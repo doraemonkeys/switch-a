@@ -6,14 +6,14 @@
 
 ## 总体进度 Checklist
 
-### Phase 1: 工程骨架 (预计 1-2 天)
-- [ ] Go module 初始化 + 目录结构
-- [ ] 启动配置加载 (环境变量)
-- [ ] 日志初始化 (doraemonkeys/mylog/zap)
-- [ ] 核心接口定义 (Store, Selector, Clock, HTTPDoer)
-- [ ] GORM + SQLite 初始化 (AutoMigrate)
-- [ ] 健康检查端点 `/health`
-- [ ] `make verify` 基础通过
+### Phase 1: 工程骨架 (预计 1-2 天) ✅
+- [x] Go module 初始化 + 目录结构
+- [x] 启动配置加载 (环境变量)
+- [x] 日志初始化 (doraemonkeys/mylog/zap)
+- [x] 核心接口定义 (Store, Selector, Clock, HTTPDoer)
+- [x] GORM + SQLite 初始化 (AutoMigrate)
+- [x] 健康检查端点 `/health`
+- [x] `make verify` 基础通过
 
 ### Phase 2: 代理转发核心 (预计 2-3 天)
 - [ ] API 类型路由解析 (claude/codex/gemini/custom)
