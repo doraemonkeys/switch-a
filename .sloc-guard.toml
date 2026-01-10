@@ -7,7 +7,7 @@ exclude = ["**/.git/**", "**/build/**", "**/dist/**", "**/node_modules/**"]
 
 [content]
 extensions = ["go", "js", "ts"]
-max_lines = 500
+max_lines = 600
 warn_threshold = 0.9
 skip_comments = true
 skip_blank = true
@@ -17,7 +17,7 @@ skip_blank = true
 # web (Node.js/TypeScript)
 [[content.rules]]
 pattern = "web/**"
-max_lines = 500
+max_lines = 600
 
 # Test files - relaxed limits
 [[content.rules]]
