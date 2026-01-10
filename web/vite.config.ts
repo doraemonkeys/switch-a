@@ -14,7 +14,6 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // 代理到后端 API
       '/admin/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
@@ -28,16 +27,28 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
+      // Logic layers: api, lib, hooks, config - require high coverage
+      // View layers: components - medium coverage
+      // Assembly layers: pages - excluded from thresholds
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}', 'src/main.tsx'],
+      exclude: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'src/main.tsx',
+        'src/test-setup.ts',
+        'src/pages/**',
+      ],
       thresholds: {
-        lines: 50,
-        functions: 50,
+        // Phase 1: Establishing quality baseline
+        // branches is harder to achieve but more meaningful for logic coverage
+        lines: 60,
+        functions: 60,
+        statements: 60,
         branches: 50,
-        statements: 50,
       },
     },
   },

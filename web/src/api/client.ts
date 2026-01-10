@@ -28,38 +28,23 @@ export function createTokenManager(storage: Storage) {
   }
 }
 
-// API Client factory with dependency injection
-export function createApiClient(deps: ApiClientDeps) {
-  const { storage, httpClient, baseUrl } = deps
-  const tokenManager = createTokenManager(storage)
+// Request factory with dependency injection
+function createRequest(deps: ApiClientDeps, tokenManager: ReturnType<typeof createTokenManager>) {
+  const { httpClient, baseUrl } = deps
 
-  async function request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
+  return async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const token = tokenManager.get()
-
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    }
+    const headers: HeadersInit = { 'Content-Type': 'application/json', ...options.headers }
 
     if (token) {
       (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
     }
 
-    const response = await httpClient.fetch(`${baseUrl}${endpoint}`, {
-      ...options,
-      headers,
-    })
+    const response = await httpClient.fetch(`${baseUrl}${endpoint}`, { ...options, headers })
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
-      throw new ApiError(
-        data.code || 'UNKNOWN_ERROR',
-        data.message || response.statusText,
-        response.status
-      )
+      throw new ApiError(data.code || 'UNKNOWN_ERROR', data.message || response.statusText, response.status)
     }
 
     // 204 No Content
@@ -69,6 +54,12 @@ export function createApiClient(deps: ApiClientDeps) {
 
     return response.json()
   }
+}
+
+// API Client factory with dependency injection
+export function createApiClient(deps: ApiClientDeps) {
+  const tokenManager = createTokenManager(deps.storage)
+  const request = createRequest(deps, tokenManager)
 
   return {
     // Token management
@@ -150,7 +141,8 @@ export function createApiClient(deps: ApiClientDeps) {
         if (params?.limit) query.set('limit', String(params.limit))
         if (params?.offset) query.set('offset', String(params.offset))
         const queryStr = query.toString()
-        return request<RequestLog[]>(`/logs${queryStr ? `?${queryStr}` : ''}`)
+        const endpoint = queryStr ? `/logs?${queryStr}` : '/logs'
+        return request<RequestLog[]>(endpoint)
       },
     },
   }

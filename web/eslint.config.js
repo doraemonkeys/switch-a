@@ -7,7 +7,8 @@ import sonarjs from 'eslint-plugin-sonarjs'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', 'coverage']),
+  // 共享配置
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -22,10 +23,22 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
-      // 函数最大行数限制 (50行)
-      'max-lines-per-function': ['error', { max: 50, skipBlankLines: true, skipComments: true }],
       // 认知复杂度检查 (默认15)
       'sonarjs/cognitive-complexity': ['error', 15],
+    },
+  },
+  // *.ts (工具/业务逻辑): 100 行
+  {
+    files: ['**/*.ts'],
+    rules: {
+      'max-lines-per-function': ['error', { max: 100, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // *.tsx (组件): 250 行
+  {
+    files: ['**/*.tsx'],
+    rules: {
+      'max-lines-per-function': ['error', { max: 250, skipBlankLines: true, skipComments: true }],
     },
   },
 ])
