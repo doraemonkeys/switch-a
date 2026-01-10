@@ -41,4 +41,15 @@ export default defineConfig([
       'max-lines-per-function': ['error', { max: 250, skipBlankLines: true, skipComments: true }],
     },
   },
+  // ✅ 测试文件 override（放宽）
+  {
+    files: [
+      '**/*.{test,spec}.{ts,tsx}',
+      '**/__tests__/**/*.{ts,tsx}',
+    ],
+    rules: {
+      'max-lines-per-function': ['warn', { max: 300, skipBlankLines: true, skipComments: true }],
+      'sonarjs/cognitive-complexity': ['warn', 20],
+    },
+  },
 ])

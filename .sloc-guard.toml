@@ -1,4 +1,4 @@
-
+# More config: https://github.com/doraemonkeys/sloc-guard
 version = "2"
 
 [scanner]
@@ -18,6 +18,12 @@ skip_blank = true
 [[content.rules]]
 pattern = "web/**"
 max_lines = 500
+
+# Test files - relaxed limits
+[[content.rules]]
+pattern = "**/web/**/*.test.*"
+max_lines = 1200
+warn_at = 1000
 
 [structure]
 max_files = 20
