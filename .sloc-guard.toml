@@ -21,7 +21,7 @@ max_lines = 500
 
 # Test files - relaxed limits
 [[content.rules]]
-pattern = "**/web/**/*.test.*"
+pattern = "web/**/*.test.*"
 max_lines = 1200
 warn_at = 1000
 

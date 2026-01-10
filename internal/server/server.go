@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/proxy"
 
 	"go.uber.org/zap"
 )
@@ -20,6 +21,7 @@ const ReadHeaderTimeout = 10 * time.Second
 type store interface {
 	// Provider operations
 	ListProviders(ctx context.Context) ([]model.Provider, error)
+	ListProvidersByAPIType(ctx context.Context, apiType string) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (*model.Provider, error)
 	CreateProvider(ctx context.Context, p *model.Provider) error
 	UpdateProvider(ctx context.Context, p *model.Provider) error
@@ -42,16 +44,18 @@ type store interface {
 	SetConfig(ctx context.Context, key, value string) error
 
 	// Log operations
+	InsertLog(ctx context.Context, log *model.RequestLog) error
 	ListLogs(ctx context.Context, limit, offset int) ([]model.RequestLog, error)
 }
 
 // Server represents the HTTP server.
 type Server struct {
-	server     *http.Server
-	logger     *zap.Logger
-	store      store
-	adminToken string
-	listener   net.Listener
+	server       *http.Server
+	logger       *zap.Logger
+	store        store
+	adminToken   string
+	listener     net.Listener
+	proxyHandler *proxy.Handler
 }
 
 // Config holds server configuration.
@@ -71,21 +75,46 @@ type HealthResponse struct {
 // New creates a new HTTP server.
 func New(cfg Config) *Server {
 	mux := http.NewServeMux()
+
+	// Create proxy handler
+	proxyHandler := proxy.NewHandler(proxy.Config{
+		Store:  cfg.Store,
+		Logger: cfg.Logger,
+	})
+
 	s := &Server{
 		server: &http.Server{
 			Addr:              net.JoinHostPort("", cfg.Port),
 			Handler:           mux,
 			ReadHeaderTimeout: ReadHeaderTimeout,
 		},
-		logger:     cfg.Logger,
-		store:      cfg.Store,
-		adminToken: cfg.AdminToken,
+		logger:       cfg.Logger,
+		store:        cfg.Store,
+		adminToken:   cfg.AdminToken,
+		proxyHandler: proxyHandler,
 	}
 
 	// Register routes
 	mux.HandleFunc("GET /health", s.handleHealth)
 
+	// Proxy API routes (no auth required)
+	// Claude API
+	mux.HandleFunc("POST /v1/messages", s.handleProxy)
+	mux.HandleFunc("GET /v1/models", s.handleProxy)
+	// Codex API
+	mux.HandleFunc("POST /responses", s.handleProxy)
+	// Gemini API
+	mux.HandleFunc("POST /gemini/", s.handleProxy)
+	// Custom API
+	mux.HandleFunc("POST /custom/", s.handleProxy)
+	mux.HandleFunc("GET /custom/", s.handleProxy)
+
 	return s
+}
+
+// handleProxy forwards requests to the proxy handler.
+func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
+	s.proxyHandler.ServeHTTP(w, r)
 }
 
 // Start starts the HTTP server.

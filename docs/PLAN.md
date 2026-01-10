@@ -15,14 +15,14 @@
 - [x] 健康检查端点 `/health`
 - [x] `make verify` 基础通过
 
-### Phase 2: 代理转发核心 (预计 2-3 天)
-- [ ] API 类型路由解析 (claude/codex/gemini/custom)
-- [ ] 请求信息提取 (IP, User, Model)
-- [ ] Header 透传与过滤
-- [ ] 认证头处理 (auto/bearer/x-api-key)
-- [ ] HTTP 转发 (普通响应)
-- [ ] SSE 流式响应代理
-- [ ] 请求体缓冲 (支持重试)
+### Phase 2: 代理转发核心 (预计 2-3 天) ✅
+- [x] API 类型路由解析 (claude/codex/gemini/custom)
+- [x] 请求信息提取 (IP, User, Model)
+- [x] Header 透传与过滤
+- [x] 认证头处理 (auto/bearer/x-api-key)
+- [x] HTTP 转发 (普通响应)
+- [x] SSE 流式响应代理
+- [x] 请求体缓冲 (支持重试)
 
 ### Phase 3: 供应商选择与健康管理 (预计 2-4 天)
 - [ ] 供应商/分组数据模型 + 存储
@@ -141,60 +141,6 @@
 │  - runtime_config (运行时配置)                                   │
 │  - request_logs   (请求日志)                                     │
 └─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 三、目录结构
-
-```
-switch-a/
-├── cmd/
-│   └── switch-a/
-│       └── main.go              # 程序入口 (仅依赖装配)
-├── internal/
-│   ├── config/
-│   │   └── config.go            # 配置结构与加载
-│   ├── logger/
-│   │   └── logger.go            # 日志初始化 (doraemonkeys/mylog/zap)
-│   ├── server/
-│   │   ├── server.go            # HTTP 服务器
-│   │   └── middleware.go        # 中间件 (日志、恢复、认证)
-│   ├── proxy/
-│   │   ├── handler.go           # 代理请求处理器
-│   │   ├── router.go            # API 类型路由解析
-│   │   ├── extractor.go         # 请求信息提取 (IP, User, Model)
-│   │   ├── headers.go           # Header 透传与过滤
-│   │   └── transport.go         # HTTP 传输 (含 SSE)
-│   ├── selector/
-│   │   ├── selector.go          # 供应商选择器
-│   │   ├── strategy.go          # 选择策略 (优先级/随机/权重)
-│   │   └── sticky.go            # 粘性会话缓存
-│   ├── health/
-│   │   ├── manager.go           # 健康状态管理
-│   │   └── circuit.go           # 熔断器 (滑动窗口)
-│   ├── store/
-│   │   ├── store.go             # 存储接口定义
-│   │   └── sqlite.go            # GORM SQLite 实现 (含 AutoMigrate)
-│   ├── admin/
-│   │   ├── handler.go           # 管理 API 处理器
-│   │   └── auth.go              # 管理认证
-│   └── model/
-│       └── model.go             # 数据模型定义
-├── web/                         # React 前端
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── api/
-│   │   └── App.tsx
-│   ├── package.json
-│   └── vite.config.ts
-├── docs/
-│   ├── PLAN.md                  # 本文档
-│   └── ENGINEERING_GUIDELINES.md
-├── Makefile
-├── go.mod
-└── go.sum
 ```
 
 ---
@@ -871,89 +817,19 @@ disabled_until 到期后自动恢复
 
 ## 十、分阶段实现详情
 
-### Phase 1: 工程骨架
+### Phase 1: 工程骨架 ✅ (已完成)
 
-**目标**：项目可编译运行，通过基础质量检查
-
-**任务清单**：
-
-1. **项目初始化**
-   - `go mod init`
-   - 创建目录结构
-   - 配置 `.gitignore`
-
-2. **配置加载** (`internal/config/`)
-   - 读取 3 个环境变量
-   - 启动时校验 `SWITCHA_ADMIN_TOKEN` 必填
-
-3. **日志初始化** (`internal/logger/`)
-   - 使用 `doraemonkeys/mylog/zap` 初始化 logger
-   - 支持开发/生产环境不同配置
-   - 日志文件路径: `./logs/switch-a.log`
-
-4. **核心接口定义** (`internal/`)
-   - `Store` 接口
-   - `Selector` 接口
-   - `HealthManager` 接口
-   - `Clock` / `HTTPDoer` 辅助接口 (便于测试)
-
-5. **GORM + SQLite 基础** (`internal/store/`)
-   - GORM 初始化 (gorm.io/gorm + gorm.io/driver/sqlite)
-   - 启用 WAL 模式
-   - AutoMigrate 自动建表
-
-6. **HTTP Server** (`internal/server/`)
-   - 基础 server 启动/关闭
-   - `/health` 端点
-
-7. **构建配置**
-   - `Makefile` 完善
-   - `make verify` 通过
-
-**验收标准**：
-- 程序启动后监听端口
-- `/health` 返回 200
-- `make verify` 通过
+> 已实现: Go module、配置加载、日志 (mylog/zap)、核心接口、GORM+SQLite、HTTP Server、`/health` 端点
+> 
+> 代码位置: `internal/config/`, `internal/logger/`, `internal/store/`, `internal/server/`
 
 ---
 
-### Phase 2: 代理转发核心
+### Phase 2: 代理转发核心 ✅ (已完成)
 
-**目标**：能够成功代理 Claude API 请求（含 SSE）
-
-**任务清单**：
-
-1. **路由解析** (`internal/proxy/router.go`)
-   - URL → api_type 映射
-   - 默认 claude 透传
-
-2. **信息提取** (`internal/proxy/extractor.go`)
-   - 提取 Client IP (支持代理头)
-   - 提取 User ID (从配置的 header)
-   - 提取 Model (从 JSON body; Gemini 从 URL 路径提取)
-     - 使用 `json.Decoder` 流式解析，仅读取到 `model` 字段即停止
-     - 对于大请求体（如带图片），避免解析完整 JSON
-     - 最多读取 128KB 数据，超出仍未找到 `model` 字段则返回 "unknown"
-
-3. **Header 处理** (`internal/proxy/headers.go`)
-   - 透传逻辑
-   - 过滤列表
-   - 认证头写入
-
-4. **HTTP 传输** (`internal/proxy/transport.go`)
-   - 普通请求转发
-   - SSE 流式转发
-   - 请求体缓冲
-
-5. **代理处理器** (`internal/proxy/handler.go`)
-   - 整合上述组件
-   - 错误处理
-
-**验收标准**：
-- 配置一个 Claude 供应商后
-- `/v1/messages` 普通请求可用
-- `/v1/messages` 流式请求可用
-- 未知路径透传
+> 已实现: API 类型路由、请求信息提取 (IP/User/Model)、Header 透传过滤、认证头处理、HTTP/SSE 转发、请求体缓冲
+> 
+> 代码位置: `internal/proxy/` (router.go, extractor.go, headers.go, transport.go, handler.go)
 
 ---
 
