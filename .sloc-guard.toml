@@ -33,4 +33,4 @@ warn_at = 900
 
 [structure]
 max_files = 20
-max_dirs = 10
+max_dirs = 20
