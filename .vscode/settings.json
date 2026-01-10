@@ -1,0 +1,12 @@
+{
+  // 指定使用 web 目录中的 TypeScript 版本
+  "typescript.tsdk": "web/node_modules/typescript/lib",
+  // 启用工作区 TypeScript 版本（而非 VS Code 内置版本）
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  // 将 tsconfig 文件识别为 JSONC（支持注释的 JSON）
+  "files.associations": {
+    "tsconfig*.json": "jsonc"
+  },
+  // 忽略 Tailwind CSS v4 自定义 at-rules 的警告（如 @theme, @source 等）
+  "css.lint.unknownAtRules": "ignore"
+}

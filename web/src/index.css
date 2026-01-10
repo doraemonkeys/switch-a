@@ -1,0 +1,229 @@
+@import "tailwindcss";
+
+/* 浅色主题 - 现代清新风格 */
+@theme {
+  /* 主色调 - 靛蓝色系 */
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-light: #eef2ff;
+  --color-primary-ring: rgba(99, 102, 241, 0.3);
+
+  /* 语义色 */
+  --color-success: #10b981;
+  --color-success-light: #ecfdf5;
+  --color-warning: #f59e0b;
+  --color-warning-light: #fffbeb;
+  --color-danger: #ef4444;
+  --color-danger-light: #fef2f2;
+  --color-info: #3b82f6;
+  --color-info-light: #eff6ff;
+
+  /* 背景色 */
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f8fafc;
+  --color-bg-tertiary: #f1f5f9;
+  --color-bg-hover: #f1f5f9;
+
+  /* 文字色 */
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #64748b;
+  --color-text-muted: #94a3b8;
+
+  /* 边框色 */
+  --color-border: #e2e8f0;
+  --color-border-light: #f1f5f9;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07),
+    0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08),
+    0 4px 6px -4px rgba(0, 0, 0, 0.04);
+}
+
+/* 基础样式 */
+body {
+  @apply bg-bg-secondary text-text-primary antialiased;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+/* 自定义组件样式 */
+@layer components {
+  /* 按钮基础样式 */
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           inline-flex items-center justify-center gap-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply bg-primary text-white hover:bg-primary-hover 
+           focus:ring-primary-ring active:scale-[0.98]
+           shadow-sm hover:shadow-md;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-text-primary border border-border 
+           hover:bg-bg-hover hover:border-border
+           focus:ring-primary-ring active:scale-[0.98]
+           shadow-sm;
+  }
+
+  .btn-danger {
+    @apply bg-danger text-white hover:bg-red-600 
+           focus:ring-red-300 active:scale-[0.98]
+           shadow-sm hover:shadow-md;
+  }
+
+  .btn-ghost {
+    @apply bg-transparent text-text-secondary 
+           hover:bg-bg-hover hover:text-text-primary
+           focus:ring-primary-ring;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-sm;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  /* 卡片样式 */
+  .card {
+    @apply bg-white border border-border rounded-xl p-6;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.2s ease;
+  }
+
+  .card:hover {
+    box-shadow: var(--shadow-md);
+  }
+
+  .card-flat {
+    @apply bg-white border border-border rounded-xl p-6;
+  }
+
+  /* 输入框样式 */
+  .input {
+    @apply w-full px-3.5 py-2.5 bg-white border border-border rounded-lg 
+           text-text-primary placeholder:text-text-muted
+           transition-all duration-200
+           focus:outline-none focus:ring-2 focus:ring-primary-ring focus:border-primary;
+  }
+
+  .input:hover:not(:focus) {
+    @apply border-border;
+    border-color: #cbd5e1;
+  }
+
+  /* Select 样式 */
+  select.input {
+    @apply pr-10 cursor-pointer;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.75rem center;
+    background-repeat: no-repeat;
+    background-size: 1.25em 1.25em;
+    appearance: none;
+  }
+
+  /* Checkbox 样式 */
+  input[type="checkbox"] {
+    @apply w-4 h-4 rounded border-border text-primary 
+           focus:ring-2 focus:ring-primary-ring focus:ring-offset-0
+           cursor-pointer;
+  }
+
+  /* 标签样式 */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply bg-success-light text-emerald-700;
+  }
+
+  .badge-warning {
+    @apply bg-warning-light text-amber-700;
+  }
+
+  .badge-danger {
+    @apply bg-danger-light text-red-700;
+  }
+
+  .badge-info {
+    @apply bg-info-light text-blue-700;
+  }
+
+  .badge-neutral {
+    @apply bg-bg-tertiary text-text-secondary;
+  }
+
+  /* 表格样式 */
+  .table-header {
+    @apply bg-bg-secondary border-b border-border;
+  }
+
+  .table-row {
+    @apply border-b border-border-light transition-colors hover:bg-bg-hover;
+  }
+
+  .table-cell {
+    @apply px-4 py-3 text-sm;
+  }
+
+  /* 导航链接样式 */
+  .nav-link {
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-lg font-medium
+           transition-all duration-200 text-text-secondary
+           hover:bg-white hover:text-text-primary hover:shadow-sm;
+  }
+
+  .nav-link-active {
+    @apply bg-primary text-white shadow-md hover:bg-primary-hover hover:text-white;
+  }
+
+  /* 分割线 */
+  .divider {
+    @apply border-t border-border;
+  }
+
+  /* 空状态 */
+  .empty-state {
+    @apply text-center py-12 text-text-secondary;
+  }
+
+  /* 加载动画 */
+  .spinner {
+    @apply animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full;
+  }
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-bg-secondary rounded-full;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #cbd5e1;
+}
+
+/* 焦点可见性优化 */
+:focus-visible {
+  @apply outline-none ring-2 ring-primary-ring ring-offset-2;
+}
+
+/* 选择文本颜色 */
+::selection {
+  @apply bg-primary-light text-primary;
+}

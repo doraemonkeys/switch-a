@@ -1,0 +1,59 @@
+version: "2"
+
+run:
+  # 设置超时时间
+  timeout: 5m
+  # 如果有任何 issue，返回非 0 状态码（满足"不能有任何警告"的要求）
+  issues-exit-code: 1
+
+linters:
+  enable:
+    - govet          # 官方 vet
+    - staticcheck    # 常用静态分析
+    - ineffassign
+    - misspell
+    - funlen    # 检查函数长度
+    - nestif    # 检查 if 嵌套深度
+    - gocyclo   # 检查循环复杂度 (辅助嵌套检查)
+    - gocognit   # 检查认知复杂度
+    # - lll      # 检查单行长度
+    - revive  # 可以用来扩充更多检查
+    - errcheck       # 检查未处理的错误返回值
+    - errorlint      # 检查 Go 1.13+ 错误处理最佳实践
+    - bodyclose      # 检查 HTTP response body 是否关闭
+    # - noctx          # 检查 HTTP 请求是否传递 context
+    - gocritic       # 综合性代码审查
+    - unconvert      # 检查不必要的类型转换
+    - prealloc       # 检查 slice 是否可预分配
+    - dupl           # 检查重复代码块
+  exclusions:
+    # 排除测试文件（通常测试文件会比较长或逻辑特殊，如果也要检查可去掉此行）
+    paths:
+      - test
+      - _test\.go
+  settings:
+    funlen:
+      # 限制函数行数不超过 200 行
+      lines: 200
+      # 限制语句数量 (可根据需求调整，通常设为行数的一半或忽略)
+      statements: 100
+      # 计算时不包含注释
+      ignore-comments: true
+    nestif:
+      # 限制 if 嵌套层数。
+      # nestif 的计算比较严格，设为 3 意味着 if a { if b { if c { ... } } } 就会报警
+      min-complexity: 4 # 这里的数值通常对应嵌套深度+1，或者根据复杂度算法调整
+    revive:
+      rules:
+        # 3. 单文件不超过 xx 行
+        - name: file-length-limit
+          disabled: false
+          arguments:
+            - max: 700
+              skipComments: true
+              skipBlankLines: true
+
+issues:
+  # 确保不隐藏任何问题，零容忍
+  max-issues-per-linter: 0
+  max-same-issues: 0

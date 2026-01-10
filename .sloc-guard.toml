@@ -1,0 +1,24 @@
+
+version = "2"
+
+[scanner]
+gitignore = true
+exclude = ["**/.git/**", "**/build/**", "**/dist/**", "**/node_modules/**"]
+
+[content]
+extensions = ["go", "js", "ts"]
+max_lines = 500
+warn_threshold = 0.9
+skip_comments = true
+skip_blank = true
+
+# Per-subdirectory rules (monorepo)
+
+# web (Node.js/TypeScript)
+[[content.rules]]
+pattern = "web/**"
+max_lines = 500
+
+[structure]
+max_files = 20
+max_dirs = 10

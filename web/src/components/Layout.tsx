@@ -1,0 +1,77 @@
+import { NavLink, Outlet } from 'react-router-dom'
+
+const navItems = [
+  { to: '/', label: 'Dashboard', icon: '📊' },
+  { to: '/providers', label: 'Providers', icon: '🔌' },
+  { to: '/groups', label: 'Groups', icon: '📁' },
+  { to: '/config', label: 'Config', icon: '⚙️' },
+  { to: '/logs', label: 'Logs', icon: '📋' },
+]
+
+export function Layout() {
+  return (
+    <div className="min-h-screen bg-bg-secondary">
+      {/* Header */}
+      <header className="bg-white border-b border-border sticky top-0 z-10 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-linear-to-br from-primary to-indigo-500 rounded-lg flex items-center justify-center shadow-md">
+                <span className="text-white text-lg">⚡</span>
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-text-primary">Switch-A</h1>
+                <p className="text-xs text-text-muted -mt-0.5">AI Provider Proxy</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-success-light rounded-full">
+                <span className="w-2 h-2 bg-success rounded-full animate-pulse"></span>
+                <span className="text-xs font-medium text-emerald-700">Online</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex gap-6">
+          {/* Sidebar Navigation */}
+          <nav className="w-52 shrink-0">
+            <div className="bg-white rounded-xl border border-border p-2 shadow-sm">
+              <ul className="space-y-1">
+                {navItems.map((item) => (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.to === '/'}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 ${isActive
+                          ? 'bg-linear-to-r from-primary to-indigo-500 text-white shadow-md'
+                          : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                        }`
+                      }
+                    >
+                      <span className="text-base">{item.icon}</span>
+                      <span className="font-medium text-sm">{item.label}</span>
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Version Info */}
+            <div className="mt-4 px-4 py-3 bg-white rounded-xl border border-border text-center">
+              <p className="text-xs text-text-muted">Version 0.1.0</p>
+            </div>
+          </nav>
+
+          {/* Main Content */}
+          <main className="flex-1 min-w-0">
+            <Outlet />
+          </main>
+        </div>
+      </div>
+    </div>
+  )
+}
