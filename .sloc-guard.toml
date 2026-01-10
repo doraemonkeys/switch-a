@@ -25,6 +25,12 @@ pattern = "**/web/**/*.test.*"
 max_lines = 1200
 warn_at = 1000
 
+# Go test files
+[[content.rules]]
+pattern = "**/*_test.go"
+max_lines = 1100
+warn_at = 900
+
 [structure]
 max_files = 20
 max_dirs = 10

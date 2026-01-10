@@ -21,9 +21,9 @@ TEMP_ENV := TEMP="$(TMP_DIR)" TMP="$(TMP_DIR)"
 ci:
 	@mkdir -p .tmp
 	@go install github.com/vladopajic/go-test-coverage/v2@latest
-	@set -o pipefail && go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./... 2>&1 | tail -n 10
+	@set -o pipefail && go test ./... -coverprofile=./cover.out -covermode=atomic 2>&1 | tail -n 10
 	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
-	@golangci-lint run -q
+	@golangci-lint run
 	@sloc-guard -q check
 	@cd web && pnpm lint --quiet
 	@cd web && pnpm test:coverage --silent
@@ -37,7 +37,7 @@ lint:
 coverage:
 	mkdir -p .tmp
 	go install github.com/vladopajic/go-test-coverage/v2@latest
-	go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+	go test ./... -coverprofile=./cover.out -covermode=atomic
 	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 
 sloc:

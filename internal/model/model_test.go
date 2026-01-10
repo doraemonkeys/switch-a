@@ -7,13 +7,15 @@ import (
 )
 
 func TestProvider_JSON(t *testing.T) {
+	groupID := "g1"
 	p := Provider{
 		ID:       "p1",
 		Name:     "Test Provider",
 		BaseURL:  "https://api.example.com",
 		APIKey:   "key123",
-		APITypes: []string{"claude", "codex"},
+		APITypes: []ProviderAPIType{{ProviderID: "p1", APIType: "claude"}},
 		AuthMode: "bearer",
+		GroupID:  &groupID,
 		Enabled:  true,
 	}
 
@@ -29,6 +31,27 @@ func TestProvider_JSON(t *testing.T) {
 
 	if p2.ID != p.ID || p2.Name != p.Name {
 		t.Errorf("round-trip failed: got %+v", p2)
+	}
+}
+
+func TestProviderAPIType_JSON(t *testing.T) {
+	pat := ProviderAPIType{
+		ProviderID: "p1",
+		APIType:    "claude",
+	}
+
+	data, err := json.Marshal(pat)
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+
+	var pat2 ProviderAPIType
+	if err := json.Unmarshal(data, &pat2); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	if pat2.ProviderID != pat.ProviderID || pat2.APIType != pat.APIType {
+		t.Errorf("round-trip failed: got %+v", pat2)
 	}
 }
 
@@ -58,12 +81,13 @@ func TestGroup_JSON(t *testing.T) {
 }
 
 func TestHealthState_JSON(t *testing.T) {
+	now := time.Now()
 	h := HealthState{
 		ProviderID:   "p1",
 		Available:    true,
 		SuccessCount: 100,
 		FailCount:    5,
-		LastSuccess:  time.Now(),
+		LastSuccess:  &now,
 	}
 
 	data, err := json.Marshal(h)
@@ -78,6 +102,28 @@ func TestHealthState_JSON(t *testing.T) {
 
 	if h2.ProviderID != h.ProviderID || h2.SuccessCount != h.SuccessCount {
 		t.Errorf("round-trip failed: got %+v", h2)
+	}
+}
+
+func TestRuntimeConfig_JSON(t *testing.T) {
+	rc := RuntimeConfig{
+		Key:       "sticky_ttl",
+		Value:     "300",
+		UpdatedAt: time.Now(),
+	}
+
+	data, err := json.Marshal(rc)
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+
+	var rc2 RuntimeConfig
+	if err := json.Unmarshal(data, &rc2); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	if rc2.Key != rc.Key || rc2.Value != rc.Value {
+		t.Errorf("round-trip failed: got %+v", rc2)
 	}
 }
 
@@ -107,9 +153,7 @@ func TestRequestLog_JSON(t *testing.T) {
 }
 
 func TestGatewayError_JSON(t *testing.T) {
-	e := GatewayError{}
-	e.Error.Code = "PROVIDER_UNAVAILABLE"
-	e.Error.Message = "No available provider"
+	e := NewGatewayError("PROVIDER_UNAVAILABLE", "No available provider")
 
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -123,6 +167,16 @@ func TestGatewayError_JSON(t *testing.T) {
 
 	if e2.Error.Code != e.Error.Code {
 		t.Errorf("round-trip failed: got %+v", e2)
+	}
+}
+
+func TestNewGatewayError(t *testing.T) {
+	e := NewGatewayError("TEST_CODE", "Test message")
+	if e.Error.Code != "TEST_CODE" {
+		t.Errorf("Code = %q, want %q", e.Error.Code, "TEST_CODE")
+	}
+	if e.Error.Message != "Test message" {
+		t.Errorf("Message = %q, want %q", e.Error.Message, "Test message")
 	}
 }
 
@@ -156,6 +210,17 @@ func TestStickyKey(t *testing.T) {
 
 	if k.IP != "192.168.1.1" {
 		t.Errorf("IP = %q, want %q", k.IP, "192.168.1.1")
+	}
+}
+
+func TestStickyEntry(t *testing.T) {
+	e := StickyEntry{
+		ProviderID: "p1",
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+
+	if e.ProviderID != "p1" {
+		t.Errorf("ProviderID = %q, want %q", e.ProviderID, "p1")
 	}
 }
 

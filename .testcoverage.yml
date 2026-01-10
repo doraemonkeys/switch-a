@@ -3,7 +3,7 @@
 # https://github.com/vladopajic/go-test-coverage
 
 profile: cover.out
-local-prefix: menv
+local-prefix: switch-a
 
 threshold:
   # 每个 package 覆盖率

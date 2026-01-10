@@ -31,12 +31,17 @@ linters:
     paths:
       - test
       - _test\.go
+    rules:
+      # 忽略 Close() 方法的 errcheck
+      - linters:
+          - errcheck
+        source: "defer.*\\.Close\\(\\)"
   settings:
     funlen:
       # 限制函数行数不超过 200 行
-      lines: 200
+      lines: 150
       # 限制语句数量 (可根据需求调整，通常设为行数的一半或忽略)
-      statements: 100
+      statements: 75
       # 计算时不包含注释
       ignore-comments: true
     nestif:

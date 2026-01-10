@@ -10,6 +10,6 @@ const (
 
 // Default configuration values.
 const (
-	DefaultPort   = "8080"
+	DefaultPort   = "28080"
 	DefaultDBPath = "./data.db"
 )

@@ -1,19 +1,13 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
 func TestLoad_Success(t *testing.T) {
-	os.Setenv("SWITCHA_ADMIN_TOKEN", "test-token")
-	os.Setenv("SWITCHA_PORT", "9000")
-	os.Setenv("SWITCHA_DB_PATH", "/tmp/test.db")
-	defer func() {
-		os.Unsetenv("SWITCHA_ADMIN_TOKEN")
-		os.Unsetenv("SWITCHA_PORT")
-		os.Unsetenv("SWITCHA_DB_PATH")
-	}()
+	t.Setenv("SWITCHA_ADMIN_TOKEN", "test-token")
+	t.Setenv("SWITCHA_PORT", "9000")
+	t.Setenv("SWITCHA_DB_PATH", "/tmp/test.db")
 
 	cfg, err := Load()
 	if err != nil {
@@ -32,18 +26,15 @@ func TestLoad_Success(t *testing.T) {
 }
 
 func TestLoad_DefaultValues(t *testing.T) {
-	os.Setenv("SWITCHA_ADMIN_TOKEN", "test-token")
-	os.Unsetenv("SWITCHA_PORT")
-	os.Unsetenv("SWITCHA_DB_PATH")
-	defer os.Unsetenv("SWITCHA_ADMIN_TOKEN")
+	t.Setenv("SWITCHA_ADMIN_TOKEN", "test-token")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Port != "8080" {
-		t.Errorf("Port = %q, want default %q", cfg.Port, "8080")
+	if cfg.Port != DefaultPort {
+		t.Errorf("Port = %q, want default %q", cfg.Port, DefaultPort)
 	}
 	if cfg.DBPath != "./data.db" {
 		t.Errorf("DBPath = %q, want default %q", cfg.DBPath, "./data.db")
@@ -51,8 +42,6 @@ func TestLoad_DefaultValues(t *testing.T) {
 }
 
 func TestLoad_MissingAdminToken(t *testing.T) {
-	os.Unsetenv("SWITCHA_ADMIN_TOKEN")
-
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error when SWITCHA_ADMIN_TOKEN is missing")
@@ -60,8 +49,7 @@ func TestLoad_MissingAdminToken(t *testing.T) {
 }
 
 func TestGetEnvOrDefault(t *testing.T) {
-	os.Setenv("TEST_KEY", "custom-value")
-	defer os.Unsetenv("TEST_KEY")
+	t.Setenv("TEST_KEY", "custom-value")
 
 	if v := getEnvOrDefault("TEST_KEY", "default"); v != "custom-value" {
 		t.Errorf("got %q, want %q", v, "custom-value")

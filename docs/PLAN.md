@@ -11,7 +11,7 @@
 - [ ] 启动配置加载 (环境变量)
 - [ ] 日志初始化 (doraemonkeys/mylog/zap)
 - [ ] 核心接口定义 (Store, Selector, Clock, HTTPDoer)
-- [ ] SQLite 连接 + migration 框架
+- [ ] GORM + SQLite 初始化 (AutoMigrate)
 - [ ] 健康检查端点 `/health`
 - [ ] `make verify` 基础通过
 
@@ -78,6 +78,8 @@
 | 层级 | 技术选型 |
 |------|----------|
 | 后端 | Go 1.24+ |
+| HTTP 框架 | 标准库 `net/http` + `http.ServeMux` (Go 1.22+ 增强路由) |
+| ORM | GORM (gorm.io/gorm + gorm.io/driver/sqlite) |
 | 日志 | doraemonkeys/mylog/zap + go.uber.org/zap |
 | 前端 | React 19 + TypeScript + Vite |
 | 数据库 | SQLite (嵌入式) |
@@ -173,8 +175,7 @@ switch-a/
 │   │   └── circuit.go           # 熔断器 (滑动窗口)
 │   ├── store/
 │   │   ├── store.go             # 存储接口定义
-│   │   ├── sqlite.go            # SQLite 实现
-│   │   └── migrations.go        # 数据库迁移
+│   │   └── sqlite.go            # GORM SQLite 实现 (含 AutoMigrate)
 │   ├── admin/
 │   │   ├── handler.go           # 管理 API 处理器
 │   │   └── auth.go              # 管理认证
@@ -204,38 +205,46 @@ switch-a/
 
 ```go
 type Provider struct {
-    ID          string    `json:"id"`
-    Name        string    `json:"name"`
-    BaseURL     string    `json:"base_url"`
-    APIKey      string    `json:"api_key"`      // 明文存储
-    APITypes    []string  `json:"api_types"`    // ["claude", "codex"] - 通过关联表存储
-    AuthMode    string    `json:"auth_mode"`    // auto/bearer/x-api-key (优先级：Provider.AuthMode > 全局 auth_mode)
-    GroupID     string    `json:"group_id"`
-    Weight      int       `json:"weight"`       // 1-100
-    Priority    int       `json:"priority"`     // 越小越优先
-    Concurrency int       `json:"concurrency"`  // 最大并发 (0=不限)
-    MaxRetries  int       `json:"max_retries"`  // 最大重试次数 (-1=使用全局默认值, 0=不重试)
-    Enabled     bool      `json:"enabled"`
+    ID          string    `gorm:"primaryKey" json:"id"`
+    Name        string    `gorm:"not null" json:"name"`
+    BaseURL     string    `gorm:"not null" json:"base_url"`
+    APIKey      string    `gorm:"not null" json:"api_key"`      // 明文存储
+    APITypes    []ProviderAPIType `gorm:"foreignKey:ProviderID" json:"api_types"` // 通过关联表存储
+    AuthMode    string    `gorm:"default:auto" json:"auth_mode"`    // auto/bearer/x-api-key
+    GroupID     *string   `gorm:"index" json:"group_id"`
+    Group       *Group    `gorm:"foreignKey:GroupID" json:"-"`
+    Weight      int       `gorm:"default:1" json:"weight"`       // 1-100
+    Priority    int       `gorm:"default:0" json:"priority"`     // 越小越优先
+    Concurrency int       `gorm:"default:0" json:"concurrency"`  // 最大并发 (0=不限)
+    MaxRetries  int       `gorm:"default:-1" json:"max_retries"` // -1=使用全局默认值, 0=不重试
+    Enabled     bool      `gorm:"default:true;index" json:"enabled"`
     CreatedAt   time.Time `json:"created_at"`
     UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// ProviderAPIType 供应商-API类型关联表
+type ProviderAPIType struct {
+    ProviderID string `gorm:"primaryKey" json:"provider_id"`
+    APIType    string `gorm:"primaryKey;index" json:"api_type"` // claude/codex/gemini/custom:xxx
+}
 ```
 
-> **注意**: `APITypes` 在数据库中通过 `provider_api_types` 关联表存储（多对多关系），
-> 而非 JSON 数组，以优化按 API 类型查询供应商的效率。
+> **注意**: `APITypes` 通过 GORM 的 `has many` 关联自动管理，
+> 使用 `Preload("APITypes")` 加载关联数据。
 
 ### 4.2 分组 (Group)
 
 ```go
 type Group struct {
-    ID        string    `json:"id"`
-    Name      string    `json:"name"`
-    Strategy  string    `json:"strategy"`   // priority/random/weight (组内选择策略)
-    Priority  int       `json:"priority"`   // 组间优先级 (inter_group_strategy=priority 时使用)
-    Weight    int       `json:"weight"`     // 组间权重 (inter_group_strategy=weight 时使用)
-    Enabled   bool      `json:"enabled"`
-    CreatedAt time.Time `json:"created_at"`
-    UpdatedAt time.Time `json:"updated_at"`
+    ID        string     `gorm:"primaryKey" json:"id"`
+    Name      string     `gorm:"not null" json:"name"`
+    Strategy  string     `gorm:"default:priority" json:"strategy"`   // priority/random/weight
+    Priority  int        `gorm:"default:0" json:"priority"`   // 组间优先级
+    Weight    int        `gorm:"default:1" json:"weight"`     // 组间权重
+    Enabled   bool       `gorm:"default:true" json:"enabled"`
+    Providers []Provider `gorm:"foreignKey:GroupID" json:"providers,omitempty"`
+    CreatedAt time.Time  `json:"created_at"`
+    UpdatedAt time.Time  `json:"updated_at"`
 }
 ```
 
@@ -264,15 +273,16 @@ type Group struct {
 
 ```go
 type HealthState struct {
-    ProviderID     string    `json:"provider_id"`
-    Available      bool      `json:"available"`
-    SuccessCount   int64     `json:"success_count"`
-    FailCount      int64     `json:"fail_count"`
-    LastSuccess    time.Time `json:"last_success"`
-    LastFailure    time.Time `json:"last_failure"`
-    LastError      string    `json:"last_error"`
-    DisabledUntil  time.Time `json:"disabled_until"`
-    DisabledReason string    `json:"disabled_reason"`
+    ProviderID     string     `gorm:"primaryKey" json:"provider_id"`
+    Provider       *Provider  `gorm:"foreignKey:ProviderID;constraint:OnDelete:CASCADE" json:"-"`
+    Available      bool       `gorm:"default:true" json:"available"`
+    SuccessCount   int64      `gorm:"default:0" json:"success_count"`
+    FailCount      int64      `gorm:"default:0" json:"fail_count"`
+    LastSuccess    *time.Time `json:"last_success"`
+    LastFailure    *time.Time `json:"last_failure"`
+    LastError      string     `json:"last_error"`
+    DisabledUntil  *time.Time `json:"disabled_until"`
+    DisabledReason string     `json:"disabled_reason"`
 }
 ```
 
@@ -326,6 +336,45 @@ type StickyEntry struct {
 | `log_retention_days` | 日志保留天数 | `7` |
 | `inter_group_strategy` | 组间选择策略 | `priority` |
 
+**默认值初始化**：
+
+首次启动时，自动将上述默认值写入 `runtime_config` 表（仅当 key 不存在时）：
+
+```go
+// internal/store/sqlite.go
+func (s *SQLiteStore) InitDefaultConfig(ctx context.Context) error {
+    defaults := map[string]string{
+        "auth_mode":                "auto",
+        "user_header":              "X-User-ID",
+        "trust_proxy_headers":      "true",
+        "upstream_connect_timeout": "10",
+        "upstream_read_timeout":    "0",
+        "sticky_enabled":           "true",
+        "sticky_ttl":               "300",
+        "circuit_failure":          "3",
+        "circuit_window":           "60",
+        "circuit_disable":          "300",
+        "max_body_size":            "10",
+        "max_retries":              "3",
+        "log_retention_days":       "7",
+        "inter_group_strategy":     "priority",
+    }
+    for key, value := range defaults {
+        // INSERT OR IGNORE: 仅当 key 不存在时插入
+        err := s.db.WithContext(ctx).Exec(
+            "INSERT OR IGNORE INTO runtime_configs (key, value, updated_at) VALUES (?, ?, ?)",
+            key, value, time.Now(),
+        ).Error
+        if err != nil {
+            return err
+        }
+    }
+    return nil
+}
+```
+
+> 在 `main.go` 中 AutoMigrate 后调用 `store.InitDefaultConfig(ctx)`
+
 ### 5.3 日志配置
 
 使用 `doraemonkeys/mylog/zap` 封装的 zap 日志库，支持灵活的 Builder 配置：
@@ -367,102 +416,90 @@ logger := mylog.NewBuilder().
 
 ---
 
-## 六、数据库 Schema
+## 六、数据库 Schema (GORM)
 
-```sql
--- 运行时配置表
-CREATE TABLE runtime_config (
-    key         TEXT PRIMARY KEY,
-    value       TEXT NOT NULL,
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+使用 GORM 的 `AutoMigrate` 自动管理数据库 Schema，无需手动编写 SQL。
 
--- 分组表
-CREATE TABLE groups (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    strategy    TEXT DEFAULT 'priority',
-    priority    INTEGER DEFAULT 0,
-    weight      INTEGER DEFAULT 1,
-    enabled     BOOLEAN DEFAULT TRUE,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+### 6.1 GORM 模型定义
 
--- 供应商表
-CREATE TABLE providers (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    base_url    TEXT NOT NULL,
-    api_key     TEXT NOT NULL,
-    auth_mode   TEXT DEFAULT 'auto',
-    group_id    TEXT,
-    weight      INTEGER DEFAULT 1,
-    priority    INTEGER DEFAULT 0,
-    concurrency INTEGER DEFAULT 0,
-    max_retries INTEGER DEFAULT -1,  -- -1=使用全局默认值, 0=不重试
-    enabled     BOOLEAN DEFAULT TRUE,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL
-);
+```go
+// RuntimeConfig 运行时配置表
+type RuntimeConfig struct {
+    Key       string    `gorm:"primaryKey" json:"key"`
+    Value     string    `gorm:"not null" json:"value"`
+    UpdatedAt time.Time `json:"updated_at"`
+}
 
--- 供应商-API类型关联表 (多对多关系，优化查询效率)
-CREATE TABLE provider_api_types (
-    provider_id TEXT NOT NULL,
-    api_type    TEXT NOT NULL,              -- claude/codex/gemini/custom:xxx
-    PRIMARY KEY (provider_id, api_type),
-    FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
-);
-
--- API 类型说明：
--- - claude: 匹配 /v1/messages/* 路径
--- - codex: 匹配 /responses/* 路径
--- - gemini: 匹配 /gemini/* 路径
--- - custom:xxx: 匹配 /custom/xxx/* 路径（xxx 为 toolId）
---
--- Custom API 类型配置方式：
--- - 存储格式: 精确匹配字符串，如 "custom:mytool", "custom:search"
--- - 不支持通配符: 必须完整指定 toolId
--- - 无需预定义: 用户配置什么 toolId 就匹配什么，无需预先定义列表
--- - 管理界面: 直接输入 "custom:toolId" 格式的字符串
-
--- 健康状态表
-CREATE TABLE health_states (
-    provider_id     TEXT PRIMARY KEY,
-    available       BOOLEAN DEFAULT TRUE,
-    success_count   INTEGER DEFAULT 0,
-    fail_count      INTEGER DEFAULT 0,
-    last_success    DATETIME,
-    last_failure    DATETIME,
-    last_error      TEXT,
-    disabled_until  DATETIME,
-    disabled_reason TEXT,
-    FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
-);
-
--- 请求日志表
-CREATE TABLE request_logs (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider_id  TEXT,
-    api_type     TEXT,
-    model        TEXT,
-    client_ip    TEXT,
-    user_id      TEXT,
-    status_code  INTEGER,
-    latency_ms   INTEGER,
-    success      BOOLEAN,
-    error_msg    TEXT,
-    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- 索引
-CREATE INDEX idx_provider_api_types_api_type ON provider_api_types(api_type);
-CREATE INDEX idx_providers_group_id ON providers(group_id);
-CREATE INDEX idx_providers_enabled ON providers(enabled);
-CREATE INDEX idx_request_logs_created_at ON request_logs(created_at);
-CREATE INDEX idx_request_logs_provider_id ON request_logs(provider_id);
+// RequestLog 请求日志表
+type RequestLog struct {
+    ID         uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+    ProviderID string     `gorm:"index" json:"provider_id"`
+    APIType    string     `json:"api_type"`
+    Model      string     `json:"model"`
+    ClientIP   string     `json:"client_ip"`
+    UserID     string     `json:"user_id"`
+    StatusCode int        `json:"status_code"`
+    LatencyMs  int64      `json:"latency_ms"`
+    Success    bool       `json:"success"`
+    ErrorMsg   string     `json:"error_msg"`
+    CreatedAt  time.Time  `gorm:"index" json:"created_at"`
+}
 ```
+
+> 其他模型定义见 4.1-4.3 节
+
+### 6.2 数据库初始化
+
+```go
+package store
+
+import (
+    "gorm.io/driver/sqlite"
+    "gorm.io/gorm"
+    "gorm.io/gorm/logger"
+)
+
+func NewDB(dbPath string) (*gorm.DB, error) {
+    db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+        Logger: logger.Default.LogMode(logger.Warn),
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // 启用 WAL 模式提升并发性能
+    db.Exec("PRAGMA journal_mode=WAL")
+    
+    // 自动迁移
+    err = db.AutoMigrate(
+        &Group{},
+        &Provider{},
+        &ProviderAPIType{},
+        &HealthState{},
+        &RuntimeConfig{},
+        &RequestLog{},
+    )
+    if err != nil {
+        return nil, err
+    }
+
+    return db, nil
+}
+```
+
+### 6.3 API 类型说明
+
+| API 类型 | 匹配路径 | 示例 |
+|----------|----------|------|
+| `claude` | `/v1/messages/*` | 标准 Claude API |
+| `codex` | `/responses/*` | Codex API |
+| `gemini` | `/gemini/*` | Gemini API |
+| `custom:xxx` | `/custom/xxx/*` | 自定义 CLI 工具 |
+
+**Custom API 类型配置**：
+- 存储格式: 精确匹配字符串，如 `"custom:mytool"`, `"custom:search"`
+- 不支持通配符: 必须完整指定 toolId
+- 管理界面: 直接输入 `"custom:toolId"` 格式的字符串
 
 ---
 
@@ -474,14 +511,14 @@ CREATE INDEX idx_request_logs_provider_id ON request_logs(provider_id);
 type Store interface {
     // Provider
     ListProviders(ctx context.Context) ([]Provider, error)
-    // ListProvidersByAPIType 通过 provider_api_types 关联表高效查询
+    // ListProvidersByAPIType 通过 GORM Joins 查询关联表
     ListProvidersByAPIType(ctx context.Context, apiType string) ([]Provider, error)
     GetProvider(ctx context.Context, id string) (*Provider, error)
-    // CreateProvider 同时写入 providers 表和 provider_api_types 关联表
+    // CreateProvider 使用 GORM 处理关联表
     CreateProvider(ctx context.Context, p *Provider) error
-    // UpdateProvider 同时更新 providers 表和 provider_api_types 关联表
+    // UpdateProvider 使用 GORM 更新关联
     UpdateProvider(ctx context.Context, p *Provider) error
-    // DeleteProvider 关联表通过 ON DELETE CASCADE 自动清理
+    // DeleteProvider GORM 自动处理 CASCADE 删除
     DeleteProvider(ctx context.Context, id string) error
 
     // Group
@@ -507,6 +544,8 @@ type Store interface {
     CleanOldLogs(ctx context.Context, beforeDays int) error
 }
 ```
+
+
 
 ### 7.2 选择器接口
 
@@ -858,10 +897,10 @@ disabled_until 到期后自动恢复
    - `HealthManager` 接口
    - `Clock` / `HTTPDoer` 辅助接口 (便于测试)
 
-5. **SQLite 基础** (`internal/store/`)
-   - 数据库连接
-   - Migration 执行框架
-   - 表创建
+5. **GORM + SQLite 基础** (`internal/store/`)
+   - GORM 初始化 (gorm.io/gorm + gorm.io/driver/sqlite)
+   - 启用 WAL 模式
+   - AutoMigrate 自动建表
 
 6. **HTTP Server** (`internal/server/`)
    - 基础 server 启动/关闭
@@ -894,7 +933,7 @@ disabled_until 到期后自动恢复
    - 提取 Model (从 JSON body; Gemini 从 URL 路径提取)
      - 使用 `json.Decoder` 流式解析，仅读取到 `model` 字段即停止
      - 对于大请求体（如带图片），避免解析完整 JSON
-     - 最多读取 4KB 数据，超出仍未找到 `model` 字段则返回 "unknown"
+     - 最多读取 128KB 数据，超出仍未找到 `model` 字段则返回 "unknown"
 
 3. **Header 处理** (`internal/proxy/headers.go`)
    - 透传逻辑
@@ -925,7 +964,7 @@ disabled_until 到期后自动恢复
 **任务清单**：
 
 1. **数据模型存储** (`internal/store/`)
-   - Provider CRUD
+   - Provider CRUD (使用 GORM)
    - Group CRUD
    - HealthState 读写
    - RuntimeConfig 读写
@@ -1107,11 +1146,12 @@ disabled_until 到期后自动恢复
 | 请求体过大内存压力 | 稳定性 | 设置 `max_body_size` 限制 |
 | X-Forwarded-For 伪造 | 粘性失效 | 配置 `trust_proxy_headers`；生产部署在可信反代后 |
 | API Key 明文存储 | 安全性 | 首期文件权限控制；后续可加密 |
-| SQLite 并发写入 | 性能 | WAL 模式；日志异步批量写入 |
+| SQLite 并发写入 | 性能 | GORM + WAL 模式；日志异步批量写入 |
 
 ---
 
 ## 十二、部署说明
+
 
 ### 构建
 
@@ -1130,35 +1170,4 @@ SWITCHA_PORT=8080 \
 SWITCHA_DB_PATH=./data.db \
 SWITCHA_ADMIN_TOKEN=your-secure-token \
 ./switch-a
-```
-
-### Docker
-
-```bash
-docker run -d \
-  -p 8080:8080 \
-  -v switch-a-data:/data \
-  -e SWITCHA_ADMIN_TOKEN=your-secure-token \
-  switch-a
-```
-
-### 反向代理 (Nginx 示例)
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name ai-proxy.example.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Connection '';
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding off;
-    }
-}
 ```

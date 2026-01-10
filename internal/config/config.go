@@ -2,7 +2,7 @@
 package config
 
 import (
-	"errors"
+	"fmt"
 	"os"
 )
 
@@ -22,7 +22,7 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.AdminToken == "" {
-		return nil, errors.New("SWITCHA_ADMIN_TOKEN is required")
+		return nil, fmt.Errorf("%s is required", EnvAdminToken)
 	}
 
 	return cfg, nil
