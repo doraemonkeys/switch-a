@@ -36,3 +36,6 @@ TODO
 *_gitignore*
 *gitignore_*
 .cursor/
+
+# Web coverage reports
+web/coverage/
