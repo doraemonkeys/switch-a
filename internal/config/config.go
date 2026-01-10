@@ -16,9 +16,9 @@ type Config struct {
 // Load loads configuration from environment variables.
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:       getEnvOrDefault("SWITCHA_PORT", "8080"),
-		DBPath:     getEnvOrDefault("SWITCHA_DB_PATH", "./data.db"),
-		AdminToken: os.Getenv("SWITCHA_ADMIN_TOKEN"),
+		Port:       getEnvOrDefault(EnvPort, DefaultPort),
+		DBPath:     getEnvOrDefault(EnvDBPath, DefaultDBPath),
+		AdminToken: os.Getenv(EnvAdminToken),
 	}
 
 	if cfg.AdminToken == "" {
