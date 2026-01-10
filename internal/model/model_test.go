@@ -213,17 +213,6 @@ func TestStickyKey(t *testing.T) {
 	}
 }
 
-func TestStickyEntry(t *testing.T) {
-	e := StickyEntry{
-		ProviderID: "p1",
-		ExpiresAt:  time.Now().Add(time.Hour),
-	}
-
-	if e.ProviderID != "p1" {
-		t.Errorf("ProviderID = %q, want %q", e.ProviderID, "p1")
-	}
-}
-
 func TestSelectRequest(t *testing.T) {
 	r := SelectRequest{
 		ClientIP: "10.0.0.1",

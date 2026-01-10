@@ -47,6 +47,8 @@ func newMockStore() *mockStore {
 			"max_retries":              "3",
 			"upstream_connect_timeout": "10",
 			"upstream_read_timeout":    "0",
+			"sticky_enabled":           "true",
+			"sticky_ttl":               "300",
 		},
 		logs: []model.RequestLog{},
 	}

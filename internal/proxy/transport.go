@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -28,8 +29,13 @@ type TransportConfig struct {
 
 // NewTransport creates a new transport with the given configuration.
 func NewTransport(cfg TransportConfig) *Transport {
-	// Create a custom transport with connect timeout
+	// Create a custom transport with proper timeout handling:
+	// - DialContext timeout: controls TCP connection establishment time
+	// - ResponseHeaderTimeout: controls time to receive response headers after connection
 	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: cfg.ConnectTimeout,
+		}).DialContext,
 		ResponseHeaderTimeout: cfg.ConnectTimeout,
 	}
 

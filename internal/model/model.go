@@ -84,12 +84,6 @@ type StickyKey struct {
 	APIType string
 }
 
-// StickyEntry represents a sticky cache entry.
-type StickyEntry struct {
-	ProviderID string
-	ExpiresAt  time.Time
-}
-
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
 	ClientIP string

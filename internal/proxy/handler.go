@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"go.uber.org/zap"
 )
@@ -22,7 +24,29 @@ const (
 	DefaultMaxRetries              = 3
 	DefaultConnectTimeoutSec       = 10
 	DefaultUserHeader              = "X-User-ID"
+	// DefaultStickyEnabled is the default value for sticky sessions.
+	// When enabled, clients are routed to the same provider for consistency.
+	DefaultStickyEnabled = true
 )
+
+// Config keys for runtime configuration stored in the database.
+// Using constants prevents typos and enables compile-time checking.
+const (
+	ConfigKeyTrustProxyHeaders      = "trust_proxy_headers"
+	ConfigKeyUserHeader             = "user_header"
+	ConfigKeyMaxBodySize            = "max_body_size"
+	ConfigKeyAuthMode               = "auth_mode"
+	ConfigKeyMaxRetries             = "max_retries"
+	ConfigKeyUpstreamConnectTimeout = "upstream_connect_timeout"
+	ConfigKeyUpstreamReadTimeout    = "upstream_read_timeout"
+	ConfigKeyStickyEnabled          = "sticky_enabled"
+	ConfigKeyStickyTTL              = "sticky_ttl"
+	ConfigKeyInterGroupStrategy     = selector.ConfigKeyInterGroupStrategy
+)
+
+// defaultStickyTTLSeconds is the default sticky session TTL in seconds.
+// We use the canonical value from selector package to ensure consistency.
+const defaultStickyTTLSeconds = selector.DefaultStickyTTLSeconds
 
 // runtimeConfig holds configuration loaded from the store per-request.
 // This struct is immutable once created and passed through the request flow.
@@ -34,11 +58,15 @@ type runtimeConfig struct {
 	maxRetries     int
 	connectTimeout time.Duration
 	readTimeout    time.Duration
+	stickyEnabled  bool
+	stickyTTL      time.Duration
 }
 
 // Handler handles proxy requests.
 type Handler struct {
 	store     Store
+	selector  Selector
+	health    internal.HealthManager
 	logger    *zap.Logger
 	mu        sync.RWMutex
 	transport *Transport
@@ -58,17 +86,32 @@ type Store interface {
 	InsertLog(ctx context.Context, log *model.RequestLog) error
 }
 
+// Selector defines the provider selection interface.
+type Selector interface {
+	Select(ctx context.Context, req *model.SelectRequest) (*model.Provider, error)
+	SelectExcluding(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
+	UpdateStickyWithTTL(req *model.SelectRequest, providerID string, ttl time.Duration)
+	ReleaseConcurrency(providerID string)
+	// ClearConcurrency removes the concurrency counter for a deleted provider.
+	// This should be called when a provider is deleted to prevent unbounded memory growth.
+	ClearConcurrency(providerID string)
+}
+
 // Config holds proxy handler configuration.
 type Config struct {
-	Store  Store
-	Logger *zap.Logger
+	Store    Store
+	Selector Selector
+	Health   internal.HealthManager
+	Logger   *zap.Logger
 }
 
 // NewHandler creates a new proxy handler.
 func NewHandler(cfg Config) *Handler {
 	return &Handler{
-		store:  cfg.Store,
-		logger: cfg.Logger,
+		store:    cfg.Store,
+		selector: cfg.Selector,
+		health:   cfg.Health,
+		logger:   cfg.Logger,
 	}
 }
 
@@ -112,6 +155,21 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	return h.transport
 }
 
+// proxyContext holds all state for a proxy request.
+// Note: context.Context is intentionally not stored here; it should be passed
+// through the call chain as a function parameter per Go best practices.
+type proxyContext struct {
+	r         *http.Request
+	w         http.ResponseWriter
+	cfg       *runtimeConfig
+	transport *Transport
+	apiType   string
+	body      []byte
+	info      RequestInfo
+	selectReq *model.SelectRequest
+	startTime time.Time
+}
+
 // ServeHTTP handles proxy requests.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -125,9 +183,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create transport (cached, thread-safe)
-	transport := h.getTransport(cfg)
-
 	// Parse API type from path
 	apiType, ok := ParseAPIType(r.URL.Path)
 	if !ok {
@@ -139,106 +194,256 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Buffer request body for potential retries
 	body, err := ConsumeAndReplaceBody(r, cfg.maxBodySizeMB)
 	if err != nil {
-		if errors.Is(err, ErrBodyTooLarge) {
-			h.writeGatewayError(w, http.StatusRequestEntityTooLarge, ErrCodeBodyTooLarge, fmt.Sprintf("Request body exceeds %d MB limit", cfg.maxBodySizeMB))
-			return
-		}
-		h.logger.Error("failed to read request body", zap.Error(err)) // coverage-ignore -- body read errors are rare
-		h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to read request body")
+		h.handleBodyError(w, err, cfg.maxBodySizeMB)
 		return
 	}
 
-	// Extract request info
-	info := RequestInfo{
-		ClientIP: ExtractClientIP(r, cfg.trustProxy),
-		UserID:   ExtractUserID(r, cfg.userHeader),
-		Model:    ExtractModel(r, apiType, body),
+	// Build proxy context
+	pctx := &proxyContext{
+		r:         r,
+		w:         w,
+		cfg:       cfg,
+		transport: h.getTransport(cfg),
+		apiType:   apiType,
+		body:      body,
+		info: RequestInfo{
+			ClientIP: ExtractClientIP(r, cfg.trustProxy),
+			UserID:   ExtractUserID(r, cfg.userHeader),
+			Model:    ExtractModel(r, apiType, body),
+			APIType:  apiType,
+		},
+		startTime: startTime,
+	}
+	pctx.selectReq = &model.SelectRequest{
+		ClientIP: pctx.info.ClientIP,
+		User:     pctx.info.UserID,
 		APIType:  apiType,
+		Model:    pctx.info.Model,
 	}
 
-	// Get available providers for this API type
-	providers, err := h.store.ListProvidersByAPIType(ctx, apiType)
-	if err != nil { // coverage-ignore -- database errors are rare after successful startup
-		h.logger.Error("failed to list providers", zap.Error(err), zap.String("api_type", apiType))
-		h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to list providers")
+	// Execute proxy with retry logic
+	h.executeProxy(ctx, pctx)
+}
+
+// handleBodyError handles body read errors.
+func (h *Handler) handleBodyError(w http.ResponseWriter, err error, maxSize int64) {
+	if errors.Is(err, ErrBodyTooLarge) {
+		h.writeGatewayError(w, http.StatusRequestEntityTooLarge, ErrCodeBodyTooLarge, fmt.Sprintf("Request body exceeds %d MB limit", maxSize))
 		return
 	}
+	h.logger.Error("failed to read request body", zap.Error(err)) // coverage-ignore -- body read errors are rare
+	h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to read request body")
+}
 
-	if len(providers) == 0 {
-		h.logger.Warn("no providers available", zap.String("api_type", apiType))
-		h.writeGatewayError(w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", apiType))
-		return
-	}
-
-	// Try providers with retry logic
+// executeProxy runs the proxy logic with retry.
+func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	var lastErr error
 	var providerUsed *model.Provider
 	var statusCode int
 	var success bool
+	excludedProviders := make(map[string]bool)
+	headersWritten := false
 
-	for attempt := 0; attempt <= cfg.maxRetries; attempt++ {
-		provider := &providers[attempt%len(providers)]
-		providerUsed = provider
-
-		// Build upstream URL
-		upstreamPath := BuildUpstreamPath(r.URL.Path, apiType)
-		upstreamURL := h.buildFullURL(provider.BaseURL, upstreamPath, r.URL.RawQuery)
-
-		// Create upstream request
-		upstreamReq, err := BuildUpstreamRequest(ctx, r.Method, upstreamURL, body, r)
-		if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
-			h.logger.Error("failed to build upstream request", zap.Error(err))
-			lastErr = err
-			continue
-		}
-
-		// Set authentication header
-		SetAuthHeader(upstreamReq.Header, provider.APIKey, provider.AuthMode, cfg.globalAuthMode, r)
-
-		// Forward request
-		headersWritten, respStatusCode, err := transport.ForwardRequest(ctx, w, upstreamReq)
-		statusCode = respStatusCode
-
-		if err != nil { // coverage-ignore -- network errors tested at integration level
-			h.logger.Warn("upstream request failed",
-				zap.String("provider_id", provider.ID),
-				zap.Error(err),
-				zap.Int("attempt", attempt+1),
-			)
-			lastErr = err
-
-			// Can only retry if headers haven't been written
-			if headersWritten {
-				break
+	for attempt := 0; attempt <= pctx.cfg.maxRetries && !headersWritten; attempt++ {
+		provider, err := h.selectProvider(ctx, pctx, attempt, excludedProviders)
+		if err != nil {
+			if errors.Is(err, ErrNoProvider) {
+				h.handleNoProvider(pctx)
+				return
 			}
+			lastErr = err
 			continue
 		}
-
-		// Check if response indicates failure (5xx or 429)
-		if shouldRetry(respStatusCode) { // coverage-ignore -- retry logic tested at integration level
-			h.logger.Warn("upstream returned error status",
-				zap.String("provider_id", provider.ID),
-				zap.Int("status_code", respStatusCode),
-				zap.Int("attempt", attempt+1),
-			)
-			// Response already written to client, can't retry
-			// But mark as success=false for logging
-			success = false
+		if provider == nil {
 			break
 		}
 
-		success = true
-		break
+		providerUsed = provider
+		excludedProviders[provider.ID] = true
+
+		result := h.forwardToProvider(ctx, pctx, provider, attempt)
+		headersWritten = result.headersWritten
+		statusCode = result.statusCode
+		lastErr = result.err
+		success = result.success
+
+		if result.done {
+			break
+		}
 	}
 
-	// Log request (async) - uses context.Background() internally
-	go h.logRequest(info, providerUsed, statusCode, success, lastErr, time.Since(startTime))
+	// Log request asynchronously.
+	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
+	// but avoids blocking the response path. For a high-throughput proxy,
+	// this is an acceptable trade-off as most logs will complete.
+	go h.logRequest(pctx.info, providerUsed, statusCode, success, lastErr, time.Since(pctx.startTime))
 
-	// If all retries exhausted and no response written
-	if !success && lastErr != nil && statusCode == 0 { // coverage-ignore -- retry exhaustion tested at integration level
-		h.writeGatewayError(w, http.StatusServiceUnavailable, ErrCodeProviderExhausted, "All providers failed")
+	// Handle exhausted retries
+	if !success && !headersWritten { // coverage-ignore -- retry exhaustion tested at integration level
+		h.handleExhaustedRetries(pctx, lastErr)
 	}
 }
+
+// forwardResult holds the result of forwarding to a provider.
+type forwardResult struct {
+	headersWritten bool
+	statusCode     int
+	success        bool
+	err            error
+	done           bool // whether to stop retrying
+}
+
+// forwardToProvider forwards the request to a single provider.
+func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider, attempt int) forwardResult {
+	result := forwardResult{}
+
+	// Check provider-specific max retries
+	providerMaxRetries := pctx.cfg.maxRetries
+	if provider.MaxRetries >= 0 {
+		providerMaxRetries = provider.MaxRetries
+	}
+	if attempt > providerMaxRetries {
+		return result // Continue to next provider
+	}
+
+	// Build upstream URL
+	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
+	upstreamURL := h.buildFullURL(provider.BaseURL, upstreamPath, pctx.r.URL.RawQuery)
+
+	// Create upstream request
+	upstreamReq, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
+	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
+		h.logger.Error("failed to build upstream request", zap.Error(err))
+		result.err = err
+		h.releaseConcurrency(provider.ID)
+		return result
+	}
+
+	// Set authentication header
+	SetAuthHeader(upstreamReq.Header, provider.APIKey, provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
+
+	// Forward request
+	result.headersWritten, result.statusCode, err = pctx.transport.ForwardRequest(ctx, pctx.w, upstreamReq)
+
+	if err != nil { // coverage-ignore -- network errors tested at integration level
+		h.logger.Warn("upstream request failed",
+			zap.String("provider_id", provider.ID),
+			zap.Error(err),
+			zap.Int("attempt", attempt+1),
+		)
+		result.err = err
+		h.markFailure(ctx, provider.ID, err)
+		h.releaseConcurrency(provider.ID)
+		result.done = result.headersWritten
+		return result
+	}
+
+	// Check if response indicates failure (5xx or 429)
+	if shouldRetry(result.statusCode) { // coverage-ignore -- retry logic tested at integration level
+		h.logger.Warn("upstream returned error status",
+			zap.String("provider_id", provider.ID),
+			zap.Int("status_code", result.statusCode),
+			zap.Int("attempt", attempt+1),
+		)
+		h.markFailure(ctx, provider.ID, fmt.Errorf("upstream returned status %d", result.statusCode))
+		h.releaseConcurrency(provider.ID)
+		result.done = true
+		return result
+	}
+
+	// Success!
+	result.success = true
+	result.done = true
+	h.markSuccess(ctx, provider.ID)
+	h.releaseConcurrency(provider.ID)
+
+	// Update sticky cache
+	if pctx.cfg.stickyEnabled && h.selector != nil {
+		h.selector.UpdateStickyWithTTL(pctx.selectReq, provider.ID, pctx.cfg.stickyTTL)
+	}
+
+	return result
+}
+
+// selectProvider selects a provider for the given attempt.
+func (h *Handler) selectProvider(ctx context.Context, pctx *proxyContext, attempt int, excluded map[string]bool) (*model.Provider, error) {
+	if h.selector != nil {
+		if attempt == 0 {
+			return h.selector.Select(ctx, pctx.selectReq)
+		}
+		return h.selector.SelectExcluding(ctx, pctx.selectReq, excluded)
+	}
+
+	// Fallback: direct provider list (no selector configured)
+	return h.selectProviderFallback(ctx, pctx, attempt)
+}
+
+// selectProviderFallback selects a provider when no Selector is configured.
+//
+// This fallback exists for minimal deployments where advanced selection features
+// (health checks, concurrency limits, sticky sessions, group-based strategies) are not needed.
+// It uses simple round-robin selection based on attempt number.
+//
+// Limitations compared to the full Selector:
+//   - No health checks: unhealthy providers may be selected
+//   - No concurrency limits: may overload providers
+//   - No sticky sessions: same client may hit different providers
+//   - No group-based strategies: ignores priority/weight/random settings
+//
+// For production deployments with multiple providers, configure a Selector for robust behavior.
+func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext, attempt int) (*model.Provider, error) {
+	providers, err := h.store.ListProvidersByAPIType(ctx, pctx.apiType)
+	if err != nil { // coverage-ignore -- database errors are rare after successful startup
+		h.logger.Error("failed to list providers", zap.Error(err), zap.String("api_type", pctx.apiType))
+		return nil, err
+	}
+	if len(providers) == 0 {
+		return nil, ErrNoProvider
+	}
+	// Simple round-robin: cycle through providers on each retry attempt
+	provider := providers[attempt%len(providers)]
+	return &provider, nil
+}
+
+// handleNoProvider handles the case when no provider is available.
+func (h *Handler) handleNoProvider(pctx *proxyContext) {
+	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
+	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
+	go h.logRequest(pctx.info, nil, 0, false, ErrNoProvider, time.Since(pctx.startTime))
+}
+
+// handleExhaustedRetries handles exhausted retry attempts.
+func (h *Handler) handleExhaustedRetries(pctx *proxyContext, lastErr error) {
+	if lastErr != nil {
+		h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderExhausted, "All providers failed")
+	} else {
+		h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
+	}
+}
+
+// markSuccess marks a successful request for the provider.
+func (h *Handler) markSuccess(ctx context.Context, providerID string) {
+	if h.health != nil {
+		h.health.MarkSuccess(ctx, providerID)
+	}
+}
+
+// markFailure marks a failed request for the provider.
+func (h *Handler) markFailure(ctx context.Context, providerID string, err error) {
+	if h.health != nil {
+		h.health.MarkFailure(ctx, providerID, err)
+	}
+}
+
+// releaseConcurrency releases the concurrency slot for a provider.
+func (h *Handler) releaseConcurrency(providerID string) {
+	if h.selector != nil {
+		h.selector.ReleaseConcurrency(providerID)
+	}
+}
+
+// ErrNoProvider is an alias for the shared error (for backwards compatibility).
+var ErrNoProvider = internal.ErrNoProvider
 
 // loadConfig loads runtime configuration from the store.
 // Returns an immutable runtimeConfig struct for use during the request.
@@ -246,14 +451,14 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	cfg := &runtimeConfig{}
 
 	// Trust proxy headers
-	trustProxy, err := h.store.GetConfig(ctx, "trust_proxy_headers")
+	trustProxy, err := h.store.GetConfig(ctx, ConfigKeyTrustProxyHeaders)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		return nil, err
 	}
 	cfg.trustProxy = trustProxy == "true"
 
 	// User header
-	userHeader, err := h.store.GetConfig(ctx, "user_header")
+	userHeader, err := h.store.GetConfig(ctx, ConfigKeyUserHeader)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		return nil, err
 	}
@@ -264,14 +469,14 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	}
 
 	// Max body size
-	maxBodySize, err := h.store.GetConfig(ctx, "max_body_size")
+	maxBodySize, err := h.store.GetConfig(ctx, ConfigKeyMaxBodySize)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		return nil, err
 	}
 	cfg.maxBodySizeMB = parseInt64OrDefault(maxBodySize, DefaultMaxBodySizeMB)
 
 	// Global auth mode
-	authMode, err := h.store.GetConfig(ctx, "auth_mode")
+	authMode, err := h.store.GetConfig(ctx, ConfigKeyAuthMode)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		return nil, err
 	}
@@ -282,24 +487,37 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	}
 
 	// Max retries
-	maxRetries, err := h.store.GetConfig(ctx, "max_retries")
+	maxRetries, err := h.store.GetConfig(ctx, ConfigKeyMaxRetries)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		return nil, err
 	}
 	cfg.maxRetries = parseIntOrDefault(maxRetries, DefaultMaxRetries)
 
 	// Upstream timeouts - errors logged but use defaults (non-critical config)
-	connectTimeout, err := h.store.GetConfig(ctx, "upstream_connect_timeout")
+	connectTimeout, err := h.store.GetConfig(ctx, ConfigKeyUpstreamConnectTimeout)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		h.logger.Warn("failed to get upstream_connect_timeout, using default", zap.Error(err))
 	}
-	readTimeout, err := h.store.GetConfig(ctx, "upstream_read_timeout")
+	readTimeout, err := h.store.GetConfig(ctx, ConfigKeyUpstreamReadTimeout)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		h.logger.Warn("failed to get upstream_read_timeout, using default", zap.Error(err))
 	}
 
 	cfg.connectTimeout = time.Duration(parseIntOrDefault(connectTimeout, DefaultConnectTimeoutSec)) * time.Second
 	cfg.readTimeout = time.Duration(parseIntOrDefault(readTimeout, 0)) * time.Second
+
+	// Sticky session config
+	stickyEnabled, err := h.store.GetConfig(ctx, ConfigKeyStickyEnabled)
+	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+		h.logger.Warn("failed to get sticky_enabled, using default", zap.Error(err))
+	}
+	cfg.stickyEnabled = parseBoolOrDefault(stickyEnabled, DefaultStickyEnabled)
+
+	stickyTTL, err := h.store.GetConfig(ctx, ConfigKeyStickyTTL)
+	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+		h.logger.Warn("failed to get sticky_ttl, using default", zap.Error(err))
+	}
+	cfg.stickyTTL = time.Duration(parseIntOrDefault(stickyTTL, defaultStickyTTLSeconds)) * time.Second
 
 	return cfg, nil
 }
@@ -391,4 +609,12 @@ func parseInt64OrDefault(s string, defaultVal int64) int64 {
 		return defaultVal
 	}
 	return v
+}
+
+// parseBoolOrDefault parses a string to bool, returning defaultVal if empty.
+func parseBoolOrDefault(s string, defaultVal bool) bool {
+	if s == "" {
+		return defaultVal
+	}
+	return s == "true"
 }
