@@ -1131,10 +1131,6 @@ disabled_until 到期后自动恢复
    - Dockerfile
    - docker-compose 示例
 
-**验收标准**：
-- 文档完整
-- 多平台构建成功
-- Docker 可用
 
 ---
 

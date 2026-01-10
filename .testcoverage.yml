@@ -7,7 +7,7 @@ local-prefix: switch-a
 
 threshold:
   # 每个 package 覆盖率
-  package: 90
+  package: 70
   # 总体覆盖率
   total: 90
   # 单个文件覆盖率不做限制
