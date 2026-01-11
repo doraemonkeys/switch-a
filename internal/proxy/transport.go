@@ -23,12 +23,14 @@ type Transport struct {
 	client         *http.Client
 	connectTimeout time.Duration
 	readTimeout    time.Duration
+	sseIdleTimeout time.Duration
 }
 
 // TransportConfig holds transport configuration.
 type TransportConfig struct {
 	ConnectTimeout time.Duration
 	ReadTimeout    time.Duration // 0 = no timeout
+	SSEIdleTimeout time.Duration // 0 = no idle timeout (trust upstream)
 }
 
 // NewTransport creates a new transport with the given configuration.
@@ -53,6 +55,7 @@ func NewTransport(cfg TransportConfig) *Transport {
 		client:         client,
 		connectTimeout: cfg.ConnectTimeout,
 		readTimeout:    cfg.ReadTimeout,
+		sseIdleTimeout: cfg.SSEIdleTimeout,
 	}
 }
 
@@ -121,6 +124,15 @@ func (t *Transport) WriteToClient(ctx context.Context, w http.ResponseWriter, re
 	return t.forwardRegular(w, resp.Body)
 }
 
+// ErrSSEIdleTimeout is returned when an SSE stream times out due to inactivity.
+var ErrSSEIdleTimeout = &sseIdleTimeoutError{}
+
+type sseIdleTimeoutError struct{}
+
+func (e *sseIdleTimeoutError) Error() string {
+	return "SSE stream idle timeout: no data received within timeout period"
+}
+
 // ForwardRequest forwards a request to the upstream server and writes the response to w.
 // Returns whether the response headers have been written (affects retry capability).
 //
@@ -162,30 +174,115 @@ func (t *Transport) forwardRegular(w http.ResponseWriter, body io.Reader) error 
 	return err
 }
 
+// idleWatchdog monitors SSE streams for idle timeout.
+// It closes the body when no data is received within the timeout period,
+// which interrupts any blocking Read() call and prevents goroutine leaks.
+type idleWatchdog struct {
+	closer  io.Closer
+	timer   *time.Timer
+	timeout time.Duration
+	done    chan struct{}
+	stopped chan struct{}
+}
+
+// newIdleWatchdog creates and starts an idle watchdog for SSE streams.
+// The watchdog closes the body if no Reset() is called within the timeout.
+// If timeout is 0, returns nil (no watchdog needed).
+func newIdleWatchdog(ctx context.Context, closer io.Closer, timeout time.Duration) *idleWatchdog {
+	if timeout <= 0 {
+		return nil
+	}
+
+	w := &idleWatchdog{
+		closer:  closer,
+		timer:   time.NewTimer(timeout),
+		timeout: timeout,
+		done:    make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+
+	go w.run(ctx)
+	return w
+}
+
+// run is the watchdog goroutine. It exits when:
+// - Context is cancelled
+// - Timer fires (closes body to interrupt Read)
+// - Stop() is called (normal completion)
+func (w *idleWatchdog) run(ctx context.Context) {
+	defer close(w.stopped)
+	defer w.timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		// Context cancelled - body will be closed elsewhere
+		return
+	case <-w.done:
+		// Normal completion - stop watching
+		return
+	case <-w.timer.C:
+		// Idle timeout - close body to interrupt blocking Read()
+		_ = w.closer.Close()
+		return
+	}
+}
+
+// Reset resets the idle timer. Call this after each successful read.
+func (w *idleWatchdog) Reset() {
+	if w == nil {
+		return
+	}
+	// Stop and drain the timer, then reset
+	if !w.timer.Stop() {
+		select {
+		case <-w.timer.C:
+		default:
+		}
+	}
+	w.timer.Reset(w.timeout)
+}
+
+// Stop signals the watchdog to stop and waits for it to exit.
+// Call this when the SSE stream completes normally.
+func (w *idleWatchdog) Stop() {
+	if w == nil {
+		return
+	}
+	close(w.done)
+	<-w.stopped // Wait for goroutine to exit
+}
+
 // forwardSSE forwards a Server-Sent Events stream with flushing.
-func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body io.Reader) error {
+// It uses an idle watchdog to detect silent upstream connections and prevent goroutine leaks.
+func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body io.ReadCloser) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok { // coverage-ignore -- standard http.ResponseWriter always implements Flusher
 		// Fallback to regular copy if flushing not supported
 		return t.forwardRegular(w, body)
 	}
 
+	// Start idle watchdog if configured.
+	// The watchdog closes body after timeout, interrupting the blocking Read().
+	watchdog := newIdleWatchdog(ctx, body, t.sseIdleTimeout)
+	defer watchdog.Stop()
+
 	reader := bufio.NewReader(body)
 	buf := make([]byte, sseBufferSize)
 
 	for {
+		// Note: ctx.Done() check here is ineffective once Read() blocks.
+		// The watchdog handles timeout by closing body from another goroutine.
 		select {
 		case <-ctx.Done(): // coverage-ignore -- context cancellation tested at integration level
 			return ctx.Err()
 		default:
 		}
 
-		// Set read deadline if configured
-		// Note: this only works if body implements net.Conn, which typically it doesn't
-		// For SSE, readTimeout of 0 (no timeout) is recommended
-
 		n, err := reader.Read(buf)
 		if n > 0 {
+			// Data received - reset idle watchdog timer
+			watchdog.Reset()
+
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
 				return writeErr
 			}
@@ -196,9 +293,23 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 			if err == io.EOF {
 				return nil
 			}
+			// Check if this is an idle timeout (body was closed by watchdog)
+			if t.sseIdleTimeout > 0 && isClosedError(err) {
+				return ErrSSEIdleTimeout
+			}
 			return err // coverage-ignore -- read errors during SSE are rare
 		}
 	}
+}
+
+// isClosedError checks if the error indicates the connection was closed.
+// This happens when the idle watchdog closes the body to interrupt Read().
+func isClosedError(err error) bool {
+	// Common patterns for closed connection errors
+	errStr := err.Error()
+	return strings.Contains(errStr, "closed") ||
+		strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "reset")
 }
 
 // BuildUpstreamRequest creates an HTTP request for the upstream server.

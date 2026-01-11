@@ -40,6 +40,7 @@ const (
 	ConfigKeyMaxRetries             = "max_retries"
 	ConfigKeyUpstreamConnectTimeout = "upstream_connect_timeout"
 	ConfigKeyUpstreamReadTimeout    = "upstream_read_timeout"
+	ConfigKeySSEIdleTimeout         = "sse_idle_timeout"
 	ConfigKeyStickyEnabled          = "sticky_enabled"
 	ConfigKeyStickyTTL              = "sticky_ttl"
 	ConfigKeyInterGroupStrategy     = selector.ConfigKeyInterGroupStrategy
@@ -59,6 +60,7 @@ type runtimeConfig struct {
 	maxRetries     int
 	connectTimeout time.Duration
 	readTimeout    time.Duration
+	sseIdleTimeout time.Duration
 	stickyEnabled  bool
 	stickyTTL      time.Duration
 }
@@ -78,6 +80,7 @@ type Handler struct {
 type transportCacheKey struct {
 	connectTimeout time.Duration
 	readTimeout    time.Duration
+	sseIdleTimeout time.Duration
 }
 
 // Store defines the minimal storage interface needed by the proxy handler.
@@ -121,12 +124,14 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	key := &transportCacheKey{
 		connectTimeout: cfg.connectTimeout,
 		readTimeout:    cfg.readTimeout,
+		sseIdleTimeout: cfg.sseIdleTimeout,
 	}
 
 	h.mu.RLock()
 	if h.transport != nil && h.lastCfg != nil &&
 		h.lastCfg.connectTimeout == key.connectTimeout &&
-		h.lastCfg.readTimeout == key.readTimeout {
+		h.lastCfg.readTimeout == key.readTimeout &&
+		h.lastCfg.sseIdleTimeout == key.sseIdleTimeout {
 		transport := h.transport
 		h.mu.RUnlock()
 		return transport
@@ -139,7 +144,8 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	// Double-check after acquiring write lock
 	if h.transport != nil && h.lastCfg != nil &&
 		h.lastCfg.connectTimeout == key.connectTimeout &&
-		h.lastCfg.readTimeout == key.readTimeout {
+		h.lastCfg.readTimeout == key.readTimeout &&
+		h.lastCfg.sseIdleTimeout == key.sseIdleTimeout {
 		return h.transport
 	}
 
@@ -151,6 +157,7 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	h.transport = NewTransport(TransportConfig{
 		ConnectTimeout: cfg.connectTimeout,
 		ReadTimeout:    cfg.readTimeout,
+		SSEIdleTimeout: cfg.sseIdleTimeout,
 	})
 	h.lastCfg = key
 	return h.transport
@@ -523,6 +530,13 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	cfg.connectTimeout = time.Duration(parseIntOrDefault(connectTimeout, DefaultConnectTimeoutSec)) * time.Second
 	cfg.readTimeout = time.Duration(parseIntOrDefault(readTimeout, 0)) * time.Second
 
+	// SSE idle timeout - protects against silent upstream connections
+	sseIdleTimeout, err := h.store.GetConfig(ctx, ConfigKeySSEIdleTimeout)
+	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+		h.logger.Warn("failed to get sse_idle_timeout, using default", zap.Error(err))
+	}
+	cfg.sseIdleTimeout = time.Duration(parseIntOrDefault(sseIdleTimeout, defaults.SSEIdleTimeoutSec)) * time.Second
+
 	// Sticky session config
 	stickyEnabled, err := h.store.GetConfig(ctx, ConfigKeyStickyEnabled)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
@@ -585,10 +599,14 @@ func shouldRetry(statusCode int) bool {
 }
 
 // buildFullURL constructs the full upstream URL.
-// If baseURL is invalid, falls back to simple string concatenation and logs a warning.
-// Note: Base URLs should be validated at provider creation time to avoid this fallback.
+// It properly joins the baseURL's existing path (if any) with the given path.
+// For example: baseURL="https://api.openai.com/v1", path="/chat/completions"
+// yields "https://api.openai.com/v1/chat/completions".
 func (h *Handler) buildFullURL(baseURL, path, query string) string {
-	u, err := url.Parse(baseURL)
+	// url.JoinPath handles path joining correctly:
+	// - Preserves the base URL's scheme, host, and existing path
+	// - Properly joins paths (handles slashes, dots, etc.)
+	joined, err := url.JoinPath(baseURL, path)
 	if err != nil {
 		// Invalid base URL - fall back to string concatenation.
 		// This produces a potentially malformed URL, but the request will fail
@@ -600,9 +618,12 @@ func (h *Handler) buildFullURL(baseURL, path, query string) string {
 		return baseURL + path
 	}
 
-	u.Path = path
-	u.RawQuery = query
-	return u.String()
+	if query == "" {
+		return joined
+	}
+
+	// Append query string if present
+	return joined + "?" + query
 }
 
 // parseIntOrDefault parses a string to int, returning defaultVal on error.

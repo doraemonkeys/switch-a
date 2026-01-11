@@ -205,6 +205,193 @@ func TestCopyResponseHeaders(t *testing.T) {
 	}
 }
 
+func TestIdleWatchdog(t *testing.T) {
+	t.Run("nil when timeout is zero", func(t *testing.T) {
+		closer := &mockCloser{}
+		watchdog := newIdleWatchdog(context.Background(), closer, 0)
+		if watchdog != nil {
+			t.Error("expected nil watchdog when timeout is 0")
+		}
+	})
+
+	t.Run("nil when timeout is negative", func(t *testing.T) {
+		closer := &mockCloser{}
+		watchdog := newIdleWatchdog(context.Background(), closer, -1*time.Second)
+		if watchdog != nil {
+			t.Error("expected nil watchdog when timeout is negative")
+		}
+	})
+
+	t.Run("closes body on timeout", func(t *testing.T) {
+		closer := &mockCloser{}
+		watchdog := newIdleWatchdog(context.Background(), closer, 50*time.Millisecond)
+
+		// Wait for timeout
+		time.Sleep(100 * time.Millisecond)
+		watchdog.Stop()
+
+		if !closer.closed {
+			t.Error("expected body to be closed on timeout")
+		}
+	})
+
+	t.Run("reset prevents timeout", func(t *testing.T) {
+		closer := &mockCloser{}
+		watchdog := newIdleWatchdog(context.Background(), closer, 50*time.Millisecond)
+
+		// Reset before timeout
+		time.Sleep(30 * time.Millisecond)
+		watchdog.Reset()
+		time.Sleep(30 * time.Millisecond)
+		watchdog.Reset()
+		time.Sleep(30 * time.Millisecond)
+		watchdog.Stop()
+
+		if closer.closed {
+			t.Error("body should not be closed when reset is called")
+		}
+	})
+
+	t.Run("stop prevents timeout", func(t *testing.T) {
+		closer := &mockCloser{}
+		watchdog := newIdleWatchdog(context.Background(), closer, 100*time.Millisecond)
+
+		// Stop immediately
+		watchdog.Stop()
+
+		// Wait past the original timeout
+		time.Sleep(150 * time.Millisecond)
+
+		if closer.closed {
+			t.Error("body should not be closed after stop")
+		}
+	})
+
+	t.Run("context cancellation stops watchdog", func(t *testing.T) {
+		closer := &mockCloser{}
+		ctx, cancel := context.WithCancel(context.Background())
+		watchdog := newIdleWatchdog(ctx, closer, 100*time.Millisecond)
+
+		// Cancel context immediately
+		cancel()
+
+		// Wait for watchdog to exit
+		watchdog.Stop()
+
+		if closer.closed {
+			t.Error("body should not be closed on context cancellation")
+		}
+	})
+
+	t.Run("reset on nil watchdog is safe", func(t *testing.T) {
+		var watchdog *idleWatchdog
+		// Should not panic
+		watchdog.Reset()
+	})
+
+	t.Run("stop on nil watchdog is safe", func(t *testing.T) {
+		var watchdog *idleWatchdog
+		// Should not panic
+		watchdog.Stop()
+	})
+}
+
+type mockCloser struct {
+	closed bool
+}
+
+func (m *mockCloser) Close() error {
+	m.closed = true
+	return nil
+}
+
+func TestSSEIdleTimeout(t *testing.T) {
+	t.Run("stream completes normally without timeout", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			flusher := w.(http.Flusher)
+			_, _ = w.Write([]byte("data: event1\n\n"))
+			flusher.Flush()
+			_, _ = w.Write([]byte("data: event2\n\n"))
+			flusher.Flush()
+		}))
+		defer server.Close()
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			SSEIdleTimeout: 5 * time.Second, // Long timeout, should not trigger
+		})
+
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+		w := httptest.NewRecorder()
+
+		_, _, err := transport.ForwardRequest(context.Background(), w, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(w.Body.String(), "event1") {
+			t.Error("response should contain event1")
+		}
+	})
+
+	t.Run("no timeout when SSEIdleTimeout is zero", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			flusher := w.(http.Flusher)
+			_, _ = w.Write([]byte("data: event1\n\n"))
+			flusher.Flush()
+		}))
+		defer server.Close()
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			SSEIdleTimeout: 0, // Disabled
+		})
+
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+		w := httptest.NewRecorder()
+
+		_, _, err := transport.ForwardRequest(context.Background(), w, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestIsClosedError(t *testing.T) {
+	tests := []struct {
+		name    string
+		errMsg  string
+		want    bool
+	}{
+		{"closed error", "use of closed network connection", true},
+		{"EOF error", "unexpected EOF", true},
+		{"reset error", "connection reset by peer", true},
+		{"timeout error", "i/o timeout", false},
+		{"random error", "some random error", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &testError{msg: tt.errMsg}
+			got := isClosedError(err)
+			if got != tt.want {
+				t.Errorf("isClosedError(%q) = %v, want %v", tt.errMsg, got, tt.want)
+			}
+		})
+	}
+}
+
+type testError struct {
+	msg string
+}
+
+func (e *testError) Error() string {
+	return e.msg
+}
+
 func TestBuildUpstreamRequest(t *testing.T) {
 	t.Run("with body", func(t *testing.T) {
 		origReq := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)

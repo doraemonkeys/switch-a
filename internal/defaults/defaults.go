@@ -24,6 +24,11 @@ const (
 	UpstreamConnectTimeoutSec = 10
 	// UpstreamReadTimeoutSec is the default upstream read timeout in seconds (0 = no timeout).
 	UpstreamReadTimeoutSec = 0
+	// SSEIdleTimeoutSec is the default SSE stream idle timeout in seconds.
+	// 0 means no idle timeout (trust upstream to close connection).
+	// When set, the connection is closed if no data is received within this duration.
+	// Recommended: 0 for trusted providers (OpenAI, Anthropic), 300 for user-defined providers.
+	SSEIdleTimeoutSec = 0
 )
 
 // Sticky session defaults.

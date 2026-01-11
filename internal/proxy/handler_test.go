@@ -337,6 +337,27 @@ func TestBuildFullURL(t *testing.T) {
 			query:   "",
 			want:    "://invalid/v1/messages",
 		},
+		{
+			name:    "base URL with existing path",
+			baseURL: "https://api.openai.com/v1",
+			path:    "/chat/completions",
+			query:   "",
+			want:    "https://api.openai.com/v1/chat/completions",
+		},
+		{
+			name:    "base URL with existing path and query",
+			baseURL: "https://api.openai.com/v1",
+			path:    "/chat/completions",
+			query:   "stream=true",
+			want:    "https://api.openai.com/v1/chat/completions?stream=true",
+		},
+		{
+			name:    "base URL with trailing slash and existing path",
+			baseURL: "https://api.openai.com/v1/",
+			path:    "/chat/completions",
+			query:   "",
+			want:    "https://api.openai.com/v1/chat/completions",
+		},
 	}
 
 	for _, tt := range tests {
