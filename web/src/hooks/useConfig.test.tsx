@@ -134,7 +134,7 @@ describe("useConfig", () => {
   });
 
   it("should set saving state during update", async () => {
-    let resolveFn: () => void;
+    let resolveFn: (value?: unknown) => void;
     mockApi.config.update = vi.fn().mockImplementation(
       () =>
         new Promise((resolve) => {
