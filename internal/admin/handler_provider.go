@@ -329,7 +329,11 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteProvider handles DELETE /admin/api/providers/{id}.
-// After successful deletion, clears the concurrency counter to prevent memory leaks.
+// After successful deletion, clears in-memory state to prevent memory leaks:
+// - Concurrency counter (in ConcurrencyLimiter)
+// - Circuit breaker failure history (in HealthManager)
+// Note: StickyCache entries are not explicitly cleared as they self-heal
+// (entries are deleted on next access when the provider is not found).
 func (h *Handler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	h.handleDelete(w, r, deleteConfig{
 		resourceType: "Provider",
@@ -347,6 +351,12 @@ func (h *Handler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 			// leave orphaned counter entries.
 			if h.cleaner != nil {
 				h.cleaner.ClearConcurrency(id)
+			}
+			// Clear circuit breaker failure history to prevent memory leak.
+			// The CircuitBreaker holds failure timestamps in a map that persist
+			// until explicitly cleared or cleaned up by the periodic cleanup loop.
+			if h.health != nil {
+				h.health.ResetCircuitBreaker(id)
 			}
 			return nil
 		},

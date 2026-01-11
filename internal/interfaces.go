@@ -88,6 +88,9 @@ type HealthManager interface {
 	ManualDisable(ctx context.Context, providerID string, reason string) error
 	// ManualEnable manually enables a provider (clears disabled state).
 	ManualEnable(ctx context.Context, providerID string) error
+	// ResetCircuitBreaker clears the in-memory failure history for a provider.
+	// Call this when a provider is deleted to prevent memory leaks.
+	ResetCircuitBreaker(providerID string)
 }
 
 // StickyCache defines the sticky session cache interface.

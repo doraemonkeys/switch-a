@@ -37,18 +37,22 @@ type LogStore interface {
 // startLogCleanupLoop starts a background goroutine that periodically cleans up
 // old request logs to prevent the request_logs table from growing indefinitely.
 // Returns a stop function to terminate the cleanup loop.
-func startLogCleanupLoop(ctx context.Context, store LogStore, log *zap.Logger) (stop func()) {
+//
+// Note: A fresh context with timeout is created for each cleanup operation rather
+// than storing the startup context. This follows Go best practices where contexts
+// should be passed through call chains, not stored for later use.
+func startLogCleanupLoop(store LogStore, log *zap.Logger) (stop func()) {
 	ticker := time.NewTicker(LogCleanupInterval)
 	done := make(chan struct{})
 
 	go func() {
-		// Run initial cleanup on startup
-		cleanOldLogs(ctx, store, log)
+		// Run initial cleanup on startup with fresh context
+		cleanOldLogs(store, log)
 
 		for {
 			select {
 			case <-ticker.C:
-				cleanOldLogs(ctx, store, log)
+				cleanOldLogs(store, log)
 			case <-done:
 				ticker.Stop()
 				return
@@ -61,8 +65,16 @@ func startLogCleanupLoop(ctx context.Context, store LogStore, log *zap.Logger) (
 	}
 }
 
+// LogCleanupTimeout is the maximum time allowed for a single log cleanup operation.
+const LogCleanupTimeout = 30 * time.Second
+
 // cleanOldLogs performs the actual log cleanup, reading retention days from config.
-func cleanOldLogs(ctx context.Context, store LogStore, log *zap.Logger) {
+// Creates a fresh context with timeout for each cleanup operation.
+func cleanOldLogs(store LogStore, log *zap.Logger) {
+	// Create a fresh context with timeout for this cleanup operation
+	ctx, cancel := context.WithTimeout(context.Background(), LogCleanupTimeout)
+	defer cancel()
+
 	// Get retention days from config, default to 7
 	retentionDays := DefaultLogRetentionDays
 	if val, err := store.GetConfig(ctx, "log_retention_days"); err == nil && val != "" {
@@ -124,7 +136,7 @@ func run() error {
 	defer stopCleanup()
 
 	// Start log cleanup loop to prevent request_logs table from growing indefinitely
-	stopLogCleanup := startLogCleanupLoop(ctx, st, log)
+	stopLogCleanup := startLogCleanupLoop(st, log)
 	defer stopLogCleanup()
 
 	// Initialize concurrency limiter for per-provider request limits

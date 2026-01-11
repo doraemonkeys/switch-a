@@ -134,16 +134,22 @@ func extractModelFromJSON(body []byte) string {
 //
 // This function consumes the original body and replaces r.Body with a new
 // io.NopCloser(bytes.Reader) so the body can be read again by subsequent handlers.
-// The original body cannot be accessed after this call.
+// The original body is closed after reading to release resources.
 func ConsumeAndReplaceBody(r *http.Request, maxBodySizeMB int64) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
 	}
 
+	// Close original body when done to release resources.
+	// While Go's HTTP server closes the body after request handling,
+	// explicit closing ensures timely resource release, especially on error paths.
+	originalBody := r.Body
+	defer originalBody.Close()
+
 	maxBytes := maxBodySizeMB * 1024 * 1024
 
 	// Use LimitReader to prevent reading too much
-	limitedReader := io.LimitReader(r.Body, maxBytes+1)
+	limitedReader := io.LimitReader(originalBody, maxBytes+1)
 	body, err := io.ReadAll(limitedReader)
 	if err != nil { // coverage-ignore -- read errors on LimitReader are rare
 		return nil, err

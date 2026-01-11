@@ -230,6 +230,10 @@ func (m *mockHealthManager) ManualEnable(_ context.Context, _ string) error {
 	return m.enableErr
 }
 
+func (m *mockHealthManager) ResetCircuitBreaker(_ string) {
+	// No-op for testing
+}
+
 // mockConcurrencyTracker implements ConcurrencyTracker interface for testing.
 type mockConcurrencyTracker struct {
 	counts map[string]int64

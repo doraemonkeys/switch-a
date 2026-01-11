@@ -185,6 +185,11 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	if group.Weight <= 0 {
 		group.Weight = DefaultWeight
 	}
+	// Validate priority is not reserved for ungrouped providers
+	if group.Priority == ReservedGroupPriority {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Priority value 2147483647 is reserved for ungrouped providers")
+		return
+	}
 
 	if err := h.store.CreateGroup(r.Context(), group); err != nil {
 		h.logger.Error("failed to create group", zap.String("id", req.ID), zap.Error(err))
@@ -252,6 +257,11 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		group.Strategy = *req.Strategy
 	}
 	if req.Priority != nil {
+		// Validate priority is not reserved for ungrouped providers
+		if *req.Priority == ReservedGroupPriority {
+			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Priority value 2147483647 is reserved for ungrouped providers")
+			return
+		}
 		group.Priority = *req.Priority
 	}
 	if req.Weight != nil {

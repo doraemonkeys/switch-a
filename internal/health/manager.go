@@ -224,6 +224,13 @@ func (m *Manager) ManualEnable(ctx context.Context, providerID string) error {
 	return m.store.UpdateHealthState(ctx, state)
 }
 
+// ResetCircuitBreaker clears the in-memory failure history for a provider.
+// Call this when a provider is deleted to prevent memory leaks.
+// The database health_states are cleaned up separately during deletion.
+func (m *Manager) ResetCircuitBreaker(providerID string) {
+	m.circuit.Reset(providerID)
+}
+
 // getConfigInt retrieves a config value as int with default.
 func (m *Manager) getConfigInt(ctx context.Context, key string, defaultVal int) int {
 	val, err := m.store.GetConfig(ctx, key)

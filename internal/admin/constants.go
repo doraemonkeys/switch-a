@@ -3,6 +3,7 @@ package admin
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,10 @@ const (
 	MaxRequestBodySize = 1 << 20 // 1MB limit for JSON requests
 	MaxConfigUpdates   = 50      // Maximum number of config keys per update request
 )
+
+// ReservedGroupPriority is reserved for ungrouped providers.
+// Groups cannot use this priority value as it would conflict with ungrouped providers.
+const ReservedGroupPriority = math.MaxInt32
 
 // ValidStrategies contains the allowed strategy values.
 var ValidStrategies = map[string]bool{
