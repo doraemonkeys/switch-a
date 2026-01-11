@@ -26,6 +26,8 @@ var (
 	DefaultTrustProxyHeaders = boolToString(defaults.TrustProxyHeaders)
 	// DefaultUpstreamConnectTimeout is the default upstream connection timeout in seconds.
 	DefaultUpstreamConnectTimeout = strconv.Itoa(defaults.UpstreamConnectTimeoutSec)
+	// DefaultFirstByteTimeout is the default timeout for receiving the first response byte in seconds.
+	DefaultFirstByteTimeout = strconv.Itoa(defaults.FirstByteTimeoutSec)
 	// DefaultUpstreamReadTimeout is the default upstream read timeout in seconds (0 = no timeout).
 	DefaultUpstreamReadTimeout = strconv.Itoa(defaults.UpstreamReadTimeoutSec)
 	// DefaultSSEIdleTimeout is the default SSE idle timeout in seconds (0 = no timeout).

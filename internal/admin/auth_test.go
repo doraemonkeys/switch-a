@@ -90,6 +90,41 @@ func TestAuthMiddleware_Wrap_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_Wrap_CaseInsensitiveBearer(t *testing.T) {
+	token := "test-token-123"
+	m := NewAuthMiddleware(token)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("success"))
+	})
+
+	wrapped := m.Wrap(handler)
+
+	// Test lowercase "bearer"
+	testCases := []string{
+		"bearer " + token,
+		"Bearer " + token,
+		"BEARER " + token,
+		"BeArEr " + token,
+	}
+
+	for _, authValue := range testCases {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/test", nil)
+		req.Header.Set("Authorization", authValue)
+		w := httptest.NewRecorder()
+
+		wrapped.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Authorization %q: status = %d, want %d", authValue, w.Code, http.StatusOK)
+		}
+		if w.Body.String() != "success" {
+			t.Errorf("Authorization %q: body = %q, want %q", authValue, w.Body.String(), "success")
+		}
+	}
+}
+
 func TestAuthMiddleware_WrapFunc(t *testing.T) {
 	token := "test-token"
 	m := NewAuthMiddleware(token)

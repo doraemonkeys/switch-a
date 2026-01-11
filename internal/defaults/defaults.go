@@ -22,7 +22,14 @@ const (
 const (
 	// UpstreamConnectTimeoutSec is the default upstream connection timeout in seconds.
 	UpstreamConnectTimeoutSec = 10
-	// UpstreamReadTimeoutSec is the default upstream read timeout in seconds (0 = no timeout).
+	// FirstByteTimeoutSec is the default timeout for receiving the first response byte in seconds.
+	// 0 means no timeout (wait indefinitely for the first byte).
+	// This is separate from ReadTimeout to support AI model inference scenarios where
+	// the model may take 60+ seconds to start responding, but once started, responds quickly.
+	FirstByteTimeoutSec = 0
+	// UpstreamReadTimeoutSec is the default upstream read timeout (idle timeout) in seconds.
+	// 0 means no timeout. When set, connection is closed if no data received within this duration
+	// during data transfer (after first byte is received).
 	UpstreamReadTimeoutSec = 0
 	// SSEIdleTimeoutSec is the default SSE stream idle timeout in seconds.
 	// 0 means no idle timeout (trust upstream to close connection).

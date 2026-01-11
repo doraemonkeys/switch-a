@@ -41,6 +41,7 @@ const (
 	ConfigKeyAuthMode               = "auth_mode"
 	ConfigKeyMaxRetries             = "max_retries"
 	ConfigKeyUpstreamConnectTimeout = "upstream_connect_timeout"
+	ConfigKeyFirstByteTimeout       = "first_byte_timeout"
 	ConfigKeyUpstreamReadTimeout    = "upstream_read_timeout"
 	ConfigKeySSEIdleTimeout         = "sse_idle_timeout"
 	ConfigKeyStickyEnabled          = "sticky_enabled"
@@ -55,16 +56,17 @@ const defaultStickyTTLSeconds = selector.DefaultStickyTTLSeconds
 // runtimeConfig holds configuration loaded from the store per-request.
 // This struct is immutable once created and passed through the request flow.
 type runtimeConfig struct {
-	trustProxy     bool
-	userHeader     string
-	maxBodySizeMB  int64
-	globalAuthMode string
-	maxRetries     int
-	connectTimeout time.Duration
-	readTimeout    time.Duration
-	sseIdleTimeout time.Duration
-	stickyEnabled  bool
-	stickyTTL      time.Duration
+	trustProxy       bool
+	userHeader       string
+	maxBodySizeMB    int64
+	globalAuthMode   string
+	maxRetries       int
+	connectTimeout   time.Duration
+	firstByteTimeout time.Duration
+	readTimeout      time.Duration
+	sseIdleTimeout   time.Duration
+	stickyEnabled    bool
+	stickyTTL        time.Duration
 }
 
 // Handler handles proxy requests.
@@ -81,9 +83,10 @@ type Handler struct {
 
 // transportCacheKey is used to detect if Transport config changed.
 type transportCacheKey struct {
-	connectTimeout time.Duration
-	readTimeout    time.Duration
-	sseIdleTimeout time.Duration
+	connectTimeout   time.Duration
+	firstByteTimeout time.Duration
+	readTimeout      time.Duration
+	sseIdleTimeout   time.Duration
 }
 
 // Store defines the minimal storage interface needed by the proxy handler.
@@ -125,14 +128,16 @@ func NewHandler(cfg Config) *Handler {
 // getTransport returns a cached Transport or creates a new one if config changed.
 func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	key := &transportCacheKey{
-		connectTimeout: cfg.connectTimeout,
-		readTimeout:    cfg.readTimeout,
-		sseIdleTimeout: cfg.sseIdleTimeout,
+		connectTimeout:   cfg.connectTimeout,
+		firstByteTimeout: cfg.firstByteTimeout,
+		readTimeout:      cfg.readTimeout,
+		sseIdleTimeout:   cfg.sseIdleTimeout,
 	}
 
 	h.mu.RLock()
 	if h.transport != nil && h.lastCfg != nil &&
 		h.lastCfg.connectTimeout == key.connectTimeout &&
+		h.lastCfg.firstByteTimeout == key.firstByteTimeout &&
 		h.lastCfg.readTimeout == key.readTimeout &&
 		h.lastCfg.sseIdleTimeout == key.sseIdleTimeout {
 		transport := h.transport
@@ -147,6 +152,7 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	// Double-check after acquiring write lock
 	if h.transport != nil && h.lastCfg != nil &&
 		h.lastCfg.connectTimeout == key.connectTimeout &&
+		h.lastCfg.firstByteTimeout == key.firstByteTimeout &&
 		h.lastCfg.readTimeout == key.readTimeout &&
 		h.lastCfg.sseIdleTimeout == key.sseIdleTimeout {
 		return h.transport
@@ -158,9 +164,10 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	}
 
 	h.transport = NewTransport(TransportConfig{
-		ConnectTimeout: cfg.connectTimeout,
-		ReadTimeout:    cfg.readTimeout,
-		SSEIdleTimeout: cfg.sseIdleTimeout,
+		ConnectTimeout:   cfg.connectTimeout,
+		FirstByteTimeout: cfg.firstByteTimeout,
+		ReadTimeout:      cfg.readTimeout,
+		SSEIdleTimeout:   cfg.sseIdleTimeout,
 	})
 	h.lastCfg = key
 	return h.transport
@@ -532,12 +539,17 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		h.logger.Warn("failed to get upstream_connect_timeout, using default", zap.Error(err))
 	}
+	firstByteTimeout, err := h.store.GetConfig(ctx, ConfigKeyFirstByteTimeout)
+	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+		h.logger.Warn("failed to get first_byte_timeout, using default", zap.Error(err))
+	}
 	readTimeout, err := h.store.GetConfig(ctx, ConfigKeyUpstreamReadTimeout)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		h.logger.Warn("failed to get upstream_read_timeout, using default", zap.Error(err))
 	}
 
 	cfg.connectTimeout = time.Duration(parseIntOrDefault(connectTimeout, DefaultConnectTimeoutSec)) * time.Second
+	cfg.firstByteTimeout = time.Duration(parseIntOrDefault(firstByteTimeout, defaults.FirstByteTimeoutSec)) * time.Second
 	cfg.readTimeout = time.Duration(parseIntOrDefault(readTimeout, 0)) * time.Second
 
 	// SSE idle timeout - protects against silent upstream connections

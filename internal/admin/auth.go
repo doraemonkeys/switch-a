@@ -27,14 +27,14 @@ func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		// Extract Bearer token
-		const prefix = "Bearer "
-		if !strings.HasPrefix(authHeader, prefix) {
+		// Extract Bearer token (case-insensitive per RFC 7235)
+		const prefix = "bearer "
+		if len(authHeader) < len(prefix) || !strings.EqualFold(authHeader[:len(prefix)], prefix) {
 			writeError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "Invalid Authorization header format")
 			return
 		}
 
-		token := strings.TrimPrefix(authHeader, prefix)
+		token := authHeader[len(prefix):]
 		// Use constant-time comparison to prevent timing attacks
 		if subtle.ConstantTimeCompare([]byte(token), []byte(m.token)) != 1 {
 			writeError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "Invalid token")

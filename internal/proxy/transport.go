@@ -28,22 +28,27 @@ type Transport struct {
 
 // TransportConfig holds transport configuration.
 type TransportConfig struct {
-	ConnectTimeout time.Duration
-	ReadTimeout    time.Duration // 0 = no timeout
-	SSEIdleTimeout time.Duration // 0 = no idle timeout (trust upstream)
+	ConnectTimeout   time.Duration // TCP connection establishment timeout
+	FirstByteTimeout time.Duration // Time to wait for first response byte (0 = no timeout)
+	ReadTimeout      time.Duration // Idle timeout during data transfer (0 = no timeout)
+	SSEIdleTimeout   time.Duration // SSE stream idle timeout (0 = no idle timeout, trust upstream)
 }
 
 // NewTransport creates a new transport with the given configuration.
 func NewTransport(cfg TransportConfig) *Transport {
-	// ResponseHeaderTimeout controls time to receive response headers after connection.
-	// When ReadTimeout is 0 (no timeout), we also don't set ResponseHeaderTimeout,
-	// allowing long-running requests (like AI model inference that may take 30+ seconds
-	// before starting to respond) to complete without being prematurely terminated.
-	responseHeaderTimeout := cfg.ReadTimeout
+	// ResponseHeaderTimeout controls time to receive response headers (first byte) after connection.
+	// This is now separate from ReadTimeout (idle timeout during data transfer) to support
+	// AI model inference scenarios where:
+	// - The model may take 60+ seconds to start responding (needs longer first byte timeout)
+	// - But once started, data should flow steadily (shorter idle timeout is appropriate)
+	//
+	// When FirstByteTimeout is 0, we don't set ResponseHeaderTimeout,
+	// allowing long-running requests to complete without being prematurely terminated.
+	responseHeaderTimeout := cfg.FirstByteTimeout
 
 	// Create a custom transport with proper timeout handling:
 	// - DialContext timeout: controls TCP connection establishment time
-	// - ResponseHeaderTimeout: controls time to receive response headers after connection
+	// - ResponseHeaderTimeout: controls time to receive first response byte after connection
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout: cfg.ConnectTimeout,
