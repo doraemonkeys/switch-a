@@ -68,43 +68,73 @@ func (t *Transport) CloseIdleConnections() {
 	t.client.CloseIdleConnections()
 }
 
-// ForwardRequest forwards a request to the upstream server and writes the response to w.
-// Returns whether the response headers have been written (affects retry capability).
-func (t *Transport) ForwardRequest(ctx context.Context, w http.ResponseWriter, upstreamReq *http.Request) (headersWritten bool, statusCode int, err error) {
-	// Apply connect timeout to context
-	if t.connectTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, t.connectTimeout)
-		defer cancel()
-	}
+// UpstreamResponse holds the response from an upstream server.
+// The caller must call Close() when done, regardless of whether WriteToClient was called.
+type UpstreamResponse struct {
+	StatusCode int
+	Header     http.Header
+	Body       io.ReadCloser
+	isSSE      bool
+}
 
+// Close closes the upstream response body.
+func (r *UpstreamResponse) Close() {
+	if r.Body != nil {
+		_ = r.Body.Close()
+	}
+}
+
+// FetchUpstream sends a request to the upstream server and returns the response
+// without writing to the client. This allows the caller to inspect the status code
+// and decide whether to retry before committing to the response.
+//
+// The caller MUST call UpstreamResponse.Close() when done.
+func (t *Transport) FetchUpstream(ctx context.Context, upstreamReq *http.Request) (*UpstreamResponse, error) {
 	upstreamReq = upstreamReq.WithContext(ctx)
 
-	resp, err := t.client.Do(upstreamReq)
-	if err != nil { // coverage-ignore -- network errors are tested at integration level
-		return false, 0, err
+	resp, err := t.client.Do(upstreamReq) //nolint:bodyclose // Body is returned to caller via UpstreamResponse; caller must call Close()
+	if err != nil {                       // coverage-ignore -- network errors are tested at integration level
+		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	// Check if response is SSE
-	isSSE := isSSEResponse(resp)
+	return &UpstreamResponse{
+		StatusCode: resp.StatusCode,
+		Header:     resp.Header,
+		Body:       resp.Body,
+		isSSE:      isSSEResponse(resp),
+	}, nil
+}
 
+// WriteToClient writes the upstream response to the client.
+// This should be called after deciding not to retry.
+func (t *Transport) WriteToClient(ctx context.Context, w http.ResponseWriter, resp *UpstreamResponse) error {
 	// Copy response headers
 	copyResponseHeaders(w.Header(), resp.Header)
 
 	// Write status code
 	w.WriteHeader(resp.StatusCode)
-	headersWritten = true
-	statusCode = resp.StatusCode
 
 	// Forward body
-	if isSSE {
-		err = t.forwardSSE(ctx, w, resp.Body)
-	} else {
-		err = t.forwardRegular(w, resp.Body)
+	if resp.isSSE {
+		return t.forwardSSE(ctx, w, resp.Body)
 	}
+	return t.forwardRegular(w, resp.Body)
+}
 
-	return headersWritten, statusCode, err
+// ForwardRequest forwards a request to the upstream server and writes the response to w.
+// Returns whether the response headers have been written (affects retry capability).
+//
+// Deprecated: Use FetchUpstream + WriteToClient for retry-aware forwarding.
+// This method is kept for backward compatibility but immediately writes headers.
+func (t *Transport) ForwardRequest(ctx context.Context, w http.ResponseWriter, upstreamReq *http.Request) (headersWritten bool, statusCode int, err error) {
+	resp, err := t.FetchUpstream(ctx, upstreamReq)
+	if err != nil {
+		return false, 0, err
+	}
+	defer resp.Close()
+
+	err = t.WriteToClient(ctx, w, resp)
+	return true, resp.StatusCode, err
 }
 
 // isSSEResponse checks if the response is Server-Sent Events.

@@ -449,6 +449,51 @@ func TestUpdateGroup_AllFields(t *testing.T) {
 	}
 }
 
+func TestUpdateGroup_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{
+			name:    "empty name",
+			body:    `{"name": ""}`,
+			wantMsg: "Name cannot be empty",
+		},
+		{
+			name:    "zero weight",
+			body:    `{"weight": 0}`,
+			wantMsg: "Weight must be positive",
+		},
+		{
+			name:    "negative weight",
+			body:    `{"weight": -1}`,
+			wantMsg: "Weight must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, st, _ := testHandler()
+			st.groups["test"] = &model.Group{ID: "test", Name: "Test", Weight: 1}
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/api/groups/test", bytes.NewBufferString(tt.body))
+			setPathValue(req, "id", "test")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.UpdateGroup(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if !bytes.Contains(w.Body.Bytes(), []byte(tt.wantMsg)) {
+				t.Errorf("body = %s, want to contain %q", w.Body.String(), tt.wantMsg)
+			}
+		})
+	}
+}
+
 func TestDeleteGroup(t *testing.T) {
 	h, st, _ := testHandler()
 

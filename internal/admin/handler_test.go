@@ -520,6 +520,125 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	}
 }
 
+func TestUpdateProvider_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{
+			name:    "empty name",
+			body:    `{"name": ""}`,
+			wantMsg: "Name cannot be empty",
+		},
+		{
+			name:    "empty base_url",
+			body:    `{"base_url": ""}`,
+			wantMsg: "BaseURL cannot be empty",
+		},
+		{
+			name:    "empty api_key",
+			body:    `{"api_key": ""}`,
+			wantMsg: "APIKey cannot be empty",
+		},
+		{
+			name:    "zero weight",
+			body:    `{"weight": 0}`,
+			wantMsg: "Weight must be positive",
+		},
+		{
+			name:    "negative weight",
+			body:    `{"weight": -1}`,
+			wantMsg: "Weight must be positive",
+		},
+		{
+			name:    "negative concurrency",
+			body:    `{"concurrency": -1}`,
+			wantMsg: "Concurrency cannot be negative",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, st, _ := testHandler()
+			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", BaseURL: "https://api.com", APIKey: "key"}
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(tt.body))
+			setPathValue(req, "id", "test")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.UpdateProvider(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if !bytes.Contains(w.Body.Bytes(), []byte(tt.wantMsg)) {
+				t.Errorf("body = %s, want to contain %q", w.Body.String(), tt.wantMsg)
+			}
+		})
+	}
+}
+
+func TestUpdateProvider_SyncsHealthManager(t *testing.T) {
+	h, st, health := testHandler()
+
+	st.providers["test"] = &model.Provider{ID: "test", Name: "Test", Enabled: true}
+
+	// Disable the provider
+	body := `{"enabled": false}`
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(body))
+	setPathValue(req, "id", "test")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.UpdateProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify provider is disabled
+	if st.providers["test"].Enabled {
+		t.Error("Provider should be disabled")
+	}
+
+	// Re-enable the provider
+	body = `{"enabled": true}`
+	req = httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(body))
+	setPathValue(req, "id", "test")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	h.UpdateProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify provider is enabled
+	if !st.providers["test"].Enabled {
+		t.Error("Provider should be enabled")
+	}
+
+	// Test that health manager error is logged but doesn't fail the request
+	health.disableErr = errors.New("health manager error")
+	st.providers["test"].Enabled = true
+
+	body = `{"enabled": false}`
+	req = httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(body))
+	setPathValue(req, "id", "test")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	h.UpdateProvider(w, req)
+
+	// Request should still succeed even if health manager fails
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
 func TestDeleteProvider(t *testing.T) {
 	h, st, _ := testHandler()
 

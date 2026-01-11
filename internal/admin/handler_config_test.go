@@ -147,6 +147,145 @@ func TestUpdateConfig_GetAfterSetError(t *testing.T) {
 	}
 }
 
+func TestUpdateConfig_InvalidValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{
+			name:    "circuit_failure negative",
+			body:    `{"circuit_failure": "-1"}`,
+			wantMsg: "must be a positive integer",
+		},
+		{
+			name:    "circuit_failure not number",
+			body:    `{"circuit_failure": "abc"}`,
+			wantMsg: "must be a valid integer",
+		},
+		{
+			name:    "sticky_ttl zero",
+			body:    `{"sticky_ttl": "0"}`,
+			wantMsg: "must be a positive integer",
+		},
+		{
+			name:    "max_retries negative",
+			body:    `{"max_retries": "-5"}`,
+			wantMsg: "must be a non-negative integer",
+		},
+		{
+			name:    "trust_proxy_headers invalid",
+			body:    `{"trust_proxy_headers": "maybe"}`,
+			wantMsg: "must be 'true' or 'false'",
+		},
+		{
+			name:    "sticky_enabled invalid",
+			body:    `{"sticky_enabled": "yes"}`,
+			wantMsg: "must be 'true' or 'false'",
+		},
+		{
+			name:    "auth_mode invalid",
+			body:    `{"auth_mode": "invalid"}`,
+			wantMsg: "must be 'auto', 'bearer', or 'x-api-key'",
+		},
+		{
+			name:    "inter_group_strategy invalid",
+			body:    `{"inter_group_strategy": "invalid"}`,
+			wantMsg: "must be 'priority', 'random', or 'weight'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, _, _ := testHandler()
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/api/config", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.UpdateConfig(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if !bytes.Contains(w.Body.Bytes(), []byte(tt.wantMsg)) {
+				t.Errorf("body = %s, want to contain %q", w.Body.String(), tt.wantMsg)
+			}
+		})
+	}
+}
+
+func TestUpdateConfig_ValidValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		body  string
+		key   string
+		value string
+	}{
+		{
+			name:  "trust_proxy_headers true",
+			body:  `{"trust_proxy_headers": "true"}`,
+			key:   "trust_proxy_headers",
+			value: "true",
+		},
+		{
+			name:  "trust_proxy_headers false",
+			body:  `{"trust_proxy_headers": "false"}`,
+			key:   "trust_proxy_headers",
+			value: "false",
+		},
+		{
+			name:  "trust_proxy_headers 1",
+			body:  `{"trust_proxy_headers": "1"}`,
+			key:   "trust_proxy_headers",
+			value: "1",
+		},
+		{
+			name:  "max_retries zero",
+			body:  `{"max_retries": "0"}`,
+			key:   "max_retries",
+			value: "0",
+		},
+		{
+			name:  "auth_mode auto",
+			body:  `{"auth_mode": "auto"}`,
+			key:   "auth_mode",
+			value: "auto",
+		},
+		{
+			name:  "inter_group_strategy priority",
+			body:  `{"inter_group_strategy": "priority"}`,
+			key:   "inter_group_strategy",
+			value: "priority",
+		},
+		{
+			name:  "user_header any string",
+			body:  `{"user_header": "X-Custom-User"}`,
+			key:   "user_header",
+			value: "X-Custom-User",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, st, _ := testHandler()
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/api/config", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.UpdateConfig(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+			}
+			if st.config[tt.key] != tt.value {
+				t.Errorf("%s = %q, want %q", tt.key, st.config[tt.key], tt.value)
+			}
+		})
+	}
+}
+
 // Health Tests
 
 func TestGetHealth(t *testing.T) {

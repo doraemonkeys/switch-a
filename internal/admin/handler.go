@@ -218,6 +218,16 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate fields before fetching group
+	if req.Name != nil && *req.Name == "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Name cannot be empty")
+		return
+	}
+	if req.Weight != nil && *req.Weight <= 0 {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Weight must be positive")
+		return
+	}
+
 	group, err := h.store.GetGroup(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -302,6 +312,10 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	for key, value := range updates {
 		if !IsValidConfigKey(key) {
 			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid config key: "+key)
+			return
+		}
+		if err := ValidateConfigValue(key, value); err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid value for "+key+": "+err.Error())
 			return
 		}
 		if err := h.store.SetConfig(r.Context(), key, value); err != nil {

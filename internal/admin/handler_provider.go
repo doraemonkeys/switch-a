@@ -191,33 +191,40 @@ type UpdateProviderRequest struct {
 	Enabled     *bool    `json:"enabled"`
 }
 
-// UpdateProvider handles PUT /admin/api/providers/{id}.
-func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Provider ID is required")
-		return
+// validate checks that all provided fields have valid values.
+// Returns an error message if validation fails, empty string otherwise.
+func (req *UpdateProviderRequest) validate() string {
+	if req.Name != nil && *req.Name == "" {
+		return "Name cannot be empty"
 	}
-
-	limitRequestBody(w, r)
-	var req UpdateProviderRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
-		return
+	if req.BaseURL != nil && *req.BaseURL == "" {
+		return "BaseURL cannot be empty"
 	}
-
-	provider, err := h.store.GetProvider(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, ErrCodeNotFound, "Provider not found: "+id)
-			return
+	if req.APIKey != nil && *req.APIKey == "" {
+		return "APIKey cannot be empty"
+	}
+	if req.Weight != nil && *req.Weight <= 0 {
+		return "Weight must be positive"
+	}
+	if req.Concurrency != nil && *req.Concurrency < 0 {
+		return "Concurrency cannot be negative"
+	}
+	if req.APITypes != nil && len(req.APITypes) == 0 {
+		return "At least one api_type is required"
+	}
+	for _, apiType := range req.APITypes {
+		if !IsValidAPIType(apiType) {
+			return "Invalid api_type: " + apiType
 		}
-		h.logger.Error("failed to get provider", zap.String("id", id), zap.Error(err))
-		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update provider")
-		return
 	}
+	if req.AuthMode != nil && !IsValidAuthMode(*req.AuthMode) {
+		return "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'"
+	}
+	return ""
+}
 
-	// Update fields if provided
+// applyTo updates the provider fields from the request.
+func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 	if req.Name != nil {
 		provider.Name = *req.Name
 	}
@@ -228,34 +235,17 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		provider.APIKey = *req.APIKey
 	}
 	if req.APITypes != nil {
-		for _, apiType := range req.APITypes {
-			if !IsValidAPIType(apiType) {
-				writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid api_type: "+apiType)
-				return
-			}
-		}
 		apiTypes := make([]model.ProviderAPIType, len(req.APITypes))
 		for i, at := range req.APITypes {
 			apiTypes[i] = model.ProviderAPIType{
-				ProviderID: id,
+				ProviderID: provider.ID,
 				APIType:    at,
 			}
 		}
 		provider.APITypes = apiTypes
 	}
 	if req.AuthMode != nil {
-		if !IsValidAuthMode(*req.AuthMode) {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'")
-			return
-		}
 		provider.AuthMode = *req.AuthMode
-	}
-	if req.GroupID != nil {
-		groupID, ok := h.validateAndResolveGroupID(w, r, *req.GroupID)
-		if !ok {
-			return
-		}
-		provider.GroupID = groupID
 	}
 	if req.Weight != nil {
 		provider.Weight = *req.Weight
@@ -272,11 +262,60 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		provider.Enabled = *req.Enabled
 	}
+}
+
+// UpdateProvider handles PUT /admin/api/providers/{id}.
+func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Provider ID is required")
+		return
+	}
+
+	limitRequestBody(w, r)
+	var req UpdateProviderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
+		return
+	}
+
+	if errMsg := req.validate(); errMsg != "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
+		return
+	}
+
+	provider, err := h.store.GetProvider(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, ErrCodeNotFound, "Provider not found: "+id)
+			return
+		}
+		h.logger.Error("failed to get provider", zap.String("id", id), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update provider")
+		return
+	}
+
+	originalEnabled := provider.Enabled
+
+	req.applyTo(provider)
+
+	// Validate and resolve GroupID separately (requires store access)
+	if req.GroupID != nil {
+		groupID, ok := h.validateAndResolveGroupID(w, r, *req.GroupID)
+		if !ok {
+			return
+		}
+		provider.GroupID = groupID
+	}
 
 	if err := h.store.UpdateProvider(r.Context(), provider); err != nil {
 		h.logger.Error("failed to update provider", zap.String("id", id), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update provider")
 		return
+	}
+
+	if provider.Enabled != originalEnabled {
+		h.syncHealthManagerState(r.Context(), id, provider.Enabled)
 	}
 
 	writeJSON(w, http.StatusOK, provider)

@@ -326,9 +326,9 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	// Set authentication header
 	SetAuthHeader(upstreamReq.Header, provider.APIKey, provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
 
-	// Forward request
-	result.headersWritten, result.statusCode, err = pctx.transport.ForwardRequest(ctx, pctx.w, upstreamReq)
-
+	// Fetch upstream response WITHOUT writing to client yet
+	// This allows us to check status code and retry if needed
+	upstreamResp, err := pctx.transport.FetchUpstream(ctx, upstreamReq)
 	if err != nil { // coverage-ignore -- network errors tested at integration level
 		h.logger.Warn("upstream request failed",
 			zap.String("provider_id", provider.ID),
@@ -338,12 +338,13 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		result.err = err
 		h.markFailure(ctx, provider.ID, err)
 		h.releaseConcurrency(provider.ID)
-		result.done = result.headersWritten
-		return result
+		return result // headersWritten is false, so retry is possible
 	}
 
-	// Check if response indicates failure (5xx or 429)
-	if shouldRetry(result.statusCode) { // coverage-ignore -- retry logic tested at integration level
+	result.statusCode = upstreamResp.StatusCode
+
+	// Check if response indicates failure (5xx or 429) BEFORE writing to client
+	if shouldRetry(result.statusCode) {
 		h.logger.Warn("upstream returned error status",
 			zap.String("provider_id", provider.ID),
 			zap.Int("status_code", result.statusCode),
@@ -351,9 +352,21 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		)
 		h.markFailure(ctx, provider.ID, fmt.Errorf("upstream returned status %d", result.statusCode))
 		h.releaseConcurrency(provider.ID)
-		result.done = true
+		upstreamResp.Close() // Close without writing to client
+		// headersWritten is still false, allowing retry with another provider
 		return result
 	}
+
+	// Commit: write response to client
+	if err := pctx.transport.WriteToClient(ctx, pctx.w, upstreamResp); err != nil { // coverage-ignore -- write errors occur when client disconnects
+		h.logger.Warn("failed to write response to client",
+			zap.String("provider_id", provider.ID),
+			zap.Error(err),
+		)
+		result.err = err
+	}
+	upstreamResp.Close()
+	result.headersWritten = true
 
 	// Success!
 	result.success = true
