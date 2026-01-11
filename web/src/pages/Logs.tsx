@@ -17,7 +17,9 @@ export function Logs() {
       <div className="card p-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-[200px] relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">🔍</span>
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">
+              🔍
+            </span>
             <input
               type="text"
               placeholder="Search by model, IP, or user..."
@@ -77,7 +79,9 @@ export function Logs() {
                     <div className="w-20 h-20 mx-auto mb-4 bg-bg-tertiary rounded-2xl flex items-center justify-center">
                       <span className="text-4xl">📋</span>
                     </div>
-                    <p className="font-medium text-text-primary mb-1">No logs recorded yet</p>
+                    <p className="font-medium text-text-primary mb-1">
+                      No logs recorded yet
+                    </p>
                     <p className="text-sm text-text-muted">
                       Logs will appear here once you start proxying requests.
                     </p>
@@ -92,7 +96,7 @@ export function Logs() {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-text-secondary">
-          Showing <span className="font-medium text-text-primary">0</span> of{' '}
+          Showing <span className="font-medium text-text-primary">0</span> of{" "}
           <span className="font-medium text-text-primary">0</span> results
         </p>
         <div className="flex items-center gap-2">
@@ -112,35 +116,19 @@ export function Logs() {
 
       {/* Log Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <LogStatCard
-          label="Total Requests"
-          value="0"
-          icon="📊"
-        />
-        <LogStatCard
-          label="Success Rate"
-          value="0%"
-          icon="✅"
-        />
-        <LogStatCard
-          label="Avg Latency"
-          value="0ms"
-          icon="⚡"
-        />
-        <LogStatCard
-          label="Errors Today"
-          value="0"
-          icon="⚠️"
-        />
+        <LogStatCard label="Total Requests" value="0" icon="📊" />
+        <LogStatCard label="Success Rate" value="0%" icon="✅" />
+        <LogStatCard label="Avg Latency" value="0ms" icon="⚡" />
+        <LogStatCard label="Errors Today" value="0" icon="⚠️" />
       </div>
     </div>
-  )
+  );
 }
 
 interface LogStatCardProps {
-  label: string
-  value: string
-  icon: string
+  label: string;
+  value: string;
+  icon: string;
 }
 
 function LogStatCard({ label, value, icon }: LogStatCardProps) {
@@ -154,5 +142,5 @@ function LogStatCard({ label, value, icon }: LogStatCardProps) {
         </div>
       </div>
     </div>
-  )
+  );
 }

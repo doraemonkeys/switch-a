@@ -16,7 +16,9 @@ export function Providers() {
       {/* Filter Bar */}
       <div className="flex items-center gap-3">
         <div className="flex-1 relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">🔍</span>
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">
+            🔍
+          </span>
           <input
             type="text"
             placeholder="Search providers..."
@@ -66,7 +68,9 @@ export function Providers() {
                   <div className="w-20 h-20 mx-auto mb-4 bg-bg-tertiary rounded-2xl flex items-center justify-center">
                     <span className="text-4xl">🔌</span>
                   </div>
-                  <p className="font-medium text-text-primary mb-1">No providers configured yet</p>
+                  <p className="font-medium text-text-primary mb-1">
+                    No providers configured yet
+                  </p>
                   <p className="text-sm text-text-muted mb-4">
                     Add your first AI provider to start proxying requests.
                   </p>
@@ -90,12 +94,13 @@ export function Providers() {
           <div>
             <h4 className="font-semibold text-text-primary">Getting Started</h4>
             <p className="text-sm text-text-secondary mt-1">
-              Configure your AI providers with their base URL and API key. You can group providers
-              and set up load balancing strategies to automatically switch between them.
+              Configure your AI providers with their base URL and API key. You
+              can group providers and set up load balancing strategies to
+              automatically switch between them.
             </p>
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

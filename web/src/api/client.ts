@@ -1,21 +1,21 @@
-import { API_BASE, STORAGE_KEYS } from '../config'
+import { API_BASE, STORAGE_KEYS } from "../config";
 import {
   type ApiClientDeps,
   type Storage,
   browserStorage,
   browserHttpClient,
-} from './interfaces'
+} from "./interfaces";
 
 // API Error type
 export class ApiError extends Error {
-  code: string
-  status: number
+  code: string;
+  status: number;
 
   constructor(code: string, message: string, status: number) {
-    super(message)
-    this.name = 'ApiError'
-    this.code = code
-    this.status = status
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = status;
   }
 }
 
@@ -23,43 +23,60 @@ export class ApiError extends Error {
 export function createTokenManager(storage: Storage) {
   return {
     get: (): string | null => storage.getItem(STORAGE_KEYS.AUTH_TOKEN),
-    set: (token: string): void => storage.setItem(STORAGE_KEYS.AUTH_TOKEN, token),
+    set: (token: string): void =>
+      storage.setItem(STORAGE_KEYS.AUTH_TOKEN, token),
     clear: (): void => storage.removeItem(STORAGE_KEYS.AUTH_TOKEN),
-  }
+  };
 }
 
 // Request factory with dependency injection
-function createRequest(deps: ApiClientDeps, tokenManager: ReturnType<typeof createTokenManager>) {
-  const { httpClient, baseUrl } = deps
+function createRequest(
+  deps: ApiClientDeps,
+  tokenManager: ReturnType<typeof createTokenManager>,
+) {
+  const { httpClient, baseUrl } = deps;
 
-  return async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const token = tokenManager.get()
-    const headers: HeadersInit = { 'Content-Type': 'application/json', ...options.headers }
+  return async function request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    const token = tokenManager.get();
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+      ...options.headers,
+    };
 
     if (token) {
-      (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
+      (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
     }
 
-    const response = await httpClient.fetch(`${baseUrl}${endpoint}`, { ...options, headers })
+    const response = await httpClient.fetch(`${baseUrl}${endpoint}`, {
+      ...options,
+      headers,
+    });
 
     if (!response.ok) {
-      const data = await response.json().catch(() => ({}))
-      throw new ApiError(data.code || 'UNKNOWN_ERROR', data.message || response.statusText, response.status)
+      const data = await response.json().catch(() => ({}));
+      throw new ApiError(
+        data.code || "UNKNOWN_ERROR",
+        data.message || response.statusText,
+        response.status,
+      );
     }
 
     // 204 No Content
     if (response.status === 204) {
-      return undefined as T
+      return undefined as T;
     }
 
-    return response.json()
-  }
+    return response.json();
+  };
 }
 
 // API Client factory with dependency injection
 export function createApiClient(deps: ApiClientDeps) {
-  const tokenManager = createTokenManager(deps.storage)
-  const request = createRequest(deps, tokenManager)
+  const tokenManager = createTokenManager(deps.storage);
+  const request = createRequest(deps, tokenManager);
 
   return {
     // Token management
@@ -68,212 +85,212 @@ export function createApiClient(deps: ApiClientDeps) {
 
     // Providers
     providers: {
-      list: () => request<Provider[]>('/providers'),
+      list: () => request<Provider[]>("/providers"),
       get: (id: string) => request<Provider>(`/providers/${id}`),
       create: (data: ProviderInput) =>
-        request<Provider>('/providers', {
-          method: 'POST',
+        request<Provider>("/providers", {
+          method: "POST",
           body: JSON.stringify(data),
         }),
       update: (id: string, data: ProviderInput) =>
         request<Provider>(`/providers/${id}`, {
-          method: 'PUT',
+          method: "PUT",
           body: JSON.stringify(data),
         }),
       delete: (id: string) =>
         request<void>(`/providers/${id}`, {
-          method: 'DELETE',
+          method: "DELETE",
         }),
       enable: (id: string) =>
         request<void>(`/providers/${id}/enable`, {
-          method: 'POST',
+          method: "POST",
         }),
       disable: (id: string) =>
         request<void>(`/providers/${id}/disable`, {
-          method: 'POST',
+          method: "POST",
         }),
       reset: (id: string) =>
         request<void>(`/providers/${id}/reset`, {
-          method: 'POST',
+          method: "POST",
         }),
     },
 
     // Groups
     groups: {
-      list: () => request<Group[]>('/groups'),
+      list: () => request<Group[]>("/groups"),
       get: (id: string) => request<Group>(`/groups/${id}`),
       create: (data: GroupInput) =>
-        request<Group>('/groups', {
-          method: 'POST',
+        request<Group>("/groups", {
+          method: "POST",
           body: JSON.stringify(data),
         }),
       update: (id: string, data: GroupInput) =>
         request<Group>(`/groups/${id}`, {
-          method: 'PUT',
+          method: "PUT",
           body: JSON.stringify(data),
         }),
       delete: (id: string) =>
         request<void>(`/groups/${id}`, {
-          method: 'DELETE',
+          method: "DELETE",
         }),
     },
 
     // Config
     config: {
-      get: () => request<Record<string, string>>('/config'),
+      get: () => request<Record<string, string>>("/config"),
       update: (data: Record<string, string>) =>
-        request<Record<string, string>>('/config', {
-          method: 'PUT',
+        request<Record<string, string>>("/config", {
+          method: "PUT",
           body: JSON.stringify(data),
         }),
     },
 
     // Status
     status: {
-      get: () => request<SystemStatus>('/status'),
-      health: () => request<HealthState[]>('/health'),
+      get: () => request<SystemStatus>("/status"),
+      health: () => request<HealthState[]>("/health"),
     },
 
     // Logs
     logs: {
       list: (params?: { limit?: number; offset?: number }) => {
-        const query = new URLSearchParams()
-        if (params?.limit) query.set('limit', String(params.limit))
-        if (params?.offset) query.set('offset', String(params.offset))
-        const queryStr = query.toString()
-        const endpoint = queryStr ? `/logs?${queryStr}` : '/logs'
-        return request<LogsResponse>(endpoint)
+        const query = new URLSearchParams();
+        if (params?.limit) query.set("limit", String(params.limit));
+        if (params?.offset) query.set("offset", String(params.offset));
+        const queryStr = query.toString();
+        const endpoint = queryStr ? `/logs?${queryStr}` : "/logs";
+        return request<LogsResponse>(endpoint);
       },
     },
-  }
+  };
 }
 
 // Type for the API client instance
-export type ApiClient = ReturnType<typeof createApiClient>
+export type ApiClient = ReturnType<typeof createApiClient>;
 
 // Default instance for convenience (browser environment)
 const defaultDeps: ApiClientDeps = {
   storage: browserStorage,
   httpClient: browserHttpClient,
   baseUrl: API_BASE,
-}
+};
 
-export const api = createApiClient(defaultDeps)
-export const setToken = api.setToken
-export const clearToken = api.clearToken
+export const api = createApiClient(defaultDeps);
+export const setToken = api.setToken;
+export const clearToken = api.clearToken;
 
 // Type definitions
 
 // ProviderAPIType represents the association between Provider and API types
 export interface ProviderAPIType {
-  provider_id: string
-  api_type: string
+  provider_id: string;
+  api_type: string;
 }
 
 export interface Provider {
-  id: string
-  name: string
-  base_url: string
-  api_key: string
-  api_types: ProviderAPIType[]
-  auth_mode: string
-  group_id: string | null
-  weight: number
-  priority: number
-  concurrency: number
-  max_retries: number
-  enabled: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  api_types: ProviderAPIType[];
+  auth_mode: string;
+  group_id: string | null;
+  weight: number;
+  priority: number;
+  concurrency: number;
+  max_retries: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ProviderInput {
-  id?: string
-  name: string
-  base_url: string
-  api_key: string
-  api_types: string[]
-  auth_mode?: string
-  group_id?: string | null
-  weight?: number
-  priority?: number
-  concurrency?: number
-  max_retries?: number
-  enabled?: boolean
+  id?: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  api_types: string[];
+  auth_mode?: string;
+  group_id?: string | null;
+  weight?: number;
+  priority?: number;
+  concurrency?: number;
+  max_retries?: number;
+  enabled?: boolean;
 }
 
 export interface Group {
-  id: string
-  name: string
-  strategy: string
-  priority: number
-  weight: number
-  enabled: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  strategy: string;
+  priority: number;
+  weight: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface GroupInput {
-  id?: string
-  name: string
-  strategy?: string
-  priority?: number
-  weight?: number
-  enabled?: boolean
+  id?: string;
+  name: string;
+  strategy?: string;
+  priority?: number;
+  weight?: number;
+  enabled?: boolean;
 }
 
 export interface HealthState {
-  provider_id: string
-  available: boolean
-  success_count: number
-  fail_count: number
-  last_success: string | null
-  last_failure: string | null
-  last_error: string | null
-  disabled_until: string | null
-  disabled_reason: string | null
+  provider_id: string;
+  available: boolean;
+  success_count: number;
+  fail_count: number;
+  last_success: string | null;
+  last_failure: string | null;
+  last_error: string | null;
+  disabled_until: string | null;
+  disabled_reason: string | null;
 }
 
 // ProviderStatus represents the status of a single provider
 export interface ProviderStatus {
-  id: string
-  name: string
-  enabled: boolean
-  current_requests: number
-  health: HealthState | null
+  id: string;
+  name: string;
+  enabled: boolean;
+  current_requests: number;
+  health: HealthState | null;
 }
 
 // SystemStatus represents the overall system status (raw backend response)
 export interface SystemStatus {
-  providers: ProviderStatus[]
+  providers: ProviderStatus[];
 }
 
 // SystemStatusSummary represents computed summary statistics
 export interface SystemStatusSummary {
-  providers_total: number
-  providers_healthy: number
-  providers_unhealthy: number
-  requests_today: number
+  providers_total: number;
+  providers_healthy: number;
+  providers_unhealthy: number;
+  requests_today: number;
 }
 
 export interface RequestLog {
-  id: number
-  provider_id: string
-  api_type: string
-  model: string
-  client_ip: string
-  user_id: string
-  status_code: number
-  latency_ms: number
-  success: boolean
-  error_msg: string | null
-  created_at: string
+  id: number;
+  provider_id: string;
+  api_type: string;
+  model: string;
+  client_ip: string;
+  user_id: string;
+  status_code: number;
+  latency_ms: number;
+  success: boolean;
+  error_msg: string | null;
+  created_at: string;
 }
 
 // LogsResponse represents the paginated logs response from the backend
 export interface LogsResponse {
-  logs: RequestLog[]
-  total: number
-  limit: number
-  offset: number
+  logs: RequestLog[];
+  total: number;
+  limit: number;
+  offset: number;
 }

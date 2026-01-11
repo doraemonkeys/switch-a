@@ -18,9 +18,13 @@ export function Groups() {
         {/* Empty State Card */}
         <div className="card border-dashed border-2 hover:border-primary/50 transition-colors cursor-pointer group">
           <div className="empty-state py-8">
-            <div className="w-14 h-14 mx-auto mb-3 bg-bg-tertiary rounded-xl flex items-center justify-center 
-                          group-hover:bg-primary-light transition-colors">
-              <span className="text-2xl group-hover:scale-110 transition-transform">➕</span>
+            <div
+              className="w-14 h-14 mx-auto mb-3 bg-bg-tertiary rounded-xl flex items-center justify-center 
+                          group-hover:bg-primary-light transition-colors"
+            >
+              <span className="text-2xl group-hover:scale-110 transition-transform">
+                ➕
+              </span>
             </div>
             <p className="font-medium text-text-primary">Create New Group</p>
             <p className="text-sm text-text-muted mt-1">
@@ -54,13 +58,13 @@ export function Groups() {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 interface StrategyCardProps {
-  name: string
-  description: string
-  icon: string
+  name: string;
+  description: string;
+  icon: string;
 }
 
 function StrategyCard({ name, description, icon }: StrategyCardProps) {
@@ -72,5 +76,5 @@ function StrategyCard({ name, description, icon }: StrategyCardProps) {
       </div>
       <p className="text-sm text-text-secondary">{description}</p>
     </div>
-  )
+  );
 }

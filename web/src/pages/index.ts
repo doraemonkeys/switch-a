@@ -1,5 +1,5 @@
-export { Dashboard } from './Dashboard'
-export { Providers } from './Providers'
-export { Groups } from './Groups'
-export { Config } from './Config'
-export { Logs } from './Logs'
+export { Dashboard } from "./Dashboard";
+export { Providers } from "./Providers";
+export { Groups } from "./Groups";
+export { Config } from "./Config";
+export { Logs } from "./Logs";

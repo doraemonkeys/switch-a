@@ -1,12 +1,12 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet } from "react-router-dom";
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: '📊' },
-  { to: '/providers', label: 'Providers', icon: '🔌' },
-  { to: '/groups', label: 'Groups', icon: '📁' },
-  { to: '/config', label: 'Config', icon: '⚙️' },
-  { to: '/logs', label: 'Logs', icon: '📋' },
-]
+  { to: "/", label: "Dashboard", icon: "📊" },
+  { to: "/providers", label: "Providers", icon: "🔌" },
+  { to: "/groups", label: "Groups", icon: "📁" },
+  { to: "/config", label: "Config", icon: "⚙️" },
+  { to: "/logs", label: "Logs", icon: "📋" },
+];
 
 export function Layout() {
   return (
@@ -20,14 +20,20 @@ export function Layout() {
                 <span className="text-white text-lg">⚡</span>
               </div>
               <div>
-                <h1 className="text-lg font-bold text-text-primary">Switch-A</h1>
-                <p className="text-xs text-text-muted -mt-0.5">AI Provider Proxy</p>
+                <h1 className="text-lg font-bold text-text-primary">
+                  Switch-A
+                </h1>
+                <p className="text-xs text-text-muted -mt-0.5">
+                  AI Provider Proxy
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 px-3 py-1.5 bg-success-light rounded-full">
                 <span className="w-2 h-2 bg-success rounded-full animate-pulse"></span>
-                <span className="text-xs font-medium text-emerald-700">Online</span>
+                <span className="text-xs font-medium text-emerald-700">
+                  Online
+                </span>
               </div>
             </div>
           </div>
@@ -44,11 +50,12 @@ export function Layout() {
                   <li key={item.to}>
                     <NavLink
                       to={item.to}
-                      end={item.to === '/'}
+                      end={item.to === "/"}
                       className={({ isActive }) =>
-                        `flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 ${isActive
-                          ? 'bg-linear-to-r from-primary to-indigo-500 text-white shadow-md'
-                          : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                        `flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 ${
+                          isActive
+                            ? "bg-linear-to-r from-primary to-indigo-500 text-white shadow-md"
+                            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                         }`
                       }
                     >
@@ -73,5 +80,5 @@ export function Layout() {
         </div>
       </div>
     </div>
-  )
+  );
 }

@@ -1,4 +1,4 @@
-import { CONFIG_DEFAULTS, FORM_CONSTRAINTS } from '../config'
+import { CONFIG_DEFAULTS, FORM_CONSTRAINTS } from "../config";
 
 export function Config() {
   return (
@@ -6,7 +6,9 @@ export function Config() {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-text-primary">Configuration</h2>
+          <h2 className="text-2xl font-bold text-text-primary">
+            Configuration
+          </h2>
           <p className="text-text-secondary mt-1">运行时配置管理</p>
         </div>
         <span className="badge badge-success">
@@ -63,15 +65,14 @@ export function Config() {
           >
             <div className="space-y-4">
               <label className="flex items-center gap-3 p-4 rounded-xl bg-bg-secondary border border-border-light cursor-pointer hover:border-primary/30 transition-colors">
-                <input
-                  type="checkbox"
-                  id="sticky_enabled"
-                  defaultChecked
-                />
+                <input type="checkbox" id="sticky_enabled" defaultChecked />
                 <div>
-                  <span className="font-medium text-text-primary">Enable sticky session</span>
+                  <span className="font-medium text-text-primary">
+                    Enable sticky session
+                  </span>
                   <p className="text-xs text-text-muted mt-0.5">
-                    Route returning users to the same provider within the TTL window
+                    Route returning users to the same provider within the TTL
+                    window
                   </p>
                 </div>
               </label>
@@ -104,7 +105,9 @@ export function Config() {
                 <input
                   type="number"
                   className="input"
-                  defaultValue={CONFIG_DEFAULTS.CIRCUIT_BREAKER.FAILURE_THRESHOLD}
+                  defaultValue={
+                    CONFIG_DEFAULTS.CIRCUIT_BREAKER.FAILURE_THRESHOLD
+                  }
                   min={FORM_CONSTRAINTS.MIN_POSITIVE}
                 />
                 <p className="text-xs text-text-muted mt-1.5">
@@ -121,9 +124,7 @@ export function Config() {
                   defaultValue={CONFIG_DEFAULTS.CIRCUIT_BREAKER.WINDOW_SECONDS}
                   min={FORM_CONSTRAINTS.MIN_POSITIVE}
                 />
-                <p className="text-xs text-text-muted mt-1.5">
-                  检测窗口时长
-                </p>
+                <p className="text-xs text-text-muted mt-1.5">检测窗口时长</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-primary mb-1.5">
@@ -137,9 +138,7 @@ export function Config() {
                   }
                   min={FORM_CONSTRAINTS.MIN_POSITIVE}
                 />
-                <p className="text-xs text-text-muted mt-1.5">
-                  熔断禁用时长
-                </p>
+                <p className="text-xs text-text-muted mt-1.5">熔断禁用时长</p>
               </div>
             </div>
           </ConfigSection>
@@ -162,17 +161,22 @@ export function Config() {
         </form>
       </div>
     </div>
-  )
+  );
 }
 
 interface ConfigSectionProps {
-  title: string
-  description: string
-  icon: string
-  children: React.ReactNode
+  title: string;
+  description: string;
+  icon: string;
+  children: React.ReactNode;
 }
 
-function ConfigSection({ title, description, icon, children }: ConfigSectionProps) {
+function ConfigSection({
+  title,
+  description,
+  icon,
+  children,
+}: ConfigSectionProps) {
   return (
     <fieldset className="space-y-4">
       <div className="flex items-start gap-3">
@@ -180,11 +184,13 @@ function ConfigSection({ title, description, icon, children }: ConfigSectionProp
           <span className="text-lg">{icon}</span>
         </div>
         <div>
-          <legend className="text-lg font-semibold text-text-primary">{title}</legend>
+          <legend className="text-lg font-semibold text-text-primary">
+            {title}
+          </legend>
           <p className="text-sm text-text-secondary">{description}</p>
         </div>
       </div>
       <div className="ml-13">{children}</div>
     </fieldset>
-  )
+  );
 }

@@ -1,26 +1,26 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, waitFor, act } from '@testing-library/react'
-import type { ReactNode } from 'react'
-import { useProviders, useProvider } from './useProviders'
-import { ApiContext } from '../api/context'
-import type { ApiClient, Provider } from '../api/client'
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { renderHook, waitFor, act } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { useProviders, useProvider } from "./useProviders";
+import { ApiContext } from "../api/context";
+import type { ApiClient, Provider } from "../api/client";
 
 const mockProvider: Provider = {
-  id: '1',
-  name: 'OpenAI',
-  base_url: 'https://api.openai.com',
-  api_key: 'sk-xxx',
-  api_types: [{ provider_id: '1', api_type: 'claude' }],
-  auth_mode: 'bearer',
+  id: "1",
+  name: "OpenAI",
+  base_url: "https://api.openai.com",
+  api_key: "sk-xxx",
+  api_types: [{ provider_id: "1", api_type: "claude" }],
+  auth_mode: "bearer",
   group_id: null,
   weight: 1,
   priority: 1,
   concurrency: 10,
   max_retries: -1,
   enabled: true,
-  created_at: '2024-01-01T00:00:00Z',
-  updated_at: '2024-01-01T00:00:00Z',
-}
+  created_at: "2024-01-01T00:00:00Z",
+  updated_at: "2024-01-01T00:00:00Z",
+};
 
 function createMockApiClient() {
   return {
@@ -36,270 +36,288 @@ function createMockApiClient() {
       disable: vi.fn().mockResolvedValue(undefined),
       reset: vi.fn().mockResolvedValue(undefined),
     },
-    groups: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    groups: {
+      list: vi.fn(),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    },
     config: { get: vi.fn(), update: vi.fn() },
     status: { get: vi.fn(), health: vi.fn() },
     logs: { list: vi.fn() },
-  } as unknown as ApiClient
+  } as unknown as ApiClient;
 }
 
 function createWrapper(apiClient: ApiClient) {
   return ({ children }: { children: ReactNode }) => (
     <ApiContext.Provider value={apiClient}>{children}</ApiContext.Provider>
-  )
+  );
 }
 
-describe('useProviders', () => {
-  let mockApi: ReturnType<typeof createMockApiClient>
+describe("useProviders", () => {
+  let mockApi: ReturnType<typeof createMockApiClient>;
 
   beforeEach(() => {
-    mockApi = createMockApiClient()
-  })
+    mockApi = createMockApiClient();
+  });
 
-  it('should fetch providers on mount', async () => {
+  it("should fetch providers on mount", async () => {
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
-    expect(result.current.loading).toBe(true)
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    expect(result.current.providers).toEqual([mockProvider])
-    expect(result.current.error).toBeNull()
-    expect(mockApi.providers.list).toHaveBeenCalled()
-  })
-
-  it('should handle fetch error', async () => {
-    mockApi.providers.list = vi.fn().mockRejectedValue(new Error('Network error'))
-
-    const { result } = renderHook(() => useProviders(), {
-      wrapper: createWrapper(mockApi),
-    })
+    expect(result.current.loading).toBe(true);
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
-    expect(result.current.error).toBeInstanceOf(Error)
-    expect(result.current.error?.message).toBe('Network error')
-    expect(result.current.providers).toEqual([])
-  })
+    expect(result.current.providers).toEqual([mockProvider]);
+    expect(result.current.error).toBeNull();
+    expect(mockApi.providers.list).toHaveBeenCalled();
+  });
 
-  it('should handle non-Error rejection', async () => {
-    mockApi.providers.list = vi.fn().mockRejectedValue('string error')
+  it("should handle fetch error", async () => {
+    mockApi.providers.list = vi
+      .fn()
+      .mockRejectedValue(new Error("Network error"));
 
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
-    expect(result.current.error?.message).toBe('Failed to fetch providers')
-  })
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe("Network error");
+    expect(result.current.providers).toEqual([]);
+  });
 
-  it('should refetch providers', async () => {
+  it("should handle non-Error rejection", async () => {
+    mockApi.providers.list = vi.fn().mockRejectedValue("string error");
+
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.error?.message).toBe("Failed to fetch providers");
+  });
+
+  it("should refetch providers", async () => {
+    const { result } = renderHook(() => useProviders(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
 
     await act(async () => {
-      await result.current.refetch()
-    })
+      await result.current.refetch();
+    });
 
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2)
-  })
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
 
-  it('should create provider and refetch', async () => {
+  it("should create provider and refetch", async () => {
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
-    const input = { name: 'New', base_url: 'https://new.example.com', api_key: 'key', api_types: ['claude'] }
+    const input = {
+      name: "New",
+      base_url: "https://new.example.com",
+      api_key: "key",
+      api_types: ["claude"],
+    };
     await act(async () => {
-      await result.current.createProvider(input)
-    })
+      await result.current.createProvider(input);
+    });
 
-    expect(mockApi.providers.create).toHaveBeenCalledWith(input)
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2)
-  })
+    expect(mockApi.providers.create).toHaveBeenCalledWith(input);
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
 
-  it('should update provider and refetch', async () => {
+  it("should update provider and refetch", async () => {
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
-    const input = { name: 'Updated', base_url: 'https://updated.example.com', api_key: 'key', api_types: ['claude'] }
+    const input = {
+      name: "Updated",
+      base_url: "https://updated.example.com",
+      api_key: "key",
+      api_types: ["claude"],
+    };
     await act(async () => {
-      await result.current.updateProvider('1', input)
-    })
+      await result.current.updateProvider("1", input);
+    });
 
-    expect(mockApi.providers.update).toHaveBeenCalledWith('1', input)
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2)
-  })
+    expect(mockApi.providers.update).toHaveBeenCalledWith("1", input);
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
 
-  it('should delete provider and refetch', async () => {
+  it("should delete provider and refetch", async () => {
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
     await act(async () => {
-      await result.current.deleteProvider('1')
-    })
+      await result.current.deleteProvider("1");
+    });
 
-    expect(mockApi.providers.delete).toHaveBeenCalledWith('1')
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2)
-  })
+    expect(mockApi.providers.delete).toHaveBeenCalledWith("1");
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
 
-  it('should enable provider and refetch', async () => {
+  it("should enable provider and refetch", async () => {
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
     await act(async () => {
-      await result.current.enableProvider('1')
-    })
+      await result.current.enableProvider("1");
+    });
 
-    expect(mockApi.providers.enable).toHaveBeenCalledWith('1')
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2)
-  })
+    expect(mockApi.providers.enable).toHaveBeenCalledWith("1");
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
 
-  it('should disable provider and refetch', async () => {
+  it("should disable provider and refetch", async () => {
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
     await act(async () => {
-      await result.current.disableProvider('1')
-    })
+      await result.current.disableProvider("1");
+    });
 
-    expect(mockApi.providers.disable).toHaveBeenCalledWith('1')
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2)
-  })
+    expect(mockApi.providers.disable).toHaveBeenCalledWith("1");
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
 
-  it('should reset provider and refetch', async () => {
+  it("should reset provider and refetch", async () => {
     const { result } = renderHook(() => useProviders(), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
     await act(async () => {
-      await result.current.resetProvider('1')
-    })
+      await result.current.resetProvider("1");
+    });
 
-    expect(mockApi.providers.reset).toHaveBeenCalledWith('1')
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2)
-  })
-})
+    expect(mockApi.providers.reset).toHaveBeenCalledWith("1");
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
+});
 
-describe('useProvider', () => {
-  let mockApi: ReturnType<typeof createMockApiClient>
+describe("useProvider", () => {
+  let mockApi: ReturnType<typeof createMockApiClient>;
 
   beforeEach(() => {
-    mockApi = createMockApiClient()
-  })
+    mockApi = createMockApiClient();
+  });
 
-  it('should fetch single provider on mount', async () => {
-    const { result } = renderHook(() => useProvider('1'), {
+  it("should fetch single provider on mount", async () => {
+    const { result } = renderHook(() => useProvider("1"), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
-    expect(result.current.loading).toBe(true)
+    expect(result.current.loading).toBe(true);
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
-    expect(result.current.provider).toEqual(mockProvider)
-    expect(result.current.error).toBeNull()
-    expect(mockApi.providers.get).toHaveBeenCalledWith('1')
-  })
+    expect(result.current.provider).toEqual(mockProvider);
+    expect(result.current.error).toBeNull();
+    expect(mockApi.providers.get).toHaveBeenCalledWith("1");
+  });
 
-  it('should handle fetch error', async () => {
-    mockApi.providers.get = vi.fn().mockRejectedValue(new Error('Not found'))
+  it("should handle fetch error", async () => {
+    mockApi.providers.get = vi.fn().mockRejectedValue(new Error("Not found"));
 
-    const { result } = renderHook(() => useProvider('1'), {
+    const { result } = renderHook(() => useProvider("1"), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
-    expect(result.current.error).toBeInstanceOf(Error)
-    expect(result.current.error?.message).toBe('Not found')
-  })
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe("Not found");
+  });
 
-  it('should handle non-Error rejection', async () => {
-    mockApi.providers.get = vi.fn().mockRejectedValue('string error')
+  it("should handle non-Error rejection", async () => {
+    mockApi.providers.get = vi.fn().mockRejectedValue("string error");
 
-    const { result } = renderHook(() => useProvider('1'), {
+    const { result } = renderHook(() => useProvider("1"), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
-    expect(result.current.error?.message).toBe('Failed to fetch provider')
-  })
+    expect(result.current.error?.message).toBe("Failed to fetch provider");
+  });
 
-  it('should not fetch when id is empty', async () => {
-    const { result } = renderHook(() => useProvider(''), {
+  it("should not fetch when id is empty", async () => {
+    const { result } = renderHook(() => useProvider(""), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     // Give time for any potential fetch to complete
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(mockApi.providers.get).not.toHaveBeenCalled()
-    expect(result.current.provider).toBeNull()
-  })
+    expect(mockApi.providers.get).not.toHaveBeenCalled();
+    expect(result.current.provider).toBeNull();
+  });
 
-  it('should refetch provider', async () => {
-    const { result } = renderHook(() => useProvider('1'), {
+  it("should refetch provider", async () => {
+    const { result } = renderHook(() => useProvider("1"), {
       wrapper: createWrapper(mockApi),
-    })
+    });
 
     await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
+      expect(result.current.loading).toBe(false);
+    });
 
     await act(async () => {
-      await result.current.refetch()
-    })
+      await result.current.refetch();
+    });
 
-    expect(mockApi.providers.get).toHaveBeenCalledTimes(2)
-  })
-})
+    expect(mockApi.providers.get).toHaveBeenCalledTimes(2);
+  });
+});

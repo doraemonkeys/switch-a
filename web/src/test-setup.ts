@@ -1,4 +1,4 @@
-import '@testing-library/jest-dom'
+import "@testing-library/jest-dom";
 
 /**
  * Test setup for Vitest + React Testing Library

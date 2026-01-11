@@ -1,10 +1,10 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { Layout } from '@/components/Layout'
-import { Dashboard } from '@/pages/Dashboard'
-import { Providers } from '@/pages/Providers'
-import { Groups } from '@/pages/Groups'
-import { Config } from '@/pages/Config'
-import { Logs } from '@/pages/Logs'
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Layout } from "@/components/Layout";
+import { Dashboard } from "@/pages/Dashboard";
+import { Providers } from "@/pages/Providers";
+import { Groups } from "@/pages/Groups";
+import { Config } from "@/pages/Config";
+import { Logs } from "@/pages/Logs";
 
 function App() {
   return (
@@ -20,7 +20,7 @@ function App() {
         </Route>
       </Routes>
     </BrowserRouter>
-  )
+  );
 }
 
-export default App
+export default App;

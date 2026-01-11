@@ -6,8 +6,8 @@ export {
   ApiError,
   createApiClient,
   createTokenManager,
-} from './client'
-export type { ApiClient } from './client'
+} from "./client";
+export type { ApiClient } from "./client";
 
 // Type exports
 export type {
@@ -18,12 +18,12 @@ export type {
   HealthState,
   SystemStatus,
   RequestLog,
-} from './client'
+} from "./client";
 
 // Interface exports (for testing/mocking)
-export type { Storage, HttpClient, ApiClientDeps } from './interfaces'
-export { browserStorage, browserHttpClient } from './interfaces'
+export type { Storage, HttpClient, ApiClientDeps } from "./interfaces";
+export { browserStorage, browserHttpClient } from "./interfaces";
 
 // Context exports
-export { ApiProvider } from './ApiContext'
-export { useApi } from './useApi'
+export { ApiProvider } from "./ApiContext";
+export { useApi } from "./useApi";

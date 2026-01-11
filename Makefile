@@ -28,7 +28,7 @@ ci:
 	@cd web && pnpm test:coverage --silent
 
 # 正常模式
-verify: coverage lint sloc fmt web-lint web-coverage
+verify: coverage lint sloc fmt web-lint web-coverage web-fmt
 
 lint:
 	golangci-lint run
@@ -47,6 +47,9 @@ test:
 
 fmt:
 	go fmt ./...
+
+web-fmt:
+	cd web && pnpm fmt
 
 # 生成覆盖率报告并在终端显示
 cover:
