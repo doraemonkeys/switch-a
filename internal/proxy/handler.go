@@ -255,7 +255,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	for attempt := 0; attempt <= pctx.cfg.maxRetries && !headersWritten; attempt++ {
 		provider, err := h.selectProvider(ctx, pctx, attempt, excludedProviders)
 		if err != nil {
-			if errors.Is(err, ErrNoProvider) {
+			if errors.Is(err, internal.ErrNoProvider) {
 				h.handleNoProvider(pctx)
 				return
 			}
@@ -422,7 +422,7 @@ func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext
 		return nil, err
 	}
 	if len(providers) == 0 {
-		return nil, ErrNoProvider
+		return nil, internal.ErrNoProvider
 	}
 	// Simple round-robin: cycle through providers on each retry attempt
 	provider := providers[attempt%len(providers)]
@@ -433,7 +433,7 @@ func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext
 func (h *Handler) handleNoProvider(pctx *proxyContext) {
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(pctx.info, nil, 0, false, ErrNoProvider, time.Since(pctx.startTime))
+	go h.logRequest(pctx.info, nil, 0, false, internal.ErrNoProvider, time.Since(pctx.startTime))
 }
 
 // handleExhaustedRetries handles exhausted retry attempts.
@@ -465,9 +465,6 @@ func (h *Handler) releaseConcurrency(providerID string) {
 		h.selector.ReleaseConcurrency(providerID)
 	}
 }
-
-// ErrNoProvider is an alias for the shared error (for backwards compatibility).
-var ErrNoProvider = internal.ErrNoProvider
 
 // loadConfig loads runtime configuration from the store.
 // Returns an immutable runtimeConfig struct for use during the request.

@@ -133,22 +133,6 @@ func (e *sseIdleTimeoutError) Error() string {
 	return "SSE stream idle timeout: no data received within timeout period"
 }
 
-// ForwardRequest forwards a request to the upstream server and writes the response to w.
-// Returns whether the response headers have been written (affects retry capability).
-//
-// Deprecated: Use FetchUpstream + WriteToClient for retry-aware forwarding.
-// This method is kept for backward compatibility but immediately writes headers.
-func (t *Transport) ForwardRequest(ctx context.Context, w http.ResponseWriter, upstreamReq *http.Request) (headersWritten bool, statusCode int, err error) {
-	resp, err := t.FetchUpstream(ctx, upstreamReq)
-	if err != nil {
-		return false, 0, err
-	}
-	defer resp.Close()
-
-	err = t.WriteToClient(ctx, w, resp)
-	return true, resp.StatusCode, err
-}
-
 // isSSEResponse checks if the response is Server-Sent Events.
 func isSSEResponse(resp *http.Response) bool {
 	contentType := resp.Header.Get("Content-Type")

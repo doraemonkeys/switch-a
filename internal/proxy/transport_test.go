@@ -60,7 +60,7 @@ func TestTransport_Do(t *testing.T) {
 	}
 }
 
-func TestTransport_ForwardRequest(t *testing.T) {
+func TestTransport_FetchAndWrite(t *testing.T) {
 	t.Run("normal response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -76,15 +76,19 @@ func TestTransport_ForwardRequest(t *testing.T) {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		w := httptest.NewRecorder()
 
-		written, statusCode, err := transport.ForwardRequest(context.Background(), w, req)
+		resp, err := transport.FetchUpstream(context.Background(), req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !written {
-			t.Error("expected headers to be written")
+		defer resp.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 		}
-		if statusCode != http.StatusOK {
-			t.Errorf("status = %d, want %d", statusCode, http.StatusOK)
+
+		err = transport.WriteToClient(context.Background(), w, resp)
+		if err != nil {
+			t.Fatalf("unexpected error writing to client: %v", err)
 		}
 		if w.Header().Get("Content-Type") != "application/json" {
 			t.Errorf("Content-Type = %q, want %q", w.Header().Get("Content-Type"), "application/json")
@@ -108,15 +112,19 @@ func TestTransport_ForwardRequest(t *testing.T) {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		w := httptest.NewRecorder()
 
-		written, statusCode, err := transport.ForwardRequest(context.Background(), w, req)
+		resp, err := transport.FetchUpstream(context.Background(), req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !written {
-			t.Error("expected headers to be written")
+		defer resp.Close()
+
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusInternalServerError)
 		}
-		if statusCode != http.StatusInternalServerError {
-			t.Errorf("status = %d, want %d", statusCode, http.StatusInternalServerError)
+
+		err = transport.WriteToClient(context.Background(), w, resp)
+		if err != nil {
+			t.Fatalf("unexpected error writing to client: %v", err)
 		}
 	})
 
@@ -142,15 +150,19 @@ func TestTransport_ForwardRequest(t *testing.T) {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		w := httptest.NewRecorder()
 
-		written, statusCode, err := transport.ForwardRequest(context.Background(), w, req)
+		resp, err := transport.FetchUpstream(context.Background(), req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !written {
-			t.Error("expected headers to be written")
+		defer resp.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 		}
-		if statusCode != http.StatusOK {
-			t.Errorf("status = %d, want %d", statusCode, http.StatusOK)
+
+		err = transport.WriteToClient(context.Background(), w, resp)
+		if err != nil {
+			t.Fatalf("unexpected error writing to client: %v", err)
 		}
 		if !strings.Contains(w.Body.String(), "data: event1") {
 			t.Error("response should contain event1")
@@ -326,7 +338,13 @@ func TestSSEIdleTimeout(t *testing.T) {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		w := httptest.NewRecorder()
 
-		_, _, err := transport.ForwardRequest(context.Background(), w, req)
+		resp, err := transport.FetchUpstream(context.Background(), req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer resp.Close()
+
+		err = transport.WriteToClient(context.Background(), w, resp)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -353,7 +371,13 @@ func TestSSEIdleTimeout(t *testing.T) {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		w := httptest.NewRecorder()
 
-		_, _, err := transport.ForwardRequest(context.Background(), w, req)
+		resp, err := transport.FetchUpstream(context.Background(), req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer resp.Close()
+
+		err = transport.WriteToClient(context.Background(), w, resp)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

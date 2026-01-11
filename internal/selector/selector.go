@@ -335,10 +335,7 @@ func (s *Selector) getProviderByIDIfValid(ctx context.Context, providerID, apiTy
 }
 
 // UpdateSticky updates the sticky cache after a successful request using the default TTL.
-//
-// Note: This method is kept for API compatibility and simpler use cases.
-// The proxy handler uses UpdateStickyWithTTL for configurable TTL support.
-// If you need to specify a custom TTL, use UpdateStickyWithTTL instead.
+// This is a convenience method; use UpdateStickyWithTTL if you need a custom TTL.
 func (s *Selector) UpdateSticky(req *model.SelectRequest, providerID string) {
 	if s.sticky == nil {
 		return
