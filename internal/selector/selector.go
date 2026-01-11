@@ -166,8 +166,13 @@ func (s *Selector) SelectExcluding(ctx context.Context, req *model.SelectRequest
 }
 
 // checkStickyCache checks for a cached sticky provider and returns it if available.
+// Returns nil if sticky sessions are disabled (StickyEnabled=false) or if no valid cached provider exists.
 func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectRequest) *model.Provider {
 	if s.sticky == nil {
+		return nil
+	}
+
+	if !req.StickyEnabled {
 		return nil
 	}
 

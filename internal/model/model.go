@@ -86,10 +86,11 @@ type StickyKey struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
-	ClientIP string
-	User     string
-	APIType  string
-	Model    string
+	ClientIP      string
+	User          string
+	APIType       string
+	Model         string
+	StickyEnabled bool // Whether sticky sessions are enabled (pre-loaded from config)
 }
 
 // GatewayError represents an error response from the gateway.

@@ -199,9 +199,10 @@ func TestSelector_Select_WithStickyCache(t *testing.T) {
 	})
 
 	req := &model.SelectRequest{
-		ClientIP: "192.168.1.1",
-		User:     "user1",
-		APIType:  "claude",
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: true,
 	}
 
 	// Pre-populate sticky cache
@@ -219,6 +220,84 @@ func TestSelector_Select_WithStickyCache(t *testing.T) {
 	}
 	if provider.ID != "p2" {
 		t.Errorf("expected sticky p2, got %s", provider.ID)
+	}
+}
+
+func TestSelector_Select_StickyDisabledByConfig(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	sticky := NewMemoryStickyCache(clock)
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:       store,
+		StickyCache: sticky,
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: false, // Sticky sessions disabled (pre-loaded from config by caller)
+	}
+
+	// Pre-populate sticky cache with p2
+	stickyKey := model.StickyKey{
+		IP:      req.ClientIP,
+		User:    req.User,
+		APIType: req.APIType,
+	}
+	sticky.Set(stickyKey, "p2", 5*time.Minute)
+
+	// Should skip sticky cache and select by priority (p1)
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p1" {
+		t.Errorf("expected p1 (sticky disabled), got %s", provider.ID)
+	}
+}
+
+func TestSelector_Select_StickyEnabledWithNilCache(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	// Create selector without StickyCache (nil)
+	sel := NewSelector(Config{
+		Store:       store,
+		StickyCache: nil, // No sticky cache configured
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: true, // Sticky enabled but no cache configured
+	}
+
+	// Should gracefully fall back to priority selection (p1)
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p1" {
+		t.Errorf("expected p1 (fallback to priority), got %s", provider.ID)
 	}
 }
 
@@ -241,9 +320,10 @@ func TestSelector_Select_StickyExpired(t *testing.T) {
 	})
 
 	req := &model.SelectRequest{
-		ClientIP: "192.168.1.1",
-		User:     "user1",
-		APIType:  "claude",
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: true,
 	}
 
 	// Pre-populate sticky cache
@@ -593,9 +673,10 @@ func TestSelector_StickyCache_ProviderDisabled(t *testing.T) {
 	})
 
 	req := &model.SelectRequest{
-		ClientIP: "192.168.1.1",
-		User:     "user1",
-		APIType:  "claude",
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: true,
 	}
 
 	// Pre-populate sticky cache with disabled provider
@@ -648,9 +729,10 @@ func TestSelector_StickyCache_ProviderWrongAPIType(t *testing.T) {
 	})
 
 	req := &model.SelectRequest{
-		ClientIP: "192.168.1.1",
-		User:     "user1",
-		APIType:  "claude",
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: true,
 	}
 
 	// Pre-populate sticky cache with provider that has wrong API type
@@ -700,9 +782,10 @@ func TestSelector_StickyCache_HealthCheck(t *testing.T) {
 	})
 
 	req := &model.SelectRequest{
-		ClientIP: "192.168.1.1",
-		User:     "user1",
-		APIType:  "claude",
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: true,
 	}
 
 	// Pre-populate sticky cache with unhealthy provider
@@ -752,9 +835,10 @@ func TestSelector_StickyCache_ConcurrencyLimit(t *testing.T) {
 	})
 
 	req := &model.SelectRequest{
-		ClientIP: "192.168.1.1",
-		User:     "user1",
-		APIType:  "claude",
+		ClientIP:      "192.168.1.1",
+		User:          "user1",
+		APIType:       "claude",
+		StickyEnabled: true,
 	}
 
 	// Pre-populate sticky cache with provider at concurrency limit

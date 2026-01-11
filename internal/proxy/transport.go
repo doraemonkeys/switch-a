@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -245,7 +246,7 @@ func (t *Transport) forwardRegular(ctx context.Context, w http.ResponseWriter, b
 			}
 
 			if result.err != nil {
-				if result.err == io.EOF {
+				if errors.Is(result.err, io.EOF) {
 					return nil // Normal completion
 				}
 				return result.err

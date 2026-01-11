@@ -233,10 +233,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		startTime: startTime,
 	}
 	pctx.selectReq = &model.SelectRequest{
-		ClientIP: pctx.info.ClientIP,
-		User:     pctx.info.UserID,
-		APIType:  apiType,
-		Model:    pctx.info.Model,
+		ClientIP:      pctx.info.ClientIP,
+		User:          pctx.info.UserID,
+		APIType:       apiType,
+		Model:         pctx.info.Model,
+		StickyEnabled: cfg.stickyEnabled,
 	}
 
 	// Execute proxy with retry logic
