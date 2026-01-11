@@ -35,6 +35,14 @@ type configEntry struct {
 
 // CachedStore wraps a Store with in-memory caching for config values.
 // This reduces database pressure for high-frequency config reads during proxy requests.
+//
+// Design tradeoffs:
+//   - GetAllConfig is NOT cached (returns fresh values), while GetConfig uses cache.
+//     This may cause brief inconsistency (up to 5s TTL), acceptable for proxy use.
+//   - No stampede protection on cache expiry. Acceptable for low-cardinality config
+//     keys with 5s TTL. Consider singleflight if this becomes a bottleneck.
+//   - TOCTOU gap: concurrent requests for the same expired key may redundantly fetch
+//     from DB. Not a correctness bug, just slightly wasteful under high concurrency.
 type CachedStore struct {
 	internal.Store
 	cache    map[string]configEntry
@@ -83,10 +91,11 @@ func (s *CachedStore) GetConfig(ctx context.Context, key string) (string, error)
 	}
 
 	// Cache the value with write lock
+	// Use fresh timestamp after DB call for accurate TTL
 	s.mu.Lock()
 	s.cache[key] = configEntry{
 		value:     value,
-		expiresAt: now.Add(s.cacheTTL),
+		expiresAt: s.clock.Now().Add(s.cacheTTL),
 	}
 	s.mu.Unlock()
 
@@ -139,4 +148,14 @@ func (s *CachedStore) InvalidateAllConfig() {
 	s.mu.Lock()
 	s.cache = make(map[string]configEntry)
 	s.mu.Unlock()
+}
+
+// InitDefaultConfig initializes default config values and invalidates the cache.
+// This override ensures cache consistency even if called after startup.
+func (s *CachedStore) InitDefaultConfig(ctx context.Context) error {
+	if err := s.Store.InitDefaultConfig(ctx); err != nil {
+		return err
+	}
+	s.InvalidateAllConfig()
+	return nil
 }

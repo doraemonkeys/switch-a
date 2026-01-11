@@ -337,6 +337,9 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
 		h.logger.Error("failed to build upstream request", zap.Error(err))
 		result.err = err
+		// Mark failure for invalid URL configuration so circuit breaker can trigger.
+		// This prevents bad configurations from being infinitely retried.
+		h.markFailure(ctx, provider.ID, err)
 		h.releaseConcurrency(provider.ID)
 		return result
 	}
@@ -391,10 +394,12 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		result.err = writeErr
 		result.success = false
 
-		// Check if this is an upstream timeout error (not a client disconnect).
-		// ErrReadTimeout and ErrSSEIdleTimeout indicate the upstream stopped sending data,
-		// which should trigger circuit breaker to avoid routing to hanging providers.
-		if errors.Is(writeErr, ErrReadTimeout) || errors.Is(writeErr, ErrSSEIdleTimeout) {
+		// Check if this is an upstream error (not a client disconnect).
+		// These errors indicate problems with the upstream provider and should
+		// trigger circuit breaker to avoid routing to problematic providers:
+		// - ErrReadTimeout/ErrSSEIdleTimeout: upstream stopped sending data
+		// - UpstreamReadError: upstream connection reset, unexpected EOF, etc.
+		if errors.Is(writeErr, ErrReadTimeout) || errors.Is(writeErr, ErrSSEIdleTimeout) || IsUpstreamReadError(writeErr) {
 			h.markFailure(ctx, provider.ID, writeErr)
 		}
 		// For other write errors (e.g., client disconnected), we don't markFailure

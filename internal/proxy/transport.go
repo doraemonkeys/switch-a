@@ -249,7 +249,8 @@ func (t *Transport) forwardRegular(ctx context.Context, w http.ResponseWriter, b
 				if errors.Is(result.err, io.EOF) {
 					return nil // Normal completion
 				}
-				return result.err
+				// Wrap as upstream read error to distinguish from client write errors
+				return NewUpstreamReadError(result.err)
 			}
 
 		case <-timer.C:
@@ -381,7 +382,8 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 			if t.sseIdleTimeout > 0 && isClosedError(err) {
 				return ErrSSEIdleTimeout
 			}
-			return err // coverage-ignore -- read errors during SSE are rare
+			// Wrap as upstream read error to distinguish from client write errors
+			return NewUpstreamReadError(err) // coverage-ignore -- read errors during SSE are rare
 		}
 	}
 }
