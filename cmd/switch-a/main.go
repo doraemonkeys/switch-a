@@ -104,15 +104,23 @@ func run() error {
 	log.Info("starting switch-a", zap.String("port", cfg.Port))
 
 	// Initialize store
-	st, err := store.NewSQLiteStore(cfg.DBPath, internal.RealClock{})
+	sqlStore, err := store.NewSQLiteStore(cfg.DBPath, internal.RealClock{})
 	if err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
 	}
-	defer func() { _ = st.Close() }()
+
+	// Wrap with caching layer to reduce database pressure for config reads.
+	// Each proxy request reads 10+ config values; caching prevents database
+	// overload under high QPS while allowing config changes to propagate quickly.
+	st := store.NewCachedStore(store.CachedStoreConfig{
+		Store: sqlStore,
+		// Default TTL of 5 seconds balances responsiveness with performance
+	})
+	defer func() { _ = sqlStore.Close() }()
 
 	// Initialize default configuration
 	ctx := context.Background()
-	if err := st.InitDefaultConfig(ctx); err != nil {
+	if err := sqlStore.InitDefaultConfig(ctx); err != nil {
 		return fmt.Errorf("failed to initialize default config: %w", err)
 	}
 

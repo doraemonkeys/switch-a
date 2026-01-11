@@ -362,12 +362,14 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 
 	// Check if response indicates failure (5xx or 429) BEFORE writing to client
 	if shouldRetry(result.statusCode) {
+		statusErr := fmt.Errorf("upstream returned status %d", result.statusCode)
 		h.logger.Warn("upstream returned error status",
 			zap.String("provider_id", provider.ID),
 			zap.Int("status_code", result.statusCode),
 			zap.Int("attempt", attempt+1),
 		)
-		h.markFailure(ctx, provider.ID, fmt.Errorf("upstream returned status %d", result.statusCode))
+		result.err = statusErr // Record error for proper "all providers failed" message
+		h.markFailure(ctx, provider.ID, statusErr)
 		h.releaseConcurrency(provider.ID)
 		upstreamResp.Close() // Close without writing to client
 		// headersWritten is still false, allowing retry with another provider
@@ -387,9 +389,15 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		)
 		result.err = writeErr
 		result.success = false
-		// Don't mark success for failed writes - this was a failure
-		// Note: We intentionally don't markFailure here either, as the upstream
-		// itself succeeded; only the client write failed (e.g., client disconnected)
+
+		// Check if this is an upstream timeout error (not a client disconnect).
+		// ErrReadTimeout and ErrSSEIdleTimeout indicate the upstream stopped sending data,
+		// which should trigger circuit breaker to avoid routing to hanging providers.
+		if errors.Is(writeErr, ErrReadTimeout) || errors.Is(writeErr, ErrSSEIdleTimeout) {
+			h.markFailure(ctx, provider.ID, writeErr)
+		}
+		// For other write errors (e.g., client disconnected), we don't markFailure
+		// as the upstream itself succeeded; only the client write failed.
 		h.releaseConcurrency(provider.ID)
 		return result
 	}
