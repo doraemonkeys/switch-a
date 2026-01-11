@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -109,7 +110,10 @@ func run() error {
 	log := logger.New(logger.DefaultConfig())
 	defer func() { _ = log.Sync() }()
 
-	log.Info("starting switch-a", zap.String("port", cfg.Port))
+	log.Info("starting switch-a",
+		zap.String("proxy_port", cfg.Port),
+		zap.String("admin_port", cfg.AdminPort),
+	)
 
 	// Initialize store
 	sqlStore, err := store.NewSQLiteStore(cfg.DBPath, internal.RealClock{})
@@ -172,9 +176,18 @@ func run() error {
 		Logger:        log,
 	})
 
-	// Create HTTP server with full component stack
-	srv := server.New(server.Config{
-		Port:        cfg.Port,
+	// Create proxy HTTP server (public port)
+	proxySrv := server.New(server.Config{
+		Port:     cfg.Port,
+		Logger:   log,
+		Store:    st,
+		Health:   healthMgr,
+		Selector: sel,
+	})
+
+	// Create admin HTTP server (separate port for security)
+	adminSrv := server.NewAdmin(server.AdminConfig{
+		Port:        cfg.AdminPort,
 		AdminToken:  cfg.AdminToken,
 		Logger:      log,
 		Store:       st,
@@ -183,29 +196,55 @@ func run() error {
 		Concurrency: limiter,
 	})
 
-	// Start server in goroutine
-	errCh := make(chan error, 1)
+	// Start servers in goroutines
+	errCh := make(chan error, 2)
 	go func() {
-		errCh <- srv.Start()
+		errCh <- proxySrv.Start()
+	}()
+	go func() {
+		errCh <- adminSrv.Start()
 	}()
 
-	// Wait for interrupt signal
+	// Wait for interrupt signal or server error
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
 	case err := <-errCh:
-		return err
+		// Drain the channel to collect all errors if both servers failed simultaneously
+		var errs []error
+		errs = append(errs, err)
+		// Non-blocking drain of remaining errors
+		for {
+			select {
+			case e := <-errCh:
+				errs = append(errs, e)
+			default:
+				// No more errors in channel
+				return errors.Join(errs...)
+			}
+		}
 	case sig := <-sigCh:
 		log.Info("received signal, shutting down", zap.String("signal", sig.String()))
 	}
 
-	// Graceful shutdown
+	// Graceful shutdown of both servers
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown error: %w", err)
+	var shutdownErr error
+	if err := proxySrv.Shutdown(shutdownCtx); err != nil {
+		shutdownErr = fmt.Errorf("proxy server shutdown error: %w", err)
+	}
+	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+		if shutdownErr != nil {
+			shutdownErr = fmt.Errorf("%w; admin server shutdown error: %w", shutdownErr, err)
+		} else {
+			shutdownErr = fmt.Errorf("admin server shutdown error: %w", err)
+		}
+	}
+	if shutdownErr != nil {
+		return shutdownErr
 	}
 
 	log.Info("switch-a stopped")

@@ -9,6 +9,7 @@ import (
 // Config holds the startup configuration loaded from environment variables.
 type Config struct {
 	Port       string
+	AdminPort  string
 	DBPath     string
 	AdminToken string
 }
@@ -17,6 +18,7 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Port:       getEnvOrDefault(EnvPort, DefaultPort),
+		AdminPort:  getEnvOrDefault(EnvAdminPort, DefaultAdminPort),
 		DBPath:     getEnvOrDefault(EnvDBPath, DefaultDBPath),
 		AdminToken: os.Getenv(EnvAdminToken),
 	}

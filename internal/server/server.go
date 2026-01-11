@@ -56,14 +56,20 @@ type store interface {
 	CountLogs(ctx context.Context) (int64, error)
 }
 
-// Server represents the HTTP server.
+// Server represents the HTTP server (proxy only).
 type Server struct {
 	server       *http.Server
 	logger       *zap.Logger
 	store        store
-	adminToken   string
 	listener     net.Listener
 	proxyHandler *proxy.Handler
+}
+
+// AdminServer represents the admin HTTP server (separate port for security).
+type AdminServer struct {
+	server   *http.Server
+	logger   *zap.Logger
+	listener net.Listener
 }
 
 // ConcurrencyTracker is an alias to avoid duplicating the interface definition.
@@ -74,8 +80,17 @@ type ConcurrencyTracker = admin.ConcurrencyTracker
 // concurrency management and sticky sessions.
 type Selector = proxy.Selector
 
-// Config holds server configuration.
+// Config holds proxy server configuration.
 type Config struct {
+	Port     string
+	Logger   *zap.Logger
+	Store    store
+	Health   internal.HealthManager
+	Selector Selector
+}
+
+// AdminConfig holds admin server configuration.
+type AdminConfig struct {
 	Port        string
 	AdminToken  string
 	Logger      *zap.Logger
@@ -91,7 +106,7 @@ type HealthResponse struct {
 	Timestamp string `json:"timestamp"`
 }
 
-// New creates a new HTTP server.
+// New creates a new proxy HTTP server.
 func New(cfg Config) *Server {
 	mux := http.NewServeMux()
 
@@ -117,7 +132,6 @@ func New(cfg Config) *Server {
 		},
 		logger:       cfg.Logger,
 		store:        cfg.Store,
-		adminToken:   cfg.AdminToken,
 		proxyHandler: proxyHandler,
 	}
 
@@ -136,14 +150,34 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("POST "+proxy.RouteCustomPrefix, s.handleProxy)
 	mux.HandleFunc("GET "+proxy.RouteCustomPrefix, s.handleProxy)
 
-	// Admin API routes (require auth)
+	return s
+}
+
+// NewAdmin creates a new admin HTTP server (separate port for security).
+func NewAdmin(cfg AdminConfig) *AdminServer {
+	mux := http.NewServeMux()
+
+	s := &AdminServer{
+		server: &http.Server{
+			Addr:              net.JoinHostPort("", cfg.Port),
+			Handler:           mux,
+			ReadHeaderTimeout: ReadHeaderTimeout,
+			IdleTimeout:       IdleTimeout,
+		},
+		logger: cfg.Logger,
+	}
+
+	// Health check endpoint
+	mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Register admin API routes with authentication
 	s.registerAdminRoutes(mux, cfg)
 
 	return s
 }
 
 // registerAdminRoutes registers admin API routes with authentication.
-func (s *Server) registerAdminRoutes(mux *http.ServeMux, cfg Config) {
+func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Create admin handler with cleaner for proper resource cleanup.
 	// The Selector implements ConcurrencyCleaner for clearing concurrency
 	// counters when providers are deleted.
@@ -212,8 +246,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
-// handleHealth handles the /health endpoint.
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+// writeHealthResponse writes a JSON health check response.
+// This is a shared implementation used by both Server and AdminServer to avoid duplication.
+func writeHealthResponse(w http.ResponseWriter, logger *zap.Logger) {
 	resp := HealthResponse{
 		Status:    "ok",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -222,14 +257,54 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil { // coverage-ignore -- JSON encoding of simple struct rarely fails
-		s.logger.Error("failed to encode health response", zap.Error(err))
+		logger.Error("failed to encode health response", zap.Error(err))
 	}
+}
+
+// handleHealth handles the /health endpoint.
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeHealthResponse(w, s.logger)
 }
 
 // Addr returns the server's address.
 // If the server is listening, returns the actual address (useful when port 0 is used).
 // Otherwise, returns the configured address.
 func (s *Server) Addr() string {
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
+	return s.server.Addr
+}
+
+// Start starts the admin HTTP server.
+func (s *AdminServer) Start() error {
+	ln, err := net.Listen("tcp", s.server.Addr)
+	if err != nil { // coverage-ignore -- port binding errors require specific conditions
+		return err
+	}
+	s.listener = ln
+	s.logger.Info("starting admin HTTP server", zap.String("addr", ln.Addr().String()))
+	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed { // coverage-ignore -- serve errors after successful listen are rare
+		return err
+	}
+	return nil
+}
+
+// Shutdown gracefully shuts down the admin server.
+func (s *AdminServer) Shutdown(ctx context.Context) error {
+	s.logger.Info("shutting down admin HTTP server")
+	return s.server.Shutdown(ctx)
+}
+
+// handleHealth handles the /health endpoint for admin server.
+func (s *AdminServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeHealthResponse(w, s.logger)
+}
+
+// Addr returns the admin server's address.
+// If the server is listening, returns the actual address (useful when port 0 is used).
+// Otherwise, returns the configured address.
+func (s *AdminServer) Addr() string {
 	if s.listener != nil {
 		return s.listener.Addr().String()
 	}

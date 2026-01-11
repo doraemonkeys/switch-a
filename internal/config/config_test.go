@@ -7,6 +7,7 @@ import (
 func TestLoad_Success(t *testing.T) {
 	t.Setenv("SWITCHA_ADMIN_TOKEN", "test-token")
 	t.Setenv("SWITCHA_PORT", "9000")
+	t.Setenv("SWITCHA_ADMIN_PORT", "9001")
 	t.Setenv("SWITCHA_DB_PATH", "/tmp/test.db")
 
 	cfg, err := Load()
@@ -19,6 +20,9 @@ func TestLoad_Success(t *testing.T) {
 	}
 	if cfg.Port != "9000" {
 		t.Errorf("Port = %q, want %q", cfg.Port, "9000")
+	}
+	if cfg.AdminPort != "9001" {
+		t.Errorf("AdminPort = %q, want %q", cfg.AdminPort, "9001")
 	}
 	if cfg.DBPath != "/tmp/test.db" {
 		t.Errorf("DBPath = %q, want %q", cfg.DBPath, "/tmp/test.db")
@@ -35,6 +39,9 @@ func TestLoad_DefaultValues(t *testing.T) {
 
 	if cfg.Port != DefaultPort {
 		t.Errorf("Port = %q, want default %q", cfg.Port, DefaultPort)
+	}
+	if cfg.AdminPort != DefaultAdminPort {
+		t.Errorf("AdminPort = %q, want default %q", cfg.AdminPort, DefaultAdminPort)
 	}
 	if cfg.DBPath != "./data.db" {
 		t.Errorf("DBPath = %q, want default %q", cfg.DBPath, "./data.db")

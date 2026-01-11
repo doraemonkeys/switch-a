@@ -56,6 +56,17 @@ func testServer(t *testing.T) *Server {
 	})
 }
 
+func testAdminServer(t *testing.T) *AdminServer {
+	t.Helper()
+	logger, _ := zap.NewDevelopment()
+	return NewAdmin(AdminConfig{
+		Port:       "0",
+		AdminToken: "test-token",
+		Logger:     logger,
+		Store:      &mockStore{},
+	})
+}
+
 func TestNew(t *testing.T) {
 	s := testServer(t)
 	if s == nil {
@@ -160,6 +171,96 @@ func TestServerStartAndShutdown(t *testing.T) {
 	}
 	if !ready {
 		t.Fatal("server did not become ready in time")
+	}
+
+	// Shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := s.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown error: %v", err)
+	}
+
+	// Start should return nil after shutdown
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("Start returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("Start did not return after shutdown")
+	}
+}
+
+func TestNewAdmin(t *testing.T) {
+	s := testAdminServer(t)
+	if s == nil {
+		t.Fatal("expected non-nil admin server")
+	}
+}
+
+func TestAdminServerAddr(t *testing.T) {
+	s := testAdminServer(t)
+	addr := s.Addr()
+	if addr == "" {
+		t.Error("expected non-empty address")
+	}
+}
+
+func TestAdminServerShutdown(t *testing.T) {
+	s := testAdminServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Shutdown without starting should not error
+	if err := s.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown error: %v", err)
+	}
+}
+
+func TestAdminServerStartAndShutdown(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	s := NewAdmin(AdminConfig{
+		Port:       "0", // Use port 0 to get a random available port
+		AdminToken: "test-token",
+		Logger:     logger,
+		Store:      &mockStore{},
+	})
+
+	// Start server in background
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.Start()
+	}()
+
+	// Poll health endpoint until server is ready (max 5 seconds)
+	ready := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		addr := s.Addr()
+		// Wait until the listener is set and we have an actual address
+		if addr == ":0" {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		// Extract port from address (handles both IPv4 and IPv6 formats)
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		resp, err := http.Get("http://127.0.0.1:" + port + "/health")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				ready = true
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("admin server did not become ready in time")
 	}
 
 	// Shutdown
