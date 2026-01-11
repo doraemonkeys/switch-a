@@ -41,6 +41,9 @@ type Store interface {
 	IncrementFailCount(ctx context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error)
 	// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
 	TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
+	// AtomicRecoverIfExpired atomically checks if a provider's auto-disable period has expired
+	// and recovers it. Returns true if recovery was performed, false otherwise.
+	AtomicRecoverIfExpired(ctx context.Context, providerID string, now time.Time) (bool, error)
 }
 
 // Config holds health manager configuration.
@@ -141,32 +144,27 @@ func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error)
 // and performs recovery if so. This method has side effects - it updates
 // the provider's health state and resets the circuit breaker.
 // Returns true if recovery was performed, false otherwise.
+//
+// Uses atomic database operation to prevent race conditions where concurrent
+// calls could overwrite each other's state updates.
 func (m *Manager) RecoverIfExpired(ctx context.Context, providerID string) bool {
-	state, err := m.store.GetHealthState(ctx, providerID)
+	now := m.clock.Now()
+
+	// Use atomic check-and-update to prevent race conditions.
+	// This prevents lost updates when concurrent requests call RecoverIfExpired simultaneously.
+	recovered, err := m.store.AtomicRecoverIfExpired(ctx, providerID, now)
 	if err != nil {
-		m.logger.Error("failed to get health state", zap.String("provider_id", providerID), zap.Error(err))
+		m.logger.Error("failed to recover provider", zap.String("provider_id", providerID), zap.Error(err))
 		return false
 	}
 
-	// Check if auto-disabled and if disable period has expired
-	if state.DisabledUntil != nil && !state.Available {
-		if m.clock.Now().After(*state.DisabledUntil) {
-			// Disable period expired, auto-recover
-			state.Available = true
-			state.DisabledUntil = nil
-			state.DisabledReason = ""
-			m.circuit.Reset(providerID)
-
-			if err := m.store.UpdateHealthState(ctx, state); err != nil {
-				m.logger.Error("failed to update health state on auto-recovery",
-					zap.String("provider_id", providerID), zap.Error(err))
-				return false
-			}
-			m.logger.Info("provider auto-recovered", zap.String("provider_id", providerID))
-			return true
-		}
+	if recovered {
+		// Reset in-memory circuit breaker state
+		m.circuit.Reset(providerID)
+		m.logger.Info("provider auto-recovered", zap.String("provider_id", providerID))
 	}
-	return false
+
+	return recovered
 }
 
 // IsAvailable checks if the provider is currently available.
@@ -183,6 +181,11 @@ func (m *Manager) IsAvailable(ctx context.Context, providerID string) bool {
 }
 
 // ManualDisable manually disables a provider.
+//
+// Race condition note: This method uses read-modify-write pattern which is not atomic.
+// However, this is acceptable because manual disable/enable are low-frequency admin
+// operations (typically triggered by UI button clicks), not high-concurrency code paths.
+// The probability of concurrent admin actions on the same provider is negligible.
 func (m *Manager) ManualDisable(ctx context.Context, providerID string, reason string) error {
 	state, err := m.store.GetHealthState(ctx, providerID)
 	if err != nil {
@@ -200,6 +203,11 @@ func (m *Manager) ManualDisable(ctx context.Context, providerID string, reason s
 }
 
 // ManualEnable manually enables a provider (clears disabled state).
+//
+// Race condition note: This method uses read-modify-write pattern which is not atomic.
+// However, this is acceptable because manual disable/enable are low-frequency admin
+// operations (typically triggered by UI button clicks), not high-concurrency code paths.
+// The probability of concurrent admin actions on the same provider is negligible.
 func (m *Manager) ManualEnable(ctx context.Context, providerID string) error {
 	state, err := m.store.GetHealthState(ctx, providerID)
 	if err != nil {

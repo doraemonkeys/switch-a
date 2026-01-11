@@ -362,9 +362,9 @@ func TestSSEIdleTimeout(t *testing.T) {
 
 func TestIsClosedError(t *testing.T) {
 	tests := []struct {
-		name    string
-		errMsg  string
-		want    bool
+		name   string
+		errMsg string
+		want   bool
 	}{
 		{"closed error", "use of closed network connection", true},
 		{"EOF error", "unexpected EOF", true},

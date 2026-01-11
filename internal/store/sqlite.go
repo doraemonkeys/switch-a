@@ -359,6 +359,31 @@ func (s *SQLiteStore) TriggerCircuitBreaker(ctx context.Context, providerID stri
 	return nil
 }
 
+// AtomicRecoverIfExpired atomically checks if a provider's auto-disable period has expired
+// and recovers it in a single SQL operation. This prevents race conditions where concurrent
+// calls could overwrite each other's state updates.
+// Returns true if recovery was performed, false otherwise.
+func (s *SQLiteStore) AtomicRecoverIfExpired(ctx context.Context, providerID string, now time.Time) (bool, error) {
+	// Use atomic SQL UPDATE with WHERE clause that checks the expiration condition.
+	// Only auto-disabled providers (with disabled_until set and available=false) are recovered.
+	// Manual disables (disabled_reason LIKE 'manual:%') are excluded.
+	result := s.db.WithContext(ctx).Exec(`
+		UPDATE health_states 
+		SET available = true,
+			disabled_until = NULL,
+			disabled_reason = ''
+		WHERE provider_id = ?
+			AND available = false
+			AND disabled_until IS NOT NULL
+			AND disabled_until < ?
+			AND disabled_reason NOT LIKE 'manual:%'
+	`, providerID, now)
+	if result.Error != nil {
+		return false, fmt.Errorf("atomic recover for provider %q: %w", providerID, result.Error)
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func (s *SQLiteStore) ListHealthStates(ctx context.Context) ([]model.HealthState, error) {
 	var states []model.HealthState
 	if err := s.db.WithContext(ctx).Find(&states).Error; err != nil {

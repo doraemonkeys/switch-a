@@ -38,6 +38,9 @@ type Store interface {
 	IncrementFailCount(ctx context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error)
 	// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
 	TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
+	// AtomicRecoverIfExpired atomically checks if a provider's auto-disable period has expired
+	// and recovers it. Returns true if recovery was performed, false otherwise.
+	AtomicRecoverIfExpired(ctx context.Context, providerID string, now time.Time) (bool, error)
 
 	// Config operations
 	GetConfig(ctx context.Context, key string) (string, error)

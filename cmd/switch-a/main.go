@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -24,6 +25,56 @@ func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(ExitCodeError)
+	}
+}
+
+// LogStore defines the minimal interface for log cleanup operations.
+type LogStore interface {
+	CleanOldLogs(ctx context.Context, beforeDays int) error
+	GetConfig(ctx context.Context, key string) (string, error)
+}
+
+// startLogCleanupLoop starts a background goroutine that periodically cleans up
+// old request logs to prevent the request_logs table from growing indefinitely.
+// Returns a stop function to terminate the cleanup loop.
+func startLogCleanupLoop(ctx context.Context, store LogStore, log *zap.Logger) (stop func()) {
+	ticker := time.NewTicker(LogCleanupInterval)
+	done := make(chan struct{})
+
+	go func() {
+		// Run initial cleanup on startup
+		cleanOldLogs(ctx, store, log)
+
+		for {
+			select {
+			case <-ticker.C:
+				cleanOldLogs(ctx, store, log)
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+	}
+}
+
+// cleanOldLogs performs the actual log cleanup, reading retention days from config.
+func cleanOldLogs(ctx context.Context, store LogStore, log *zap.Logger) {
+	// Get retention days from config, default to 7
+	retentionDays := DefaultLogRetentionDays
+	if val, err := store.GetConfig(ctx, "log_retention_days"); err == nil && val != "" {
+		if days, err := strconv.Atoi(val); err == nil && days > 0 {
+			retentionDays = days
+		}
+	}
+
+	if err := store.CleanOldLogs(ctx, retentionDays); err != nil {
+		log.Error("failed to clean old logs", zap.Error(err))
+	} else {
+		log.Debug("cleaned old request logs", zap.Int("retention_days", retentionDays))
 	}
 }
 
@@ -71,6 +122,10 @@ func run() error {
 	// Start cleanup loop to prevent memory growth from expired entries
 	stopCleanup := stickyCache.StartCleanupLoop(5 * time.Minute)
 	defer stopCleanup()
+
+	// Start log cleanup loop to prevent request_logs table from growing indefinitely
+	stopLogCleanup := startLogCleanupLoop(ctx, st, log)
+	defer stopLogCleanup()
 
 	// Initialize concurrency limiter for per-provider request limits
 	limiter := selector.NewConcurrencyLimiter()

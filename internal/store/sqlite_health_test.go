@@ -233,3 +233,148 @@ func TestTriggerCircuitBreaker(t *testing.T) {
 		t.Error("expected DisabledUntil to be set")
 	}
 }
+
+func TestAtomicRecoverIfExpired(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create provider first
+	provider := &model.Provider{
+		ID:      "p1",
+		Name:    "Test Provider",
+		BaseURL: "https://api.example.com",
+		APIKey:  "key",
+		Enabled: true,
+	}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	now := time.Now()
+
+	// Test 1: No health state exists - should return false (no recovery needed)
+	recovered, err := store.AtomicRecoverIfExpired(ctx, "p1", now)
+	if err != nil {
+		t.Fatalf("AtomicRecoverIfExpired failed: %v", err)
+	}
+	if recovered {
+		t.Error("expected recovered = false for provider with no health state")
+	}
+
+	// Test 2: Provider is available - should return false
+	availableState := &model.HealthState{
+		ProviderID: "p1",
+		Available:  true,
+	}
+	if err := store.UpdateHealthState(ctx, availableState); err != nil {
+		t.Fatalf("UpdateHealthState failed: %v", err)
+	}
+	recovered, err = store.AtomicRecoverIfExpired(ctx, "p1", now)
+	if err != nil {
+		t.Fatalf("AtomicRecoverIfExpired failed: %v", err)
+	}
+	if recovered {
+		t.Error("expected recovered = false for available provider")
+	}
+
+	// Test 3: Auto-disabled but not yet expired - should return false
+	disabledUntil := now.Add(5 * time.Minute)
+	autoDisabledState := &model.HealthState{
+		ProviderID:     "p1",
+		Available:      false,
+		DisabledUntil:  &disabledUntil,
+		DisabledReason: "auto: circuit breaker triggered",
+	}
+	if err := store.UpdateHealthState(ctx, autoDisabledState); err != nil {
+		t.Fatalf("UpdateHealthState failed: %v", err)
+	}
+	recovered, err = store.AtomicRecoverIfExpired(ctx, "p1", now)
+	if err != nil {
+		t.Fatalf("AtomicRecoverIfExpired failed: %v", err)
+	}
+	if recovered {
+		t.Error("expected recovered = false for non-expired auto-disable")
+	}
+
+	// Test 4: Auto-disabled and expired - should return true and recover
+	expiredTime := now.Add(6 * time.Minute)
+	recovered, err = store.AtomicRecoverIfExpired(ctx, "p1", expiredTime)
+	if err != nil {
+		t.Fatalf("AtomicRecoverIfExpired failed: %v", err)
+	}
+	if !recovered {
+		t.Error("expected recovered = true for expired auto-disable")
+	}
+
+	// Verify state was updated
+	state, err := store.GetHealthState(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetHealthState failed: %v", err)
+	}
+	if !state.Available {
+		t.Error("expected Available = true after recovery")
+	}
+	if state.DisabledUntil != nil {
+		t.Error("expected DisabledUntil = nil after recovery")
+	}
+	if state.DisabledReason != "" {
+		t.Errorf("expected DisabledReason = \"\", got %q", state.DisabledReason)
+	}
+
+	// Test 5: Calling again should return false (already recovered)
+	recovered, err = store.AtomicRecoverIfExpired(ctx, "p1", expiredTime)
+	if err != nil {
+		t.Fatalf("AtomicRecoverIfExpired failed: %v", err)
+	}
+	if recovered {
+		t.Error("expected recovered = false after already recovered")
+	}
+}
+
+func TestAtomicRecoverIfExpired_ManualDisable(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create provider first
+	provider := &model.Provider{
+		ID:      "p1",
+		Name:    "Test Provider",
+		BaseURL: "https://api.example.com",
+		APIKey:  "key",
+		Enabled: true,
+	}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	now := time.Now()
+
+	// Manually disabled provider should NOT be recovered even if disabled_until is expired
+	disabledUntil := now.Add(-1 * time.Minute) // Already expired
+	manualDisabledState := &model.HealthState{
+		ProviderID:     "p1",
+		Available:      false,
+		DisabledUntil:  &disabledUntil,
+		DisabledReason: "manual: maintenance",
+	}
+	if err := store.UpdateHealthState(ctx, manualDisabledState); err != nil {
+		t.Fatalf("UpdateHealthState failed: %v", err)
+	}
+
+	recovered, err := store.AtomicRecoverIfExpired(ctx, "p1", now)
+	if err != nil {
+		t.Fatalf("AtomicRecoverIfExpired failed: %v", err)
+	}
+	if recovered {
+		t.Error("expected recovered = false for manually disabled provider")
+	}
+
+	// Verify state was NOT changed
+	state, err := store.GetHealthState(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetHealthState failed: %v", err)
+	}
+	if state.Available {
+		t.Error("expected Available = false (manual disable should not be recovered)")
+	}
+}

@@ -21,17 +21,6 @@
 * Avoid Global State: Ban the use of Singletons or global variables unless absolutely necessary and properly encapsulated, as they impede test isolation.
 
 
-### React Specific
-* Declarative UI & Unidirectional Flow: Define UI strictly as a function of state ($UI = f(state)$) with data flowing down via props and events bubbling up;
-* Logic-View Separation & Atomicity: Extract logic into Custom Hooks; keep components focused on rendering. Avoid prop drilling (≤3 levels)—prefer Composition/colocation, then Context for shared cross-cutting state.
-* Composition over Configuration: Prefer children and Component Composition over monolithic components with excessive conditional props.
-* No Redundant State: Calculate derived values directly during render instead of syncing via state. Ensure all state updates are immutable. 
-* Strict Hooks Usage: Hooks at top level (except use API which permits conditions). Exhaustive deps required for effects. Trust React Compiler for memoization; avoid manual useMemo/useCallback unless needed as escape hatches.
-* Modern Functional Patterns: Use strictly Functional Components (no Classes). Prefer `React.Fragment` (`<>`) over unnecessary nodes and never use array indexes as keys for dynamic lists.
-* Accessibility-First Testing: Prioritize user-centric testing queries (e.g., `getByRole`, `getByLabelText`) over implementation details (`data-testid`) to ensure semantic and accessible HTML.
-* Effects for External Systems Only: Handle user actions in event handlers. Use useEffect only for external system sync (subscriptions, timers, network).
-
-
 ### Go Specific
 * Never store context inside a struct.
 * Accept Interfaces, Return Structs. Define interfaces where they are used (consumer side), not where they are implemented.

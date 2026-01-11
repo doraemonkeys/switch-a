@@ -13,11 +13,12 @@ import (
 
 // mockStore implements the Store interface for testing.
 type mockStore struct {
-	healthStates             map[string]*model.HealthState
-	configs                  map[string]string
-	updateErr                error
-	getHealthStateErr        error
-	triggerCircuitBreakerErr error
+	healthStates              map[string]*model.HealthState
+	configs                   map[string]string
+	updateErr                 error
+	getHealthStateErr         error
+	triggerCircuitBreakerErr  error
+	atomicRecoverIfExpiredErr error
 }
 
 func newMockStore() *mockStore {
@@ -113,6 +114,38 @@ func (m *mockStore) TriggerCircuitBreaker(_ context.Context, providerID string, 
 	state.DisabledReason = reason
 	m.healthStates[providerID] = state
 	return nil
+}
+
+func (m *mockStore) AtomicRecoverIfExpired(_ context.Context, providerID string, now time.Time) (bool, error) {
+	if m.atomicRecoverIfExpiredErr != nil {
+		return false, m.atomicRecoverIfExpiredErr
+	}
+	if m.updateErr != nil {
+		return false, m.updateErr
+	}
+	state, ok := m.healthStates[providerID]
+	if !ok {
+		return false, nil
+	}
+	// Check conditions: auto-disabled and expired (not manual)
+	if state.Available {
+		return false, nil
+	}
+	if state.DisabledUntil == nil {
+		return false, nil
+	}
+	if len(state.DisabledReason) >= 7 && state.DisabledReason[:7] == "manual:" {
+		return false, nil
+	}
+	if !now.After(*state.DisabledUntil) {
+		return false, nil
+	}
+	// Recover
+	state.Available = true
+	state.DisabledUntil = nil
+	state.DisabledReason = ""
+	m.healthStates[providerID] = state
+	return true, nil
 }
 
 func TestManager_MarkSuccess(t *testing.T) {
@@ -554,10 +587,10 @@ func TestManager_MarkFailure_CircuitBreaker_StoreError(t *testing.T) {
 	}
 }
 
-func TestManager_RecoverIfExpired_GetStateError(t *testing.T) {
+func TestManager_RecoverIfExpired_AtomicStoreError(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	store := newMockStore()
-	store.getHealthStateErr = errors.New("store error")
+	store.atomicRecoverIfExpiredErr = errors.New("store error")
 	logger := zap.NewNop()
 
 	mgr := NewManager(Config{
@@ -572,36 +605,6 @@ func TestManager_RecoverIfExpired_GetStateError(t *testing.T) {
 	recovered := mgr.RecoverIfExpired(ctx, "p1")
 	if recovered {
 		t.Error("RecoverIfExpired should return false on store error")
-	}
-}
-
-func TestManager_RecoverIfExpired_UpdateStateError(t *testing.T) {
-	clock := &mockClock{now: time.Now()}
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	// Set up an auto-disabled state that should expire
-	disableUntil := clock.Now().Add(-1 * time.Minute) // Already expired
-	store.healthStates["p1"] = &model.HealthState{
-		ProviderID:     "p1",
-		Available:      false,
-		DisabledUntil:  &disableUntil,
-		DisabledReason: "auto: test",
-	}
-	store.updateErr = errors.New("store error")
-
-	mgr := NewManager(Config{
-		Store:  store,
-		Clock:  clock,
-		Logger: logger,
-	})
-
-	ctx := context.Background()
-
-	// Should return false on update error
-	recovered := mgr.RecoverIfExpired(ctx, "p1")
-	if recovered {
-		t.Error("RecoverIfExpired should return false on update error")
 	}
 }
 
