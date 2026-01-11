@@ -481,7 +481,7 @@ describe('createApiClient status API', () => {
     })
 
     it('should get system status', async () => {
-        const status = { providers_total: 5, providers_healthy: 4 }
+        const status = { providers: [{ id: '1', name: 'Provider 1', enabled: true, current_requests: 0, health: null }] }
         mockHttpClient.mockResponse({
             ok: true,
             status: 200,
@@ -527,16 +527,16 @@ describe('createApiClient logs API', () => {
     })
 
     it('should list logs without params', async () => {
-        const logs = [{ id: 1, provider_id: '1' }]
+        const logsResponse = { logs: [{ id: 1, provider_id: '1' }], total: 1, limit: 20, offset: 0 }
         mockHttpClient.mockResponse({
             ok: true,
             status: 200,
-            json: () => Promise.resolve(logs),
+            json: () => Promise.resolve(logsResponse),
         })
 
         const result = await api.logs.list()
 
-        expect(result).toEqual(logs)
+        expect(result).toEqual(logsResponse)
         expect(mockHttpClient.fetch).toHaveBeenCalledWith(
             'https://test-api.example.com/logs',
             expect.any(Object)

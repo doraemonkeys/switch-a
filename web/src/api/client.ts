@@ -122,7 +122,7 @@ export function createApiClient(deps: ApiClientDeps) {
     config: {
       get: () => request<Record<string, string>>('/config'),
       update: (data: Record<string, string>) =>
-        request<void>('/config', {
+        request<Record<string, string>>('/config', {
           method: 'PUT',
           body: JSON.stringify(data),
         }),
@@ -142,7 +142,7 @@ export function createApiClient(deps: ApiClientDeps) {
         if (params?.offset) query.set('offset', String(params.offset))
         const queryStr = query.toString()
         const endpoint = queryStr ? `/logs?${queryStr}` : '/logs'
-        return request<RequestLog[]>(endpoint)
+        return request<LogsResponse>(endpoint)
       },
     },
   }
@@ -163,17 +163,25 @@ export const setToken = api.setToken
 export const clearToken = api.clearToken
 
 // Type definitions
+
+// ProviderAPIType represents the association between Provider and API types
+export interface ProviderAPIType {
+  provider_id: string
+  api_type: string
+}
+
 export interface Provider {
   id: string
   name: string
   base_url: string
   api_key: string
-  api_types: string[]
+  api_types: ProviderAPIType[]
   auth_mode: string
   group_id: string | null
   weight: number
   priority: number
   concurrency: number
+  max_retries: number
   enabled: boolean
   created_at: string
   updated_at: string
@@ -190,6 +198,7 @@ export interface ProviderInput {
   weight?: number
   priority?: number
   concurrency?: number
+  max_retries?: number
   enabled?: boolean
 }
 
@@ -225,7 +234,22 @@ export interface HealthState {
   disabled_reason: string | null
 }
 
+// ProviderStatus represents the status of a single provider
+export interface ProviderStatus {
+  id: string
+  name: string
+  enabled: boolean
+  current_requests: number
+  health: HealthState | null
+}
+
+// SystemStatus represents the overall system status (raw backend response)
 export interface SystemStatus {
+  providers: ProviderStatus[]
+}
+
+// SystemStatusSummary represents computed summary statistics
+export interface SystemStatusSummary {
   providers_total: number
   providers_healthy: number
   providers_unhealthy: number
@@ -244,4 +268,12 @@ export interface RequestLog {
   success: boolean
   error_msg: string | null
   created_at: string
+}
+
+// LogsResponse represents the paginated logs response from the backend
+export interface LogsResponse {
+  logs: RequestLog[]
+  total: number
+  limit: number
+  offset: number
 }
