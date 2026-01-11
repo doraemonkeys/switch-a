@@ -35,6 +35,12 @@ type TransportConfig struct {
 
 // NewTransport creates a new transport with the given configuration.
 func NewTransport(cfg TransportConfig) *Transport {
+	// ResponseHeaderTimeout controls time to receive response headers after connection.
+	// When ReadTimeout is 0 (no timeout), we also don't set ResponseHeaderTimeout,
+	// allowing long-running requests (like AI model inference that may take 30+ seconds
+	// before starting to respond) to complete without being prematurely terminated.
+	responseHeaderTimeout := cfg.ReadTimeout
+
 	// Create a custom transport with proper timeout handling:
 	// - DialContext timeout: controls TCP connection establishment time
 	// - ResponseHeaderTimeout: controls time to receive response headers after connection
@@ -42,7 +48,7 @@ func NewTransport(cfg TransportConfig) *Transport {
 		DialContext: (&net.Dialer{
 			Timeout: cfg.ConnectTimeout,
 		}).DialContext,
-		ResponseHeaderTimeout: cfg.ConnectTimeout,
+		ResponseHeaderTimeout: responseHeaderTimeout,
 	}
 
 	client := &http.Client{
@@ -121,7 +127,7 @@ func (t *Transport) WriteToClient(ctx context.Context, w http.ResponseWriter, re
 	if resp.isSSE {
 		return t.forwardSSE(ctx, w, resp.Body)
 	}
-	return t.forwardRegular(w, resp.Body)
+	return t.forwardRegular(ctx, w, resp.Body)
 }
 
 // ErrSSEIdleTimeout is returned when an SSE stream times out due to inactivity.
@@ -152,10 +158,87 @@ func copyResponseHeaders(dst, src http.Header) {
 	}
 }
 
-// forwardRegular forwards a regular HTTP response body.
-func (t *Transport) forwardRegular(w http.ResponseWriter, body io.Reader) error {
-	_, err := io.Copy(w, body)
-	return err
+// ErrReadTimeout is returned when reading the response body times out due to inactivity.
+var ErrReadTimeout = &readTimeoutError{}
+
+type readTimeoutError struct{}
+
+func (e *readTimeoutError) Error() string {
+	return "upstream read timeout: no data received within timeout period"
+}
+
+// regularReadBufferSize is the buffer size for reading regular response bodies.
+const regularReadBufferSize = 32 * 1024 // 32KB
+
+// forwardRegular forwards a regular HTTP response body with optional idle timeout.
+// Unlike a total timeout, idle timeout only triggers when no data is received
+// for the configured duration, allowing large responses to complete normally
+// as long as data keeps flowing.
+func (t *Transport) forwardRegular(ctx context.Context, w http.ResponseWriter, body io.Reader) error {
+	if t.readTimeout <= 0 {
+		// No timeout configured, use simple copy
+		_, err := io.Copy(w, body)
+		return err
+	}
+
+	// Use idle timeout (like SSE) instead of total timeout.
+	// This prevents killing legitimate long-running transfers that are actively sending data.
+	buf := make([]byte, regularReadBufferSize)
+	timer := time.NewTimer(t.readTimeout)
+	defer timer.Stop()
+
+	for {
+		// Check context before blocking on read
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Use a goroutine to read with timeout detection
+		type readResult struct {
+			n   int
+			err error
+		}
+		resultCh := make(chan readResult, 1)
+
+		go func() {
+			n, err := body.Read(buf)
+			resultCh <- readResult{n, err}
+		}()
+
+		select {
+		case result := <-resultCh:
+			if result.n > 0 {
+				// Data received - reset idle timer and write to client
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(t.readTimeout)
+
+				if _, writeErr := w.Write(buf[:result.n]); writeErr != nil {
+					return writeErr
+				}
+			}
+
+			if result.err != nil {
+				if result.err == io.EOF {
+					return nil // Normal completion
+				}
+				return result.err
+			}
+
+		case <-timer.C:
+			// Idle timeout - no data received within timeout period
+			return ErrReadTimeout
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // idleWatchdog monitors SSE streams for idle timeout.
@@ -238,7 +321,7 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 	flusher, ok := w.(http.Flusher)
 	if !ok { // coverage-ignore -- standard http.ResponseWriter always implements Flusher
 		// Fallback to regular copy if flushing not supported
-		return t.forwardRegular(w, body)
+		return t.forwardRegular(ctx, w, body)
 	}
 
 	// Start idle watchdog if configured.

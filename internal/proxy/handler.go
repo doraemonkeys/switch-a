@@ -368,19 +368,27 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	}
 
 	// Commit: write response to client
-	if err := pctx.transport.WriteToClient(ctx, pctx.w, upstreamResp); err != nil { // coverage-ignore -- write errors occur when client disconnects
-		h.logger.Warn("failed to write response to client",
-			zap.String("provider_id", provider.ID),
-			zap.Error(err),
-		)
-		result.err = err
-	}
+	writeErr := pctx.transport.WriteToClient(ctx, pctx.w, upstreamResp)
 	upstreamResp.Close()
 	result.headersWritten = true
+	result.done = true // No retry possible after headers are written
 
-	// Success!
+	if writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
+		h.logger.Warn("failed to write response to client",
+			zap.String("provider_id", provider.ID),
+			zap.Error(writeErr),
+		)
+		result.err = writeErr
+		result.success = false
+		// Don't mark success for failed writes - this was a failure
+		// Note: We intentionally don't markFailure here either, as the upstream
+		// itself succeeded; only the client write failed (e.g., client disconnected)
+		h.releaseConcurrency(provider.ID)
+		return result
+	}
+
+	// True success: upstream responded and we wrote it to client
 	result.success = true
-	result.done = true
 	h.markSuccess(ctx, provider.ID)
 	h.releaseConcurrency(provider.ID)
 

@@ -118,21 +118,26 @@ func TestIsValidAPIType(t *testing.T) {
 		apiType string
 		want    bool
 	}{
-		{"chat", true},
-		{"completion", true},
-		{"embedding", true},
-		{"image", true},
-		{"audio", true},
-		{"moderation", true},
+		// Valid routable types (match proxy router)
 		{"claude", true},
-		{"gpt", true},
 		{"codex", true},
 		{"gemini", true},
-		{"llama", true},
-		{"mistral", true},
 		{"custom:mytool", true},
-		{"custom:", false},       // empty custom name
-		{"Custom:mytool", false}, // case sensitive prefix
+		// Invalid: empty custom name
+		{"custom:", false},
+		// Invalid: case sensitive prefix
+		{"Custom:mytool", false},
+		// Invalid: these API types have no matching proxy routes
+		{"chat", false},
+		{"completion", false},
+		{"embedding", false},
+		{"image", false},
+		{"audio", false},
+		{"moderation", false},
+		{"gpt", false},
+		{"llama", false},
+		{"mistral", false},
+		// Invalid: unknown types
 		{"invalid", false},
 		{"", false},
 	}

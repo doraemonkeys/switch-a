@@ -55,22 +55,19 @@ var ValidAuthModes = map[string]bool{
 }
 
 // ValidAPITypes contains the allowed API type values.
-// These can be functional types (chat, embedding) or provider-specific identifiers.
+// These must match the types recognized by the proxy router (see proxy/router.go):
+//   - claude: routes via /v1/messages, /v1/models
+//   - codex:  routes via /responses
+//   - gemini: routes via /gemini/*
+//   - custom:*: routes via /custom/:toolId/* (handled separately in IsValidAPIType)
+//
+// Note: Previous versions allowed functional types (chat, completion, embedding, etc.)
+// and provider names (gpt, llama, mistral) that had no matching proxy routes,
+// causing providers to be created but never matched by incoming requests.
 var ValidAPITypes = map[string]bool{
-	// Functional API types
-	"chat":       true,
-	"completion": true,
-	"embedding":  true,
-	"image":      true,
-	"audio":      true,
-	"moderation": true,
-	// Provider-specific types for routing
-	"claude":  true,
-	"gpt":     true,
-	"codex":   true,
-	"gemini":  true,
-	"llama":   true,
-	"mistral": true,
+	"claude": true,
+	"codex":  true,
+	"gemini": true,
 }
 
 // ValidConfigKeys contains the allowed configuration keys.
