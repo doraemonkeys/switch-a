@@ -304,6 +304,9 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		providerMaxRetries = provider.MaxRetries
 	}
 	if attempt > providerMaxRetries {
+		// Release concurrency slot that was acquired during provider selection.
+		// Without this, slots accumulate over time causing "phantom full capacity".
+		h.releaseConcurrency(provider.ID)
 		return result // Continue to next provider
 	}
 

@@ -13,9 +13,11 @@ import (
 
 // mockStore implements the Store interface for testing.
 type mockStore struct {
-	healthStates map[string]*model.HealthState
-	configs      map[string]string
-	updateErr    error
+	healthStates             map[string]*model.HealthState
+	configs                  map[string]string
+	updateErr                error
+	getHealthStateErr        error
+	triggerCircuitBreakerErr error
 }
 
 func newMockStore() *mockStore {
@@ -30,6 +32,9 @@ func newMockStore() *mockStore {
 }
 
 func (m *mockStore) GetHealthState(_ context.Context, providerID string) (*model.HealthState, error) {
+	if m.getHealthStateErr != nil {
+		return nil, m.getHealthStateErr
+	}
 	if state, ok := m.healthStates[providerID]; ok {
 		return state, nil
 	}
@@ -49,6 +54,65 @@ func (m *mockStore) UpdateHealthState(_ context.Context, state *model.HealthStat
 
 func (m *mockStore) GetConfig(_ context.Context, key string) (string, error) {
 	return m.configs[key], nil
+}
+
+func (m *mockStore) IncrementSuccessCount(_ context.Context, providerID string, now time.Time) (*model.HealthState, error) {
+	if m.updateErr != nil {
+		return nil, m.updateErr
+	}
+	state, ok := m.healthStates[providerID]
+	if !ok {
+		state = &model.HealthState{
+			ProviderID: providerID,
+			Available:  true,
+		}
+	}
+	state.SuccessCount++
+	state.LastSuccess = &now
+	// Only set available=true if not manually disabled
+	if len(state.DisabledReason) < 7 || state.DisabledReason[:7] != "manual:" {
+		state.Available = true
+	}
+	m.healthStates[providerID] = state
+	return state, nil
+}
+
+func (m *mockStore) IncrementFailCount(_ context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error) {
+	if m.updateErr != nil {
+		return nil, m.updateErr
+	}
+	state, ok := m.healthStates[providerID]
+	if !ok {
+		state = &model.HealthState{
+			ProviderID: providerID,
+			Available:  true,
+		}
+	}
+	state.FailCount++
+	state.LastFailure = &now
+	state.LastError = lastError
+	m.healthStates[providerID] = state
+	return state, nil
+}
+
+func (m *mockStore) TriggerCircuitBreaker(_ context.Context, providerID string, disabledUntil time.Time, reason string) error {
+	if m.triggerCircuitBreakerErr != nil {
+		return m.triggerCircuitBreakerErr
+	}
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	state, ok := m.healthStates[providerID]
+	if !ok {
+		state = &model.HealthState{
+			ProviderID: providerID,
+		}
+	}
+	state.Available = false
+	state.DisabledUntil = &disabledUntil
+	state.DisabledReason = reason
+	m.healthStates[providerID] = state
+	return nil
 }
 
 func TestManager_MarkSuccess(t *testing.T) {
@@ -417,5 +481,189 @@ func TestManager_MarkFailure_NilError(t *testing.T) {
 	state := store.healthStates["p1"]
 	if state.LastError != "" {
 		t.Errorf("LastError should be empty for nil error, got %q", state.LastError)
+	}
+}
+
+func TestManager_MarkSuccess_StoreError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	store.updateErr = errors.New("store error")
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+
+	// Should not panic on store error, just log and return
+	mgr.MarkSuccess(ctx, "p1")
+
+	// No state should be saved due to error
+	if _, ok := store.healthStates["p1"]; ok {
+		t.Error("expected no state to be saved on store error")
+	}
+}
+
+func TestManager_MarkFailure_StoreError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	store.updateErr = errors.New("store error")
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+	testErr := errors.New("connection refused")
+
+	// Should return false on store error
+	triggered := mgr.MarkFailure(ctx, "p1", testErr)
+	if triggered {
+		t.Error("MarkFailure should return false on store error")
+	}
+}
+
+func TestManager_MarkFailure_CircuitBreaker_StoreError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	store.configs["circuit_failure"] = "1" // Trigger on first failure
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+	testErr := errors.New("connection refused")
+
+	// Set store error for TriggerCircuitBreaker, but not for IncrementFailCount
+	store.triggerCircuitBreakerErr = errors.New("store error")
+
+	// Should still return true (circuit triggered) but log error
+	triggered := mgr.MarkFailure(ctx, "p1", testErr)
+	if !triggered {
+		t.Error("MarkFailure should return true when circuit breaker triggers")
+	}
+}
+
+func TestManager_RecoverIfExpired_GetStateError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	store.getHealthStateErr = errors.New("store error")
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+
+	// Should return false on store error
+	recovered := mgr.RecoverIfExpired(ctx, "p1")
+	if recovered {
+		t.Error("RecoverIfExpired should return false on store error")
+	}
+}
+
+func TestManager_RecoverIfExpired_UpdateStateError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	// Set up an auto-disabled state that should expire
+	disableUntil := clock.Now().Add(-1 * time.Minute) // Already expired
+	store.healthStates["p1"] = &model.HealthState{
+		ProviderID:     "p1",
+		Available:      false,
+		DisabledUntil:  &disableUntil,
+		DisabledReason: "auto: test",
+	}
+	store.updateErr = errors.New("store error")
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+
+	// Should return false on update error
+	recovered := mgr.RecoverIfExpired(ctx, "p1")
+	if recovered {
+		t.Error("RecoverIfExpired should return false on update error")
+	}
+}
+
+func TestManager_IsAvailable_StoreError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	store.getHealthStateErr = errors.New("store error")
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+
+	// Should return false (fail safe) on store error
+	available := mgr.IsAvailable(ctx, "p1")
+	if available {
+		t.Error("IsAvailable should return false on store error (fail safe)")
+	}
+}
+
+func TestManager_ManualDisable_GetStateError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	store.getHealthStateErr = errors.New("store error")
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+
+	// Should return error
+	err := mgr.ManualDisable(ctx, "p1", "test")
+	if err == nil {
+		t.Error("ManualDisable should return error on store error")
+	}
+}
+
+func TestManager_ManualEnable_GetStateError(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	store.getHealthStateErr = errors.New("store error")
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+
+	// Should return error
+	err := mgr.ManualEnable(ctx, "p1")
+	if err == nil {
+		t.Error("ManualEnable should return error on store error")
 	}
 }

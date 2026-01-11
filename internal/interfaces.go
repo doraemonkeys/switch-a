@@ -30,6 +30,14 @@ type Store interface {
 	GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error)
 	UpdateHealthState(ctx context.Context, state *model.HealthState) error
 	ListHealthStates(ctx context.Context) ([]model.HealthState, error)
+	// IncrementSuccessCount atomically increments success_count and sets available=true
+	// (unless manually disabled). Returns the updated state.
+	IncrementSuccessCount(ctx context.Context, providerID string, now time.Time) (*model.HealthState, error)
+	// IncrementFailCount atomically increments fail_count, sets last_failure and last_error.
+	// Returns the updated state.
+	IncrementFailCount(ctx context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error)
+	// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
+	TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
 
 	// Config operations
 	GetConfig(ctx context.Context, key string) (string, error)

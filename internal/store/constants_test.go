@@ -24,4 +24,3 @@ func TestBoolToString(t *testing.T) {
 		})
 	}
 }
-

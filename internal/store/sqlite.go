@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"switch-a/internal"
 	"switch-a/internal/model"
@@ -296,6 +297,64 @@ func (s *SQLiteStore) UpdateHealthState(ctx context.Context, state *model.Health
 		state.LastSuccess, state.LastFailure, state.LastError, state.DisabledUntil, state.DisabledReason).Error
 	if err != nil {
 		return fmt.Errorf("update health state for provider %q: %w", state.ProviderID, err)
+	}
+	return nil
+}
+
+// IncrementSuccessCount atomically increments success_count and sets available=true
+// (unless manually disabled). Returns the updated state.
+func (s *SQLiteStore) IncrementSuccessCount(ctx context.Context, providerID string, now time.Time) (*model.HealthState, error) {
+	// Use atomic SQL UPDATE to prevent race conditions.
+	// The CASE expression preserves manual disable state (disabled_reason LIKE 'manual:%').
+	err := s.db.WithContext(ctx).Exec(`
+		INSERT INTO health_states (provider_id, available, success_count, fail_count, last_success, last_failure, last_error, disabled_until, disabled_reason)
+		VALUES (?, true, 1, 0, ?, NULL, '', NULL, '')
+		ON CONFLICT(provider_id) DO UPDATE SET
+			success_count = health_states.success_count + 1,
+			last_success = excluded.last_success,
+			available = CASE 
+				WHEN health_states.disabled_reason LIKE 'manual:%' THEN health_states.available 
+				ELSE true 
+			END
+	`, providerID, now).Error
+	if err != nil {
+		return nil, fmt.Errorf("increment success count for provider %q: %w", providerID, err)
+	}
+	return s.GetHealthState(ctx, providerID)
+}
+
+// IncrementFailCount atomically increments fail_count, sets last_failure and last_error.
+// Returns the updated state.
+func (s *SQLiteStore) IncrementFailCount(ctx context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error) {
+	// Use atomic SQL UPDATE to prevent race conditions.
+	err := s.db.WithContext(ctx).Exec(`
+		INSERT INTO health_states (provider_id, available, success_count, fail_count, last_success, last_failure, last_error, disabled_until, disabled_reason)
+		VALUES (?, true, 0, 1, NULL, ?, ?, NULL, '')
+		ON CONFLICT(provider_id) DO UPDATE SET
+			fail_count = health_states.fail_count + 1,
+			last_failure = excluded.last_failure,
+			last_error = excluded.last_error
+	`, providerID, now, lastError).Error
+	if err != nil {
+		return nil, fmt.Errorf("increment fail count for provider %q: %w", providerID, err)
+	}
+	return s.GetHealthState(ctx, providerID)
+}
+
+// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
+// This is designed to not be overwritten by concurrent MarkSuccess calls.
+func (s *SQLiteStore) TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error {
+	// Use atomic SQL UPDATE to set circuit breaker state.
+	// This is called after IncrementFailCount, so the row should already exist.
+	err := s.db.WithContext(ctx).Exec(`
+		UPDATE health_states 
+		SET available = false,
+			disabled_until = ?,
+			disabled_reason = ?
+		WHERE provider_id = ?
+	`, disabledUntil, reason, providerID).Error
+	if err != nil {
+		return fmt.Errorf("trigger circuit breaker for provider %q: %w", providerID, err)
 	}
 	return nil
 }

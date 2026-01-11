@@ -33,6 +33,14 @@ type Store interface {
 	GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error)
 	UpdateHealthState(ctx context.Context, state *model.HealthState) error
 	GetConfig(ctx context.Context, key string) (string, error)
+	// IncrementSuccessCount atomically increments success_count and sets available=true
+	// (unless manually disabled). Returns the updated state.
+	IncrementSuccessCount(ctx context.Context, providerID string, now time.Time) (*model.HealthState, error)
+	// IncrementFailCount atomically increments fail_count, sets last_failure and last_error.
+	// Returns the updated state.
+	IncrementFailCount(ctx context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error)
+	// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
+	TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
 }
 
 // Config holds health manager configuration.
@@ -70,38 +78,36 @@ func (m *Manager) StartCleanupLoop(interval, maxAge time.Duration) (stop func())
 
 // MarkSuccess marks a successful request for the provider.
 func (m *Manager) MarkSuccess(ctx context.Context, providerID string) {
-	state, err := m.store.GetHealthState(ctx, providerID)
+	now := m.clock.Now()
+
+	// Use atomic increment to avoid race conditions.
+	// This prevents lost updates when concurrent requests complete simultaneously.
+	_, err := m.store.IncrementSuccessCount(ctx, providerID, now)
 	if err != nil {
-		m.logger.Error("failed to get health state", zap.String("provider_id", providerID), zap.Error(err))
+		m.logger.Error("failed to increment success count", zap.String("provider_id", providerID), zap.Error(err))
 		return
 	}
 
-	now := m.clock.Now()
-	state.SuccessCount++
-	state.LastSuccess = &now
-	state.Available = true
-
 	// Reset circuit breaker on success
 	m.circuit.Reset(providerID)
-
-	if err := m.store.UpdateHealthState(ctx, state); err != nil {
-		m.logger.Error("failed to update health state", zap.String("provider_id", providerID), zap.Error(err))
-	}
 }
 
 // MarkFailure marks a failed request, returns true if circuit breaker triggered.
 func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error) bool {
-	state, stateErr := m.store.GetHealthState(ctx, providerID)
-	if stateErr != nil {
-		m.logger.Error("failed to get health state", zap.String("provider_id", providerID), zap.Error(stateErr))
-		return false
+	now := m.clock.Now()
+
+	// Extract error message
+	var lastError string
+	if err != nil {
+		lastError = err.Error()
 	}
 
-	now := m.clock.Now()
-	state.FailCount++
-	state.LastFailure = &now
-	if err != nil {
-		state.LastError = err.Error()
+	// Use atomic increment to avoid race conditions.
+	// This prevents lost updates when concurrent requests fail simultaneously.
+	_, stateErr := m.store.IncrementFailCount(ctx, providerID, now, lastError)
+	if stateErr != nil {
+		m.logger.Error("failed to increment fail count", zap.String("provider_id", providerID), zap.Error(stateErr))
+		return false
 	}
 
 	// Get circuit breaker config
@@ -109,23 +115,23 @@ func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error)
 	circuitWindow := time.Duration(m.getConfigInt(ctx, "circuit_window", DefaultCircuitWindow)) * time.Second
 	circuitDisable := time.Duration(m.getConfigInt(ctx, "circuit_disable", DefaultCircuitDisable)) * time.Second
 
-	// Record failure and check if threshold reached
+	// Record failure in in-memory circuit breaker and check if threshold reached
 	triggered := m.circuit.RecordFailure(providerID, circuitWindow, circuitFailure)
 	if triggered {
 		disableUntil := now.Add(circuitDisable)
-		state.DisabledUntil = &disableUntil
-		state.DisabledReason = DisabledReasonPrefixAuto + "circuit breaker triggered"
-		state.Available = false
+		reason := DisabledReasonPrefixAuto + "circuit breaker triggered"
+
+		// Use atomic update to set circuit breaker state.
+		// This prevents a concurrent MarkSuccess from overwriting the disabled state.
+		if triggerErr := m.store.TriggerCircuitBreaker(ctx, providerID, disableUntil, reason); triggerErr != nil {
+			m.logger.Error("failed to trigger circuit breaker", zap.String("provider_id", providerID), zap.Error(triggerErr))
+		}
 
 		m.logger.Warn("circuit breaker triggered",
 			zap.String("provider_id", providerID),
 			zap.Int("threshold", circuitFailure),
 			zap.Duration("disable_duration", circuitDisable),
 		)
-	}
-
-	if stateErr := m.store.UpdateHealthState(ctx, state); stateErr != nil {
-		m.logger.Error("failed to update health state", zap.String("provider_id", providerID), zap.Error(stateErr))
 	}
 
 	return triggered
