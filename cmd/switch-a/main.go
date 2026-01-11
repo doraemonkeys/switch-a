@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,11 +42,17 @@ type LogStore interface {
 // Note: A fresh context with timeout is created for each cleanup operation rather
 // than storing the startup context. This follows Go best practices where contexts
 // should be passed through call chains, not stored for later use.
+//
+// The stop function waits for the cleanup goroutine to fully exit before returning,
+// ensuring no database operations occur after the store is closed.
 func startLogCleanupLoop(store LogStore, log *zap.Logger) (stop func()) {
 	ticker := time.NewTicker(LogCleanupInterval)
 	done := make(chan struct{})
+	var wg sync.WaitGroup
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		// Run initial cleanup on startup with fresh context
 		cleanOldLogs(store, log)
 
@@ -62,6 +69,7 @@ func startLogCleanupLoop(store LogStore, log *zap.Logger) (stop func()) {
 
 	return func() {
 		close(done)
+		wg.Wait() // Wait for goroutine to fully exit before returning
 	}
 }
 

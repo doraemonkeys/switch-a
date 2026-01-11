@@ -98,10 +98,15 @@ func (cb *CircuitBreaker) Cleanup(maxAge time.Duration) {
 
 // StartCleanupLoop spawns a goroutine that periodically calls Cleanup().
 // Returns a stop function to terminate the cleanup loop.
+// The stop function waits for the cleanup goroutine to fully exit before returning.
 // Example: stop := cb.StartCleanupLoop(5 * time.Minute, 10 * time.Minute); defer stop()
 func (cb *CircuitBreaker) StartCleanupLoop(interval, maxAge time.Duration) (stop func()) {
 	done := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -113,5 +118,8 @@ func (cb *CircuitBreaker) StartCleanupLoop(interval, maxAge time.Duration) (stop
 			}
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		wg.Wait()
+	}
 }

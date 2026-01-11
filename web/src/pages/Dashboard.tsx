@@ -7,7 +7,7 @@ type ProviderStatusType = "healthy" | "unhealthy" | "disabled";
 
 function getProviderStatus(
   enabled: boolean,
-  available: boolean | undefined
+  available: boolean | undefined,
 ): ProviderStatusType {
   if (!enabled) return "disabled";
   return available !== false ? "healthy" : "unhealthy";
@@ -144,7 +144,7 @@ export function Dashboard() {
                         statusDotClass[
                           getProviderStatus(
                             provider.enabled,
-                            provider.health?.available
+                            provider.health?.available,
                           )
                         ]
                       }`}
@@ -170,7 +170,7 @@ export function Dashboard() {
                         statusBadgeClass[
                           getProviderStatus(
                             provider.enabled,
-                            provider.health?.available
+                            provider.health?.available,
                           )
                         ]
                       }`}
@@ -179,7 +179,7 @@ export function Dashboard() {
                         statusLabel[
                           getProviderStatus(
                             provider.enabled,
-                            provider.health?.available
+                            provider.health?.available,
                           )
                         ]
                       }

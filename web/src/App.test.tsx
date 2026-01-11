@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
@@ -7,22 +7,64 @@ import { Providers } from "@/pages/Providers";
 import { Groups } from "@/pages/Groups";
 import { Config } from "@/pages/Config";
 import { Logs } from "@/pages/Logs";
+import { ApiContext } from "@/api/context";
+import type { ApiClient } from "@/api/client";
+
+function createMockApiClient(): ApiClient {
+  return {
+    setToken: vi.fn(),
+    clearToken: vi.fn(),
+    providers: {
+      list: vi.fn().mockResolvedValue([]),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      enable: vi.fn(),
+      disable: vi.fn(),
+      reset: vi.fn(),
+    },
+    groups: {
+      list: vi.fn().mockResolvedValue([]),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    },
+    config: {
+      get: vi.fn().mockResolvedValue({
+        log_retention_days: 7,
+        timeout_seconds: 30,
+        max_retries: 3,
+      }),
+      update: vi.fn(),
+    },
+    status: {
+      get: vi.fn().mockResolvedValue({ providers: [] }),
+      health: vi.fn().mockResolvedValue([]),
+    },
+    logs: { list: vi.fn().mockResolvedValue([]) },
+  } as unknown as ApiClient;
+}
 
 // Test component that replicates App routing without BrowserRouter basename issues
 function TestApp({ initialPath = "/" }: { initialPath?: string }) {
+  const mockApi = createMockApiClient();
   return (
-    <MemoryRouter initialEntries={[initialPath]}>
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="providers" element={<Providers />} />
-          <Route path="groups" element={<Groups />} />
-          <Route path="config" element={<Config />} />
-          <Route path="logs" element={<Logs />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>
+    <ApiContext.Provider value={mockApi}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Dashboard />} />
+            <Route path="providers" element={<Providers />} />
+            <Route path="groups" element={<Groups />} />
+            <Route path="config" element={<Config />} />
+            <Route path="logs" element={<Logs />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </ApiContext.Provider>
   );
 }
 

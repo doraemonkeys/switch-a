@@ -76,6 +76,25 @@ func (m *mockStore) InsertLog(_ context.Context, log *model.RequestLog) error {
 	return nil
 }
 
+func TestNewHandler_NilStorePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when Store is nil, but did not panic")
+		} else {
+			msg, ok := r.(string)
+			if !ok || !strings.Contains(msg, "Store is required") {
+				t.Errorf("unexpected panic message: %v", r)
+			}
+		}
+	}()
+
+	// This should panic
+	NewHandler(Config{
+		Store:  nil,
+		Logger: zap.NewNop(),
+	})
+}
+
 func TestHandler_ServeHTTP_UnknownAPIType(t *testing.T) {
 	store := newMockStore()
 	logger := zap.NewNop()

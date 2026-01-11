@@ -9,8 +9,42 @@ import (
 	"testing"
 	"time"
 
+	"switch-a/internal/model"
+
 	"go.uber.org/zap"
 )
+
+// mockStore implements the store interface for testing.
+type mockStore struct{}
+
+func (m *mockStore) ListProviders(context.Context) ([]model.Provider, error) { return nil, nil }
+func (m *mockStore) ListProvidersByAPIType(context.Context, string) ([]model.Provider, error) {
+	return nil, nil
+}
+func (m *mockStore) GetProvider(context.Context, string) (*model.Provider, error) { return nil, nil }
+func (m *mockStore) CreateProvider(context.Context, *model.Provider) error        { return nil }
+func (m *mockStore) UpdateProvider(context.Context, *model.Provider) error        { return nil }
+func (m *mockStore) DeleteProvider(context.Context, string) error                 { return nil }
+
+func (m *mockStore) ListGroups(context.Context) ([]model.Group, error)      { return nil, nil }
+func (m *mockStore) GetGroup(context.Context, string) (*model.Group, error) { return nil, nil }
+func (m *mockStore) CreateGroup(context.Context, *model.Group) error        { return nil }
+func (m *mockStore) UpdateGroup(context.Context, *model.Group) error        { return nil }
+func (m *mockStore) DeleteGroup(context.Context, string) error              { return nil }
+
+func (m *mockStore) GetHealthState(context.Context, string) (*model.HealthState, error) {
+	return nil, nil
+}
+func (m *mockStore) ListHealthStates(context.Context) ([]model.HealthState, error) { return nil, nil }
+
+func (m *mockStore) GetConfig(context.Context, string) (string, error)       { return "", nil }
+func (m *mockStore) GetAllConfig(context.Context) (map[string]string, error) { return nil, nil }
+func (m *mockStore) SetConfig(context.Context, string, string) error         { return nil }
+func (m *mockStore) SetConfigs(context.Context, map[string]string) error     { return nil }
+
+func (m *mockStore) InsertLog(context.Context, *model.RequestLog) error             { return nil }
+func (m *mockStore) ListLogs(context.Context, int, int) ([]model.RequestLog, error) { return nil, nil }
+func (m *mockStore) CountLogs(context.Context) (int64, error)                       { return 0, nil }
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
@@ -18,6 +52,7 @@ func testServer(t *testing.T) *Server {
 	return New(Config{
 		Port:   "0",
 		Logger: logger,
+		Store:  &mockStore{},
 	})
 }
 
@@ -88,6 +123,7 @@ func TestServerStartAndShutdown(t *testing.T) {
 	s := New(Config{
 		Port:   "0", // Use port 0 to get a random available port
 		Logger: logger,
+		Store:  &mockStore{},
 	})
 
 	// Start server in background

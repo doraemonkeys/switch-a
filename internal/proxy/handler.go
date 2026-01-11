@@ -116,7 +116,11 @@ type Config struct {
 }
 
 // NewHandler creates a new proxy handler.
+// Panics if Store is nil, as the handler cannot function without it.
 func NewHandler(cfg Config) *Handler {
+	if cfg.Store == nil {
+		panic("proxy: Store is required but was nil")
+	}
 	return &Handler{
 		store:    cfg.Store,
 		selector: cfg.Selector,

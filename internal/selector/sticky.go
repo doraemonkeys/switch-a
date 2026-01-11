@@ -89,10 +89,15 @@ func (c *MemoryStickyCache) Cleanup() {
 
 // StartCleanupLoop spawns a goroutine that periodically calls Cleanup().
 // Returns a stop function to terminate the cleanup loop.
+// The stop function waits for the cleanup goroutine to fully exit before returning.
 // Example: stop := cache.StartCleanupLoop(5 * time.Minute); defer stop()
 func (c *MemoryStickyCache) StartCleanupLoop(interval time.Duration) (stop func()) {
 	done := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -104,7 +109,10 @@ func (c *MemoryStickyCache) StartCleanupLoop(interval time.Duration) (stop func(
 			}
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		wg.Wait()
+	}
 }
 
 // Len returns the number of entries in the cache (for testing).

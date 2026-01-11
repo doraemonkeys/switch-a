@@ -19,6 +19,10 @@ import (
 // ReadHeaderTimeout is the timeout for reading request headers.
 const ReadHeaderTimeout = 10 * time.Second
 
+// IdleTimeout is the timeout for keep-alive connections.
+// Prevents idle connections from occupying resources indefinitely.
+const IdleTimeout = 120 * time.Second
+
 // store defines the minimal storage interface needed by the server.
 type store interface {
 	// Provider operations
@@ -109,6 +113,7 @@ func New(cfg Config) *Server {
 			Addr:              net.JoinHostPort("", cfg.Port),
 			Handler:           mux,
 			ReadHeaderTimeout: ReadHeaderTimeout,
+			IdleTimeout:       IdleTimeout,
 		},
 		logger:       cfg.Logger,
 		store:        cfg.Store,
