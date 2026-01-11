@@ -144,3 +144,42 @@ func TestMemoryStickyCache_DifferentKeys(t *testing.T) {
 		t.Errorf("expected different values for different keys, got %q, %q, %q", p1, p2, p3)
 	}
 }
+
+func TestMemoryStickyCache_StartCleanupLoop(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	cache := NewMemoryStickyCache(clock)
+
+	key := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	cache.Set(key, "provider1", 50*time.Millisecond)
+
+	// Start cleanup loop with short interval
+	stop := cache.StartCleanupLoop(30 * time.Millisecond)
+	defer stop()
+
+	// Initially should have the entry
+	if cache.Len() != 1 {
+		t.Errorf("expected 1 entry, got %d", cache.Len())
+	}
+
+	// Advance time past expiration
+	clock.Advance(100 * time.Millisecond)
+
+	// Wait for cleanup to run
+	time.Sleep(50 * time.Millisecond)
+
+	// After cleanup, entry should be removed
+	if cache.Len() != 0 {
+		t.Errorf("expected 0 entries after cleanup, got %d", cache.Len())
+	}
+}
+
+func TestMemoryStickyCache_StartCleanupLoop_Stop(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	cache := NewMemoryStickyCache(clock)
+
+	// Start and immediately stop
+	stop := cache.StartCleanupLoop(10 * time.Millisecond)
+	stop()
+
+	// Should not panic or hang
+}

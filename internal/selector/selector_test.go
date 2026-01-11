@@ -91,6 +91,42 @@ func (h *mockHealthChecker) IsAvailable(_ context.Context, providerID string) bo
 	return true // Default to available
 }
 
+// mockStoreWithDisabledProvider wraps mockStore and returns a disabled provider for specific ID.
+type mockStoreWithDisabledProvider struct {
+	*mockStore
+	disabledProviderID string
+}
+
+func (m *mockStoreWithDisabledProvider) GetProvider(_ context.Context, id string) (*model.Provider, error) {
+	if id == m.disabledProviderID {
+		return &model.Provider{
+			ID:       id,
+			Name:     "Disabled Provider",
+			Enabled:  false,
+			APITypes: []model.ProviderAPIType{{ProviderID: id, APIType: "claude"}},
+		}, nil
+	}
+	return m.mockStore.GetProvider(context.Background(), id)
+}
+
+// mockStoreWithWrongAPIType wraps mockStore and returns a provider with wrong API type for specific ID.
+type mockStoreWithWrongAPIType struct {
+	*mockStore
+	wrongTypeID string
+}
+
+func (m *mockStoreWithWrongAPIType) GetProvider(_ context.Context, id string) (*model.Provider, error) {
+	if id == m.wrongTypeID {
+		return &model.Provider{
+			ID:       id,
+			Name:     "Wrong API Type Provider",
+			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: id, APIType: "different"}}, // Not "claude"
+		}, nil
+	}
+	return m.mockStore.GetProvider(context.Background(), id)
+}
+
 func TestSelector_Select_NoProviders(t *testing.T) {
 	store := newMockStore()
 	clock := &mockClock{now: time.Now()}
@@ -494,5 +530,497 @@ func TestSelector_StoreError(t *testing.T) {
 	_, err := sel.Select(context.Background(), req)
 	if err == nil {
 		t.Error("expected error from store")
+	}
+}
+
+func TestSelector_ConfigError_DefaultsToStrategy(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2},
+	}
+	// Remove the inter_group_strategy config to trigger default
+	delete(store.configs, "inter_group_strategy")
+
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should use default priority strategy
+	if provider.ID != "p1" {
+		t.Errorf("expected p1 (highest priority), got %s", provider.ID)
+	}
+}
+
+func TestSelector_StickyCache_ProviderDisabled(t *testing.T) {
+	store := newMockStore()
+	// In real store, ListProvidersByAPIType only returns enabled providers
+	// So only p2 is in the list. p1 is accessed via GetProvider for sticky check.
+	store.providers = []model.Provider{
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	sticky := NewMemoryStickyCache(clock)
+	logger := zap.NewNop()
+
+	// Create a custom store that returns disabled provider for GetProvider
+	customStore := &mockStoreWithDisabledProvider{
+		mockStore:          store,
+		disabledProviderID: "p1",
+	}
+
+	sel := NewSelector(Config{
+		Store:       customStore,
+		StickyCache: sticky,
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Pre-populate sticky cache with disabled provider
+	stickyKey := model.StickyKey{
+		IP:      req.ClientIP,
+		User:    req.User,
+		APIType: req.APIType,
+	}
+	sticky.Set(stickyKey, "p1", 5*time.Minute)
+
+	// Should skip disabled sticky provider and select p2
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p2" {
+		t.Errorf("expected p2, got %s", provider.ID)
+	}
+
+	// Sticky cache should have been deleted for disabled provider
+	_, found := sticky.Get(stickyKey)
+	if found {
+		t.Error("expected sticky cache to be deleted for disabled provider")
+	}
+}
+
+func TestSelector_StickyCache_ProviderWrongAPIType(t *testing.T) {
+	store := newMockStore()
+	// In real store, ListProvidersByAPIType only returns providers supporting the API type
+	// So only p2 is in the list for "claude" API type. p1 is accessed via GetProvider for sticky check.
+	store.providers = []model.Provider{
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	sticky := NewMemoryStickyCache(clock)
+	logger := zap.NewNop()
+
+	// Create a custom store that returns wrong API type for GetProvider
+	customStore := &mockStoreWithWrongAPIType{
+		mockStore:   store,
+		wrongTypeID: "p1",
+	}
+
+	sel := NewSelector(Config{
+		Store:       customStore,
+		StickyCache: sticky,
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Pre-populate sticky cache with provider that has wrong API type
+	stickyKey := model.StickyKey{
+		IP:      req.ClientIP,
+		User:    req.User,
+		APIType: req.APIType,
+	}
+	sticky.Set(stickyKey, "p1", 5*time.Minute)
+
+	// Should skip sticky provider with wrong API type and select p2
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p2" {
+		t.Errorf("expected p2, got %s", provider.ID)
+	}
+
+	// Sticky cache should have been deleted for wrong API type provider
+	_, found := sticky.Get(stickyKey)
+	if found {
+		t.Error("expected sticky cache to be deleted for provider with wrong API type")
+	}
+}
+
+func TestSelector_StickyCache_HealthCheck(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	sticky := NewMemoryStickyCache(clock)
+	health := newMockHealthChecker()
+	health.available["p1"] = false // Sticky provider is unhealthy
+	health.available["p2"] = true
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:         store,
+		StickyCache:   sticky,
+		HealthChecker: health,
+		Clock:         clock,
+		Logger:        logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Pre-populate sticky cache with unhealthy provider
+	stickyKey := model.StickyKey{
+		IP:      req.ClientIP,
+		User:    req.User,
+		APIType: req.APIType,
+	}
+	sticky.Set(stickyKey, "p1", 5*time.Minute)
+
+	// Should skip unhealthy sticky provider and select p2
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p2" {
+		t.Errorf("expected p2, got %s", provider.ID)
+	}
+
+	// Sticky cache should have been deleted
+	_, found := sticky.Get(stickyKey)
+	if found {
+		t.Error("expected sticky cache to be deleted for unhealthy provider")
+	}
+}
+
+func TestSelector_StickyCache_ConcurrencyLimit(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	sticky := NewMemoryStickyCache(clock)
+	limiter := NewConcurrencyLimiter()
+	// Consume p1's concurrency slot
+	limiter.TryAcquire("p1", 1)
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:       store,
+		StickyCache: sticky,
+		Limiter:     limiter,
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Pre-populate sticky cache with provider at concurrency limit
+	stickyKey := model.StickyKey{
+		IP:      req.ClientIP,
+		User:    req.User,
+		APIType: req.APIType,
+	}
+	sticky.Set(stickyKey, "p1", 5*time.Minute)
+
+	// Should skip sticky provider at limit and select p2
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p2" {
+		t.Errorf("expected p2, got %s", provider.ID)
+	}
+}
+
+func TestSelector_GroupLoadError(t *testing.T) {
+	g1ID := "g1"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID},
+	}
+	// Don't add group to mock store - will cause error
+
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Should still select provider (treated as ungrouped)
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p1" {
+		t.Errorf("expected p1, got %s", provider.ID)
+	}
+}
+
+func TestSelector_UpdateStickyWithTTL(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	sticky := NewMemoryStickyCache(clock)
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:       store,
+		StickyCache: sticky,
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Test with custom TTL
+	sel.UpdateStickyWithTTL(req, "p1", 10*time.Minute)
+
+	stickyKey := model.StickyKey{
+		IP:      req.ClientIP,
+		User:    req.User,
+		APIType: req.APIType,
+	}
+	providerID, found := sticky.Get(stickyKey)
+	if !found {
+		t.Error("sticky should be set")
+	}
+	if providerID != "p1" {
+		t.Errorf("expected p1, got %s", providerID)
+	}
+
+	// Advance past default TTL but within custom TTL
+	clock.Advance(6 * time.Minute)
+	_, found = sticky.Get(stickyKey)
+	if !found {
+		t.Error("sticky should still be valid with custom TTL")
+	}
+}
+
+func TestSelector_UpdateStickyWithTTL_NoCache(t *testing.T) {
+	store := newMockStore()
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:       store,
+		StickyCache: nil, // No cache
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Should not panic
+	sel.UpdateStickyWithTTL(req, "p1", 10*time.Minute)
+}
+
+func TestSelector_UpdateSticky_NoCache(t *testing.T) {
+	store := newMockStore()
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:       store,
+		StickyCache: nil, // No cache
+		Clock:       clock,
+		Logger:      logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Should not panic
+	sel.UpdateSticky(req, "p1")
+}
+
+func TestSelector_ClearConcurrency(t *testing.T) {
+	store := newMockStore()
+	clock := &mockClock{now: time.Now()}
+	limiter := NewConcurrencyLimiter()
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:   store,
+		Limiter: limiter,
+		Clock:   clock,
+		Logger:  logger,
+	})
+
+	// Acquire a slot
+	limiter.TryAcquire("p1", 5)
+
+	// Clear it
+	sel.ClearConcurrency("p1")
+
+	// Should be cleared (can acquire again as if new)
+	if !limiter.TryAcquire("p1", 1) {
+		t.Error("expected to acquire slot after clear")
+	}
+}
+
+func TestSelector_ClearConcurrency_NoLimiter(t *testing.T) {
+	store := newMockStore()
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:   store,
+		Limiter: nil, // No limiter
+		Clock:   clock,
+		Logger:  logger,
+	})
+
+	// Should not panic
+	sel.ClearConcurrency("p1")
+}
+
+func TestSelector_ReleaseConcurrency_NoLimiter(t *testing.T) {
+	store := newMockStore()
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:   store,
+		Limiter: nil, // No limiter
+		Clock:   clock,
+		Logger:  logger,
+	})
+
+	// Should not panic
+	sel.ReleaseConcurrency("p1")
+}
+
+func TestSelector_AllProvidersExcluded(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true},
+		{ID: "p2", Name: "Provider 2", Enabled: true},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Exclude all providers
+	excluded := map[string]bool{"p1": true, "p2": true}
+
+	_, err := sel.SelectExcluding(context.Background(), req, excluded)
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Errorf("expected ErrNoProvider, got %v", err)
+	}
+}
+
+func TestSelector_SelectFromGroup_ConcurrencyRetry(t *testing.T) {
+	g1ID := "g1"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1, Concurrency: 1},
+		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g1ID, Priority: 2, Concurrency: 1},
+	}
+	store.groups = map[string]*model.Group{
+		"g1": {ID: "g1", Name: "Group 1", Strategy: "priority", Priority: 1, Enabled: true},
+	}
+
+	clock := &mockClock{now: time.Now()}
+	limiter := NewConcurrencyLimiter()
+	// Fill p1's slot
+	limiter.TryAcquire("p1", 1)
+	logger := zap.NewNop()
+
+	sel := NewSelector(Config{
+		Store:   store,
+		Limiter: limiter,
+		Clock:   clock,
+		Logger:  logger,
+	})
+
+	req := &model.SelectRequest{
+		ClientIP: "192.168.1.1",
+		User:     "user1",
+		APIType:  "claude",
+	}
+
+	// Should skip p1 (at limit) and select p2
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.ID != "p2" {
+		t.Errorf("expected p2 (p1 at limit), got %s", provider.ID)
 	}
 }

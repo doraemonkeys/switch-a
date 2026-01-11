@@ -27,6 +27,9 @@ const DefaultStickyTTL = defaults.StickyTTL
 // ConfigKeyInterGroupStrategy is the config key for inter-group selection strategy.
 const ConfigKeyInterGroupStrategy = "inter_group_strategy"
 
+// ConfigKeyStickyEnabled is the config key for enabling/disabling sticky sessions.
+const ConfigKeyStickyEnabled = "sticky_enabled"
+
 // UngroupedProviderPriority is the priority assigned to ungrouped providers.
 // They are given the lowest priority (highest value) so grouped providers take precedence.
 //

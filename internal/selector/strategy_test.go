@@ -215,3 +215,100 @@ func TestSelectGroup_Random(t *testing.T) {
 		t.Errorf("SelectGroup(random): expected multiple groups to be selected")
 	}
 }
+
+func TestSelectProvider_RandomStrategy(t *testing.T) {
+	providers := []*model.Provider{
+		{ID: "p1"},
+		{ID: "p2"},
+		{ID: "p3"},
+	}
+
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		p := SelectProvider(providers, StrategyRandom)
+		if p == nil {
+			t.Fatal("SelectProvider returned nil")
+		}
+		seen[p.ID] = true
+	}
+
+	if len(seen) < 2 {
+		t.Errorf("SelectProvider(random): expected multiple providers to be selected")
+	}
+}
+
+func TestSelectProvider_WeightStrategy(t *testing.T) {
+	providers := []*model.Provider{
+		{ID: "heavy", Weight: 100},
+		{ID: "light", Weight: 1},
+	}
+
+	heavyCount := 0
+	for i := 0; i < 1000; i++ {
+		p := SelectProvider(providers, StrategyWeight)
+		if p.ID == "heavy" {
+			heavyCount++
+		}
+	}
+
+	// Heavy should be selected much more often
+	if heavyCount < 900 {
+		t.Errorf("SelectProvider(weight): heavy selected %d/1000 times, expected ~990", heavyCount)
+	}
+}
+
+func TestSelectByWeight_NegativeWeight(t *testing.T) {
+	// Test with negative weight (should default to 1)
+	providers := []*model.Provider{
+		{ID: "p1", Weight: -5},
+		{ID: "p2", Weight: -10},
+	}
+
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		p := SelectByWeight(providers)
+		if p == nil {
+			t.Fatal("SelectByWeight returned nil")
+		}
+		seen[p.ID] = true
+	}
+
+	// Should select both providers (both treated as weight 1)
+	if len(seen) < 2 {
+		t.Errorf("SelectByWeight with negative weights: expected both providers to be selected")
+	}
+}
+
+func TestSelectGroup_PriorityTiebreaker(t *testing.T) {
+	groups := []*groupCandidate{
+		{GroupID: "b", Priority: 5},
+		{GroupID: "a", Priority: 5},
+		{GroupID: "c", Priority: 5},
+	}
+
+	g := SelectGroup(groups, StrategyPriority)
+	if g.GroupID != "a" {
+		t.Errorf("SelectGroup(priority) with tie = %s, want a (alphabetical tiebreaker)", g.GroupID)
+	}
+}
+
+func TestSelectGroup_ZeroWeight(t *testing.T) {
+	groups := []*groupCandidate{
+		{GroupID: "g1", Weight: 0},
+		{GroupID: "g2", Weight: 0},
+	}
+
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		g := SelectGroup(groups, StrategyWeight)
+		if g == nil {
+			t.Fatal("SelectGroup returned nil")
+		}
+		seen[g.GroupID] = true
+	}
+
+	// Should select both groups (both treated as weight 1)
+	if len(seen) < 2 {
+		t.Errorf("SelectGroup with zero weights: expected both groups to be selected")
+	}
+}

@@ -416,6 +416,101 @@ func (e *testError) Error() string {
 	return e.msg
 }
 
+func TestSSEIdleTimeoutError(t *testing.T) {
+	err := ErrSSEIdleTimeout
+	msg := err.Error()
+	if msg != "SSE stream idle timeout: no data received within timeout period" {
+		t.Errorf("unexpected error message: %s", msg)
+	}
+}
+
+func TestReadTimeoutError(t *testing.T) {
+	err := ErrReadTimeout
+	msg := err.Error()
+	if msg != "upstream read timeout: no data received within timeout period" {
+		t.Errorf("unexpected error message: %s", msg)
+	}
+}
+
+func TestForwardRegular_WithIdleTimeout(t *testing.T) {
+	t.Run("completes normally with data flowing", func(t *testing.T) {
+		// Create a response body with multiple chunks
+		data := bytes.Repeat([]byte("test data chunk "), 100)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			ReadTimeout:    1 * time.Second,
+		})
+
+		w := httptest.NewRecorder()
+		err := transport.forwardRegular(context.Background(), w, body)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if w.Body.String() != string(data) {
+			t.Errorf("body mismatch: got %d bytes, want %d bytes", w.Body.Len(), len(data))
+		}
+	})
+
+	t.Run("timeout when no data received", func(t *testing.T) {
+		// Create a reader that blocks forever
+		pr, _ := io.Pipe()
+		defer pr.Close()
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			ReadTimeout:    50 * time.Millisecond,
+		})
+
+		w := httptest.NewRecorder()
+		err := transport.forwardRegular(context.Background(), w, pr)
+		if err != ErrReadTimeout {
+			t.Errorf("expected ErrReadTimeout, got: %v", err)
+		}
+	})
+
+	t.Run("context cancellation", func(t *testing.T) {
+		pr, _ := io.Pipe()
+		defer pr.Close()
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			ReadTimeout:    5 * time.Second,
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		w := httptest.NewRecorder()
+		err := transport.forwardRegular(ctx, w, pr)
+		if err != context.Canceled {
+			t.Errorf("expected context.Canceled, got: %v", err)
+		}
+	})
+
+	t.Run("no timeout when ReadTimeout is zero", func(t *testing.T) {
+		data := []byte("test data")
+		body := io.NopCloser(bytes.NewReader(data))
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			ReadTimeout:    0, // Disabled
+		})
+
+		w := httptest.NewRecorder()
+		err := transport.forwardRegular(context.Background(), w, body)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if w.Body.String() != string(data) {
+			t.Errorf("body mismatch")
+		}
+	})
+}
+
 func TestBuildUpstreamRequest(t *testing.T) {
 	t.Run("with body", func(t *testing.T) {
 		origReq := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)

@@ -298,6 +298,65 @@ func TestCachedStore_DefaultTTL(t *testing.T) {
 	}
 }
 
+func TestCachedStore_GetConfig_StoreError(t *testing.T) {
+	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
+	if err != nil {
+		t.Fatalf("failed to create SQLite store: %v", err)
+	}
+	defer sqlStore.Close()
+
+	// Create a mock that returns error on GetConfig
+	mock := &errorOnGetStore{Store: sqlStore, getErr: errors.New("db connection failed")}
+	clock := &mockClock{now: time.Now()}
+	cached := NewCachedStore(CachedStoreConfig{
+		Store:    mock,
+		CacheTTL: 5 * time.Second,
+		Clock:    clock,
+	})
+
+	ctx := context.Background()
+
+	// Should return error from store
+	_, err = cached.GetConfig(ctx, "key1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err.Error() != "db connection failed" {
+		t.Errorf("expected 'db connection failed', got '%s'", err.Error())
+	}
+}
+
+func TestCachedStore_SetConfigs_StoreError(t *testing.T) {
+	cached, mock, _ := setupCachedStoreTest(t)
+	mock.setErr = errors.New("write failed")
+	ctx := context.Background()
+
+	// Cache the value first
+	_, _ = cached.GetConfig(ctx, "key1")
+
+	// Try to update (should fail)
+	err := cached.SetConfigs(ctx, map[string]string{"key1": "newvalue"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	// Cache should still be valid (not invalidated on error)
+	val, _ := cached.GetConfig(ctx, "key1")
+	if val != "value1" {
+		t.Errorf("expected cached 'value1', got '%s'", val)
+	}
+}
+
+// errorOnGetStore is a mock store that returns error on GetConfig.
+type errorOnGetStore struct {
+	internal.Store
+	getErr error
+}
+
+func (s *errorOnGetStore) GetConfig(ctx context.Context, key string) (string, error) {
+	return "", s.getErr
+}
+
 // Ensure CachedStore still passes through other Store methods
 func TestCachedStore_PassthroughMethods(t *testing.T) {
 	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
