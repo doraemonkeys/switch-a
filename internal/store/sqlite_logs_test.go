@@ -60,6 +60,42 @@ func TestRequestLogs(t *testing.T) {
 	}
 }
 
+func TestCountLogs(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// Initially should be empty
+	count, err := store.CountLogs(ctx)
+	if err != nil {
+		t.Fatalf("CountLogs failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("CountLogs = %d, want 0", count)
+	}
+
+	// Insert logs
+	for i := 0; i < 5; i++ {
+		log := &model.RequestLog{
+			ProviderID: "p1",
+			APIType:    "claude",
+			Model:      "claude-3",
+			CreatedAt:  time.Now(),
+		}
+		if err := store.InsertLog(ctx, log); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	// Count should be 5
+	count, err = store.CountLogs(ctx)
+	if err != nil {
+		t.Fatalf("CountLogs after insert failed: %v", err)
+	}
+	if count != 5 {
+		t.Errorf("CountLogs = %d, want 5", count)
+	}
+}
+
 func TestCleanOldLogs(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()

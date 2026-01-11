@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"switch-a/internal"
+	"switch-a/internal/defaults"
 	"switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -14,11 +15,17 @@ import (
 // Compile-time interface check.
 var _ internal.HealthManager = (*Manager)(nil)
 
-// Default values.
+// Default values - derived from centralized defaults package.
 const (
-	DefaultCircuitFailure = 3
-	DefaultCircuitWindow  = 60  // seconds
-	DefaultCircuitDisable = 300 // seconds
+	DefaultCircuitFailure = defaults.CircuitFailure
+	DefaultCircuitWindow  = defaults.CircuitWindowSec
+	DefaultCircuitDisable = defaults.CircuitDisableSec
+)
+
+// DisabledReason prefixes for distinguishing automatic vs manual disables.
+const (
+	DisabledReasonPrefixAuto   = "auto: "
+	DisabledReasonPrefixManual = "manual: "
 )
 
 // Store defines the minimal storage interface needed by the health manager.
@@ -51,6 +58,14 @@ func NewManager(cfg Config) *Manager {
 		clock:   cfg.Clock,
 		logger:  cfg.Logger,
 	}
+}
+
+// StartCleanupLoop starts a background goroutine that periodically cleans up
+// old failure records in the circuit breaker to prevent memory leaks.
+// Returns a stop function to terminate the cleanup loop.
+// Example: stop := mgr.StartCleanupLoop(5 * time.Minute, 10 * time.Minute); defer stop()
+func (m *Manager) StartCleanupLoop(interval, maxAge time.Duration) (stop func()) {
+	return m.circuit.StartCleanupLoop(interval, maxAge)
 }
 
 // MarkSuccess marks a successful request for the provider.
@@ -99,7 +114,7 @@ func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error)
 	if triggered {
 		disableUntil := now.Add(circuitDisable)
 		state.DisabledUntil = &disableUntil
-		state.DisabledReason = "auto: circuit breaker triggered"
+		state.DisabledReason = DisabledReasonPrefixAuto + "circuit breaker triggered"
 		state.Available = false
 
 		m.logger.Warn("circuit breaker triggered",
@@ -116,12 +131,15 @@ func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error)
 	return triggered
 }
 
-// IsAvailable checks if the provider is available.
-func (m *Manager) IsAvailable(ctx context.Context, providerID string) bool {
+// RecoverIfExpired checks if a provider's auto-disable period has expired
+// and performs recovery if so. This method has side effects - it updates
+// the provider's health state and resets the circuit breaker.
+// Returns true if recovery was performed, false otherwise.
+func (m *Manager) RecoverIfExpired(ctx context.Context, providerID string) bool {
 	state, err := m.store.GetHealthState(ctx, providerID)
 	if err != nil {
 		m.logger.Error("failed to get health state", zap.String("provider_id", providerID), zap.Error(err))
-		return false // Fail safe: treat as unavailable if we can't check
+		return false
 	}
 
 	// Check if auto-disabled and if disable period has expired
@@ -136,11 +154,23 @@ func (m *Manager) IsAvailable(ctx context.Context, providerID string) bool {
 			if err := m.store.UpdateHealthState(ctx, state); err != nil {
 				m.logger.Error("failed to update health state on auto-recovery",
 					zap.String("provider_id", providerID), zap.Error(err))
+				return false
 			}
 			m.logger.Info("provider auto-recovered", zap.String("provider_id", providerID))
 			return true
 		}
-		return false
+	}
+	return false
+}
+
+// IsAvailable checks if the provider is currently available.
+// This is a pure query with no side effects.
+// Call RecoverIfExpired first if you want to trigger auto-recovery for expired providers.
+func (m *Manager) IsAvailable(ctx context.Context, providerID string) bool {
+	state, err := m.store.GetHealthState(ctx, providerID)
+	if err != nil {
+		m.logger.Error("failed to get health state", zap.String("provider_id", providerID), zap.Error(err))
+		return false // Fail safe: treat as unavailable if we can't check
 	}
 
 	return state.Available
@@ -154,7 +184,10 @@ func (m *Manager) ManualDisable(ctx context.Context, providerID string, reason s
 	}
 
 	state.Available = false
-	state.DisabledReason = "manual: " + reason
+	// Manual disable must override any previous auto-disable state.
+	// Clearing DisabledUntil prevents IsAvailable() from auto-recovering the provider.
+	state.DisabledUntil = nil
+	state.DisabledReason = DisabledReasonPrefixManual + reason
 	// No DisabledUntil for manual disable - requires manual enable
 
 	return m.store.UpdateHealthState(ctx, state)

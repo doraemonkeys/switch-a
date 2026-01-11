@@ -1,34 +1,49 @@
 // Package store provides data storage implementations.
 package store
 
-// Default runtime configuration values.
-const (
+import (
+	"strconv"
+
+	"switch-a/internal/defaults"
+)
+
+// boolToString converts a bool to "true" or "false" string.
+func boolToString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// Default runtime configuration values as strings for database storage.
+// These are derived from the centralized defaults package.
+var (
 	// DefaultAuthMode is the default authentication mode.
-	DefaultAuthMode = "auto"
+	DefaultAuthMode = defaults.AuthMode
 	// DefaultUserHeader is the default header for user identification.
-	DefaultUserHeader = "X-User-ID"
+	DefaultUserHeader = defaults.UserHeader
 	// DefaultTrustProxyHeaders indicates whether proxy headers are trusted by default.
-	DefaultTrustProxyHeaders = "true"
+	DefaultTrustProxyHeaders = boolToString(defaults.TrustProxyHeaders)
 	// DefaultUpstreamConnectTimeout is the default upstream connection timeout in seconds.
-	DefaultUpstreamConnectTimeout = "10"
+	DefaultUpstreamConnectTimeout = strconv.Itoa(defaults.UpstreamConnectTimeoutSec)
 	// DefaultUpstreamReadTimeout is the default upstream read timeout in seconds (0 = no timeout).
-	DefaultUpstreamReadTimeout = "0"
+	DefaultUpstreamReadTimeout = strconv.Itoa(defaults.UpstreamReadTimeoutSec)
 	// DefaultStickyEnabled indicates whether sticky sessions are enabled by default.
-	DefaultStickyEnabled = "true"
+	DefaultStickyEnabled = boolToString(defaults.StickyEnabled)
 	// DefaultStickyTTL is the default sticky session TTL in seconds.
-	DefaultStickyTTL = "300"
+	DefaultStickyTTL = strconv.Itoa(defaults.StickyTTLSeconds)
 	// DefaultCircuitFailure is the default number of failures before circuit opens.
-	DefaultCircuitFailure = "3"
+	DefaultCircuitFailure = strconv.Itoa(defaults.CircuitFailure)
 	// DefaultCircuitWindow is the default circuit breaker window in seconds.
-	DefaultCircuitWindow = "60"
+	DefaultCircuitWindow = strconv.Itoa(defaults.CircuitWindowSec)
 	// DefaultCircuitDisable is the default circuit breaker disable duration in seconds.
-	DefaultCircuitDisable = "300"
+	DefaultCircuitDisable = strconv.Itoa(defaults.CircuitDisableSec)
 	// DefaultMaxBodySize is the default maximum request body size in MB.
-	DefaultMaxBodySize = "10"
+	DefaultMaxBodySize = strconv.FormatInt(defaults.MaxBodySizeMB, 10)
 	// DefaultMaxRetries is the default maximum number of retries.
-	DefaultMaxRetries = "3"
+	DefaultMaxRetries = strconv.Itoa(defaults.MaxRetries)
 	// DefaultLogRetentionDays is the default log retention period in days.
-	DefaultLogRetentionDays = "7"
+	DefaultLogRetentionDays = strconv.Itoa(defaults.LogRetentionDays)
 	// DefaultInterGroupStrategy is the default inter-group routing strategy.
-	DefaultInterGroupStrategy = "priority"
+	DefaultInterGroupStrategy = defaults.InterGroupStrategy
 )

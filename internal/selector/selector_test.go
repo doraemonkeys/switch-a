@@ -80,6 +80,10 @@ func newMockHealthChecker() *mockHealthChecker {
 	}
 }
 
+func (h *mockHealthChecker) RecoverIfExpired(_ context.Context, _ string) bool {
+	return false // Mock does not perform recovery
+}
+
 func (h *mockHealthChecker) IsAvailable(_ context.Context, providerID string) bool {
 	if available, ok := h.available[providerID]; ok {
 		return available

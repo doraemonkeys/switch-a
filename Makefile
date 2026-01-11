@@ -20,7 +20,6 @@ TEMP_ENV := TEMP="$(TMP_DIR)" TMP="$(TMP_DIR)"
 # 静默模式
 ci:
 	@mkdir -p .tmp
-	@go install github.com/vladopajic/go-test-coverage/v2@latest
 	@set -o pipefail && go test ./... -coverprofile=./cover.out -covermode=atomic 2>&1 | tail -n 10
 	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 	@golangci-lint run
@@ -36,7 +35,6 @@ lint:
 
 coverage:
 	mkdir -p .tmp
-	go install github.com/vladopajic/go-test-coverage/v2@latest
 	go test ./... -coverprofile=./cover.out -covermode=atomic
 	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 

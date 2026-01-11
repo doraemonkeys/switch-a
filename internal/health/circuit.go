@@ -73,6 +73,7 @@ func (cb *CircuitBreaker) Reset(providerID string) {
 }
 
 // Cleanup removes old failure records to prevent memory bloat.
+// Call periodically or use StartCleanupLoop for automatic cleanup.
 func (cb *CircuitBreaker) Cleanup(maxAge time.Duration) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -93,4 +94,24 @@ func (cb *CircuitBreaker) Cleanup(maxAge time.Duration) {
 			cb.failures[providerID] = valid
 		}
 	}
+}
+
+// StartCleanupLoop spawns a goroutine that periodically calls Cleanup().
+// Returns a stop function to terminate the cleanup loop.
+// Example: stop := cb.StartCleanupLoop(5 * time.Minute, 10 * time.Minute); defer stop()
+func (cb *CircuitBreaker) StartCleanupLoop(interval, maxAge time.Duration) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cb.Cleanup(maxAge)
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
 }

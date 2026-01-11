@@ -231,6 +231,9 @@ func (s *SQLiteStore) CreateGroup(ctx context.Context, g *model.Group) error {
 }
 
 func (s *SQLiteStore) UpdateGroup(ctx context.Context, g *model.Group) error {
+	// Clear providers to avoid GORM trying to update the association.
+	// This is an ORM implementation detail that should be handled here.
+	g.Providers = nil
 	if err := s.db.WithContext(ctx).Save(g).Error; err != nil {
 		return fmt.Errorf("update group %q: %w", g.ID, err)
 	}
@@ -238,13 +241,20 @@ func (s *SQLiteStore) UpdateGroup(ctx context.Context, g *model.Group) error {
 }
 
 func (s *SQLiteStore) DeleteGroup(ctx context.Context, id string) error {
-	// First update providers to remove group reference
-	if err := s.db.WithContext(ctx).Model(&model.Provider{}).
-		Where("group_id = ?", id).
-		Update("group_id", nil).Error; err != nil { // coverage-ignore -- UPDATE rarely fails on valid schema
-		return fmt.Errorf("delete group %q: unlink providers: %w", id, err)
-	}
-	if err := s.db.WithContext(ctx).Delete(&model.Group{}, "id = ?", id).Error; err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// First update providers to remove group reference
+		if err := tx.Model(&model.Provider{}).
+			Where("group_id = ?", id).
+			Update("group_id", nil).Error; err != nil { // coverage-ignore -- UPDATE rarely fails within transaction
+			return fmt.Errorf("unlink providers: %w", err)
+		}
+		// Then delete the group
+		if err := tx.Delete(&model.Group{}, "id = ?", id).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("delete group %q: %w", id, err)
 	}
 	return nil
@@ -361,6 +371,15 @@ func (s *SQLiteStore) ListLogs(ctx context.Context, limit, offset int) ([]model.
 		return nil, fmt.Errorf("list logs: %w", err)
 	}
 	return logs, nil
+}
+
+func (s *SQLiteStore) CountLogs(ctx context.Context) (int64, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(&model.RequestLog{}).Count(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("count logs: %w", err)
+	}
+	return count, nil
 }
 
 func (s *SQLiteStore) CleanOldLogs(ctx context.Context, beforeDays int) error {

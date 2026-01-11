@@ -15,6 +15,20 @@ const (
 // CustomAPITypePrefix is the prefix for custom API types.
 const CustomAPITypePrefix = "custom:"
 
+// Route path constants used for HTTP routing.
+// These ensure consistency between server route registration and path parsing.
+const (
+	// Claude API routes
+	RouteClaudeMessages = "/v1/messages"
+	RouteClaudeModels   = "/v1/models"
+	// Codex API routes
+	RouteCodexResponses = "/responses"
+	// Gemini API routes (prefix)
+	RouteGeminiPrefix = "/gemini/"
+	// Custom API routes (prefix)
+	RouteCustomPrefix = "/custom/"
+)
+
 // ParseAPIType determines the API type from the request path.
 // Returns the API type and a boolean indicating if the type was recognized.
 //

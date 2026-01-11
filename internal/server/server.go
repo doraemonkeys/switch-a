@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"switch-a/internal"
+	"switch-a/internal/admin"
 	"switch-a/internal/model"
 	"switch-a/internal/proxy"
 
@@ -46,6 +48,7 @@ type store interface {
 	// Log operations
 	InsertLog(ctx context.Context, log *model.RequestLog) error
 	ListLogs(ctx context.Context, limit, offset int) ([]model.RequestLog, error)
+	CountLogs(ctx context.Context) (int64, error)
 }
 
 // Server represents the HTTP server.
@@ -58,12 +61,23 @@ type Server struct {
 	proxyHandler *proxy.Handler
 }
 
+// ConcurrencyTracker is an alias to avoid duplicating the interface definition.
+type ConcurrencyTracker = admin.ConcurrencyTracker
+
+// Selector defines the provider selection interface needed by the server.
+// This extends the basic internal.Selector with additional methods for
+// concurrency management and sticky sessions.
+type Selector = proxy.Selector
+
 // Config holds server configuration.
 type Config struct {
-	Port       string
-	AdminToken string
-	Logger     *zap.Logger
-	Store      store
+	Port        string
+	AdminToken  string
+	Logger      *zap.Logger
+	Store       store
+	Health      internal.HealthManager
+	Selector    Selector
+	Concurrency ConcurrencyTracker
 }
 
 // HealthResponse represents the health check response.
@@ -76,10 +90,17 @@ type HealthResponse struct {
 func New(cfg Config) *Server {
 	mux := http.NewServeMux()
 
-	// Create proxy handler
+	// Create proxy handler with all dependencies for full functionality.
+	// Without Selector and Health, the proxy falls back to degraded mode:
+	// - No health checks (MarkSuccess/MarkFailure are no-ops)
+	// - No concurrency limits
+	// - No sticky sessions
+	// - Simple round-robin provider selection
 	proxyHandler := proxy.NewHandler(proxy.Config{
-		Store:  cfg.Store,
-		Logger: cfg.Logger,
+		Store:    cfg.Store,
+		Selector: cfg.Selector,
+		Health:   cfg.Health,
+		Logger:   cfg.Logger,
 	})
 
 	s := &Server{
@@ -99,17 +120,65 @@ func New(cfg Config) *Server {
 
 	// Proxy API routes (no auth required)
 	// Claude API
-	mux.HandleFunc("POST /v1/messages", s.handleProxy)
-	mux.HandleFunc("GET /v1/models", s.handleProxy)
+	mux.HandleFunc("POST "+proxy.RouteClaudeMessages, s.handleProxy)
+	mux.HandleFunc("GET "+proxy.RouteClaudeModels, s.handleProxy)
 	// Codex API
-	mux.HandleFunc("POST /responses", s.handleProxy)
+	mux.HandleFunc("POST "+proxy.RouteCodexResponses, s.handleProxy)
 	// Gemini API
-	mux.HandleFunc("POST /gemini/", s.handleProxy)
+	mux.HandleFunc("POST "+proxy.RouteGeminiPrefix, s.handleProxy)
 	// Custom API
-	mux.HandleFunc("POST /custom/", s.handleProxy)
-	mux.HandleFunc("GET /custom/", s.handleProxy)
+	mux.HandleFunc("POST "+proxy.RouteCustomPrefix, s.handleProxy)
+	mux.HandleFunc("GET "+proxy.RouteCustomPrefix, s.handleProxy)
+
+	// Admin API routes (require auth)
+	s.registerAdminRoutes(mux, cfg)
 
 	return s
+}
+
+// registerAdminRoutes registers admin API routes with authentication.
+func (s *Server) registerAdminRoutes(mux *http.ServeMux, cfg Config) {
+	// Create admin handler with cleaner for proper resource cleanup.
+	// The Selector implements ConcurrencyCleaner for clearing concurrency
+	// counters when providers are deleted.
+	adminHandler := admin.NewHandler(admin.Config{
+		Store:       cfg.Store,
+		Health:      cfg.Health,
+		Concurrency: cfg.Concurrency,
+		Cleaner:     cfg.Selector,
+		Logger:      cfg.Logger,
+	})
+
+	// Create auth middleware
+	auth := admin.NewAuthMiddleware(cfg.AdminToken)
+
+	// Provider routes
+	mux.Handle("GET /admin/api/providers", auth.WrapFunc(adminHandler.ListProviders))
+	mux.Handle("POST /admin/api/providers", auth.WrapFunc(adminHandler.CreateProvider))
+	mux.Handle("GET /admin/api/providers/{id}", auth.WrapFunc(adminHandler.GetProvider))
+	mux.Handle("PUT /admin/api/providers/{id}", auth.WrapFunc(adminHandler.UpdateProvider))
+	mux.Handle("DELETE /admin/api/providers/{id}", auth.WrapFunc(adminHandler.DeleteProvider))
+	mux.Handle("POST /admin/api/providers/{id}/enable", auth.WrapFunc(adminHandler.EnableProvider))
+	mux.Handle("POST /admin/api/providers/{id}/disable", auth.WrapFunc(adminHandler.DisableProvider))
+	mux.Handle("POST /admin/api/providers/{id}/reset", auth.WrapFunc(adminHandler.ResetProvider))
+
+	// Group routes
+	mux.Handle("GET /admin/api/groups", auth.WrapFunc(adminHandler.ListGroups))
+	mux.Handle("POST /admin/api/groups", auth.WrapFunc(adminHandler.CreateGroup))
+	mux.Handle("GET /admin/api/groups/{id}", auth.WrapFunc(adminHandler.GetGroup))
+	mux.Handle("PUT /admin/api/groups/{id}", auth.WrapFunc(adminHandler.UpdateGroup))
+	mux.Handle("DELETE /admin/api/groups/{id}", auth.WrapFunc(adminHandler.DeleteGroup))
+
+	// Config routes
+	mux.Handle("GET /admin/api/config", auth.WrapFunc(adminHandler.GetConfig))
+	mux.Handle("PUT /admin/api/config", auth.WrapFunc(adminHandler.UpdateConfig))
+
+	// Health and status routes
+	mux.Handle("GET /admin/api/health", auth.WrapFunc(adminHandler.GetHealth))
+	mux.Handle("GET /admin/api/status", auth.WrapFunc(adminHandler.GetStatus))
+
+	// Logs route
+	mux.Handle("GET /admin/api/logs", auth.WrapFunc(adminHandler.GetLogs))
 }
 
 // handleProxy forwards requests to the proxy handler.

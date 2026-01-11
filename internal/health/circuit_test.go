@@ -150,3 +150,34 @@ func TestCircuitBreaker_MultipleProviders(t *testing.T) {
 		t.Error("p2 should not trigger yet")
 	}
 }
+
+func TestCircuitBreaker_StartCleanupLoop(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	cb := NewCircuitBreaker(clock)
+
+	window := time.Minute
+
+	// Add failures
+	cb.RecordFailure("p1", window, 10)
+	cb.RecordFailure("p2", window, 10)
+
+	// Start cleanup loop with very short interval for testing
+	stop := cb.StartCleanupLoop(10*time.Millisecond, time.Minute)
+
+	// Advance clock past maxAge
+	clock.Advance(2 * time.Minute)
+
+	// Wait for at least one cleanup cycle
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop the loop
+	stop()
+
+	// Failures should be cleaned up
+	if cb.GetFailureCount("p1", window) != 0 {
+		t.Error("p1 failures should be cleaned up by loop")
+	}
+	if cb.GetFailureCount("p2", window) != 0 {
+		t.Error("p2 failures should be cleaned up by loop")
+	}
+}

@@ -7,10 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"switch-a/internal"
 	"switch-a/internal/config"
+	"switch-a/internal/health"
 	"switch-a/internal/logger"
+	"switch-a/internal/selector"
 	"switch-a/internal/server"
 	"switch-a/internal/store"
 
@@ -50,12 +53,51 @@ func run() error {
 		return fmt.Errorf("failed to initialize default config: %w", err)
 	}
 
-	// Create HTTP server
+	// Initialize clock for time-based operations
+	clock := internal.RealClock{}
+
+	// Initialize health manager for circuit breaker and availability tracking
+	healthMgr := health.NewManager(health.Config{
+		Store:  st,
+		Clock:  clock,
+		Logger: log,
+	})
+	// Start cleanup loop to prevent memory growth from old failure records
+	stopHealthCleanup := healthMgr.StartCleanupLoop(5*time.Minute, 10*time.Minute)
+	defer stopHealthCleanup()
+
+	// Initialize sticky cache for session affinity
+	stickyCache := selector.NewMemoryStickyCache(clock)
+	// Start cleanup loop to prevent memory growth from expired entries
+	stopCleanup := stickyCache.StartCleanupLoop(5 * time.Minute)
+	defer stopCleanup()
+
+	// Initialize concurrency limiter for per-provider request limits
+	limiter := selector.NewConcurrencyLimiter()
+
+	// Initialize selector for provider selection with all features:
+	// - Health checks
+	// - Sticky sessions
+	// - Concurrency limits
+	// - Group-based strategies (priority, weight, random)
+	sel := selector.NewSelector(selector.Config{
+		Store:         st,
+		HealthChecker: healthMgr,
+		StickyCache:   stickyCache,
+		Limiter:       limiter,
+		Clock:         clock,
+		Logger:        log,
+	})
+
+	// Create HTTP server with full component stack
 	srv := server.New(server.Config{
-		Port:       cfg.Port,
-		AdminToken: cfg.AdminToken,
-		Logger:     log,
-		Store:      st,
+		Port:        cfg.Port,
+		AdminToken:  cfg.AdminToken,
+		Logger:      log,
+		Store:       st,
+		Health:      healthMgr,
+		Selector:    sel,
+		Concurrency: limiter,
 	})
 
 	// Start server in goroutine

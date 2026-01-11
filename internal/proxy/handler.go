@@ -12,21 +12,22 @@ import (
 	"time"
 
 	"switch-a/internal"
+	"switch-a/internal/defaults"
 	"switch-a/internal/model"
 	"switch-a/internal/selector"
 
 	"go.uber.org/zap"
 )
 
-// Default configuration values.
+// Default configuration values - derived from centralized defaults package.
 const (
-	DefaultMaxBodySizeMB     int64 = 10
-	DefaultMaxRetries              = 3
-	DefaultConnectTimeoutSec       = 10
-	DefaultUserHeader              = "X-User-ID"
+	DefaultMaxBodySizeMB     = defaults.MaxBodySizeMB
+	DefaultMaxRetries        = defaults.MaxRetries
+	DefaultConnectTimeoutSec = defaults.UpstreamConnectTimeoutSec
+	DefaultUserHeader        = defaults.UserHeader
 	// DefaultStickyEnabled is the default value for sticky sessions.
 	// When enabled, clients are routed to the same provider for consistency.
-	DefaultStickyEnabled = true
+	DefaultStickyEnabled = defaults.StickyEnabled
 )
 
 // Config keys for runtime configuration stored in the database.
@@ -562,8 +563,9 @@ func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusC
 }
 
 // shouldRetry determines if a response status code indicates a retryable failure.
+// Retries on server errors (5xx) and rate limiting (429 Too Many Requests).
 func shouldRetry(statusCode int) bool {
-	return statusCode >= 500 || statusCode == 429
+	return statusCode >= defaults.StatusServerError || statusCode == defaults.StatusTooManyRequests
 }
 
 // buildFullURL constructs the full upstream URL.

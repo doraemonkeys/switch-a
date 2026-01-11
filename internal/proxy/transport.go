@@ -12,6 +12,10 @@ import (
 )
 
 // sseBufferSize is the buffer size for reading SSE streams.
+// The 4096 byte (4KB) value balances memory efficiency with throughput:
+// - Small enough to avoid excessive memory allocation per connection
+// - Large enough to minimize syscall overhead for typical SSE event sizes
+// - Aligned with common OS page sizes for efficient I/O operations
 const sseBufferSize = 4096
 
 // Transport handles HTTP request forwarding with SSE support.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"switch-a/internal"
+	"switch-a/internal/defaults"
 	"switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -16,12 +17,12 @@ import (
 var _ internal.Selector = (*Selector)(nil)
 
 // DefaultStickyTTLSeconds is the canonical default TTL for sticky sessions in seconds.
-// All components should derive their sticky TTL values from this constant.
-const DefaultStickyTTLSeconds = 300
+// Derived from the centralized defaults package.
+const DefaultStickyTTLSeconds = defaults.StickyTTLSeconds
 
 // DefaultStickyTTL is the default TTL for sticky sessions as a time.Duration.
-// Derived from DefaultStickyTTLSeconds for convenience.
-const DefaultStickyTTL = DefaultStickyTTLSeconds * time.Second
+// Derived from the centralized defaults package.
+const DefaultStickyTTL = defaults.StickyTTL
 
 // ConfigKeyInterGroupStrategy is the config key for inter-group selection strategy.
 const ConfigKeyInterGroupStrategy = "inter_group_strategy"
@@ -45,6 +46,10 @@ type Store interface {
 
 // HealthChecker defines the interface to check provider availability.
 type HealthChecker interface {
+	// RecoverIfExpired triggers auto-recovery if the provider's disable period has expired.
+	// Returns true if recovery was performed.
+	RecoverIfExpired(ctx context.Context, providerID string) bool
+	// IsAvailable checks if the provider is currently available (pure query).
 	IsAvailable(ctx context.Context, providerID string) bool
 }
 
@@ -174,10 +179,13 @@ func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectReques
 		return nil
 	}
 
-	// Verify provider health
-	if s.health != nil && !s.health.IsAvailable(ctx, providerID) {
-		s.sticky.Delete(stickyKey)
-		return nil
+	// Verify provider health (trigger recovery first, then check availability)
+	if s.health != nil {
+		s.health.RecoverIfExpired(ctx, providerID)
+		if !s.health.IsAvailable(ctx, providerID) {
+			s.sticky.Delete(stickyKey)
+			return nil
+		}
 	}
 
 	// Get and verify provider
@@ -207,9 +215,12 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.P
 			continue
 		}
 
-		// Check health
-		if s.health != nil && !s.health.IsAvailable(ctx, p.ID) {
-			continue
+		// Check health (trigger recovery first, then check availability)
+		if s.health != nil {
+			s.health.RecoverIfExpired(ctx, p.ID)
+			if !s.health.IsAvailable(ctx, p.ID) {
+				continue
+			}
 		}
 
 		if p.GroupID == nil || *p.GroupID == "" {

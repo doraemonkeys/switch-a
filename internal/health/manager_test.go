@@ -168,7 +168,7 @@ func TestManager_IsAvailable(t *testing.T) {
 		t.Error("new provider should be available")
 	}
 
-	// Manually disable
+	// Auto-disable (simulating circuit breaker)
 	disableUntil := clock.Now().Add(5 * time.Minute)
 	store.healthStates[providerID] = &model.HealthState{
 		ProviderID:     providerID,
@@ -177,6 +177,7 @@ func TestManager_IsAvailable(t *testing.T) {
 		DisabledReason: "auto: test",
 	}
 
+	// IsAvailable is now a pure query - should return false
 	if mgr.IsAvailable(ctx, providerID) {
 		t.Error("disabled provider should not be available")
 	}
@@ -184,8 +185,19 @@ func TestManager_IsAvailable(t *testing.T) {
 	// Advance time past disable period
 	clock.Advance(6 * time.Minute)
 
+	// IsAvailable alone should still return false (pure query, no side effects)
+	if mgr.IsAvailable(ctx, providerID) {
+		t.Error("IsAvailable should not auto-recover, it's a pure query now")
+	}
+
+	// RecoverIfExpired should trigger recovery and return true
+	if !mgr.RecoverIfExpired(ctx, providerID) {
+		t.Error("RecoverIfExpired should return true when recovery is performed")
+	}
+
+	// Now IsAvailable should return true
 	if !mgr.IsAvailable(ctx, providerID) {
-		t.Error("provider should auto-recover after disable period")
+		t.Error("provider should be available after RecoverIfExpired")
 	}
 
 	// State should be updated
@@ -195,6 +207,53 @@ func TestManager_IsAvailable(t *testing.T) {
 	}
 	if state.DisabledUntil != nil {
 		t.Error("DisabledUntil should be cleared after recovery")
+	}
+}
+
+func TestManager_RecoverIfExpired(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+	providerID := "p1"
+
+	// Initially available - RecoverIfExpired should return false (no recovery needed)
+	if mgr.RecoverIfExpired(ctx, providerID) {
+		t.Error("RecoverIfExpired should return false for available provider")
+	}
+
+	// Set up auto-disabled state
+	disableUntil := clock.Now().Add(5 * time.Minute)
+	store.healthStates[providerID] = &model.HealthState{
+		ProviderID:     providerID,
+		Available:      false,
+		DisabledUntil:  &disableUntil,
+		DisabledReason: "auto: circuit breaker",
+	}
+
+	// Disable period not expired yet - should return false
+	if mgr.RecoverIfExpired(ctx, providerID) {
+		t.Error("RecoverIfExpired should return false when disable period not expired")
+	}
+
+	// Advance time past disable period
+	clock.Advance(6 * time.Minute)
+
+	// Now should return true and recover
+	if !mgr.RecoverIfExpired(ctx, providerID) {
+		t.Error("RecoverIfExpired should return true when disable period expired")
+	}
+
+	// Calling again should return false (already recovered)
+	if mgr.RecoverIfExpired(ctx, providerID) {
+		t.Error("RecoverIfExpired should return false after already recovered")
 	}
 }
 
@@ -229,6 +288,48 @@ func TestManager_ManualDisable(t *testing.T) {
 	clock.Advance(24 * time.Hour)
 	if mgr.IsAvailable(ctx, providerID) {
 		t.Error("manually disabled provider should not auto-recover")
+	}
+}
+
+func TestManager_ManualDisable_OverridesAutoDisable(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+	providerID := "p1"
+
+	// Simulate an auto-disable (circuit breaker) state.
+	autoDisableUntil := clock.Now().Add(5 * time.Minute)
+	store.healthStates[providerID] = &model.HealthState{
+		ProviderID:     providerID,
+		Available:      false,
+		DisabledUntil:  &autoDisableUntil,
+		DisabledReason: DisabledReasonPrefixAuto + "circuit breaker triggered",
+	}
+
+	// Manual disable should override auto-disable and prevent auto-recovery.
+	if err := mgr.ManualDisable(ctx, providerID, "maintenance"); err != nil {
+		t.Fatalf("ManualDisable failed: %v", err)
+	}
+
+	state := store.healthStates[providerID]
+	if state.DisabledUntil != nil {
+		t.Error("DisabledUntil should be cleared on manual disable to prevent auto-recovery")
+	}
+	if state.DisabledReason != "manual: maintenance" {
+		t.Errorf("DisabledReason = %q, want %q", state.DisabledReason, "manual: maintenance")
+	}
+
+	clock.Advance(6 * time.Minute)
+	if mgr.IsAvailable(ctx, providerID) {
+		t.Error("manually disabled provider should not auto-recover even after previous auto-disable would have expired")
 	}
 }
 

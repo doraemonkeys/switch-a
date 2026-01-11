@@ -40,6 +40,7 @@ type Store interface {
 	// Log operations
 	InsertLog(ctx context.Context, log *model.RequestLog) error
 	ListLogs(ctx context.Context, limit, offset int) ([]model.RequestLog, error)
+	CountLogs(ctx context.Context) (int64, error)
 	CleanOldLogs(ctx context.Context, beforeDays int) error
 
 	// Close closes the store and releases resources.
@@ -64,7 +65,12 @@ type HealthManager interface {
 	MarkSuccess(ctx context.Context, providerID string)
 	// MarkFailure marks a failed request, returns true if circuit breaker triggered.
 	MarkFailure(ctx context.Context, providerID string, err error) bool
-	// IsAvailable checks if the provider is available.
+	// RecoverIfExpired checks if a provider's auto-disable period has expired
+	// and performs recovery if so. Returns true if recovery was performed.
+	// This method has side effects - it updates the provider's health state.
+	RecoverIfExpired(ctx context.Context, providerID string) bool
+	// IsAvailable checks if the provider is currently available.
+	// This is a pure query with no side effects.
 	IsAvailable(ctx context.Context, providerID string) bool
 	// ManualDisable manually disables a provider.
 	ManualDisable(ctx context.Context, providerID string, reason string) error
