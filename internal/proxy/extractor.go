@@ -12,6 +12,9 @@ import (
 // maxModelExtractBytes is the maximum bytes to read when extracting the model field.
 const maxModelExtractBytes = 128 * 1024 // 128KB
 
+// ModelUnknown is returned when the model cannot be extracted from the request.
+const ModelUnknown = "unknown"
+
 // modelFieldRe matches the "model" field in JSON.
 // Captures: "model":"value" or "model": "value" (with optional whitespace).
 //
@@ -93,7 +96,7 @@ func extractGeminiModel(path string) string {
 	// or: /gemini/v1/{model}:{action}
 	parts := strings.Split(path, "/models/")
 	if len(parts) < 2 {
-		return "unknown"
+		return ModelUnknown
 	}
 
 	modelPart := parts[1]
@@ -107,7 +110,7 @@ func extractGeminiModel(path string) string {
 	}
 
 	if modelPart == "" { // coverage-ignore -- empty model after parsing is rare
-		return "unknown"
+		return ModelUnknown
 	}
 	return modelPart
 }
@@ -126,7 +129,7 @@ func extractModelFromJSON(body []byte) string {
 	if len(matches) >= 2 {
 		return string(matches[1])
 	}
-	return "unknown"
+	return ModelUnknown
 }
 
 // ConsumeAndReplaceBody reads the request body and returns a buffer containing it.

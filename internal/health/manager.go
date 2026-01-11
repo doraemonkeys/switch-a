@@ -28,6 +28,11 @@ const (
 	DisabledReasonPrefixManual = "manual: "
 )
 
+// Reason strings for disabled state.
+const (
+	ReasonCircuitBreakerTriggered = "circuit breaker triggered"
+)
+
 // Store defines the minimal storage interface needed by the health manager.
 type Store interface {
 	GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error)
@@ -122,7 +127,7 @@ func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error)
 	triggered := m.circuit.RecordFailure(providerID, circuitWindow, circuitFailure)
 	if triggered {
 		disableUntil := now.Add(circuitDisable)
-		reason := DisabledReasonPrefixAuto + "circuit breaker triggered"
+		reason := DisabledReasonPrefixAuto + ReasonCircuitBreakerTriggered
 
 		// Use atomic update to set circuit breaker state.
 		// This prevents a concurrent MarkSuccess from overwriting the disabled state.
