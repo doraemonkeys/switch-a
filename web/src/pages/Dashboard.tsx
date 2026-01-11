@@ -1,4 +1,73 @@
+import { Link, useNavigate } from "react-router-dom";
+import { useStatus } from "../hooks/useStatus";
+import { useLogs } from "../hooks/useLogs";
+import { useMemo } from "react";
+
+type ProviderStatusType = "healthy" | "unhealthy" | "disabled";
+
+function getProviderStatus(
+  enabled: boolean,
+  available: boolean | undefined
+): ProviderStatusType {
+  if (!enabled) return "disabled";
+  return available !== false ? "healthy" : "unhealthy";
+}
+
+const statusDotClass: Record<ProviderStatusType, string> = {
+  healthy: "bg-success",
+  unhealthy: "bg-danger",
+  disabled: "bg-text-muted",
+};
+
+const statusBadgeClass: Record<ProviderStatusType, string> = {
+  healthy: "bg-success-light text-success-dark",
+  unhealthy: "bg-danger-light text-danger-dark",
+  disabled: "bg-gray-100 text-gray-600",
+};
+
+const statusLabel: Record<ProviderStatusType, string> = {
+  healthy: "Healthy",
+  unhealthy: "Unhealthy",
+  disabled: "Disabled",
+};
+
 export function Dashboard() {
+  const {
+    status,
+    summary,
+    loading: statusLoading,
+    refetch: refetchStatus,
+  } = useStatus();
+  const {
+    logs,
+    total: totalLogs,
+    loading: logsLoading,
+    refetch: refetchLogs,
+  } = useLogs({
+    limit: 50,
+  });
+  const navigate = useNavigate();
+
+  const handleRefresh = () => {
+    refetchStatus();
+    refetchLogs();
+  };
+
+  const loading = statusLoading || logsLoading;
+
+  // Calculate trends (mock for now as we don't have historical data)
+  const trends = {
+    providers: { value: 0, label: "configured" },
+    healthy: { value: 0, label: "available" },
+    unhealthy: { value: 0, label: "circuit breaker" },
+    requests: { value: 0, label: "total logged" },
+  };
+
+  // Filter for recent errors
+  const recentErrors = useMemo(() => {
+    return logs.filter((log) => !log.success).slice(0, 5);
+  }, [logs]);
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -7,8 +76,12 @@ export function Dashboard() {
           <h2 className="text-2xl font-bold text-text-primary">Dashboard</h2>
           <p className="text-text-secondary mt-1">系统状态总览</p>
         </div>
-        <button className="btn btn-secondary btn-sm">
-          <span>🔄</span>
+        <button
+          onClick={handleRefresh}
+          disabled={loading}
+          className="btn btn-secondary btn-sm"
+        >
+          <span className={loading ? "animate-spin" : ""}>🔄</span>
           Refresh
         </button>
       </div>
@@ -17,30 +90,30 @@ export function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Providers"
-          value="0"
+          value={summary?.providers_total.toString() || "0"}
           icon="🔌"
-          trend={{ value: 0, label: "configured" }}
+          trend={trends.providers}
           variant="primary"
         />
         <StatCard
           title="Healthy"
-          value="0"
+          value={summary?.providers_healthy.toString() || "0"}
           icon="✅"
-          trend={{ value: 0, label: "available" }}
+          trend={trends.healthy}
           variant="success"
         />
         <StatCard
           title="Unhealthy"
-          value="0"
+          value={summary?.providers_unhealthy.toString() || "0"}
           icon="⚠️"
-          trend={{ value: 0, label: "circuit breaker" }}
+          trend={trends.unhealthy}
           variant="danger"
         />
         <StatCard
-          title="Requests Today"
-          value="0"
+          title="Total Requests"
+          value={totalLogs.toString() || "0"}
           icon="📈"
-          trend={{ value: 0, label: "total requests" }}
+          trend={trends.requests}
           variant="info"
         />
       </div>
@@ -53,22 +126,84 @@ export function Dashboard() {
             <h3 className="text-lg font-semibold text-text-primary">
               Provider Status
             </h3>
-            <span className="badge badge-neutral">0 providers</span>
+            <span className="badge badge-neutral">
+              {status?.providers.length || 0} providers
+            </span>
           </div>
-          <div className="empty-state">
-            <div className="w-16 h-16 mx-auto mb-4 bg-bg-tertiary rounded-full flex items-center justify-center">
-              <span className="text-3xl">🔌</span>
+
+          {status?.providers && status.providers.length > 0 ? (
+            <div className="space-y-3">
+              {status.providers.map((provider) => (
+                <div
+                  key={provider.id}
+                  className="flex items-center justify-between p-3 rounded-lg border border-border bg-bg-secondary/50 hover:bg-bg-secondary transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        statusDotClass[
+                          getProviderStatus(
+                            provider.enabled,
+                            provider.health?.available
+                          )
+                        ]
+                      }`}
+                    />
+                    <div>
+                      <p className="font-medium text-text-primary">
+                        {provider.name}
+                      </p>
+                      <p className="text-xs text-text-muted">
+                        ID: {provider.id}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="text-xs text-text-muted">Requests</p>
+                      <p className="text-sm font-medium text-text-primary">
+                        {provider.current_requests}
+                      </p>
+                    </div>
+                    <div
+                      className={`px-2 py-1 rounded text-xs font-medium ${
+                        statusBadgeClass[
+                          getProviderStatus(
+                            provider.enabled,
+                            provider.health?.available
+                          )
+                        ]
+                      }`}
+                    >
+                      {
+                        statusLabel[
+                          getProviderStatus(
+                            provider.enabled,
+                            provider.health?.available
+                          )
+                        ]
+                      }
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-            <p className="font-medium text-text-primary mb-1">
-              No providers configured
-            </p>
-            <p className="text-sm text-text-muted">
-              Go to Providers page to add your first provider.
-            </p>
-            <button className="btn btn-primary btn-sm mt-4">
-              + Add Provider
-            </button>
-          </div>
+          ) : (
+            <div className="empty-state">
+              <div className="w-16 h-16 mx-auto mb-4 bg-bg-tertiary rounded-full flex items-center justify-center">
+                <span className="text-3xl">🔌</span>
+              </div>
+              <p className="font-medium text-text-primary mb-1">
+                No providers configured
+              </p>
+              <p className="text-sm text-text-muted">
+                Go to Providers page to add your first provider.
+              </p>
+              <Link to="/providers" className="btn btn-primary btn-sm mt-4">
+                + Add Provider
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Quick Actions */}
@@ -77,10 +212,26 @@ export function Dashboard() {
             Quick Actions
           </h3>
           <div className="space-y-2">
-            <QuickActionButton icon="➕" label="Add Provider" />
-            <QuickActionButton icon="📁" label="Create Group" />
-            <QuickActionButton icon="⚙️" label="Edit Config" />
-            <QuickActionButton icon="📋" label="View Logs" />
+            <QuickActionButton
+              icon="➕"
+              label="Add Provider"
+              onClick={() => navigate("/providers")}
+            />
+            <QuickActionButton
+              icon="📁"
+              label="Create Group"
+              onClick={() => navigate("/groups")}
+            />
+            <QuickActionButton
+              icon="⚙️"
+              label="Edit Config"
+              onClick={() => navigate("/config")}
+            />
+            <QuickActionButton
+              icon="📋"
+              label="View Logs"
+              onClick={() => navigate("/logs")}
+            />
           </div>
         </div>
       </div>
@@ -91,18 +242,51 @@ export function Dashboard() {
           <h3 className="text-lg font-semibold text-text-primary">
             Recent Errors
           </h3>
-          <button className="text-sm text-primary hover:text-primary-hover font-medium">
+          <Link
+            to="/logs"
+            className="text-sm text-primary hover:text-primary-hover font-medium"
+          >
             View All →
-          </button>
+          </Link>
         </div>
-        <div className="empty-state py-8">
-          <div className="w-12 h-12 mx-auto mb-3 bg-success-light rounded-full flex items-center justify-center">
-            <span className="text-2xl">✨</span>
+        {recentErrors.length > 0 ? (
+          <div className="space-y-3">
+            {recentErrors.map((log) => (
+              <div
+                key={log.id}
+                className="p-3 rounded-lg border border-danger-light bg-danger-light/10"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-text-primary">
+                        {log.model}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-danger-light text-danger-dark">
+                        {log.status_code}
+                      </span>
+                    </div>
+                    <p className="text-sm text-text-secondary">
+                      {log.error_msg || "Unknown error"}
+                    </p>
+                  </div>
+                  <span className="text-xs text-text-muted">
+                    {new Date(log.created_at).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
-          <p className="text-sm">
-            No errors recorded. Everything is running smoothly!
-          </p>
-        </div>
+        ) : (
+          <div className="empty-state py-8">
+            <div className="w-12 h-12 mx-auto mb-3 bg-success-light rounded-full flex items-center justify-center">
+              <span className="text-2xl">✨</span>
+            </div>
+            <p className="text-sm">
+              No recent errors. Everything is running smoothly!
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -166,13 +350,15 @@ function StatCard({ title, value, icon, trend, variant }: StatCardProps) {
 interface QuickActionButtonProps {
   icon: string;
   label: string;
+  onClick: () => void;
 }
 
-function QuickActionButton({ icon, label }: QuickActionButtonProps) {
+function QuickActionButton({ icon, label, onClick }: QuickActionButtonProps) {
   return (
     <button
+      onClick={onClick}
       className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border 
-                       hover:bg-bg-hover hover:border-primary/30 transition-all duration-200 group"
+                       hover:bg-bg-hover hover:border-primary/30 transition-all duration-200 group text-left"
     >
       <span className="text-lg group-hover:scale-110 transition-transform">
         {icon}

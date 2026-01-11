@@ -205,6 +205,14 @@ func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectReques
 
 	// Check concurrency limit
 	if s.limiter != nil && !s.limiter.TryAcquire(provider.ID, provider.Concurrency) {
+		// Log sticky cache deletion for observability.
+		// This helps identify when high load causes session affinity loss.
+		s.logger.Debug("sticky cache deleted due to concurrency limit",
+			zap.String("provider_id", provider.ID),
+			zap.String("client_ip", stickyKey.IP),
+			zap.String("user", stickyKey.User),
+			zap.String("api_type", stickyKey.APIType),
+		)
 		s.sticky.Delete(stickyKey)
 		return nil
 	}

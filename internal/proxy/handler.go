@@ -277,10 +277,25 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 			break
 		}
 
+		// Check provider-specific max retries BEFORE adding to excluded.
+		// This ensures providers are only skipped if the global attempt exceeds their threshold,
+		// but they can still be tried if selected on an earlier attempt.
+		providerMaxRetries := pctx.cfg.maxRetries
+		if provider.MaxRetries >= 0 {
+			providerMaxRetries = provider.MaxRetries
+		}
+		if attempt > providerMaxRetries {
+			// Provider can't be used at this attempt level.
+			// Add to excluded to prevent re-selection, release concurrency, and continue.
+			excludedProviders[provider.ID] = true
+			h.releaseConcurrency(provider.ID)
+			continue
+		}
+
 		providerUsed = provider
 		excludedProviders[provider.ID] = true
 
-		result := h.forwardToProvider(ctx, pctx, provider, attempt)
+		result := h.forwardToProvider(ctx, pctx, provider)
 		headersWritten = result.headersWritten
 		statusCode = result.statusCode
 		lastErr = result.err
@@ -313,20 +328,9 @@ type forwardResult struct {
 }
 
 // forwardToProvider forwards the request to a single provider.
-func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider, attempt int) forwardResult {
+// Note: MaxRetries check is performed in executeProxy before calling this function.
+func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider) forwardResult {
 	result := forwardResult{}
-
-	// Check provider-specific max retries
-	providerMaxRetries := pctx.cfg.maxRetries
-	if provider.MaxRetries >= 0 {
-		providerMaxRetries = provider.MaxRetries
-	}
-	if attempt > providerMaxRetries {
-		// Release concurrency slot that was acquired during provider selection.
-		// Without this, slots accumulate over time causing "phantom full capacity".
-		h.releaseConcurrency(provider.ID)
-		return result // Continue to next provider
-	}
 
 	// Build upstream URL
 	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
@@ -354,7 +358,6 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		h.logger.Warn("upstream request failed",
 			zap.String("provider_id", provider.ID),
 			zap.Error(err),
-			zap.Int("attempt", attempt+1),
 		)
 		result.err = err
 		h.markFailure(ctx, provider.ID, err)
@@ -370,7 +373,6 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		h.logger.Warn("upstream returned error status",
 			zap.String("provider_id", provider.ID),
 			zap.Int("status_code", result.statusCode),
-			zap.Int("attempt", attempt+1),
 		)
 		result.err = statusErr // Record error for proper "all providers failed" message
 		h.markFailure(ctx, provider.ID, statusErr)
