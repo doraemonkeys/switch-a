@@ -28,6 +28,8 @@ var (
 	DefaultUpstreamConnectTimeout = strconv.Itoa(defaults.UpstreamConnectTimeoutSec)
 	// DefaultUpstreamReadTimeout is the default upstream read timeout in seconds (0 = no timeout).
 	DefaultUpstreamReadTimeout = strconv.Itoa(defaults.UpstreamReadTimeoutSec)
+	// DefaultSSEIdleTimeout is the default SSE idle timeout in seconds (0 = no timeout).
+	DefaultSSEIdleTimeout = strconv.Itoa(defaults.SSEIdleTimeoutSec)
 	// DefaultStickyEnabled indicates whether sticky sessions are enabled by default.
 	DefaultStickyEnabled = boolToString(defaults.StickyEnabled)
 	// DefaultStickyTTL is the default sticky session TTL in seconds.

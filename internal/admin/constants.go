@@ -75,6 +75,7 @@ var ValidConfigKeys = map[string]bool{
 	"trust_proxy_headers":      true,
 	"upstream_connect_timeout": true,
 	"upstream_read_timeout":    true,
+	"sse_idle_timeout":         true,
 	"sticky_enabled":           true,
 	"sticky_ttl":               true,
 	"circuit_failure":          true,
@@ -126,7 +127,8 @@ var configValidators = map[string]ConfigValidator{
 	"user_header":              nil, // Any string is valid
 	"trust_proxy_headers":      validateBoolConfig,
 	"upstream_connect_timeout": validatePositiveIntConfig,
-	"upstream_read_timeout":    validatePositiveIntConfig,
+	"upstream_read_timeout":    validateNonNegativeIntConfig, // 0 means no timeout
+	"sse_idle_timeout":         validateNonNegativeIntConfig, // 0 means no timeout
 	"sticky_enabled":           validateBoolConfig,
 	"sticky_ttl":               validatePositiveIntConfig,
 	"circuit_failure":          validatePositiveIntConfig,

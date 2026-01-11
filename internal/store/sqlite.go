@@ -30,6 +30,7 @@ func getDefaultConfigs() map[string]string {
 		"trust_proxy_headers":      DefaultTrustProxyHeaders,
 		"upstream_connect_timeout": DefaultUpstreamConnectTimeout,
 		"upstream_read_timeout":    DefaultUpstreamReadTimeout,
+		"sse_idle_timeout":         DefaultSSEIdleTimeout,
 		"sticky_enabled":           DefaultStickyEnabled,
 		"sticky_ttl":               DefaultStickyTTL,
 		"circuit_failure":          DefaultCircuitFailure,

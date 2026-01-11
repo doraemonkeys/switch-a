@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -609,13 +610,14 @@ func (h *Handler) buildFullURL(baseURL, path, query string) string {
 	// - Properly joins paths (handles slashes, dots, etc.)
 	joined, err := url.JoinPath(baseURL, path)
 	if err != nil {
-		// Invalid base URL - fall back to string concatenation.
-		// This produces a potentially malformed URL, but the request will fail
-		// with a clear error rather than silently misbehaving.
+		// Invalid base URL - fall back to string concatenation with proper slash handling.
 		h.logger.Warn("invalid base URL, falling back to string concatenation",
 			zap.String("base_url", baseURL),
 			zap.Error(err),
 		)
+		if !strings.HasSuffix(baseURL, "/") && !strings.HasPrefix(path, "/") {
+			return baseURL + "/" + path
+		}
 		return baseURL + path
 	}
 
@@ -652,9 +654,11 @@ func parseInt64OrDefault(s string, defaultVal int64) int64 {
 }
 
 // parseBoolOrDefault parses a string to bool, returning defaultVal if empty.
+// Accepts "true", "1" as true, and "false", "0" as false (case-insensitive).
 func parseBoolOrDefault(s string, defaultVal bool) bool {
 	if s == "" {
 		return defaultVal
 	}
-	return s == "true"
+	lower := strings.ToLower(s)
+	return lower == "true" || lower == "1"
 }
