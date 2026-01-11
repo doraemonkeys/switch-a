@@ -175,8 +175,25 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 		if err := tx.Where("provider_id = ?", p.ID).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
 			return err
 		}
-		// Save provider with new API types
-		return tx.Save(p).Error
+
+		// Temporarily clear APITypes to avoid GORM trying to update them via Save
+		apiTypes := p.APITypes
+		p.APITypes = nil
+
+		// Save provider (without APITypes)
+		if err := tx.Save(p).Error; err != nil {
+			return err
+		}
+
+		// Restore and create new API types explicitly
+		p.APITypes = apiTypes
+		for i := range p.APITypes {
+			p.APITypes[i].ProviderID = p.ID
+			if err := tx.Create(&p.APITypes[i]).Error; err != nil { // coverage-ignore -- transaction error after successful provider save is rare
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("update provider %q: %w", p.ID, err)
@@ -306,10 +323,13 @@ func (s *SQLiteStore) UpdateHealthState(ctx context.Context, state *model.Health
 }
 
 // IncrementSuccessCount atomically increments success_count and sets available=true
-// (unless manually disabled). Returns the updated state.
+// (unless manually disabled or auto-disabled with unexpired disabled_until).
+// Returns the updated state.
 func (s *SQLiteStore) IncrementSuccessCount(ctx context.Context, providerID string, now time.Time) (*model.HealthState, error) {
 	// Use atomic SQL UPDATE to prevent race conditions.
-	// The CASE expression preserves manual disable state (disabled_reason LIKE 'manual:%').
+	// The CASE expression preserves:
+	// - manual disable state (disabled_reason LIKE 'manual:%')
+	// - auto-disable state when disabled_until has not expired yet
 	err := s.db.WithContext(ctx).Exec(`
 		INSERT INTO health_states (provider_id, available, success_count, fail_count, last_success, last_failure, last_error, disabled_until, disabled_reason)
 		VALUES (?, true, 1, 0, ?, NULL, '', NULL, '')
@@ -318,9 +338,10 @@ func (s *SQLiteStore) IncrementSuccessCount(ctx context.Context, providerID stri
 			last_success = excluded.last_success,
 			available = CASE 
 				WHEN health_states.disabled_reason LIKE 'manual:%' THEN health_states.available 
+				WHEN health_states.disabled_reason LIKE 'auto:%' AND health_states.disabled_until > ? THEN health_states.available
 				ELSE true 
 			END
-	`, providerID, now).Error
+	`, providerID, now, now).Error
 	if err != nil {
 		return nil, fmt.Errorf("increment success count for provider %q: %w", providerID, err)
 	}

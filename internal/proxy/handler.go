@@ -566,9 +566,13 @@ func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code,
 	}
 }
 
+// logInsertTimeout is the maximum time allowed for inserting a request log.
+// This prevents goroutine accumulation if the database is slow or blocked.
+const logInsertTimeout = 2 * time.Second
+
 // logRequest logs the request asynchronously.
-// Note: Uses context.Background() because this runs after the HTTP response completes
-// and the request context may already be cancelled.
+// Note: Uses context.Background() with timeout because this runs after the HTTP response
+// completes and the request context may already be cancelled.
 func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusCode int, success bool, err error, latency time.Duration) {
 	log := &model.RequestLog{
 		APIType:    info.APIType,
@@ -589,7 +593,11 @@ func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusC
 		log.ErrorMsg = err.Error()
 	}
 
-	if insertErr := h.store.InsertLog(context.Background(), log); insertErr != nil { // coverage-ignore -- log insert errors are logged but don't affect response
+	// Use timeout to prevent goroutine accumulation if database is slow or blocked
+	ctx, cancel := context.WithTimeout(context.Background(), logInsertTimeout)
+	defer cancel()
+
+	if insertErr := h.store.InsertLog(ctx, log); insertErr != nil { // coverage-ignore -- log insert errors are logged but don't affect response
 		h.logger.Error("failed to insert request log", zap.Error(insertErr))
 	}
 }
