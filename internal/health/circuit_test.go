@@ -132,6 +132,31 @@ func TestCircuitBreaker_Cleanup(t *testing.T) {
 	}
 }
 
+func TestCircuitBreaker_Cleanup_PreservesRecentFailures(t *testing.T) {
+	clock := &mockClock{
+		now: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+	}
+	cb := NewCircuitBreaker(clock)
+
+	const providerID = "p1"
+	const threshold = 10
+
+	// Keep the sliding window wide enough so the old failure remains in the internal slice,
+	// then rely on Cleanup(maxAge) to drop only the expired entries.
+	recordWindow := 10 * time.Minute
+	maxAge := time.Minute
+
+	cb.RecordFailure(providerID, recordWindow, threshold) // t0
+	clock.Advance(2 * time.Minute)
+	cb.RecordFailure(providerID, recordWindow, threshold) // t0 + 2m
+
+	cb.Cleanup(maxAge)
+
+	if got := cb.GetFailureCount(providerID, recordWindow); got != 1 {
+		t.Fatalf("failure count after Cleanup = %d, want %d", got, 1)
+	}
+}
+
 func TestCircuitBreaker_MultipleProviders(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cb := NewCircuitBreaker(clock)
