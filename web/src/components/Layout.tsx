@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { APP_VERSION } from "../config";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: "📊" },
@@ -69,7 +70,7 @@ export function Layout() {
 
             {/* Version Info */}
             <div className="mt-4 px-4 py-3 bg-white rounded-xl border border-border text-center">
-              <p className="text-xs text-text-muted">Version 0.1.0</p>
+              <p className="text-xs text-text-muted">Version {APP_VERSION}</p>
             </div>
           </nav>
 

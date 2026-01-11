@@ -1,6 +1,9 @@
 // API Configuration
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "/admin/api";
 
+// Application Version
+export const APP_VERSION = "0.1.0";
+
 // Storage Keys
 export const STORAGE_KEYS = {
   AUTH_TOKEN: "admin_token",

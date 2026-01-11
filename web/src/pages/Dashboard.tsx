@@ -2,34 +2,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { useStatus } from "../hooks/useStatus";
 import { useLogs } from "../hooks/useLogs";
 import { useMemo } from "react";
-
-type ProviderStatusType = "healthy" | "unhealthy" | "disabled";
-
-function getProviderStatus(
-  enabled: boolean,
-  available: boolean | undefined,
-): ProviderStatusType {
-  if (!enabled) return "disabled";
-  return available !== false ? "healthy" : "unhealthy";
-}
-
-const statusDotClass: Record<ProviderStatusType, string> = {
-  healthy: "bg-success",
-  unhealthy: "bg-danger",
-  disabled: "bg-text-muted",
-};
-
-const statusBadgeClass: Record<ProviderStatusType, string> = {
-  healthy: "bg-success-light text-success-dark",
-  unhealthy: "bg-danger-light text-danger-dark",
-  disabled: "bg-gray-100 text-gray-600",
-};
-
-const statusLabel: Record<ProviderStatusType, string> = {
-  healthy: "Healthy",
-  unhealthy: "Unhealthy",
-  disabled: "Disabled",
-};
+import {
+  getProviderStatus,
+  statusDotClass,
+  statusBadgeClass,
+  statusLabel,
+} from "./providers/types";
 
 export function Dashboard() {
   const {

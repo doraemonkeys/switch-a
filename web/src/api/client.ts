@@ -202,6 +202,7 @@ export interface Provider {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  health?: HealthState | null;
 }
 
 export interface ProviderInput {
