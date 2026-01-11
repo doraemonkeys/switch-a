@@ -232,12 +232,15 @@ func (s *SQLiteStore) CreateGroup(ctx context.Context, g *model.Group) error {
 }
 
 func (s *SQLiteStore) UpdateGroup(ctx context.Context, g *model.Group) error {
-	// Clear providers to avoid GORM trying to update the association.
+	// Preserve providers to avoid GORM trying to update the association.
 	// This is an ORM implementation detail that should be handled here.
+	providers := g.Providers
 	g.Providers = nil
 	if err := s.db.WithContext(ctx).Save(g).Error; err != nil {
 		return fmt.Errorf("update group %q: %w", g.ID, err)
 	}
+	// Restore providers so the returned Group object has the association
+	g.Providers = providers
 	return nil
 }
 
@@ -433,6 +436,25 @@ func (s *SQLiteStore) SetConfig(ctx context.Context, key, value string) error {
 		return fmt.Errorf("set config %q: %w", key, err)
 	}
 	return nil
+}
+
+// SetConfigs atomically updates multiple config values in a single transaction.
+// If any key fails, the entire batch is rolled back to prevent partial updates.
+func (s *SQLiteStore) SetConfigs(ctx context.Context, configs map[string]string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := s.clock.Now()
+		for key, value := range configs {
+			cfg := model.RuntimeConfig{
+				Key:       key,
+				Value:     value,
+				UpdatedAt: now,
+			}
+			if err := tx.Save(&cfg).Error; err != nil {
+				return fmt.Errorf("set config %q: %w", key, err)
+			}
+		}
+		return nil
+	})
 }
 
 // Log operations

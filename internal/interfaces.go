@@ -46,6 +46,7 @@ type Store interface {
 	GetConfig(ctx context.Context, key string) (string, error)
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 	SetConfig(ctx context.Context, key, value string) error
+	SetConfigs(ctx context.Context, configs map[string]string) error
 	InitDefaultConfig(ctx context.Context) error
 
 	// Log operations

@@ -38,6 +38,7 @@ type Store interface {
 	// Config operations
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 	SetConfig(ctx context.Context, key, value string) error
+	SetConfigs(ctx context.Context, configs map[string]string) error
 
 	// Log operations
 	ListLogs(ctx context.Context, limit, offset int) ([]model.RequestLog, error)
@@ -309,6 +310,7 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate all keys and values before updating
 	for key, value := range updates {
 		if !IsValidConfigKey(key) {
 			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid config key: "+key)
@@ -318,11 +320,13 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid value for "+key+": "+err.Error())
 			return
 		}
-		if err := h.store.SetConfig(r.Context(), key, value); err != nil {
-			h.logger.Error("failed to set config", zap.String("key", key), zap.Error(err))
-			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update config")
-			return
-		}
+	}
+
+	// Update all configs atomically in a single transaction
+	if err := h.store.SetConfigs(r.Context(), updates); err != nil {
+		h.logger.Error("failed to update configs", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update config")
+		return
 	}
 
 	// Return updated config

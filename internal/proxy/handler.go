@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"switch-a/internal"
@@ -67,13 +68,14 @@ type runtimeConfig struct {
 
 // Handler handles proxy requests.
 type Handler struct {
-	store     Store
-	selector  Selector
-	health    internal.HealthManager
-	logger    *zap.Logger
-	mu        sync.RWMutex
-	transport *Transport
-	lastCfg   *transportCacheKey
+	store           Store
+	selector        Selector
+	health          internal.HealthManager
+	logger          *zap.Logger
+	mu              sync.RWMutex
+	transport       *Transport
+	lastCfg         *transportCacheKey
+	fallbackCounter atomic.Int64 // Counter for true round-robin in fallback mode
 }
 
 // transportCacheKey is used to detect if Transport config changed.
@@ -424,8 +426,10 @@ func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext
 	if len(providers) == 0 {
 		return nil, internal.ErrNoProvider
 	}
-	// Simple round-robin: cycle through providers on each retry attempt
-	provider := providers[attempt%len(providers)]
+	// True round-robin: use atomic counter for cross-request distribution,
+	// plus attempt offset to ensure retries hit different providers.
+	idx := h.fallbackCounter.Add(1)
+	provider := providers[(int(idx)-1+attempt)%len(providers)]
 	return &provider, nil
 }
 

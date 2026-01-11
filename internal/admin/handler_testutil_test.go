@@ -171,6 +171,16 @@ func (m *mockStore) SetConfig(_ context.Context, key, value string) error {
 	return nil
 }
 
+func (m *mockStore) SetConfigs(_ context.Context, configs map[string]string) error {
+	if m.configErr != nil {
+		return m.configErr
+	}
+	for key, value := range configs {
+		m.config[key] = value
+	}
+	return nil
+}
+
 func (m *mockStore) ListLogs(_ context.Context, limit, offset int) ([]model.RequestLog, error) {
 	if m.logsErr != nil {
 		return nil, m.logsErr
@@ -266,6 +276,17 @@ func (s *configErrorStore) SetConfig(_ context.Context, key, value string) error
 		return s.setErr
 	}
 	s.config[key] = value
+	return nil
+}
+
+func (s *configErrorStore) SetConfigs(_ context.Context, configs map[string]string) error {
+	s.setCalls++
+	if s.setErr != nil {
+		return s.setErr
+	}
+	for key, value := range configs {
+		s.config[key] = value
+	}
 	return nil
 }
 

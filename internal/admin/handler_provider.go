@@ -99,6 +99,10 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.MaxRetries != nil && *req.MaxRetries < -1 {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "MaxRetries must be -1 (default) or non-negative")
+		return
+	}
 
 	// Check if provider already exists
 	_, err := h.store.GetProvider(r.Context(), req.ID)
@@ -208,6 +212,9 @@ func (req *UpdateProviderRequest) validate() string {
 	}
 	if req.Concurrency != nil && *req.Concurrency < 0 {
 		return "Concurrency cannot be negative"
+	}
+	if req.MaxRetries != nil && *req.MaxRetries < -1 {
+		return "MaxRetries must be -1 (default) or non-negative"
 	}
 	if req.APITypes != nil && len(req.APITypes) == 0 {
 		return "At least one api_type is required"

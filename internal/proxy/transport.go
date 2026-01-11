@@ -212,16 +212,12 @@ func (w *idleWatchdog) run(ctx context.Context) {
 }
 
 // Reset resets the idle timer. Call this after each successful read.
+// Note: We simply reset the timer without stop-and-drain. If the timer already
+// fired, run() has already exited and closed the body, so subsequent reads will
+// fail anyway with ErrSSEIdleTimeout — which is the expected idle timeout behavior.
 func (w *idleWatchdog) Reset() {
 	if w == nil {
 		return
-	}
-	// Stop and drain the timer, then reset
-	if !w.timer.Stop() {
-		select {
-		case <-w.timer.C:
-		default:
-		}
 	}
 	w.timer.Reset(w.timeout)
 }

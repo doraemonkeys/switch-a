@@ -98,3 +98,53 @@ func TestConfigOperations(t *testing.T) {
 		t.Errorf("GetAllConfig missing test_key")
 	}
 }
+
+func TestSetConfigs(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// Set multiple configs atomically
+	configs := map[string]string{
+		"key1": "value1",
+		"key2": "value2",
+		"key3": "value3",
+	}
+	if err := store.SetConfigs(ctx, configs); err != nil {
+		t.Fatalf("SetConfigs failed: %v", err)
+	}
+
+	// Verify all configs were set
+	for key, want := range configs {
+		got, err := store.GetConfig(ctx, key)
+		if err != nil {
+			t.Fatalf("GetConfig(%q) failed: %v", key, err)
+		}
+		if got != want {
+			t.Errorf("GetConfig(%q) = %q, want %q", key, got, want)
+		}
+	}
+
+	// Update existing configs
+	updated := map[string]string{
+		"key1": "updated1",
+		"key2": "updated2",
+	}
+	if err := store.SetConfigs(ctx, updated); err != nil {
+		t.Fatalf("SetConfigs update failed: %v", err)
+	}
+
+	// Verify updates
+	got, _ := store.GetConfig(ctx, "key1")
+	if got != "updated1" {
+		t.Errorf("key1 = %q, want %q", got, "updated1")
+	}
+	got, _ = store.GetConfig(ctx, "key2")
+	if got != "updated2" {
+		t.Errorf("key2 = %q, want %q", got, "updated2")
+	}
+	// key3 should remain unchanged
+	got, _ = store.GetConfig(ctx, "key3")
+	if got != "value3" {
+		t.Errorf("key3 = %q, want %q", got, "value3")
+	}
+}
