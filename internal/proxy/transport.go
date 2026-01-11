@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"switch-a/internal/defaults"
 )
 
 // sseBufferSize is the buffer size for reading SSE streams.
@@ -49,11 +51,24 @@ func NewTransport(cfg TransportConfig) *Transport {
 	// Create a custom transport with proper timeout handling:
 	// - DialContext timeout: controls TCP connection establishment time
 	// - ResponseHeaderTimeout: controls time to receive first response byte after connection
+	// - Connection pool settings: essential for proxy performance
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
-			Timeout: cfg.ConnectTimeout,
+			Timeout:   cfg.ConnectTimeout,
+			KeepAlive: defaults.TCPKeepAliveSec * time.Second,
 		}).DialContext,
 		ResponseHeaderTimeout: responseHeaderTimeout,
+
+		// Connection pool configuration - critical for proxy performance.
+		// Default MaxIdleConnsPerHost is only 2, which causes excessive connection churn.
+		MaxIdleConns:        defaults.MaxIdleConns,
+		MaxIdleConnsPerHost: defaults.MaxIdleConnsPerHost,
+		IdleConnTimeout:     defaults.IdleConnTimeoutSec * time.Second,
+		TLSHandshakeTimeout: defaults.TLSHandshakeTimeoutSec * time.Second,
+
+		// Disable compression to avoid decompress/compress overhead in proxy scenarios.
+		// The upstream response is passed through as-is to the client.
+		DisableCompression: true,
 	}
 
 	client := &http.Client{

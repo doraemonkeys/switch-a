@@ -18,6 +18,21 @@ const (
 	TrustProxyHeaders = true
 )
 
+// Connection pool defaults.
+const (
+	// MaxIdleConns is the maximum number of idle connections across all hosts.
+	MaxIdleConns = 100
+	// MaxIdleConnsPerHost is the maximum number of idle connections per host.
+	// The default http.Transport value is only 2, which is too small for a proxy.
+	MaxIdleConnsPerHost = 20
+	// IdleConnTimeoutSec is the idle connection timeout in seconds.
+	IdleConnTimeoutSec = 90
+	// TLSHandshakeTimeoutSec is the TLS handshake timeout in seconds.
+	TLSHandshakeTimeoutSec = 10
+	// TCPKeepAliveSec is the TCP keepalive interval in seconds.
+	TCPKeepAliveSec = 30
+)
+
 // Timeout defaults.
 const (
 	// UpstreamConnectTimeoutSec is the default upstream connection timeout in seconds.
