@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -87,7 +88,8 @@ func LoadWithPath(configPath string) (*Config, error) {
 		}
 		// Only ignore "not found" errors for default search paths
 		// Surface parse errors so users know their config file is malformed
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var configFileNotFoundError viper.ConfigFileNotFoundError
+		if !errors.As(err, &configFileNotFoundError) {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
 	} else {
