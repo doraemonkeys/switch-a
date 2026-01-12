@@ -20,6 +20,8 @@ type Provider struct {
 	Enabled     bool              `gorm:"default:true;index" json:"enabled"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+	// Health is populated by admin API handlers, not stored in database.
+	Health *HealthState `gorm:"-" json:"health,omitempty"`
 }
 
 // ProviderAPIType represents the association between Provider and API types.

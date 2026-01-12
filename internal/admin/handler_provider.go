@@ -23,6 +23,18 @@ func (h *Handler) ListProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Populate health state for each provider.
+	// Using partial failure design: if health retrieval fails for a provider,
+	// we log and continue rather than failing the entire request.
+	for i := range providers {
+		state, err := h.store.GetHealthState(r.Context(), providers[i].ID)
+		if err != nil {
+			h.logger.Warn("failed to get health state", zap.String("id", providers[i].ID), zap.Error(err))
+			continue
+		}
+		providers[i].Health = state
+	}
+
 	writeJSON(w, http.StatusOK, providers)
 }
 
@@ -43,6 +55,16 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to get provider", zap.String("id", id), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get provider")
 		return
+	}
+
+	// Populate health state.
+	// Using partial failure design: if health retrieval fails,
+	// we log and continue rather than failing the entire request.
+	state, err := h.store.GetHealthState(r.Context(), id)
+	if err != nil {
+		h.logger.Warn("failed to get health state", zap.String("id", id), zap.Error(err))
+	} else {
+		provider.Health = state
 	}
 
 	writeJSON(w, http.StatusOK, provider)
