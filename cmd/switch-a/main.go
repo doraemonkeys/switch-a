@@ -111,6 +111,7 @@ func run() error {
 		LogPath:     cfg.LogPath,
 		MaxSizeMB:   cfg.LogMaxSizeMB,
 		MaxKeepDays: cfg.LogMaxKeepDays,
+		Level:       cfg.LogLevel,
 	})
 	defer func() { _ = log.Sync() }()
 
@@ -123,6 +124,7 @@ func run() error {
 		zap.String("proxy_port", cfg.Port),
 		zap.String("admin_port", cfg.AdminPort),
 		zap.String("log_path", cfg.LogPath),
+		zap.String("log_level", cfg.LogLevel),
 	)
 
 	// Initialize store

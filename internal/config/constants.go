@@ -11,6 +11,7 @@ const (
 	EnvLogPath        = "SWITCHA_LOG_PATH"
 	EnvLogMaxSizeMB   = "SWITCHA_LOG_MAX_SIZE_MB"
 	EnvLogMaxKeepDays = "SWITCHA_LOG_MAX_KEEP_DAYS"
+	EnvLogLevel       = "SWITCHA_LOG_LEVEL"
 )
 
 // Config file settings.
@@ -28,6 +29,7 @@ const (
 	KeyLogPath        = "log_path"
 	KeyLogMaxSizeMB   = "log_max_size_mb"
 	KeyLogMaxKeepDays = "log_max_keep_days"
+	KeyLogLevel       = "log_level"
 )
 
 // Default configuration values.
@@ -38,4 +40,5 @@ const (
 	DefaultLogPath        = "./logs/switch-a.log"
 	DefaultLogMaxSizeMB   = 100
 	DefaultLogMaxKeepDays = 7
+	DefaultLogLevel       = "info"
 )

@@ -18,6 +18,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.MaxKeepDays != 7 {
 		t.Errorf("MaxKeepDays = %d, want %d", cfg.MaxKeepDays, 7)
 	}
+	if cfg.Level != "info" {
+		t.Errorf("Level = %q, want %q", cfg.Level, "info")
+	}
 	if cfg.IsDev {
 		t.Error("IsDev = true, want false")
 	}
@@ -44,6 +47,7 @@ func TestNew_Production(t *testing.T) {
 		LogPath:     logPath,
 		MaxSizeMB:   10,
 		MaxKeepDays: 1,
+		Level:       "info",
 		IsDev:       false,
 	}
 	logger := New(cfg)
@@ -60,4 +64,34 @@ func TestNew_Production(t *testing.T) {
 
 	// Cleanup will be done by the OS or manually - we don't delete because
 	// the lumberjack logger may still have the file handle open
+}
+
+func TestParseLevel(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"debug", "debug"},
+		{"DEBUG", "debug"},
+		{"  debug  ", "debug"},
+		{"info", "info"},
+		{"INFO", "info"},
+		{"warn", "warn"},
+		{"WARN", "warn"},
+		{"warning", "warn"},
+		{"WARNING", "warn"},
+		{"error", "error"},
+		{"ERROR", "error"},
+		{"invalid", "info"}, // defaults to info
+		{"", "info"},        // defaults to info
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			level := ParseLevel(tt.input)
+			if level.String() != tt.expected {
+				t.Errorf("ParseLevel(%q) = %q, want %q", tt.input, level.String(), tt.expected)
+			}
+		})
+	}
 }

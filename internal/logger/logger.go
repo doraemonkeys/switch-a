@@ -2,6 +2,8 @@
 package logger
 
 import (
+	"strings"
+
 	mylog "github.com/doraemonkeys/mylog/zap"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -12,6 +14,7 @@ const (
 	DefaultLogPath     = "./logs/switch-a.log"
 	DefaultMaxSizeMB   = 100
 	DefaultMaxKeepDays = 7
+	DefaultLogLevel    = "info"
 )
 
 // Config holds logger configuration options.
@@ -19,6 +22,7 @@ type Config struct {
 	LogPath     string
 	MaxSizeMB   int
 	MaxKeepDays int
+	Level       string // Log level: debug, info, warn, error
 	IsDev       bool
 }
 
@@ -28,13 +32,34 @@ func DefaultConfig() Config {
 		LogPath:     DefaultLogPath,
 		MaxSizeMB:   DefaultMaxSizeMB,
 		MaxKeepDays: DefaultMaxKeepDays,
+		Level:       DefaultLogLevel,
 		IsDev:       false,
+	}
+}
+
+// ParseLevel converts a string log level to zapcore.Level.
+// Supported levels: debug, info, warn, error.
+// Defaults to InfoLevel if the level string is not recognized.
+func ParseLevel(level string) zapcore.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return zapcore.DebugLevel
+	case "info":
+		return zapcore.InfoLevel
+	case "warn", "warning":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
 	}
 }
 
 // New creates a new logger instance based on the provided configuration.
 // In production, logs to both file and console; in development, logs to console only.
 func New(cfg Config) *zap.Logger {
+	level := ParseLevel(cfg.Level)
+
 	if cfg.IsDev {
 		return mylog.NewBuilder().
 			NoLogFile().
@@ -44,7 +69,7 @@ func New(cfg Config) *zap.Logger {
 
 	return mylog.NewBuilder().
 		LogPath(cfg.LogPath).
-		Level(zapcore.InfoLevel).
+		Level(level).
 		MaxLogSize(cfg.MaxSizeMB).
 		MaxKeepDays(cfg.MaxKeepDays).
 		JSONFormatFile().

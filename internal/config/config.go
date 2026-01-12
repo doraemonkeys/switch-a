@@ -37,6 +37,7 @@ type Config struct {
 	LogPath        string `mapstructure:"log_path"`
 	LogMaxSizeMB   int    `mapstructure:"log_max_size_mb"`
 	LogMaxKeepDays int    `mapstructure:"log_max_keep_days"`
+	LogLevel       string `mapstructure:"log_level"`
 	ConfigFileUsed string `mapstructure:"-"` // Path to config file that was loaded (not from config)
 }
 
@@ -61,6 +62,7 @@ func LoadWithPath(configPath string) (*Config, error) {
 	v.SetDefault(KeyLogPath, DefaultLogPath)
 	v.SetDefault(KeyLogMaxSizeMB, DefaultLogMaxSizeMB)
 	v.SetDefault(KeyLogMaxKeepDays, DefaultLogMaxKeepDays)
+	v.SetDefault(KeyLogLevel, DefaultLogLevel)
 
 	// Configure environment variables
 	v.SetEnvPrefix(EnvPrefix)
@@ -75,6 +77,7 @@ func LoadWithPath(configPath string) (*Config, error) {
 	_ = v.BindEnv(KeyLogPath, EnvLogPath)
 	_ = v.BindEnv(KeyLogMaxSizeMB, EnvLogMaxSizeMB)
 	_ = v.BindEnv(KeyLogMaxKeepDays, EnvLogMaxKeepDays)
+	_ = v.BindEnv(KeyLogLevel, EnvLogLevel)
 
 	// Configure config file paths
 	configureViperPaths(v, configPath)

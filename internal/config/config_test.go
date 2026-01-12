@@ -57,6 +57,9 @@ func TestLoad_DefaultValues(t *testing.T) {
 	if cfg.LogMaxKeepDays != DefaultLogMaxKeepDays {
 		t.Errorf("LogMaxKeepDays = %d, want default %d", cfg.LogMaxKeepDays, DefaultLogMaxKeepDays)
 	}
+	if cfg.LogLevel != DefaultLogLevel {
+		t.Errorf("LogLevel = %q, want default %q", cfg.LogLevel, DefaultLogLevel)
+	}
 }
 
 func TestLoad_MissingAdminToken(t *testing.T) {
@@ -78,6 +81,7 @@ admin_token: "file-token"
 log_path: "/var/log/app.log"
 log_max_size_mb: 50
 log_max_keep_days: 14
+log_level: "debug"
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		t.Fatalf("failed to create config file: %v", err)
@@ -108,6 +112,9 @@ log_max_keep_days: 14
 	}
 	if cfg.LogMaxKeepDays != 14 {
 		t.Errorf("LogMaxKeepDays = %d, want %d", cfg.LogMaxKeepDays, 14)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "debug")
 	}
 }
 

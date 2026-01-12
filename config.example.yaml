@@ -45,3 +45,9 @@ log_max_size_mb: 100
 # 环境变量: SWITCHA_LOG_MAX_KEEP_DAYS
 # 默认值: 7
 log_max_keep_days: 7
+
+# 日志级别
+# 环境变量: SWITCHA_LOG_LEVEL
+# 可选值: debug, info, warn, error
+# 默认值: info
+log_level: "info"
