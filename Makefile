@@ -20,7 +20,7 @@ TEMP_ENV := TEMP="$(TMP_DIR)" TMP="$(TMP_DIR)"
 # 静默模式
 ci:
 	@mkdir -p .tmp
-	@set -o pipefail && go test ./... -coverprofile=./cover.out -covermode=atomic 2>&1 | tail -n 10
+	@set -o pipefail && go test -race ./... -coverprofile=./cover.out -covermode=atomic 2>&1 | tail -n 10
 	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 	@golangci-lint run
 	@sloc-guard -q check
@@ -36,7 +36,7 @@ lint:
 
 coverage:
 	mkdir -p .tmp
-	go test ./... -coverprofile=./cover.out -covermode=atomic
+	go test -race ./... -coverprofile=./cover.out -covermode=atomic
 	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 
 sloc:
@@ -54,12 +54,12 @@ web-fmt:
 
 # 生成覆盖率报告并在终端显示
 cover:
-	go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+	go test -race ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
 	go tool cover -func=./cover.out
 
 # 生成覆盖率报告并在浏览器中打开 HTML 可视化页面
 cover-html:
-	go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+	go test -race ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
 	go tool cover -html=./cover.out
 
 clean:

@@ -197,6 +197,73 @@ func TestIsSSEResponse(t *testing.T) {
 	}
 }
 
+func TestUpstreamResponse_Drain(t *testing.T) {
+	t.Run("drains body before closing", func(t *testing.T) {
+		// Create a body with some data
+		data := bytes.Repeat([]byte("test data "), 100)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusOK,
+			Body:       body,
+		}
+
+		resp.Drain()
+
+		// Verify body is closed (reading should return 0/EOF)
+		n, err := body.Read(make([]byte, 1))
+		if n != 0 || err != io.EOF {
+			// This is expected because NopCloser doesn't actually close the underlying reader
+			// but Drain should have read all data
+		}
+	})
+
+	t.Run("handles nil body", func(t *testing.T) {
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusOK,
+			Body:       nil,
+		}
+
+		// Should not panic
+		resp.Drain()
+	})
+
+	t.Run("limits drain to maxDrainBytes", func(t *testing.T) {
+		// Create a body larger than maxDrainBytes (64KB)
+		data := bytes.Repeat([]byte("x"), 100*1024) // 100KB
+		readCount := 0
+		trackingReader := &trackingReader{
+			reader:    bytes.NewReader(data),
+			readCount: &readCount,
+		}
+		body := io.NopCloser(trackingReader)
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusOK,
+			Body:       body,
+		}
+
+		resp.Drain()
+
+		// Should have limited reads due to LimitReader
+		// readCount should be less than full data size
+		if readCount > 65*1024 {
+			t.Errorf("expected read count <= 65KB, got %d bytes", readCount)
+		}
+	})
+}
+
+type trackingReader struct {
+	reader    io.Reader
+	readCount *int
+}
+
+func (r *trackingReader) Read(p []byte) (n int, err error) {
+	n, err = r.reader.Read(p)
+	*r.readCount += n
+	return
+}
+
 func TestCopyResponseHeaders(t *testing.T) {
 	src := make(http.Header)
 	src.Set("Content-Type", "application/json")

@@ -107,11 +107,30 @@ type UpstreamResponse struct {
 	isSSE      bool
 }
 
+// maxDrainBytes limits how much we drain from response body before close.
+// This prevents memory exhaustion from large error responses while still
+// enabling connection reuse for typical API error responses.
+const maxDrainBytes = 64 * 1024 // 64KB
+
 // Close closes the upstream response body.
+// For better connection reuse when retrying, use Drain() instead.
 func (r *UpstreamResponse) Close() {
 	if r.Body != nil {
 		_ = r.Body.Close()
 	}
+}
+
+// Drain reads and discards the response body before closing.
+// This enables HTTP connection reuse, which is important for retry scenarios.
+// Without draining, Go's http.Client cannot reuse the connection.
+func (r *UpstreamResponse) Drain() {
+	if r.Body == nil {
+		return
+	}
+	// Drain up to maxDrainBytes to enable connection reuse without risking OOM.
+	// LimitReader ensures we don't read more than the limit even for large responses.
+	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, maxDrainBytes))
+	_ = r.Body.Close()
 }
 
 // FetchUpstream sends a request to the upstream server and returns the response

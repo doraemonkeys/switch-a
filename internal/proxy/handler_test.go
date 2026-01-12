@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +30,9 @@ func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
 }
 
 // mockStore implements the Store interface for testing.
+// It is thread-safe to allow concurrent use with async logRequest goroutines.
 type mockStore struct {
+	mu        sync.Mutex
 	providers []model.Provider
 	configs   map[string]string
 	logs      []model.RequestLog
@@ -69,11 +72,20 @@ func (m *mockStore) GetConfig(_ context.Context, key string) (string, error) {
 }
 
 func (m *mockStore) InsertLog(_ context.Context, log *model.RequestLog) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return m.err
 	}
 	m.logs = append(m.logs, *log)
 	return nil
+}
+
+// LogsLen returns the number of logs in a thread-safe manner.
+func (m *mockStore) LogsLen() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.logs)
 }
 
 func TestNewHandler_NilStorePanics(t *testing.T) {
@@ -233,7 +245,7 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 
 	// Wait for async log using polling helper
 	waitFor(t, func() bool {
-		return len(store.logs) > 0
+		return store.LogsLen() > 0
 	}, 100*time.Millisecond)
 }
 
@@ -490,6 +502,47 @@ func TestParseInt64OrDefault(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("parseInt64OrDefault(%q, %d) = %d, want %d", tt.s, tt.def, got, tt.want)
 		}
+	}
+}
+
+func TestParseBoolOrDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		def  bool
+		want bool
+	}{
+		// Empty string returns default
+		{"empty_default_true", "", true, true},
+		{"empty_default_false", "", false, false},
+
+		// Valid true values
+		{"true_lowercase", "true", false, true},
+		{"true_uppercase", "TRUE", false, true},
+		{"true_mixedcase", "True", false, true},
+		{"one", "1", false, true},
+
+		// Valid false values
+		{"false_lowercase", "false", true, false},
+		{"false_uppercase", "FALSE", true, false},
+		{"false_mixedcase", "False", true, false},
+		{"zero", "0", true, false},
+
+		// Invalid values should return default (BUG FIX: previously returned false)
+		{"invalid_default_true", "invalid", true, true},
+		{"invalid_default_false", "invalid", false, false},
+		{"yes_default_true", "yes", true, true},
+		{"no_default_true", "no", true, true},
+		{"garbage_default_true", "xyz123", true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseBoolOrDefault(tt.s, tt.def)
+			if got != tt.want {
+				t.Errorf("parseBoolOrDefault(%q, %v) = %v, want %v", tt.s, tt.def, got, tt.want)
+			}
+		})
 	}
 }
 

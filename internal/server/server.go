@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"switch-a/internal"
@@ -62,6 +63,7 @@ type Server struct {
 	server       *http.Server
 	logger       *zap.Logger
 	store        store
+	mu           sync.RWMutex // protects listener
 	listener     net.Listener
 	proxyHandler *proxy.Handler
 }
@@ -70,6 +72,7 @@ type Server struct {
 type AdminServer struct {
 	server   *http.Server
 	logger   *zap.Logger
+	mu       sync.RWMutex // protects listener
 	listener net.Listener
 }
 
@@ -238,7 +241,9 @@ func (s *Server) Start() error {
 	if err != nil { // coverage-ignore -- port binding errors require specific conditions
 		return err
 	}
+	s.mu.Lock()
 	s.listener = ln
+	s.mu.Unlock()
 	s.logger.Info("starting HTTP server", zap.String("addr", ln.Addr().String()))
 	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed { // coverage-ignore -- serve errors after successful listen are rare
 		return err
@@ -276,8 +281,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // If the server is listening, returns the actual address (useful when port 0 is used).
 // Otherwise, returns the configured address.
 func (s *Server) Addr() string {
-	if s.listener != nil {
-		return s.listener.Addr().String()
+	s.mu.RLock()
+	ln := s.listener
+	s.mu.RUnlock()
+	if ln != nil {
+		return ln.Addr().String()
 	}
 	return s.server.Addr
 }
@@ -288,7 +296,9 @@ func (s *AdminServer) Start() error {
 	if err != nil { // coverage-ignore -- port binding errors require specific conditions
 		return err
 	}
+	s.mu.Lock()
 	s.listener = ln
+	s.mu.Unlock()
 	s.logger.Info("starting admin HTTP server", zap.String("addr", ln.Addr().String()))
 	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed { // coverage-ignore -- serve errors after successful listen are rare
 		return err
@@ -311,8 +321,11 @@ func (s *AdminServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // If the server is listening, returns the actual address (useful when port 0 is used).
 // Otherwise, returns the configured address.
 func (s *AdminServer) Addr() string {
-	if s.listener != nil {
-		return s.listener.Addr().String()
+	s.mu.RLock()
+	ln := s.listener
+	s.mu.RUnlock()
+	if ln != nil {
+		return ln.Addr().String()
 	}
 	return s.server.Addr
 }

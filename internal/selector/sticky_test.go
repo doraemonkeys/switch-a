@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -8,15 +9,21 @@ import (
 )
 
 // mockClock implements internal.Clock for testing.
+// It is thread-safe to allow concurrent use in tests with cleanup goroutines.
 type mockClock struct {
+	mu  sync.RWMutex
 	now time.Time
 }
 
 func (c *mockClock) Now() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.now
 }
 
 func (c *mockClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
 }
 

@@ -381,7 +381,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		result.err = statusErr // Record error for proper "all providers failed" message
 		h.markFailure(ctx, provider.ID, statusErr)
 		h.releaseConcurrency(provider.ID)
-		upstreamResp.Close() // Close without writing to client
+		upstreamResp.Drain() // Drain and close to enable connection reuse for retries
 		// headersWritten is still false, allowing retry with another provider
 		return result
 	}
@@ -701,12 +701,20 @@ func parseInt64OrDefault(s string, defaultVal int64) int64 {
 	return v
 }
 
-// parseBoolOrDefault parses a string to bool, returning defaultVal if empty.
+// parseBoolOrDefault parses a string to bool, returning defaultVal if empty or invalid.
 // Accepts "true", "1" as true, and "false", "0" as false (case-insensitive).
+// Invalid values (e.g., "xyz") return defaultVal instead of false.
 func parseBoolOrDefault(s string, defaultVal bool) bool {
 	if s == "" {
 		return defaultVal
 	}
 	lower := strings.ToLower(s)
-	return lower == "true" || lower == "1"
+	switch lower {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	default:
+		return defaultVal
+	}
 }
