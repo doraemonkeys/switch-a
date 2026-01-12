@@ -248,15 +248,15 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.P
 		groupID := *p.GroupID
 		if _, exists := groupMap[groupID]; !exists {
 			// Load group info
-		group, err := s.store.GetGroup(ctx, groupID)
-		if err != nil {
-			s.logger.Warn("failed to load group, skipping provider",
-				zap.String("group_id", groupID),
-				zap.String("provider_id", p.ID),
-				zap.Error(err))
-			// Fail-closed: skip this provider instead of treating as ungrouped
-			continue
-		}
+			group, err := s.store.GetGroup(ctx, groupID)
+			if err != nil {
+				s.logger.Warn("failed to load group, skipping provider",
+					zap.String("group_id", groupID),
+					zap.String("provider_id", p.ID),
+					zap.Error(err))
+				// Fail-closed: skip this provider instead of treating as ungrouped
+				continue
+			}
 			if !group.Enabled {
 				continue // Skip disabled groups
 			}

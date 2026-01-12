@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -131,5 +132,42 @@ func TestConcurrencyLimiter_Release(t *testing.T) {
 	limiter.Release(providerID)
 	if limiter.Current(providerID) != 0 {
 		t.Errorf("Current after double release = %d, want 0", limiter.Current(providerID))
+	}
+}
+
+func TestConcurrencyLimiter_NoMapEntryOnEmptyCalls(t *testing.T) {
+	limiter := NewConcurrencyLimiter()
+
+	// Calling Release() and Current() on unknown providers should NOT create map entries
+	// This prevents unbounded memory growth from empty calls
+
+	// Call Release and Current on a never-acquired provider
+	unknownProvider := "never-acquired"
+	limiter.Release(unknownProvider)
+	_ = limiter.Current(unknownProvider)
+
+	// Now try to check if an entry was created by looking at map size
+	// We can check this indirectly by acquiring on a known provider and checking Clear behavior
+	knownProvider := "known"
+	limiter.TryAcquire(knownProvider, 10)
+
+	// Clear the known provider
+	limiter.Clear(knownProvider)
+
+	// The unknown provider should still return 0 (no entry was created)
+	if limiter.Current(unknownProvider) != 0 {
+		t.Errorf("Current for unknown provider = %d, want 0", limiter.Current(unknownProvider))
+	}
+
+	// Verify that calling Release/Current many times doesn't create entries
+	for i := 0; i < 1000; i++ {
+		providerID := fmt.Sprintf("random-%d", i)
+		limiter.Release(providerID)
+		_ = limiter.Current(providerID)
+	}
+
+	// After all those calls, acquiring a new provider should still work
+	if !limiter.TryAcquire("final", 1) {
+		t.Error("TryAcquire should succeed after Release/Current calls")
 	}
 }

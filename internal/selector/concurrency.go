@@ -55,25 +55,35 @@ func (l *ConcurrencyLimiter) TryAcquire(providerID string, limit int) bool {
 }
 
 // Release releases a slot for the provider.
-// If the counter is already at zero, this is a no-op to prevent negative counts.
+// If the counter is already at zero or doesn't exist, this is a no-op.
+// Does not create a map entry if the provider was never acquired.
 func (l *ConcurrencyLimiter) Release(providerID string) {
-	counter := l.getCounter(providerID)
+	counter, ok := l.counts.Load(providerID)
+	if !ok {
+		return // No entry exists, nothing to release
+	}
+	c := counter.(*atomic.Int64)
 	// Use CAS loop to prevent counter going negative
 	for {
-		current := counter.Load()
+		current := c.Load()
 		if current <= 0 {
 			return // Already at zero or below, nothing to release
 		}
-		if counter.CompareAndSwap(current, current-1) {
+		if c.CompareAndSwap(current, current-1) {
 			return
 		}
 	}
 }
 
 // Current returns the current concurrency count for a provider.
+// Returns 0 if the provider has no active concurrency tracking (never acquired).
+// Does not create a map entry if the provider was never acquired.
 func (l *ConcurrencyLimiter) Current(providerID string) int64 {
-	counter := l.getCounter(providerID)
-	return counter.Load()
+	counter, ok := l.counts.Load(providerID)
+	if !ok {
+		return 0 // No entry exists, return 0
+	}
+	return counter.(*atomic.Int64).Load()
 }
 
 // Clear removes the counter for a provider.

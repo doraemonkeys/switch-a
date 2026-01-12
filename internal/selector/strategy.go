@@ -2,6 +2,7 @@
 package selector
 
 import (
+	"math"
 	"math/rand/v2"
 	"sort"
 
@@ -14,6 +15,10 @@ const (
 	StrategyRandom   = "random"
 	StrategyWeight   = "weight"
 )
+
+// MaxWeight is the maximum allowed weight value to prevent integer overflow.
+// Individual weights are capped at this value during weighted selection.
+const MaxWeight = 1_000_000
 
 // SelectByPriority sorts providers by priority (ascending) and returns the first available.
 // Lower priority value = higher precedence.
@@ -43,32 +48,44 @@ func SelectByRandom(providers []*model.Provider) *model.Provider {
 	return providers[rand.IntN(len(providers))]
 }
 
+// clampWeight ensures weight is within valid bounds [1, MaxWeight].
+func clampWeight(weight int) int64 {
+	if weight <= 0 {
+		return 1
+	}
+	if weight > MaxWeight {
+		return MaxWeight
+	}
+	return int64(weight)
+}
+
 // selectByWeightGeneric performs weighted random selection on a slice of items.
-// getWeight returns the weight for each item (defaults to 1 if <= 0).
+// getWeight returns the weight for each item (defaults to 1 if <= 0, capped at MaxWeight).
+// Uses int64 arithmetic to prevent integer overflow with large weights.
 func selectByWeightGeneric[T any](items []T, getWeight func(T) int) (T, bool) {
 	var zero T
 	if len(items) == 0 {
 		return zero, false
 	}
 
-	totalWeight := 0
+	var totalWeight int64
 	for _, item := range items {
-		weight := getWeight(item)
-		if weight <= 0 {
-			weight = 1
+		w := clampWeight(getWeight(item))
+		// Check for overflow before adding
+		if totalWeight > math.MaxInt64-w {
+			// Cap at MaxInt64 to prevent overflow
+			totalWeight = math.MaxInt64
+			break
 		}
-		totalWeight += weight
+		totalWeight += w
 	}
 
 	// Note: totalWeight is always >= len(items) since each item has weight >= 1
-	r := rand.IntN(totalWeight)
-	cumulative := 0
+	r := rand.Int64N(totalWeight)
+	var cumulative int64
 	for _, item := range items {
-		weight := getWeight(item)
-		if weight <= 0 {
-			weight = 1
-		}
-		cumulative += weight
+		w := clampWeight(getWeight(item))
+		cumulative += w
 		if r < cumulative {
 			return item, true
 		}

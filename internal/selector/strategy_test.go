@@ -312,3 +312,38 @@ func TestSelectGroup_ZeroWeight(t *testing.T) {
 		t.Errorf("SelectGroup with zero weights: expected both groups to be selected")
 	}
 }
+
+func TestSelectByWeight_LargeWeight(t *testing.T) {
+	// Test that extremely large weights are capped to prevent overflow
+	providers := []*model.Provider{
+		{ID: "huge", Weight: 999999999}, // Exceeds MaxWeight, will be capped
+		{ID: "normal", Weight: 100},
+	}
+
+	// This should not panic - weights are capped at MaxWeight
+	hugeCount := 0
+	for i := 0; i < 100; i++ {
+		p := SelectByWeight(providers)
+		if p == nil {
+			t.Fatal("SelectByWeight returned nil")
+		}
+		if p.ID == "huge" {
+			hugeCount++
+		}
+	}
+
+	// "huge" should be selected most of the time since MaxWeight >> 100
+	if hugeCount < 50 {
+		t.Errorf("SelectByWeight: huge selected %d/100 times, expected majority", hugeCount)
+	}
+}
+
+func TestSelectByWeight_MaxWeightConstant(t *testing.T) {
+	// Verify MaxWeight constant is reasonable
+	if MaxWeight <= 0 {
+		t.Errorf("MaxWeight should be positive, got %d", MaxWeight)
+	}
+	if MaxWeight > 1_000_000_000 {
+		t.Errorf("MaxWeight should be <= 1 billion to prevent overflow issues, got %d", MaxWeight)
+	}
+}

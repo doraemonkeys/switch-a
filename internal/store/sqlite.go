@@ -64,6 +64,26 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 		return nil, err
 	}
 
+	// Set busy_timeout to wait up to 5 seconds when database is locked
+	// This prevents "database is locked" errors under high concurrency
+	if err := db.Exec("PRAGMA busy_timeout=5000").Error; err != nil { // coverage-ignore -- PRAGMA rarely fails on valid connection
+		return nil, err
+	}
+
+	// Configure connection pool for SQLite
+	// SQLite handles concurrency best with a single writer, so we limit connections
+	sqlDB, err := db.DB()
+	if err != nil { // coverage-ignore -- DB() rarely fails on valid gorm.DB
+		return nil, err
+	}
+	// MaxOpenConns=1 ensures serialized writes (SQLite recommendation for WAL mode)
+	// This prevents "database is locked" errors from concurrent writers
+	sqlDB.SetMaxOpenConns(1)
+	// Allow idle connections to be reused
+	sqlDB.SetMaxIdleConns(1)
+	// Close idle connections after 5 minutes to prevent stale connections
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+
 	// Auto migrate tables
 	if err := db.AutoMigrate(
 		&model.Group{},
