@@ -1,6 +1,8 @@
 import { useState, useMemo } from "react";
 import { useProviders } from "../../hooks/useProviders";
 import { useGroups } from "../../hooks/useGroups";
+import { useToast } from "../../hooks/useToast";
+import { ConfirmModal } from "../../components";
 import type { Provider, ProviderInput } from "../../api/client";
 import { getProviderStatus } from "./types";
 import type { StatusFilter } from "./types";
@@ -8,7 +10,6 @@ import { ProvidersTableBody } from "./ProvidersTableBody";
 import { ProviderModal } from "./ProviderModal";
 import {
   PageHeader,
-  MutationErrorAlert,
   FilterBar,
   HelpCard,
   ErrorState,
@@ -28,13 +29,18 @@ export function Providers() {
     disableProvider,
   } = useProviders();
   const { groups } = useGroups();
+  const toast = useToast();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
   const [showModal, setShowModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; provider: Provider | null }>({
+    isOpen: false,
+    provider: null,
+  });
+  const [deleting, setDeleting] = useState(false);
 
   const filteredProviders = useMemo(() => {
     return providers.filter((provider) => {
@@ -58,50 +64,60 @@ export function Providers() {
   }, [providers, searchQuery, groupFilter, statusFilter]);
 
   const handleToggleProvider = async (provider: Provider) => {
-    setMutationError(null);
     try {
       if (provider.enabled) {
         await disableProvider(provider.id);
+        toast.success(`Provider "${provider.name}" disabled`);
       } else {
         await enableProvider(provider.id);
+        toast.success(`Provider "${provider.name}" enabled`);
       }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to toggle provider";
-      setMutationError(message);
+      toast.error(message);
     }
   };
 
-  const handleDeleteProvider = async (provider: Provider) => {
-    if (
-      !confirm(`Are you sure you want to delete provider "${provider.name}"?`)
-    ) {
-      return;
-    }
-    setMutationError(null);
+  const handleDeleteClick = (provider: Provider) => {
+    setDeleteConfirm({ isOpen: true, provider });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm.provider) return;
+    setDeleting(true);
     try {
-      await deleteProvider(provider.id);
+      await deleteProvider(deleteConfirm.provider.id);
+      toast.success(`Provider "${deleteConfirm.provider.name}" deleted`);
+      setDeleteConfirm({ isOpen: false, provider: null });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to delete provider";
-      setMutationError(message);
+      toast.error(message);
+    } finally {
+      setDeleting(false);
     }
   };
 
+  const handleDeleteCancel = () => {
+    setDeleteConfirm({ isOpen: false, provider: null });
+  };
+
   const handleSaveProvider = async (data: ProviderInput) => {
-    setMutationError(null);
     try {
       if (editingProvider) {
         await updateProvider(editingProvider.id, data);
+        toast.success("Provider updated successfully");
       } else {
         await createProvider(data);
+        toast.success("Provider created successfully");
       }
       setShowModal(false);
       setEditingProvider(null);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to save provider";
-      setMutationError(message);
+      toast.error(message);
       throw err;
     }
   };
@@ -134,13 +150,6 @@ export function Providers() {
         onAddClick={handleAddClick}
       />
 
-      {mutationError && (
-        <MutationErrorAlert
-          error={mutationError}
-          onDismiss={() => setMutationError(null)}
-        />
-      )}
-
       <FilterBar
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -161,7 +170,7 @@ export function Providers() {
               filteredProviders={filteredProviders}
               onToggle={handleToggleProvider}
               onEdit={handleEditClick}
-              onDelete={handleDeleteProvider}
+              onDelete={handleDeleteClick}
               onAddClick={handleAddClick}
               getGroupName={getGroupName}
             />
@@ -182,6 +191,18 @@ export function Providers() {
           groups={groups}
         />
       )}
+
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Provider"
+        message={`Are you sure you want to delete provider "${deleteConfirm.provider?.name}"? This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        loading={deleting}
+      />
     </div>
   );
 }

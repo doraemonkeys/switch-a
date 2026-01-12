@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/pages/Dashboard";
@@ -8,6 +8,7 @@ import { Groups } from "@/pages/Groups";
 import { Config } from "@/pages/Config";
 import { Logs } from "@/pages/Logs";
 import { ApiContext } from "@/api/context";
+import { ToastProvider } from "@/components/Toast";
 import type { ApiClient } from "@/api/client";
 
 function createMockApiClient(): ApiClient {
@@ -52,18 +53,20 @@ function TestApp({ initialPath = "/" }: { initialPath?: string }) {
   const mockApi = createMockApiClient();
   return (
     <ApiContext.Provider value={mockApi}>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="providers" element={<Providers />} />
-            <Route path="groups" element={<Groups />} />
-            <Route path="config" element={<Config />} />
-            <Route path="logs" element={<Logs />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <Routes>
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Dashboard />} />
+              <Route path="providers" element={<Providers />} />
+              <Route path="groups" element={<Groups />} />
+              <Route path="config" element={<Config />} />
+              <Route path="logs" element={<Logs />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
     </ApiContext.Provider>
   );
 }
@@ -100,20 +103,24 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: /Logs/i })).toBeInTheDocument();
   });
 
-  it("should navigate to providers page", () => {
+  it("should navigate to providers page", async () => {
     render(<TestApp initialPath="/providers" />);
 
-    expect(
-      screen.getByRole("heading", { name: /Providers/i }),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Providers/i }),
+      ).toBeInTheDocument();
+    });
   });
 
-  it("should navigate to groups page", () => {
+  it("should navigate to groups page", async () => {
     render(<TestApp initialPath="/groups" />);
 
-    expect(
-      screen.getByRole("heading", { name: /Groups/i }),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Groups/i }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("should navigate to config page", () => {

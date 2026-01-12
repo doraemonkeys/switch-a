@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useGroups } from "../hooks/useGroups";
+import { useToast } from "../hooks/useToast";
 import { GroupModal, ConfirmModal } from "../components";
 import type { Group, GroupInput } from "../api/types";
 
@@ -24,6 +25,7 @@ const TrashIcon = () => (
 
 export function Groups() {
   const { groups, loading, error, createGroup, updateGroup, deleteGroup } = useGroups();
+  const toast = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; groupId: string | null }>({
@@ -52,8 +54,10 @@ export function Groups() {
       try {
         await deleteGroup(deleteConfirm.groupId);
         setDeleteConfirm({ isOpen: false, groupId: null });
+        toast.success("Group deleted successfully");
       } catch (err) {
-        console.error("Failed to delete group:", err);
+        const message = err instanceof Error ? err.message : "Failed to delete group";
+        toast.error(message);
       } finally {
         setDeleting(false);
       }
@@ -65,10 +69,18 @@ export function Groups() {
   };
 
   const handleSubmit = async (data: GroupInput) => {
-    if (editingGroup) {
-      await updateGroup(editingGroup.id, data);
-    } else {
-      await createGroup(data);
+    try {
+      if (editingGroup) {
+        await updateGroup(editingGroup.id, data);
+        toast.success("Group updated successfully");
+      } else {
+        await createGroup(data);
+        toast.success("Group created successfully");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Operation failed";
+      toast.error(message);
+      throw err; // Re-throw to let modal handle it
     }
   };
 
