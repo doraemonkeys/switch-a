@@ -123,12 +123,14 @@ describe("App", () => {
     });
   });
 
-  it("should navigate to config page", () => {
+  it("should navigate to config page", async () => {
     render(<TestApp initialPath="/config" />);
 
-    expect(
-      screen.getByRole("heading", { name: /Configuration/i }),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Configuration/i }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("should navigate to logs page", () => {
