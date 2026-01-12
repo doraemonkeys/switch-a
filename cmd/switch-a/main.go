@@ -107,12 +107,22 @@ func run() error {
 	}
 
 	// Initialize logger
-	log := logger.New(logger.DefaultConfig())
+	log := logger.New(logger.Config{
+		LogPath:     cfg.LogPath,
+		MaxSizeMB:   cfg.LogMaxSizeMB,
+		MaxKeepDays: cfg.LogMaxKeepDays,
+	})
 	defer func() { _ = log.Sync() }()
+
+	// Log which config file was loaded (if any)
+	if cfg.ConfigFileUsed != "" {
+		log.Info("loaded config file", zap.String("path", cfg.ConfigFileUsed))
+	}
 
 	log.Info("starting switch-a",
 		zap.String("proxy_port", cfg.Port),
 		zap.String("admin_port", cfg.AdminPort),
+		zap.String("log_path", cfg.LogPath),
 	)
 
 	// Initialize store

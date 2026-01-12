@@ -1,0 +1,47 @@
+# Switch-A 配置文件示例
+# 将此文件复制为 config.yaml 并修改配置值
+#
+# 配置优先级（从高到低）：
+#   1. 环境变量 (SWITCHA_*)
+#   2. 配置文件 (config.yaml)
+#   3. 默认值
+#
+# 配置文件搜索路径：
+#   - ./config.yaml (当前目录)
+#   - ./config/config.yaml
+#   - /etc/switch-a/config.yaml
+
+# 代理服务端口
+# 环境变量: SWITCHA_PORT
+# 默认值: 28080
+port: "28080"
+
+# 管理服务端口
+# 环境变量: SWITCHA_ADMIN_PORT
+# 默认值: 28081
+admin_port: "28081"
+
+# SQLite 数据库路径
+# 环境变量: SWITCHA_DB_PATH
+# 默认值: ./data.db
+db_path: "./data.db"
+
+# 管理 API 认证令牌 (必填)
+# 环境变量: SWITCHA_ADMIN_TOKEN
+# 无默认值，必须设置
+admin_token: "your-secret-token-here"
+
+# 日志文件路径
+# 环境变量: SWITCHA_LOG_PATH
+# 默认值: ./logs/switch-a.log
+log_path: "./logs/switch-a.log"
+
+# 单个日志文件最大大小 (MB)
+# 环境变量: SWITCHA_LOG_MAX_SIZE_MB
+# 默认值: 100
+log_max_size_mb: 100
+
+# 日志文件保留天数
+# 环境变量: SWITCHA_LOG_MAX_KEEP_DAYS
+# 默认值: 7
+log_max_keep_days: 7

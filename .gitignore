@@ -30,7 +30,6 @@ go.work.sum
 # .vscode/
 
 test.sh
-*.exe
 cover.out
 TODO
 *_gitignore*
@@ -39,3 +38,6 @@ TODO
 
 # Web coverage reports
 web/coverage/
+config.yaml
+tmp/
+cmd/switch-a/config.yaml
