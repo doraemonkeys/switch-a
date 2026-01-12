@@ -54,6 +54,7 @@ type Store interface {
 	InsertLog(ctx context.Context, log *model.RequestLog) error
 	ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error)
 	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
+	GetLogStats(ctx context.Context, startTime, endTime time.Time) (*model.LogStats, error)
 	CleanOldLogs(ctx context.Context, beforeDays int) error
 
 	// Close closes the store and releases resources.

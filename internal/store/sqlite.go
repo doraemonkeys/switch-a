@@ -623,3 +623,109 @@ func (s *SQLiteStore) CleanOldLogs(ctx context.Context, beforeDays int) error {
 	}
 	return nil
 }
+
+// GetLogStats retrieves aggregated statistics from request logs within the given time range.
+// If startTime is zero, all logs are included (for "all" period).
+func (s *SQLiteStore) GetLogStats(ctx context.Context, startTime, endTime time.Time) (*model.LogStats, error) {
+	stats := &model.LogStats{
+		ByAPIType:  make(map[string]int64),
+		ByProvider: []model.ProviderLogStats{},
+	}
+
+	// Build base query with time filter
+	baseQuery := s.db.WithContext(ctx).Model(&model.RequestLog{})
+	if !startTime.IsZero() {
+		baseQuery = baseQuery.Where("created_at >= ?", startTime)
+	}
+	baseQuery = baseQuery.Where("created_at < ?", endTime)
+
+	// Get overall statistics using a single query
+	var overallStats struct {
+		TotalRequests int64
+		SuccessCount  int64
+		AvgLatencyMs  float64
+	}
+	err := baseQuery.Session(&gorm.Session{}).Select(
+		"COUNT(*) as total_requests",
+		"SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count",
+		"COALESCE(AVG(latency_ms), 0) as avg_latency_ms",
+	).Scan(&overallStats).Error
+	if err != nil {
+		return nil, fmt.Errorf("get overall log stats: %w", err)
+	}
+
+	stats.TotalRequests = overallStats.TotalRequests
+	stats.SuccessCount = overallStats.SuccessCount
+	stats.FailCount = overallStats.TotalRequests - overallStats.SuccessCount
+	stats.AvgLatencyMs = int64(overallStats.AvgLatencyMs)
+
+	// Calculate success rate
+	if stats.TotalRequests > 0 {
+		stats.SuccessRate = float64(stats.SuccessCount) / float64(stats.TotalRequests)
+	}
+
+	// Get statistics by API type
+	type apiTypeStat struct {
+		APIType string
+		Count   int64
+	}
+	var apiTypeStats []apiTypeStat
+	err = baseQuery.Session(&gorm.Session{}).
+		Select("api_type", "COUNT(*) as count").
+		Group("api_type").
+		Scan(&apiTypeStats).Error
+	if err != nil {
+		return nil, fmt.Errorf("get api type stats: %w", err)
+	}
+	for _, stat := range apiTypeStats {
+		stats.ByAPIType[stat.APIType] = stat.Count
+	}
+
+	// Get statistics by provider
+	type providerStat struct {
+		ProviderID   string
+		Count        int64
+		SuccessCount int64
+	}
+	var providerStats []providerStat
+	err = baseQuery.Session(&gorm.Session{}).
+		Select(
+			"provider_id",
+			"COUNT(*) as count",
+			"SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count",
+		).
+		Group("provider_id").
+		Order("count DESC").
+		Scan(&providerStats).Error
+	if err != nil {
+		return nil, fmt.Errorf("get provider stats: %w", err)
+	}
+	for _, stat := range providerStats {
+		successRate := float64(0)
+		if stat.Count > 0 {
+			successRate = float64(stat.SuccessCount) / float64(stat.Count)
+		}
+		stats.ByProvider = append(stats.ByProvider, model.ProviderLogStats{
+			ProviderID:   stat.ProviderID,
+			Count:        stat.Count,
+			SuccessCount: stat.SuccessCount,
+			SuccessRate:  successRate,
+		})
+	}
+
+	// Get earliest log timestamp (for "all" period display)
+	if startTime.IsZero() {
+		var earliestLog model.RequestLog
+		err = s.db.WithContext(ctx).Model(&model.RequestLog{}).
+			Order("created_at ASC").
+			Limit(1).
+			Select("created_at").
+			First(&earliestLog).Error
+		if err == nil {
+			stats.EarliestLog = earliestLog.CreatedAt
+		}
+		// Ignore error - it's OK if there are no logs
+	}
+
+	return stats, nil
+}

@@ -434,3 +434,214 @@ func TestListLogs_EmptyResult(t *testing.T) {
 		t.Errorf("expected count=0, got %d", count)
 	}
 }
+
+func TestGetLogStats_Empty(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	startTime := now.Add(-24 * time.Hour)
+	stats, err := store.GetLogStats(ctx, startTime, now)
+	if err != nil {
+		t.Fatalf("GetLogStats failed: %v", err)
+	}
+
+	if stats.TotalRequests != 0 {
+		t.Errorf("TotalRequests = %d, want 0", stats.TotalRequests)
+	}
+	if stats.SuccessCount != 0 {
+		t.Errorf("SuccessCount = %d, want 0", stats.SuccessCount)
+	}
+	if stats.FailCount != 0 {
+		t.Errorf("FailCount = %d, want 0", stats.FailCount)
+	}
+	if stats.SuccessRate != 0 {
+		t.Errorf("SuccessRate = %f, want 0", stats.SuccessRate)
+	}
+	if len(stats.ByAPIType) != 0 {
+		t.Errorf("len(ByAPIType) = %d, want 0", len(stats.ByAPIType))
+	}
+	if len(stats.ByProvider) != 0 {
+		t.Errorf("len(ByProvider) = %d, want 0", len(stats.ByProvider))
+	}
+}
+
+func TestGetLogStats_WithData(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	logs := []model.RequestLog{
+		{ProviderID: "p1", APIType: "claude", Success: true, LatencyMs: 100, CreatedAt: now.Add(-1 * time.Hour)},
+		{ProviderID: "p1", APIType: "claude", Success: true, LatencyMs: 200, CreatedAt: now.Add(-2 * time.Hour)},
+		{ProviderID: "p2", APIType: "codex", Success: false, LatencyMs: 300, CreatedAt: now.Add(-3 * time.Hour)},
+		{ProviderID: "p2", APIType: "codex", Success: true, LatencyMs: 400, CreatedAt: now.Add(-4 * time.Hour)},
+	}
+	for i := range logs {
+		if err := store.InsertLog(ctx, &logs[i]); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	startTime := now.Add(-24 * time.Hour)
+	stats, err := store.GetLogStats(ctx, startTime, now)
+	if err != nil {
+		t.Fatalf("GetLogStats failed: %v", err)
+	}
+
+	// Check overall statistics
+	if stats.TotalRequests != 4 {
+		t.Errorf("TotalRequests = %d, want 4", stats.TotalRequests)
+	}
+	if stats.SuccessCount != 3 {
+		t.Errorf("SuccessCount = %d, want 3", stats.SuccessCount)
+	}
+	if stats.FailCount != 1 {
+		t.Errorf("FailCount = %d, want 1", stats.FailCount)
+	}
+	if stats.SuccessRate < 0.74 || stats.SuccessRate > 0.76 {
+		t.Errorf("SuccessRate = %f, want ~0.75", stats.SuccessRate)
+	}
+	// Average latency should be (100+200+300+400)/4 = 250
+	if stats.AvgLatencyMs != 250 {
+		t.Errorf("AvgLatencyMs = %d, want 250", stats.AvgLatencyMs)
+	}
+
+	// Check by API type
+	if stats.ByAPIType["claude"] != 2 {
+		t.Errorf("ByAPIType[claude] = %d, want 2", stats.ByAPIType["claude"])
+	}
+	if stats.ByAPIType["codex"] != 2 {
+		t.Errorf("ByAPIType[codex] = %d, want 2", stats.ByAPIType["codex"])
+	}
+
+	// Check by provider
+	if len(stats.ByProvider) != 2 {
+		t.Errorf("len(ByProvider) = %d, want 2", len(stats.ByProvider))
+	}
+}
+
+func TestGetLogStats_TimeFilter(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	logs := []model.RequestLog{
+		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: now.Add(-1 * time.Hour)},
+		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: now.Add(-23 * time.Hour)},
+		{ProviderID: "p1", APIType: "claude", Success: false, CreatedAt: now.Add(-25 * time.Hour)}, // Outside 24h
+	}
+	for i := range logs {
+		if err := store.InsertLog(ctx, &logs[i]); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	// Get stats for last 24 hours
+	startTime := now.Add(-24 * time.Hour)
+	stats, err := store.GetLogStats(ctx, startTime, now)
+	if err != nil {
+		t.Fatalf("GetLogStats failed: %v", err)
+	}
+
+	// Only 2 logs should be counted
+	if stats.TotalRequests != 2 {
+		t.Errorf("TotalRequests = %d, want 2", stats.TotalRequests)
+	}
+	if stats.SuccessCount != 2 {
+		t.Errorf("SuccessCount = %d, want 2", stats.SuccessCount)
+	}
+	if stats.FailCount != 0 {
+		t.Errorf("FailCount = %d, want 0", stats.FailCount)
+	}
+}
+
+func TestGetLogStats_AllPeriod(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	logs := []model.RequestLog{
+		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: now.Add(-1 * time.Hour)},
+		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: now.Add(-30 * 24 * time.Hour)},  // 30 days ago
+		{ProviderID: "p1", APIType: "claude", Success: false, CreatedAt: now.Add(-60 * 24 * time.Hour)}, // 60 days ago
+	}
+	for i := range logs {
+		if err := store.InsertLog(ctx, &logs[i]); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	// Get stats for all time (zero start time)
+	stats, err := store.GetLogStats(ctx, time.Time{}, now)
+	if err != nil {
+		t.Fatalf("GetLogStats failed: %v", err)
+	}
+
+	// All 3 logs should be counted
+	if stats.TotalRequests != 3 {
+		t.Errorf("TotalRequests = %d, want 3", stats.TotalRequests)
+	}
+
+	// Earliest log should be set
+	if stats.EarliestLog.IsZero() {
+		t.Error("EarliestLog should not be zero for 'all' period")
+	}
+}
+
+func TestGetLogStats_ProviderSuccessRate(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	logs := []model.RequestLog{
+		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: now.Add(-1 * time.Hour)},
+		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: now.Add(-2 * time.Hour)},
+		{ProviderID: "p2", APIType: "codex", Success: false, CreatedAt: now.Add(-3 * time.Hour)},
+		{ProviderID: "p2", APIType: "codex", Success: false, CreatedAt: now.Add(-4 * time.Hour)},
+	}
+	for i := range logs {
+		if err := store.InsertLog(ctx, &logs[i]); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	startTime := now.Add(-24 * time.Hour)
+	stats, err := store.GetLogStats(ctx, startTime, now)
+	if err != nil {
+		t.Fatalf("GetLogStats failed: %v", err)
+	}
+
+	// Find stats for each provider
+	var p1Stats, p2Stats *model.ProviderLogStats
+	for i := range stats.ByProvider {
+		if stats.ByProvider[i].ProviderID == "p1" {
+			p1Stats = &stats.ByProvider[i]
+		} else if stats.ByProvider[i].ProviderID == "p2" {
+			p2Stats = &stats.ByProvider[i]
+		}
+	}
+
+	if p1Stats == nil {
+		t.Fatal("p1 stats not found")
+	}
+	if p2Stats == nil {
+		t.Fatal("p2 stats not found")
+	}
+
+	// p1 should have 100% success rate
+	if p1Stats.SuccessRate != 1.0 {
+		t.Errorf("p1.SuccessRate = %f, want 1.0", p1Stats.SuccessRate)
+	}
+	if p1Stats.Count != 2 {
+		t.Errorf("p1.Count = %d, want 2", p1Stats.Count)
+	}
+
+	// p2 should have 0% success rate
+	if p2Stats.SuccessRate != 0 {
+		t.Errorf("p2.SuccessRate = %f, want 0", p2Stats.SuccessRate)
+	}
+	if p2Stats.Count != 2 {
+		t.Errorf("p2.Count = %d, want 2", p2Stats.Count)
+	}
+}

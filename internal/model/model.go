@@ -131,3 +131,23 @@ type ErrorResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
+
+// LogStats represents aggregated statistics from request logs.
+type LogStats struct {
+	TotalRequests int64              // Total number of requests
+	SuccessCount  int64              // Number of successful requests
+	FailCount     int64              // Number of failed requests
+	SuccessRate   float64            // Success rate (0.0 to 1.0)
+	AvgLatencyMs  int64              // Average latency in milliseconds
+	ByAPIType     map[string]int64   // Request count by API type
+	ByProvider    []ProviderLogStats // Request statistics by provider
+	EarliestLog   time.Time          // Earliest log timestamp (for "all" period)
+}
+
+// ProviderLogStats represents log statistics for a single provider.
+type ProviderLogStats struct {
+	ProviderID   string  // Provider ID
+	Count        int64   // Total request count
+	SuccessCount int64   // Successful request count
+	SuccessRate  float64 // Success rate (0.0 to 1.0)
+}

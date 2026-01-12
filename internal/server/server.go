@@ -57,6 +57,7 @@ type store interface {
 	InsertLog(ctx context.Context, log *model.RequestLog) error
 	ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error)
 	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
+	GetLogStats(ctx context.Context, startTime, endTime time.Time) (*model.LogStats, error)
 }
 
 // Server represents the HTTP server (proxy only).
@@ -225,6 +226,9 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 
 	// Logs route
 	mux.Handle("GET /admin/api/logs", auth.WrapFunc(adminHandler.GetLogs))
+
+	// Stats route
+	mux.Handle("GET /admin/api/stats", auth.WrapFunc(adminHandler.GetStats))
 
 	// Frontend static files (no auth required)
 	// Serves the embedded React SPA with history fallback for client-side routing.

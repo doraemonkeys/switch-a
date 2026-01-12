@@ -50,6 +50,12 @@ func (m *mockStore) ListLogs(context.Context, model.LogFilter) ([]model.RequestL
 	return nil, nil
 }
 func (m *mockStore) CountLogs(context.Context, model.LogFilter) (int64, error) { return 0, nil }
+func (m *mockStore) GetLogStats(context.Context, time.Time, time.Time) (*model.LogStats, error) {
+	return &model.LogStats{
+		ByAPIType:  make(map[string]int64),
+		ByProvider: []model.ProviderLogStats{},
+	}, nil
+}
 
 func testServer(t *testing.T) *Server {
 	t.Helper()

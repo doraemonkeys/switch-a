@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"switch-a/internal/model"
 	"switch-a/internal/store"
@@ -263,6 +264,63 @@ func (m *mockStore) CountLogs(_ context.Context, filter model.LogFilter) (int64,
 		}
 	}
 	return count, nil
+}
+
+func (m *mockStore) GetLogStats(_ context.Context, startTime, endTime time.Time) (*model.LogStats, error) {
+	if m.logsErr != nil {
+		return nil, m.logsErr
+	}
+
+	stats := &model.LogStats{
+		ByAPIType:  make(map[string]int64),
+		ByProvider: []model.ProviderLogStats{},
+	}
+
+	// Filter and aggregate logs
+	providerStats := make(map[string]*model.ProviderLogStats)
+	var totalLatency int64
+	for _, log := range m.logs {
+		if !startTime.IsZero() && log.CreatedAt.Before(startTime) {
+			continue
+		}
+		if log.CreatedAt.After(endTime) || log.CreatedAt.Equal(endTime) {
+			continue
+		}
+
+		stats.TotalRequests++
+		totalLatency += log.LatencyMs
+		if log.Success {
+			stats.SuccessCount++
+		} else {
+			stats.FailCount++
+		}
+		stats.ByAPIType[log.APIType]++
+
+		// Aggregate by provider
+		ps, ok := providerStats[log.ProviderID]
+		if !ok {
+			ps = &model.ProviderLogStats{ProviderID: log.ProviderID}
+			providerStats[log.ProviderID] = ps
+		}
+		ps.Count++
+		if log.Success {
+			ps.SuccessCount++
+		}
+	}
+
+	// Calculate success rates and average latency
+	if stats.TotalRequests > 0 {
+		stats.SuccessRate = float64(stats.SuccessCount) / float64(stats.TotalRequests)
+		stats.AvgLatencyMs = totalLatency / stats.TotalRequests
+	}
+	for _, ps := range providerStats {
+		if ps.Count > 0 {
+			ps.SuccessRate = float64(ps.SuccessCount) / float64(ps.Count)
+		}
+		stats.ByProvider = append(stats.ByProvider, *ps)
+	}
+
+	return stats, nil
 }
 
 // mockHealthManager implements HealthManager interface for testing.
