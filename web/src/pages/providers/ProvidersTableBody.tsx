@@ -11,6 +11,7 @@ export interface ProvidersTableBodyProps {
   providers: Provider[];
   filteredProviders: Provider[];
   onToggle: (provider: Provider) => void;
+  onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onAddClick: () => void;
   getGroupName: (groupId: string | null) => string;
@@ -21,6 +22,7 @@ export function ProvidersTableBody({
   providers,
   filteredProviders,
   onToggle,
+  onEdit,
   onDelete,
   onAddClick,
   getGroupName,
@@ -133,6 +135,13 @@ export function ProvidersTableBody({
                   title={provider.enabled ? "Disable" : "Enable"}
                 >
                   {provider.enabled ? "⏸️" : "▶️"}
+                </button>
+                <button
+                  onClick={() => onEdit(provider)}
+                  className="btn btn-ghost btn-sm"
+                  title="Edit"
+                >
+                  ✏️
                 </button>
                 <button
                   onClick={() => onDelete(provider)}

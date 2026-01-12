@@ -1,4 +1,4 @@
-export { Providers } from "./Providers";
-export { AddProviderModal } from "./AddProviderModal";
-export { ProvidersTableBody } from "./ProvidersTableBody";
+export * from "./Providers";
+export * from "./ProviderModal";
+export * from "./ProvidersTableBody";
 export * from "./types";

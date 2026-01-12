@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/pages/Dashboard";
-import { Providers } from "@/pages/Providers";
+import { Providers } from "@/pages/providers";
 import { Groups } from "@/pages/Groups";
 import { Config } from "@/pages/Config";
 import { Logs } from "@/pages/Logs";

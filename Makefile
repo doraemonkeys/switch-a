@@ -1,4 +1,4 @@
-.PHONY: ci verify lint coverage sloc clean test fmt build release-windows release-clean web-lint web-coverage
+.PHONY: ci verify lint coverage sloc clean test fmt build release-windows release-clean web-lint web-coverage web-tsc
 
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -26,9 +26,10 @@ ci:
 	@sloc-guard -q check
 	@cd web && pnpm lint --quiet
 	@cd web && pnpm test:coverage --silent
+	@cd web && npx tsc --noEmit -p tsconfig.app.json
 
 # 正常模式
-verify: coverage lint sloc fmt web-lint web-coverage web-fmt
+verify: coverage lint sloc fmt web-lint web-coverage web-tsc web-fmt
 
 lint:
 	golangci-lint run
@@ -79,3 +80,6 @@ web-lint:
 
 web-coverage:
 	cd web && pnpm test:coverage
+
+web-tsc:
+	cd web && npx tsc --noEmit -p tsconfig.app.json
