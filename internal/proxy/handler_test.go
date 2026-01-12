@@ -319,7 +319,7 @@ func TestHandler_ServeHTTP_SSEProxy(t *testing.T) {
 	}
 }
 
-func TestShouldRetry(t *testing.T) {
+func TestShouldFailover(t *testing.T) {
 	tests := []struct {
 		statusCode int
 		want       bool
@@ -327,31 +327,33 @@ func TestShouldRetry(t *testing.T) {
 		{200, false},
 		{201, false},
 		{400, false},
-		{401, true}, // Unauthorized - provider misconfiguration, try another
-		{403, true}, // Forbidden - provider misconfiguration, try another
-		{404, false},
-		{429, true}, // Rate limit
-		{500, true}, // Server error
-		{502, true}, // Bad gateway
-		{503, true}, // Service unavailable
-		{504, true}, // Gateway timeout
+		{401, true},  // Unauthorized - provider misconfiguration, try another
+		{402, true},  // Payment Required - quota exhausted, try another
+		{403, true},  // Forbidden - provider misconfiguration, try another
+		{404, false}, // Not Found - client error, don't failover
+		{429, true},  // Rate limit
+		{500, true},  // Server error
+		{502, true},  // Bad gateway
+		{503, true},  // Service unavailable
+		{504, true},  // Gateway timeout
 	}
 
 	for _, tt := range tests {
-		got := shouldRetry(tt.statusCode)
+		got := shouldFailover(tt.statusCode)
 		if got != tt.want {
-			t.Errorf("shouldRetry(%d) = %v, want %v", tt.statusCode, got, tt.want)
+			t.Errorf("shouldFailover(%d) = %v, want %v", tt.statusCode, got, tt.want)
 		}
 	}
 }
 
-func TestHandler_LogsSuccessFalse_ForRetryableStatusCodes(t *testing.T) {
-	// Test that retryable status codes (401, 403, 429, 5xx) are logged with success=false
+func TestHandler_LogsSuccessFalse_ForFailoverStatusCodes(t *testing.T) {
+	// Test that failover-eligible status codes (401, 402, 403, 429, 5xx) are logged with success=false
 	tests := []struct {
 		name       string
 		statusCode int
 	}{
 		{"401_unauthorized", http.StatusUnauthorized},
+		{"402_payment_required", http.StatusPaymentRequired},
 		{"403_forbidden", http.StatusForbidden},
 		{"429_too_many_requests", http.StatusTooManyRequests},
 		{"500_internal_server_error", http.StatusInternalServerError},

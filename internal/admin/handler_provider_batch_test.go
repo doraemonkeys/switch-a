@@ -196,9 +196,9 @@ func TestBatchProviderAction_AllFail(t *testing.T) {
 
 	h.BatchProviderAction(w, req)
 
-	// Should return 200 with success=false when all fail
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	// Should return 400 Bad Request when all operations fail
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 
 	var resp BatchProviderResponse
@@ -271,8 +271,9 @@ func TestBatchProviderAction_DeleteWithUpdateError(t *testing.T) {
 
 	h.BatchProviderAction(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	// Should return 400 Bad Request when all operations fail
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 
 	var resp BatchProviderResponse

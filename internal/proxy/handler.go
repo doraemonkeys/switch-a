@@ -377,8 +377,9 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 
 	result.statusCode = upstreamResp.StatusCode
 
-	// Check if response indicates retryable failure (5xx, 429, 401, 403) BEFORE writing to client
-	if shouldRetry(result.statusCode) {
+	// Check if response indicates failover-eligible error BEFORE writing to client.
+	// Failover-eligible: 5xx, 402, 429, 401, 403 - these are provider-side issues.
+	if shouldFailover(result.statusCode) {
 		statusErr := fmt.Errorf("upstream returned status %d", result.statusCode)
 		h.logger.Warn("upstream returned error status",
 			zap.String("provider_id", provider.ID),
@@ -661,14 +662,16 @@ func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusC
 	}
 }
 
-// shouldRetry determines if a response status code indicates a retryable failure.
-// Retries on:
+// shouldFailover determines if we should try another provider instead of
+// forwarding this response to the client. Returns true for provider-side issues
+// that may be resolved by switching to a different provider:
 //   - Server errors (5xx): temporary upstream issues
-//   - Rate limiting (429): provider overloaded, try another
-//   - Authentication errors (401, 403): provider misconfiguration (wrong/expired API key),
-//     try another provider that might have valid credentials
-func shouldRetry(statusCode int) bool {
+//   - Payment/quota errors (402): provider billing limits or quota exhausted
+//   - Rate limiting (429): provider overloaded
+//   - Auth errors (401, 403): provider misconfiguration (wrong/expired API key)
+func shouldFailover(statusCode int) bool {
 	return statusCode >= defaults.StatusServerError ||
+		statusCode == defaults.StatusPaymentRequired ||
 		statusCode == defaults.StatusTooManyRequests ||
 		statusCode == defaults.StatusUnauthorized ||
 		statusCode == defaults.StatusForbidden

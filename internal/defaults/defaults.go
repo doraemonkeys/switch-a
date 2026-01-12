@@ -91,17 +91,20 @@ const (
 	ProviderWeight = 1
 )
 
-// HTTP status codes for retry logic.
-// These are semantic aliases to make retry logic more readable.
+// HTTP status codes for failover logic.
+// These are semantic aliases to make failover logic more readable.
 const (
-	// StatusServerError is the threshold for server errors that may be retried.
+	// StatusServerError is the threshold for server errors that trigger failover.
 	StatusServerError = http.StatusInternalServerError
-	// StatusTooManyRequests indicates rate limiting that may be retried.
+	// StatusPaymentRequired indicates quota/billing issues (e.g., weekly limit reached).
+	// This should trigger failover as another provider may have available quota.
+	StatusPaymentRequired = http.StatusPaymentRequired
+	// StatusTooManyRequests indicates rate limiting that triggers failover.
 	StatusTooManyRequests = http.StatusTooManyRequests
 	// StatusUnauthorized indicates authentication failure (e.g., invalid API key).
-	// This should trigger retry with other providers as it indicates provider misconfiguration.
+	// This should trigger failover as it indicates provider misconfiguration.
 	StatusUnauthorized = http.StatusUnauthorized
 	// StatusForbidden indicates access denied (e.g., expired API key, insufficient permissions).
-	// This should trigger retry with other providers as it indicates provider misconfiguration.
+	// This should trigger failover as it indicates provider misconfiguration.
 	StatusForbidden = http.StatusForbidden
 )

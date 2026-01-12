@@ -501,6 +501,19 @@ func (h *Handler) ResetProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
+// getProviderOrError retrieves a provider by ID, returning a standardized error for batch operations.
+// Used by batch operations to avoid duplicating the "check provider exists -> handle not found" pattern.
+func (h *Handler) getProviderOrError(ctx context.Context, id string) (*model.Provider, error) {
+	provider, err := h.store.GetProvider(ctx, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, errors.New("provider not found: " + id)
+		}
+		return nil, errors.New("failed to get provider: " + id)
+	}
+	return provider, nil
+}
+
 // validateAndResolveGroupID validates the groupID and returns the resolved pointer.
 // Returns nil pointer if groupID is empty (to clear the association).
 // Returns false for ok if validation failed and error response was written.
@@ -615,7 +628,7 @@ func (h *Handler) BatchProviderAction(w http.ResponseWriter, r *http.Request) {
 	if successCount > 0 && successCount < len(req.IDs) {
 		status = http.StatusMultiStatus
 	} else if successCount == 0 {
-		status = http.StatusOK // All failed, but still return 200 with success=false
+		status = http.StatusBadRequest
 	}
 
 	writeJSON(w, status, resp)
@@ -623,12 +636,8 @@ func (h *Handler) BatchProviderAction(w http.ResponseWriter, r *http.Request) {
 
 // batchReset resets a provider's circuit breaker state.
 func (h *Handler) batchReset(ctx context.Context, id string) error {
-	// Check if provider exists
-	if _, err := h.store.GetProvider(ctx, id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return errors.New("provider not found: " + id)
-		}
-		return errors.New("failed to get provider: " + id)
+	if _, err := h.getProviderOrError(ctx, id); err != nil {
+		return err
 	}
 
 	// Reset via health manager
@@ -642,12 +651,9 @@ func (h *Handler) batchReset(ctx context.Context, id string) error {
 
 // batchEnable enables a provider.
 func (h *Handler) batchEnable(ctx context.Context, id string) error {
-	provider, err := h.store.GetProvider(ctx, id)
+	provider, err := h.getProviderOrError(ctx, id)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return errors.New("provider not found: " + id)
-		}
-		return errors.New("failed to get provider: " + id)
+		return err
 	}
 
 	provider.Enabled = true
@@ -666,12 +672,9 @@ func (h *Handler) batchEnable(ctx context.Context, id string) error {
 
 // batchDisable disables a provider.
 func (h *Handler) batchDisable(ctx context.Context, id string) error {
-	provider, err := h.store.GetProvider(ctx, id)
+	provider, err := h.getProviderOrError(ctx, id)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return errors.New("provider not found: " + id)
-		}
-		return errors.New("failed to get provider: " + id)
+		return err
 	}
 
 	provider.Enabled = false
@@ -690,12 +693,8 @@ func (h *Handler) batchDisable(ctx context.Context, id string) error {
 
 // batchDelete deletes a provider.
 func (h *Handler) batchDelete(ctx context.Context, id string) error {
-	// Check if provider exists
-	if _, err := h.store.GetProvider(ctx, id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return errors.New("provider not found: " + id)
-		}
-		return errors.New("failed to get provider: " + id)
+	if _, err := h.getProviderOrError(ctx, id); err != nil {
+		return err
 	}
 
 	if err := h.store.DeleteProvider(ctx, id); err != nil {
