@@ -25,7 +25,6 @@ type mockStore struct {
 	configErr    error
 	logsErr      error
 	healthErr    error
-	existsForGet bool // If true, GetProvider/GetGroup returns ErrNotFound
 }
 
 func newMockStore() *mockStore {
@@ -265,13 +264,23 @@ func setPathValue(r *http.Request, key, value string) {
 }
 
 // configErrorStore is a specialized mock for testing config error paths.
+// Note: configData is intentionally named differently from mockStore.config
+// to avoid field shadowing and make it clear this is specialized behavior.
 type configErrorStore struct {
 	mockStore
-	config   map[string]string
-	setErr   error
-	getErr   error
-	afterSet bool
-	setCalls int
+	configData map[string]string
+	setErr     error
+	getErr     error
+	afterSet   bool
+	setCalls   int
+}
+
+// newConfigErrorStore creates a new configErrorStore with initialized maps.
+func newConfigErrorStore() *configErrorStore {
+	return &configErrorStore{
+		mockStore:  *newMockStore(),
+		configData: make(map[string]string),
+	}
 }
 
 func (s *configErrorStore) SetConfig(_ context.Context, key, value string) error {
@@ -279,7 +288,7 @@ func (s *configErrorStore) SetConfig(_ context.Context, key, value string) error
 	if s.setErr != nil {
 		return s.setErr
 	}
-	s.config[key] = value
+	s.configData[key] = value
 	return nil
 }
 
@@ -289,7 +298,7 @@ func (s *configErrorStore) SetConfigs(_ context.Context, configs map[string]stri
 		return s.setErr
 	}
 	for key, value := range configs {
-		s.config[key] = value
+		s.configData[key] = value
 	}
 	return nil
 }
@@ -298,8 +307,8 @@ func (s *configErrorStore) GetAllConfig(_ context.Context) (map[string]string, e
 	if s.afterSet && s.setCalls > 0 && s.getErr != nil {
 		return nil, s.getErr
 	}
-	result := make(map[string]string, len(s.config))
-	for k, v := range s.config {
+	result := make(map[string]string, len(s.configData))
+	for k, v := range s.configData {
 		result[k] = v
 	}
 	return result, nil

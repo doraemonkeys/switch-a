@@ -32,6 +32,10 @@ const (
 	DefaultStickyEnabled = defaults.StickyEnabled
 )
 
+// StatusCodeNoResponse indicates no upstream response was received.
+// Used when logging requests where no provider was available to handle the request.
+const StatusCodeNoResponse = 0
+
 // Config keys for runtime configuration stored in the database.
 // Using constants prevents typos and enables compile-time checking.
 const (
@@ -473,7 +477,7 @@ func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext
 func (h *Handler) handleNoProvider(pctx *proxyContext) {
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(pctx.info, nil, 0, false, internal.ErrNoProvider, time.Since(pctx.startTime))
+	go h.logRequest(pctx.info, nil, StatusCodeNoResponse, false, internal.ErrNoProvider, time.Since(pctx.startTime))
 }
 
 // handleExhaustedRetries handles exhausted retry attempts.
@@ -664,9 +668,10 @@ func (h *Handler) buildFullURL(baseURL, path, query string) string {
 			zap.Error(err),
 		)
 		if !strings.HasSuffix(baseURL, "/") && !strings.HasPrefix(path, "/") {
-			return baseURL + "/" + path
+			joined = baseURL + "/" + path
+		} else {
+			joined = baseURL + path
 		}
-		return baseURL + path
 	}
 
 	if query == "" {

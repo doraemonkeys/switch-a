@@ -93,12 +93,8 @@ func TestUpdateConfig_InvalidJSON(t *testing.T) {
 
 func TestUpdateConfig_SetError(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	st := &configErrorStore{
-		config:   make(map[string]string),
-		setErr:   errors.New("database error"),
-		getErr:   nil,
-		afterSet: false,
-	}
+	st := newConfigErrorStore()
+	st.setErr = errors.New("database error")
 
 	h := NewHandler(Config{
 		Store:       st,
@@ -121,12 +117,9 @@ func TestUpdateConfig_SetError(t *testing.T) {
 
 func TestUpdateConfig_GetAfterSetError(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	st := &configErrorStore{
-		config:   make(map[string]string),
-		setErr:   nil,
-		getErr:   errors.New("database error"),
-		afterSet: true,
-	}
+	st := newConfigErrorStore()
+	st.getErr = errors.New("database error")
+	st.afterSet = true
 
 	h := NewHandler(Config{
 		Store:       st,
