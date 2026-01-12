@@ -147,6 +147,7 @@ interface NumberFieldRowProps {
     label: string;
     min: number;
     defaultValue: number;
+    hint?: string;
   }>;
 }
 
@@ -157,7 +158,7 @@ export function NumberFieldRow({
 }: NumberFieldRowProps) {
   return (
     <div className="grid grid-cols-2 gap-4">
-      {fields.map(({ key, label, min, defaultValue }) => {
+      {fields.map(({ key, label, min, defaultValue, hint }) => {
         // key is constrained to ProviderInputNumberKey, so formData[key] is number | undefined
         const value = (formData[key] as number | undefined) ?? defaultValue;
         return (
@@ -174,6 +175,7 @@ export function NumberFieldRow({
               }
               min={min}
             />
+            {hint && <p className="text-xs text-text-muted mt-1">{hint}</p>}
           </FormField>
         );
       })}

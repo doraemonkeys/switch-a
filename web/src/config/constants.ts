@@ -29,7 +29,7 @@ export const STRATEGY_OPTIONS = [
   {
     value: STRATEGIES.PRIORITY,
     label: "Priority",
-    description: "Select providers in order of priority (lower number = higher priority)",
+    description: "Select providers in order of priority. Lower number = higher priority. Best for primary/backup setups.",
   },
   {
     value: STRATEGIES.RANDOM,

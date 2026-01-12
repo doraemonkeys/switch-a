@@ -185,10 +185,10 @@ export function GroupModal({ isOpen, onClose, onSubmit, initialData, title }: Gr
                                 value={formData.id}
                                 onChange={handleIdChange}
                                 className={`${inputClass} ${idError ? "border-red-500 focus:border-red-500" : ""}`}
-                                placeholder="Auto-generated from name, or customize"
+                                placeholder="Auto-generated: name-random"
                             />
                             <p className={`text-xs mt-1 ${idError ? "text-red-400" : "text-text-muted"}`}>
-                                {idError || "Auto-generated from Name. Only lowercase letters, numbers, and hyphens allowed."}
+                                {idError || "Auto-generated from Name + random ID. Only lowercase letters, numbers, and hyphens allowed."}
                             </p>
                         </div>
                     )}
@@ -207,6 +207,7 @@ export function GroupModal({ isOpen, onClose, onSubmit, initialData, title }: Gr
                                 onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
                                 className={inputClass}
                             />
+                            <p className="text-xs text-text-muted mt-1">Lower number = higher priority (0 is highest)</p>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-text-secondary mb-1">Weight</label>
@@ -216,6 +217,7 @@ export function GroupModal({ isOpen, onClose, onSubmit, initialData, title }: Gr
                                 onChange={(e) => setFormData({ ...formData, weight: parseInt(e.target.value) || 0 })}
                                 className={inputClass}
                             />
+                            <p className="text-xs text-text-muted mt-1">Higher weight = more traffic (for weight strategy)</p>
                         </div>
                     </div>
 

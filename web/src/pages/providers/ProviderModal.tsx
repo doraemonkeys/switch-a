@@ -209,13 +209,13 @@ export function ProviderModal({
                 }}
                 required
                 autoComplete="off"
-                placeholder="Auto-generated from name, or customize"
+                placeholder="Auto-generated: name-random"
               />
               {idError ? (
                 <p className="text-xs text-red-400 mt-1">{idError}</p>
               ) : (
                 <p className="text-xs text-text-muted mt-1">
-                  Auto-generated from Name. Only lowercase letters, numbers, and hyphens allowed.
+                  Auto-generated from Name + random ID. Only lowercase letters, numbers, and hyphens allowed.
                 </p>
               )}
             </FormField>
@@ -264,8 +264,8 @@ export function ProviderModal({
             formData={formData}
             setFormData={setFormData}
             fields={[
-              { key: "priority", label: "Priority", min: 0, defaultValue: 0 },
-              { key: "weight", label: "Weight", min: 1, defaultValue: 1 },
+              { key: "priority", label: "Priority", min: 0, defaultValue: 0, hint: "Lower = higher priority (0 is highest)" },
+              { key: "weight", label: "Weight", min: 1, defaultValue: 1, hint: "Higher = more traffic (for weight strategy)" },
             ]}
           />
           <NumberFieldRow
