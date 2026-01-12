@@ -222,6 +222,8 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Config routes
 	mux.Handle("GET /admin/api/config", auth.WrapFunc(adminHandler.GetConfig))
 	mux.Handle("PUT /admin/api/config", auth.WrapFunc(adminHandler.UpdateConfig))
+	mux.Handle("GET /admin/api/config/export", auth.WrapFunc(adminHandler.ExportConfig))
+	mux.Handle("POST /admin/api/config/import", auth.WrapFunc(adminHandler.ImportConfig))
 
 	// Health and status routes
 	mux.Handle("GET /admin/api/health", auth.WrapFunc(adminHandler.GetHealth))
