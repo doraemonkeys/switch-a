@@ -74,7 +74,7 @@ func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveIndex(w, r)
 		return
 	}
-	f.Close()
+	_ = f.Close()
 
 	// Check if it's a directory
 	stat, err := fs.Stat(h.fs, filePath)
