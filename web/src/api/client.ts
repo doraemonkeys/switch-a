@@ -13,6 +13,9 @@ import type {
   HealthState,
   SystemStatus,
   LogsResponse,
+  LogFilter,
+  StatsParams,
+  StatsResponse,
 } from "./types";
 
 // Re-export types for backward compatibility
@@ -28,6 +31,15 @@ export type {
   SystemStatusSummary,
   RequestLog,
   LogsResponse,
+  LogFilter,
+  StatsPeriod,
+  StatsGranularity,
+  StatsParams,
+  ProviderStats,
+  ProviderRequestStats,
+  TimeRange,
+  TimeSeriesPoint,
+  StatsResponse,
 } from "./types";
 
 // API Error type
@@ -53,16 +65,42 @@ export function createTokenManager(storage: Storage) {
   };
 }
 
+// Build query string for logs API
+function buildLogsQuery(filter?: LogFilter): string {
+  const query = new URLSearchParams();
+  if (filter?.limit != null) query.set("limit", String(filter.limit));
+  if (filter?.offset != null) query.set("offset", String(filter.offset));
+  if (filter?.provider_id) query.set("provider_id", filter.provider_id);
+  if (filter?.api_type) query.set("api_type", filter.api_type);
+  if (filter?.success != null) query.set("success", String(filter.success));
+  if (filter?.user_id) query.set("user_id", filter.user_id);
+  if (filter?.start_time) query.set("start_time", filter.start_time);
+  if (filter?.end_time) query.set("end_time", filter.end_time);
+  if (filter?.min_latency != null)
+    query.set("min_latency", String(filter.min_latency));
+  if (filter?.sort_by) query.set("sort_by", filter.sort_by);
+  if (filter?.sort_order) query.set("sort_order", filter.sort_order);
+  return query.toString();
+}
+
+// Build query string for stats API
+function buildStatsQuery(params?: StatsParams): string {
+  const query = new URLSearchParams();
+  if (params?.period) query.set("period", params.period);
+  if (params?.granularity) query.set("granularity", params.granularity);
+  return query.toString();
+}
+
 // Request factory with dependency injection
 function createRequest(
   deps: ApiClientDeps,
-  tokenManager: ReturnType<typeof createTokenManager>,
+  tokenManager: ReturnType<typeof createTokenManager>
 ) {
   const { httpClient, baseUrl, onUnauthorized } = deps;
 
   return async function request<T>(
     endpoint: string,
-    options: RequestInit = {},
+    options: RequestInit = {}
   ): Promise<T> {
     const token = tokenManager.get();
     const headers: Record<string, string> = {
@@ -91,7 +129,7 @@ function createRequest(
       throw new ApiError(
         data.code || "UNKNOWN_ERROR",
         data.message || response.statusText,
-        response.status,
+        response.status
       );
     }
 
@@ -202,13 +240,19 @@ export function createApiClient(deps: ApiClientDeps) {
 
     // Logs
     logs: {
-      list: (params?: { limit?: number; offset?: number }) => {
-        const query = new URLSearchParams();
-        if (params?.limit) query.set("limit", String(params.limit));
-        if (params?.offset) query.set("offset", String(params.offset));
-        const queryStr = query.toString();
-        const endpoint = queryStr ? `/logs?${queryStr}` : "/logs";
-        return request<LogsResponse>(endpoint);
+      list: (filter?: LogFilter) => {
+        const queryStr = buildLogsQuery(filter);
+        return request<LogsResponse>(queryStr ? `/logs?${queryStr}` : "/logs");
+      },
+    },
+
+    // Stats
+    stats: {
+      get: (params?: StatsParams) => {
+        const queryStr = buildStatsQuery(params);
+        return request<StatsResponse>(
+          queryStr ? `/stats?${queryStr}` : "/stats"
+        );
       },
     },
   };

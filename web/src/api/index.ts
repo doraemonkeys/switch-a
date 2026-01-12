@@ -22,6 +22,15 @@ export type {
   SystemStatusSummary,
   RequestLog,
   LogsResponse,
+  LogFilter,
+  StatsPeriod,
+  StatsGranularity,
+  StatsParams,
+  ProviderStats,
+  ProviderRequestStats,
+  TimeRange,
+  TimeSeriesPoint,
+  StatsResponse,
 } from "./types";
 
 // Interface exports (for testing/mocking)

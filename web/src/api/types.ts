@@ -112,4 +112,94 @@ export interface LogsResponse {
   total: number;
   limit: number;
   offset: number;
+  sort_by: string;
+  sort_order: string;
+}
+
+// LogFilter represents filter parameters for log queries
+export interface LogFilter {
+  /** Max results (default: 100, max: 1000) */
+  limit?: number;
+  /** Pagination offset (default: 0) */
+  offset?: number;
+  /** Filter by provider ID */
+  provider_id?: string;
+  /** Filter by API type (claude/codex/gemini/custom:*) */
+  api_type?: string;
+  /** Filter by success/failure */
+  success?: boolean;
+  /** Filter by user ID */
+  user_id?: string;
+  /** Filter by start time (RFC3339 format) */
+  start_time?: string;
+  /** Filter by end time (RFC3339 format) */
+  end_time?: string;
+  /** Filter by minimum latency in ms */
+  min_latency?: number;
+  /** Sort field (created_at/latency_ms, default: created_at) */
+  sort_by?: "created_at" | "latency_ms";
+  /** Sort direction (asc/desc, default: desc) */
+  sort_order?: "asc" | "desc";
+}
+
+// Stats API types
+
+/** Valid period values for stats API */
+export type StatsPeriod = "24h" | "7d" | "30d" | "all";
+
+/** Valid granularity values for stats API */
+export type StatsGranularity = "5m" | "15m" | "1h" | "6h" | "1d";
+
+// StatsParams represents query parameters for stats API
+export interface StatsParams {
+  /** Statistics time range (default: 24h) */
+  period?: StatsPeriod;
+  /** Time bucket size for time series (optional) */
+  granularity?: StatsGranularity;
+}
+
+// ProviderStats represents provider health statistics
+export interface ProviderStats {
+  total: number;
+  healthy: number;
+  unhealthy: number;
+  disabled: number;
+}
+
+// ProviderRequestStats represents request statistics for a single provider
+export interface ProviderRequestStats {
+  id: string;
+  name: string;
+  count: number;
+  success_rate: number;
+}
+
+// TimeRange represents the time range for statistics
+export interface TimeRange {
+  start: string;
+  end: string;
+}
+
+// TimeSeriesPoint represents a single data point in a time series
+export interface TimeSeriesPoint {
+  time: string;
+  requests: number;
+  success_count: number;
+  fail_count: number;
+  success_rate: number;
+  avg_latency_ms: number;
+}
+
+// StatsResponse represents the response for the stats API
+export interface StatsResponse {
+  total_requests: number;
+  success_count: number;
+  fail_count: number;
+  success_rate: number;
+  avg_latency_ms: number;
+  providers: ProviderStats;
+  requests_by_api_type: Record<string, number>;
+  requests_by_provider: ProviderRequestStats[];
+  time_range: TimeRange;
+  timeseries?: TimeSeriesPoint[];
 }
