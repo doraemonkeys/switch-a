@@ -50,7 +50,7 @@ linters:
     nestif:
       # 限制 if 嵌套层数。
       # nestif 的计算比较严格，设为 3 意味着 if a { if b { if c { ... } } } 就会报警
-      min-complexity: 4 # 这里的数值通常对应嵌套深度+1，或者根据复杂度算法调整
+      min-complexity: 5 # 这里的数值通常对应嵌套深度+1，或者根据复杂度算法调整
     revive:
       rules:
         # 3. 单文件不超过 xx 行

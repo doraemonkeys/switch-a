@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -29,10 +30,10 @@ var ValidGranularities = map[string]time.Duration{
 // MinGranularityByPeriod defines the minimum allowed granularity for each period.
 // This prevents excessive data points from large time ranges with small granularities.
 var MinGranularityByPeriod = map[string]time.Duration{
-	"24h": 5 * time.Minute,  // 24h allows 5m minimum (288 points max)
-	"7d":  time.Hour,        // 7d allows 1h minimum (168 points max)
-	"30d": 6 * time.Hour,    // 30d allows 6h minimum (120 points max)
-	"all": 24 * time.Hour,   // all allows 1d minimum
+	"24h": 5 * time.Minute, // 24h allows 5m minimum (288 points max)
+	"7d":  time.Hour,       // 7d allows 1h minimum (168 points max)
+	"30d": 6 * time.Hour,   // 30d allows 6h minimum (120 points max)
+	"all": 24 * time.Hour,  // all allows 1d minimum
 }
 
 // periodToDuration converts a period string to time.Duration.
@@ -68,18 +69,105 @@ func formatGranularity(d time.Duration) string {
 	}
 }
 
+// statsParams holds validated parameters for the stats API.
+type statsParams struct {
+	period      string
+	granularity time.Duration
+}
+
+// validateStatsParams validates and returns stats query parameters.
+// Returns nil params and writes error response if validation fails.
+func (h *Handler) validateStatsParams(w http.ResponseWriter, r *http.Request) *statsParams {
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		period = "24h"
+	}
+	if !ValidPeriods[period] {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid period: must be '24h', '7d', '30d', or 'all'")
+		return nil
+	}
+
+	granularityStr := r.URL.Query().Get("granularity")
+	var granularity time.Duration
+	if granularityStr != "" {
+		var ok bool
+		granularity, ok = ValidGranularities[granularityStr]
+		if !ok {
+			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid granularity: must be '5m', '15m', '1h', '6h', or '1d'")
+			return nil
+		}
+
+		minGranularity := MinGranularityByPeriod[period]
+		if granularity < minGranularity {
+			writeError(w, http.StatusBadRequest, ErrCodeValidation,
+				"Granularity too fine for period: "+period+" requires minimum granularity of "+formatGranularity(minGranularity))
+			return nil
+		}
+	}
+
+	return &statsParams{period: period, granularity: granularity}
+}
+
+// calculateProviderStats computes provider health statistics.
+// Providers without explicit health state are counted as healthy.
+func calculateProviderStats(providers []model.Provider, healthStates map[string]*model.HealthState) ProviderStats {
+	stats := ProviderStats{Total: len(providers)}
+	for i := range providers {
+		p := &providers[i]
+		if !p.Enabled {
+			stats.Disabled++
+			continue
+		}
+		if state, ok := healthStates[p.ID]; ok && state != nil && !state.Available {
+			stats.Unhealthy++
+		} else {
+			stats.Healthy++
+		}
+	}
+	return stats
+}
+
+// buildRequestsByProvider converts log stats to provider request stats with names.
+func buildRequestsByProvider(logStats *model.LogStats, providerNameMap map[string]string) []ProviderRequestStats {
+	result := make([]ProviderRequestStats, 0, len(logStats.ByProvider))
+	for _, ps := range logStats.ByProvider {
+		name := ps.ProviderID
+		if n, ok := providerNameMap[ps.ProviderID]; ok {
+			name = n
+		}
+		result = append(result, ProviderRequestStats{
+			ID:          ps.ProviderID,
+			Name:        name,
+			Count:       ps.Count,
+			SuccessRate: ps.SuccessRate,
+		})
+	}
+	return result
+}
+
+// getTimeSeriesStartTime determines the start time for time series based on period and log stats.
+func getTimeSeriesStartTime(period string, startTime time.Time, earliestLog time.Time, now time.Time) time.Time {
+	if period != "all" {
+		return startTime
+	}
+	if !earliestLog.IsZero() {
+		return earliestLog
+	}
+	return now.Add(-DefaultTimeSeriesRangeDays * 24 * time.Hour)
+}
+
 // StatsResponse represents the response for the stats API.
 type StatsResponse struct {
-	TotalRequests      int64                    `json:"total_requests"`
-	SuccessCount       int64                    `json:"success_count"`
-	FailCount          int64                    `json:"fail_count"`
-	SuccessRate        float64                  `json:"success_rate"`
-	AvgLatencyMs       int64                    `json:"avg_latency_ms"`
-	Providers          ProviderStats            `json:"providers"`
-	RequestsByAPIType  map[string]int64         `json:"requests_by_api_type"`
-	RequestsByProvider []ProviderRequestStats   `json:"requests_by_provider"`
-	TimeRange          TimeRange                `json:"time_range"`
-	TimeSeries         []model.TimeSeriesPoint  `json:"timeseries,omitempty"`
+	TotalRequests      int64                   `json:"total_requests"`
+	SuccessCount       int64                   `json:"success_count"`
+	FailCount          int64                   `json:"fail_count"`
+	SuccessRate        float64                 `json:"success_rate"`
+	AvgLatencyMs       int64                   `json:"avg_latency_ms"`
+	Providers          ProviderStats           `json:"providers"`
+	RequestsByAPIType  map[string]int64        `json:"requests_by_api_type"`
+	RequestsByProvider []ProviderRequestStats  `json:"requests_by_provider"`
+	TimeRange          TimeRange               `json:"time_range"`
+	TimeSeries         []model.TimeSeriesPoint `json:"timeseries,omitempty"`
 }
 
 // ProviderStats represents provider health statistics.
@@ -109,51 +197,15 @@ type TimeRange struct {
 //   - period: statistics time range (24h/7d/30d/all, default: 24h)
 //   - granularity: time bucket size for time series (5m/15m/1h/6h/1d, optional)
 func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
-	// Parse and validate period parameter
-	period := r.URL.Query().Get("period")
-	if period == "" {
-		period = "24h"
-	}
-	if !ValidPeriods[period] {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid period: must be '24h', '7d', '30d', or 'all'")
+	params := h.validateStatsParams(w, r)
+	if params == nil {
 		return
-	}
-
-	// Parse and validate granularity parameter
-	granularityStr := r.URL.Query().Get("granularity")
-	var granularity time.Duration
-	if granularityStr != "" {
-		var ok bool
-		granularity, ok = ValidGranularities[granularityStr]
-		if !ok {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid granularity: must be '5m', '15m', '1h', '6h', or '1d'")
-			return
-		}
-
-		// Check granularity limit for the period
-		minGranularity := MinGranularityByPeriod[period]
-		if granularity < minGranularity {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation,
-				"Granularity too fine for period: "+period+" requires minimum granularity of "+formatGranularity(minGranularity))
-			return
-		}
 	}
 
 	ctx := r.Context()
 	now := time.Now().UTC()
+	startTime, endTime := h.calculateTimeRange(params.period, now)
 
-	// Calculate time range
-	var startTime time.Time
-	duration := periodToDuration(period)
-	if duration > 0 {
-		startTime = now.Add(-duration)
-	} else {
-		// For "all", use a very old date
-		startTime = time.Time{}
-	}
-	endTime := now
-
-	// Get log statistics from store
 	logStats, err := h.store.GetLogStats(ctx, startTime, endTime)
 	if err != nil {
 		h.logger.Error("failed to get log stats", zap.Error(err))
@@ -161,102 +213,18 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get provider statistics
-	providers, err := h.store.ListProviders(ctx)
+	providerStats, providerNameMap, err := h.fetchProviderStats(ctx)
 	if err != nil {
-		h.logger.Error("failed to list providers", zap.Error(err))
+		h.logger.Error("failed to get provider stats", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get statistics")
 		return
 	}
 
-	// Collect provider IDs for batch health state fetch
-	providerIDs := make([]string, len(providers))
-	providerNameMap := make(map[string]string, len(providers))
-	for i := range providers {
-		providerIDs[i] = providers[i].ID
-		providerNameMap[providers[i].ID] = providers[i].Name
-	}
+	resp := h.buildStatsResponse(logStats, providerStats, providerNameMap, startTime, endTime, params.period)
 
-	// Get health states for all providers
-	healthStates, err := h.store.GetHealthStatesByProviderIDs(ctx, providerIDs)
-	if err != nil {
-		h.logger.Warn("failed to batch fetch health states", zap.Error(err))
-	}
-
-	// Calculate provider health statistics.
-	// Design decision: Providers without explicit health state are counted as healthy.
-	// This is because health states are only created when a provider experiences failures,
-	// so a missing health state indicates the provider has never failed and should be
-	// considered healthy. This avoids false negatives for newly added providers.
-	providerStats := ProviderStats{
-		Total: len(providers),
-	}
-	for _, p := range providers {
-		if !p.Enabled {
-			providerStats.Disabled++
-			continue
-		}
-		if state, ok := healthStates[p.ID]; ok && state != nil {
-			if state.Available {
-				providerStats.Healthy++
-			} else {
-				providerStats.Unhealthy++
-			}
-		} else {
-			// No health state found - provider is assumed healthy (see design note above)
-			providerStats.Healthy++
-		}
-	}
-
-	// Build requests by provider with names
-	requestsByProvider := make([]ProviderRequestStats, 0, len(logStats.ByProvider))
-	for _, ps := range logStats.ByProvider {
-		name := ps.ProviderID
-		if n, ok := providerNameMap[ps.ProviderID]; ok {
-			name = n
-		}
-		requestsByProvider = append(requestsByProvider, ProviderRequestStats{
-			ID:          ps.ProviderID,
-			Name:        name,
-			Count:       ps.Count,
-			SuccessRate: ps.SuccessRate,
-		})
-	}
-
-	// Build response
-	resp := StatsResponse{
-		TotalRequests:      logStats.TotalRequests,
-		SuccessCount:       logStats.SuccessCount,
-		FailCount:          logStats.FailCount,
-		SuccessRate:        logStats.SuccessRate,
-		AvgLatencyMs:       logStats.AvgLatencyMs,
-		Providers:          providerStats,
-		RequestsByAPIType:  logStats.ByAPIType,
-		RequestsByProvider: requestsByProvider,
-		TimeRange: TimeRange{
-			Start: startTime,
-			End:   endTime,
-		},
-	}
-
-	// For "all" period, adjust start time to earliest log if available
-	if period == "all" && !logStats.EarliestLog.IsZero() {
-		resp.TimeRange.Start = logStats.EarliestLog
-	}
-
-	// Fetch time series data if granularity is specified
-	if granularity > 0 {
-		tsStartTime := startTime
-		// For "all" period with time series, use earliest log time or default fallback
-		if period == "all" {
-			if !logStats.EarliestLog.IsZero() {
-				tsStartTime = logStats.EarliestLog
-			} else {
-				tsStartTime = now.Add(-DefaultTimeSeriesRangeDays * 24 * time.Hour)
-			}
-		}
-
-		timeSeries, err := h.store.GetLogTimeSeries(ctx, tsStartTime, endTime, granularity)
+	if params.granularity > 0 {
+		tsStartTime := getTimeSeriesStartTime(params.period, startTime, logStats.EarliestLog, now)
+		timeSeries, err := h.store.GetLogTimeSeries(ctx, tsStartTime, endTime, params.granularity)
 		if err != nil {
 			h.logger.Error("failed to get log time series", zap.Error(err))
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get time series statistics")
@@ -266,4 +234,63 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// calculateTimeRange returns start and end times based on period.
+func (h *Handler) calculateTimeRange(period string, now time.Time) (time.Time, time.Time) {
+	duration := periodToDuration(period)
+	var startTime time.Time
+	if duration > 0 {
+		startTime = now.Add(-duration)
+	}
+	return startTime, now
+}
+
+// fetchProviderStats retrieves providers and calculates health statistics.
+func (h *Handler) fetchProviderStats(ctx context.Context) (ProviderStats, map[string]string, error) {
+	providers, err := h.store.ListProviders(ctx)
+	if err != nil {
+		return ProviderStats{}, nil, err
+	}
+
+	providerIDs := make([]string, len(providers))
+	providerNameMap := make(map[string]string, len(providers))
+	for i := range providers {
+		providerIDs[i] = providers[i].ID
+		providerNameMap[providers[i].ID] = providers[i].Name
+	}
+
+	healthStates, err := h.store.GetHealthStatesByProviderIDs(ctx, providerIDs)
+	if err != nil {
+		h.logger.Warn("failed to batch fetch health states", zap.Error(err))
+	}
+
+	return calculateProviderStats(providers, healthStates), providerNameMap, nil
+}
+
+// buildStatsResponse constructs the stats response from collected data.
+func (h *Handler) buildStatsResponse(
+	logStats *model.LogStats,
+	providerStats ProviderStats,
+	providerNameMap map[string]string,
+	startTime, endTime time.Time,
+	period string,
+) StatsResponse {
+	resp := StatsResponse{
+		TotalRequests:      logStats.TotalRequests,
+		SuccessCount:       logStats.SuccessCount,
+		FailCount:          logStats.FailCount,
+		SuccessRate:        logStats.SuccessRate,
+		AvgLatencyMs:       logStats.AvgLatencyMs,
+		Providers:          providerStats,
+		RequestsByAPIType:  logStats.ByAPIType,
+		RequestsByProvider: buildRequestsByProvider(logStats, providerNameMap),
+		TimeRange:          TimeRange{Start: startTime, End: endTime},
+	}
+
+	if period == "all" && !logStats.EarliestLog.IsZero() {
+		resp.TimeRange.Start = logStats.EarliestLog
+	}
+
+	return resp
 }
