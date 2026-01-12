@@ -5,6 +5,30 @@ import {
   browserStorage,
   browserHttpClient,
 } from "./interfaces";
+import type {
+  Provider,
+  ProviderInput,
+  Group,
+  GroupInput,
+  HealthState,
+  SystemStatus,
+  LogsResponse,
+} from "./types";
+
+// Re-export types for backward compatibility
+export type {
+  Provider,
+  ProviderAPIType,
+  ProviderInput,
+  Group,
+  GroupInput,
+  HealthState,
+  ProviderStatus,
+  SystemStatus,
+  SystemStatusSummary,
+  RequestLog,
+  LogsResponse,
+} from "./types";
 
 // API Error type
 export class ApiError extends Error {
@@ -34,20 +58,20 @@ function createRequest(
   deps: ApiClientDeps,
   tokenManager: ReturnType<typeof createTokenManager>,
 ) {
-  const { httpClient, baseUrl } = deps;
+  const { httpClient, baseUrl, onUnauthorized } = deps;
 
   return async function request<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
     const token = tokenManager.get();
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      ...options.headers,
+      ...(options.headers as Record<string, string>),
     };
 
     if (token) {
-      (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
+      headers["Authorization"] = `Bearer ${token}`;
     }
 
     const response = await httpClient.fetch(`${baseUrl}${endpoint}`, {
@@ -57,6 +81,13 @@ function createRequest(
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
+
+      // Handle 401 Unauthorized - clear token and redirect to login
+      if (response.status === 401) {
+        tokenManager.clear();
+        onUnauthorized?.();
+      }
+
       throw new ApiError(
         data.code || "UNKNOWN_ERROR",
         data.message || response.statusText,
@@ -82,6 +113,24 @@ export function createApiClient(deps: ApiClientDeps) {
     // Token management
     setToken: tokenManager.set,
     clearToken: tokenManager.clear,
+    getToken: tokenManager.get,
+
+    // Validate a token without storing it or triggering onUnauthorized
+    // Returns true if token is valid, false otherwise
+    validateToken: async (token: string): Promise<boolean> => {
+      const { httpClient, baseUrl } = deps;
+      try {
+        const response = await httpClient.fetch(`${baseUrl}/status`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    },
 
     // Providers
     providers: {
@@ -102,15 +151,15 @@ export function createApiClient(deps: ApiClientDeps) {
           method: "DELETE",
         }),
       enable: (id: string) =>
-        request<void>(`/providers/${id}/enable`, {
+        request<Provider>(`/providers/${id}/enable`, {
           method: "POST",
         }),
       disable: (id: string) =>
-        request<void>(`/providers/${id}/disable`, {
+        request<Provider>(`/providers/${id}/disable`, {
           method: "POST",
         }),
       reset: (id: string) =>
-        request<void>(`/providers/${id}/reset`, {
+        request<HealthState>(`/providers/${id}/reset`, {
           method: "POST",
         }),
     },
@@ -168,130 +217,23 @@ export function createApiClient(deps: ApiClientDeps) {
 // Type for the API client instance
 export type ApiClient = ReturnType<typeof createApiClient>;
 
+// Default browser handler for 401 Unauthorized - redirects to login page
+function browserUnauthorizedHandler(): void {
+  // Use window.location to redirect to login, preserving current path for redirect back
+  const currentPath = window.location.pathname + window.location.search;
+  const loginUrl = `/admin/login?from=${encodeURIComponent(currentPath)}`;
+  window.location.href = loginUrl;
+}
+
 // Default instance for convenience (browser environment)
 const defaultDeps: ApiClientDeps = {
   storage: browserStorage,
   httpClient: browserHttpClient,
   baseUrl: API_BASE,
+  onUnauthorized: browserUnauthorizedHandler,
 };
 
 export const api = createApiClient(defaultDeps);
 export const setToken = api.setToken;
 export const clearToken = api.clearToken;
-
-// Type definitions
-
-// ProviderAPIType represents the association between Provider and API types
-export interface ProviderAPIType {
-  provider_id: string;
-  api_type: string;
-}
-
-export interface Provider {
-  id: string;
-  name: string;
-  base_url: string;
-  api_key: string;
-  api_types: ProviderAPIType[];
-  auth_mode: string;
-  group_id: string | null;
-  weight: number;
-  priority: number;
-  concurrency: number;
-  max_retries: number;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-  health?: HealthState | null;
-}
-
-export interface ProviderInput {
-  id?: string;
-  name: string;
-  base_url: string;
-  api_key: string;
-  api_types: string[];
-  auth_mode?: string;
-  group_id?: string | null;
-  weight?: number;
-  priority?: number;
-  concurrency?: number;
-  max_retries?: number;
-  enabled?: boolean;
-}
-
-export interface Group {
-  id: string;
-  name: string;
-  strategy: string;
-  priority: number;
-  weight: number;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface GroupInput {
-  id?: string;
-  name: string;
-  strategy?: string;
-  priority?: number;
-  weight?: number;
-  enabled?: boolean;
-}
-
-export interface HealthState {
-  provider_id: string;
-  available: boolean;
-  success_count: number;
-  fail_count: number;
-  last_success: string | null;
-  last_failure: string | null;
-  last_error: string | null;
-  disabled_until: string | null;
-  disabled_reason: string | null;
-}
-
-// ProviderStatus represents the status of a single provider
-export interface ProviderStatus {
-  id: string;
-  name: string;
-  enabled: boolean;
-  current_requests: number;
-  health: HealthState | null;
-}
-
-// SystemStatus represents the overall system status (raw backend response)
-export interface SystemStatus {
-  providers: ProviderStatus[];
-}
-
-// SystemStatusSummary represents computed summary statistics
-export interface SystemStatusSummary {
-  providers_total: number;
-  providers_healthy: number;
-  providers_unhealthy: number;
-  requests_today: number;
-}
-
-export interface RequestLog {
-  id: number;
-  provider_id: string;
-  api_type: string;
-  model: string;
-  client_ip: string;
-  user_id: string;
-  status_code: number;
-  latency_ms: number;
-  success: boolean;
-  error_msg: string | null;
-  created_at: string;
-}
-
-// LogsResponse represents the paginated logs response from the backend
-export interface LogsResponse {
-  logs: RequestLog[];
-  total: number;
-  limit: number;
-  offset: number;
-}
+export const getToken = api.getToken;

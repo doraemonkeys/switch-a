@@ -7,6 +7,7 @@ import {
   NumberFieldRow,
   EnabledCheckbox,
   FormActions,
+  AuthModeField,
 } from "./ProviderFormFields";
 
 export interface ProviderModalProps {
@@ -25,10 +26,12 @@ export function ProviderModal({
   const isEditMode = !!initialData;
 
   const [formData, setFormData] = useState<ProviderInput>({
+    id: "",
     name: "",
     base_url: "",
     api_key: "",
     api_types: [],
+    auth_mode: "auto",
     group_id: null,
     weight: 1,
     priority: 0,
@@ -48,6 +51,7 @@ export function ProviderModal({
         base_url: initialData.base_url,
         api_key: initialData.api_key,
         api_types: initialData.api_types.map((t) => t.api_type),
+        auth_mode: initialData.auth_mode || "auto",
         group_id: initialData.group_id,
         weight: initialData.weight,
         priority: initialData.priority,
@@ -84,14 +88,30 @@ export function ProviderModal({
               {isEditMode ? "Edit Provider" : "Add Provider"}
             </h3>
             <button
+              type="button"
               onClick={onClose}
               className="text-text-muted hover:text-text-primary"
+              aria-label="Close"
             >
               ✕
             </button>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {!isEditMode && (
+            <FormField label="ID">
+              <input
+                type="text"
+                className="input"
+                value={formData.id || ""}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, id: e.target.value }))
+                }
+                required
+                placeholder="e.g., openai-prod"
+              />
+            </FormField>
+          )}
           <FormField label="Name">
             <input
               type="text"
@@ -129,6 +149,12 @@ export function ProviderModal({
             />
           </FormField>
           <ApiTypesField value={apiTypesInput} onChange={setApiTypesInput} />
+          <AuthModeField
+            value={formData.auth_mode || "auto"}
+            onChange={(value) =>
+              setFormData((prev) => ({ ...prev, auth_mode: value }))
+            }
+          />
           <GroupSelectField
             value={formData.group_id ?? null}
             onChange={(value) =>
@@ -157,7 +183,7 @@ export function ProviderModal({
               {
                 key: "max_retries",
                 label: "Max Retries",
-                min: 0,
+                min: -1,
                 defaultValue: 3,
               },
             ]}

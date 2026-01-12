@@ -12,13 +12,17 @@ export type { ApiClient } from "./client";
 // Type exports
 export type {
   Provider,
+  ProviderAPIType,
   ProviderInput,
   Group,
   GroupInput,
   HealthState,
+  ProviderStatus,
   SystemStatus,
+  SystemStatusSummary,
   RequestLog,
-} from "./client";
+  LogsResponse,
+} from "./types";
 
 // Interface exports (for testing/mocking)
 export type { Storage, HttpClient, ApiClientDeps } from "./interfaces";

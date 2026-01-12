@@ -20,6 +20,7 @@ export function ApiProvider({ children, deps }: ApiProviderProps) {
         storage: deps.storage ?? browserStorage,
         httpClient: deps.httpClient ?? browserHttpClient,
         baseUrl: deps.baseUrl ?? API_BASE,
+        onUnauthorized: deps.onUnauthorized,
       })
     : defaultApi;
 

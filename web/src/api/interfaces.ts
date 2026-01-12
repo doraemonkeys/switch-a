@@ -15,6 +15,7 @@ export interface ApiClientDeps {
   storage: Storage;
   httpClient: HttpClient;
   baseUrl: string;
+  onUnauthorized?: () => void; // Called when 401 response is received
 }
 
 // Default implementations using browser APIs

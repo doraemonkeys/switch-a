@@ -2,13 +2,16 @@ import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { Layout } from "./Layout";
+import { ApiProvider } from "@/api/ApiContext";
 
-// Wrapper to provide routing context
+// Wrapper to provide routing and API context
 function renderWithRouter(initialPath = "/") {
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>
-      <Layout />
-    </MemoryRouter>,
+    <ApiProvider>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Layout />
+      </MemoryRouter>
+    </ApiProvider>,
   );
 }
 
@@ -77,5 +80,10 @@ describe("Layout", () => {
     renderWithRouter();
 
     expect(screen.getByText("⚡")).toBeInTheDocument();
+  });
+
+  it("should render logout button", () => {
+    renderWithRouter();
+    expect(screen.getByRole("button", { name: /Logout/i })).toBeInTheDocument();
   });
 });

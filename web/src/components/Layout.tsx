@@ -1,5 +1,6 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { APP_VERSION } from "../config";
+import { useApi } from "@/api/useApi";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: "📊" },
@@ -10,6 +11,14 @@ const navItems = [
 ];
 
 export function Layout() {
+  const { clearToken } = useApi();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    clearToken();
+    navigate("/login");
+  };
+
   return (
     <div className="min-h-screen bg-bg-secondary">
       {/* Header */}
@@ -36,6 +45,13 @@ export function Layout() {
                   Online
                 </span>
               </div>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded-lg transition-colors"
+              >
+                <span>🚪</span>
+                <span>Logout</span>
+              </button>
             </div>
           </div>
         </div>

@@ -1,12 +1,6 @@
 import type { ProviderInput } from "../../api/client";
 
-const COMMON_API_TYPES = [
-  "chat",
-  "embeddings",
-  "images",
-  "audio",
-  "moderation",
-];
+const COMMON_API_TYPES = ["claude", "codex", "gemini"];
 
 interface FormFieldProps {
   label: string;
@@ -52,7 +46,7 @@ export function ApiTypesField({ value, onChange }: ApiTypesFieldProps) {
         className="input"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="e.g., chat, embeddings, images"
+        placeholder="e.g., claude, codex, gemini"
       />
       <div className="flex flex-wrap gap-2 mt-2">
         {COMMON_API_TYPES.map((type) => {
@@ -109,11 +103,47 @@ export function GroupSelectField({
   );
 }
 
+const AUTH_MODES = [
+  { value: "auto", label: "Auto (detect from API type)" },
+  { value: "bearer", label: "Bearer Token" },
+  { value: "x-api-key", label: "X-API-Key Header" },
+];
+
+interface AuthModeFieldProps {
+  value: string;
+  onChange: (value: string) => void;
+}
+
+export function AuthModeField({ value, onChange }: AuthModeFieldProps) {
+  return (
+    <FormField label="Auth Mode">
+      <select
+        className="input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {AUTH_MODES.map((mode) => (
+          <option key={mode.value} value={mode.value}>
+            {mode.label}
+          </option>
+        ))}
+      </select>
+    </FormField>
+  );
+}
+
+// Keys of ProviderInput that are number types
+type ProviderInputNumberKey =
+  | "weight"
+  | "priority"
+  | "concurrency"
+  | "max_retries";
+
 interface NumberFieldRowProps {
   formData: ProviderInput;
   setFormData: React.Dispatch<React.SetStateAction<ProviderInput>>;
   fields: Array<{
-    key: keyof ProviderInput;
+    key: ProviderInputNumberKey;
     label: string;
     min: number;
     defaultValue: number;
@@ -127,22 +157,26 @@ export function NumberFieldRow({
 }: NumberFieldRowProps) {
   return (
     <div className="grid grid-cols-2 gap-4">
-      {fields.map(({ key, label, min, defaultValue }) => (
-        <FormField key={key} label={label}>
-          <input
-            type="number"
-            className="input"
-            value={formData[key] as number}
-            onChange={(e) =>
-              setFormData((prev) => ({
-                ...prev,
-                [key]: parseInt(e.target.value) || defaultValue,
-              }))
-            }
-            min={min}
-          />
-        </FormField>
-      ))}
+      {fields.map(({ key, label, min, defaultValue }) => {
+        // key is constrained to ProviderInputNumberKey, so formData[key] is number | undefined
+        const value = (formData[key] as number | undefined) ?? defaultValue;
+        return (
+          <FormField key={key} label={label}>
+            <input
+              type="number"
+              className="input"
+              value={value}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  [key]: parseInt(e.target.value) || defaultValue,
+                }))
+              }
+              min={min}
+            />
+          </FormField>
+        );
+      })}
     </div>
   );
 }

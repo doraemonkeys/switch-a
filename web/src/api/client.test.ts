@@ -198,6 +198,171 @@ describe("createApiClient", () => {
         status: 500,
       });
     });
+
+    it("should clear token and call onUnauthorized on 401 response", async () => {
+      const onUnauthorized = vi.fn();
+      const customApi = createApiClient({
+        storage: mockStorage,
+        httpClient: mockHttpClient,
+        baseUrl: "https://test-api.example.com",
+        onUnauthorized,
+      });
+
+      mockStorage.data.set("admin_token", "expired-token");
+      mockHttpClient.mockResponse({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () =>
+          Promise.resolve({ code: "AUTH_EXPIRED", message: "Token expired" }),
+      });
+
+      await expect(customApi.providers.list()).rejects.toMatchObject({
+        code: "AUTH_EXPIRED",
+        status: 401,
+      });
+
+      // Token should be cleared
+      expect(mockStorage.data.has("admin_token")).toBe(false);
+      // onUnauthorized callback should be called
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("validateToken", () => {
+    it("should return true when token is valid", async () => {
+      mockHttpClient.mockResponse({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ providers: [] }),
+      });
+
+      const result = await api.validateToken("valid-token");
+
+      expect(result).toBe(true);
+      expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+        "https://test-api.example.com/status",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer valid-token",
+          }),
+        }),
+      );
+    });
+
+    it("should return false when token is invalid", async () => {
+      mockHttpClient.mockResponse({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () => Promise.resolve({ code: "AUTH_REQUIRED" }),
+      });
+
+      const result = await api.validateToken("invalid-token");
+
+      expect(result).toBe(false);
+    });
+
+    it("should return false on network error", async () => {
+      (mockHttpClient.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("Network error"),
+      );
+
+      const result = await api.validateToken("any-token");
+
+      expect(result).toBe(false);
+    });
+
+    it("should not call onUnauthorized when validating token fails", async () => {
+      const onUnauthorized = vi.fn();
+      const customApi = createApiClient({
+        storage: mockStorage,
+        httpClient: mockHttpClient,
+        baseUrl: "https://test-api.example.com",
+        onUnauthorized,
+      });
+
+      mockHttpClient.mockResponse({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () => Promise.resolve({ code: "AUTH_REQUIRED" }),
+      });
+
+      await customApi.validateToken("invalid-token");
+
+      // onUnauthorized should NOT be called during validateToken
+      expect(onUnauthorized).not.toHaveBeenCalled();
+    });
+
+    it("should not store token during validation", async () => {
+      mockHttpClient.mockResponse({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ providers: [] }),
+      });
+
+      await api.validateToken("test-token");
+
+      // Token should NOT be stored after validation
+      expect(mockStorage.data.has("admin_token")).toBe(false);
+    });
+  });
+
+  describe("auth flow", () => {
+    it("should include Authorization header after setting token", async () => {
+      // Initially no token
+      mockHttpClient.mockResponse({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([]),
+      });
+
+      await api.providers.list();
+      expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.not.objectContaining({
+            Authorization: expect.any(String),
+          }),
+        }),
+      );
+
+      // Set token
+      api.setToken("new-auth-token");
+
+      // Now request should include Authorization header
+      await api.providers.list();
+      expect(mockHttpClient.fetch).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer new-auth-token",
+          }),
+        }),
+      );
+    });
+
+    it("should not include Authorization header after clearing token", async () => {
+      // Set and then clear token
+      api.setToken("temp-token");
+      api.clearToken();
+
+      mockHttpClient.mockResponse({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([]),
+      });
+
+      await api.providers.list();
+
+      expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
   });
 });
 
@@ -312,36 +477,54 @@ describe("createApiClient providers API", () => {
   });
 
   it("should enable provider", async () => {
-    mockHttpClient.mockResponse({ ok: true, status: 204 });
+    const mockProvider = { id: "1", name: "Test", enabled: true };
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(mockProvider),
+    });
 
-    await api.providers.enable("1");
+    const result = await api.providers.enable("1");
 
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/providers/1/enable",
       expect.objectContaining({ method: "POST" }),
     );
+    expect(result).toEqual(mockProvider);
   });
 
   it("should disable provider", async () => {
-    mockHttpClient.mockResponse({ ok: true, status: 204 });
+    const mockProvider = { id: "1", name: "Test", enabled: false };
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(mockProvider),
+    });
 
-    await api.providers.disable("1");
+    const result = await api.providers.disable("1");
 
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/providers/1/disable",
       expect.objectContaining({ method: "POST" }),
     );
+    expect(result).toEqual(mockProvider);
   });
 
   it("should reset provider", async () => {
-    mockHttpClient.mockResponse({ ok: true, status: 204 });
+    const mockHealthState = { provider_id: "1", available: true };
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(mockHealthState),
+    });
 
-    await api.providers.reset("1");
+    const result = await api.providers.reset("1");
 
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/providers/1/reset",
       expect.objectContaining({ method: "POST" }),
     );
+    expect(result).toEqual(mockHealthState);
   });
 });
 
