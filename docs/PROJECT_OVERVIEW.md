@@ -22,8 +22,9 @@ Client → HTTP Server → Proxy Handler → Selector → Provider → Upstream 
 |---------|---------|
 | `cmd/switch-a` | Main entry point, server setup |
 | `internal/config` | Environment variable loading |
+| `internal/defaults` | Centralized default values |
 | `internal/model` | Data models (Provider, Group, HealthState, etc.) |
-| `internal/store` | SQLite storage implementation |
+| `internal/store` | SQLite storage with caching layer |
 | `internal/proxy` | HTTP proxy handler, routing, headers, transport |
 | `internal/selector` | Provider selection strategies, sticky cache, concurrency |
 | `internal/health` | Circuit breaker, health management |
@@ -62,21 +63,3 @@ type StickyCache interface { ... }   // Session affinity cache
 - Threshold failures → auto-disable for configured duration
 - Auto-recover after disable period expires
 - Manual enable/disable supported
-
-## Management API
-
-All admin endpoints require `Authorization: Bearer <admin_token>` header.
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/admin/api/providers` | GET/POST | List/Create providers |
-| `/admin/api/providers/{id}` | GET/PUT/DELETE | Get/Update/Delete provider |
-| `/admin/api/providers/{id}/enable` | POST | Enable provider |
-| `/admin/api/providers/{id}/disable` | POST | Disable provider |
-| `/admin/api/providers/{id}/reset` | POST | Reset circuit breaker |
-| `/admin/api/groups` | GET/POST | List/Create groups |
-| `/admin/api/groups/{id}` | GET/PUT/DELETE | Get/Update/Delete group |
-| `/admin/api/config` | GET/PUT | Get/Update runtime config |
-| `/admin/api/health` | GET | Health states of all providers |
-| `/admin/api/status` | GET | System status with concurrency info |
-| `/admin/api/logs` | GET | Request logs (paginated) |
