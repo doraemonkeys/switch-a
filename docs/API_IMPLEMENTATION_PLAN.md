@@ -10,7 +10,7 @@
 | 2 | 日志查询增强（过滤+排序） | 🔴高 | ⭐⭐⭐ | ✅ 已完成 |
 | 3 | 系统统计摘要 API（基础版） | 🔴高 | ⭐⭐⭐ | ✅ 已完成 |
 | 4 | 统计 API 增强（时间序列） | 🟡中 | ⭐⭐⭐ | ✅ 已完成 |
-| 5 | Group 快捷操作 API | 🟡中 | ⭐ | ⬜ 待开始 |
+| 5 | Group 快捷操作 API | 🟡中 | ⭐ | ✅ 已完成 |
 | 6 | 配置导出/导入 API | 🟡中 | ⭐⭐⭐ | ⬜ 待开始 |
 
 ---
@@ -39,9 +39,14 @@
 - **粒度限制**: 24h≥5m, 7d≥1h, 30d≥6h, all≥1d
 - **新增返回字段**: `timeseries` 数组，包含每个时间桶的 requests/success_count/fail_count/success_rate/avg_latency_ms
 
+### 阶段 5：Group 快捷操作 API
+- **端点**: `POST /admin/api/groups/{id}/enable` 和 `POST /admin/api/groups/{id}/disable`
+- **功能**: 为 Group 提供语义化的启用/禁用快捷接口
+- **响应**: 返回更新后的 Group 对象（含 id, name, enabled 等字段）
+
 ---
 
-## 阶段 5：Group 快捷操作 API
+## 阶段 5：Group 快捷操作 API（详细）
 
 ### 目标
 为 Group 提供语义化的启用/禁用快捷接口。
@@ -71,9 +76,9 @@ POST /admin/api/groups/{id}/disable
 3. 返回更新后的 Group 状态
 
 ### 完成标志
-- [ ] enable/disable 接口可用
-- [ ] 返回更新后状态
-- [ ] 404 处理正确
+- [x] enable/disable 接口可用
+- [x] 返回更新后状态
+- [x] 404 处理正确
 
 ---
 

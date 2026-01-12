@@ -216,6 +216,8 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("GET /admin/api/groups/{id}", auth.WrapFunc(adminHandler.GetGroup))
 	mux.Handle("PUT /admin/api/groups/{id}", auth.WrapFunc(adminHandler.UpdateGroup))
 	mux.Handle("DELETE /admin/api/groups/{id}", auth.WrapFunc(adminHandler.DeleteGroup))
+	mux.Handle("POST /admin/api/groups/{id}/enable", auth.WrapFunc(adminHandler.EnableGroup))
+	mux.Handle("POST /admin/api/groups/{id}/disable", auth.WrapFunc(adminHandler.DisableGroup))
 
 	// Config routes
 	mux.Handle("GET /admin/api/config", auth.WrapFunc(adminHandler.GetConfig))

@@ -296,6 +296,50 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// EnableGroup handles POST /admin/api/groups/{id}/enable.
+func (h *Handler) EnableGroup(w http.ResponseWriter, r *http.Request) {
+	h.setGroupEnabled(w, r, true)
+}
+
+// DisableGroup handles POST /admin/api/groups/{id}/disable.
+func (h *Handler) DisableGroup(w http.ResponseWriter, r *http.Request) {
+	h.setGroupEnabled(w, r, false)
+}
+
+// setGroupEnabled is a helper to enable or disable a group.
+func (h *Handler) setGroupEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
+	action := "enable"
+	if !enabled {
+		action = "disable"
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Group ID is required")
+		return
+	}
+
+	group, err := h.store.GetGroup(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, ErrCodeNotFound, "Group not found: "+id)
+			return
+		}
+		h.logger.Error("failed to get group", zap.String("id", id), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to "+action+" group")
+		return
+	}
+
+	group.Enabled = enabled
+	if err := h.store.UpdateGroup(r.Context(), group); err != nil {
+		h.logger.Error("failed to update group", zap.String("id", id), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to "+action+" group")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, group)
+}
+
 // Config API handlers
 
 // GetConfig handles GET /admin/api/config.

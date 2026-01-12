@@ -573,3 +573,179 @@ func TestDeleteGroup_GetError(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
 }
+
+func TestEnableGroup(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.groups["test-group"] = &model.Group{ID: "test-group", Name: "Test Group", Enabled: false}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/test-group/enable", nil)
+	setPathValue(req, "id", "test-group")
+	w := httptest.NewRecorder()
+
+	h.EnableGroup(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var group model.Group
+	if err := json.NewDecoder(w.Body).Decode(&group); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if !group.Enabled {
+		t.Error("group should be enabled")
+	}
+
+	if !st.groups["test-group"].Enabled {
+		t.Error("group in store should be enabled")
+	}
+}
+
+func TestEnableGroup_NotFound(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/non-existent/enable", nil)
+	setPathValue(req, "id", "non-existent")
+	w := httptest.NewRecorder()
+
+	h.EnableGroup(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestEnableGroup_EmptyID(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups//enable", nil)
+	w := httptest.NewRecorder()
+
+	h.EnableGroup(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestEnableGroup_GetError(t *testing.T) {
+	h, st, _ := testHandler()
+	st.getErr = errors.New("database error")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/test/enable", nil)
+	setPathValue(req, "id", "test")
+	w := httptest.NewRecorder()
+
+	h.EnableGroup(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestEnableGroup_UpdateError(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.groups["test"] = &model.Group{ID: "test", Name: "Test", Enabled: false}
+	st.updateErr = errors.New("database error")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/test/enable", nil)
+	setPathValue(req, "id", "test")
+	w := httptest.NewRecorder()
+
+	h.EnableGroup(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestDisableGroup(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.groups["test-group"] = &model.Group{ID: "test-group", Name: "Test Group", Enabled: true}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/test-group/disable", nil)
+	setPathValue(req, "id", "test-group")
+	w := httptest.NewRecorder()
+
+	h.DisableGroup(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var group model.Group
+	if err := json.NewDecoder(w.Body).Decode(&group); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if group.Enabled {
+		t.Error("group should be disabled")
+	}
+
+	if st.groups["test-group"].Enabled {
+		t.Error("group in store should be disabled")
+	}
+}
+
+func TestDisableGroup_NotFound(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/non-existent/disable", nil)
+	setPathValue(req, "id", "non-existent")
+	w := httptest.NewRecorder()
+
+	h.DisableGroup(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestDisableGroup_EmptyID(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups//disable", nil)
+	w := httptest.NewRecorder()
+
+	h.DisableGroup(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestDisableGroup_GetError(t *testing.T) {
+	h, st, _ := testHandler()
+	st.getErr = errors.New("database error")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/test/disable", nil)
+	setPathValue(req, "id", "test")
+	w := httptest.NewRecorder()
+
+	h.DisableGroup(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestDisableGroup_UpdateError(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.groups["test"] = &model.Group{ID: "test", Name: "Test", Enabled: true}
+	st.updateErr = errors.New("database error")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/groups/test/disable", nil)
+	setPathValue(req, "id", "test")
+	w := httptest.NewRecorder()
+
+	h.DisableGroup(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
