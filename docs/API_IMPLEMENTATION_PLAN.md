@@ -15,177 +15,23 @@
 
 ---
 
-## 阶段 1：Provider 批量操作 API
+## ✅ 已完成阶段摘要
 
-### 目标
-实现统一的批量操作端点，支持对多个 Provider 执行 reset/enable/disable/delete 操作。
+### 阶段 1：Provider 批量操作 API
+- **端点**: `POST /admin/api/providers/batch`
+- **功能**: 批量 reset/enable/disable/delete 操作
+- **请求**: `{"action": "reset", "ids": ["id1", "id2"]}`
+- **响应**: 200 全部成功 / 207 部分失败
 
-### API 定义
+### 阶段 2：日志查询增强
+- **端点**: `GET /admin/api/logs`
+- **新增参数**: `provider_id`, `api_type`, `success`, `user_id`, `start_time`, `end_time`, `min_latency`, `sort_by`, `sort_order`
+- **默认排序**: `created_at DESC`
 
-```
-POST /admin/api/providers/batch
-```
-
-**请求体**：
-```json
-{
-  "action": "reset",  // "reset" | "enable" | "disable" | "delete"
-  "ids": ["provider-1", "provider-2", "provider-3"]
-}
-```
-
-**成功响应** (200)：
-```json
-{
-  "success": true,
-  "affected": 3,
-  "results": [
-    {"id": "provider-1", "success": true},
-    {"id": "provider-2", "success": true},
-    {"id": "provider-3", "success": true}
-  ]
-}
-```
-
-**部分失败响应** (207)：
-```json
-{
-  "success": false,
-  "affected": 2,
-  "results": [
-    {"id": "provider-1", "success": true},
-    {"id": "provider-2", "success": true},
-    {"id": "provider-3", "success": false, "error": "provider not found"}
-  ]
-}
-```
-
-### 实现要点
-1. 在 `internal/admin/handlers.go` 添加 `BatchProviderAction` handler
-2. 验证 action 参数合法性
-3. 遍历 ids 执行对应操作，收集结果
-4. 支持部分成功场景（返回 207 状态码）
-
-### 测试用例
-- [x] 批量 reset 3 个 provider
-- [x] 批量 enable/disable
-- [x] 批量 delete
-- [x] 部分 id 不存在的场景
-- [x] 空 ids 数组
-
-### 完成标志
-- [x] API 可正常调用
-- [x] 返回格式正确
-- [x] 部分失败时返回 207
-
----
-
-## 阶段 2：日志查询增强
-
-### 目标
-为 `GET /admin/api/logs` 增加过滤和排序参数。
-
-### API 定义
-
-```
-GET /admin/api/logs?provider_id=xxx&success=false&sort_by=latency_ms&sort_order=desc
-```
-
-### 新增参数
-
-| 参数 | 类型 | 说明 | 示例 |
-|------|------|------|------|
-| `provider_id` | string | 按 Provider ID 过滤 | `openai-1` |
-| `api_type` | string | 按 API 类型过滤 | `claude`/`codex`/`gemini`/`custom` |
-| `success` | bool | 按成功/失败过滤 | `true`/`false` |
-| `user_id` | string | 按用户过滤 | `user-123` |
-| `start_time` | RFC3339 | 开始时间 | `2026-01-11T00:00:00Z` |
-| `end_time` | RFC3339 | 结束时间 | `2026-01-12T00:00:00Z` |
-| `min_latency` | int | 最小延迟(ms) | `1000` |
-| `sort_by` | string | 排序字段 | `created_at`/`latency_ms` |
-| `sort_order` | string | 排序方向 | `asc`/`desc` |
-
-### 实现要点
-1. 修改 `internal/store/log_store.go` 的查询方法，支持动态 WHERE 条件
-2. 使用参数化查询防止 SQL 注入
-3. 修改 handler 解析新参数
-4. 默认排序：`created_at DESC`
-
-### 测试用例
-- [x] 单个过滤条件
-- [x] 多个过滤条件组合
-- [x] 时间范围过滤
-- [x] 按延迟排序（找慢请求）
-- [x] 边界条件（空结果）
-
-### 完成标志
-- [x] 所有过滤参数生效
-- [x] 排序功能正常
-- [x] SQL 注入测试通过（使用参数化查询）
-
----
-
-## 阶段 3：系统统计摘要 API（基础版）
-
-### 目标
-提供系统级统计数据聚合接口，用于 Dashboard 展示。
-
-### API 定义
-
-```
-GET /admin/api/stats?period=24h
-```
-
-### 参数
-| 参数 | 说明 | 可选值 | 默认值 |
-|------|------|--------|--------|
-| `period` | 统计时间范围 | `24h`/`7d`/`30d`/`all` | `24h` |
-
-### 响应示例
-```json
-{
-  "total_requests": 12580,
-  "success_count": 12100,
-  "fail_count": 480,
-  "success_rate": 0.9618,
-  "avg_latency_ms": 1250,
-  "providers": {
-    "total": 5,
-    "healthy": 4,
-    "unhealthy": 1,
-    "disabled": 0
-  },
-  "requests_by_api_type": {
-    "claude": 5000,
-    "codex": 4000,
-    "gemini": 3580
-  },
-  "requests_by_provider": [
-    {"id": "openai-1", "name": "OpenAI Primary", "count": 3000, "success_rate": 0.98},
-    {"id": "claude-1", "name": "Claude Main", "count": 5000, "success_rate": 0.95}
-  ],
-  "time_range": {
-    "start": "2026-01-11T00:00:00Z",
-    "end": "2026-01-12T00:00:00Z"
-  }
-}
-```
-
-### 实现要点
-1. 在 `internal/admin/handlers.go` 添加 `GetStats` handler
-2. 在 `internal/store/` 添加统计查询方法
-3. 使用 SQL 聚合函数：`COUNT`, `AVG`, `SUM`
-4. Provider 状态从 HealthManager 获取
-
-### 测试用例
-- [x] 不同 period 参数
-- [x] 无数据时返回零值
-- [x] 统计数据准确性验证
-
-### 完成标志
-- [x] API 返回完整统计数据
-- [x] 数据计算正确
-- [x] 响应时间 < 500ms
+### 阶段 3：系统统计摘要 API
+- **端点**: `GET /admin/api/stats?period=24h`
+- **period 可选值**: `24h`/`7d`/`30d`/`all`
+- **返回**: total_requests, success_rate, avg_latency_ms, providers 状态, requests_by_api_type, requests_by_provider
 
 ---
 
@@ -369,11 +215,10 @@ POST /admin/api/config/import
 ## 阶段依赖关系
 
 ```
-阶段 1 (批量操作) ─┬─→ 可并行
-阶段 2 (日志增强) ─┘
+阶段 1-3 ✅ 已完成
         │
         ▼
-阶段 3 (统计基础) ─→ 阶段 4 (统计增强)
+阶段 4 (统计增强) ─→ 依赖阶段 3
         │
         ▼
 阶段 5 (Group操作) ─→ 可独立
@@ -381,10 +226,3 @@ POST /admin/api/config/import
         ▼
 阶段 6 (导入导出) ─→ 建议最后
 ```
-
-**说明**：
-- 阶段 1-2 无依赖，可按任意顺序或并行
-- 阶段 4 依赖阶段 3
-- 阶段 5 相对独立
-- 阶段 6 建议最后实现（涉及所有数据模型）
-
