@@ -8,3 +8,6 @@ export function slugify(str: string): string {
     .replace(/-+/g, "-")
     .replace(/(^-)|(-$)/g, "");
 }
+
+/** Validate ID: only lowercase letters, numbers, and hyphens allowed */
+export const isValidId = (id: string): boolean => /^[a-z0-9-]*$/.test(id);

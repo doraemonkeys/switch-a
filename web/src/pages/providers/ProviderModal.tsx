@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import type { FormEvent } from "react";
 import type { Provider, ProviderInput } from "../../api/client";
 import {
   FormField,
@@ -9,7 +10,27 @@ import {
   FormActions,
   AuthModeField,
 } from "./ProviderFormFields";
-import { slugify } from "../../lib/utils";
+import { slugify, isValidId } from "../../lib/utils";
+
+function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="p-6 border-b border-border">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-text-primary">{title}</h3>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-text-muted hover:text-text-primary transition-colors"
+          aria-label="Close"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export interface ProviderModalProps {
   initialData?: Provider;
@@ -43,8 +64,25 @@ export function ProviderModal({
 
   const [apiTypesInput, setApiTypesInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // Track if user has manually edited the ID to something different from auto-generated
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
+  const [idError, setIdError] = useState<string | null>(null);
+
+  // Handle Escape key to close modal
+  const handleEscape = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submitting) {
+        onClose();
+      }
+    },
+    [onClose, submitting]
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [handleEscape]);
 
   useEffect(() => {
     if (initialData) {
@@ -63,15 +101,43 @@ export function ProviderModal({
         enabled: initialData.enabled,
       });
       setApiTypesInput(initialData.api_types.map((t) => t.api_type).join(", "));
+      setIdManuallyEdited(false);
+      setIdError(null);
+      setError(null);
     } else {
       // Reset for new providers
+      setFormData({
+        id: "",
+        name: "",
+        base_url: "",
+        api_key: "",
+        api_types: [],
+        auth_mode: "auto",
+        group_id: null,
+        weight: 1,
+        priority: 0,
+        concurrency: 10,
+        max_retries: 3,
+        enabled: true,
+      });
+      setApiTypesInput("");
       setIdManuallyEdited(false);
+      setIdError(null);
+      setError(null);
     }
   }, [initialData]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+
+    // Validate ID before submission
+    if (!isEditMode && formData.id && !isValidId(formData.id)) {
+      setIdError("ID can only contain lowercase letters, numbers, and hyphens");
+      return;
+    }
+
     setSubmitting(true);
+    setError(null);
     try {
       await onSubmit({
         ...formData,
@@ -80,30 +146,24 @@ export function ProviderModal({
           .map((s) => s.trim())
           .filter(Boolean),
       });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save provider");
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-bg-primary rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-border">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-text-primary">
-              {isEditMode ? "Edit Provider" : "Add Provider"}
-            </h3>
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-text-muted hover:text-text-primary"
-              aria-label="Close"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+        <ModalHeader title={isEditMode ? "Edit Provider" : "Add Provider"} onClose={onClose} />
         <form onSubmit={handleSubmit} className="p-6 space-y-4" autoComplete="off">
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
           <FormField label="Name">
             <input
               type="text"
@@ -128,7 +188,7 @@ export function ProviderModal({
             <FormField label="ID">
               <input
                 type="text"
-                className="input"
+                className={`input ${idError ? "border-red-500 focus:border-red-500" : ""}`}
                 value={formData.id}
                 onChange={(e) => {
                   const newId = e.target.value;
@@ -140,14 +200,24 @@ export function ProviderModal({
                     setIdManuallyEdited(false);
                   }
                   setFormData((prev) => ({ ...prev, id: newId }));
+                  // Validate ID and show error if invalid
+                  if (newId && !isValidId(newId)) {
+                    setIdError("ID can only contain lowercase letters, numbers, and hyphens");
+                  } else {
+                    setIdError(null);
+                  }
                 }}
                 required
                 autoComplete="off"
                 placeholder="Auto-generated from name, or customize"
               />
-              <p className="text-xs text-text-muted mt-1">
-                Auto-generated from Name. You can customize it if needed.
-              </p>
+              {idError ? (
+                <p className="text-xs text-red-400 mt-1">{idError}</p>
+              ) : (
+                <p className="text-xs text-text-muted mt-1">
+                  Auto-generated from Name. Only lowercase letters, numbers, and hyphens allowed.
+                </p>
+              )}
             </FormField>
           )}
           <FormField label="Base URL">
@@ -205,7 +275,7 @@ export function ProviderModal({
               {
                 key: "concurrency",
                 label: "Concurrency Limit",
-                min: 1,
+                min: 0,
                 defaultValue: 10,
               },
               {
