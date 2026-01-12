@@ -102,7 +102,7 @@ export function ProviderFormBody({
               // Validate ID and show error if invalid
               if (newId && !isValidId(newId)) {
                 setIdError(
-                  "ID can only contain lowercase letters, numbers, and hyphens"
+                  "ID can only contain lowercase letters, numbers, and hyphens",
                 );
               } else {
                 setIdError(null);

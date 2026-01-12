@@ -43,7 +43,7 @@ describe("useQuery", () => {
     const fetcher = vi.fn().mockRejectedValue("string error");
 
     const { result } = renderHook(() =>
-      useQuery(fetcher, [], { errorMessage: "Custom error message" })
+      useQuery(fetcher, [], { errorMessage: "Custom error message" }),
     );
 
     await waitFor(() => {
@@ -99,7 +99,7 @@ describe("useQuery", () => {
 
     const { result, rerender } = renderHook(
       ({ id }) => useQuery(() => fetcher(id), [id]),
-      { initialProps: { id: 1 } }
+      { initialProps: { id: 1 } },
     );
 
     await waitFor(() => {
@@ -158,7 +158,7 @@ describe("useMutation", () => {
     const mutator = vi.fn().mockResolvedValue(mockResult);
 
     const { result } = renderHook(() =>
-      useMutation<typeof mockResult, { name: string }>(mutator)
+      useMutation<typeof mockResult, { name: string }>(mutator),
     );
 
     expect(result.current.loading).toBe(false);
@@ -180,7 +180,7 @@ describe("useMutation", () => {
       () =>
         new Promise((resolve) => {
           resolveFn = resolve;
-        })
+        }),
     );
 
     const { result } = renderHook(() => useMutation(mutator));
@@ -228,7 +228,7 @@ describe("useMutation", () => {
     const mutator = vi.fn().mockRejectedValue("string error");
 
     const { result } = renderHook(() =>
-      useMutation(mutator, { errorMessage: "Custom mutation error" })
+      useMutation(mutator, { errorMessage: "Custom mutation error" }),
     );
 
     let caughtError: Error | undefined;
