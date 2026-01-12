@@ -79,6 +79,21 @@ type RequestLog struct {
 	CreatedAt  time.Time `gorm:"index" json:"created_at"`
 }
 
+// LogFilter represents filter and sort parameters for log queries.
+type LogFilter struct {
+	ProviderID string     // Filter by provider ID
+	APIType    string     // Filter by API type (claude/codex/gemini/custom:*)
+	Success    *bool      // Filter by success/failure (nil = no filter)
+	UserID     string     // Filter by user ID
+	StartTime  *time.Time // Filter by start time (inclusive)
+	EndTime    *time.Time // Filter by end time (exclusive)
+	MinLatency *int64     // Filter by minimum latency in ms
+	SortBy     string     // Sort field: "created_at" or "latency_ms"
+	SortOrder  string     // Sort direction: "asc" or "desc"
+	Limit      int        // Maximum number of results
+	Offset     int        // Offset for pagination
+}
+
 // StickyKey represents the cache key for sticky session.
 type StickyKey struct {
 	IP      string

@@ -321,6 +321,39 @@ func (s *SQLiteStore) GetHealthState(ctx context.Context, providerID string) (*m
 	return &state, nil
 }
 
+// GetHealthStatesByProviderIDs fetches health states for multiple providers in a single query.
+// Returns a map of provider ID to health state. For providers without stored state,
+// returns a default available state.
+func (s *SQLiteStore) GetHealthStatesByProviderIDs(ctx context.Context, providerIDs []string) (map[string]*model.HealthState, error) {
+	if len(providerIDs) == 0 {
+		return make(map[string]*model.HealthState), nil
+	}
+
+	var states []model.HealthState
+	err := s.db.WithContext(ctx).Where("provider_id IN ?", providerIDs).Find(&states).Error
+	if err != nil {
+		return nil, fmt.Errorf("get health states by provider IDs: %w", err)
+	}
+
+	// Build result map with fetched states
+	result := make(map[string]*model.HealthState, len(providerIDs))
+	for i := range states {
+		result[states[i].ProviderID] = &states[i]
+	}
+
+	// Add default available state for providers not found in the database
+	for _, id := range providerIDs {
+		if _, ok := result[id]; !ok {
+			result[id] = &model.HealthState{
+				ProviderID: id,
+				Available:  true,
+			}
+		}
+	}
+
+	return result, nil
+}
+
 func (s *SQLiteStore) UpdateHealthState(ctx context.Context, state *model.HealthState) error {
 	// Use raw SQL upsert to properly handle zero-value boolean fields
 	err := s.db.WithContext(ctx).Exec(`
@@ -509,23 +542,72 @@ func (s *SQLiteStore) InsertLog(ctx context.Context, log *model.RequestLog) erro
 	return nil
 }
 
-func (s *SQLiteStore) ListLogs(ctx context.Context, limit, offset int) ([]model.RequestLog, error) {
+func (s *SQLiteStore) ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error) {
 	var logs []model.RequestLog
-	err := s.db.WithContext(ctx).
-		Order("created_at DESC").
-		Limit(limit).
-		Offset(offset).
-		Find(&logs).Error
-	if err != nil {
+	query := s.db.WithContext(ctx).Model(&model.RequestLog{})
+
+	// Apply filters
+	query = s.applyLogFilters(query, filter)
+
+	// Apply sorting
+	sortBy := "created_at"
+	if filter.SortBy == "latency_ms" {
+		sortBy = "latency_ms"
+	}
+	sortOrder := "DESC"
+	if filter.SortOrder == "asc" {
+		sortOrder = "ASC"
+	}
+	query = query.Order(sortBy + " " + sortOrder)
+
+	// Apply pagination
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query = query.Offset(filter.Offset)
+	}
+
+	if err := query.Find(&logs).Error; err != nil {
 		return nil, fmt.Errorf("list logs: %w", err)
 	}
 	return logs, nil
 }
 
-func (s *SQLiteStore) CountLogs(ctx context.Context) (int64, error) {
+// applyLogFilters applies the filter conditions to a GORM query.
+func (s *SQLiteStore) applyLogFilters(query *gorm.DB, filter model.LogFilter) *gorm.DB {
+	if filter.ProviderID != "" {
+		query = query.Where("provider_id = ?", filter.ProviderID)
+	}
+	if filter.APIType != "" {
+		query = query.Where("api_type = ?", filter.APIType)
+	}
+	if filter.Success != nil {
+		query = query.Where("success = ?", *filter.Success)
+	}
+	if filter.UserID != "" {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+	if filter.StartTime != nil {
+		query = query.Where("created_at >= ?", *filter.StartTime)
+	}
+	if filter.EndTime != nil {
+		query = query.Where("created_at < ?", *filter.EndTime)
+	}
+	if filter.MinLatency != nil {
+		query = query.Where("latency_ms >= ?", *filter.MinLatency)
+	}
+	return query
+}
+
+func (s *SQLiteStore) CountLogs(ctx context.Context, filter model.LogFilter) (int64, error) {
 	var count int64
-	err := s.db.WithContext(ctx).Model(&model.RequestLog{}).Count(&count).Error
-	if err != nil {
+	query := s.db.WithContext(ctx).Model(&model.RequestLog{})
+
+	// Apply the same filters as ListLogs (but ignore pagination)
+	query = s.applyLogFilters(query, filter)
+
+	if err := query.Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("count logs: %w", err)
 	}
 	return count, nil

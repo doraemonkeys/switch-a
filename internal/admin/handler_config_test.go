@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 
@@ -485,5 +486,188 @@ func TestGetLogs_Error(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestGetLogs_WithFilters(t *testing.T) {
+	h, st, _ := testHandler()
+	now := time.Now()
+
+	// Add test logs with different properties
+	st.logs = []model.RequestLog{
+		{ID: 1, ProviderID: "p1", APIType: "claude", Success: true, UserID: "user1", LatencyMs: 100, CreatedAt: now},
+		{ID: 2, ProviderID: "p1", APIType: "claude", Success: false, UserID: "user1", LatencyMs: 500, CreatedAt: now},
+		{ID: 3, ProviderID: "p2", APIType: "codex", Success: true, UserID: "user2", LatencyMs: 200, CreatedAt: now},
+	}
+
+	// Test provider_id filter
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?provider_id=p1", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp LogsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(resp.Logs) != 2 {
+		t.Errorf("expected 2 logs for p1, got %d", len(resp.Logs))
+	}
+	if resp.Total != 2 {
+		t.Errorf("expected total=2, got %d", resp.Total)
+	}
+}
+
+func TestGetLogs_SortBy(t *testing.T) {
+	h, st, _ := testHandler()
+	now := time.Now()
+
+	st.logs = []model.RequestLog{
+		{ID: 1, ProviderID: "p1", LatencyMs: 100, CreatedAt: now},
+		{ID: 2, ProviderID: "p2", LatencyMs: 500, CreatedAt: now},
+		{ID: 3, ProviderID: "p3", LatencyMs: 200, CreatedAt: now},
+	}
+
+	// Test sort_by=latency_ms&sort_order=desc
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?sort_by=latency_ms&sort_order=desc", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp LogsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.SortBy != "latency_ms" {
+		t.Errorf("expected sort_by=latency_ms, got %s", resp.SortBy)
+	}
+	if resp.SortOrder != "desc" {
+		t.Errorf("expected sort_order=desc, got %s", resp.SortOrder)
+	}
+}
+
+func TestGetLogs_InvalidSuccess(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?success=invalid", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLogs_InvalidSortBy(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?sort_by=invalid", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLogs_InvalidSortOrder(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?sort_order=invalid", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLogs_InvalidStartTime(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?start_time=invalid", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLogs_InvalidEndTime(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?end_time=invalid", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLogs_InvalidMinLatency(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?min_latency=invalid", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLogs_NegativeMinLatency(t *testing.T) {
+	h, _, _ := testHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?min_latency=-100", nil)
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLogs_ValidTimeRange(t *testing.T) {
+	h, st, _ := testHandler()
+	now := time.Now().UTC()
+
+	st.logs = []model.RequestLog{
+		{ID: 1, ProviderID: "p1", CreatedAt: now.Add(-2 * time.Hour)},
+		{ID: 2, ProviderID: "p2", CreatedAt: now.Add(-1 * time.Hour)},
+		{ID: 3, ProviderID: "p3", CreatedAt: now},
+	}
+
+	// Use UTC format to avoid URL encoding issues with timezone offset
+	startTime := now.Add(-90 * time.Minute).Format(time.RFC3339)
+	endTime := now.Add(-30 * time.Minute).Format(time.RFC3339)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs", nil)
+	q := req.URL.Query()
+	q.Set("start_time", startTime)
+	q.Set("end_time", endTime)
+	req.URL.RawQuery = q.Encode()
+
+	w := httptest.NewRecorder()
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp LogsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(resp.Logs) != 1 {
+		t.Errorf("expected 1 log in time range, got %d", len(resp.Logs))
 	}
 }

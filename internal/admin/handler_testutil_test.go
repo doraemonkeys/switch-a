@@ -140,6 +140,24 @@ func (m *mockStore) GetHealthState(_ context.Context, providerID string) (*model
 	}, nil
 }
 
+func (m *mockStore) GetHealthStatesByProviderIDs(_ context.Context, providerIDs []string) (map[string]*model.HealthState, error) {
+	if m.healthErr != nil {
+		return nil, m.healthErr
+	}
+	result := make(map[string]*model.HealthState, len(providerIDs))
+	for _, id := range providerIDs {
+		if hs, ok := m.healthStates[id]; ok {
+			result[id] = hs
+		} else {
+			result[id] = &model.HealthState{
+				ProviderID: id,
+				Available:  true,
+			}
+		}
+	}
+	return result, nil
+}
+
 func (m *mockStore) ListHealthStates(_ context.Context) ([]model.HealthState, error) {
 	if m.healthErr != nil {
 		return nil, m.healthErr
@@ -180,25 +198,71 @@ func (m *mockStore) SetConfigs(_ context.Context, configs map[string]string) err
 	return nil
 }
 
-func (m *mockStore) ListLogs(_ context.Context, limit, offset int) ([]model.RequestLog, error) {
+// matchesFilter checks if a log entry matches the given filter criteria.
+func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
+	if filter.ProviderID != "" && log.ProviderID != filter.ProviderID {
+		return false
+	}
+	if filter.APIType != "" && log.APIType != filter.APIType {
+		return false
+	}
+	if filter.Success != nil && log.Success != *filter.Success {
+		return false
+	}
+	if filter.UserID != "" && log.UserID != filter.UserID {
+		return false
+	}
+	if filter.StartTime != nil && log.CreatedAt.Before(*filter.StartTime) {
+		return false
+	}
+	if filter.EndTime != nil && !log.CreatedAt.Before(*filter.EndTime) {
+		return false
+	}
+	if filter.MinLatency != nil && log.LatencyMs < *filter.MinLatency {
+		return false
+	}
+	return true
+}
+
+func (m *mockStore) ListLogs(_ context.Context, filter model.LogFilter) ([]model.RequestLog, error) {
 	if m.logsErr != nil {
 		return nil, m.logsErr
 	}
-	if offset >= len(m.logs) {
+
+	// Apply filters to logs
+	var filtered []model.RequestLog
+	for _, log := range m.logs {
+		if matchesFilter(log, filter) {
+			filtered = append(filtered, log)
+		}
+	}
+
+	// Apply pagination
+	offset := filter.Offset
+	limit := filter.Limit
+	if offset >= len(filtered) {
 		return []model.RequestLog{}, nil
 	}
 	end := offset + limit
-	if end > len(m.logs) {
-		end = len(m.logs)
+	if end > len(filtered) {
+		end = len(filtered)
 	}
-	return m.logs[offset:end], nil
+	return filtered[offset:end], nil
 }
 
-func (m *mockStore) CountLogs(_ context.Context) (int64, error) {
+func (m *mockStore) CountLogs(_ context.Context, filter model.LogFilter) (int64, error) {
 	if m.logsErr != nil {
 		return 0, m.logsErr
 	}
-	return int64(len(m.logs)), nil
+
+	// Apply filters to logs
+	count := int64(0)
+	for _, log := range m.logs {
+		if matchesFilter(log, filter) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // mockHealthManager implements HealthManager interface for testing.
@@ -245,6 +309,15 @@ func (m *mockConcurrencyTracker) Current(providerID string) int64 {
 	return m.counts[providerID]
 }
 
+// mockConcurrencyCleaner implements ConcurrencyCleaner interface for testing.
+type mockConcurrencyCleaner struct {
+	cleared []string
+}
+
+func (m *mockConcurrencyCleaner) ClearConcurrency(providerID string) {
+	m.cleared = append(m.cleared, providerID)
+}
+
 func testHandler() (*Handler, *mockStore, *mockHealthManager) {
 	logger, _ := zap.NewDevelopment()
 	st := newMockStore()
@@ -253,6 +326,7 @@ func testHandler() (*Handler, *mockStore, *mockHealthManager) {
 		Store:       st,
 		Health:      health,
 		Concurrency: &mockConcurrencyTracker{},
+		Cleaner:     &mockConcurrencyCleaner{},
 		Logger:      logger,
 	})
 	return h, st, health

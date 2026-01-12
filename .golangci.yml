@@ -37,6 +37,9 @@ linters:
           - errcheck
         source: "defer.*\\.Close\\(\\)"
   settings:
+    # gocognit:
+    #   # 认知复杂度阈值，超过此值才报错(default: 30)
+    #   min-complexity: 34
     funlen:
       # 限制函数行数不超过 200 行
       lines: 150

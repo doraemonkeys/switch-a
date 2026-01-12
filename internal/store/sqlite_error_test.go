@@ -246,7 +246,7 @@ func TestListLogs_Error(t *testing.T) {
 	store := setupClosedStore(t)
 	ctx := context.Background()
 
-	_, err := store.ListLogs(ctx, 10, 0)
+	_, err := store.ListLogs(ctx, model.LogFilter{Limit: 10, Offset: 0})
 	if err == nil {
 		t.Error("expected error on closed connection")
 	}

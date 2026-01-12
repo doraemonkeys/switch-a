@@ -44,6 +44,7 @@ type store interface {
 
 	// Health state operations
 	GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error)
+	GetHealthStatesByProviderIDs(ctx context.Context, providerIDs []string) (map[string]*model.HealthState, error)
 	ListHealthStates(ctx context.Context) ([]model.HealthState, error)
 
 	// Config operations
@@ -54,8 +55,8 @@ type store interface {
 
 	// Log operations
 	InsertLog(ctx context.Context, log *model.RequestLog) error
-	ListLogs(ctx context.Context, limit, offset int) ([]model.RequestLog, error)
-	CountLogs(ctx context.Context) (int64, error)
+	ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error)
+	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
 }
 
 // Server represents the HTTP server (proxy only).
@@ -199,6 +200,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Provider routes
 	mux.Handle("GET /admin/api/providers", auth.WrapFunc(adminHandler.ListProviders))
 	mux.Handle("POST /admin/api/providers", auth.WrapFunc(adminHandler.CreateProvider))
+	mux.Handle("POST /admin/api/providers/batch", auth.WrapFunc(adminHandler.BatchProviderAction))
 	mux.Handle("GET /admin/api/providers/{id}", auth.WrapFunc(adminHandler.GetProvider))
 	mux.Handle("PUT /admin/api/providers/{id}", auth.WrapFunc(adminHandler.UpdateProvider))
 	mux.Handle("DELETE /admin/api/providers/{id}", auth.WrapFunc(adminHandler.DeleteProvider))

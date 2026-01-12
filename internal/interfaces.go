@@ -28,6 +28,7 @@ type Store interface {
 
 	// Health state operations
 	GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error)
+	GetHealthStatesByProviderIDs(ctx context.Context, providerIDs []string) (map[string]*model.HealthState, error)
 	UpdateHealthState(ctx context.Context, state *model.HealthState) error
 	ListHealthStates(ctx context.Context) ([]model.HealthState, error)
 	// IncrementSuccessCount atomically increments success_count and sets available=true
@@ -51,8 +52,8 @@ type Store interface {
 
 	// Log operations
 	InsertLog(ctx context.Context, log *model.RequestLog) error
-	ListLogs(ctx context.Context, limit, offset int) ([]model.RequestLog, error)
-	CountLogs(ctx context.Context) (int64, error)
+	ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error)
+	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
 	CleanOldLogs(ctx context.Context, beforeDays int) error
 
 	// Close closes the store and releases resources.

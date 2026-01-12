@@ -35,6 +35,9 @@ func (m *mockStore) DeleteGroup(context.Context, string) error              { re
 func (m *mockStore) GetHealthState(context.Context, string) (*model.HealthState, error) {
 	return nil, nil
 }
+func (m *mockStore) GetHealthStatesByProviderIDs(context.Context, []string) (map[string]*model.HealthState, error) {
+	return nil, nil
+}
 func (m *mockStore) ListHealthStates(context.Context) ([]model.HealthState, error) { return nil, nil }
 
 func (m *mockStore) GetConfig(context.Context, string) (string, error)       { return "", nil }
@@ -42,9 +45,11 @@ func (m *mockStore) GetAllConfig(context.Context) (map[string]string, error) { r
 func (m *mockStore) SetConfig(context.Context, string, string) error         { return nil }
 func (m *mockStore) SetConfigs(context.Context, map[string]string) error     { return nil }
 
-func (m *mockStore) InsertLog(context.Context, *model.RequestLog) error             { return nil }
-func (m *mockStore) ListLogs(context.Context, int, int) ([]model.RequestLog, error) { return nil, nil }
-func (m *mockStore) CountLogs(context.Context) (int64, error)                       { return 0, nil }
+func (m *mockStore) InsertLog(context.Context, *model.RequestLog) error { return nil }
+func (m *mockStore) ListLogs(context.Context, model.LogFilter) ([]model.RequestLog, error) {
+	return nil, nil
+}
+func (m *mockStore) CountLogs(context.Context, model.LogFilter) (int64, error) { return 0, nil }
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
