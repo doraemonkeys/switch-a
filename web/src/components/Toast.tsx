@@ -177,7 +177,7 @@ function ToastContainer({ toasts, onRemove }: ToastContainerProps) {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-3">
+    <div className="fixed top-4 right-4 z-9999 flex flex-col gap-3">
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onRemove={onRemove} />
       ))}
@@ -210,25 +210,25 @@ export function ToastProvider({ children }: ToastProviderProps) {
   const success = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "success", message, duration }),
-    [addToast],
+    [addToast]
   );
 
   const error = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "error", message, duration }),
-    [addToast],
+    [addToast]
   );
 
   const warning = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "warning", message, duration }),
-    [addToast],
+    [addToast]
   );
 
   const info = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "info", message, duration }),
-    [addToast],
+    [addToast]
   );
 
   const value: ToastContextValue = {

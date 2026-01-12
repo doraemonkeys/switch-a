@@ -24,12 +24,12 @@ ci:
 	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 	@golangci-lint run
 	@sloc-guard -q check
-	@cd web && pnpm lint --quiet
 	@cd web && pnpm test:coverage --silent
 	@cd web && npx tsc --noEmit -p tsconfig.app.json
+	@cd web && pnpm lint --quiet
 
 # 正常模式
-verify: coverage lint sloc fmt web-lint web-coverage web-tsc web-fmt
+verify: coverage lint sloc fmt web-coverage web-tsc web-lint web-fmt
 
 lint:
 	golangci-lint run

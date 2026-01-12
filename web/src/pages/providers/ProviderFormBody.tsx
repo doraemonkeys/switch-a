@@ -43,8 +43,18 @@ export function ProviderFormBody({
   onCancel,
   groups,
 }: ProviderFormBodyProps) {
-  const { data: formData, setData: setFormData, apiTypesInput, setApiTypesInput } = formState;
-  const { manuallyEdited: idManuallyEdited, setManuallyEdited: setIdManuallyEdited, error: idError, setError: setIdError } = idState;
+  const {
+    data: formData,
+    setData: setFormData,
+    apiTypesInput,
+    setApiTypesInput,
+  } = formState;
+  const {
+    manuallyEdited: idManuallyEdited,
+    setManuallyEdited: setIdManuallyEdited,
+    error: idError,
+    setError: setIdError,
+  } = idState;
 
   return (
     <>
