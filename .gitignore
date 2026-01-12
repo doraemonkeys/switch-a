@@ -38,6 +38,12 @@ TODO
 
 # Web coverage reports
 web/coverage/
+
+# Frontend build output (keep placeholder for go:embed)
+web/dist/*
+!web/dist/PLACEHOLDER.txt
+!web/dist/.gitkeep
+
 config.yaml
 tmp/
 cmd/switch-a/config.yaml

@@ -12,6 +12,7 @@ import (
 	"switch-a/internal/admin"
 	"switch-a/internal/model"
 	"switch-a/internal/proxy"
+	"switch-a/web"
 
 	"go.uber.org/zap"
 )
@@ -219,6 +220,11 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 
 	// Logs route
 	mux.Handle("GET /admin/api/logs", auth.WrapFunc(adminHandler.GetLogs))
+
+	// Frontend static files (no auth required)
+	// Serves the embedded React SPA with history fallback for client-side routing.
+	// The frontend is built with base path "/admin/" so all assets are correctly prefixed.
+	mux.Handle("/admin/", http.StripPrefix("/admin", web.Handler()))
 }
 
 // handleProxy forwards requests to the proxy handler.

@@ -6,6 +6,9 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Base path for production build - all assets will be prefixed with /admin/
+  // This matches the server mount point: mux.Handle("/admin/", ...)
+  base: '/admin/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

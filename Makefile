@@ -1,4 +1,4 @@
-.PHONY: ci verify lint coverage sloc clean test fmt build release-windows release-clean web-lint web-coverage web-tsc
+.PHONY: ci verify lint coverage sloc clean test fmt build build-all web-build release-windows release-clean web-lint web-coverage web-tsc
 
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -65,8 +65,17 @@ cover-html:
 clean:
 	rm -rf .tmp cover.out coverage.out
 
+# Build frontend only
+web-build:
+	cd web && pnpm install && pnpm build
+
+# Build Go binary only (requires frontend to be built first)
 build:
-	go build
+	go build -o switch-a ./cmd/switch-a
+
+# Build complete release binary with embedded frontend
+build-all: web-build build
+	@echo "Build complete: switch-a binary with embedded frontend"
 
 release-windows:
 	bash release.sh windows
