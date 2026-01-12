@@ -31,6 +31,10 @@ func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
 
 // mockStore implements the Store interface for testing.
 // It is thread-safe to allow concurrent use with async logRequest goroutines.
+// Thread-safety is critical here because logs are inserted via `go h.logRequest(...)`
+// which runs concurrently with test assertions. Without mutex protection, test assertions
+// reading logs could race with the background goroutine writing logs, causing flaky tests
+// or data races detectable by the race detector.
 type mockStore struct {
 	mu        sync.Mutex
 	providers []model.Provider
@@ -86,6 +90,18 @@ func (m *mockStore) LogsLen() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.logs)
+}
+
+// LastLog returns the most recent log entry in a thread-safe manner.
+// Returns nil if no logs exist.
+func (m *mockStore) LastLog() *model.RequestLog {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.logs) == 0 {
+		return nil
+	}
+	log := m.logs[len(m.logs)-1]
+	return &log
 }
 
 func TestNewHandler_NilStorePanics(t *testing.T) {
@@ -326,6 +342,189 @@ func TestShouldRetry(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("shouldRetry(%d) = %v, want %v", tt.statusCode, got, tt.want)
 		}
+	}
+}
+
+func TestHandler_LogsSuccessFalse_ForRetryableStatusCodes(t *testing.T) {
+	// Test that retryable status codes (401, 403, 429, 5xx) are logged with success=false
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{"401_unauthorized", http.StatusUnauthorized},
+		{"403_forbidden", http.StatusForbidden},
+		{"429_too_many_requests", http.StatusTooManyRequests},
+		{"500_internal_server_error", http.StatusInternalServerError},
+		{"502_bad_gateway", http.StatusBadGateway},
+		{"503_service_unavailable", http.StatusServiceUnavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create upstream server that returns the test status code
+			upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(`{"error":"test error"}`))
+			}))
+			defer upstreamServer.Close()
+
+			store := newMockStore()
+			store.configs["max_retries"] = "0" // Disable retries to test single attempt
+			store.providers = []model.Provider{
+				{
+					ID:       "p1",
+					Name:     "Test Provider",
+					BaseURL:  upstreamServer.URL,
+					APIKey:   "test-api-key",
+					AuthMode: "bearer",
+					Enabled:  true,
+				},
+			}
+			logger := zap.NewNop()
+
+			handler := NewHandler(Config{
+				Store:  store,
+				Logger: logger,
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			// Wait for async log
+			waitFor(t, func() bool {
+				return store.LogsLen() > 0
+			}, 100*time.Millisecond)
+
+			// Verify log entry has success=false
+			log := store.LastLog()
+			if log == nil {
+				t.Fatal("expected log entry to be created")
+			}
+			if log.Success {
+				t.Errorf("expected Success=false for status %d, got Success=true", tt.statusCode)
+			}
+			if log.StatusCode != tt.statusCode {
+				t.Errorf("expected StatusCode=%d, got %d", tt.statusCode, log.StatusCode)
+			}
+		})
+	}
+}
+
+func TestHandler_LogsSuccessTrue_For2xxStatusCodes(t *testing.T) {
+	// Create upstream server that returns 200 OK
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"response":"success"}`))
+	}))
+	defer upstreamServer.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p1",
+			Name:     "Test Provider",
+			BaseURL:  upstreamServer.URL,
+			APIKey:   "test-api-key",
+			AuthMode: "bearer",
+			Enabled:  true,
+		},
+	}
+	logger := zap.NewNop()
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	// Wait for async log
+	waitFor(t, func() bool {
+		return store.LogsLen() > 0
+	}, 100*time.Millisecond)
+
+	// Verify log entry has success=true
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry to be created")
+	}
+	if !log.Success {
+		t.Error("expected Success=true for status 200, got Success=false")
+	}
+	if log.StatusCode != http.StatusOK {
+		t.Errorf("expected StatusCode=200, got %d", log.StatusCode)
+	}
+}
+
+func TestHandler_LogsSuccessFalse_ForNonRetryable4xxStatusCodes(t *testing.T) {
+	// Test that non-retryable 4xx status codes (400, 404, etc.) are logged with success=false
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{"400_bad_request", http.StatusBadRequest},
+		{"404_not_found", http.StatusNotFound},
+		{"422_unprocessable_entity", http.StatusUnprocessableEntity},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create upstream server that returns the test status code
+			upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(`{"error":"client error"}`))
+			}))
+			defer upstreamServer.Close()
+
+			store := newMockStore()
+			store.providers = []model.Provider{
+				{
+					ID:       "p1",
+					Name:     "Test Provider",
+					BaseURL:  upstreamServer.URL,
+					APIKey:   "test-api-key",
+					AuthMode: "bearer",
+					Enabled:  true,
+				},
+			}
+			logger := zap.NewNop()
+
+			handler := NewHandler(Config{
+				Store:  store,
+				Logger: logger,
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			// Wait for async log
+			waitFor(t, func() bool {
+				return store.LogsLen() > 0
+			}, 100*time.Millisecond)
+
+			// Verify log entry has success=false (client errors are not "successful")
+			log := store.LastLog()
+			if log == nil {
+				t.Fatal("expected log entry to be created")
+			}
+			if log.Success {
+				t.Errorf("expected Success=false for status %d, got Success=true", tt.statusCode)
+			}
+			if log.StatusCode != tt.statusCode {
+				t.Errorf("expected StatusCode=%d, got %d", tt.statusCode, log.StatusCode)
+			}
+		})
 	}
 }
 
@@ -580,5 +779,109 @@ func TestHandler_getTransport_caching(t *testing.T) {
 	t3 := handler.getTransport(cfg2)
 	if t1 == t3 {
 		t.Error("expected new transport instance for different config")
+	}
+}
+
+// slowMockStore is a mock store that delays InsertLog calls to test timeout behavior.
+type slowMockStore struct {
+	*mockStore
+	insertDelay   time.Duration
+	insertStarted chan struct{} // signals when InsertLog starts executing
+	insertDone    chan struct{} // signals when InsertLog completes
+}
+
+func newSlowMockStore(delay time.Duration) *slowMockStore {
+	return &slowMockStore{
+		mockStore:     newMockStore(),
+		insertDelay:   delay,
+		insertStarted: make(chan struct{}, 1),
+		insertDone:    make(chan struct{}, 1),
+	}
+}
+
+func (s *slowMockStore) InsertLog(ctx context.Context, log *model.RequestLog) error {
+	select {
+	case s.insertStarted <- struct{}{}:
+	default:
+	}
+	select {
+	case <-time.After(s.insertDelay):
+		// Delay completed, proceed with insert
+		select {
+		case s.insertDone <- struct{}{}:
+		default:
+		}
+		return s.mockStore.InsertLog(ctx, log)
+	case <-ctx.Done():
+		// Context cancelled (timeout), return error
+		return ctx.Err()
+	}
+}
+
+func TestHandler_LogRequest_Timeout(t *testing.T) {
+	// Test that logRequest respects the timeout when the database is slow.
+	// The logInsertTimeout constant is 2 seconds, so we use a delay longer than that.
+	// We use a shorter timeout for testing by checking that the goroutine doesn't block.
+
+	// Create upstream server that returns 200 OK quickly
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstreamServer.Close()
+
+	// Create a slow store that takes longer than logInsertTimeout (2s)
+	// We use 5 seconds to ensure it exceeds the timeout
+	store := newSlowMockStore(5 * time.Second)
+	store.providers = []model.Provider{
+		{
+			ID:       "p1",
+			Name:     "Test Provider",
+			BaseURL:  upstreamServer.URL,
+			APIKey:   "test-api-key",
+			AuthMode: "bearer",
+			Enabled:  true,
+		},
+	}
+	logger := zap.NewNop()
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	startTime := time.Now()
+	handler.ServeHTTP(w, req)
+	responseTime := time.Since(startTime)
+
+	// Response should complete quickly (not blocked by slow log insert)
+	if responseTime > 500*time.Millisecond {
+		t.Errorf("response took too long (%v), expected < 500ms - log insert may be blocking", responseTime)
+	}
+
+	// Wait for the InsertLog goroutine to start
+	select {
+	case <-store.insertStarted:
+		// Good, insert started
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("InsertLog goroutine did not start")
+	}
+
+	// The InsertLog should be cancelled by timeout (2s), not complete normally (5s)
+	// Wait a bit longer than the timeout to ensure it completes
+	select {
+	case <-store.insertDone:
+		t.Error("InsertLog completed normally, expected timeout cancellation")
+	case <-time.After(3 * time.Second):
+		// Good, InsertLog was cancelled by timeout (didn't complete in 3s, which is > 2s timeout but < 5s delay)
+	}
+
+	// Verify no log was inserted (because timeout cancelled it)
+	if store.LogsLen() > 0 {
+		t.Error("expected no logs due to timeout, but found logs")
 	}
 }

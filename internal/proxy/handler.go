@@ -349,6 +349,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
 		h.logger.Error("failed to build upstream request", zap.Error(err))
 		result.err = err
+		result.success = false // Explicitly mark as failure
 		// Mark failure for invalid URL configuration so circuit breaker can trigger.
 		// This prevents bad configurations from being infinitely retried.
 		h.markFailure(ctx, provider.ID, err)
@@ -368,6 +369,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 			zap.Error(err),
 		)
 		result.err = err
+		result.success = false // Explicitly mark as failure
 		h.markFailure(ctx, provider.ID, err)
 		h.releaseConcurrency(provider.ID)
 		return result // headersWritten is false, so retry is possible
@@ -375,7 +377,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 
 	result.statusCode = upstreamResp.StatusCode
 
-	// Check if response indicates failure (5xx or 429) BEFORE writing to client
+	// Check if response indicates retryable failure (5xx, 429, 401, 403) BEFORE writing to client
 	if shouldRetry(result.statusCode) {
 		statusErr := fmt.Errorf("upstream returned status %d", result.statusCode)
 		h.logger.Warn("upstream returned error status",
@@ -383,6 +385,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 			zap.Int("status_code", result.statusCode),
 		)
 		result.err = statusErr // Record error for proper "all providers failed" message
+		result.success = false // Explicitly mark as failure for logging
 		h.markFailure(ctx, provider.ID, statusErr)
 		h.releaseConcurrency(provider.ID)
 		upstreamResp.Drain() // Drain and close to enable connection reuse for retries
@@ -478,8 +481,10 @@ func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext
 	}
 	// True round-robin: use atomic counter for cross-request distribution,
 	// plus attempt offset to ensure retries hit different providers.
+	// Use uint64 conversion to handle wrap-around safely: when int64 wraps from
+	// MaxInt64 to MinInt64, converting to uint64 ensures non-negative indices.
 	idx := h.fallbackCounter.Add(1)
-	provider := providers[(int(idx)-1+attempt)%len(providers)]
+	provider := providers[int(uint64(idx-1+int64(attempt))%uint64(len(providers)))]
 	return &provider, nil
 }
 
