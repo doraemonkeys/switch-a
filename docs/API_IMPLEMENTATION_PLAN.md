@@ -9,7 +9,7 @@
 | 1 | Provider 批量操作 API | 🔴高 | ⭐⭐ | ✅ 已完成 |
 | 2 | 日志查询增强（过滤+排序） | 🔴高 | ⭐⭐⭐ | ✅ 已完成 |
 | 3 | 系统统计摘要 API（基础版） | 🔴高 | ⭐⭐⭐ | ✅ 已完成 |
-| 4 | 统计 API 增强（时间序列） | 🟡中 | ⭐⭐⭐ | ⬜ 待开始 |
+| 4 | 统计 API 增强（时间序列） | 🟡中 | ⭐⭐⭐ | ✅ 已完成 |
 | 5 | Group 快捷操作 API | 🟡中 | ⭐ | ⬜ 待开始 |
 | 6 | 配置导出/导入 API | 🟡中 | ⭐⭐⭐ | ⬜ 待开始 |
 
@@ -33,70 +33,11 @@
 - **period 可选值**: `24h`/`7d`/`30d`/`all`
 - **返回**: total_requests, success_rate, avg_latency_ms, providers 状态, requests_by_api_type, requests_by_provider
 
----
-
-## 阶段 4：统计 API 增强（时间序列）
-
-### 目标
-在阶段3基础上，增加时间粒度聚合，用于绘制趋势图。
-
-### API 定义
-
-```
-GET /admin/api/stats?period=24h&granularity=1h
-```
-
-### 新增参数
-| 参数 | 说明 | 可选值 |
-|------|------|--------|
-| `granularity` | 时间粒度 | `5m`/`15m`/`1h`/`6h`/`1d` |
-
-### 响应示例（增加 timeseries 字段）
-```json
-{
-  "summary": {
-    "total_requests": 12580,
-    "success_rate": 0.9618,
-    ...
-  },
-  "timeseries": [
-    {
-      "time": "2026-01-12T00:00:00Z",
-      "requests": 500,
-      "success_count": 490,
-      "fail_count": 10,
-      "success_rate": 0.98,
-      "avg_latency_ms": 1100
-    },
-    {
-      "time": "2026-01-12T01:00:00Z",
-      "requests": 480,
-      "success_count": 465,
-      "fail_count": 15,
-      "success_rate": 0.97,
-      "avg_latency_ms": 1250
-    }
-  ]
-}
-```
-
-### 实现要点
-1. 使用 SQL 的 `strftime` 或时间函数按粒度分组
-2. 补齐没有数据的时间点（填充零值）
-3. 考虑查询性能，大时间范围 + 小粒度时返回错误
-
-### 粒度限制规则
-| period | 允许的最小粒度 |
-|--------|---------------|
-| 24h | 5m |
-| 7d | 1h |
-| 30d | 6h |
-| all | 1d |
-
-### 完成标志
-- [ ] 时间序列数据正确
-- [ ] 时间点连续（补零）
-- [ ] 粒度限制生效
+### 阶段 4：统计 API 增强（时间序列）
+- **端点**: `GET /admin/api/stats?period=24h&granularity=1h`
+- **granularity 可选值**: `5m`/`15m`/`1h`/`6h`/`1d`
+- **粒度限制**: 24h≥5m, 7d≥1h, 30d≥6h, all≥1d
+- **新增返回字段**: `timeseries` 数组，包含每个时间桶的 requests/success_count/fail_count/success_rate/avg_latency_ms
 
 ---
 
@@ -215,10 +156,7 @@ POST /admin/api/config/import
 ## 阶段依赖关系
 
 ```
-阶段 1-3 ✅ 已完成
-        │
-        ▼
-阶段 4 (统计增强) ─→ 依赖阶段 3
+阶段 1-4 ✅ 已完成
         │
         ▼
 阶段 5 (Group操作) ─→ 可独立

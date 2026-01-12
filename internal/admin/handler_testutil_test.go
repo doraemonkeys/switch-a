@@ -323,6 +323,69 @@ func (m *mockStore) GetLogStats(_ context.Context, startTime, endTime time.Time)
 	return stats, nil
 }
 
+func (m *mockStore) GetLogTimeSeries(_ context.Context, startTime, endTime time.Time, granularity time.Duration) ([]model.TimeSeriesPoint, error) {
+	if m.logsErr != nil {
+		return nil, m.logsErr
+	}
+
+	granularitySeconds := int64(granularity.Seconds())
+
+	// Create buckets map
+	buckets := make(map[int64]*model.TimeSeriesPoint)
+
+	// Filter logs and aggregate into buckets
+	for _, log := range m.logs {
+		if !startTime.IsZero() && log.CreatedAt.Before(startTime) {
+			continue
+		}
+		if log.CreatedAt.After(endTime) || log.CreatedAt.Equal(endTime) {
+			continue
+		}
+
+		bucketTime := (log.CreatedAt.Unix() / granularitySeconds) * granularitySeconds
+		bucket, ok := buckets[bucketTime]
+		if !ok {
+			bucket = &model.TimeSeriesPoint{
+				Time: time.Unix(bucketTime, 0).UTC(),
+			}
+			buckets[bucketTime] = bucket
+		}
+
+		bucket.Requests++
+		bucket.AvgLatencyMs += log.LatencyMs // Will divide later
+		if log.Success {
+			bucket.SuccessCount++
+		} else {
+			bucket.FailCount++
+		}
+	}
+
+	// Calculate averages for existing buckets
+	for _, bucket := range buckets {
+		if bucket.Requests > 0 {
+			bucket.SuccessRate = float64(bucket.SuccessCount) / float64(bucket.Requests)
+			bucket.AvgLatencyMs = bucket.AvgLatencyMs / bucket.Requests
+		}
+	}
+
+	// Generate all time buckets and fill with data or zeros
+	var result []model.TimeSeriesPoint
+	startBucket := (startTime.Unix() / granularitySeconds) * granularitySeconds
+	endBucket := (endTime.Unix() / granularitySeconds) * granularitySeconds
+
+	for bucket := startBucket; bucket < endBucket; bucket += granularitySeconds {
+		if point, ok := buckets[bucket]; ok {
+			result = append(result, *point)
+		} else {
+			result = append(result, model.TimeSeriesPoint{
+				Time: time.Unix(bucket, 0).UTC(),
+			})
+		}
+	}
+
+	return result, nil
+}
+
 // mockHealthManager implements HealthManager interface for testing.
 type mockHealthManager struct {
 	disableErr error

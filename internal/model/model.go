@@ -151,3 +151,13 @@ type ProviderLogStats struct {
 	SuccessCount int64   // Successful request count
 	SuccessRate  float64 // Success rate (0.0 to 1.0)
 }
+
+// TimeSeriesPoint represents a single data point in a time series.
+type TimeSeriesPoint struct {
+	Time         time.Time `json:"time"`
+	Requests     int64     `json:"requests"`
+	SuccessCount int64     `json:"success_count"`
+	FailCount    int64     `json:"fail_count"`
+	SuccessRate  float64   `json:"success_rate"`
+	AvgLatencyMs int64     `json:"avg_latency_ms"`
+}

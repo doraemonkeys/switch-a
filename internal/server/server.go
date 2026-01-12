@@ -58,6 +58,7 @@ type store interface {
 	ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error)
 	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
 	GetLogStats(ctx context.Context, startTime, endTime time.Time) (*model.LogStats, error)
+	GetLogTimeSeries(ctx context.Context, startTime, endTime time.Time, granularity time.Duration) ([]model.TimeSeriesPoint, error)
 }
 
 // Server represents the HTTP server (proxy only).

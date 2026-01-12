@@ -56,6 +56,9 @@ func (m *mockStore) GetLogStats(context.Context, time.Time, time.Time) (*model.L
 		ByProvider: []model.ProviderLogStats{},
 	}, nil
 }
+func (m *mockStore) GetLogTimeSeries(context.Context, time.Time, time.Time, time.Duration) ([]model.TimeSeriesPoint, error) {
+	return nil, nil
+}
 
 func testServer(t *testing.T) *Server {
 	t.Helper()

@@ -22,12 +22,13 @@ const (
 // Default values for resources.
 // Core defaults are derived from the centralized defaults package.
 const (
-	DefaultStrategy   = defaults.InterGroupStrategy
-	DefaultAuthMode   = defaults.AuthMode
-	DefaultWeight     = defaults.ProviderWeight
-	DefaultMaxRetries = -1 // Use global default (special value for admin API)
-	DefaultLogsLimit  = 100
-	MaxLogsLimit      = 1000
+	DefaultStrategy            = defaults.InterGroupStrategy
+	DefaultAuthMode            = defaults.AuthMode
+	DefaultWeight              = defaults.ProviderWeight
+	DefaultMaxRetries          = -1 // Use global default (special value for admin API)
+	DefaultLogsLimit           = 100
+	MaxLogsLimit               = 1000
+	DefaultTimeSeriesRangeDays = 30 // Default fallback range for "all" period time series
 )
 
 // Request body size limits.
