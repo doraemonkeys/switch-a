@@ -9,6 +9,7 @@ import {
   FormActions,
   AuthModeField,
 } from "./ProviderFormFields";
+import { slugify } from "../../lib/utils";
 
 export interface ProviderModalProps {
   initialData?: Provider;
@@ -42,6 +43,8 @@ export function ProviderModal({
 
   const [apiTypesInput, setApiTypesInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Track if user has manually edited the ID to something different from auto-generated
+  const [idManuallyEdited, setIdManuallyEdited] = useState(false);
 
   useEffect(() => {
     if (initialData) {
@@ -60,6 +63,9 @@ export function ProviderModal({
         enabled: initialData.enabled,
       });
       setApiTypesInput(initialData.api_types.map((t) => t.api_type).join(", "));
+    } else {
+      // Reset for new providers
+      setIdManuallyEdited(false);
     }
   }, [initialData]);
 
@@ -81,7 +87,7 @@ export function ProviderModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-bg-primary rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-bg-primary rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="p-6 border-b border-border">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-text-primary">
@@ -97,33 +103,53 @@ export function ProviderModal({
             </button>
           </div>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {!isEditMode && (
-            <FormField label="ID">
-              <input
-                type="text"
-                className="input"
-                value={formData.id || ""}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, id: e.target.value }))
-                }
-                required
-                placeholder="e.g., openai-prod"
-              />
-            </FormField>
-          )}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4" autoComplete="off">
           <FormField label="Name">
             <input
               type="text"
               className="input"
               value={formData.name}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, name: e.target.value }))
-              }
+              onChange={(e) => {
+                const newName = e.target.value;
+                setFormData((prev) => {
+                  // Auto-generate ID from name if not in edit mode and ID hasn't been manually edited
+                  if (!isEditMode && !idManuallyEdited) {
+                    return { ...prev, name: newName, id: slugify(newName) };
+                  }
+                  return { ...prev, name: newName };
+                });
+              }}
               required
+              autoComplete="off"
               placeholder="e.g., OpenAI Production"
             />
           </FormField>
+          {!isEditMode && (
+            <FormField label="ID">
+              <input
+                type="text"
+                className="input"
+                value={formData.id}
+                onChange={(e) => {
+                  const newId = e.target.value;
+                  // Only mark as manually edited if user types something different from auto-generated
+                  const autoId = slugify(formData.name);
+                  if (newId !== autoId) {
+                    setIdManuallyEdited(true);
+                  } else {
+                    setIdManuallyEdited(false);
+                  }
+                  setFormData((prev) => ({ ...prev, id: newId }));
+                }}
+                required
+                autoComplete="off"
+                placeholder="Auto-generated from name, or customize"
+              />
+              <p className="text-xs text-text-muted mt-1">
+                Auto-generated from Name. You can customize it if needed.
+              </p>
+            </FormField>
+          )}
           <FormField label="Base URL">
             <input
               type="url"
@@ -133,6 +159,7 @@ export function ProviderModal({
                 setFormData((prev) => ({ ...prev, base_url: e.target.value }))
               }
               required
+              autoComplete="off"
               placeholder="e.g., https://api.openai.com"
             />
           </FormField>
@@ -145,6 +172,7 @@ export function ProviderModal({
                 setFormData((prev) => ({ ...prev, api_key: e.target.value }))
               }
               required
+              autoComplete="new-password"
               placeholder="sk-..."
             />
           </FormField>
