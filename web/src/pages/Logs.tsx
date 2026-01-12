@@ -104,7 +104,7 @@ export function Logs() {
             ← Previous
           </button>
           <div className="flex items-center gap-1">
-            <button className="w-9 h-9 rounded-lg bg-primary text-white text-sm font-medium">
+            <button className="w-9 h-9 rounded-lg bg-primary text-white text-sm font-medium cursor-pointer">
               1
             </button>
           </div>

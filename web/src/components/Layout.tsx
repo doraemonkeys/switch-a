@@ -47,7 +47,7 @@ export function Layout() {
               </div>
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded-lg transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded-lg transition-colors cursor-pointer"
               >
                 <span>🚪</span>
                 <span>Logout</span>

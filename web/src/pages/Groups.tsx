@@ -191,14 +191,14 @@ function GroupCard({ group, onEdit, onDelete }: GroupCardProps) {
       <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
-          className="p-1.5 rounded-lg bg-bg-tertiary text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors"
+          className="p-1.5 rounded-lg bg-bg-tertiary text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
           title="Edit"
         >
           <EditIcon />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="p-1.5 rounded-lg bg-bg-tertiary text-text-secondary hover:text-red-400 hover:bg-red-400/10 transition-colors"
+          className="p-1.5 rounded-lg bg-bg-tertiary text-text-secondary hover:text-red-400 hover:bg-red-400/10 transition-colors cursor-pointer"
           title="Delete"
         >
           <TrashIcon />

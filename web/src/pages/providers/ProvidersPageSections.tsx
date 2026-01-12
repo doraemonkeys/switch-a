@@ -53,7 +53,7 @@ export function MutationErrorAlert({
       </div>
       <button
         onClick={onDismiss}
-        className="text-danger-dark hover:text-danger transition-colors"
+        className="text-danger-dark hover:text-danger transition-colors cursor-pointer"
         aria-label="Dismiss error"
       >
         ✕

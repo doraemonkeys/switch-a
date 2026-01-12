@@ -59,7 +59,7 @@ export function ApiTypesField({ value, onChange }: ApiTypesFieldProps) {
               key={type}
               type="button"
               onClick={() => toggleApiType(type)}
-              className={`px-2 py-1 text-xs rounded-full border transition-colors ${
+              className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${
                 isSelected
                   ? "bg-primary text-white border-primary"
                   : "bg-bg-secondary text-text-secondary border-border hover:border-primary"
@@ -198,7 +198,7 @@ export function EnabledCheckbox({ checked, onChange }: EnabledCheckboxProps) {
       />
       <label
         htmlFor="enabled"
-        className="text-sm font-medium text-text-secondary"
+        className="text-sm font-medium text-text-secondary cursor-pointer"
       >
         Enable provider immediately
       </label>

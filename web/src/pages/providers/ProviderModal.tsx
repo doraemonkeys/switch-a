@@ -20,7 +20,7 @@ function ModalHeader({ title, onClose }: { title: string; onClose: () => void })
         <button
           type="button"
           onClick={onClose}
-          className="text-text-muted hover:text-text-primary transition-colors"
+          className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
           aria-label="Close"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

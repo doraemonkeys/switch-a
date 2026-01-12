@@ -9,7 +9,7 @@ const CloseButton = ({ onClick, disabled }: { onClick: () => void; disabled?: bo
     <button
         onClick={onClick}
         disabled={disabled}
-        className="text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+        className="text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
         aria-label="Close"
     >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -237,7 +237,7 @@ export function GroupModal({ isOpen, onClose, onSubmit, initialData, title }: Gr
                             type="button"
                             onClick={onClose}
                             disabled={loading}
-                            className="px-4 py-2 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                            className="px-4 py-2 text-text-secondary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Cancel
                         </button>

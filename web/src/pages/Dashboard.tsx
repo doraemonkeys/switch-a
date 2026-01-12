@@ -95,7 +95,7 @@ export function Dashboard() {
             <span className="text-sm text-text-secondary">Auto-refresh</span>
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
                 autoRefresh ? "bg-primary" : "bg-gray-200"
               }`}
             >
@@ -490,7 +490,7 @@ function QuickActionButton({ icon, label, onClick }: QuickActionButtonProps) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border 
+      className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border cursor-pointer
                        hover:bg-bg-hover hover:border-primary/30 transition-all duration-200 group text-left"
     >
       <span className="text-lg group-hover:scale-110 transition-transform">

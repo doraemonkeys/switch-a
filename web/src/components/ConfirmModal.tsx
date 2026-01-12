@@ -56,7 +56,7 @@ export function ConfirmModal({
                     <button
                         onClick={onClose}
                         disabled={loading}
-                        className="text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                        className="text-text-secondary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         aria-label="Close"
                     >
                         <svg
@@ -84,7 +84,7 @@ export function ConfirmModal({
                         type="button"
                         onClick={onClose}
                         disabled={loading}
-                        className="px-4 py-2 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                        className="px-4 py-2 text-text-secondary hover:text-text-primary transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {cancelText}
                     </button>
@@ -92,7 +92,7 @@ export function ConfirmModal({
                         type="button"
                         onClick={onConfirm}
                         disabled={loading}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${variantStyles[variant]}`}
+                        className={`px-4 py-2 rounded-lg font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${variantStyles[variant]}`}
                     >
                         {loading ? "Processing..." : confirmText}
                     </button>
