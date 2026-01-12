@@ -111,7 +111,7 @@ export function GroupModal({
     (e: KeyboardEvent) => {
       if (e.key === "Escape" && !loading) onClose();
     },
-    [onClose, loading],
+    [onClose, loading]
   );
 
   useEffect(() => {
@@ -184,7 +184,7 @@ export function GroupModal({
     setIdError(
       newId && !isValidId(newId)
         ? "ID can only contain lowercase letters, numbers, and hyphens"
-        : null,
+        : null
     );
   };
 

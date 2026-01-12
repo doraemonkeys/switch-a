@@ -17,7 +17,7 @@ interface UseLogsResult {
   params: UseLogsParams;
 }
 
-const DEFAULT_LIMIT = 20;
+export const DEFAULT_LIMIT = 20;
 
 export function useLogs(initialParams?: UseLogsParams): UseLogsResult {
   const api = useApi();
