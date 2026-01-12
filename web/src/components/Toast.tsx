@@ -210,25 +210,25 @@ export function ToastProvider({ children }: ToastProviderProps) {
   const success = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "success", message, duration }),
-    [addToast]
+    [addToast],
   );
 
   const error = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "error", message, duration }),
-    [addToast]
+    [addToast],
   );
 
   const warning = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "warning", message, duration }),
-    [addToast]
+    [addToast],
   );
 
   const info = useCallback(
     (message: string, duration?: number) =>
       addToast({ type: "info", message, duration }),
-    [addToast]
+    [addToast],
   );
 
   const value: ToastContextValue = {
