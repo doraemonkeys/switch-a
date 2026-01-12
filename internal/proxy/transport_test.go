@@ -451,36 +451,46 @@ func TestSSEIdleTimeout(t *testing.T) {
 	})
 }
 
-func TestIsClosedError(t *testing.T) {
-	tests := []struct {
-		name   string
-		errMsg string
-		want   bool
-	}{
-		{"closed error", "use of closed network connection", true},
-		{"EOF error", "unexpected EOF", true},
-		{"reset error", "connection reset by peer", true},
-		{"timeout error", "i/o timeout", false},
-		{"random error", "some random error", false},
-	}
+func TestIdleWatchdogTimedOut(t *testing.T) {
+	t.Run("nil watchdog returns false", func(t *testing.T) {
+		var w *idleWatchdog
+		if w.TimedOut() {
+			t.Error("nil watchdog should return false for TimedOut()")
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &testError{msg: tt.errMsg}
-			got := isClosedError(err)
-			if got != tt.want {
-				t.Errorf("isClosedError(%q) = %v, want %v", tt.errMsg, got, tt.want)
-			}
-		})
-	}
-}
+	t.Run("new watchdog not timed out", func(t *testing.T) {
+		body := io.NopCloser(strings.NewReader("test"))
+		w := newIdleWatchdog(context.Background(), body, 1*time.Second)
+		defer w.Stop()
 
-type testError struct {
-	msg string
-}
+		if w.TimedOut() {
+			t.Error("new watchdog should not be timed out")
+		}
+	})
 
-func (e *testError) Error() string {
-	return e.msg
+	t.Run("watchdog times out after idle period", func(t *testing.T) {
+		body := io.NopCloser(strings.NewReader("test"))
+		w := newIdleWatchdog(context.Background(), body, 10*time.Millisecond)
+
+		// Wait for timeout
+		time.Sleep(50 * time.Millisecond)
+
+		if !w.TimedOut() {
+			t.Error("watchdog should be timed out after idle period")
+		}
+		w.Stop()
+	})
+
+	t.Run("stopped watchdog not timed out", func(t *testing.T) {
+		body := io.NopCloser(strings.NewReader("test"))
+		w := newIdleWatchdog(context.Background(), body, 1*time.Second)
+		w.Stop()
+
+		if w.TimedOut() {
+			t.Error("stopped watchdog should not be timed out")
+		}
+	})
 }
 
 func TestSSEIdleTimeoutError(t *testing.T) {

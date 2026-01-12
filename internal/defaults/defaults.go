@@ -98,4 +98,10 @@ const (
 	StatusServerError = http.StatusInternalServerError
 	// StatusTooManyRequests indicates rate limiting that may be retried.
 	StatusTooManyRequests = http.StatusTooManyRequests
+	// StatusUnauthorized indicates authentication failure (e.g., invalid API key).
+	// This should trigger retry with other providers as it indicates provider misconfiguration.
+	StatusUnauthorized = http.StatusUnauthorized
+	// StatusForbidden indicates access denied (e.g., expired API key, insufficient permissions).
+	// This should trigger retry with other providers as it indicates provider misconfiguration.
+	StatusForbidden = http.StatusForbidden
 )

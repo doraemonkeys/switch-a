@@ -883,13 +883,10 @@ func TestSelector_GroupLoadError(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	// Should still select provider (treated as ungrouped)
-	provider, err := sel.Select(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider.ID != "p1" {
-		t.Errorf("expected p1, got %s", provider.ID)
+	// Fail-closed: provider should be skipped when group load fails
+	_, err := sel.Select(context.Background(), req)
+	if err != internal.ErrNoProvider {
+		t.Errorf("expected ErrNoProvider, got %v", err)
 	}
 }
 

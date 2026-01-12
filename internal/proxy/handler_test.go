@@ -311,8 +311,8 @@ func TestShouldRetry(t *testing.T) {
 		{200, false},
 		{201, false},
 		{400, false},
-		{401, false},
-		{403, false},
+		{401, true}, // Unauthorized - provider misconfiguration, try another
+		{403, true}, // Forbidden - provider misconfiguration, try another
 		{404, false},
 		{429, true}, // Rate limit
 		{500, true}, // Server error

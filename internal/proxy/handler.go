@@ -418,9 +418,19 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		return result
 	}
 
-	// True success: upstream responded and we wrote it to client
-	result.success = true
-	h.markSuccess(ctx, provider.ID)
+	// Mark as success only for 2xx/3xx status codes.
+	// Other status codes (4xx like 400 Bad Request) indicate the request was processed
+	// but wasn't a true "success" for health tracking purposes.
+	// Note: Retryable error codes (401, 403, 429, 5xx) are already handled above
+	// and will not reach this point.
+	if result.statusCode < 400 {
+		result.success = true
+		h.markSuccess(ctx, provider.ID)
+	} else {
+		// Non-retryable client errors (e.g., 400 Bad Request, 404 Not Found)
+		// Set result flag to false but skip health tracking - client errors don't reflect provider health
+		result.success = false
+	}
 	h.releaseConcurrency(provider.ID)
 
 	// Update sticky cache
@@ -520,7 +530,7 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		return nil, err
 	}
-	cfg.trustProxy = trustProxy == "true"
+	cfg.trustProxy = parseBoolOrDefault(trustProxy, false)
 
 	// User header
 	userHeader, err := h.store.GetConfig(ctx, ConfigKeyUserHeader)
@@ -647,9 +657,16 @@ func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusC
 }
 
 // shouldRetry determines if a response status code indicates a retryable failure.
-// Retries on server errors (5xx) and rate limiting (429 Too Many Requests).
+// Retries on:
+//   - Server errors (5xx): temporary upstream issues
+//   - Rate limiting (429): provider overloaded, try another
+//   - Authentication errors (401, 403): provider misconfiguration (wrong/expired API key),
+//     try another provider that might have valid credentials
 func shouldRetry(statusCode int) bool {
-	return statusCode >= defaults.StatusServerError || statusCode == defaults.StatusTooManyRequests
+	return statusCode >= defaults.StatusServerError ||
+		statusCode == defaults.StatusTooManyRequests ||
+		statusCode == defaults.StatusUnauthorized ||
+		statusCode == defaults.StatusForbidden
 }
 
 // buildFullURL constructs the full upstream URL.

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"switch-a/internal/defaults"
@@ -286,11 +287,13 @@ func (t *Transport) forwardRegular(ctx context.Context, w http.ResponseWriter, b
 // It closes the body when no data is received within the timeout period,
 // which interrupts any blocking Read() call and prevents goroutine leaks.
 type idleWatchdog struct {
-	closer  io.Closer
-	timer   *time.Timer
-	timeout time.Duration
-	done    chan struct{}
-	stopped chan struct{}
+	closer       io.Closer
+	timer        *time.Timer
+	timeout      time.Duration
+	done         chan struct{}
+	stopped      chan struct{}
+	timedOut     bool // set to true when watchdog closes connection due to idle timeout
+	timedOutLock sync.Mutex
 }
 
 // newIdleWatchdog creates and starts an idle watchdog for SSE streams.
@@ -329,7 +332,10 @@ func (w *idleWatchdog) run(ctx context.Context) {
 		// Normal completion - stop watching
 		return
 	case <-w.timer.C:
-		// Idle timeout - close body to interrupt blocking Read()
+		// Idle timeout - set flag and close body to interrupt blocking Read()
+		w.timedOutLock.Lock()
+		w.timedOut = true
+		w.timedOutLock.Unlock()
 		_ = w.closer.Close()
 		return
 	}
@@ -354,6 +360,17 @@ func (w *idleWatchdog) Stop() {
 	}
 	close(w.done)
 	<-w.stopped // Wait for goroutine to exit
+}
+
+// TimedOut returns true if the watchdog closed the connection due to idle timeout.
+// This is more reliable than checking error strings, as it uses a flag set by the watchdog.
+func (w *idleWatchdog) TimedOut() bool {
+	if w == nil {
+		return false
+	}
+	w.timedOutLock.Lock()
+	defer w.timedOutLock.Unlock()
+	return w.timedOut
 }
 
 // forwardSSE forwards a Server-Sent Events stream with flushing.
@@ -397,24 +414,18 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 			if err == io.EOF {
 				return nil
 			}
-			// Check if this is an idle timeout (body was closed by watchdog)
-			if t.sseIdleTimeout > 0 && isClosedError(err) {
+			// Check if this is an idle timeout (body was closed by watchdog).
+			// Use the watchdog's flag instead of error string matching for reliability.
+			// String matching (e.g., checking for "closed", "EOF", "reset") is fragile
+			// because real network errors may contain the same patterns and would be
+			// incorrectly classified as idle timeouts, affecting circuit breaker stats.
+			if watchdog.TimedOut() {
 				return ErrSSEIdleTimeout
 			}
 			// Wrap as upstream read error to distinguish from client write errors
 			return NewUpstreamReadError(err) // coverage-ignore -- read errors during SSE are rare
 		}
 	}
-}
-
-// isClosedError checks if the error indicates the connection was closed.
-// This happens when the idle watchdog closes the body to interrupt Read().
-func isClosedError(err error) bool {
-	// Common patterns for closed connection errors
-	errStr := err.Error()
-	return strings.Contains(errStr, "closed") ||
-		strings.Contains(errStr, "EOF") ||
-		strings.Contains(errStr, "reset")
 }
 
 // BuildUpstreamRequest creates an HTTP request for the upstream server.
