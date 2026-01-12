@@ -17,7 +17,11 @@ function TestComponent() {
         Show Warning
       </button>
       <button onClick={() => toast.info("Info message")}>Show Info</button>
-      <button onClick={() => toast.addToast({ type: "info", message: "Custom", duration: 0 })}>
+      <button
+        onClick={() =>
+          toast.addToast({ type: "info", message: "Custom", duration: 0 })
+        }
+      >
         Persistent Toast
       </button>
     </div>
@@ -37,7 +41,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Show Success"));
@@ -48,7 +52,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Show Error"));
@@ -59,7 +63,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Show Warning"));
@@ -70,7 +74,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Show Info"));
@@ -81,7 +85,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Show Success"));
@@ -99,7 +103,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Persistent Toast"));
@@ -118,7 +122,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Show Success"));
@@ -139,7 +143,7 @@ describe("Toast", () => {
     render(
       <ToastProvider>
         <TestComponent />
-      </ToastProvider>
+      </ToastProvider>,
     );
 
     fireEvent.click(screen.getByText("Show Success"));
@@ -161,7 +165,7 @@ describe("Toast", () => {
     }
 
     expect(() => render(<BrokenComponent />)).toThrow(
-      "useToast must be used within a ToastProvider"
+      "useToast must be used within a ToastProvider",
     );
 
     consoleSpy.mockRestore();

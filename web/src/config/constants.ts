@@ -29,7 +29,8 @@ export const STRATEGY_OPTIONS = [
   {
     value: STRATEGIES.PRIORITY,
     label: "Priority",
-    description: "Select providers in order of priority. Lower number = higher priority. Best for primary/backup setups.",
+    description:
+      "Select providers in order of priority. Lower number = higher priority. Best for primary/backup setups.",
   },
   {
     value: STRATEGIES.RANDOM,
@@ -39,7 +40,8 @@ export const STRATEGY_OPTIONS = [
   {
     value: STRATEGIES.WEIGHT,
     label: "Weight",
-    description: "Select based on configured weights (higher weight = more likely)",
+    description:
+      "Select based on configured weights (higher weight = more likely)",
   },
 ] as const;
 
@@ -64,7 +66,8 @@ export const AUTH_MODE_OPTIONS = [
   {
     value: AUTH_MODES.BEARER,
     label: "Bearer",
-    description: "Use Bearer token authentication (Authorization: Bearer <key>)",
+    description:
+      "Use Bearer token authentication (Authorization: Bearer <key>)",
   },
   {
     value: AUTH_MODES.X_API_KEY,
@@ -118,7 +121,10 @@ export function isValidAPIType(type: string): boolean {
   if (Object.values(API_TYPES).includes(type as APIType)) {
     return true;
   }
-  return type.startsWith(CUSTOM_API_TYPE_PREFIX) && type.length > CUSTOM_API_TYPE_PREFIX.length;
+  return (
+    type.startsWith(CUSTOM_API_TYPE_PREFIX) &&
+    type.length > CUSTOM_API_TYPE_PREFIX.length
+  );
 }
 
 /**

@@ -12,7 +12,13 @@ import {
 } from "./ProviderFormFields";
 import { slugify, isValidId } from "../../lib/utils";
 
-function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function ModalHeader({
+  title,
+  onClose,
+}: {
+  title: string;
+  onClose: () => void;
+}) {
   return (
     <div className="p-6 border-b border-border">
       <div className="flex items-center justify-between">
@@ -23,8 +29,18 @@ function ModalHeader({ title, onClose }: { title: string; onClose: () => void })
           className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
           aria-label="Close"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          <svg
+            className="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M6 18L18 6M6 6l12 12"
+            />
           </svg>
         </button>
       </div>
@@ -76,7 +92,7 @@ export function ProviderModal({
         onClose();
       }
     },
-    [onClose, submitting]
+    [onClose, submitting],
   );
 
   useEffect(() => {
@@ -157,8 +173,15 @@ export function ProviderModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-bg-primary rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-        <ModalHeader title={isEditMode ? "Edit Provider" : "Add Provider"} onClose={onClose} />
-        <form onSubmit={handleSubmit} className="p-6 space-y-4" autoComplete="off">
+        <ModalHeader
+          title={isEditMode ? "Edit Provider" : "Add Provider"}
+          onClose={onClose}
+        />
+        <form
+          onSubmit={handleSubmit}
+          className="p-6 space-y-4"
+          autoComplete="off"
+        >
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">
               {error}
@@ -202,7 +225,9 @@ export function ProviderModal({
                   setFormData((prev) => ({ ...prev, id: newId }));
                   // Validate ID and show error if invalid
                   if (newId && !isValidId(newId)) {
-                    setIdError("ID can only contain lowercase letters, numbers, and hyphens");
+                    setIdError(
+                      "ID can only contain lowercase letters, numbers, and hyphens",
+                    );
                   } else {
                     setIdError(null);
                   }
@@ -215,7 +240,8 @@ export function ProviderModal({
                 <p className="text-xs text-red-400 mt-1">{idError}</p>
               ) : (
                 <p className="text-xs text-text-muted mt-1">
-                  Auto-generated from Name + random ID. Only lowercase letters, numbers, and hyphens allowed.
+                  Auto-generated from Name + random ID. Only lowercase letters,
+                  numbers, and hyphens allowed.
                 </p>
               )}
             </FormField>
@@ -264,8 +290,20 @@ export function ProviderModal({
             formData={formData}
             setFormData={setFormData}
             fields={[
-              { key: "priority", label: "Priority", min: 0, defaultValue: 0, hint: "Lower = higher priority (0 is highest)" },
-              { key: "weight", label: "Weight", min: 1, defaultValue: 1, hint: "Higher = more traffic (for weight strategy)" },
+              {
+                key: "priority",
+                label: "Priority",
+                min: 0,
+                defaultValue: 0,
+                hint: "Lower = higher priority (0 is highest)",
+              },
+              {
+                key: "weight",
+                label: "Weight",
+                min: 1,
+                defaultValue: 1,
+                hint: "Higher = more traffic (for weight strategy)",
+              },
             ]}
           />
           <NumberFieldRow

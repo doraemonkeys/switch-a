@@ -36,7 +36,10 @@ export function Providers() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
   const [showModal, setShowModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; provider: Provider | null }>({
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    provider: Provider | null;
+  }>({
     isOpen: false,
     provider: null,
   });
