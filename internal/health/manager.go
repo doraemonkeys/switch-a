@@ -33,6 +33,11 @@ const (
 	ReasonCircuitBreakerTriggered = "circuit breaker triggered"
 )
 
+// healthTrackingTimeout is the timeout for internal health tracking operations.
+// Health tracking uses a detached context to ensure completion even if the
+// request context is cancelled (e.g., client disconnect).
+const healthTrackingTimeout = 5 * time.Second
+
 // Store defines the minimal storage interface needed by the health manager.
 type Store interface {
 	GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error)
@@ -85,12 +90,18 @@ func (m *Manager) StartCleanupLoop(interval, maxAge time.Duration) (stop func())
 }
 
 // MarkSuccess marks a successful request for the provider.
-func (m *Manager) MarkSuccess(ctx context.Context, providerID string) {
+// Note: Uses internal context for database operations to ensure health tracking
+// completes even if the request context is cancelled (e.g., client disconnect).
+func (m *Manager) MarkSuccess(_ context.Context, providerID string) {
 	now := m.clock.Now()
+
+	// Detach from request context - health tracking is bookkeeping that must complete
+	internalCtx, cancel := context.WithTimeout(context.Background(), healthTrackingTimeout)
+	defer cancel()
 
 	// Use atomic increment to avoid race conditions.
 	// This prevents lost updates when concurrent requests complete simultaneously.
-	_, err := m.store.IncrementSuccessCount(ctx, providerID, now)
+	_, err := m.store.IncrementSuccessCount(internalCtx, providerID, now)
 	if err != nil {
 		m.logger.Error("failed to increment success count", zap.String("provider_id", providerID), zap.Error(err))
 		return
@@ -101,8 +112,14 @@ func (m *Manager) MarkSuccess(ctx context.Context, providerID string) {
 }
 
 // MarkFailure marks a failed request, returns true if circuit breaker triggered.
-func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error) bool {
+// Note: Uses internal context for database operations to ensure health tracking
+// completes even if the request context is cancelled (e.g., client disconnect).
+func (m *Manager) MarkFailure(_ context.Context, providerID string, err error) bool {
 	now := m.clock.Now()
+
+	// Detach from request context - health tracking is bookkeeping that must complete
+	internalCtx, cancel := context.WithTimeout(context.Background(), healthTrackingTimeout)
+	defer cancel()
 
 	// Extract error message
 	var lastError string
@@ -112,16 +129,16 @@ func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error)
 
 	// Use atomic increment to avoid race conditions.
 	// This prevents lost updates when concurrent requests fail simultaneously.
-	_, stateErr := m.store.IncrementFailCount(ctx, providerID, now, lastError)
+	_, stateErr := m.store.IncrementFailCount(internalCtx, providerID, now, lastError)
 	if stateErr != nil {
 		m.logger.Error("failed to increment fail count", zap.String("provider_id", providerID), zap.Error(stateErr))
 		return false
 	}
 
 	// Get circuit breaker config
-	circuitFailure := m.getConfigInt(ctx, "circuit_failure", DefaultCircuitFailure)
-	circuitWindow := time.Duration(m.getConfigInt(ctx, "circuit_window", DefaultCircuitWindow)) * time.Second
-	circuitDisable := time.Duration(m.getConfigInt(ctx, "circuit_disable", DefaultCircuitDisable)) * time.Second
+	circuitFailure := m.getConfigInt(internalCtx, "circuit_failure", DefaultCircuitFailure)
+	circuitWindow := time.Duration(m.getConfigInt(internalCtx, "circuit_window", DefaultCircuitWindow)) * time.Second
+	circuitDisable := time.Duration(m.getConfigInt(internalCtx, "circuit_disable", DefaultCircuitDisable)) * time.Second
 
 	// Record failure in in-memory circuit breaker and check if threshold reached
 	triggered := m.circuit.RecordFailure(providerID, circuitWindow, circuitFailure)
@@ -131,7 +148,7 @@ func (m *Manager) MarkFailure(ctx context.Context, providerID string, err error)
 
 		// Use atomic update to set circuit breaker state.
 		// This prevents a concurrent MarkSuccess from overwriting the disabled state.
-		if triggerErr := m.store.TriggerCircuitBreaker(ctx, providerID, disableUntil, reason); triggerErr != nil {
+		if triggerErr := m.store.TriggerCircuitBreaker(internalCtx, providerID, disableUntil, reason); triggerErr != nil {
 			m.logger.Error("failed to trigger circuit breaker", zap.String("provider_id", providerID), zap.Error(triggerErr))
 		}
 
