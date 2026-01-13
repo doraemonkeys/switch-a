@@ -36,7 +36,7 @@ const (
 // Timeout defaults.
 const (
 	// UpstreamConnectTimeoutSec is the default upstream connection timeout in seconds.
-	UpstreamConnectTimeoutSec = 10
+	UpstreamConnectTimeoutSec = 20
 	// FirstByteTimeoutSec is the default timeout for receiving the first response byte in seconds.
 	// 0 means no timeout (wait indefinitely for the first byte).
 	// This is separate from ReadTimeout to support AI model inference scenarios where
@@ -76,7 +76,7 @@ const (
 // Request handling defaults.
 const (
 	// MaxBodySizeMB is the default maximum request body size in MB.
-	MaxBodySizeMB int64 = 10
+	MaxBodySizeMB int64 = 128
 	// MaxRetries is the default maximum number of retries.
 	MaxRetries = 3
 	// LogRetentionDays is the default log retention period in days.

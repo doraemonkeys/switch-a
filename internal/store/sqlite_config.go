@@ -10,9 +10,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// getDefaultConfigs returns the default runtime configuration values.
+// GetDefaultConfigs returns the default runtime configuration values.
 // Returns a new map each time to prevent mutation of shared state.
-func getDefaultConfigs() map[string]string {
+// This is exported so the admin API can return defaults separately from user values.
+func GetDefaultConfigs() map[string]string {
 	return map[string]string{
 		"auth_mode":                DefaultAuthMode,
 		"user_header":              DefaultUserHeader,
@@ -40,7 +41,7 @@ func (s *SQLiteStore) GetConfig(ctx context.Context, key string) (string, error)
 	err := s.db.WithContext(ctx).First(&cfg, "key = ?", key).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// Return default value if exists
-		if defaultVal, ok := getDefaultConfigs()[key]; ok {
+		if defaultVal, ok := GetDefaultConfigs()[key]; ok {
 			return defaultVal, nil
 		}
 		return "", nil

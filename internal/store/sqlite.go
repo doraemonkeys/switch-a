@@ -87,7 +87,7 @@ func (s *SQLiteStore) Close() error {
 
 // InitDefaultConfig initializes default runtime configuration values.
 func (s *SQLiteStore) InitDefaultConfig(ctx context.Context) error {
-	for key, value := range getDefaultConfigs() {
+	for key, value := range GetDefaultConfigs() {
 		err := s.db.WithContext(ctx).Exec(
 			"INSERT OR IGNORE INTO runtime_configs (key, value, updated_at) VALUES (?, ?, ?)",
 			key, value, s.clock.Now(),

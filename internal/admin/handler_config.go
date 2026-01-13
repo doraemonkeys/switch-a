@@ -5,21 +5,42 @@ import (
 	"net/http"
 	"strconv"
 
+	"switch-a/internal/store"
+
 	"go.uber.org/zap"
 )
+
+// ConfigResponse represents the config API response with separated defaults and user values.
+// This design allows the frontend to:
+// - Know which settings are user-modified vs default
+// - Implement "reset to default" functionality
+// - Show visual indicators for modified settings
+type ConfigResponse struct {
+	// Defaults contains all default configuration values.
+	Defaults map[string]string `json:"defaults"`
+	// Values contains only the user-modified configuration values.
+	// If a key exists in Values, it means the user has customized it.
+	Values map[string]string `json:"values"`
+}
 
 // Config API handlers
 
 // GetConfig handles GET /admin/api/config.
+// Returns both defaults and user-modified values separately.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	config, err := h.store.GetAllConfig(r.Context())
+	values, err := h.store.GetAllConfig(r.Context())
 	if err != nil {
 		h.logger.Error("failed to get config", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get config")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, config)
+	resp := ConfigResponse{
+		Defaults: store.GetDefaultConfigs(),
+		Values:   values,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // UpdateConfig handles PUT /admin/api/config.
@@ -55,13 +76,18 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return updated config
-	config, err := h.store.GetAllConfig(r.Context())
+	// Return updated config with defaults and user values separated
+	values, err := h.store.GetAllConfig(r.Context())
 	if err != nil {
 		h.logger.Error("failed to get config after update", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get config")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, config)
+	resp := ConfigResponse{
+		Defaults: store.GetDefaultConfigs(),
+		Values:   values,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

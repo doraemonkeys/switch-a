@@ -31,13 +31,25 @@ func TestGetConfig(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var config map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&config); err != nil {
+	var resp ConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if config["sticky_enabled"] != "true" {
-		t.Errorf("sticky_enabled = %q, want %q", config["sticky_enabled"], "true")
+	// Check user-modified values
+	if resp.Values["sticky_enabled"] != "true" {
+		t.Errorf("Values[sticky_enabled] = %q, want %q", resp.Values["sticky_enabled"], "true")
+	}
+	if resp.Values["max_retries"] != "3" {
+		t.Errorf("Values[max_retries] = %q, want %q", resp.Values["max_retries"], "3")
+	}
+
+	// Check that defaults are present
+	if resp.Defaults == nil {
+		t.Fatal("Defaults should not be nil")
+	}
+	if _, ok := resp.Defaults["sticky_enabled"]; !ok {
+		t.Error("Defaults should contain sticky_enabled")
 	}
 }
 
@@ -70,11 +82,25 @@ func TestUpdateConfig(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
+	// Verify store was updated
 	if st.config["max_retries"] != "5" {
 		t.Errorf("max_retries = %q, want %q", st.config["max_retries"], "5")
 	}
 	if st.config["sticky_ttl"] != "600" {
 		t.Errorf("sticky_ttl = %q, want %q", st.config["sticky_ttl"], "600")
+	}
+
+	// Verify response format
+	var resp ConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.Values["max_retries"] != "5" {
+		t.Errorf("Values[max_retries] = %q, want %q", resp.Values["max_retries"], "5")
+	}
+	if resp.Defaults == nil {
+		t.Fatal("Defaults should not be nil")
 	}
 }
 
@@ -275,6 +301,18 @@ func TestUpdateConfig_ValidValues(t *testing.T) {
 			}
 			if st.config[tt.key] != tt.value {
 				t.Errorf("%s = %q, want %q", tt.key, st.config[tt.key], tt.value)
+			}
+
+			// Verify response format includes both defaults and values
+			var resp ConfigResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if resp.Defaults == nil {
+				t.Error("Defaults should not be nil")
+			}
+			if resp.Values[tt.key] != tt.value {
+				t.Errorf("Values[%s] = %q, want %q", tt.key, resp.Values[tt.key], tt.value)
 			}
 		})
 	}
