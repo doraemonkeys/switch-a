@@ -219,7 +219,7 @@ export function ProvidersTableBody({
             <td className="table-cell text-center">
               {failCount > 0 ? (
                 <span
-                  className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-medium text-white bg-danger rounded-full"
+                  className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-medium text-danger bg-danger-light rounded"
                   title="Consecutive failures"
                 >
                   {failCount}
@@ -229,11 +229,20 @@ export function ProvidersTableBody({
               )}
             </td>
             <td className="table-cell">
-              {disabledUntil ? (
-                <RecoveryTimer disabledUntil={disabledUntil} />
-              ) : (
-                <span className="text-text-muted text-sm">—</span>
-              )}
+              {(() => {
+                if (status === "pending-recovery") {
+                  return (
+                    <span className="text-xs font-medium bg-warning-light text-warning-dark px-2 py-0.5 rounded inline-flex items-center gap-1">
+                      <span className="inline-block w-1.5 h-1.5 bg-warning rounded-full animate-pulse" />
+                      Probing
+                    </span>
+                  );
+                }
+                if (disabledUntil) {
+                  return <RecoveryTimer disabledUntil={disabledUntil} />;
+                }
+                return <span className="text-text-muted text-sm">—</span>;
+              })()}
             </td>
             <td className="table-cell">
               <span className="text-sm text-text-secondary">
@@ -242,7 +251,7 @@ export function ProvidersTableBody({
             </td>
             <td className="table-cell text-right">
               <div className="flex items-center justify-end gap-1">
-                {status === "unhealthy" && (
+                {(status === "unhealthy" || status === "pending-recovery") && (
                   <button
                     onClick={() => onReset(provider)}
                     className="btn btn-ghost btn-sm text-warning hover:bg-warning-light"

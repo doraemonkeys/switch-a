@@ -52,6 +52,6 @@ export const statusBadgeClass: Record<ProviderStatusType, string> = {
 export const statusLabel: Record<ProviderStatusType, string> = {
   healthy: "Healthy",
   unhealthy: "Circuit Open",
-  "pending-recovery": "Pending",
+  "pending-recovery": "Probing",
   disabled: "Disabled",
 };

@@ -1,8 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useProviders } from "../../hooks/useProviders";
 import { useGroups } from "../../hooks/useGroups";
 import { useToast } from "../../hooks/useToast";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { ConfirmModal } from "../../components";
+import { DEFAULT_REFRESH_INTERVAL } from "../../components/refreshIntervalConstants";
 import type { Provider, ProviderInput } from "../../api/client";
 import { getProviderStatus } from "./types";
 import type { StatusFilter } from "./types";
@@ -31,12 +34,38 @@ export function Providers() {
   } = useProviders();
   const { groups } = useGroups();
   const toast = useToast();
+  const [searchParams] = useSearchParams();
 
-  const [searchQuery, setSearchQuery] = useState("");
+  // Initialize filters from URL parameters
+  const [searchQuery, setSearchQuery] = useState(
+    searchParams.get("search") || "",
+  );
   const [groupFilter, setGroupFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    (searchParams.get("status") as StatusFilter) || "",
+  );
+
   const [showModal, setShowModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
+
+  // Auto-refresh state
+  const [refreshInterval, setRefreshInterval] = useLocalStorage(
+    "providers:refreshInterval",
+    DEFAULT_REFRESH_INTERVAL.providers,
+  );
+
+  // Auto-refresh effect
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval>;
+    if (refreshInterval > 0) {
+      intervalId = setInterval(() => {
+        refetch();
+      }, refreshInterval);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [refreshInterval, refetch]);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -77,7 +106,12 @@ export function Providers() {
           status === "pending-recovery"
         )
           return true;
-        if (statusFilter !== status) return false;
+
+        // Map "unhealthy" filter to both "unhealthy" and "circuit-open" status logic if needed
+        // Currently getProviderStatus returns "unhealthy" for circuit open.
+        if (statusFilter === status) return true;
+
+        return false;
       }
       return true;
     });
@@ -192,6 +226,8 @@ export function Providers() {
         loading={loading}
         onRefresh={() => refetch()}
         onAddClick={handleAddClick}
+        refreshInterval={refreshInterval}
+        onRefreshIntervalChange={setRefreshInterval}
       />
 
       <FilterBar

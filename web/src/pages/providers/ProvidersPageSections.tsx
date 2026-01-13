@@ -1,16 +1,21 @@
 import type { Group } from "../../api/client";
 import type { StatusFilter } from "./types";
+import { RefreshIntervalSelect } from "../../components/RefreshIntervalSelect";
 
 interface PageHeaderProps {
   loading: boolean;
   onRefresh: () => void;
   onAddClick: () => void;
+  refreshInterval: number;
+  onRefreshIntervalChange: (interval: number) => void;
 }
 
 export function PageHeader({
   loading,
   onRefresh,
   onAddClick,
+  refreshInterval,
+  onRefreshIntervalChange,
 }: PageHeaderProps) {
   return (
     <div className="flex items-center justify-between">
@@ -20,7 +25,14 @@ export function PageHeader({
           Manage AI provider configurations
         </p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <RefreshIntervalSelect
+            value={refreshInterval}
+            onChange={onRefreshIntervalChange}
+            showLabel
+          />
+        </div>
         <button
           onClick={onRefresh}
           disabled={loading}
