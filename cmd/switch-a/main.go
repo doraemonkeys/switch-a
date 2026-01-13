@@ -217,6 +217,14 @@ func run() error {
 		errCh <- adminSrv.Start()
 	}()
 
+	// Print user-friendly URLs after servers start
+	fmt.Println()
+	fmt.Println("=========================================")
+	fmt.Printf("  Proxy URL:  http://localhost:%s\n", cfg.Port)
+	fmt.Printf("  Admin URL:  http://localhost:%s\n", cfg.AdminPort)
+	fmt.Println("=========================================")
+	fmt.Println()
+
 	// Wait for interrupt signal or server error
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
