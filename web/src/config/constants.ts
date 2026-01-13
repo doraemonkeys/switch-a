@@ -229,4 +229,5 @@ export const CONFIG_DEFAULTS = {
 export const FORM_CONSTRAINTS = {
   MIN_POSITIVE: 1,
   MIN_ZERO: 0,
+  MAX_RETRIES_LIMIT: 10,
 } as const;

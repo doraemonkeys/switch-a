@@ -5,15 +5,16 @@ import {
   AuthSettingsSection,
   StickySessionSection,
   CircuitBreakerSection,
+  TimeoutSettingsSection,
+  RequestLimitsSection,
+  OtherSettingsSection,
   ConfigFormActions,
 } from "./ConfigFormSections";
 
 interface ConfigFormProps {
   initialConfig: Record<string, string>;
-  /** Default values from server (for reset to default) */
+  /** Default values from server (for comparing with current values) */
   defaults?: Record<string, string>;
-  /** Keys that have been modified from default */
-  modifiedKeys?: Set<string>;
   onSave: (config: Record<string, string>) => Promise<void>;
   saving: boolean;
 }
@@ -31,7 +32,6 @@ function normalizeConfig(
 export function ConfigForm({
   initialConfig,
   defaults = {},
-  modifiedKeys = new Set(),
   onSave,
   saving,
 }: ConfigFormProps) {
@@ -94,12 +94,7 @@ export function ConfigForm({
     return String(defaultValue);
   };
 
-  // Helper to check if a key is modified from server default
-  const isModified = (key: string): boolean => {
-    return modifiedKeys.has(key);
-  };
-
-  // Helper to get server default value for a key
+  // Helper to get server default value for a key (used by ModifiedBadge for comparison)
   const getDefault = (key: string): string | undefined => {
     return defaults[key];
   };
@@ -121,25 +116,36 @@ export function ConfigForm({
         <RoutingStrategySection
           getValue={getValue}
           handleChange={handleChange}
-          isModified={isModified}
           getDefault={getDefault}
         />
         <AuthSettingsSection
           getValue={getValue}
           handleChange={handleChange}
-          isModified={isModified}
           getDefault={getDefault}
         />
         <StickySessionSection
           getValue={getValue}
           handleChange={handleChange}
-          isModified={isModified}
           getDefault={getDefault}
         />
         <CircuitBreakerSection
           getValue={getValue}
           handleChange={handleChange}
-          isModified={isModified}
+          getDefault={getDefault}
+        />
+        <TimeoutSettingsSection
+          getValue={getValue}
+          handleChange={handleChange}
+          getDefault={getDefault}
+        />
+        <RequestLimitsSection
+          getValue={getValue}
+          handleChange={handleChange}
+          getDefault={getDefault}
+        />
+        <OtherSettingsSection
+          getValue={getValue}
+          handleChange={handleChange}
           getDefault={getDefault}
         />
         <ConfigFormActions

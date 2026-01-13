@@ -72,9 +72,16 @@ describe("FORM_CONSTRAINTS", () => {
     expect(FORM_CONSTRAINTS.MIN_ZERO).toBe(0);
   });
 
+  it("should have MAX_RETRIES_LIMIT constraint", () => {
+    expect(FORM_CONSTRAINTS.MAX_RETRIES_LIMIT).toBe(10);
+  });
+
   it("should have logical constraint values", () => {
     expect(FORM_CONSTRAINTS.MIN_ZERO).toBeLessThan(
       FORM_CONSTRAINTS.MIN_POSITIVE,
+    );
+    expect(FORM_CONSTRAINTS.MIN_ZERO).toBeLessThan(
+      FORM_CONSTRAINTS.MAX_RETRIES_LIMIT,
     );
   });
 });

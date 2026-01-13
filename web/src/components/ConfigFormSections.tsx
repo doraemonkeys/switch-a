@@ -10,33 +10,31 @@ import { ConfigSection } from "./ConfigSection";
 interface SectionProps {
   getValue: (key: string, defaultValue: string | number | boolean) => string;
   handleChange: (key: string, value: string) => void;
-  /** Check if a key has been modified from server default */
-  isModified?: (key: string) => boolean;
   /** Get server default value for a key */
   getDefault?: (key: string) => string | undefined;
 }
 
-/** Modified indicator badge component */
+/** Modified indicator badge component - shows when current value differs from default */
 function ModifiedBadge({
-  configKey,
-  isModified,
+  currentValue,
   getDefault,
+  configKey,
 }: {
-  configKey: string;
-  isModified?: (key: string) => boolean;
+  currentValue: string;
   getDefault?: (key: string) => string | undefined;
+  configKey: string;
 }) {
-  if (!isModified?.(configKey)) return null;
-
   const defaultValue = getDefault?.(configKey);
-  const title = defaultValue
-    ? `Default: ${defaultValue}`
-    : "Modified from default";
+
+  // Only show badge when value differs from default
+  if (defaultValue === undefined || currentValue === defaultValue) {
+    return null;
+  }
 
   return (
     <span
       className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary/10 text-primary cursor-help"
-      title={title}
+      title={`Default: ${defaultValue}`}
     >
       Modified
     </span>
@@ -46,7 +44,6 @@ function ModifiedBadge({
 export function RoutingStrategySection({
   getValue,
   handleChange,
-  isModified,
   getDefault,
 }: SectionProps) {
   return (
@@ -60,7 +57,10 @@ export function RoutingStrategySection({
           Inter-Group Strategy
           <ModifiedBadge
             configKey={CONFIG_KEYS.INTER_GROUP_STRATEGY}
-            isModified={isModified}
+            currentValue={getValue(
+              CONFIG_KEYS.INTER_GROUP_STRATEGY,
+              DEFAULTS.INTER_GROUP_STRATEGY,
+            )}
             getDefault={getDefault}
           />
         </label>
@@ -100,7 +100,6 @@ export function RoutingStrategySection({
 export function AuthSettingsSection({
   getValue,
   handleChange,
-  isModified,
   getDefault,
 }: SectionProps) {
   return (
@@ -115,7 +114,7 @@ export function AuthSettingsSection({
             Auth Mode
             <ModifiedBadge
               configKey={CONFIG_KEYS.AUTH_MODE}
-              isModified={isModified}
+              currentValue={getValue(CONFIG_KEYS.AUTH_MODE, DEFAULTS.AUTH_MODE)}
               getDefault={getDefault}
             />
           </label>
@@ -142,7 +141,10 @@ export function AuthSettingsSection({
             User Header
             <ModifiedBadge
               configKey={CONFIG_KEYS.USER_HEADER}
-              isModified={isModified}
+              currentValue={getValue(
+                CONFIG_KEYS.USER_HEADER,
+                DEFAULTS.USER_HEADER,
+              )}
               getDefault={getDefault}
             />
           </label>
@@ -164,10 +166,209 @@ export function AuthSettingsSection({
   );
 }
 
+export function TimeoutSettingsSection({
+  getValue,
+  handleChange,
+  getDefault,
+}: SectionProps) {
+  return (
+    <ConfigSection
+      title="Timeout Settings"
+      description="Configure connection and read timeouts for upstream requests."
+      icon="⏱️"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            Connect Timeout (seconds)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.UPSTREAM_CONNECT_TIMEOUT}
+              currentValue={getValue(
+                CONFIG_KEYS.UPSTREAM_CONNECT_TIMEOUT,
+                DEFAULTS.UPSTREAM_CONNECT_TIMEOUT,
+              )}
+              getDefault={getDefault}
+            />
+          </label>
+          <input
+            type="number"
+            className="input"
+            min={FORM_CONSTRAINTS.MIN_POSITIVE}
+            value={getValue(
+              CONFIG_KEYS.UPSTREAM_CONNECT_TIMEOUT,
+              DEFAULTS.UPSTREAM_CONNECT_TIMEOUT,
+            )}
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.UPSTREAM_CONNECT_TIMEOUT, e.target.value)
+            }
+          />
+          <p className="text-xs text-text-muted mt-1.5">上游连接超时时间</p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            First Byte Timeout (seconds)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.FIRST_BYTE_TIMEOUT}
+              currentValue={getValue(
+                CONFIG_KEYS.FIRST_BYTE_TIMEOUT,
+                DEFAULTS.FIRST_BYTE_TIMEOUT,
+              )}
+              getDefault={getDefault}
+            />
+          </label>
+          <input
+            type="number"
+            className="input"
+            min={FORM_CONSTRAINTS.MIN_ZERO}
+            value={getValue(
+              CONFIG_KEYS.FIRST_BYTE_TIMEOUT,
+              DEFAULTS.FIRST_BYTE_TIMEOUT,
+            )}
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.FIRST_BYTE_TIMEOUT, e.target.value)
+            }
+          />
+          <p className="text-xs text-text-muted mt-1.5">
+            等待首字节的最大时长 (0 = 无限制)
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            Read Timeout (seconds)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.UPSTREAM_READ_TIMEOUT}
+              currentValue={getValue(
+                CONFIG_KEYS.UPSTREAM_READ_TIMEOUT,
+                DEFAULTS.UPSTREAM_READ_TIMEOUT,
+              )}
+              getDefault={getDefault}
+            />
+          </label>
+          <input
+            type="number"
+            className="input"
+            min={FORM_CONSTRAINTS.MIN_ZERO}
+            value={getValue(
+              CONFIG_KEYS.UPSTREAM_READ_TIMEOUT,
+              DEFAULTS.UPSTREAM_READ_TIMEOUT,
+            )}
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.UPSTREAM_READ_TIMEOUT, e.target.value)
+            }
+          />
+          <p className="text-xs text-text-muted mt-1.5">
+            读取响应的超时时间 (0 = 无限制)
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            SSE Idle Timeout (seconds)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.SSE_IDLE_TIMEOUT}
+              currentValue={getValue(
+                CONFIG_KEYS.SSE_IDLE_TIMEOUT,
+                DEFAULTS.SSE_IDLE_TIMEOUT,
+              )}
+              getDefault={getDefault}
+            />
+          </label>
+          <input
+            type="number"
+            className="input"
+            min={FORM_CONSTRAINTS.MIN_ZERO}
+            value={getValue(
+              CONFIG_KEYS.SSE_IDLE_TIMEOUT,
+              DEFAULTS.SSE_IDLE_TIMEOUT,
+            )}
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.SSE_IDLE_TIMEOUT, e.target.value)
+            }
+          />
+          <p className="text-xs text-text-muted mt-1.5">
+            SSE 流空闲超时 (0 = 无限制)
+          </p>
+        </div>
+      </div>
+    </ConfigSection>
+  );
+}
+
+export function RequestLimitsSection({
+  getValue,
+  handleChange,
+  getDefault,
+}: SectionProps) {
+  return (
+    <ConfigSection
+      title="Request Limits"
+      description="Configure constraints on request sizes and retries."
+      icon="🛑"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            Max Body Size (MB)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.MAX_BODY_SIZE}
+              currentValue={getValue(
+                CONFIG_KEYS.MAX_BODY_SIZE,
+                DEFAULTS.MAX_BODY_SIZE_MB,
+              )}
+              getDefault={getDefault}
+            />
+          </label>
+          <input
+            type="number"
+            className="input"
+            min={FORM_CONSTRAINTS.MIN_POSITIVE}
+            value={getValue(
+              CONFIG_KEYS.MAX_BODY_SIZE,
+              DEFAULTS.MAX_BODY_SIZE_MB,
+            )}
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.MAX_BODY_SIZE, e.target.value)
+            }
+          />
+          <p className="text-xs text-text-muted mt-1.5">最大允许的请求体大小</p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            Max Retries
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.MAX_RETRIES}
+              currentValue={getValue(
+                CONFIG_KEYS.MAX_RETRIES,
+                DEFAULTS.MAX_RETRIES,
+              )}
+              getDefault={getDefault}
+            />
+          </label>
+          <input
+            type="number"
+            className="input"
+            min={FORM_CONSTRAINTS.MIN_ZERO}
+            max={FORM_CONSTRAINTS.MAX_RETRIES_LIMIT}
+            value={getValue(CONFIG_KEYS.MAX_RETRIES, DEFAULTS.MAX_RETRIES)}
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.MAX_RETRIES, e.target.value)
+            }
+          />
+          <p className="text-xs text-text-muted mt-1.5">
+            最大重试次数 (0-{FORM_CONSTRAINTS.MAX_RETRIES_LIMIT})
+          </p>
+        </div>
+      </div>
+    </ConfigSection>
+  );
+}
+
 export function StickySessionSection({
   getValue,
   handleChange,
-  isModified,
   getDefault,
 }: SectionProps) {
   return (
@@ -195,7 +396,10 @@ export function StickySessionSection({
             </span>
             <ModifiedBadge
               configKey={CONFIG_KEYS.STICKY_ENABLED}
-              isModified={isModified}
+              currentValue={getValue(
+                CONFIG_KEYS.STICKY_ENABLED,
+                DEFAULTS.STICKY_ENABLED,
+              )}
               getDefault={getDefault}
             />
           </div>
@@ -206,7 +410,10 @@ export function StickySessionSection({
             Sticky TTL (seconds)
             <ModifiedBadge
               configKey={CONFIG_KEYS.STICKY_TTL}
-              isModified={isModified}
+              currentValue={getValue(
+                CONFIG_KEYS.STICKY_TTL,
+                DEFAULTS.STICKY_TTL,
+              )}
               getDefault={getDefault}
             />
           </label>
@@ -232,7 +439,6 @@ export function StickySessionSection({
 export function CircuitBreakerSection({
   getValue,
   handleChange,
-  isModified,
   getDefault,
 }: SectionProps) {
   return (
@@ -247,7 +453,10 @@ export function CircuitBreakerSection({
             Failure Threshold
             <ModifiedBadge
               configKey={CONFIG_KEYS.CIRCUIT_FAILURE}
-              isModified={isModified}
+              currentValue={getValue(
+                CONFIG_KEYS.CIRCUIT_FAILURE,
+                DEFAULTS.CIRCUIT_FAILURE,
+              )}
               getDefault={getDefault}
             />
           </label>
@@ -270,7 +479,10 @@ export function CircuitBreakerSection({
             Window (seconds)
             <ModifiedBadge
               configKey={CONFIG_KEYS.CIRCUIT_WINDOW}
-              isModified={isModified}
+              currentValue={getValue(
+                CONFIG_KEYS.CIRCUIT_WINDOW,
+                DEFAULTS.CIRCUIT_WINDOW,
+              )}
               getDefault={getDefault}
             />
           </label>
@@ -293,7 +505,10 @@ export function CircuitBreakerSection({
             Disable Duration (seconds)
             <ModifiedBadge
               configKey={CONFIG_KEYS.CIRCUIT_DISABLE}
-              isModified={isModified}
+              currentValue={getValue(
+                CONFIG_KEYS.CIRCUIT_DISABLE,
+                DEFAULTS.CIRCUIT_DISABLE,
+              )}
               getDefault={getDefault}
             />
           </label>
@@ -310,6 +525,85 @@ export function CircuitBreakerSection({
             }
           />
           <p className="text-xs text-text-muted mt-1.5">熔断禁用时长</p>
+        </div>
+      </div>
+    </ConfigSection>
+  );
+}
+
+export function OtherSettingsSection({
+  getValue,
+  handleChange,
+  getDefault,
+}: SectionProps) {
+  return (
+    <ConfigSection
+      title="Other Settings"
+      description="Additional system configuration."
+      icon="⚙️"
+    >
+      <div className="space-y-4">
+        <label className="flex items-center gap-3 p-4 rounded-xl bg-bg-secondary border border-border-light cursor-pointer hover:border-primary/30 transition-colors">
+          <input
+            type="checkbox"
+            id="trust_proxy_headers"
+            checked={
+              getValue(
+                CONFIG_KEYS.TRUST_PROXY_HEADERS,
+                DEFAULTS.TRUST_PROXY_HEADERS,
+              ) === "true"
+            }
+            onChange={(e) =>
+              handleChange(
+                CONFIG_KEYS.TRUST_PROXY_HEADERS,
+                String(e.target.checked),
+              )
+            }
+          />
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-text-primary">
+              Trust Proxy Headers
+            </span>
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.TRUST_PROXY_HEADERS}
+              currentValue={getValue(
+                CONFIG_KEYS.TRUST_PROXY_HEADERS,
+                DEFAULTS.TRUST_PROXY_HEADERS,
+              )}
+              getDefault={getDefault}
+            />
+          </div>
+        </label>
+        <p className="text-xs text-text-muted -mt-2 ml-1">
+          Whether to trust X-Forwarded-For headers (enable if behind a load
+          balancer)
+        </p>
+
+        <div className="max-w-xs">
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            Log Retention (days)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.LOG_RETENTION_DAYS}
+              currentValue={getValue(
+                CONFIG_KEYS.LOG_RETENTION_DAYS,
+                DEFAULTS.LOG_RETENTION_DAYS,
+              )}
+              getDefault={getDefault}
+            />
+          </label>
+          <input
+            type="number"
+            className="input"
+            min={FORM_CONSTRAINTS.MIN_POSITIVE}
+            value={getValue(
+              CONFIG_KEYS.LOG_RETENTION_DAYS,
+              DEFAULTS.LOG_RETENTION_DAYS,
+            )}
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.LOG_RETENTION_DAYS, e.target.value)
+            }
+          />
+          <p className="text-xs text-text-muted mt-1.5">日志保留天数</p>
         </div>
       </div>
     </ConfigSection>

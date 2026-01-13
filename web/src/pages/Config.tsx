@@ -4,7 +4,6 @@ import { ConfigForm } from "../components/ConfigForm";
 export function Config() {
   const {
     defaults,
-    values,
     config: remoteConfig,
     loading,
     error,
@@ -42,7 +41,6 @@ export function Config() {
       <ConfigForm
         initialConfig={remoteConfig}
         defaults={defaults}
-        modifiedKeys={new Set(Object.keys(values || {}))}
         onSave={updateConfig}
         saving={saving}
       />
