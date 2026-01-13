@@ -221,7 +221,7 @@ func run() error {
 	fmt.Println()
 	fmt.Println("=========================================")
 	fmt.Printf("  Proxy URL:  http://localhost:%s\n", cfg.Port)
-	fmt.Printf("  Admin URL:  http://localhost:%s\n", cfg.AdminPort)
+	fmt.Printf("  Admin URL:  http://localhost:%s/admin\n", cfg.AdminPort)
 	fmt.Println("=========================================")
 	fmt.Println()
 
