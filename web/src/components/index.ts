@@ -4,6 +4,8 @@ export * from "./ConfirmModal";
 export * from "./ErrorBoundary";
 export * from "./GroupModal";
 export * from "./Layout";
+export * from "./LogDetailModal";
+export * from "./LogFilters";
 export * from "./refreshIntervalConstants";
 export * from "./RefreshIntervalSelect";
 export * from "./RequireAuth";

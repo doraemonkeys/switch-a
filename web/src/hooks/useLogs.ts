@@ -57,8 +57,22 @@ export function useLogs(initialFilter?: LogFilter): UseLogsResult {
   }, [refetch]);
 
   // Partial update helper for convenience
+  // Automatically resets offset to 0 when filter criteria (not pagination) changes
   const updateFilter = useCallback((partial: Partial<LogFilter>) => {
-    setFilter((prev) => ({ ...prev, ...partial }));
+    setFilter((prev) => {
+      // Check if this is a pagination-only update
+      const isPaginationOnly =
+        Object.keys(partial).length === 1 &&
+        (partial.offset !== undefined || partial.limit !== undefined);
+
+      // Reset offset to 0 when filter criteria changes (not pagination)
+      const newFilter = { ...prev, ...partial };
+      if (!isPaginationOnly && partial.offset === undefined) {
+        newFilter.offset = 0;
+      }
+
+      return newFilter;
+    });
   }, []);
 
   return {

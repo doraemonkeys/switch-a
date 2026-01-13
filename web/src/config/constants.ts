@@ -231,3 +231,28 @@ export const FORM_CONSTRAINTS = {
   MIN_ZERO: 0,
   MAX_RETRIES_LIMIT: 10,
 } as const;
+
+// =============================================================================
+// Stats Display Thresholds
+// =============================================================================
+
+/**
+ * Thresholds for displaying success rate indicators.
+ * Values are decimal rates (0.0 - 1.0).
+ */
+export const SUCCESS_RATE_THRESHOLDS = {
+  /** Success rate >= this value shows "success" variant */
+  SUCCESS: 0.95,
+  /** Success rate >= this value (but < SUCCESS) shows "warning" variant */
+  WARNING: 0.8,
+  // Below WARNING threshold shows "danger" variant
+} as const;
+
+/**
+ * Thresholds for displaying error count indicators.
+ */
+export const ERROR_COUNT_THRESHOLDS = {
+  /** Error count < this value (and > 0) shows "warning" variant */
+  WARNING_MAX: 10,
+  // count === 0 shows "success", count >= WARNING_MAX shows "danger"
+} as const;

@@ -44,3 +44,33 @@ export function stringToColor(str: string) {
     border: `hsl(${hue}, 60%, 85%)`,
   };
 }
+
+// =============================================================================
+// Badge Style Utilities
+// =============================================================================
+
+/** Badge style classes for success state */
+export const BADGE_STYLES = {
+  SUCCESS:
+    "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  DANGER: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+  WARNING:
+    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+  INFO: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+} as const;
+
+/** Get badge class based on success boolean */
+export function getSuccessBadgeClass(success: boolean): string {
+  return success ? BADGE_STYLES.SUCCESS : BADGE_STYLES.DANGER;
+}
+
+/** Get badge class based on HTTP status code */
+export function getStatusCodeBadgeClass(statusCode: number): string {
+  if (statusCode >= 200 && statusCode < 300) {
+    return BADGE_STYLES.SUCCESS;
+  }
+  if (statusCode >= 400) {
+    return BADGE_STYLES.DANGER;
+  }
+  return BADGE_STYLES.WARNING;
+}
