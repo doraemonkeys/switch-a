@@ -673,8 +673,8 @@ func TestHandler_loadConfig_defaults(t *testing.T) {
 	if cfg.userHeader != "X-User-ID" {
 		t.Errorf("userHeader = %q, want default %q", cfg.userHeader, "X-User-ID")
 	}
-	if cfg.maxBodySizeMB != 10 {
-		t.Errorf("maxBodySizeMB = %d, want default %d", cfg.maxBodySizeMB, 10)
+	if cfg.maxBodySizeMB != 128 {
+		t.Errorf("maxBodySizeMB = %d, want default %d", cfg.maxBodySizeMB, 128)
 	}
 	if cfg.globalAuthMode != "auto" {
 		t.Errorf("globalAuthMode = %q, want default %q", cfg.globalAuthMode, "auto")
