@@ -1,11 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useApi } from "../api";
-import type { RequestLog } from "../api/client";
-
-interface UseLogsParams {
-  limit?: number;
-  offset?: number;
-}
+import type { RequestLog, LogFilter, LogsResponse } from "../api/client";
 
 interface UseLogsResult {
   logs: RequestLog[];
@@ -13,40 +8,58 @@ interface UseLogsResult {
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
-  setParams: (params: UseLogsParams) => void;
-  params: UseLogsParams;
+  /** @deprecated Use setFilter instead */
+  setParams: (filter: LogFilter) => void;
+  setFilter: (filter: LogFilter) => void;
+  updateFilter: (filter: Partial<LogFilter>) => void;
+  /** @deprecated Use filter instead */
+  params: LogFilter;
+  filter: LogFilter;
+  /** Sort field and direction from the response */
+  sortBy: string;
+  sortOrder: string;
 }
 
 export const DEFAULT_LIMIT = 20;
 
-export function useLogs(initialParams?: UseLogsParams): UseLogsResult {
+export function useLogs(initialFilter?: LogFilter): UseLogsResult {
   const api = useApi();
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [total, setTotal] = useState(0);
+  const [sortBy, setSortBy] = useState("created_at");
+  const [sortOrder, setSortOrder] = useState("desc");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [params, setParams] = useState<UseLogsParams>({
-    limit: initialParams?.limit ?? DEFAULT_LIMIT,
-    offset: initialParams?.offset ?? 0,
+  const [filter, setFilter] = useState<LogFilter>({
+    limit: initialFilter?.limit ?? DEFAULT_LIMIT,
+    offset: initialFilter?.offset ?? 0,
+    ...initialFilter,
   });
 
   const refetch = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.logs.list(params);
+      const response: LogsResponse = await api.logs.list(filter);
       setLogs(response.logs);
       setTotal(response.total);
+      setSortBy(response.sort_by);
+      setSortOrder(response.sort_order);
     } catch (err) {
       setError(err instanceof Error ? err : new Error("Failed to fetch logs"));
     } finally {
       setLoading(false);
     }
-  }, [api, params]);
+  }, [api, filter]);
 
   useEffect(() => {
     refetch();
   }, [refetch]);
+
+  // Partial update helper for convenience
+  const updateFilter = useCallback((partial: Partial<LogFilter>) => {
+    setFilter((prev) => ({ ...prev, ...partial }));
+  }, []);
 
   return {
     logs,
@@ -54,7 +67,14 @@ export function useLogs(initialParams?: UseLogsParams): UseLogsResult {
     loading,
     error,
     refetch,
-    setParams,
-    params,
+    // Backward compatible aliases
+    setParams: setFilter,
+    params: filter,
+    // New API
+    setFilter,
+    updateFilter,
+    filter,
+    sortBy,
+    sortOrder,
   };
 }

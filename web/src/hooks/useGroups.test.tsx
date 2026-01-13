@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { useGroups, useGroup } from "./useGroups";
-import { ApiContext } from "../api/context";
 import type { ApiClient, Group } from "../api/client";
+import { createMockApiClient, createWrapper } from "./test-utils";
 
 const mockGroup: Group = {
   id: "1",
@@ -16,44 +15,27 @@ const mockGroup: Group = {
   updated_at: "2024-01-01T00:00:00Z",
 };
 
-function createMockApiClient() {
-  return {
-    setToken: vi.fn(),
-    clearToken: vi.fn(),
-    providers: {
-      list: vi.fn(),
-      get: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      enable: vi.fn(),
-      disable: vi.fn(),
-      reset: vi.fn(),
-    },
-    groups: {
-      list: vi.fn().mockResolvedValue([mockGroup]),
-      get: vi.fn().mockResolvedValue(mockGroup),
-      create: vi.fn().mockResolvedValue(mockGroup),
-      update: vi.fn().mockResolvedValue(mockGroup),
-      delete: vi.fn().mockResolvedValue(undefined),
-    },
-    config: { get: vi.fn(), update: vi.fn() },
-    status: { get: vi.fn(), health: vi.fn() },
-    logs: { list: vi.fn() },
-  } as unknown as ApiClient;
-}
-
-function createWrapper(apiClient: ApiClient) {
-  return ({ children }: { children: ReactNode }) => (
-    <ApiContext.Provider value={apiClient}>{children}</ApiContext.Provider>
-  );
+function setupMockApiClient(): ApiClient {
+  const mockApi = createMockApiClient();
+  mockApi.groups.list = vi.fn().mockResolvedValue([mockGroup]);
+  mockApi.groups.get = vi.fn().mockResolvedValue(mockGroup);
+  mockApi.groups.create = vi.fn().mockResolvedValue(mockGroup);
+  mockApi.groups.update = vi.fn().mockResolvedValue(mockGroup);
+  mockApi.groups.delete = vi.fn().mockResolvedValue(undefined);
+  mockApi.groups.enable = vi
+    .fn()
+    .mockResolvedValue({ ...mockGroup, enabled: true });
+  mockApi.groups.disable = vi
+    .fn()
+    .mockResolvedValue({ ...mockGroup, enabled: false });
+  return mockApi;
 }
 
 describe("useGroups", () => {
-  let mockApi: ReturnType<typeof createMockApiClient>;
+  let mockApi: ApiClient;
 
   beforeEach(() => {
-    mockApi = createMockApiClient();
+    mockApi = setupMockApiClient();
   });
 
   it("should fetch groups on mount", async () => {
@@ -170,13 +152,47 @@ describe("useGroups", () => {
     expect(mockApi.groups.delete).toHaveBeenCalledWith("1");
     expect(mockApi.groups.list).toHaveBeenCalledTimes(2);
   });
+
+  it("should enable group and refetch", async () => {
+    const { result } = renderHook(() => useGroups(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.enableGroup("1");
+    });
+
+    expect(mockApi.groups.enable).toHaveBeenCalledWith("1");
+    expect(mockApi.groups.list).toHaveBeenCalledTimes(2);
+  });
+
+  it("should disable group and refetch", async () => {
+    const { result } = renderHook(() => useGroups(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.disableGroup("1");
+    });
+
+    expect(mockApi.groups.disable).toHaveBeenCalledWith("1");
+    expect(mockApi.groups.list).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("useGroup", () => {
-  let mockApi: ReturnType<typeof createMockApiClient>;
+  let mockApi: ApiClient;
 
   beforeEach(() => {
-    mockApi = createMockApiClient();
+    mockApi = setupMockApiClient();
   });
 
   it("should fetch single group on mount", async () => {
@@ -224,12 +240,14 @@ describe("useGroup", () => {
     expect(result.current.error?.message).toBe("Failed to fetch group");
   });
 
-  it("should not fetch when id is empty", async () => {
+  it("should not fetch when id is empty and set loading to false", async () => {
     const { result } = renderHook(() => useGroup(""), {
       wrapper: createWrapper(mockApi),
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
 
     expect(mockApi.groups.get).not.toHaveBeenCalled();
     expect(result.current.group).toBeNull();

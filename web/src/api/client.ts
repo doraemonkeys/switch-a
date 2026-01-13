@@ -38,6 +38,7 @@ export type {
   LogFilter,
   StatsParams,
   StatsResponse,
+  BatchAction,
   BatchProviderRequest,
   BatchProviderResponse,
   ExportedConfig,

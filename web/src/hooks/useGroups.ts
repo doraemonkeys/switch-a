@@ -10,6 +10,8 @@ interface UseGroupsResult {
   createGroup: (data: GroupInput) => Promise<Group>;
   updateGroup: (id: string, data: GroupInput) => Promise<Group>;
   deleteGroup: (id: string) => Promise<void>;
+  enableGroup: (id: string) => Promise<void>;
+  disableGroup: (id: string) => Promise<void>;
 }
 
 export function useGroups(): UseGroupsResult {
@@ -63,6 +65,22 @@ export function useGroups(): UseGroupsResult {
     [api, refetch],
   );
 
+  const enableGroup = useCallback(
+    async (id: string): Promise<void> => {
+      await api.groups.enable(id);
+      await refetch();
+    },
+    [api, refetch],
+  );
+
+  const disableGroup = useCallback(
+    async (id: string): Promise<void> => {
+      await api.groups.disable(id);
+      await refetch();
+    },
+    [api, refetch],
+  );
+
   return {
     groups,
     loading,
@@ -71,6 +89,8 @@ export function useGroups(): UseGroupsResult {
     createGroup,
     updateGroup,
     deleteGroup,
+    enableGroup,
+    disableGroup,
   };
 }
 
@@ -88,7 +108,10 @@ export function useGroup(id: string): UseGroupResult {
   const [error, setError] = useState<Error | null>(null);
 
   const refetch = useCallback(async () => {
-    if (!id) return;
+    if (!id) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
