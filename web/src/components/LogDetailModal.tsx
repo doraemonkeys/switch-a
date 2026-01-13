@@ -104,6 +104,20 @@ export function LogDetailModal({
                 </span>
               }
             />
+            <DetailRow
+              label="Request Type"
+              value={
+                log.is_sse ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                    SSE Stream
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300">
+                    Regular
+                  </span>
+                )
+              }
+            />
           </DetailSection>
 
           {/* Response Info */}

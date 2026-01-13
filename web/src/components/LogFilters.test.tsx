@@ -64,6 +64,7 @@ describe("LogFilters - Basic Rendering", () => {
 
     expect(screen.getByText("Provider")).toBeInTheDocument();
     expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.getByText("Request Type")).toBeInTheDocument();
     expect(screen.getByText("API Type")).toBeInTheDocument();
     expect(screen.getByText("Time Range")).toBeInTheDocument();
   });
@@ -181,7 +182,7 @@ describe("LogFilters - API Type Filter", () => {
       />,
     );
 
-    const apiTypeSelect = screen.getByDisplayValue("All Types");
+    const apiTypeSelect = screen.getByRole("combobox", { name: /api type/i });
     fireEvent.change(apiTypeSelect, { target: { value: "claude" } });
 
     expect(mockOnFilterChange).toHaveBeenCalledWith({ api_type: "claude" });
@@ -314,7 +315,9 @@ describe("LogFilters - Time Range Filter", () => {
       />,
     );
 
-    const timeRangeSelect = screen.getAllByRole("combobox")[3]; // Time Range is 4th select
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     fireEvent.change(timeRangeSelect, { target: { value: "" } });
 
     expect(mockOnFilterChange).toHaveBeenCalledWith({
@@ -511,7 +514,9 @@ describe("LogFilters - Date Preset Detection", () => {
       />,
     );
 
-    const timeRangeSelect = screen.getAllByRole("combobox")[3];
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     expect(timeRangeSelect).toHaveValue("1h");
 
     vi.useRealTimers();
@@ -533,7 +538,9 @@ describe("LogFilters - Date Preset Detection", () => {
       />,
     );
 
-    const timeRangeSelect = screen.getAllByRole("combobox")[3];
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     expect(timeRangeSelect).toHaveValue("24h");
 
     vi.useRealTimers();
@@ -555,7 +562,9 @@ describe("LogFilters - Date Preset Detection", () => {
       />,
     );
 
-    const timeRangeSelect = screen.getAllByRole("combobox")[3];
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     expect(timeRangeSelect).toHaveValue("7d");
 
     vi.useRealTimers();
@@ -577,7 +586,9 @@ describe("LogFilters - Date Preset Detection", () => {
       />,
     );
 
-    const timeRangeSelect = screen.getAllByRole("combobox")[3];
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     expect(timeRangeSelect).toHaveValue("30d");
 
     vi.useRealTimers();
@@ -600,7 +611,9 @@ describe("LogFilters - Date Preset Detection", () => {
       />,
     );
 
-    const timeRangeSelect = screen.getAllByRole("combobox")[3];
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     expect(timeRangeSelect).toHaveValue("");
 
     vi.useRealTimers();
@@ -616,7 +629,9 @@ describe("LogFilters - Date Preset Detection", () => {
       />,
     );
 
-    const timeRangeSelect = screen.getAllByRole("combobox")[3];
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     expect(timeRangeSelect).toHaveValue("");
   });
 
@@ -634,7 +649,9 @@ describe("LogFilters - Date Preset Detection", () => {
     );
 
     // First set a valid preset
-    const timeRangeSelect = screen.getAllByRole("combobox")[3];
+    const timeRangeSelect = screen.getByRole("combobox", {
+      name: /time range/i,
+    });
     fireEvent.change(timeRangeSelect, { target: { value: "1h" } });
     expect(mockOnFilterChange).toHaveBeenCalledTimes(1);
 

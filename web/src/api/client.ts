@@ -81,6 +81,7 @@ function buildLogsQuery(filter?: LogFilter): string {
   if (filter?.provider_id) query.set("provider_id", filter.provider_id);
   if (filter?.api_type) query.set("api_type", filter.api_type);
   if (filter?.success != null) query.set("success", String(filter.success));
+  if (filter?.is_sse != null) query.set("is_sse", String(filter.is_sse));
   if (filter?.user_id) query.set("user_id", filter.user_id);
   if (filter?.start_time) query.set("start_time", filter.start_time);
   if (filter?.end_time) query.set("end_time", filter.end_time);

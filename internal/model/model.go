@@ -75,6 +75,7 @@ type RequestLog struct {
 	StatusCode int       `json:"status_code"`
 	LatencyMs  int64     `json:"latency_ms"`
 	Success    bool      `json:"success"`
+	IsSSE      bool      `json:"is_sse"`
 	ErrorMsg   string    `json:"error_msg"`
 	CreatedAt  time.Time `gorm:"index" json:"created_at"`
 }
@@ -84,6 +85,7 @@ type LogFilter struct {
 	ProviderID string     // Filter by provider ID
 	APIType    string     // Filter by API type (claude/codex/gemini/custom:*)
 	Success    *bool      // Filter by success/failure (nil = no filter)
+	IsSSE      *bool      // Filter by SSE/regular request (nil = no filter)
 	UserID     string     // Filter by user ID
 	StartTime  *time.Time // Filter by start time (inclusive)
 	EndTime    *time.Time // Filter by end time (exclusive)

@@ -164,6 +164,7 @@ export interface RequestLog {
   status_code: number;
   latency_ms: number;
   success: boolean;
+  is_sse: boolean;
   error_msg: string | null;
   created_at: string;
 }
@@ -190,6 +191,8 @@ export interface LogFilter {
   api_type?: string;
   /** Filter by success/failure */
   success?: boolean;
+  /** Filter by SSE/regular request */
+  is_sse?: boolean;
   /** Filter by user ID */
   user_id?: string;
   /** Filter by start time (RFC3339 format) */

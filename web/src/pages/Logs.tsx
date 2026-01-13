@@ -87,6 +87,7 @@ export function Logs() {
       filter.provider_id ||
       filter.api_type ||
       filter.success !== undefined ||
+      filter.is_sse !== undefined ||
       filter.start_time ||
       filter.end_time
     );
@@ -113,6 +114,7 @@ export function Logs() {
       provider_id: undefined,
       api_type: undefined,
       success: undefined,
+      is_sse: undefined,
       start_time: undefined,
       end_time: undefined,
       min_latency: undefined,
@@ -408,9 +410,19 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
         )}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 uppercase">
-          {log.api_type}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 uppercase">
+            {log.api_type}
+          </span>
+          {log.is_sse && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
+              title="Server-Sent Events (streaming)"
+            >
+              SSE
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary font-mono">
         {log.model}

@@ -134,6 +134,11 @@ func (r *UpstreamResponse) Drain() {
 	_ = r.Body.Close()
 }
 
+// IsSSE returns true if the response is a Server-Sent Events stream.
+func (r *UpstreamResponse) IsSSE() bool {
+	return r.isSSE
+}
+
 // FetchUpstream sends a request to the upstream server and returns the response
 // without writing to the client. This allows the caller to inspect the status code
 // and decide whether to retry before committing to the response.

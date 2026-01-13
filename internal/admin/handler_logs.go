@@ -30,6 +30,7 @@ type LogsResponse struct {
 //   - provider_id: filter by provider ID
 //   - api_type: filter by API type (claude/codex/gemini/custom:*)
 //   - success: filter by success/failure (true/false)
+//   - is_sse: filter by SSE/regular request (true/false)
 //   - user_id: filter by user ID
 //   - start_time: filter by start time (RFC3339)
 //   - end_time: filter by end time (RFC3339)
@@ -91,6 +92,11 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	filter.UserID = getQueryParam(query, "user_id")
 
 	filter.Success, errMsg = parseBoolPtr(getQueryParam(query, "success"), "success")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.IsSSE, errMsg = parseBoolPtr(getQueryParam(query, "is_sse"), "is_sse")
 	if errMsg != "" {
 		return filter, errMsg
 	}

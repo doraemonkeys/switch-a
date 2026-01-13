@@ -268,6 +268,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	var providerUsed *model.Provider
 	var statusCode int
 	var success bool
+	var isSSE bool
 	excludedProviders := make(map[string]bool)
 	headersWritten := false
 
@@ -314,6 +315,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		statusCode = result.statusCode
 		lastErr = result.err
 		success = result.success
+		isSSE = result.isSSE
 
 		if result.done {
 			break
@@ -324,7 +326,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
 	// but avoids blocking the response path. For a high-throughput proxy,
 	// this is an acceptable trade-off as most logs will complete.
-	go h.logRequest(pctx.info, providerUsed, statusCode, success, lastErr, time.Since(pctx.startTime))
+	go h.logRequest(pctx.info, providerUsed, statusCode, success, isSSE, lastErr, time.Since(pctx.startTime))
 
 	// Handle exhausted retries
 	if !success && !headersWritten { // coverage-ignore -- retry exhaustion tested at integration level
@@ -339,6 +341,7 @@ type forwardResult struct {
 	success        bool
 	err            error
 	done           bool // whether to stop retrying
+	isSSE          bool // whether the response was SSE
 }
 
 // forwardToProvider forwards the request to a single provider.
@@ -382,6 +385,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	}
 
 	result.statusCode = upstreamResp.StatusCode
+	result.isSSE = upstreamResp.IsSSE()
 
 	// Check if response indicates failover-eligible error BEFORE writing to client.
 	// Failover-eligible: 5xx, 402, 429, 401, 403 - these are provider-side issues.
@@ -503,7 +507,7 @@ func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext
 func (h *Handler) handleNoProvider(pctx *proxyContext) {
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(pctx.info, nil, StatusCodeNoResponse, false, internal.ErrNoProvider, time.Since(pctx.startTime))
+	go h.logRequest(pctx.info, nil, StatusCodeNoResponse, false, false, internal.ErrNoProvider, time.Since(pctx.startTime))
 }
 
 // handleExhaustedRetries handles exhausted retry attempts.
@@ -643,7 +647,7 @@ const logInsertTimeout = 2 * time.Second
 // logRequest logs the request asynchronously.
 // Note: Uses context.Background() with timeout because this runs after the HTTP response
 // completes and the request context may already be cancelled.
-func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusCode int, success bool, err error, latency time.Duration) {
+func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusCode int, success bool, isSSE bool, err error, latency time.Duration) {
 	log := &model.RequestLog{
 		APIType:    info.APIType,
 		Model:      info.Model,
@@ -652,6 +656,7 @@ func (h *Handler) logRequest(info RequestInfo, provider *model.Provider, statusC
 		StatusCode: statusCode,
 		LatencyMs:  latency.Milliseconds(),
 		Success:    success,
+		IsSSE:      isSSE,
 		CreatedAt:  time.Now(),
 	}
 

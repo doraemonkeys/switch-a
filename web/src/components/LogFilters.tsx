@@ -33,6 +33,7 @@ export function LogFilters({
       filter.provider_id ||
       filter.api_type ||
       filter.success !== undefined ||
+      filter.is_sse !== undefined ||
       filter.start_time ||
       filter.end_time
     );
@@ -96,6 +97,7 @@ export function LogFilters({
             Provider
           </label>
           <select
+            aria-label="Provider"
             value={filter.provider_id || ""}
             onChange={(e) =>
               onFilterChange({
@@ -117,6 +119,7 @@ export function LogFilters({
         <div className="flex flex-col gap-1">
           <label className="text-xs text-text-muted font-medium">Status</label>
           <select
+            aria-label="Status"
             value={filter.success === undefined ? "" : String(filter.success)}
             onChange={(e) => {
               const val = e.target.value;
@@ -132,12 +135,35 @@ export function LogFilters({
           </select>
         </div>
 
+        {/* Request Type Filter (SSE/Regular) */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-text-muted font-medium">
+            Request Type
+          </label>
+          <select
+            aria-label="Request Type"
+            value={filter.is_sse === undefined ? "" : String(filter.is_sse)}
+            onChange={(e) => {
+              const val = e.target.value;
+              onFilterChange({
+                is_sse: val === "" ? undefined : val === "true",
+              });
+            }}
+            className="input input-sm min-w-[120px]"
+          >
+            <option value="">All Types</option>
+            <option value="true">SSE Stream</option>
+            <option value="false">Regular</option>
+          </select>
+        </div>
+
         {/* API Type Filter */}
         <div className="flex flex-col gap-1">
           <label className="text-xs text-text-muted font-medium">
             API Type
           </label>
           <select
+            aria-label="API Type"
             value={filter.api_type || ""}
             onChange={(e) =>
               onFilterChange({
@@ -161,6 +187,7 @@ export function LogFilters({
             Time Range
           </label>
           <select
+            aria-label="Time Range"
             value={currentDatePreset}
             onChange={(e) => handleDatePresetChange(e.target.value)}
             className="input input-sm min-w-[140px]"
@@ -205,6 +232,12 @@ export function LogFilters({
               <FilterBadge
                 label={`Status: ${filter.success ? "Success" : "Failed"}`}
                 onRemove={() => onFilterChange({ success: undefined })}
+              />
+            )}
+            {filter.is_sse !== undefined && (
+              <FilterBadge
+                label={`Stream: ${filter.is_sse ? "SSE" : "Regular"}`}
+                onRemove={() => onFilterChange({ is_sse: undefined })}
               />
             )}
             {filter.api_type && (

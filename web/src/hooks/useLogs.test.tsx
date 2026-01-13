@@ -15,6 +15,7 @@ const mockLogs: RequestLog[] = [
     status_code: 200,
     latency_ms: 150,
     success: true,
+    is_sse: false,
     error_msg: null,
     created_at: "2024-01-01T00:00:00Z",
   },
