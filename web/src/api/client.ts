@@ -16,30 +16,34 @@ import type {
   LogFilter,
   StatsParams,
   StatsResponse,
+  BatchProviderRequest,
+  BatchProviderResponse,
+  ExportedConfig,
+  ImportConfigRequest,
+  ImportPreviewResponse,
+  ImportResult,
 } from "./types";
 
-// Re-export types for backward compatibility
+// Re-export types for consumers
 export type {
   Provider,
-  ProviderAPIType,
   ProviderInput,
   Group,
   GroupInput,
   HealthState,
-  ProviderStatus,
   SystemStatus,
   SystemStatusSummary,
   RequestLog,
   LogsResponse,
   LogFilter,
-  StatsPeriod,
-  StatsGranularity,
   StatsParams,
-  ProviderStats,
-  ProviderRequestStats,
-  TimeRange,
-  TimeSeriesPoint,
   StatsResponse,
+  BatchProviderRequest,
+  BatchProviderResponse,
+  ExportedConfig,
+  ImportConfigRequest,
+  ImportPreviewResponse,
+  ImportResult,
 } from "./types";
 
 // API Error type
@@ -94,13 +98,13 @@ function buildStatsQuery(params?: StatsParams): string {
 // Request factory with dependency injection
 function createRequest(
   deps: ApiClientDeps,
-  tokenManager: ReturnType<typeof createTokenManager>
+  tokenManager: ReturnType<typeof createTokenManager>,
 ) {
   const { httpClient, baseUrl, onUnauthorized } = deps;
 
   return async function request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
   ): Promise<T> {
     const token = tokenManager.get();
     const headers: Record<string, string> = {
@@ -129,7 +133,7 @@ function createRequest(
       throw new ApiError(
         data.code || "UNKNOWN_ERROR",
         data.message || response.statusText,
-        response.status
+        response.status,
       );
     }
 
@@ -142,19 +146,79 @@ function createRequest(
   };
 }
 
+// Type for authenticated request function (handles token injection)
+type AuthenticatedRequestFn = <T>(
+  endpoint: string,
+  options?: RequestInit,
+) => Promise<T>;
+
+// =============================================================================
+// API Module Organization Standard:
+// - Factory functions: APIs with ≥5 methods (providers, groups)
+// - Inline definitions: APIs with <5 methods (config, status, logs, stats)
+// =============================================================================
+
+// Create providers API object
+function createProvidersApi(request: AuthenticatedRequestFn) {
+  return {
+    list: () => request<Provider[]>("/providers"),
+    get: (id: string) => request<Provider>(`/providers/${id}`),
+    create: (data: ProviderInput) =>
+      request<Provider>("/providers", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: ProviderInput) =>
+      request<Provider>(`/providers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      request<void>(`/providers/${id}`, { method: "DELETE" }),
+    enable: (id: string) =>
+      request<Provider>(`/providers/${id}/enable`, { method: "POST" }),
+    disable: (id: string) =>
+      request<Provider>(`/providers/${id}/disable`, { method: "POST" }),
+    reset: (id: string) =>
+      request<HealthState>(`/providers/${id}/reset`, { method: "POST" }),
+    batch: (data: BatchProviderRequest) =>
+      request<BatchProviderResponse>("/providers/batch", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  };
+}
+
+// Create groups API object
+function createGroupsApi(request: AuthenticatedRequestFn) {
+  return {
+    list: () => request<Group[]>("/groups"),
+    get: (id: string) => request<Group>(`/groups/${id}`),
+    create: (data: GroupInput) =>
+      request<Group>("/groups", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: GroupInput) =>
+      request<Group>(`/groups/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      request<void>(`/groups/${id}`, { method: "DELETE" }),
+    enable: (id: string) =>
+      request<Group>(`/groups/${id}/enable`, { method: "POST" }),
+    disable: (id: string) =>
+      request<Group>(`/groups/${id}/disable`, { method: "POST" }),
+  };
+}
+
 // API Client factory with dependency injection
 export function createApiClient(deps: ApiClientDeps) {
   const tokenManager = createTokenManager(deps.storage);
   const request = createRequest(deps, tokenManager);
 
   return {
-    // Token management
     setToken: tokenManager.set,
     clearToken: tokenManager.clear,
     getToken: tokenManager.get,
-
-    // Validate a token without storing it or triggering onUnauthorized
-    // Returns true if token is valid, false otherwise
     validateToken: async (token: string): Promise<boolean> => {
       const { httpClient, baseUrl } = deps;
       try {
@@ -169,60 +233,8 @@ export function createApiClient(deps: ApiClientDeps) {
         return false;
       }
     },
-
-    // Providers
-    providers: {
-      list: () => request<Provider[]>("/providers"),
-      get: (id: string) => request<Provider>(`/providers/${id}`),
-      create: (data: ProviderInput) =>
-        request<Provider>("/providers", {
-          method: "POST",
-          body: JSON.stringify(data),
-        }),
-      update: (id: string, data: ProviderInput) =>
-        request<Provider>(`/providers/${id}`, {
-          method: "PUT",
-          body: JSON.stringify(data),
-        }),
-      delete: (id: string) =>
-        request<void>(`/providers/${id}`, {
-          method: "DELETE",
-        }),
-      enable: (id: string) =>
-        request<Provider>(`/providers/${id}/enable`, {
-          method: "POST",
-        }),
-      disable: (id: string) =>
-        request<Provider>(`/providers/${id}/disable`, {
-          method: "POST",
-        }),
-      reset: (id: string) =>
-        request<HealthState>(`/providers/${id}/reset`, {
-          method: "POST",
-        }),
-    },
-
-    // Groups
-    groups: {
-      list: () => request<Group[]>("/groups"),
-      get: (id: string) => request<Group>(`/groups/${id}`),
-      create: (data: GroupInput) =>
-        request<Group>("/groups", {
-          method: "POST",
-          body: JSON.stringify(data),
-        }),
-      update: (id: string, data: GroupInput) =>
-        request<Group>(`/groups/${id}`, {
-          method: "PUT",
-          body: JSON.stringify(data),
-        }),
-      delete: (id: string) =>
-        request<void>(`/groups/${id}`, {
-          method: "DELETE",
-        }),
-    },
-
-    // Config
+    providers: createProvidersApi(request),
+    groups: createGroupsApi(request),
     config: {
       get: () => request<Record<string, string>>("/config"),
       update: (data: Record<string, string>) =>
@@ -230,28 +242,33 @@ export function createApiClient(deps: ApiClientDeps) {
           method: "PUT",
           body: JSON.stringify(data),
         }),
+      export: () => request<ExportedConfig>("/config/export"),
+      importPreview: (data: ImportConfigRequest) =>
+        request<ImportPreviewResponse>("/config/import?dry_run=true", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      import: (data: ImportConfigRequest) =>
+        request<ImportResult>("/config/import", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
     },
-
-    // Status
     status: {
       get: () => request<SystemStatus>("/status"),
       health: () => request<HealthState[]>("/health"),
     },
-
-    // Logs
     logs: {
       list: (filter?: LogFilter) => {
         const queryStr = buildLogsQuery(filter);
         return request<LogsResponse>(queryStr ? `/logs?${queryStr}` : "/logs");
       },
     },
-
-    // Stats
     stats: {
       get: (params?: StatsParams) => {
         const queryStr = buildStatsQuery(params);
         return request<StatsResponse>(
-          queryStr ? `/stats?${queryStr}` : "/stats"
+          queryStr ? `/stats?${queryStr}` : "/stats",
         );
       },
     },

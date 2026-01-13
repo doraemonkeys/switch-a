@@ -11,18 +11,30 @@ export type { ApiClient } from "./client";
 
 // Type exports
 export type {
+  // Enum types (synced with backend)
+  Strategy,
+  AuthMode,
+  BuiltInAPIType,
+  ConfigKey,
+  ErrorCode,
+  ErrorResponse,
+  // Provider types
   Provider,
   ProviderAPIType,
   ProviderInput,
+  // Group types
   Group,
   GroupInput,
+  // Health & Status types
   HealthState,
   ProviderStatus,
   SystemStatus,
   SystemStatusSummary,
+  // Log types
   RequestLog,
   LogsResponse,
   LogFilter,
+  // Stats types
   StatsPeriod,
   StatsGranularity,
   StatsParams,
@@ -31,6 +43,22 @@ export type {
   TimeRange,
   TimeSeriesPoint,
   StatsResponse,
+  // Batch operation types
+  BatchAction,
+  BatchProviderRequest,
+  BatchProviderResult,
+  BatchProviderResponse,
+  // Config export/import types
+  ExportedProvider,
+  ExportedGroup,
+  ExportedConfig,
+  ImportConfigRequest,
+  ChangeCount,
+  ImportChanges,
+  ImportPreviewResponse,
+  AppliedCount,
+  ImportedCounts,
+  ImportResult,
 } from "./types";
 
 // Interface exports (for testing/mocking)

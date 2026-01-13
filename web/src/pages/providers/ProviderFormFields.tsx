@@ -1,4 +1,4 @@
-import type { ProviderInput } from "../../api/client";
+import type { ProviderInput, AuthMode } from "../../api";
 
 const COMMON_API_TYPES = ["claude", "codex", "gemini"];
 
@@ -110,8 +110,8 @@ const AUTH_MODES = [
 ];
 
 interface AuthModeFieldProps {
-  value: string;
-  onChange: (value: string) => void;
+  value: AuthMode;
+  onChange: (value: AuthMode) => void;
 }
 
 export function AuthModeField({ value, onChange }: AuthModeFieldProps) {
@@ -120,7 +120,7 @@ export function AuthModeField({ value, onChange }: AuthModeFieldProps) {
       <select
         className="input"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value as AuthMode)}
       >
         {AUTH_MODES.map((mode) => (
           <option key={mode.value} value={mode.value}>

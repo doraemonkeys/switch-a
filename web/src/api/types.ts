@@ -1,3 +1,53 @@
+// =============================================================================
+// Enum Types (synced with internal/admin/constants.go)
+// =============================================================================
+
+/** Valid strategy values for group selection */
+export type Strategy = "priority" | "random" | "weight";
+
+/** Valid authentication mode values */
+export type AuthMode = "auto" | "bearer" | "x-api-key";
+
+/** Built-in API type values (custom:* pattern handled separately) */
+export type BuiltInAPIType = "claude" | "codex" | "gemini";
+
+/** Valid configuration keys */
+export type ConfigKey =
+  | "auth_mode"
+  | "user_header"
+  | "trust_proxy_headers"
+  | "upstream_connect_timeout"
+  | "first_byte_timeout"
+  | "upstream_read_timeout"
+  | "sse_idle_timeout"
+  | "sticky_enabled"
+  | "sticky_ttl"
+  | "circuit_failure"
+  | "circuit_window"
+  | "circuit_disable"
+  | "max_body_size"
+  | "max_retries"
+  | "log_retention_days"
+  | "inter_group_strategy";
+
+/** API error codes */
+export type ErrorCode =
+  | "VALIDATION_ERROR"
+  | "INTERNAL_ERROR"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "UNAUTHORIZED";
+
+/** Standard API error response */
+export interface ErrorResponse {
+  code: ErrorCode;
+  message: string;
+}
+
+// =============================================================================
+// Provider Types
+// =============================================================================
+
 // ProviderAPIType represents the association between Provider and API types
 export interface ProviderAPIType {
   provider_id: string;
@@ -10,7 +60,7 @@ export interface Provider {
   base_url: string;
   api_key: string;
   api_types: ProviderAPIType[];
-  auth_mode: string;
+  auth_mode: AuthMode;
   group_id: string | null;
   weight: number;
   priority: number;
@@ -28,7 +78,7 @@ export interface ProviderInput {
   base_url: string;
   api_key: string;
   api_types: string[];
-  auth_mode?: string;
+  auth_mode?: AuthMode;
   group_id?: string | null;
   weight?: number;
   priority?: number;
@@ -37,10 +87,14 @@ export interface ProviderInput {
   enabled?: boolean;
 }
 
+// =============================================================================
+// Group Types
+// =============================================================================
+
 export interface Group {
   id: string;
   name: string;
-  strategy: string;
+  strategy: Strategy;
   priority: number;
   weight: number;
   enabled: boolean;
@@ -52,7 +106,7 @@ export interface Group {
 export interface GroupInput {
   id?: string;
   name: string;
-  strategy?: string;
+  strategy?: Strategy;
   priority?: number;
   weight?: number;
   enabled?: boolean;
@@ -142,6 +196,31 @@ export interface LogFilter {
   sort_order?: "asc" | "desc";
 }
 
+// Batch operations types
+
+/** Valid batch action values */
+export type BatchAction = "reset" | "enable" | "disable" | "delete";
+
+/** Request for batch provider operations */
+export interface BatchProviderRequest {
+  action: BatchAction;
+  ids: string[];
+}
+
+/** Result of a single provider operation in a batch */
+export interface BatchProviderResult {
+  id: string;
+  success: boolean;
+  error?: string;
+}
+
+/** Response for batch provider operations */
+export interface BatchProviderResponse {
+  success: boolean;
+  affected: number;
+  results: BatchProviderResult[];
+}
+
 // Stats API types
 
 /** Valid period values for stats API */
@@ -202,4 +281,89 @@ export interface StatsResponse {
   requests_by_provider: ProviderRequestStats[];
   time_range: TimeRange;
   timeseries?: TimeSeriesPoint[];
+}
+
+// Config Export/Import types
+
+/** ExportedProvider represents a provider in the export format */
+export interface ExportedProvider {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  api_types: string[];
+  auth_mode: AuthMode;
+  group_id?: string | null;
+  weight: number;
+  priority: number;
+  concurrency: number;
+  max_retries: number;
+  enabled: boolean;
+}
+
+/** ExportedGroup represents a group in the export format */
+export interface ExportedGroup {
+  id: string;
+  name: string;
+  strategy: Strategy;
+  priority: number;
+  weight: number;
+  enabled: boolean;
+}
+
+/** ExportedConfig represents the full exported configuration */
+export interface ExportedConfig {
+  version: string;
+  exported_at: string;
+  providers: ExportedProvider[];
+  groups: ExportedGroup[];
+  settings: Partial<Record<ConfigKey, string>>;
+}
+
+/** ImportConfigRequest represents the request body for config import */
+export interface ImportConfigRequest {
+  version?: string;
+  providers: ExportedProvider[];
+  groups: ExportedGroup[];
+  settings: Partial<Record<ConfigKey, string>>;
+}
+
+/** ChangeCount represents add/update/delete counts */
+export interface ChangeCount {
+  add: number;
+  update: number;
+  delete: number;
+}
+
+/** ImportChanges represents the changes that will be applied during import */
+export interface ImportChanges {
+  providers: ChangeCount;
+  groups: ChangeCount;
+  settings: ChangeCount;
+}
+
+/** ImportPreviewResponse is the response for dry_run=true */
+export interface ImportPreviewResponse {
+  dry_run: boolean;
+  changes: ImportChanges;
+  warnings: string[];
+}
+
+/** AppliedCount represents added/updated counts for applied changes */
+export interface AppliedCount {
+  added: number;
+  updated: number;
+}
+
+/** ImportedCounts represents the counts of successfully imported items */
+export interface ImportedCounts {
+  providers: AppliedCount;
+  groups: AppliedCount;
+  settings: AppliedCount;
+}
+
+/** ImportResult represents the result of an actual import */
+export interface ImportResult {
+  success: boolean;
+  applied: ImportedCounts;
 }

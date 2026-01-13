@@ -26,6 +26,8 @@ const mockLogsResponse: LogsResponse = {
   total: 100,
   limit: 20,
   offset: 0,
+  sort_by: "created_at",
+  sort_order: "desc",
 };
 
 function createMockApiClient() {

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import type { FormEvent } from "react";
-import type { Group, GroupInput } from "../api/types";
+import type { Group, GroupInput, Strategy } from "../api/types";
 import { STRATEGIES, STRATEGY_OPTIONS } from "../config/constants";
 import { slugify, isValidId } from "../lib/utils";
 
@@ -36,8 +36,8 @@ const CloseButton = ({
 
 // Strategy selector component
 interface StrategySelectorProps {
-  value: string;
-  onChange: (value: string) => void;
+  value: Strategy;
+  onChange: (value: Strategy) => void;
 }
 
 const StrategySelector = ({ value, onChange }: StrategySelectorProps) => (
@@ -61,7 +61,7 @@ const StrategySelector = ({ value, onChange }: StrategySelectorProps) => (
             name="strategy"
             value={strategy.value}
             checked={value === strategy.value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => onChange(e.target.value as Strategy)}
             className="mt-1"
           />
           <div>
