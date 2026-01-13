@@ -29,7 +29,9 @@ function ModifiedBadge({
   if (!isModified?.(configKey)) return null;
 
   const defaultValue = getDefault?.(configKey);
-  const title = defaultValue ? `Default: ${defaultValue}` : "Modified from default";
+  const title = defaultValue
+    ? `Default: ${defaultValue}`
+    : "Modified from default";
 
   return (
     <span

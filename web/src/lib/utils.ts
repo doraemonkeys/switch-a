@@ -30,3 +30,17 @@ export function slugify(str: string): string {
 
 /** Validate ID: only lowercase letters, numbers, and hyphens allowed */
 export const isValidId = (id: string): boolean => /^[a-z0-9-]*$/.test(id);
+
+/** Generate a consistent pastel color from a string */
+export function stringToColor(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash % 360);
+  return {
+    bg: `hsl(${hue}, 85%, 96%)`,
+    text: `hsl(${hue}, 70%, 35%)`,
+    border: `hsl(${hue}, 60%, 85%)`,
+  };
+}

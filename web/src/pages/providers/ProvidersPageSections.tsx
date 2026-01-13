@@ -16,7 +16,9 @@ export function PageHeader({
     <div className="flex items-center justify-between">
       <div>
         <h2 className="text-2xl font-bold text-text-primary">Providers</h2>
-        <p className="text-text-secondary mt-1">管理 AI 供应商配置</p>
+        <p className="text-text-secondary mt-1">
+          Manage AI provider configurations
+        </p>
       </div>
       <div className="flex items-center gap-2">
         <button
@@ -114,7 +116,8 @@ export function FilterBar({
       >
         <option value="">All Status</option>
         <option value="healthy">Healthy</option>
-        <option value="unhealthy">Unhealthy</option>
+        <option value="unhealthy">Circuit Open</option>
+        <option value="pending-recovery">Pending Recovery</option>
         <option value="disabled">Disabled</option>
       </select>
     </div>
@@ -174,6 +177,8 @@ export function ProvidersTableHeader() {
     { label: "Group", align: "left" },
     { label: "API Types", align: "left" },
     { label: "Status", align: "left" },
+    { label: "Failures", align: "center" },
+    { label: "Recovery", align: "left" },
     { label: "Priority / Weight", align: "left" },
     { label: "Actions", align: "right" },
   ];

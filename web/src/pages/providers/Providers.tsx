@@ -27,6 +27,7 @@ export function Providers() {
     deleteProvider,
     enableProvider,
     disableProvider,
+    resetProvider,
   } = useProviders();
   const { groups } = useGroups();
   const toast = useToast();
@@ -36,6 +37,7 @@ export function Providers() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
   const [showModal, setShowModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
+
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
     provider: Provider | null;
@@ -44,6 +46,15 @@ export function Providers() {
     provider: null,
   });
   const [deleting, setDeleting] = useState(false);
+
+  const [resetConfirm, setResetConfirm] = useState<{
+    isOpen: boolean;
+    provider: Provider | null;
+  }>({
+    isOpen: false,
+    provider: null,
+  });
+  const [resetting, setResetting] = useState(false);
 
   const filteredProviders = useMemo(() => {
     return providers.filter((provider) => {
@@ -59,7 +70,13 @@ export function Providers() {
         const status = getProviderStatus(
           provider.enabled,
           provider.health?.available,
+          provider.health?.disabled_until,
         );
+        if (
+          statusFilter === "pending-recovery" &&
+          status === "pending-recovery"
+        )
+          return true;
         if (statusFilter !== status) return false;
       }
       return true;
@@ -104,6 +121,30 @@ export function Providers() {
 
   const handleDeleteCancel = () => {
     setDeleteConfirm({ isOpen: false, provider: null });
+  };
+
+  const handleResetClick = (provider: Provider) => {
+    setResetConfirm({ isOpen: true, provider });
+  };
+
+  const handleResetConfirm = async () => {
+    if (!resetConfirm.provider) return;
+    setResetting(true);
+    try {
+      await resetProvider(resetConfirm.provider.id);
+      toast.success(`Provider "${resetConfirm.provider.name}" reset`);
+      setResetConfirm({ isOpen: false, provider: null });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to reset provider";
+      toast.error(message);
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const handleResetCancel = () => {
+    setResetConfirm({ isOpen: false, provider: null });
   };
 
   const handleSaveProvider = async (data: ProviderInput) => {
@@ -174,7 +215,9 @@ export function Providers() {
               onToggle={handleToggleProvider}
               onEdit={handleEditClick}
               onDelete={handleDeleteClick}
+              onReset={handleResetClick}
               onAddClick={handleAddClick}
+              onGroupClick={setGroupFilter}
               getGroupName={getGroupName}
             />
           </tbody>
@@ -205,6 +248,18 @@ export function Providers() {
         cancelText="Cancel"
         variant="danger"
         loading={deleting}
+      />
+
+      <ConfirmModal
+        isOpen={resetConfirm.isOpen}
+        onClose={handleResetCancel}
+        onConfirm={handleResetConfirm}
+        title="Reset Provider Circuit Breaker"
+        message={`Are you sure you want to reset the circuit breaker state for provider "${resetConfirm.provider?.name}"? This will clear failure counts and enable the provider immediately.`}
+        confirmText="Reset"
+        cancelText="Cancel"
+        variant="warning"
+        loading={resetting}
       />
     </div>
   );
