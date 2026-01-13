@@ -1,5 +1,35 @@
+import { useState } from "react";
 import { useConfig } from "../hooks/useConfig";
+import { useConfigExport } from "../hooks/useConfigExport";
+import { useToast } from "../hooks/useToast";
 import { ConfigForm } from "../components/ConfigForm";
+import { ConfigImportModal } from "../components/ConfigImportModal";
+
+// Download icon
+const DownloadIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24">
+    <path
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+    />
+  </svg>
+);
+
+// Upload icon
+const UploadIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24">
+    <path
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+    />
+  </svg>
+);
 
 export function Config() {
   const {
@@ -9,7 +39,54 @@ export function Config() {
     error,
     saving,
     updateConfig,
+    refetch,
   } = useConfig();
+
+  const { exportConfig, previewImport, importConfig, exporting, importing } =
+    useConfigExport();
+
+  const toast = useToast();
+
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  // Handle export - download JSON file
+  const handleExport = async () => {
+    try {
+      const config = await exportConfig();
+
+      // Create downloadable blob
+      const blob = new Blob([JSON.stringify(config, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+
+      // Generate filename with date
+      const date = new Date().toISOString().split("T")[0];
+      const filename = `switch-a-config-${date}.json`;
+
+      // Trigger download
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success("配置导出成功");
+    } catch (err) {
+      console.error("Export failed:", err);
+      toast.error(err instanceof Error ? err.message : "导出配置失败");
+    }
+  };
+
+  // Handle import success - refetch config
+  const handleImportSuccess = async () => {
+    setImportModalOpen(false);
+    toast.success("配置导入成功");
+    // Refetch config to update the form
+    await refetch();
+  };
 
   if (loading) {
     return (
@@ -35,6 +112,31 @@ export function Config() {
               Error: {error.message}
             </span>
           )}
+
+          {/* Export Button */}
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="btn btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="导出所有配置（包括 Providers、Groups 和 Settings）"
+          >
+            {exporting ? (
+              <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+            ) : (
+              <DownloadIcon />
+            )}
+            <span>导出</span>
+          </button>
+
+          {/* Import Button */}
+          <button
+            onClick={() => setImportModalOpen(true)}
+            className="btn btn-secondary flex items-center gap-2"
+            title="从 JSON 文件导入配置"
+          >
+            <UploadIcon />
+            <span>导入</span>
+          </button>
         </div>
       </div>
 
@@ -43,6 +145,21 @@ export function Config() {
         defaults={defaults}
         onSave={updateConfig}
         saving={saving}
+      />
+
+      {/* Import Modal */}
+      <ConfigImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onPreview={previewImport}
+        onImport={async (data) => {
+          const result = await importConfig(data);
+          if (result.success) {
+            await handleImportSuccess();
+          }
+          return result;
+        }}
+        importing={importing}
       />
     </div>
   );

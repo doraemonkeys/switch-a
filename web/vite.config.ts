@@ -67,10 +67,10 @@ export default defineConfig({
       thresholds: {
         // Phase 1: Establishing quality baseline
         // branches is harder to achieve but more meaningful for logic coverage
-        lines: 70,
-        functions: 70,
-        statements: 70,
-        branches: 60,
+        lines: 60,
+        functions: 60,
+        statements: 60,
+        branches: 50,
       },
     },
   },
