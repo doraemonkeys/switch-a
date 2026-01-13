@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { Provider } from "../../api/client";
 import { stringToColor } from "../../lib/utils";
 import {
@@ -23,6 +23,7 @@ export interface ProvidersTableBodyProps {
 
 function RecoveryTimer({ disabledUntil }: { disabledUntil: string }) {
   const [timeLeft, setTimeLeft] = useState<string>("");
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const calculateTimeLeft = () => {
@@ -32,6 +33,11 @@ function RecoveryTimer({ disabledUntil }: { disabledUntil: string }) {
 
       if (diff <= 0) {
         setTimeLeft("");
+        // Stop the interval once time has expired
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
         return;
       }
 
@@ -41,9 +47,14 @@ function RecoveryTimer({ disabledUntil }: { disabledUntil: string }) {
     };
 
     calculateTimeLeft();
-    const timer = setInterval(calculateTimeLeft, 1000);
+    timerRef.current = setInterval(calculateTimeLeft, 1000);
 
-    return () => clearInterval(timer);
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [disabledUntil]);
 
   if (!timeLeft) return <span className="text-sm text-text-muted">—</span>;

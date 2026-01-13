@@ -20,6 +20,8 @@ export function getProviderStatus(
   disabledUntil?: string | null,
 ): ProviderStatusType {
   if (!enabled) return "disabled";
+  // Treat both `undefined` (no health info yet) and `true` as healthy.
+  // Only when `available === false` do we check for unhealthy/pending-recovery.
   if (available !== false) return "healthy";
 
   // If available is false:

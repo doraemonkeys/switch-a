@@ -171,6 +171,12 @@ export function ErrorState({ message, onRetry }: ErrorStateProps) {
   );
 }
 
+const alignClass: Record<string, string> = {
+  left: "text-left",
+  center: "text-center",
+  right: "text-right",
+};
+
 export function ProvidersTableHeader() {
   const headers = [
     { label: "Provider", align: "left" },
@@ -189,7 +195,7 @@ export function ProvidersTableHeader() {
         {headers.map((header) => (
           <th
             key={header.label}
-            className={`table-cell text-${header.align} text-xs font-medium text-text-secondary uppercase tracking-wider`}
+            className={`table-cell ${alignClass[header.align]} text-xs font-medium text-text-secondary uppercase tracking-wider`}
           >
             {header.label}
           </th>
