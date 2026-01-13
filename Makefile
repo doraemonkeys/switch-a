@@ -1,4 +1,7 @@
-.PHONY: ci verify lint coverage sloc clean test fmt build build-all web-build release-windows release-clean web-lint web-coverage web-tsc
+.PHONY: ci verify lint coverage sloc clean test fmt build build-all web-build release-windows release-clean web-lint web-coverage web-tsc check-go-env
+
+# AI Note: 如果 bash 无法运行，请使用以下命令：
+# powershell.exe -Command "cd '.'; make ci" 2>&1
 
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -17,8 +20,24 @@ endif
 
 TEMP_ENV := TEMP="$(TMP_DIR)" TMP="$(TMP_DIR)"
 
+# Go 环境检查 (仅 Windows Git Bash/MSYS2)
+check-go-env:
+	@case "$$(uname -s)" in \
+		MINGW*|MSYS*|CYGWIN*) \
+			if [ -z "$$(go env GOMODCACHE 2>/dev/null)" ] || [ -z "$$(go env GOPATH 2>/dev/null)" ]; then \
+				echo ""; \
+				echo "❌ Go environment issue detected in current terminal"; \
+				echo ""; \
+				echo "💡 Recommended: Run with PowerShell:"; \
+				echo "   powershell.exe -Command \"cd '$$(pwd -W)'; make ci\""; \
+				echo ""; \
+				exit 1; \
+			fi \
+		;; \
+	esac
+
 # 静默模式
-ci:
+ci: check-go-env
 	@mkdir -p .tmp
 	@set -o pipefail && go test -race ./... -coverprofile=./cover.out -covermode=atomic 2>&1 | tail -n 10
 	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
@@ -29,7 +48,10 @@ ci:
 	@cd web && pnpm lint --quiet
 
 # 正常模式
-verify: coverage lint sloc fmt web-coverage web-tsc web-lint web-fmt
+verify: check-go-env coverage lint sloc fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude
+
+rm-tmpclaude:
+	@rm tmpclaude-*
 
 lint:
 	golangci-lint run

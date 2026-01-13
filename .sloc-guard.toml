@@ -37,6 +37,6 @@ max_lines = 1100
 warn_at = 900
 
 [structure]
-max_files = 20
+max_files = 50
 max_dirs = 20
-count_exclude = ["*_test.go", "*.test.*"]
+count_exclude = ["*_test.go", "*.test.*", "tmpclaude-*"]

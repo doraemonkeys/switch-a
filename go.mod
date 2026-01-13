@@ -4,6 +4,7 @@ go 1.25
 
 require (
 	github.com/doraemonkeys/mylog v0.4.1
+	github.com/google/uuid v1.6.0
 	github.com/spf13/viper v1.21.0
 	go.uber.org/zap v1.27.0
 	gorm.io/driver/sqlite v1.5.7
