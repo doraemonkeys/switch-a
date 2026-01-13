@@ -10,11 +10,42 @@ import { ConfigSection } from "./ConfigSection";
 interface SectionProps {
   getValue: (key: string, defaultValue: string | number | boolean) => string;
   handleChange: (key: string, value: string) => void;
+  /** Check if a key has been modified from server default */
+  isModified?: (key: string) => boolean;
+  /** Get server default value for a key */
+  getDefault?: (key: string) => string | undefined;
+}
+
+/** Modified indicator badge component */
+function ModifiedBadge({
+  configKey,
+  isModified,
+  getDefault,
+}: {
+  configKey: string;
+  isModified?: (key: string) => boolean;
+  getDefault?: (key: string) => string | undefined;
+}) {
+  if (!isModified?.(configKey)) return null;
+
+  const defaultValue = getDefault?.(configKey);
+  const title = defaultValue ? `Default: ${defaultValue}` : "Modified from default";
+
+  return (
+    <span
+      className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary/10 text-primary cursor-help"
+      title={title}
+    >
+      Modified
+    </span>
+  );
 }
 
 export function RoutingStrategySection({
   getValue,
   handleChange,
+  isModified,
+  getDefault,
 }: SectionProps) {
   return (
     <ConfigSection
@@ -25,6 +56,11 @@ export function RoutingStrategySection({
       <div>
         <label className="block text-sm font-medium text-text-primary mb-1.5">
           Inter-Group Strategy
+          <ModifiedBadge
+            configKey={CONFIG_KEYS.INTER_GROUP_STRATEGY}
+            isModified={isModified}
+            getDefault={getDefault}
+          />
         </label>
         <select
           className="input"
@@ -59,7 +95,12 @@ export function RoutingStrategySection({
   );
 }
 
-export function AuthSettingsSection({ getValue, handleChange }: SectionProps) {
+export function AuthSettingsSection({
+  getValue,
+  handleChange,
+  isModified,
+  getDefault,
+}: SectionProps) {
   return (
     <ConfigSection
       title="Authentication"
@@ -70,6 +111,11 @@ export function AuthSettingsSection({ getValue, handleChange }: SectionProps) {
         <div>
           <label className="block text-sm font-medium text-text-primary mb-1.5">
             Auth Mode
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.AUTH_MODE}
+              isModified={isModified}
+              getDefault={getDefault}
+            />
           </label>
           <select
             className="input"
@@ -92,6 +138,11 @@ export function AuthSettingsSection({ getValue, handleChange }: SectionProps) {
         <div>
           <label className="block text-sm font-medium text-text-primary mb-1.5">
             User Header
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.USER_HEADER}
+              isModified={isModified}
+              getDefault={getDefault}
+            />
           </label>
           <input
             type="text"
@@ -111,7 +162,12 @@ export function AuthSettingsSection({ getValue, handleChange }: SectionProps) {
   );
 }
 
-export function StickySessionSection({ getValue, handleChange }: SectionProps) {
+export function StickySessionSection({
+  getValue,
+  handleChange,
+  isModified,
+  getDefault,
+}: SectionProps) {
   return (
     <ConfigSection
       title="Sticky Session"
@@ -131,19 +187,26 @@ export function StickySessionSection({ getValue, handleChange }: SectionProps) {
               handleChange(CONFIG_KEYS.STICKY_ENABLED, String(e.target.checked))
             }
           />
-          <div>
+          <div className="flex items-center gap-2">
             <span className="font-medium text-text-primary">
               Enable sticky session
             </span>
-            <p className="text-xs text-text-muted mt-0.5">
-              Route returning users to the same provider within the TTL window
-            </p>
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.STICKY_ENABLED}
+              isModified={isModified}
+              getDefault={getDefault}
+            />
           </div>
         </label>
 
         <div className="max-w-xs">
           <label className="block text-sm font-medium text-text-primary mb-1.5">
             Sticky TTL (seconds)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.STICKY_TTL}
+              isModified={isModified}
+              getDefault={getDefault}
+            />
           </label>
           <input
             type="number"
@@ -167,6 +230,8 @@ export function StickySessionSection({ getValue, handleChange }: SectionProps) {
 export function CircuitBreakerSection({
   getValue,
   handleChange,
+  isModified,
+  getDefault,
 }: SectionProps) {
   return (
     <ConfigSection
@@ -178,6 +243,11 @@ export function CircuitBreakerSection({
         <div>
           <label className="block text-sm font-medium text-text-primary mb-1.5">
             Failure Threshold
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.CIRCUIT_FAILURE}
+              isModified={isModified}
+              getDefault={getDefault}
+            />
           </label>
           <input
             type="number"
@@ -196,6 +266,11 @@ export function CircuitBreakerSection({
         <div>
           <label className="block text-sm font-medium text-text-primary mb-1.5">
             Window (seconds)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.CIRCUIT_WINDOW}
+              isModified={isModified}
+              getDefault={getDefault}
+            />
           </label>
           <input
             type="number"
@@ -214,6 +289,11 @@ export function CircuitBreakerSection({
         <div>
           <label className="block text-sm font-medium text-text-primary mb-1.5">
             Disable Duration (seconds)
+            <ModifiedBadge
+              configKey={CONFIG_KEYS.CIRCUIT_DISABLE}
+              isModified={isModified}
+              getDefault={getDefault}
+            />
           </label>
           <input
             type="number"

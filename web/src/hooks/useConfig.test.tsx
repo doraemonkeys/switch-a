@@ -5,9 +5,16 @@ import { useConfig } from "./useConfig";
 import { ApiContext } from "../api/context";
 import type { ApiClient } from "../api/client";
 
-const mockConfig = {
-  sticky_ttl: "300",
-  failure_threshold: "3",
+// New API response format with defaults and values
+const mockConfigResponse = {
+  defaults: {
+    sticky_ttl: "300",
+    failure_threshold: "3",
+    auth_mode: "auto",
+  },
+  values: {
+    sticky_ttl: "600", // User modified this value
+  },
 };
 
 function createMockApiClient() {
@@ -32,8 +39,8 @@ function createMockApiClient() {
       delete: vi.fn(),
     },
     config: {
-      get: vi.fn().mockResolvedValue(mockConfig),
-      update: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(mockConfigResponse),
+      update: vi.fn().mockResolvedValue(mockConfigResponse),
     },
     status: { get: vi.fn(), health: vi.fn() },
     logs: { list: vi.fn() },
@@ -64,9 +71,35 @@ describe("useConfig", () => {
       expect(result.current.loading).toBe(false);
     });
 
-    expect(result.current.config).toEqual(mockConfig);
+    // Check defaults are stored separately
+    expect(result.current.defaults).toEqual(mockConfigResponse.defaults);
+    // Check user-modified values are stored separately
+    expect(result.current.values).toEqual(mockConfigResponse.values);
+    // Check merged config: values override defaults
+    expect(result.current.config).toEqual({
+      sticky_ttl: "600", // from values (user modified)
+      failure_threshold: "3", // from defaults
+      auth_mode: "auto", // from defaults
+    });
     expect(result.current.error).toBeNull();
     expect(mockApi.config.get).toHaveBeenCalled();
+  });
+
+  it("should correctly identify modified keys", async () => {
+    const { result } = renderHook(() => useConfig(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    // sticky_ttl is in values, so it's modified
+    expect(result.current.isModified("sticky_ttl")).toBe(true);
+    // failure_threshold is only in defaults, not modified
+    expect(result.current.isModified("failure_threshold")).toBe(false);
+    // auth_mode is only in defaults, not modified
+    expect(result.current.isModified("auth_mode")).toBe(false);
   });
 
   it("should handle fetch error", async () => {
@@ -82,6 +115,8 @@ describe("useConfig", () => {
 
     expect(result.current.error).toBeInstanceOf(Error);
     expect(result.current.error?.message).toBe("Network error");
+    expect(result.current.defaults).toEqual({});
+    expect(result.current.values).toEqual({});
     expect(result.current.config).toEqual({});
   });
 

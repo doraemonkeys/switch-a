@@ -10,6 +10,10 @@ import {
 
 interface ConfigFormProps {
   initialConfig: Record<string, string>;
+  /** Default values from server (for reset to default) */
+  defaults?: Record<string, string>;
+  /** Keys that have been modified from default */
+  modifiedKeys?: Set<string>;
   onSave: (config: Record<string, string>) => Promise<void>;
   saving: boolean;
 }
@@ -24,7 +28,13 @@ function normalizeConfig(
   return normalized;
 }
 
-export function ConfigForm({ initialConfig, onSave, saving }: ConfigFormProps) {
+export function ConfigForm({
+  initialConfig,
+  defaults = {},
+  modifiedKeys = new Set(),
+  onSave,
+  saving,
+}: ConfigFormProps) {
   const toast = useToast();
 
   // Memoize the normalized initial config to maintain stable reference
@@ -84,6 +94,16 @@ export function ConfigForm({ initialConfig, onSave, saving }: ConfigFormProps) {
     return String(defaultValue);
   };
 
+  // Helper to check if a key is modified from server default
+  const isModified = (key: string): boolean => {
+    return modifiedKeys.has(key);
+  };
+
+  // Helper to get server default value for a key
+  const getDefault = (key: string): string | undefined => {
+    return defaults[key];
+  };
+
   return (
     <div className="card">
       <div className="mb-6 flex justify-end">
@@ -101,12 +121,26 @@ export function ConfigForm({ initialConfig, onSave, saving }: ConfigFormProps) {
         <RoutingStrategySection
           getValue={getValue}
           handleChange={handleChange}
+          isModified={isModified}
+          getDefault={getDefault}
         />
-        <AuthSettingsSection getValue={getValue} handleChange={handleChange} />
-        <StickySessionSection getValue={getValue} handleChange={handleChange} />
+        <AuthSettingsSection
+          getValue={getValue}
+          handleChange={handleChange}
+          isModified={isModified}
+          getDefault={getDefault}
+        />
+        <StickySessionSection
+          getValue={getValue}
+          handleChange={handleChange}
+          isModified={isModified}
+          getDefault={getDefault}
+        />
         <CircuitBreakerSection
           getValue={getValue}
           handleChange={handleChange}
+          isModified={isModified}
+          getDefault={getDefault}
         />
         <ConfigFormActions
           isDirty={isDirty}

@@ -30,6 +30,14 @@ export type ConfigKey =
   | "log_retention_days"
   | "inter_group_strategy";
 
+/** Response from GET /config API */
+export interface ConfigResponse {
+  /** Default configuration values (all keys with their defaults) */
+  defaults: Record<string, string>;
+  /** User-modified configuration values (only modified keys) */
+  values: Record<string, string>;
+}
+
 /** API error codes */
 export type ErrorCode =
   | "VALIDATION_ERROR"

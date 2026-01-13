@@ -22,6 +22,7 @@ import type {
   ImportConfigRequest,
   ImportPreviewResponse,
   ImportResult,
+  ConfigResponse,
 } from "./types";
 
 // Re-export types for consumers
@@ -45,6 +46,7 @@ export type {
   ImportConfigRequest,
   ImportPreviewResponse,
   ImportResult,
+  ConfigResponse,
 } from "./types";
 
 // API Error type
@@ -237,9 +239,9 @@ export function createApiClient(deps: ApiClientDeps) {
     providers: createProvidersApi(request),
     groups: createGroupsApi(request),
     config: {
-      get: () => request<Record<string, string>>("/config"),
+      get: () => request<ConfigResponse>("/config"),
       update: (data: Record<string, string>) =>
-        request<Record<string, string>>("/config", {
+        request<ConfigResponse>("/config", {
           method: "PUT",
           body: JSON.stringify(data),
         }),

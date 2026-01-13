@@ -17,28 +17,53 @@ describe("createApiClient config API", () => {
     });
   });
 
-  it("should get config", async () => {
-    const config = { sticky_ttl: "300" };
+  it("should get config with defaults and values", async () => {
+    const configResponse = {
+      defaults: {
+        sticky_ttl: "300",
+        auth_mode: "auto",
+        max_retries: "3",
+      },
+      values: {
+        max_retries: "5",
+      },
+    };
     mockHttpClient.mockResponse({
       ok: true,
       status: 200,
-      json: () => Promise.resolve(config),
+      json: () => Promise.resolve(configResponse),
     });
 
     const result = await api.config.get();
 
-    expect(result).toEqual(config);
+    expect(result).toEqual(configResponse);
+    expect(result.defaults.sticky_ttl).toBe("300");
+    expect(result.values.max_retries).toBe("5");
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config",
       expect.any(Object),
     );
   });
 
-  it("should update config", async () => {
-    mockHttpClient.mockResponse({ ok: true, status: 204 });
+  it("should update config and return new response", async () => {
+    const updatedConfigResponse = {
+      defaults: {
+        sticky_ttl: "300",
+        auth_mode: "auto",
+      },
+      values: {
+        sticky_ttl: "600",
+      },
+    };
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(updatedConfigResponse),
+    });
 
-    await api.config.update({ sticky_ttl: "600" });
+    const result = await api.config.update({ sticky_ttl: "600" });
 
+    expect(result).toEqual(updatedConfigResponse);
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config",
       expect.objectContaining({

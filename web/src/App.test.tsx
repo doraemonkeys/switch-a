@@ -34,9 +34,12 @@ function createMockApiClient(): ApiClient {
     },
     config: {
       get: vi.fn().mockResolvedValue({
-        log_retention_days: 7,
-        timeout_seconds: 30,
-        max_retries: 3,
+        defaults: {
+          log_retention_days: "7",
+          timeout_seconds: "30",
+          max_retries: "3",
+        },
+        values: {},
       }),
       update: vi.fn(),
     },
