@@ -156,7 +156,7 @@ func (s *Selector) SelectExcluding(ctx context.Context, req *model.SelectRequest
 		groupCandidates = removeGroupCandidate(groupCandidates, group.GroupID)
 
 		// Try to select a provider from this group
-		provider := s.selectFromGroup(group, excludeIDs)
+		provider := s.selectFromGroup(ctx, group, excludeIDs)
 		if provider != nil {
 			return provider, nil
 		}
@@ -287,7 +287,7 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.P
 // selectFromGroup selects a provider from a group using the group's strategy.
 // It first filters and selects a provider using the strategy, then acquires
 // the concurrency slot only for the selected provider.
-func (s *Selector) selectFromGroup(group *groupCandidate, excludeIDs map[string]bool) *model.Provider {
+func (s *Selector) selectFromGroup(ctx context.Context, group *groupCandidate, excludeIDs map[string]bool) *model.Provider {
 	// Filter providers by exclusion list only (no slot acquisition yet)
 	candidates := make([]*model.Provider, 0, len(group.Providers))
 	for _, p := range group.Providers {
@@ -307,6 +307,14 @@ func (s *Selector) selectFromGroup(group *groupCandidate, excludeIDs map[string]
 		selected := SelectProvider(candidates, group.Strategy)
 		if selected == nil {
 			return nil
+		}
+
+		// Double-check: capture concurrent circuit breaker trips
+		// This handles the race condition where a provider becomes unhealthy
+		// between buildGroupCandidates and this selection point
+		if s.health != nil && !s.health.IsAvailable(ctx, selected.ID) {
+			candidates = removeProvider(candidates, selected.ID)
+			continue
 		}
 
 		// Try to acquire concurrency slot for the selected provider only

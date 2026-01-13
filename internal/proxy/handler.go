@@ -272,6 +272,12 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	headersWritten := false
 
 	for attempt := 0; attempt <= pctx.cfg.maxRetries && !headersWritten; attempt++ {
+		// Early exit on context cancellation - avoid wasted retries
+		if err := ctx.Err(); err != nil {
+			lastErr = err
+			break
+		}
+
 		provider, err := h.selectProvider(ctx, pctx, attempt, excludedProviders)
 		if err != nil {
 			if errors.Is(err, internal.ErrNoProvider) {
