@@ -425,7 +425,7 @@ export function ConfigImportModal({
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<ImportConfigRequest | null>(
-    null,
+    null
   );
   const [preview, setPreview] = useState<ImportPreviewResponse | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -453,7 +453,7 @@ export function ConfigImportModal({
     (e: KeyboardEvent) => {
       if (e.key === "Escape" && !importing) onClose();
     },
-    [onClose, importing],
+    [onClose, importing]
   );
 
   useEffect(() => {
@@ -529,7 +529,7 @@ export function ConfigImportModal({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onPreview],
+    [onPreview]
   );
 
   // Handle drag events
