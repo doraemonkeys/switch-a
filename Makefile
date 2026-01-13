@@ -77,12 +77,6 @@ build:
 build-all: web-build build
 	@echo "Build complete: switch-a binary with embedded frontend"
 
-release-windows:
-	bash release.sh windows
-
-release-clean:
-	bash release.sh clean
-
 # Web 前端检查
 web-lint:
 	cd web && pnpm lint
