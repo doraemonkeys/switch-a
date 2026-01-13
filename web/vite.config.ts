@@ -1,11 +1,30 @@
 import { defineConfig } from 'vitest/config'
+import type { Plugin } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
+// Plugin to redirect /admin to /admin/ for better UX
+// Without this, users visiting /admin get an error instead of the app
+function trailingSlashRedirect(): Plugin {
+  return {
+    name: 'trailing-slash-redirect',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url === '/admin') {
+          res.writeHead(302, { Location: '/admin/' })
+          res.end()
+          return
+        }
+        next()
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), trailingSlashRedirect()],
   // Base path for production build - all assets will be prefixed with /admin/
   // This matches the server mount point: mux.Handle("/admin/", ...)
   base: '/admin/',

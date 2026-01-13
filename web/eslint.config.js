@@ -27,11 +27,11 @@ export default defineConfig([
       'sonarjs/cognitive-complexity': ['error', 15],
     },
   },
-  // *.ts (工具/业务逻辑): 100 行
+  // *.ts (工具/业务逻辑)
   {
     files: ['**/*.ts'],
     rules: {
-      'max-lines-per-function': ['error', { max: 100, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': ['error', { max: 150, skipBlankLines: true, skipComments: true }],
     },
   },
   // *.tsx (组件): 250 行

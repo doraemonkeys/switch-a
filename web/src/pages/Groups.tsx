@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useGroups } from "../hooks/useGroups";
 import { useToast } from "../hooks/useToast";
-import { GroupModal, ConfirmModal } from "../components";
+import { GroupModal, ConfirmModal, GroupDetailDrawer } from "../components";
 import type { Group, GroupInput } from "../api/types";
 
 // SVG Icons
@@ -68,6 +68,9 @@ export function Groups() {
   });
   const [deleting, setDeleting] = useState(false);
 
+  // Detail drawer state
+  const [detailGroup, setDetailGroup] = useState<Group | null>(null);
+
   const handleCreate = () => {
     setEditingGroup(null);
     setIsModalOpen(true);
@@ -76,10 +79,24 @@ export function Groups() {
   const handleEdit = (group: Group) => {
     setEditingGroup(group);
     setIsModalOpen(true);
+    setDetailGroup(null); // Close drawer when editing
+  };
+
+  const handleViewDetail = (group: Group) => {
+    setDetailGroup(group);
+  };
+
+  const handleCloseDetail = () => {
+    setDetailGroup(null);
   };
 
   const handleDeleteClick = (id: string) => {
     setDeleteConfirm({ isOpen: true, groupId: id });
+  };
+
+  const handleDrawerDelete = (group: Group) => {
+    handleDeleteClick(group.id);
+    setDetailGroup(null); // Close drawer when deleting
   };
 
   const handleDeleteConfirm = async () => {
@@ -189,6 +206,7 @@ export function Groups() {
             group={group}
             onEdit={() => handleEdit(group)}
             onDelete={() => handleDeleteClick(group.id)}
+            onViewDetail={() => handleViewDetail(group)}
           />
         ))}
       </div>
@@ -211,6 +229,13 @@ export function Groups() {
         cancelText="Cancel"
         variant="danger"
         loading={deleting}
+      />
+
+      <GroupDetailDrawer
+        group={detailGroup}
+        onClose={handleCloseDetail}
+        onEdit={handleEdit}
+        onDelete={handleDrawerDelete}
       />
 
       {/* Strategy Guide */}
@@ -244,11 +269,15 @@ interface GroupCardProps {
   group: Group;
   onEdit: () => void;
   onDelete: () => void;
+  onViewDetail?: () => void;
 }
 
-function GroupCard({ group, onEdit, onDelete }: GroupCardProps) {
+function GroupCard({ group, onEdit, onDelete, onViewDetail }: GroupCardProps) {
   return (
-    <div className="card relative group hover:border-primary/30 transition-colors">
+    <div
+      className={`card relative group hover:border-primary/30 transition-colors ${onViewDetail ? "cursor-pointer" : ""}`}
+      onClick={onViewDetail}
+    >
       <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
           onClick={(e) => {
@@ -275,7 +304,7 @@ function GroupCard({ group, onEdit, onDelete }: GroupCardProps) {
       <div className="flex items-start justify-between mb-4">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-lg font-semibold text-text-primary">
+            <h3 className="text-lg font-semibold text-text-primary hover:text-primary transition-colors">
               {group.name}
             </h3>
             <span

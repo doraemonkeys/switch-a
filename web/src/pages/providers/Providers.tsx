@@ -1,16 +1,15 @@
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useProviders } from "../../hooks/useProviders";
 import { useGroups } from "../../hooks/useGroups";
-import { useToast } from "../../hooks/useToast";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { ConfirmModal } from "../../components";
+import { ConfirmModal, ProviderDetailDrawer } from "../../components";
 import { DEFAULT_REFRESH_INTERVAL } from "../../components/refreshIntervalConstants";
 import type { Provider, ProviderInput } from "../../api/client";
 import { getProviderStatus } from "./types";
 import type { StatusFilter } from "./types";
 import { ProvidersTableBody } from "./ProvidersTableBody";
 import { ProviderModal } from "./ProviderModal";
+import { useProviderActions } from "./useProviderActions";
 import {
   PageHeader,
   FilterBar,
@@ -25,15 +24,20 @@ export function Providers() {
     loading,
     error,
     refetch,
-    createProvider,
-    updateProvider,
-    deleteProvider,
-    enableProvider,
-    disableProvider,
-    resetProvider,
-  } = useProviders();
+    deleteConfirm,
+    deleting,
+    handleDeleteClick,
+    handleDeleteConfirm,
+    handleDeleteCancel,
+    resetConfirm,
+    resetting,
+    handleResetClick,
+    handleResetConfirm,
+    handleResetCancel,
+    handleToggleProvider,
+    handleSaveProvider,
+  } = useProviderActions();
   const { groups } = useGroups();
-  const toast = useToast();
   const [searchParams] = useSearchParams();
 
   // Initialize filters from URL parameters
@@ -58,32 +62,15 @@ export function Providers() {
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval>;
     if (refreshInterval > 0) {
-      intervalId = setInterval(() => {
-        refetch();
-      }, refreshInterval);
+      intervalId = setInterval(() => refetch(), refreshInterval);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
   }, [refreshInterval, refetch]);
 
-  const [deleteConfirm, setDeleteConfirm] = useState<{
-    isOpen: boolean;
-    provider: Provider | null;
-  }>({
-    isOpen: false,
-    provider: null,
-  });
-  const [deleting, setDeleting] = useState(false);
-
-  const [resetConfirm, setResetConfirm] = useState<{
-    isOpen: boolean;
-    provider: Provider | null;
-  }>({
-    isOpen: false,
-    provider: null,
-  });
-  const [resetting, setResetting] = useState(false);
+  // Detail drawer state
+  const [detailProvider, setDetailProvider] = useState<Provider | null>(null);
 
   const filteredProviders = useMemo(() => {
     return providers.filter((provider) => {
@@ -106,98 +93,17 @@ export function Providers() {
           status === "pending-recovery"
         )
           return true;
-
-        // Map "unhealthy" filter to both "unhealthy" and "circuit-open" status logic if needed
-        // Currently getProviderStatus returns "unhealthy" for circuit open.
         if (statusFilter === status) return true;
-
         return false;
       }
       return true;
     });
   }, [providers, searchQuery, groupFilter, statusFilter]);
 
-  const handleToggleProvider = async (provider: Provider) => {
-    try {
-      if (provider.enabled) {
-        await disableProvider(provider.id);
-        toast.success(`Provider "${provider.name}" disabled`);
-      } else {
-        await enableProvider(provider.id);
-        toast.success(`Provider "${provider.name}" enabled`);
-      }
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to toggle provider";
-      toast.error(message);
-    }
-  };
-
-  const handleDeleteClick = (provider: Provider) => {
-    setDeleteConfirm({ isOpen: true, provider });
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!deleteConfirm.provider) return;
-    setDeleting(true);
-    try {
-      await deleteProvider(deleteConfirm.provider.id);
-      toast.success(`Provider "${deleteConfirm.provider.name}" deleted`);
-      setDeleteConfirm({ isOpen: false, provider: null });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to delete provider";
-      toast.error(message);
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleDeleteCancel = () => {
-    setDeleteConfirm({ isOpen: false, provider: null });
-  };
-
-  const handleResetClick = (provider: Provider) => {
-    setResetConfirm({ isOpen: true, provider });
-  };
-
-  const handleResetConfirm = async () => {
-    if (!resetConfirm.provider) return;
-    setResetting(true);
-    try {
-      await resetProvider(resetConfirm.provider.id);
-      toast.success(`Provider "${resetConfirm.provider.name}" reset`);
-      setResetConfirm({ isOpen: false, provider: null });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to reset provider";
-      toast.error(message);
-    } finally {
-      setResetting(false);
-    }
-  };
-
-  const handleResetCancel = () => {
-    setResetConfirm({ isOpen: false, provider: null });
-  };
-
-  const handleSaveProvider = async (data: ProviderInput) => {
-    try {
-      if (editingProvider) {
-        await updateProvider(editingProvider.id, data);
-        toast.success("Provider updated successfully");
-      } else {
-        await createProvider(data);
-        toast.success("Provider created successfully");
-      }
-      setShowModal(false);
-      setEditingProvider(null);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to save provider";
-      toast.error(message);
-      throw err;
-    }
+  const onSaveProvider = async (data: ProviderInput) => {
+    await handleSaveProvider(data, editingProvider);
+    setShowModal(false);
+    setEditingProvider(null);
   };
 
   const handleAddClick = () => {
@@ -208,6 +114,26 @@ export function Providers() {
   const handleEditClick = (provider: Provider) => {
     setEditingProvider(provider);
     setShowModal(true);
+    setDetailProvider(null);
+  };
+
+  const handleViewDetail = (provider: Provider) => setDetailProvider(provider);
+  const handleCloseDetail = () => setDetailProvider(null);
+
+  const handleDrawerToggle = async (provider: Provider) => {
+    await handleToggleProvider(provider);
+    const updatedProvider = providers.find((p) => p.id === provider.id);
+    if (updatedProvider) setDetailProvider(updatedProvider);
+  };
+
+  const handleDrawerDelete = (provider: Provider) => {
+    handleDeleteClick(provider);
+    setDetailProvider(null);
+  };
+
+  const handleDrawerReset = (provider: Provider) => {
+    handleResetClick(provider);
+    setDetailProvider(null);
   };
 
   const getGroupName = (groupId: string | null) => {
@@ -216,9 +142,8 @@ export function Providers() {
     return group?.name ?? groupId;
   };
 
-  if (error) {
+  if (error)
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
-  }
 
   return (
     <div className="space-y-6">
@@ -229,7 +154,6 @@ export function Providers() {
         refreshInterval={refreshInterval}
         onRefreshIntervalChange={setRefreshInterval}
       />
-
       <FilterBar
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -254,6 +178,7 @@ export function Providers() {
               onReset={handleResetClick}
               onAddClick={handleAddClick}
               onGroupClick={setGroupFilter}
+              onViewDetail={handleViewDetail}
               getGroupName={getGroupName}
             />
           </tbody>
@@ -269,7 +194,7 @@ export function Providers() {
             setShowModal(false);
             setEditingProvider(null);
           }}
-          onSubmit={handleSaveProvider}
+          onSubmit={onSaveProvider}
           groups={groups}
         />
       )}
@@ -285,7 +210,6 @@ export function Providers() {
         variant="danger"
         loading={deleting}
       />
-
       <ConfirmModal
         isOpen={resetConfirm.isOpen}
         onClose={handleResetCancel}
@@ -296,6 +220,15 @@ export function Providers() {
         cancelText="Cancel"
         variant="warning"
         loading={resetting}
+      />
+      <ProviderDetailDrawer
+        provider={detailProvider}
+        onClose={handleCloseDetail}
+        onEdit={handleEditClick}
+        onDelete={handleDrawerDelete}
+        onToggle={handleDrawerToggle}
+        onReset={handleDrawerReset}
+        getGroupName={getGroupName}
       />
     </div>
   );

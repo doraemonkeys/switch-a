@@ -32,6 +32,7 @@ export type {
   Group,
   GroupInput,
   HealthState,
+  ProviderStatus,
   SystemStatus,
   SystemStatusSummary,
   RequestLog,
