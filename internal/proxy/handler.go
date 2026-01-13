@@ -434,6 +434,10 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		// Non-retryable client errors (e.g., 400 Bad Request, 404 Not Found)
 		// Set result flag to false but skip health tracking - client errors don't reflect provider health
 		result.success = false
+		h.logger.Info("upstream returned client error",
+			zap.String("provider_id", provider.ID),
+			zap.Int("status_code", result.statusCode),
+		)
 	}
 	h.releaseConcurrency(provider.ID)
 
