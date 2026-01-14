@@ -44,8 +44,9 @@ var (
 	DefaultCircuitDisable = strconv.Itoa(defaults.CircuitDisableSec)
 	// DefaultMaxBodySize is the default maximum request body size in MB.
 	DefaultMaxBodySize = strconv.FormatInt(defaults.MaxBodySizeMB, 10)
-	// DefaultMaxRetries is the default maximum number of retries.
-	DefaultMaxRetries = strconv.Itoa(defaults.MaxRetries)
+	// DefaultGlobalMaxAttempts is the default maximum number of upstream attempts per request.
+	// 0 means unlimited.
+	DefaultGlobalMaxAttempts = strconv.Itoa(defaults.GlobalMaxAttempts)
 	// DefaultLogRetentionDays is the default log retention period in days.
 	DefaultLogRetentionDays = strconv.Itoa(defaults.LogRetentionDays)
 	// DefaultInterGroupStrategy is the default inter-group routing strategy.

@@ -15,6 +15,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// Test timeout constants for consistent timing across tests.
+const (
+	testPollTimeout      = 100 * time.Millisecond
+	testResponseMaxDur   = 500 * time.Millisecond
+	testSlowDBDelay      = 5 * time.Second
+	testTimeoutWaitDelay = 3 * time.Second
+)
+
 // waitFor polls a condition until it returns true or timeout is reached.
 // This avoids flaky tests that rely on fixed time.Sleep durations.
 func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
@@ -52,7 +60,7 @@ func newMockStore() *mockStore {
 			ConfigKeyUserHeader:             "X-User-ID",
 			ConfigKeyMaxBodySize:            "10",
 			ConfigKeyAuthMode:               "auto",
-			ConfigKeyMaxRetries:             "3",
+			ConfigKeyGlobalMaxAttempts:      "0",
 			ConfigKeyUpstreamConnectTimeout: "10",
 			ConfigKeyUpstreamReadTimeout:    "0",
 			ConfigKeyStickyEnabled:          "true",
@@ -158,6 +166,25 @@ func TestNewHandler_NilStorePanics(t *testing.T) {
 	})
 }
 
+func TestNewHandler_NilLoggerPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when Logger is nil, but did not panic")
+		} else {
+			msg, ok := r.(string)
+			if !ok || !strings.Contains(msg, "Logger is required") {
+				t.Errorf("unexpected panic message: %v", r)
+			}
+		}
+	}()
+
+	// This should panic
+	NewHandler(Config{
+		Store:  newMockStore(),
+		Logger: nil,
+	})
+}
+
 func TestHandler_ServeHTTP_UnknownAPIType(t *testing.T) {
 	store := newMockStore()
 	logger := zap.NewNop()
@@ -215,7 +242,7 @@ func TestHandler_ServeHTTP_NoProviders(t *testing.T) {
 
 func TestHandler_ServeHTTP_BodyTooLarge(t *testing.T) {
 	store := newMockStore()
-	store.configs["max_body_size"] = "1" // 1MB limit
+	store.configs[ConfigKeyMaxBodySize] = "1" // 1MB limit
 	store.providers = []model.Provider{
 		{ID: "p1", BaseURL: "https://api.example.com", APIKey: "key"},
 	}
@@ -297,12 +324,12 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	// Wait for async log using polling helper
 	waitFor(t, func() bool {
 		return store.LogsLen() > 0
-	}, 100*time.Millisecond)
+	}, testPollTimeout)
 
 	// Verify attempts were recorded for retry tracking (TEST-003)
 	waitFor(t, func() bool {
 		return store.AttemptsLen() > 0
-	}, 100*time.Millisecond)
+	}, testPollTimeout)
 
 	attempts := store.LastAttempts(1)
 	if len(attempts) != 1 {
@@ -426,7 +453,7 @@ func TestHandler_LogsSuccessFalse_ForFailoverStatusCodes(t *testing.T) {
 			defer upstreamServer.Close()
 
 			store := newMockStore()
-			store.configs["max_retries"] = "0" // Disable retries to test single attempt
+			store.configs[ConfigKeyGlobalMaxAttempts] = "1" // Limit to a single upstream attempt
 			store.providers = []model.Provider{
 				{
 					ID:       "p1",
@@ -453,7 +480,7 @@ func TestHandler_LogsSuccessFalse_ForFailoverStatusCodes(t *testing.T) {
 			// Wait for async log
 			waitFor(t, func() bool {
 				return store.LogsLen() > 0
-			}, 100*time.Millisecond)
+			}, testPollTimeout)
 
 			// Verify log entry has success=false
 			log := store.LastLog()
@@ -506,7 +533,7 @@ func TestHandler_LogsSuccessTrue_For2xxStatusCodes(t *testing.T) {
 	// Wait for async log
 	waitFor(t, func() bool {
 		return store.LogsLen() > 0
-	}, 100*time.Millisecond)
+	}, testPollTimeout)
 
 	// Verify log entry has success=true
 	log := store.LastLog()
@@ -568,7 +595,7 @@ func TestHandler_LogsSuccessFalse_ForNonRetryable4xxStatusCodes(t *testing.T) {
 			// Wait for async log
 			waitFor(t, func() bool {
 				return store.LogsLen() > 0
-			}, 100*time.Millisecond)
+			}, testPollTimeout)
 
 			// Verify log entry has success=false (client errors are not "successful")
 			log := store.LastLog()
@@ -704,8 +731,8 @@ func TestHandler_loadConfig(t *testing.T) {
 	if cfg.globalAuthMode != "auto" {
 		t.Errorf("globalAuthMode = %q, want %q", cfg.globalAuthMode, "auto")
 	}
-	if cfg.maxRetries != 3 {
-		t.Errorf("maxRetries = %d, want %d", cfg.maxRetries, 3)
+	if cfg.globalMaxAttempts != 0 {
+		t.Errorf("globalMaxAttempts = %d, want %d", cfg.globalMaxAttempts, 0)
 	}
 }
 
@@ -734,8 +761,8 @@ func TestHandler_loadConfig_defaults(t *testing.T) {
 	if cfg.globalAuthMode != "auto" {
 		t.Errorf("globalAuthMode = %q, want default %q", cfg.globalAuthMode, "auto")
 	}
-	if cfg.maxRetries != 3 {
-		t.Errorf("maxRetries = %d, want default %d", cfg.maxRetries, 3)
+	if cfg.globalMaxAttempts != 0 {
+		t.Errorf("globalMaxAttempts = %d, want default %d", cfg.globalMaxAttempts, 0)
 	}
 }
 
@@ -849,8 +876,10 @@ type slowMockStore struct {
 
 func newSlowMockStore(delay time.Duration) *slowMockStore {
 	return &slowMockStore{
-		mockStore:     newMockStore(),
-		insertDelay:   delay,
+		mockStore:   newMockStore(),
+		insertDelay: delay,
+		// Buffer of 1 allows signaling without blocking the test goroutine.
+		// Non-blocking sends prevent deadlock if test doesn't wait for signal.
 		insertStarted: make(chan struct{}, 1),
 		insertDone:    make(chan struct{}, 1),
 	}
@@ -875,6 +904,83 @@ func (s *slowMockStore) InsertLog(ctx context.Context, log *model.RequestLog) er
 	}
 }
 
+func TestFirstWriteResponseWriter(t *testing.T) {
+	var callCount int
+	recorder := httptest.NewRecorder()
+
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+		onFirstWrite: func() {
+			callCount++
+		},
+	}
+
+	// First write should trigger callback
+	n, err := w.Write([]byte("hello"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("expected 5 bytes written, got %d", n)
+	}
+	if callCount != 1 {
+		t.Errorf("expected callback to be called once, got %d", callCount)
+	}
+
+	// Second write should NOT trigger callback again
+	n, err = w.Write([]byte("world"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("expected 5 bytes written, got %d", n)
+	}
+	if callCount != 1 {
+		t.Errorf("expected callback to still be 1, got %d", callCount)
+	}
+
+	// Verify body content
+	if recorder.Body.String() != "helloworld" {
+		t.Errorf("expected body 'helloworld', got %q", recorder.Body.String())
+	}
+}
+
+func TestFirstWriteResponseWriter_Flush(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+		onFirstWrite:   func() {},
+	}
+
+	// Write and flush
+	_, _ = w.Write([]byte("data: test\n\n"))
+	w.Flush()
+
+	// Verify flushed was set (httptest.ResponseRecorder tracks this)
+	if !recorder.Flushed {
+		t.Error("expected Flush to be called on underlying ResponseWriter")
+	}
+}
+
+func TestFirstWriteResponseWriter_NilCallback(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+		onFirstWrite:   nil, // No callback
+	}
+
+	// Should not panic with nil callback
+	n, err := w.Write([]byte("test"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("expected 4 bytes written, got %d", n)
+	}
+}
+
 func TestHandler_LogRequest_Timeout(t *testing.T) {
 	// Test that logRequest respects the timeout when the database is slow.
 	// The logInsertTimeout constant is 2 seconds, so we use a delay longer than that.
@@ -889,7 +995,7 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 
 	// Create a slow store that takes longer than logInsertTimeout (2s)
 	// We use 5 seconds to ensure it exceeds the timeout
-	store := newSlowMockStore(5 * time.Second)
+	store := newSlowMockStore(testSlowDBDelay)
 	store.providers = []model.Provider{
 		{
 			ID:       "p1",
@@ -924,7 +1030,7 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 	select {
 	case <-store.insertStarted:
 		// Good, insert started
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(testResponseMaxDur):
 		t.Fatal("InsertLog goroutine did not start")
 	}
 
@@ -933,7 +1039,7 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 	select {
 	case <-store.insertDone:
 		t.Error("InsertLog completed normally, expected timeout cancellation")
-	case <-time.After(3 * time.Second):
+	case <-time.After(testTimeoutWaitDelay):
 		// Good, InsertLog was cancelled by timeout (didn't complete in 3s, which is > 2s timeout but < 5s delay)
 	}
 

@@ -304,7 +304,7 @@ type idleWatchdog struct {
 // newIdleWatchdog creates and starts an idle watchdog for SSE streams.
 // The watchdog closes the body if no Reset() is called within the timeout.
 // If timeout is 0, returns nil (no watchdog needed).
-func newIdleWatchdog(ctx context.Context, closer io.Closer, timeout time.Duration) *idleWatchdog {
+func newIdleWatchdog(closer io.Closer, timeout time.Duration) *idleWatchdog {
 	if timeout <= 0 {
 		return nil
 	}
@@ -317,22 +317,19 @@ func newIdleWatchdog(ctx context.Context, closer io.Closer, timeout time.Duratio
 		stopped: make(chan struct{}),
 	}
 
-	go w.run(ctx)
+	go w.run()
 	return w
 }
 
 // run is the watchdog goroutine. It exits when:
-// - Context is cancelled
 // - Timer fires (closes body to interrupt Read)
 // - Stop() is called (normal completion)
-func (w *idleWatchdog) run(ctx context.Context) {
+// Note: Context cancellation is handled by a separate goroutine in forwardSSE.
+func (w *idleWatchdog) run() {
 	defer close(w.stopped)
 	defer w.timer.Stop()
 
 	select {
-	case <-ctx.Done():
-		// Context cancelled - body will be closed elsewhere
-		return
 	case <-w.done:
 		// Normal completion - stop watching
 		return
@@ -387,9 +384,26 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 		return t.forwardRegular(ctx, w, body)
 	}
 
+	// Always handle context cancellation to close body and unblock Read().
+	// This is separate from idle timeout - context cancellation is mandatory.
+	// Without this, when SSEIdleTimeout=0 (default), Read() would block indefinitely
+	// after client disconnects, causing requests to linger in the active registry.
+	ctxDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = body.Close() // Unblock blocking Read()
+		case <-ctxDone:
+			// Normal exit, body closed elsewhere
+		}
+	}()
+	defer close(ctxDone)
+
 	// Start idle watchdog if configured.
 	// The watchdog closes body after timeout, interrupting the blocking Read().
-	watchdog := newIdleWatchdog(ctx, body, t.sseIdleTimeout)
+	// Note: Both the context goroutine above and the watchdog may close body,
+	// but body.Close() is idempotent so this is safe.
+	watchdog := newIdleWatchdog(body, t.sseIdleTimeout)
 	defer watchdog.Stop()
 
 	reader := bufio.NewReader(body)
@@ -397,7 +411,7 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 
 	for {
 		// Note: ctx.Done() check here is ineffective once Read() blocks.
-		// The watchdog handles timeout by closing body from another goroutine.
+		// The context cancellation goroutine above handles this by closing body.
 		select {
 		case <-ctx.Done(): // coverage-ignore -- context cancellation tested at integration level
 			return ctx.Err()

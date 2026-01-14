@@ -21,6 +21,10 @@ func (c *mockClock) Now() time.Time {
 	return c.now
 }
 
+func (c *mockClock) NewTicker(d time.Duration) *time.Ticker {
+	return time.NewTicker(d)
+}
+
 func (c *mockClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -28,7 +28,7 @@ func GetDefaultConfigs() map[string]string {
 		"circuit_window":           DefaultCircuitWindow,
 		"circuit_disable":          DefaultCircuitDisable,
 		"max_body_size":            DefaultMaxBodySize,
-		"max_retries":              DefaultMaxRetries,
+		"global_max_attempts":      DefaultGlobalMaxAttempts,
 		"log_retention_days":       DefaultLogRetentionDays,
 		"inter_group_strategy":     DefaultInterGroupStrategy,
 	}

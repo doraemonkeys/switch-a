@@ -25,9 +25,9 @@ func TestValidateConfigValue(t *testing.T) {
 		{"upstream_read_timeout valid", "upstream_read_timeout", "60", false},
 
 		// Non-negative int validators
-		{"max_retries zero", "max_retries", "0", false},
-		{"max_retries positive", "max_retries", "3", false},
-		{"max_retries negative", "max_retries", "-1", true},
+		{"global_max_attempts zero", "global_max_attempts", "0", false},
+		{"global_max_attempts positive", "global_max_attempts", "3", false},
+		{"global_max_attempts negative", "global_max_attempts", "-1", true},
 
 		// Bool validators
 		{"trust_proxy_headers true", "trust_proxy_headers", "true", false},
@@ -167,7 +167,7 @@ func TestIsValidConfigKey(t *testing.T) {
 		{"circuit_window", true},
 		{"circuit_disable", true},
 		{"max_body_size", true},
-		{"max_retries", true},
+		{"global_max_attempts", true},
 		{"log_retention_days", true},
 		{"inter_group_strategy", true},
 		{"unknown_key", false},

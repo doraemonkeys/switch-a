@@ -15,6 +15,10 @@ func (c *mockClock) Now() time.Time {
 	return c.current
 }
 
+func (c *mockClock) NewTicker(d time.Duration) *time.Ticker {
+	return time.NewTicker(d)
+}
+
 func TestNewActiveRequestRegistry(t *testing.T) {
 	r := NewActiveRequestRegistry()
 	if r == nil {
@@ -500,6 +504,271 @@ func TestActiveRequestLifecycle_Integration(t *testing.T) {
 	list = registry.List()
 	if len(list) != 0 {
 		t.Errorf("expected 0 active requests after double unregister, got %d", len(list))
+	}
+}
+
+func TestFindActiveProvider_ReturnsProviderWithData(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// Register request but without data received
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+
+	// Should not find (HasReceivedData = false)
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if found {
+		t.Error("should not find provider when HasReceivedData is false")
+	}
+
+	// Mark data received
+	r.MarkDataReceived("req-1")
+
+	// Now should find
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if !found {
+		t.Error("should find provider when HasReceivedData is true")
+	}
+	if providerID != "provider-1" {
+		t.Errorf("expected provider-1, got %s", providerID)
+	}
+}
+
+func TestFindActiveProvider_DifferentStickyKeys(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// Register requests with different sticky keys
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+	r.MarkDataReceived("req-1")
+
+	r.Register(&ActiveRequest{
+		RequestID:  "req-2",
+		ProviderID: "provider-2",
+		ClientIP:   "5.6.7.8",
+		UserID:     "user-2",
+		APIType:    "openai",
+	})
+	r.MarkDataReceived("req-2")
+
+	// Find by first sticky key
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if !found || providerID != "provider-1" {
+		t.Errorf("expected provider-1 for first sticky key, got %s (found=%v)", providerID, found)
+	}
+
+	// Find by second sticky key
+	providerID, found = r.FindActiveProvider("5.6.7.8", "user-2", "openai")
+	if !found || providerID != "provider-2" {
+		t.Errorf("expected provider-2 for second sticky key, got %s (found=%v)", providerID, found)
+	}
+
+	// Non-existent sticky key
+	_, found = r.FindActiveProvider("9.9.9.9", "user-3", "gemini")
+	if found {
+		t.Error("should not find provider for non-existent sticky key")
+	}
+}
+
+func TestFindActiveProvider_MultipleRequestsSameStickyKey(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// Register multiple requests with the same sticky key
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+	r.Register(&ActiveRequest{
+		RequestID:  "req-2",
+		ProviderID: "provider-2",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+
+	// Neither has received data
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if found {
+		t.Error("should not find provider when no request has received data")
+	}
+
+	// Only mark one as having received data
+	r.MarkDataReceived("req-2")
+
+	// Should find provider-2
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if !found {
+		t.Error("should find provider when one request has received data")
+	}
+	if providerID != "provider-2" {
+		t.Errorf("expected provider-2, got %s", providerID)
+	}
+}
+
+func TestMarkDataReceived_NonExistent(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// Should not panic when marking non-existent request
+	r.MarkDataReceived("non-existent")
+
+	// Verify registry is still empty
+	list := r.List()
+	if len(list) != 0 {
+		t.Errorf("expected 0 requests, got %d", len(list))
+	}
+}
+
+func TestStickyIndex_CleanupOnUnregister(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// Register request
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+	r.MarkDataReceived("req-1")
+
+	// Verify it's findable
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if !found {
+		t.Error("should find provider before unregister")
+	}
+
+	// Unregister
+	r.Unregister("req-1")
+
+	// Should not find anymore
+	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if found {
+		t.Error("should not find provider after unregister")
+	}
+}
+
+func TestStickyIndex_CleanupOnCleanupStale(t *testing.T) {
+	baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	clock := &mockClock{current: baseTime}
+	r := NewActiveRequestRegistryWithClock(clock)
+
+	// Register old request
+	r.Register(&ActiveRequest{
+		RequestID:  "old-req",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+		StartedAt:  baseTime.Add(-45 * time.Minute),
+	})
+	r.MarkDataReceived("old-req")
+
+	// Verify it's findable
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if !found {
+		t.Error("should find provider before cleanup")
+	}
+
+	// Cleanup stale requests
+	removed := r.CleanupStale(30 * time.Minute)
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+
+	// Should not find anymore
+	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if found {
+		t.Error("should not find provider after cleanup")
+	}
+}
+
+func TestStickyIndex_OverwriteExistingRequest(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// Register request with one provider
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+	r.MarkDataReceived("req-1")
+
+	// Overwrite with different provider (same request ID)
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-2",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+	r.MarkDataReceived("req-1")
+
+	// Should find the new provider
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if !found {
+		t.Error("should find provider after overwrite")
+	}
+	if providerID != "provider-2" {
+		t.Errorf("expected provider-2 after overwrite, got %s", providerID)
+	}
+}
+
+func TestStickyIndex_OverwriteWithDifferentStickyKey(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// Register request with original sticky key
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+	})
+	r.MarkDataReceived("req-1")
+
+	// Verify findable with original key
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if !found {
+		t.Error("should find provider with original key")
+	}
+
+	// Overwrite with different sticky key (same request ID)
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "5.6.7.8", // Different IP
+		UserID:     "user-2",  // Different user
+		APIType:    "openai",  // Different API type
+	})
+	r.MarkDataReceived("req-1")
+
+	// Should NOT find with original key anymore
+	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	if found {
+		t.Error("should not find provider with original key after overwrite")
+	}
+
+	// Should find with new key
+	providerID, found := r.FindActiveProvider("5.6.7.8", "user-2", "openai")
+	if !found {
+		t.Error("should find provider with new key")
+	}
+	if providerID != "provider-1" {
+		t.Errorf("expected provider-1, got %s", providerID)
 	}
 }
 

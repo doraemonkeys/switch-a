@@ -16,10 +16,11 @@ type Provider struct {
 	Weight      int               `gorm:"default:1" json:"weight"`
 	Priority    int               `gorm:"default:0" json:"priority"`
 	Concurrency int               `gorm:"default:0" json:"concurrency"`
-	MaxRetries  int               `gorm:"default:-1" json:"max_retries"`
-	Enabled     bool              `gorm:"default:true;index" json:"enabled"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	// MaxRetries is the number of retries allowed for this provider (0 = try once, no retry).
+	MaxRetries int       `gorm:"default:0" json:"max_retries"`
+	Enabled    bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 	// Health is populated by admin API handlers, not stored in database.
 	Health *HealthState `gorm:"-" json:"health,omitempty"`
 }

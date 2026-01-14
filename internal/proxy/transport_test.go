@@ -287,7 +287,7 @@ func TestCopyResponseHeaders(t *testing.T) {
 func TestIdleWatchdog(t *testing.T) {
 	t.Run("nil when timeout is zero", func(t *testing.T) {
 		closer := &mockCloser{}
-		watchdog := newIdleWatchdog(context.Background(), closer, 0)
+		watchdog := newIdleWatchdog(closer, 0)
 		if watchdog != nil {
 			t.Error("expected nil watchdog when timeout is 0")
 		}
@@ -295,7 +295,7 @@ func TestIdleWatchdog(t *testing.T) {
 
 	t.Run("nil when timeout is negative", func(t *testing.T) {
 		closer := &mockCloser{}
-		watchdog := newIdleWatchdog(context.Background(), closer, -1*time.Second)
+		watchdog := newIdleWatchdog(closer, -1*time.Second)
 		if watchdog != nil {
 			t.Error("expected nil watchdog when timeout is negative")
 		}
@@ -303,7 +303,7 @@ func TestIdleWatchdog(t *testing.T) {
 
 	t.Run("closes body on timeout", func(t *testing.T) {
 		closer := &mockCloser{}
-		watchdog := newIdleWatchdog(context.Background(), closer, 50*time.Millisecond)
+		watchdog := newIdleWatchdog(closer, 50*time.Millisecond)
 
 		// Wait for timeout
 		time.Sleep(100 * time.Millisecond)
@@ -316,7 +316,7 @@ func TestIdleWatchdog(t *testing.T) {
 
 	t.Run("reset prevents timeout", func(t *testing.T) {
 		closer := &mockCloser{}
-		watchdog := newIdleWatchdog(context.Background(), closer, 50*time.Millisecond)
+		watchdog := newIdleWatchdog(closer, 50*time.Millisecond)
 
 		// Reset before timeout
 		time.Sleep(30 * time.Millisecond)
@@ -333,7 +333,7 @@ func TestIdleWatchdog(t *testing.T) {
 
 	t.Run("stop prevents timeout", func(t *testing.T) {
 		closer := &mockCloser{}
-		watchdog := newIdleWatchdog(context.Background(), closer, 100*time.Millisecond)
+		watchdog := newIdleWatchdog(closer, 100*time.Millisecond)
 
 		// Stop immediately
 		watchdog.Stop()
@@ -343,22 +343,6 @@ func TestIdleWatchdog(t *testing.T) {
 
 		if closer.closed {
 			t.Error("body should not be closed after stop")
-		}
-	})
-
-	t.Run("context cancellation stops watchdog", func(t *testing.T) {
-		closer := &mockCloser{}
-		ctx, cancel := context.WithCancel(context.Background())
-		watchdog := newIdleWatchdog(ctx, closer, 100*time.Millisecond)
-
-		// Cancel context immediately
-		cancel()
-
-		// Wait for watchdog to exit
-		watchdog.Stop()
-
-		if closer.closed {
-			t.Error("body should not be closed on context cancellation")
 		}
 	})
 
@@ -449,6 +433,66 @@ func TestSSEIdleTimeout(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("context cancellation closes body even without SSEIdleTimeout", func(t *testing.T) {
+		// This test verifies the fix for the issue where SSE streams would hang
+		// when client disconnects and SSEIdleTimeout=0 (the default).
+		// Without the fix, Read() would block indefinitely because there was
+		// no goroutine to close the body on context cancellation.
+		serverReady := make(chan struct{})
+		serverDone := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			flusher := w.(http.Flusher)
+			_, _ = w.Write([]byte("data: event1\n\n"))
+			flusher.Flush()
+			close(serverReady)
+			// Block until test signals done - simulating upstream that never closes
+			<-serverDone
+		}))
+		defer func() {
+			close(serverDone)
+			server.Close()
+		}()
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			SSEIdleTimeout: 0, // Disabled - this is the default that was problematic
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+		w := httptest.NewRecorder()
+
+		resp, err := transport.FetchUpstream(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer resp.Close()
+
+		// Start WriteToClient in a goroutine
+		done := make(chan error, 1)
+		go func() {
+			done <- transport.WriteToClient(ctx, w, resp)
+		}()
+
+		// Wait for server to send initial data
+		<-serverReady
+
+		// Cancel context to simulate client disconnect
+		cancel()
+
+		// WriteToClient should return quickly after context cancellation
+		select {
+		case err := <-done:
+			if err != context.Canceled {
+				t.Errorf("expected context.Canceled, got: %v", err)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("WriteToClient did not return after context cancellation - the fix is not working")
+		}
+	})
 }
 
 func TestIdleWatchdogTimedOut(t *testing.T) {
@@ -461,7 +505,7 @@ func TestIdleWatchdogTimedOut(t *testing.T) {
 
 	t.Run("new watchdog not timed out", func(t *testing.T) {
 		body := io.NopCloser(strings.NewReader("test"))
-		w := newIdleWatchdog(context.Background(), body, 1*time.Second)
+		w := newIdleWatchdog(body, 1*time.Second)
 		defer w.Stop()
 
 		if w.TimedOut() {
@@ -471,7 +515,7 @@ func TestIdleWatchdogTimedOut(t *testing.T) {
 
 	t.Run("watchdog times out after idle period", func(t *testing.T) {
 		body := io.NopCloser(strings.NewReader("test"))
-		w := newIdleWatchdog(context.Background(), body, 10*time.Millisecond)
+		w := newIdleWatchdog(body, 10*time.Millisecond)
 
 		// Wait for timeout
 		time.Sleep(50 * time.Millisecond)
@@ -484,7 +528,7 @@ func TestIdleWatchdogTimedOut(t *testing.T) {
 
 	t.Run("stopped watchdog not timed out", func(t *testing.T) {
 		body := io.NopCloser(strings.NewReader("test"))
-		w := newIdleWatchdog(context.Background(), body, 1*time.Second)
+		w := newIdleWatchdog(body, 1*time.Second)
 		w.Stop()
 
 		if w.TimedOut() {

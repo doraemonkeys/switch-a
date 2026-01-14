@@ -115,6 +115,7 @@ type StickyCache interface {
 // Clock provides time-related functions for testing.
 type Clock interface {
 	Now() time.Time
+	NewTicker(d time.Duration) *time.Ticker
 }
 
 // HTTPDoer performs HTTP requests for testing.
@@ -128,4 +129,9 @@ type RealClock struct{}
 // Now returns the current time.
 func (RealClock) Now() time.Time {
 	return time.Now()
+}
+
+// NewTicker returns a new time.Ticker.
+func (RealClock) NewTicker(d time.Duration) *time.Ticker {
+	return time.NewTicker(d)
 }

@@ -69,7 +69,7 @@ func TestExportConfig(t *testing.T) {
 	}
 
 	st.config["sticky_enabled"] = "true"
-	st.config["max_retries"] = "3"
+	st.config["global_max_attempts"] = "3"
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
 	w := httptest.NewRecorder()
@@ -188,8 +188,8 @@ func TestImportConfig_DryRun(t *testing.T) {
 			{ID: "g2", Name: "New Group", Strategy: "weight", Enabled: true},
 		},
 		Settings: map[string]string{
-			"sticky_enabled": "false",
-			"max_retries":    "5",
+			"sticky_enabled":      "false",
+			"global_max_attempts": "5",
 		},
 	}
 
@@ -250,7 +250,7 @@ func TestImportConfig_ActualImport(t *testing.T) {
 			{ID: "g2", Name: "New Group", Strategy: "weight", Weight: 2, Enabled: false},
 		},
 		Settings: map[string]string{
-			"max_retries": "5",
+			"global_max_attempts": "5",
 		},
 	}
 

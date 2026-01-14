@@ -20,7 +20,7 @@ func TestGetConfig(t *testing.T) {
 	h, st, _ := testHandler()
 
 	st.config["sticky_enabled"] = "true"
-	st.config["max_retries"] = "3"
+	st.config["global_max_attempts"] = "3"
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
 	w := httptest.NewRecorder()
@@ -40,8 +40,8 @@ func TestGetConfig(t *testing.T) {
 	if resp.Values["sticky_enabled"] != "true" {
 		t.Errorf("Values[sticky_enabled] = %q, want %q", resp.Values["sticky_enabled"], "true")
 	}
-	if resp.Values["max_retries"] != "3" {
-		t.Errorf("Values[max_retries] = %q, want %q", resp.Values["max_retries"], "3")
+	if resp.Values["global_max_attempts"] != "3" {
+		t.Errorf("Values[global_max_attempts] = %q, want %q", resp.Values["global_max_attempts"], "3")
 	}
 
 	// Check that defaults are present
@@ -70,7 +70,7 @@ func TestGetConfig_Error(t *testing.T) {
 func TestUpdateConfig(t *testing.T) {
 	h, st, _ := testHandler()
 
-	body := `{"max_retries": "5", "sticky_ttl": "600"}`
+	body := `{"global_max_attempts": "5", "sticky_ttl": "600"}`
 
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -83,8 +83,8 @@ func TestUpdateConfig(t *testing.T) {
 	}
 
 	// Verify store was updated
-	if st.config["max_retries"] != "5" {
-		t.Errorf("max_retries = %q, want %q", st.config["max_retries"], "5")
+	if st.config["global_max_attempts"] != "5" {
+		t.Errorf("global_max_attempts = %q, want %q", st.config["global_max_attempts"], "5")
 	}
 	if st.config["sticky_ttl"] != "600" {
 		t.Errorf("sticky_ttl = %q, want %q", st.config["sticky_ttl"], "600")
@@ -96,8 +96,8 @@ func TestUpdateConfig(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Values["max_retries"] != "5" {
-		t.Errorf("Values[max_retries] = %q, want %q", resp.Values["max_retries"], "5")
+	if resp.Values["global_max_attempts"] != "5" {
+		t.Errorf("Values[global_max_attempts] = %q, want %q", resp.Values["global_max_attempts"], "5")
 	}
 	if resp.Defaults == nil {
 		t.Fatal("Defaults should not be nil")
@@ -129,7 +129,7 @@ func TestUpdateConfig_SetError(t *testing.T) {
 		Logger:      logger,
 	})
 
-	body := `{"max_retries": "5"}`
+	body := `{"global_max_attempts": "5"}`
 
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -154,7 +154,7 @@ func TestUpdateConfig_GetAfterSetError(t *testing.T) {
 		Logger:      logger,
 	})
 
-	body := `{"max_retries": "5"}`
+	body := `{"global_max_attempts": "5"}`
 
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -189,8 +189,8 @@ func TestUpdateConfig_InvalidValues(t *testing.T) {
 			wantMsg: "must be a positive integer",
 		},
 		{
-			name:    "max_retries negative",
-			body:    `{"max_retries": "-5"}`,
+			name:    "global_max_attempts negative",
+			body:    `{"global_max_attempts": "-5"}`,
 			wantMsg: "must be a non-negative integer",
 		},
 		{
@@ -261,9 +261,9 @@ func TestUpdateConfig_ValidValues(t *testing.T) {
 			value: "1",
 		},
 		{
-			name:  "max_retries zero",
-			body:  `{"max_retries": "0"}`,
-			key:   "max_retries",
+			name:  "global_max_attempts zero",
+			body:  `{"global_max_attempts": "0"}`,
+			key:   "global_max_attempts",
 			value: "0",
 		},
 		{

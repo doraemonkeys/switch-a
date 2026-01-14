@@ -51,7 +51,7 @@ ci: check-go-env
 verify: check-go-env coverage lint sloc fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude
 
 rm-tmpclaude:
-	@rm tmpclaude-*
+	@rm -f tmpclaude-*
 
 lint:
 	golangci-lint run

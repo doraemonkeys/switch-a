@@ -164,7 +164,7 @@ func TestCreateProvider_ValidationErrors(t *testing.T) {
 		{"missing api_key", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_types": ["claude"]}`},
 		{"missing api_types", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key"}`},
 		{"empty api_types", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": []}`},
-		{"max_retries too negative", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "max_retries": -2}`},
+		{"negative max_retries", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "max_retries": -2}`},
 	}
 
 	for _, tt := range tests {
@@ -456,7 +456,7 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 		Weight:      1,
 		Priority:    0,
 		Concurrency: 0,
-		MaxRetries:  -1,
+		MaxRetries:  0,
 		Enabled:     true,
 	}
 
@@ -558,9 +558,14 @@ func TestUpdateProvider_ValidationErrors(t *testing.T) {
 			wantMsg: "Concurrency cannot be negative",
 		},
 		{
-			name:    "max_retries too negative",
+			name:    "negative max_retries",
 			body:    `{"max_retries": -2}`,
-			wantMsg: "MaxRetries must be -1 (default) or non-negative",
+			wantMsg: "MaxRetries must be non-negative",
+		},
+		{
+			name:    "max_retries boundary minus one",
+			body:    `{"max_retries": -1}`,
+			wantMsg: "MaxRetries must be non-negative",
 		},
 	}
 

@@ -29,6 +29,7 @@ function createMockLog(overrides?: Partial<RequestLog>): RequestLog {
   };
 }
 
+// eslint-disable-next-line max-lines-per-function -- comprehensive test suite for modal component
 describe("LogDetailModal", () => {
   const mockOnClose = vi.fn();
 

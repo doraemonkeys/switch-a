@@ -56,9 +56,11 @@ const (
 
 // Request handling defaults.
 const (
-	MaxBodySizeMB    int64 = 128
-	MaxRetries       int   = 3
-	LogRetentionDays int   = 7
+	MaxBodySizeMB int64 = 128
+	// GlobalMaxAttempts is the maximum number of upstream attempts for a single request.
+	// 0 means unlimited (will iterate through all providers subject to per-provider retries).
+	GlobalMaxAttempts int = 0
+	LogRetentionDays  int = 7
 )
 
 // Logger defaults.
@@ -73,6 +75,9 @@ const (
 const (
 	InterGroupStrategy = "priority"
 	ProviderWeight     = 1
+	// ProviderMaxRetries is the default retry count for a provider.
+	// 0 means try once, no retry.
+	ProviderMaxRetries = 0
 )
 
 // HTTP status codes for failover logic.
@@ -85,4 +90,6 @@ const (
 	// StatusUnauthorized/StatusForbidden: trigger failover as they indicate provider misconfiguration.
 	StatusUnauthorized = http.StatusUnauthorized
 	StatusForbidden    = http.StatusForbidden
+	// StatusClientError marks the boundary between success (2xx/3xx) and client error (4xx) responses.
+	StatusClientError = http.StatusBadRequest
 )

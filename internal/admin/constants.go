@@ -22,11 +22,11 @@ const (
 // Default values for resources.
 // Core defaults are derived from the centralized defaults package.
 const (
-	DefaultStrategy   = defaults.InterGroupStrategy
-	DefaultAuthMode   = defaults.AuthMode
-	DefaultWeight     = defaults.ProviderWeight
-	DefaultMaxRetries = -1 // Use global default (special value for admin API)
-	DefaultLogsLimit  = 100
+	DefaultStrategy           = defaults.InterGroupStrategy
+	DefaultAuthMode           = defaults.AuthMode
+	DefaultWeight             = defaults.ProviderWeight
+	DefaultProviderMaxRetries = defaults.ProviderMaxRetries
+	DefaultLogsLimit          = 100
 	// MaxLogsLimit caps query results to prevent excessive memory usage and
 	// slow responses. 1000 is enough for most debugging sessions while
 	// keeping response times under a second with typical database sizes.
@@ -98,7 +98,7 @@ var validConfigKeys = map[string]bool{
 	"circuit_window":           true,
 	"circuit_disable":          true,
 	"max_body_size":            true,
-	"max_retries":              true,
+	"global_max_attempts":      true,
 	"log_retention_days":       true,
 	"inter_group_strategy":     true,
 }
@@ -152,7 +152,7 @@ var configValidators = map[string]ConfigValidator{
 	"circuit_window":           validatePositiveIntConfig,
 	"circuit_disable":          validatePositiveIntConfig,
 	"max_body_size":            validatePositiveIntConfig,
-	"max_retries":              validateNonNegativeIntConfig,
+	"global_max_attempts":      validateNonNegativeIntConfig,
 	"log_retention_days":       validatePositiveIntConfig,
 	"inter_group_strategy":     validateStrategyConfig,
 }

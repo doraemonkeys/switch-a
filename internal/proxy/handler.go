@@ -2,13 +2,9 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,53 +17,6 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
-
-// Default configuration values - derived from centralized defaults package.
-const (
-	DefaultMaxBodySizeMB     = defaults.MaxBodySizeMB
-	DefaultMaxRetries        = defaults.MaxRetries
-	DefaultConnectTimeoutSec = defaults.UpstreamConnectTimeoutSec
-	DefaultUserHeader        = defaults.UserHeader
-	DefaultStickyEnabled     = defaults.StickyEnabled // When enabled, clients are routed to the same provider
-)
-
-// StatusCodeNoResponse indicates no upstream response was received.
-// Used when logging requests where no provider was available to handle the request.
-const StatusCodeNoResponse = 0
-
-// Config keys for runtime configuration stored in the database.
-const (
-	ConfigKeyTrustProxyHeaders      = "trust_proxy_headers"
-	ConfigKeyUserHeader             = "user_header"
-	ConfigKeyMaxBodySize            = "max_body_size"
-	ConfigKeyAuthMode               = "auth_mode"
-	ConfigKeyMaxRetries             = "max_retries"
-	ConfigKeyUpstreamConnectTimeout = "upstream_connect_timeout"
-	ConfigKeyFirstByteTimeout       = "first_byte_timeout"
-	ConfigKeyUpstreamReadTimeout    = "upstream_read_timeout"
-	ConfigKeySSEIdleTimeout         = "sse_idle_timeout"
-	ConfigKeyStickyEnabled          = "sticky_enabled"
-	ConfigKeyStickyTTL              = "sticky_ttl"
-	ConfigKeyInterGroupStrategy     = selector.ConfigKeyInterGroupStrategy
-)
-
-// defaultStickyTTLSeconds uses canonical value from selector package for consistency.
-const defaultStickyTTLSeconds = selector.DefaultStickyTTLSeconds
-
-// runtimeConfig holds configuration loaded from the store per-request (immutable once created).
-type runtimeConfig struct {
-	trustProxy       bool
-	userHeader       string
-	maxBodySizeMB    int64
-	globalAuthMode   string
-	maxRetries       int
-	connectTimeout   time.Duration
-	firstByteTimeout time.Duration
-	readTimeout      time.Duration
-	sseIdleTimeout   time.Duration
-	stickyEnabled    bool
-	stickyTTL        time.Duration
-}
 
 // Handler handles proxy requests.
 type Handler struct {
@@ -88,6 +37,31 @@ type transportCacheKey struct {
 	firstByteTimeout time.Duration
 	readTimeout      time.Duration
 	sseIdleTimeout   time.Duration
+}
+
+// firstWriteResponseWriter tracks first data write to enable sticky session fallback.
+// When an SSE stream outlives the sticky TTL, we use the active provider registry
+// to maintain session affinity. This wrapper signals when actual data starts flowing
+// so the registry can mark the request as having received data.
+type firstWriteResponseWriter struct {
+	http.ResponseWriter
+	onFirstWrite func()
+	written      bool
+}
+
+func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
+	if !w.written && w.onFirstWrite != nil {
+		w.onFirstWrite()
+		w.written = true
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+// Flush preserves http.Flusher interface for SSE streaming.
+func (w *firstWriteResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // Store defines the minimal storage interface needed by the proxy handler.
@@ -120,10 +94,13 @@ type Config struct {
 }
 
 // NewHandler creates a new proxy handler.
-// Panics if Store is nil, as the handler cannot function without it.
+// Panics if Store or Logger is nil, as the handler cannot function without them.
 func NewHandler(cfg Config) *Handler {
 	if cfg.Store == nil {
 		panic("proxy: Store is required but was nil")
+	}
+	if cfg.Logger == nil {
+		panic("proxy: Logger is required but was nil")
 	}
 	return &Handler{
 		store:          cfg.Store,
@@ -182,7 +159,9 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	return h.transport
 }
 
-// proxyContext holds all state for a proxy request. Context is passed through call chain per Go best practices.
+// proxyContext aggregates per-request state to reduce method signature complexity.
+// Immutable fields (r, cfg, apiType, body, info, startTime, requestID) are set once during construction.
+// Mutable fields (selectReq, isSticky, attempts) are modified during retry orchestration.
 type proxyContext struct {
 	r         *http.Request
 	w         http.ResponseWriter
@@ -267,107 +246,179 @@ func (h *Handler) handleBodyError(w http.ResponseWriter, err error, maxSize int6
 	h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to read request body")
 }
 
+// retryState tracks mutable state across retry attempts in executeProxy.
+type retryState struct {
+	lastErr           error
+	providerUsed      *model.Provider
+	statusCode        int
+	success           bool
+	isSSE             bool
+	headersWritten    bool
+	excludedProviders map[string]bool
+	currentProvider   *model.Provider
+	// providerAttempt is 0-based within a single provider. A provider with MaxRetries=N
+	// can be attempted (N+1) times: providerAttempt 0..N.
+	providerAttempt  int
+	activeRegistered bool
+}
+
+// selectAndRegisterProvider selects a provider and registers the active request.
+// Returns true if selection succeeded, false if the loop should break or return early.
+// The earlyReturn flag indicates whether to return immediately from executeProxy.
+func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyContext, state *retryState, attempt int) (continueLoop, earlyReturn bool) {
+	provider, fromSticky, err := h.selectProviderWithTracking(ctx, pctx, attempt, state.excludedProviders)
+	if err != nil {
+		if errors.Is(err, internal.ErrNoProvider) {
+			// No provider available before any upstream attempt -> immediate error.
+			if attempt == 0 && len(pctx.attempts) == 0 {
+				h.handleNoProvider(pctx)
+				return false, true
+			}
+			// No providers left after previous failures -> treat as exhausted.
+			return false, false
+		}
+		state.lastErr = err
+		return false, false
+	}
+	if provider == nil {
+		return false, false
+	}
+
+	state.currentProvider = provider
+	state.providerAttempt = 0
+
+	// Track sticky cache hit on first attempt
+	if attempt == 0 {
+		pctx.isSticky = fromSticky
+	}
+
+	h.registerActiveRequest(pctx, state, provider)
+	return true, false
+}
+
+// registerActiveRequest registers or updates the active request in the registry.
+func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, provider *model.Provider) {
+	if h.activeRegistry == nil {
+		return
+	}
+	// Register (or update) active request.
+	// Note: We update ProviderID on provider switch so sticky fallback reflects the
+	// actual upstream provider that eventually produces data.
+	h.activeRegistry.Register(&ActiveRequest{
+		RequestID:  pctx.requestID,
+		ProviderID: provider.ID,
+		Model:      pctx.info.Model,
+		APIType:    pctx.apiType,
+		UserID:     pctx.info.UserID,
+		ClientIP:   pctx.info.ClientIP,
+		IsSSE:      false, // Updated after response type is known
+		StartedAt:  pctx.startTime,
+	})
+	state.activeRegistered = true
+}
+
+// recordAttempt records a request attempt in the proxy context.
+func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result forwardResult, attempt int, attemptStart time.Time) {
+	attemptRecord := model.RequestAttempt{
+		RequestID:  pctx.requestID,
+		ProviderID: state.currentProvider.ID,
+		Attempt:    attempt,
+		StatusCode: result.statusCode,
+		LatencyMs:  time.Since(attemptStart).Milliseconds(),
+		CreatedAt:  time.Now(),
+	}
+	if result.err != nil {
+		attemptRecord.Error = result.err.Error()
+	}
+	pctx.attempts = append(pctx.attempts, attemptRecord)
+}
+
+// tryIncrementAndExhaustsProvider attempts to increment the provider retry counter.
+// Returns true if the provider is exhausted (should switch to a different provider).
+func (h *Handler) tryIncrementAndExhaustsProvider(ctx context.Context, state *retryState) bool {
+	// Retry decision: by default, retry the SAME provider up to Provider.MaxRetries times.
+	// If the provider becomes unavailable (circuit breaker), we stop retrying it early.
+	maxRetries := max(0, state.currentProvider.MaxRetries)
+	if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
+		maxRetries = forceProviderSwitch
+	}
+	if state.providerAttempt < maxRetries {
+		state.providerAttempt++
+		return false
+	}
+	return true
+}
+
+// excludeCurrentProvider marks the current provider as excluded and releases its concurrency.
+func (h *Handler) excludeCurrentProvider(state *retryState) {
+	state.excludedProviders[state.currentProvider.ID] = true
+	h.releaseConcurrency(state.currentProvider.ID)
+	state.currentProvider = nil
+}
+
 // executeProxy runs the proxy logic with retry.
 func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
-	var (
-		lastErr           error
-		providerUsed      *model.Provider
-		statusCode        int
-		success, isSSE    bool
-		headersWritten    bool
-		excludedProviders = make(map[string]bool)
-	)
+	state := &retryState{
+		excludedProviders: make(map[string]bool),
+	}
 
-	for attempt := 0; attempt <= pctx.cfg.maxRetries && !headersWritten; attempt++ {
-		attemptStart := time.Now()
+	for attempt := 0; !state.headersWritten; attempt++ {
+		if pctx.cfg.globalMaxAttempts > 0 && attempt >= pctx.cfg.globalMaxAttempts {
+			break
+		}
 
 		// Early exit on context cancellation - avoid wasted retries
 		if err := ctx.Err(); err != nil {
-			lastErr = err
+			state.lastErr = err
 			break
 		}
 
-		provider, fromSticky, err := h.selectProviderWithTracking(ctx, pctx, attempt, excludedProviders)
-		if err != nil {
-			if errors.Is(err, internal.ErrNoProvider) {
-				h.handleNoProvider(pctx)
+		attemptStart := time.Now()
+
+		// Select a provider if we don't have one or if we just switched.
+		if state.currentProvider == nil {
+			continueLoop, earlyReturn := h.selectAndRegisterProvider(ctx, pctx, state, attempt)
+			if earlyReturn {
 				return
 			}
-			lastErr = err
-			continue
-		}
-		if provider == nil {
-			break
+			if !continueLoop {
+				break
+			}
 		}
 
-		// Track sticky cache hit on first attempt
-		if attempt == 0 {
-			pctx.isSticky = fromSticky
-		}
+		state.providerUsed = state.currentProvider
 
-		// Check provider-specific max retries BEFORE adding to excluded.
-		// This ensures providers are only skipped if the global attempt exceeds their threshold,
-		// but they can still be tried if selected on an earlier attempt.
-		providerMaxRetries := pctx.cfg.maxRetries
-		if provider.MaxRetries >= 0 {
-			providerMaxRetries = provider.MaxRetries
-		}
-		if attempt > providerMaxRetries {
-			// Provider can't be used at this attempt level.
-			// Add to excluded to prevent re-selection, release concurrency, and continue.
-			excludedProviders[provider.ID] = true
-			h.releaseConcurrency(provider.ID)
-			continue
-		}
-
-		providerUsed = provider
-		excludedProviders[provider.ID] = true
-
-		// Register active request on first attempt only. ProviderID is the initial
-		// selection; retries use different providers but active request isn't updated.
-		// For retry details, see request_attempts table.
-		if attempt == 0 && h.activeRegistry != nil {
-			h.activeRegistry.Register(&ActiveRequest{
-				RequestID:  pctx.requestID,
-				ProviderID: provider.ID,
-				Model:      pctx.info.Model,
-				APIType:    pctx.apiType,
-				UserID:     pctx.info.UserID,
-				ClientIP:   pctx.info.ClientIP,
-				IsSSE:      false, // Updated by UpdateSSE after response type is known
-				StartedAt:  pctx.startTime,
-			})
-		}
-
-		result := h.forwardToProvider(ctx, pctx, provider)
-		headersWritten = result.headersWritten
-		statusCode = result.statusCode
-		lastErr = result.err
-		success = result.success
-		isSSE = result.isSSE
+		result := h.forwardToProvider(ctx, pctx, state.currentProvider)
+		state.headersWritten = result.headersWritten
+		state.statusCode = result.statusCode
+		state.lastErr = result.err
+		state.success = result.success
+		state.isSSE = result.isSSE
 
 		// Update SSE status in active registry now that we know the response type
-		if attempt == 0 && h.activeRegistry != nil {
+		if state.headersWritten && h.activeRegistry != nil && state.activeRegistered {
 			h.activeRegistry.UpdateSSE(pctx.requestID, result.isSSE)
 		}
 
-		// Record this attempt
-		attemptRecord := model.RequestAttempt{
-			RequestID:  pctx.requestID,
-			ProviderID: provider.ID,
-			Attempt:    attempt,
-			StatusCode: result.statusCode,
-			LatencyMs:  time.Since(attemptStart).Milliseconds(),
-			CreatedAt:  time.Now(),
-		}
-		if result.err != nil {
-			attemptRecord.Error = result.err.Error()
-		}
-		pctx.attempts = append(pctx.attempts, attemptRecord)
+		h.recordAttempt(pctx, state, result, attempt, attemptStart)
 
 		if result.done {
 			break
 		}
+
+		if h.tryIncrementAndExhaustsProvider(ctx, state) {
+			h.excludeCurrentProvider(state)
+		}
+	}
+
+	h.finalizeProxy(pctx, state)
+}
+
+// finalizeProxy performs cleanup and logging after the retry loop completes.
+func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
+	// Release concurrency for the current provider (if any).
+	if state.currentProvider != nil {
+		h.releaseConcurrency(state.currentProvider.ID)
 	}
 
 	// Unregister active request
@@ -379,11 +430,11 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
 	// but avoids blocking the response path. For a high-throughput proxy,
 	// this is an acceptable trade-off as most logs will complete.
-	go h.logRequest(pctx, providerUsed, statusCode, success, isSSE, lastErr, time.Since(pctx.startTime))
+	go h.logRequest(pctx, state.providerUsed, state.statusCode, state.success, state.isSSE, state.lastErr, time.Since(pctx.startTime))
 
 	// Handle exhausted retries
-	if !success && !headersWritten { // coverage-ignore -- retry exhaustion tested at integration level
-		h.handleExhaustedRetries(pctx, lastErr)
+	if !state.success && !state.headersWritten { // coverage-ignore -- retry exhaustion tested at integration level
+		h.handleExhaustedRetries(pctx, state.lastErr)
 	}
 }
 
@@ -398,7 +449,7 @@ type forwardResult struct {
 }
 
 // forwardToProvider forwards the request to a single provider.
-// Note: MaxRetries check is performed in executeProxy before calling this function.
+// Note: Retry orchestration (per-provider retries and provider switching) is handled in executeProxy.
 func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider) forwardResult {
 	result := forwardResult{}
 
@@ -415,7 +466,6 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		// Mark failure for invalid URL configuration so circuit breaker can trigger.
 		// This prevents bad configurations from being infinitely retried.
 		h.markFailure(ctx, provider.ID, err)
-		h.releaseConcurrency(provider.ID)
 		return result
 	}
 
@@ -433,7 +483,6 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		result.err = err
 		result.success = false // Explicitly mark as failure
 		h.markFailure(ctx, provider.ID, err)
-		h.releaseConcurrency(provider.ID)
 		return result // headersWritten is false, so retry is possible
 	}
 
@@ -451,14 +500,23 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		result.err = statusErr // Record error for proper "all providers failed" message
 		result.success = false // Explicitly mark as failure for logging
 		h.markFailure(ctx, provider.ID, statusErr)
-		h.releaseConcurrency(provider.ID)
 		upstreamResp.Drain() // Drain and close to enable connection reuse for retries
 		// headersWritten is still false, allowing retry with another provider
 		return result
 	}
 
+	// Wrap ResponseWriter to detect first data write for sticky session fallback
+	wrappedWriter := &firstWriteResponseWriter{
+		ResponseWriter: pctx.w,
+		onFirstWrite: func() {
+			if h.activeRegistry != nil {
+				h.activeRegistry.MarkDataReceived(pctx.requestID)
+			}
+		},
+	}
+
 	// Commit: write response to client
-	writeErr := pctx.transport.WriteToClient(ctx, pctx.w, upstreamResp)
+	writeErr := pctx.transport.WriteToClient(ctx, wrappedWriter, upstreamResp)
 	upstreamResp.Close()
 	result.headersWritten = true
 	result.done = true // No retry possible after headers are written
@@ -481,7 +539,6 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		}
 		// For other write errors (e.g., client disconnected), we don't markFailure
 		// as the upstream itself succeeded; only the client write failed.
-		h.releaseConcurrency(provider.ID)
 		return result
 	}
 
@@ -490,7 +547,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	// but wasn't a true "success" for health tracking purposes.
 	// Note: Retryable error codes (401, 403, 429, 5xx) are already handled above
 	// and will not reach this point.
-	if result.statusCode < 400 {
+	if result.statusCode < defaults.StatusClientError {
 		result.success = true
 		h.markSuccess(ctx, provider.ID)
 	} else {
@@ -502,7 +559,6 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 			zap.Int("status_code", result.statusCode),
 		)
 	}
-	h.releaseConcurrency(provider.ID)
 
 	// Update sticky cache
 	if pctx.cfg.stickyEnabled && h.selector != nil {
@@ -510,318 +566,4 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	}
 
 	return result
-}
-
-// selectProviderWithTracking selects a provider for the given attempt.
-// Returns (provider, fromStickyCache, error).
-func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyContext, attempt int, excluded map[string]bool) (*model.Provider, bool, error) {
-	if h.selector != nil {
-		if attempt == 0 {
-			result, err := h.selector.SelectWithMetadata(ctx, pctx.selectReq)
-			if err != nil {
-				return nil, false, err
-			}
-			return result.Provider, result.FromStickyCache, nil
-		}
-		provider, err := h.selector.SelectExcluding(ctx, pctx.selectReq, excluded)
-		return provider, false, err
-	}
-
-	// Fallback: direct provider list (no selector configured)
-	provider, err := h.selectProviderFallback(ctx, pctx, attempt)
-	return provider, false, err
-}
-
-// selectProviderFallback selects a provider when no Selector is configured.
-//
-// This fallback exists for minimal deployments where advanced selection features
-// (health checks, concurrency limits, sticky sessions, group-based strategies) are not needed.
-// It uses simple round-robin selection based on attempt number.
-//
-// Limitations compared to the full Selector:
-//   - No health checks: unhealthy providers may be selected
-//   - No concurrency limits: may overload providers
-//   - No sticky sessions: same client may hit different providers
-//   - No group-based strategies: ignores priority/weight/random settings
-//
-// For production deployments with multiple providers, configure a Selector for robust behavior.
-func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext, attempt int) (*model.Provider, error) {
-	providers, err := h.store.ListProvidersByAPIType(ctx, pctx.apiType)
-	if err != nil { // coverage-ignore -- database errors are rare after successful startup
-		h.logger.Error("failed to list providers", zap.Error(err), zap.String("api_type", pctx.apiType))
-		return nil, err
-	}
-	if len(providers) == 0 {
-		return nil, internal.ErrNoProvider
-	}
-	// True round-robin: use atomic counter for cross-request distribution,
-	// plus attempt offset to ensure retries hit different providers.
-	// Use uint64 conversion to handle wrap-around safely: when int64 wraps from
-	// MaxInt64 to MinInt64, converting to uint64 ensures non-negative indices.
-	idx := h.fallbackCounter.Add(1)
-	provider := providers[int(uint64(idx-1+int64(attempt))%uint64(len(providers)))]
-	return &provider, nil
-}
-
-// handleNoProvider handles the case when no provider is available.
-func (h *Handler) handleNoProvider(pctx *proxyContext) {
-	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
-	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(pctx, nil, StatusCodeNoResponse, false, false, internal.ErrNoProvider, time.Since(pctx.startTime))
-}
-
-// handleExhaustedRetries handles exhausted retry attempts.
-func (h *Handler) handleExhaustedRetries(pctx *proxyContext, lastErr error) {
-	if lastErr != nil {
-		h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderExhausted, "All providers failed")
-	} else {
-		h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	}
-}
-
-// markSuccess marks a successful request for the provider.
-func (h *Handler) markSuccess(ctx context.Context, providerID string) {
-	if h.health != nil {
-		h.health.MarkSuccess(ctx, providerID)
-	}
-}
-
-// markFailure marks a failed request for the provider.
-func (h *Handler) markFailure(ctx context.Context, providerID string, err error) {
-	if h.health != nil {
-		h.health.MarkFailure(ctx, providerID, err)
-	}
-}
-
-// releaseConcurrency releases the concurrency slot for a provider.
-func (h *Handler) releaseConcurrency(providerID string) {
-	if h.selector != nil {
-		h.selector.ReleaseConcurrency(providerID)
-	}
-}
-
-// loadConfig loads runtime configuration from the store.
-// Returns an immutable runtimeConfig struct for use during the request.
-func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
-	cfg := &runtimeConfig{}
-
-	// Trust proxy headers
-	trustProxy, err := h.store.GetConfig(ctx, ConfigKeyTrustProxyHeaders)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		return nil, err
-	}
-	cfg.trustProxy = parseBoolOrDefault(trustProxy, false)
-
-	// User header
-	userHeader, err := h.store.GetConfig(ctx, ConfigKeyUserHeader)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		return nil, err
-	}
-	if cfg.userHeader = DefaultUserHeader; userHeader != "" {
-		cfg.userHeader = userHeader
-	}
-
-	// Max body size
-	maxBodySize, err := h.store.GetConfig(ctx, ConfigKeyMaxBodySize)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		return nil, err
-	}
-	cfg.maxBodySizeMB = parseInt64OrDefault(maxBodySize, DefaultMaxBodySizeMB)
-
-	// Global auth mode
-	authMode, err := h.store.GetConfig(ctx, ConfigKeyAuthMode)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		return nil, err
-	}
-	if cfg.globalAuthMode = AuthModeAuto; authMode != "" {
-		cfg.globalAuthMode = authMode
-	}
-
-	// Max retries
-	maxRetries, err := h.store.GetConfig(ctx, ConfigKeyMaxRetries)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		return nil, err
-	}
-	cfg.maxRetries = parseIntOrDefault(maxRetries, DefaultMaxRetries)
-
-	// Upstream timeouts - errors logged but use defaults (non-critical config)
-	connectTimeout, err := h.store.GetConfig(ctx, ConfigKeyUpstreamConnectTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		h.logger.Warn("failed to get upstream_connect_timeout, using default", zap.Error(err))
-	}
-	firstByteTimeout, err := h.store.GetConfig(ctx, ConfigKeyFirstByteTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		h.logger.Warn("failed to get first_byte_timeout, using default", zap.Error(err))
-	}
-	readTimeout, err := h.store.GetConfig(ctx, ConfigKeyUpstreamReadTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		h.logger.Warn("failed to get upstream_read_timeout, using default", zap.Error(err))
-	}
-
-	cfg.connectTimeout = time.Duration(parseIntOrDefault(connectTimeout, DefaultConnectTimeoutSec)) * time.Second
-	cfg.firstByteTimeout = time.Duration(parseIntOrDefault(firstByteTimeout, defaults.FirstByteTimeoutSec)) * time.Second
-	cfg.readTimeout = time.Duration(parseIntOrDefault(readTimeout, 0)) * time.Second
-
-	// SSE idle timeout - protects against silent upstream connections
-	sseIdleTimeout, err := h.store.GetConfig(ctx, ConfigKeySSEIdleTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		h.logger.Warn("failed to get sse_idle_timeout, using default", zap.Error(err))
-	}
-	cfg.sseIdleTimeout = time.Duration(parseIntOrDefault(sseIdleTimeout, defaults.SSEIdleTimeoutSec)) * time.Second
-
-	// Sticky session config
-	stickyEnabled, err := h.store.GetConfig(ctx, ConfigKeyStickyEnabled)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		h.logger.Warn("failed to get sticky_enabled, using default", zap.Error(err))
-	}
-	cfg.stickyEnabled = parseBoolOrDefault(stickyEnabled, DefaultStickyEnabled)
-
-	stickyTTL, err := h.store.GetConfig(ctx, ConfigKeyStickyTTL)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		h.logger.Warn("failed to get sticky_ttl, using default", zap.Error(err))
-	}
-	cfg.stickyTTL = time.Duration(parseIntOrDefault(stickyTTL, defaultStickyTTLSeconds)) * time.Second
-
-	return cfg, nil
-}
-
-// writeGatewayError writes a gateway error response.
-func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	err := model.NewGatewayError(code, message)
-	if encErr := json.NewEncoder(w).Encode(err); encErr != nil { // coverage-ignore -- JSON encoding of simple struct rarely fails
-		h.logger.Error("failed to encode error response", zap.Error(encErr))
-	}
-}
-
-// logInsertTimeout is the maximum time allowed for inserting a request log.
-// This prevents goroutine accumulation if the database is slow or blocked.
-const logInsertTimeout = 2 * time.Second
-
-// logRequest logs the request asynchronously.
-// Note: Uses context.Background() with timeout because this runs after the HTTP response
-// completes and the request context may already be cancelled.
-func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statusCode int, success bool, isSSE bool, err error, latency time.Duration) {
-	log := &model.RequestLog{
-		RequestID:  pctx.requestID,
-		APIType:    pctx.info.APIType,
-		Model:      pctx.info.Model,
-		ClientIP:   pctx.info.ClientIP,
-		UserID:     pctx.info.UserID,
-		StatusCode: statusCode,
-		LatencyMs:  latency.Milliseconds(),
-		Success:    success,
-		IsSSE:      isSSE,
-		RetryCount: max(0, len(pctx.attempts)-1),
-		IsSticky:   pctx.isSticky,
-		CreatedAt:  time.Now(),
-	}
-
-	if provider != nil {
-		log.ProviderID = provider.ID
-	}
-
-	if err != nil { // coverage-ignore -- error logging path
-		log.ErrorMsg = err.Error()
-	}
-
-	// Use timeout to prevent goroutine accumulation if database is slow or blocked
-	ctx, cancel := context.WithTimeout(context.Background(), logInsertTimeout)
-	defer cancel()
-
-	if insertErr := h.store.InsertLog(ctx, log); insertErr != nil { // coverage-ignore -- log insert errors are logged but don't affect response
-		h.logger.Error("failed to insert request log", zap.Error(insertErr))
-	}
-
-	// Store attempts if there are any (for retry tracking)
-	if len(pctx.attempts) > 0 {
-		if insertErr := h.store.InsertAttempts(ctx, pctx.attempts); insertErr != nil { // coverage-ignore -- attempt insert errors are logged but don't affect response
-			h.logger.Error("failed to insert request attempts", zap.Error(insertErr))
-		}
-	}
-}
-
-// shouldFailover determines if we should try another provider instead of
-// forwarding this response to the client. Returns true for provider-side issues
-// that may be resolved by switching to a different provider:
-//   - Server errors (5xx): temporary upstream issues
-//   - Payment/quota errors (402): provider billing limits or quota exhausted
-//   - Rate limiting (429): provider overloaded
-//   - Auth errors (401, 403): provider misconfiguration (wrong/expired API key)
-func shouldFailover(statusCode int) bool {
-	return statusCode >= defaults.StatusServerError ||
-		statusCode == defaults.StatusPaymentRequired ||
-		statusCode == defaults.StatusTooManyRequests ||
-		statusCode == defaults.StatusUnauthorized ||
-		statusCode == defaults.StatusForbidden
-}
-
-// buildFullURL constructs the full upstream URL.
-// It properly joins the baseURL's existing path (if any) with the given path.
-// For example: baseURL="https://api.openai.com/v1", path="/chat/completions"
-// yields "https://api.openai.com/v1/chat/completions".
-func (h *Handler) buildFullURL(baseURL, path, query string) string {
-	// url.JoinPath handles path joining correctly:
-	// - Preserves the base URL's scheme, host, and existing path
-	// - Properly joins paths (handles slashes, dots, etc.)
-	joined, err := url.JoinPath(baseURL, path)
-	if err != nil {
-		// Invalid base URL - fall back to string concatenation with proper slash handling.
-		h.logger.Warn("invalid base URL, falling back to string concatenation",
-			zap.String("base_url", baseURL),
-			zap.Error(err),
-		)
-		if !strings.HasSuffix(baseURL, "/") && !strings.HasPrefix(path, "/") {
-			joined = baseURL + "/" + path
-		} else {
-			joined = baseURL + path
-		}
-	}
-
-	if query != "" {
-		return joined + "?" + query
-	}
-	return joined
-}
-
-// parseIntOrDefault parses a string to int, returning defaultVal on error.
-func parseIntOrDefault(s string, defaultVal int) int {
-	if s == "" {
-		return defaultVal
-	}
-	if v, err := strconv.Atoi(s); err == nil {
-		return v
-	}
-	return defaultVal
-}
-
-// parseInt64OrDefault parses a string to int64, returning defaultVal on error.
-func parseInt64OrDefault(s string, defaultVal int64) int64 {
-	if s == "" {
-		return defaultVal
-	}
-	if v, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return v
-	}
-	return defaultVal
-}
-
-// parseBoolOrDefault parses a string to bool, returning defaultVal if empty or invalid.
-// Accepts "true", "1" as true, and "false", "0" as false (case-insensitive).
-// Invalid values (e.g., "xyz") return defaultVal instead of false.
-func parseBoolOrDefault(s string, defaultVal bool) bool {
-	if s == "" {
-		return defaultVal
-	}
-	lower := strings.ToLower(s)
-	switch lower {
-	case "true", "1":
-		return true
-	case "false", "0":
-		return false
-	default:
-		return defaultVal
-	}
 }

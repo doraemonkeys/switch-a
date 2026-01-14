@@ -129,8 +129,8 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.MaxRetries != nil && *req.MaxRetries < -1 {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "MaxRetries must be -1 (default) or non-negative")
+	if req.MaxRetries != nil && *req.MaxRetries < 0 {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "MaxRetries must be non-negative")
 		return
 	}
 
@@ -161,7 +161,7 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine MaxRetries value: use explicit value if provided, otherwise default
-	maxRetries := DefaultMaxRetries
+	maxRetries := DefaultProviderMaxRetries
 	if req.MaxRetries != nil {
 		maxRetries = *req.MaxRetries
 	}
@@ -243,8 +243,8 @@ func (req *UpdateProviderRequest) validate() string {
 	if req.Concurrency != nil && *req.Concurrency < 0 {
 		return "Concurrency cannot be negative"
 	}
-	if req.MaxRetries != nil && *req.MaxRetries < -1 {
-		return "MaxRetries must be -1 (default) or non-negative"
+	if req.MaxRetries != nil && *req.MaxRetries < 0 {
+		return "MaxRetries must be non-negative"
 	}
 	if req.APITypes != nil && len(req.APITypes) == 0 {
 		return "At least one api_type is required"
