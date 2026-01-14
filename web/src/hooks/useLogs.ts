@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useApi } from "../api";
 import type { RequestLog, LogFilter, LogsResponse } from "../api/client";
 
@@ -32,7 +32,7 @@ export function useLogs(initialFilter?: LogFilter): UseLogsResult {
     ...initialFilter,
   });
 
-  const refetch = async () => {
+  const refetch = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -46,11 +46,11 @@ export function useLogs(initialFilter?: LogFilter): UseLogsResult {
     } finally {
       setLoading(false);
     }
-  };
+  }, [api, filter]);
 
   useEffect(() => {
     refetch();
-  }, [api, filter]);
+  }, [refetch]);
 
   // Partial update helper for convenience
   // Automatically resets offset to 0 when filter criteria (not pagination) changes

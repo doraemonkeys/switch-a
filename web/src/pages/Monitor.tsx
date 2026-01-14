@@ -1,10 +1,22 @@
+import { useState, useMemo } from "react";
 import { LiveRequestsPanel } from "../components/LiveRequestsPanel";
 import { useLiveRequests, useStatus, useProviders } from "../hooks";
 
 /** Threshold in ms to highlight long-running requests */
-const LONG_RUNNING_REQUEST_THRESHOLD_MS = 30000;
+const LONG_RUNNING_REQUEST_THRESHOLD_MS = 300000;
+
+/** Poll interval options in milliseconds */
+const POLL_INTERVALS = [
+  { value: 0, label: "Paused" },
+  { value: 2000, label: "2s" },
+  { value: 5000, label: "5s" },
+  { value: 10000, label: "10s" },
+  { value: 30000, label: "30s" },
+] as const;
 
 export function Monitor() {
+  const [pollInterval, setPollInterval] = useState(5000);
+
   const {
     requests,
     count,
@@ -12,7 +24,7 @@ export function Monitor() {
     error: requestsError,
     refetch: refetchRequests,
     isPolling,
-  } = useLiveRequests({ pollInterval: 5000 });
+  } = useLiveRequests({ pollInterval, enabled: pollInterval > 0 });
 
   const {
     status,
@@ -53,6 +65,16 @@ export function Monitor() {
     };
   })();
 
+  // Memoize long-running count to avoid calling Date.now() on every render
+  const longRunningCount = useMemo(() => {
+    // eslint-disable-next-line react-hooks/purity -- Date.now() is intentionally used once per requests update
+    const now = Date.now();
+    return requests.filter((r) => {
+      const duration = now - new Date(r.started_at).getTime();
+      return duration > LONG_RUNNING_REQUEST_THRESHOLD_MS;
+    }).length;
+  }, [requests]);
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -64,7 +86,23 @@ export function Monitor() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isPolling && (
+          {/* Poll Interval Selector */}
+          <div className="flex items-center gap-2">
+            <select
+              value={pollInterval}
+              onChange={(e) => setPollInterval(Number(e.target.value))}
+              className="input py-1.5 text-sm w-24"
+              aria-label="Refresh interval"
+            >
+              {POLL_INTERVALS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {isPolling && pollInterval > 0 && (
             <span
               className="flex items-center gap-2 text-sm text-text-secondary"
               role="status"
@@ -89,13 +127,26 @@ export function Monitor() {
       </div>
 
       {/* Stats Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card bg-gradient-to-br from-blue-500/10 to-blue-600/5">
           <div className="flex items-center gap-4">
             <div className="text-4xl">🔄</div>
             <div>
               <p className="text-3xl font-bold text-text-primary">{count}</p>
               <p className="text-sm text-text-secondary">Active Requests</p>
+            </div>
+          </div>
+        </div>
+        <div className="card bg-gradient-to-br from-amber-500/10 to-amber-600/5">
+          <div className="flex items-center gap-4">
+            <div className="text-4xl">⚠️</div>
+            <div>
+              <p className="text-3xl font-bold text-text-primary">
+                {longRunningCount}
+              </p>
+              <p className="text-sm text-text-secondary">
+                Long Running (&gt;{LONG_RUNNING_REQUEST_THRESHOLD_MS / 1000}s)
+              </p>
             </div>
           </div>
         </div>
@@ -128,12 +179,6 @@ export function Monitor() {
         {/* Live Requests Panel */}
         <div className="lg:col-span-2">
           <div className="card">
-            <div className="flex items-center justify-between mb-4 pb-4 border-b border-border-light">
-              <h3 className="text-lg font-semibold text-text-primary">
-                Live Requests
-              </h3>
-              <span className="badge badge-neutral">{count} active</span>
-            </div>
             <LiveRequestsPanel
               requests={requests}
               loading={requestsLoading}
@@ -158,7 +203,11 @@ export function Monitor() {
 
           {statusLoading && !status && (
             <div className="p-4 text-center">
-              <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-accent-primary" />
+              <div
+                className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-accent-primary"
+                role="status"
+                aria-label="Loading provider status"
+              />
             </div>
           )}
 
