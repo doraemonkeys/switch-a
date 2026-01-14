@@ -112,15 +112,15 @@ function ActionsCell({
           👁️
         </button>
       )}
-      {showReset && (
-        <button
-          onClick={() => onReset(provider)}
-          className="btn btn-ghost btn-sm text-warning hover:bg-warning-light"
-          title="Reset Circuit Breaker"
-        >
-          🔄
-        </button>
-      )}
+      {/* 始终渲染重置按钮以保持对齐，不需要时隐藏 */}
+      <button
+        onClick={() => onReset(provider)}
+        className={`btn btn-ghost btn-sm text-warning hover:bg-warning-light ${showReset ? "" : "invisible"}`}
+        title="Reset Circuit Breaker"
+        disabled={!showReset}
+      >
+        🔄
+      </button>
       <button
         onClick={() => onToggle(provider)}
         className="btn btn-ghost btn-sm"

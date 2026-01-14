@@ -19,13 +19,23 @@ import (
 )
 
 // ReadHeaderTimeout is the timeout for reading request headers.
+// 10s is generous for legitimate clients; excessively slow header
+// transmission may indicate slowloris attacks or severely degraded networks.
 const ReadHeaderTimeout = 10 * time.Second
 
 // IdleTimeout is the timeout for keep-alive connections.
 // Prevents idle connections from occupying resources indefinitely.
 const IdleTimeout = 120 * time.Second
 
+// HTTP response constants.
+const (
+	HealthStatusOK = "ok"
+)
+
 // store defines the minimal storage interface needed by the server.
+// This is a subset of internal.Store, defined at the consumer side per Go idiom
+// "Accept Interfaces, Return Structs". The server requires provider/group CRUD,
+// config access, and logging capabilities but not health state mutations or cleanup.
 type store interface {
 	// Provider operations
 	ListProviders(ctx context.Context) ([]model.Provider, error)
@@ -59,6 +69,11 @@ type store interface {
 	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
 	GetLogStats(ctx context.Context, startTime, endTime time.Time) (*model.LogStats, error)
 	GetLogTimeSeries(ctx context.Context, startTime, endTime time.Time, granularity time.Duration) ([]model.TimeSeriesPoint, error)
+	GetLogByID(ctx context.Context, id uint) (*model.RequestLog, error)
+
+	// Attempt operations
+	InsertAttempts(ctx context.Context, attempts []model.RequestAttempt) error
+	GetAttemptsByRequestID(ctx context.Context, requestID string) ([]model.RequestAttempt, error)
 }
 
 // Server represents the HTTP server (proxy only).
@@ -89,22 +104,24 @@ type Selector = proxy.Selector
 
 // Config holds proxy server configuration.
 type Config struct {
-	Port     string
-	Logger   *zap.Logger
-	Store    store
-	Health   internal.HealthManager
-	Selector Selector
+	Port           string
+	Logger         *zap.Logger
+	Store          store
+	Health         internal.HealthManager
+	Selector       Selector
+	ActiveRegistry *proxy.ActiveRequestRegistry
 }
 
 // AdminConfig holds admin server configuration.
 type AdminConfig struct {
-	Port        string
-	AdminToken  string
-	Logger      *zap.Logger
-	Store       store
-	Health      internal.HealthManager
-	Selector    Selector
-	Concurrency ConcurrencyTracker
+	Port          string
+	AdminToken    string
+	Logger        *zap.Logger
+	Store         store
+	Health        internal.HealthManager
+	Selector      Selector
+	Concurrency   ConcurrencyTracker
+	ActiveReqList admin.ActiveRequestLister
 }
 
 // HealthResponse represents the health check response.
@@ -124,10 +141,11 @@ func New(cfg Config) *Server {
 	// - No sticky sessions
 	// - Simple round-robin provider selection
 	proxyHandler := proxy.NewHandler(proxy.Config{
-		Store:    cfg.Store,
-		Selector: cfg.Selector,
-		Health:   cfg.Health,
-		Logger:   cfg.Logger,
+		Store:          cfg.Store,
+		Selector:       cfg.Selector,
+		Health:         cfg.Health,
+		ActiveRegistry: cfg.ActiveRegistry,
+		Logger:         cfg.Logger,
 	})
 
 	s := &Server{
@@ -189,11 +207,12 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// The Selector implements ConcurrencyCleaner for clearing concurrency
 	// counters when providers are deleted.
 	adminHandler := admin.NewHandler(admin.Config{
-		Store:       cfg.Store,
-		Health:      cfg.Health,
-		Concurrency: cfg.Concurrency,
-		Cleaner:     cfg.Selector,
-		Logger:      cfg.Logger,
+		Store:         cfg.Store,
+		Health:        cfg.Health,
+		Concurrency:   cfg.Concurrency,
+		Cleaner:       cfg.Selector,
+		ActiveReqList: cfg.ActiveReqList,
+		Logger:        cfg.Logger,
 	})
 
 	// Create auth middleware
@@ -231,6 +250,10 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 
 	// Logs route
 	mux.Handle("GET /admin/api/logs", auth.WrapFunc(adminHandler.GetLogs))
+	mux.Handle("GET /admin/api/logs/{id}", auth.WrapFunc(adminHandler.GetLog))
+
+	// Active requests route
+	mux.Handle("GET /admin/api/requests/active", auth.WrapFunc(adminHandler.GetActiveRequests))
 
 	// Stats route
 	mux.Handle("GET /admin/api/stats", auth.WrapFunc(adminHandler.GetStats))
@@ -272,11 +295,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // This is a shared implementation used by both Server and AdminServer to avoid duplication.
 func writeHealthResponse(w http.ResponseWriter, logger *zap.Logger) {
 	resp := HealthResponse{
-		Status:    "ok",
+		Status:    HealthStatusOK,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", admin.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil { // coverage-ignore -- JSON encoding of simple struct rarely fails
 		logger.Error("failed to encode health response", zap.Error(err))

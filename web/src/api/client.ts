@@ -23,6 +23,8 @@ import type {
   ImportPreviewResponse,
   ImportResult,
   ConfigResponse,
+  ActiveRequestsResponse,
+  RequestLog,
 } from "./types";
 
 // Re-export types for consumers
@@ -48,6 +50,9 @@ export type {
   ImportPreviewResponse,
   ImportResult,
   ConfigResponse,
+  ActiveRequest,
+  ActiveRequestsResponse,
+  RequestAttempt,
 } from "./types";
 
 // API Error type
@@ -87,6 +92,10 @@ function buildLogsQuery(filter?: LogFilter): string {
   if (filter?.end_time) query.set("end_time", filter.end_time);
   if (filter?.min_latency != null)
     query.set("min_latency", String(filter.min_latency));
+  if (filter?.min_retry_count != null)
+    query.set("min_retry_count", String(filter.min_retry_count));
+  if (filter?.has_retries != null)
+    query.set("has_retries", String(filter.has_retries));
   if (filter?.sort_by) query.set("sort_by", filter.sort_by);
   if (filter?.sort_order) query.set("sort_order", filter.sort_order);
   return query.toString();
@@ -268,6 +277,7 @@ export function createApiClient(deps: ApiClientDeps) {
         const queryStr = buildLogsQuery(filter);
         return request<LogsResponse>(queryStr ? `/logs?${queryStr}` : "/logs");
       },
+      get: (id: number) => request<RequestLog>(`/logs/${id}`),
     },
     stats: {
       get: (params?: StatsParams) => {
@@ -276,6 +286,9 @@ export function createApiClient(deps: ApiClientDeps) {
           queryStr ? `/stats?${queryStr}` : "/stats",
         );
       },
+    },
+    requests: {
+      active: () => request<ActiveRequestsResponse>("/requests/active"),
     },
   };
 }

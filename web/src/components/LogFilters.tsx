@@ -1,9 +1,46 @@
-import { useMemo } from "react";
 import type { LogFilter, Provider } from "../api/types";
 import { API_TYPES } from "../config/constants";
 
 // API Types list derived from constants
 const API_TYPES_LIST = Object.values(API_TYPES);
+
+// Helper function to get current retries filter value for select
+function getRetriesFilterValue(filter: LogFilter): string {
+  if (filter.has_retries === true) return "has_retries";
+  if (filter.has_retries === false) return "no_retries";
+  if (filter.min_retry_count !== undefined && filter.min_retry_count >= 1)
+    return "1+";
+  return "";
+}
+
+// Helper function to handle retries filter change
+function handleRetriesFilterChange(
+  value: string,
+  onFilterChange: (filter: Partial<LogFilter>) => void,
+): void {
+  switch (value) {
+    case "has_retries":
+      onFilterChange({ has_retries: true, min_retry_count: undefined });
+      break;
+    case "no_retries":
+      onFilterChange({ has_retries: false, min_retry_count: undefined });
+      break;
+    case "1+":
+      onFilterChange({ has_retries: undefined, min_retry_count: 1 });
+      break;
+    default:
+      onFilterChange({ has_retries: undefined, min_retry_count: undefined });
+  }
+}
+
+// Helper function to get retries filter label for badge
+function getRetriesFilterLabel(filter: LogFilter): string | null {
+  if (filter.has_retries === true) return "Has Retries";
+  if (filter.has_retries === false) return "No Retries";
+  if (filter.min_retry_count !== undefined && filter.min_retry_count >= 1)
+    return "1+ Retries";
+  return null;
+}
 
 // Date range presets
 const DATE_PRESETS = [
@@ -27,17 +64,17 @@ export function LogFilters({
   providers,
   onClear,
 }: LogFiltersProps) {
-  // Check if any filter is active
-  const hasActiveFilters = useMemo(() => {
-    return !!(
-      filter.provider_id ||
-      filter.api_type ||
-      filter.success !== undefined ||
-      filter.is_sse !== undefined ||
-      filter.start_time ||
-      filter.end_time
-    );
-  }, [filter]);
+  // Check if any filter is active (derived state during render)
+  const hasActiveFilters = !!(
+    filter.provider_id ||
+    filter.api_type ||
+    filter.success !== undefined ||
+    filter.is_sse !== undefined ||
+    filter.start_time ||
+    filter.end_time ||
+    filter.has_retries !== undefined ||
+    filter.min_retry_count !== undefined
+  );
 
   // Handle date preset change
   const handleDatePresetChange = (preset: string) => {
@@ -72,8 +109,8 @@ export function LogFilters({
     });
   };
 
-  // Determine current date preset based on filter
-  const currentDatePreset = useMemo(() => {
+  // Determine current date preset based on filter (derived state during render)
+  const currentDatePreset = (() => {
     if (!filter.start_time) return "";
 
     const start = new Date(filter.start_time);
@@ -86,18 +123,21 @@ export function LogFilters({
     if (diffHours <= 24 * 7.1) return "7d";
     if (diffHours <= 24 * 30.1) return "30d";
     return "";
-  }, [filter.start_time]);
+  })();
 
   return (
     <div className="card p-4">
       <div className="flex flex-wrap items-center gap-4">
         {/* Provider Filter */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-text-muted font-medium">
+          <label
+            htmlFor="provider-filter"
+            className="text-xs text-text-muted font-medium"
+          >
             Provider
           </label>
           <select
-            aria-label="Provider"
+            id="provider-filter"
             value={filter.provider_id || ""}
             onChange={(e) =>
               onFilterChange({
@@ -117,9 +157,14 @@ export function LogFilters({
 
         {/* Status Filter */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-text-muted font-medium">Status</label>
+          <label
+            htmlFor="status-filter"
+            className="text-xs text-text-muted font-medium"
+          >
+            Status
+          </label>
           <select
-            aria-label="Status"
+            id="status-filter"
             value={filter.success === undefined ? "" : String(filter.success)}
             onChange={(e) => {
               const val = e.target.value;
@@ -137,11 +182,14 @@ export function LogFilters({
 
         {/* Request Type Filter (SSE/Regular) */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-text-muted font-medium">
+          <label
+            htmlFor="request-type-filter"
+            className="text-xs text-text-muted font-medium"
+          >
             Request Type
           </label>
           <select
-            aria-label="Request Type"
+            id="request-type-filter"
             value={filter.is_sse === undefined ? "" : String(filter.is_sse)}
             onChange={(e) => {
               const val = e.target.value;
@@ -159,11 +207,14 @@ export function LogFilters({
 
         {/* API Type Filter */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-text-muted font-medium">
+          <label
+            htmlFor="api-type-filter"
+            className="text-xs text-text-muted font-medium"
+          >
             API Type
           </label>
           <select
-            aria-label="API Type"
+            id="api-type-filter"
             value={filter.api_type || ""}
             onChange={(e) =>
               onFilterChange({
@@ -181,13 +232,39 @@ export function LogFilters({
           </select>
         </div>
 
+        {/* Retries Filter */}
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="retries-filter"
+            className="text-xs text-text-muted font-medium"
+          >
+            Retries
+          </label>
+          <select
+            id="retries-filter"
+            value={getRetriesFilterValue(filter)}
+            onChange={(e) =>
+              handleRetriesFilterChange(e.target.value, onFilterChange)
+            }
+            className="input input-sm min-w-[130px]"
+          >
+            <option value="">All</option>
+            <option value="has_retries">Has Retries</option>
+            <option value="no_retries">No Retries</option>
+            <option value="1+">1+ Retries</option>
+          </select>
+        </div>
+
         {/* Date Range Filter */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-text-muted font-medium">
+          <label
+            htmlFor="time-range-filter"
+            className="text-xs text-text-muted font-medium"
+          >
             Time Range
           </label>
           <select
-            aria-label="Time Range"
+            id="time-range-filter"
             value={currentDatePreset}
             onChange={(e) => handleDatePresetChange(e.target.value)}
             className="input input-sm min-w-[140px]"
@@ -244,6 +321,17 @@ export function LogFilters({
               <FilterBadge
                 label={`Type: ${filter.api_type}`}
                 onRemove={() => onFilterChange({ api_type: undefined })}
+              />
+            )}
+            {getRetriesFilterLabel(filter) && (
+              <FilterBadge
+                label={`Retries: ${getRetriesFilterLabel(filter)}`}
+                onRemove={() =>
+                  onFilterChange({
+                    has_retries: undefined,
+                    min_retry_count: undefined,
+                  })
+                }
               />
             )}
             {filter.start_time && (

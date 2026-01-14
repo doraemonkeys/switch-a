@@ -59,6 +59,18 @@ func (m *mockStore) GetLogStats(context.Context, time.Time, time.Time) (*model.L
 func (m *mockStore) GetLogTimeSeries(context.Context, time.Time, time.Time, time.Duration) ([]model.TimeSeriesPoint, error) {
 	return nil, nil
 }
+func (m *mockStore) GetAttemptsByRequestID(context.Context, string) ([]model.RequestAttempt, error) {
+	return nil, nil
+}
+func (m *mockStore) GetLogByID(context.Context, uint) (*model.RequestLog, error) {
+	return nil, nil
+}
+func (m *mockStore) InsertAttempts(context.Context, []model.RequestAttempt) error {
+	return nil
+}
+func (m *mockStore) CleanOldAttempts(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
 
 func testServer(t *testing.T) *Server {
 	t.Helper()

@@ -7,6 +7,7 @@ import { createMockApiClient, createWrapper } from "./test-utils";
 const mockLogs: RequestLog[] = [
   {
     id: 1,
+    request_id: "test-request-id-1",
     provider_id: "1",
     api_type: "claude",
     model: "claude-3",
@@ -18,6 +19,8 @@ const mockLogs: RequestLog[] = [
     is_sse: false,
     error_msg: null,
     created_at: "2024-01-01T00:00:00Z",
+    retry_count: 0,
+    is_sticky: false,
   },
 ];
 

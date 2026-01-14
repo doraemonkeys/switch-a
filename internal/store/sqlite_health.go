@@ -11,8 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Health state operations
-
 func (s *SQLiteStore) GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error) {
 	var state model.HealthState
 	err := s.db.WithContext(ctx).First(&state, "provider_id = ?", providerID).Error

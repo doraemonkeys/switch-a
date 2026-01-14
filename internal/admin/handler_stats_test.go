@@ -295,19 +295,19 @@ func TestGetStats_ProviderNameMapping(t *testing.T) {
 }
 
 func TestValidPeriods(t *testing.T) {
-	// Test that ValidPeriods contains expected values
+	// Test that validPeriods contains expected values
 	expectedPeriods := []string{"24h", "7d", "30d", "all"}
 	for _, p := range expectedPeriods {
-		if !ValidPeriods[p] {
-			t.Errorf("ValidPeriods should contain %q", p)
+		if !validPeriods[p] {
+			t.Errorf("validPeriods should contain %q", p)
 		}
 	}
 
 	// Test that invalid periods are not included
 	invalidPeriods := []string{"1h", "12h", "1d", "90d", ""}
 	for _, p := range invalidPeriods {
-		if ValidPeriods[p] {
-			t.Errorf("ValidPeriods should not contain %q", p)
+		if validPeriods[p] {
+			t.Errorf("validPeriods should not contain %q", p)
 		}
 	}
 }
@@ -528,7 +528,7 @@ func TestGetStats_WithoutGranularity(t *testing.T) {
 }
 
 func TestValidGranularities(t *testing.T) {
-	// Test that ValidGranularities contains expected values
+	// Test that validGranularities contains expected values
 	expectedGranularities := map[string]time.Duration{
 		"5m":  5 * time.Minute,
 		"15m": 15 * time.Minute,
@@ -538,10 +538,10 @@ func TestValidGranularities(t *testing.T) {
 	}
 
 	for granularity, expected := range expectedGranularities {
-		if got, ok := ValidGranularities[granularity]; !ok {
-			t.Errorf("ValidGranularities should contain %q", granularity)
+		if got, ok := validGranularities[granularity]; !ok {
+			t.Errorf("validGranularities should contain %q", granularity)
 		} else if got != expected {
-			t.Errorf("ValidGranularities[%q] = %v, want %v", granularity, got, expected)
+			t.Errorf("validGranularities[%q] = %v, want %v", granularity, got, expected)
 		}
 	}
 }

@@ -10,12 +10,16 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/proxy"
 	"switch-a/internal/store"
 
 	"go.uber.org/zap"
 )
 
 // Store defines the storage interface needed by admin handlers.
+// This is a subset of internal.Store, defined at the consumer side per Go idiom
+// "Accept Interfaces, Return Structs". Admin handlers only need read/list operations
+// and don't require log insertion, health state mutations, or cleanup operations.
 type Store interface {
 	// Provider operations
 	ListProviders(ctx context.Context) ([]model.Provider, error)
@@ -46,6 +50,8 @@ type Store interface {
 	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
 	GetLogStats(ctx context.Context, startTime, endTime time.Time) (*model.LogStats, error)
 	GetLogTimeSeries(ctx context.Context, startTime, endTime time.Time, granularity time.Duration) ([]model.TimeSeriesPoint, error)
+	GetLogByID(ctx context.Context, id uint) (*model.RequestLog, error)
+	GetAttemptsByRequestID(ctx context.Context, requestID string) ([]model.RequestAttempt, error)
 }
 
 // ConcurrencyTracker provides concurrency information for status API.
@@ -59,32 +65,43 @@ type ConcurrencyCleaner interface {
 	ClearConcurrency(providerID string)
 }
 
+// ActiveRequestLister provides access to active requests.
+type ActiveRequestLister interface {
+	List() []proxy.ActiveRequest
+}
+
+// ActiveRequest is an alias for proxy.ActiveRequest for convenience.
+type ActiveRequest = proxy.ActiveRequest
+
 // Handler handles admin API requests.
 type Handler struct {
-	store       Store
-	health      internal.HealthManager
-	concurrency ConcurrencyTracker
-	cleaner     ConcurrencyCleaner
-	logger      *zap.Logger
+	store         Store
+	health        internal.HealthManager
+	concurrency   ConcurrencyTracker
+	cleaner       ConcurrencyCleaner
+	activeReqList ActiveRequestLister
+	logger        *zap.Logger
 }
 
 // Config holds admin handler configuration.
 type Config struct {
-	Store       Store
-	Health      internal.HealthManager
-	Concurrency ConcurrencyTracker
-	Cleaner     ConcurrencyCleaner
-	Logger      *zap.Logger
+	Store         Store
+	Health        internal.HealthManager
+	Concurrency   ConcurrencyTracker
+	Cleaner       ConcurrencyCleaner
+	ActiveReqList ActiveRequestLister
+	Logger        *zap.Logger
 }
 
 // NewHandler creates a new admin handler.
 func NewHandler(cfg Config) *Handler {
 	return &Handler{
-		store:       cfg.Store,
-		health:      cfg.Health,
-		concurrency: cfg.Concurrency,
-		cleaner:     cfg.Cleaner,
-		logger:      cfg.Logger,
+		store:         cfg.Store,
+		health:        cfg.Health,
+		concurrency:   cfg.Concurrency,
+		cleaner:       cfg.Cleaner,
+		activeReqList: cfg.ActiveReqList,
+		logger:        cfg.Logger,
 	}
 }
 
@@ -95,7 +112,9 @@ type deleteConfig struct {
 	deleteFunc   func(ctx context.Context, id string) error
 }
 
-// handleDelete is a generic delete handler to reduce code duplication.
+// handleDelete provides consistent error handling and response formatting for
+// all resource deletions, ensuring uniform API behavior across providers, groups,
+// and other deletable entities.
 func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, cfg deleteConfig) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -125,7 +144,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, cfg delet
 
 // writeJSON writes a JSON response with the given status code.
 func writeJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", ContentTypeJSON)
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil { // coverage-ignore -- JSON encoding rarely fails
 		// Can't write error response since headers are already sent
@@ -135,7 +154,7 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 // writeError writes an error response in the standard format.
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", ContentTypeJSON)
 	w.WriteHeader(status)
 	resp := model.ErrorResponse{
 		Code:    code,

@@ -16,6 +16,7 @@ import (
 	"switch-a/internal/config"
 	"switch-a/internal/health"
 	"switch-a/internal/logger"
+	"switch-a/internal/proxy"
 	"switch-a/internal/selector"
 	"switch-a/internal/server"
 	"switch-a/internal/store"
@@ -158,13 +159,13 @@ func run() error {
 		Logger: log,
 	})
 	// Start cleanup loop to prevent memory growth from old failure records
-	stopHealthCleanup := healthMgr.StartCleanupLoop(5*time.Minute, 10*time.Minute)
+	stopHealthCleanup := healthMgr.StartCleanupLoop(HealthCleanupInterval, HealthCleanupMaxAge)
 	defer stopHealthCleanup()
 
 	// Initialize sticky cache for session affinity
 	stickyCache := selector.NewMemoryStickyCache(clock)
 	// Start cleanup loop to prevent memory growth from expired entries
-	stopCleanup := stickyCache.StartCleanupLoop(5 * time.Minute)
+	stopCleanup := stickyCache.StartCleanupLoop(StickyCacheCleanupInterval)
 	defer stopCleanup()
 
 	// Start log cleanup loop to prevent request_logs table from growing indefinitely
@@ -173,6 +174,11 @@ func run() error {
 
 	// Initialize concurrency limiter for per-provider request limits
 	limiter := selector.NewConcurrencyLimiter()
+
+	// Initialize active request registry for live request monitoring
+	activeRegistry := proxy.NewActiveRequestRegistry()
+	activeRegistry.StartCleanup()
+	defer activeRegistry.StopCleanup()
 
 	// Initialize selector for provider selection with all features:
 	// - Health checks
@@ -190,22 +196,24 @@ func run() error {
 
 	// Create proxy HTTP server (public port)
 	proxySrv := server.New(server.Config{
-		Port:     cfg.Port,
-		Logger:   log,
-		Store:    st,
-		Health:   healthMgr,
-		Selector: sel,
+		Port:           cfg.Port,
+		Logger:         log,
+		Store:          st,
+		Health:         healthMgr,
+		Selector:       sel,
+		ActiveRegistry: activeRegistry,
 	})
 
 	// Create admin HTTP server (separate port for security)
 	adminSrv := server.NewAdmin(server.AdminConfig{
-		Port:        cfg.AdminPort,
-		AdminToken:  cfg.AdminToken,
-		Logger:      log,
-		Store:       st,
-		Health:      healthMgr,
-		Selector:    sel,
-		Concurrency: limiter,
+		Port:          cfg.AdminPort,
+		AdminToken:    cfg.AdminToken,
+		Logger:        log,
+		Store:         st,
+		Health:        healthMgr,
+		Selector:      sel,
+		Concurrency:   limiter,
+		ActiveReqList: activeRegistry,
 	})
 
 	// Start servers in goroutines

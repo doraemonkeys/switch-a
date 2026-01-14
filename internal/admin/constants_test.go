@@ -182,3 +182,148 @@ func TestIsValidConfigKey(t *testing.T) {
 		})
 	}
 }
+
+// Tests for individual validation helper functions (lines 166-208 in constants.go)
+
+func TestValidatePositiveIntConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid positive integer", "10", false},
+		{"valid large positive integer", "1000000", false},
+		{"valid minimum positive", "1", false},
+		{"invalid zero", "0", true},
+		{"invalid negative", "-1", true},
+		{"invalid large negative", "-1000", true},
+		{"invalid non-numeric", "abc", true},
+		{"invalid empty string", "", true},
+		{"invalid float", "1.5", true},
+		{"invalid mixed", "10abc", true},
+		{"invalid whitespace", " 10 ", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePositiveIntConfig(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validatePositiveIntConfig(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateNonNegativeIntConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid positive integer", "10", false},
+		{"valid zero", "0", false},
+		{"valid large positive integer", "1000000", false},
+		{"invalid negative", "-1", true},
+		{"invalid large negative", "-1000", true},
+		{"invalid non-numeric", "abc", true},
+		{"invalid empty string", "", true},
+		{"invalid float", "1.5", true},
+		{"invalid mixed", "10abc", true},
+		{"invalid whitespace", " 0 ", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateNonNegativeIntConfig(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateNonNegativeIntConfig(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateBoolConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid true lowercase", "true", false},
+		{"valid false lowercase", "false", false},
+		{"valid TRUE uppercase", "TRUE", false},
+		{"valid FALSE uppercase", "FALSE", false},
+		{"valid True mixed case", "True", false},
+		{"valid False mixed case", "False", false},
+		{"valid 1", "1", false},
+		{"valid 0", "0", false},
+		{"invalid yes", "yes", true},
+		{"invalid no", "no", true},
+		{"invalid empty string", "", true},
+		{"invalid numeric non-bool", "2", true},
+		{"invalid random string", "maybe", true},
+		{"invalid whitespace", " true ", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBoolConfig(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateBoolConfig(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateAuthModeConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid auto", "auto", false},
+		{"valid bearer", "bearer", false},
+		{"valid x-api-key", "x-api-key", false},
+		{"invalid empty string", "", true},
+		{"invalid uppercase AUTO", "AUTO", true},
+		{"invalid uppercase BEARER", "BEARER", true},
+		{"invalid basic", "basic", true},
+		{"invalid oauth", "oauth", true},
+		{"invalid random string", "something", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAuthModeConfig(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateAuthModeConfig(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateStrategyConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid priority", "priority", false},
+		{"valid random", "random", false},
+		{"valid weight", "weight", false},
+		{"invalid empty string", "", true},
+		{"invalid uppercase PRIORITY", "PRIORITY", true},
+		{"invalid uppercase RANDOM", "RANDOM", true},
+		{"invalid round-robin", "round-robin", true},
+		{"invalid least-connections", "least-connections", true},
+		{"invalid random string", "anything", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateStrategyConfig(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateStrategyConfig(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}

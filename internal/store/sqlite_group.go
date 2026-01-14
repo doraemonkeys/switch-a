@@ -10,8 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Group operations
-
 func (s *SQLiteStore) ListGroups(ctx context.Context) ([]model.Group, error) {
 	var groups []model.Group
 	if err := s.db.WithContext(ctx).Preload("Providers").Preload("Providers.APITypes").Find(&groups).Error; err != nil {

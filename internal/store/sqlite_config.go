@@ -34,8 +34,6 @@ func GetDefaultConfigs() map[string]string {
 	}
 }
 
-// Config operations
-
 func (s *SQLiteStore) GetConfig(ctx context.Context, key string) (string, error) {
 	var cfg model.RuntimeConfig
 	err := s.db.WithContext(ctx).First(&cfg, "key = ?", key).Error

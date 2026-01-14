@@ -1,34 +1,34 @@
-import { useEffect, useCallback } from "react";
+import { useEffect } from "react";
 import type { RequestLog } from "../api/types";
 import { getSuccessBadgeClass, getStatusCodeBadgeClass } from "../lib/utils";
+import { RequestAttemptTimeline } from "./RequestAttemptTimeline";
 
 interface LogDetailModalProps {
   log: RequestLog | null;
   providerName: string;
+  /** Provider name map for displaying names in attempt timeline */
+  providerNames?: Map<string, string>;
   onClose: () => void;
 }
 
 export function LogDetailModal({
   log,
   providerName,
+  providerNames,
   onClose,
 }: LogDetailModalProps) {
   // Handle Escape key to close modal
-  const handleEscape = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    },
-    [onClose],
-  );
-
   useEffect(() => {
     if (log) {
+      const handleEscape = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          onClose();
+        }
+      };
       document.addEventListener("keydown", handleEscape);
       return () => document.removeEventListener("keydown", handleEscape);
     }
-  }, [log, handleEscape]);
+  }, [log, onClose]);
 
   if (!log) return null;
 
@@ -43,17 +43,25 @@ export function LogDetailModal({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="log-detail-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="bg-bg-secondary w-full max-w-lg rounded-xl shadow-2xl border border-border-light"
+        className="bg-bg-secondary w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl border border-border-light flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-6 border-b border-border-light flex justify-between items-start">
+        <div className="p-6 border-b border-border-light flex justify-between items-start flex-shrink-0">
           <div>
-            <h2 className="text-xl font-bold text-text-primary">Log Details</h2>
+            <h2
+              id="log-detail-modal-title"
+              className="text-xl font-bold text-text-primary"
+            >
+              Log Details
+            </h2>
             <p className="text-sm text-text-muted mt-1">#{log.id}</p>
           </div>
           <button
@@ -78,14 +86,25 @@ export function LogDetailModal({
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 overflow-y-auto flex-1 min-h-0">
           {/* Status Badge */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <span
               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${getSuccessBadgeClass(log.success)}`}
             >
               {log.success ? "✅ Success" : "❌ Failed"}
             </span>
+            {log.is_sticky && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
+                🔗 Sticky Session
+              </span>
+            )}
+            {log.retry_count > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                🔄 {log.retry_count}{" "}
+                {log.retry_count === 1 ? "retry" : "retries"}
+              </span>
+            )}
             <span className="text-sm text-text-muted">{formattedTime}</span>
           </div>
 
@@ -153,10 +172,20 @@ export function LogDetailModal({
               </div>
             </DetailSection>
           )}
+
+          {/* Attempt Timeline (only show if there are multiple attempts) */}
+          {log.attempts && log.attempts.length > 0 && (
+            <DetailSection title="Request Attempts">
+              <RequestAttemptTimeline
+                attempts={log.attempts}
+                providerNames={providerNames}
+              />
+            </DetailSection>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-3 p-6 pt-0">
+        <div className="flex justify-end gap-3 p-6 border-t border-border-light flex-shrink-0">
           <button type="button" onClick={onClose} className="btn btn-secondary">
             Close
           </button>

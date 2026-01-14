@@ -1,6 +1,8 @@
 // Package config handles configuration loading and management.
 package config
 
+import "switch-a/internal/defaults"
+
 // Environment variable names.
 const (
 	EnvPrefix         = "SWITCHA"
@@ -37,8 +39,8 @@ const (
 	DefaultPort           = "28080"
 	DefaultAdminPort      = "28081"
 	DefaultDBPath         = "./data.db"
-	DefaultLogPath        = "./logs/switch-a.log"
-	DefaultLogMaxSizeMB   = 100
-	DefaultLogMaxKeepDays = 7
-	DefaultLogLevel       = "info"
+	DefaultLogPath        = defaults.LogPath
+	DefaultLogMaxSizeMB   = defaults.LogMaxSizeMB
+	DefaultLogMaxKeepDays = defaults.LogMaxKeepDays
+	DefaultLogLevel       = defaults.LogLevel
 )

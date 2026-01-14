@@ -10,8 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Provider operations
-
 func (s *SQLiteStore) ListProviders(ctx context.Context) ([]model.Provider, error) {
 	var providers []model.Provider
 	if err := s.db.WithContext(ctx).Preload("APITypes").Find(&providers).Error; err != nil {

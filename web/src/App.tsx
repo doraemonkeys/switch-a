@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/pages/Dashboard";
+import { Monitor } from "@/pages/Monitor";
 import { Providers } from "@/pages/providers";
 import { Groups } from "@/pages/Groups";
 import { Config } from "@/pages/Config";
@@ -26,6 +27,7 @@ function App() {
               }
             >
               <Route index element={<Dashboard />} />
+              <Route path="monitor" element={<Monitor />} />
               <Route path="providers" element={<Providers />} />
               <Route path="groups" element={<Groups />} />
               <Route path="config" element={<Config />} />

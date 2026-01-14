@@ -10,16 +10,18 @@ import (
 	"go.uber.org/zap"
 )
 
-// ValidPeriods contains the allowed period values for stats API.
-var ValidPeriods = map[string]bool{
+// validPeriods contains the allowed period values for stats API.
+// Unexported to prevent external mutation.
+var validPeriods = map[string]bool{
 	"24h": true,
 	"7d":  true,
 	"30d": true,
 	"all": true,
 }
 
-// ValidGranularities contains the allowed granularity values for stats API.
-var ValidGranularities = map[string]time.Duration{
+// validGranularities contains the allowed granularity values for stats API.
+// Unexported to prevent external mutation.
+var validGranularities = map[string]time.Duration{
 	"5m":  5 * time.Minute,
 	"15m": 15 * time.Minute,
 	"1h":  time.Hour,
@@ -27,9 +29,10 @@ var ValidGranularities = map[string]time.Duration{
 	"1d":  24 * time.Hour,
 }
 
-// MinGranularityByPeriod defines the minimum allowed granularity for each period.
+// minGranularityByPeriod defines the minimum allowed granularity for each period.
 // This prevents excessive data points from large time ranges with small granularities.
-var MinGranularityByPeriod = map[string]time.Duration{
+// Unexported to prevent external mutation.
+var minGranularityByPeriod = map[string]time.Duration{
 	"24h": 5 * time.Minute, // 24h allows 5m minimum (288 points max)
 	"7d":  time.Hour,       // 7d allows 1h minimum (168 points max)
 	"30d": 6 * time.Hour,   // 30d allows 6h minimum (120 points max)
@@ -82,7 +85,7 @@ func (h *Handler) validateStatsParams(w http.ResponseWriter, r *http.Request) *s
 	if period == "" {
 		period = "24h"
 	}
-	if !ValidPeriods[period] {
+	if !validPeriods[period] {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid period: must be '24h', '7d', '30d', or 'all'")
 		return nil
 	}
@@ -91,13 +94,13 @@ func (h *Handler) validateStatsParams(w http.ResponseWriter, r *http.Request) *s
 	var granularity time.Duration
 	if granularityStr != "" {
 		var ok bool
-		granularity, ok = ValidGranularities[granularityStr]
+		granularity, ok = validGranularities[granularityStr]
 		if !ok {
 			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid granularity: must be '5m', '15m', '1h', '6h', or '1d'")
 			return nil
 		}
 
-		minGranularity := MinGranularityByPeriod[period]
+		minGranularity := minGranularityByPeriod[period]
 		if granularity < minGranularity {
 			writeError(w, http.StatusBadRequest, ErrCodeValidation,
 				"Granularity too fine for period: "+period+" requires minimum granularity of "+formatGranularity(minGranularity))

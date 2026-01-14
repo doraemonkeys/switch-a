@@ -1,12 +1,14 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -35,6 +37,8 @@ type LogsResponse struct {
 //   - start_time: filter by start time (RFC3339)
 //   - end_time: filter by end time (RFC3339)
 //   - min_latency: filter by minimum latency in ms
+//   - min_retry_count: filter by minimum retry count
+//   - has_retries: filter by has retries (true = retry_count > 0, false = retry_count = 0)
 //   - sort_by: sort field (created_at/latency_ms, default: created_at)
 //   - sort_order: sort direction (asc/desc, default: desc)
 func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +74,11 @@ func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 
 // parseLogFilter parses query parameters into a LogFilter.
 // Returns the filter and an error message (empty string if no error).
+//
+// Design rationale:
+//   - limit requires positive values because zero results are never useful
+//   - offset allows zero for the first page of results
+//   - defaults to descending sort so users see recent logs first (typical use case)
 func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	var filter model.LogFilter
 	var errMsg string
@@ -112,6 +121,16 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	}
 
 	filter.MinLatency, errMsg = parseNonNegativeInt64Ptr(getQueryParam(query, "min_latency"), "min_latency")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.MinRetryCount, errMsg = parseNonNegativeIntPtr(getQueryParam(query, "min_retry_count"), "min_retry_count")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.HasRetries, errMsg = parseBoolPtr(getQueryParam(query, "has_retries"), "has_retries")
 	if errMsg != "" {
 		return filter, errMsg
 	}
@@ -166,6 +185,21 @@ func parseNonNegativeInt(s string, name string, defaultVal int) (int, string) {
 	return v, ""
 }
 
+// parseNonNegativeIntPtr parses a non-negative integer pointer from string.
+func parseNonNegativeIntPtr(s string, name string) (*int, string) {
+	if s == "" {
+		return nil, ""
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return nil, "Invalid " + name + ": must be a valid integer"
+	}
+	if v < 0 {
+		return nil, "Invalid " + name + ": must be a non-negative integer"
+	}
+	return &v, ""
+}
+
 // parseBoolPtr parses a boolean pointer from string.
 func parseBoolPtr(s string, name string) (*bool, string) {
 	if s == "" {
@@ -211,6 +245,7 @@ func parseNonNegativeInt64Ptr(s string, name string) (*int64, string) {
 }
 
 // parseSortParams validates and returns sort parameters with defaults.
+// Defaults to descending "created_at" because most users want recent logs first.
 func parseSortParams(sortBy, sortOrder string) (string, string, string) {
 	if sortBy != "" && sortBy != "created_at" && sortBy != "latency_ms" {
 		return "", "", "Invalid sort_by: must be 'created_at' or 'latency_ms'"
@@ -228,4 +263,44 @@ func parseSortParams(sortBy, sortOrder string) (string, string, string) {
 	}
 
 	return sortBy, sortOrder, ""
+}
+
+// GetLog handles GET /admin/api/logs/{id}.
+// Returns a single log entry with its attempts if any.
+func (h *Handler) GetLog(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Log ID is required")
+		return
+	}
+
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid log ID: must be a positive integer")
+		return
+	}
+
+	log, err := h.store.GetLogByID(r.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, ErrCodeNotFound, "Log not found")
+			return
+		}
+		h.logger.Error("failed to get log", zap.Uint64("id", id), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get log")
+		return
+	}
+
+	// Fetch attempts if request has a request_id
+	if log.RequestID != "" {
+		attempts, err := h.store.GetAttemptsByRequestID(r.Context(), log.RequestID)
+		if err != nil {
+			h.logger.Error("failed to get attempts", zap.String("request_id", log.RequestID), zap.Error(err))
+			// Don't fail the request, just log the error and return the log without attempts
+		} else {
+			log.Attempts = attempts
+		}
+	}
+
+	writeJSON(w, http.StatusOK, log)
 }

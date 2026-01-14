@@ -66,6 +66,12 @@ type Config struct {
 	Logger        *zap.Logger
 }
 
+// SelectResult contains the selected provider along with metadata about the selection.
+type SelectResult struct {
+	Provider        *model.Provider
+	FromStickyCache bool
+}
+
 // Selector selects providers based on strategies and health status.
 type Selector struct {
 	store   Store
@@ -94,6 +100,29 @@ func (s *Selector) Select(ctx context.Context, req *model.SelectRequest) (*model
 	return s.SelectExcluding(ctx, req, nil)
 }
 
+// SelectWithMetadata chooses an available provider and returns metadata about the selection.
+// It works like Select but also indicates whether the provider came from the sticky cache.
+func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequest) (*SelectResult, error) {
+	// Check sticky cache first
+	if provider := s.checkStickyCache(ctx, req); provider != nil {
+		return &SelectResult{
+			Provider:        provider,
+			FromStickyCache: true,
+		}, nil
+	}
+
+	// Fall through to normal provider selection (without sticky cache check)
+	provider, err := s.selectExcludingInternal(ctx, req, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SelectResult{
+		Provider:        provider,
+		FromStickyCache: false,
+	}, nil
+}
+
 // SelectExcluding selects a provider excluding the given provider IDs (for retry).
 func (s *Selector) SelectExcluding(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
 	// Check sticky cache first (if no exclusions)
@@ -103,6 +132,12 @@ func (s *Selector) SelectExcluding(ctx context.Context, req *model.SelectRequest
 		}
 	}
 
+	return s.selectExcludingInternal(ctx, req, excludeIDs)
+}
+
+// selectExcludingInternal performs the actual provider selection without sticky cache check.
+// This is extracted to allow SelectWithMetadata to track whether the result came from sticky cache.
+func (s *Selector) selectExcludingInternal(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
 	// Get all enabled providers for this API type
 	providers, err := s.store.ListProvidersByAPIType(ctx, req.APIType)
 	if err != nil {

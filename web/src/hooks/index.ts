@@ -5,6 +5,7 @@ export { useConfig } from "./useConfig";
 export { useConfigExport } from "./useConfigExport";
 export { useStatus, useHealthStates } from "./useStatus";
 export { useLogs } from "./useLogs";
+export { useLiveRequests } from "./useLiveRequests";
 export { useStats } from "./useStats";
 export { useQuery, useMutation } from "./useQuery";
 export { useLocalStorage } from "./useLocalStorage";

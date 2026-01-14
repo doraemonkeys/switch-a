@@ -46,9 +46,13 @@ export function createMockApiClient(): ApiClient {
     },
     logs: {
       list: vi.fn(),
+      get: vi.fn(),
     },
     stats: {
       get: vi.fn(),
+    },
+    requests: {
+      active: vi.fn().mockResolvedValue({ requests: [], count: 0 }),
     },
   } as unknown as ApiClient;
 }

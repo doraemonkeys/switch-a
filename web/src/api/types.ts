@@ -154,8 +154,43 @@ export interface SystemStatusSummary {
   requests_today: number;
 }
 
+// =============================================================================
+// Live Request Monitoring Types
+// =============================================================================
+
+/** Represents an active in-flight request being processed */
+export interface ActiveRequest {
+  request_id: string;
+  provider_id: string;
+  model: string;
+  api_type: string;
+  user_id: string;
+  client_ip: string;
+  is_sse: boolean;
+  started_at: string; // ISO timestamp
+}
+
+/** Represents a single attempt within a request (for retry tracking) */
+export interface RequestAttempt {
+  id: number;
+  request_id: string;
+  provider_id: string;
+  attempt: number;
+  status_code: number;
+  error: string;
+  latency_ms: number;
+  created_at: string; // ISO timestamp
+}
+
+/** Response for active requests API */
+export interface ActiveRequestsResponse {
+  requests: ActiveRequest[];
+  count: number;
+}
+
 export interface RequestLog {
   id: number;
+  request_id: string;
   provider_id: string;
   api_type: string;
   model: string;
@@ -165,8 +200,11 @@ export interface RequestLog {
   latency_ms: number;
   success: boolean;
   is_sse: boolean;
+  retry_count: number;
+  is_sticky: boolean;
   error_msg: string | null;
   created_at: string;
+  attempts?: RequestAttempt[];
 }
 
 // LogsResponse represents the paginated logs response from the backend
@@ -201,6 +239,10 @@ export interface LogFilter {
   end_time?: string;
   /** Filter by minimum latency in ms */
   min_latency?: number;
+  /** Filter by minimum retry count */
+  min_retry_count?: number;
+  /** Filter by has retries (true = retry_count > 0, false = retry_count = 0) */
+  has_retries?: boolean;
   /** Sort field (created_at/latency_ms, default: created_at) */
   sort_by?: "created_at" | "latency_ms";
   /** Sort direction (asc/desc, default: desc) */

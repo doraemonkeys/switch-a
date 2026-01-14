@@ -18,6 +18,7 @@ type mockStore struct {
 	healthStates map[string]*model.HealthState
 	config       map[string]string
 	logs         []model.RequestLog
+	attempts     map[string][]model.RequestAttempt // Keyed by request_id for GetAttemptsByRequestID
 	listErr      error
 	getErr       error
 	createErr    error
@@ -26,6 +27,7 @@ type mockStore struct {
 	configErr    error
 	logsErr      error
 	healthErr    error
+	attemptsErr  error // Separate error field for attempts operations
 }
 
 func newMockStore() *mockStore {
@@ -35,6 +37,7 @@ func newMockStore() *mockStore {
 		healthStates: make(map[string]*model.HealthState),
 		config:       make(map[string]string),
 		logs:         []model.RequestLog{},
+		attempts:     make(map[string][]model.RequestAttempt),
 	}
 }
 
@@ -384,6 +387,30 @@ func (m *mockStore) GetLogTimeSeries(_ context.Context, startTime, endTime time.
 	}
 
 	return result, nil
+}
+
+func (m *mockStore) GetLogByID(_ context.Context, id uint) (*model.RequestLog, error) {
+	if m.logsErr != nil {
+		return nil, m.logsErr
+	}
+	for _, log := range m.logs {
+		if log.ID == id {
+			return &log, nil
+		}
+	}
+	// Return ErrNotFound to match the actual SQLiteStore implementation behavior.
+	// This ensures tests properly validate handler error handling paths.
+	return nil, store.ErrNotFound
+}
+
+func (m *mockStore) GetAttemptsByRequestID(_ context.Context, requestID string) ([]model.RequestAttempt, error) {
+	if m.attemptsErr != nil {
+		return nil, m.attemptsErr
+	}
+	if attempts, ok := m.attempts[requestID]; ok {
+		return attempts, nil
+	}
+	return nil, nil
 }
 
 // mockHealthManager implements HealthManager interface for testing.

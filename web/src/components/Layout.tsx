@@ -4,6 +4,7 @@ import { useApi } from "@/api/useApi";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: "📊" },
+  { to: "/monitor", label: "Monitor", icon: "📡" },
   { to: "/providers", label: "Providers", icon: "🔌" },
   { to: "/groups", label: "Groups", icon: "📁" },
   { to: "/config", label: "Config", icon: "⚙️" },

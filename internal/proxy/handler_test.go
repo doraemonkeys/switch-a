@@ -40,6 +40,7 @@ type mockStore struct {
 	providers []model.Provider
 	configs   map[string]string
 	logs      []model.RequestLog
+	attempts  []model.RequestAttempt // Captures attempts for verification
 	err       error
 }
 
@@ -47,17 +48,18 @@ func newMockStore() *mockStore {
 	return &mockStore{
 		providers: []model.Provider{},
 		configs: map[string]string{
-			"trust_proxy_headers":      "true",
-			"user_header":              "X-User-ID",
-			"max_body_size":            "10",
-			"auth_mode":                "auto",
-			"max_retries":              "3",
-			"upstream_connect_timeout": "10",
-			"upstream_read_timeout":    "0",
-			"sticky_enabled":           "true",
-			"sticky_ttl":               "300",
+			ConfigKeyTrustProxyHeaders:      "true",
+			ConfigKeyUserHeader:             "X-User-ID",
+			ConfigKeyMaxBodySize:            "10",
+			ConfigKeyAuthMode:               "auto",
+			ConfigKeyMaxRetries:             "3",
+			ConfigKeyUpstreamConnectTimeout: "10",
+			ConfigKeyUpstreamReadTimeout:    "0",
+			ConfigKeyStickyEnabled:          "true",
+			ConfigKeyStickyTTL:              "300",
 		},
-		logs: []model.RequestLog{},
+		logs:     []model.RequestLog{},
+		attempts: []model.RequestAttempt{},
 	}
 }
 
@@ -83,6 +85,39 @@ func (m *mockStore) InsertLog(_ context.Context, log *model.RequestLog) error {
 	}
 	m.logs = append(m.logs, *log)
 	return nil
+}
+
+func (m *mockStore) InsertAttempts(_ context.Context, attempts []model.RequestAttempt) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.attempts = append(m.attempts, attempts...)
+	return nil
+}
+
+// AttemptsLen returns the number of attempts in a thread-safe manner.
+func (m *mockStore) AttemptsLen() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.attempts)
+}
+
+// LastAttempts returns the most recent N attempt entries in a thread-safe manner.
+// Returns nil if no attempts exist.
+func (m *mockStore) LastAttempts(n int) []model.RequestAttempt {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.attempts) == 0 {
+		return nil
+	}
+	if n > len(m.attempts) {
+		n = len(m.attempts)
+	}
+	result := make([]model.RequestAttempt, n)
+	copy(result, m.attempts[len(m.attempts)-n:])
+	return result
 }
 
 // LogsLen returns the number of logs in a thread-safe manner.
@@ -263,6 +298,26 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	waitFor(t, func() bool {
 		return store.LogsLen() > 0
 	}, 100*time.Millisecond)
+
+	// Verify attempts were recorded for retry tracking (TEST-003)
+	waitFor(t, func() bool {
+		return store.AttemptsLen() > 0
+	}, 100*time.Millisecond)
+
+	attempts := store.LastAttempts(1)
+	if len(attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	}
+	if attempts[0].ProviderID != "p1" {
+		t.Errorf("attempt provider_id = %q, want %q", attempts[0].ProviderID, "p1")
+	}
+	if attempts[0].StatusCode != http.StatusOK {
+		t.Errorf("attempt status_code = %d, want %d", attempts[0].StatusCode, http.StatusOK)
+	}
+	// Attempt number is 0-indexed (first attempt = 0)
+	if attempts[0].Attempt != 0 {
+		t.Errorf("attempt number = %d, want 0 (first attempt)", attempts[0].Attempt)
+	}
 }
 
 func TestHandler_ServeHTTP_SSEProxy(t *testing.T) {

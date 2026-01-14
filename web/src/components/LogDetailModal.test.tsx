@@ -11,6 +11,7 @@ const TEST_CLIENT_IP = "192.168.1.1";
 function createMockLog(overrides?: Partial<RequestLog>): RequestLog {
   return {
     id: 1,
+    request_id: "test-request-id-1",
     provider_id: "provider-1",
     api_type: "claude",
     model: "claude-3-opus",
@@ -22,6 +23,8 @@ function createMockLog(overrides?: Partial<RequestLog>): RequestLog {
     is_sse: false,
     error_msg: null,
     created_at: "2024-01-15T10:30:00Z",
+    retry_count: 0,
+    is_sticky: false,
     ...overrides,
   };
 }
@@ -324,5 +327,200 @@ describe("LogDetailModal", () => {
       "keydown",
       expect.any(Function),
     );
+  });
+
+  describe("sticky session badge", () => {
+    it("shows sticky session badge when is_sticky is true", () => {
+      const log = createMockLog({ is_sticky: true });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText(/Sticky Session/)).toBeInTheDocument();
+    });
+
+    it("does not show sticky session badge when is_sticky is false", () => {
+      const log = createMockLog({ is_sticky: false });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.queryByText(/Sticky Session/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("retry count badge", () => {
+    it("shows retry badge with singular text for 1 retry", () => {
+      const log = createMockLog({ retry_count: 1 });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText(/1 retry/)).toBeInTheDocument();
+    });
+
+    it("shows retry badge with plural text for multiple retries", () => {
+      const log = createMockLog({ retry_count: 3 });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText(/3 retries/)).toBeInTheDocument();
+    });
+
+    it("does not show retry badge when retry_count is 0", () => {
+      const log = createMockLog({ retry_count: 0 });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.queryByText(/retry/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("request type display", () => {
+    it("shows SSE Stream badge when is_sse is true", () => {
+      const log = createMockLog({ is_sse: true });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText("SSE Stream")).toBeInTheDocument();
+    });
+
+    it("shows Regular badge when is_sse is false", () => {
+      const log = createMockLog({ is_sse: false });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText("Regular")).toBeInTheDocument();
+    });
+  });
+
+  describe("request attempts timeline", () => {
+    it("renders RequestAttemptTimeline when attempts array is non-empty", () => {
+      const log = createMockLog({
+        attempts: [
+          {
+            id: 1,
+            request_id: "test-request-id-1",
+            provider_id: "provider-1",
+            attempt: 0,
+            status_code: 500,
+            error: "Connection timeout",
+            latency_ms: 30000,
+            created_at: "2024-01-15T10:29:30Z",
+          },
+          {
+            id: 2,
+            request_id: "test-request-id-1",
+            provider_id: "provider-2",
+            attempt: 1,
+            status_code: 200,
+            error: "",
+            latency_ms: 150,
+            created_at: "2024-01-15T10:30:00Z",
+          },
+        ],
+      });
+
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText("Request Attempts")).toBeInTheDocument();
+      expect(screen.getByText("Attempt 1")).toBeInTheDocument();
+      expect(screen.getByText("Attempt 2")).toBeInTheDocument();
+    });
+
+    it("does not show Request Attempts section when attempts is empty", () => {
+      const log = createMockLog({ attempts: [] });
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.queryByText("Request Attempts")).not.toBeInTheDocument();
+    });
+
+    it("does not show Request Attempts section when attempts is undefined", () => {
+      const log = createMockLog();
+      // Explicitly set attempts to undefined
+      delete (log as Partial<typeof log>).attempts;
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.queryByText("Request Attempts")).not.toBeInTheDocument();
+    });
+
+    it("passes providerNames to RequestAttemptTimeline", () => {
+      const log = createMockLog({
+        attempts: [
+          {
+            id: 1,
+            request_id: "test-request-id-1",
+            provider_id: "provider-abc",
+            attempt: 0,
+            status_code: 200,
+            error: "",
+            latency_ms: 100,
+            created_at: "2024-01-15T10:30:00Z",
+          },
+        ],
+      });
+      const providerNames = new Map([["provider-abc", "My Provider"]]);
+
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          providerNames={providerNames}
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText(/Provider: My Provider/)).toBeInTheDocument();
+    });
   });
 });

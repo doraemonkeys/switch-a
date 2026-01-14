@@ -4,17 +4,19 @@ package logger
 import (
 	"strings"
 
+	"switch-a/internal/defaults"
+
 	mylog "github.com/doraemonkeys/mylog/zap"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-// Default configuration values.
+// Default configuration values derived from centralized defaults.
 const (
-	DefaultLogPath     = "./logs/switch-a.log"
-	DefaultMaxSizeMB   = 100
-	DefaultMaxKeepDays = 7
-	DefaultLogLevel    = "info"
+	DefaultLogPath     = defaults.LogPath
+	DefaultMaxSizeMB   = defaults.LogMaxSizeMB
+	DefaultMaxKeepDays = defaults.LogMaxKeepDays
+	DefaultLogLevel    = defaults.LogLevel
 )
 
 // Config holds logger configuration options.
@@ -26,7 +28,6 @@ type Config struct {
 	IsDev       bool
 }
 
-// DefaultConfig returns the default logger configuration.
 func DefaultConfig() Config {
 	return Config{
 		LogPath:     DefaultLogPath,

@@ -67,6 +67,7 @@ type RuntimeConfig struct {
 // RequestLog represents a request log entry.
 type RequestLog struct {
 	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RequestID  string    `gorm:"index" json:"request_id"`
 	ProviderID string    `gorm:"index" json:"provider_id"`
 	APIType    string    `json:"api_type"`
 	Model      string    `json:"model"`
@@ -77,23 +78,41 @@ type RequestLog struct {
 	Success    bool      `json:"success"`
 	IsSSE      bool      `json:"is_sse"`
 	ErrorMsg   string    `json:"error_msg"`
+	RetryCount int       `json:"retry_count"`
+	IsSticky   bool      `json:"is_sticky"`
 	CreatedAt  time.Time `gorm:"index" json:"created_at"`
+	// Attempts is populated by API, not stored directly in database.
+	Attempts []RequestAttempt `gorm:"-" json:"attempts,omitempty"`
+}
+
+// RequestAttempt represents a single attempt within a request (for retry tracking).
+type RequestAttempt struct {
+	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RequestID  string    `gorm:"index" json:"request_id"`
+	ProviderID string    `json:"provider_id"`
+	Attempt    int       `json:"attempt"`
+	StatusCode int       `json:"status_code"`
+	Error      string    `json:"error"`
+	LatencyMs  int64     `json:"latency_ms"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // LogFilter represents filter and sort parameters for log queries.
 type LogFilter struct {
-	ProviderID string     // Filter by provider ID
-	APIType    string     // Filter by API type (claude/codex/gemini/custom:*)
-	Success    *bool      // Filter by success/failure (nil = no filter)
-	IsSSE      *bool      // Filter by SSE/regular request (nil = no filter)
-	UserID     string     // Filter by user ID
-	StartTime  *time.Time // Filter by start time (inclusive)
-	EndTime    *time.Time // Filter by end time (exclusive)
-	MinLatency *int64     // Filter by minimum latency in ms
-	SortBy     string     // Sort field: "created_at" or "latency_ms"
-	SortOrder  string     // Sort direction: "asc" or "desc"
-	Limit      int        // Maximum number of results
-	Offset     int        // Offset for pagination
+	ProviderID    string     // Filter by provider ID
+	APIType       string     // Filter by API type (claude/codex/gemini/custom:*)
+	Success       *bool      // Filter by success/failure (nil = no filter)
+	IsSSE         *bool      // Filter by SSE/regular request (nil = no filter)
+	UserID        string     // Filter by user ID
+	StartTime     *time.Time // Filter by start time (inclusive)
+	EndTime       *time.Time // Filter by end time (exclusive)
+	MinLatency    *int64     // Filter by minimum latency in ms
+	MinRetryCount *int       // Filter by minimum retry count (e.g., 1 for "has retries")
+	HasRetries    *bool      // Filter by has retries (true = retry_count > 0, false = retry_count = 0)
+	SortBy        string     // Sort field: "created_at" or "latency_ms"
+	SortOrder     string     // Sort direction: "asc" or "desc"
+	Limit         int        // Maximum number of results
+	Offset        int        // Offset for pagination
 }
 
 // StickyKey represents the cache key for sticky session.

@@ -61,7 +61,6 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	// Close idle connections after 5 minutes to prevent stale connections
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 
-	// Auto migrate tables
 	if err := db.AutoMigrate(
 		&model.Group{},
 		&model.Provider{},
@@ -69,6 +68,7 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 		&model.HealthState{},
 		&model.RuntimeConfig{},
 		&model.RequestLog{},
+		&model.RequestAttempt{},
 	); err != nil { // coverage-ignore -- AutoMigrate rarely fails on valid schema
 		return nil, err
 	}

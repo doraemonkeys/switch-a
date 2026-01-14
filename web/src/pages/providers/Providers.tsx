@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useGroups } from "../../hooks/useGroups";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -72,33 +72,28 @@ export function Providers() {
   // Detail drawer state
   const [detailProvider, setDetailProvider] = useState<Provider | null>(null);
 
-  const filteredProviders = useMemo(() => {
-    return providers.filter((provider) => {
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const matchesName = provider.name.toLowerCase().includes(query);
-        const matchesId = provider.id.toLowerCase().includes(query);
-        const matchesUrl = provider.base_url.toLowerCase().includes(query);
-        if (!matchesName && !matchesId && !matchesUrl) return false;
-      }
-      if (groupFilter && provider.group_id !== groupFilter) return false;
-      if (statusFilter) {
-        const status = getProviderStatus(
-          provider.enabled,
-          provider.health?.available,
-          provider.health?.disabled_until,
-        );
-        if (
-          statusFilter === "pending-recovery" &&
-          status === "pending-recovery"
-        )
-          return true;
-        if (statusFilter === status) return true;
-        return false;
-      }
-      return true;
-    });
-  }, [providers, searchQuery, groupFilter, statusFilter]);
+  const filteredProviders = providers.filter((provider) => {
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      const matchesName = provider.name.toLowerCase().includes(query);
+      const matchesId = provider.id.toLowerCase().includes(query);
+      const matchesUrl = provider.base_url.toLowerCase().includes(query);
+      if (!matchesName && !matchesId && !matchesUrl) return false;
+    }
+    if (groupFilter && provider.group_id !== groupFilter) return false;
+    if (statusFilter) {
+      const status = getProviderStatus(
+        provider.enabled,
+        provider.health?.available,
+        provider.health?.disabled_until,
+      );
+      if (statusFilter === "pending-recovery" && status === "pending-recovery")
+        return true;
+      if (statusFilter === status) return true;
+      return false;
+    }
+    return true;
+  });
 
   const onSaveProvider = async (data: ProviderInput) => {
     await handleSaveProvider(data, editingProvider);
@@ -164,8 +159,8 @@ export function Providers() {
         groups={groups}
       />
 
-      <div className="card overflow-hidden p-0">
-        <table className="w-full">
+      <div className="card overflow-x-auto p-0">
+        <table className="w-full min-w-[900px]">
           <ProvidersTableHeader />
           <tbody className="divide-y divide-border">
             <ProvidersTableBody

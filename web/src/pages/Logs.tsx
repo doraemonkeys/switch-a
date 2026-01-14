@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState } from "react";
 import { useLogs, DEFAULT_LIMIT } from "../hooks/useLogs";
 import { useProviders } from "../hooks/useProviders";
 import { useStats } from "../hooks/useStats";
@@ -9,9 +9,10 @@ import {
   ERROR_COUNT_THRESHOLDS,
 } from "../config/constants";
 import { getSuccessBadgeClass } from "../lib/utils";
+import { api } from "../api/client";
 
 // Constants
-const LOG_TABLE_COLUMNS = 7;
+const LOG_TABLE_COLUMNS = 8;
 const PROVIDER_ID_PREVIEW_LENGTH = 8;
 
 // Date formatter moved outside component to avoid re-creation on each render
@@ -49,6 +50,18 @@ function getStatVariantClass(variant: StatVariant): string {
   return "text-text-primary";
 }
 
+// Helper to determine aria-sort value for sortable table headers
+type AriaSortValue = "ascending" | "descending" | "none";
+
+function getAriaSortValue(
+  field: string,
+  currentSortBy: string,
+  currentSortOrder: string,
+): AriaSortValue {
+  if (currentSortBy !== field) return "none";
+  return currentSortOrder === "asc" ? "ascending" : "descending";
+}
+
 export function Logs() {
   const limit = DEFAULT_LIMIT;
   const {
@@ -65,8 +78,19 @@ export function Logs() {
   const { providers } = useProviders();
   const { stats, loading: statsLoading } = useStats({ period: "24h" });
 
-  // Selected log for detail modal
+  // Selected log for detail modal (fetched with attempts)
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
+
+  // Handler to fetch full log details (with attempts) when clicking a log
+  const handleSelectLog = async (log: RequestLog) => {
+    try {
+      const fullLog = await api.logs.get(log.id);
+      setSelectedLog(fullLog);
+    } catch {
+      // Fallback to partial log if fetch fails
+      setSelectedLog(log);
+    }
+  };
 
   // Calculate pagination values
   const currentPage = Math.floor((filter.offset || 0) / limit) + 1;
@@ -74,42 +98,39 @@ export function Logs() {
   const startResult = total === 0 ? 0 : (filter.offset || 0) + 1;
   const endResult = Math.min((filter.offset || 0) + limit, total);
 
-  // Memoize provider name lookup
-  const providerNames = useMemo(() => {
+  // Provider name lookup
+  const providerNames = (() => {
     const map = new Map<string, string>();
     providers.forEach((p) => map.set(p.id, p.name));
     return map;
-  }, [providers]);
+  })();
 
   // Check if any filter is active
-  const hasActiveFilters = useMemo(() => {
-    return !!(
-      filter.provider_id ||
-      filter.api_type ||
-      filter.success !== undefined ||
-      filter.is_sse !== undefined ||
-      filter.start_time ||
-      filter.end_time
-    );
-  }, [filter]);
+  const hasActiveFilters = !!(
+    filter.provider_id ||
+    filter.api_type ||
+    filter.success !== undefined ||
+    filter.is_sse !== undefined ||
+    filter.start_time ||
+    filter.end_time ||
+    filter.has_retries !== undefined ||
+    filter.min_retry_count !== undefined
+  );
 
   const handlePageChange = (newPage: number) => {
     if (newPage < 1 || newPage > totalPages) return;
     updateFilter({ offset: (newPage - 1) * limit });
   };
 
-  const handleSort = useCallback(
-    (field: "created_at" | "latency_ms") => {
-      if (sortBy === field) {
-        updateFilter({ sort_order: sortOrder === "asc" ? "desc" : "asc" });
-      } else {
-        updateFilter({ sort_by: field, sort_order: "desc" });
-      }
-    },
-    [sortBy, sortOrder, updateFilter],
-  );
+  const handleSort = (field: "created_at" | "latency_ms") => {
+    if (sortBy === field) {
+      updateFilter({ sort_order: sortOrder === "asc" ? "desc" : "asc" });
+    } else {
+      updateFilter({ sort_by: field, sort_order: "desc" });
+    }
+  };
 
-  const handleClearFilters = useCallback(() => {
+  const handleClearFilters = () => {
     updateFilter({
       provider_id: undefined,
       api_type: undefined,
@@ -119,8 +140,10 @@ export function Logs() {
       end_time: undefined,
       min_latency: undefined,
       user_id: undefined,
+      has_retries: undefined,
+      min_retry_count: undefined,
     });
-  }, [updateFilter]);
+  };
 
   return (
     <div className="space-y-6">
@@ -143,7 +166,7 @@ export function Logs() {
         hasActiveFilters={hasActiveFilters}
         providerNames={providerNames}
         onSort={handleSort}
-        onSelectLog={setSelectedLog}
+        onSelectLog={handleSelectLog}
         onClearFilters={handleClearFilters}
       />
 
@@ -171,6 +194,7 @@ export function Logs() {
         providerName={
           selectedLog ? providerNames.get(selectedLog.provider_id) || "" : ""
         }
+        providerNames={providerNames}
         onClose={() => setSelectedLog(null)}
       />
     </div>
@@ -257,6 +281,7 @@ function LogsTable({
             <tr>
               <th
                 onClick={() => onSort("created_at")}
+                aria-sort={getAriaSortValue("created_at", sortBy, sortOrder)}
                 className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider cursor-pointer hover:text-text-primary transition-colors"
               >
                 <span className="inline-flex items-center">
@@ -276,8 +301,12 @@ function LogsTable({
               <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Status
               </th>
+              <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+                Retries
+              </th>
               <th
                 onClick={() => onSort("latency_ms")}
+                aria-sort={getAriaSortValue("latency_ms", sortBy, sortOrder)}
                 className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider cursor-pointer hover:text-text-primary transition-colors"
               >
                 <span className="inline-flex items-center">
@@ -397,6 +426,15 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
   return (
     <tr
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      tabIndex={0}
+      role="button"
+      aria-label={`View details for ${log.model} request at ${formatTime(log.created_at)}`}
       className="hover:bg-bg-tertiary/50 transition-colors cursor-pointer"
     >
       <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
@@ -434,6 +472,15 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
           {log.success ? "✅" : "❌"}
           {log.status_code}
         </span>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm">
+        {log.retry_count > 0 ? (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+            🔄 {log.retry_count}
+          </span>
+        ) : (
+          <span className="text-text-muted">-</span>
+        )}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
         {log.latency_ms}ms
@@ -535,7 +582,7 @@ function Pagination({
     }
   };
 
-  const pageNumbers = useMemo(() => {
+  const pageNumbers = (() => {
     const pages: (number | "...")[] = [];
     const showPages = 5;
 
@@ -566,7 +613,7 @@ function Pagination({
       pages.push(totalPages);
     }
     return pages;
-  }, [currentPage, totalPages]);
+  })();
 
   return (
     <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -597,7 +644,10 @@ function Pagination({
         <div className="hidden sm:flex items-center gap-1">
           {pageNumbers.map((page, index) =>
             page === "..." ? (
-              <span key={`ellipsis-${index}`} className="px-2 text-text-muted">
+              <span
+                key={`ellipsis-after-${pageNumbers[index - 1]}`}
+                className="px-2 text-text-muted"
+              >
                 ...
               </span>
             ) : (
@@ -642,8 +692,11 @@ function Pagination({
             onSubmit={handleJumpSubmit}
             className="hidden md:flex items-center gap-2 ml-2"
           >
-            <span className="text-sm text-text-muted">Go to</span>
+            <label htmlFor="go-to-page" className="text-sm text-text-muted">
+              Go to
+            </label>
             <input
+              id="go-to-page"
               type="number"
               min={1}
               max={totalPages}

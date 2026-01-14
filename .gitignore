@@ -35,6 +35,8 @@ TODO
 *_gitignore*
 *gitignore_*
 .cursor/
+.claude/
+CLAUDE.md
 
 # Web coverage reports
 web/coverage/
@@ -48,3 +50,4 @@ config.yaml
 tmp/
 cmd/switch-a/config.yaml
 tmpclaude-*
+review_agent.md

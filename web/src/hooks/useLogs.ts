@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useApi } from "../api";
 import type { RequestLog, LogFilter, LogsResponse } from "../api/client";
 
@@ -8,12 +8,8 @@ interface UseLogsResult {
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
-  /** @deprecated Use setFilter instead */
-  setParams: (filter: LogFilter) => void;
   setFilter: (filter: LogFilter) => void;
   updateFilter: (filter: Partial<LogFilter>) => void;
-  /** @deprecated Use filter instead */
-  params: LogFilter;
   filter: LogFilter;
   /** Sort field and direction from the response */
   sortBy: string;
@@ -36,7 +32,7 @@ export function useLogs(initialFilter?: LogFilter): UseLogsResult {
     ...initialFilter,
   });
 
-  const refetch = useCallback(async () => {
+  const refetch = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -50,15 +46,15 @@ export function useLogs(initialFilter?: LogFilter): UseLogsResult {
     } finally {
       setLoading(false);
     }
-  }, [api, filter]);
+  };
 
   useEffect(() => {
     refetch();
-  }, [refetch]);
+  }, [api, filter]);
 
   // Partial update helper for convenience
   // Automatically resets offset to 0 when filter criteria (not pagination) changes
-  const updateFilter = useCallback((partial: Partial<LogFilter>) => {
+  const updateFilter = (partial: Partial<LogFilter>) => {
     setFilter((prev) => {
       // Check if this is a pagination-only update
       const isPaginationOnly =
@@ -73,7 +69,7 @@ export function useLogs(initialFilter?: LogFilter): UseLogsResult {
 
       return newFilter;
     });
-  }, []);
+  };
 
   return {
     logs,
@@ -81,10 +77,6 @@ export function useLogs(initialFilter?: LogFilter): UseLogsResult {
     loading,
     error,
     refetch,
-    // Backward compatible aliases
-    setParams: setFilter,
-    params: filter,
-    // New API
     setFilter,
     updateFilter,
     filter,

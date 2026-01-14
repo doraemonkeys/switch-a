@@ -22,11 +22,14 @@ const (
 // Default values for resources.
 // Core defaults are derived from the centralized defaults package.
 const (
-	DefaultStrategy            = defaults.InterGroupStrategy
-	DefaultAuthMode            = defaults.AuthMode
-	DefaultWeight              = defaults.ProviderWeight
-	DefaultMaxRetries          = -1 // Use global default (special value for admin API)
-	DefaultLogsLimit           = 100
+	DefaultStrategy   = defaults.InterGroupStrategy
+	DefaultAuthMode   = defaults.AuthMode
+	DefaultWeight     = defaults.ProviderWeight
+	DefaultMaxRetries = -1 // Use global default (special value for admin API)
+	DefaultLogsLimit  = 100
+	// MaxLogsLimit caps query results to prevent excessive memory usage and
+	// slow responses. 1000 is enough for most debugging sessions while
+	// keeping response times under a second with typical database sizes.
 	MaxLogsLimit               = 1000
 	DefaultTimeSeriesRangeDays = 30 // Default fallback range for "all" period time series
 )
@@ -37,25 +40,33 @@ const (
 	MaxConfigUpdates   = 50      // Maximum number of config keys per update request
 )
 
+// HTTP constants.
+const (
+	ContentTypeJSON = "application/json"
+)
+
 // ReservedGroupPriority is reserved for ungrouped providers.
 // Groups cannot use this priority value as it would conflict with ungrouped providers.
 const ReservedGroupPriority = math.MaxInt32
 
-// ValidStrategies contains the allowed strategy values.
-var ValidStrategies = map[string]bool{
+// validStrategies contains the allowed strategy values.
+// Unexported to prevent external mutation; use IsValidStrategy() for validation.
+var validStrategies = map[string]bool{
 	"priority": true,
 	"random":   true,
 	"weight":   true,
 }
 
-// ValidAuthModes contains the allowed auth mode values.
-var ValidAuthModes = map[string]bool{
+// validAuthModes contains the allowed auth mode values.
+// Unexported to prevent external mutation; use IsValidAuthMode() for validation.
+var validAuthModes = map[string]bool{
 	"auto":      true,
 	"bearer":    true,
 	"x-api-key": true,
 }
 
-// ValidAPITypes contains the allowed API type values.
+// validAPITypes contains the allowed API type values.
+// Unexported to prevent external mutation; use IsValidAPIType() for validation.
 // These must match the types recognized by the proxy router (see proxy/router.go):
 //   - claude: routes via /v1/messages, /v1/models
 //   - codex:  routes via /responses
@@ -65,14 +76,15 @@ var ValidAuthModes = map[string]bool{
 // Note: Previous versions allowed functional types (chat, completion, embedding, etc.)
 // and provider names (gpt, llama, mistral) that had no matching proxy routes,
 // causing providers to be created but never matched by incoming requests.
-var ValidAPITypes = map[string]bool{
+var validAPITypes = map[string]bool{
 	"claude": true,
 	"codex":  true,
 	"gemini": true,
 }
 
-// ValidConfigKeys contains the allowed configuration keys.
-var ValidConfigKeys = map[string]bool{
+// validConfigKeys contains the allowed configuration keys.
+// Unexported to prevent external mutation; use IsValidConfigKey() for validation.
+var validConfigKeys = map[string]bool{
 	"auth_mode":                true,
 	"user_header":              true,
 	"trust_proxy_headers":      true,
@@ -93,12 +105,12 @@ var ValidConfigKeys = map[string]bool{
 
 // IsValidStrategy checks if the given strategy is valid.
 func IsValidStrategy(s string) bool {
-	return ValidStrategies[s]
+	return validStrategies[s]
 }
 
 // IsValidAuthMode checks if the given auth mode is valid.
 func IsValidAuthMode(m string) bool {
-	return ValidAuthModes[m]
+	return validAuthModes[m]
 }
 
 // CustomAPITypePrefix is the prefix for custom API types (e.g., "custom:mytool").
@@ -107,7 +119,7 @@ const CustomAPITypePrefix = "custom:"
 // IsValidAPIType checks if the given API type is valid.
 // Accepts both predefined API types and custom:* pattern for custom tools.
 func IsValidAPIType(t string) bool {
-	if ValidAPITypes[t] {
+	if validAPITypes[t] {
 		return true
 	}
 	// Support custom:* format for custom API tools
@@ -119,7 +131,7 @@ func IsValidAPIType(t string) bool {
 
 // IsValidConfigKey checks if the given config key is valid.
 func IsValidConfigKey(k string) bool {
-	return ValidConfigKeys[k]
+	return validConfigKeys[k]
 }
 
 // ConfigValidator is a function that validates a config value.

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,7 +11,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// Log operations
+// Sort field and order constants for log queries.
+const (
+	SortByCreatedAt = "created_at"
+	SortByLatencyMs = "latency_ms"
+	SortOrderAsc    = "asc"
+	SortOrderDesc   = "desc"
+)
 
 func (s *SQLiteStore) InsertLog(ctx context.Context, log *model.RequestLog) error {
 	if err := s.db.WithContext(ctx).Create(log).Error; err != nil {
@@ -27,12 +34,12 @@ func (s *SQLiteStore) ListLogs(ctx context.Context, filter model.LogFilter) ([]m
 	query = s.applyLogFilters(query, filter)
 
 	// Apply sorting
-	sortBy := "created_at"
-	if filter.SortBy == "latency_ms" {
-		sortBy = "latency_ms"
+	sortBy := SortByCreatedAt
+	if filter.SortBy == SortByLatencyMs {
+		sortBy = SortByLatencyMs
 	}
 	sortOrder := "DESC"
-	if filter.SortOrder == "asc" {
+	if filter.SortOrder == SortOrderAsc {
 		sortOrder = "ASC"
 	}
 	query = query.Order(sortBy + " " + sortOrder)
@@ -77,6 +84,16 @@ func (s *SQLiteStore) applyLogFilters(query *gorm.DB, filter model.LogFilter) *g
 	if filter.MinLatency != nil {
 		query = query.Where("latency_ms >= ?", *filter.MinLatency)
 	}
+	if filter.MinRetryCount != nil {
+		query = query.Where("retry_count >= ?", *filter.MinRetryCount)
+	}
+	if filter.HasRetries != nil {
+		if *filter.HasRetries {
+			query = query.Where("retry_count > 0")
+		} else {
+			query = query.Where("retry_count = 0")
+		}
+	}
 	return query
 }
 
@@ -93,15 +110,54 @@ func (s *SQLiteStore) CountLogs(ctx context.Context, filter model.LogFilter) (in
 	return count, nil
 }
 
-func (s *SQLiteStore) CleanOldLogs(ctx context.Context, beforeDays int) error {
-	cutoff := s.clock.Now().AddDate(0, 0, -beforeDays)
-	err := s.db.WithContext(ctx).
-		Where("created_at < ?", cutoff).
-		Delete(&model.RequestLog{}).Error
-	if err != nil {
-		return fmt.Errorf("clean old logs (before %d days): %w", beforeDays, err)
+// GetLogByID retrieves a single log entry by its ID.
+func (s *SQLiteStore) GetLogByID(ctx context.Context, id uint) (*model.RequestLog, error) {
+	var log model.RequestLog
+	if err := s.db.WithContext(ctx).First(&log, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get log by id %d: %w", id, err)
 	}
-	return nil
+	return &log, nil
+}
+
+func (s *SQLiteStore) CleanOldLogs(ctx context.Context, beforeDays int) error {
+	// Validate input to prevent accidental deletion of recent logs.
+	// A negative value would result in a cutoff in the future.
+	if beforeDays < 0 {
+		return fmt.Errorf("beforeDays must be non-negative, got %d", beforeDays)
+	}
+
+	cutoff := s.clock.Now().AddDate(0, 0, -beforeDays)
+
+	// Use a transaction to delete both logs and their associated attempts atomically.
+	// This prevents orphaned request_attempts records from accumulating.
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Get request IDs to be deleted
+		var requestIDs []string
+		if err := tx.Model(&model.RequestLog{}).
+			Where("created_at < ?", cutoff).
+			Pluck("request_id", &requestIDs).Error; err != nil {
+			return fmt.Errorf("get request IDs for cleanup: %w", err)
+		}
+
+		// Delete associated attempts first (foreign key integrity)
+		if len(requestIDs) > 0 {
+			if err := tx.Where("request_id IN ?", requestIDs).
+				Delete(&model.RequestAttempt{}).Error; err != nil {
+				return fmt.Errorf("clean old attempts: %w", err)
+			}
+		}
+
+		// Delete logs
+		if err := tx.Where("created_at < ?", cutoff).
+			Delete(&model.RequestLog{}).Error; err != nil {
+			return fmt.Errorf("clean old logs (before %d days): %w", beforeDays, err)
+		}
+
+		return nil
+	})
 }
 
 // GetLogStats retrieves aggregated statistics from request logs within the given time range.

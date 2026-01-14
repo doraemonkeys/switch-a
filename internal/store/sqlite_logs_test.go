@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +98,35 @@ func TestCountLogs(t *testing.T) {
 	}
 }
 
+func TestGetLogByID(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// Test not found case
+	_, err := store.GetLogByID(ctx, 99999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+
+	// Test found case
+	log := &model.RequestLog{
+		ProviderID: "p1",
+		APIType:    "claude",
+		CreatedAt:  time.Now(),
+	}
+	if err := store.InsertLog(ctx, log); err != nil {
+		t.Fatalf("InsertLog failed: %v", err)
+	}
+
+	found, err := store.GetLogByID(ctx, log.ID)
+	if err != nil {
+		t.Fatalf("GetLogByID failed: %v", err)
+	}
+	if found.ID != log.ID {
+		t.Errorf("expected ID %d, got %d", log.ID, found.ID)
+	}
+}
+
 func TestCleanOldLogs(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -132,6 +163,167 @@ func TestCleanOldLogs(t *testing.T) {
 	}
 	if len(logs) != 1 {
 		t.Errorf("expected 1 log after clean, got %d", len(logs))
+	}
+}
+
+func TestCleanOldLogs_CascadesAttemptsDelete(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	oldTime := time.Now().AddDate(0, 0, -10) // 10 days ago
+
+	// Create an old log with a request_id
+	oldLog := &model.RequestLog{
+		RequestID:  "old-req-123",
+		ProviderID: "p1",
+		APIType:    "claude",
+		CreatedAt:  oldTime,
+	}
+	if err := store.InsertLog(ctx, oldLog); err != nil {
+		t.Fatalf("InsertLog failed: %v", err)
+	}
+
+	// Create attempts associated with the old log
+	attempts := []model.RequestAttempt{
+		{
+			RequestID:  "old-req-123",
+			ProviderID: "p1",
+			Attempt:    1,
+			StatusCode: 503,
+			CreatedAt:  oldTime,
+		},
+		{
+			RequestID:  "old-req-123",
+			ProviderID: "p2",
+			Attempt:    2,
+			StatusCode: 200,
+			CreatedAt:  oldTime,
+		},
+	}
+	if err := store.InsertAttempts(ctx, attempts); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	// Verify attempts exist before cleanup
+	attemptsBefore, err := store.GetAttemptsByRequestID(ctx, "old-req-123")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(attemptsBefore) != 2 {
+		t.Fatalf("expected 2 attempts before cleanup, got %d", len(attemptsBefore))
+	}
+
+	// Clean logs older than 7 days (should cascade delete attempts)
+	if err := store.CleanOldLogs(ctx, 7); err != nil {
+		t.Fatalf("CleanOldLogs failed: %v", err)
+	}
+
+	// Verify log was deleted
+	logs, err := store.ListLogs(ctx, model.LogFilter{Limit: 10, Offset: 0})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(logs) != 0 {
+		t.Errorf("expected 0 logs after clean, got %d", len(logs))
+	}
+
+	// Verify associated attempts were also deleted (cascading delete)
+	attemptsAfter, err := store.GetAttemptsByRequestID(ctx, "old-req-123")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID after cleanup failed: %v", err)
+	}
+	if len(attemptsAfter) != 0 {
+		t.Errorf("expected 0 attempts after cleanup (cascading delete), got %d", len(attemptsAfter))
+	}
+}
+
+func TestCleanOldLogs_RetainsRecentLogAttempts(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	oldTime := time.Now().AddDate(0, 0, -10) // 10 days ago
+	recentTime := time.Now()
+
+	// Create an old log with attempts (should be deleted)
+	oldLog := &model.RequestLog{
+		RequestID:  "old-req",
+		ProviderID: "p1",
+		APIType:    "claude",
+		CreatedAt:  oldTime,
+	}
+	if err := store.InsertLog(ctx, oldLog); err != nil {
+		t.Fatalf("InsertLog failed: %v", err)
+	}
+	oldAttempts := []model.RequestAttempt{
+		{RequestID: "old-req", ProviderID: "p1", Attempt: 1, CreatedAt: oldTime},
+	}
+	if err := store.InsertAttempts(ctx, oldAttempts); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	// Create a recent log with attempts (should be retained)
+	recentLog := &model.RequestLog{
+		RequestID:  "recent-req",
+		ProviderID: "p2",
+		APIType:    "claude",
+		CreatedAt:  recentTime,
+	}
+	if err := store.InsertLog(ctx, recentLog); err != nil {
+		t.Fatalf("InsertLog failed: %v", err)
+	}
+	recentAttempts := []model.RequestAttempt{
+		{RequestID: "recent-req", ProviderID: "p2", Attempt: 1, CreatedAt: recentTime},
+	}
+	if err := store.InsertAttempts(ctx, recentAttempts); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	// Clean logs older than 7 days
+	if err := store.CleanOldLogs(ctx, 7); err != nil {
+		t.Fatalf("CleanOldLogs failed: %v", err)
+	}
+
+	// Verify only recent log remains
+	logs, err := store.ListLogs(ctx, model.LogFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(logs) != 1 || logs[0].RequestID != "recent-req" {
+		t.Errorf("expected only recent-req log to remain, got %d logs", len(logs))
+	}
+
+	// Verify old attempts were deleted
+	oldAttemptsAfter, err := store.GetAttemptsByRequestID(ctx, "old-req")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(oldAttemptsAfter) != 0 {
+		t.Errorf("expected old attempts to be deleted, got %d", len(oldAttemptsAfter))
+	}
+
+	// Verify recent attempts were retained
+	recentAttemptsAfter, err := store.GetAttemptsByRequestID(ctx, "recent-req")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(recentAttemptsAfter) != 1 {
+		t.Errorf("expected recent attempts to be retained, got %d", len(recentAttemptsAfter))
+	}
+}
+
+func TestCleanOldLogs_NegativeBeforeDaysError(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// CleanOldLogs with negative beforeDays should return an error
+	err := store.CleanOldLogs(ctx, -1)
+	if err == nil {
+		t.Fatal("expected error for negative beforeDays, got nil")
+	}
+
+	// Verify error message contains useful information
+	if !strings.Contains(err.Error(), "beforeDays must be non-negative") {
+		t.Errorf("error message should indicate invalid input, got: %v", err)
 	}
 }
 
@@ -232,6 +424,42 @@ func TestListLogs_FilterBySuccess(t *testing.T) {
 	}
 	if len(result) != 1 {
 		t.Errorf("expected 1 failed log, got %d", len(result))
+	}
+}
+
+func TestListLogs_FilterByIsSSE(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	logs := []model.RequestLog{
+		{ProviderID: "p1", IsSSE: true, CreatedAt: time.Now()},
+		{ProviderID: "p2", IsSSE: false, CreatedAt: time.Now()},
+		{ProviderID: "p3", IsSSE: true, CreatedAt: time.Now()},
+	}
+	for i := range logs {
+		if err := store.InsertLog(ctx, &logs[i]); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	// Filter by IsSSE=true
+	isSSETrue := true
+	result, err := store.ListLogs(ctx, model.LogFilter{IsSSE: &isSSETrue, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("expected 2 SSE logs, got %d", len(result))
+	}
+
+	// Filter by IsSSE=false
+	isSSEFalse := false
+	result, err = store.ListLogs(ctx, model.LogFilter{IsSSE: &isSSEFalse, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("expected 1 non-SSE log, got %d", len(result))
 	}
 }
 
@@ -827,6 +1055,58 @@ func TestGetLogTimeSeries_DifferentGranularities(t *testing.T) {
 				t.Errorf("len(result) = %d, want %d", len(result), tc.wantBuckets)
 			}
 		})
+	}
+}
+
+func TestListLogs_FilterByMinRetryCount(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	logs := []model.RequestLog{
+		{ProviderID: "p1", RetryCount: 0, CreatedAt: time.Now()},
+		{ProviderID: "p2", RetryCount: 1, CreatedAt: time.Now()},
+		{ProviderID: "p3", RetryCount: 2, CreatedAt: time.Now()},
+		{ProviderID: "p4", RetryCount: 3, CreatedAt: time.Now()},
+	}
+	for i := range logs {
+		if err := store.InsertLog(ctx, &logs[i]); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	// Filter by MinRetryCount=2 (should match logs with retry_count >= 2)
+	minRetries := 2
+	result, err := store.ListLogs(ctx, model.LogFilter{MinRetryCount: &minRetries, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("expected 2 logs with retry_count >= 2, got %d", len(result))
+	}
+	for _, log := range result {
+		if log.RetryCount < 2 {
+			t.Errorf("expected retry_count >= 2, got %d", log.RetryCount)
+		}
+	}
+
+	// Filter by MinRetryCount=1 (should match logs with retry_count >= 1)
+	minRetries = 1
+	result, err = store.ListLogs(ctx, model.LogFilter{MinRetryCount: &minRetries, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 3 {
+		t.Errorf("expected 3 logs with retry_count >= 1, got %d", len(result))
+	}
+
+	// Filter by MinRetryCount=0 (should match all logs)
+	minRetries = 0
+	result, err = store.ListLogs(ctx, model.LogFilter{MinRetryCount: &minRetries, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 4 {
+		t.Errorf("expected 4 logs with retry_count >= 0, got %d", len(result))
 	}
 }
 
