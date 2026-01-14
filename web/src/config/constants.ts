@@ -159,7 +159,7 @@ export const CONFIG_KEYS = {
   CIRCUIT_WINDOW: "circuit_window",
   CIRCUIT_DISABLE: "circuit_disable",
   MAX_BODY_SIZE: "max_body_size",
-  MAX_RETRIES: "max_retries",
+  GLOBAL_MAX_ATTEMPTS: "global_max_attempts",
   LOG_RETENTION_DAYS: "log_retention_days",
   INTER_GROUP_STRATEGY: "inter_group_strategy",
 } as const;
@@ -197,7 +197,8 @@ export const DEFAULTS = {
 
   // Request Handling
   MAX_BODY_SIZE_MB: 10,
-  MAX_RETRIES: 3,
+  GLOBAL_MAX_ATTEMPTS: 0, // 0 = unlimited (iterate through all providers)
+  PROVIDER_MAX_RETRIES: 0, // 0 = try once, no retry on same provider
   LOG_RETENTION_DAYS: 7,
 
   // Strategy
@@ -206,10 +207,11 @@ export const DEFAULTS = {
 } as const;
 
 /**
- * Special value for max_retries meaning "use global default".
- * @see internal/admin/constants.go DefaultMaxRetries
+ * Default provider max retries value.
+ * 0 = try once, no retry on same provider before switching to next.
+ * @see internal/defaults/defaults.go ProviderMaxRetries
  */
-export const MAX_RETRIES_USE_GLOBAL = -1;
+export const DEFAULT_PROVIDER_MAX_RETRIES = 0;
 
 // =============================================================================
 // Deprecated - Use DEFAULTS instead
@@ -229,7 +231,19 @@ export const CONFIG_DEFAULTS = {
 export const FORM_CONSTRAINTS = {
   MIN_POSITIVE: 1,
   MIN_ZERO: 0,
-  MAX_RETRIES_LIMIT: 10,
+  MAX_PROVIDER_RETRIES: 10, // Max value for provider-level max_retries
+  MAX_GLOBAL_ATTEMPTS: 20, // Max value for global_max_attempts
+} as const;
+
+// Recent Logs Display Limit
+export const RECENT_LOGS_LIMIT = 5;
+
+// Provider Form Default Values
+export const PROVIDER_DEFAULTS = {
+  PRIORITY: 0,
+  WEIGHT: 1,
+  CONCURRENCY: 10,
+  MAX_RETRIES: 0,
 } as const;
 
 // =============================================================================
@@ -239,6 +253,9 @@ export const FORM_CONSTRAINTS = {
 /**
  * Thresholds for displaying success rate indicators.
  * Values are decimal rates (0.0 - 1.0).
+ *
+ * Rationale: 0.95 represents excellent health (95% SLA standard),
+ * 0.80 represents degraded service requiring attention.
  */
 export const SUCCESS_RATE_THRESHOLDS = {
   /** Success rate >= this value shows "success" variant */
@@ -250,6 +267,9 @@ export const SUCCESS_RATE_THRESHOLDS = {
 
 /**
  * Thresholds for displaying error count indicators.
+ *
+ * Rationale: 10 errors is the threshold for concern - below this count
+ * individual errors may be transient.
  */
 export const ERROR_COUNT_THRESHOLDS = {
   /** Error count < this value (and > 0) shows "warning" variant */

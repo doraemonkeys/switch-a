@@ -14,7 +14,7 @@ import {
   ERROR_CODES,
   CONFIG_KEYS,
   DEFAULTS,
-  MAX_RETRIES_USE_GLOBAL,
+  DEFAULT_PROVIDER_MAX_RETRIES,
 } from "./constants";
 
 describe("API_BASE", () => {
@@ -72,8 +72,12 @@ describe("FORM_CONSTRAINTS", () => {
     expect(FORM_CONSTRAINTS.MIN_ZERO).toBe(0);
   });
 
-  it("should have MAX_RETRIES_LIMIT constraint", () => {
-    expect(FORM_CONSTRAINTS.MAX_RETRIES_LIMIT).toBe(10);
+  it("should have MAX_PROVIDER_RETRIES constraint", () => {
+    expect(FORM_CONSTRAINTS.MAX_PROVIDER_RETRIES).toBe(10);
+  });
+
+  it("should have MAX_GLOBAL_ATTEMPTS constraint", () => {
+    expect(FORM_CONSTRAINTS.MAX_GLOBAL_ATTEMPTS).toBe(20);
   });
 
   it("should have logical constraint values", () => {
@@ -81,7 +85,7 @@ describe("FORM_CONSTRAINTS", () => {
       FORM_CONSTRAINTS.MIN_POSITIVE,
     );
     expect(FORM_CONSTRAINTS.MIN_ZERO).toBeLessThan(
-      FORM_CONSTRAINTS.MAX_RETRIES_LIMIT,
+      FORM_CONSTRAINTS.MAX_PROVIDER_RETRIES,
     );
   });
 });
@@ -202,7 +206,7 @@ describe("CONFIG_KEYS", () => {
     expect(CONFIG_KEYS.STICKY_ENABLED).toBe("sticky_enabled");
     expect(CONFIG_KEYS.STICKY_TTL).toBe("sticky_ttl");
     expect(CONFIG_KEYS.CIRCUIT_FAILURE).toBe("circuit_failure");
-    expect(CONFIG_KEYS.MAX_RETRIES).toBe("max_retries");
+    expect(CONFIG_KEYS.GLOBAL_MAX_ATTEMPTS).toBe("global_max_attempts");
     expect(CONFIG_KEYS.INTER_GROUP_STRATEGY).toBe("inter_group_strategy");
   });
 
@@ -238,7 +242,8 @@ describe("DEFAULTS", () => {
 
   it("should have request handling defaults", () => {
     expect(DEFAULTS.MAX_BODY_SIZE_MB).toBe(10);
-    expect(DEFAULTS.MAX_RETRIES).toBe(3);
+    expect(DEFAULTS.GLOBAL_MAX_ATTEMPTS).toBe(0); // 0 = unlimited
+    expect(DEFAULTS.PROVIDER_MAX_RETRIES).toBe(0); // 0 = no retry on same provider
     expect(DEFAULTS.LOG_RETENTION_DAYS).toBe(7);
   });
 
@@ -248,9 +253,9 @@ describe("DEFAULTS", () => {
   });
 });
 
-describe("MAX_RETRIES_USE_GLOBAL", () => {
-  it("should be -1 (special value for global default)", () => {
-    expect(MAX_RETRIES_USE_GLOBAL).toBe(-1);
+describe("DEFAULT_PROVIDER_MAX_RETRIES", () => {
+  it("should be 0 (try once, no retry)", () => {
+    expect(DEFAULT_PROVIDER_MAX_RETRIES).toBe(0);
   });
 });
 

@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import type { FormEvent } from "react";
 import type { Provider, ProviderInput } from "../../api/client";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { isValidId } from "../../lib/utils";
+import { CloseIcon } from "../../components/icons/CloseIcon";
+import { PROVIDER_DEFAULTS } from "../../config/constants";
 
 function ModalHeader({
   title,
@@ -21,19 +23,7 @@ function ModalHeader({
           className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
           aria-label="Close"
         >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
+          <CloseIcon />
         </button>
       </div>
     </div>
@@ -48,10 +38,10 @@ const DEFAULT_FORM_DATA: ProviderInput = {
   api_types: [],
   auth_mode: "auto",
   group_id: null,
-  weight: 1,
-  priority: 0,
-  concurrency: 10,
-  max_retries: 3,
+  weight: PROVIDER_DEFAULTS.WEIGHT,
+  priority: PROVIDER_DEFAULTS.PRIORITY,
+  concurrency: PROVIDER_DEFAULTS.CONCURRENCY,
+  max_retries: PROVIDER_DEFAULTS.MAX_RETRIES,
   enabled: true,
 };
 
@@ -77,19 +67,15 @@ export function ProviderModal({
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
 
-  const handleEscape = useCallback(
-    (e: KeyboardEvent) => {
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !submitting) {
         onClose();
       }
-    },
-    [onClose, submitting],
-  );
-
-  useEffect(() => {
+    };
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [handleEscape]);
+  }, [onClose, submitting]);
 
   useEffect(() => {
     if (initialData) {

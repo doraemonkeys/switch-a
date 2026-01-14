@@ -1,12 +1,9 @@
 // =============================================================================
-// Enum Types (synced with internal/admin/constants.go)
+// Enum Types - Re-exported from constants.ts for convenience
 // =============================================================================
 
-/** Valid strategy values for group selection */
-export type Strategy = "priority" | "random" | "weight";
-
-/** Valid authentication mode values */
-export type AuthMode = "auto" | "bearer" | "x-api-key";
+import type { Strategy, AuthMode, ErrorCode } from "../config/constants";
+export type { Strategy, AuthMode, ErrorCode };
 
 /** Built-in API type values (custom:* pattern handled separately) */
 export type BuiltInAPIType = "claude" | "codex" | "gemini";
@@ -26,7 +23,7 @@ export type ConfigKey =
   | "circuit_window"
   | "circuit_disable"
   | "max_body_size"
-  | "max_retries"
+  | "global_max_attempts"
   | "log_retention_days"
   | "inter_group_strategy";
 
@@ -37,14 +34,6 @@ export interface ConfigResponse {
   /** User-modified configuration values (only modified keys) */
   values: Record<string, string>;
 }
-
-/** API error codes */
-export type ErrorCode =
-  | "VALIDATION_ERROR"
-  | "INTERNAL_ERROR"
-  | "NOT_FOUND"
-  | "CONFLICT"
-  | "UNAUTHORIZED";
 
 /** Standard API error response */
 export interface ErrorResponse {

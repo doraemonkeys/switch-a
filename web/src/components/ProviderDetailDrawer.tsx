@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Provider, RequestLog } from "../api/types";
 import { useApi } from "../api";
@@ -12,6 +12,8 @@ import {
 import { stringToColor, getSuccessBadgeClass } from "../lib/utils";
 import { DetailSection, DetailRow } from "./DrawerSection";
 import { RecoveryTimer } from "./RecoveryTimer";
+import { CloseIcon } from "./icons/CloseIcon";
+import { RECENT_LOGS_LIMIT } from "../config/constants";
 
 interface ProviderDetailDrawerProps {
   provider: Provider | null;
@@ -22,23 +24,6 @@ interface ProviderDetailDrawerProps {
   onReset: (provider: Provider) => void;
   getGroupName: (groupId: string | null) => string;
 }
-
-// Close icon component
-const CloseIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    stroke="currentColor"
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M6 18L18 6M6 6l12 12"
-    />
-  </svg>
-);
 
 // Recent log item component
 function RecentLogItem({ log }: { log: RequestLog }) {
@@ -99,7 +84,7 @@ function useRecentLogs(providerId: string | undefined) {
     let cancelled = false;
 
     api.logs
-      .list({ provider_id: providerId, limit: 5 })
+      .list({ provider_id: providerId, limit: RECENT_LOGS_LIMIT })
       .then((response) => {
         if (!cancelled) {
           setState({ logs: response.logs, fetchedFor: providerId });
@@ -165,7 +150,19 @@ function BasicInfoSection({
         value={`P${provider.priority} / W${provider.weight}`}
       />
       <DetailRow label="Concurrency" value={provider.concurrency} />
-      <DetailRow label="Max Retries" value={provider.max_retries} />
+      <DetailRow
+        label="Max Retries"
+        value={
+          <span className="flex items-center gap-2">
+            <span>{provider.max_retries}</span>
+            <span className="text-xs text-text-muted">
+              {provider.max_retries === 0
+                ? "(switch immediately on failure)"
+                : `(retry ${provider.max_retries}x before switching)`}
+            </span>
+          </span>
+        }
+      />
       <DetailRow
         label="Auth Mode"
         value={
@@ -367,16 +364,11 @@ export function ProviderDetailDrawer({
     provider?.id,
   );
 
-  // Handle ESC key to close drawer
-  const handleEscape = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    },
-    [onClose],
-  );
-
   useEffect(() => {
     if (provider) {
+      const handleEscape = (e: KeyboardEvent) => {
+        if (e.key === "Escape") onClose();
+      };
       document.addEventListener("keydown", handleEscape);
       document.body.style.overflow = "hidden";
       return () => {
@@ -384,7 +376,7 @@ export function ProviderDetailDrawer({
         document.body.style.overflow = "";
       };
     }
-  }, [provider, handleEscape]);
+  }, [provider, onClose]);
 
   if (!provider) return null;
 

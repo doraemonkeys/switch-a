@@ -10,6 +10,7 @@ import {
   AuthModeField,
 } from "./ProviderFormFields";
 import { slugify, isValidId } from "../../lib/utils";
+import { PROVIDER_DEFAULTS } from "../../config/constants";
 
 export interface FormState {
   data: ProviderInput;
@@ -216,14 +217,14 @@ export function ProviderFormBody({
             key: "priority",
             label: "Priority",
             min: 0,
-            defaultValue: 0,
+            defaultValue: PROVIDER_DEFAULTS.PRIORITY,
             hint: "Lower = higher priority (0 is highest)",
           },
           {
             key: "weight",
             label: "Weight",
             min: 1,
-            defaultValue: 1,
+            defaultValue: PROVIDER_DEFAULTS.WEIGHT,
             hint: "Higher = more traffic (for weight strategy)",
           },
         ]}
@@ -236,13 +237,15 @@ export function ProviderFormBody({
             key: "concurrency",
             label: "Concurrency Limit",
             min: 0,
-            defaultValue: 10,
+            defaultValue: PROVIDER_DEFAULTS.CONCURRENCY,
+            hint: "最大并发请求数 (0 = 无限制)",
           },
           {
             key: "max_retries",
             label: "Max Retries",
-            min: -1,
-            defaultValue: 3,
+            min: 0,
+            defaultValue: PROVIDER_DEFAULTS.MAX_RETRIES,
+            hint: "单个供应商重试次数 (0 = 不重试直接切换)",
           },
         ]}
       />
