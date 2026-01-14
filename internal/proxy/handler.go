@@ -395,10 +395,8 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		state.success = result.success
 		state.isSSE = result.isSSE
 
-		// Update SSE status in active registry now that we know the response type
-		if state.headersWritten && h.activeRegistry != nil && state.activeRegistered {
-			h.activeRegistry.UpdateSSE(pctx.requestID, result.isSSE)
-		}
+		// Note: SSE status is updated in forwardToProvider() BEFORE streaming starts.
+		// This ensures long-running SSE streams are visible in the Monitor page with the SSE badge.
 
 		h.recordAttempt(pctx, state, result, attempt, attemptStart)
 
@@ -503,6 +501,15 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		upstreamResp.Drain() // Drain and close to enable connection reuse for retries
 		// headersWritten is still false, allowing retry with another provider
 		return result
+	}
+
+	// Update SSE status in active registry BEFORE starting to stream.
+	// This is crucial for SSE requests: WriteToClient blocks until the entire stream completes,
+	// so we need to update the SSE flag now while the request is still "active" and visible
+	// in monitoring. If we waited until after WriteToClient, the request would be unregistered
+	// almost immediately after being marked as SSE, making it invisible in the Monitor page.
+	if h.activeRegistry != nil && result.isSSE {
+		h.activeRegistry.UpdateSSE(pctx.requestID, true)
 	}
 
 	// Wrap ResponseWriter to detect first data write for sticky session fallback
