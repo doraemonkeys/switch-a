@@ -22,10 +22,10 @@ describe("createApiClient config API", () => {
       defaults: {
         sticky_ttl: "300",
         auth_mode: "auto",
-        max_retries: "3",
+        global_max_attempts: "3",
       },
       values: {
-        max_retries: "5",
+        global_max_attempts: "5",
       },
     };
     mockHttpClient.mockResponse({
@@ -38,7 +38,7 @@ describe("createApiClient config API", () => {
 
     expect(result).toEqual(configResponse);
     expect(result.defaults.sticky_ttl).toBe("300");
-    expect(result.values.max_retries).toBe("5");
+    expect(result.values.global_max_attempts).toBe("5");
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config",
       expect.any(Object),

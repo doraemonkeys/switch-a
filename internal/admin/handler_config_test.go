@@ -53,6 +53,42 @@ func TestGetConfig(t *testing.T) {
 	}
 }
 
+func TestGetConfig_FiltersStaleKeys(t *testing.T) {
+	h, st, _ := testHandler()
+
+	// Simulate stale config entries from previous versions
+	st.config["sticky_enabled"] = "true"
+	st.config["max_retries"] = "10"         // Invalid: should be filtered out
+	st.config["invalid_key"] = "some_value" // Invalid: should be filtered out
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+	w := httptest.NewRecorder()
+
+	h.GetConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp ConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Valid key should be present
+	if resp.Values["sticky_enabled"] != "true" {
+		t.Errorf("Values[sticky_enabled] = %q, want %q", resp.Values["sticky_enabled"], "true")
+	}
+
+	// Invalid keys should be filtered out
+	if _, ok := resp.Values["max_retries"]; ok {
+		t.Error("Values should not contain stale key 'max_retries'")
+	}
+	if _, ok := resp.Values["invalid_key"]; ok {
+		t.Error("Values should not contain invalid key 'invalid_key'")
+	}
+}
+
 func TestGetConfig_Error(t *testing.T) {
 	h, st, _ := testHandler()
 	st.configErr = errors.New("database error")
