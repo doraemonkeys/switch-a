@@ -129,6 +129,21 @@ func shouldFailover(statusCode int) bool {
 		statusCode == defaults.StatusForbidden
 }
 
+// shouldForceProviderSwitch determines if the status code indicates a permanent
+// failure that won't be resolved by retrying the same provider. For these codes,
+// we should immediately switch to a different provider instead of wasting retries:
+//   - 402 Payment Required: billing/quota issue, won't change with retries
+//   - 401 Unauthorized: authentication failure, won't change with retries
+//   - 403 Forbidden: access denied, won't change with retries
+//
+// Note: 429 (Too Many Requests) and 5xx errors are NOT included because they may
+// be transient and could succeed on retry with the same provider.
+func shouldForceProviderSwitch(statusCode int) bool {
+	return statusCode == defaults.StatusPaymentRequired ||
+		statusCode == defaults.StatusUnauthorized ||
+		statusCode == defaults.StatusForbidden
+}
+
 // buildFullURL constructs the full upstream URL.
 // It properly joins the baseURL's existing path (if any) with the given path.
 // For example: baseURL="https://api.openai.com/v1", path="/chat/completions"

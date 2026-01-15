@@ -337,9 +337,13 @@ func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result fo
 // Returns true if the provider is exhausted (should switch to a different provider).
 func (h *Handler) tryIncrementAndExhaustsProvider(ctx context.Context, state *retryState) bool {
 	// Retry decision: by default, retry the SAME provider up to Provider.MaxRetries times.
-	// If the provider becomes unavailable (circuit breaker), we stop retrying it early.
+	// Force immediate provider switch for:
+	// 1. Permanent failures (402, 401, 403) - retrying same provider won't help
+	// 2. Circuit breaker triggered - provider is marked unavailable
 	maxRetries := max(0, state.currentProvider.MaxRetries)
-	if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
+	if shouldForceProviderSwitch(state.statusCode) {
+		maxRetries = forceProviderSwitch
+	} else if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
 		maxRetries = forceProviderSwitch
 	}
 	if state.providerAttempt < maxRetries {

@@ -428,6 +428,33 @@ func TestShouldFailover(t *testing.T) {
 	}
 }
 
+func TestShouldForceProviderSwitch(t *testing.T) {
+	tests := []struct {
+		statusCode int
+		want       bool
+	}{
+		{200, false},
+		{201, false},
+		{400, false},
+		{401, true},  // Unauthorized - permanent failure, switch provider immediately
+		{402, true},  // Payment Required - permanent failure, switch provider immediately
+		{403, true},  // Forbidden - permanent failure, switch provider immediately
+		{404, false}, // Not Found - client error
+		{429, false}, // Rate limit - transient, may succeed on retry with same provider
+		{500, false}, // Server error - transient, may succeed on retry with same provider
+		{502, false}, // Bad gateway - transient
+		{503, false}, // Service unavailable - transient
+		{504, false}, // Gateway timeout - transient
+	}
+
+	for _, tt := range tests {
+		got := shouldForceProviderSwitch(tt.statusCode)
+		if got != tt.want {
+			t.Errorf("shouldForceProviderSwitch(%d) = %v, want %v", tt.statusCode, got, tt.want)
+		}
+	}
+}
+
 func TestHandler_LogsSuccessFalse_ForFailoverStatusCodes(t *testing.T) {
 	// Test that failover-eligible status codes (401, 402, 403, 429, 5xx) are logged with success=false
 	tests := []struct {
