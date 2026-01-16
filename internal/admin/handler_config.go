@@ -93,9 +93,18 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Filter out any stale config keys that are no longer valid.
+	// This handles database entries from previous versions.
+	filteredValues := make(map[string]string)
+	for key, value := range values {
+		if IsValidConfigKey(key) {
+			filteredValues[key] = value
+		}
+	}
+
 	resp := ConfigResponse{
 		Defaults: store.GetDefaultConfigs(),
-		Values:   values,
+		Values:   filteredValues,
 	}
 
 	writeJSON(w, http.StatusOK, resp)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"switch-a/internal/model"
@@ -123,7 +124,7 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate priority is not reserved for ungrouped providers
 	if group.Priority == ReservedGroupPriority {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Priority value 2147483647 is reserved for ungrouped providers")
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, fmt.Sprintf("Priority value %d is reserved for ungrouped providers", ReservedGroupPriority))
 		return
 	}
 
@@ -186,7 +187,7 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 	if req.Priority != nil {
 		// Validate priority is not reserved for ungrouped providers
 		if *req.Priority == ReservedGroupPriority {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Priority value 2147483647 is reserved for ungrouped providers")
+			writeError(w, http.StatusBadRequest, ErrCodeValidation, fmt.Sprintf("Priority value %d is reserved for ungrouped providers", ReservedGroupPriority))
 			return
 		}
 		group.Priority = *req.Priority

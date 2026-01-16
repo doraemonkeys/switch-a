@@ -220,70 +220,71 @@ const regularReadBufferSize = 32 * 1024 // 32KB
 // Unlike a total timeout, idle timeout only triggers when no data is received
 // for the configured duration, allowing large responses to complete normally
 // as long as data keeps flowing.
-func (t *Transport) forwardRegular(ctx context.Context, w http.ResponseWriter, body io.Reader) error {
+//
+// Uses the same watchdog pattern as forwardSSE to prevent goroutine leaks:
+// closing the body interrupts blocking Read() calls.
+func (t *Transport) forwardRegular(ctx context.Context, w http.ResponseWriter, body io.ReadCloser) error {
 	if t.readTimeout <= 0 {
 		// No timeout configured, use simple copy
 		_, err := io.Copy(w, body)
 		return err
 	}
 
-	// Use idle timeout (like SSE) instead of total timeout.
-	// This prevents killing legitimate long-running transfers that are actively sending data.
+	// Handle context cancellation by closing body to unblock Read().
+	// This is separate from idle timeout - context cancellation is mandatory.
+	ctxDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = body.Close() // Unblock blocking Read()
+		case <-ctxDone:
+			// Normal exit, body closed elsewhere
+		}
+	}()
+	defer close(ctxDone)
+
+	// Start idle watchdog if configured.
+	// The watchdog closes body after timeout, interrupting the blocking Read().
+	// Note: Both the context goroutine above and the watchdog may close body,
+	// but body.Close() is idempotent so this is safe.
+	watchdog := newIdleWatchdog(body, t.readTimeout)
+	defer watchdog.Stop()
+
 	buf := make([]byte, regularReadBufferSize)
-	timer := time.NewTimer(t.readTimeout)
-	defer timer.Stop()
 
 	for {
-		// Check context before blocking on read
+		// Note: ctx.Done() check here is ineffective once Read() blocks.
+		// The context cancellation goroutine above handles this by closing body.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		// Use a goroutine to read with timeout detection
-		type readResult struct {
-			n   int
-			err error
+		n, err := body.Read(buf)
+		if n > 0 {
+			// Data received - reset idle watchdog timer
+			watchdog.Reset()
+
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
 		}
-		resultCh := make(chan readResult, 1)
 
-		go func() {
-			n, err := body.Read(buf)
-			resultCh <- readResult{n, err}
-		}()
-
-		select {
-		case result := <-resultCh:
-			if result.n > 0 {
-				// Data received - reset idle timer and write to client
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(t.readTimeout)
-
-				if _, writeErr := w.Write(buf[:result.n]); writeErr != nil {
-					return writeErr
-				}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil // Normal completion
 			}
-
-			if result.err != nil {
-				if errors.Is(result.err, io.EOF) {
-					return nil // Normal completion
-				}
-				// Wrap as upstream read error to distinguish from client write errors
-				return NewUpstreamReadError(result.err)
+			// Check if context was cancelled (body closed by context goroutine).
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
-
-		case <-timer.C:
-			// Idle timeout - no data received within timeout period
-			return ErrReadTimeout
-
-		case <-ctx.Done():
-			return ctx.Err()
+			// Check if this is an idle timeout (body was closed by watchdog).
+			if watchdog.TimedOut() {
+				return ErrReadTimeout
+			}
+			// Wrap as upstream read error to distinguish from client write errors
+			return NewUpstreamReadError(err)
 		}
 	}
 }

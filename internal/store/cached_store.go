@@ -53,7 +53,12 @@ type CachedStore struct {
 
 // NewCachedStore creates a new cached store wrapper.
 // It caches GetConfig calls to reduce database pressure under high QPS.
+// Panics if cfg.Store is nil (indicates programming error).
 func NewCachedStore(cfg CachedStoreConfig) *CachedStore {
+	if cfg.Store == nil {
+		panic("cached_store: cfg.Store must not be nil")
+	}
+
 	ttl := cfg.CacheTTL
 	if ttl <= 0 {
 		ttl = DefaultConfigCacheTTL

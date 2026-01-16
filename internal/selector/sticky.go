@@ -98,7 +98,7 @@ func (c *MemoryStickyCache) StartCleanupLoop(interval time.Duration) (stop func(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(interval)
+		ticker := c.clock.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {

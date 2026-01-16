@@ -39,6 +39,12 @@ const ConfigKeyStickyEnabled = "sticky_enabled"
 // group priorities should be kept in reasonable ranges (e.g., 0-1000).
 const UngroupedProviderPriority = math.MaxInt32
 
+// UngroupedGroupIDPrefix is the prefix for virtual group IDs assigned to ungrouped providers.
+const UngroupedGroupIDPrefix = "__ungrouped_"
+
+// UngroupedProviderWeight is the weight assigned to ungrouped provider virtual groups.
+const UngroupedProviderWeight = 1
+
 // Store defines the minimal storage interface needed by the selector.
 type Store interface {
 	ListProvidersByAPIType(ctx context.Context, apiType string) ([]model.Provider, error)
@@ -167,9 +173,9 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, req *model.Selec
 	for i, p := range ungroupedProviders {
 		provider := p // Create a copy to avoid pointer issues
 		groupCandidates = append(groupCandidates, &groupCandidate{
-			GroupID:   fmt.Sprintf("__ungrouped_%d_%s", i, provider.ID), // Unique virtual group ID
+			GroupID:   fmt.Sprintf("%s%d_%s", UngroupedGroupIDPrefix, i, provider.ID), // Unique virtual group ID
 			Priority:  UngroupedProviderPriority,
-			Weight:    1,
+			Weight:    UngroupedProviderWeight,
 			Strategy:  StrategyPriority,
 			Providers: []*model.Provider{&provider},
 		})
