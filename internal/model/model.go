@@ -88,14 +88,15 @@ type RequestLog struct {
 
 // RequestAttempt represents a single attempt within a request (for retry tracking).
 type RequestAttempt struct {
-	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	RequestID  string    `gorm:"index" json:"request_id"`
-	ProviderID string    `json:"provider_id"`
-	Attempt    int       `json:"attempt"`
-	StatusCode int       `json:"status_code"`
-	Error      string    `json:"error"`
-	LatencyMs  int64     `json:"latency_ms"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RequestID   string    `gorm:"index" json:"request_id"`
+	ProviderID  string    `json:"provider_id"`
+	Attempt     int       `json:"attempt"`
+	StatusCode  int       `json:"status_code"`
+	Error       string    `json:"error"`
+	BodySnippet string    `json:"body_snippet,omitempty"` // First ~512 bytes of error response (failover scenarios only)
+	LatencyMs   int64     `json:"latency_ms"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // LogFilter represents filter and sort parameters for log queries.

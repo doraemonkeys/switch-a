@@ -320,12 +320,13 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 // recordAttempt records a request attempt in the proxy context.
 func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result forwardResult, attempt int, attemptStart time.Time) {
 	attemptRecord := model.RequestAttempt{
-		RequestID:  pctx.requestID,
-		ProviderID: state.currentProvider.ID,
-		Attempt:    attempt,
-		StatusCode: result.statusCode,
-		LatencyMs:  time.Since(attemptStart).Milliseconds(),
-		CreatedAt:  time.Now(),
+		RequestID:   pctx.requestID,
+		ProviderID:  state.currentProvider.ID,
+		Attempt:     attempt,
+		StatusCode:  result.statusCode,
+		BodySnippet: result.bodySnippet,
+		LatencyMs:   time.Since(attemptStart).Milliseconds(),
+		CreatedAt:   time.Now(),
 	}
 	if result.err != nil {
 		attemptRecord.Error = result.err.Error()
@@ -446,8 +447,9 @@ type forwardResult struct {
 	statusCode     int
 	success        bool
 	err            error
-	done           bool // whether to stop retrying
-	isSSE          bool // whether the response was SSE
+	done           bool   // whether to stop retrying
+	isSSE          bool   // whether the response was SSE
+	bodySnippet    string // first ~500 bytes of error response (failover scenarios only)
 }
 
 // forwardToProvider forwards the request to a single provider.
@@ -502,7 +504,9 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		result.err = statusErr // Record error for proper "all providers failed" message
 		result.success = false // Explicitly mark as failure for logging
 		h.markFailure(ctx, provider.ID, statusErr)
-		upstreamResp.Drain() // Drain and close to enable connection reuse for retries
+		// Capture response body snippet for debugging before draining.
+		// This helps diagnose why upstream returned an error (e.g., quota exceeded, invalid key).
+		result.bodySnippet = upstreamResp.DrainWithSnippet(0) // 0 = use default size (512 bytes)
 		// headersWritten is still false, allowing retry with another provider
 		return result
 	}

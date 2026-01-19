@@ -253,6 +253,125 @@ func TestUpstreamResponse_Drain(t *testing.T) {
 	})
 }
 
+func TestUpstreamResponse_DrainWithSnippet(t *testing.T) {
+	t.Run("captures snippet from small body", func(t *testing.T) {
+		data := []byte(`{"error": "quota exceeded", "message": "You have exceeded your API quota"}`)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusTooManyRequests,
+			Body:       body,
+		}
+
+		snippet := resp.DrainWithSnippet(0) // Use default size
+
+		if snippet != string(data) {
+			t.Errorf("snippet = %q, want %q", snippet, string(data))
+		}
+	})
+
+	t.Run("truncates large body to maxSnippet", func(t *testing.T) {
+		// Create a body larger than the requested snippet size
+		data := bytes.Repeat([]byte("x"), 1000)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       body,
+		}
+
+		snippet := resp.DrainWithSnippet(100) // Request only 100 bytes
+
+		if len(snippet) != 100 {
+			t.Errorf("snippet length = %d, want 100", len(snippet))
+		}
+		if snippet != string(data[:100]) {
+			t.Errorf("snippet content mismatch")
+		}
+	})
+
+	t.Run("uses default size when maxSnippet is 0", func(t *testing.T) {
+		// Create a body larger than default maxSnippetBytes (512)
+		data := bytes.Repeat([]byte("y"), 1000)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusForbidden,
+			Body:       body,
+		}
+
+		snippet := resp.DrainWithSnippet(0)
+
+		if len(snippet) != maxSnippetBytes {
+			t.Errorf("snippet length = %d, want %d", len(snippet), maxSnippetBytes)
+		}
+	})
+
+	t.Run("handles nil body", func(t *testing.T) {
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusOK,
+			Body:       nil,
+		}
+
+		snippet := resp.DrainWithSnippet(100)
+
+		if snippet != "" {
+			t.Errorf("expected empty snippet for nil body, got %q", snippet)
+		}
+	})
+
+	t.Run("drains remaining content after snippet", func(t *testing.T) {
+		// Create a body with trackable reads
+		data := bytes.Repeat([]byte("z"), 10*1024) // 10KB
+		readCount := 0
+		trackingReader := &trackingReader{
+			reader:    bytes.NewReader(data),
+			readCount: &readCount,
+		}
+		body := io.NopCloser(trackingReader)
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       body,
+		}
+
+		snippet := resp.DrainWithSnippet(100)
+
+		// Should have captured first 100 bytes
+		if len(snippet) != 100 {
+			t.Errorf("snippet length = %d, want 100", len(snippet))
+		}
+
+		// Should have drained more than just the snippet
+		if readCount <= 100 {
+			t.Errorf("expected to drain more than snippet, only read %d bytes", readCount)
+		}
+	})
+
+	t.Run("limits total drain to maxDrainBytes", func(t *testing.T) {
+		// Create a body larger than maxDrainBytes (64KB)
+		data := bytes.Repeat([]byte("w"), 100*1024) // 100KB
+		readCount := 0
+		trackingReader := &trackingReader{
+			reader:    bytes.NewReader(data),
+			readCount: &readCount,
+		}
+		body := io.NopCloser(trackingReader)
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusBadGateway,
+			Body:       body,
+		}
+
+		resp.DrainWithSnippet(100)
+
+		// Should have limited total reads to maxDrainBytes
+		if readCount > 65*1024 {
+			t.Errorf("expected read count <= 65KB, got %d bytes", readCount)
+		}
+	})
+}
+
 type trackingReader struct {
 	reader    io.Reader
 	readCount *int

@@ -167,6 +167,7 @@ export interface RequestAttempt {
   attempt: number;
   status_code: number;
   error: string;
+  body_snippet?: string; // First ~512 bytes of error response (failover scenarios only)
   latency_ms: number;
   created_at: string; // ISO timestamp
 }

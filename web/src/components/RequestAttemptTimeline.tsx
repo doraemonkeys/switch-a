@@ -55,6 +55,8 @@ interface AttemptNodeProps {
 function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
   const isSuccess = attempt.status_code >= 200 && attempt.status_code < 400;
   const hasError = attempt.error && attempt.error.length > 0;
+  const hasBodySnippet =
+    attempt.body_snippet && attempt.body_snippet.length > 0;
 
   // Determine the card border/background based on status
   const getCardClasses = () => {
@@ -127,6 +129,16 @@ function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
           <div className="mt-2 p-2 rounded bg-red-100/50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
             <p className="text-xs text-red-700 dark:text-red-300 font-mono break-words">
               {attempt.error}
+            </p>
+          </div>
+        )}
+
+        {/* Response body snippet (failover scenarios) */}
+        {hasBodySnippet && (
+          <div className="mt-2 p-2 rounded bg-amber-100/50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+            <p className="text-xs text-text-secondary mb-1">Response Body:</p>
+            <p className="text-xs text-amber-700 dark:text-amber-300 font-mono break-words whitespace-pre-wrap">
+              {attempt.body_snippet}
             </p>
           </div>
         )}

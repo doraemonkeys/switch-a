@@ -134,6 +134,37 @@ func (r *UpstreamResponse) Drain() {
 	_ = r.Body.Close()
 }
 
+// maxSnippetBytes is the default size for response body snippets captured during failover.
+const maxSnippetBytes = 512
+
+// DrainWithSnippet reads the first maxSnippet bytes of the response body for debugging,
+// then drains the remaining content and closes. This is used in failover scenarios
+// where the response would otherwise be discarded, allowing us to capture error details
+// without affecting normal request flow.
+//
+// Returns the captured snippet as a string. If maxSnippet is 0, uses default size.
+func (r *UpstreamResponse) DrainWithSnippet(maxSnippet int) string {
+	if r.Body == nil {
+		return ""
+	}
+	if maxSnippet <= 0 {
+		maxSnippet = maxSnippetBytes
+	}
+
+	// Read first maxSnippet bytes for the snippet
+	snippet := make([]byte, maxSnippet)
+	n, _ := io.ReadFull(r.Body, snippet)
+
+	// Drain remaining content (up to maxDrainBytes - already read bytes) to enable connection reuse
+	remaining := maxDrainBytes - int64(n)
+	if remaining > 0 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, remaining))
+	}
+	_ = r.Body.Close()
+
+	return string(snippet[:n])
+}
+
 // IsSSE returns true if the response is a Server-Sent Events stream.
 func (r *UpstreamResponse) IsSSE() bool {
 	return r.isSSE
