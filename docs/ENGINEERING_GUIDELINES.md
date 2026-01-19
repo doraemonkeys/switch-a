@@ -10,6 +10,7 @@
 
 ### Best Practices
 * Break down complex problems into smaller, manageable parts.
+* Single Responsibility Principle (SRP): Ensure each module, class, or function has one clear purpose. If a component handles multiple distinct concerns, split it to prevent complexity accumulation.
 * Consider performance implications (e.g., unnecessary re-renders in React).
 * Minimize Nesting (Guard Clauses): Handle errors and edge cases early. Keep the "happy path" at the lowest indentation level.
 
