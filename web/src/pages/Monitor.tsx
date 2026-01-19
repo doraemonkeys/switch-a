@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { LiveRequestsPanel } from "../components/LiveRequestsPanel";
 import { useLiveRequests, useStatus, useProviders } from "../hooks";
 
@@ -34,6 +34,37 @@ export function Monitor() {
   } = useStatus();
 
   const { providers } = useProviders();
+
+  // Track if tab is visible for polling optimization
+  const isVisibleRef = useRef(true);
+
+  // Auto-refresh status when polling is enabled
+  useEffect(() => {
+    if (pollInterval <= 0) return;
+
+    const handleVisibilityChange = () => {
+      isVisibleRef.current = document.visibilityState === "visible";
+      // Immediately refetch when becoming visible
+      if (isVisibleRef.current) {
+        refetchStatus();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    isVisibleRef.current = document.visibilityState === "visible";
+
+    const intervalId = setInterval(() => {
+      // Only poll if tab is visible
+      if (isVisibleRef.current) {
+        refetchStatus();
+      }
+    }, pollInterval);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(intervalId);
+    };
+  }, [pollInterval, refetchStatus]);
 
   // Build provider name map for display
   const providerNames = (() => {
