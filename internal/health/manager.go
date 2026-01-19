@@ -192,8 +192,14 @@ func (m *Manager) RecoverIfExpired(ctx context.Context, providerID string) bool 
 // IsAvailable checks if the provider is currently available.
 // This is a pure query with no side effects.
 // Call RecoverIfExpired first if you want to trigger auto-recovery for expired providers.
-func (m *Manager) IsAvailable(ctx context.Context, providerID string) bool {
-	state, err := m.store.GetHealthState(ctx, providerID)
+// Note: Uses internal context to avoid "context canceled" errors when client disconnects.
+func (m *Manager) IsAvailable(_ context.Context, providerID string) bool {
+	// Detach from request context - health check is a fast query that should complete
+	// even if the client disconnects to avoid noisy "context canceled" error logs.
+	internalCtx, cancel := context.WithTimeout(context.Background(), healthTrackingTimeout)
+	defer cancel()
+
+	state, err := m.store.GetHealthState(internalCtx, providerID)
 	if err != nil {
 		m.logger.Error("failed to get health state", zap.String("provider_id", providerID), zap.Error(err))
 		return false // Fail safe: treat as unavailable if we can't check
