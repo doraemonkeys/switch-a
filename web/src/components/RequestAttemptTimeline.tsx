@@ -7,6 +7,32 @@ interface RequestAttemptTimelineProps {
   providerNames?: Map<string, string>;
 }
 
+/** Maps switch reason codes to human-readable labels with icons */
+function getSwitchReasonLabel(
+  reason: string,
+): { text: string; icon: string } | null {
+  switch (reason) {
+    case "circuit_breaker_triggered":
+      return {
+        text: "Circuit breaker triggered — switched provider",
+        icon: "⚡",
+      };
+    case "max_retries_exhausted":
+      return { text: "Max retries reached — switched provider", icon: "🔄" };
+    case "permanent_error_401":
+      return { text: "Auth error (401) — switched provider", icon: "🔐" };
+    case "permanent_error_402":
+      return {
+        text: "Payment required (402) — switched provider",
+        icon: "💳",
+      };
+    case "permanent_error_403":
+      return { text: "Forbidden (403) — switched provider", icon: "🚫" };
+    default:
+      return null;
+  }
+}
+
 /**
  * Vertical timeline component showing request retry attempts.
  *
@@ -57,6 +83,9 @@ function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
   const hasError = attempt.error && attempt.error.length > 0;
   const hasBodySnippet =
     attempt.body_snippet && attempt.body_snippet.length > 0;
+  const switchReasonInfo = attempt.switch_reason
+    ? getSwitchReasonLabel(attempt.switch_reason)
+    : null;
 
   // Determine the card border/background based on status
   const getCardClasses = () => {
@@ -140,6 +169,14 @@ function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
             <p className="text-xs text-amber-700 dark:text-amber-300 font-mono break-words whitespace-pre-wrap">
               {attempt.body_snippet}
             </p>
+          </div>
+        )}
+
+        {/* Switch reason indicator */}
+        {switchReasonInfo && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded">
+            <span>{switchReasonInfo.icon}</span>
+            <span>{switchReasonInfo.text}</span>
           </div>
         )}
       </div>

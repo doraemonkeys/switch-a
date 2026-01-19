@@ -318,15 +318,16 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 }
 
 // recordAttempt records a request attempt in the proxy context.
-func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result forwardResult, attempt int, attemptStart time.Time) {
+func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result forwardResult, attempt int, attemptStart time.Time, switchReason string) {
 	attemptRecord := model.RequestAttempt{
-		RequestID:   pctx.requestID,
-		ProviderID:  state.currentProvider.ID,
-		Attempt:     attempt,
-		StatusCode:  result.statusCode,
-		BodySnippet: result.bodySnippet,
-		LatencyMs:   time.Since(attemptStart).Milliseconds(),
-		CreatedAt:   time.Now(),
+		RequestID:    pctx.requestID,
+		ProviderID:   state.currentProvider.ID,
+		Attempt:      attempt,
+		StatusCode:   result.statusCode,
+		BodySnippet:  result.bodySnippet,
+		LatencyMs:    time.Since(attemptStart).Milliseconds(),
+		SwitchReason: switchReason,
+		CreatedAt:    time.Now(),
 	}
 	if result.err != nil {
 		attemptRecord.Error = result.err.Error()
@@ -335,23 +336,33 @@ func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result fo
 }
 
 // tryIncrementAndExhaustsProvider attempts to increment the provider retry counter.
-// Returns true if the provider is exhausted (should switch to a different provider).
-func (h *Handler) tryIncrementAndExhaustsProvider(ctx context.Context, state *retryState) bool {
-	// Retry decision: by default, retry the SAME provider up to Provider.MaxRetries times.
-	// Force immediate provider switch for:
-	// 1. Permanent failures (402, 401, 403) - retrying same provider won't help
-	// 2. Circuit breaker triggered - provider is marked unavailable
+// Returns (exhausted bool, switchReason string):
+//   - exhausted=true means we should switch to a different provider
+//   - switchReason is non-empty only when exhausted=true, explaining why the switch occurred
+//
+// Note: Since markFailure is called in forwardToProvider, and IsAvailable check happens
+// here (after markFailure), if this failure triggers the circuit breaker, switchReason
+// will correctly record "circuit_breaker_triggered".
+func (h *Handler) tryIncrementAndExhaustsProvider(ctx context.Context, state *retryState) (bool, string) {
 	maxRetries := max(0, state.currentProvider.MaxRetries)
+
+	// Check for permanent errors that should force immediate provider switch
 	if shouldForceProviderSwitch(state.statusCode) {
-		maxRetries = forceProviderSwitch
-	} else if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
-		maxRetries = forceProviderSwitch
+		return true, formatPermanentErrorReason(state.statusCode)
 	}
+
+	// Check if circuit breaker has been triggered for this provider
+	if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
+		return true, SwitchReasonCircuitBreakerTriggered
+	}
+
+	// Normal retry logic: check if there are retries remaining
 	if state.providerAttempt < maxRetries {
 		state.providerAttempt++
-		return false
+		return false, ""
 	}
-	return true
+
+	return true, SwitchReasonMaxRetriesExhausted
 }
 
 // excludeCurrentProvider marks the current provider as excluded and releases its concurrency.
@@ -403,13 +414,19 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		// Note: SSE status is updated in forwardToProvider() BEFORE streaming starts.
 		// This ensures long-running SSE streams are visible in the Monitor page with the SSE badge.
 
-		h.recordAttempt(pctx, state, result, attempt, attemptStart)
-
+		// Success or final failure (headers written) - no provider switch
 		if result.done {
+			h.recordAttempt(pctx, state, result, attempt, attemptStart, "")
 			break
 		}
 
-		if h.tryIncrementAndExhaustsProvider(ctx, state) {
+		// Determine if we need to switch providers (and why)
+		exhausted, switchReason := h.tryIncrementAndExhaustsProvider(ctx, state)
+
+		// Record the attempt with the switch reason (now known)
+		h.recordAttempt(pctx, state, result, attempt, attemptStart, switchReason)
+
+		if exhausted {
 			h.excludeCurrentProvider(state)
 		}
 	}

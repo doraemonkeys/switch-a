@@ -45,10 +45,6 @@ const (
 // defaultStickyTTLSeconds uses canonical value from selector package for consistency.
 const defaultStickyTTLSeconds = selector.DefaultStickyTTLSeconds
 
-// forceProviderSwitch is a sentinel value assigned to maxRetries to force
-// immediate provider switching when a circuit breaker trips.
-const forceProviderSwitch = -1
-
 // runtimeConfig holds configuration loaded from the store per-request (immutable once created).
 type runtimeConfig struct {
 	trustProxy        bool

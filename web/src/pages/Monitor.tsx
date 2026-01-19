@@ -14,6 +14,86 @@ const POLL_INTERVALS = [
   { value: 30000, label: "30s" },
 ] as const;
 
+/** Calculate human-readable time until a future ISO date */
+function formatTimeUntil(isoDate: string): string {
+  const target = new Date(isoDate).getTime();
+  const now = Date.now();
+  const diffMs = target - now;
+
+  if (diffMs <= 0) return "recovering...";
+
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+/** Format disabled reason for display (removes "auto: " prefix for readability) */
+function formatDisabledReason(reason: string): string {
+  if (reason.startsWith("auto: ")) {
+    return reason.slice(6);
+  }
+  if (reason.startsWith("manual: ")) {
+    return `Manual: ${reason.slice(8)}`;
+  }
+  return reason;
+}
+
+/** Build a map of provider ID to name for display */
+function buildProviderNameMap(
+  providers: Array<{ id: string; name: string }> | undefined,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (providers) {
+    for (const p of providers) {
+      map.set(p.id, p.name);
+    }
+  }
+  return map;
+}
+
+interface StatusDotProps {
+  enabled: boolean;
+  available: boolean;
+  disabledReason?: string | null;
+}
+
+function StatusDot({ enabled, available, disabledReason }: StatusDotProps) {
+  if (!enabled) {
+    return (
+      <span
+        className="w-2.5 h-2.5 rounded-full bg-gray-400 flex-shrink-0"
+        title="Disabled by configuration"
+        role="img"
+        aria-label="Disabled"
+      />
+    );
+  }
+  if (!available) {
+    const title = disabledReason
+      ? `Unhealthy: ${disabledReason.replace(/^(auto|manual): /, "")}`
+      : "Unhealthy";
+    return (
+      <span
+        className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0"
+        title={title}
+        role="img"
+        aria-label={title}
+      />
+    );
+  }
+  return (
+    <span
+      className="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0"
+      title="Healthy"
+      role="img"
+      aria-label="Healthy"
+    />
+  );
+}
+
 export function Monitor() {
   const [pollInterval, setPollInterval] = useState(5000);
 
@@ -66,16 +146,7 @@ export function Monitor() {
     };
   }, [pollInterval, refetchStatus]);
 
-  // Build provider name map for display
-  const providerNames = (() => {
-    const map = new Map<string, string>();
-    if (providers) {
-      for (const p of providers) {
-        map.set(p.id, p.name);
-      }
-    }
-    return map;
-  })();
+  const providerNames = buildProviderNameMap(providers);
 
   const handleRefresh = () => {
     refetchRequests();
@@ -254,17 +325,37 @@ export function Monitor() {
                     key={provider.id}
                     className="flex items-center justify-between p-3 rounded-lg bg-bg-tertiary hover:bg-bg-hover transition-colors"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       <StatusDot
                         enabled={provider.enabled}
                         available={provider.health?.available ?? true}
+                        disabledReason={provider.health?.disabled_reason}
                       />
-                      <span className="truncate text-sm font-medium text-text-primary">
-                        {provider.name}
-                      </span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="truncate text-sm font-medium text-text-primary">
+                          {provider.name}
+                        </span>
+                        {!provider.health?.available &&
+                          provider.health?.disabled_reason && (
+                            <span className="text-xs text-amber-600 dark:text-amber-400 truncate">
+                              {formatDisabledReason(
+                                provider.health.disabled_reason,
+                              )}
+                              {provider.health.disabled_until && (
+                                <>
+                                  {" "}
+                                  · Recovers in{" "}
+                                  {formatTimeUntil(
+                                    provider.health.disabled_until,
+                                  )}
+                                </>
+                              )}
+                            </span>
+                          )}
+                      </div>
                     </div>
                     {provider.current_requests > 0 && (
-                      <span className="badge badge-primary text-xs">
+                      <span className="badge badge-primary text-xs flex-shrink-0">
                         {provider.current_requests} req
                       </span>
                     )}
@@ -276,41 +367,5 @@ export function Monitor() {
         </div>
       </div>
     </div>
-  );
-}
-
-interface StatusDotProps {
-  enabled: boolean;
-  available: boolean;
-}
-
-function StatusDot({ enabled, available }: StatusDotProps) {
-  if (!enabled) {
-    return (
-      <span
-        className="w-2.5 h-2.5 rounded-full bg-gray-400"
-        title="Disabled"
-        role="img"
-        aria-label="Disabled"
-      />
-    );
-  }
-  if (!available) {
-    return (
-      <span
-        className="w-2.5 h-2.5 rounded-full bg-red-500"
-        title="Unhealthy"
-        role="img"
-        aria-label="Unhealthy"
-      />
-    );
-  }
-  return (
-    <span
-      className="w-2.5 h-2.5 rounded-full bg-green-500"
-      title="Healthy"
-      role="img"
-      aria-label="Healthy"
-    />
   );
 }

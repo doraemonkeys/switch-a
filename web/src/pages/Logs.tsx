@@ -203,6 +203,18 @@ export function Logs() {
 
 // Sub-components
 
+function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span className="relative group cursor-help text-text-muted">
+      <span className="text-xs">ℹ️</span>
+      <span className="invisible group-hover:visible absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 p-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-50 whitespace-normal">
+        {text}
+        <span className="absolute left-1/2 -translate-x-1/2 top-full border-4 border-transparent border-t-gray-900" />
+      </span>
+    </span>
+  );
+}
+
 interface LogsHeaderProps {
   loading: boolean;
   onRefresh: () => void;
@@ -302,7 +314,10 @@ function LogsTable({
                 Status
               </th>
               <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
-                Retries
+                <span className="inline-flex items-center gap-1">
+                  Retries
+                  <InfoTooltip text="Retry count shows the number of additional attempts after the initial request. A request with max_retries=2 can have up to 3 attempts total (1 initial + 2 retries). Circuit breaker or permanent errors (401/402/403) may interrupt retries early." />
+                </span>
               </th>
               <th
                 onClick={() => onSort("latency_ms")}
