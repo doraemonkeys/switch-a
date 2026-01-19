@@ -528,6 +528,15 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		return result
 	}
 
+	// For non-failover 4xx errors (e.g., 400 Bad Request, 404 Not Found), use TeeReader
+	// to capture a body snippet while still forwarding the complete response to the client.
+	// This helps users diagnose client errors without blocking the response.
+	// Note: 401/402/403/429 are handled above via shouldFailover and DrainWithSnippet.
+	var snippetBuf *limitedBuffer
+	if result.statusCode >= defaults.StatusClientError && result.statusCode < defaults.StatusServerError {
+		snippetBuf = upstreamResp.TeeBody(0) // 0 = use default size (512 bytes)
+	}
+
 	// Update SSE status in active registry BEFORE starting to stream.
 	// This is crucial for SSE requests: WriteToClient blocks until the entire stream completes,
 	// so we need to update the SSE flag now while the request is still "active" and visible
@@ -586,6 +595,10 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		// Non-retryable client errors (e.g., 400 Bad Request, 404 Not Found)
 		// Set result flag to false but skip health tracking - client errors don't reflect provider health
 		result.success = false
+		// Capture the snippet that was populated by TeeReader during WriteToClient
+		if snippetBuf != nil {
+			result.bodySnippet = snippetBuf.String()
+		}
 		h.logger.Info("upstream returned client error",
 			zap.String("provider_id", provider.ID),
 			zap.Int("status_code", result.statusCode),

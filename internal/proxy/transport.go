@@ -137,6 +137,53 @@ func (r *UpstreamResponse) Drain() {
 // maxSnippetBytes is the default size for response body snippets captured during failover.
 const maxSnippetBytes = 512
 
+// limitedBuffer captures up to `limit` bytes, discarding excess.
+// Used by TeeBody to capture response snippets while forwarding to client.
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool // true if any data was discarded due to limit
+}
+
+func (lb *limitedBuffer) Write(p []byte) (int, error) {
+	n := len(p) // Always return original length to satisfy io.Writer
+	remaining := lb.limit - lb.buf.Len()
+	if remaining <= 0 {
+		lb.truncated = true
+		return n, nil // Already full, discard but return success
+	}
+	if len(p) > remaining {
+		lb.truncated = true
+		p = p[:remaining]
+	}
+	lb.buf.Write(p)
+	return n, nil
+}
+
+// String returns the captured content, with truncation marker if data was discarded.
+func (lb *limitedBuffer) String() string {
+	if lb.truncated {
+		return lb.buf.String() + "...[truncated]"
+	}
+	return lb.buf.String()
+}
+
+// teeReadCloser wraps ReadCloser with TeeReader, preserving Close behavior.
+// Critical: Do not use io.NopCloser here; the original Body must be closed
+// to prevent connection leaks.
+type teeReadCloser struct {
+	original io.ReadCloser
+	tee      io.Reader
+}
+
+func (t *teeReadCloser) Read(p []byte) (int, error) {
+	return t.tee.Read(p)
+}
+
+func (t *teeReadCloser) Close() error {
+	return t.original.Close()
+}
+
 // DrainWithSnippet reads the first maxSnippet bytes of the response body for debugging,
 // then drains the remaining content and closes. This is used in failover scenarios
 // where the response would otherwise be discarded, allowing us to capture error details
@@ -163,6 +210,27 @@ func (r *UpstreamResponse) DrainWithSnippet(maxSnippet int) string {
 	_ = r.Body.Close()
 
 	return string(snippet[:n])
+}
+
+// TeeBody wraps the response body with a TeeReader that captures the first maxBytes
+// into the returned buffer. The original body can still be fully read/forwarded.
+// This is used for non-failover 4xx errors where we need to both forward the response
+// to the client AND capture a snippet for diagnostics.
+//
+// If maxBytes is 0, uses default size (maxSnippetBytes).
+func (r *UpstreamResponse) TeeBody(maxBytes int) *limitedBuffer {
+	if r.Body == nil {
+		return nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = maxSnippetBytes
+	}
+	lb := &limitedBuffer{limit: maxBytes}
+	r.Body = &teeReadCloser{
+		original: r.Body,
+		tee:      io.TeeReader(r.Body, lb),
+	}
+	return lb
 }
 
 // IsSSE returns true if the response is a Server-Sent Events stream.

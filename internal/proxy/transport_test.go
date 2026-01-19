@@ -383,6 +383,268 @@ func (r *trackingReader) Read(p []byte) (n int, err error) {
 	return
 }
 
+func TestLimitedBuffer(t *testing.T) {
+	t.Run("captures data within limit", func(t *testing.T) {
+		lb := &limitedBuffer{limit: 100}
+
+		n, err := lb.Write([]byte("hello world"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if n != 11 {
+			t.Errorf("n = %d, want 11", n)
+		}
+		if lb.String() != "hello world" {
+			t.Errorf("String() = %q, want %q", lb.String(), "hello world")
+		}
+		if lb.truncated {
+			t.Error("truncated should be false")
+		}
+	})
+
+	t.Run("truncates data exceeding limit", func(t *testing.T) {
+		lb := &limitedBuffer{limit: 10}
+
+		n, err := lb.Write([]byte("hello world and more"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Write returns the original length even when truncating
+		if n != 20 {
+			t.Errorf("n = %d, want 20", n)
+		}
+		if lb.String() != "hello worl...[truncated]" {
+			t.Errorf("String() = %q, want %q", lb.String(), "hello worl...[truncated]")
+		}
+		if !lb.truncated {
+			t.Error("truncated should be true")
+		}
+	})
+
+	t.Run("multiple writes within limit", func(t *testing.T) {
+		lb := &limitedBuffer{limit: 20}
+
+		lb.Write([]byte("hello "))
+		lb.Write([]byte("world"))
+
+		if lb.String() != "hello world" {
+			t.Errorf("String() = %q, want %q", lb.String(), "hello world")
+		}
+		if lb.truncated {
+			t.Error("truncated should be false")
+		}
+	})
+
+	t.Run("multiple writes exceeding limit", func(t *testing.T) {
+		lb := &limitedBuffer{limit: 10}
+
+		lb.Write([]byte("hello ")) // 6 bytes, 4 remaining
+		lb.Write([]byte("world"))  // 5 bytes, truncated to 4
+
+		if lb.String() != "hello worl...[truncated]" {
+			t.Errorf("String() = %q, want %q", lb.String(), "hello worl...[truncated]")
+		}
+		if !lb.truncated {
+			t.Error("truncated should be true")
+		}
+	})
+
+	t.Run("write when already full", func(t *testing.T) {
+		lb := &limitedBuffer{limit: 5}
+
+		lb.Write([]byte("hello"))
+		n, err := lb.Write([]byte("world"))
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Returns full length even when discarding
+		if n != 5 {
+			t.Errorf("n = %d, want 5", n)
+		}
+		if lb.String() != "hello...[truncated]" {
+			t.Errorf("String() = %q, want %q", lb.String(), "hello...[truncated]")
+		}
+	})
+}
+
+func TestTeeReadCloser(t *testing.T) {
+	t.Run("reads through tee", func(t *testing.T) {
+		data := []byte("test data for tee")
+		original := io.NopCloser(bytes.NewReader(data))
+		var captured bytes.Buffer
+
+		trc := &teeReadCloser{
+			original: original,
+			tee:      io.TeeReader(original, &captured),
+		}
+
+		// Read all data
+		result, err := io.ReadAll(trc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Original data should be read
+		if string(result) != string(data) {
+			t.Errorf("read = %q, want %q", string(result), string(data))
+		}
+
+		// Captured buffer should also have the data
+		if captured.String() != string(data) {
+			t.Errorf("captured = %q, want %q", captured.String(), string(data))
+		}
+	})
+
+	t.Run("close closes original", func(t *testing.T) {
+		closeCount := 0
+		original := &mockReadCloser{
+			reader:     bytes.NewReader([]byte("test")),
+			closeCount: &closeCount,
+		}
+		trc := &teeReadCloser{
+			original: original,
+			tee:      original,
+		}
+
+		err := trc.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if closeCount != 1 {
+			t.Errorf("closeCount = %d, want 1", closeCount)
+		}
+	})
+}
+
+type mockReadCloser struct {
+	reader     io.Reader
+	closeCount *int
+}
+
+func (m *mockReadCloser) Read(p []byte) (int, error) {
+	return m.reader.Read(p)
+}
+
+func (m *mockReadCloser) Close() error {
+	*m.closeCount++
+	return nil
+}
+
+func TestUpstreamResponse_TeeBody(t *testing.T) {
+	t.Run("captures snippet while forwarding full body", func(t *testing.T) {
+		data := []byte(`{"error": {"message": "Model not found", "type": "invalid_request_error"}}`)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusBadRequest,
+			Body:       body,
+		}
+
+		lb := resp.TeeBody(0) // Use default size
+		if lb == nil {
+			t.Fatal("TeeBody returned nil")
+		}
+
+		// Read all data from the body (simulating WriteToClient)
+		readData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Full data should be readable
+		if string(readData) != string(data) {
+			t.Errorf("read = %q, want %q", string(readData), string(data))
+		}
+
+		// Snippet should be captured
+		if lb.String() != string(data) {
+			t.Errorf("snippet = %q, want %q", lb.String(), string(data))
+		}
+	})
+
+	t.Run("truncates large response in snippet", func(t *testing.T) {
+		data := bytes.Repeat([]byte("x"), 1000)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusNotFound,
+			Body:       body,
+		}
+
+		lb := resp.TeeBody(100) // Only capture 100 bytes
+
+		// Read all data from the body
+		readData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Full data should be readable
+		if len(readData) != 1000 {
+			t.Errorf("read length = %d, want 1000", len(readData))
+		}
+
+		// Snippet should be truncated
+		expected := string(data[:100]) + "...[truncated]"
+		if lb.String() != expected {
+			t.Errorf("snippet length = %d, want %d", len(lb.String()), len(expected))
+		}
+	})
+
+	t.Run("uses default size when maxBytes is 0", func(t *testing.T) {
+		data := bytes.Repeat([]byte("y"), 1000)
+		body := io.NopCloser(bytes.NewReader(data))
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusBadRequest,
+			Body:       body,
+		}
+
+		lb := resp.TeeBody(0)
+
+		io.ReadAll(resp.Body)
+
+		// Should capture maxSnippetBytes (512) + truncated marker
+		if lb.limit != maxSnippetBytes {
+			t.Errorf("limit = %d, want %d", lb.limit, maxSnippetBytes)
+		}
+	})
+
+	t.Run("handles nil body", func(t *testing.T) {
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusBadRequest,
+			Body:       nil,
+		}
+
+		lb := resp.TeeBody(100)
+
+		if lb != nil {
+			t.Errorf("expected nil for nil body, got %+v", lb)
+		}
+	})
+
+	t.Run("close still works after TeeBody", func(t *testing.T) {
+		closeCount := 0
+		body := &mockReadCloser{
+			reader:     bytes.NewReader([]byte("test")),
+			closeCount: &closeCount,
+		}
+
+		resp := &UpstreamResponse{
+			StatusCode: http.StatusBadRequest,
+			Body:       body,
+		}
+
+		resp.TeeBody(100)
+		resp.Close()
+
+		if closeCount != 1 {
+			t.Errorf("closeCount = %d, want 1", closeCount)
+		}
+	})
+}
+
 func TestCopyResponseHeaders(t *testing.T) {
 	src := make(http.Header)
 	src.Set("Content-Type", "application/json")

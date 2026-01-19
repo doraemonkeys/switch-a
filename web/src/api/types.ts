@@ -167,7 +167,7 @@ export interface RequestAttempt {
   attempt: number;
   status_code: number;
   error: string;
-  body_snippet?: string; // First ~512 bytes of error response (failover scenarios only)
+  body_snippet?: string; // First ~512 bytes of error response
   latency_ms: number;
   switch_reason?: string; // Reason for switching to next provider (if any)
   created_at: string; // ISO timestamp
