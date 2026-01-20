@@ -24,7 +24,7 @@ const logInsertTimeout = 2 * time.Second
 func (h *Handler) handleNoProvider(pctx *proxyContext) {
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(pctx, nil, StatusCodeNoResponse, false, false, internal.ErrNoProvider, time.Since(pctx.startTime))
+	go h.logRequest(pctx, nil, StatusCodeNoResponse, false, false, nil, internal.ErrNoProvider, time.Since(pctx.startTime))
 }
 
 // handleExhaustedRetries handles exhausted retry attempts.
@@ -74,7 +74,7 @@ func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code,
 // logRequest logs the request asynchronously.
 // Note: Uses context.Background() with timeout because this runs after the HTTP response
 // completes and the request context may already be cancelled.
-func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statusCode int, success bool, isSSE bool, err error, latency time.Duration) {
+func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statusCode int, success bool, isSSE bool, firstTokenMs *int64, err error, latency time.Duration) {
 	log := &model.RequestLog{
 		RequestID:       pctx.requestID,
 		APIType:         pctx.info.APIType,
@@ -92,6 +92,7 @@ func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statu
 		RequestMethod:   pctx.info.Method,
 		UserAgent:       pctx.info.UserAgent,
 		RequestIDHeader: pctx.info.RequestID,
+		FirstTokenMs:    firstTokenMs,
 	}
 
 	if provider != nil {

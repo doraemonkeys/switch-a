@@ -218,6 +218,8 @@ export interface RequestLog {
   request_method?: string; // HTTP method: GET/POST/PUT/DELETE
   user_agent?: string; // Client User-Agent (truncated to 512 chars)
   request_id_header?: string; // Client's X-Request-ID for tracing
+  // Phase 2 diagnostic fields (P1)
+  first_token_ms?: number | null; // Time to first token for SSE requests (ms), null for non-SSE
   attempts?: RequestAttempt[];
 }
 

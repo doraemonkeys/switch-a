@@ -122,6 +122,8 @@ type RequestLog struct {
 	RequestMethod   string `gorm:"default:''" json:"request_method"`    // HTTP method: GET/POST/PUT/DELETE
 	UserAgent       string `gorm:"default:''" json:"user_agent"`        // Client User-Agent (truncated to 512 chars)
 	RequestIDHeader string `gorm:"default:''" json:"request_id_header"` // Client's X-Request-ID for tracing
+	// Phase 2 diagnostic fields (P1)
+	FirstTokenMs *int64 `gorm:"default:null" json:"first_token_ms"` // Time to first token for SSE requests (ms), null for non-SSE
 	// Attempts is populated by API, not stored directly in database.
 	Attempts []RequestAttempt `gorm:"-" json:"attempts,omitempty"`
 }
