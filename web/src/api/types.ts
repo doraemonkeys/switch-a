@@ -2,8 +2,13 @@
 // Enum Types - Re-exported from constants.ts for convenience
 // =============================================================================
 
-import type { Strategy, AuthMode, ErrorCode } from "../config/constants";
-export type { Strategy, AuthMode, ErrorCode };
+import type {
+  Strategy,
+  AuthMode,
+  ErrorCode,
+  FailoverScope,
+} from "../config/constants";
+export type { Strategy, AuthMode, ErrorCode, FailoverScope };
 
 /** Built-in API type values (custom:* pattern handled separately) */
 export type BuiltInAPIType = "claude" | "codex" | "gemini";
@@ -63,6 +68,12 @@ export interface Provider {
   priority: number;
   concurrency: number;
   max_retries: number;
+  /** Vendor identifier for failover isolation. Empty = no isolation, "*" = wildcard */
+  vendor: string;
+  /** Outbound failover control: where we can failover TO after this provider fails */
+  failover_scope: FailoverScope;
+  /** Inbound failover control: which sources we accept failover FROM */
+  accept_failover: FailoverScope;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -81,6 +92,12 @@ export interface ProviderInput {
   priority?: number;
   concurrency?: number;
   max_retries?: number;
+  /** Vendor identifier for failover isolation */
+  vendor?: string;
+  /** Outbound failover control */
+  failover_scope?: FailoverScope;
+  /** Inbound failover control */
+  accept_failover?: FailoverScope;
   enabled?: boolean;
 }
 
@@ -342,6 +359,9 @@ export interface ExportedProvider {
   priority: number;
   concurrency: number;
   max_retries: number;
+  vendor?: string;
+  failover_scope?: FailoverScope;
+  accept_failover?: FailoverScope;
   enabled: boolean;
 }
 

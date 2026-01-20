@@ -26,18 +26,21 @@ type ExportedConfig struct {
 // ExportedProvider represents a provider in the export format.
 // This is a flattened version without health state or timestamps.
 type ExportedProvider struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	BaseURL     string   `json:"base_url"`
-	APIKey      string   `json:"api_key"`
-	APITypes    []string `json:"api_types"`
-	AuthMode    string   `json:"auth_mode"`
-	GroupID     *string  `json:"group_id,omitempty"`
-	Weight      int      `json:"weight"`
-	Priority    int      `json:"priority"`
-	Concurrency int      `json:"concurrency"`
-	MaxRetries  int      `json:"max_retries"`
-	Enabled     bool     `json:"enabled"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	BaseURL        string   `json:"base_url"`
+	APIKey         string   `json:"api_key"`
+	APITypes       []string `json:"api_types"`
+	AuthMode       string   `json:"auth_mode"`
+	GroupID        *string  `json:"group_id,omitempty"`
+	Weight         int      `json:"weight"`
+	Priority       int      `json:"priority"`
+	Concurrency    int      `json:"concurrency"`
+	MaxRetries     int      `json:"max_retries"`
+	Vendor         string   `json:"vendor,omitempty"`
+	FailoverScope  string   `json:"failover_scope,omitempty"`
+	AcceptFailover string   `json:"accept_failover,omitempty"`
+	Enabled        bool     `json:"enabled"`
 }
 
 // ExportedGroup represents a group in the export format.
@@ -134,18 +137,21 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 			apiTypes[j] = at.APIType
 		}
 		exportedProviders[i] = ExportedProvider{
-			ID:          p.ID,
-			Name:        p.Name,
-			BaseURL:     p.BaseURL,
-			APIKey:      p.APIKey,
-			APITypes:    apiTypes,
-			AuthMode:    p.AuthMode,
-			GroupID:     p.GroupID,
-			Weight:      p.Weight,
-			Priority:    p.Priority,
-			Concurrency: p.Concurrency,
-			MaxRetries:  p.MaxRetries,
-			Enabled:     p.Enabled,
+			ID:             p.ID,
+			Name:           p.Name,
+			BaseURL:        p.BaseURL,
+			APIKey:         p.APIKey,
+			APITypes:       apiTypes,
+			AuthMode:       p.AuthMode,
+			GroupID:        p.GroupID,
+			Weight:         p.Weight,
+			Priority:       p.Priority,
+			Concurrency:    p.Concurrency,
+			MaxRetries:     p.MaxRetries,
+			Vendor:         p.Vendor,
+			FailoverScope:  string(p.FailoverScope),
+			AcceptFailover: string(p.AcceptFailover),
+			Enabled:        p.Enabled,
 		}
 	}
 
@@ -554,19 +560,32 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		}
 	}
 
+	// Validate failover scopes (use defaults if invalid)
+	failoverScope := model.Scope(p.FailoverScope)
+	if !model.IsValidScope(failoverScope) {
+		failoverScope = model.ScopeAny
+	}
+	acceptFailover := model.Scope(p.AcceptFailover)
+	if !model.IsValidScope(acceptFailover) {
+		acceptFailover = model.ScopeAny
+	}
+
 	return &model.Provider{
-		ID:          p.ID,
-		Name:        p.Name,
-		BaseURL:     p.BaseURL,
-		APIKey:      p.APIKey,
-		APITypes:    apiTypes,
-		AuthMode:    authMode,
-		GroupID:     groupID,
-		Weight:      weight,
-		Priority:    p.Priority,
-		Concurrency: p.Concurrency,
-		MaxRetries:  p.MaxRetries,
-		Enabled:     p.Enabled,
+		ID:             p.ID,
+		Name:           p.Name,
+		BaseURL:        p.BaseURL,
+		APIKey:         p.APIKey,
+		APITypes:       apiTypes,
+		AuthMode:       authMode,
+		GroupID:        groupID,
+		Weight:         weight,
+		Priority:       p.Priority,
+		Concurrency:    p.Concurrency,
+		MaxRetries:     p.MaxRetries,
+		Vendor:         p.Vendor,
+		FailoverScope:  failoverScope,
+		AcceptFailover: acceptFailover,
+		Enabled:        p.Enabled,
 	}, true
 }
 

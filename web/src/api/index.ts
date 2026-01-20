@@ -14,6 +14,7 @@ export type {
   // Enum types (synced with backend)
   Strategy,
   AuthMode,
+  FailoverScope,
   BuiltInAPIType,
   ConfigKey,
   ErrorCode,

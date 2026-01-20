@@ -8,6 +8,7 @@ import {
   EnabledCheckbox,
   FormActions,
   AuthModeField,
+  FailoverSection,
 } from "./ProviderFormFields";
 import { slugify, isValidId } from "../../lib/utils";
 import { PROVIDER_DEFAULTS } from "../../config/constants";
@@ -58,6 +59,11 @@ export function ProviderFormBody({
     setError: setIdError,
   } = idState;
   const [showApiKey, setShowApiKey] = useState(false);
+  const [failoverExpanded, setFailoverExpanded] = useState(
+    Boolean(
+      formData.vendor || formData.failover_scope || formData.accept_failover,
+    ),
+  );
 
   return (
     <>
@@ -238,16 +244,22 @@ export function ProviderFormBody({
             label: "Concurrency Limit",
             min: 0,
             defaultValue: PROVIDER_DEFAULTS.CONCURRENCY,
-            hint: "最大并发请求数 (0 = 无限制)",
+            hint: "Max concurrent requests (0 = unlimited)",
           },
           {
             key: "max_retries",
             label: "Max Retries",
             min: 0,
             defaultValue: PROVIDER_DEFAULTS.MAX_RETRIES,
-            hint: "单个供应商重试次数 (0 = 不重试直接切换)",
+            hint: "Retries per provider (0 = no retry, switch immediately)",
           },
         ]}
+      />
+      <FailoverSection
+        formData={formData}
+        setFormData={setFormData}
+        expanded={failoverExpanded}
+        onToggle={() => setFailoverExpanded(!failoverExpanded)}
       />
       <EnabledCheckbox
         checked={formData.enabled ?? true}

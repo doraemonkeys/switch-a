@@ -87,7 +87,66 @@ export const API_TYPES = {
   GEMINI: "gemini",
 } as const;
 
+/**
+ * Failover scope values for vendor isolation.
+ * Controls which providers can be used as failover targets.
+ * @see internal/model/model.go Scope
+ */
+export const FAILOVER_SCOPES = {
+  NONE: "none",
+  VENDOR: "vendor",
+  ANY: "any",
+} as const;
+
+export type FailoverScope =
+  (typeof FAILOVER_SCOPES)[keyof typeof FAILOVER_SCOPES];
+
+/** Vendor wildcard value that matches any vendor */
+export const VENDOR_WILDCARD = "*";
+
+export const FAILOVER_SCOPE_OPTIONS = [
+  {
+    value: FAILOVER_SCOPES.ANY,
+    label: "Any",
+    description: "Allow failover to/from any provider (default)",
+    icon: "🌐",
+  },
+  {
+    value: FAILOVER_SCOPES.VENDOR,
+    label: "Same Vendor",
+    description: "Only allow failover within the same vendor group",
+    icon: "🔗",
+  },
+  {
+    value: FAILOVER_SCOPES.NONE,
+    label: "None",
+    description: "Do not allow failover",
+    icon: "🚫",
+  },
+] as const;
+
 export type APIType = (typeof API_TYPES)[keyof typeof API_TYPES];
+
+/**
+ * Common API types for quick selection in forms.
+ * These are the standard API types supported by the proxy.
+ */
+export const COMMON_API_TYPES = [
+  API_TYPES.CLAUDE,
+  API_TYPES.CODEX,
+  API_TYPES.GEMINI,
+] as const;
+
+/**
+ * Common vendor names for quick selection in forms.
+ * These represent well-known AI API providers.
+ */
+export const COMMON_VENDORS = [
+  "yescode",
+  "openrouter",
+  "openai",
+  "anthropic",
+] as const;
 
 /**
  * Prefix for custom API types (e.g., "custom:mytool").

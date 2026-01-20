@@ -13,7 +13,11 @@ import { stringToColor, getSuccessBadgeClass } from "../lib/utils";
 import { DetailSection, DetailRow } from "./DrawerSection";
 import { RecoveryTimer } from "./RecoveryTimer";
 import { CloseIcon } from "./icons/CloseIcon";
-import { RECENT_LOGS_LIMIT } from "../config/constants";
+import {
+  RECENT_LOGS_LIMIT,
+  FAILOVER_SCOPES,
+  VENDOR_WILDCARD,
+} from "../config/constants";
 
 interface ProviderDetailDrawerProps {
   provider: Provider | null;
@@ -184,6 +188,121 @@ function BasicInfoSection({
               </span>
             )) ?? <span className="text-text-muted">—</span>}
           </div>
+        }
+      />
+    </DetailSection>
+  );
+}
+
+// Failover scope badge component
+function ScopeBadge({
+  scope,
+  direction,
+}: {
+  scope: string;
+  direction: "out" | "in";
+}) {
+  const scopeConfig: Record<
+    string,
+    { label: string; icon: string; className: string }
+  > = {
+    [FAILOVER_SCOPES.NONE]: {
+      label: "None",
+      icon: "🚫",
+      className: "bg-danger-light text-danger-dark",
+    },
+    [FAILOVER_SCOPES.VENDOR]: {
+      label: "Vendor",
+      icon: "🔗",
+      className: "bg-warning-light text-warning-dark",
+    },
+    [FAILOVER_SCOPES.ANY]: {
+      label: "Any",
+      icon: "🌐",
+      className: "bg-success-light text-success-dark",
+    },
+  };
+
+  const config = scopeConfig[scope] ?? scopeConfig[FAILOVER_SCOPES.ANY];
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.className}`}
+      title={
+        direction === "out"
+          ? "Outbound failover scope"
+          : "Inbound failover acceptance"
+      }
+    >
+      <span>{config.icon}</span>
+      {config.label}
+    </span>
+  );
+}
+
+// Failover info section component
+function FailoverInfoSection({ provider }: { provider: Provider }) {
+  const hasVendorConfig =
+    provider.vendor ||
+    provider.failover_scope !== FAILOVER_SCOPES.ANY ||
+    provider.accept_failover !== FAILOVER_SCOPES.ANY;
+
+  // Show warning if vendor scope is set but vendor is empty
+  const hasWarning =
+    !provider.vendor &&
+    (provider.failover_scope === FAILOVER_SCOPES.VENDOR ||
+      provider.accept_failover === FAILOVER_SCOPES.VENDOR);
+
+  if (!hasVendorConfig) {
+    return null;
+  }
+
+  const renderVendorBadge = () => {
+    if (!provider.vendor) {
+      return <span className="text-text-muted italic">Not set</span>;
+    }
+    if (provider.vendor === VENDOR_WILDCARD) {
+      return (
+        <span className="px-2 py-0.5 bg-info-light text-info-dark rounded text-xs font-medium">
+          * (Wildcard)
+        </span>
+      );
+    }
+    return (
+      <span className="px-2 py-0.5 bg-primary-light text-primary-dark rounded text-xs font-medium font-mono">
+        {provider.vendor}
+      </span>
+    );
+  };
+
+  return (
+    <DetailSection title="Failover Isolation">
+      {hasWarning && (
+        <div className="mb-3 p-2 rounded-lg bg-warning-light/50 border border-warning-light text-xs text-warning-dark flex items-start gap-2">
+          <span>⚠️</span>
+          <span>
+            Vendor scope is configured but vendor is empty - failover may be
+            blocked
+          </span>
+        </div>
+      )}
+      <DetailRow label="Vendor" value={renderVendorBadge()} />
+      <DetailRow
+        label="Failover To"
+        value={
+          <ScopeBadge
+            scope={provider.failover_scope || FAILOVER_SCOPES.ANY}
+            direction="out"
+          />
+        }
+      />
+      <DetailRow
+        label="Accept From"
+        value={
+          <ScopeBadge
+            scope={provider.accept_failover || FAILOVER_SCOPES.ANY}
+            direction="in"
+          />
         }
       />
     </DetailSection>
@@ -420,6 +539,7 @@ export function ProviderDetailDrawer({
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           <BasicInfoSection provider={provider} getGroupName={getGroupName} />
+          <FailoverInfoSection provider={provider} />
           <HealthStatusSection
             provider={provider}
             status={status}

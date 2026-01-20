@@ -42,6 +42,9 @@ const DEFAULT_FORM_DATA: ProviderInput = {
   priority: PROVIDER_DEFAULTS.PRIORITY,
   concurrency: PROVIDER_DEFAULTS.CONCURRENCY,
   max_retries: PROVIDER_DEFAULTS.MAX_RETRIES,
+  vendor: "",
+  failover_scope: "any",
+  accept_failover: "any",
   enabled: true,
 };
 
@@ -91,6 +94,9 @@ export function ProviderModal({
         priority: initialData.priority,
         concurrency: initialData.concurrency,
         max_retries: initialData.max_retries,
+        vendor: initialData.vendor || "",
+        failover_scope: initialData.failover_scope || "any",
+        accept_failover: initialData.accept_failover || "any",
         enabled: initialData.enabled,
       });
       setApiTypesInput(initialData.api_types.map((t) => t.api_type).join(", "));
