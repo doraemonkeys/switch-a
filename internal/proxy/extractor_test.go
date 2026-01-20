@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestExtractClientIP(t *testing.T) {
@@ -376,6 +377,122 @@ func TestConsumeAndReplaceBody(t *testing.T) {
 		}
 		if len(got) != len(body) {
 			t.Errorf("got body length %d, want %d", len(got), len(body))
+		}
+	})
+}
+
+func TestGetReqBodySnippet(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       []byte
+		wantSuffix string // expected suffix (empty for non-truncated, "..." for truncated)
+		wantLen    int    // expected length (0 means check equals original)
+	}{
+		{
+			name:       "empty body",
+			body:       nil,
+			wantSuffix: "",
+			wantLen:    0,
+		},
+		{
+			name:       "empty slice",
+			body:       []byte{},
+			wantSuffix: "",
+			wantLen:    0,
+		},
+		{
+			name:       "short body",
+			body:       []byte("short body"),
+			wantSuffix: "",
+			wantLen:    10,
+		},
+		{
+			name:       "body at exact limit",
+			body:       bytes.Repeat([]byte("x"), MaxReqBodySnippetLength),
+			wantSuffix: "",
+			wantLen:    MaxReqBodySnippetLength,
+		},
+		{
+			name:       "body exceeds limit",
+			body:       bytes.Repeat([]byte("x"), MaxReqBodySnippetLength+100),
+			wantSuffix: "...",
+			wantLen:    MaxReqBodySnippetLength + 3, // truncated + "..."
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetReqBodySnippet(tt.body)
+
+			if tt.wantLen == 0 && len(tt.body) > 0 {
+				if got != string(tt.body) {
+					t.Errorf("GetReqBodySnippet() = %q, want %q", got, string(tt.body))
+				}
+			} else if tt.wantLen > 0 && len(got) != tt.wantLen {
+				t.Errorf("GetReqBodySnippet() length = %d, want %d", len(got), tt.wantLen)
+			}
+
+			if tt.wantSuffix != "" && !strings.HasSuffix(got, tt.wantSuffix) {
+				t.Errorf("GetReqBodySnippet() should end with %q, got %q", tt.wantSuffix, got)
+			}
+		})
+	}
+}
+
+func TestGetReqBodySnippet_UTF8Safety(t *testing.T) {
+	// Test that UTF-8 multi-byte characters are not split during truncation
+
+	t.Run("truncation at UTF-8 boundary", func(t *testing.T) {
+		// Create a body with UTF-8 characters that would be split at MaxReqBodySnippetLength
+		// Chinese character "中" is 3 bytes: 0xE4 0xB8 0xAD
+		// Fill up to near the limit with ASCII, then add multi-byte chars
+		padding := bytes.Repeat([]byte("a"), MaxReqBodySnippetLength-2)
+		// Add a 3-byte UTF-8 character that would be split if we just truncate at limit
+		body := append(padding, []byte("中文")...) // 2 Chinese chars = 6 bytes
+
+		got := GetReqBodySnippet(body)
+
+		// The result should be valid UTF-8
+		if !utf8.ValidString(got) {
+			t.Errorf("GetReqBodySnippet() produced invalid UTF-8: %q", got)
+		}
+
+		// Should end with "..."
+		if !strings.HasSuffix(got, "...") {
+			t.Errorf("GetReqBodySnippet() should end with '...', got %q", got)
+		}
+	})
+
+	t.Run("body with only multi-byte characters", func(t *testing.T) {
+		// Create body with only 4-byte emoji characters that exceeds limit
+		// Each emoji is 4 bytes
+		emoji := "😀"
+		numEmojis := MaxReqBodySnippetLength/4 + 10 // Exceed limit
+		body := []byte(strings.Repeat(emoji, numEmojis))
+
+		got := GetReqBodySnippet(body)
+
+		// The result should be valid UTF-8
+		if !utf8.ValidString(got) {
+			t.Errorf("GetReqBodySnippet() produced invalid UTF-8: %q", got)
+		}
+
+		// Should end with "..."
+		if !strings.HasSuffix(got, "...") {
+			t.Errorf("GetReqBodySnippet() should end with '...', got %q", got)
+		}
+	})
+
+	t.Run("mixed ASCII and multi-byte at boundary", func(t *testing.T) {
+		// Position a multi-byte character exactly at the truncation point
+		// MaxReqBodySnippetLength-1 ASCII chars + 3-byte UTF-8 char
+		padding := bytes.Repeat([]byte("x"), MaxReqBodySnippetLength-1)
+		body := append(padding, []byte("日")...) // 3-byte character
+
+		got := GetReqBodySnippet(body)
+
+		if !utf8.ValidString(got) {
+			t.Errorf("GetReqBodySnippet() produced invalid UTF-8: %q", got)
 		}
 	})
 }

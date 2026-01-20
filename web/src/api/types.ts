@@ -220,6 +220,10 @@ export interface RequestLog {
   request_id_header?: string; // Client's X-Request-ID for tracing
   // Phase 2 diagnostic fields (P1)
   first_token_ms?: number | null; // Time to first token for SSE requests (ms), null for non-SSE
+  // Phase 3 transfer statistics (P2)
+  request_bytes?: number; // Request body size in bytes
+  response_bytes?: number; // Response body size in bytes
+  content_type?: string; // Request Content-Type header
   attempts?: RequestAttempt[];
 }
 

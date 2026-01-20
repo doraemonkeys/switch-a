@@ -43,12 +43,14 @@ type transportCacheKey struct {
 // When an SSE stream outlives the sticky TTL, we use the active provider registry
 // to maintain session affinity. This wrapper signals when actual data starts flowing
 // so the registry can mark the request as having received data.
-// It also tracks the time of first write for TTFT (Time To First Token) metrics.
+// It also tracks the time of first write for TTFT (Time To First Token) metrics,
+// and counts total bytes written for transfer statistics.
 type firstWriteResponseWriter struct {
 	http.ResponseWriter
 	onFirstWrite   func()
 	written        bool
 	firstWriteTime time.Time // Time of first data write (for TTFT calculation)
+	bytesWritten   int64     // Total bytes written to client
 }
 
 func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
@@ -59,7 +61,9 @@ func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
 		}
 		w.written = true
 	}
-	return w.ResponseWriter.Write(p)
+	n, err := w.ResponseWriter.Write(p)
+	w.bytesWritten += int64(n)
+	return n, err
 }
 
 // Flush preserves http.Flusher interface for SSE streaming.
@@ -220,14 +224,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		apiType:   apiType,
 		body:      body,
 		info: RequestInfo{
-			ClientIP:  ExtractClientIP(r, cfg.trustProxy),
-			UserID:    ExtractUserID(r, cfg.userHeader),
-			Model:     ExtractModel(r, apiType, body),
-			APIType:   apiType,
-			Path:      r.URL.Path,
-			Method:    r.Method,
-			UserAgent: ExtractUserAgent(r),
-			RequestID: ExtractRequestIDHeader(r),
+			ClientIP:    ExtractClientIP(r, cfg.trustProxy),
+			UserID:      ExtractUserID(r, cfg.userHeader),
+			Model:       ExtractModel(r, apiType, body),
+			APIType:     apiType,
+			Path:        r.URL.Path,
+			Method:      r.Method,
+			UserAgent:   ExtractUserAgent(r),
+			RequestID:   ExtractRequestIDHeader(r),
+			ContentType: ExtractContentType(r),
 		},
 		startTime: startTime,
 		requestID: requestID,
@@ -275,6 +280,8 @@ type retryState struct {
 	// firstTokenMs tracks Time To First Token for SSE requests (in milliseconds).
 	// Only set for successful SSE responses when data starts flowing.
 	firstTokenMs *int64
+	// responseBytes tracks total bytes written to client for transfer statistics.
+	responseBytes int64
 }
 
 // selectAndRegisterProvider selects a provider and registers the active request.
@@ -359,7 +366,11 @@ func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result fo
 	}
 	if result.err != nil {
 		attemptRecord.Error = result.err.Error()
-		// Include request body snippet for error attempts to help diagnose issues
+		// Include request body snippet for error attempts to help diagnose issues.
+		// SECURITY NOTE: This may expose sensitive data (API keys, tokens, PII) in the
+		// request_attempts table. Administrators should be aware that error diagnostics
+		// include partial request content. The snippet is truncated to 512 bytes to limit
+		// exposure. Consider the security implications when granting access to logs/attempts data.
 		attemptRecord.ReqBodySnippet = GetReqBodySnippet(pctx.body)
 	}
 	pctx.attempts = append(pctx.attempts, attemptRecord)
@@ -441,6 +452,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		state.success = result.success
 		state.isSSE = result.isSSE
 		state.firstTokenMs = result.firstTokenMs
+		state.responseBytes = result.responseBytes
 
 		// Note: SSE status is updated in forwardToProvider() BEFORE streaming starts.
 		// This ensures long-running SSE streams are visible in the Monitor page with the SSE badge.
@@ -481,7 +493,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
 	// but avoids blocking the response path. For a high-throughput proxy,
 	// this is an acceptable trade-off as most logs will complete.
-	go h.logRequest(pctx, state.providerUsed, state.statusCode, state.success, state.isSSE, state.firstTokenMs, state.lastErr, time.Since(pctx.startTime))
+	go h.logRequest(pctx, state.providerUsed, state.statusCode, state.success, state.isSSE, state.firstTokenMs, state.responseBytes, state.lastErr, time.Since(pctx.startTime))
 
 	// Handle exhausted retries
 	if !state.success && !state.headersWritten { // coverage-ignore -- retry exhaustion tested at integration level
@@ -499,6 +511,7 @@ type forwardResult struct {
 	isSSE          bool   // whether the response was SSE
 	bodySnippet    string // first ~500 bytes of error response (failover scenarios only)
 	firstTokenMs   *int64 // Time To First Token for SSE requests (ms from request start)
+	responseBytes  int64  // Total bytes written to client (for transfer statistics)
 }
 
 // forwardToProvider forwards the request to a single provider.
@@ -600,6 +613,9 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		ttft := wrappedWriter.firstWriteTime.Sub(pctx.startTime).Milliseconds()
 		result.firstTokenMs = &ttft
 	}
+
+	// Capture response bytes for transfer statistics
+	result.responseBytes = wrappedWriter.bytesWritten
 
 	if writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
 		h.logger.Warn("failed to write response to client",

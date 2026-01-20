@@ -124,6 +124,10 @@ type RequestLog struct {
 	RequestIDHeader string `gorm:"default:''" json:"request_id_header"` // Client's X-Request-ID for tracing
 	// Phase 2 diagnostic fields (P1)
 	FirstTokenMs *int64 `gorm:"default:null" json:"first_token_ms"` // Time to first token for SSE requests (ms), null for non-SSE
+	// Phase 3 transfer statistics (P2)
+	RequestBytes  int64  `gorm:"default:0" json:"request_bytes"`  // Request body size in bytes
+	ResponseBytes int64  `gorm:"default:0" json:"response_bytes"` // Response body size in bytes
+	ContentType   string `gorm:"default:''" json:"content_type"`  // Request Content-Type header
 	// Attempts is populated by API, not stored directly in database.
 	Attempts []RequestAttempt `gorm:"-" json:"attempts,omitempty"`
 }

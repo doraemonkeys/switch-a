@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // maxModelExtractBytes is the maximum bytes to read when extracting the model field.
@@ -32,14 +33,15 @@ const MaxReqBodySnippetLength = 512
 
 // RequestInfo contains information extracted from a proxy request.
 type RequestInfo struct {
-	ClientIP  string
-	UserID    string
-	Model     string
-	APIType   string
-	Path      string // Request path (relative, e.g., /v1/messages)
-	Method    string // HTTP method (GET/POST/PUT/DELETE)
-	UserAgent string // Client User-Agent (truncated to MaxUserAgentLength)
-	RequestID string // Client's X-Request-ID header for tracing
+	ClientIP    string
+	UserID      string
+	Model       string
+	APIType     string
+	Path        string // Request path (relative, e.g., /v1/messages)
+	Method      string // HTTP method (GET/POST/PUT/DELETE)
+	UserAgent   string // Client User-Agent (truncated to MaxUserAgentLength)
+	RequestID   string // Client's X-Request-ID header for tracing
+	ContentType string // Request Content-Type header
 }
 
 // ExtractClientIP extracts the client IP address from the request.
@@ -100,16 +102,36 @@ func ExtractRequestIDHeader(r *http.Request) string {
 	return r.Header.Get("X-Request-ID")
 }
 
-// GetReqBodySnippet returns a truncated snippet of the request body.
+// ExtractContentType extracts the Content-Type header from the request.
+func ExtractContentType(r *http.Request) string {
+	return r.Header.Get("Content-Type")
+}
+
+// GetReqBodySnippet returns a truncated snippet of the request body for debugging.
 // Returns empty string if body is nil or empty.
+//
+// When truncation occurs, "..." is appended to indicate the body was truncated.
+// Truncation respects UTF-8 boundaries to avoid splitting multi-byte characters.
+//
+// SECURITY NOTE: Request bodies may contain sensitive data (API keys, auth tokens, PII).
+// This function is used only for error diagnostics and stored in request_attempts table.
+// Administrators should be aware that error logs may expose partial request content.
 func GetReqBodySnippet(body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
-	if len(body) > MaxReqBodySnippetLength {
-		return string(body[:MaxReqBodySnippetLength])
+	if len(body) <= MaxReqBodySnippetLength {
+		return string(body)
 	}
-	return string(body)
+
+	// Truncate at MaxReqBodySnippetLength, but ensure we don't split a UTF-8 character.
+	// Walk backwards from the cut point to find a valid UTF-8 boundary.
+	snippet := body[:MaxReqBodySnippetLength]
+	for len(snippet) > 0 && !utf8.Valid(snippet) {
+		snippet = snippet[:len(snippet)-1]
+	}
+
+	return string(snippet) + "..."
 }
 
 // ExtractModel extracts the model name from the request.
