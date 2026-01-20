@@ -3,6 +3,7 @@ import type { RequestLog } from "../api/types";
 import { getSuccessBadgeClass, getStatusCodeBadgeClass } from "../lib/utils";
 import { CopyButton } from "./CopyButton";
 import { ErrorBodyParser } from "./ErrorBodyParser";
+import { ProviderChain } from "./ProviderChain";
 import { RequestAttemptTimeline } from "./RequestAttemptTimeline";
 
 interface LogDetailModalProps {
@@ -115,8 +116,12 @@ export function LogDetailModal({
 
         {/* Content */}
         <div className="p-6 space-y-6 overflow-y-auto flex-1 min-h-0">
-          <StatusBadges log={log} formattedTime={formattedTime} />
-          <RequestInfo log={log} providerName={providerName} />
+          <StatusBadges log={log} />
+          <RequestInfo
+            log={log}
+            providerName={providerName}
+            providerNames={providerNames}
+          />
           <ResponseInfo log={log} />
           <ClientInfo log={log} />
 
@@ -182,13 +187,7 @@ function CloseButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function StatusBadges({
-  log,
-  formattedTime,
-}: {
-  log: RequestLog;
-  formattedTime: string;
-}) {
+function StatusBadges({ log }: { log: RequestLog }) {
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <span
@@ -206,7 +205,6 @@ function StatusBadges({
           🔄 {log.retry_count} {log.retry_count === 1 ? "retry" : "retries"}
         </span>
       )}
-      <span className="text-sm text-text-muted">{formattedTime}</span>
     </div>
   );
 }
@@ -214,13 +212,31 @@ function StatusBadges({
 function RequestInfo({
   log,
   providerName,
+  providerNames,
 }: {
   log: RequestLog;
   providerName: string;
+  providerNames?: Map<string, string>;
 }) {
+  const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
+
   return (
     <DetailSection title="Request Information">
-      <DetailRow label="Provider" value={providerName || log.provider_id} />
+      {/* Provider Chain - show visual failover path when there are retries */}
+      {hasMultipleAttempts && log.attempts ? (
+        <div className="py-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-text-secondary">Provider Chain</span>
+          </div>
+          <ProviderChain
+            attempts={log.attempts}
+            providerNames={providerNames}
+            success={log.success}
+          />
+        </div>
+      ) : (
+        <DetailRow label="Provider" value={providerName || log.provider_id} />
+      )}
       <DetailRow label="Model" value={log.model} mono />
       <DetailRow
         label="API Type"
@@ -249,6 +265,11 @@ function RequestInfo({
 }
 
 function ResponseInfo({ log }: { log: RequestLog }) {
+  const hasTTFT =
+    log.is_sse &&
+    log.first_token_ms !== null &&
+    log.first_token_ms !== undefined;
+
   return (
     <DetailSection title="Response">
       <DetailRow
@@ -261,26 +282,204 @@ function ResponseInfo({ log }: { log: RequestLog }) {
           </span>
         }
       />
-      <DetailRow label="Latency" value={`${log.latency_ms}ms`} />
+      {/* Latency with TTFT for SSE requests */}
+      <DetailRow
+        label="Latency"
+        value={
+          <div className="flex items-center gap-2">
+            <span className="font-mono">{log.latency_ms}ms</span>
+            {hasTTFT && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                <svg
+                  className="w-3 h-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
+                </svg>
+                TTFT: {log.first_token_ms}ms
+              </span>
+            )}
+          </div>
+        }
+      />
     </DetailSection>
   );
 }
 
 function ClientInfo({ log }: { log: RequestLog }) {
+  const hasExtendedInfo =
+    log.user_agent || log.request_id_header || log.user_id;
+
   return (
     <DetailSection title="Client Information">
-      <DetailRow label="Client IP" value={log.client_ip} mono />
-      {log.user_id && <DetailRow label="User ID" value={log.user_id} mono />}
-      {log.user_agent && (
-        <CopyableField label="User-Agent" value={log.user_agent} />
-      )}
-      {log.request_id_header && (
-        <CopyableField
-          label="Request ID (X-Request-ID)"
-          value={log.request_id_header}
+      {/* Primary client info in a compact grid */}
+      <div
+        className={`grid gap-3 mb-3 ${log.user_id ? "grid-cols-2" : "grid-cols-1"}`}
+      >
+        {/* Client IP Card */}
+        <ClientInfoCard
+          icon={
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
+              />
+            </svg>
+          }
+          label="IP Address"
+          value={log.client_ip}
+          copyable
         />
+        {/* User ID Card - only shown when user_id exists */}
+        {log.user_id && (
+          <ClientInfoCard
+            icon={
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                />
+              </svg>
+            }
+            label="User ID"
+            value={log.user_id}
+            copyable
+          />
+        )}
+      </div>
+
+      {/* Extended info in collapsible style cards */}
+      {hasExtendedInfo && (
+        <div className="space-y-2">
+          {/* User-Agent */}
+          {log.user_agent && (
+            <ClientInfoExpandedCard
+              icon={
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+              }
+              label="User-Agent"
+              value={log.user_agent}
+            />
+          )}
+          {/* Request ID */}
+          {log.request_id_header && (
+            <ClientInfoExpandedCard
+              icon={
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
+                  />
+                </svg>
+              }
+              label="Request ID (X-Request-ID)"
+              value={log.request_id_header}
+            />
+          )}
+        </div>
       )}
     </DetailSection>
+  );
+}
+
+/** Compact card for primary client info (IP, User ID) */
+function ClientInfoCard({
+  icon,
+  label,
+  value,
+  copyable = false,
+  muted = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  copyable?: boolean;
+  muted?: boolean;
+}) {
+  return (
+    <div className="px-3 py-2.5 rounded-lg bg-bg-tertiary border border-border-light">
+      <div className="flex items-center gap-1.5 text-text-muted mb-1">
+        {icon}
+        <span className="text-xs">{label}</span>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className={`text-sm font-mono truncate ${muted ? "text-text-muted" : "text-text-primary"}`}
+          title={value}
+        >
+          {value}
+        </span>
+        {copyable && value && value !== "—" && (
+          <CopyButton text={value} className="flex-shrink-0" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Expanded card for longer values (User-Agent, Request ID) */
+function ClientInfoExpandedCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="px-3 py-2.5 rounded-lg bg-bg-tertiary border border-border-light">
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="flex items-center gap-1.5 text-text-muted">
+          {icon}
+          <span className="text-xs">{label}</span>
+        </div>
+        <CopyButton text={value} />
+      </div>
+      <p className="text-sm text-text-primary font-mono break-all leading-relaxed">
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -317,25 +516,6 @@ function DetailRow({ label, value, mono }: DetailRowProps) {
       >
         {value}
       </span>
-    </div>
-  );
-}
-
-interface CopyableFieldProps {
-  label: string;
-  value: string;
-}
-
-function CopyableField({ label, value }: CopyableFieldProps) {
-  return (
-    <div className="py-1">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-sm text-text-secondary">{label}</span>
-        <CopyButton text={value} />
-      </div>
-      <p className="text-sm text-text-primary font-mono bg-bg-tertiary px-2 py-1.5 rounded break-all">
-        {value}
-      </p>
     </div>
   );
 }
