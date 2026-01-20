@@ -55,10 +55,20 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 			p.UpdatedAt = now
 		}
 
+		// Set default scope values if empty
+		failoverScope := p.FailoverScope
+		if failoverScope == "" {
+			failoverScope = model.ScopeAny
+		}
+		acceptFailover := p.AcceptFailover
+		if acceptFailover == "" {
+			acceptFailover = model.ScopeAny
+		}
+
 		if err := tx.Exec(`
-			INSERT INTO providers (id, name, base_url, api_key, auth_mode, group_id, weight, priority, concurrency, max_retries, enabled, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, p.ID, p.Name, p.BaseURL, p.APIKey, p.AuthMode, p.GroupID, p.Weight, p.Priority, p.Concurrency, p.MaxRetries, p.Enabled, p.CreatedAt, p.UpdatedAt).Error; err != nil { // coverage-ignore -- INSERT rarely fails with valid data
+			INSERT INTO providers (id, name, base_url, api_key, auth_mode, group_id, weight, priority, concurrency, max_retries, vendor, failover_scope, accept_failover, enabled, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, p.ID, p.Name, p.BaseURL, p.APIKey, p.AuthMode, p.GroupID, p.Weight, p.Priority, p.Concurrency, p.MaxRetries, p.Vendor, failoverScope, acceptFailover, p.Enabled, p.CreatedAt, p.UpdatedAt).Error; err != nil { // coverage-ignore -- INSERT rarely fails with valid data
 			return err
 		}
 		// Create API types separately
@@ -81,6 +91,14 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 		// Delete existing API types
 		if err := tx.Where("provider_id = ?", p.ID).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
 			return err
+		}
+
+		// Set default scope values if empty (same as CreateProvider)
+		if p.FailoverScope == "" {
+			p.FailoverScope = model.ScopeAny
+		}
+		if p.AcceptFailover == "" {
+			p.AcceptFailover = model.ScopeAny
 		}
 
 		// Temporarily clear APITypes to avoid GORM trying to update them via Save

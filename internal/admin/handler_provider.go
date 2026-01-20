@@ -78,20 +78,29 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, provider)
 }
 
+// ProviderResponse wraps a Provider with optional warnings for API responses.
+type ProviderResponse struct {
+	*model.Provider
+	Warnings []string `json:"warnings,omitempty"`
+}
+
 // CreateProviderRequest represents the request to create a provider.
 type CreateProviderRequest struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	BaseURL     string   `json:"base_url"`
-	APIKey      string   `json:"api_key"`
-	APITypes    []string `json:"api_types"`
-	AuthMode    string   `json:"auth_mode"`
-	GroupID     *string  `json:"group_id"`
-	Weight      int      `json:"weight"`
-	Priority    int      `json:"priority"`
-	Concurrency int      `json:"concurrency"`
-	MaxRetries  *int     `json:"max_retries"` // Pointer to distinguish unset (nil) from explicit 0
-	Enabled     *bool    `json:"enabled"`
+	ID             string       `json:"id"`
+	Name           string       `json:"name"`
+	BaseURL        string       `json:"base_url"`
+	APIKey         string       `json:"api_key"`
+	APITypes       []string     `json:"api_types"`
+	AuthMode       string       `json:"auth_mode"`
+	GroupID        *string      `json:"group_id"`
+	Weight         int          `json:"weight"`
+	Priority       int          `json:"priority"`
+	Concurrency    int          `json:"concurrency"`
+	MaxRetries     *int         `json:"max_retries"` // Pointer to distinguish unset (nil) from explicit 0
+	Vendor         string       `json:"vendor"`
+	FailoverScope  *model.Scope `json:"failover_scope"`  // Pointer to distinguish unset (nil) from explicit empty
+	AcceptFailover *model.Scope `json:"accept_failover"` // Pointer to distinguish unset (nil) from explicit empty
+	Enabled        *bool        `json:"enabled"`
 }
 
 // CreateProvider handles POST /admin/api/providers.
@@ -133,6 +142,14 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, "MaxRetries must be non-negative")
 		return
 	}
+	if req.FailoverScope != nil && !model.IsValidScope(*req.FailoverScope) {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid failover_scope: must be 'none', 'vendor', or 'any'")
+		return
+	}
+	if req.AcceptFailover != nil && !model.IsValidScope(*req.AcceptFailover) {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid accept_failover: must be 'none', 'vendor', or 'any'")
+		return
+	}
 
 	// Check if provider already exists
 	_, err := h.store.GetProvider(r.Context(), req.ID)
@@ -166,19 +183,32 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		maxRetries = *req.MaxRetries
 	}
 
+	// Determine scope values: use explicit value if provided, otherwise default to "any"
+	failoverScope := model.ScopeAny
+	if req.FailoverScope != nil {
+		failoverScope = *req.FailoverScope
+	}
+	acceptFailover := model.ScopeAny
+	if req.AcceptFailover != nil {
+		acceptFailover = *req.AcceptFailover
+	}
+
 	provider := &model.Provider{
-		ID:          req.ID,
-		Name:        req.Name,
-		BaseURL:     req.BaseURL,
-		APIKey:      req.APIKey,
-		APITypes:    apiTypes,
-		AuthMode:    req.AuthMode,
-		GroupID:     req.GroupID,
-		Weight:      req.Weight,
-		Priority:    req.Priority,
-		Concurrency: req.Concurrency,
-		MaxRetries:  maxRetries,
-		Enabled:     enabled,
+		ID:             req.ID,
+		Name:           req.Name,
+		BaseURL:        req.BaseURL,
+		APIKey:         req.APIKey,
+		APITypes:       apiTypes,
+		AuthMode:       req.AuthMode,
+		GroupID:        req.GroupID,
+		Weight:         req.Weight,
+		Priority:       req.Priority,
+		Concurrency:    req.Concurrency,
+		MaxRetries:     maxRetries,
+		Vendor:         req.Vendor,
+		FailoverScope:  failoverScope,
+		AcceptFailover: acceptFailover,
+		Enabled:        enabled,
 	}
 
 	// Set defaults and validate
@@ -201,28 +231,39 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		provider.GroupID = groupID
 	}
 
+	// Check for contradictory failover configuration
+	warnings := model.HasContradictoryConfig(provider)
+	for _, warning := range warnings {
+		h.logger.Warn("provider has contradictory failover config",
+			zap.String("id", req.ID),
+			zap.String("warning", warning))
+	}
+
 	if err := h.store.CreateProvider(r.Context(), provider); err != nil {
 		h.logger.Error("failed to create provider", zap.String("id", req.ID), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to create provider")
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, provider)
+	writeJSON(w, http.StatusCreated, ProviderResponse{Provider: provider, Warnings: warnings})
 }
 
 // UpdateProviderRequest represents the request to update a provider.
 type UpdateProviderRequest struct {
-	Name        *string  `json:"name"`
-	BaseURL     *string  `json:"base_url"`
-	APIKey      *string  `json:"api_key"`
-	APITypes    []string `json:"api_types"`
-	AuthMode    *string  `json:"auth_mode"`
-	GroupID     *string  `json:"group_id"`
-	Weight      *int     `json:"weight"`
-	Priority    *int     `json:"priority"`
-	Concurrency *int     `json:"concurrency"`
-	MaxRetries  *int     `json:"max_retries"`
-	Enabled     *bool    `json:"enabled"`
+	Name           *string      `json:"name"`
+	BaseURL        *string      `json:"base_url"`
+	APIKey         *string      `json:"api_key"`
+	APITypes       []string     `json:"api_types"`
+	AuthMode       *string      `json:"auth_mode"`
+	GroupID        *string      `json:"group_id"`
+	Weight         *int         `json:"weight"`
+	Priority       *int         `json:"priority"`
+	Concurrency    *int         `json:"concurrency"`
+	MaxRetries     *int         `json:"max_retries"`
+	Vendor         *string      `json:"vendor"`
+	FailoverScope  *model.Scope `json:"failover_scope"`
+	AcceptFailover *model.Scope `json:"accept_failover"`
+	Enabled        *bool        `json:"enabled"`
 }
 
 // validate checks that all provided fields have valid values.
@@ -256,6 +297,12 @@ func (req *UpdateProviderRequest) validate() string {
 	}
 	if req.AuthMode != nil && !IsValidAuthMode(*req.AuthMode) {
 		return "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'"
+	}
+	if req.FailoverScope != nil && !model.IsValidScope(*req.FailoverScope) {
+		return "Invalid failover_scope: must be 'none', 'vendor', or 'any'"
+	}
+	if req.AcceptFailover != nil && !model.IsValidScope(*req.AcceptFailover) {
+		return "Invalid accept_failover: must be 'none', 'vendor', or 'any'"
 	}
 	return ""
 }
@@ -295,6 +342,15 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 	}
 	if req.MaxRetries != nil {
 		provider.MaxRetries = *req.MaxRetries
+	}
+	if req.Vendor != nil {
+		provider.Vendor = *req.Vendor
+	}
+	if req.FailoverScope != nil {
+		provider.FailoverScope = *req.FailoverScope
+	}
+	if req.AcceptFailover != nil {
+		provider.AcceptFailover = *req.AcceptFailover
 	}
 	if req.Enabled != nil {
 		provider.Enabled = *req.Enabled
@@ -345,6 +401,14 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		provider.GroupID = groupID
 	}
 
+	// Check for contradictory failover configuration
+	warnings := model.HasContradictoryConfig(provider)
+	for _, warning := range warnings {
+		h.logger.Warn("provider has contradictory failover config",
+			zap.String("id", id),
+			zap.String("warning", warning))
+	}
+
 	if err := h.store.UpdateProvider(r.Context(), provider); err != nil {
 		h.logger.Error("failed to update provider", zap.String("id", id), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update provider")
@@ -355,7 +419,7 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		h.syncHealthManagerState(r.Context(), id, provider.Enabled)
 	}
 
-	writeJSON(w, http.StatusOK, provider)
+	writeJSON(w, http.StatusOK, ProviderResponse{Provider: provider, Warnings: warnings})
 }
 
 // DeleteProvider handles DELETE /admin/api/providers/{id}.

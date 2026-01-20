@@ -165,8 +165,8 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, req *model.Selec
 		interGroupStrategy = StrategyPriority
 	}
 
-	// Build group candidates
-	groupCandidates, ungroupedProviders := s.buildGroupCandidates(ctx, providers, excludeIDs)
+	// Build group candidates with failover filtering
+	groupCandidates, ungroupedProviders := s.buildGroupCandidates(ctx, providers, excludeIDs, req.FailoverContext, req.MaxProviderSwitches)
 
 	// Add ungrouped providers as individual virtual groups (lowest priority)
 	// Each gets a unique virtual group ID to allow independent removal during retry
@@ -262,7 +262,7 @@ func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectReques
 }
 
 // buildGroupCandidates organizes providers into groups.
-func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.Provider, excludeIDs map[string]bool) ([]*groupCandidate, []model.Provider) {
+func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.Provider, excludeIDs map[string]bool, failoverCtx *model.FailoverContext, maxProviderSwitches int) ([]*groupCandidate, []model.Provider) {
 	groupMap := make(map[string]*groupCandidate)
 	var ungrouped []model.Provider
 
@@ -276,6 +276,20 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.P
 		if s.health != nil {
 			s.health.RecoverIfExpired(ctx, p.ID)
 			if !s.health.IsAvailable(ctx, p.ID) {
+				continue
+			}
+		}
+
+		// Check failover isolation rules (if this is a failover attempt)
+		if failoverCtx != nil {
+			if !model.IsFailoverAllowed(&p, failoverCtx, maxProviderSwitches) {
+				s.logger.Debug("provider excluded by failover rules",
+					zap.String("provider_id", p.ID),
+					zap.String("vendor", p.Vendor),
+					zap.String("candidate_accept_failover", string(p.AcceptFailover)),
+					zap.Strings("contaminated_vendors", failoverCtx.ContaminatedVendors),
+					zap.String("strictest_scope", string(failoverCtx.StrictestScope)),
+					zap.Int("retry_count", failoverCtx.RetryCount))
 				continue
 			}
 		}

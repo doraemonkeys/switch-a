@@ -260,12 +260,19 @@ type retryState struct {
 	// can be attempted (N+1) times: providerAttempt 0..N.
 	providerAttempt  int
 	activeRegistered bool
+	// failoverContext tracks vendor isolation state across failover attempts.
+	// Initialized after the first provider is selected; nil for the first selection.
+	failoverContext *model.FailoverContext
 }
 
 // selectAndRegisterProvider selects a provider and registers the active request.
 // Returns true if selection succeeded, false if the loop should break or return early.
 // The earlyReturn flag indicates whether to return immediately from executeProxy.
 func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyContext, state *retryState, attempt int) (continueLoop, earlyReturn bool) {
+	// Set up failover context for provider selection
+	pctx.selectReq.FailoverContext = state.failoverContext
+	pctx.selectReq.MaxProviderSwitches = pctx.cfg.globalMaxAttempts
+
 	provider, fromSticky, err := h.selectProviderWithTracking(ctx, pctx, attempt, state.excludedProviders)
 	if err != nil {
 		if errors.Is(err, internal.ErrNoProvider) {
@@ -286,6 +293,15 @@ func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyCont
 
 	state.currentProvider = provider
 	state.providerAttempt = 0
+
+	// Initialize or update failover context
+	if state.failoverContext == nil {
+		// First provider: initialize failover context
+		state.failoverContext = model.NewFailoverContext(provider)
+	} else {
+		// Subsequent provider: update failover context
+		state.failoverContext.Update(provider)
+	}
 
 	// Track sticky cache hit on first attempt
 	if attempt == 0 {

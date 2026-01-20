@@ -3,6 +3,33 @@ package model
 
 import "time"
 
+// Scope defines the failover scope for vendor isolation.
+// Controls which providers can be used as failover targets.
+type Scope string
+
+const (
+	// ScopeNone means no failover is allowed.
+	ScopeNone Scope = "none"
+	// ScopeVendor means failover is only allowed within the same vendor.
+	ScopeVendor Scope = "vendor"
+	// ScopeAny means failover to any provider is allowed (default).
+	ScopeAny Scope = "any"
+)
+
+// VendorWildcard is the wildcard value that matches any vendor.
+const VendorWildcard = "*"
+
+// IsValidScope checks if the given scope is valid.
+// Empty string is valid and treated as ScopeAny (the default).
+func IsValidScope(s Scope) bool {
+	switch s {
+	case ScopeNone, ScopeVendor, ScopeAny, "":
+		return true
+	default:
+		return false
+	}
+}
+
 // Provider represents an AI provider configuration.
 type Provider struct {
 	ID          string            `gorm:"primaryKey" json:"id"`
@@ -17,10 +44,18 @@ type Provider struct {
 	Priority    int               `gorm:"default:0" json:"priority"`
 	Concurrency int               `gorm:"default:0" json:"concurrency"`
 	// MaxRetries is the number of retries allowed for this provider (0 = try once, no retry).
-	MaxRetries int       `gorm:"default:0" json:"max_retries"`
-	Enabled    bool      `gorm:"default:true;index" json:"enabled"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	MaxRetries int `gorm:"default:0" json:"max_retries"`
+	// Vendor identifies the vendor for failover isolation.
+	// Empty string means the provider doesn't participate in vendor isolation.
+	// "*" (VendorWildcard) matches any non-empty vendor.
+	Vendor string `gorm:"index" json:"vendor"`
+	// FailoverScope controls outbound failover: where we can failover TO after this provider fails.
+	FailoverScope Scope `gorm:"default:any" json:"failover_scope"`
+	// AcceptFailover controls inbound failover: which sources we accept failover FROM.
+	AcceptFailover Scope     `gorm:"default:any" json:"accept_failover"`
+	Enabled        bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 	// Health is populated by admin API handlers, not stored in database.
 	Health *HealthState `gorm:"-" json:"health,omitempty"`
 }
@@ -127,11 +162,16 @@ type StickyKey struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
-	ClientIP      string
-	User          string
-	APIType       string
-	Model         string
-	StickyEnabled bool // Whether sticky sessions are enabled (pre-loaded from config)
+	ClientIP        string
+	User            string
+	APIType         string
+	Model           string
+	StickyEnabled   bool             // Whether sticky sessions are enabled (pre-loaded from config)
+	FailoverContext *FailoverContext // Optional: failover context for vendor isolation (nil = first attempt)
+	// MaxProviderSwitches limits the number of provider switches (failover attempts) allowed.
+	// 0 = no limit. This counts only provider changes, not per-provider retries.
+	// Distinct from globalMaxAttempts which limits total loop iterations including per-provider retries.
+	MaxProviderSwitches int
 }
 
 // GatewayError represents an error response from the gateway.
