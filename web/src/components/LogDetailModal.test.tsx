@@ -62,7 +62,8 @@ describe("LogDetailModal", () => {
       />,
     );
 
-    expect(screen.getByText("Log Details")).toBeInTheDocument();
+    // Title shows "Request Details" when no request_method/request_path
+    expect(screen.getByText("Request Details")).toBeInTheDocument();
     expect(screen.getByText("#1")).toBeInTheDocument();
     expect(screen.getByText("Test Provider")).toBeInTheDocument();
     expect(screen.getByText("claude-3-opus")).toBeInTheDocument();
@@ -71,6 +72,23 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("150ms")).toBeInTheDocument();
     expect(screen.getByText(TEST_CLIENT_IP)).toBeInTheDocument();
     expect(screen.getByText("user-123")).toBeInTheDocument();
+  });
+
+  it("shows METHOD /path title when request_method and request_path are provided", () => {
+    const log = createMockLog({
+      request_method: "POST",
+      request_path: "/v1/messages",
+    });
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Test Provider"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getByText("POST")).toBeInTheDocument();
+    expect(screen.getByText("/v1/messages")).toBeInTheDocument();
   });
 
   it("shows success badge for successful logs", () => {
@@ -186,7 +204,7 @@ describe("LogDetailModal", () => {
     );
 
     // Click on the backdrop (the outer div with bg-black/50)
-    const backdrop = screen.getByText("Log Details").closest(".fixed");
+    const backdrop = screen.getByText("Request Details").closest(".fixed");
     fireEvent.click(backdrop!);
     expect(mockOnClose).toHaveBeenCalledTimes(1);
   });
@@ -202,7 +220,7 @@ describe("LogDetailModal", () => {
     );
 
     // Click on the modal content
-    fireEvent.click(screen.getByText("Log Details"));
+    fireEvent.click(screen.getByText("Request Details"));
     expect(mockOnClose).not.toHaveBeenCalled();
   });
 

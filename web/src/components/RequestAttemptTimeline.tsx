@@ -1,10 +1,14 @@
+import { useState } from "react";
 import type { RequestAttempt } from "../api/types";
 import { getStatusCodeBadgeClass } from "../lib/utils";
+import { ErrorBodyParser } from "./ErrorBodyParser";
 
 interface RequestAttemptTimelineProps {
   attempts: RequestAttempt[];
   /** Provider name map for display */
   providerNames?: Map<string, string>;
+  /** User-Agent from parent request log (for diagnostic tips) */
+  userAgent?: string;
 }
 
 /** Maps switch reason codes to human-readable labels with icons */
@@ -39,12 +43,14 @@ function getSwitchReasonLabel(
  * Features:
  * - Visual timeline with colored status indicators
  * - Status code badges with color coding
- * - Error messages for failed attempts
+ * - Smart error parsing with diagnostic tips
+ * - Request body snippet for failed attempts
  * - Latency display for each attempt
  */
 export function RequestAttemptTimeline({
   attempts,
   providerNames,
+  userAgent,
 }: RequestAttemptTimelineProps) {
   if (!attempts || attempts.length === 0) {
     return null;
@@ -65,6 +71,7 @@ export function RequestAttemptTimeline({
             attempt={attempt}
             isLast={index === sortedAttempts.length - 1}
             providerName={providerNames?.get(attempt.provider_id)}
+            userAgent={userAgent}
           />
         ))}
       </div>
@@ -76,13 +83,23 @@ interface AttemptNodeProps {
   attempt: RequestAttempt;
   isLast: boolean;
   providerName?: string;
+  userAgent?: string;
 }
 
-function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
+function AttemptNode({
+  attempt,
+  isLast,
+  providerName,
+  userAgent,
+}: AttemptNodeProps) {
+  const [showReqBody, setShowReqBody] = useState(false);
+
   const isSuccess = attempt.status_code >= 200 && attempt.status_code < 400;
   const hasError = attempt.error && attempt.error.length > 0;
   const hasBodySnippet =
     attempt.body_snippet && attempt.body_snippet.length > 0;
+  const hasReqBodySnippet =
+    attempt.req_body_snippet && attempt.req_body_snippet.length > 0;
   const switchReasonInfo = attempt.switch_reason
     ? getSwitchReasonLabel(attempt.switch_reason)
     : null;
@@ -92,7 +109,7 @@ function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
     if (isLast && isSuccess) {
       return "border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/10";
     }
-    if (hasError) {
+    if (hasError || !isSuccess) {
       return "border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-900/10";
     }
     return "border-border-light bg-bg-tertiary";
@@ -114,6 +131,16 @@ function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
       return "bg-amber-500";
     }
     return "bg-gray-400";
+  };
+
+  // Format request body for display
+  const formatReqBody = (body: string): string => {
+    try {
+      const parsed = JSON.parse(body);
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return body;
+    }
   };
 
   return (
@@ -162,13 +189,46 @@ function AttemptNode({ attempt, isLast, providerName }: AttemptNodeProps) {
           </div>
         )}
 
-        {/* Response body snippet (failover scenarios) */}
+        {/* Response body snippet - Now with smart parsing */}
         {hasBodySnippet && (
-          <div className="mt-2 p-2 rounded bg-amber-100/50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-            <p className="text-xs text-text-secondary mb-1">Response Body:</p>
-            <p className="text-xs text-amber-700 dark:text-amber-300 font-mono break-words whitespace-pre-wrap">
-              {attempt.body_snippet}
-            </p>
+          <div className="mt-2">
+            <p className="text-xs text-text-muted mb-1.5">Response Body:</p>
+            <ErrorBodyParser
+              body={attempt.body_snippet!}
+              statusCode={attempt.status_code}
+              userAgent={userAgent}
+            />
+          </div>
+        )}
+
+        {/* Request body snippet - Collapsible for error attempts */}
+        {hasReqBodySnippet && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setShowReqBody(!showReqBody)}
+              className="text-xs text-text-muted hover:text-text-secondary transition-colors flex items-center gap-1"
+            >
+              <svg
+                className={`w-3 h-3 transition-transform ${showReqBody ? "rotate-90" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+              Request Body {showReqBody ? "(hide)" : "(show)"}
+            </button>
+            {showReqBody && (
+              <pre className="mt-1.5 p-2 rounded bg-bg-tertiary text-xs font-mono text-text-secondary overflow-x-auto whitespace-pre-wrap break-words max-h-32 overflow-y-auto border border-border-light">
+                {formatReqBody(attempt.req_body_snippet!)}
+              </pre>
+            )}
           </div>
         )}
 
