@@ -23,12 +23,23 @@ const ModelUnknown = "unknown"
 // Using regex avoids the overhead of full JSON parsing for every request.
 var modelFieldRe = regexp.MustCompile(`"model"\s*:\s*"([^"]+)"`)
 
+// MaxUserAgentLength is the maximum length of User-Agent to store.
+// Longer values are truncated to prevent database bloat.
+const MaxUserAgentLength = 512
+
+// MaxReqBodySnippetLength is the maximum length of request body snippet to store.
+const MaxReqBodySnippetLength = 512
+
 // RequestInfo contains information extracted from a proxy request.
 type RequestInfo struct {
-	ClientIP string
-	UserID   string
-	Model    string
-	APIType  string
+	ClientIP  string
+	UserID    string
+	Model     string
+	APIType   string
+	Path      string // Request path (relative, e.g., /v1/messages)
+	Method    string // HTTP method (GET/POST/PUT/DELETE)
+	UserAgent string // Client User-Agent (truncated to MaxUserAgentLength)
+	RequestID string // Client's X-Request-ID header for tracing
 }
 
 // ExtractClientIP extracts the client IP address from the request.
@@ -72,6 +83,33 @@ func extractFromRemoteAddr(remoteAddr string) string {
 // ExtractUserID extracts the user ID from the specified header.
 func ExtractUserID(r *http.Request, userHeader string) string {
 	return r.Header.Get(userHeader)
+}
+
+// ExtractUserAgent extracts and truncates the User-Agent header.
+func ExtractUserAgent(r *http.Request) string {
+	ua := r.Header.Get("User-Agent")
+	if len(ua) > MaxUserAgentLength {
+		return ua[:MaxUserAgentLength]
+	}
+	return ua
+}
+
+// ExtractRequestIDHeader extracts the X-Request-ID header from the request.
+// This is the client-provided request ID for distributed tracing.
+func ExtractRequestIDHeader(r *http.Request) string {
+	return r.Header.Get("X-Request-ID")
+}
+
+// GetReqBodySnippet returns a truncated snippet of the request body.
+// Returns empty string if body is nil or empty.
+func GetReqBodySnippet(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	if len(body) > MaxReqBodySnippetLength {
+		return string(body[:MaxReqBodySnippetLength])
+	}
+	return string(body)
 }
 
 // ExtractModel extracts the model name from the request.

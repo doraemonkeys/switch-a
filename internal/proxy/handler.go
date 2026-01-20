@@ -215,10 +215,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		apiType:   apiType,
 		body:      body,
 		info: RequestInfo{
-			ClientIP: ExtractClientIP(r, cfg.trustProxy),
-			UserID:   ExtractUserID(r, cfg.userHeader),
-			Model:    ExtractModel(r, apiType, body),
-			APIType:  apiType,
+			ClientIP:  ExtractClientIP(r, cfg.trustProxy),
+			UserID:    ExtractUserID(r, cfg.userHeader),
+			Model:     ExtractModel(r, apiType, body),
+			APIType:   apiType,
+			Path:      r.URL.Path,
+			Method:    r.Method,
+			UserAgent: ExtractUserAgent(r),
+			RequestID: ExtractRequestIDHeader(r),
 		},
 		startTime: startTime,
 		requestID: requestID,
@@ -347,6 +351,8 @@ func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result fo
 	}
 	if result.err != nil {
 		attemptRecord.Error = result.err.Error()
+		// Include request body snippet for error attempts to help diagnose issues
+		attemptRecord.ReqBodySnippet = GetReqBodySnippet(pctx.body)
 	}
 	pctx.attempts = append(pctx.attempts, attemptRecord)
 }

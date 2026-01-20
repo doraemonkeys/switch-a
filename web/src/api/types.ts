@@ -185,6 +185,7 @@ export interface RequestAttempt {
   status_code: number;
   error: string;
   body_snippet?: string; // First ~512 bytes of error response
+  req_body_snippet?: string; // First ~512 bytes of request body (error attempts only)
   latency_ms: number;
   switch_reason?: string; // Reason for switching to next provider (if any)
   created_at: string; // ISO timestamp
@@ -212,6 +213,11 @@ export interface RequestLog {
   is_sticky: boolean;
   error_msg: string | null;
   created_at: string;
+  // Phase 1 diagnostic fields (P0)
+  request_path?: string; // Relative path like /v1/messages
+  request_method?: string; // HTTP method: GET/POST/PUT/DELETE
+  user_agent?: string; // Client User-Agent (truncated to 512 chars)
+  request_id_header?: string; // Client's X-Request-ID for tracing
   attempts?: RequestAttempt[];
 }
 

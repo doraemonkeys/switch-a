@@ -117,6 +117,11 @@ type RequestLog struct {
 	RetryCount int       `json:"retry_count"`
 	IsSticky   bool      `json:"is_sticky"`
 	CreatedAt  time.Time `gorm:"index" json:"created_at"`
+	// Phase 1 diagnostic fields (P0)
+	RequestPath     string `gorm:"default:''" json:"request_path"`      // Relative path like /v1/messages (without base_url)
+	RequestMethod   string `gorm:"default:''" json:"request_method"`    // HTTP method: GET/POST/PUT/DELETE
+	UserAgent       string `gorm:"default:''" json:"user_agent"`        // Client User-Agent (truncated to 512 chars)
+	RequestIDHeader string `gorm:"default:''" json:"request_id_header"` // Client's X-Request-ID for tracing
 	// Attempts is populated by API, not stored directly in database.
 	Attempts []RequestAttempt `gorm:"-" json:"attempts,omitempty"`
 }
@@ -129,7 +134,8 @@ type RequestAttempt struct {
 	Attempt      int       `json:"attempt"`
 	StatusCode   int       `json:"status_code"`
 	Error        string    `json:"error"`
-	BodySnippet  string    `json:"body_snippet,omitempty"` // First ~512 bytes of error response (failover scenarios only)
+	BodySnippet  string    `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
+	ReqBodySnippet string  `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
 	LatencyMs    int64     `json:"latency_ms"`
 	SwitchReason string    `json:"switch_reason,omitempty"` // Reason for switching to next provider (if any)
 	CreatedAt    time.Time `json:"created_at"`
