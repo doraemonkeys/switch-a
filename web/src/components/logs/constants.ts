@@ -3,13 +3,14 @@
 export const LOG_TABLE_COLUMNS = 9;
 export const PROVIDER_ID_PREVIEW_LENGTH = 8;
 
-// Date formatter for consistent time display
+// Date formatter for consistent time display (compact format: MM/DD HH:mm:ss)
 export const dateFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
+  month: "2-digit",
+  day: "2-digit",
   hour: "2-digit",
   minute: "2-digit",
   second: "2-digit",
+  hour12: false,
 });
 
 // Claude cache billing rates

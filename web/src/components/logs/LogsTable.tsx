@@ -1,6 +1,6 @@
 import type { RequestLog } from "../../api/types";
 import { getSuccessBadgeClass } from "../../lib/utils";
-import { getAriaSortValue } from "./utils";
+import { getAriaSortValue, shortenModelName } from "./utils";
 import {
   LOG_TABLE_COLUMNS,
   PROVIDER_ID_PREVIEW_LENGTH,
@@ -44,7 +44,7 @@ export function LogsTable({
   };
 
   return (
-    <div className="card overflow-hidden p-0">
+    <div className="card p-0">
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead className="table-header">
@@ -52,33 +52,33 @@ export function LogsTable({
               <th
                 onClick={() => onSort("created_at")}
                 aria-sort={getAriaSortValue("created_at", sortBy, sortOrder)}
-                className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider cursor-pointer hover:text-text-primary transition-colors"
+                className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider cursor-pointer hover:text-text-primary transition-colors"
               >
                 <span className="inline-flex items-center">
                   Time
                   {renderSortIcon("created_at")}
                 </span>
               </th>
-              <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+              <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Provider
               </th>
-              <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
-                API Type
+              <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+                API
               </th>
-              <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+              <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Model
               </th>
-              <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+              <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Status
               </th>
               {/* Tokens column - hidden on mobile */}
-              <th className="hidden md:table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+              <th className="hidden md:table-cell px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 <span className="inline-flex items-center gap-1">
                   Tokens
                   <InfoTooltip text="Input → Output tokens. ⚡ indicates cache hit. Hover for cache hit percentage." />
                 </span>
               </th>
-              <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+              <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 <span className="inline-flex items-center gap-1">
                   Retries
                   <InfoTooltip text="Retry count shows the number of additional attempts after the initial request. A request with max_retries=2 can have up to 3 attempts total (1 initial + 2 retries). Circuit breaker or permanent errors (401/402/403) may interrupt retries early." />
@@ -87,14 +87,14 @@ export function LogsTable({
               <th
                 onClick={() => onSort("latency_ms")}
                 aria-sort={getAriaSortValue("latency_ms", sortBy, sortOrder)}
-                className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider cursor-pointer hover:text-text-primary transition-colors"
+                className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider cursor-pointer hover:text-text-primary transition-colors"
               >
                 <span className="inline-flex items-center">
                   Latency
                   {renderSortIcon("latency_ms")}
                 </span>
               </th>
-              <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+              <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Client
               </th>
             </tr>
@@ -263,24 +263,24 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
       aria-label={`View details for ${log.model} request at ${formatTime(log.created_at)}`}
       className="hover:bg-bg-tertiary/50 transition-colors cursor-pointer"
     >
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
+      <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
         {formatTime(log.created_at)}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">
+      <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-text-primary">
         {providerName || (
           <span className="text-text-muted font-mono text-xs">
             {log.provider_id.substring(0, PROVIDER_ID_PREVIEW_LENGTH)}...
           </span>
         )}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
-        <div className="flex items-center gap-1.5">
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 uppercase">
+      <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
+        <div className="flex items-center gap-1">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 uppercase">
             {log.api_type}
           </span>
           {log.is_sse && (
             <span
-              className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
+              className="inline-flex items-center px-1 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
               title="Server-Sent Events (streaming)"
             >
               SSE
@@ -288,9 +288,14 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
           )}
         </div>
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm">
+      <td className="px-3 py-3 whitespace-nowrap text-sm">
         <div className="flex flex-col">
-          <span className="text-text-primary font-mono">{log.model}</span>
+          <span
+            className="text-text-primary font-mono cursor-help"
+            title={log.model}
+          >
+            {shortenModelName(log.model)}
+          </span>
           {/* Non-standard path hint - only shown for unusual endpoints */}
           {showPathHint && (
             <span
@@ -300,40 +305,45 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
               <span className={getMethodStyle(log.request_method!)}>
                 {log.request_method}
               </span>
-              <span className="truncate max-w-[120px]">{log.request_path}</span>
+              <span className="truncate max-w-[100px]">{log.request_path}</span>
             </span>
           )}
         </div>
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm">
+      <td className="px-3 py-3 whitespace-nowrap text-sm">
         <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${getSuccessBadgeClass(log.success)}`}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getSuccessBadgeClass(log.success)}`}
         >
           {log.success ? "✅" : "❌"}
           {log.status_code}
         </span>
       </td>
       {/* Tokens column - hidden on mobile */}
-      <td className="hidden md:table-cell px-6 py-4 whitespace-nowrap text-sm">
+      <td className="hidden md:table-cell px-3 py-3 whitespace-nowrap text-sm">
         <TokenCell log={log} />
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm">
+      <td className="px-3 py-3 whitespace-nowrap text-sm">
         {log.retry_count > 0 ? (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
             🔄 {log.retry_count}
           </span>
         ) : (
           <span className="text-text-muted">-</span>
         )}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
+      <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
         {log.latency_ms}ms
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
+      <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
         <div className="flex flex-col">
           <span className="text-xs font-mono">{log.client_ip}</span>
           {log.user_id && (
-            <span className="text-xs text-text-muted">User: {log.user_id}</span>
+            <span
+              className="text-xs text-text-muted truncate max-w-[80px]"
+              title={log.user_id}
+            >
+              {log.user_id}
+            </span>
           )}
         </div>
       </td>

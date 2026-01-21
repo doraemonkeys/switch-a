@@ -36,27 +36,42 @@ export function formatTokenLocale(count: number): string {
 
 /**
  * Calculate cache hit rate percentage
+ *
+ * In Claude API, prompt_tokens does NOT include cache tokens.
+ * Total input = prompt_tokens + cache_read + cache_creation
+ * Cache hit rate = cache_read / total_input * 100
+ *
  * @returns Cache hit rate as percentage (0-100), or null if not calculable
  */
 export function calculateCacheHitRate(
   cacheReadTokens: number | null | undefined,
   promptTokens: number | null | undefined,
+  cacheCreationTokens?: number | null | undefined,
 ): number | null {
-  if (
-    promptTokens == null ||
-    promptTokens === 0 ||
-    cacheReadTokens == null ||
-    cacheReadTokens === 0
-  ) {
+  if (cacheReadTokens == null || cacheReadTokens === 0) {
     return null;
   }
-  return Math.round((cacheReadTokens / promptTokens) * 100);
+
+  // Total input = new tokens + cache read + cache creation
+  const newTokens = promptTokens ?? 0;
+  const cacheCreation = cacheCreationTokens ?? 0;
+  const totalInput = newTokens + cacheReadTokens + cacheCreation;
+
+  if (totalInput === 0) {
+    return null;
+  }
+
+  return Math.round((cacheReadTokens / totalInput) * 100);
 }
 
 /**
  * Calculate effective billable input tokens for Claude cache
  * Formula: uncached + cache_read×READ_RATE + cache_creation×WRITE_RATE
- * Where: uncached = prompt_tokens - cache_read
+ *
+ * In Claude API, prompt_tokens does NOT include cache tokens:
+ * - prompt_tokens = new (uncached) tokens only
+ * - cache_read_input_tokens = tokens read from cache
+ * - cache_creation_input_tokens = tokens written to cache
  *
  * @see CLAUDE_CACHE_BILLING for billing rates
  */
@@ -65,7 +80,8 @@ export function calculateEffectiveCost(
   cacheReadTokens: number,
   cacheCreationTokens: number,
 ): { billable: number; uncached: number } {
-  const uncached = promptTokens - cacheReadTokens;
+  // prompt_tokens IS the uncached tokens in Claude API
+  const uncached = promptTokens;
   const billable = Math.round(
     uncached +
       cacheReadTokens * CLAUDE_CACHE_BILLING.READ_RATE +
@@ -106,4 +122,30 @@ export function getAriaSortValue(
 ): AriaSortValue {
   if (currentSortBy !== field) return "none";
   return currentSortOrder === "asc" ? "ascending" : "descending";
+}
+
+// =============================================================================
+// Model Name Formatting
+// =============================================================================
+
+/**
+ * Shorten model name for compact display
+ * Examples:
+ *   - "claude-opus-4-5-20251101" -> "opus-4-5"
+ *   - "claude-haiku-4-5-20251001" -> "haiku-4-5"
+ *   - "gpt-4o-mini-2024-07-18" -> "gpt-4o-mini"
+ *   - "gemini-1.5-pro" -> "gemini-1.5-pro"
+ */
+export function shortenModelName(model: string): string {
+  // Remove date suffix (e.g., -20251101, -2024-07-18)
+  const withoutDate = model
+    .replace(/-\d{8}$/, "")
+    .replace(/-\d{4}-\d{2}-\d{2}$/, "");
+
+  // For Claude models, remove "claude-" prefix
+  if (withoutDate.startsWith("claude-")) {
+    return withoutDate.slice(7);
+  }
+
+  return withoutDate;
 }

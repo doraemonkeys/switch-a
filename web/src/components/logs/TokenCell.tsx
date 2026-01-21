@@ -45,7 +45,12 @@ function TokenDisplay({
  * - Partial data shows available tokens with `—` for missing
  */
 export function TokenCell({ log }: TokenCellProps) {
-  const { prompt_tokens, completion_tokens, cache_read_input_tokens } = log;
+  const {
+    prompt_tokens,
+    completion_tokens,
+    cache_read_input_tokens,
+    cache_creation_input_tokens,
+  } = log;
 
   // Check if we have any token data
   const hasPromptTokens = prompt_tokens != null;
@@ -54,7 +59,7 @@ export function TokenCell({ log }: TokenCellProps) {
     cache_read_input_tokens != null && cache_read_input_tokens > 0;
 
   // If no token data at all, show unavailable indicator
-  if (!hasPromptTokens && !hasCompletionTokens) {
+  if (!hasPromptTokens && !hasCompletionTokens && !hasCacheRead) {
     return (
       <span className="text-text-muted" title="Token data unavailable">
         —
@@ -62,8 +67,14 @@ export function TokenCell({ log }: TokenCellProps) {
     );
   }
 
-  // Format individual values
-  const inputDisplay = hasPromptTokens ? formatTokenCount(prompt_tokens) : "—";
+  // Calculate total input tokens (new + cache_read + cache_creation)
+  const totalInput =
+    (prompt_tokens ?? 0) +
+    (cache_read_input_tokens ?? 0) +
+    (cache_creation_input_tokens ?? 0);
+
+  // Format individual values - show total input for display
+  const inputDisplay = totalInput > 0 ? formatTokenCount(totalInput) : "—";
   const outputDisplay = hasCompletionTokens
     ? formatTokenCount(completion_tokens)
     : "—";
@@ -72,6 +83,7 @@ export function TokenCell({ log }: TokenCellProps) {
   const cacheHitRate = calculateCacheHitRate(
     cache_read_input_tokens,
     prompt_tokens,
+    cache_creation_input_tokens,
   );
   const cacheTooltip =
     cacheHitRate !== null ? `Cache Hit: ${cacheHitRate}%` : "";

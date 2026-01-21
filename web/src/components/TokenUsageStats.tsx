@@ -51,10 +51,11 @@ export function TokenUsageStats({
     return null;
   }
 
-  // Calculate cache hit rate
+  // Calculate cache hit rate (considers total input = new + cache_read + cache_creation)
   const cacheHitRate = calculateCacheHitRate(
     cache_read_input_tokens,
     prompt_tokens,
+    cache_creation_input_tokens,
   );
 
   // Calculate summary display
