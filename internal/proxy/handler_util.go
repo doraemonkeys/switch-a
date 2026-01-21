@@ -24,7 +24,7 @@ const logInsertTimeout = 2 * time.Second
 func (h *Handler) handleNoProvider(pctx *proxyContext) {
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(pctx, nil, StatusCodeNoResponse, false, false, nil, 0, internal.ErrNoProvider, time.Since(pctx.startTime))
+	go h.logRequest(pctx, nil, StatusCodeNoResponse, false, false, nil, 0, nil, internal.ErrNoProvider, time.Since(pctx.startTime))
 }
 
 // handleExhaustedRetries handles exhausted retry attempts.
@@ -74,7 +74,7 @@ func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code,
 // logRequest logs the request asynchronously.
 // Note: Uses context.Background() with timeout because this runs after the HTTP response
 // completes and the request context may already be cancelled.
-func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statusCode int, success bool, isSSE bool, firstTokenMs *int64, responseBytes int64, err error, latency time.Duration) {
+func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statusCode int, success bool, isSSE bool, firstTokenMs *int64, responseBytes int64, tokenUsage *TokenUsage, err error, latency time.Duration) {
 	log := &model.RequestLog{
 		RequestID:       pctx.requestID,
 		APIType:         pctx.info.APIType,
@@ -105,6 +105,20 @@ func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statu
 
 	if err != nil { // coverage-ignore -- error logging path
 		log.ErrorMsg = err.Error()
+	}
+
+	// Persist token usage to database (Phase 4a-4).
+	if tokenUsage != nil {
+		h.logger.Debug("token usage captured",
+			zap.String("request_id", pctx.requestID),
+			zap.Int64("prompt_tokens", tokenUsage.PromptTokens),
+			zap.Int64("completion_tokens", tokenUsage.CompletionTokens),
+			zap.Int64("total_tokens", tokenUsage.TotalTokens),
+			zap.Int64("cache_read_tokens", tokenUsage.CacheReadInputTokens),
+		)
+		// Convert TokenUsage to model fields for database storage
+		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
+			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = tokenUsage.ToModelFields()
 	}
 
 	// Use timeout to prevent goroutine accumulation if database is slow or blocked

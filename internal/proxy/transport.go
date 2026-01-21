@@ -102,10 +102,11 @@ func (t *Transport) CloseIdleConnections() {
 // UpstreamResponse holds the response from an upstream server.
 // The caller must call Close() when done, regardless of whether WriteToClient was called.
 type UpstreamResponse struct {
-	StatusCode int
-	Header     http.Header
-	Body       io.ReadCloser
-	isSSE      bool
+	StatusCode    int
+	Header        http.Header
+	Body          io.ReadCloser
+	ContentLength int64 // -1 if unknown (chunked transfer encoding)
+	isSSE         bool
 }
 
 // maxDrainBytes limits how much we drain from response body before close.
@@ -252,10 +253,11 @@ func (t *Transport) FetchUpstream(ctx context.Context, upstreamReq *http.Request
 	}
 
 	return &UpstreamResponse{
-		StatusCode: resp.StatusCode,
-		Header:     resp.Header,
-		Body:       resp.Body,
-		isSSE:      isSSEResponse(resp),
+		StatusCode:    resp.StatusCode,
+		Header:        resp.Header,
+		Body:          resp.Body,
+		ContentLength: resp.ContentLength, // -1 for chunked/unknown
+		isSSE:         isSSEResponse(resp),
 	}, nil
 }
 

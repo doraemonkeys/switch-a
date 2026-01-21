@@ -282,6 +282,9 @@ type retryState struct {
 	firstTokenMs *int64
 	// responseBytes tracks total bytes written to client for transfer statistics.
 	responseBytes int64
+	// tokenUsage tracks token usage extracted from response (Phase 4a).
+	// Only set for successful 2xx responses that contain usage data.
+	tokenUsage *TokenUsage
 }
 
 // selectAndRegisterProvider selects a provider and registers the active request.
@@ -453,6 +456,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		state.isSSE = result.isSSE
 		state.firstTokenMs = result.firstTokenMs
 		state.responseBytes = result.responseBytes
+		state.tokenUsage = result.tokenUsage
 
 		// Note: SSE status is updated in forwardToProvider() BEFORE streaming starts.
 		// This ensures long-running SSE streams are visible in the Monitor page with the SSE badge.
@@ -493,7 +497,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
 	// but avoids blocking the response path. For a high-throughput proxy,
 	// this is an acceptable trade-off as most logs will complete.
-	go h.logRequest(pctx, state.providerUsed, state.statusCode, state.success, state.isSSE, state.firstTokenMs, state.responseBytes, state.lastErr, time.Since(pctx.startTime))
+	go h.logRequest(pctx, state.providerUsed, state.statusCode, state.success, state.isSSE, state.firstTokenMs, state.responseBytes, state.tokenUsage, state.lastErr, time.Since(pctx.startTime))
 
 	// Handle exhausted retries
 	if !state.success && !state.headersWritten { // coverage-ignore -- retry exhaustion tested at integration level
@@ -507,11 +511,12 @@ type forwardResult struct {
 	statusCode     int
 	success        bool
 	err            error
-	done           bool   // whether to stop retrying
-	isSSE          bool   // whether the response was SSE
-	bodySnippet    string // first ~500 bytes of error response (failover scenarios only)
-	firstTokenMs   *int64 // Time To First Token for SSE requests (ms from request start)
-	responseBytes  int64  // Total bytes written to client (for transfer statistics)
+	done           bool        // whether to stop retrying
+	isSSE          bool        // whether the response was SSE
+	bodySnippet    string      // first ~500 bytes of error response (failover scenarios only)
+	firstTokenMs   *int64      // Time To First Token for SSE requests (ms from request start)
+	responseBytes  int64       // Total bytes written to client (for transfer statistics)
+	tokenUsage     *TokenUsage // Token usage extracted from response (Phase 4a)
 }
 
 // forwardToProvider forwards the request to a single provider.
@@ -582,6 +587,21 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 		snippetBuf = upstreamResp.TeeBody(0) // 0 = use default size (512 bytes)
 	}
 
+	// Set up token capture interceptor for successful responses.
+	// Token usage is typically in the response body for API responses.
+	// Different interceptors are used for non-SSE and SSE responses.
+	var interceptor ResponseInterceptor
+	if result.statusCode >= 200 && result.statusCode < 300 {
+		if result.isSSE {
+			// Phase 4b: SSE streaming responses
+			interceptor = newSSETokenInterceptor(NewZapLoggerAdapter(h.logger.Sugar()))
+		} else {
+			// Phase 4a: Non-streaming responses
+			interceptor = newTokenCaptureInterceptor(upstreamResp.ContentLength, NewZapLoggerAdapter(h.logger.Sugar()))
+		}
+		upstreamResp.Body = interceptor.Wrap(upstreamResp.Body)
+	}
+
 	// Update SSE status in active registry BEFORE starting to stream.
 	// This is crucial for SSE requests: WriteToClient blocks until the entire stream completes,
 	// so we need to update the SSE flag now while the request is still "active" and visible
@@ -606,6 +626,19 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	upstreamResp.Close()
 	result.headersWritten = true
 	result.done = true // No retry possible after headers are written
+
+	// Extract token usage from interceptor (Phase 4a).
+	// This must be done after Body is fully read (i.e., after WriteToClient).
+	if interceptor != nil {
+		usage, complete := interceptor.Result()
+		if complete && usage != nil {
+			result.tokenUsage = usage
+		} else if !complete {
+			h.logger.Debug("response not fully read, token usage may be incomplete",
+				zap.Int("status", result.statusCode),
+			)
+		}
+	}
 
 	// Calculate TTFT (Time To First Token) for SSE requests
 	// Only meaningful for SSE where first data write indicates model starting to respond
