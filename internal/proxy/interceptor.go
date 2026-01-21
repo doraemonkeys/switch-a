@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	"github.com/andybalholm/brotli"
 )
 
 // ResponseInterceptor intercepts response body to extract token usage.
@@ -16,6 +18,10 @@ type ResponseInterceptor interface {
 	// Must be called after the wrapped body's Read returns io.EOF.
 	// complete: whether the body was fully read.
 	Result() (usage *TokenUsage, complete bool)
+	// Wait blocks until any background processing completes.
+	// For SSE with gzip/brotli compression, this waits for the decompression goroutine.
+	// For non-compressed or non-streaming cases, this returns immediately.
+	Wait()
 }
 
 // interceptTeeReadCloser wraps ReadCloser, writing to a Writer simultaneously.
@@ -97,6 +103,11 @@ func (i *tokenCaptureInterceptor) Result() (*TokenUsage, bool) {
 	return i.result, i.complete
 }
 
+// Wait is a no-op for non-streaming responses (no background goroutines).
+func (i *tokenCaptureInterceptor) Wait() {
+	// No background processing for non-streaming responses
+}
+
 // maybeDecompressGzip detects and decompresses gzip data.
 // Returns original data if not gzip or decompression fails.
 // gzip magic number: 0x1f 0x8b
@@ -150,8 +161,12 @@ func (i *sseTokenInterceptor) Wrap(body io.ReadCloser) io.ReadCloser {
 		return nil
 	}
 
-	// Non-gzip: use the original sseReadCloser processing
-	if !strings.EqualFold(i.contentEncoding, "gzip") {
+	// Check for supported compression encodings
+	isGzip := strings.EqualFold(i.contentEncoding, "gzip")
+	isBrotli := strings.EqualFold(i.contentEncoding, "br")
+
+	// No compression: use the original sseReadCloser processing
+	if !isGzip && !isBrotli {
 		return &sseReadCloser{
 			original:    body,
 			interceptor: i,
@@ -168,25 +183,43 @@ func (i *sseTokenInterceptor) Wrap(body io.ReadCloser) io.ReadCloser {
 	go func() {
 		defer i.wg.Done()
 
-		gzReader, err := gzip.NewReader(pr)
-		if err != nil {
-			if i.logger != nil {
-				i.logger.Debug("failed to create gzip reader for SSE", "error", err.Error())
-			}
-			_, _ = io.Copy(io.Discard, pr) // Drain pipe to prevent blocking
-			i.setComplete(nil)             // Mark complete even on error
-			return
-		}
-		defer gzReader.Close() // Only close gzReader, pw is closed by gzipPassthroughReadCloser.Close()
+		var decompressor io.Reader
+		var gzCloser io.Closer
 
-		i.parseSSEFromReader(gzReader)
+		if isGzip {
+			gzReader, err := gzip.NewReader(pr)
+			if err != nil {
+				if i.logger != nil {
+					i.logger.Debug("failed to create gzip reader for SSE", "error", err.Error())
+				}
+				_, _ = io.Copy(io.Discard, pr) // Drain pipe to prevent blocking
+				i.setComplete(nil)             // Mark complete even on error
+				return
+			}
+			decompressor = gzReader
+			gzCloser = gzReader
+		} else {
+			// Brotli: no error on NewReader, it's just a wrapper
+			decompressor = brotli.NewReader(pr)
+		}
+
+		if gzCloser != nil {
+			defer gzCloser.Close()
+		}
+
+		i.parseSSEFromReader(decompressor)
 	}()
 
 	if i.logger != nil {
-		i.logger.Debug("SSE stream gzip passthrough enabled with TeeReader")
+		encodingType := "gzip"
+		if isBrotli {
+			encodingType = "brotli"
+		}
+		i.logger.Debug("SSE stream compression passthrough enabled with TeeReader",
+			"encoding", encodingType)
 	}
 
-	return &gzipPassthroughReadCloser{
+	return &compressedPassthroughReadCloser{
 		original: body,
 		tee:      tee,
 		pw:       pw,
@@ -223,10 +256,27 @@ func (i *sseTokenInterceptor) Result() (*TokenUsage, bool) {
 	return i.result, i.complete
 }
 
-// Wait blocks until background goroutine completes (for gzip passthrough).
-// For non-gzip cases, wg.Add(1) is never called, so Wait() returns immediately.
+// Wait blocks until background goroutine completes (for gzip/brotli passthrough).
+// For non-compressed cases, wg.Add(1) is never called, so Wait() returns immediately.
 func (i *sseTokenInterceptor) Wait() {
 	i.wg.Wait()
+}
+
+// discardOldDataForOverflow discards old data from buf when adding newBytes would exceed maxSSEBuffer.
+// Returns the trimmed buffer. This is a shared helper to avoid DRY violation.
+func (i *sseTokenInterceptor) discardOldDataForOverflow(buf []byte, newBytes int) []byte {
+	if len(buf)+newBytes <= maxSSEBuffer {
+		return buf
+	}
+	excess := len(buf) + newBytes - maxSSEBuffer
+	if i.logger != nil {
+		i.logger.Debug("SSE buffer overflow, discarding old data",
+			"excess", excess, "bufLen", len(buf), "newBytes", newBytes)
+	}
+	if excess < len(buf) {
+		return buf[excess:]
+	}
+	return nil
 }
 
 // parseSSEFromReader reads and parses SSE events from the given reader.
@@ -258,20 +308,7 @@ func (i *sseTokenInterceptor) processChunk(data []byte) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	// Handle buffer overflow
-	if len(i.lastChunk)+len(data) > maxSSEBuffer {
-		excess := len(i.lastChunk) + len(data) - maxSSEBuffer
-		if i.logger != nil {
-			i.logger.Debug("SSE buffer overflow in processChunk, discarding old data",
-				"excess", excess, "bufLen", len(i.lastChunk), "newBytes", len(data))
-		}
-		if excess < len(i.lastChunk) {
-			i.lastChunk = i.lastChunk[excess:]
-		} else {
-			i.lastChunk = nil
-		}
-	}
-
+	i.lastChunk = i.discardOldDataForOverflow(i.lastChunk, len(data))
 	i.lastChunk = append(i.lastChunk, data...)
 	i.extractLastDataLocked()
 }
@@ -294,34 +331,35 @@ func (i *sseTokenInterceptor) extractLastDataLocked() {
 		}
 
 		if containsUsageMarker(data) {
-			// Found usage data, save and parse immediately
-			savedData := make([]byte, len(data))
-			copy(savedData, data)
+			// Found usage data, parse immediately.
+			// No need to copy data since parseTokenUsageWithLogger performs JSON unmarshaling
+			// which creates new objects without retaining the input slice.
 			if i.logger != nil {
 				i.logger.Debug("SSE usage data captured (processChunk)",
 					"data_preview", truncateForLog(data, 300),
 				)
 			}
-			i.result = parseTokenUsageWithLogger(savedData, i.logger)
+			i.result = parseTokenUsageWithLogger(data, i.logger)
 		}
 	}
 }
 
-// gzipPassthroughReadCloser passes through compressed data to client
+// compressedPassthroughReadCloser passes through compressed data to client
 // while simultaneously writing to a pipe for background decompression.
-type gzipPassthroughReadCloser struct {
+// Works with any compression format (gzip, brotli, etc.).
+type compressedPassthroughReadCloser struct {
 	original io.ReadCloser
 	tee      io.Reader
 	pw       *io.PipeWriter // Closed only in Close()
 }
 
-func (g *gzipPassthroughReadCloser) Read(p []byte) (int, error) {
-	return g.tee.Read(p)
+func (c *compressedPassthroughReadCloser) Read(p []byte) (int, error) {
+	return c.tee.Read(p)
 }
 
-func (g *gzipPassthroughReadCloser) Close() error {
-	_ = g.pw.Close() // Close pw to signal goroutine to exit
-	return g.original.Close()
+func (c *compressedPassthroughReadCloser) Close() error {
+	_ = c.pw.Close() // Close pw to signal goroutine to exit
+	return c.original.Close()
 }
 
 // sseReadCloser parses SSE stream and keeps the last data chunk containing usage.
@@ -349,20 +387,7 @@ func (s *sseReadCloser) Read(p []byte) (int, error) {
 
 // handleBufferOverflow discards old data when buffer would exceed maxSSEBuffer.
 func (s *sseReadCloser) handleBufferOverflow(newBytes int) {
-	if len(s.buf)+newBytes <= maxSSEBuffer {
-		return
-	}
-	// Discard old data, keep the newest
-	excess := len(s.buf) + newBytes - maxSSEBuffer
-	if s.interceptor.logger != nil {
-		s.interceptor.logger.Debug("SSE buffer overflow, discarding old data",
-			"excess", excess, "bufLen", len(s.buf), "newBytes", newBytes)
-	}
-	if excess < len(s.buf) {
-		s.buf = s.buf[excess:]
-	} else {
-		s.buf = nil
-	}
+	s.buf = s.interceptor.discardOldDataForOverflow(s.buf, newBytes)
 }
 
 // sseDataPrefix is the SSE data line prefix.
