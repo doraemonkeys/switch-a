@@ -18,8 +18,12 @@ var _ internal.HealthManager = (*Manager)(nil)
 // Default values - derived from centralized defaults package.
 const (
 	DefaultCircuitFailure = defaults.CircuitFailure
-	DefaultCircuitWindow  = defaults.CircuitWindowSec
-	DefaultCircuitDisable = defaults.CircuitDisableSec
+)
+
+// Default durations - derived from centralized defaults package.
+var (
+	DefaultCircuitWindow  = defaults.CircuitWindow
+	DefaultCircuitDisable = defaults.CircuitDisabled
 )
 
 // DisabledReason prefixes for distinguishing automatic vs manual disables.
@@ -137,8 +141,8 @@ func (m *Manager) MarkFailure(_ context.Context, providerID string, err error) b
 
 	// Get circuit breaker config
 	circuitFailure := m.getConfigInt(internalCtx, "circuit_failure", DefaultCircuitFailure)
-	circuitWindow := time.Duration(m.getConfigInt(internalCtx, "circuit_window", DefaultCircuitWindow)) * time.Second
-	circuitDisable := time.Duration(m.getConfigInt(internalCtx, "circuit_disable", DefaultCircuitDisable)) * time.Second
+	circuitWindow := m.getConfigDuration(internalCtx, "circuit_window", DefaultCircuitWindow)
+	circuitDisable := m.getConfigDuration(internalCtx, "circuit_disable", DefaultCircuitDisable)
 
 	// Record failure in in-memory circuit breaker and check if threshold reached
 	triggered := m.circuit.RecordFailure(providerID, circuitWindow, circuitFailure)
@@ -270,4 +274,18 @@ func (m *Manager) getConfigInt(ctx context.Context, key string, defaultVal int) 
 		return defaultVal
 	}
 	return v
+}
+
+// getConfigDuration retrieves a config value as time.Duration with default.
+// Config values are stored as seconds (int).
+func (m *Manager) getConfigDuration(ctx context.Context, key string, defaultVal time.Duration) time.Duration {
+	val, err := m.store.GetConfig(ctx, key)
+	if err != nil || val == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(val)
+	if err != nil {
+		return defaultVal
+	}
+	return time.Duration(v) * time.Second
 }

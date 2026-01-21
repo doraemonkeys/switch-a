@@ -16,10 +16,16 @@ import (
 const (
 	DefaultMaxBodySizeMB     = defaults.MaxBodySizeMB
 	DefaultGlobalMaxAttempts = defaults.GlobalMaxAttempts
-	DefaultConnectTimeoutSec = defaults.UpstreamConnectTimeoutSec
 	DefaultUserHeader        = defaults.UserHeader
 	DefaultStickyEnabled     = defaults.StickyEnabled // When enabled, clients are routed to the same provider
 	DefaultGlobalAuthMode    = defaults.AuthMode      // Default auth mode for provider authentication
+)
+
+// Default timeout values - derived from centralized defaults package.
+var (
+	DefaultConnectTimeout   = defaults.UpstreamConnectTimeout
+	DefaultFirstByteTimeout = defaults.FirstByteTimeout
+	DefaultSSEIdleTimeout   = defaults.SSEIdleTimeout
 )
 
 // StatusCodeNoResponse indicates no upstream response was received.
@@ -124,16 +130,16 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 		h.logger.Warn("failed to get upstream_read_timeout, using default", zap.Error(err))
 	}
 
-	cfg.connectTimeout = time.Duration(parseIntOrDefault(connectTimeout, DefaultConnectTimeoutSec)) * time.Second
-	cfg.firstByteTimeout = time.Duration(parseIntOrDefault(firstByteTimeout, defaults.FirstByteTimeoutSec)) * time.Second
-	cfg.readTimeout = time.Duration(parseIntOrDefault(readTimeout, 0)) * time.Second
+	cfg.connectTimeout = parseDurationSecondsOrDefault(connectTimeout, DefaultConnectTimeout)
+	cfg.firstByteTimeout = parseDurationSecondsOrDefault(firstByteTimeout, DefaultFirstByteTimeout)
+	cfg.readTimeout = parseDurationSecondsOrDefault(readTimeout, 0)
 
 	// SSE idle timeout - protects against silent upstream connections
 	sseIdleTimeout, err := h.store.GetConfig(ctx, ConfigKeySSEIdleTimeout)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		h.logger.Warn("failed to get sse_idle_timeout, using default", zap.Error(err))
 	}
-	cfg.sseIdleTimeout = time.Duration(parseIntOrDefault(sseIdleTimeout, defaults.SSEIdleTimeoutSec)) * time.Second
+	cfg.sseIdleTimeout = parseDurationSecondsOrDefault(sseIdleTimeout, DefaultSSEIdleTimeout)
 
 	// Sticky session config
 	stickyEnabled, err := h.store.GetConfig(ctx, ConfigKeyStickyEnabled)
@@ -158,6 +164,17 @@ func parseIntOrDefault(s string, defaultVal int) int {
 	}
 	if v, err := strconv.Atoi(s); err == nil {
 		return v
+	}
+	return defaultVal
+}
+
+// parseDurationSecondsOrDefault parses a string as seconds to time.Duration, returning defaultVal on error.
+func parseDurationSecondsOrDefault(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	if v, err := strconv.Atoi(s); err == nil {
+		return time.Duration(v) * time.Second
 	}
 	return defaultVal
 }

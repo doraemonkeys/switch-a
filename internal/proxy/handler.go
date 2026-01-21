@@ -39,6 +39,14 @@ type transportCacheKey struct {
 	sseIdleTimeout   time.Duration
 }
 
+// Equals returns true if the two cache keys have identical configuration.
+func (k *transportCacheKey) Equals(other *transportCacheKey) bool {
+	return k.connectTimeout == other.connectTimeout &&
+		k.firstByteTimeout == other.firstByteTimeout &&
+		k.readTimeout == other.readTimeout &&
+		k.sseIdleTimeout == other.sseIdleTimeout
+}
+
 // firstWriteResponseWriter tracks first data write to enable sticky session fallback.
 // When an SSE stream outlives the sticky TTL, we use the active provider registry
 // to maintain session affinity. This wrapper signals when actual data starts flowing
@@ -130,11 +138,7 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	}
 
 	h.mu.RLock()
-	if h.transport != nil && h.lastCfg != nil &&
-		h.lastCfg.connectTimeout == key.connectTimeout &&
-		h.lastCfg.firstByteTimeout == key.firstByteTimeout &&
-		h.lastCfg.readTimeout == key.readTimeout &&
-		h.lastCfg.sseIdleTimeout == key.sseIdleTimeout {
+	if h.transport != nil && h.lastCfg != nil && h.lastCfg.Equals(key) {
 		transport := h.transport
 		h.mu.RUnlock()
 		return transport
@@ -145,11 +149,7 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 	defer h.mu.Unlock()
 
 	// Double-check pattern: another goroutine may have updated transport between our read unlock and write lock
-	if h.transport != nil && h.lastCfg != nil &&
-		h.lastCfg.connectTimeout == key.connectTimeout &&
-		h.lastCfg.firstByteTimeout == key.firstByteTimeout &&
-		h.lastCfg.readTimeout == key.readTimeout &&
-		h.lastCfg.sseIdleTimeout == key.sseIdleTimeout {
+	if h.transport != nil && h.lastCfg != nil && h.lastCfg.Equals(key) {
 		return h.transport
 	}
 
@@ -372,14 +372,14 @@ func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result fo
 		// Include request body snippet for error attempts to help diagnose issues.
 		// SECURITY NOTE: This may expose sensitive data (API keys, tokens, PII) in the
 		// request_attempts table. Administrators should be aware that error diagnostics
-		// include partial request content. The snippet is truncated to 512 bytes to limit
+		// include partial request content. The snippet is truncated to maxSnippetBytes to limit
 		// exposure. Consider the security implications when granting access to logs/attempts data.
 		attemptRecord.ReqBodySnippet = GetReqBodySnippet(pctx.body)
 	}
 	pctx.attempts = append(pctx.attempts, attemptRecord)
 }
 
-// tryIncrementAndExhaustsProvider attempts to increment the provider retry counter.
+// tryIncrementAndExhaustProvider attempts to increment the provider retry counter.
 // Returns (exhausted bool, switchReason string):
 //   - exhausted=true means we should switch to a different provider
 //   - switchReason is non-empty only when exhausted=true, explaining why the switch occurred
@@ -387,7 +387,7 @@ func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result fo
 // Note: Since markFailure is called in forwardToProvider, and IsAvailable check happens
 // here (after markFailure), if this failure triggers the circuit breaker, switchReason
 // will correctly record "circuit_breaker_triggered".
-func (h *Handler) tryIncrementAndExhaustsProvider(ctx context.Context, state *retryState) (bool, string) {
+func (h *Handler) tryIncrementAndExhaustProvider(ctx context.Context, state *retryState) (bool, string) {
 	maxRetries := max(0, state.currentProvider.MaxRetries)
 
 	// Check for permanent errors that should force immediate provider switch
@@ -416,12 +416,31 @@ func (h *Handler) excludeCurrentProvider(state *retryState) {
 	state.currentProvider = nil
 }
 
+// applyBackoffDelay waits for the configured backoff delay before retrying the same provider.
+// Returns true if the context was cancelled during the delay, false otherwise.
+func (h *Handler) applyBackoffDelay(ctx context.Context, provider *model.Provider, retryIndex int) bool {
+	if provider.Backoff.IsZero() {
+		return false
+	}
+	delay := provider.Backoff.DelayForRetry(retryIndex)
+	if delay <= 0 {
+		return false
+	}
+	select {
+	case <-time.After(delay):
+		return false
+	case <-ctx.Done():
+		return true
+	}
+}
+
 // executeProxy runs the proxy logic with retry.
 func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	state := &retryState{
 		excludedProviders: make(map[string]bool),
 	}
 
+retryLoop:
 	for attempt := 0; !state.headersWritten; attempt++ {
 		if pctx.cfg.globalMaxAttempts > 0 && attempt >= pctx.cfg.globalMaxAttempts {
 			break
@@ -468,14 +487,23 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		}
 
 		// Determine if we need to switch providers (and why)
-		exhausted, switchReason := h.tryIncrementAndExhaustsProvider(ctx, state)
+		exhausted, switchReason := h.tryIncrementAndExhaustProvider(ctx, state)
 
 		// Record the attempt with the switch reason (now known)
 		h.recordAttempt(pctx, state, result, attempt, attemptStart, switchReason)
 
-		if exhausted {
-			h.excludeCurrentProvider(state)
+		if !exhausted {
+			// Same provider retry - apply backoff delay.
+			// providerAttempt is already incremented in tryIncrementAndExhaustsProvider,
+			// so retryIndex = providerAttempt - 1 (0 for first retry, 1 for second, etc.)
+			if h.applyBackoffDelay(ctx, state.currentProvider, state.providerAttempt-1) {
+				state.lastErr = ctx.Err()
+				break retryLoop
+			}
+			continue // retry same provider
 		}
+
+		h.excludeCurrentProvider(state)
 	}
 
 	h.finalizeProxy(pctx, state)
@@ -522,12 +550,11 @@ type forwardResult struct {
 // setupTokenInterceptor creates and configures a token capture interceptor for successful responses.
 // Returns the interceptor (for Result() call) and sseInterceptor (for Wait() call if SSE).
 func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp *UpstreamResponse) (ResponseInterceptor, *sseTokenInterceptor) {
-	if statusCode < 200 || statusCode >= 300 {
+	if statusCode < defaults.StatusSuccessMin || statusCode >= defaults.StatusSuccessMax {
 		return nil, nil
 	}
 
 	if isSSE {
-		// Phase 4b: SSE streaming responses
 		// Pass Content-Encoding for stream decompression support
 		contentEncoding := upstreamResp.Header.Get("Content-Encoding")
 		sseInterceptor := newSSETokenInterceptor(
@@ -537,7 +564,6 @@ func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp
 		return sseInterceptor, sseInterceptor
 	}
 
-	// Phase 4a: Non-streaming responses
 	return newTokenCaptureInterceptor(upstreamResp.ContentLength, NewZapLoggerAdapter(h.logger.Sugar())), nil
 }
 

@@ -106,7 +106,7 @@ func TestTryIncrementAndExhaustsProvider_ReturnsCorrectSwitchReason(t *testing.T
 				},
 			}
 
-			exhausted, switchReason := handler.tryIncrementAndExhaustsProvider(context.Background(), state)
+			exhausted, switchReason := handler.tryIncrementAndExhaustProvider(context.Background(), state)
 
 			if exhausted != tt.wantExhausted {
 				t.Errorf("exhausted = %v, want %v", exhausted, tt.wantExhausted)

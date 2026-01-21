@@ -1,4 +1,3 @@
-// Package model defines the core data models for switch-a.
 package model
 
 // FailoverContext tracks state across failover attempts using "contamination tracking + strictest policy".

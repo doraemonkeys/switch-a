@@ -19,25 +19,25 @@ const (
 const (
 	MaxIdleConns = 100
 	// MaxIdleConnsPerHost: http.Transport default is only 2, too small for a proxy.
-	MaxIdleConnsPerHost    = 20
-	IdleConnTimeoutSec     = 90
-	TLSHandshakeTimeoutSec = 10
-	TCPKeepAliveSec        = 30
+	MaxIdleConnsPerHost = 20
+	IdleConnTimeout     = 90 * time.Second
+	TLSHandshakeTimeout = 10 * time.Second
+	TCPKeepAlive        = 30 * time.Second
 )
 
 // Timeout defaults.
 const (
-	UpstreamConnectTimeoutSec = 20
-	// FirstByteTimeoutSec: 0 means wait indefinitely for the first byte.
+	UpstreamConnectTimeout = 20 * time.Second
+	// FirstByteTimeout: 0 means wait indefinitely for the first byte.
 	// Supports AI model inference scenarios where the model may take 60+ seconds
 	// to start responding, but once started, responds quickly.
-	FirstByteTimeoutSec = 0
-	// UpstreamReadTimeoutSec: 0 means no timeout. When set, connection closes
+	FirstByteTimeout = 0 * time.Second
+	// UpstreamReadTimeout: 0 means no timeout. When set, connection closes
 	// if no data received within this duration during data transfer.
-	UpstreamReadTimeoutSec = 0
-	// SSEIdleTimeoutSec: 0 trusts upstream to close connection.
+	UpstreamReadTimeout = 0 * time.Second
+	// SSEIdleTimeout: 0 trusts upstream to close connection.
 	// Recommended: 0 for trusted providers (OpenAI, Anthropic), 300 for user-defined providers.
-	SSEIdleTimeoutSec = 0
+	SSEIdleTimeout = 0 * time.Second
 )
 
 // Sticky session defaults.
@@ -49,9 +49,9 @@ const (
 
 // Circuit breaker defaults.
 const (
-	CircuitFailure    = 3
-	CircuitWindowSec  = 60
-	CircuitDisableSec = 300
+	CircuitFailure  = 3
+	CircuitWindow   = 60 * time.Second
+	CircuitDisabled = 300 * time.Second
 )
 
 // Request handling defaults.
@@ -80,9 +80,20 @@ const (
 	ProviderMaxRetries = 0
 )
 
+// Backoff defaults for same-provider retries.
+const (
+	BackoffInitialDelay = 100 * time.Millisecond
+	BackoffMaxDelay     = 5 * time.Second
+	BackoffMultiplier   = 2.0
+)
+
 // HTTP status codes for failover logic.
 // These semantic aliases make failover logic more readable.
 const (
+	// StatusSuccessMin is the lower bound (inclusive) for successful HTTP responses.
+	StatusSuccessMin = http.StatusOK
+	// StatusSuccessMax is the upper bound (exclusive) for successful HTTP responses (2xx range).
+	StatusSuccessMax  = http.StatusMultipleChoices
 	StatusServerError = http.StatusInternalServerError
 	// StatusPaymentRequired: triggers failover since another provider may have available quota.
 	StatusPaymentRequired = http.StatusPaymentRequired

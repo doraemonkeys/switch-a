@@ -3,6 +3,7 @@ package store
 
 import (
 	"strconv"
+	"time"
 
 	"switch-a/internal/defaults"
 )
@@ -15,6 +16,11 @@ func boolToString(b bool) string {
 	return "false"
 }
 
+// durationToSecondsString converts a time.Duration to its seconds value as a string.
+func durationToSecondsString(d time.Duration) string {
+	return strconv.Itoa(int(d / time.Second))
+}
+
 // Default runtime configuration values as strings for database storage.
 // These are derived from the centralized defaults package.
 var (
@@ -25,13 +31,13 @@ var (
 	// DefaultTrustProxyHeaders indicates whether proxy headers are trusted by default.
 	DefaultTrustProxyHeaders = boolToString(defaults.TrustProxyHeaders)
 	// DefaultUpstreamConnectTimeout is the default upstream connection timeout in seconds.
-	DefaultUpstreamConnectTimeout = strconv.Itoa(defaults.UpstreamConnectTimeoutSec)
+	DefaultUpstreamConnectTimeout = durationToSecondsString(defaults.UpstreamConnectTimeout)
 	// DefaultFirstByteTimeout is the default timeout for receiving the first response byte in seconds.
-	DefaultFirstByteTimeout = strconv.Itoa(defaults.FirstByteTimeoutSec)
+	DefaultFirstByteTimeout = durationToSecondsString(defaults.FirstByteTimeout)
 	// DefaultUpstreamReadTimeout is the default upstream read timeout in seconds (0 = no timeout).
-	DefaultUpstreamReadTimeout = strconv.Itoa(defaults.UpstreamReadTimeoutSec)
+	DefaultUpstreamReadTimeout = durationToSecondsString(defaults.UpstreamReadTimeout)
 	// DefaultSSEIdleTimeout is the default SSE idle timeout in seconds (0 = no timeout).
-	DefaultSSEIdleTimeout = strconv.Itoa(defaults.SSEIdleTimeoutSec)
+	DefaultSSEIdleTimeout = durationToSecondsString(defaults.SSEIdleTimeout)
 	// DefaultStickyEnabled indicates whether sticky sessions are enabled by default.
 	DefaultStickyEnabled = boolToString(defaults.StickyEnabled)
 	// DefaultStickyTTL is the default sticky session TTL in seconds.
@@ -39,9 +45,9 @@ var (
 	// DefaultCircuitFailure is the default number of failures before circuit opens.
 	DefaultCircuitFailure = strconv.Itoa(defaults.CircuitFailure)
 	// DefaultCircuitWindow is the default circuit breaker window in seconds.
-	DefaultCircuitWindow = strconv.Itoa(defaults.CircuitWindowSec)
+	DefaultCircuitWindow = durationToSecondsString(defaults.CircuitWindow)
 	// DefaultCircuitDisable is the default circuit breaker disable duration in seconds.
-	DefaultCircuitDisable = strconv.Itoa(defaults.CircuitDisableSec)
+	DefaultCircuitDisable = durationToSecondsString(defaults.CircuitDisabled)
 	// DefaultMaxBodySize is the default maximum request body size in MB.
 	DefaultMaxBodySize = strconv.FormatInt(defaults.MaxBodySizeMB, 10)
 	// DefaultGlobalMaxAttempts is the default maximum number of upstream attempts per request.

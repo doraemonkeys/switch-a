@@ -57,7 +57,7 @@ func NewTransport(cfg TransportConfig) *Transport {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   cfg.ConnectTimeout,
-			KeepAlive: defaults.TCPKeepAliveSec * time.Second,
+			KeepAlive: defaults.TCPKeepAlive,
 		}).DialContext,
 		ResponseHeaderTimeout: responseHeaderTimeout,
 
@@ -65,8 +65,8 @@ func NewTransport(cfg TransportConfig) *Transport {
 		// Default MaxIdleConnsPerHost is only 2, which causes excessive connection churn.
 		MaxIdleConns:        defaults.MaxIdleConns,
 		MaxIdleConnsPerHost: defaults.MaxIdleConnsPerHost,
-		IdleConnTimeout:     defaults.IdleConnTimeoutSec * time.Second,
-		TLSHandshakeTimeout: defaults.TLSHandshakeTimeoutSec * time.Second,
+		IdleConnTimeout:     defaults.IdleConnTimeout,
+		TLSHandshakeTimeout: defaults.TLSHandshakeTimeout,
 
 		// Disable compression to avoid decompress/compress overhead in proxy scenarios.
 		// The upstream response is passed through as-is to the client.
@@ -532,7 +532,7 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 		}
 
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			// Check if this is an idle timeout (body was closed by watchdog).
