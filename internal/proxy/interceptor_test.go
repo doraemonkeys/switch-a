@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
 	"io"
 	"strings"
 	"testing"
@@ -371,6 +372,108 @@ func TestTokenCaptureInterceptor_ResultInvalidJSON(t *testing.T) {
 	if usage != nil {
 		t.Error("expected nil usage for invalid JSON")
 	}
+}
+
+func TestTokenCaptureInterceptor_GzipResponse(t *testing.T) {
+	// Test that gzip compressed response is properly decompressed and parsed
+	jsonData := `{"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`
+
+	// Compress the data with gzip
+	var gzipBuf bytes.Buffer
+	gzipWriter := gzip.NewWriter(&gzipBuf)
+	_, err := gzipWriter.Write([]byte(jsonData))
+	if err != nil {
+		t.Fatalf("gzip write failed: %v", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatalf("gzip close failed: %v", err)
+	}
+
+	compressedData := gzipBuf.Bytes()
+
+	// Verify it starts with gzip magic number
+	if len(compressedData) < 2 || compressedData[0] != 0x1f || compressedData[1] != 0x8b {
+		t.Fatal("test data is not valid gzip")
+	}
+
+	interceptor := newTokenCaptureInterceptor(int64(len(compressedData)), nil)
+	original := &testReadCloser{Reader: bytes.NewReader(compressedData)}
+	wrapped := interceptor.Wrap(original)
+
+	_, err = io.ReadAll(wrapped)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	_ = wrapped.Close()
+
+	usage, complete := interceptor.Result()
+	if !complete {
+		t.Error("expected complete=true")
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage from gzip compressed response")
+	}
+	if usage.PromptTokens != 100 {
+		t.Errorf("expected PromptTokens=100, got %d", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 50 {
+		t.Errorf("expected CompletionTokens=50, got %d", usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 150 {
+		t.Errorf("expected TotalTokens=150, got %d", usage.TotalTokens)
+	}
+}
+
+func TestMaybeDecompressGzip(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected string
+	}{
+		{
+			name:     "plain text",
+			input:    []byte(`{"usage":{"prompt_tokens":100}}`),
+			expected: `{"usage":{"prompt_tokens":100}}`,
+		},
+		{
+			name:     "empty",
+			input:    []byte{},
+			expected: "",
+		},
+		{
+			name:     "single byte",
+			input:    []byte{0x1f},
+			expected: string([]byte{0x1f}),
+		},
+		{
+			name:     "invalid gzip magic",
+			input:    []byte{0x1f, 0x00, 0x08, 0x00},
+			expected: string([]byte{0x1f, 0x00, 0x08, 0x00}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := maybeDecompressGzip(tt.input)
+			if string(result) != tt.expected {
+				t.Errorf("maybeDecompressGzip() = %q, want %q", string(result), tt.expected)
+			}
+		})
+	}
+
+	// Test valid gzip
+	t.Run("valid gzip", func(t *testing.T) {
+		original := `{"usage":{"prompt_tokens":200}}`
+		var buf bytes.Buffer
+		w := gzip.NewWriter(&buf)
+		_, _ = w.Write([]byte(original))
+		_ = w.Close()
+
+		result := maybeDecompressGzip(buf.Bytes())
+		if string(result) != original {
+			t.Errorf("maybeDecompressGzip() = %q, want %q", string(result), original)
+		}
+	})
 }
 
 // ============================================================
@@ -848,5 +951,140 @@ func BenchmarkSSETokenInterceptor_LargeStream(b *testing.B) {
 		_, _ = io.ReadAll(wrapped)
 		_ = wrapped.Close()
 		_, _ = interceptor.Result()
+	}
+}
+
+func TestSSETokenInterceptor_CRLFSeparator(t *testing.T) {
+	// Test SSE stream with \r\n\r\n separators (Windows/HTTP style)
+	sseData := "event: message_start\r\ndata: {\"type\":\"message_start\"}\r\n\r\n" +
+		"event: message_delta\r\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":300,\"output_tokens\":150}}\r\n\r\n" +
+		"event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n"
+
+	interceptor := newSSETokenInterceptor(nil)
+	original := &testReadCloser{Reader: strings.NewReader(sseData)}
+	wrapped := interceptor.Wrap(original)
+
+	_, err := io.ReadAll(wrapped)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	_ = wrapped.Close()
+
+	usage, complete := interceptor.Result()
+	if !complete {
+		t.Error("expected complete=true")
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage for CRLF separated stream")
+	}
+	if usage.PromptTokens != 300 {
+		t.Errorf("expected PromptTokens=300, got %d", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 150 {
+		t.Errorf("expected CompletionTokens=150, got %d", usage.CompletionTokens)
+	}
+}
+
+func TestFindSSEChunkSeparator(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       string
+		wantIdx    int
+		wantSepLen int
+	}{
+		{"LF only", "data: test\n\nmore", 10, 2},
+		{"CRLF only", "data: test\r\n\r\nmore", 10, 4},
+		{"LF before CRLF", "a\n\nb\r\n\r\n", 1, 2},
+		{"CRLF before LF", "a\r\n\r\nb\n\n", 1, 4},
+		{"no separator", "data: test", -1, 0},
+		{"empty", "", -1, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx, sepLen := findSSEChunkSeparator([]byte(tt.data))
+			if idx != tt.wantIdx {
+				t.Errorf("idx = %d, want %d", idx, tt.wantIdx)
+			}
+			if sepLen != tt.wantSepLen {
+				t.Errorf("sepLen = %d, want %d", sepLen, tt.wantSepLen)
+			}
+		})
+	}
+}
+
+// TestSSETokenInterceptor_NoTrailingSeparator tests that usage data is captured
+// even when the last SSE chunk doesn't have a trailing \n\n separator.
+// This can happen when the upstream server closes the connection without
+// sending a final separator.
+func TestSSETokenInterceptor_NoTrailingSeparator(t *testing.T) {
+	// SSE stream where the last chunk with usage has no trailing \n\n
+	sseData := `event: message_start` + "\n" +
+		`data: {"type":"message_start"}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","delta":{"text":"Hello"}}` + "\n\n" +
+		`event: message_delta` + "\n" +
+		`data: {"type":"message_delta","usage":{"input_tokens":250,"output_tokens":125}}` // No trailing \n\n
+
+	interceptor := newSSETokenInterceptor(nil)
+	original := &testReadCloser{Reader: strings.NewReader(sseData)}
+	wrapped := interceptor.Wrap(original)
+
+	_, err := io.ReadAll(wrapped)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	_ = wrapped.Close()
+
+	usage, complete := interceptor.Result()
+	if !complete {
+		t.Error("expected complete=true")
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage even without trailing separator")
+	}
+	if usage.PromptTokens != 250 {
+		t.Errorf("expected PromptTokens=250, got %d", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 125 {
+		t.Errorf("expected CompletionTokens=125, got %d", usage.CompletionTokens)
+	}
+}
+
+// TestSSETokenInterceptor_RealClaudeStreamFormat tests with realistic Claude SSE format
+// from the actual API response, including the message_stop event without trailing separator.
+func TestSSETokenInterceptor_RealClaudeStreamFormat(t *testing.T) {
+	// Simulates real Claude API response format from 响应体.txt
+	sseData := `event: message_start` + "\n" +
+		`data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_123"}}` + "\n\n" +
+		`event: content_block_delta` + "\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}` + "\n\n" +
+		`event: message_delta` + "\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":117,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":25}}` + "\n\n" +
+		`event: message_stop` + "\n" +
+		`data: {"type":"message_stop"}` // No trailing \n\n at very end
+
+	interceptor := newSSETokenInterceptor(nil)
+	original := &testReadCloser{Reader: strings.NewReader(sseData)}
+	wrapped := interceptor.Wrap(original)
+
+	_, err := io.ReadAll(wrapped)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	_ = wrapped.Close()
+
+	usage, complete := interceptor.Result()
+	if !complete {
+		t.Error("expected complete=true")
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if usage.PromptTokens != 117 {
+		t.Errorf("expected PromptTokens=117, got %d", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 25 {
+		t.Errorf("expected CompletionTokens=25, got %d", usage.CompletionTokens)
 	}
 }
