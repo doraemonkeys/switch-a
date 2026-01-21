@@ -20,6 +20,7 @@ export type {
   ErrorCode,
   ErrorResponse,
   // Provider types
+  BackoffPolicy,
   Provider,
   ProviderAPIType,
   ProviderInput,

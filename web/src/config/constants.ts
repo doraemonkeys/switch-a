@@ -260,6 +260,12 @@ export const DEFAULTS = {
   PROVIDER_MAX_RETRIES: 0, // 0 = try once, no retry on same provider
   LOG_RETENTION_DAYS: 7,
 
+  // Backoff Policy (for same-provider retries)
+  BACKOFF_INITIAL_DELAY: "100ms",
+  BACKOFF_MAX_DELAY: "5s",
+  BACKOFF_MULTIPLIER: 2.0,
+  BACKOFF_JITTER: false,
+
   // Strategy
   INTER_GROUP_STRATEGY: STRATEGIES.PRIORITY,
   PROVIDER_WEIGHT: 1,
@@ -292,6 +298,8 @@ export const FORM_CONSTRAINTS = {
   MIN_ZERO: 0,
   MAX_PROVIDER_RETRIES: 10, // Max value for provider-level max_retries
   MAX_GLOBAL_ATTEMPTS: 20, // Max value for global_max_attempts
+  // Backoff policy constraints
+  BACKOFF_MAX_MULTIPLIER: 10, // Max exponential multiplier
 } as const;
 
 // Recent Logs Display Limit
@@ -303,6 +311,13 @@ export const PROVIDER_DEFAULTS = {
   WEIGHT: 1,
   CONCURRENCY: 10,
   MAX_RETRIES: 0,
+  /** Default backoff policy for same-provider retries */
+  BACKOFF: {
+    INITIAL_DELAY: DEFAULTS.BACKOFF_INITIAL_DELAY,
+    MAX_DELAY: DEFAULTS.BACKOFF_MAX_DELAY,
+    MULTIPLIER: DEFAULTS.BACKOFF_MULTIPLIER,
+    JITTER: DEFAULTS.BACKOFF_JITTER,
+  },
 } as const;
 
 // =============================================================================

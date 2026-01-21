@@ -29,6 +29,7 @@ import type {
 
 // Re-export types for consumers
 export type {
+  BackoffPolicy,
   Provider,
   ProviderInput,
   Group,

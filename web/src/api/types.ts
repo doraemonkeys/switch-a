@@ -50,6 +50,21 @@ export interface ErrorResponse {
 // Provider Types
 // =============================================================================
 
+/**
+ * BackoffPolicy defines exponential backoff behavior for same-provider retries.
+ * Duration values are strings in Go duration format (e.g., "100ms", "5s").
+ */
+export interface BackoffPolicy {
+  /** Initial delay before first retry (e.g., "100ms") */
+  initial_delay: string;
+  /** Maximum delay cap (e.g., "5s") */
+  max_delay: string;
+  /** Exponential multiplier (default: 2.0) */
+  multiplier?: number;
+  /** Enable Full Jitter mode: delay = random[0, calculated_delay] */
+  jitter?: boolean;
+}
+
 // ProviderAPIType represents the association between Provider and API types
 export interface ProviderAPIType {
   provider_id: string;
@@ -68,6 +83,8 @@ export interface Provider {
   priority: number;
   concurrency: number;
   max_retries: number;
+  /** Exponential backoff policy for same-provider retries */
+  backoff?: BackoffPolicy;
   /** Vendor identifier for failover isolation. Empty = no isolation, "*" = wildcard */
   vendor: string;
   /** Outbound failover control: where we can failover TO after this provider fails */
@@ -92,6 +109,8 @@ export interface ProviderInput {
   priority?: number;
   concurrency?: number;
   max_retries?: number;
+  /** Exponential backoff policy for same-provider retries */
+  backoff?: BackoffPolicy;
   /** Vendor identifier for failover isolation */
   vendor?: string;
   /** Outbound failover control */
@@ -406,6 +425,8 @@ export interface ExportedProvider {
   priority: number;
   concurrency: number;
   max_retries: number;
+  /** Exponential backoff policy for same-provider retries */
+  backoff?: BackoffPolicy;
   vendor?: string;
   failover_scope?: FailoverScope;
   accept_failover?: FailoverScope;

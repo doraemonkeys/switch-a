@@ -15,6 +15,7 @@ import {
   CONFIG_KEYS,
   DEFAULTS,
   DEFAULT_PROVIDER_MAX_RETRIES,
+  PROVIDER_DEFAULTS,
 } from "./constants";
 
 describe("API_BASE", () => {
@@ -78,6 +79,10 @@ describe("FORM_CONSTRAINTS", () => {
 
   it("should have MAX_GLOBAL_ATTEMPTS constraint", () => {
     expect(FORM_CONSTRAINTS.MAX_GLOBAL_ATTEMPTS).toBe(20);
+  });
+
+  it("should have BACKOFF_MAX_MULTIPLIER constraint", () => {
+    expect(FORM_CONSTRAINTS.BACKOFF_MAX_MULTIPLIER).toBe(10);
   });
 
   it("should have logical constraint values", () => {
@@ -251,6 +256,13 @@ describe("DEFAULTS", () => {
     expect(DEFAULTS.INTER_GROUP_STRATEGY).toBe(STRATEGIES.PRIORITY);
     expect(DEFAULTS.PROVIDER_WEIGHT).toBe(1);
   });
+
+  it("should have backoff policy defaults", () => {
+    expect(DEFAULTS.BACKOFF_INITIAL_DELAY).toBe("100ms");
+    expect(DEFAULTS.BACKOFF_MAX_DELAY).toBe("5s");
+    expect(DEFAULTS.BACKOFF_MULTIPLIER).toBe(2.0);
+    expect(DEFAULTS.BACKOFF_JITTER).toBe(false);
+  });
 });
 
 describe("DEFAULT_PROVIDER_MAX_RETRIES", () => {
@@ -262,5 +274,27 @@ describe("DEFAULT_PROVIDER_MAX_RETRIES", () => {
 describe("CUSTOM_API_TYPE_PREFIX", () => {
   it("should be 'custom:'", () => {
     expect(CUSTOM_API_TYPE_PREFIX).toBe("custom:");
+  });
+});
+
+describe("PROVIDER_DEFAULTS", () => {
+  it("should have basic provider defaults", () => {
+    expect(PROVIDER_DEFAULTS.PRIORITY).toBe(0);
+    expect(PROVIDER_DEFAULTS.WEIGHT).toBe(1);
+    expect(PROVIDER_DEFAULTS.CONCURRENCY).toBe(10);
+    expect(PROVIDER_DEFAULTS.MAX_RETRIES).toBe(0);
+  });
+
+  it("should have backoff policy defaults", () => {
+    expect(PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY).toBe(
+      DEFAULTS.BACKOFF_INITIAL_DELAY,
+    );
+    expect(PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY).toBe(
+      DEFAULTS.BACKOFF_MAX_DELAY,
+    );
+    expect(PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER).toBe(
+      DEFAULTS.BACKOFF_MULTIPLIER,
+    );
+    expect(PROVIDER_DEFAULTS.BACKOFF.JITTER).toBe(DEFAULTS.BACKOFF_JITTER);
   });
 });
