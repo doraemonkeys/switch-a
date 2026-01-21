@@ -6,6 +6,7 @@ import { ErrorBodyParser } from "./ErrorBodyParser";
 import { ProviderChain } from "./ProviderChain";
 import { RequestAttemptTimeline } from "./RequestAttemptTimeline";
 import { TransferStats } from "./TransferStats";
+import { TokenUsageStats } from "./TokenUsageStats";
 
 interface LogDetailModalProps {
   log: RequestLog | null;
@@ -132,6 +133,9 @@ export function LogDetailModal({
             responseBytes={log.response_bytes}
             contentType={log.content_type}
           />
+
+          {/* Token Usage Statistics - Collapsible section for token counts and cache info */}
+          <TokenUsageStats log={log} />
 
           {/* Error Details - Smart parsing with diagnostic tips */}
           {!log.success && log.error_msg && (

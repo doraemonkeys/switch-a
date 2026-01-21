@@ -7,6 +7,7 @@ import {
   dateFormatter,
 } from "./constants";
 import { InfoTooltip } from "./InfoTooltip";
+import { TokenCell } from "./TokenCell";
 
 interface LogsTableProps {
   logs: RequestLog[];
@@ -69,6 +70,13 @@ export function LogsTable({
               </th>
               <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Status
+              </th>
+              {/* Tokens column - hidden on mobile */}
+              <th className="hidden md:table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+                <span className="inline-flex items-center gap-1">
+                  Tokens
+                  <InfoTooltip text="Input → Output tokens. ⚡ indicates cache hit. Hover for cache hit percentage." />
+                </span>
               </th>
               <th className="table-cell text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 <span className="inline-flex items-center gap-1">
@@ -304,6 +312,10 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
           {log.success ? "✅" : "❌"}
           {log.status_code}
         </span>
+      </td>
+      {/* Tokens column - hidden on mobile */}
+      <td className="hidden md:table-cell px-6 py-4 whitespace-nowrap text-sm">
+        <TokenCell log={log} />
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm">
         {log.retry_count > 0 ? (

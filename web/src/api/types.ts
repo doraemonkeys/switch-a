@@ -197,6 +197,33 @@ export interface ActiveRequestsResponse {
   count: number;
 }
 
+// =============================================================================
+// Token Usage Types
+// =============================================================================
+
+/**
+ * Extra usage details from API response (parsed JSON object).
+ * Supports known fields and allows extension for unknown provider-specific fields.
+ */
+export interface UsageDetails {
+  /** Service tier (e.g., "default", "flex") */
+  service_tier?: string;
+  /** Claude: ephemeral 1-hour input tokens */
+  ephemeral_1h_input_tokens?: number;
+  /** Claude: ephemeral 5-minute input tokens */
+  ephemeral_5m_input_tokens?: number;
+  /** OpenAI o1 series: reasoning tokens */
+  reasoning_tokens?: number;
+  /** OpenAI: cached tokens (GPT-4 Turbo+) */
+  cached_tokens?: number;
+  /** Allow extension for unknown provider-specific fields */
+  [key: string]: unknown;
+}
+
+// =============================================================================
+// Request Log Types
+// =============================================================================
+
 export interface RequestLog {
   id: number;
   request_id: string;
@@ -224,6 +251,14 @@ export interface RequestLog {
   request_bytes?: number; // Request body size in bytes
   response_bytes?: number; // Response body size in bytes
   content_type?: string; // Request Content-Type header
+  // Phase 4 token usage statistics (P3)
+  // Uses null to distinguish "unknown/parse failed" from explicit 0
+  prompt_tokens?: number | null; // Input tokens (OpenAI: prompt_tokens, Claude: input_tokens)
+  completion_tokens?: number | null; // Output tokens (OpenAI: completion_tokens, Claude: output_tokens)
+  total_tokens?: number | null; // Total tokens
+  cache_read_input_tokens?: number | null; // Claude: tokens read from cache (billed at 10%)
+  cache_creation_input_tokens?: number | null; // Claude: tokens written to cache (billed at 125%)
+  usage_details?: UsageDetails | null; // Parsed usage details (service_tier, etc.)
   attempts?: RequestAttempt[];
 }
 

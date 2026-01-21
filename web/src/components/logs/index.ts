@@ -5,6 +5,7 @@ export { LogStatsGrid } from "./LogStatsGrid";
 export { Pagination } from "./Pagination";
 export { ErrorBanner } from "./ErrorBanner";
 export { InfoTooltip } from "./InfoTooltip";
+export { TokenCell } from "./TokenCell";
 
 // Utils and constants
 export * from "./utils";
