@@ -191,9 +191,55 @@ interface LogTableRowProps {
   onClick: () => void;
 }
 
+/** Standard API paths that don't need to be highlighted */
+const STANDARD_PATHS = [
+  "/v1/messages",
+  "/v1/chat/completions",
+  "/v1/complete",
+  "/chat/completions",
+  "/messages",
+];
+
+/**
+ * Check if a path is considered standard (common API endpoints).
+ * Standard paths won't be shown as hints in the list view.
+ */
+function isStandardPath(path: string | undefined): boolean {
+  if (!path) return true;
+  return STANDARD_PATHS.some(
+    (standard) =>
+      path === standard ||
+      path.toLowerCase() === standard ||
+      path.endsWith(standard),
+  );
+}
+
+/**
+ * Get a short method badge style based on HTTP method
+ */
+function getMethodStyle(method: string): string {
+  switch (method.toUpperCase()) {
+    case "GET":
+      return "text-emerald-600 dark:text-emerald-400";
+    case "POST":
+      return "text-blue-600 dark:text-blue-400";
+    case "PUT":
+    case "PATCH":
+      return "text-amber-600 dark:text-amber-400";
+    case "DELETE":
+      return "text-red-600 dark:text-red-400";
+    default:
+      return "text-gray-600 dark:text-gray-400";
+  }
+}
+
 function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
   const formatTime = (dateStr: string) =>
     dateFormatter.format(new Date(dateStr));
+
+  // Determine if we should show path hint
+  const showPathHint =
+    log.request_path && log.request_method && !isStandardPath(log.request_path);
 
   return (
     <tr
@@ -234,8 +280,22 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
           )}
         </div>
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary font-mono">
-        {log.model}
+      <td className="px-6 py-4 whitespace-nowrap text-sm">
+        <div className="flex flex-col">
+          <span className="text-text-primary font-mono">{log.model}</span>
+          {/* Non-standard path hint - only shown for unusual endpoints */}
+          {showPathHint && (
+            <span
+              className="text-[11px] text-text-muted font-mono mt-0.5 flex items-center gap-1"
+              title={`${log.request_method} ${log.request_path}`}
+            >
+              <span className={getMethodStyle(log.request_method!)}>
+                {log.request_method}
+              </span>
+              <span className="truncate max-w-[120px]">{log.request_path}</span>
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm">
         <span

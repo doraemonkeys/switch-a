@@ -5,6 +5,7 @@ import { CopyButton } from "./CopyButton";
 import { ErrorBodyParser } from "./ErrorBodyParser";
 import { ProviderChain } from "./ProviderChain";
 import { RequestAttemptTimeline } from "./RequestAttemptTimeline";
+import { TransferStats } from "./TransferStats";
 
 interface LogDetailModalProps {
   log: RequestLog | null;
@@ -124,6 +125,13 @@ export function LogDetailModal({
           />
           <ResponseInfo log={log} />
           <ClientInfo log={log} />
+
+          {/* Transfer Statistics - Collapsible section for request/response sizes */}
+          <TransferStats
+            requestBytes={log.request_bytes}
+            responseBytes={log.response_bytes}
+            contentType={log.content_type}
+          />
 
           {/* Error Details - Smart parsing with diagnostic tips */}
           {!log.success && log.error_msg && (
