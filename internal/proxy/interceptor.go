@@ -139,20 +139,7 @@ type sseReadCloser struct {
 func (s *sseReadCloser) Read(p []byte) (int, error) {
 	n, err := s.original.Read(p)
 	if n > 0 {
-		// Prevent buffer from growing indefinitely (e.g., SSE stream without \n\n for long time)
-		if len(s.buf)+n > maxSSEBuffer {
-			// Discard old data, keep the newest
-			excess := len(s.buf) + n - maxSSEBuffer
-			if s.interceptor.logger != nil {
-				s.interceptor.logger.Debug("SSE buffer overflow, discarding old data",
-					"excess", excess, "bufLen", len(s.buf), "newBytes", n)
-			}
-			if excess < len(s.buf) {
-				s.buf = s.buf[excess:]
-			} else {
-				s.buf = nil
-			}
-		}
+		s.handleBufferOverflow(n)
 		s.buf = append(s.buf, p[:n]...)
 		s.extractLastData()
 	}
@@ -160,6 +147,24 @@ func (s *sseReadCloser) Read(p []byte) (int, error) {
 		s.interceptor.complete = true
 	}
 	return n, err
+}
+
+// handleBufferOverflow discards old data when buffer would exceed maxSSEBuffer.
+func (s *sseReadCloser) handleBufferOverflow(newBytes int) {
+	if len(s.buf)+newBytes <= maxSSEBuffer {
+		return
+	}
+	// Discard old data, keep the newest
+	excess := len(s.buf) + newBytes - maxSSEBuffer
+	if s.interceptor.logger != nil {
+		s.interceptor.logger.Debug("SSE buffer overflow, discarding old data",
+			"excess", excess, "bufLen", len(s.buf), "newBytes", newBytes)
+	}
+	if excess < len(s.buf) {
+		s.buf = s.buf[excess:]
+	} else {
+		s.buf = nil
+	}
 }
 
 // sseDataPrefix is the SSE data line prefix.
@@ -222,7 +227,8 @@ func (s *sseReadCloser) extractLastData() {
 
 	// Prevent slice operations from keeping underlying array from being GC'd
 	// When capacity is too large but actual usage is small, reallocate buffer
-	if processed && len(s.buf) > 0 && cap(s.buf) > maxSSEBuffer/4 {
+	// Added minBufferReallocCapacity threshold to avoid unnecessary reallocation for small buffers
+	if processed && len(s.buf) > 0 && cap(s.buf) > maxSSEBuffer/4 && cap(s.buf) > minBufferReallocCapacity {
 		newBuf := make([]byte, len(s.buf))
 		copy(newBuf, s.buf)
 		s.buf = newBuf

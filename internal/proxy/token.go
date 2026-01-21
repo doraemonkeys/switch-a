@@ -7,9 +7,10 @@ import (
 
 // Constants for token parsing buffer sizes.
 const (
-	defaultTokenParseBytes = 4 * 1024  // 4KB, tail buffer default size
-	fullCaptureThreshold   = 32 * 1024 // 32KB, below this we capture full response
-	maxSSEBuffer           = 64 * 1024 // 64KB, SSE buffer max limit
+	defaultTokenParseBytes   = 4 * 1024  // 4KB, tail buffer default size
+	fullCaptureThreshold     = 32 * 1024 // 32KB, below this we capture full response
+	maxSSEBuffer             = 64 * 1024 // 64KB, SSE buffer max limit
+	minBufferReallocCapacity = 8 * 1024  // 8KB, minimum capacity threshold for buffer reallocation
 )
 
 // TokenUsage represents complete token usage statistics.
