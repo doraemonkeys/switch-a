@@ -519,6 +519,28 @@ type forwardResult struct {
 	tokenUsage     *TokenUsage // Token usage extracted from response (Phase 4a)
 }
 
+// setupTokenInterceptor creates and configures a token capture interceptor for successful responses.
+// Returns the interceptor (for Result() call) and sseInterceptor (for Wait() call if SSE).
+func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp *UpstreamResponse) (ResponseInterceptor, *sseTokenInterceptor) {
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, nil
+	}
+
+	if isSSE {
+		// Phase 4b: SSE streaming responses
+		// Pass Content-Encoding for stream decompression support
+		contentEncoding := upstreamResp.Header.Get("Content-Encoding")
+		sseInterceptor := newSSETokenInterceptor(
+			NewZapLoggerAdapter(h.logger.Sugar()),
+			contentEncoding,
+		)
+		return sseInterceptor, sseInterceptor
+	}
+
+	// Phase 4a: Non-streaming responses
+	return newTokenCaptureInterceptor(upstreamResp.ContentLength, NewZapLoggerAdapter(h.logger.Sugar())), nil
+}
+
 // forwardToProvider forwards the request to a single provider.
 // Note: Retry orchestration (per-provider retries and provider switching) is handled in executeProxy.
 func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider) forwardResult {
@@ -590,15 +612,8 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	// Set up token capture interceptor for successful responses.
 	// Token usage is typically in the response body for API responses.
 	// Different interceptors are used for non-SSE and SSE responses.
-	var interceptor ResponseInterceptor
-	if result.statusCode >= 200 && result.statusCode < 300 {
-		if result.isSSE {
-			// Phase 4b: SSE streaming responses
-			interceptor = newSSETokenInterceptor(NewZapLoggerAdapter(h.logger.Sugar()))
-		} else {
-			// Phase 4a: Non-streaming responses
-			interceptor = newTokenCaptureInterceptor(upstreamResp.ContentLength, NewZapLoggerAdapter(h.logger.Sugar()))
-		}
+	interceptor, sseInterceptor := h.setupTokenInterceptor(result.statusCode, result.isSSE, upstreamResp)
+	if interceptor != nil {
 		upstreamResp.Body = interceptor.Wrap(upstreamResp.Body)
 	}
 
@@ -630,6 +645,10 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	// Extract token usage from interceptor (Phase 4a).
 	// This must be done after Body is fully read (i.e., after WriteToClient).
 	if interceptor != nil {
+		// For SSE with gzip passthrough, wait for background goroutine to complete parsing
+		if sseInterceptor != nil {
+			sseInterceptor.Wait()
+		}
 		usage, complete := interceptor.Result()
 		if complete && usage != nil {
 			result.tokenUsage = usage

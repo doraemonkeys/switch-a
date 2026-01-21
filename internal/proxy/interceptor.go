@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io"
+	"strings"
+	"sync"
 )
 
 // ResponseInterceptor intercepts response body to extract token usage.
@@ -124,29 +126,85 @@ func maybeDecompressGzip(data []byte) []byte {
 // - Claude: event: message_stop\ndata: {"usage":{...}}\n\n
 // Usage is typically in the last valid data chunk before stream ends.
 type sseTokenInterceptor struct {
-	result    *TokenUsage
-	complete  bool
-	lastChunk []byte // Only keep the last data chunk containing usage
-	logger    Logger
+	mu              sync.Mutex
+	wg              sync.WaitGroup
+	result          *TokenUsage
+	complete        bool
+	lastChunk       []byte // Only keep the last data chunk containing usage
+	logger          Logger
+	contentEncoding string // Content-Encoding header value for decompression
 }
 
 // newSSETokenInterceptor creates a new interceptor for SSE streaming responses.
-func newSSETokenInterceptor(logger Logger) *sseTokenInterceptor {
-	return &sseTokenInterceptor{logger: logger}
+// contentEncoding should be the value of Content-Encoding header (e.g., "gzip", "").
+func newSSETokenInterceptor(logger Logger, contentEncoding string) *sseTokenInterceptor {
+	return &sseTokenInterceptor{
+		logger:          logger,
+		contentEncoding: contentEncoding,
+	}
 }
 
 func (i *sseTokenInterceptor) Wrap(body io.ReadCloser) io.ReadCloser {
 	if body == nil {
-		i.complete = true
+		i.setComplete(nil)
 		return nil
 	}
-	return &sseReadCloser{
-		original:    body,
-		interceptor: i,
+
+	// Non-gzip: use the original sseReadCloser processing
+	if !strings.EqualFold(i.contentEncoding, "gzip") {
+		return &sseReadCloser{
+			original:    body,
+			interceptor: i,
+		}
+	}
+
+	// TeeReader passthrough: pass original compressed data to client
+	// while parsing decompressed data in background goroutine
+	pr, pw := io.Pipe()
+	tee := io.TeeReader(body, pw)
+
+	// Start background goroutine to decompress and parse SSE events
+	i.wg.Add(1)
+	go func() {
+		defer i.wg.Done()
+
+		gzReader, err := gzip.NewReader(pr)
+		if err != nil {
+			if i.logger != nil {
+				i.logger.Debug("failed to create gzip reader for SSE", "error", err.Error())
+			}
+			_, _ = io.Copy(io.Discard, pr) // Drain pipe to prevent blocking
+			i.setComplete(nil)             // Mark complete even on error
+			return
+		}
+		defer gzReader.Close() // Only close gzReader, pw is closed by gzipPassthroughReadCloser.Close()
+
+		i.parseSSEFromReader(gzReader)
+	}()
+
+	if i.logger != nil {
+		i.logger.Debug("SSE stream gzip passthrough enabled with TeeReader")
+	}
+
+	return &gzipPassthroughReadCloser{
+		original: body,
+		tee:      tee,
+		pw:       pw,
 	}
 }
 
+// setComplete marks the interceptor as complete with the given result (thread-safe).
+func (i *sseTokenInterceptor) setComplete(result *TokenUsage) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.result = result
+	i.complete = true
+}
+
 func (i *sseTokenInterceptor) Result() (*TokenUsage, bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
 	if i.result == nil && len(i.lastChunk) > 0 {
 		i.result = parseTokenUsageWithLogger(i.lastChunk, i.logger)
 		// Log if parsing failed despite having data
@@ -165,6 +223,107 @@ func (i *sseTokenInterceptor) Result() (*TokenUsage, bool) {
 	return i.result, i.complete
 }
 
+// Wait blocks until background goroutine completes (for gzip passthrough).
+// For non-gzip cases, wg.Add(1) is never called, so Wait() returns immediately.
+func (i *sseTokenInterceptor) Wait() {
+	i.wg.Wait()
+}
+
+// parseSSEFromReader reads and parses SSE events from the given reader.
+// Used by the background goroutine for gzip passthrough.
+func (i *sseTokenInterceptor) parseSSEFromReader(r io.Reader) {
+	buf := make([]byte, regularReadBufferSize)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			i.processChunk(buf[:n])
+		}
+		if err != nil {
+			if err != io.EOF && i.logger != nil {
+				i.logger.Debug("SSE parse goroutine read error", "error", err.Error())
+			}
+			break
+		}
+	}
+	// Read result under lock to avoid data race with processChunk
+	i.mu.Lock()
+	result := i.result
+	i.mu.Unlock()
+	i.setComplete(result)
+}
+
+// processChunk processes a chunk of SSE data.
+// This is extracted for reuse between sseReadCloser and parseSSEFromReader.
+func (i *sseTokenInterceptor) processChunk(data []byte) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	// Handle buffer overflow
+	if len(i.lastChunk)+len(data) > maxSSEBuffer {
+		excess := len(i.lastChunk) + len(data) - maxSSEBuffer
+		if i.logger != nil {
+			i.logger.Debug("SSE buffer overflow in processChunk, discarding old data",
+				"excess", excess, "bufLen", len(i.lastChunk), "newBytes", len(data))
+		}
+		if excess < len(i.lastChunk) {
+			i.lastChunk = i.lastChunk[excess:]
+		} else {
+			i.lastChunk = nil
+		}
+	}
+
+	i.lastChunk = append(i.lastChunk, data...)
+	i.extractLastDataLocked()
+}
+
+// extractLastDataLocked extracts usage data from the buffer.
+// Must be called with mu held.
+func (i *sseTokenInterceptor) extractLastDataLocked() {
+	for {
+		idx, sepLen := findSSEChunkSeparator(i.lastChunk)
+		if idx < 0 {
+			break
+		}
+		chunk := i.lastChunk[:idx]
+		i.lastChunk = i.lastChunk[idx+sepLen:]
+
+		// Extract data content from SSE chunk
+		data := extractSSEDataContent(chunk)
+		if data == nil {
+			continue
+		}
+
+		if containsUsageMarker(data) {
+			// Found usage data, save and parse immediately
+			savedData := make([]byte, len(data))
+			copy(savedData, data)
+			if i.logger != nil {
+				i.logger.Debug("SSE usage data captured (processChunk)",
+					"data_preview", truncateForLog(data, 300),
+				)
+			}
+			i.result = parseTokenUsageWithLogger(savedData, i.logger)
+		}
+	}
+}
+
+// gzipPassthroughReadCloser passes through compressed data to client
+// while simultaneously writing to a pipe for background decompression.
+type gzipPassthroughReadCloser struct {
+	original io.ReadCloser
+	tee      io.Reader
+	pw       *io.PipeWriter // Closed only in Close()
+}
+
+func (g *gzipPassthroughReadCloser) Read(p []byte) (int, error) {
+	return g.tee.Read(p)
+}
+
+func (g *gzipPassthroughReadCloser) Close() error {
+	_ = g.pw.Close() // Close pw to signal goroutine to exit
+	return g.original.Close()
+}
+
 // sseReadCloser parses SSE stream and keeps the last data chunk containing usage.
 type sseReadCloser struct {
 	original    io.ReadCloser
@@ -180,10 +339,10 @@ func (s *sseReadCloser) Read(p []byte) (int, error) {
 		s.extractLastData()
 	}
 	if err == io.EOF {
-		s.interceptor.complete = true
 		// Process any remaining data in buffer at EOF
 		// The last SSE chunk may not have a trailing \n\n separator
 		s.processRemainingBuffer()
+		s.interceptor.setComplete(nil) // use thread-safe setter
 	}
 	return n, err
 }
@@ -218,19 +377,14 @@ var sseUsageMarkers = [][]byte{
 // sseDoneMarker is the OpenAI SSE stream end marker.
 var sseDoneMarker = []byte("[DONE]")
 
-// SSE chunk separators - both \n\n and \r\n\r\n are valid per SSE spec
-var (
-	sseChunkSeparatorLF   = []byte("\n\n")
-	sseChunkSeparatorCRLF = []byte("\r\n\r\n")
-)
-
-// extractAndSaveUsageData extracts data from an SSE chunk and saves it if it contains usage.
-// Returns true if the chunk should be skipped (e.g., [DONE] marker or no data prefix).
-func (s *sseReadCloser) extractAndSaveUsageData(chunk []byte, logSource string) bool {
+// extractSSEDataContent extracts the data content from an SSE chunk.
+// Returns nil if the chunk should be skipped (no data prefix, or [DONE] marker).
+// Returns the data bytes if valid data is found.
+func extractSSEDataContent(chunk []byte) []byte {
 	// Find "data: " line within chunk (supports Claude multi-line format)
 	dataIdx := bytes.Index(chunk, sseDataPrefix)
 	if dataIdx < 0 {
-		return true // skip
+		return nil // skip - no data prefix
 	}
 
 	// Extract content after "data: " until end of line (handle both \n and \r\n)
@@ -245,22 +399,50 @@ func (s *sseReadCloser) extractAndSaveUsageData(chunk []byte, logSource string) 
 
 	// Skip OpenAI SSE stream end marker [DONE]
 	if bytes.Equal(bytes.TrimSpace(data), sseDoneMarker) {
+		return nil // skip
+	}
+
+	return data
+}
+
+// containsUsageMarker checks if data contains any usage marker.
+func containsUsageMarker(data []byte) bool {
+	for _, marker := range sseUsageMarkers {
+		if bytes.Contains(data, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// SSE chunk separators - both \n\n and \r\n\r\n are valid per SSE spec
+var (
+	sseChunkSeparatorLF   = []byte("\n\n")
+	sseChunkSeparatorCRLF = []byte("\r\n\r\n")
+)
+
+// extractAndSaveUsageData extracts data from an SSE chunk and saves it if it contains usage.
+// Returns true if the chunk should be skipped (e.g., [DONE] marker or no data prefix).
+func (s *sseReadCloser) extractAndSaveUsageData(chunk []byte, logSource string) bool {
+	// Extract data content from SSE chunk
+	data := extractSSEDataContent(chunk)
+	if data == nil {
 		return true // skip
 	}
 
 	// Use more precise matching to avoid false positives from response content
 	// e.g., "Let me explain the usage of..." should not trigger save
-	for _, marker := range sseUsageMarkers {
-		if bytes.Contains(data, marker) {
-			s.interceptor.lastChunk = append(s.interceptor.lastChunk[:0], data...)
-			if s.interceptor.logger != nil {
-				s.interceptor.logger.Debug("SSE usage data captured",
-					"source", logSource,
-					"data_preview", truncateForLog(data, 300),
-				)
-			}
-			break
+	if containsUsageMarker(data) {
+		// Lock when modifying lastChunk for thread-safety and consistency with gzip path
+		s.interceptor.mu.Lock()
+		s.interceptor.lastChunk = append(s.interceptor.lastChunk[:0], data...)
+		if s.interceptor.logger != nil {
+			s.interceptor.logger.Debug("SSE usage data captured",
+				"source", logSource,
+				"data_preview", truncateForLog(data, 300),
+			)
 		}
+		s.interceptor.mu.Unlock()
 	}
 	return false
 }
