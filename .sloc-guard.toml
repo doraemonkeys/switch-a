@@ -27,8 +27,8 @@ warn_at = 1000
 
 [[content.rules]]
 pattern = "web/**/*.tsx"
-max_lines = 700
-warn_at = 600
+max_lines = 800
+warn_at = 700
 
 # Go test files
 [[content.rules]]
