@@ -46,8 +46,8 @@ type BackoffPolicy struct {
 	// Multiplier controls exponential growth. Default is 2.0 if zero.
 	// Must be >= 1.0 to ensure delays don't shrink.
 	Multiplier float64 `gorm:"column:backoff_multiplier" json:"multiplier,omitempty"`
-	// Jitter enables Full Jitter mode: delay becomes random in [0, calculated_delay].
-	// Recommended for distributed systems to prevent thundering herd.
+	// Jitter enables Equal Jitter mode: delay becomes random in [base/2, base].
+	// Guarantees at least 50% of calculated delay while preventing thundering herd.
 	Jitter bool `gorm:"column:backoff_jitter" json:"jitter,omitempty"`
 }
 
@@ -98,7 +98,7 @@ func (b BackoffPolicy) DelayForRetry(retryIndex int) time.Duration {
 	}
 
 	if b.Jitter {
-		delay = rand.Float64() * delay // Full Jitter: [0, delay]
+		delay = delay/2 + rand.Float64()*delay/2 // Equal Jitter: [delay/2, delay]
 	}
 
 	return time.Duration(delay)

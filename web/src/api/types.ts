@@ -61,7 +61,7 @@ export interface BackoffPolicy {
   max_delay: string;
   /** Exponential multiplier (default: 2.0) */
   multiplier?: number;
-  /** Enable Full Jitter mode: delay = random[0, calculated_delay] */
+  /** Enable Equal Jitter mode: delay = calculated_delay/2 + random[0, calculated_delay/2] */
   jitter?: boolean;
 }
 

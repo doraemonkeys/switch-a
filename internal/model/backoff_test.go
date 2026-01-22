@@ -239,13 +239,13 @@ func TestBackoffPolicy_DelayForRetry_Jitter(t *testing.T) {
 		Jitter:       true,
 	}
 
-	// With jitter, delay should be in [0, calculated_delay]
+	// With Equal Jitter, delay should be in [base/2, base]
 	// Run multiple times to verify randomness
 	seen := make(map[time.Duration]bool)
 	for i := 0; i < 100; i++ {
 		delay := policy.DelayForRetry(0)
-		if delay < 0 || delay > 100*time.Millisecond {
-			t.Errorf("DelayForRetry(0) with jitter = %v, want in [0, 100ms]", delay)
+		if delay < 50*time.Millisecond || delay > 100*time.Millisecond {
+			t.Errorf("DelayForRetry(0) with jitter = %v, want in [50ms, 100ms]", delay)
 		}
 		seen[delay] = true
 	}
@@ -253,6 +253,67 @@ func TestBackoffPolicy_DelayForRetry_Jitter(t *testing.T) {
 	// With 100 iterations, we should see multiple distinct values
 	if len(seen) < 5 {
 		t.Errorf("Jitter should produce varied delays, only got %d distinct values", len(seen))
+	}
+}
+
+// TestBackoffPolicy_EqualJitter_Distribution demonstrates the actual distribution
+// of Equal Jitter delays. Equal Jitter guarantees at least 50% of base delay.
+// This test prints statistics to help understand jitter behavior.
+func TestBackoffPolicy_EqualJitter_Distribution(t *testing.T) {
+	policy := BackoffPolicy{
+		InitialDelay: Duration(1 * time.Second),
+		Multiplier:   3.0,
+		Jitter:       true,
+	}
+
+	const iterations = 10000
+
+	for retryIndex := 0; retryIndex < 3; retryIndex++ {
+		var sum time.Duration
+		var minDelay, maxDelay time.Duration
+
+		// Calculate the base delay (without jitter)
+		baseDelay := time.Second * time.Duration(1)
+		for i := 0; i < retryIndex; i++ {
+			baseDelay *= 3
+		}
+
+		minDelay = baseDelay // Initialize to max possible
+		for i := 0; i < iterations; i++ {
+			delay := policy.DelayForRetry(retryIndex)
+			sum += delay
+
+			if delay < minDelay {
+				minDelay = delay
+			}
+			if delay > maxDelay {
+				maxDelay = delay
+			}
+		}
+
+		avgDelay := sum / iterations
+		expectedAvg := baseDelay * 3 / 4 // Equal Jitter average is base * 3/4
+
+		t.Logf("RetryIndex=%d (base=%v):", retryIndex, baseDelay)
+		t.Logf("  Average delay: %v (expected ~%v)", avgDelay, expectedAvg)
+		t.Logf("  Min delay: %v (expected >= %v)", minDelay, baseDelay/2)
+		t.Logf("  Max delay: %v (expected <= %v)", maxDelay, baseDelay)
+
+		// Verify minimum is at least base/2
+		if minDelay < baseDelay/2 {
+			t.Errorf("Min delay %v is less than base/2 (%v)", minDelay, baseDelay/2)
+		}
+
+		// Verify maximum does not exceed base
+		if maxDelay > baseDelay {
+			t.Errorf("Max delay %v exceeds base (%v)", maxDelay, baseDelay)
+		}
+
+		// Verify average is roughly 3/4 of base (within 10% tolerance)
+		tolerance := baseDelay / 10
+		if avgDelay < expectedAvg-tolerance || avgDelay > expectedAvg+tolerance {
+			t.Errorf("Average delay %v is not close to expected %v", avgDelay, expectedAvg)
+		}
 	}
 }
 

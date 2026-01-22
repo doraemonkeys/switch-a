@@ -146,8 +146,8 @@ function BackoffPreview({ backoff, maxRetries }: BackoffPreviewProps) {
       </ul>
       {backoff.jitter && (
         <p className="text-xs text-text-muted mt-2 italic">
-          With jitter, actual delays are randomly chosen between 0 and the shown
-          value
+          With jitter, actual delays are randomly chosen between 50% and 100% of
+          the shown value
         </p>
       )}
     </div>
