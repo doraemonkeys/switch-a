@@ -3,6 +3,7 @@ module switch-a
 go 1.25
 
 require (
+	github.com/andybalholm/brotli v1.2.0
 	github.com/doraemonkeys/mylog v0.4.1
 	github.com/google/uuid v1.6.0
 	github.com/spf13/viper v1.21.0
@@ -12,7 +13,6 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
