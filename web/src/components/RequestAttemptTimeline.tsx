@@ -11,6 +11,58 @@ interface RequestAttemptTimelineProps {
   userAgent?: string;
 }
 
+/**
+ * Format time as HH:MM:SS.mmm for display
+ */
+function formatTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+/**
+ * Format full timestamp for tooltip
+ */
+function formatFullTimestamp(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+/**
+ * Calculate time offset from first attempt in milliseconds
+ */
+function getTimeOffset(currentTime: string, firstTime: string): number {
+  return new Date(currentTime).getTime() - new Date(firstTime).getTime();
+}
+
+/**
+ * Format offset duration in human-readable form
+ */
+function formatOffset(offsetMs: number): string {
+  if (offsetMs < 1000) {
+    return `+${offsetMs}ms`;
+  }
+  const seconds = offsetMs / 1000;
+  if (seconds < 60) {
+    return `+${seconds.toFixed(1)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `+${minutes}m ${remainingSeconds.toFixed(0)}s`;
+}
+
 /** Maps switch reason codes to human-readable labels with icons */
 function getSwitchReasonLabel(
   reason: string,
@@ -58,6 +110,7 @@ export function RequestAttemptTimeline({
 
   // Sort by attempt number
   const sortedAttempts = [...attempts].sort((a, b) => a.attempt - b.attempt);
+  const firstAttemptTime = sortedAttempts[0]?.created_at;
 
   return (
     <div className="relative">
@@ -69,9 +122,11 @@ export function RequestAttemptTimeline({
           <AttemptNode
             key={attempt.id}
             attempt={attempt}
+            isFirst={index === 0}
             isLast={index === sortedAttempts.length - 1}
             providerName={providerNames?.get(attempt.provider_id)}
             userAgent={userAgent}
+            firstAttemptTime={firstAttemptTime}
           />
         ))}
       </div>
@@ -81,16 +136,20 @@ export function RequestAttemptTimeline({
 
 interface AttemptNodeProps {
   attempt: RequestAttempt;
+  isFirst: boolean;
   isLast: boolean;
   providerName?: string;
   userAgent?: string;
+  firstAttemptTime?: string;
 }
 
 function AttemptNode({
   attempt,
+  isFirst,
   isLast,
   providerName,
   userAgent,
+  firstAttemptTime,
 }: AttemptNodeProps) {
   const [showReqBody, setShowReqBody] = useState(false);
 
@@ -175,10 +234,42 @@ function AttemptNode({
           </span>
         </div>
 
-        {/* Provider */}
-        <p className="text-sm text-text-secondary mt-1">
-          Provider: {providerName || attempt.provider_id}
-        </p>
+        {/* Provider and Timing info */}
+        <div className="flex items-center justify-between mt-1">
+          <p className="text-sm text-text-secondary">
+            Provider: {providerName || attempt.provider_id}
+          </p>
+          {/* Time display: absolute time for first attempt, offset for subsequent */}
+          {attempt.created_at && (
+            <span
+              className="text-xs text-text-muted font-mono flex items-center gap-1.5"
+              title={formatFullTimestamp(attempt.created_at)}
+            >
+              <svg
+                className="w-3 h-3"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              {isFirst ? (
+                formatTime(attempt.created_at)
+              ) : (
+                <span className="text-amber-600 dark:text-amber-400">
+                  {formatOffset(
+                    getTimeOffset(attempt.created_at, firstAttemptTime!),
+                  )}
+                </span>
+              )}
+            </span>
+          )}
+        </div>
 
         {/* Error message */}
         {hasError && (
