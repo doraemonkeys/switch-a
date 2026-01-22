@@ -16,7 +16,7 @@ import (
 func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyContext, attempt int, excluded map[string]bool) (*model.Provider, bool, error) {
 	if h.selector == nil {
 		// Fallback: direct provider list (no selector configured)
-		provider, err := h.selectProviderFallback(ctx, pctx, attempt)
+		provider, err := h.selectProviderFallback(ctx, pctx, attempt, excluded)
 		return provider, false, err
 	}
 
@@ -108,13 +108,22 @@ func (h *Handler) getProviderIfValid(ctx context.Context, providerID string, pct
 //   - No group-based strategies: ignores priority/weight/random settings
 //
 // For production deployments with multiple providers, configure a Selector for robust behavior.
-func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext, attempt int) (*model.Provider, error) {
+func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext, attempt int, excluded map[string]bool) (*model.Provider, error) {
 	providers, err := h.store.ListProvidersByAPIType(ctx, pctx.apiType)
 	if err != nil { // coverage-ignore -- database errors are rare after successful startup
 		h.logger.Error("failed to list providers", zap.Error(err), zap.String("api_type", pctx.apiType))
 		return nil, err
 	}
-	if len(providers) == 0 {
+
+	// Filter out excluded providers (those that have already failed in this request)
+	available := providers[:0]
+	for _, p := range providers {
+		if !excluded[p.ID] {
+			available = append(available, p)
+		}
+	}
+
+	if len(available) == 0 {
 		return nil, internal.ErrNoProvider
 	}
 	// True round-robin: use atomic counter for cross-request distribution,
@@ -122,6 +131,6 @@ func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext
 	// Use uint64 conversion to handle wrap-around safely: when int64 wraps from
 	// MaxInt64 to MinInt64, converting to uint64 ensures non-negative indices.
 	idx := h.fallbackCounter.Add(1)
-	provider := providers[int(uint64(idx-1+int64(attempt))%uint64(len(providers)))]
+	provider := available[int(uint64(idx-1+int64(attempt))%uint64(len(available)))]
 	return &provider, nil
 }

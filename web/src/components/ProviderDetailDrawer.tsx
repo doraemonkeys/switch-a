@@ -17,6 +17,7 @@ import {
   RECENT_LOGS_LIMIT,
   FAILOVER_SCOPES,
   VENDOR_WILDCARD,
+  PROVIDER_DEFAULTS,
 } from "../config/constants";
 
 interface ProviderDetailDrawerProps {
@@ -240,6 +241,74 @@ function ScopeBadge({
   );
 }
 
+// Backoff info section component - only shown when max_retries > 0
+function BackoffInfoSection({ provider }: { provider: Provider }) {
+  // Only show if retries are enabled
+  if (!provider.max_retries || provider.max_retries === 0) {
+    return null;
+  }
+
+  const backoff = provider.backoff;
+  const hasCustomBackoff =
+    backoff &&
+    (backoff.initial_delay !== PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY ||
+      backoff.max_delay !== PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY ||
+      (backoff.multiplier !== undefined &&
+        backoff.multiplier !== PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER) ||
+      (backoff.jitter !== undefined &&
+        backoff.jitter !== PROVIDER_DEFAULTS.BACKOFF.JITTER));
+
+  // If no custom backoff, show a simple note about defaults
+  if (!hasCustomBackoff) {
+    return (
+      <DetailSection title="Retry Backoff">
+        <div className="p-2 rounded-lg bg-bg-tertiary/50 text-xs text-text-muted">
+          Using default exponential backoff:{" "}
+          <span className="font-mono">
+            {PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY}
+          </span>{" "}
+          →{" "}
+          <span className="font-mono">
+            {PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY}
+          </span>{" "}
+          (×{PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER})
+        </div>
+      </DetailSection>
+    );
+  }
+
+  return (
+    <DetailSection title="Retry Backoff">
+      <DetailRow
+        label="Initial Delay"
+        value={
+          <span className="font-mono text-xs">{backoff.initial_delay}</span>
+        }
+      />
+      <DetailRow
+        label="Max Delay"
+        value={<span className="font-mono text-xs">{backoff.max_delay}</span>}
+      />
+      <DetailRow
+        label="Multiplier"
+        value={`×${backoff.multiplier ?? PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER}`}
+      />
+      <DetailRow
+        label="Jitter"
+        value={
+          backoff.jitter ? (
+            <span className="px-1.5 py-0.5 text-xs rounded bg-info-light text-info-dark">
+              Enabled
+            </span>
+          ) : (
+            <span className="text-text-muted">Off</span>
+          )
+        }
+      />
+    </DetailSection>
+  );
+}
+
 // Failover info section component
 function FailoverInfoSection({ provider }: { provider: Provider }) {
   const hasVendorConfig =
@@ -360,6 +429,7 @@ function HealthStatusSection({
           <button
             onClick={onReset}
             className="btn btn-sm text-warning hover:bg-warning-light text-xs"
+            aria-label="Reset health status"
           >
             🔄 Reset
           </button>
@@ -432,7 +502,11 @@ function RecentRequestsSection({
   const renderContent = () => {
     if (loading) {
       return (
-        <div className="flex items-center justify-center py-8">
+        <div
+          className="flex items-center justify-center py-8"
+          role="status"
+          aria-label="Loading recent requests"
+        >
           <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
       );
@@ -447,9 +521,9 @@ function RecentRequestsSection({
       );
     }
     return (
-      <div className="text-center py-6 text-text-muted text-sm">
+      <p className="text-center py-6 text-text-muted text-sm">
         No recent requests
-      </div>
+      </p>
     );
   };
 
@@ -506,10 +580,11 @@ export function ProviderDetailDrawer({
   );
 
   return (
-    <>
+    <div role="dialog" aria-modal="true" aria-labelledby="drawer-title">
       <div
         className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm transition-opacity"
         onClick={onClose}
+        aria-hidden="true"
       />
       <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-bg-primary shadow-2xl border-l border-border-light flex flex-col animate-slide-in-right">
         {/* Header */}
@@ -519,7 +594,10 @@ export function ProviderDetailDrawer({
               <div
                 className={`w-2.5 h-2.5 rounded-full ${statusDotClass[status]}`}
               />
-              <h2 className="text-xl font-bold text-text-primary truncate">
+              <h2
+                id="drawer-title"
+                className="text-xl font-bold text-text-primary truncate"
+              >
                 {provider.name}
               </h2>
             </div>
@@ -539,6 +617,7 @@ export function ProviderDetailDrawer({
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           <BasicInfoSection provider={provider} getGroupName={getGroupName} />
+          <BackoffInfoSection provider={provider} />
           <FailoverInfoSection provider={provider} />
           <HealthStatusSection
             provider={provider}
@@ -551,8 +630,18 @@ export function ProviderDetailDrawer({
             loading={logsLoading}
           />
           <div className="text-xs text-text-muted space-y-1 pt-4 border-t border-border-light">
-            <p>Created: {new Date(provider.created_at).toLocaleString()}</p>
-            <p>Updated: {new Date(provider.updated_at).toLocaleString()}</p>
+            <p>
+              Created:{" "}
+              <time dateTime={provider.created_at}>
+                {new Date(provider.created_at).toLocaleString()}
+              </time>
+            </p>
+            <p>
+              Updated:{" "}
+              <time dateTime={provider.updated_at}>
+                {new Date(provider.updated_at).toLocaleString()}
+              </time>
+            </p>
           </div>
         </div>
 
@@ -562,7 +651,7 @@ export function ProviderDetailDrawer({
             <button
               onClick={() => onDelete(provider)}
               className="btn btn-ghost text-danger hover:bg-danger-light"
-              title="Delete Provider"
+              aria-label="Delete provider"
             >
               🗑️ Delete
             </button>
@@ -570,8 +659,8 @@ export function ProviderDetailDrawer({
               <button
                 onClick={() => onToggle(provider)}
                 className="btn btn-secondary btn-sm"
-                title={
-                  provider.enabled ? "Disable Provider" : "Enable Provider"
+                aria-label={
+                  provider.enabled ? "Disable provider" : "Enable provider"
                 }
               >
                 {provider.enabled ? "⏸️ Disable" : "▶️ Enable"}
@@ -579,6 +668,7 @@ export function ProviderDetailDrawer({
               <button
                 onClick={() => onEdit(provider)}
                 className="btn btn-primary btn-sm"
+                aria-label="Edit provider"
               >
                 ✏️ Edit
               </button>
@@ -586,6 +676,6 @@ export function ProviderDetailDrawer({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -46,4 +47,12 @@ func NewUpstreamReadError(err error) error {
 func IsUpstreamReadError(err error) bool {
 	var upstreamErr *UpstreamReadError
 	return errors.As(err, &upstreamErr)
+}
+
+// isClientCancellation checks if the error indicates a client-side cancellation.
+// These errors should NOT trigger circuit breaker as they don't indicate provider issues:
+//   - context.Canceled: client disconnected or request was cancelled
+//   - context.DeadlineExceeded: client-side timeout was reached
+func isClientCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

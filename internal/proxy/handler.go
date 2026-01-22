@@ -594,14 +594,19 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	// Fetch upstream response WITHOUT writing to client yet
 	// This allows us to check status code and retry if needed
 	upstreamResp, err := pctx.transport.FetchUpstream(ctx, upstreamReq)
-	if err != nil { // coverage-ignore -- network errors tested at integration level
+	if err != nil {
 		h.logger.Warn("upstream request failed",
 			zap.String("provider_id", provider.ID),
 			zap.Error(err),
 		)
 		result.err = err
 		result.success = false // Explicitly mark as failure
-		h.markFailure(ctx, provider.ID, err)
+		// Only mark failure for upstream errors, not client cancellations.
+		// Client cancellations (context.Canceled, context.DeadlineExceeded) indicate
+		// the client disconnected, not a provider issue.
+		if !isClientCancellation(err) {
+			h.markFailure(ctx, provider.ID, err)
+		}
 		return result // headersWritten is false, so retry is possible
 	}
 

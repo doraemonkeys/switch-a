@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 
@@ -293,6 +294,84 @@ func TestCreateProvider_WithEnabled(t *testing.T) {
 	}
 }
 
+func TestCreateProvider_WithBackoff(t *testing.T) {
+	h, st, _ := testHandler()
+
+	body := `{
+		"id": "new-provider",
+		"name": "New Provider",
+		"base_url": "https://api.example.com",
+		"api_key": "sk-test-key",
+		"api_types": ["claude"],
+		"backoff": {
+			"initial_delay": "100ms",
+			"max_delay": "5s",
+			"multiplier": 2.0,
+			"jitter": true
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.CreateProvider(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	provider := st.providers["new-provider"]
+	if provider.Backoff.InitialDelay != model.Duration(100*time.Millisecond) {
+		t.Errorf("InitialDelay = %v, want 100ms", provider.Backoff.InitialDelay)
+	}
+	if provider.Backoff.MaxDelay != model.Duration(5*time.Second) {
+		t.Errorf("MaxDelay = %v, want 5s", provider.Backoff.MaxDelay)
+	}
+	if provider.Backoff.Multiplier != 2.0 {
+		t.Errorf("Multiplier = %v, want 2.0", provider.Backoff.Multiplier)
+	}
+	if !provider.Backoff.Jitter {
+		t.Error("Jitter should be true")
+	}
+}
+
+func TestCreateProvider_BackoffValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "negative initial_delay",
+			body: `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "backoff": {"initial_delay": "-1s"}}`,
+		},
+		{
+			name: "initial_delay exceeds max_delay",
+			body: `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "backoff": {"initial_delay": "10s", "max_delay": "1s"}}`,
+		},
+		{
+			name: "multiplier less than 1",
+			body: `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "backoff": {"initial_delay": "100ms", "multiplier": 0.5}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, _, _ := testHandler()
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.CreateProvider(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestUpdateProvider(t *testing.T) {
 	h, st, _ := testHandler()
 
@@ -518,6 +597,97 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	}
 	if updated.Enabled {
 		t.Error("Enabled should be false")
+	}
+}
+
+func TestUpdateProvider_WithBackoff(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.providers["test"] = &model.Provider{
+		ID:      "test",
+		Name:    "Test",
+		BaseURL: "https://api.com",
+		APIKey:  "key",
+		Backoff: model.BackoffPolicy{},
+	}
+
+	body := `{
+		"backoff": {
+			"initial_delay": "200ms",
+			"max_delay": "10s",
+			"multiplier": 1.5,
+			"jitter": true
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(body))
+	setPathValue(req, "id", "test")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.UpdateProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	updated := st.providers["test"]
+	if updated.Backoff.InitialDelay != model.Duration(200*time.Millisecond) {
+		t.Errorf("InitialDelay = %v, want 200ms", updated.Backoff.InitialDelay)
+	}
+	if updated.Backoff.MaxDelay != model.Duration(10*time.Second) {
+		t.Errorf("MaxDelay = %v, want 10s", updated.Backoff.MaxDelay)
+	}
+	if updated.Backoff.Multiplier != 1.5 {
+		t.Errorf("Multiplier = %v, want 1.5", updated.Backoff.Multiplier)
+	}
+	if !updated.Backoff.Jitter {
+		t.Error("Jitter should be true")
+	}
+}
+
+func TestUpdateProvider_BackoffValidationErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{
+			name:    "negative initial_delay",
+			body:    `{"backoff": {"initial_delay": "-1s"}}`,
+			wantMsg: "Invalid backoff",
+		},
+		{
+			name:    "initial_delay exceeds max_delay",
+			body:    `{"backoff": {"initial_delay": "10s", "max_delay": "1s"}}`,
+			wantMsg: "Invalid backoff",
+		},
+		{
+			name:    "multiplier less than 1",
+			body:    `{"backoff": {"initial_delay": "100ms", "multiplier": 0.5}}`,
+			wantMsg: "Invalid backoff",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, st, _ := testHandler()
+			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", BaseURL: "https://api.com", APIKey: "key"}
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(tt.body))
+			setPathValue(req, "id", "test")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.UpdateProvider(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if !bytes.Contains(w.Body.Bytes(), []byte(tt.wantMsg)) {
+				t.Errorf("body = %s, want to contain %q", w.Body.String(), tt.wantMsg)
+			}
+		})
 	}
 }
 

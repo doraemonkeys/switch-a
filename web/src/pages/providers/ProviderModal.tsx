@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useId } from "react";
 import type { FormEvent } from "react";
 import type { Provider, ProviderInput } from "../../api/client";
 import { ProviderFormBody } from "./ProviderFormBody";
@@ -8,15 +8,19 @@ import { PROVIDER_DEFAULTS } from "../../config/constants";
 
 function ModalHeader({
   title,
+  titleId,
   onClose,
 }: {
   title: string;
+  titleId: string;
   onClose: () => void;
 }) {
   return (
     <div className="p-6 border-b border-border">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-text-primary">{title}</h3>
+        <h3 id={titleId} className="text-lg font-semibold text-text-primary">
+          {title}
+        </h3>
         <button
           type="button"
           onClick={onClose}
@@ -48,6 +52,33 @@ const DEFAULT_FORM_DATA: ProviderInput = {
   enabled: true,
 };
 
+function deriveFormData(initialData?: Provider): ProviderInput {
+  if (!initialData) return DEFAULT_FORM_DATA;
+  return {
+    id: initialData.id,
+    name: initialData.name,
+    base_url: initialData.base_url,
+    api_key: initialData.api_key,
+    api_types: initialData.api_types.map((t) => t.api_type),
+    auth_mode: initialData.auth_mode || "auto",
+    group_id: initialData.group_id,
+    weight: initialData.weight,
+    priority: initialData.priority,
+    concurrency: initialData.concurrency,
+    max_retries: initialData.max_retries,
+    backoff: initialData.backoff,
+    vendor: initialData.vendor || "",
+    failover_scope: initialData.failover_scope || "any",
+    accept_failover: initialData.accept_failover || "any",
+    enabled: initialData.enabled,
+  };
+}
+
+function deriveApiTypesInput(initialData?: Provider): string {
+  if (!initialData) return "";
+  return initialData.api_types.map((t) => t.api_type).join(", ");
+}
+
 export interface ProviderModalProps {
   initialData?: Provider;
   onClose: () => void;
@@ -62,55 +93,55 @@ export function ProviderModal({
   groups,
 }: ProviderModalProps) {
   const isEditMode = !!initialData;
+  const titleId = useId();
+  const modalRef = useRef<HTMLDivElement>(null);
 
-  const [formData, setFormData] = useState<ProviderInput>(DEFAULT_FORM_DATA);
-  const [apiTypesInput, setApiTypesInput] = useState("");
+  const [formData, setFormData] = useState<ProviderInput>(() =>
+    deriveFormData(initialData),
+  );
+  const [apiTypesInput, setApiTypesInput] = useState(() =>
+    deriveApiTypesInput(initialData),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
 
+  // Auto-focus first focusable element when modal opens
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !submitting) {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [onClose, submitting]);
+    const firstFocusable = modalRef.current?.querySelector<HTMLElement>(
+      'input, select, textarea, button:not([aria-label="Close"])',
+    );
+    firstFocusable?.focus();
+  }, []);
 
   useEffect(() => {
-    if (initialData) {
-      setFormData({
-        id: initialData.id,
-        name: initialData.name,
-        base_url: initialData.base_url,
-        api_key: initialData.api_key,
-        api_types: initialData.api_types.map((t) => t.api_type),
-        auth_mode: initialData.auth_mode || "auto",
-        group_id: initialData.group_id,
-        weight: initialData.weight,
-        priority: initialData.priority,
-        concurrency: initialData.concurrency,
-        max_retries: initialData.max_retries,
-        vendor: initialData.vendor || "",
-        failover_scope: initialData.failover_scope || "any",
-        accept_failover: initialData.accept_failover || "any",
-        enabled: initialData.enabled,
-      });
-      setApiTypesInput(initialData.api_types.map((t) => t.api_type).join(", "));
-      setIdManuallyEdited(false);
-      setIdError(null);
-      setError(null);
-    } else {
-      setFormData(DEFAULT_FORM_DATA);
-      setApiTypesInput("");
-      setIdManuallyEdited(false);
-      setIdError(null);
-      setError(null);
-    }
-  }, [initialData]);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submitting) {
+        onClose();
+        return;
+      }
+
+      if (e.key === "Tab" && modalRef.current) {
+        const focusableElements =
+          modalRef.current.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          );
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey && document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement?.focus();
+        } else if (!e.shiftKey && document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, submitting]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -138,9 +169,16 @@ export function ProviderModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-bg-primary rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="bg-bg-primary rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto"
+      >
         <ModalHeader
           title={isEditMode ? "Edit Provider" : "Add Provider"}
+          titleId={titleId}
           onClose={onClose}
         />
         <form

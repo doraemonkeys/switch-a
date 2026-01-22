@@ -86,21 +86,120 @@ type ProviderResponse struct {
 
 // CreateProviderRequest represents the request to create a provider.
 type CreateProviderRequest struct {
-	ID             string       `json:"id"`
-	Name           string       `json:"name"`
-	BaseURL        string       `json:"base_url"`
-	APIKey         string       `json:"api_key"`
-	APITypes       []string     `json:"api_types"`
-	AuthMode       string       `json:"auth_mode"`
-	GroupID        *string      `json:"group_id"`
-	Weight         int          `json:"weight"`
-	Priority       int          `json:"priority"`
-	Concurrency    int          `json:"concurrency"`
-	MaxRetries     *int         `json:"max_retries"` // Pointer to distinguish unset (nil) from explicit 0
-	Vendor         string       `json:"vendor"`
-	FailoverScope  *model.Scope `json:"failover_scope"`  // Pointer to distinguish unset (nil) from explicit empty
-	AcceptFailover *model.Scope `json:"accept_failover"` // Pointer to distinguish unset (nil) from explicit empty
-	Enabled        *bool        `json:"enabled"`
+	ID             string               `json:"id"`
+	Name           string               `json:"name"`
+	BaseURL        string               `json:"base_url"`
+	APIKey         string               `json:"api_key"`
+	APITypes       []string             `json:"api_types"`
+	AuthMode       string               `json:"auth_mode"`
+	GroupID        *string              `json:"group_id"`
+	Weight         int                  `json:"weight"`
+	Priority       int                  `json:"priority"`
+	Concurrency    int                  `json:"concurrency"`
+	MaxRetries     *int                 `json:"max_retries"` // Pointer to distinguish unset (nil) from explicit 0
+	Backoff        *model.BackoffPolicy `json:"backoff"`     // Exponential backoff for same-provider retries
+	Vendor         string               `json:"vendor"`
+	FailoverScope  *model.Scope         `json:"failover_scope"`  // Pointer to distinguish unset (nil) from explicit empty
+	AcceptFailover *model.Scope         `json:"accept_failover"` // Pointer to distinguish unset (nil) from explicit empty
+	Enabled        *bool                `json:"enabled"`
+}
+
+// validate checks that all required fields are present and all provided fields have valid values.
+// Returns an error message if validation fails, empty string otherwise.
+func (req *CreateProviderRequest) validate() string {
+	if req.ID == "" {
+		return "Provider ID is required"
+	}
+	if req.Name == "" {
+		return "Provider name is required"
+	}
+	if req.BaseURL == "" {
+		return "Provider base_url is required"
+	}
+	if req.APIKey == "" {
+		return "Provider api_key is required"
+	}
+	if len(req.APITypes) == 0 {
+		return "At least one api_type is required"
+	}
+	for _, apiType := range req.APITypes {
+		if !IsValidAPIType(apiType) {
+			return "Invalid api_type: " + apiType
+		}
+	}
+	if req.MaxRetries != nil && *req.MaxRetries < 0 {
+		return "MaxRetries must be non-negative"
+	}
+	if req.Backoff != nil {
+		if err := req.Backoff.Validate(); err != nil {
+			return "Invalid backoff: " + err.Error()
+		}
+	}
+	if req.FailoverScope != nil && !model.IsValidScope(*req.FailoverScope) {
+		return "Invalid failover_scope: must be 'none', 'vendor', or 'any'"
+	}
+	if req.AcceptFailover != nil && !model.IsValidScope(*req.AcceptFailover) {
+		return "Invalid accept_failover: must be 'none', 'vendor', or 'any'"
+	}
+	if req.AuthMode != "" && !IsValidAuthMode(req.AuthMode) {
+		return "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'"
+	}
+	return ""
+}
+
+// toProvider converts the request to a Provider model with appropriate defaults applied.
+func (req *CreateProviderRequest) toProvider() *model.Provider {
+	apiTypes := make([]model.ProviderAPIType, len(req.APITypes))
+	for i, at := range req.APITypes {
+		apiTypes[i] = model.ProviderAPIType{
+			ProviderID: req.ID,
+			APIType:    at,
+		}
+	}
+
+	provider := &model.Provider{
+		ID:             req.ID,
+		Name:           req.Name,
+		BaseURL:        req.BaseURL,
+		APIKey:         req.APIKey,
+		APITypes:       apiTypes,
+		AuthMode:       req.AuthMode,
+		GroupID:        req.GroupID,
+		Weight:         req.Weight,
+		Priority:       req.Priority,
+		Concurrency:    req.Concurrency,
+		MaxRetries:     DefaultProviderMaxRetries,
+		Backoff:        model.BackoffPolicy{},
+		Vendor:         req.Vendor,
+		FailoverScope:  model.ScopeAny,
+		AcceptFailover: model.ScopeAny,
+		Enabled:        true,
+	}
+
+	// Apply explicit values where provided
+	if req.Enabled != nil {
+		provider.Enabled = *req.Enabled
+	}
+	if req.MaxRetries != nil {
+		provider.MaxRetries = *req.MaxRetries
+	}
+	if req.FailoverScope != nil {
+		provider.FailoverScope = *req.FailoverScope
+	}
+	if req.AcceptFailover != nil {
+		provider.AcceptFailover = *req.AcceptFailover
+	}
+	if req.Backoff != nil {
+		provider.Backoff = *req.Backoff
+	}
+	if provider.Weight <= 0 {
+		provider.Weight = DefaultWeight
+	}
+	if provider.AuthMode == "" {
+		provider.AuthMode = DefaultAuthMode
+	}
+
+	return provider
 }
 
 // CreateProvider handles POST /admin/api/providers.
@@ -112,42 +211,8 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ID == "" {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Provider ID is required")
-		return
-	}
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Provider name is required")
-		return
-	}
-	if req.BaseURL == "" {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Provider base_url is required")
-		return
-	}
-	if req.APIKey == "" {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Provider api_key is required")
-		return
-	}
-	if len(req.APITypes) == 0 {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "At least one api_type is required")
-		return
-	}
-	for _, apiType := range req.APITypes {
-		if !IsValidAPIType(apiType) {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid api_type: "+apiType)
-			return
-		}
-	}
-	if req.MaxRetries != nil && *req.MaxRetries < 0 {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "MaxRetries must be non-negative")
-		return
-	}
-	if req.FailoverScope != nil && !model.IsValidScope(*req.FailoverScope) {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid failover_scope: must be 'none', 'vendor', or 'any'")
-		return
-	}
-	if req.AcceptFailover != nil && !model.IsValidScope(*req.AcceptFailover) {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid accept_failover: must be 'none', 'vendor', or 'any'")
+	if errMsg := req.validate(); errMsg != "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
 		return
 	}
 
@@ -163,64 +228,7 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build provider model
-	apiTypes := make([]model.ProviderAPIType, len(req.APITypes))
-	for i, at := range req.APITypes {
-		apiTypes[i] = model.ProviderAPIType{
-			ProviderID: req.ID,
-			APIType:    at,
-		}
-	}
-
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-
-	// Determine MaxRetries value: use explicit value if provided, otherwise default
-	maxRetries := DefaultProviderMaxRetries
-	if req.MaxRetries != nil {
-		maxRetries = *req.MaxRetries
-	}
-
-	// Determine scope values: use explicit value if provided, otherwise default to "any"
-	failoverScope := model.ScopeAny
-	if req.FailoverScope != nil {
-		failoverScope = *req.FailoverScope
-	}
-	acceptFailover := model.ScopeAny
-	if req.AcceptFailover != nil {
-		acceptFailover = *req.AcceptFailover
-	}
-
-	provider := &model.Provider{
-		ID:             req.ID,
-		Name:           req.Name,
-		BaseURL:        req.BaseURL,
-		APIKey:         req.APIKey,
-		APITypes:       apiTypes,
-		AuthMode:       req.AuthMode,
-		GroupID:        req.GroupID,
-		Weight:         req.Weight,
-		Priority:       req.Priority,
-		Concurrency:    req.Concurrency,
-		MaxRetries:     maxRetries,
-		Vendor:         req.Vendor,
-		FailoverScope:  failoverScope,
-		AcceptFailover: acceptFailover,
-		Enabled:        enabled,
-	}
-
-	// Set defaults and validate
-	if provider.Weight <= 0 {
-		provider.Weight = DefaultWeight
-	}
-	if provider.AuthMode == "" {
-		provider.AuthMode = DefaultAuthMode
-	} else if !IsValidAuthMode(provider.AuthMode) {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'")
-		return
-	}
+	provider := req.toProvider()
 
 	// Validate GroupID exists if provided
 	if provider.GroupID != nil {
@@ -250,20 +258,21 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProviderRequest represents the request to update a provider.
 type UpdateProviderRequest struct {
-	Name           *string      `json:"name"`
-	BaseURL        *string      `json:"base_url"`
-	APIKey         *string      `json:"api_key"`
-	APITypes       []string     `json:"api_types"`
-	AuthMode       *string      `json:"auth_mode"`
-	GroupID        *string      `json:"group_id"`
-	Weight         *int         `json:"weight"`
-	Priority       *int         `json:"priority"`
-	Concurrency    *int         `json:"concurrency"`
-	MaxRetries     *int         `json:"max_retries"`
-	Vendor         *string      `json:"vendor"`
-	FailoverScope  *model.Scope `json:"failover_scope"`
-	AcceptFailover *model.Scope `json:"accept_failover"`
-	Enabled        *bool        `json:"enabled"`
+	Name           *string              `json:"name"`
+	BaseURL        *string              `json:"base_url"`
+	APIKey         *string              `json:"api_key"`
+	APITypes       []string             `json:"api_types"`
+	AuthMode       *string              `json:"auth_mode"`
+	GroupID        *string              `json:"group_id"`
+	Weight         *int                 `json:"weight"`
+	Priority       *int                 `json:"priority"`
+	Concurrency    *int                 `json:"concurrency"`
+	MaxRetries     *int                 `json:"max_retries"`
+	Backoff        *model.BackoffPolicy `json:"backoff"` // Exponential backoff for same-provider retries
+	Vendor         *string              `json:"vendor"`
+	FailoverScope  *model.Scope         `json:"failover_scope"`
+	AcceptFailover *model.Scope         `json:"accept_failover"`
+	Enabled        *bool                `json:"enabled"`
 }
 
 // validate checks that all provided fields have valid values.
@@ -297,6 +306,11 @@ func (req *UpdateProviderRequest) validate() string {
 	}
 	if req.AuthMode != nil && !IsValidAuthMode(*req.AuthMode) {
 		return "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'"
+	}
+	if req.Backoff != nil {
+		if err := req.Backoff.Validate(); err != nil {
+			return "Invalid backoff: " + err.Error()
+		}
 	}
 	if req.FailoverScope != nil && !model.IsValidScope(*req.FailoverScope) {
 		return "Invalid failover_scope: must be 'none', 'vendor', or 'any'"
@@ -342,6 +356,9 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 	}
 	if req.MaxRetries != nil {
 		provider.MaxRetries = *req.MaxRetries
+	}
+	if req.Backoff != nil {
+		provider.Backoff = *req.Backoff
 	}
 	if req.Vendor != nil {
 		provider.Vendor = *req.Vendor

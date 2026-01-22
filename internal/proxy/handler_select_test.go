@@ -626,7 +626,7 @@ func TestSelectProviderFallback_NoProviders(t *testing.T) {
 		apiType: "claude",
 	}
 
-	provider, err := handler.selectProviderFallback(ctx, pctx, 0)
+	provider, err := handler.selectProviderFallback(ctx, pctx, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for no providers")
 	}
@@ -658,7 +658,7 @@ func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 	// Make multiple selections and verify round-robin behavior
 	seen := make(map[string]int)
 	for i := 0; i < 9; i++ {
-		provider, err := handler.selectProviderFallback(ctx, pctx, 0)
+		provider, err := handler.selectProviderFallback(ctx, pctx, 0, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -693,13 +693,13 @@ func TestSelectProviderFallback_AttemptOffset(t *testing.T) {
 	}
 
 	// Get first provider
-	p0, _ := handler.selectProviderFallback(ctx, pctx, 0)
+	p0, _ := handler.selectProviderFallback(ctx, pctx, 0, nil)
 
 	// Reset counter to get predictable behavior for test
 	handler.fallbackCounter.Store(0)
 
 	// Get provider with attempt offset
-	p1, _ := handler.selectProviderFallback(ctx, pctx, 1)
+	p1, _ := handler.selectProviderFallback(ctx, pctx, 1, nil)
 
 	// With 2 providers, attempt=0 and attempt=1 should give different providers
 	// when starting from the same counter position
