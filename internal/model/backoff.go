@@ -1,8 +1,10 @@
 package model
 
 import (
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"time"
@@ -33,22 +35,45 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Value implements driver.Valuer so raw SQL and GORM both serialize Duration
+// identically as int64 nanoseconds, eliminating manual int64() casts.
+func (d Duration) Value() (driver.Value, error) {
+	return int64(d), nil
+}
+
+// Scan implements sql.Scanner so GORM can read int64 nanoseconds back into Duration.
+func (d *Duration) Scan(value any) error {
+	if value == nil {
+		*d = 0
+		return nil
+	}
+	switch v := value.(type) {
+	case int64:
+		*d = Duration(v)
+		return nil
+	default:
+		return fmt.Errorf("cannot scan %T into Duration", value)
+	}
+}
+
 // BackoffPolicy defines exponential backoff behavior for same-provider retries.
 // When a provider fails and has retries remaining, this policy controls the
 // delay before each retry attempt.
+// Column names omit the "backoff_" prefix because Provider embeds this struct
+// with gorm:"embeddedPrefix:backoff_" which prepends it automatically.
 type BackoffPolicy struct {
 	// InitialDelay is the base delay for the first retry (e.g., 100ms).
 	// If zero or negative, no backoff is applied.
-	InitialDelay Duration `gorm:"column:backoff_initial_delay" json:"initial_delay"`
+	InitialDelay Duration `gorm:"column:initial_delay" json:"initial_delay"`
 	// MaxDelay caps the maximum delay regardless of retry count (e.g., 5s).
 	// If zero, no maximum is enforced.
-	MaxDelay Duration `gorm:"column:backoff_max_delay" json:"max_delay"`
+	MaxDelay Duration `gorm:"column:max_delay" json:"max_delay"`
 	// Multiplier controls exponential growth. Default is 2.0 if zero.
 	// Must be >= 1.0 to ensure delays don't shrink.
-	Multiplier float64 `gorm:"column:backoff_multiplier" json:"multiplier,omitempty"`
+	Multiplier float64 `gorm:"column:multiplier" json:"multiplier,omitempty"`
 	// Jitter enables Equal Jitter mode: delay becomes random in [base/2, base].
 	// Guarantees at least 50% of calculated delay while preventing thundering herd.
-	Jitter bool `gorm:"column:backoff_jitter" json:"jitter,omitempty"`
+	Jitter bool `gorm:"column:jitter" json:"jitter,omitempty"`
 }
 
 // IsZero reports whether the policy is unconfigured.

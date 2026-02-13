@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useId } from "react";
 import type { FormEvent } from "react";
-import type { Provider, ProviderInput } from "../../api/client";
+import type { Provider, ProviderInput } from "../../api";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { isValidId } from "../../lib/utils";
 import { CloseIcon } from "../../components/icons/CloseIcon";
-import { PROVIDER_DEFAULTS } from "../../config/constants";
+import { PROVIDER_DEFAULTS, FAILOVER_SCOPES } from "../../config/constants";
 
 function ModalHeader({
   title,
@@ -46,9 +46,10 @@ const DEFAULT_FORM_DATA: ProviderInput = {
   priority: PROVIDER_DEFAULTS.PRIORITY,
   concurrency: PROVIDER_DEFAULTS.CONCURRENCY,
   max_retries: PROVIDER_DEFAULTS.MAX_RETRIES,
+  // Default: opt out of vendor isolation so new providers work without failover setup
   vendor: "",
-  failover_scope: "any",
-  accept_failover: "any",
+  failover_scope: FAILOVER_SCOPES.ANY,
+  accept_failover: FAILOVER_SCOPES.ANY,
   enabled: true,
 };
 
@@ -68,8 +69,8 @@ function deriveFormData(initialData?: Provider): ProviderInput {
     max_retries: initialData.max_retries,
     backoff: initialData.backoff,
     vendor: initialData.vendor || "",
-    failover_scope: initialData.failover_scope || "any",
-    accept_failover: initialData.accept_failover || "any",
+    failover_scope: initialData.failover_scope || FAILOVER_SCOPES.ANY,
+    accept_failover: initialData.accept_failover || FAILOVER_SCOPES.ANY,
     enabled: initialData.enabled,
   };
 }

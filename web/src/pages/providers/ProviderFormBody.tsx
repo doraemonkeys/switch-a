@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ProviderInput } from "../../api/client";
+import type { ProviderInput } from "../../api";
 import { FormField } from "./FormField";
 import {
   ApiTypesField,
@@ -11,6 +11,7 @@ import {
   ApiKeyField,
 } from "./BasicFormFields";
 import { FailoverSection } from "./FailoverFields";
+import { hasFailoverConfig } from "./failoverConfig";
 import { BackoffSection } from "./BackoffFields";
 import { slugify, isValidId } from "../../lib/utils";
 import { PROVIDER_DEFAULTS } from "../../config/constants";
@@ -62,9 +63,7 @@ export function ProviderFormBody({
   } = idState;
   const [showApiKey, setShowApiKey] = useState(false);
   const [failoverExpanded, setFailoverExpanded] = useState(
-    Boolean(
-      formData.vendor || formData.failover_scope || formData.accept_failover,
-    ),
+    hasFailoverConfig(formData),
   );
   // Auto-expand backoff section when max_retries > 0 and backoff is configured
   const [backoffExpanded, setBackoffExpanded] = useState(

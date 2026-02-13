@@ -96,9 +96,9 @@ type CreateProviderRequest struct {
 	Weight         int                  `json:"weight"`
 	Priority       int                  `json:"priority"`
 	Concurrency    int                  `json:"concurrency"`
-	MaxRetries     *int                 `json:"max_retries"` // Pointer to distinguish unset (nil) from explicit 0
-	Backoff        *model.BackoffPolicy `json:"backoff"`     // Exponential backoff for same-provider retries
-	Vendor         string               `json:"vendor"`
+	MaxRetries     *int                 `json:"max_retries"`     // Pointer to distinguish unset (nil) from explicit 0
+	Backoff        *model.BackoffPolicy `json:"backoff"`         // Exponential backoff for same-provider retries
+	Vendor         string               `json:"vendor"`          // Empty = no isolation, "*" = wildcard (see model.Provider.Vendor)
 	FailoverScope  *model.Scope         `json:"failover_scope"`  // Pointer to distinguish unset (nil) from explicit empty
 	AcceptFailover *model.Scope         `json:"accept_failover"` // Pointer to distinguish unset (nil) from explicit empty
 	Enabled        *bool                `json:"enabled"`

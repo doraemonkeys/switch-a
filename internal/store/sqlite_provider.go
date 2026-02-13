@@ -66,9 +66,19 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 		}
 
 		if err := tx.Exec(`
-			INSERT INTO providers (id, name, base_url, api_key, auth_mode, group_id, weight, priority, concurrency, max_retries, vendor, failover_scope, accept_failover, enabled, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, p.ID, p.Name, p.BaseURL, p.APIKey, p.AuthMode, p.GroupID, p.Weight, p.Priority, p.Concurrency, p.MaxRetries, p.Vendor, failoverScope, acceptFailover, p.Enabled, p.CreatedAt, p.UpdatedAt).Error; err != nil { // coverage-ignore -- INSERT rarely fails with valid data
+			INSERT INTO providers (
+				id, name, base_url, api_key, auth_mode, group_id,
+				weight, priority, concurrency, max_retries,
+				backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter,
+				vendor, failover_scope, accept_failover,
+				enabled, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, p.Name, p.BaseURL, p.APIKey, p.AuthMode, p.GroupID,
+			p.Weight, p.Priority, p.Concurrency, p.MaxRetries,
+			p.Backoff.InitialDelay, p.Backoff.MaxDelay, p.Backoff.Multiplier, p.Backoff.Jitter,
+			p.Vendor, failoverScope, acceptFailover,
+			p.Enabled, p.CreatedAt, p.UpdatedAt,
+		).Error; err != nil { // coverage-ignore -- INSERT rarely fails with valid data
 			return err
 		}
 		// Create API types separately

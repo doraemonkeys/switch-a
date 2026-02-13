@@ -7,6 +7,7 @@ import {
   VENDOR_WILDCARD,
 } from "../../config/constants";
 import { FormField } from "./FormField";
+import { hasFailoverConfig } from "./failoverConfig";
 
 interface VendorFieldProps {
   value: string;
@@ -178,12 +179,7 @@ export function FailoverSection({
   onToggle,
 }: FailoverSectionProps) {
   const contentId = useId();
-  const hasConfig =
-    formData.vendor ||
-    (formData.failover_scope &&
-      formData.failover_scope !== FAILOVER_SCOPES.ANY) ||
-    (formData.accept_failover &&
-      formData.accept_failover !== FAILOVER_SCOPES.ANY);
+  const hasConfig = hasFailoverConfig(formData);
 
   return (
     <div className="border border-border rounded-lg overflow-hidden">
