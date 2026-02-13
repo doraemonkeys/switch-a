@@ -29,7 +29,7 @@ check-go-env:
 				echo "❌ Go environment issue detected in current terminal"; \
 				echo ""; \
 				echo "💡 Recommended: Run with PowerShell:"; \
-				echo "   powershell.exe -Command \"cd '$$(pwd -W)'; make ci\""; \
+				echo "   pwsh -Command \"cd '$$(pwd -W)'; make ci\""; \
 				echo ""; \
 				exit 1; \
 			fi \
@@ -44,7 +44,7 @@ ci: check-go-env
 	@golangci-lint run
 	@sloc-guard -q check
 	@cd web && pnpm test:coverage --silent
-	@cd web && npx tsc --noEmit -p tsconfig.app.json
+	@cd web && pnpm exec tsc --noEmit -p tsconfig.app.json
 	@cd web && pnpm lint --quiet
 
 # 正常模式
@@ -107,4 +107,4 @@ web-coverage:
 	cd web && pnpm test:coverage
 
 web-tsc:
-	cd web && npx tsc --noEmit -p tsconfig.app.json
+	cd web && pnpm exec tsc --noEmit -p tsconfig.app.json
