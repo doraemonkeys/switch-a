@@ -15,10 +15,11 @@ import (
 	"switch-a/internal/model"
 )
 
-// trackingHealthManager tracks calls to MarkFailure for testing.
+// trackingHealthManager tracks calls to MarkFailure and MarkSuccess for testing.
 type trackingHealthManager struct {
 	mu               sync.Mutex
 	markFailureCalls []markFailureCall
+	markSuccessIDs   []string
 	available        map[string]bool
 }
 
@@ -33,7 +34,11 @@ func newTrackingHealthManager() *trackingHealthManager {
 	}
 }
 
-func (m *trackingHealthManager) MarkSuccess(_ context.Context, _ string) {}
+func (m *trackingHealthManager) MarkSuccess(_ context.Context, providerID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.markSuccessIDs = append(m.markSuccessIDs, providerID)
+}
 
 func (m *trackingHealthManager) MarkFailure(_ context.Context, providerID string, err error) bool {
 	m.mu.Lock()
@@ -71,6 +76,14 @@ func (m *trackingHealthManager) getMarkFailureCalls() []markFailureCall {
 	defer m.mu.Unlock()
 	result := make([]markFailureCall, len(m.markFailureCalls))
 	copy(result, m.markFailureCalls)
+	return result
+}
+
+func (m *trackingHealthManager) getMarkSuccessIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]string, len(m.markSuccessIDs))
+	copy(result, m.markSuccessIDs)
 	return result
 }
 
@@ -326,4 +339,122 @@ func TestUpstream5xx_TriggerCircuitBreaker(t *testing.T) {
 	if len(calls) == 0 {
 		t.Error("MarkFailure SHOULD be called for upstream 5xx errors")
 	}
+}
+
+// TestClientDisconnectDuringSSE_MarksSuccessAndNoError verifies that when a client
+// disconnects mid-SSE-stream, the upstream 200 is still counted as a success:
+//   - markSuccess is called (not markFailure) — circuit breaker stays accurate
+//   - No error_msg is written to the request log — dashboard shows clean history
+//   - success=true in the log — consistent with the upstream actually succeeding
+func TestClientDisconnectDuringSSE_MarksSuccessAndNoError(t *testing.T) {
+	serverDone := make(chan struct{})
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
+		flusher.Flush()
+		// Block until test signals — simulates upstream still streaming
+		<-serverDone
+	}))
+	defer func() {
+		close(serverDone)
+		upstreamServer.Close()
+	}()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p1",
+			Name:     "Test Provider",
+			APIKey:   "test-key",
+			Enabled:  true,
+			AuthMode: "bearer",
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
+		},
+	}
+
+	healthManager := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Health: healthManager,
+		Logger: zap.NewNop(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test","stream":true}`))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Use a ResponseWriter that signals when the proxy writes SSE data to the client.
+	// This guarantees we cancel AFTER FetchUpstream succeeded and streaming started,
+	// so we hit the writeErr path (not the FetchUpstream error path).
+	clientGotData := make(chan struct{}, 1)
+	nw := &notifyingResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		onWrite:          func() { clientGotData <- struct{}{} },
+	}
+
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(nw, req)
+		close(done)
+	}()
+
+	// Wait for data to flow through the proxy to the client, then disconnect
+	select {
+	case <-clientGotData:
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for SSE data to reach client")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for handler to complete")
+	}
+
+	// markFailure must NOT be called
+	failCalls := healthManager.getMarkFailureCalls()
+	if len(failCalls) > 0 {
+		t.Errorf("MarkFailure should NOT be called on client disconnect, got %d calls", len(failCalls))
+	}
+
+	// markSuccess MUST be called — upstream returned 200
+	successIDs := healthManager.getMarkSuccessIDs()
+	if len(successIDs) == 0 {
+		t.Error("MarkSuccess should be called when upstream returned 200 and client disconnected")
+	}
+
+	// Log must record success with no error message
+	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
+	log := store.LastLog()
+	if !log.Success {
+		t.Error("log.Success should be true for client disconnect on 200 upstream")
+	}
+	if log.ErrorMsg != "" {
+		t.Errorf("log.ErrorMsg should be empty for client disconnect, got %q", log.ErrorMsg)
+	}
+}
+
+// notifyingResponseWriter wraps httptest.ResponseRecorder and calls onWrite
+// (once) when the first body data is written. This lets tests synchronize on
+// the proxy actually streaming data to the client, avoiding races where
+// cancel() fires before FetchUpstream completes.
+type notifyingResponseWriter struct {
+	*httptest.ResponseRecorder
+	onWrite func()
+	once    sync.Once
+}
+
+func (n *notifyingResponseWriter) Write(p []byte) (int, error) {
+	n.once.Do(n.onWrite)
+	return n.ResponseRecorder.Write(p)
+}
+
+// Flush delegates to the inner recorder so forwardSSE detects Flusher support.
+func (n *notifyingResponseWriter) Flush() {
+	n.ResponseRecorder.Flush()
 }

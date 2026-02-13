@@ -732,23 +732,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	result.responseBytes = wrappedWriter.bytesWritten
 
 	if writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
-		h.logger.Warn("failed to write response to client",
-			zap.String("provider_id", provider.ID),
-			zap.Error(writeErr),
-		)
-		result.err = writeErr
-		result.success = false
-
-		// Check if this is an upstream error (not a client disconnect).
-		// These errors indicate problems with the upstream provider and should
-		// trigger circuit breaker to avoid routing to problematic providers:
-		// - ErrReadTimeout/ErrSSEIdleTimeout: upstream stopped sending data
-		// - UpstreamReadError: upstream connection reset, unexpected EOF, etc.
-		if errors.Is(writeErr, ErrReadTimeout) || errors.Is(writeErr, ErrSSEIdleTimeout) || IsUpstreamReadError(writeErr) {
-			h.markFailure(ctx, provider.ID, writeErr)
-		}
-		// For other write errors (e.g., client disconnected), we don't markFailure
-		// as the upstream itself succeeded; only the client write failed.
+		h.handleWriteError(ctx, writeErr, provider.ID, &result)
 		return result
 	}
 
@@ -780,4 +764,40 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	}
 
 	return result
+}
+
+// handleWriteError classifies a write error and updates the result accordingly. // coverage-ignore
+func (h *Handler) handleWriteError(ctx context.Context, writeErr error, providerID string, result *forwardResult) {
+	// Distinguish client disconnect from real errors.
+	// Client disconnect (context.Canceled) is normal — the upstream succeeded,
+	// so we should not log it as a warning or record it as an error.
+	clientDisconnect := ctx.Err() != nil
+
+	if clientDisconnect {
+		h.logger.Debug("client disconnected during response streaming",
+			zap.String("provider_id", providerID),
+		)
+	} else {
+		h.logger.Warn("failed to write response to client",
+			zap.String("provider_id", providerID),
+			zap.Error(writeErr),
+		)
+		result.err = writeErr
+	}
+
+	// Upstream errors indicate problems with the provider and should
+	// trigger circuit breaker to avoid routing to problematic providers.
+	switch {
+	case errors.Is(writeErr, ErrReadTimeout) || errors.Is(writeErr, ErrSSEIdleTimeout) || IsUpstreamReadError(writeErr):
+		result.success = false
+		h.markFailure(ctx, providerID, writeErr)
+	case clientDisconnect && result.statusCode < defaults.StatusClientError:
+		// Client disconnected but upstream returned 2xx — count as success.
+		result.success = true
+		h.markSuccess(ctx, providerID)
+	default:
+		// Other write errors (e.g., client disconnected with non-2xx) — don't markFailure
+		// as the upstream itself succeeded; only the client write failed.
+		result.success = false
+	}
 }
