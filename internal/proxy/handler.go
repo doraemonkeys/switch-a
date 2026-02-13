@@ -606,7 +606,7 @@ func (h *Handler) extractTokenUsage(statusCode int, interceptor ResponseIntercep
 	}
 
 	usage, complete := interceptor.Result()
-	if complete && usage != nil {
+	if usage != nil {
 		return usage
 	}
 	if !complete {
