@@ -79,7 +79,7 @@ func (p *Provider) BaseURLForAPIType(apiType string) string {
 type ProviderAPIType struct {
 	ProviderID string `gorm:"primaryKey" json:"provider_id"`
 	APIType    string `gorm:"primaryKey;index" json:"api_type"`
-	BaseURL    string `gorm:"not null" json:"base_url"`
+	BaseURL    string `gorm:"not null;default:''" json:"base_url"`
 }
 
 // Group represents a provider group configuration.
