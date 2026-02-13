@@ -1,3 +1,17 @@
+import type { APITypeInput } from "../../api";
+
+/** Tracked entry pairs a stable client-side key with the actual input data. */
+export interface TrackedAPITypeEntry {
+  clientKey: string;
+  data: APITypeInput;
+}
+
+let nextClientKey = 0;
+/** Generate a unique client-side key for stable React reconciliation. */
+export function generateClientKey(): string {
+  return `apitype-${++nextClientKey}`;
+}
+
 export type ProviderStatusType =
   | "healthy"
   | "unhealthy"

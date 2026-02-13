@@ -8,9 +8,14 @@ import type { ApiClient, Provider } from "../api/client";
 const mockProvider: Provider = {
   id: "1",
   name: "OpenAI",
-  base_url: "https://api.openai.com",
   api_key: "sk-xxx",
-  api_types: [{ provider_id: "1", api_type: "claude" }],
+  api_types: [
+    {
+      provider_id: "1",
+      api_type: "claude",
+      base_url: "https://api.openai.com",
+    },
+  ],
   auth_mode: "bearer",
   group_id: null,
   weight: 1,
@@ -140,9 +145,8 @@ describe("useProviders", () => {
 
     const input = {
       name: "New",
-      base_url: "https://new.example.com",
       api_key: "key",
-      api_types: ["claude"],
+      api_types: [{ api_type: "claude", base_url: "https://new.example.com" }],
     };
     await act(async () => {
       await result.current.createProvider(input);
@@ -163,9 +167,10 @@ describe("useProviders", () => {
 
     const input = {
       name: "Updated",
-      base_url: "https://updated.example.com",
       api_key: "key",
-      api_types: ["claude"],
+      api_types: [
+        { api_type: "claude", base_url: "https://updated.example.com" },
+      ],
     };
     await act(async () => {
       await result.current.updateProvider("1", input);

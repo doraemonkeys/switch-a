@@ -59,9 +59,8 @@ func TestGetProvider(t *testing.T) {
 	h, st, _ := testHandler()
 
 	st.providers["test-provider"] = &model.Provider{
-		ID:      "test-provider",
-		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
+		ID:   "test-provider",
+		Name: "Test Provider",
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/providers/test-provider", nil)
@@ -132,9 +131,8 @@ func TestCreateProvider(t *testing.T) {
 	body := `{
 		"id": "new-provider",
 		"name": "New Provider",
-		"base_url": "https://api.example.com",
 		"api_key": "sk-test-key",
-		"api_types": ["claude"]
+		"api_types": [{"api_type": "claude", "base_url": "https://api.example.com"}]
 	}`
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(body))
@@ -159,13 +157,15 @@ func TestCreateProvider_ValidationErrors(t *testing.T) {
 		name string
 		body string
 	}{
-		{"missing id", `{"name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"]}`},
-		{"missing name", `{"id": "test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"]}`},
-		{"missing base_url", `{"id": "test", "name": "Test", "api_key": "key", "api_types": ["claude"]}`},
-		{"missing api_key", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_types": ["claude"]}`},
-		{"missing api_types", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key"}`},
-		{"empty api_types", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": []}`},
-		{"negative max_retries", `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "max_retries": -2}`},
+		{"missing id", `{"name": "Test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "https://api.com"}]}`},
+		{"missing name", `{"id": "test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "https://api.com"}]}`},
+		{"missing api_key", `{"id": "test", "name": "Test", "api_types": [{"api_type": "claude", "base_url": "https://api.com"}]}`},
+		{"missing api_types", `{"id": "test", "name": "Test", "api_key": "key"}`},
+		{"empty api_types", `{"id": "test", "name": "Test", "api_key": "key", "api_types": []}`},
+		{"missing base_url in api_type", `{"id": "test", "name": "Test", "api_key": "key", "api_types": [{"api_type": "claude"}]}`},
+		{"invalid base_url (no scheme)", `{"id": "test", "name": "Test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "not-a-url"}]}`},
+		{"invalid base_url (no host)", `{"id": "test", "name": "Test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "http://"}]}`},
+		{"negative max_retries", `{"id": "test", "name": "Test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "https://api.com"}], "max_retries": -2}`},
 	}
 
 	for _, tt := range tests {
@@ -205,9 +205,8 @@ func TestCreateProvider_Conflict(t *testing.T) {
 	body := `{
 		"id": "existing",
 		"name": "New Provider",
-		"base_url": "https://api.example.com",
 		"api_key": "sk-test-key",
-		"api_types": ["claude"]
+		"api_types": [{"api_type": "claude", "base_url": "https://api.example.com"}]
 	}`
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(body))
@@ -228,9 +227,8 @@ func TestCreateProvider_CreateError(t *testing.T) {
 	body := `{
 		"id": "new-provider",
 		"name": "New Provider",
-		"base_url": "https://api.example.com",
 		"api_key": "sk-test-key",
-		"api_types": ["claude"]
+		"api_types": [{"api_type": "claude", "base_url": "https://api.example.com"}]
 	}`
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(body))
@@ -251,9 +249,8 @@ func TestCreateProvider_GetCheckError(t *testing.T) {
 	body := `{
 		"id": "new-provider",
 		"name": "New Provider",
-		"base_url": "https://api.example.com",
 		"api_key": "sk-test-key",
-		"api_types": ["claude"]
+		"api_types": [{"api_type": "claude", "base_url": "https://api.example.com"}]
 	}`
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(body))
@@ -273,9 +270,8 @@ func TestCreateProvider_WithEnabled(t *testing.T) {
 	body := `{
 		"id": "new-provider",
 		"name": "New Provider",
-		"base_url": "https://api.example.com",
 		"api_key": "sk-test-key",
-		"api_types": ["claude"],
+		"api_types": [{"api_type": "claude", "base_url": "https://api.example.com"}],
 		"enabled": false
 	}`
 
@@ -300,9 +296,8 @@ func TestCreateProvider_WithBackoff(t *testing.T) {
 	body := `{
 		"id": "new-provider",
 		"name": "New Provider",
-		"base_url": "https://api.example.com",
 		"api_key": "sk-test-key",
-		"api_types": ["claude"],
+		"api_types": [{"api_type": "claude", "base_url": "https://api.example.com"}],
 		"backoff": {
 			"initial_delay": "100ms",
 			"max_delay": "5s",
@@ -343,15 +338,15 @@ func TestCreateProvider_BackoffValidationErrors(t *testing.T) {
 	}{
 		{
 			name: "negative initial_delay",
-			body: `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "backoff": {"initial_delay": "-1s"}}`,
+			body: `{"id": "test", "name": "Test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "https://api.com"}], "backoff": {"initial_delay": "-1s"}}`,
 		},
 		{
 			name: "initial_delay exceeds max_delay",
-			body: `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "backoff": {"initial_delay": "10s", "max_delay": "1s"}}`,
+			body: `{"id": "test", "name": "Test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "https://api.com"}], "backoff": {"initial_delay": "10s", "max_delay": "1s"}}`,
 		},
 		{
 			name: "multiplier less than 1",
-			body: `{"id": "test", "name": "Test", "base_url": "https://api.com", "api_key": "key", "api_types": ["claude"], "backoff": {"initial_delay": "100ms", "multiplier": 0.5}}`,
+			body: `{"id": "test", "name": "Test", "api_key": "key", "api_types": [{"api_type": "claude", "base_url": "https://api.com"}], "backoff": {"initial_delay": "100ms", "multiplier": 0.5}}`,
 		},
 	}
 
@@ -378,7 +373,6 @@ func TestUpdateProvider(t *testing.T) {
 	st.providers["test-provider"] = &model.Provider{
 		ID:       "test-provider",
 		Name:     "Old Name",
-		BaseURL:  "https://old.api.com",
 		APIKey:   "old-key",
 		Weight:   1,
 		Priority: 0,
@@ -528,7 +522,6 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	st.providers["test"] = &model.Provider{
 		ID:          "test",
 		Name:        "Old Name",
-		BaseURL:     "https://old.api.com",
 		APIKey:      "old-key",
 		AuthMode:    "bearer",
 		GroupID:     nil,
@@ -537,13 +530,13 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 		Concurrency: 0,
 		MaxRetries:  0,
 		Enabled:     true,
+		APITypes:    []model.ProviderAPIType{{ProviderID: "test", APIType: "claude", BaseURL: "https://old.api.com"}},
 	}
 
 	body := `{
 		"name": "New Name",
-		"base_url": "https://new.api.com",
 		"api_key": "new-key",
-		"api_types": ["claude", "codex"],
+		"api_types": [{"api_type": "claude", "base_url": "https://new.api.com"}, {"api_type": "codex", "base_url": "https://new.api.com"}],
 		"auth_mode": "x-api-key",
 		"group_id": "group-1",
 		"weight": 5,
@@ -567,9 +560,6 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	updated := st.providers["test"]
 	if updated.Name != "New Name" {
 		t.Errorf("Name = %q, want %q", updated.Name, "New Name")
-	}
-	if updated.BaseURL != "https://new.api.com" {
-		t.Errorf("BaseURL = %q, want %q", updated.BaseURL, "https://new.api.com")
 	}
 	if updated.APIKey != "new-key" {
 		t.Errorf("APIKey = %q, want %q", updated.APIKey, "new-key")
@@ -606,7 +596,6 @@ func TestUpdateProvider_WithBackoff(t *testing.T) {
 	st.providers["test"] = &model.Provider{
 		ID:      "test",
 		Name:    "Test",
-		BaseURL: "https://api.com",
 		APIKey:  "key",
 		Backoff: model.BackoffPolicy{},
 	}
@@ -672,7 +661,7 @@ func TestUpdateProvider_BackoffValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h, st, _ := testHandler()
-			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", BaseURL: "https://api.com", APIKey: "key"}
+			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", APIKey: "key"}
 
 			req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(tt.body))
 			setPathValue(req, "id", "test")
@@ -701,11 +690,6 @@ func TestUpdateProvider_ValidationErrors(t *testing.T) {
 			name:    "empty name",
 			body:    `{"name": ""}`,
 			wantMsg: "Name cannot be empty",
-		},
-		{
-			name:    "empty base_url",
-			body:    `{"base_url": ""}`,
-			wantMsg: "BaseURL cannot be empty",
 		},
 		{
 			name:    "empty api_key",
@@ -737,12 +721,22 @@ func TestUpdateProvider_ValidationErrors(t *testing.T) {
 			body:    `{"max_retries": -1}`,
 			wantMsg: "MaxRetries must be non-negative",
 		},
+		{
+			name:    "invalid base_url in api_type (no scheme)",
+			body:    `{"api_types": [{"api_type": "claude", "base_url": "not-a-url"}]}`,
+			wantMsg: "Invalid base_url for api_type",
+		},
+		{
+			name:    "invalid base_url in api_type (no host)",
+			body:    `{"api_types": [{"api_type": "claude", "base_url": "http://"}]}`,
+			wantMsg: "Invalid base_url for api_type",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h, st, _ := testHandler()
-			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", BaseURL: "https://api.com", APIKey: "key"}
+			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", APIKey: "key"}
 
 			req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(tt.body))
 			setPathValue(req, "id", "test")

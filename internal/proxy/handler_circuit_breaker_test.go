@@ -104,10 +104,10 @@ func TestContextCancellation_DoesNotTriggerCircuitBreaker(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  upstreamServer.URL,
 			APIKey:   "test-key",
 			Enabled:  true,
 			AuthMode: "bearer",
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 
@@ -192,10 +192,10 @@ func TestDeadlineExceeded_DoesNotTriggerCircuitBreaker(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  upstreamServer.URL,
 			APIKey:   "test-key",
 			Enabled:  true,
 			AuthMode: "bearer",
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 
@@ -246,10 +246,10 @@ func TestUpstreamNetworkError_TriggerCircuitBreaker(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  serverURL, // Server that refuses connections
 			APIKey:   "test-key",
 			Enabled:  true,
 			AuthMode: "bearer",
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: serverURL}},
 		},
 	}
 
@@ -294,10 +294,10 @@ func TestUpstream5xx_TriggerCircuitBreaker(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  upstreamServer.URL,
 			APIKey:   "test-key",
 			Enabled:  true,
 			AuthMode: "bearer",
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 

@@ -11,9 +11,8 @@ func TestProvider_JSON(t *testing.T) {
 	p := Provider{
 		ID:       "p1",
 		Name:     "Test Provider",
-		BaseURL:  "https://api.example.com",
 		APIKey:   "key123",
-		APITypes: []ProviderAPIType{{ProviderID: "p1", APIType: "claude"}},
+		APITypes: []ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"}},
 		AuthMode: "bearer",
 		GroupID:  &groupID,
 		Enabled:  true,
@@ -38,6 +37,7 @@ func TestProviderAPIType_JSON(t *testing.T) {
 	pat := ProviderAPIType{
 		ProviderID: "p1",
 		APIType:    "claude",
+		BaseURL:    "https://api.example.com",
 	}
 
 	data, err := json.Marshal(pat)
@@ -50,7 +50,7 @@ func TestProviderAPIType_JSON(t *testing.T) {
 		t.Fatalf("unmarshal error: %v", err)
 	}
 
-	if pat2.ProviderID != pat.ProviderID || pat2.APIType != pat.APIType {
+	if pat2.ProviderID != pat.ProviderID || pat2.APIType != pat.APIType || pat2.BaseURL != pat.BaseURL {
 		t.Errorf("round-trip failed: got %+v", pat2)
 	}
 }
@@ -210,6 +210,35 @@ func TestStickyKey(t *testing.T) {
 
 	if k.IP != "192.168.1.1" {
 		t.Errorf("IP = %q, want %q", k.IP, "192.168.1.1")
+	}
+}
+
+func TestProvider_BaseURLForAPIType(t *testing.T) {
+	p := Provider{
+		ID: "p1",
+		APITypes: []ProviderAPIType{
+			{ProviderID: "p1", APIType: "claude", BaseURL: "https://claude.example.com"},
+			{ProviderID: "p1", APIType: "codex", BaseURL: "https://codex.example.com"},
+		},
+	}
+
+	// Matching API type returns the corresponding BaseURL.
+	if got := p.BaseURLForAPIType("claude"); got != "https://claude.example.com" {
+		t.Errorf("BaseURLForAPIType(claude) = %q, want %q", got, "https://claude.example.com")
+	}
+	if got := p.BaseURLForAPIType("codex"); got != "https://codex.example.com" {
+		t.Errorf("BaseURLForAPIType(codex) = %q, want %q", got, "https://codex.example.com")
+	}
+
+	// Non-existent API type returns empty string.
+	if got := p.BaseURLForAPIType("gemini"); got != "" {
+		t.Errorf("BaseURLForAPIType(gemini) = %q, want empty", got)
+	}
+
+	// Empty APITypes returns empty string.
+	empty := Provider{ID: "p2"}
+	if got := empty.BaseURLForAPIType("claude"); got != "" {
+		t.Errorf("BaseURLForAPIType on empty provider = %q, want empty", got)
 	}
 }
 

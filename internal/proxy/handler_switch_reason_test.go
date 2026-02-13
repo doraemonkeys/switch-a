@@ -160,22 +160,22 @@ func TestHandler_RecordsSwitchReasonInAttempts(t *testing.T) {
 		{
 			ID:         "p1",
 			Name:       "Provider 1",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key1",
 			AuthMode:   "bearer",
 			Enabled:    true,
 			MaxRetries: 1, // Allow 1 retry (2 attempts total)
 			Priority:   1,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 		{
 			ID:         "p2",
 			Name:       "Provider 2",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key2",
 			AuthMode:   "bearer",
 			Enabled:    true,
 			MaxRetries: 0,
 			Priority:   0, // Lower priority, used after p1 exhausted
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 
@@ -260,22 +260,22 @@ func TestHandler_RecordsPermanentErrorSwitchReason(t *testing.T) {
 				{
 					ID:         "p1",
 					Name:       "Provider 1",
-					BaseURL:    upstreamServer.URL,
 					APIKey:     "key1",
 					AuthMode:   "bearer",
 					Enabled:    true,
 					MaxRetries: 2, // Even with retries, permanent error should switch immediately
 					Priority:   1,
+					APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 				},
 				{
 					ID:         "p2",
 					Name:       "Provider 2",
-					BaseURL:    upstreamServer.URL,
 					APIKey:     "key2",
 					AuthMode:   "bearer",
 					Enabled:    true,
 					MaxRetries: 0,
 					Priority:   0,
+					APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
 				},
 			}
 

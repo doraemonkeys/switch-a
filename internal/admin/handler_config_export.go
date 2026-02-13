@@ -26,21 +26,37 @@ type ExportedConfig struct {
 // ExportedProvider represents a provider in the export format.
 // This is a flattened version without health state or timestamps.
 type ExportedProvider struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	BaseURL        string   `json:"base_url"`
-	APIKey         string   `json:"api_key"`
-	APITypes       []string `json:"api_types"`
-	AuthMode       string   `json:"auth_mode"`
-	GroupID        *string  `json:"group_id,omitempty"`
-	Weight         int      `json:"weight"`
-	Priority       int      `json:"priority"`
-	Concurrency    int      `json:"concurrency"`
-	MaxRetries     int      `json:"max_retries"`
-	Vendor         string   `json:"vendor,omitempty"`
-	FailoverScope  string   `json:"failover_scope,omitempty"`
-	AcceptFailover string   `json:"accept_failover,omitempty"`
-	Enabled        bool     `json:"enabled"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	APIKey         string            `json:"api_key"`
+	APITypes       []ExportedAPIType `json:"api_types"`
+	AuthMode       string            `json:"auth_mode"`
+	GroupID        *string           `json:"group_id,omitempty"`
+	Weight         int               `json:"weight"`
+	Priority       int               `json:"priority"`
+	Concurrency    int               `json:"concurrency"`
+	MaxRetries     int               `json:"max_retries"`
+	Backoff        ExportedBackoff   `json:"backoff,omitempty"`
+	Vendor         string            `json:"vendor,omitempty"`
+	FailoverScope  string            `json:"failover_scope,omitempty"`
+	AcceptFailover string            `json:"accept_failover,omitempty"`
+	Enabled        bool              `json:"enabled"`
+}
+
+// ExportedBackoff represents backoff settings in the export format.
+// Uses raw numeric types instead of model.Duration to keep the export format
+// independent of internal serialization details.
+type ExportedBackoff struct {
+	InitialDelay model.Duration `json:"initial_delay,omitempty"`
+	MaxDelay     model.Duration `json:"max_delay,omitempty"`
+	Multiplier   float64        `json:"multiplier,omitempty"`
+	Jitter       bool           `json:"jitter,omitempty"`
+}
+
+// ExportedAPIType represents an API type with its base URL in the export format.
+type ExportedAPIType struct {
+	APIType string `json:"api_type"`
+	BaseURL string `json:"base_url"`
 }
 
 // ExportedGroup represents a group in the export format.
@@ -132,22 +148,30 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 	// Convert to export format
 	exportedProviders := make([]ExportedProvider, len(providers))
 	for i, p := range providers {
-		apiTypes := make([]string, len(p.APITypes))
+		apiTypes := make([]ExportedAPIType, len(p.APITypes))
 		for j, at := range p.APITypes {
-			apiTypes[j] = at.APIType
+			apiTypes[j] = ExportedAPIType{
+				APIType: at.APIType,
+				BaseURL: at.BaseURL,
+			}
 		}
 		exportedProviders[i] = ExportedProvider{
-			ID:             p.ID,
-			Name:           p.Name,
-			BaseURL:        p.BaseURL,
-			APIKey:         p.APIKey,
-			APITypes:       apiTypes,
-			AuthMode:       p.AuthMode,
-			GroupID:        p.GroupID,
-			Weight:         p.Weight,
-			Priority:       p.Priority,
-			Concurrency:    p.Concurrency,
-			MaxRetries:     p.MaxRetries,
+			ID:          p.ID,
+			Name:        p.Name,
+			APIKey:      p.APIKey,
+			APITypes:    apiTypes,
+			AuthMode:    p.AuthMode,
+			GroupID:     p.GroupID,
+			Weight:      p.Weight,
+			Priority:    p.Priority,
+			Concurrency: p.Concurrency,
+			MaxRetries:  p.MaxRetries,
+			Backoff: ExportedBackoff{
+				InitialDelay: p.Backoff.InitialDelay,
+				MaxDelay:     p.Backoff.MaxDelay,
+				Multiplier:   p.Backoff.Multiplier,
+				Jitter:       p.Backoff.Jitter,
+			},
 			Vendor:         p.Vendor,
 			FailoverScope:  string(p.FailoverScope),
 			AcceptFailover: string(p.AcceptFailover),
@@ -295,9 +319,16 @@ func validateExportedProvider(p *ExportedProvider) []string {
 	if p.Name == "" {
 		warnings = append(warnings, "Provider '"+p.ID+"' has empty name")
 	}
-	for _, apiType := range p.APITypes {
-		if !IsValidAPIType(apiType) {
-			warnings = append(warnings, "Provider '"+p.ID+"' has invalid api_type: "+apiType)
+	for _, at := range p.APITypes {
+		if !IsValidAPIType(at.APIType) {
+			warnings = append(warnings, "Provider '"+p.ID+"' has invalid api_type: "+at.APIType)
+		}
+		if at.BaseURL == "" {
+			warnings = append(warnings, "Provider '"+p.ID+"' has empty base_url for api_type: "+at.APIType)
+		} else if !isValidBaseURL(at.BaseURL) {
+			// Match the same validation used in CRUD handlers to prevent imports
+			// of providers with malformed URLs that would fail at proxy routing time.
+			warnings = append(warnings, "Provider '"+p.ID+"' has malformed base_url for api_type: "+at.APIType)
 		}
 	}
 	if p.AuthMode != "" && !IsValidAuthMode(p.AuthMode) {
@@ -501,7 +532,7 @@ func (h *Handler) importProvider(
 	existingProviders map[string]*model.Provider,
 	validGroups map[string]bool,
 ) (int, int, error) {
-	if p.ID == "" || p.Name == "" || p.BaseURL == "" || p.APIKey == "" {
+	if p.ID == "" || p.Name == "" || p.APIKey == "" {
 		return 0, 0, nil
 	}
 
@@ -528,7 +559,12 @@ func (h *Handler) importProvider(
 // Returns false if the provider is invalid and should be skipped.
 func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (*model.Provider, bool) {
 	// Validate API types
-	validAPITypes := filterValidAPITypes(p.APITypes)
+	var validAPITypes []ExportedAPIType
+	for _, at := range p.APITypes {
+		if IsValidAPIType(at.APIType) && at.BaseURL != "" {
+			validAPITypes = append(validAPITypes, at)
+		}
+	}
 	if len(validAPITypes) == 0 {
 		return nil, false
 	}
@@ -556,7 +592,8 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	for i, at := range validAPITypes {
 		apiTypes[i] = model.ProviderAPIType{
 			ProviderID: p.ID,
-			APIType:    at,
+			APIType:    at.APIType,
+			BaseURL:    at.BaseURL,
 		}
 	}
 
@@ -571,33 +608,27 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	}
 
 	return &model.Provider{
-		ID:             p.ID,
-		Name:           p.Name,
-		BaseURL:        p.BaseURL,
-		APIKey:         p.APIKey,
-		APITypes:       apiTypes,
-		AuthMode:       authMode,
-		GroupID:        groupID,
-		Weight:         weight,
-		Priority:       p.Priority,
-		Concurrency:    p.Concurrency,
-		MaxRetries:     p.MaxRetries,
+		ID:          p.ID,
+		Name:        p.Name,
+		APIKey:      p.APIKey,
+		APITypes:    apiTypes,
+		AuthMode:    authMode,
+		GroupID:     groupID,
+		Weight:      weight,
+		Priority:    p.Priority,
+		Concurrency: p.Concurrency,
+		MaxRetries:  p.MaxRetries,
+		Backoff: model.BackoffPolicy{
+			InitialDelay: p.Backoff.InitialDelay,
+			MaxDelay:     p.Backoff.MaxDelay,
+			Multiplier:   p.Backoff.Multiplier,
+			Jitter:       p.Backoff.Jitter,
+		},
 		Vendor:         p.Vendor,
 		FailoverScope:  failoverScope,
 		AcceptFailover: acceptFailover,
 		Enabled:        p.Enabled,
 	}, true
-}
-
-// filterValidAPITypes filters and returns only valid API types.
-func filterValidAPITypes(apiTypes []string) []string {
-	validAPITypes := make([]string, 0, len(apiTypes))
-	for _, apiType := range apiTypes {
-		if IsValidAPIType(apiType) {
-			validAPITypes = append(validAPITypes, apiType)
-		}
-	}
-	return validAPITypes
 }
 
 // buildValidGroupsMap builds a map of valid group IDs from request and existing groups.

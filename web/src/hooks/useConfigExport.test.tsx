@@ -16,9 +16,8 @@ const mockExportedConfig: ExportedConfig = {
     {
       id: "1",
       name: "Provider 1",
-      base_url: "https://api.example.com",
       api_key: "key-123",
-      api_types: ["claude"],
+      api_types: [{ api_type: "claude", base_url: "https://api.example.com" }],
       auth_mode: "bearer",
       group_id: null,
       weight: 1,

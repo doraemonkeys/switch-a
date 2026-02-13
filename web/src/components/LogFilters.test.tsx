@@ -9,7 +9,6 @@ function createMockProviders(): Provider[] {
     {
       id: "provider-1",
       name: "Provider One",
-      base_url: "https://api.example.com",
       api_key: "key-1",
       api_types: [],
       auth_mode: "bearer",
@@ -28,7 +27,6 @@ function createMockProviders(): Provider[] {
     {
       id: "provider-2",
       name: "Provider Two",
-      base_url: "https://api2.example.com",
       api_key: "key-2",
       api_types: [],
       auth_mode: "bearer",

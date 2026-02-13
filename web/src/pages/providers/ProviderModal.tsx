@@ -37,7 +37,6 @@ function ModalHeader({
 const DEFAULT_FORM_DATA: ProviderInput = {
   id: "",
   name: "",
-  base_url: "",
   api_key: "",
   api_types: [],
   auth_mode: "auto",
@@ -58,9 +57,11 @@ function deriveFormData(initialData?: Provider): ProviderInput {
   return {
     id: initialData.id,
     name: initialData.name,
-    base_url: initialData.base_url,
     api_key: initialData.api_key,
-    api_types: initialData.api_types.map((t) => t.api_type),
+    api_types: initialData.api_types.map((t) => ({
+      api_type: t.api_type,
+      base_url: t.base_url,
+    })),
     auth_mode: initialData.auth_mode || "auto",
     group_id: initialData.group_id,
     weight: initialData.weight,
@@ -73,11 +74,6 @@ function deriveFormData(initialData?: Provider): ProviderInput {
     accept_failover: initialData.accept_failover || FAILOVER_SCOPES.ANY,
     enabled: initialData.enabled,
   };
-}
-
-function deriveApiTypesInput(initialData?: Provider): string {
-  if (!initialData) return "";
-  return initialData.api_types.map((t) => t.api_type).join(", ");
 }
 
 export interface ProviderModalProps {
@@ -99,9 +95,6 @@ export function ProviderModal({
 
   const [formData, setFormData] = useState<ProviderInput>(() =>
     deriveFormData(initialData),
-  );
-  const [apiTypesInput, setApiTypesInput] = useState(() =>
-    deriveApiTypesInput(initialData),
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -150,15 +143,21 @@ export function ProviderModal({
       setIdError("ID can only contain lowercase letters, numbers, and hyphens");
       return;
     }
+
+    // Filter out entries with empty api_type, then validate remaining entries
+    const validApiTypes = formData.api_types.filter((t) => t.api_type.trim());
+    const missingUrl = validApiTypes.find((t) => !t.base_url.trim());
+    if (missingUrl) {
+      setError(`Base URL is required for API type "${missingUrl.api_type}"`);
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
       await onSubmit({
         ...formData,
-        api_types: apiTypesInput
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        api_types: validApiTypes,
       });
       onClose();
     } catch (err) {
@@ -191,8 +190,6 @@ export function ProviderModal({
             formState={{
               data: formData,
               setData: setFormData,
-              apiTypesInput,
-              setApiTypesInput,
             }}
             idState={{
               manuallyEdited: idManuallyEdited,

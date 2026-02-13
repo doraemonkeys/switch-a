@@ -81,9 +81,10 @@ describe("createApiClient config API", () => {
         {
           id: "provider-1",
           name: "OpenAI",
-          base_url: "https://api.openai.com",
           api_key: "sk-***",
-          api_types: ["claude"],
+          api_types: [
+            { api_type: "claude", base_url: "https://api.openai.com" },
+          ],
           auth_mode: "bearer",
           weight: 1,
           priority: 1,
@@ -125,9 +126,10 @@ describe("createApiClient config API", () => {
         {
           id: "provider-1",
           name: "OpenAI",
-          base_url: "https://api.openai.com",
           api_key: "sk-new",
-          api_types: ["claude"],
+          api_types: [
+            { api_type: "claude", base_url: "https://api.openai.com" },
+          ],
           auth_mode: "bearer" as const,
           weight: 1,
           priority: 1,
@@ -172,9 +174,10 @@ describe("createApiClient config API", () => {
         {
           id: "provider-1",
           name: "OpenAI",
-          base_url: "https://api.openai.com",
           api_key: "sk-new",
-          api_types: ["claude"],
+          api_types: [
+            { api_type: "claude", base_url: "https://api.openai.com" },
+          ],
           auth_mode: "bearer" as const,
           weight: 1,
           priority: 1,

@@ -54,9 +54,8 @@ describe("createApiClient providers API", () => {
   it("should create provider", async () => {
     const input = {
       name: "Test",
-      base_url: "https://test.example.com",
       api_key: "key",
-      api_types: ["claude"],
+      api_types: [{ api_type: "claude", base_url: "https://test.example.com" }],
     };
     const created = { id: "1", ...input };
     mockHttpClient.mockResponse({
@@ -80,9 +79,8 @@ describe("createApiClient providers API", () => {
   it("should update provider", async () => {
     const input = {
       name: "Updated",
-      base_url: "https://test.example.com",
       api_key: "key",
-      api_types: ["claude"],
+      api_types: [{ api_type: "claude", base_url: "https://test.example.com" }],
     };
     mockHttpClient.mockResponse({
       ok: true,

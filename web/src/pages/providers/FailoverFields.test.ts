@@ -6,7 +6,6 @@ import { hasFailoverConfig } from "./failoverConfig";
 const BASE_INPUT: ProviderInput = {
   id: "test",
   name: "Test",
-  base_url: "https://example.com",
   api_key: "key",
   api_types: [],
   vendor: "",

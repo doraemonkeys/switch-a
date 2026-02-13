@@ -135,7 +135,6 @@ func TestDeleteGroupClearsProviderReference(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		GroupID: &groupID,
 		Enabled: true,

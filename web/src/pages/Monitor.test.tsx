@@ -34,9 +34,14 @@ const mockProviders: Provider[] = [
   {
     id: "provider-1",
     name: "Anthropic",
-    base_url: "https://api.anthropic.com",
     api_key: "key-1",
-    api_types: [{ provider_id: "provider-1", api_type: "claude" }],
+    api_types: [
+      {
+        provider_id: "provider-1",
+        api_type: "claude",
+        base_url: "https://api.anthropic.com",
+      },
+    ],
     auth_mode: "bearer",
     group_id: null,
     weight: 1,
@@ -53,9 +58,14 @@ const mockProviders: Provider[] = [
   {
     id: "provider-2",
     name: "OpenAI",
-    base_url: "https://api.openai.com",
     api_key: "key-2",
-    api_types: [{ provider_id: "provider-2", api_type: "codex" }],
+    api_types: [
+      {
+        provider_id: "provider-2",
+        api_type: "codex",
+        base_url: "https://api.openai.com",
+      },
+    ],
     auth_mode: "bearer",
     group_id: null,
     weight: 1,

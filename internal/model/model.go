@@ -34,7 +34,6 @@ func IsValidScope(s Scope) bool {
 type Provider struct {
 	ID          string            `gorm:"primaryKey" json:"id"`
 	Name        string            `gorm:"not null" json:"name"`
-	BaseURL     string            `gorm:"not null" json:"base_url"`
 	APIKey      string            `gorm:"not null" json:"api_key"`
 	APITypes    []ProviderAPIType `gorm:"foreignKey:ProviderID" json:"api_types"`
 	AuthMode    string            `gorm:"default:auto" json:"auth_mode"`
@@ -63,10 +62,24 @@ type Provider struct {
 	Health *HealthState `gorm:"-" json:"health,omitempty"`
 }
 
+// BaseURLForAPIType returns the base URL for the given API type.
+// Empty return allows caller to decide failure behavior, since some code paths
+// handle missing API types differently (e.g., admin validation vs proxy routing).
+func (p *Provider) BaseURLForAPIType(apiType string) string {
+	for _, at := range p.APITypes {
+		if at.APIType == apiType {
+			return at.BaseURL
+		}
+	}
+	return ""
+}
+
 // ProviderAPIType represents the association between Provider and API types.
+// Each entry carries its own BaseURL, allowing different endpoints per API type.
 type ProviderAPIType struct {
 	ProviderID string `gorm:"primaryKey" json:"provider_id"`
 	APIType    string `gorm:"primaryKey;index" json:"api_type"`
+	BaseURL    string `gorm:"not null" json:"base_url"`
 }
 
 // Group represents a provider group configuration.

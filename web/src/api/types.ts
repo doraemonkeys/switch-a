@@ -65,16 +65,17 @@ export interface BackoffPolicy {
   jitter?: boolean;
 }
 
-// ProviderAPIType represents the association between Provider and API types
+// ProviderAPIType represents the association between Provider and API types.
+// Each entry carries its own BaseURL, allowing different endpoints per API type.
 export interface ProviderAPIType {
   provider_id: string;
   api_type: string;
+  base_url: string;
 }
 
 export interface Provider {
   id: string;
   name: string;
-  base_url: string;
   api_key: string;
   api_types: ProviderAPIType[];
   auth_mode: AuthMode;
@@ -97,12 +98,17 @@ export interface Provider {
   health?: HealthState | null;
 }
 
+/** API type entry with its base URL, matching backend APITypeInput */
+export interface APITypeInput {
+  api_type: string;
+  base_url: string;
+}
+
 export interface ProviderInput {
   id?: string;
   name: string;
-  base_url: string;
   api_key: string;
-  api_types: string[];
+  api_types: APITypeInput[];
   auth_mode?: AuthMode;
   group_id?: string | null;
   weight?: number;
@@ -412,13 +418,18 @@ export interface StatsResponse {
 
 // Config Export/Import types
 
+/** ExportedAPIType represents an API type with its base URL in the export format */
+export interface ExportedAPIType {
+  api_type: string;
+  base_url: string;
+}
+
 /** ExportedProvider represents a provider in the export format */
 export interface ExportedProvider {
   id: string;
   name: string;
-  base_url: string;
   api_key: string;
-  api_types: string[];
+  api_types: ExportedAPIType[];
   auth_mode: AuthMode;
   group_id?: string | null;
   weight: number;

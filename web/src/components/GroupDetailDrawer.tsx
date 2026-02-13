@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import type { Group, Provider } from "../api/types";
 import {
@@ -85,7 +85,9 @@ function ProviderListItem({
             {provider.name}
           </p>
           <p className="text-xs text-text-muted truncate max-w-[180px]">
-            {provider.base_url}
+            {provider.api_types?.length > 1
+              ? `${provider.api_types.length} API types`
+              : provider.api_types?.[0]?.base_url || "\u2014"}
           </p>
         </div>
       </div>
@@ -181,15 +183,11 @@ export function GroupDetailDrawer({
   onProviderClick,
 }: GroupDetailDrawerProps) {
   // Handle ESC key to close drawer
-  const handleEscape = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    },
-    [onClose],
-  );
-
   useEffect(() => {
     if (group) {
+      const handleEscape = (e: KeyboardEvent) => {
+        if (e.key === "Escape") onClose();
+      };
       document.addEventListener("keydown", handleEscape);
       document.body.style.overflow = "hidden";
       return () => {
@@ -197,7 +195,7 @@ export function GroupDetailDrawer({
         document.body.style.overflow = "";
       };
     }
-  }, [group, handleEscape]);
+  }, [group, onClose]);
 
   if (!group) return null;
 

@@ -24,6 +24,7 @@ export type {
   Provider,
   ProviderAPIType,
   ProviderInput,
+  APITypeInput,
   // Group types
   Group,
   GroupInput,
@@ -51,6 +52,7 @@ export type {
   BatchProviderResult,
   BatchProviderResponse,
   // Config export/import types
+  ExportedAPIType,
   ExportedProvider,
   ExportedGroup,
   ExportedConfig,

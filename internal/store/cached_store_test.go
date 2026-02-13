@@ -379,7 +379,6 @@ func TestCachedStore_PassthroughMethods(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "test-provider",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		Enabled: true,
 	}
 

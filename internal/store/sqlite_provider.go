@@ -67,13 +67,13 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 
 		if err := tx.Exec(`
 			INSERT INTO providers (
-				id, name, base_url, api_key, auth_mode, group_id,
+				id, name, api_key, auth_mode, group_id,
 				weight, priority, concurrency, max_retries,
 				backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter,
 				vendor, failover_scope, accept_failover,
 				enabled, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.ID, p.Name, p.BaseURL, p.APIKey, p.AuthMode, p.GroupID,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, p.Name, p.APIKey, p.AuthMode, p.GroupID,
 			p.Weight, p.Priority, p.Concurrency, p.MaxRetries,
 			p.Backoff.InitialDelay, p.Backoff.MaxDelay, p.Backoff.Multiplier, p.Backoff.Jitter,
 			p.Vendor, failoverScope, acceptFailover,
@@ -103,22 +103,35 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 			return err
 		}
 
-		// Set default scope values if empty (same as CreateProvider)
-		if p.FailoverScope == "" {
-			p.FailoverScope = model.ScopeAny
+		// Set default scope values if empty (same as CreateProvider).
+		// Use local variables to avoid mutating the caller's pointer.
+		failoverScope := p.FailoverScope
+		if failoverScope == "" {
+			failoverScope = model.ScopeAny
 		}
-		if p.AcceptFailover == "" {
-			p.AcceptFailover = model.ScopeAny
+		acceptFailover := p.AcceptFailover
+		if acceptFailover == "" {
+			acceptFailover = model.ScopeAny
 		}
 
 		// Temporarily clear APITypes to avoid GORM trying to update them via Save
 		apiTypes := p.APITypes
 		p.APITypes = nil
 
+		// Apply scopes for the Save call, then restore originals
+		origFailover := p.FailoverScope
+		origAccept := p.AcceptFailover
+		p.FailoverScope = failoverScope
+		p.AcceptFailover = acceptFailover
+
 		// Save provider (without APITypes)
 		if err := tx.Save(p).Error; err != nil {
 			return err
 		}
+
+		// Restore original values so the caller's struct is not mutated
+		p.FailoverScope = origFailover
+		p.AcceptFailover = origAccept
 
 		// Restore and create new API types explicitly
 		p.APITypes = apiTypes

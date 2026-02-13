@@ -76,7 +76,6 @@ func TestCreateProvider_Error(t *testing.T) {
 	p := &model.Provider{
 		ID:      "p1",
 		Name:    "Test",
-		BaseURL: "https://test.com",
 		APIKey:  "key",
 		Enabled: true,
 	}
@@ -93,7 +92,6 @@ func TestUpdateProvider_Error(t *testing.T) {
 	p := &model.Provider{
 		ID:      "p1",
 		Name:    "Test",
-		BaseURL: "https://test.com",
 		APIKey:  "key",
 		Enabled: true,
 	}

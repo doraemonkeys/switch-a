@@ -148,7 +148,33 @@ function BasicInfoSection({
 
   return (
     <DetailSection title="Basic Information">
-      <DetailRow label="Endpoint" value={provider.base_url} mono />
+      <DetailRow
+        label="API Types"
+        value={
+          provider.api_types?.length ? (
+            <div className="space-y-1.5">
+              {provider.api_types.map((apiType) => (
+                <div
+                  key={apiType.api_type}
+                  className="flex items-center gap-2 justify-end"
+                >
+                  <span className="px-1.5 py-0.5 text-xs rounded bg-info-light text-blue-700 shrink-0">
+                    {apiType.api_type}
+                  </span>
+                  <span
+                    className="text-xs font-mono text-text-secondary truncate"
+                    title={apiType.base_url}
+                  >
+                    {apiType.base_url}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <span className="text-text-muted">—</span>
+          )
+        }
+      />
       <DetailRow label="Group" value={renderGroupBadge()} />
       <DetailRow
         label="Priority / Weight"
@@ -174,21 +200,6 @@ function BasicInfoSection({
           <span className="px-1.5 py-0.5 text-xs rounded bg-primary-light text-primary-dark uppercase">
             {provider.auth_mode}
           </span>
-        }
-      />
-      <DetailRow
-        label="API Types"
-        value={
-          <div className="flex flex-wrap gap-1 justify-end">
-            {provider.api_types?.map((apiType) => (
-              <span
-                key={apiType.api_type}
-                className="px-1.5 py-0.5 text-xs rounded bg-info-light text-blue-700"
-              >
-                {apiType.api_type}
-              </span>
-            )) ?? <span className="text-text-muted">—</span>}
-          </div>
         }
       />
     </DetailSection>

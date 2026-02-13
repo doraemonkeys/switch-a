@@ -77,7 +77,9 @@ export function Providers() {
       const query = searchQuery.toLowerCase();
       const matchesName = provider.name.toLowerCase().includes(query);
       const matchesId = provider.id.toLowerCase().includes(query);
-      const matchesUrl = provider.base_url.toLowerCase().includes(query);
+      const matchesUrl = provider.api_types?.some((t) =>
+        t.base_url.toLowerCase().includes(query),
+      );
       if (!matchesName && !matchesId && !matchesUrl) return false;
     }
     if (groupFilter && provider.group_id !== groupFilter) return false;

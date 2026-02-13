@@ -567,22 +567,66 @@ func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp
 	return newTokenCaptureInterceptor(upstreamResp.ContentLength, NewZapLoggerAdapter(h.logger.Sugar())), nil
 }
 
+// buildProviderRequest validates the provider's base URL and constructs the upstream HTTP request.
+func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, error) {
+	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
+	baseURL := provider.BaseURLForAPIType(pctx.apiType)
+
+	// Fail fast if provider has no BaseURL configured for this API type.
+	// This prevents forwarding requests to invalid URLs (just the path with no host),
+	// which would produce cryptic errors instead of a clear diagnostic message.
+	if baseURL == "" {
+		h.logger.Error("missing base_url for api_type",
+			zap.String("provider_id", provider.ID),
+			zap.String("api_type", pctx.apiType),
+		)
+		return nil, fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
+	}
+
+	upstreamURL := h.buildFullURL(baseURL, upstreamPath, pctx.r.URL.RawQuery)
+
+	req, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
+	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
+		h.logger.Error("failed to build upstream request", zap.Error(err))
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// extractTokenUsage waits for interceptors to finish and returns parsed token usage, if available.
+func (h *Handler) extractTokenUsage(statusCode int, interceptor ResponseInterceptor, sseInterceptor *sseTokenInterceptor) *TokenUsage {
+	if interceptor == nil {
+		return nil
+	}
+
+	// For SSE with gzip passthrough, wait for background goroutine to complete parsing
+	if sseInterceptor != nil {
+		sseInterceptor.Wait()
+	}
+
+	usage, complete := interceptor.Result()
+	if complete && usage != nil {
+		return usage
+	}
+	if !complete {
+		h.logger.Debug("response not fully read, token usage may be incomplete",
+			zap.Int("status", statusCode),
+		)
+	}
+	return nil
+}
+
 // forwardToProvider forwards the request to a single provider.
 // Note: Retry orchestration (per-provider retries and provider switching) is handled in executeProxy.
 func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider) forwardResult {
 	result := forwardResult{}
 
-	// Build upstream URL
-	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
-	upstreamURL := h.buildFullURL(provider.BaseURL, upstreamPath, pctx.r.URL.RawQuery)
-
-	// Create upstream request
-	upstreamReq, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
-	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
-		h.logger.Error("failed to build upstream request", zap.Error(err))
+	upstreamReq, err := h.buildProviderRequest(ctx, pctx, provider)
+	if err != nil {
 		result.err = err
-		result.success = false // Explicitly mark as failure
-		// Mark failure for invalid URL configuration so circuit breaker can trigger.
+		result.success = false
+		// Mark failure so circuit breaker can trigger.
 		// This prevents bad configurations from being infinitely retried.
 		h.markFailure(ctx, provider.ID, err)
 		return result
@@ -675,20 +719,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 
 	// Extract token usage from interceptor (Phase 4a).
 	// This must be done after Body is fully read (i.e., after WriteToClient).
-	if interceptor != nil {
-		// For SSE with gzip passthrough, wait for background goroutine to complete parsing
-		if sseInterceptor != nil {
-			sseInterceptor.Wait()
-		}
-		usage, complete := interceptor.Result()
-		if complete && usage != nil {
-			result.tokenUsage = usage
-		} else if !complete {
-			h.logger.Debug("response not fully read, token usage may be incomplete",
-				zap.Int("status", result.statusCode),
-			)
-		}
-	}
+	result.tokenUsage = h.extractTokenUsage(result.statusCode, interceptor, sseInterceptor)
 
 	// Calculate TTFT (Time To First Token) for SSE requests
 	// Only meaningful for SSE where first data write indicates model starting to respond

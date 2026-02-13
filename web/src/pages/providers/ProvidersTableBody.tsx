@@ -112,7 +112,7 @@ function ActionsCell({
           👁️
         </button>
       )}
-      {/* 始终渲染重置按钮以保持对齐，不需要时隐藏 */}
+      {/* Always render the reset button to maintain alignment; hide when not needed */}
       <button
         onClick={() => onReset(provider)}
         className={`btn btn-ghost btn-sm text-warning hover:bg-warning-light ${showReset ? "" : "invisible"}`}
@@ -191,7 +191,9 @@ function ProviderRow({
               {provider.name}
             </p>
             <p className="text-xs text-text-muted truncate max-w-[200px]">
-              {provider.base_url}
+              {provider.api_types?.length > 1
+                ? `${provider.api_types.length} API types`
+                : provider.api_types?.[0]?.base_url || "\u2014"}
             </p>
           </div>
         </div>

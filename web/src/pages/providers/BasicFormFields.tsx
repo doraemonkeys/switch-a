@@ -1,66 +1,121 @@
 import type { ProviderInput, AuthMode } from "../../api";
 import { AUTH_MODE_OPTIONS, COMMON_API_TYPES } from "../../config/constants";
 import { FormField } from "./FormField";
+import { generateClientKey, type TrackedAPITypeEntry } from "./types";
+import type { APITypeInput } from "../../api";
 
 interface ApiTypesFieldProps {
-  value: string;
-  onChange: (value: string) => void;
+  entries: TrackedAPITypeEntry[];
+  onChange: (entries: TrackedAPITypeEntry[]) => void;
 }
 
-export function ApiTypesField({ value, onChange }: ApiTypesFieldProps) {
-  const toggleApiType = (type: string) => {
-    const currentTypes = value
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    let newTypes: string[];
-    if (currentTypes.includes(type)) {
-      newTypes = currentTypes.filter((t) => t !== type);
-    } else {
-      newTypes = [...currentTypes, type];
-    }
-    onChange(newTypes.join(", "));
+export function ApiTypesField({ entries, onChange }: ApiTypesFieldProps) {
+  const updateEntry = (
+    clientKey: string,
+    field: keyof APITypeInput,
+    v: string,
+  ) => {
+    const next = entries.map((entry) =>
+      entry.clientKey === clientKey
+        ? { ...entry, data: { ...entry.data, [field]: v } }
+        : entry,
+    );
+    onChange(next);
   };
 
+  const removeEntry = (clientKey: string) => {
+    onChange(entries.filter((e) => e.clientKey !== clientKey));
+  };
+
+  const addEntry = (apiType = "") => {
+    // Auto-fill base_url from the last existing row for convenience
+    const lastUrl =
+      entries.length > 0 ? entries[entries.length - 1].data.base_url : "";
+    onChange([
+      ...entries,
+      {
+        clientKey: generateClientKey(),
+        data: { api_type: apiType, base_url: lastUrl },
+      },
+    ]);
+  };
+
+  const toggleQuickType = (type: string) => {
+    const existing = entries.find((e) => e.data.api_type === type);
+    if (existing) {
+      removeEntry(existing.clientKey);
+    } else {
+      addEntry(type);
+    }
+  };
+
+  const selectedTypes = new Set(entries.map((e) => e.data.api_type));
+
   return (
-    <FormField label="API Types">
-      {(id) => (
-        <>
-          <input
-            id={id}
-            type="text"
-            className="input"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="e.g., claude, codex, gemini"
-          />
-          <div className="flex flex-wrap gap-2 mt-2">
-            {COMMON_API_TYPES.map((type) => {
-              const isSelected = value
-                .split(",")
-                .map((s) => s.trim())
-                .includes(type);
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  aria-pressed={isSelected}
-                  onClick={() => toggleApiType(type)}
-                  className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${
-                    isSelected
-                      ? "bg-primary text-white border-primary"
-                      : "bg-bg-secondary text-text-secondary border-border hover:border-primary"
-                  }`}
-                >
-                  {type}
-                </button>
-              );
-            })}
+    <fieldset>
+      <legend className="block text-sm font-medium text-text-secondary mb-1">
+        API Types
+      </legend>
+      <div className="space-y-2">
+        {entries.map((entry, index) => (
+          <div key={entry.clientKey} className="flex items-center gap-2">
+            <input
+              type="text"
+              className="input w-36 shrink-0"
+              value={entry.data.api_type}
+              onChange={(e) =>
+                updateEntry(entry.clientKey, "api_type", e.target.value)
+              }
+              placeholder="API type"
+              aria-label={`API type ${index + 1}`}
+            />
+            <input
+              type="url"
+              className="input flex-1"
+              value={entry.data.base_url}
+              onChange={(e) =>
+                updateEntry(entry.clientKey, "base_url", e.target.value)
+              }
+              placeholder="https://api.example.com"
+              required
+              aria-label={`Base URL for ${entry.data.api_type || "entry " + String(index + 1)}`}
+            />
+            <button
+              type="button"
+              onClick={() => removeEntry(entry.clientKey)}
+              className="p-1.5 text-text-muted hover:text-danger transition-colors shrink-0 cursor-pointer"
+              aria-label={`Remove ${entry.data.api_type || "entry"}`}
+            >
+              ✕
+            </button>
           </div>
-        </>
-      )}
-    </FormField>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        {COMMON_API_TYPES.map((type) => (
+          <button
+            key={type}
+            type="button"
+            aria-pressed={selectedTypes.has(type)}
+            onClick={() => toggleQuickType(type)}
+            className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${
+              selectedTypes.has(type)
+                ? "bg-primary text-white border-primary"
+                : "bg-bg-secondary text-text-secondary border-border hover:border-primary"
+            }`}
+          >
+            {type}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => addEntry()}
+          className="px-2 py-1 text-xs rounded-full border border-dashed border-border text-text-secondary hover:border-primary hover:text-primary transition-colors cursor-pointer"
+        >
+          + Custom
+        </button>
+      </div>
+    </fieldset>
   );
 }
 

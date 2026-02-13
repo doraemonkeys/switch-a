@@ -16,7 +16,6 @@ func TestHealthState(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 	}
@@ -74,7 +73,6 @@ func TestIncrementSuccessCount(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 	}
@@ -114,7 +112,6 @@ func TestIncrementSuccessCount_PreservesManualDisable(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 	}
@@ -154,7 +151,6 @@ func TestIncrementFailCount(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 	}
@@ -197,7 +193,6 @@ func TestTriggerCircuitBreaker(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 	}
@@ -242,7 +237,6 @@ func TestAtomicRecoverIfExpired(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 	}
@@ -339,7 +333,6 @@ func TestAtomicRecoverIfExpired_ManualDisable(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 	}

@@ -18,13 +18,12 @@ func TestProviderCRUD(t *testing.T) {
 	provider := &model.Provider{
 		ID:       "p1",
 		Name:     "Test Provider",
-		BaseURL:  "https://api.example.com",
 		APIKey:   "secret-key",
 		AuthMode: "bearer",
 		GroupID:  &groupID,
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{
-			{ProviderID: "p1", APIType: "claude"},
+			{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"},
 		},
 	}
 
@@ -45,6 +44,9 @@ func TestProviderCRUD(t *testing.T) {
 	}
 	if len(got.APITypes) != 1 {
 		t.Errorf("APITypes len = %d, want 1", len(got.APITypes))
+	}
+	if got.APITypes[0].BaseURL != "https://api.example.com" {
+		t.Errorf("APITypes[0].BaseURL = %q, want %q", got.APITypes[0].BaseURL, "https://api.example.com")
 	}
 
 	// List
@@ -92,26 +94,23 @@ func TestListProvidersByAPIType(t *testing.T) {
 	p1 := &model.Provider{
 		ID:       "p1",
 		Name:     "Claude Provider",
-		BaseURL:  "https://api.claude.com",
 		APIKey:   "key1",
 		Enabled:  true,
-		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.claude.com"}},
 	}
 	p2 := &model.Provider{
 		ID:       "p2",
 		Name:     "Codex Provider",
-		BaseURL:  "https://api.codex.com",
 		APIKey:   "key2",
 		Enabled:  true,
-		APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "codex"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "codex", BaseURL: "https://api.codex.com"}},
 	}
 	p3 := &model.Provider{
 		ID:       "p3",
 		Name:     "Disabled Claude",
-		BaseURL:  "https://api.disabled.com",
 		APIKey:   "key3",
 		Enabled:  false,
-		APITypes: []model.ProviderAPIType{{ProviderID: "p3", APIType: "claude"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "p3", APIType: "claude", BaseURL: "https://api.disabled.com"}},
 	}
 
 	for _, p := range []*model.Provider{p1, p2, p3} {
@@ -150,10 +149,9 @@ func TestListProviders(t *testing.T) {
 	p := &model.Provider{
 		ID:       "p1",
 		Name:     "Test",
-		BaseURL:  "https://test.com",
 		APIKey:   "key",
 		Enabled:  true,
-		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://test.com"}},
 	}
 	if err := store.CreateProvider(ctx, p); err != nil {
 		t.Fatalf("CreateProvider failed: %v", err)
@@ -176,10 +174,9 @@ func TestUpdateProvider(t *testing.T) {
 	p := &model.Provider{
 		ID:       "p1",
 		Name:     "Original",
-		BaseURL:  "https://test.com",
 		APIKey:   "key",
 		Enabled:  true,
-		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://test.com"}},
 	}
 	if err := store.CreateProvider(ctx, p); err != nil {
 		t.Fatalf("CreateProvider failed: %v", err)
@@ -187,7 +184,7 @@ func TestUpdateProvider(t *testing.T) {
 
 	// Update provider
 	p.Name = "Updated"
-	p.APITypes = []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex"}}
+	p.APITypes = []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "https://test.com"}}
 	if err := store.UpdateProvider(ctx, p); err != nil {
 		t.Fatalf("UpdateProvider failed: %v", err)
 	}
@@ -212,7 +209,6 @@ func TestCreateProvider_NewFieldsPersisted(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "backoff-test",
 		Name:    "Backoff Test",
-		BaseURL: "https://api.example.com",
 		APIKey:  "key",
 		Enabled: true,
 		Backoff: model.BackoffPolicy{
@@ -225,7 +221,7 @@ func TestCreateProvider_NewFieldsPersisted(t *testing.T) {
 		FailoverScope:  model.ScopeVendor,
 		AcceptFailover: model.ScopeVendor,
 		MaxRetries:     3,
-		APITypes:       []model.ProviderAPIType{{ProviderID: "backoff-test", APIType: "claude"}},
+		APITypes:       []model.ProviderAPIType{{ProviderID: "backoff-test", APIType: "claude", BaseURL: "https://api.example.com"}},
 	}
 
 	if err := store.CreateProvider(ctx, provider); err != nil {
@@ -272,10 +268,9 @@ func TestUpdateProvider_BackoffFieldsPersisted(t *testing.T) {
 	provider := &model.Provider{
 		ID:       "backoff-update",
 		Name:     "Backoff Update Test",
-		BaseURL:  "https://api.example.com",
 		APIKey:   "key",
 		Enabled:  true,
-		APITypes: []model.ProviderAPIType{{ProviderID: "backoff-update", APIType: "claude"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "backoff-update", APIType: "claude", BaseURL: "https://api.example.com"}},
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {
 		t.Fatalf("CreateProvider failed: %v", err)
@@ -330,6 +325,50 @@ func TestUpdateProvider_BackoffFieldsPersisted(t *testing.T) {
 	}
 	if got.Backoff.Jitter {
 		t.Error("Jitter after clear = true, want false")
+	}
+}
+
+func TestUpdateProvider_DoesNotMutateInput(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create provider with empty scopes (should default to "any")
+	p := &model.Provider{
+		ID:       "p1",
+		Name:     "Test",
+		APIKey:   "key",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://test.com"}},
+		// Leave FailoverScope and AcceptFailover empty
+	}
+	if err := store.CreateProvider(ctx, p); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	// Update and verify the caller's struct is not mutated
+	p.Name = "Updated"
+	if err := store.UpdateProvider(ctx, p); err != nil {
+		t.Fatalf("UpdateProvider failed: %v", err)
+	}
+
+	// The caller's struct should retain its original empty scope values
+	if p.FailoverScope != "" {
+		t.Errorf("FailoverScope was mutated to %q, expected empty string", p.FailoverScope)
+	}
+	if p.AcceptFailover != "" {
+		t.Errorf("AcceptFailover was mutated to %q, expected empty string", p.AcceptFailover)
+	}
+
+	// But the database should have the default values
+	got, err := store.GetProvider(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetProvider failed: %v", err)
+	}
+	if got.FailoverScope != model.ScopeAny {
+		t.Errorf("stored FailoverScope = %q, want %q", got.FailoverScope, model.ScopeAny)
+	}
+	if got.AcceptFailover != model.ScopeAny {
+		t.Errorf("stored AcceptFailover = %q, want %q", got.AcceptFailover, model.ScopeAny)
 	}
 }
 

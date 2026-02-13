@@ -44,10 +44,10 @@ func TestBackoff_AppliesDelayOnSameProviderRetry(t *testing.T) {
 		{
 			ID:         "p1",
 			Name:       "Provider 1",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key1",
 			AuthMode:   "bearer",
 			Enabled:    true,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 			MaxRetries: 2, // Allow 2 retries (3 attempts total)
 			Backoff: model.BackoffPolicy{
 				InitialDelay: model.Duration(50 * time.Millisecond),
@@ -131,10 +131,10 @@ func TestBackoff_NoDelayWhenBackoffNotConfigured(t *testing.T) {
 		{
 			ID:         "p1",
 			Name:       "Provider 1",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key1",
 			AuthMode:   "bearer",
 			Enabled:    true,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 			MaxRetries: 2,
 			// No Backoff configured (zero value)
 		},
@@ -190,10 +190,10 @@ func TestBackoff_RespectsMaxDelay(t *testing.T) {
 		{
 			ID:         "p1",
 			Name:       "Provider 1",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key1",
 			AuthMode:   "bearer",
 			Enabled:    true,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 			MaxRetries: 4, // Allow 4 retries (5 attempts total)
 			Backoff: model.BackoffPolicy{
 				InitialDelay: model.Duration(50 * time.Millisecond),
@@ -255,10 +255,10 @@ func TestBackoff_CancelsOnContextDone(t *testing.T) {
 		{
 			ID:         "p1",
 			Name:       "Provider 1",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key1",
 			AuthMode:   "bearer",
 			Enabled:    true,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 			MaxRetries: 10, // Many retries
 			Backoff: model.BackoffPolicy{
 				InitialDelay: model.Duration(500 * time.Millisecond), // Long delay
@@ -334,10 +334,10 @@ func TestBackoff_NoDelayOnProviderSwitch(t *testing.T) {
 		{
 			ID:         "p1",
 			Name:       "Provider 1",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key1",
 			AuthMode:   "bearer",
 			Enabled:    true,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 			Priority:   1,
 			MaxRetries: 0, // No retries - switch to next provider
 			Backoff: model.BackoffPolicy{
@@ -350,10 +350,10 @@ func TestBackoff_NoDelayOnProviderSwitch(t *testing.T) {
 		{
 			ID:         "p2",
 			Name:       "Provider 2",
-			BaseURL:    upstreamServer.URL,
 			APIKey:     "key2",
 			AuthMode:   "bearer",
 			Enabled:    true,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
 			Priority:   0,
 			MaxRetries: 0,
 		},

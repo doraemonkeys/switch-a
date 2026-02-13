@@ -10,6 +10,7 @@ import {
   AuthModeField,
   ApiKeyField,
 } from "./BasicFormFields";
+import { generateClientKey, type TrackedAPITypeEntry } from "./types";
 import { FailoverSection } from "./FailoverFields";
 import { hasFailoverConfig } from "./failoverConfig";
 import { BackoffSection } from "./BackoffFields";
@@ -19,8 +20,6 @@ import { PROVIDER_DEFAULTS } from "../../config/constants";
 export interface FormState {
   data: ProviderInput;
   setData: React.Dispatch<React.SetStateAction<ProviderInput>>;
-  apiTypesInput: string;
-  setApiTypesInput: (value: string) => void;
 }
 
 export interface IdState {
@@ -49,12 +48,7 @@ export function ProviderFormBody({
   onCancel,
   groups,
 }: ProviderFormBodyProps) {
-  const {
-    data: formData,
-    setData: setFormData,
-    apiTypesInput,
-    setApiTypesInput,
-  } = formState;
+  const { data: formData, setData: setFormData } = formState;
   const {
     manuallyEdited: idManuallyEdited,
     setManuallyEdited: setIdManuallyEdited,
@@ -71,6 +65,21 @@ export function ProviderFormBody({
       formData.max_retries && formData.max_retries > 0 && formData.backoff,
     ),
   );
+
+  // Tracked entries carry stable client-side keys so React can reconcile
+  // rows correctly when entries are added/removed from the middle.
+  const [trackedEntries, setTrackedEntries] = useState<TrackedAPITypeEntry[]>(
+    () =>
+      formData.api_types.map((t) => ({
+        clientKey: generateClientKey(),
+        data: t,
+      })),
+  );
+
+  const handleApiTypesChange = (entries: TrackedAPITypeEntry[]) => {
+    setTrackedEntries(entries);
+    setFormData((prev) => ({ ...prev, api_types: entries.map((e) => e.data) }));
+  };
 
   return (
     <>
@@ -146,22 +155,6 @@ export function ProviderFormBody({
           )}
         </FormField>
       )}
-      <FormField label="Base URL">
-        {(id) => (
-          <input
-            id={id}
-            type="url"
-            className="input"
-            value={formData.base_url}
-            onChange={(e) =>
-              setFormData((prev) => ({ ...prev, base_url: e.target.value }))
-            }
-            required
-            autoComplete="off"
-            placeholder="e.g., https://api.openai.com"
-          />
-        )}
-      </FormField>
       <ApiKeyField
         value={formData.api_key}
         onChange={(value) =>
@@ -170,7 +163,7 @@ export function ProviderFormBody({
         showApiKey={showApiKey}
         onToggleVisibility={() => setShowApiKey(!showApiKey)}
       />
-      <ApiTypesField value={apiTypesInput} onChange={setApiTypesInput} />
+      <ApiTypesField entries={trackedEntries} onChange={handleApiTypesChange} />
       <AuthModeField
         value={formData.auth_mode || "auto"}
         onChange={(value) =>

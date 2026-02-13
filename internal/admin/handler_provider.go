@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 
 	"switch-a/internal/model"
 	"switch-a/internal/store"
@@ -88,9 +89,8 @@ type ProviderResponse struct {
 type CreateProviderRequest struct {
 	ID             string               `json:"id"`
 	Name           string               `json:"name"`
-	BaseURL        string               `json:"base_url"`
 	APIKey         string               `json:"api_key"`
-	APITypes       []string             `json:"api_types"`
+	APITypes       []APITypeInput       `json:"api_types"`
 	AuthMode       string               `json:"auth_mode"`
 	GroupID        *string              `json:"group_id"`
 	Weight         int                  `json:"weight"`
@@ -104,6 +104,22 @@ type CreateProviderRequest struct {
 	Enabled        *bool                `json:"enabled"`
 }
 
+// APITypeInput represents an API type entry with its base URL.
+type APITypeInput struct {
+	APIType string `json:"api_type"`
+	BaseURL string `json:"base_url"`
+}
+
+// isValidBaseURL checks that a base URL has a scheme and host,
+// rejecting bare strings that url.Parse would accept silently.
+func isValidBaseURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Scheme != "" && u.Host != ""
+}
+
 // validate checks that all required fields are present and all provided fields have valid values.
 // Returns an error message if validation fails, empty string otherwise.
 func (req *CreateProviderRequest) validate() string {
@@ -113,18 +129,21 @@ func (req *CreateProviderRequest) validate() string {
 	if req.Name == "" {
 		return "Provider name is required"
 	}
-	if req.BaseURL == "" {
-		return "Provider base_url is required"
-	}
 	if req.APIKey == "" {
 		return "Provider api_key is required"
 	}
 	if len(req.APITypes) == 0 {
 		return "At least one api_type is required"
 	}
-	for _, apiType := range req.APITypes {
-		if !IsValidAPIType(apiType) {
-			return "Invalid api_type: " + apiType
+	for _, at := range req.APITypes {
+		if !IsValidAPIType(at.APIType) {
+			return "Invalid api_type: " + at.APIType
+		}
+		if at.BaseURL == "" {
+			return "base_url is required for api_type: " + at.APIType
+		}
+		if !isValidBaseURL(at.BaseURL) {
+			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
 		}
 	}
 	if req.MaxRetries != nil && *req.MaxRetries < 0 {
@@ -153,14 +172,14 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 	for i, at := range req.APITypes {
 		apiTypes[i] = model.ProviderAPIType{
 			ProviderID: req.ID,
-			APIType:    at,
+			APIType:    at.APIType,
+			BaseURL:    at.BaseURL,
 		}
 	}
 
 	provider := &model.Provider{
 		ID:             req.ID,
 		Name:           req.Name,
-		BaseURL:        req.BaseURL,
 		APIKey:         req.APIKey,
 		APITypes:       apiTypes,
 		AuthMode:       req.AuthMode,
@@ -259,9 +278,8 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 // UpdateProviderRequest represents the request to update a provider.
 type UpdateProviderRequest struct {
 	Name           *string              `json:"name"`
-	BaseURL        *string              `json:"base_url"`
 	APIKey         *string              `json:"api_key"`
-	APITypes       []string             `json:"api_types"`
+	APITypes       []APITypeInput       `json:"api_types"`
 	AuthMode       *string              `json:"auth_mode"`
 	GroupID        *string              `json:"group_id"`
 	Weight         *int                 `json:"weight"`
@@ -281,9 +299,6 @@ func (req *UpdateProviderRequest) validate() string {
 	if req.Name != nil && *req.Name == "" {
 		return "Name cannot be empty"
 	}
-	if req.BaseURL != nil && *req.BaseURL == "" {
-		return "BaseURL cannot be empty"
-	}
 	if req.APIKey != nil && *req.APIKey == "" {
 		return "APIKey cannot be empty"
 	}
@@ -299,9 +314,15 @@ func (req *UpdateProviderRequest) validate() string {
 	if req.APITypes != nil && len(req.APITypes) == 0 {
 		return "At least one api_type is required"
 	}
-	for _, apiType := range req.APITypes {
-		if !IsValidAPIType(apiType) {
-			return "Invalid api_type: " + apiType
+	for _, at := range req.APITypes {
+		if !IsValidAPIType(at.APIType) {
+			return "Invalid api_type: " + at.APIType
+		}
+		if at.BaseURL == "" {
+			return "base_url is required for api_type: " + at.APIType
+		}
+		if !isValidBaseURL(at.BaseURL) {
+			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
 		}
 	}
 	if req.AuthMode != nil && !IsValidAuthMode(*req.AuthMode) {
@@ -326,9 +347,6 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 	if req.Name != nil {
 		provider.Name = *req.Name
 	}
-	if req.BaseURL != nil {
-		provider.BaseURL = *req.BaseURL
-	}
 	if req.APIKey != nil {
 		provider.APIKey = *req.APIKey
 	}
@@ -337,7 +355,8 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 		for i, at := range req.APITypes {
 			apiTypes[i] = model.ProviderAPIType{
 				ProviderID: provider.ID,
-				APIType:    at,
+				APIType:    at.APIType,
+				BaseURL:    at.BaseURL,
 			}
 		}
 		provider.APITypes = apiTypes

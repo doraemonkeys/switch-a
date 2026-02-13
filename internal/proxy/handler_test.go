@@ -244,7 +244,7 @@ func TestHandler_ServeHTTP_BodyTooLarge(t *testing.T) {
 	store := newMockStore()
 	store.configs[ConfigKeyMaxBodySize] = "1" // 1MB limit
 	store.providers = []model.Provider{
-		{ID: "p1", BaseURL: "https://api.example.com", APIKey: "key"},
+		{ID: "p1", APIKey: "key", APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"}}},
 	}
 	logger := zap.NewNop()
 
@@ -273,6 +273,53 @@ func TestHandler_ServeHTTP_BodyTooLarge(t *testing.T) {
 	}
 }
 
+func TestHandler_ServeHTTP_EmptyBaseURL_FailsFast(t *testing.T) {
+	// Provider has APIType "codex" but request is for "claude" - no matching BaseURL.
+	// The proxy should fail fast instead of forwarding to an invalid URL.
+	store := newMockStore()
+	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
+	store.providers = []model.Provider{
+		{
+			ID:       "p1",
+			Name:     "Wrong API Type Provider",
+			APIKey:   "test-api-key",
+			AuthMode: "bearer",
+			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "https://api.example.com"}},
+		},
+	}
+	logger := zap.NewNop()
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	// Should return an error (exhausted retries) since provider has no base_url for claude
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+
+	// Wait for async log
+	waitFor(t, func() bool {
+		return store.LogsLen() > 0
+	}, testPollTimeout)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.Success {
+		t.Error("expected Success=false for missing base_url")
+	}
+}
+
 func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	// Create upstream server
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,10 +339,10 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  upstreamServer.URL,
 			APIKey:   "test-api-key",
 			AuthMode: "bearer",
 			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 	logger := zap.NewNop()
@@ -368,10 +415,10 @@ func TestHandler_ServeHTTP_SSEProxy(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  upstreamServer.URL,
 			APIKey:   "test-api-key",
 			AuthMode: "bearer",
 			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 	logger := zap.NewNop()
@@ -485,10 +532,10 @@ func TestHandler_LogsSuccessFalse_ForFailoverStatusCodes(t *testing.T) {
 				{
 					ID:       "p1",
 					Name:     "Test Provider",
-					BaseURL:  upstreamServer.URL,
 					APIKey:   "test-api-key",
 					AuthMode: "bearer",
 					Enabled:  true,
+					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 				},
 			}
 			logger := zap.NewNop()
@@ -538,10 +585,10 @@ func TestHandler_LogsSuccessTrue_For2xxStatusCodes(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  upstreamServer.URL,
 			APIKey:   "test-api-key",
 			AuthMode: "bearer",
 			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 	logger := zap.NewNop()
@@ -600,10 +647,10 @@ func TestHandler_LogsSuccessFalse_ForNonRetryable4xxStatusCodes(t *testing.T) {
 				{
 					ID:       "p1",
 					Name:     "Test Provider",
-					BaseURL:  upstreamServer.URL,
 					APIKey:   "test-api-key",
 					AuthMode: "bearer",
 					Enabled:  true,
+					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 				},
 			}
 			logger := zap.NewNop()
@@ -1027,10 +1074,10 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 		{
 			ID:       "p1",
 			Name:     "Test Provider",
-			BaseURL:  upstreamServer.URL,
 			APIKey:   "test-api-key",
 			AuthMode: "bearer",
 			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 		},
 	}
 	logger := zap.NewNop()

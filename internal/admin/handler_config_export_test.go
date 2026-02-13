@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 
@@ -39,9 +40,8 @@ func TestExportConfig(t *testing.T) {
 	st.providers["p1"] = &model.Provider{
 		ID:       "p1",
 		Name:     "Provider 1",
-		BaseURL:  "https://api.p1.com",
 		APIKey:   "key1",
-		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.p1.com"}},
 		AuthMode: "bearer",
 		Weight:   1,
 		Enabled:  true,
@@ -50,9 +50,8 @@ func TestExportConfig(t *testing.T) {
 	st.providers["p2"] = &model.Provider{
 		ID:       "p2",
 		Name:     "Provider 2",
-		BaseURL:  "https://api.p2.com",
 		APIKey:   "key2",
-		APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "codex"}},
+		APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "codex", BaseURL: "https://api.p2.com"}},
 		AuthMode: "auto",
 		GroupID:  &groupID,
 		Weight:   2,
@@ -115,8 +114,8 @@ func TestExportConfig(t *testing.T) {
 	if p1.Name != "Provider 1" {
 		t.Errorf("p1.Name = %q, want %q", p1.Name, "Provider 1")
 	}
-	if len(p1.APITypes) != 1 || p1.APITypes[0] != "claude" {
-		t.Errorf("p1.APITypes = %v, want [claude]", p1.APITypes)
+	if len(p1.APITypes) != 1 || p1.APITypes[0].APIType != "claude" {
+		t.Errorf("p1.APITypes = %v, want [{claude, ...}]", p1.APITypes)
 	}
 }
 
@@ -180,8 +179,8 @@ func TestImportConfig_DryRun(t *testing.T) {
 	importReq := ImportConfigRequest{
 		Version: "1.0",
 		Providers: []ExportedProvider{
-			{ID: "p1", Name: "Updated Provider", BaseURL: "https://api.com", APIKey: "key", APITypes: []string{"claude"}, Enabled: true},
-			{ID: "p2", Name: "New Provider", BaseURL: "https://api2.com", APIKey: "key2", APITypes: []string{"codex"}, Enabled: true},
+			{ID: "p1", Name: "Updated Provider", APIKey: "key", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, Enabled: true},
+			{ID: "p2", Name: "New Provider", APIKey: "key2", APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://api2.com"}}, Enabled: true},
 		},
 		Groups: []ExportedGroup{
 			{ID: "g1", Name: "Updated Group", Strategy: "priority", Enabled: true},
@@ -236,14 +235,14 @@ func TestImportConfig_ActualImport(t *testing.T) {
 	h, st, _ := testHandler()
 
 	// Setup existing data
-	st.providers["p1"] = &model.Provider{ID: "p1", Name: "Existing Provider", BaseURL: "old", APIKey: "old"}
+	st.providers["p1"] = &model.Provider{ID: "p1", Name: "Existing Provider", APIKey: "old"}
 	st.groups["g1"] = &model.Group{ID: "g1", Name: "Existing Group"}
 
 	importReq := ImportConfigRequest{
 		Version: "1.0",
 		Providers: []ExportedProvider{
-			{ID: "p1", Name: "Updated Provider", BaseURL: "https://api.com", APIKey: "key", APITypes: []string{"claude"}, AuthMode: "bearer", Weight: 1, Enabled: true},
-			{ID: "p2", Name: "New Provider", BaseURL: "https://api2.com", APIKey: "key2", APITypes: []string{"codex"}, AuthMode: "auto", Weight: 2, Enabled: false},
+			{ID: "p1", Name: "Updated Provider", APIKey: "key", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, AuthMode: "bearer", Weight: 1, Enabled: true},
+			{ID: "p2", Name: "New Provider", APIKey: "key2", APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://api2.com"}}, AuthMode: "auto", Weight: 2, Enabled: false},
 		},
 		Groups: []ExportedGroup{
 			{ID: "g1", Name: "Updated Group", Strategy: "priority", Weight: 1, Enabled: true},
@@ -321,10 +320,10 @@ func TestImportConfig_WithWarnings(t *testing.T) {
 	importReq := ImportConfigRequest{
 		Version: "1.0",
 		Providers: []ExportedProvider{
-			{ID: "", Name: "Empty ID Provider"},                                                          // Empty ID
-			{ID: "p1", Name: "Invalid API Type", APITypes: []string{"invalid"}},                          // Invalid API type
-			{ID: "p2", Name: "Invalid Auth Mode", APITypes: []string{"claude"}, AuthMode: "invalid"},     // Invalid auth mode
-			{ID: "p3", Name: "Non-existent Group", APITypes: []string{"claude"}, GroupID: strPtr("g99")}, // Group doesn't exist
+			{ID: "", Name: "Empty ID Provider"}, // Empty ID
+			{ID: "p1", Name: "Invalid API Type", APITypes: []ExportedAPIType{{APIType: "invalid", BaseURL: "https://api.com"}}},                          // Invalid API type
+			{ID: "p2", Name: "Invalid Auth Mode", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, AuthMode: "invalid"},     // Invalid auth mode
+			{ID: "p3", Name: "Non-existent Group", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, GroupID: strPtr("g99")}, // Group doesn't exist
 		},
 		Groups: []ExportedGroup{
 			{ID: "", Name: "Empty ID Group"},                                                             // Empty ID
@@ -398,9 +397,8 @@ func TestImportConfig_ProviderWithGroupReference(t *testing.T) {
 			{
 				ID:       "p1",
 				Name:     "Provider with Group",
-				BaseURL:  "https://api.com",
 				APIKey:   "key",
-				APITypes: []string{"claude"},
+				APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}},
 				GroupID:  strPtr("g1"),
 				Weight:   1,
 				Enabled:  true,
@@ -526,7 +524,7 @@ func TestImportConfig_CreateProviderError(t *testing.T) {
 	importReq := ImportConfigRequest{
 		Version: "1.0",
 		Providers: []ExportedProvider{
-			{ID: "p1", Name: "New Provider", BaseURL: "https://api.com", APIKey: "key", APITypes: []string{"claude"}, Weight: 1, Enabled: true},
+			{ID: "p1", Name: "New Provider", APIKey: "key", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, Weight: 1, Enabled: true},
 		},
 	}
 
@@ -548,12 +546,12 @@ func TestImportConfig_SkipsInvalidProviders(t *testing.T) {
 	importReq := ImportConfigRequest{
 		Version: "1.0",
 		Providers: []ExportedProvider{
-			{ID: "", Name: "Empty ID"},                                                  // Skipped: empty ID
-			{ID: "p1", Name: ""},                                                        // Skipped: empty name
-			{ID: "p2", Name: "No URL", APIKey: "key"},                                   // Skipped: empty base_url
-			{ID: "p3", Name: "No Key", BaseURL: "https://api.com"},                      // Skipped: empty api_key
-			{ID: "p4", Name: "No API Types", BaseURL: "https://api.com", APIKey: "key"}, // Skipped: no API types
-			{ID: "p5", Name: "Valid", BaseURL: "https://api.com", APIKey: "key", APITypes: []string{"claude"}, Weight: 1, Enabled: true}, // Valid
+			{ID: "", Name: "Empty ID"},                      // Skipped: empty ID
+			{ID: "p1", Name: ""},                            // Skipped: empty name
+			{ID: "p2", Name: "No URL", APIKey: "key"},       // Skipped: no api_types with base_url
+			{ID: "p3", Name: "No Key"},                      // Skipped: empty api_key
+			{ID: "p4", Name: "No API Types", APIKey: "key"}, // Skipped: no API types
+			{ID: "p5", Name: "Valid", APIKey: "key", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, Weight: 1, Enabled: true}, // Valid
 		},
 	}
 
@@ -630,9 +628,8 @@ func TestImportConfig_DefaultValues(t *testing.T) {
 			{
 				ID:       "p1",
 				Name:     "Provider without defaults",
-				BaseURL:  "https://api.com",
 				APIKey:   "key",
-				APITypes: []string{"claude"},
+				APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}},
 				// AuthMode, Weight not set
 			},
 		},
@@ -683,4 +680,113 @@ func TestImportConfig_DefaultValues(t *testing.T) {
 // Helper function for creating string pointers
 func strPtr(s string) *string {
 	return &s
+}
+
+func TestExportConfig_BackoffRoundtrip(t *testing.T) {
+	h, st, _ := testHandler()
+
+	// Setup provider with backoff settings
+	st.providers["p1"] = &model.Provider{
+		ID:       "p1",
+		Name:     "Backoff Provider",
+		APIKey:   "key",
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"}},
+		AuthMode: "bearer",
+		Weight:   1,
+		Enabled:  true,
+		Backoff: model.BackoffPolicy{
+			InitialDelay: model.Duration(500 * time.Millisecond),
+			MaxDelay:     model.Duration(5 * time.Second),
+			Multiplier:   2.5,
+			Jitter:       true,
+		},
+	}
+
+	// Export
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	w := httptest.NewRecorder()
+	h.ExportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var export ExportedConfig
+	if err := json.NewDecoder(w.Body).Decode(&export); err != nil {
+		t.Fatalf("failed to decode export: %v", err)
+	}
+
+	if len(export.Providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(export.Providers))
+	}
+
+	ep := export.Providers[0]
+	if ep.Backoff.InitialDelay != model.Duration(500*time.Millisecond) {
+		t.Errorf("exported InitialDelay = %v, want 500ms", time.Duration(ep.Backoff.InitialDelay))
+	}
+	if ep.Backoff.MaxDelay != model.Duration(5*time.Second) {
+		t.Errorf("exported MaxDelay = %v, want 5s", time.Duration(ep.Backoff.MaxDelay))
+	}
+	if ep.Backoff.Multiplier != 2.5 {
+		t.Errorf("exported Multiplier = %v, want 2.5", ep.Backoff.Multiplier)
+	}
+	if !ep.Backoff.Jitter {
+		t.Error("exported Jitter = false, want true")
+	}
+
+	// Import the exported data into a fresh store
+	h2, st2, _ := testHandler()
+
+	importReq := ImportConfigRequest{
+		Version:   export.Version,
+		Providers: export.Providers,
+	}
+	body, _ := json.Marshal(importReq)
+	req2 := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+
+	h2.ImportConfig(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want %d; body: %s", w2.Code, http.StatusOK, w2.Body.String())
+	}
+
+	// Verify backoff settings survived the roundtrip
+	imported := st2.providers["p1"]
+	if imported == nil {
+		t.Fatal("provider p1 not found after import")
+	}
+	if imported.Backoff.InitialDelay != model.Duration(500*time.Millisecond) {
+		t.Errorf("imported InitialDelay = %v, want 500ms", time.Duration(imported.Backoff.InitialDelay))
+	}
+	if imported.Backoff.MaxDelay != model.Duration(5*time.Second) {
+		t.Errorf("imported MaxDelay = %v, want 5s", time.Duration(imported.Backoff.MaxDelay))
+	}
+	if imported.Backoff.Multiplier != 2.5 {
+		t.Errorf("imported Multiplier = %v, want 2.5", imported.Backoff.Multiplier)
+	}
+	if !imported.Backoff.Jitter {
+		t.Error("imported Jitter = false, want true")
+	}
+}
+
+func TestValidateExportedProvider_MalformedURL(t *testing.T) {
+	p := &ExportedProvider{
+		ID:       "p1",
+		Name:     "Test",
+		APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "not-a-url"}},
+	}
+
+	warnings := validateExportedProvider(p)
+	found := false
+	for _, w := range warnings {
+		if w == "Provider 'p1' has malformed base_url for api_type: claude" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected malformed base_url warning, got: %v", warnings)
+	}
 }
