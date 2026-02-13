@@ -3,10 +3,12 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -874,6 +876,92 @@ func TestSSEIdleTimeout(t *testing.T) {
 			t.Fatal("WriteToClient did not return after context cancellation - the fix is not working")
 		}
 	})
+
+	t.Run("context cancellation during blocking Read returns context error not UpstreamReadError", func(t *testing.T) {
+		// This test ensures that when a client disconnects while Read() is actively
+		// blocking (waiting for more SSE data), the error is classified as a context
+		// cancellation — not an upstream read error. Without this distinction, the
+		// circuit breaker would incorrectly count healthy upstreams as failures.
+		//
+		// The test is deterministic: it synchronizes so that cancel() happens only
+		// after Read() is already blocking, eliminating the race where the select
+		// at the top of the loop could catch ctx.Done() first.
+		body := &blockingSSEReadCloser{
+			data:       []byte("data: event1\n\n"),
+			readCalled: make(chan struct{}, 1),
+			block:      make(chan struct{}),
+		}
+
+		transport := NewTransport(TransportConfig{
+			ConnectTimeout: 5 * time.Second,
+			SSEIdleTimeout: 0,
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		w := httptest.NewRecorder()
+
+		done := make(chan error, 1)
+		go func() {
+			done <- transport.forwardSSE(ctx, w, body)
+		}()
+
+		// Wait until Read() is blocking on the second call
+		<-body.readCalled
+
+		// Now cancel context while Read is blocked
+		cancel()
+
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("expected context.Canceled, got: %v", err)
+			}
+			if IsUpstreamReadError(err) {
+				t.Errorf("error should not be UpstreamReadError, got: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("forwardSSE did not return after context cancellation")
+		}
+	})
+}
+
+// blockingSSEReadCloser returns initial data on first Read, then blocks on
+// subsequent Reads until Close is called. It signals via readCalled when
+// the blocking read starts, allowing tests to synchronize context cancellation.
+type blockingSSEReadCloser struct {
+	data       []byte
+	readOnce   bool
+	readCalled chan struct{}
+	block      chan struct{}
+	mu         sync.Mutex
+	closed     bool
+}
+
+func (b *blockingSSEReadCloser) Read(p []byte) (int, error) {
+	if !b.readOnce {
+		b.readOnce = true
+		n := copy(p, b.data)
+		return n, nil
+	}
+	// Signal that the blocking read has started
+	select {
+	case b.readCalled <- struct{}{}:
+	default:
+	}
+	<-b.block
+	return 0, errors.New("read on closed body")
+}
+
+func (b *blockingSSEReadCloser) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.closed {
+		b.closed = true
+		close(b.block)
+	}
+	return nil
 }
 
 func TestIdleWatchdogTimedOut(t *testing.T) {

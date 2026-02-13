@@ -535,6 +535,10 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
+			// Check if context was cancelled (body closed by context goroutine).
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			// Check if this is an idle timeout (body was closed by watchdog).
 			// Use the watchdog's flag instead of error string matching for reliability.
 			// String matching (e.g., checking for "closed", "EOF", "reset") is fragile
