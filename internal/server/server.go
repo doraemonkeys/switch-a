@@ -175,6 +175,10 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("POST "+proxy.RouteCustomPrefix, s.handleProxy)
 	mux.HandleFunc("GET "+proxy.RouteCustomPrefix, s.handleProxy)
 
+	// Catch-all for unregistered routes — log and return 404.
+	// Without this, Go's default ServeMux silently returns 404 with no visibility.
+	mux.HandleFunc("/", s.handleNotFound)
+
 	return s
 }
 
@@ -197,6 +201,9 @@ func NewAdmin(cfg AdminConfig) *AdminServer {
 
 	// Register admin API routes with authentication
 	s.registerAdminRoutes(mux, cfg)
+
+	// Catch-all for unregistered routes outside /admin/ — log and return 404.
+	mux.HandleFunc("/", s.handleNotFound)
 
 	return s
 }
@@ -262,6 +269,16 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Serves the embedded React SPA with history fallback for client-side routing.
 	// The frontend is built with base path "/admin/" so all assets are correctly prefixed.
 	mux.Handle("/admin/", http.StripPrefix("/admin", web.Handler()))
+}
+
+// handleNotFound handles requests that don't match any registered route.
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	s.logger.Warn("unmatched route",
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.String("remote_addr", r.RemoteAddr),
+	)
+	http.NotFound(w, r)
 }
 
 // handleProxy forwards requests to the proxy handler.
@@ -349,6 +366,16 @@ func (s *AdminServer) Shutdown(ctx context.Context) error {
 // handleHealth handles the /health endpoint for admin server.
 func (s *AdminServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeHealthResponse(w, s.logger)
+}
+
+// handleNotFound handles requests that don't match any registered admin route.
+func (s *AdminServer) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	s.logger.Warn("unmatched route",
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.String("remote_addr", r.RemoteAddr),
+	)
+	http.NotFound(w, r)
 }
 
 // Addr returns the admin server's address.

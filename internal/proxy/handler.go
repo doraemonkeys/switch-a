@@ -253,6 +253,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // handleBodyError handles body read errors.
 func (h *Handler) handleBodyError(w http.ResponseWriter, err error, maxSize int64) {
 	if errors.Is(err, ErrBodyTooLarge) {
+		h.logger.Warn("request body too large", zap.Int64("max_size_mb", maxSize))
 		h.writeGatewayError(w, http.StatusRequestEntityTooLarge, ErrCodeBodyTooLarge, fmt.Sprintf("Request body exceeds %d MB limit", maxSize))
 		return
 	}

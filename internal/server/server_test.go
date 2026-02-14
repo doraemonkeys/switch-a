@@ -307,3 +307,29 @@ func TestAdminServerStartAndShutdown(t *testing.T) {
 		t.Error("Start did not return after shutdown")
 	}
 }
+
+func TestHandleNotFound(t *testing.T) {
+	s := testServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/unknown/path", nil)
+	w := httptest.NewRecorder()
+
+	s.handleNotFound(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestAdminHandleNotFound(t *testing.T) {
+	s := testAdminServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/foo/bar", nil)
+	w := httptest.NewRecorder()
+
+	s.handleNotFound(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
