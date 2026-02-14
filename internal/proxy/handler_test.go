@@ -1122,3 +1122,105 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 		t.Error("expected no logs due to timeout, but found logs")
 	}
 }
+
+func TestHandler_StickyCache_UpdatedOnClientDisconnect(t *testing.T) {
+	// Bug: When a client disconnects during SSE streaming (e.g., Codex CLI receiving
+	// a complete response and closing the connection), WriteToClient returns a writeErr.
+	// The writeErr path in forwardToProvider returns early, skipping UpdateStickyWithTTL.
+	// This means sticky sessions are never established for SSE requests where the client
+	// disconnects before the server finishes — which is the normal Codex flow.
+
+	// Set up upstream SSE server that streams data, then blocks until client disconnects.
+	clientDisconnected := make(chan struct{})
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("ResponseWriter doesn't support Flusher")
+		}
+
+		// Send some data
+		_, _ = w.Write([]byte("data: {\"chunk\":1}\n\n"))
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: {\"chunk\":2}\n\n"))
+		flusher.Flush()
+
+		// Block until client disconnects — simulates a long SSE stream
+		// where the client closes after receiving enough data.
+		<-r.Context().Done()
+		close(clientDisconnected)
+	}))
+	defer upstreamServer.Close()
+
+	provider := model.Provider{
+		ID:       "p1",
+		Name:     "Test Provider",
+		APIKey:   "test-api-key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: upstreamServer.URL}},
+	}
+
+	store := newMockStore()
+	store.providers = []model.Provider{provider}
+
+	sel := &mockSelector{
+		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
+			return &selectResult{
+				Provider:        &provider,
+				FromStickyCache: false,
+			}, nil
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:    store,
+		Selector: sel,
+		Logger:   zap.NewNop(),
+	})
+
+	// Create a cancellable context to simulate client disconnect.
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader(`{"model":"o3-pro"}`))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Run the proxy in a goroutine; cancel context shortly after to simulate disconnect.
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(w, req)
+		close(done)
+	}()
+
+	// Wait a bit for the SSE stream to start flowing, then cancel (client disconnect).
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	// Wait for proxy to finish.
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not return after client disconnect")
+	}
+
+	// Wait for upstream to see the disconnect.
+	select {
+	case <-clientDisconnected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream did not see client disconnect")
+	}
+
+	// The critical assertion: sticky cache MUST be updated even when client disconnects.
+	// The upstream returned 200 OK and data was flowing — sticky should be set.
+	waitFor(t, func() bool {
+		return sel.StickyUpdatesLen() > 0
+	}, testPollTimeout)
+
+	sel.mu.Lock()
+	if sel.stickyUpdates[0].ProviderID != "p1" {
+		t.Errorf("sticky update provider_id = %q, want %q", sel.stickyUpdates[0].ProviderID, "p1")
+	}
+	sel.mu.Unlock()
+}

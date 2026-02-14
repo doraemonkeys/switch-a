@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,15 @@ type mockSelector struct {
 	selectWithMetadataFunc func(ctx context.Context, req *model.SelectRequest) (*selectResult, error)
 	selectExcludingFunc    func(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
 	selectFunc             func(ctx context.Context, req *model.SelectRequest) (*model.Provider, error)
+
+	mu            sync.Mutex
+	stickyUpdates []stickyUpdate // Records all UpdateStickyWithTTL calls
+}
+
+// stickyUpdate records a single call to UpdateStickyWithTTL.
+type stickyUpdate struct {
+	ProviderID string
+	TTL        time.Duration
 }
 
 // selectResult mirrors selector.SelectResult for testing.
@@ -53,11 +63,22 @@ func (m *mockSelector) SelectWithMetadata(ctx context.Context, req *model.Select
 	return nil, nil
 }
 
-func (m *mockSelector) UpdateStickyWithTTL(_ *model.SelectRequest, _ string, _ time.Duration) {}
+func (m *mockSelector) UpdateStickyWithTTL(_ *model.SelectRequest, providerID string, ttl time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stickyUpdates = append(m.stickyUpdates, stickyUpdate{ProviderID: providerID, TTL: ttl})
+}
 
 func (m *mockSelector) ReleaseConcurrency(_ string) {}
 
 func (m *mockSelector) ClearConcurrency(_ string) {}
+
+// StickyUpdatesLen returns the number of sticky updates in a thread-safe manner.
+func (m *mockSelector) StickyUpdatesLen() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.stickyUpdates)
+}
 
 // mockHealthManager implements the HealthManager interface for testing.
 type mockHealthManager struct {

@@ -732,6 +732,13 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	// Capture response bytes for transfer statistics
 	result.responseBytes = wrappedWriter.bytesWritten
 
+	// Update sticky cache before handling writeErr, because client disconnect
+	// (e.g., Codex SSE stream closed by client after [DONE]) should still
+	// pin the provider — the upstream succeeded.
+	if pctx.cfg.stickyEnabled && h.selector != nil {
+		h.selector.UpdateStickyWithTTL(pctx.selectReq, provider.ID, pctx.cfg.stickyTTL)
+	}
+
 	if writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
 		h.handleWriteError(ctx, writeErr, provider.ID, &result)
 		return result
@@ -757,11 +764,6 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 			zap.String("provider_id", provider.ID),
 			zap.Int("status_code", result.statusCode),
 		)
-	}
-
-	// Update sticky cache
-	if pctx.cfg.stickyEnabled && h.selector != nil {
-		h.selector.UpdateStickyWithTTL(pctx.selectReq, provider.ID, pctx.cfg.stickyTTL)
 	}
 
 	return result
