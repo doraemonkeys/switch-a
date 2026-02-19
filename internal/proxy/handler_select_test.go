@@ -186,10 +186,10 @@ func TestSelectProviderWithTracking_SelectorStickyCacheHit(t *testing.T) {
 	ctx := context.Background()
 	pctx := &proxyContext{
 		apiType: "claude",
-		cfg:     &runtimeConfig{stickyEnabled: true},
+		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
 		selectReq: &model.SelectRequest{
-			APIType:       "claude",
-			StickyEnabled: true,
+			APIType:    "claude",
+			StickyMode: model.StickyModeAPIType,
 		},
 	}
 
@@ -248,12 +248,12 @@ func TestSelectProviderWithTracking_ActiveProviderFallback(t *testing.T) {
 	ctx := context.Background()
 	pctx := &proxyContext{
 		apiType: "claude",
-		cfg:     &runtimeConfig{stickyEnabled: true},
+		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
 		selectReq: &model.SelectRequest{
-			ClientIP:      "192.168.1.1",
-			User:          "user1",
-			APIType:       "claude",
-			StickyEnabled: true,
+			ClientIP:   "192.168.1.1",
+			User:       "user1",
+			APIType:    "claude",
+			StickyMode: model.StickyModeAPIType,
 		},
 	}
 
@@ -298,10 +298,10 @@ func TestSelectProviderWithTracking_NormalSelection(t *testing.T) {
 	ctx := context.Background()
 	pctx := &proxyContext{
 		apiType: "claude",
-		cfg:     &runtimeConfig{stickyEnabled: false}, // Sticky disabled
+		cfg:     &runtimeConfig{stickyMode: model.StickyModeOff}, // Sticky disabled
 		selectReq: &model.SelectRequest{
-			APIType:       "claude",
-			StickyEnabled: false,
+			APIType:    "claude",
+			StickyMode: model.StickyModeOff,
 		},
 	}
 
@@ -349,10 +349,10 @@ func TestSelectProviderWithTracking_RetryWithExclusion(t *testing.T) {
 	ctx := context.Background()
 	pctx := &proxyContext{
 		apiType: "claude",
-		cfg:     &runtimeConfig{stickyEnabled: true},
+		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
 		selectReq: &model.SelectRequest{
-			APIType:       "claude",
-			StickyEnabled: true,
+			APIType:    "claude",
+			StickyMode: model.StickyModeAPIType,
 		},
 	}
 
@@ -393,10 +393,10 @@ func TestSelectProviderWithTracking_SelectorError(t *testing.T) {
 	ctx := context.Background()
 	pctx := &proxyContext{
 		apiType: "claude",
-		cfg:     &runtimeConfig{stickyEnabled: true},
+		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
 		selectReq: &model.SelectRequest{
-			APIType:       "claude",
-			StickyEnabled: true,
+			APIType:    "claude",
+			StickyMode: model.StickyModeAPIType,
 		},
 	}
 
@@ -432,9 +432,9 @@ func TestTryActiveProviderFallback_StickyDisabled(t *testing.T) {
 
 	ctx := context.Background()
 	pctx := &proxyContext{
-		cfg: &runtimeConfig{stickyEnabled: false}, // Sticky disabled
+		cfg: &runtimeConfig{stickyMode: model.StickyModeOff}, // Sticky disabled
 		selectReq: &model.SelectRequest{
-			StickyEnabled: false,
+			StickyMode: model.StickyModeOff,
 		},
 	}
 
@@ -457,9 +457,9 @@ func TestTryActiveProviderFallback_NoActiveRegistry(t *testing.T) {
 
 	ctx := context.Background()
 	pctx := &proxyContext{
-		cfg: &runtimeConfig{stickyEnabled: true},
+		cfg: &runtimeConfig{stickyMode: model.StickyModeAPIType},
 		selectReq: &model.SelectRequest{
-			StickyEnabled: true,
+			StickyMode: model.StickyModeAPIType,
 		},
 	}
 
@@ -485,18 +485,64 @@ func TestTryActiveProviderFallback_NoActiveProvider(t *testing.T) {
 
 	ctx := context.Background()
 	pctx := &proxyContext{
-		cfg: &runtimeConfig{stickyEnabled: true},
+		cfg: &runtimeConfig{stickyMode: model.StickyModeAPIType},
 		selectReq: &model.SelectRequest{
-			ClientIP:      "192.168.1.1",
-			User:          "user1",
-			APIType:       "claude",
-			StickyEnabled: true,
+			ClientIP:   "192.168.1.1",
+			User:       "user1",
+			APIType:    "claude",
+			StickyMode: model.StickyModeAPIType,
 		},
 	}
 
 	provider := handler.tryActiveProviderFallback(ctx, pctx)
 	if provider != nil {
 		t.Error("expected nil when no active provider")
+	}
+}
+
+func TestTryActiveProviderFallback_ModelDimension(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "active-p1", Name: "Active Provider", Enabled: true},
+	}
+
+	handler := NewHandler(Config{
+		Store:          store,
+		Logger:         zap.NewNop(),
+		ActiveRegistry: NewActiveRequestRegistry(),
+	})
+
+	handler.activeRegistry.Register(&ActiveRequest{
+		RequestID:       "req-123",
+		ProviderID:      "active-p1",
+		ClientIP:        "192.168.1.1",
+		UserID:          "user1",
+		APIType:         "claude",
+		Model:           "model-a",
+		HasReceivedData: true,
+	})
+
+	ctx := context.Background()
+	pctx := &proxyContext{
+		apiType: "claude",
+		cfg:     &runtimeConfig{stickyMode: model.StickyModeModel},
+		selectReq: &model.SelectRequest{
+			ClientIP:   "192.168.1.1",
+			User:       "user1",
+			APIType:    "claude",
+			Model:      "model-b",
+			StickyMode: model.StickyModeModel,
+		},
+	}
+
+	if provider := handler.tryActiveProviderFallback(ctx, pctx); provider != nil {
+		t.Fatal("expected nil for non-matching model in model sticky mode")
+	}
+
+	pctx.selectReq.Model = "model-a"
+	provider := handler.tryActiveProviderFallback(ctx, pctx)
+	if provider == nil || provider.ID != "active-p1" {
+		t.Fatalf("expected active-p1 for matching model, got %#v", provider)
 	}
 }
 

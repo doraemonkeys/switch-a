@@ -1,6 +1,19 @@
 package store
 
-import "gorm.io/gorm"
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"switch-a/internal/model"
+
+	"gorm.io/gorm"
+)
+
+const (
+	legacyStickyEnabledConfigKey = "sticky_enabled"
+	stickyModeConfigKey          = "sticky_mode"
+)
 
 // migrateBaseURLToAPIType moves base_url from the providers table to provider_api_types.
 // Idempotent: skips if providers.base_url column no longer exists.
@@ -44,4 +57,40 @@ func migrateBaseURLToAPIType(db *gorm.DB) error {
 
 		return nil
 	})
+}
+
+// migrateStickyConfig converts legacy sticky_enabled values to sticky_mode.
+// It deletes sticky_enabled after migration to prevent stale keys in config exports.
+func migrateStickyConfig(db *gorm.DB) error {
+	var cfg model.RuntimeConfig
+	err := db.First(&cfg, "key = ?", legacyStickyEnabledConfigKey).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", legacyStickyEnabledConfigKey, err)
+	}
+
+	var mode string
+	switch strings.ToLower(cfg.Value) {
+	case "false", "0":
+		mode = string(model.StickyModeOff)
+	case "true", "1":
+		mode = string(model.StickyModeAPIType)
+	default:
+		return nil
+	}
+
+	result := db.Where("key = ?", stickyModeConfigKey).
+		FirstOrCreate(&model.RuntimeConfig{Key: stickyModeConfigKey, Value: mode})
+	if result.Error != nil {
+		return fmt.Errorf("upsert %s: %w", stickyModeConfigKey, result.Error)
+	}
+
+	if err := db.Where("key = ?", legacyStickyEnabledConfigKey).
+		Delete(&model.RuntimeConfig{}).Error; err != nil {
+		return fmt.Errorf("delete %s: %w", legacyStickyEnabledConfigKey, err)
+	}
+
+	return nil
 }

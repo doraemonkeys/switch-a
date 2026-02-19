@@ -24,8 +24,8 @@ const (
 	// Codex API routes
 	RouteCodexResponses = "/responses"
 	// Gemini API routes (prefix)
-	RouteGeminiPrefix  = "/gemini/"
-	RouteGeminiV1Beta  = "/v1beta/"
+	RouteGeminiPrefix = "/gemini/"
+	RouteGeminiV1Beta = "/v1beta/"
 	// Custom API routes (prefix)
 	RouteCustomPrefix = "/custom/"
 )

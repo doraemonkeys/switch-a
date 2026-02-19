@@ -49,7 +49,7 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyCon
 // routing to that same provider for consistency even though the cache entry expired.
 // Returns nil if no active provider is found or available.
 func (h *Handler) tryActiveProviderFallback(ctx context.Context, pctx *proxyContext) *model.Provider {
-	if !pctx.cfg.stickyEnabled || h.activeRegistry == nil {
+	if pctx.cfg.stickyMode == model.StickyModeOff || h.activeRegistry == nil {
 		return nil
 	}
 
@@ -57,6 +57,7 @@ func (h *Handler) tryActiveProviderFallback(ctx context.Context, pctx *proxyCont
 		pctx.selectReq.ClientIP,
 		pctx.selectReq.User,
 		pctx.selectReq.APIType,
+		pctx.selectReq.Model,
 	)
 	if !found {
 		return nil

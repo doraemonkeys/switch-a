@@ -21,6 +21,14 @@ func TestInitDefaultConfig(t *testing.T) {
 	if value != "300" {
 		t.Errorf("sticky_ttl = %q, want %q", value, "300")
 	}
+
+	value, err = store.GetConfig(ctx, "sticky_mode")
+	if err != nil {
+		t.Fatalf("GetConfig sticky_mode failed: %v", err)
+	}
+	if value != DefaultStickyMode {
+		t.Errorf("sticky_mode = %q, want %q", value, DefaultStickyMode)
+	}
 }
 
 func TestConfig(t *testing.T) {

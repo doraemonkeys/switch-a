@@ -27,9 +27,6 @@ const DefaultStickyTTL = defaults.StickyTTL
 // ConfigKeyInterGroupStrategy is the config key for inter-group selection strategy.
 const ConfigKeyInterGroupStrategy = "inter_group_strategy"
 
-// ConfigKeyStickyEnabled is the config key for enabling/disabling sticky sessions.
-const ConfigKeyStickyEnabled = "sticky_enabled"
-
 // UngroupedProviderPriority is the priority assigned to ungrouped providers.
 // They are given the lowest priority (highest value) so grouped providers take precedence.
 //
@@ -206,22 +203,33 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, req *model.Selec
 	return nil, internal.ErrNoProvider
 }
 
-// checkStickyCache checks for a cached sticky provider and returns it if available.
-// Returns nil if sticky sessions are disabled (StickyEnabled=false) or if no valid cached provider exists.
-func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectRequest) *model.Provider {
-	if s.sticky == nil {
-		return nil
-	}
+// isStickyEnabled returns true only for recognized non-off sticky modes.
+// Unknown or zero-value StickyMode is treated as disabled for defense-in-depth,
+// even though the current sole caller (proxy.Handler) validates before constructing SelectRequest.
+func isStickyEnabled(mode model.StickyMode) bool {
+	return mode == model.StickyModeAPIType || mode == model.StickyModeModel
+}
 
-	if !req.StickyEnabled {
-		return nil
-	}
-
-	stickyKey := model.StickyKey{
+func buildStickyKey(req *model.SelectRequest) model.StickyKey {
+	key := model.StickyKey{
 		IP:      req.ClientIP,
 		User:    req.User,
 		APIType: req.APIType,
 	}
+	if req.StickyMode == model.StickyModeModel {
+		key.Model = req.Model
+	}
+	return key
+}
+
+// checkStickyCache checks for a cached sticky provider and returns it if available.
+// Returns nil if sticky sessions are disabled or if no valid cached provider exists.
+func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectRequest) *model.Provider {
+	if s.sticky == nil || !isStickyEnabled(req.StickyMode) {
+		return nil
+	}
+
+	stickyKey := buildStickyKey(req)
 
 	providerID, found := s.sticky.Get(stickyKey)
 	if !found {
@@ -416,29 +424,21 @@ func (s *Selector) getProviderByIDIfValid(ctx context.Context, providerID, apiTy
 // UpdateSticky updates the sticky cache after a successful request using the default TTL.
 // This is a convenience method; use UpdateStickyWithTTL if you need a custom TTL.
 func (s *Selector) UpdateSticky(req *model.SelectRequest, providerID string) {
-	if s.sticky == nil {
+	if s.sticky == nil || !isStickyEnabled(req.StickyMode) {
 		return
 	}
 
-	stickyKey := model.StickyKey{
-		IP:      req.ClientIP,
-		User:    req.User,
-		APIType: req.APIType,
-	}
+	stickyKey := buildStickyKey(req)
 	s.sticky.Set(stickyKey, providerID, DefaultStickyTTL)
 }
 
 // UpdateStickyWithTTL updates the sticky cache with a specific TTL.
 func (s *Selector) UpdateStickyWithTTL(req *model.SelectRequest, providerID string, ttl time.Duration) {
-	if s.sticky == nil {
+	if s.sticky == nil || !isStickyEnabled(req.StickyMode) {
 		return
 	}
 
-	stickyKey := model.StickyKey{
-		IP:      req.ClientIP,
-		User:    req.User,
-		APIType: req.APIType,
-	}
+	stickyKey := buildStickyKey(req)
 	s.sticky.Set(stickyKey, providerID, ttl)
 }
 

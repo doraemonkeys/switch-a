@@ -67,7 +67,7 @@ func TestExportConfig(t *testing.T) {
 		Enabled:  true,
 	}
 
-	st.config["sticky_enabled"] = "true"
+	st.config["sticky_mode"] = "model"
 	st.config["global_max_attempts"] = "3"
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
@@ -96,8 +96,8 @@ func TestExportConfig(t *testing.T) {
 		t.Errorf("len(groups) = %d, want 1", len(export.Groups))
 	}
 
-	if export.Settings["sticky_enabled"] != "true" {
-		t.Errorf("sticky_enabled = %q, want %q", export.Settings["sticky_enabled"], "true")
+	if export.Settings["sticky_mode"] != "model" {
+		t.Errorf("sticky_mode = %q, want %q", export.Settings["sticky_mode"], "model")
 	}
 
 	// Verify provider data is correct
@@ -174,7 +174,7 @@ func TestImportConfig_DryRun(t *testing.T) {
 	// Setup existing data
 	st.providers["p1"] = &model.Provider{ID: "p1", Name: "Existing Provider"}
 	st.groups["g1"] = &model.Group{ID: "g1", Name: "Existing Group"}
-	st.config["sticky_enabled"] = "true"
+	st.config["sticky_mode"] = "api_type"
 
 	importReq := ImportConfigRequest{
 		Version: "1.0",
@@ -223,6 +223,12 @@ func TestImportConfig_DryRun(t *testing.T) {
 	}
 	if resp.Changes.Groups.Update != 1 {
 		t.Errorf("groups.update = %d, want 1", resp.Changes.Groups.Update)
+	}
+	if resp.Changes.Settings.Add != 1 {
+		t.Errorf("settings.add = %d, want 1", resp.Changes.Settings.Add)
+	}
+	if resp.Changes.Settings.Update != 1 {
+		t.Errorf("settings.update = %d, want 1", resp.Changes.Settings.Update)
 	}
 
 	// Verify data was not actually changed
@@ -295,6 +301,36 @@ func TestImportConfig_ActualImport(t *testing.T) {
 	}
 	if st.groups["g2"] == nil {
 		t.Error("g2 should exist after import")
+	}
+}
+
+func TestImportConfig_MigratesLegacyStickyEnabled(t *testing.T) {
+	h, st, _ := testHandler()
+	st.config["sticky_mode"] = "model"
+
+	importReq := ImportConfigRequest{
+		Version: "1.0",
+		Settings: map[string]string{
+			"sticky_enabled": "1",
+		},
+	}
+
+	body, _ := json.Marshal(importReq)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	if got := st.config["sticky_mode"]; got != "api_type" {
+		t.Errorf("sticky_mode = %q, want %q", got, "api_type")
+	}
+	if _, exists := st.config["sticky_enabled"]; exists {
+		t.Error("sticky_enabled should not be persisted after import migration")
 	}
 }
 
@@ -788,5 +824,32 @@ func TestValidateExportedProvider_MalformedURL(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected malformed base_url warning, got: %v", warnings)
+	}
+}
+
+func TestMigrateImportKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       string
+		value     string
+		wantKey   string
+		wantValue string
+	}{
+		{"legacy true", "sticky_enabled", "true", "sticky_mode", "api_type"},
+		{"legacy one", "sticky_enabled", "1", "sticky_mode", "api_type"},
+		{"legacy false", "sticky_enabled", "false", "sticky_mode", "off"},
+		{"legacy zero", "sticky_enabled", "0", "sticky_mode", "off"},
+		{"legacy uppercase", "sticky_enabled", "TRUE", "sticky_mode", "api_type"},
+		{"legacy invalid", "sticky_enabled", "maybe", "sticky_enabled", "maybe"},
+		{"other key", "sticky_ttl", "300", "sticky_ttl", "300"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotKey, gotValue := migrateImportKey(tt.key, tt.value)
+			if gotKey != tt.wantKey || gotValue != tt.wantValue {
+				t.Errorf("migrateImportKey(%q, %q) = (%q, %q), want (%q, %q)", tt.key, tt.value, gotKey, gotValue, tt.wantKey, tt.wantValue)
+			}
+		})
 	}
 }

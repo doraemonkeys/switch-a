@@ -30,6 +30,29 @@ func TestNewActiveRequestRegistry(t *testing.T) {
 	if len(r.requests) != 0 {
 		t.Error("requests map should be empty")
 	}
+	if r.keyIndex == nil {
+		t.Error("keyIndex map should be initialized")
+	}
+	if !r.perModel.Load() {
+		t.Error("perModel should default to true")
+	}
+}
+
+func TestNewActiveRequestRegistryWithClock(t *testing.T) {
+	clock := &mockClock{current: time.Now()}
+	r := NewActiveRequestRegistryWithClock(clock)
+	if r == nil {
+		t.Fatal("NewActiveRequestRegistryWithClock returned nil")
+	}
+	if r.clock != clock {
+		t.Error("expected injected clock to be set")
+	}
+	if r.keyIndex == nil {
+		t.Error("keyIndex map should be initialized")
+	}
+	if !r.perModel.Load() {
+		t.Error("perModel should default to true")
+	}
 }
 
 func TestActiveRequestRegistry_Register(t *testing.T) {
@@ -520,7 +543,7 @@ func TestFindActiveProvider_ReturnsProviderWithData(t *testing.T) {
 	})
 
 	// Should not find (HasReceivedData = false)
-	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if found {
 		t.Error("should not find provider when HasReceivedData is false")
 	}
@@ -529,7 +552,7 @@ func TestFindActiveProvider_ReturnsProviderWithData(t *testing.T) {
 	r.MarkDataReceived("req-1")
 
 	// Now should find
-	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if !found {
 		t.Error("should find provider when HasReceivedData is true")
 	}
@@ -561,21 +584,120 @@ func TestFindActiveProvider_DifferentStickyKeys(t *testing.T) {
 	r.MarkDataReceived("req-2")
 
 	// Find by first sticky key
-	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if !found || providerID != "provider-1" {
 		t.Errorf("expected provider-1 for first sticky key, got %s (found=%v)", providerID, found)
 	}
 
 	// Find by second sticky key
-	providerID, found = r.FindActiveProvider("5.6.7.8", "user-2", "openai")
+	providerID, found = r.FindActiveProvider("5.6.7.8", "user-2", "openai", "")
 	if !found || providerID != "provider-2" {
 		t.Errorf("expected provider-2 for second sticky key, got %s (found=%v)", providerID, found)
 	}
 
 	// Non-existent sticky key
-	_, found = r.FindActiveProvider("9.9.9.9", "user-3", "gemini")
+	_, found = r.FindActiveProvider("9.9.9.9", "user-3", "gemini", "")
 	if found {
 		t.Error("should not find provider for non-existent sticky key")
+	}
+}
+
+func TestFindActiveProvider_StickyModeSwitch(t *testing.T) {
+	r := NewActiveRequestRegistry()
+	r.SetStickyPerModel(false)
+
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+		Model:      "model-a",
+	})
+	r.MarkDataReceived("req-1")
+
+	// api_type mode ignores model and should match.
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "different-model")
+	if !found || providerID != "provider-1" {
+		t.Fatalf("expected provider-1 in api_type mode, got %q (found=%v)", providerID, found)
+	}
+
+	// Switching to model mode should require exact model match.
+	r.SetStickyPerModel(true)
+	if _, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "different-model"); found {
+		t.Fatal("expected miss for different model after switching to model mode")
+	}
+	if _, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "model-a"); found {
+		t.Fatal("expected miss for pre-switch registration after key mode changed")
+	}
+
+	r.Register(&ActiveRequest{
+		RequestID:  "req-2",
+		ProviderID: "provider-2",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+		Model:      "model-a",
+	})
+	r.MarkDataReceived("req-2")
+
+	providerID, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "model-a")
+	if !found || providerID != "provider-2" {
+		t.Fatalf("expected provider-2 for post-switch model registration, got %q (found=%v)", providerID, found)
+	}
+}
+
+func TestStickyIndex_ModeSwitchCleanupUsesRegisteredKey(t *testing.T) {
+	r := NewActiveRequestRegistry()
+	r.SetStickyPerModel(false)
+
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+		Model:      "model-a",
+	})
+	r.MarkDataReceived("req-1")
+
+	// Switch mode before unregister to simulate runtime config updates.
+	r.SetStickyPerModel(true)
+	r.Unregister("req-1")
+
+	// If cleanup used the new key shape, a stale api_type entry would remain.
+	r.SetStickyPerModel(false)
+	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "ignored-model"); found {
+		t.Fatal("expected sticky entry to be fully cleaned after unregister across mode switch")
+	}
+}
+
+func TestStickyIndex_ModeSwitchCleanupStaleUsesRegisteredKey(t *testing.T) {
+	baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	clock := &mockClock{current: baseTime}
+	r := NewActiveRequestRegistryWithClock(clock)
+	r.SetStickyPerModel(false)
+
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "claude",
+		Model:      "model-a",
+		StartedAt:  baseTime.Add(-45 * time.Minute),
+	})
+	r.MarkDataReceived("req-1")
+
+	r.SetStickyPerModel(true)
+	removed := r.CleanupStale(30 * time.Minute)
+	if removed != 1 {
+		t.Fatalf("expected 1 removed, got %d", removed)
+	}
+
+	r.SetStickyPerModel(false)
+	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "ignored-model"); found {
+		t.Fatal("expected sticky entry to be fully cleaned after stale cleanup across mode switch")
 	}
 }
 
@@ -599,7 +721,7 @@ func TestFindActiveProvider_MultipleRequestsSameStickyKey(t *testing.T) {
 	})
 
 	// Neither has received data
-	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if found {
 		t.Error("should not find provider when no request has received data")
 	}
@@ -608,7 +730,7 @@ func TestFindActiveProvider_MultipleRequestsSameStickyKey(t *testing.T) {
 	r.MarkDataReceived("req-2")
 
 	// Should find provider-2
-	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if !found {
 		t.Error("should find provider when one request has received data")
 	}
@@ -644,7 +766,7 @@ func TestStickyIndex_CleanupOnUnregister(t *testing.T) {
 	r.MarkDataReceived("req-1")
 
 	// Verify it's findable
-	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if !found {
 		t.Error("should find provider before unregister")
 	}
@@ -653,7 +775,7 @@ func TestStickyIndex_CleanupOnUnregister(t *testing.T) {
 	r.Unregister("req-1")
 
 	// Should not find anymore
-	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if found {
 		t.Error("should not find provider after unregister")
 	}
@@ -676,7 +798,7 @@ func TestStickyIndex_CleanupOnCleanupStale(t *testing.T) {
 	r.MarkDataReceived("old-req")
 
 	// Verify it's findable
-	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if !found {
 		t.Error("should find provider before cleanup")
 	}
@@ -688,7 +810,7 @@ func TestStickyIndex_CleanupOnCleanupStale(t *testing.T) {
 	}
 
 	// Should not find anymore
-	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if found {
 		t.Error("should not find provider after cleanup")
 	}
@@ -718,7 +840,7 @@ func TestStickyIndex_OverwriteExistingRequest(t *testing.T) {
 	r.MarkDataReceived("req-1")
 
 	// Should find the new provider
-	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if !found {
 		t.Error("should find provider after overwrite")
 	}
@@ -741,7 +863,7 @@ func TestStickyIndex_OverwriteWithDifferentStickyKey(t *testing.T) {
 	r.MarkDataReceived("req-1")
 
 	// Verify findable with original key
-	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if !found {
 		t.Error("should find provider with original key")
 	}
@@ -757,13 +879,13 @@ func TestStickyIndex_OverwriteWithDifferentStickyKey(t *testing.T) {
 	r.MarkDataReceived("req-1")
 
 	// Should NOT find with original key anymore
-	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude")
+	_, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "")
 	if found {
 		t.Error("should not find provider with original key after overwrite")
 	}
 
 	// Should find with new key
-	providerID, found := r.FindActiveProvider("5.6.7.8", "user-2", "openai")
+	providerID, found := r.FindActiveProvider("5.6.7.8", "user-2", "openai", "")
 	if !found {
 		t.Error("should find provider with new key")
 	}
