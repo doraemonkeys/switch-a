@@ -4,62 +4,109 @@
 > **Scope**: This document reflects the current codebase state only and does not describe future plans.
 > **Goal**: Help AI quickly locate relevant code by module, type, and data flow.
 
-## Architecture
+## What is Switch-AAn **AI API Gateway** that proxies requests to multiple AI providers (Claude, OpenAI, Gemini, etc.) with intelligent routing, failover, and observability.
 
-Switch-A is an AI provider proxy pool service with automatic failover.
+**Core Features:**
+- Multi-provider routing with selection strategies (priority, weight, random)
+- Circuit breaker + health checks for automatic failover
+- Vendor isolation for failover scope control
+- Sticky sessions (session affinity by IP/user)
+- Per-provider concurrency limiting
+- Request logging with token usage tracking
+- Admin UI for configuration and monitoring
+
+## Tech Stack
+
+| Layer    | Stack                                        |
+|----------|----------------------------------------------|
+| Backend  | Go 1.25, SQLite (GORM), Zap logger, Viper    |
+| Frontend | React 19, TypeScript 5.9, Vite 7, Tailwind 4 |
+| Testing  | Go test (90% coverage), Vitest (40% coverage)|## Architecture
 
 ```
-Client → HTTP Server → Proxy Handler → Selector → Provider → Upstream AI API
-                            ↓              ↓
-                      Health Manager   Sticky Cache
-                            ↓
-                      Circuit Breaker
+┌─────────────────┐     ┌─────────────────┐
+│  Proxy Server   │     │  Admin Server   │
+│   (port 28080)  │     │   (port 28081)  │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         ▼                       ▼
+┌─────────────────────────────────────────┐
+│              internal/                   │
+│  ┌─────────┐ ┌──────────┐ ┌──────────┐  │
+│  │  proxy  │ │ selector │ │  health  │  │
+│  └─────────┘ └──────────┘ └──────────┘  │
+│  ┌─────────┐ ┌──────────┐ ┌──────────┐  │
+│  │  store  │ │  model   │ │  config  │  │
+│  └─────────┘ └──────────┘ └──────────┘  │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│  SQLite (GORM)  │
+└─────────────────┘
+```## Directory Structure```
+switch-a/
+├── cmd/switch-a/          # Entry point (main.go)
+├── internal/              # Go backend packages
+│   ├── config/            # YAML/env config loading
+│   ├── model/             # Domain models: Provider, Group, HealthState, RequestLog
+│   ├── store/             # SQLite persistence + CachedStore wrapper
+│   ├── proxy/             # HTTP proxy: routing, SSE, token capture
+│   ├── selector/          # Provider selection: strategy, sticky, concurrency
+│   ├── health/            # Circuit breaker, availability tracking
+│   ├── server/            # HTTP server setup (proxy + admin)
+│   ├── admin/             # Admin API handlers
+│   └── interfaces.go      # Core interfaces (Store, Selector, HealthManager)
+├── web/                   # React frontend (embedded in Go binary)
+│   └── src/
+│       ├── api/           # API client with DI support
+│       ├── components/    # Reusable UI components
+│       ├── pages/         # Route pages (Dashboard, Providers, Groups, Config, Logs, Monitor)
+│       ├── hooks/         # Custom hooks (useConfig, useConfigExport)
+│       └── config/        # Frontend constants
+└── docs/                  # Documentation
 ```
 
-## Package Structure
+## Core Domain Models
 
-| Package | Purpose |
-|---------|---------|
-| `cmd/switch-a` | Main entry point, server setup |
-| `internal/config` | Environment variable loading |
-| `internal/defaults` | Centralized default values |
-| `internal/model` | Data models (Provider, Group, HealthState, etc.) |
-| `internal/store` | SQLite storage with caching layer |
-| `internal/proxy` | HTTP proxy handler, routing, headers, transport |
-| `internal/selector` | Provider selection strategies, sticky cache, concurrency |
-| `internal/health` | Circuit breaker, health management |
-| `internal/server` | HTTP server setup, route registration |
-| `internal/admin` | Management API handlers, authentication middleware |
-| `internal/logger` | Zap logger initialization |
+Located in `internal/model/model.go`:
+
+| Model           | Purpose                                         |
+|-----------------|-------------------------------------------------|
+| `Provider`      | AI provider config (API key, weight, priority, backoff, vendor, per-API-type base URLs) |
+| `Group`         | Provider grouping with strategy (priority/weight/random) |
+| `HealthState`   | Circuit breaker state (available, fail counts, disabled_until) |
+| `RequestLog`    | Request log with latency, tokens, retry info    |
+| `RequestAttempt`| Individual attempt within a request (for retry tracking) |
+| `RuntimeConfig` | Key-value runtime configuration                 |
 
 ## Key Interfaces
 
-```go
-// internal/interfaces.go
-type Store interface { ... }         // Data persistence
-type Selector interface { ... }      // Provider selection
-type HealthManager interface { ... } // Health tracking & circuit breaking
-type StickyCache interface { ... }   // Session affinity cache
-```
+Defined in `internal/interfaces.go`:
 
-## Selection Flow
+| Interface       | Purpose                                         |
+|-----------------|-------------------------------------------------|
+| `Store`         | Data persistence (providers, groups, health, logs, config) |
+| `Selector`      | Provider selection logic                        |
+| `HealthManager` | Circuit breaker, availability checks            |
+| `StickyCache`   | Session affinity cache                          |
+| `Clock`         | Time abstraction for testing                    |
 
-1. **Sticky Cache Check**: Return cached provider if valid
-2. **Health Filter**: Exclude unhealthy/circuit-broken providers
-3. **Group Selection**: Pick group using inter-group strategy (priority/weight/random)
-4. **Provider Selection**: Pick provider using group's strategy
-5. **Concurrency Check**: Skip providers at concurrency limit
-6. **Retry on Failure**: Exclude failed providers, try next
+## Request Flow
 
-## Strategies
+1. **Proxy receives request** → `internal/proxy/handler.go`
+2. **Extract API type** from path → `internal/proxy/extractor.go`
+3. **Select provider** (strategy + health + sticky + concurrency) → `internal/selector/selector.go`
+4. **Forward request** with retry/failover → `internal/proxy/transport.go`
+5. **Log result** (tokens, latency, attempts) → `internal/store/sqlite_logs.go`
 
-- `priority`: Lower priority value = higher precedence
-- `weight`: Weighted random selection
-- `random`: Pure random selection
+## Frontend Pages
 
-## Circuit Breaker
-
-- Sliding window tracks failures per provider
-- Threshold failures → auto-disable for configured duration
-- Auto-recover after disable period expires
-- Manual enable/disable supported
+| Page       | Path         | Purpose                              |
+|------------|--------------|--------------------------------------|
+| Dashboard  | `/admin/`    | Overview stats, quick actions        |
+| Monitor    | `/monitor`   | Real-time request monitoring         |
+| Providers  | `/providers` | Provider CRUD, health status         |
+| Groups     | `/groups`    | Group management, strategy config    |
+| Config     | `/config`    | Runtime config (sticky TTL, circuit breaker thresholds) |
+| Logs       | `/logs`      | Request log viewer with filters      |
