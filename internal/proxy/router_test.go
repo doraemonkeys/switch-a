@@ -76,6 +76,18 @@ func TestParseAPIType(t *testing.T) {
 			wantType: APITypeGemini,
 			wantOK:   true,
 		},
+		{
+			name:     "gemini native v1beta path",
+			path:     "/v1beta/models/gemini-2.5-flash-lite:generateContent",
+			wantType: APITypeGemini,
+			wantOK:   true,
+		},
+		{
+			name:     "gemini native v1beta stream path",
+			path:     "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
+			wantType: APITypeGemini,
+			wantOK:   true,
+		},
 
 		// Custom API paths
 		{

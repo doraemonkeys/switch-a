@@ -171,6 +171,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("POST "+proxy.RouteCodexResponses, s.handleProxy)
 	// Gemini API
 	mux.HandleFunc("POST "+proxy.RouteGeminiPrefix, s.handleProxy)
+	mux.HandleFunc("POST "+proxy.RouteGeminiV1Beta, s.handleProxy)
 	// Custom API
 	mux.HandleFunc("POST "+proxy.RouteCustomPrefix, s.handleProxy)
 	mux.HandleFunc("GET "+proxy.RouteCustomPrefix, s.handleProxy)
