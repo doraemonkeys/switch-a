@@ -164,7 +164,8 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	// Proxy API routes (no auth required)
-	// Claude API
+	// Claude API (register specific subpaths before the parent to ensure exact matching)
+	mux.HandleFunc("POST "+proxy.RouteClaudeCountTokens, s.handleProxy)
 	mux.HandleFunc("POST "+proxy.RouteClaudeMessages, s.handleProxy)
 	mux.HandleFunc("GET "+proxy.RouteClaudeModels, s.handleProxy)
 	// Codex API

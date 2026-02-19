@@ -19,8 +19,9 @@ const CustomAPITypePrefix = "custom:"
 // These ensure consistency between server route registration and path parsing.
 const (
 	// Claude API routes
-	RouteClaudeMessages = "/v1/messages"
-	RouteClaudeModels   = "/v1/models"
+	RouteClaudeMessages    = "/v1/messages"
+	RouteClaudeCountTokens = "/v1/messages/count_tokens"
+	RouteClaudeModels      = "/v1/models"
 	// Codex API routes
 	RouteCodexResponses = "/responses"
 	// Gemini API routes (prefix)

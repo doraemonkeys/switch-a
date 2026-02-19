@@ -25,6 +25,12 @@ func TestParseAPIType(t *testing.T) {
 			wantOK:   true,
 		},
 		{
+			name:     "claude count_tokens",
+			path:     "/v1/messages/count_tokens",
+			wantType: APITypeClaude,
+			wantOK:   true,
+		},
+		{
 			name:     "claude messages with trailing path",
 			path:     "/v1/messages/stream",
 			wantType: APITypeClaude,
@@ -159,6 +165,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 			originalPath: "/v1/messages",
 			apiType:      APITypeClaude,
 			wantPath:     "/v1/messages",
+		},
+		{
+			name:         "claude count_tokens passthrough",
+			originalPath: "/v1/messages/count_tokens",
+			apiType:      APITypeClaude,
+			wantPath:     "/v1/messages/count_tokens",
 		},
 		{
 			name:         "codex passthrough",
