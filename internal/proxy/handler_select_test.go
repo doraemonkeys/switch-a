@@ -19,8 +19,9 @@ type mockSelector struct {
 	selectExcludingFunc    func(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
 	selectFunc             func(ctx context.Context, req *model.SelectRequest) (*model.Provider, error)
 
-	mu            sync.Mutex
-	stickyUpdates []stickyUpdate // Records all UpdateStickyWithTTL calls
+	mu                   sync.Mutex
+	stickyUpdates        []stickyUpdate // Records all UpdateStickyWithTTL calls
+	concurrencyReleased  []string       // Records provider IDs passed to ReleaseConcurrency
 }
 
 // stickyUpdate records a single call to UpdateStickyWithTTL.
@@ -69,7 +70,11 @@ func (m *mockSelector) UpdateStickyWithTTL(_ *model.SelectRequest, providerID st
 	m.stickyUpdates = append(m.stickyUpdates, stickyUpdate{ProviderID: providerID, TTL: ttl})
 }
 
-func (m *mockSelector) ReleaseConcurrency(_ string) {}
+func (m *mockSelector) ReleaseConcurrency(providerID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.concurrencyReleased = append(m.concurrencyReleased, providerID)
+}
 
 func (m *mockSelector) ClearConcurrency(_ string) {}
 
@@ -269,6 +274,15 @@ func TestSelectProviderWithTracking_ActiveProviderFallback(t *testing.T) {
 	}
 	if !useStickyBehavior {
 		t.Error("expected useStickyBehavior=true for active provider fallback")
+	}
+
+	// Verify that the originally selected provider's concurrency slot was released
+	// to prevent counter leaks (SelectWithMetadata acquired a slot for fresh-p1,
+	// but we're returning active-p1 instead).
+	mockSel.mu.Lock()
+	defer mockSel.mu.Unlock()
+	if len(mockSel.concurrencyReleased) != 1 || mockSel.concurrencyReleased[0] != "fresh-p1" {
+		t.Errorf("expected concurrency release for fresh-p1, got %v", mockSel.concurrencyReleased)
 	}
 }
 
