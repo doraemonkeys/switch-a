@@ -1,6 +1,7 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useMemo, useEffect, useRef } from "react";
 import { LiveRequestsPanel } from "../components/LiveRequestsPanel";
 import { useLiveRequests, useStatus, useProviders } from "../hooks";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 
 /** Threshold in ms to highlight long-running requests */
 const LONG_RUNNING_REQUEST_THRESHOLD_MS = 300000;
@@ -95,7 +96,10 @@ function StatusDot({ enabled, available, disabledReason }: StatusDotProps) {
 }
 
 export function Monitor() {
-  const [pollInterval, setPollInterval] = useState(5000);
+  const [pollInterval, setPollInterval] = useLocalStorage(
+    "monitor:pollInterval",
+    5000,
+  );
 
   const {
     requests,

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
   INITIAL_VISIBLE_COUNT,
   LOAD_MORE_INCREMENT,
@@ -31,11 +32,20 @@ export function LiveRequestsPanel({
   // Current timestamp for duration calculation
   const [currentTime, setCurrentTime] = useState(() => Date.now());
 
-  // View state
-  const [viewMode, setViewMode] = useState<GroupViewMode>("ip");
+  // View state (persisted to localStorage)
+  const [viewMode, setViewMode] = useLocalStorage<GroupViewMode>(
+    "monitor:viewMode",
+    "ip",
+  );
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortField, setSortField] = useState<SortField>("duration");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [sortField, setSortField] = useLocalStorage<SortField>(
+    "monitor:sortField",
+    "duration",
+  );
+  const [sortOrder, setSortOrder] = useLocalStorage<SortOrder>(
+    "monitor:sortOrder",
+    "desc",
+  );
 
   // Expanded groups state (persisted across refreshes)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
