@@ -19,9 +19,9 @@ type mockSelector struct {
 	selectExcludingFunc    func(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
 	selectFunc             func(ctx context.Context, req *model.SelectRequest) (*model.Provider, error)
 
-	mu                   sync.Mutex
-	stickyUpdates        []stickyUpdate // Records all UpdateStickyWithTTL calls
-	concurrencyReleased  []string       // Records provider IDs passed to ReleaseConcurrency
+	mu                  sync.Mutex
+	stickyUpdates       []stickyUpdate // Records all UpdateStickyWithTTL calls
+	concurrencyReleased []string       // Records provider IDs passed to ReleaseConcurrency
 }
 
 // stickyUpdate records a single call to UpdateStickyWithTTL.
