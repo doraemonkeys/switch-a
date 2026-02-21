@@ -2,6 +2,21 @@ import type { Provider } from "../../api/client";
 import { stringToColor } from "../../lib/utils";
 import { RecoveryTimer } from "../../components/RecoveryTimer";
 import {
+  Info,
+  Play,
+  Pause,
+  Edit2,
+  Trash2,
+  Eye,
+  RotateCw,
+  Activity,
+  AlertCircle,
+  PlusCircle,
+  FolderOpen,
+  RefreshCw,
+  ServerCrash,
+} from "lucide-react";
+import {
   getProviderStatus,
   statusDotClass,
   statusBadgeClass,
@@ -35,24 +50,38 @@ function StatusCell({
 }) {
   const showTooltip =
     (status === "unhealthy" || status === "pending-recovery") && disabledReason;
+
+  const getBorderColor = (s: ProviderStatusType) => {
+    if (s === "healthy") return "border-success/20";
+    if (s === "unhealthy") return "border-danger/20";
+    if (s === "pending-recovery") return "border-warning/20";
+    return "border-gray-200";
+  };
+
   return (
-    <div className="group relative flex items-center gap-1">
-      <span
-        className={`px-2 py-1 rounded text-xs font-medium ${statusBadgeClass[status]}`}
+    <div className="group relative flex items-center gap-1.5">
+      <div
+        className={`px-2.5 py-1 rounded-full text-xs font-semibold tracking-wide border inline-flex items-center gap-1.5 ${statusBadgeClass[status]} ${getBorderColor(status)}`}
       >
+        <div
+          className={`w-1.5 h-1.5 rounded-full ${statusDotClass[status]} ${status === "pending-recovery" ? "animate-pulse" : ""}`}
+        />
         {statusLabel[status]}
-      </span>
+      </div>
       {showTooltip && (
         <div className="relative group/tooltip">
-          <span className="cursor-help text-text-muted">ℹ️</span>
-          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-48 p-2 bg-gray-800 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-all z-10 pointer-events-none">
-            {disabledReason}
+          <Info className="w-4 h-4 text-text-muted hover:text-text-primary cursor-help transition-colors" />
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-56 p-2.5 bg-gray-900 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-all z-10 pointer-events-none">
+            <div className="font-medium">{disabledReason}</div>
             {lastError && (
               <>
-                <hr className="my-1 border-gray-600" />
-                <span className="opacity-75">Last error: {lastError}</span>
+                <div className="h-px bg-gray-700 my-2" />
+                <span className="opacity-80 break-words line-clamp-3 leading-relaxed">
+                  Error: {lastError}
+                </span>
               </>
             )}
+            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45" />
           </div>
         </div>
       )}
@@ -70,16 +99,20 @@ function RecoveryCell({
 }) {
   if (status === "pending-recovery") {
     return (
-      <span className="text-xs font-medium bg-warning-light text-warning-dark px-2 py-0.5 rounded inline-flex items-center gap-1">
-        <span className="inline-block w-1.5 h-1.5 bg-warning rounded-full animate-pulse" />
+      <span className="text-xs font-medium bg-warning-light/50 text-warning-dark px-2.5 py-1 rounded-md inline-flex items-center gap-1.5 border border-warning/10">
+        <Activity className="w-3.5 h-3.5 animate-pulse text-warning" />
         Probing
       </span>
     );
   }
   if (disabledUntil) {
-    return <RecoveryTimer disabledUntil={disabledUntil} className="text-xs" />;
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+        <RecoveryTimer disabledUntil={disabledUntil} className="font-medium" />
+      </div>
+    );
   }
-  return <span className="text-text-muted text-sm">—</span>;
+  return <span className="text-text-muted/50 text-sm">—</span>;
 }
 
 // Action buttons cell
@@ -101,46 +134,49 @@ function ActionsCell({
   onDelete: (provider: Provider) => void;
 }) {
   const showReset = status === "unhealthy" || status === "pending-recovery";
+
   return (
-    <div className="flex items-center justify-end gap-1">
+    <div className="flex items-center justify-end gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity">
       {onViewDetail && (
         <button
           onClick={() => onViewDetail(provider)}
-          className="btn btn-ghost btn-sm text-primary hover:bg-primary-light"
+          className="p-1.5 text-text-muted hover:text-primary hover:bg-primary-light rounded-md transition-colors"
           title="View Details"
         >
-          👁️
+          <Eye className="w-4 h-4" />
         </button>
       )}
-      {/* Always render the reset button to maintain alignment; hide when not needed */}
       <button
         onClick={() => onReset(provider)}
-        className={`btn btn-ghost btn-sm text-warning hover:bg-warning-light ${showReset ? "" : "invisible"}`}
+        className={`p-1.5 text-text-muted hover:text-warning hover:bg-warning-light rounded-md transition-colors ${showReset ? "" : "hidden"}`}
         title="Reset Circuit Breaker"
-        disabled={!showReset}
       >
-        🔄
+        <RotateCw className="w-4 h-4" />
       </button>
       <button
         onClick={() => onToggle(provider)}
-        className="btn btn-ghost btn-sm"
+        className={`p-1.5 text-text-muted hover:bg-bg-hover rounded-md transition-colors ${provider.enabled ? "hover:text-warning" : "hover:text-success"}`}
         title={provider.enabled ? "Disable" : "Enable"}
       >
-        {provider.enabled ? "⏸️" : "▶️"}
+        {provider.enabled ? (
+          <Pause className="w-4 h-4" />
+        ) : (
+          <Play className="w-4 h-4" />
+        )}
       </button>
       <button
         onClick={() => onEdit(provider)}
-        className="btn btn-ghost btn-sm"
+        className="p-1.5 text-text-muted hover:text-primary hover:bg-bg-hover rounded-md transition-colors"
         title="Edit"
       >
-        ✏️
+        <Edit2 className="w-4 h-4" />
       </button>
       <button
         onClick={() => onDelete(provider)}
-        className="btn btn-ghost btn-sm text-danger hover:bg-danger-light"
+        className="p-1.5 text-text-muted hover:text-danger hover:bg-danger-light rounded-md transition-colors"
         title="Delete"
       >
-        🗑️
+        <Trash2 className="w-4 h-4" />
       </button>
     </div>
   );
@@ -178,30 +214,32 @@ function ProviderRow({
     : undefined;
 
   return (
-    <tr className="hover:bg-bg-secondary/50 transition-colors">
-      <td className="table-cell">
+    <tr className="group hover:bg-bg-secondary/60 transition-colors border-b border-border/40 last:border-b-0">
+      <td className="px-4 py-3 align-middle">
         <div className="flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${statusDotClass[status]}`} />
-          <div>
+          <div
+            className={`w-1.5 h-6 rounded-full shrink-0 ${statusDotClass[status]} opacity-80`}
+          />
+          <div className="min-w-0">
             <p
-              className={`font-medium text-text-primary ${onViewDetail ? "hover:text-primary cursor-pointer transition-colors" : ""}`}
+              className={`font-semibold text-sm text-text-primary truncate ${onViewDetail ? "hover:text-primary cursor-pointer transition-colors" : ""}`}
               onClick={onViewDetail ? () => onViewDetail(provider) : undefined}
               title={onViewDetail ? "View details" : undefined}
             >
               {provider.name}
             </p>
-            <p className="text-xs text-text-muted truncate max-w-[200px]">
+            <p className="text-[11px] text-text-muted truncate mt-0.5">
               {provider.api_types?.length > 1
-                ? `${provider.api_types.length} API types`
-                : provider.api_types?.[0]?.base_url || "\u2014"}
+                ? `${provider.api_types.length} endpoints configured`
+                : provider.api_types?.[0]?.base_url || "No endpoint configured"}
             </p>
           </div>
         </div>
       </td>
-      <td className="table-cell">
+      <td className="px-4 py-3 align-middle">
         {provider.group_id && groupColors ? (
           <span
-            className="px-2 py-1 rounded-md text-xs font-medium border whitespace-nowrap truncate max-w-[120px] inline-block cursor-pointer hover:opacity-80 transition-opacity"
+            className="px-2.5 py-1 rounded-md text-[11px] font-medium border whitespace-nowrap truncate max-w-[120px] inline-flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity shadow-sm"
             style={{
               backgroundColor: groupColors.bg,
               color: groupColors.text,
@@ -210,55 +248,72 @@ function ProviderRow({
             title={`Filter by group: ${groupName}`}
             onClick={() => onGroupClick?.(provider.group_id!)}
           >
+            <FolderOpen className="w-3 h-3 opacity-70" />
             {groupName}
           </span>
         ) : (
-          <span className="text-text-muted text-sm">—</span>
+          <span className="text-text-muted/50 text-sm">—</span>
         )}
       </td>
-      <td className="table-cell">
-        <div className="flex flex-wrap gap-1">
-          {provider.api_types?.map((apiType) => (
+      <td className="px-4 py-3 align-middle">
+        <div className="flex flex-wrap gap-1.5">
+          {provider.api_types?.slice(0, 2).map((apiType) => (
             <span
               key={apiType.api_type}
-              className="px-1.5 py-0.5 text-xs rounded bg-primary-light text-primary-dark"
+              className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-md bg-bg-tertiary text-text-secondary border border-border/50"
             >
               {apiType.api_type}
             </span>
-          )) ?? <span className="text-text-muted text-sm">—</span>}
+          )) ?? <span className="text-text-muted/50 text-sm">—</span>}
+          {provider.api_types && provider.api_types.length > 2 && (
+            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-md bg-bg-tertiary text-text-muted border border-border/50">
+              +{provider.api_types.length - 2}
+            </span>
+          )}
         </div>
       </td>
-      <td className="table-cell">
+      <td className="px-4 py-3 align-middle">
         <StatusCell
           status={status}
           disabledReason={provider.health?.disabled_reason ?? undefined}
           lastError={provider.health?.last_error ?? undefined}
         />
       </td>
-      <td className="table-cell text-center">
+      <td className="px-4 py-3 align-middle text-center">
         {failCount > 0 ? (
-          <span
-            className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-medium text-danger bg-danger-light rounded"
-            title="Consecutive failures"
-          >
+          <div className="inline-flex items-center gap-1 text-[11px] font-bold text-danger bg-danger-light/50 px-2 py-0.5 rounded-md border border-danger/10">
+            <AlertCircle className="w-3 h-3" />
             {failCount}
-          </span>
+          </div>
         ) : (
-          <span className="text-text-muted text-sm">—</span>
+          <span className="text-text-muted/50 text-sm">—</span>
         )}
       </td>
-      <td className="table-cell">
+      <td className="px-4 py-3 align-middle whitespace-nowrap">
         <RecoveryCell
           status={status}
           disabledUntil={provider.health?.disabled_until ?? undefined}
         />
       </td>
-      <td className="table-cell">
-        <span className="text-sm text-text-secondary">
-          P{provider.priority} / W{provider.weight}
-        </span>
+      <td className="px-4 py-3 align-middle whitespace-nowrap">
+        <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-bg-tertiary border border-border/50 text-[11px] font-medium text-text-secondary"
+            title="Priority"
+          >
+            <span className="text-text-muted">Pri</span>
+            <span className="text-text-primary">{provider.priority}</span>
+          </div>
+          <div
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-bg-tertiary border border-border/50 text-[11px] font-medium text-text-secondary"
+            title="Weight"
+          >
+            <span className="text-text-muted">Wt</span>
+            <span className="text-text-primary">{provider.weight}</span>
+          </div>
+        </div>
       </td>
-      <td className="table-cell text-right">
+      <td className="px-4 py-3 align-middle text-right whitespace-nowrap">
         <ActionsCell
           provider={provider}
           status={status}
@@ -289,10 +344,10 @@ export function ProvidersTableBody({
   if (loading && providers.length === 0) {
     return (
       <tr>
-        <td colSpan={8} className="px-4 py-16">
-          <div className="empty-state">
-            <div className="w-8 h-8 mx-auto mb-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-text-muted">Loading providers...</p>
+        <td colSpan={8} className="px-4 py-20">
+          <div className="flex flex-col items-center justify-center text-text-muted">
+            <RefreshCw className="w-8 h-8 animate-spin text-primary/60 mb-4" />
+            <p className="text-sm font-medium">Loading providers...</p>
           </div>
         </td>
       </tr>
@@ -303,24 +358,28 @@ export function ProvidersTableBody({
     const noProvidersConfigured = providers.length === 0;
     return (
       <tr>
-        <td colSpan={8} className="px-4 py-16">
-          <div className="empty-state">
-            <div className="w-20 h-20 mx-auto mb-4 bg-bg-tertiary rounded-2xl flex items-center justify-center">
-              <span className="text-4xl">🔌</span>
+        <td colSpan={8} className="px-4 py-24">
+          <div className="flex flex-col items-center text-center">
+            <div className="w-20 h-20 bg-bg-secondary border border-border rounded-2xl flex items-center justify-center mb-5 shadow-sm">
+              <ServerCrash className="w-10 h-10 text-text-muted" />
             </div>
-            <p className="font-medium text-text-primary mb-1">
+            <h3 className="text-lg font-semibold text-text-primary mb-2">
               {noProvidersConfigured
-                ? "No providers configured yet"
-                : "No providers match your filters"}
-            </p>
-            <p className="text-sm text-text-muted mb-4">
+                ? "No providers configured"
+                : "No matching providers"}
+            </h3>
+            <p className="text-sm text-text-secondary mb-6 max-w-sm leading-relaxed">
               {noProvidersConfigured
-                ? "Add your first AI provider to start proxying requests."
-                : "Try adjusting your search or filter criteria."}
+                ? "Get started by adding your first AI provider to configure your proxy network."
+                : "We couldn't find any providers matching your current filter criteria."}
             </p>
             {noProvidersConfigured && (
-              <button onClick={onAddClick} className="btn btn-primary">
-                <span>➕</span>Add Provider
+              <button
+                onClick={onAddClick}
+                className="btn btn-primary shadow-md"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Add First Provider</span>
               </button>
             )}
           </div>

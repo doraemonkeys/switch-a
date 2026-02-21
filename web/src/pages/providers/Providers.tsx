@@ -143,7 +143,7 @@ export function Providers() {
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
         loading={loading}
         onRefresh={() => refetch()}
@@ -151,6 +151,13 @@ export function Providers() {
         refreshInterval={refreshInterval}
         onRefreshIntervalChange={setRefreshInterval}
       />
+
+      {providers.length === 0 &&
+        !loading &&
+        !searchQuery &&
+        !groupFilter &&
+        !statusFilter && <HelpCard />}
+
       <FilterBar
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -161,28 +168,28 @@ export function Providers() {
         groups={groups}
       />
 
-      <div className="card overflow-x-auto p-0">
-        <table className="w-full min-w-[900px]">
-          <ProvidersTableHeader />
-          <tbody className="divide-y divide-border">
-            <ProvidersTableBody
-              loading={loading}
-              providers={providers}
-              filteredProviders={filteredProviders}
-              onToggle={handleToggleProvider}
-              onEdit={handleEditClick}
-              onDelete={handleDeleteClick}
-              onReset={handleResetClick}
-              onAddClick={handleAddClick}
-              onGroupClick={setGroupFilter}
-              onViewDetail={handleViewDetail}
-              getGroupName={getGroupName}
-            />
-          </tbody>
-        </table>
+      <div className="bg-white border border-border rounded-2xl shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1000px] table-auto">
+            <ProvidersTableHeader />
+            <tbody className="divide-y divide-border/60 bg-white">
+              <ProvidersTableBody
+                loading={loading}
+                providers={providers}
+                filteredProviders={filteredProviders}
+                onToggle={handleToggleProvider}
+                onEdit={handleEditClick}
+                onDelete={handleDeleteClick}
+                onReset={handleResetClick}
+                onAddClick={handleAddClick}
+                onGroupClick={setGroupFilter}
+                onViewDetail={handleViewDetail}
+                getGroupName={getGroupName}
+              />
+            </tbody>
+          </table>
+        </div>
       </div>
-
-      <HelpCard />
 
       {showModal && (
         <ProviderModal

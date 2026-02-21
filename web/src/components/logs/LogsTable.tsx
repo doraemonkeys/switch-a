@@ -75,7 +75,7 @@ export function LogsTable({
               <th className="hidden md:table-cell px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 <span className="inline-flex items-center gap-1">
                   Tokens
-                  <InfoTooltip text="Input → Output tokens. ⚡ indicates cache hit. Hover for cache hit percentage." />
+                  <InfoTooltip text="Input → Output tokens. ⚡ indicates cache hit and shows hit percentage." />
                 </span>
               </th>
               <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
