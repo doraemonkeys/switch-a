@@ -47,7 +47,14 @@ function createMockApiClient(): ApiClient {
       get: vi.fn().mockResolvedValue({ providers: [] }),
       health: vi.fn().mockResolvedValue([]),
     },
-    logs: { list: vi.fn().mockResolvedValue([]) },
+    logs: {
+      list: vi.fn().mockResolvedValue({
+        logs: [],
+        total: 0,
+        sort_by: "created_at",
+        sort_order: "desc",
+      }),
+    },
   } as unknown as ApiClient;
 }
 
@@ -75,28 +82,28 @@ function TestApp({ initialPath = "/" }: { initialPath?: string }) {
 }
 
 describe("App", () => {
-  it("should render the layout with navigation", () => {
+  it("should render the layout with navigation", async () => {
     render(<TestApp />);
 
     // Check for main app title
-    expect(screen.getByText("Switch-A")).toBeInTheDocument();
+    expect(await screen.findByText("Switch-A")).toBeInTheDocument();
     expect(screen.getByText("AI Provider Proxy")).toBeInTheDocument();
   });
 
-  it("should render dashboard by default", () => {
+  it("should render dashboard by default", async () => {
     render(<TestApp />);
 
     // Dashboard should be the default route
     expect(
-      screen.getByRole("heading", { name: /Dashboard/i }),
+      await screen.findByRole("heading", { name: /Dashboard/i }),
     ).toBeInTheDocument();
   });
 
-  it("should render all navigation links", () => {
+  it("should render all navigation links", async () => {
     render(<TestApp />);
 
     expect(
-      screen.getByRole("link", { name: /Dashboard/i }),
+      await screen.findByRole("link", { name: /Dashboard/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /Providers/i }),
@@ -136,20 +143,20 @@ describe("App", () => {
     });
   });
 
-  it("should navigate to logs page", () => {
+  it("should navigate to logs page", async () => {
     render(<TestApp initialPath="/logs" />);
 
     expect(
-      screen.getByRole("heading", { name: /Request Logs/i }),
+      await screen.findByRole("heading", { name: /Request Logs/i }),
     ).toBeInTheDocument();
   });
 
-  it("should redirect unknown routes to dashboard", () => {
+  it("should redirect unknown routes to dashboard", async () => {
     render(<TestApp initialPath="/unknown-route" />);
 
     // Should redirect to dashboard
     expect(
-      screen.getByRole("heading", { name: /Dashboard/i }),
+      await screen.findByRole("heading", { name: /Dashboard/i }),
     ).toBeInTheDocument();
   });
 });
