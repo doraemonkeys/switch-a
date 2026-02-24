@@ -3,11 +3,6 @@ import { render, screen, act, within, fireEvent } from "@testing-library/react";
 import { LiveRequestsPanel } from "./LiveRequestsPanel";
 import type { ActiveRequest } from "../../api/types";
 
-// Clear persisted settings between tests
-afterEach(() => {
-  localStorage.clear();
-});
-
 // Test data constants
 // eslint-disable-next-line sonarjs/no-hardcoded-ip -- safe for testing
 const TEST_CLIENT_IP = "192.168.1.1";

@@ -24,7 +24,7 @@ export function Layout() {
     <div className="min-h-screen bg-bg-secondary">
       {/* Header */}
       <header className="bg-white border-b border-border sticky top-0 z-10 shadow-sm">
-        <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-linear-to-br from-primary to-indigo-500 rounded-lg flex items-center justify-center shadow-md">
@@ -58,7 +58,7 @@ export function Layout() {
         </div>
       </header>
 
-      <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex gap-6">
           {/* Sidebar Navigation */}
           <nav className="w-52 shrink-0">

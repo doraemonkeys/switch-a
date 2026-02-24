@@ -22,7 +22,7 @@ export type ConfigKey =
   | "first_byte_timeout"
   | "upstream_read_timeout"
   | "sse_idle_timeout"
-  | "sticky_mode"
+  | "sticky_enabled"
   | "sticky_ttl"
   | "circuit_failure"
   | "circuit_window"

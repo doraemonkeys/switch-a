@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"switch-a/internal/defaults"
-	"switch-a/internal/model"
 )
 
 // Error codes for API responses.
@@ -93,7 +92,7 @@ var validConfigKeys = map[string]bool{
 	"first_byte_timeout":       true,
 	"upstream_read_timeout":    true,
 	"sse_idle_timeout":         true,
-	"sticky_mode":              true,
+	"sticky_enabled":           true,
 	"sticky_ttl":               true,
 	"circuit_failure":          true,
 	"circuit_window":           true,
@@ -147,7 +146,7 @@ var configValidators = map[string]ConfigValidator{
 	"first_byte_timeout":       validateNonNegativeIntConfig, // 0 means no timeout (wait indefinitely)
 	"upstream_read_timeout":    validateNonNegativeIntConfig, // 0 means no timeout
 	"sse_idle_timeout":         validateNonNegativeIntConfig, // 0 means no timeout
-	"sticky_mode":              validateStickyModeConfig,
+	"sticky_enabled":           validateBoolConfig,
 	"sticky_ttl":               validatePositiveIntConfig,
 	"circuit_failure":          validatePositiveIntConfig,
 	"circuit_window":           validatePositiveIntConfig,
@@ -208,13 +207,6 @@ func validateAuthModeConfig(value string) error {
 func validateStrategyConfig(value string) error {
 	if !IsValidStrategy(value) {
 		return fmt.Errorf("must be 'priority', 'random', or 'weight'")
-	}
-	return nil
-}
-
-func validateStickyModeConfig(value string) error {
-	if !model.IsValidStickyMode(model.StickyMode(value)) {
-		return fmt.Errorf("must be 'off', 'api_type', or 'model'")
 	}
 	return nil
 }

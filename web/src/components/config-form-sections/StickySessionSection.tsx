@@ -1,10 +1,4 @@
-import {
-  CONFIG_KEYS,
-  DEFAULTS,
-  FORM_CONSTRAINTS,
-  STICKY_MODE_OPTIONS,
-  STICKY_MODES,
-} from "../../config";
+import { CONFIG_KEYS, DEFAULTS, FORM_CONSTRAINTS } from "../../config";
 import { ConfigSection } from "../ConfigSection";
 import { ModifiedBadge } from "./ModifiedBadge";
 import type { SectionProps } from "./types";
@@ -14,8 +8,6 @@ export function StickySessionSection({
   handleChange,
   getDefault,
 }: SectionProps) {
-  const currentMode = getValue(CONFIG_KEYS.STICKY_MODE, DEFAULTS.STICKY_MODE);
-
   return (
     <ConfigSection
       title="Sticky Session"
@@ -23,35 +15,32 @@ export function StickySessionSection({
       icon="📌"
     >
       <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-text-primary mb-1.5">
-            Sticky Mode
+        <label className="flex items-center gap-3 p-4 rounded-xl bg-bg-secondary border border-border-light cursor-pointer hover:border-primary/30 transition-colors">
+          <input
+            type="checkbox"
+            id="sticky_enabled"
+            checked={
+              getValue(CONFIG_KEYS.STICKY_ENABLED, DEFAULTS.STICKY_ENABLED) ===
+              "true"
+            }
+            onChange={(e) =>
+              handleChange(CONFIG_KEYS.STICKY_ENABLED, String(e.target.checked))
+            }
+          />
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-text-primary">
+              Enable sticky session
+            </span>
             <ModifiedBadge
-              configKey={CONFIG_KEYS.STICKY_MODE}
-              currentValue={currentMode}
+              configKey={CONFIG_KEYS.STICKY_ENABLED}
+              currentValue={getValue(
+                CONFIG_KEYS.STICKY_ENABLED,
+                DEFAULTS.STICKY_ENABLED,
+              )}
               getDefault={getDefault}
             />
-          </label>
-          <select
-            className="input"
-            value={currentMode}
-            onChange={(e) =>
-              handleChange(CONFIG_KEYS.STICKY_MODE, e.target.value)
-            }
-          >
-            {STICKY_MODE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-text-muted mt-1.5">
-            {
-              STICKY_MODE_OPTIONS.find((opt) => opt.value === currentMode)
-                ?.description
-            }
-          </p>
-        </div>
+          </div>
+        </label>
 
         <div className="max-w-xs">
           <label className="block text-sm font-medium text-text-primary mb-1.5">
@@ -73,7 +62,10 @@ export function StickySessionSection({
             onChange={(e) =>
               handleChange(CONFIG_KEYS.STICKY_TTL, e.target.value)
             }
-            disabled={currentMode === STICKY_MODES.OFF}
+            disabled={
+              getValue(CONFIG_KEYS.STICKY_ENABLED, DEFAULTS.STICKY_ENABLED) !==
+              "true"
+            }
           />
         </div>
       </div>

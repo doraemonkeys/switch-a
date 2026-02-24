@@ -57,10 +57,10 @@ export const statusDotClass: Record<ProviderStatusType, string> = {
 };
 
 export const statusBadgeClass: Record<ProviderStatusType, string> = {
-  healthy: "bg-success-light text-success",
-  unhealthy: "bg-danger-light text-danger",
-  "pending-recovery": "bg-warning-light text-warning",
-  disabled: "bg-bg-tertiary text-text-secondary",
+  healthy: "bg-success-light text-success-dark",
+  unhealthy: "bg-danger-light text-danger-dark",
+  "pending-recovery": "bg-warning-light text-warning-dark",
+  disabled: "bg-gray-100 text-gray-600",
 };
 
 export const statusLabel: Record<ProviderStatusType, string> = {

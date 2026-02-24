@@ -19,14 +19,12 @@ const CustomAPITypePrefix = "custom:"
 // These ensure consistency between server route registration and path parsing.
 const (
 	// Claude API routes
-	RouteClaudeMessages    = "/v1/messages"
-	RouteClaudeCountTokens = "/v1/messages/count_tokens"
-	RouteClaudeModels      = "/v1/models"
+	RouteClaudeMessages = "/v1/messages"
+	RouteClaudeModels   = "/v1/models"
 	// Codex API routes
 	RouteCodexResponses = "/responses"
 	// Gemini API routes (prefix)
 	RouteGeminiPrefix = "/gemini/"
-	RouteGeminiV1Beta = "/v1beta/"
 	// Custom API routes (prefix)
 	RouteCustomPrefix = "/custom/"
 )
@@ -37,7 +35,7 @@ const (
 // Path mappings:
 //   - POST /v1/messages, GET /v1/models → claude
 //   - POST /responses → codex
-//   - POST /gemini/*, POST /v1beta/* → gemini
+//   - POST /gemini/* → gemini
 //   - POST /custom/:toolId/v1/messages, GET /custom/:toolId/v1/models → custom:{toolId}
 func ParseAPIType(path string) (apiType string, ok bool) {
 	// Normalize path
@@ -54,7 +52,7 @@ func ParseAPIType(path string) (apiType string, ok bool) {
 	}
 
 	// Gemini API
-	if strings.HasPrefix(path, "gemini/") || strings.HasPrefix(path, "v1beta/") {
+	if strings.HasPrefix(path, "gemini/") {
 		return APITypeGemini, true
 	}
 

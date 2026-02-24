@@ -33,9 +33,6 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyCon
 
 		// Check active requests when sticky cache misses (see tryActiveProviderFallback doc).
 		if activeProvider := h.tryActiveProviderFallback(ctx, pctx); activeProvider != nil {
-			// Release the concurrency slot acquired by SelectWithMetadata above,
-			// since we're returning a different provider from the active registry.
-			h.releaseConcurrency(result.Provider.ID)
 			return activeProvider, true, nil
 		}
 
@@ -52,7 +49,7 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyCon
 // routing to that same provider for consistency even though the cache entry expired.
 // Returns nil if no active provider is found or available.
 func (h *Handler) tryActiveProviderFallback(ctx context.Context, pctx *proxyContext) *model.Provider {
-	if pctx.cfg.stickyMode == model.StickyModeOff || h.activeRegistry == nil {
+	if !pctx.cfg.stickyEnabled || h.activeRegistry == nil {
 		return nil
 	}
 
@@ -60,7 +57,6 @@ func (h *Handler) tryActiveProviderFallback(ctx context.Context, pctx *proxyCont
 		pctx.selectReq.ClientIP,
 		pctx.selectReq.User,
 		pctx.selectReq.APIType,
-		pctx.selectReq.Model,
 	)
 	if !found {
 		return nil

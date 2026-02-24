@@ -239,11 +239,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		attempts:  make([]model.RequestAttempt, 0),
 	}
 	pctx.selectReq = &model.SelectRequest{
-		ClientIP:   pctx.info.ClientIP,
-		User:       pctx.info.UserID,
-		APIType:    apiType,
-		Model:      pctx.info.Model,
-		StickyMode: cfg.stickyMode,
+		ClientIP:      pctx.info.ClientIP,
+		User:          pctx.info.UserID,
+		APIType:       apiType,
+		Model:         pctx.info.Model,
+		StickyEnabled: cfg.stickyEnabled,
 	}
 
 	// Execute proxy with retry logic
@@ -735,7 +735,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	// Update sticky cache before handling writeErr, because client disconnect
 	// (e.g., Codex SSE stream closed by client after [DONE]) should still
 	// pin the provider — the upstream succeeded.
-	if pctx.cfg.stickyMode != model.StickyModeOff && h.selector != nil {
+	if pctx.cfg.stickyEnabled && h.selector != nil {
 		h.selector.UpdateStickyWithTTL(pctx.selectReq, provider.ID, pctx.cfg.stickyTTL)
 	}
 

@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"switch-a/internal"
@@ -13,7 +12,6 @@ type stickyKey struct {
 	ClientIP string
 	UserID   string
 	APIType  string
-	Model    string
 }
 
 // ActiveRequest represents a request currently being processed by the proxy.
@@ -39,69 +37,27 @@ type ActiveRequestRegistry struct {
 	mu          sync.RWMutex
 	requests    map[string]ActiveRequest
 	stickyIndex map[stickyKey]map[string]struct{} // stickyKey -> requestIDs for O(1) lookup
-	keyIndex    map[string]stickyKey              // requestID -> sticky key used during registration
-	perModel    atomic.Bool
-	stopCh      chan struct{}  // Channel to signal cleanup goroutine to stop
-	cleanupWg   sync.WaitGroup // WaitGroup to confirm cleanup goroutine has exited
-	clock       internal.Clock // Injected clock for testability
+	stopCh      chan struct{}                     // Channel to signal cleanup goroutine to stop
+	cleanupWg   sync.WaitGroup                    // WaitGroup to confirm cleanup goroutine has exited
+	clock       internal.Clock                    // Injected clock for testability
 }
 
 // NewActiveRequestRegistry creates a new registry for tracking active requests.
 func NewActiveRequestRegistry() *ActiveRequestRegistry {
-	r := &ActiveRequestRegistry{
+	return &ActiveRequestRegistry{
 		requests:    make(map[string]ActiveRequest),
 		stickyIndex: make(map[stickyKey]map[string]struct{}),
-		keyIndex:    make(map[string]stickyKey),
 		clock:       internal.RealClock{},
 	}
-	r.perModel.Store(true)
-	return r
 }
 
 // NewActiveRequestRegistryWithClock creates a new registry with a custom clock for testing.
 func NewActiveRequestRegistryWithClock(clock internal.Clock) *ActiveRequestRegistry {
-	r := &ActiveRequestRegistry{
+	return &ActiveRequestRegistry{
 		requests:    make(map[string]ActiveRequest),
 		stickyIndex: make(map[stickyKey]map[string]struct{}),
-		keyIndex:    make(map[string]stickyKey),
 		clock:       clock,
 	}
-	r.perModel.Store(true)
-	return r
-}
-
-// SetStickyPerModel updates whether sticky matching includes the model dimension.
-func (r *ActiveRequestRegistry) SetStickyPerModel(enabled bool) {
-	r.perModel.Store(enabled)
-}
-
-func (r *ActiveRequestRegistry) buildKeyFromParams(clientIP, userID, apiType, reqModel string) stickyKey {
-	key := stickyKey{ClientIP: clientIP, UserID: userID, APIType: apiType}
-	if r.perModel.Load() {
-		key.Model = reqModel
-	}
-	return key
-}
-
-func (r *ActiveRequestRegistry) buildKey(req *ActiveRequest) stickyKey {
-	return r.buildKeyFromParams(req.ClientIP, req.UserID, req.APIType, req.Model)
-}
-
-// removeFromStickyIndex removes a request ID from sticky/key indexes if present.
-// Caller must hold r.mu.
-func (r *ActiveRequestRegistry) removeFromStickyIndex(requestID string) {
-	key, hasKey := r.keyIndex[requestID]
-	if !hasKey {
-		return
-	}
-
-	if ids := r.stickyIndex[key]; ids != nil {
-		delete(ids, requestID)
-		if len(ids) == 0 {
-			delete(r.stickyIndex, key)
-		}
-	}
-	delete(r.keyIndex, requestID)
 }
 
 // Register overwrites any existing entry with the same ID to handle retry scenarios
@@ -114,15 +70,20 @@ func (r *ActiveRequestRegistry) Register(req *ActiveRequest) {
 	defer r.mu.Unlock()
 
 	// If request already exists, remove old sticky index entry first
-	if _, exists := r.requests[req.RequestID]; exists {
-		r.removeFromStickyIndex(req.RequestID)
+	if oldReq, exists := r.requests[req.RequestID]; exists {
+		oldKey := stickyKey{ClientIP: oldReq.ClientIP, UserID: oldReq.UserID, APIType: oldReq.APIType}
+		if ids := r.stickyIndex[oldKey]; ids != nil {
+			delete(ids, req.RequestID)
+			if len(ids) == 0 {
+				delete(r.stickyIndex, oldKey)
+			}
+		}
 	}
 
 	r.requests[req.RequestID] = *req
 
-	// Build sticky key using current mode and keep it for later cleanup.
-	key := r.buildKey(req)
-	r.keyIndex[req.RequestID] = key
+	// Add to sticky index
+	key := stickyKey{ClientIP: req.ClientIP, UserID: req.UserID, APIType: req.APIType}
 	if r.stickyIndex[key] == nil {
 		r.stickyIndex[key] = make(map[string]struct{})
 	}
@@ -134,12 +95,17 @@ func (r *ActiveRequestRegistry) Unregister(requestID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.requests[requestID]; !ok {
-		return
+	if req, ok := r.requests[requestID]; ok {
+		// Remove from sticky index
+		key := stickyKey{ClientIP: req.ClientIP, UserID: req.UserID, APIType: req.APIType}
+		if ids := r.stickyIndex[key]; ids != nil {
+			delete(ids, requestID)
+			if len(ids) == 0 {
+				delete(r.stickyIndex, key)
+			}
+		}
+		delete(r.requests, requestID)
 	}
-
-	r.removeFromStickyIndex(requestID)
-	delete(r.requests, requestID)
 }
 
 // UpdateSSE is called after response headers reveal whether the upstream is streaming.
@@ -176,13 +142,18 @@ func (r *ActiveRequestRegistry) CleanupStale(maxAge time.Duration) int {
 	cutoff := r.clock.Now().Add(-maxAge)
 	removed := 0
 	for id, req := range r.requests {
-		if !req.StartedAt.Before(cutoff) {
-			continue
+		if req.StartedAt.Before(cutoff) {
+			// Remove from sticky index
+			key := stickyKey{ClientIP: req.ClientIP, UserID: req.UserID, APIType: req.APIType}
+			if ids := r.stickyIndex[key]; ids != nil {
+				delete(ids, id)
+				if len(ids) == 0 {
+					delete(r.stickyIndex, key)
+				}
+			}
+			delete(r.requests, id)
+			removed++
 		}
-
-		r.removeFromStickyIndex(id)
-		delete(r.requests, id)
-		removed++
 	}
 	return removed
 }
@@ -191,11 +162,11 @@ func (r *ActiveRequestRegistry) CleanupStale(maxAge time.Duration) int {
 // Only returns providers from requests that have received data (HasReceivedData=true).
 // This prevents new requests from inheriting connections that are still waiting for upstream response.
 // Returns (providerID, found).
-func (r *ActiveRequestRegistry) FindActiveProvider(clientIP, userID, apiType, reqModel string) (providerID string, found bool) {
+func (r *ActiveRequestRegistry) FindActiveProvider(clientIP, userID, apiType string) (providerID string, found bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	key := r.buildKeyFromParams(clientIP, userID, apiType, reqModel)
+	key := stickyKey{ClientIP: clientIP, UserID: userID, APIType: apiType}
 	requestIDs, ok := r.stickyIndex[key]
 	if !ok {
 		return "", false

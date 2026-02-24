@@ -38,8 +38,8 @@ var (
 	DefaultUpstreamReadTimeout = durationToSecondsString(defaults.UpstreamReadTimeout)
 	// DefaultSSEIdleTimeout is the default SSE idle timeout in seconds (0 = no timeout).
 	DefaultSSEIdleTimeout = durationToSecondsString(defaults.SSEIdleTimeout)
-	// DefaultStickyMode is the default sticky session mode.
-	DefaultStickyMode = defaults.StickyMode
+	// DefaultStickyEnabled indicates whether sticky sessions are enabled by default.
+	DefaultStickyEnabled = boolToString(defaults.StickyEnabled)
 	// DefaultStickyTTL is the default sticky session TTL in seconds.
 	DefaultStickyTTL = strconv.Itoa(defaults.StickyTTLSeconds)
 	// DefaultCircuitFailure is the default number of failures before circuit opens.

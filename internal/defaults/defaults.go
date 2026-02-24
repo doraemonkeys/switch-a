@@ -42,9 +42,7 @@ const (
 
 // Sticky session defaults.
 const (
-	// StickyMode is a string literal to avoid importing model package here.
-	// model already imports defaults, so importing model would create a cycle.
-	StickyMode       = "model"
+	StickyEnabled    = true
 	StickyTTLSeconds = 300
 	StickyTTL        = StickyTTLSeconds * time.Second
 )

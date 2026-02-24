@@ -4,17 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"switch-a/internal/model"
 
 	"go.uber.org/zap"
-)
-
-const (
-	legacyStickyEnabledKey = "sticky_enabled"
-	configStickyModeKey    = "sticky_mode"
 )
 
 // ConfigExportVersion is the current version of the config export format.
@@ -303,7 +297,7 @@ func (h *Handler) validateImportRequest(req *ImportConfigRequest) []string {
 	}
 
 	// Validate settings
-	for key := range normalizeImportSettings(req.Settings) {
+	for key := range req.Settings {
 		if !IsValidConfigKey(key) {
 			warnings = append(warnings, "Unknown config key will be skipped: "+key)
 		}
@@ -415,7 +409,7 @@ func (h *Handler) calculateImportChanges(
 	}
 
 	// Calculate settings changes
-	for key, value := range normalizeImportSettings(req.Settings) {
+	for key, value := range req.Settings {
 		if !IsValidConfigKey(key) {
 			continue
 		}
@@ -465,7 +459,7 @@ func (h *Handler) applyImportChanges(
 	}
 
 	// Import settings - distinguish add/update
-	settingsToUpdate := filterValidSettings(normalizeImportSettings(req.Settings))
+	settingsToUpdate := filterValidSettings(req.Settings)
 	if len(settingsToUpdate) > 0 {
 		for key := range settingsToUpdate {
 			if _, exists := existingSettings[key]; exists {
@@ -664,36 +658,4 @@ func filterValidSettings(settings map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
-}
-
-// migrateImportKey maps legacy config keys/values to current equivalents.
-// Covers all values accepted by old bool validation: true/false/1/0.
-func migrateImportKey(key, value string) (string, string) {
-	if key == legacyStickyEnabledKey {
-		switch strings.ToLower(value) {
-		case "false", "0":
-			return configStickyModeKey, "off"
-		case "true", "1":
-			return configStickyModeKey, "api_type"
-		}
-	}
-	return key, value
-}
-
-// normalizeImportSettings applies key migrations before validation/update.
-func normalizeImportSettings(settings map[string]string) map[string]string {
-	normalized := make(map[string]string, len(settings))
-	_, hasStickyMode := settings[configStickyModeKey]
-
-	for key, value := range settings {
-		migratedKey, migratedValue := migrateImportKey(key, value)
-		if hasStickyMode && key == legacyStickyEnabledKey && migratedKey == configStickyModeKey {
-			// Prefer explicit sticky_mode over migrated sticky_enabled to keep
-			// import behavior deterministic when both keys are present.
-			continue
-		}
-		normalized[migratedKey] = migratedValue
-	}
-
-	return normalized
 }

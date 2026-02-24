@@ -46,37 +46,6 @@ export const STRATEGY_OPTIONS = [
 ] as const;
 
 /**
- * Valid sticky session modes.
- * @see internal/model/model.go StickyMode
- */
-export const STICKY_MODES = {
-  OFF: "off",
-  API_TYPE: "api_type",
-  MODEL: "model",
-} as const;
-
-export type StickyMode = (typeof STICKY_MODES)[keyof typeof STICKY_MODES];
-
-export const STICKY_MODE_OPTIONS = [
-  {
-    value: STICKY_MODES.OFF,
-    label: "Off",
-    description: "No sticky session — each request is independently routed",
-  },
-  {
-    value: STICKY_MODES.API_TYPE,
-    label: "API Type",
-    description: "Same user + API type always routes to the same provider",
-  },
-  {
-    value: STICKY_MODES.MODEL,
-    label: "Model",
-    description:
-      "Same user + API type + model always routes to the same provider (recommended)",
-  },
-] as const;
-
-/**
  * Valid authentication modes for providers.
  * @see internal/admin/constants.go ValidAuthModes
  */
@@ -243,7 +212,7 @@ export const CONFIG_KEYS = {
   FIRST_BYTE_TIMEOUT: "first_byte_timeout",
   UPSTREAM_READ_TIMEOUT: "upstream_read_timeout",
   SSE_IDLE_TIMEOUT: "sse_idle_timeout",
-  STICKY_MODE: "sticky_mode",
+  STICKY_ENABLED: "sticky_enabled",
   STICKY_TTL: "sticky_ttl",
   CIRCUIT_FAILURE: "circuit_failure",
   CIRCUIT_WINDOW: "circuit_window",
@@ -277,7 +246,7 @@ export const DEFAULTS = {
   SSE_IDLE_TIMEOUT: 0, // 0 = no timeout
 
   // Sticky Session
-  STICKY_MODE: STICKY_MODES.MODEL,
+  STICKY_ENABLED: true,
   STICKY_TTL: 300,
 
   // Circuit Breaker

@@ -22,7 +22,7 @@ func GetDefaultConfigs() map[string]string {
 		"first_byte_timeout":       DefaultFirstByteTimeout,
 		"upstream_read_timeout":    DefaultUpstreamReadTimeout,
 		"sse_idle_timeout":         DefaultSSEIdleTimeout,
-		"sticky_mode":              DefaultStickyMode,
+		"sticky_enabled":           DefaultStickyEnabled,
 		"sticky_ttl":               DefaultStickyTTL,
 		"circuit_failure":          DefaultCircuitFailure,
 		"circuit_window":           DefaultCircuitWindow,

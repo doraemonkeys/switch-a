@@ -206,14 +206,10 @@ func TestStickyKey(t *testing.T) {
 		IP:      "192.168.1.1",
 		User:    "user1",
 		APIType: "claude",
-		Model:   "claude-sonnet-4",
 	}
 
 	if k.IP != "192.168.1.1" {
 		t.Errorf("IP = %q, want %q", k.IP, "192.168.1.1")
-	}
-	if k.Model != "claude-sonnet-4" {
-		t.Errorf("Model = %q, want %q", k.Model, "claude-sonnet-4")
 	}
 }
 
@@ -248,43 +244,13 @@ func TestProvider_BaseURLForAPIType(t *testing.T) {
 
 func TestSelectRequest(t *testing.T) {
 	r := SelectRequest{
-		ClientIP:   "10.0.0.1",
-		User:       "testuser",
-		APIType:    "codex",
-		Model:      "gpt-4",
-		StickyMode: StickyModeModel,
+		ClientIP: "10.0.0.1",
+		User:     "testuser",
+		APIType:  "codex",
+		Model:    "gpt-4",
 	}
 
 	if r.APIType != "codex" {
 		t.Errorf("APIType = %q, want %q", r.APIType, "codex")
-	}
-	if r.StickyMode != StickyModeModel {
-		t.Errorf("StickyMode = %q, want %q", r.StickyMode, StickyModeModel)
-	}
-}
-
-func TestIsValidStickyMode(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		mode StickyMode
-		want bool
-	}{
-		{name: "off", mode: StickyModeOff, want: true},
-		{name: "api_type", mode: StickyModeAPIType, want: true},
-		{name: "model", mode: StickyModeModel, want: true},
-		{name: "empty", mode: "", want: false},
-		{name: "invalid", mode: StickyMode("unknown"), want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := IsValidStickyMode(tt.mode); got != tt.want {
-				t.Fatalf("IsValidStickyMode(%q) = %v, want %v", tt.mode, got, tt.want)
-			}
-		})
 	}
 }

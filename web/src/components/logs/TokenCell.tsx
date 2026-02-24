@@ -109,12 +109,12 @@ export function TokenCell({ log }: TokenCellProps) {
       {/* Cache indicator - shown when cache_read > 0 */}
       {hasCacheRead && (
         <span
-          className="hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 ml-1"
+          className="hidden md:inline-flex items-center ml-0.5"
           title={cacheTooltip}
         >
           {/* Zap/Lightning icon from Lucide */}
           <svg
-            className="w-3 h-3"
+            className="w-3.5 h-3.5 text-emerald-500"
             fill="none"
             stroke="currentColor"
             strokeWidth={2}
@@ -126,7 +126,6 @@ export function TokenCell({ log }: TokenCellProps) {
               d="M13 10V3L4 14h7v7l9-11h-7z"
             />
           </svg>
-          {cacheHitRate}%
         </span>
       )}
     </span>

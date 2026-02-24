@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"switch-a/internal/defaults"
-	"switch-a/internal/model"
 	"switch-a/internal/selector"
 
 	"go.uber.org/zap"
@@ -18,8 +17,8 @@ const (
 	DefaultMaxBodySizeMB     = defaults.MaxBodySizeMB
 	DefaultGlobalMaxAttempts = defaults.GlobalMaxAttempts
 	DefaultUserHeader        = defaults.UserHeader
-	DefaultStickyMode        = model.StickyModeModel // Default stickiness includes model dimension
-	DefaultGlobalAuthMode    = defaults.AuthMode     // Default auth mode for provider authentication
+	DefaultStickyEnabled     = defaults.StickyEnabled // When enabled, clients are routed to the same provider
+	DefaultGlobalAuthMode    = defaults.AuthMode      // Default auth mode for provider authentication
 )
 
 // Default timeout values - derived from centralized defaults package.
@@ -44,7 +43,7 @@ const (
 	ConfigKeyFirstByteTimeout       = "first_byte_timeout"
 	ConfigKeyUpstreamReadTimeout    = "upstream_read_timeout"
 	ConfigKeySSEIdleTimeout         = "sse_idle_timeout"
-	ConfigKeyStickyMode             = "sticky_mode"
+	ConfigKeyStickyEnabled          = "sticky_enabled"
 	ConfigKeyStickyTTL              = "sticky_ttl"
 	ConfigKeyInterGroupStrategy     = selector.ConfigKeyInterGroupStrategy
 )
@@ -63,7 +62,7 @@ type runtimeConfig struct {
 	firstByteTimeout  time.Duration
 	readTimeout       time.Duration
 	sseIdleTimeout    time.Duration
-	stickyMode        model.StickyMode
+	stickyEnabled     bool
 	stickyTTL         time.Duration
 }
 
@@ -143,27 +142,17 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	cfg.sseIdleTimeout = parseDurationSecondsOrDefault(sseIdleTimeout, DefaultSSEIdleTimeout)
 
 	// Sticky session config
-	stickyModeStr, err := h.store.GetConfig(ctx, ConfigKeyStickyMode)
+	stickyEnabled, err := h.store.GetConfig(ctx, ConfigKeyStickyEnabled)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
-		h.logger.Warn("failed to get sticky_mode, using default", zap.Error(err))
-		stickyModeStr = string(DefaultStickyMode)
+		h.logger.Warn("failed to get sticky_enabled, using default", zap.Error(err))
 	}
-	stickyMode := model.StickyMode(stickyModeStr)
-	if !model.IsValidStickyMode(stickyMode) {
-		h.logger.Warn("invalid sticky_mode, using default", zap.String("value", stickyModeStr))
-		stickyMode = DefaultStickyMode
-	}
-	cfg.stickyMode = stickyMode
+	cfg.stickyEnabled = parseBoolOrDefault(stickyEnabled, DefaultStickyEnabled)
 
 	stickyTTL, err := h.store.GetConfig(ctx, ConfigKeyStickyTTL)
 	if err != nil { // coverage-ignore -- config errors are rare after successful startup
 		h.logger.Warn("failed to get sticky_ttl, using default", zap.Error(err))
 	}
 	cfg.stickyTTL = time.Duration(parseIntOrDefault(stickyTTL, defaultStickyTTLSeconds)) * time.Second
-
-	if h.activeRegistry != nil {
-		h.activeRegistry.SetStickyPerModel(cfg.stickyMode == model.StickyModeModel)
-	}
 
 	return cfg, nil
 }

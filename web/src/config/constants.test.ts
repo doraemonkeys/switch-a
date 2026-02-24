@@ -5,8 +5,6 @@ import {
   FORM_CONSTRAINTS,
   STRATEGIES,
   STRATEGY_OPTIONS,
-  STICKY_MODES,
-  STICKY_MODE_OPTIONS,
   AUTH_MODES,
   AUTH_MODE_OPTIONS,
   API_TYPES,
@@ -132,28 +130,6 @@ describe("STRATEGY_OPTIONS", () => {
   });
 });
 
-describe("STICKY_MODES", () => {
-  it("should have all valid modes", () => {
-    expect(STICKY_MODES.OFF).toBe("off");
-    expect(STICKY_MODES.API_TYPE).toBe("api_type");
-    expect(STICKY_MODES.MODEL).toBe("model");
-  });
-
-  it("should have exactly 3 modes", () => {
-    expect(Object.keys(STICKY_MODES)).toHaveLength(3);
-  });
-});
-
-describe("STICKY_MODE_OPTIONS", () => {
-  it("should have options for all modes", () => {
-    expect(STICKY_MODE_OPTIONS).toHaveLength(3);
-    const values = STICKY_MODE_OPTIONS.map((opt) => opt.value);
-    expect(values).toContain(STICKY_MODES.OFF);
-    expect(values).toContain(STICKY_MODES.API_TYPE);
-    expect(values).toContain(STICKY_MODES.MODEL);
-  });
-});
-
 describe("AUTH_MODES", () => {
   it("should have all valid auth modes", () => {
     expect(AUTH_MODES.AUTO).toBe("auto");
@@ -232,7 +208,7 @@ describe("CONFIG_KEYS", () => {
   it("should have all config keys", () => {
     expect(CONFIG_KEYS.AUTH_MODE).toBe("auth_mode");
     expect(CONFIG_KEYS.USER_HEADER).toBe("user_header");
-    expect(CONFIG_KEYS.STICKY_MODE).toBe("sticky_mode");
+    expect(CONFIG_KEYS.STICKY_ENABLED).toBe("sticky_enabled");
     expect(CONFIG_KEYS.STICKY_TTL).toBe("sticky_ttl");
     expect(CONFIG_KEYS.CIRCUIT_FAILURE).toBe("circuit_failure");
     expect(CONFIG_KEYS.GLOBAL_MAX_ATTEMPTS).toBe("global_max_attempts");
@@ -259,7 +235,7 @@ describe("DEFAULTS", () => {
   });
 
   it("should have sticky session defaults", () => {
-    expect(DEFAULTS.STICKY_MODE).toBe("model");
+    expect(DEFAULTS.STICKY_ENABLED).toBe(true);
     expect(DEFAULTS.STICKY_TTL).toBe(300);
   });
 
