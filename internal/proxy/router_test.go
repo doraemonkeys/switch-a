@@ -25,6 +25,12 @@ func TestParseAPIType(t *testing.T) {
 			wantOK:   true,
 		},
 		{
+			name:     "claude count_tokens",
+			path:     "/v1/messages/count_tokens",
+			wantType: APITypeClaude,
+			wantOK:   true,
+		},
+		{
 			name:     "claude messages with trailing path",
 			path:     "/v1/messages/stream",
 			wantType: APITypeClaude,
@@ -73,6 +79,18 @@ func TestParseAPIType(t *testing.T) {
 		{
 			name:     "gemini simple",
 			path:     "/gemini/",
+			wantType: APITypeGemini,
+			wantOK:   true,
+		},
+		{
+			name:     "gemini native v1beta path",
+			path:     "/v1beta/models/gemini-2.5-flash-lite:generateContent",
+			wantType: APITypeGemini,
+			wantOK:   true,
+		},
+		{
+			name:     "gemini native v1beta stream path",
+			path:     "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
 			wantType: APITypeGemini,
 			wantOK:   true,
 		},
@@ -147,6 +165,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 			originalPath: "/v1/messages",
 			apiType:      APITypeClaude,
 			wantPath:     "/v1/messages",
+		},
+		{
+			name:         "claude count_tokens passthrough",
+			originalPath: "/v1/messages/count_tokens",
+			apiType:      APITypeClaude,
+			wantPath:     "/v1/messages/count_tokens",
 		},
 		{
 			name:         "codex passthrough",

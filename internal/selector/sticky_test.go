@@ -156,6 +156,34 @@ func TestMemoryStickyCache_DifferentKeys(t *testing.T) {
 	}
 }
 
+func TestMemoryStickyCache_ModelKeyIsolation(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	cache := NewMemoryStickyCache(clock)
+
+	apiTypeKey := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	modelAKey := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude", Model: "model-a"}
+	modelBKey := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude", Model: "model-b"}
+
+	cache.Set(apiTypeKey, "provider-api-type", 5*time.Minute)
+	cache.Set(modelAKey, "provider-model-a", 5*time.Minute)
+	cache.Set(modelBKey, "provider-model-b", 5*time.Minute)
+
+	providerID, found := cache.Get(apiTypeKey)
+	if !found || providerID != "provider-api-type" {
+		t.Fatalf("expected api_type key provider, got %q (found=%v)", providerID, found)
+	}
+
+	providerID, found = cache.Get(modelAKey)
+	if !found || providerID != "provider-model-a" {
+		t.Fatalf("expected model-a key provider, got %q (found=%v)", providerID, found)
+	}
+
+	providerID, found = cache.Get(modelBKey)
+	if !found || providerID != "provider-model-b" {
+		t.Fatalf("expected model-b key provider, got %q (found=%v)", providerID, found)
+	}
+}
+
 func TestMemoryStickyCache_StartCleanupLoop(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)

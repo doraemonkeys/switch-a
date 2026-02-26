@@ -19,7 +19,7 @@ import (
 func TestGetConfig(t *testing.T) {
 	h, st, _ := testHandler()
 
-	st.config["sticky_enabled"] = "true"
+	st.config["sticky_mode"] = "model"
 	st.config["global_max_attempts"] = "3"
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
@@ -37,8 +37,8 @@ func TestGetConfig(t *testing.T) {
 	}
 
 	// Check user-modified values
-	if resp.Values["sticky_enabled"] != "true" {
-		t.Errorf("Values[sticky_enabled] = %q, want %q", resp.Values["sticky_enabled"], "true")
+	if resp.Values["sticky_mode"] != "model" {
+		t.Errorf("Values[sticky_mode] = %q, want %q", resp.Values["sticky_mode"], "model")
 	}
 	if resp.Values["global_max_attempts"] != "3" {
 		t.Errorf("Values[global_max_attempts] = %q, want %q", resp.Values["global_max_attempts"], "3")
@@ -48,8 +48,8 @@ func TestGetConfig(t *testing.T) {
 	if resp.Defaults == nil {
 		t.Fatal("Defaults should not be nil")
 	}
-	if _, ok := resp.Defaults["sticky_enabled"]; !ok {
-		t.Error("Defaults should contain sticky_enabled")
+	if _, ok := resp.Defaults["sticky_mode"]; !ok {
+		t.Error("Defaults should contain sticky_mode")
 	}
 }
 
@@ -57,7 +57,7 @@ func TestGetConfig_FiltersStaleKeys(t *testing.T) {
 	h, st, _ := testHandler()
 
 	// Simulate stale config entries from previous versions
-	st.config["sticky_enabled"] = "true"
+	st.config["sticky_mode"] = "model"
 	st.config["max_retries"] = "10"         // Invalid: should be filtered out
 	st.config["invalid_key"] = "some_value" // Invalid: should be filtered out
 
@@ -76,8 +76,8 @@ func TestGetConfig_FiltersStaleKeys(t *testing.T) {
 	}
 
 	// Valid key should be present
-	if resp.Values["sticky_enabled"] != "true" {
-		t.Errorf("Values[sticky_enabled] = %q, want %q", resp.Values["sticky_enabled"], "true")
+	if resp.Values["sticky_mode"] != "model" {
+		t.Errorf("Values[sticky_mode] = %q, want %q", resp.Values["sticky_mode"], "model")
 	}
 
 	// Invalid keys should be filtered out
@@ -235,9 +235,9 @@ func TestUpdateConfig_InvalidValues(t *testing.T) {
 			wantMsg: "must be 'true' or 'false'",
 		},
 		{
-			name:    "sticky_enabled invalid",
-			body:    `{"sticky_enabled": "yes"}`,
-			wantMsg: "must be 'true' or 'false'",
+			name:    "sticky_mode invalid",
+			body:    `{"sticky_mode": "yes"}`,
+			wantMsg: "must be 'off', 'api_type', or 'model'",
 		},
 		{
 			name:    "auth_mode invalid",
@@ -319,6 +319,12 @@ func TestUpdateConfig_ValidValues(t *testing.T) {
 			body:  `{"user_header": "X-Custom-User"}`,
 			key:   "user_header",
 			value: "X-Custom-User",
+		},
+		{
+			name:  "sticky_mode model",
+			body:  `{"sticky_mode": "model"}`,
+			key:   "sticky_mode",
+			value: "model",
 		},
 	}
 

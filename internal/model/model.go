@@ -16,6 +16,18 @@ const (
 	ScopeAny Scope = "any"
 )
 
+// StickyMode defines sticky session routing granularity.
+type StickyMode string
+
+const (
+	// StickyModeOff disables sticky sessions.
+	StickyModeOff StickyMode = "off"
+	// StickyModeAPIType keeps stickiness by client and API type.
+	StickyModeAPIType StickyMode = "api_type"
+	// StickyModeModel keeps stickiness by client, API type, and model.
+	StickyModeModel StickyMode = "model"
+)
+
 // VendorWildcard is the wildcard value that matches any vendor.
 const VendorWildcard = "*"
 
@@ -24,6 +36,16 @@ const VendorWildcard = "*"
 func IsValidScope(s Scope) bool {
 	switch s {
 	case ScopeNone, ScopeVendor, ScopeAny, "":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsValidStickyMode checks if the given sticky mode is valid.
+func IsValidStickyMode(m StickyMode) bool {
+	switch m {
+	case StickyModeOff, StickyModeAPIType, StickyModeModel:
 		return true
 	default:
 		return false
@@ -194,6 +216,7 @@ type StickyKey struct {
 	IP      string
 	User    string
 	APIType string
+	Model   string
 }
 
 // SelectRequest represents a provider selection request.
@@ -202,7 +225,7 @@ type SelectRequest struct {
 	User            string
 	APIType         string
 	Model           string
-	StickyEnabled   bool             // Whether sticky sessions are enabled (pre-loaded from config)
+	StickyMode      StickyMode       // Sticky session mode pre-loaded from runtime config
 	FailoverContext *FailoverContext // Optional: failover context for vendor isolation (nil = first attempt)
 	// MaxProviderSwitches limits the number of provider switches (failover attempts) allowed.
 	// 0 = no limit. This counts only provider changes, not per-provider retries.

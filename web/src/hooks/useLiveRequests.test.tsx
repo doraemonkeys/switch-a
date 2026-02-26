@@ -77,10 +77,15 @@ describe("useLiveRequests", () => {
       expect(mockApi.requests.active).not.toHaveBeenCalled();
     });
 
-    it("returns loading true initially", () => {
+    it("returns loading true initially", async () => {
       const { result } = renderHook(() => useLiveRequests());
 
       expect(result.current.loading).toBe(true);
+
+      // Flush the pending async fetch to avoid act() warning on unmount
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
     });
 
     it("populates requests and count from API response", async () => {

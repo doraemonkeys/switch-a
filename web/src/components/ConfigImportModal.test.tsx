@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { ConfigImportModal } from "./ConfigImportModal";
 import type { ImportPreviewResponse, ImportResult } from "../api/types";
 
@@ -329,7 +329,7 @@ describe("Error display", () => {
     expect(screen.getByText("请选择 JSON 文件")).toBeInTheDocument();
   });
 
-  it("clears error state on valid file type drop attempt", () => {
+  it("clears error state on valid file type drop attempt", async () => {
     const { container } = render(
       <ConfigImportModal
         isOpen={true}
@@ -358,6 +358,9 @@ describe("Error display", () => {
     fireEvent.drop(dropZone, {
       dataTransfer: { files: [jsonFile] },
     });
+
+    // Flush the async file.text() promise that triggers state updates
+    await act(async () => {});
 
     // The error message should still be visible because file.text() will fail
     // but the handleFileSelect function was called

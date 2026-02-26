@@ -76,6 +76,9 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	if err := migrateBaseURLToAPIType(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate base_url: %w", err)
 	}
+	if err := migrateStickyConfig(db); err != nil { // coverage-ignore -- one-time migration
+		return nil, fmt.Errorf("migrate sticky config: %w", err)
+	}
 
 	return &SQLiteStore{db: db, clock: clock}, nil
 }

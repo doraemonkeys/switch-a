@@ -36,8 +36,10 @@ func TestValidateConfigValue(t *testing.T) {
 		{"trust_proxy_headers 1", "trust_proxy_headers", "1", false},
 		{"trust_proxy_headers 0", "trust_proxy_headers", "0", false},
 		{"trust_proxy_headers invalid", "trust_proxy_headers", "yes", true},
-		{"sticky_enabled valid", "sticky_enabled", "true", false},
-		{"sticky_enabled invalid", "sticky_enabled", "maybe", true},
+		{"sticky_mode off", "sticky_mode", "off", false},
+		{"sticky_mode api_type", "sticky_mode", "api_type", false},
+		{"sticky_mode model", "sticky_mode", "model", false},
+		{"sticky_mode invalid", "sticky_mode", "maybe", true},
 
 		// Auth mode validator
 		{"auth_mode auto", "auth_mode", "auto", false},
@@ -161,7 +163,7 @@ func TestIsValidConfigKey(t *testing.T) {
 		{"trust_proxy_headers", true},
 		{"upstream_connect_timeout", true},
 		{"upstream_read_timeout", true},
-		{"sticky_enabled", true},
+		{"sticky_mode", true},
 		{"sticky_ttl", true},
 		{"circuit_failure", true},
 		{"circuit_window", true},
@@ -323,6 +325,30 @@ func TestValidateStrategyConfig(t *testing.T) {
 			err := validateStrategyConfig(tt.value)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateStrategyConfig(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateStickyModeConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid off", "off", false},
+		{"valid api_type", "api_type", false},
+		{"valid model", "model", false},
+		{"invalid uppercase", "MODEL", true},
+		{"invalid empty", "", true},
+		{"invalid other", "true", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateStickyModeConfig(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateStickyModeConfig(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
 			}
 		})
 	}

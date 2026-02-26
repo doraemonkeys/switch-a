@@ -63,7 +63,7 @@ func newMockStore() *mockStore {
 			ConfigKeyGlobalMaxAttempts:      "0",
 			ConfigKeyUpstreamConnectTimeout: "10",
 			ConfigKeyUpstreamReadTimeout:    "0",
-			ConfigKeyStickyEnabled:          "true",
+			ConfigKeyStickyMode:             "model",
 			ConfigKeyStickyTTL:              "300",
 		},
 		logs:     []model.RequestLog{},
