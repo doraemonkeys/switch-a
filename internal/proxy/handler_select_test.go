@@ -146,15 +146,12 @@ func TestSelectProviderWithTracking_NoSelector(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-		selectReq: &model.SelectRequest{
-			APIType: "claude",
-		},
+	selectReq := &model.SelectRequest{
+		APIType: "claude",
 	}
 
 	// First attempt should select a provider
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, pctx, 0, nil)
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,16 +186,12 @@ func TestSelectProviderWithTracking_SelectorStickyCacheHit(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
-		selectReq: &model.SelectRequest{
-			APIType:    "claude",
-			StickyMode: model.StickyModeAPIType,
-		},
+	selectReq := &model.SelectRequest{
+		APIType:    "claude",
+		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, pctx, 0, nil)
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -251,18 +244,14 @@ func TestSelectProviderWithTracking_ActiveProviderFallback(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
-		selectReq: &model.SelectRequest{
-			ClientIP:   "192.168.1.1",
-			User:       "user1",
-			APIType:    "claude",
-			StickyMode: model.StickyModeAPIType,
-		},
+	selectReq := &model.SelectRequest{
+		ClientIP:   "192.168.1.1",
+		User:       "user1",
+		APIType:    "claude",
+		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, pctx, 0, nil)
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -310,16 +299,12 @@ func TestSelectProviderWithTracking_NormalSelection(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-		cfg:     &runtimeConfig{stickyMode: model.StickyModeOff}, // Sticky disabled
-		selectReq: &model.SelectRequest{
-			APIType:    "claude",
-			StickyMode: model.StickyModeOff,
-		},
+	selectReq := &model.SelectRequest{
+		APIType:    "claude",
+		StickyMode: model.StickyModeOff,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, pctx, 0, nil)
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -361,18 +346,14 @@ func TestSelectProviderWithTracking_RetryWithExclusion(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
-		selectReq: &model.SelectRequest{
-			APIType:    "claude",
-			StickyMode: model.StickyModeAPIType,
-		},
+	selectReq := &model.SelectRequest{
+		APIType:    "claude",
+		StickyMode: model.StickyModeAPIType,
 	}
 
 	excluded := map[string]bool{"failed-p1": true}
 	// attempt > 0 triggers SelectExcluding path
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, pctx, 1, excluded)
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 1, excluded)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -405,16 +386,12 @@ func TestSelectProviderWithTracking_SelectorError(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-		cfg:     &runtimeConfig{stickyMode: model.StickyModeAPIType},
-		selectReq: &model.SelectRequest{
-			APIType:    "claude",
-			StickyMode: model.StickyModeAPIType,
-		},
+	selectReq := &model.SelectRequest{
+		APIType:    "claude",
+		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, pctx, 0, nil)
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -445,14 +422,11 @@ func TestTryActiveProviderFallback_StickyDisabled(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		cfg: &runtimeConfig{stickyMode: model.StickyModeOff}, // Sticky disabled
-		selectReq: &model.SelectRequest{
-			StickyMode: model.StickyModeOff,
-		},
+	selectReq := &model.SelectRequest{
+		StickyMode: model.StickyModeOff,
 	}
 
-	provider := handler.tryActiveProviderFallback(ctx, pctx)
+	provider := handler.tryActiveProviderFallback(ctx, selectReq)
 	if provider != nil {
 		t.Error("expected nil when sticky is disabled")
 	}
@@ -470,14 +444,11 @@ func TestTryActiveProviderFallback_NoActiveRegistry(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		cfg: &runtimeConfig{stickyMode: model.StickyModeAPIType},
-		selectReq: &model.SelectRequest{
-			StickyMode: model.StickyModeAPIType,
-		},
+	selectReq := &model.SelectRequest{
+		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider := handler.tryActiveProviderFallback(ctx, pctx)
+	provider := handler.tryActiveProviderFallback(ctx, selectReq)
 	if provider != nil {
 		t.Error("expected nil when no active registry")
 	}
@@ -498,17 +469,14 @@ func TestTryActiveProviderFallback_NoActiveProvider(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		cfg: &runtimeConfig{stickyMode: model.StickyModeAPIType},
-		selectReq: &model.SelectRequest{
-			ClientIP:   "192.168.1.1",
-			User:       "user1",
-			APIType:    "claude",
-			StickyMode: model.StickyModeAPIType,
-		},
+	selectReq := &model.SelectRequest{
+		ClientIP:   "192.168.1.1",
+		User:       "user1",
+		APIType:    "claude",
+		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider := handler.tryActiveProviderFallback(ctx, pctx)
+	provider := handler.tryActiveProviderFallback(ctx, selectReq)
 	if provider != nil {
 		t.Error("expected nil when no active provider")
 	}
@@ -537,24 +505,20 @@ func TestTryActiveProviderFallback_ModelDimension(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-		cfg:     &runtimeConfig{stickyMode: model.StickyModeModel},
-		selectReq: &model.SelectRequest{
-			ClientIP:   "192.168.1.1",
-			User:       "user1",
-			APIType:    "claude",
-			Model:      "model-b",
-			StickyMode: model.StickyModeModel,
-		},
+	selectReq := &model.SelectRequest{
+		ClientIP:   "192.168.1.1",
+		User:       "user1",
+		APIType:    "claude",
+		Model:      "model-b",
+		StickyMode: model.StickyModeModel,
 	}
 
-	if provider := handler.tryActiveProviderFallback(ctx, pctx); provider != nil {
+	if provider := handler.tryActiveProviderFallback(ctx, selectReq); provider != nil {
 		t.Fatal("expected nil for non-matching model in model sticky mode")
 	}
 
-	pctx.selectReq.Model = "model-a"
-	provider := handler.tryActiveProviderFallback(ctx, pctx)
+	selectReq.Model = "model-a"
+	provider := handler.tryActiveProviderFallback(ctx, selectReq)
 	if provider == nil || provider.ID != "active-p1" {
 		t.Fatalf("expected active-p1 for matching model, got %#v", provider)
 	}
@@ -575,11 +539,8 @@ func TestGetProviderIfValid_ProviderFound(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", pctx)
+	provider := handler.getProviderIfValid(ctx, "p1", "claude")
 	if provider == nil {
 		t.Fatal("expected provider to be found")
 	}
@@ -602,11 +563,8 @@ func TestGetProviderIfValid_ProviderNotFound(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-	}
 
-	provider := handler.getProviderIfValid(ctx, "nonexistent", pctx)
+	provider := handler.getProviderIfValid(ctx, "nonexistent", "claude")
 	if provider != nil {
 		t.Error("expected nil for nonexistent provider")
 	}
@@ -626,11 +584,8 @@ func TestGetProviderIfValid_ProviderDisabled(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", pctx)
+	provider := handler.getProviderIfValid(ctx, "p1", "claude")
 	if provider != nil {
 		t.Error("expected nil for disabled provider")
 	}
@@ -654,11 +609,8 @@ func TestGetProviderIfValid_ProviderUnhealthy(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", pctx)
+	provider := handler.getProviderIfValid(ctx, "p1", "claude")
 	if provider != nil {
 		t.Error("expected nil for unhealthy provider")
 	}
@@ -681,11 +633,8 @@ func TestGetProviderIfValid_StoreError(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
-	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", pctx)
+	provider := handler.getProviderIfValid(ctx, "p1", "claude")
 	if provider != nil {
 		t.Error("expected nil on store error")
 	}
@@ -703,11 +652,11 @@ func TestSelectProviderFallback_NoProviders(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
+	selectReq := &model.SelectRequest{
+		APIType: "claude",
 	}
 
-	provider, err := handler.selectProviderFallback(ctx, pctx, 0, nil)
+	provider, err := handler.selectProviderFallback(ctx, selectReq, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for no providers")
 	}
@@ -732,14 +681,14 @@ func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
+	selectReq := &model.SelectRequest{
+		APIType: "claude",
 	}
 
 	// Make multiple selections and verify round-robin behavior
 	seen := make(map[string]int)
 	for i := 0; i < 9; i++ {
-		provider, err := handler.selectProviderFallback(ctx, pctx, 0, nil)
+		provider, err := handler.selectProviderFallback(ctx, selectReq, 0, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -769,18 +718,18 @@ func TestSelectProviderFallback_AttemptOffset(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	pctx := &proxyContext{
-		apiType: "claude",
+	selectReq := &model.SelectRequest{
+		APIType: "claude",
 	}
 
 	// Get first provider
-	p0, _ := handler.selectProviderFallback(ctx, pctx, 0, nil)
+	p0, _ := handler.selectProviderFallback(ctx, selectReq, 0, nil)
 
 	// Reset counter to get predictable behavior for test
 	handler.fallbackCounter.Store(0)
 
 	// Get provider with attempt offset
-	p1, _ := handler.selectProviderFallback(ctx, pctx, 1, nil)
+	p1, _ := handler.selectProviderFallback(ctx, selectReq, 1, nil)
 
 	// With 2 providers, attempt=0 and attempt=1 should give different providers
 	// when starting from the same counter position

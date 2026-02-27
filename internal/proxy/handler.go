@@ -29,6 +29,7 @@ type Handler struct {
 	transport       *Transport
 	lastCfg         *transportCacheKey
 	fallbackCounter atomic.Int64 // Counter for true round-robin in fallback mode
+	wsForwarder     *WebSocketForwarder
 }
 
 // transportCacheKey is used to detect if Transport config changed.
@@ -125,6 +126,7 @@ func NewHandler(cfg Config) *Handler {
 		health:         cfg.Health,
 		activeRegistry: cfg.ActiveRegistry,
 		logger:         cfg.Logger,
+		wsForwarder:    NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger}),
 	}
 }
 
@@ -205,6 +207,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		h.logger.Warn("unknown API type", zap.String("path", r.URL.Path))
 		h.writeGatewayError(w, http.StatusBadRequest, ErrCodeUnknownAPIType, fmt.Sprintf("Unknown API path: %s", r.URL.Path))
+		return
+	}
+
+	// WebSocket upgrade is only valid for Codex (OpenAI Realtime API).
+	// Reject upgrades on other API types to prevent health metric pollution
+	// from failed WS dials to non-WebSocket backends.
+	if isWebSocketUpgrade(r) {
+		if apiType != APITypeCodex {
+			h.writeGatewayError(w, http.StatusBadRequest, ErrCodeWebSocketUpgrade,
+				fmt.Sprintf("WebSocket upgrade is not supported for API type %q", apiType))
+			return
+		}
+		h.handleWebSocket(ctx, w, r, cfg, apiType, requestID, startTime)
+		return
+	}
+
+	// GET /responses exists solely for WebSocket (OpenAI Realtime API).
+	// A plain GET without Upgrade is meaningless here — reject early.
+	if r.Method == http.MethodGet && apiType == APITypeCodex {
+		h.writeGatewayError(w, http.StatusUpgradeRequired, ErrCodeWebSocketUpgrade, "This endpoint requires a WebSocket upgrade")
 		return
 	}
 
@@ -296,7 +318,7 @@ func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyCont
 	pctx.selectReq.FailoverContext = state.failoverContext
 	pctx.selectReq.MaxProviderSwitches = pctx.cfg.globalMaxAttempts
 
-	provider, fromSticky, err := h.selectProviderWithTracking(ctx, pctx, attempt, state.excludedProviders)
+	provider, fromSticky, err := h.selectProviderWithTracking(ctx, pctx.selectReq, attempt, state.excludedProviders)
 	if err != nil {
 		if errors.Is(err, internal.ErrNoProvider) {
 			// No provider available before any upstream attempt -> immediate error.

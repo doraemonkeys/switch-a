@@ -52,6 +52,13 @@ func isAuthHeader(key string) bool {
 	return lower == "authorization" || lower == "x-api-key"
 }
 
+// isWebSocketHandshakeHeader returns true for Sec-WebSocket-* headers.
+// These are client–proxy negotiation headers that the WebSocket library regenerates
+// when dialing upstream; forwarding them would conflict with the new handshake.
+func isWebSocketHandshakeHeader(key string) bool {
+	return len(key) > 14 && strings.EqualFold(key[:14], "Sec-Websocket-")
+}
+
 // DetectAuthMode determines the authentication mode from the request headers.
 // Returns the detected mode based on which auth header is present.
 func DetectAuthMode(r *http.Request) string {

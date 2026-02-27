@@ -170,6 +170,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET "+proxy.RouteClaudeModels, s.handleProxy)
 	// Codex API
 	mux.HandleFunc("POST "+proxy.RouteCodexResponses, s.handleProxy)
+	mux.HandleFunc("GET "+proxy.RouteCodexResponses, s.handleProxy) // WebSocket upgrade (OpenAI Realtime API)
 	// Gemini API
 	mux.HandleFunc("POST "+proxy.RouteGeminiPrefix, s.handleProxy)
 	mux.HandleFunc("POST "+proxy.RouteGeminiV1Beta, s.handleProxy)

@@ -19,15 +19,16 @@ type stickyKey struct {
 // ActiveRequest represents a request currently being processed by the proxy.
 // It captures metadata needed for live monitoring without storing the full request/response.
 type ActiveRequest struct {
-	RequestID       string    `json:"request_id"`  // UUID identifying this request
-	ProviderID      string    `json:"provider_id"` // Selected provider handling the request
-	Model           string    `json:"model"`       // Model being called (e.g., "claude-3-opus")
-	APIType         string    `json:"api_type"`    // API type (claude, codex, gemini, custom:*)
-	UserID          string    `json:"user_id"`     // User identifier from header
-	ClientIP        string    `json:"client_ip"`   // Client IP address
-	IsSSE           bool      `json:"is_sse"`      // Whether this is an SSE streaming request
-	StartedAt       time.Time `json:"started_at"`  // When the request started
-	HasReceivedData bool      `json:"has_data"`    // Whether data has been received from upstream
+	RequestID       string    `json:"request_id"`   // UUID identifying this request
+	ProviderID      string    `json:"provider_id"`  // Selected provider handling the request
+	Model           string    `json:"model"`        // Model being called (e.g., "claude-3-opus")
+	APIType         string    `json:"api_type"`     // API type (claude, codex, gemini, custom:*)
+	UserID          string    `json:"user_id"`      // User identifier from header
+	ClientIP        string    `json:"client_ip"`    // Client IP address
+	IsSSE           bool      `json:"is_sse"`       // Whether this is an SSE streaming request
+	IsWebSocket     bool      `json:"is_websocket"` // Whether this is a WebSocket connection
+	StartedAt       time.Time `json:"started_at"`   // When the request started
+	HasReceivedData bool      `json:"has_data"`     // Whether data has been received from upstream
 }
 
 // ActiveRequestRegistry tracks requests currently being processed.

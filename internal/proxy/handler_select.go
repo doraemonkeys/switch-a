@@ -13,15 +13,15 @@ import (
 // Returns (provider, useStickyBehavior, error). useStickyBehavior indicates the provider
 // was selected via sticky cache or active request fallback, meaning retries should be skipped
 // on failure since the client explicitly requested this provider continuity.
-func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyContext, attempt int, excluded map[string]bool) (*model.Provider, bool, error) {
+func (h *Handler) selectProviderWithTracking(ctx context.Context, selectReq *model.SelectRequest, attempt int, excluded map[string]bool) (*model.Provider, bool, error) {
 	if h.selector == nil {
 		// Fallback: direct provider list (no selector configured)
-		provider, err := h.selectProviderFallback(ctx, pctx, attempt, excluded)
+		provider, err := h.selectProviderFallback(ctx, selectReq, attempt, excluded)
 		return provider, false, err
 	}
 
 	if attempt == 0 {
-		result, err := h.selector.SelectWithMetadata(ctx, pctx.selectReq)
+		result, err := h.selector.SelectWithMetadata(ctx, selectReq)
 		if err != nil {
 			return nil, false, err
 		}
@@ -32,7 +32,7 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyCon
 		}
 
 		// Check active requests when sticky cache misses (see tryActiveProviderFallback doc).
-		if activeProvider := h.tryActiveProviderFallback(ctx, pctx); activeProvider != nil {
+		if activeProvider := h.tryActiveProviderFallback(ctx, selectReq); activeProvider != nil {
 			// Release the concurrency slot acquired by SelectWithMetadata above,
 			// since we're returning a different provider from the active registry.
 			h.releaseConcurrency(result.Provider.ID)
@@ -42,7 +42,7 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyCon
 		return result.Provider, false, nil
 	}
 
-	provider, err := h.selector.SelectExcluding(ctx, pctx.selectReq, excluded)
+	provider, err := h.selector.SelectExcluding(ctx, selectReq, excluded)
 	return provider, false, err
 }
 
@@ -51,22 +51,22 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, pctx *proxyCon
 // the client may have an ongoing request to a provider, and we want to continue
 // routing to that same provider for consistency even though the cache entry expired.
 // Returns nil if no active provider is found or available.
-func (h *Handler) tryActiveProviderFallback(ctx context.Context, pctx *proxyContext) *model.Provider {
-	if pctx.cfg.stickyMode == model.StickyModeOff || h.activeRegistry == nil {
+func (h *Handler) tryActiveProviderFallback(ctx context.Context, selectReq *model.SelectRequest) *model.Provider {
+	if selectReq.StickyMode == model.StickyModeOff || h.activeRegistry == nil {
 		return nil
 	}
 
 	activeProviderID, found := h.activeRegistry.FindActiveProvider(
-		pctx.selectReq.ClientIP,
-		pctx.selectReq.User,
-		pctx.selectReq.APIType,
-		pctx.selectReq.Model,
+		selectReq.ClientIP,
+		selectReq.User,
+		selectReq.APIType,
+		selectReq.Model,
 	)
 	if !found {
 		return nil
 	}
 
-	return h.getProviderIfValid(ctx, activeProviderID, pctx)
+	return h.getProviderIfValid(ctx, activeProviderID, selectReq.APIType)
 }
 
 // getProviderIfValid validates that a provider is still valid and available.
@@ -76,8 +76,8 @@ func (h *Handler) tryActiveProviderFallback(ctx context.Context, pctx *proxyCont
 // Note: This iterates through all providers by API type to find the target provider.
 // A direct GetProvider(id) lookup would be O(1) but requires additional store interface
 // changes. The current O(n) approach is acceptable given typical provider counts (<100).
-func (h *Handler) getProviderIfValid(ctx context.Context, providerID string, pctx *proxyContext) *model.Provider {
-	providers, err := h.store.ListProvidersByAPIType(ctx, pctx.apiType)
+func (h *Handler) getProviderIfValid(ctx context.Context, providerID string, apiType string) *model.Provider {
+	providers, err := h.store.ListProvidersByAPIType(ctx, apiType)
 	if err != nil {
 		h.logger.Warn("failed to list providers for active fallback", zap.Error(err))
 		return nil
@@ -112,10 +112,10 @@ func (h *Handler) getProviderIfValid(ctx context.Context, providerID string, pct
 //   - No group-based strategies: ignores priority/weight/random settings
 //
 // For production deployments with multiple providers, configure a Selector for robust behavior.
-func (h *Handler) selectProviderFallback(ctx context.Context, pctx *proxyContext, attempt int, excluded map[string]bool) (*model.Provider, error) {
-	providers, err := h.store.ListProvidersByAPIType(ctx, pctx.apiType)
+func (h *Handler) selectProviderFallback(ctx context.Context, selectReq *model.SelectRequest, attempt int, excluded map[string]bool) (*model.Provider, error) {
+	providers, err := h.store.ListProvidersByAPIType(ctx, selectReq.APIType)
 	if err != nil { // coverage-ignore -- database errors are rare after successful startup
-		h.logger.Error("failed to list providers", zap.Error(err), zap.String("api_type", pctx.apiType))
+		h.logger.Error("failed to list providers", zap.Error(err), zap.String("api_type", selectReq.APIType))
 		return nil, err
 	}
 

@@ -12,6 +12,7 @@ const (
 	ErrCodeProviderUnavailable = "PROVIDER_UNAVAILABLE"
 	ErrCodeProviderExhausted   = "PROVIDER_EXHAUSTED"
 	ErrCodeBodyTooLarge        = "BODY_TOO_LARGE"
+	ErrCodeWebSocketUpgrade    = "WEBSOCKET_UPGRADE_FAILED"
 	ErrCodeInternalError       = "INTERNAL_ERROR"
 )
 

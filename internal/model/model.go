@@ -140,21 +140,22 @@ type RuntimeConfig struct {
 
 // RequestLog represents a request log entry.
 type RequestLog struct {
-	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	RequestID  string    `gorm:"index" json:"request_id"`
-	ProviderID string    `gorm:"index" json:"provider_id"`
-	APIType    string    `json:"api_type"`
-	Model      string    `json:"model"`
-	ClientIP   string    `json:"client_ip"`
-	UserID     string    `json:"user_id"`
-	StatusCode int       `json:"status_code"`
-	LatencyMs  int64     `json:"latency_ms"`
-	Success    bool      `json:"success"`
-	IsSSE      bool      `json:"is_sse"`
-	ErrorMsg   string    `json:"error_msg"`
-	RetryCount int       `json:"retry_count"`
-	IsSticky   bool      `json:"is_sticky"`
-	CreatedAt  time.Time `gorm:"index" json:"created_at"`
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RequestID   string    `gorm:"index" json:"request_id"`
+	ProviderID  string    `gorm:"index" json:"provider_id"`
+	APIType     string    `json:"api_type"`
+	Model       string    `json:"model"`
+	ClientIP    string    `json:"client_ip"`
+	UserID      string    `json:"user_id"`
+	StatusCode  int       `json:"status_code"`
+	LatencyMs   int64     `json:"latency_ms"`
+	Success     bool      `json:"success"`
+	IsSSE       bool      `json:"is_sse"`
+	IsWebSocket bool      `gorm:"default:false" json:"is_websocket"`
+	ErrorMsg    string    `json:"error_msg"`
+	RetryCount  int       `json:"retry_count"`
+	IsSticky    bool      `json:"is_sticky"`
+	CreatedAt   time.Time `gorm:"index" json:"created_at"`
 	// Phase 1 diagnostic fields (P0)
 	RequestPath     string `gorm:"default:''" json:"request_path"`      // Relative path like /v1/messages (without base_url)
 	RequestMethod   string `gorm:"default:''" json:"request_method"`    // HTTP method: GET/POST/PUT/DELETE

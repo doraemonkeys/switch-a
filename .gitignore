@@ -38,8 +38,9 @@ TODO
 .claude/
 CLAUDE.md
 
-# Web coverage reports
+# Coverage output directories
 web/coverage/
+coverage_ws/
 
 # Frontend build output (keep placeholder for go:embed)
 web/dist/*

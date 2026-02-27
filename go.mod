@@ -4,6 +4,7 @@ go 1.25
 
 require (
 	github.com/andybalholm/brotli v1.2.0
+	github.com/coder/websocket v1.8.14
 	github.com/doraemonkeys/mylog v0.4.1
 	github.com/google/uuid v1.6.0
 	github.com/spf13/viper v1.21.0
