@@ -132,6 +132,9 @@ export function LogDetailModal({
             requestBytes={log.request_bytes}
             responseBytes={log.response_bytes}
             contentType={log.content_type}
+            requestLabel={log.is_websocket ? "Sent" : undefined}
+            responseLabel={log.is_websocket ? "Received" : undefined}
+            flowLabel={log.is_websocket ? "Upstream" : undefined}
           />
 
           {/* Token Usage Statistics - Collapsible section for token counts and cache info */}
@@ -221,6 +224,37 @@ function StatusBadges({ log }: { log: RequestLog }) {
   );
 }
 
+const BADGE_CLASS =
+  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium";
+
+function RequestTypeBadge({ log }: { log: RequestLog }) {
+  if (log.is_websocket) {
+    return (
+      <span
+        className={`${BADGE_CLASS} bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300`}
+      >
+        WebSocket
+      </span>
+    );
+  }
+  if (log.is_sse) {
+    return (
+      <span
+        className={`${BADGE_CLASS} bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300`}
+      >
+        SSE Stream
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`${BADGE_CLASS} bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300`}
+    >
+      Regular
+    </span>
+  );
+}
+
 function RequestInfo({
   log,
   providerName,
@@ -258,20 +292,7 @@ function RequestInfo({
           </span>
         }
       />
-      <DetailRow
-        label="Request Type"
-        value={
-          log.is_sse ? (
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
-              SSE Stream
-            </span>
-          ) : (
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300">
-              Regular
-            </span>
-          )
-        }
-      />
+      <DetailRow label="Request Type" value={<RequestTypeBadge log={log} />} />
     </DetailSection>
   );
 }

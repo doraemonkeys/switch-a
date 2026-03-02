@@ -16,6 +16,7 @@ const mockActiveRequests: ActiveRequest[] = [
     user_id: "user-1",
     client_ip: TEST_CLIENT_IP,
     is_sse: false,
+    is_websocket: false,
     started_at: new Date().toISOString(),
   },
   {
@@ -26,6 +27,7 @@ const mockActiveRequests: ActiveRequest[] = [
     user_id: "user-2",
     client_ip: TEST_CLIENT_IP,
     is_sse: true,
+    is_websocket: false,
     started_at: new Date().toISOString(),
   },
 ];

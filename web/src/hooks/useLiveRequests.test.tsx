@@ -21,6 +21,7 @@ const mockActiveResponse = {
       user_id: "user-1",
       client_ip: "192.168.1.1",
       is_sse: false,
+      is_websocket: false,
       started_at: new Date().toISOString(),
     },
   ],

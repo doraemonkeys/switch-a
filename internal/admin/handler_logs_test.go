@@ -527,6 +527,7 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 		{"invalid offset negative", "?offset=-5"},
 		{"invalid success", "?success=maybe"},
 		{"invalid is_sse", "?is_sse=maybe"},
+		{"invalid is_websocket", "?is_websocket=maybe"},
 		{"invalid start_time", "?start_time=not-a-date"},
 		{"invalid end_time", "?end_time=invalid"},
 		{"invalid min_latency non-numeric", "?min_latency=slow"},
@@ -610,6 +611,7 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 		"api_type":        {"claude"},
 		"success":         {"true"},
 		"is_sse":          {"false"},
+		"is_websocket":    {"true"},
 		"user_id":         {"user-123"},
 		"start_time":      {startTime},
 		"end_time":        {endTime},
@@ -642,6 +644,9 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 	}
 	if filter.IsSSE == nil || *filter.IsSSE != false {
 		t.Error("expected is_sse false")
+	}
+	if filter.IsWebSocket == nil || *filter.IsWebSocket != true {
+		t.Error("expected is_websocket true")
 	}
 	if filter.UserID != "user-123" {
 		t.Errorf("expected user_id 'user-123', got %q", filter.UserID)

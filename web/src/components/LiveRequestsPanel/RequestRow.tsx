@@ -7,6 +7,8 @@ import {
   COMPACT_PROVIDER_MAX_WIDTH,
   COMPACT_IP_MAX_WIDTH,
   SSE_BADGE_FONT_SIZE,
+  SSE_BADGE_COLORS,
+  WS_BADGE_COLORS,
 } from "./constants";
 
 // =============================================================================
@@ -81,8 +83,17 @@ function RequestDetailPanel({
               {request.api_type}
             </span>
             {request.is_sse && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+              <span
+                className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${SSE_BADGE_COLORS}`}
+              >
                 SSE
+              </span>
+            )}
+            {request.is_websocket && (
+              <span
+                className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${WS_BADGE_COLORS}`}
+              >
+                WS
               </span>
             )}
           </p>
@@ -290,10 +301,19 @@ function CompactRow({
 
       {request.is_sse && (
         <span
-          className="inline-flex items-center px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 flex-shrink-0"
+          className={`inline-flex items-center px-1.5 py-0.5 rounded font-medium ${SSE_BADGE_COLORS} flex-shrink-0`}
           style={{ fontSize: SSE_BADGE_FONT_SIZE }}
         >
           SSE
+        </span>
+      )}
+
+      {request.is_websocket && (
+        <span
+          className={`inline-flex items-center px-1.5 py-0.5 rounded font-medium ${WS_BADGE_COLORS} flex-shrink-0`}
+          style={{ fontSize: SSE_BADGE_FONT_SIZE }}
+        >
+          WS
         </span>
       )}
 
@@ -368,8 +388,17 @@ function FullRow({
                 {request.api_type}
               </span>
               {request.is_sse && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${SSE_BADGE_COLORS}`}
+                >
                   SSE
+                </span>
+              )}
+              {request.is_websocket && (
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${WS_BADGE_COLORS}`}
+                >
+                  WS
                 </span>
               )}
             </div>
@@ -440,17 +469,23 @@ export function RequestRow({
 }: RequestRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const durationMs = getRequestDuration(request, currentTime);
-  const isLongRunning = durationMs > longRunningThreshold;
+  // WebSocket connections are inherently long-lived; the threshold doesn't apply
+  const isLongRunning =
+    !request.is_websocket && durationMs > longRunningThreshold;
   const durationStr = formatDuration(durationMs);
 
   const showModel = groupBy !== "model";
   const showIP = groupBy !== "ip";
   const showAPIType = groupBy !== "api";
 
+  let protocolSuffix = "";
+  if (request.is_websocket) protocolSuffix = " (WS)";
+  else if (request.is_sse) protocolSuffix = " (SSE)";
+
   const tooltipContent = [
     `Model: ${request.model || "Unknown"}`,
     `Provider: ${providerName || request.provider_id}`,
-    `API: ${request.api_type}${request.is_sse ? " (SSE)" : ""}`,
+    `API: ${request.api_type}${protocolSuffix}`,
     `Duration: ${durationStr}`,
     `IP: ${request.client_ip}`,
     request.user_id ? `User: ${request.user_id}` : null,

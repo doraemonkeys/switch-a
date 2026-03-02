@@ -110,6 +110,11 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 		return filter, errMsg
 	}
 
+	filter.IsWebSocket, errMsg = parseBoolPtr(getQueryParam(query, "is_websocket"), "is_websocket")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
 	filter.StartTime, errMsg = parseTimePtr(getQueryParam(query, "start_time"), "start_time")
 	if errMsg != "" {
 		return filter, errMsg

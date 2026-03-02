@@ -463,6 +463,42 @@ func TestListLogs_FilterByIsSSE(t *testing.T) {
 	}
 }
 
+func TestListLogs_FilterByIsWebSocket(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	logs := []model.RequestLog{
+		{ProviderID: "p1", IsWebSocket: true, CreatedAt: time.Now()},
+		{ProviderID: "p2", IsWebSocket: false, CreatedAt: time.Now()},
+		{ProviderID: "p3", IsWebSocket: true, CreatedAt: time.Now()},
+	}
+	for i := range logs {
+		if err := store.InsertLog(ctx, &logs[i]); err != nil {
+			t.Fatalf("InsertLog failed: %v", err)
+		}
+	}
+
+	// Filter by IsWebSocket=true
+	isWSTrue := true
+	result, err := store.ListLogs(ctx, model.LogFilter{IsWebSocket: &isWSTrue, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("expected 2 WebSocket logs, got %d", len(result))
+	}
+
+	// Filter by IsWebSocket=false
+	isWSFalse := false
+	result, err = store.ListLogs(ctx, model.LogFilter{IsWebSocket: &isWSFalse, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("expected 1 non-WebSocket log, got %d", len(result))
+	}
+}
+
 func TestListLogs_FilterByUserID(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()

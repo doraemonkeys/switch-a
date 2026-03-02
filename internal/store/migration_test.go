@@ -133,3 +133,107 @@ func TestMigrateStickyConfig_ExistingStickyModeNotOverwritten(t *testing.T) {
 	}
 	assertConfigMissing(t, db, legacyStickyEnabledConfigKey)
 }
+
+// setupWebSocketMigrationDB creates a DB with the legacy is_web_socket column
+// (simulating GORM auto-naming before the explicit column tag was added).
+func setupWebSocketMigrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "ws_migration.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+
+	// Create request_logs with the legacy column name (GORM's default for IsWebSocket).
+	if err := db.Exec(`CREATE TABLE IF NOT EXISTS request_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		is_web_socket BOOLEAN DEFAULT 0,
+		is_websocket BOOLEAN DEFAULT 0,
+		provider_id TEXT DEFAULT '',
+		created_at DATETIME
+	)`).Error; err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			t.Logf("close ws migration db: %v", closeErr)
+		}
+	})
+
+	return db
+}
+
+func TestMigrateWebSocketColumn_CopiesData(t *testing.T) {
+	t.Parallel()
+
+	db := setupWebSocketMigrationDB(t)
+
+	// Seed data in the legacy column.
+	if err := db.Exec(`INSERT INTO request_logs (is_web_socket, is_websocket, provider_id) VALUES (1, 0, 'p1')`).Error; err != nil {
+		t.Fatalf("seed ws log: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO request_logs (is_web_socket, is_websocket, provider_id) VALUES (0, 0, 'p2')`).Error; err != nil {
+		t.Fatalf("seed regular log: %v", err)
+	}
+
+	if err := migrateWebSocketColumn(db); err != nil {
+		t.Fatalf("migrateWebSocketColumn error: %v", err)
+	}
+
+	// Verify the WS row was migrated to the new column.
+	var wsCount int64
+	if err := db.Raw(`SELECT COUNT(*) FROM request_logs WHERE is_websocket = 1`).Scan(&wsCount).Error; err != nil {
+		t.Fatalf("count ws: %v", err)
+	}
+	if wsCount != 1 {
+		t.Errorf("is_websocket=1 count = %d, want 1", wsCount)
+	}
+
+	// Verify legacy column was dropped.
+	var colCount int64
+	if err := db.Raw(`SELECT COUNT(*) FROM pragma_table_info('request_logs') WHERE name = 'is_web_socket'`).Scan(&colCount).Error; err != nil {
+		t.Fatalf("check column: %v", err)
+	}
+	if colCount != 0 {
+		t.Error("is_web_socket column should have been dropped")
+	}
+}
+
+func TestMigrateWebSocketColumn_NoLegacyColumn(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "ws_no_legacy.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+
+	// Create table WITHOUT the legacy column.
+	if err := db.Exec(`CREATE TABLE IF NOT EXISTS request_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		is_websocket BOOLEAN DEFAULT 0
+	)`).Error; err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+
+	// Should be a no-op.
+	if err := migrateWebSocketColumn(db); err != nil {
+		t.Fatalf("migrateWebSocketColumn error: %v", err)
+	}
+}

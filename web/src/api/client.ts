@@ -88,15 +88,21 @@ function buildLogsQuery(filter?: LogFilter): string {
   if (filter?.api_type) query.set("api_type", filter.api_type);
   if (filter?.success != null) query.set("success", String(filter.success));
   if (filter?.is_sse != null) query.set("is_sse", String(filter.is_sse));
+  if (filter?.is_websocket != null) {
+    query.set("is_websocket", String(filter.is_websocket));
+  }
   if (filter?.user_id) query.set("user_id", filter.user_id);
   if (filter?.start_time) query.set("start_time", filter.start_time);
   if (filter?.end_time) query.set("end_time", filter.end_time);
-  if (filter?.min_latency != null)
+  if (filter?.min_latency != null) {
     query.set("min_latency", String(filter.min_latency));
-  if (filter?.min_retry_count != null)
+  }
+  if (filter?.min_retry_count != null) {
     query.set("min_retry_count", String(filter.min_retry_count));
-  if (filter?.has_retries != null)
+  }
+  if (filter?.has_retries != null) {
     query.set("has_retries", String(filter.has_retries));
+  }
   if (filter?.sort_by) query.set("sort_by", filter.sort_by);
   if (filter?.sort_order) query.set("sort_order", filter.sort_order);
   return query.toString();

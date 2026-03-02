@@ -140,18 +140,20 @@ type RuntimeConfig struct {
 
 // RequestLog represents a request log entry.
 type RequestLog struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	RequestID   string    `gorm:"index" json:"request_id"`
-	ProviderID  string    `gorm:"index" json:"provider_id"`
-	APIType     string    `json:"api_type"`
-	Model       string    `json:"model"`
-	ClientIP    string    `json:"client_ip"`
-	UserID      string    `json:"user_id"`
-	StatusCode  int       `json:"status_code"`
-	LatencyMs   int64     `json:"latency_ms"`
-	Success     bool      `json:"success"`
-	IsSSE       bool      `json:"is_sse"`
-	IsWebSocket bool      `gorm:"default:false" json:"is_websocket"`
+	ID         uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	RequestID  string `gorm:"index" json:"request_id"`
+	ProviderID string `gorm:"index" json:"provider_id"`
+	APIType    string `json:"api_type"`
+	Model      string `json:"model"`
+	ClientIP   string `json:"client_ip"`
+	UserID     string `json:"user_id"`
+	StatusCode int    `json:"status_code"`
+	LatencyMs  int64  `json:"latency_ms"`
+	Success    bool   `json:"success"`
+	IsSSE      bool   `json:"is_sse"`
+	// Explicit column tag required: GORM's default snake_case produces "is_web_socket" (3 words),
+	// but all API layers (JSON, SQL queries, frontend) expect "is_websocket" (2 words).
+	IsWebSocket bool      `gorm:"column:is_websocket;default:false" json:"is_websocket"`
 	ErrorMsg    string    `json:"error_msg"`
 	RetryCount  int       `json:"retry_count"`
 	IsSticky    bool      `json:"is_sticky"`
@@ -200,6 +202,7 @@ type LogFilter struct {
 	APIType       string     // Filter by API type (claude/codex/gemini/custom:*)
 	Success       *bool      // Filter by success/failure (nil = no filter)
 	IsSSE         *bool      // Filter by SSE/regular request (nil = no filter)
+	IsWebSocket   *bool      // Filter by WebSocket/regular request (nil = no filter)
 	UserID        string     // Filter by user ID
 	StartTime     *time.Time // Filter by start time (inclusive)
 	EndTime       *time.Time // Filter by end time (exclusive)

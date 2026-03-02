@@ -17,6 +17,7 @@ const mockLogs: RequestLog[] = [
     latency_ms: 150,
     success: true,
     is_sse: false,
+    is_websocket: false,
     error_msg: null,
     created_at: "2024-01-01T00:00:00Z",
     retry_count: 0,

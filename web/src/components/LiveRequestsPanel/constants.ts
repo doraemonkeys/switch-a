@@ -18,6 +18,12 @@ export const COMPACT_IP_MAX_WIDTH = "100px";
 export const COMPACT_USER_MAX_WIDTH = "100px";
 export const SSE_BADGE_FONT_SIZE = "10px";
 
+// Shared badge color classes for protocol indicators (SSE, WS)
+export const SSE_BADGE_COLORS =
+  "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300";
+export const WS_BADGE_COLORS =
+  "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300";
+
 export const VIEW_MODE_LABELS: Record<
   GroupViewMode,
   { icon: string; label: string }

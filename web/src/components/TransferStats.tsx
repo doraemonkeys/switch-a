@@ -9,6 +9,12 @@ interface TransferStatsProps {
   contentType?: string;
   /** Default expanded state */
   defaultExpanded?: boolean;
+  /** Label for the request stat card (defaults to "Request") */
+  requestLabel?: string;
+  /** Label for the response stat card (defaults to "Response") */
+  responseLabel?: string;
+  /** Label for the data flow indicator (defaults to "Server") */
+  flowLabel?: string;
 }
 
 /**
@@ -66,6 +72,9 @@ export function TransferStats({
   responseBytes,
   contentType,
   defaultExpanded = false,
+  requestLabel = "Request",
+  responseLabel = "Response",
+  flowLabel = "Server",
 }: TransferStatsProps) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
 
@@ -165,7 +174,7 @@ export function TransferStats({
                   />
                 </svg>
               }
-              label="Request"
+              label={requestLabel}
               value={hasRequestBytes ? formatBytes(requestBytes!) : "—"}
               iconColor="text-blue-500"
             />
@@ -187,7 +196,7 @@ export function TransferStats({
                   />
                 </svg>
               }
-              label="Response"
+              label={responseLabel}
               value={hasResponseBytes ? formatBytes(responseBytes!) : "—"}
               iconColor="text-green-500"
             />
@@ -211,7 +220,7 @@ export function TransferStats({
               <div className="flex items-center gap-1">
                 <span className="text-blue-400">→</span>
                 <span className="px-1.5 py-0.5 rounded bg-bg-secondary text-[10px] uppercase tracking-wide">
-                  Server
+                  {flowLabel}
                 </span>
                 <span className="text-green-400">→</span>
               </div>

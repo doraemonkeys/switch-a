@@ -94,3 +94,27 @@ func migrateStickyConfig(db *gorm.DB) error {
 
 	return nil
 }
+
+// migrateWebSocketColumn copies data from the legacy is_web_socket column
+// (GORM's default snake_case for IsWebSocket) to the explicit is_websocket column.
+// Idempotent: skips if the legacy column does not exist.
+func migrateWebSocketColumn(db *gorm.DB) error {
+	var count int64
+	err := db.Raw(`SELECT COUNT(*) FROM pragma_table_info('request_logs') WHERE name = 'is_web_socket'`).Scan(&count).Error
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil // No legacy column; nothing to migrate.
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`UPDATE request_logs SET is_websocket = is_web_socket WHERE is_web_socket = 1`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`ALTER TABLE request_logs DROP COLUMN is_web_socket`).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}

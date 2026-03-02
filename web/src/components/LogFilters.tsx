@@ -67,6 +67,7 @@ function hasActiveFilters(filter: LogFilter): boolean {
     filter.api_type ||
     filter.success !== undefined ||
     filter.is_sse !== undefined ||
+    filter.is_websocket !== undefined ||
     filter.start_time ||
     filter.end_time ||
     filter.has_retries !== undefined ||
@@ -150,6 +151,15 @@ function FilterSelect({
   );
 }
 
+// Derive the current request type filter value for the select control.
+function getRequestTypeFilterValue(filter: LogFilter): string {
+  if (filter.is_websocket === true) return "ws";
+  if (filter.is_sse === true) return "sse";
+  if (filter.is_sse === false && filter.is_websocket === false)
+    return "regular";
+  return "";
+}
+
 interface LogFiltersProps {
   filter: LogFilter;
   onFilterChange: (filter: Partial<LogFilter>) => void;
@@ -164,6 +174,7 @@ export function LogFilters({
   onClear,
 }: LogFiltersProps) {
   const isActive = hasActiveFilters(filter);
+  const requestTypeValue = getRequestTypeFilterValue(filter);
 
   return (
     <div className="card p-4">
@@ -195,14 +206,27 @@ export function LogFilters({
         <FilterSelect
           id="request-type-filter"
           label="Request Type"
-          value={filter.is_sse === undefined ? "" : String(filter.is_sse)}
-          onChange={(v) =>
-            onFilterChange({ is_sse: v === "" ? undefined : v === "true" })
-          }
+          value={requestTypeValue}
+          onChange={(v) => {
+            switch (v) {
+              case "sse":
+                onFilterChange({ is_sse: true, is_websocket: undefined });
+                break;
+              case "ws":
+                onFilterChange({ is_sse: undefined, is_websocket: true });
+                break;
+              case "regular":
+                onFilterChange({ is_sse: false, is_websocket: false });
+                break;
+              default:
+                onFilterChange({ is_sse: undefined, is_websocket: undefined });
+            }
+          }}
           options={[
             { value: "", label: "All Types" },
-            { value: "true", label: "SSE Stream" },
-            { value: "false", label: "Regular" },
+            { value: "sse", label: "SSE Stream" },
+            { value: "ws", label: "WebSocket" },
+            { value: "regular", label: "Regular" },
           ]}
         />
         <FilterSelect
@@ -292,10 +316,22 @@ function ActiveFiltersSummary({
             onRemove={() => onFilterChange({ success: undefined })}
           />
         )}
+        {/* is_sse and is_websocket badges are coupled: "regular" sets both to false,
+           so removing one badge must clear both to avoid inconsistent filter state. */}
         {filter.is_sse !== undefined && (
           <FilterBadge
-            label={`Stream: ${filter.is_sse ? "SSE" : "Regular"}`}
-            onRemove={() => onFilterChange({ is_sse: undefined })}
+            label={`Type: ${filter.is_sse ? "SSE" : "Regular"}`}
+            onRemove={() =>
+              onFilterChange({ is_sse: undefined, is_websocket: undefined })
+            }
+          />
+        )}
+        {filter.is_websocket !== undefined && filter.is_sse === undefined && (
+          <FilterBadge
+            label={`Type: ${filter.is_websocket ? "WebSocket" : "Regular"}`}
+            onRemove={() =>
+              onFilterChange({ is_sse: undefined, is_websocket: undefined })
+            }
           />
         )}
         {filter.api_type && (

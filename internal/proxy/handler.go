@@ -215,6 +215,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// from failed WS dials to non-WebSocket backends.
 	if isWebSocketUpgrade(r) {
 		if apiType != APITypeCodex {
+			h.logger.Warn("websocket upgrade rejected for unsupported API type",
+				zap.String("api_type", apiType),
+				zap.String("remote_addr", r.RemoteAddr),
+			)
 			h.writeGatewayError(w, http.StatusBadRequest, ErrCodeWebSocketUpgrade,
 				fmt.Sprintf("WebSocket upgrade is not supported for API type %q", apiType))
 			return

@@ -72,6 +72,9 @@ func (s *SQLiteStore) applyLogFilters(query *gorm.DB, filter model.LogFilter) *g
 	if filter.IsSSE != nil {
 		query = query.Where("is_sse = ?", *filter.IsSSE)
 	}
+	if filter.IsWebSocket != nil {
+		query = query.Where("is_websocket = ?", *filter.IsWebSocket)
+	}
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}

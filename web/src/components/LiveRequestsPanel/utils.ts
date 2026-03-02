@@ -77,7 +77,9 @@ export function groupRequests(
   for (const [key, reqs] of groups) {
     const durations = reqs.map((r) => getRequestDuration(r, currentTime));
     const longestDuration = Math.max(...durations);
-    const hasLongRunning = durations.some((d) => d > longRunningThreshold);
+    const hasLongRunning = durations.some(
+      (d, i) => d > longRunningThreshold && !reqs[i].is_websocket,
+    );
 
     result.push({
       key,

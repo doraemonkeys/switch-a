@@ -286,6 +286,14 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
               SSE
             </span>
           )}
+          {log.is_websocket && (
+            <span
+              className="inline-flex items-center px-1 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
+              title="WebSocket connection"
+            >
+              WS
+            </span>
+          )}
         </div>
       </td>
       <td className="px-3 py-3 whitespace-nowrap text-sm">

@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useRef } from "react";
 import { LiveRequestsPanel } from "../components/LiveRequestsPanel";
+import type { SystemStatus } from "../api/types";
 import { useLiveRequests, useStatus, useProviders } from "../hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 
@@ -95,6 +96,15 @@ function StatusDot({ enabled, available, disabledReason }: StatusDotProps) {
   );
 }
 
+function calcProviderStats(status: SystemStatus | null) {
+  if (!status) return { healthy: 0, unhealthy: 0, total: 0 };
+  const total = status.providers.length;
+  const healthy = status.providers.filter(
+    (p) => p.enabled && p.health?.available !== false,
+  ).length;
+  return { total, healthy, unhealthy: total - healthy };
+}
+
 export function Monitor() {
   const [pollInterval, setPollInterval] = useLocalStorage(
     "monitor:pollInterval",
@@ -157,25 +167,15 @@ export function Monitor() {
     refetchStatus();
   };
 
-  // Calculate provider stats
-  const providerStats = (() => {
-    if (!status) return { healthy: 0, unhealthy: 0, total: 0 };
-    const total = status.providers.length;
-    const healthy = status.providers.filter(
-      (p) => p.enabled && p.health?.available !== false,
-    ).length;
-    return {
-      total,
-      healthy,
-      unhealthy: total - healthy,
-    };
-  })();
+  const providerStats = calcProviderStats(status);
 
   // Memoize long-running count to avoid calling Date.now() on every render
   const longRunningCount = useMemo(() => {
     // eslint-disable-next-line react-hooks/purity -- Date.now() is intentionally used once per requests update
     const now = Date.now();
     return requests.filter((r) => {
+      // WebSocket connections are inherently long-lived; exclude from long-running count
+      if (r.is_websocket) return false;
       const duration = now - new Date(r.started_at).getTime();
       return duration > LONG_RUNNING_REQUEST_THRESHOLD_MS;
     }).length;

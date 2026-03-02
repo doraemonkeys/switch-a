@@ -198,6 +198,7 @@ export interface ActiveRequest {
   user_id: string;
   client_ip: string;
   is_sse: boolean;
+  is_websocket: boolean;
   started_at: string; // ISO timestamp
 }
 
@@ -261,6 +262,7 @@ export interface RequestLog {
   latency_ms: number;
   success: boolean;
   is_sse: boolean;
+  is_websocket: boolean;
   retry_count: number;
   is_sticky: boolean;
   error_msg: string | null;
@@ -311,6 +313,8 @@ export interface LogFilter {
   success?: boolean;
   /** Filter by SSE/regular request */
   is_sse?: boolean;
+  /** Filter by WebSocket connection */
+  is_websocket?: boolean;
   /** Filter by user ID */
   user_id?: string;
   /** Filter by start time (RFC3339 format) */

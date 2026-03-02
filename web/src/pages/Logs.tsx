@@ -62,6 +62,7 @@ export function Logs() {
     filter.api_type ||
     filter.success !== undefined ||
     filter.is_sse !== undefined ||
+    filter.is_websocket !== undefined ||
     filter.start_time ||
     filter.end_time ||
     filter.has_retries !== undefined ||
@@ -87,6 +88,7 @@ export function Logs() {
       api_type: undefined,
       success: undefined,
       is_sse: undefined,
+      is_websocket: undefined,
       start_time: undefined,
       end_time: undefined,
       min_latency: undefined,

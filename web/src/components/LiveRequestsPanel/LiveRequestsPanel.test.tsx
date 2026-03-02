@@ -26,6 +26,7 @@ function createMockRequest(overrides?: Partial<ActiveRequest>): ActiveRequest {
     user_id: TEST_USER_ID,
     client_ip: TEST_CLIENT_IP,
     is_sse: false,
+    is_websocket: false,
     started_at: new Date().toISOString(),
     ...overrides,
   };
