@@ -666,6 +666,91 @@ func TestHandler_ServeHTTP_WebSocket_UpdatesActiveModelDuringSession(t *testing.
 	close(releaseUpstream)
 }
 
+func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		ctx := r.Context()
+		conn.SetReadLimit(wsReadLimit)
+
+		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.created","event_id":"evt_response","response":{"id":"resp_live","model":"gpt-5.4"}}`)); err != nil {
+			t.Errorf("write response.created: %v", err)
+			return
+		}
+	}))
+	defer upstream.Close()
+
+	wsProvider := &model.Provider{
+		ID:       "ws-sticky-p1",
+		Name:     "WS Sticky Provider",
+		APIKey:   "key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "ws-sticky-p1", APIType: "codex", BaseURL: upstream.URL}},
+	}
+
+	store := newMockStore()
+	store.providers = []model.Provider{*wsProvider}
+
+	mockSel := &mockSelector{
+		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
+			if req.Model != ModelUnknown {
+				t.Fatalf("selection model = %q, want %q before websocket observation", req.Model, ModelUnknown)
+			}
+			return &selectResult{
+				Provider:        wsProvider,
+				FromStickyCache: false,
+			}, nil
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:    store,
+		Logger:   zap.NewNop(),
+		Selector: mockSel,
+	})
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	for {
+		_, _, err := conn.Read(ctx)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) || isNormalClose(err) {
+			break
+		}
+		t.Fatalf("read websocket events: %v", err)
+	}
+
+	waitFor(t, func() bool { return mockSel.StickyUpdatesLen() == 1 }, testPollTimeout)
+
+	update, ok := mockSel.LastStickyUpdate()
+	if !ok {
+		t.Fatal("expected sticky update")
+	}
+	if update.ProviderID != "ws-sticky-p1" {
+		t.Fatalf("sticky provider = %q, want %q", update.ProviderID, "ws-sticky-p1")
+	}
+	if update.Model != "gpt-5.4" {
+		t.Fatalf("sticky model = %q, want %q", update.Model, "gpt-5.4")
+	}
+}
+
 // TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure verifies that a client
 // accept failure does NOT degrade the provider's health status.
 func TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure(t *testing.T) {

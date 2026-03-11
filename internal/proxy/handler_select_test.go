@@ -27,6 +27,7 @@ type mockSelector struct {
 // stickyUpdate records a single call to UpdateStickyWithTTL.
 type stickyUpdate struct {
 	ProviderID string
+	Model      string
 	TTL        time.Duration
 }
 
@@ -64,10 +65,14 @@ func (m *mockSelector) SelectWithMetadata(ctx context.Context, req *model.Select
 	return nil, nil
 }
 
-func (m *mockSelector) UpdateStickyWithTTL(_ *model.SelectRequest, providerID string, ttl time.Duration) {
+func (m *mockSelector) UpdateStickyWithTTL(req *model.SelectRequest, providerID string, ttl time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.stickyUpdates = append(m.stickyUpdates, stickyUpdate{ProviderID: providerID, TTL: ttl})
+	update := stickyUpdate{ProviderID: providerID, TTL: ttl}
+	if req != nil {
+		update.Model = req.Model
+	}
+	m.stickyUpdates = append(m.stickyUpdates, update)
 }
 
 func (m *mockSelector) ReleaseConcurrency(providerID string) {
@@ -83,6 +88,16 @@ func (m *mockSelector) StickyUpdatesLen() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.stickyUpdates)
+}
+
+// LastStickyUpdate returns the latest sticky update in a thread-safe manner.
+func (m *mockSelector) LastStickyUpdate() (stickyUpdate, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.stickyUpdates) == 0 {
+		return stickyUpdate{}, false
+	}
+	return m.stickyUpdates[len(m.stickyUpdates)-1], true
 }
 
 // mockHealthManager implements the HealthManager interface for testing.
