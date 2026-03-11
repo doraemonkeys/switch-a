@@ -976,3 +976,142 @@ func TestActiveRequestLifecycle_MultipleRequests(t *testing.T) {
 		t.Errorf("expected 0 active requests after all unregistered, got %d", len(list))
 	}
 }
+
+func TestRegisterLiveBytes_PopulatesListFields(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	r.Register(&ActiveRequest{
+		RequestID:   "ws-1",
+		IsWebSocket: true,
+		StartedAt:   time.Now(),
+	})
+
+	tracker := &LiveBytesTracker{}
+	tracker.BytesSent.Store(1024)
+	tracker.BytesReceived.Store(8192)
+	tracker.MsgsSent.Store(5)
+	tracker.MsgsReceived.Store(42)
+	tracker.LastActivityAt.Store(1700000000000)
+
+	r.RegisterLiveBytes("ws-1", tracker)
+
+	list := r.List()
+	if len(list) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(list))
+	}
+
+	req := list[0]
+	if req.BytesSent != 1024 {
+		t.Errorf("BytesSent = %d, want 1024", req.BytesSent)
+	}
+	if req.BytesReceived != 8192 {
+		t.Errorf("BytesReceived = %d, want 8192", req.BytesReceived)
+	}
+	if req.MsgsSent != 5 {
+		t.Errorf("MsgsSent = %d, want 5", req.MsgsSent)
+	}
+	if req.MsgsReceived != 42 {
+		t.Errorf("MsgsReceived = %d, want 42", req.MsgsReceived)
+	}
+	if req.LastActivityAt != 1700000000000 {
+		t.Errorf("LastActivityAt = %d, want 1700000000000", req.LastActivityAt)
+	}
+}
+
+func TestRegisterLiveBytes_NilTrackerIgnored(t *testing.T) {
+	r := NewActiveRequestRegistry()
+	r.Register(&ActiveRequest{RequestID: "ws-1", IsWebSocket: true, StartedAt: time.Now()})
+
+	// Should not panic or store anything.
+	r.RegisterLiveBytes("ws-1", nil)
+
+	list := r.List()
+	if list[0].BytesSent != 0 {
+		t.Errorf("expected zero BytesSent without tracker, got %d", list[0].BytesSent)
+	}
+}
+
+func TestRegisterLiveBytes_NonWSRequestUnaffected(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// HTTP request without a tracker should have zero live fields.
+	r.Register(&ActiveRequest{RequestID: "http-1", StartedAt: time.Now()})
+
+	list := r.List()
+	if list[0].BytesSent != 0 || list[0].BytesReceived != 0 || list[0].LastActivityAt != 0 {
+		t.Error("expected zero live fields for request without tracker")
+	}
+}
+
+func TestRegister_OverwriteClearsStaleTracker(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	// First registration with a tracker.
+	r.Register(&ActiveRequest{RequestID: "ws-1", IsWebSocket: true, StartedAt: time.Now()})
+	staleTracker := &LiveBytesTracker{}
+	staleTracker.BytesSent.Store(9999)
+	staleTracker.MsgsSent.Store(42)
+	r.RegisterLiveBytes("ws-1", staleTracker)
+
+	// Overwrite the same request ID without attaching a new tracker.
+	r.Register(&ActiveRequest{RequestID: "ws-1", ProviderID: "new-provider", IsWebSocket: true, StartedAt: time.Now()})
+
+	list := r.List()
+	if len(list) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(list))
+	}
+	if list[0].BytesSent != 0 {
+		t.Errorf("BytesSent = %d, want 0 (stale tracker should be cleared on overwrite)", list[0].BytesSent)
+	}
+	if list[0].MsgsSent != 0 {
+		t.Errorf("MsgsSent = %d, want 0", list[0].MsgsSent)
+	}
+	if list[0].ProviderID != "new-provider" {
+		t.Errorf("ProviderID = %q, want %q", list[0].ProviderID, "new-provider")
+	}
+}
+
+func TestUnregister_CleansUpLiveBytes(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	r.Register(&ActiveRequest{RequestID: "ws-1", IsWebSocket: true, StartedAt: time.Now()})
+	tracker := &LiveBytesTracker{}
+	tracker.BytesSent.Store(100)
+	r.RegisterLiveBytes("ws-1", tracker)
+
+	r.Unregister("ws-1")
+
+	// Re-register same ID — should not see stale tracker data.
+	r.Register(&ActiveRequest{RequestID: "ws-1", IsWebSocket: true, StartedAt: time.Now()})
+	list := r.List()
+	if list[0].BytesSent != 0 {
+		t.Errorf("expected zero BytesSent after re-register, got %d", list[0].BytesSent)
+	}
+}
+
+func TestCleanupStale_CleansUpLiveBytes(t *testing.T) {
+	baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	clock := &mockClock{current: baseTime}
+	r := NewActiveRequestRegistryWithClock(clock)
+
+	r.Register(&ActiveRequest{
+		RequestID:   "ws-old",
+		IsWebSocket: true,
+		StartedAt:   baseTime.Add(-45 * time.Minute),
+	})
+	tracker := &LiveBytesTracker{}
+	tracker.BytesSent.Store(999)
+	r.RegisterLiveBytes("ws-old", tracker)
+
+	removed := r.CleanupStale(30 * time.Minute)
+	if removed != 1 {
+		t.Fatalf("expected 1 removed, got %d", removed)
+	}
+
+	// Re-register same ID — tracker should be gone.
+	r.Register(&ActiveRequest{RequestID: "ws-old", IsWebSocket: true, StartedAt: baseTime})
+	list := r.List()
+	if list[0].BytesSent != 0 {
+		t.Errorf("expected zero BytesSent after stale cleanup, got %d", list[0].BytesSent)
+	}
+}

@@ -200,6 +200,11 @@ export interface ActiveRequest {
   is_sse: boolean;
   is_websocket: boolean;
   started_at: string; // ISO timestamp
+  bytes_sent?: number;
+  bytes_received?: number;
+  msgs_sent?: number;
+  msgs_received?: number;
+  last_activity_at?: number; // Unix ms, 0 = no activity yet
 }
 
 /** Represents a single attempt within a request (for retry tracking) */

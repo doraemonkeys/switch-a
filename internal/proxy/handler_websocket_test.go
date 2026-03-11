@@ -844,8 +844,6 @@ func TestHandler_ServeHTTP_NonUpgradeGET_Returns426(t *testing.T) {
 	}
 }
 
-// TestBuildWebSocketDialHeaders_FiltersSecWebSocketHeaders verifies that
-// Sec-WebSocket-* handshake headers from the client are NOT forwarded upstream.
 func TestBuildWebSocketDialHeaders_FiltersSecWebSocketHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -900,4 +898,113 @@ func TestIsWebSocketHandshakeHeader(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBytesTrackingObserver_CountsAndTimestamp(t *testing.T) {
+	t.Parallel()
+
+	tracker := &LiveBytesTracker{}
+	obs := newBytesTrackingObserver(nil, tracker)
+
+	// Simulate client → upstream messages.
+	obs.ObserveClientMessage(websocket.MessageText, []byte("hello")) // 5 bytes
+	obs.ObserveClientMessage(websocket.MessageText, []byte("world")) // 5 bytes
+
+	// Simulate upstream → client messages.
+	obs.ObserveUpstreamMessage(websocket.MessageText, []byte("response data 1234567890")) // 24 bytes
+
+	if got := tracker.BytesSent.Load(); got != 10 {
+		t.Errorf("BytesSent = %d, want 10", got)
+	}
+	if got := tracker.MsgsSent.Load(); got != 2 {
+		t.Errorf("MsgsSent = %d, want 2", got)
+	}
+	if got := tracker.BytesReceived.Load(); got != 24 {
+		t.Errorf("BytesReceived = %d, want 24", got)
+	}
+	if got := tracker.MsgsReceived.Load(); got != 1 {
+		t.Errorf("MsgsReceived = %d, want 1", got)
+	}
+	if got := tracker.LastActivityAt.Load(); got == 0 {
+		t.Error("LastActivityAt should be non-zero after messages")
+	}
+}
+
+func TestBytesTrackingObserver_DelegatesToInner(t *testing.T) {
+	t.Parallel()
+
+	var clientCalls, upstreamCalls int
+	inner := &stubObserver{
+		onClient:   func() { clientCalls++ },
+		onUpstream: func() { upstreamCalls++ },
+	}
+	tracker := &LiveBytesTracker{}
+	obs := newBytesTrackingObserver(inner, tracker)
+
+	obs.ObserveClientMessage(websocket.MessageText, []byte("a"))
+	obs.ObserveUpstreamMessage(websocket.MessageText, []byte("b"))
+
+	if clientCalls != 1 {
+		t.Errorf("inner.ObserveClientMessage called %d times, want 1", clientCalls)
+	}
+	if upstreamCalls != 1 {
+		t.Errorf("inner.ObserveUpstreamMessage called %d times, want 1", upstreamCalls)
+	}
+}
+
+func TestBytesTrackingObserver_SnapshotDelegatesToInner(t *testing.T) {
+	t.Parallel()
+
+	inner := &stubObserver{
+		snapshot: WebSocketObservation{Model: "gpt-5"},
+	}
+	tracker := &LiveBytesTracker{}
+	obs := newBytesTrackingObserver(inner, tracker)
+
+	snap := obs.Snapshot()
+	if snap.Model != "gpt-5" {
+		t.Errorf("Snapshot().Model = %q, want %q", snap.Model, "gpt-5")
+	}
+}
+
+func TestBytesTrackingObserver_NilInner(t *testing.T) {
+	t.Parallel()
+
+	tracker := &LiveBytesTracker{}
+	obs := newBytesTrackingObserver(nil, tracker)
+
+	// Should not panic with nil inner observer.
+	obs.ObserveClientMessage(websocket.MessageText, []byte("data"))
+	obs.ObserveUpstreamMessage(websocket.MessageBinary, []byte("data"))
+	snap := obs.Snapshot()
+
+	if snap.Model != "" {
+		t.Errorf("expected empty Model from nil inner Snapshot, got %q", snap.Model)
+	}
+	if tracker.MsgsSent.Load() != 1 || tracker.MsgsReceived.Load() != 1 {
+		t.Error("counters should still increment with nil inner")
+	}
+}
+
+// stubObserver is a minimal test double for WebSocketMessageObserver.
+type stubObserver struct {
+	onClient   func()
+	onUpstream func()
+	snapshot   WebSocketObservation
+}
+
+func (s *stubObserver) ObserveClientMessage(_ websocket.MessageType, _ []byte) {
+	if s.onClient != nil {
+		s.onClient()
+	}
+}
+
+func (s *stubObserver) ObserveUpstreamMessage(_ websocket.MessageType, _ []byte) {
+	if s.onUpstream != nil {
+		s.onUpstream()
+	}
+}
+
+func (s *stubObserver) Snapshot() WebSocketObservation {
+	return s.snapshot
 }

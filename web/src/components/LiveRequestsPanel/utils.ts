@@ -166,3 +166,39 @@ export function filterRequests(
       req.provider_id?.toLowerCase().includes(query),
   );
 }
+
+const BYTE_UNITS = ["B", "KB", "MB", "GB"] as const;
+
+/**
+ * Format byte count to human-readable string (e.g., "1.2 MB").
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  let unitIndex = 0;
+  let value = bytes;
+  while (value >= 1024 && unitIndex < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  const formatted = unitIndex === 0 ? value.toString() : value.toFixed(1);
+  return `${formatted} ${BYTE_UNITS[unitIndex]}`;
+}
+
+/**
+ * Format idle duration from last activity timestamp.
+ * Returns "idle Xs" / "idle Xm" / "idle Xh", or empty string if no activity yet.
+ */
+export function formatIdleDuration(
+  lastActivityMs: number,
+  currentTime: number,
+): string {
+  if (!lastActivityMs) return "";
+  const idleMs = currentTime - lastActivityMs;
+  if (idleMs < 0) return "";
+  const seconds = Math.floor(idleMs / 1000);
+  if (seconds < 60) return `idle ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `idle ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `idle ${hours}h`;
+}

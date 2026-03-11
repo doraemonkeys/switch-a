@@ -24,6 +24,9 @@ export const SSE_BADGE_COLORS =
 export const WS_BADGE_COLORS =
   "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300";
 
+// WebSocket idle time threshold: connections idle longer than this show a warning color.
+export const WS_IDLE_WARNING_THRESHOLD_MS = 30_000;
+
 export const VIEW_MODE_LABELS: Record<
   GroupViewMode,
   { icon: string; label: string }

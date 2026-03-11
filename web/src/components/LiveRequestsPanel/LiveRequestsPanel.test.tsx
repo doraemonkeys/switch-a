@@ -478,3 +478,111 @@ describe("LiveRequestsPanel - Sort and Load More", () => {
     expect(screen.getByText("Showing 15 of 15")).toBeInTheDocument();
   });
 });
+
+describe("LiveRequestsPanel - WebSocket Live Metrics", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-15T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows byte transfer indicators for active WS connections", () => {
+    const requests = [
+      createMockRequest({
+        is_websocket: true,
+        bytes_sent: 1024,
+        bytes_received: 8192,
+        msgs_sent: 5,
+        msgs_received: 42,
+        last_activity_at: Date.now() - 3000,
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    switchToAllListView();
+    // Compact bytes display
+    expect(screen.getByText(/↑1\.0 KB/)).toBeInTheDocument();
+    expect(screen.getByText(/↓8\.0 KB/)).toBeInTheDocument();
+  });
+
+  it("shows idle duration for WS connections", () => {
+    const requests = [
+      createMockRequest({
+        is_websocket: true,
+        bytes_sent: 100,
+        bytes_received: 200,
+        last_activity_at: Date.now() - 5000,
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    switchToAllListView();
+    expect(screen.getByText("idle 5s")).toBeInTheDocument();
+  });
+
+  it("does not show live metrics for non-WS requests", () => {
+    const requests = [
+      createMockRequest({
+        is_websocket: false,
+        bytes_sent: 1024,
+        bytes_received: 2048,
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    switchToAllListView();
+    expect(screen.queryByTitle(/Bytes sent/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Bytes received/)).not.toBeInTheDocument();
+  });
+
+  it("does not show live metrics for WS connections with zero bytes", () => {
+    const requests = [
+      createMockRequest({
+        is_websocket: true,
+        bytes_sent: 0,
+        bytes_received: 0,
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    switchToAllListView();
+    expect(screen.queryByTitle(/Bytes sent/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Bytes received/)).not.toBeInTheDocument();
+  });
+
+  it("shows data transfer details in expanded WS request", () => {
+    const requests = [
+      createMockRequest({
+        is_websocket: true,
+        bytes_sent: 1258291, // ~1.2 MB
+        bytes_received: 8808038, // ~8.4 MB
+        msgs_sent: 42,
+        msgs_received: 156,
+        last_activity_at: Date.now() - 3000,
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    switchToAllListView();
+
+    // Expand the request detail panel
+    const requestRow = screen.getByRole("button", {
+      name: /Active request for model/,
+    });
+    fireEvent.click(requestRow);
+
+    // Detail panel should show Data Transfer section
+    expect(screen.getByText("Data Transfer")).toBeInTheDocument();
+    expect(screen.getByText("Last Activity")).toBeInTheDocument();
+    expect(screen.getByText(/42 msgs/)).toBeInTheDocument();
+    expect(screen.getByText(/156 msgs/)).toBeInTheDocument();
+  });
+});

@@ -1,7 +1,12 @@
 import { useState } from "react";
 import type { ActiveRequest } from "../../api/types";
 import type { GroupViewMode } from "./types";
-import { formatDuration, getRequestDuration } from "./utils";
+import {
+  formatDuration,
+  getRequestDuration,
+  formatBytes,
+  formatIdleDuration,
+} from "./utils";
 import {
   COMPACT_MODEL_MAX_WIDTH,
   COMPACT_PROVIDER_MAX_WIDTH,
@@ -9,6 +14,7 @@ import {
   SSE_BADGE_FONT_SIZE,
   SSE_BADGE_COLORS,
   WS_BADGE_COLORS,
+  WS_IDLE_WARNING_THRESHOLD_MS,
 } from "./constants";
 
 // =============================================================================
@@ -42,6 +48,7 @@ interface RequestDetailPanelProps {
   providerName?: string;
   durationStr: string;
   isLongRunning: boolean;
+  currentTime: number;
 }
 
 function RequestDetailPanel({
@@ -49,6 +56,7 @@ function RequestDetailPanel({
   providerName,
   durationStr,
   isLongRunning,
+  currentTime,
 }: RequestDetailPanelProps) {
   return (
     <div className="px-4 py-3 bg-bg-secondary border-t border-border-light">
@@ -159,8 +167,101 @@ function RequestDetailPanel({
             {new Date(request.started_at).toLocaleString()}
           </p>
         </div>
+
+        {/* WebSocket Data Transfer */}
+        {request.is_websocket &&
+          ((request.bytes_sent ?? 0) > 0 ||
+            (request.bytes_received ?? 0) > 0) && (
+            <div className="col-span-2">
+              <span className="text-text-muted text-xs uppercase tracking-wide">
+                Data Transfer
+              </span>
+              <p className="text-text-primary font-mono text-xs">
+                ↑ {formatBytes(request.bytes_sent ?? 0)} (
+                {request.msgs_sent ?? 0} msgs)
+                {" / "}↓ {formatBytes(request.bytes_received ?? 0)} (
+                {request.msgs_received ?? 0} msgs)
+              </p>
+            </div>
+          )}
+
+        {/* WebSocket Last Activity */}
+        {request.is_websocket && !!request.last_activity_at && (
+          <div className="col-span-2">
+            <span className="text-text-muted text-xs uppercase tracking-wide">
+              Last Activity
+            </span>
+            <p
+              className={`text-xs font-mono ${
+                currentTime - request.last_activity_at >
+                WS_IDLE_WARNING_THRESHOLD_MS
+                  ? "text-amber-600 dark:text-amber-400 font-semibold"
+                  : "text-text-primary"
+              }`}
+            >
+              {formatIdleDuration(request.last_activity_at, currentTime) ||
+                "just now"}{" "}
+              ({new Date(request.last_activity_at).toLocaleTimeString()})
+            </p>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// =============================================================================
+// WebSocket Live Metrics
+// =============================================================================
+
+interface WsLiveIndicatorProps {
+  request: ActiveRequest;
+  currentTime: number;
+}
+
+/**
+ * Compact inline indicator for WS data flow: "↑1.2MB ↓8.4MB idle 3s"
+ */
+function WsLiveIndicator({ request, currentTime }: WsLiveIndicatorProps) {
+  if (!request.is_websocket) return null;
+
+  const hasSent = (request.bytes_sent ?? 0) > 0;
+  const hasReceived = (request.bytes_received ?? 0) > 0;
+  if (!hasSent && !hasReceived) return null;
+
+  const idleStr = formatIdleDuration(
+    request.last_activity_at ?? 0,
+    currentTime,
+  );
+  const isIdleWarning =
+    !!request.last_activity_at &&
+    currentTime - request.last_activity_at > WS_IDLE_WARNING_THRESHOLD_MS;
+
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-mono text-text-secondary flex-shrink-0">
+      {hasSent && (
+        <span title="Bytes sent (client → upstream)">
+          ↑{formatBytes(request.bytes_sent!)}
+        </span>
+      )}
+      {hasReceived && (
+        <span title="Bytes received (upstream → client)">
+          ↓{formatBytes(request.bytes_received!)}
+        </span>
+      )}
+      {idleStr && (
+        <span
+          className={
+            isIdleWarning
+              ? "text-amber-600 dark:text-amber-400 font-semibold"
+              : "text-text-muted"
+          }
+          title="Time since last WebSocket message"
+        >
+          {idleStr}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -233,6 +334,7 @@ interface CompactRowProps {
   showIP: boolean;
   showAPIType: boolean;
   tooltipContent: string;
+  currentTime: number;
 }
 
 function CompactRow({
@@ -246,6 +348,7 @@ function CompactRow({
   showIP,
   showAPIType,
   tooltipContent,
+  currentTime,
 }: CompactRowProps) {
   return (
     <div
@@ -317,6 +420,8 @@ function CompactRow({
         </span>
       )}
 
+      <WsLiveIndicator request={request} currentTime={currentTime} />
+
       <span
         className={`ml-auto font-mono text-sm font-semibold flex-shrink-0 ${
           isLongRunning
@@ -342,6 +447,7 @@ interface FullRowProps {
   isLongRunning: boolean;
   isExpanded: boolean;
   onToggle: () => void;
+  currentTime: number;
 }
 
 function FullRow({
@@ -351,6 +457,7 @@ function FullRow({
   isLongRunning,
   isExpanded,
   onToggle,
+  currentTime,
 }: FullRowProps) {
   return (
     <div
@@ -401,6 +508,7 @@ function FullRow({
                   WS
                 </span>
               )}
+              <WsLiveIndicator request={request} currentTime={currentTime} />
             </div>
 
             <div className="flex items-center gap-3 mt-1 text-sm text-text-secondary">
@@ -501,6 +609,7 @@ export function RequestRow({
       providerName={providerName}
       durationStr={durationStr}
       isLongRunning={isLongRunning}
+      currentTime={currentTime}
     />
   );
 
@@ -518,6 +627,7 @@ export function RequestRow({
           showIP={showIP}
           showAPIType={showAPIType}
           tooltipContent={tooltipContent}
+          currentTime={currentTime}
         />
         {detailPanel}
       </div>
@@ -533,6 +643,7 @@ export function RequestRow({
         isLongRunning={isLongRunning}
         isExpanded={isExpanded}
         onToggle={handleToggle}
+        currentTime={currentTime}
       />
       {detailPanel}
     </div>

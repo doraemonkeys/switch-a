@@ -11,6 +11,7 @@ import (
 	"switch-a/internal"
 	"switch-a/internal/model"
 
+	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
@@ -119,6 +120,16 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		}
 		h.activeRegistry.UpdateModel(requestID, observation.Model)
 	})
+
+	// Wrap the semantic observer with byte/message/idle tracking so the
+	// active registry can expose live data-flow metrics without touching
+	// the transport layer.
+	var tracker *LiveBytesTracker
+	if h.activeRegistry != nil {
+		tracker = &LiveBytesTracker{}
+		h.activeRegistry.RegisterLiveBytes(requestID, tracker)
+		observer = newBytesTrackingObserver(observer, tracker)
+	}
 
 	// Forward the WebSocket connection.
 	result, fwdErr := h.wsForwarder.ForwardObserved(ctx, w, r, upstreamURL, dialHeaders, observer)
@@ -230,4 +241,43 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 		h.logger.Error("failed to insert websocket request log", zap.Error(insertErr))
 		return
 	}
+}
+
+// bytesTrackingObserver decorates a WebSocketMessageObserver, recording byte
+// counts, message counts, and last-activity timestamps into a LiveBytesTracker.
+// This piggybacks on the existing observer pipeline — zero transport-layer changes.
+type bytesTrackingObserver struct {
+	inner   WebSocketMessageObserver
+	tracker *LiveBytesTracker
+}
+
+func newBytesTrackingObserver(inner WebSocketMessageObserver, tracker *LiveBytesTracker) *bytesTrackingObserver {
+	return &bytesTrackingObserver{inner: inner, tracker: tracker}
+}
+
+func (o *bytesTrackingObserver) ObserveClientMessage(messageType websocket.MessageType, data []byte) {
+	n := int64(len(data))
+	o.tracker.BytesSent.Add(n)
+	o.tracker.MsgsSent.Add(1)
+	o.tracker.LastActivityAt.Store(time.Now().UnixMilli())
+	if o.inner != nil {
+		o.inner.ObserveClientMessage(messageType, data)
+	}
+}
+
+func (o *bytesTrackingObserver) ObserveUpstreamMessage(messageType websocket.MessageType, data []byte) {
+	n := int64(len(data))
+	o.tracker.BytesReceived.Add(n)
+	o.tracker.MsgsReceived.Add(1)
+	o.tracker.LastActivityAt.Store(time.Now().UnixMilli())
+	if o.inner != nil {
+		o.inner.ObserveUpstreamMessage(messageType, data)
+	}
+}
+
+func (o *bytesTrackingObserver) Snapshot() WebSocketObservation {
+	if o.inner != nil {
+		return o.inner.Snapshot()
+	}
+	return WebSocketObservation{}
 }
