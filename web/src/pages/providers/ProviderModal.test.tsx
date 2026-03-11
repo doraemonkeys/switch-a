@@ -101,4 +101,24 @@ describe("ProviderModal", () => {
       ),
     );
   });
+
+  it("toggles visibility for an API key override", async () => {
+    const user = userEvent.setup();
+
+    render(<ProviderModal onClose={vi.fn()} onSubmit={vi.fn()} groups={[]} />);
+
+    await user.type(screen.getByLabelText("Name"), "Visible Override");
+    await user.click(screen.getByRole("button", { name: "claude" }));
+
+    const overrideInput = screen.getByLabelText("API key override for claude");
+    expect(overrideInput).toHaveAttribute("type", "password");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Show API key override for claude",
+      }),
+    );
+
+    expect(overrideInput).toHaveAttribute("type", "text");
+  });
 });
