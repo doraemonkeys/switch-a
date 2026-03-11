@@ -113,9 +113,15 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 	// Build headers for the upstream handshake:
 	// auth + non-hop-by-hop headers from the original request (e.g., OpenAI-Beta).
 	dialHeaders := buildWebSocketDialHeaders(r, provider, cfg.globalAuthMode)
+	observer := newWebSocketMessageObserver(apiType, info.Model, NewZapLoggerAdapter(h.logger.Sugar()), func(observation WebSocketObservation) {
+		if h.activeRegistry == nil || observation.Model == "" || observation.Model == ModelUnknown {
+			return
+		}
+		h.activeRegistry.UpdateModel(requestID, observation.Model)
+	})
 
 	// Forward the WebSocket connection.
-	result, fwdErr := h.wsForwarder.Forward(ctx, w, r, upstreamURL, dialHeaders)
+	result, fwdErr := h.wsForwarder.ForwardObserved(ctx, w, r, upstreamURL, dialHeaders, observer)
 	if fwdErr != nil {
 		// Accept failed — client never upgraded. This is a client-side issue (protocol
 		// mismatch, malformed request), NOT a provider failure. Do not call markFailure
@@ -126,6 +132,12 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		)
 		go h.logWebSocketRequest(requestID, info, provider, fromSticky, result, fwdErr, time.Since(startTime))
 		return
+	}
+	if result != nil && result.Model != "" {
+		info.Model = result.Model
+		// Keep selectReq in sync so the sticky cache key uses the resolved model,
+		// not the stale pre-upgrade value (often ModelUnknown for WebSocket).
+		selectReq.Model = result.Model
 	}
 
 	// Health and sticky reporting based on outcome.
@@ -206,11 +218,16 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 	if err != nil {
 		log.ErrorMsg = err.Error()
 	}
+	if result != nil && result.TokenUsage != nil {
+		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
+			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), logInsertTimeout)
 	defer cancel()
 
 	if insertErr := h.store.InsertLog(ctx, log); insertErr != nil { // coverage-ignore // store error path only reachable with a failing database
 		h.logger.Error("failed to insert websocket request log", zap.Error(insertErr))
+		return
 	}
 }

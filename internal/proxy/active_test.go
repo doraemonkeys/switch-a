@@ -781,6 +781,46 @@ func TestStickyIndex_CleanupOnUnregister(t *testing.T) {
 	}
 }
 
+func TestStickyIndex_UpdateModelReindexesRequest(t *testing.T) {
+	r := NewActiveRequestRegistry()
+
+	r.Register(&ActiveRequest{
+		RequestID:  "req-1",
+		ProviderID: "provider-1",
+		ClientIP:   "1.2.3.4",
+		UserID:     "user-1",
+		APIType:    "codex",
+		Model:      ModelUnknown,
+	})
+	r.MarkDataReceived("req-1")
+
+	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "codex", "gpt-5.4"); found {
+		t.Fatal("should not find provider before model update")
+	}
+
+	r.UpdateModel("req-1", "gpt-5.4")
+
+	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "codex", "gpt-5.4")
+	if !found {
+		t.Fatal("should find provider after model update")
+	}
+	if providerID != "provider-1" {
+		t.Fatalf("providerID = %q, want %q", providerID, "provider-1")
+	}
+
+	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "codex", ModelUnknown); found {
+		t.Fatal("should not find provider with stale model key after update")
+	}
+
+	list := r.List()
+	if len(list) != 1 {
+		t.Fatalf("expected 1 active request, got %d", len(list))
+	}
+	if list[0].Model != "gpt-5.4" {
+		t.Fatalf("list[0].Model = %q, want %q", list[0].Model, "gpt-5.4")
+	}
+}
+
 func TestStickyIndex_CleanupOnCleanupStale(t *testing.T) {
 	baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	clock := &mockClock{current: baseTime}

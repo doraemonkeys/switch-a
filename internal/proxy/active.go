@@ -154,6 +154,34 @@ func (r *ActiveRequestRegistry) UpdateSSE(requestID string, isSSE bool) {
 	}
 }
 
+// UpdateModel refreshes the semantic model for an active request after the transport
+// has already been registered. WebSocket protocols often reveal the billed model only
+// after the upgrade succeeds, so live monitoring and sticky lookup must be re-indexed.
+func (r *ActiveRequestRegistry) UpdateModel(requestID, model string) {
+	if model == "" {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	req, ok := r.requests[requestID]
+	if !ok || req.Model == model {
+		return
+	}
+
+	r.removeFromStickyIndex(requestID)
+	req.Model = model
+	r.requests[requestID] = req
+
+	key := r.buildKey(&req)
+	r.keyIndex[requestID] = key
+	if r.stickyIndex[key] == nil {
+		r.stickyIndex[key] = make(map[string]struct{})
+	}
+	r.stickyIndex[key][requestID] = struct{}{}
+}
+
 // List returns a snapshot copy safe to use without synchronization.
 func (r *ActiveRequestRegistry) List() []ActiveRequest {
 	r.mu.RLock()

@@ -81,6 +81,13 @@ type WebSocketResult struct {
 
 	// Err captures any error that terminated the session (nil for clean close).
 	Err error
+
+	// Model is the semantic model observed from relayed events when the upgrade request
+	// itself did not carry enough information to identify the billed model.
+	Model string
+
+	// TokenUsage aggregates billable usage emitted during the WebSocket session.
+	TokenUsage *TokenUsage
 }
 
 // Forward accepts a client WebSocket upgrade, dials the upstream, and relays messages
@@ -97,6 +104,13 @@ type WebSocketResult struct {
 // The caller is responsible for provider selection, health reporting, and cleanup.
 // Forward only handles the transport-level concerns: accept, dial, relay, close.
 func (f *WebSocketForwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.Request, upstreamURL string, extraHeaders http.Header) (*WebSocketResult, error) {
+	return f.ForwardObserved(ctx, w, r, upstreamURL, extraHeaders, nil)
+}
+
+// ForwardObserved behaves like Forward but additionally feeds relayed messages into an observer.
+// This keeps transport responsibilities centralized while allowing higher layers to extract
+// domain fields such as model resolution and usage from event-driven protocols.
+func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.ResponseWriter, r *http.Request, upstreamURL string, extraHeaders http.Header, observer WebSocketMessageObserver) (*WebSocketResult, error) {
 	start := time.Now()
 
 	// Accept the client's WebSocket upgrade.
@@ -130,15 +144,20 @@ func (f *WebSocketForwarder) Forward(ctx context.Context, w http.ResponseWriter,
 	upstreamConn.SetReadLimit(wsReadLimit)
 
 	// Both connections established — relay messages bidirectionally.
-	result := f.relay(ctx, clientConn, upstreamConn)
+	result := f.relay(ctx, clientConn, upstreamConn, observer)
 	result.ConnectSuccess = true
 	result.Duration = time.Since(start)
+	if observer != nil {
+		observation := observer.Snapshot()
+		result.Model = observation.Model
+		result.TokenUsage = observation.TokenUsage
+	}
 	return result, nil
 }
 
 // relay copies messages between client and upstream until one side closes.
 // Uses a context-derived cancel to ensure both goroutines exit promptly.
-func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn *websocket.Conn) *WebSocketResult {
+func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn *websocket.Conn, observer WebSocketMessageObserver) *WebSocketResult {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -151,12 +170,19 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		firstErr error
 	)
 
+	var observeClient func(websocket.MessageType, []byte)
+	var observeUpstream func(websocket.MessageType, []byte)
+	if observer != nil {
+		observeClient = observer.ObserveClientMessage
+		observeUpstream = observer.ObserveUpstreamMessage
+	}
+
 	wg.Add(2)
 
 	// client → upstream
 	go func() {
 		defer wg.Done()
-		n, err := relayMessages(ctx, upstreamConn, clientConn)
+		n, err := relayMessages(ctx, upstreamConn, clientConn, observeClient)
 		clientToUpstreamBytes.Store(n)
 		if err != nil {
 			once.Do(func() { firstErr = err })
@@ -167,7 +193,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	// upstream → client
 	go func() {
 		defer wg.Done()
-		n, err := relayMessages(ctx, clientConn, upstreamConn)
+		n, err := relayMessages(ctx, clientConn, upstreamConn, observeUpstream)
 		upstreamToClientBytes.Store(n)
 		if err != nil {
 			once.Do(func() { firstErr = err })
@@ -215,7 +241,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 
 // relayMessages copies messages from src to dst until src closes or ctx is cancelled.
 // Returns total bytes relayed and any error that terminated the relay.
-func relayMessages(ctx context.Context, dst, src *websocket.Conn) (int64, error) {
+func relayMessages(ctx context.Context, dst, src *websocket.Conn, observe func(messageType websocket.MessageType, data []byte)) (int64, error) {
 	var totalBytes int64
 	for {
 		msgType, data, err := src.Read(ctx)
@@ -223,6 +249,9 @@ func relayMessages(ctx context.Context, dst, src *websocket.Conn) (int64, error)
 			return totalBytes, err
 		}
 		totalBytes += int64(len(data))
+		if observe != nil {
+			observe(msgType, data)
+		}
 		if err := dst.Write(ctx, msgType, data); err != nil {
 			return totalBytes, err
 		}

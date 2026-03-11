@@ -35,6 +35,55 @@ type CacheCreation struct {
 	Ephemeral5mInputTokens int64 // 5-minute ephemeral cache
 }
 
+// Clone returns a deep copy so callers can snapshot accumulated usage safely.
+// WebSocket sessions update usage incrementally from relay goroutines, so log writers
+// need an isolated copy instead of sharing mutable state.
+func (u *TokenUsage) Clone() *TokenUsage {
+	if u == nil {
+		return nil
+	}
+	clone := *u
+	if u.CacheCreation != nil {
+		cacheCreation := *u.CacheCreation
+		clone.CacheCreation = &cacheCreation
+	}
+	return &clone
+}
+
+// Merge adds another usage sample into the receiver.
+// WebSocket sessions may emit multiple billable events over one connection, so the
+// connection log needs an accumulated total rather than the last event only.
+func (u *TokenUsage) Merge(other *TokenUsage) *TokenUsage {
+	if other == nil {
+		return u
+	}
+	if u == nil {
+		return other.Clone()
+	}
+
+	u.PromptTokens += other.PromptTokens
+	u.CompletionTokens += other.CompletionTokens
+	u.TotalTokens += other.TotalTokens
+	u.CacheReadInputTokens += other.CacheReadInputTokens
+
+	if other.CacheCreation != nil {
+		if u.CacheCreation == nil {
+			u.CacheCreation = &CacheCreation{}
+		}
+		u.CacheCreation.InputTokens += other.CacheCreation.InputTokens
+		u.CacheCreation.Ephemeral1hInputTokens += other.CacheCreation.Ephemeral1hInputTokens
+		u.CacheCreation.Ephemeral5mInputTokens += other.CacheCreation.Ephemeral5mInputTokens
+	}
+
+	if u.ServiceTier == "" {
+		u.ServiceTier = other.ServiceTier
+	} else if other.ServiceTier != "" && other.ServiceTier != u.ServiceTier {
+		u.ServiceTier = ""
+	}
+
+	return u
+}
+
 // BillableInputTokens returns the billable equivalent input tokens.
 // Claude billing: cache_read * 0.1 + cache_creation * 1.25 + uncached * 1.0
 func (u *TokenUsage) BillableInputTokens() float64 {
@@ -147,12 +196,22 @@ type cacheCreationField struct {
 	Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
 }
 
+// tokenDetailsField models OpenAI's nested token detail objects.
+// Responses and Realtime APIs expose cached token counts under nested detail fields
+// instead of the flat Claude-style cache_read_input_tokens field.
+type tokenDetailsField struct {
+	CachedTokens int64 `json:"cached_tokens"`
+}
+
 // usageField represents OpenAI/Claude usage format.
 type usageField struct {
 	// OpenAI
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
 	TotalTokens      int64 `json:"total_tokens"`
+	// OpenAI nested token details
+	PromptTokensDetails *tokenDetailsField `json:"prompt_tokens_details"`
+	InputTokenDetails   *tokenDetailsField `json:"input_token_details"`
 
 	// Claude basic
 	InputTokens  int64 `json:"input_tokens"`
@@ -343,8 +402,15 @@ func convertUsageFieldToTokenUsage(u *usageField) *TokenUsage {
 	if total == 0 {
 		total = prompt + completion
 	}
+	cacheRead := u.CacheReadInputTokens
+	if cacheRead == 0 && u.PromptTokensDetails != nil {
+		cacheRead = u.PromptTokensDetails.CachedTokens
+	}
+	if cacheRead == 0 && u.InputTokenDetails != nil {
+		cacheRead = u.InputTokenDetails.CachedTokens
+	}
 	// Return only if at least one field has a value
-	if prompt == 0 && completion == 0 && total == 0 {
+	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 {
 		return nil
 	}
 
@@ -352,7 +418,7 @@ func convertUsageFieldToTokenUsage(u *usageField) *TokenUsage {
 		PromptTokens:         prompt,
 		CompletionTokens:     completion,
 		TotalTokens:          total,
-		CacheReadInputTokens: u.CacheReadInputTokens,
+		CacheReadInputTokens: cacheRead,
 		ServiceTier:          u.ServiceTier,
 	}
 
@@ -384,42 +450,111 @@ func convertUsageMetadataToTokenUsage(m *usageMetadataField) *TokenUsage {
 	}
 }
 
-// normalizeUsageMap converts a map to TokenUsage.
-func normalizeUsageMap(m map[string]interface{}) *TokenUsage {
-	getInt64 := func(keys ...string) int64 {
-		for _, k := range keys {
-			if v, ok := m[k]; ok {
-				switch n := v.(type) {
-				case float64:
-					return int64(n)
-				case int64:
-					return n
-				case int:
-					return int64(n)
-				}
-			}
-		}
-		return 0
+func usageInt64(value interface{}) (int64, bool) {
+	switch n := value.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	default:
+		return 0, false
 	}
+}
 
-	getString := func(key string) string {
-		if v, ok := m[key]; ok {
-			if s, ok := v.(string); ok {
-				return s
-			}
+func lookupUsageInt64(m map[string]interface{}, keys ...string) int64 {
+	for _, key := range keys {
+		value, ok := m[key]
+		if !ok {
+			continue
 		}
+		if number, ok := usageInt64(value); ok {
+			return number
+		}
+	}
+	return 0
+}
+
+func lookupUsageString(m map[string]interface{}, key string) string {
+	value, ok := m[key]
+	if !ok {
 		return ""
 	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return text
+}
 
-	prompt := getInt64("prompt_tokens", "input_tokens", "promptTokenCount")
-	completion := getInt64("completion_tokens", "output_tokens", "candidatesTokenCount")
-	total := getInt64("total_tokens", "totalTokenCount")
+func lookupNestedUsageMap(m map[string]interface{}, key string) map[string]interface{} {
+	value, ok := m[key]
+	if !ok {
+		return nil
+	}
+	childMap, ok := value.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return childMap
+}
+
+func lookupNestedUsageInt64(m map[string]interface{}, parentKey, childKey string) int64 {
+	childMap := lookupNestedUsageMap(m, parentKey)
+	if childMap == nil {
+		return 0
+	}
+	return lookupUsageInt64(childMap, childKey)
+}
+
+func resolveCacheReadTokens(m map[string]interface{}) int64 {
+	cacheRead := lookupUsageInt64(m, "cache_read_input_tokens", "cachedContentTokenCount")
+	if cacheRead != 0 {
+		return cacheRead
+	}
+
+	cacheRead = lookupNestedUsageInt64(m, "prompt_tokens_details", "cached_tokens")
+	if cacheRead != 0 {
+		return cacheRead
+	}
+
+	return lookupNestedUsageInt64(m, "input_token_details", "cached_tokens")
+}
+
+func buildCacheCreationFromUsageMap(m map[string]interface{}) *CacheCreation {
+	cacheCreationTokens := lookupUsageInt64(m, "cache_creation_input_tokens")
+	cacheCreationMap := lookupNestedUsageMap(m, "cache_creation")
+
+	if cacheCreationTokens == 0 && cacheCreationMap == nil {
+		return nil
+	}
+
+	cacheCreation := &CacheCreation{
+		InputTokens: cacheCreationTokens,
+	}
+
+	if cacheCreationMap == nil {
+		return cacheCreation
+	}
+
+	cacheCreation.Ephemeral1hInputTokens = lookupUsageInt64(cacheCreationMap, "ephemeral_1h_input_tokens")
+	cacheCreation.Ephemeral5mInputTokens = lookupUsageInt64(cacheCreationMap, "ephemeral_5m_input_tokens")
+	return cacheCreation
+}
+
+// normalizeUsageMap converts a map to TokenUsage.
+func normalizeUsageMap(m map[string]interface{}) *TokenUsage {
+	prompt := lookupUsageInt64(m, "prompt_tokens", "input_tokens", "promptTokenCount")
+	completion := lookupUsageInt64(m, "completion_tokens", "output_tokens", "candidatesTokenCount")
+	total := lookupUsageInt64(m, "total_tokens", "totalTokenCount")
+	cacheRead := resolveCacheReadTokens(m)
 
 	if total == 0 {
 		total = prompt + completion
 	}
 
-	if prompt == 0 && completion == 0 && total == 0 {
+	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 {
 		return nil
 	}
 
@@ -427,30 +562,10 @@ func normalizeUsageMap(m map[string]interface{}) *TokenUsage {
 		PromptTokens:         prompt,
 		CompletionTokens:     completion,
 		TotalTokens:          total,
-		CacheReadInputTokens: getInt64("cache_read_input_tokens", "cachedContentTokenCount"),
-		ServiceTier:          getString("service_tier"),
+		CacheReadInputTokens: cacheRead,
+		ServiceTier:          lookupUsageString(m, "service_tier"),
 	}
-
-	// Handle cache write statistics
-	cacheCreationTokens := getInt64("cache_creation_input_tokens")
-	if cacheCreationTokens > 0 {
-		result.CacheCreation = &CacheCreation{
-			InputTokens: cacheCreationTokens,
-		}
-	}
-
-	// Handle nested cache_creation object (if exists)
-	if cc, ok := m["cache_creation"].(map[string]interface{}); ok {
-		if result.CacheCreation == nil {
-			result.CacheCreation = &CacheCreation{}
-		}
-		if v, ok := cc["ephemeral_1h_input_tokens"].(float64); ok {
-			result.CacheCreation.Ephemeral1hInputTokens = int64(v)
-		}
-		if v, ok := cc["ephemeral_5m_input_tokens"].(float64); ok {
-			result.CacheCreation.Ephemeral5mInputTokens = int64(v)
-		}
-	}
+	result.CacheCreation = buildCacheCreationFromUsageMap(m)
 
 	return result
 }

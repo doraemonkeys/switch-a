@@ -252,6 +252,37 @@ func TestParseTokenUsage_OpenAI(t *testing.T) {
 	}
 }
 
+func TestParseTokenUsage_OpenAI_WithPromptTokenDetails(t *testing.T) {
+	data := []byte(`{"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":45}}}`)
+	usage := parseTokenUsage(data)
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if usage.CacheReadInputTokens != 45 {
+		t.Errorf("expected CacheReadInputTokens=45, got %d", usage.CacheReadInputTokens)
+	}
+}
+
+func TestParseTokenUsage_OpenAIRealtime_WithInputTokenDetails(t *testing.T) {
+	data := []byte(`{"type":"response.completed","response":{"id":"resp_123","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_token_details":{"cached_tokens":9}}}}`)
+	usage := parseTokenUsage(data)
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if usage.PromptTokens != 64 {
+		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 16 {
+		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 80 {
+		t.Errorf("expected TotalTokens=80, got %d", usage.TotalTokens)
+	}
+	if usage.CacheReadInputTokens != 9 {
+		t.Errorf("expected CacheReadInputTokens=9, got %d", usage.CacheReadInputTokens)
+	}
+}
+
 // ============================================================
 // parseTokenUsage tests - Claude format
 // ============================================================

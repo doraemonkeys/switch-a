@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -502,6 +504,166 @@ func TestHandler_ServeHTTP_WebSocket_SuccessLogHasNoError(t *testing.T) {
 	if !log.Success {
 		t.Error("expected log.Success=true")
 	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_CapturesObservedModelAndTokenUsage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		ctx := r.Context()
+		conn.SetReadLimit(wsReadLimit)
+
+		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"session.created","event_id":"evt_session","session":{"model":"gpt-realtime-2025-08-28"}}`)); err != nil {
+			t.Errorf("write session.created: %v", err)
+			return
+		}
+		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","event_id":"evt_response","response":{"id":"resp_1","model":"gpt-realtime-2025-08-28","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_token_details":{"cached_tokens":11}}}}`)); err != nil {
+			t.Errorf("write response.completed: %v", err)
+			return
+		}
+	}))
+	defer upstream.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "ws-p1",
+			Name:     "WS Provider",
+			APIKey:   "key",
+			AuthMode: "bearer",
+			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
+		},
+	}
+
+	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	for {
+		_, _, err := conn.Read(ctx)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if !isNormalClose(err) {
+			t.Fatalf("read websocket events: %v", err)
+		}
+		break
+	}
+
+	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.Model != "gpt-realtime-2025-08-28" {
+		t.Fatalf("log.Model = %q, want %q", log.Model, "gpt-realtime-2025-08-28")
+	}
+	if log.PromptTokens == nil || *log.PromptTokens != 64 {
+		t.Fatalf("PromptTokens = %v, want 64", log.PromptTokens)
+	}
+	if log.CompletionTokens == nil || *log.CompletionTokens != 16 {
+		t.Fatalf("CompletionTokens = %v, want 16", log.CompletionTokens)
+	}
+	if log.TotalTokens == nil || *log.TotalTokens != 80 {
+		t.Fatalf("TotalTokens = %v, want 80", log.TotalTokens)
+	}
+	if log.CacheReadInputTokens == nil || *log.CacheReadInputTokens != 11 {
+		t.Fatalf("CacheReadInputTokens = %v, want 11", log.CacheReadInputTokens)
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_UpdatesActiveModelDuringSession(t *testing.T) {
+	releaseUpstream := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		ctx := r.Context()
+		conn.SetReadLimit(wsReadLimit)
+
+		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.created","response":{"id":"resp_live","model":"gpt-5.4"}}`)); err != nil {
+			t.Errorf("write response.created: %v", err)
+			return
+		}
+
+		select {
+		case <-releaseUpstream:
+		case <-ctx.Done():
+		}
+	}))
+	defer upstream.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "ws-p1",
+			Name:     "WS Provider",
+			APIKey:   "key",
+			AuthMode: "bearer",
+			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
+		},
+	}
+
+	registry := NewActiveRequestRegistry()
+	handler := NewHandler(Config{
+		Store:          store,
+		Logger:         zap.NewNop(),
+		ActiveRegistry: registry,
+	})
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if _, _, err := conn.Read(ctx); err != nil {
+		t.Fatalf("read websocket event: %v", err)
+	}
+
+	waitFor(t, func() bool {
+		requests := registry.List()
+		return len(requests) == 1 && requests[0].Model == "gpt-5.4"
+	}, testPollTimeout)
+
+	requests := registry.List()
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 active request, got %d", len(requests))
+	}
+	if requests[0].Model != "gpt-5.4" {
+		t.Fatalf("active model = %q, want %q", requests[0].Model, "gpt-5.4")
+	}
+
+	close(releaseUpstream)
 }
 
 // TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure verifies that a client
