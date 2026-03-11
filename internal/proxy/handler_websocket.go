@@ -107,13 +107,24 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		go h.logWebSocketRequest(requestID, info, provider, fromSticky, nil, fmt.Errorf("no base_url"), time.Since(startTime))
 		return
 	}
+	apiKey := provider.APIKeyForAPIType(apiType)
+	if apiKey == "" {
+		h.logger.Error("missing api_key for websocket",
+			zap.String("provider_id", provider.ID),
+			zap.String("api_type", apiType),
+		)
+		h.writeGatewayError(w, http.StatusBadGateway, ErrCodeWebSocketUpgrade, fmt.Sprintf("Provider %q has no api_key for api_type %q", provider.ID, apiType))
+		h.markFailure(ctx, provider.ID, fmt.Errorf("no api_key for api_type %q", apiType))
+		go h.logWebSocketRequest(requestID, info, provider, fromSticky, nil, fmt.Errorf("no api_key"), time.Since(startTime))
+		return
+	}
 
 	upstreamPath := BuildUpstreamPath(r.URL.Path, apiType)
 	upstreamURL := httpToWSURL(h.buildFullURL(baseURL, upstreamPath, r.URL.RawQuery))
 
 	// Build headers for the upstream handshake:
 	// auth + non-hop-by-hop headers from the original request (e.g., OpenAI-Beta).
-	dialHeaders := buildWebSocketDialHeaders(r, provider, cfg.globalAuthMode)
+	dialHeaders := buildWebSocketDialHeaders(r, provider, apiType, cfg.globalAuthMode)
 	observer := newWebSocketMessageObserver(apiType, info.Model, NewZapLoggerAdapter(h.logger.Sugar()), func(observation WebSocketObservation) {
 		if h.activeRegistry == nil || observation.Model == "" || observation.Model == ModelUnknown {
 			return
@@ -177,7 +188,7 @@ func extractWebSocketModel(r *http.Request) string {
 // buildWebSocketDialHeaders builds HTTP headers for the upstream WebSocket handshake.
 // Includes auth headers and passes through non-hop-by-hop, non-auth, non-handshake
 // original request headers (e.g., OpenAI-Beta: realtime=v1) that the upstream may require.
-func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, globalAuthMode string) http.Header {
+func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiType, globalAuthMode string) http.Header {
 	headers := make(http.Header)
 
 	// Copy non-hop-by-hop, non-auth, non-WebSocket-handshake headers from the original request.
@@ -191,7 +202,7 @@ func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, global
 	}
 
 	// Inject provider auth credentials.
-	SetAuthHeader(headers, provider.APIKey, provider.AuthMode, globalAuthMode, r)
+	SetAuthHeader(headers, provider.APIKeyForAPIType(apiType), provider.AuthMode, globalAuthMode, r)
 
 	return headers
 }

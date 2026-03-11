@@ -110,7 +110,7 @@ func TestBuildWebSocketDialHeaders(t *testing.T) {
 		AuthMode: "bearer",
 	}
 
-	headers := buildWebSocketDialHeaders(r, provider, "auto")
+	headers := buildWebSocketDialHeaders(r, provider, "codex", "auto")
 
 	// Provider auth should be injected.
 	if got := headers.Get("Authorization"); got != "Bearer sk-provider-key" {
@@ -131,6 +131,28 @@ func TestBuildWebSocketDialHeaders(t *testing.T) {
 	}
 	if got := headers.Get("Upgrade"); got != "" {
 		t.Errorf("Upgrade should be empty, got %q", got)
+	}
+}
+
+func TestBuildWebSocketDialHeaders_UsesAPITypeKeyOverride(t *testing.T) {
+	t.Parallel()
+
+	r := httptest.NewRequest(http.MethodGet, "/responses", nil)
+	provider := &model.Provider{
+		APIKey:   "default-key",
+		AuthMode: "bearer",
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "codex",
+			BaseURL:    "https://example.com",
+			APIKey:     "codex-key",
+		}},
+	}
+
+	headers := buildWebSocketDialHeaders(r, provider, "codex", "auto")
+
+	if got := headers.Get("Authorization"); got != "Bearer codex-key" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer codex-key")
 	}
 }
 
@@ -857,7 +879,7 @@ func TestBuildWebSocketDialHeaders_FiltersSecWebSocketHeaders(t *testing.T) {
 	r.Header.Set("Upgrade", "websocket")
 
 	provider := &model.Provider{APIKey: "sk-key", AuthMode: "bearer"}
-	headers := buildWebSocketDialHeaders(r, provider, "auto")
+	headers := buildWebSocketDialHeaders(r, provider, "codex", "auto")
 
 	// Business headers should pass through.
 	if got := headers.Get("OpenAI-Beta"); got != "realtime=v1" {

@@ -1,7 +1,10 @@
 // Package model defines the core data models for switch-a.
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Scope defines the failover scope for vendor isolation.
 // Controls which providers can be used as failover targets.
@@ -88,20 +91,53 @@ type Provider struct {
 // Empty return allows caller to decide failure behavior, since some code paths
 // handle missing API types differently (e.g., admin validation vs proxy routing).
 func (p *Provider) BaseURLForAPIType(apiType string) string {
-	for _, at := range p.APITypes {
-		if at.APIType == apiType {
-			return at.BaseURL
-		}
+	if at, ok := p.APITypeConfig(apiType); ok {
+		return at.BaseURL
 	}
 	return ""
 }
 
+// APIKeyForAPIType returns the effective API key for the given API type.
+// API-type credentials take precedence because routing first selects api_type,
+// then resolves the endpoint/auth pair for that concrete upstream contract.
+func (p *Provider) APIKeyForAPIType(apiType string) string {
+	if at, ok := p.APITypeConfig(apiType); ok {
+		if apiKey := NormalizeAPIKey(at.APIKey); apiKey != "" {
+			return apiKey
+		}
+	}
+	return NormalizeAPIKey(p.APIKey)
+}
+
+// APITypeConfig returns the configured API-type entry for the given API type.
+func (p *Provider) APITypeConfig(apiType string) (ProviderAPIType, bool) {
+	for _, at := range p.APITypes {
+		if at.APIType == apiType {
+			return at, true
+		}
+	}
+	return ProviderAPIType{}, false
+}
+
 // ProviderAPIType represents the association between Provider and API types.
-// Each entry carries its own BaseURL, allowing different endpoints per API type.
+// Each entry carries its own endpoint contract. Most providers inherit the
+// provider-level API key, but api_type may override it for split credentials.
 type ProviderAPIType struct {
 	ProviderID string `gorm:"primaryKey" json:"provider_id"`
 	APIType    string `gorm:"primaryKey;index" json:"api_type"`
 	BaseURL    string `gorm:"not null;default:''" json:"base_url"`
+	APIKey     string `gorm:"not null;default:''" json:"api_key"`
+}
+
+// NormalizeAPIKey trims surrounding whitespace so blank paste artifacts do not
+// shadow a valid credential with an unusable override.
+func NormalizeAPIKey(apiKey string) string {
+	return strings.TrimSpace(apiKey)
+}
+
+// HasAPIKey reports whether the value contains an effective credential.
+func HasAPIKey(apiKey string) bool {
+	return NormalizeAPIKey(apiKey) != ""
 }
 
 // Group represents a provider group configuration.

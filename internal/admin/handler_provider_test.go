@@ -16,6 +16,14 @@ import (
 
 // Provider Tests
 
+func defaultProviderAPITypes(providerID string) []model.ProviderAPIType {
+	return []model.ProviderAPIType{{
+		ProviderID: providerID,
+		APIType:    "claude",
+		BaseURL:    "https://api.example.com",
+	}}
+}
+
 func TestListProviders(t *testing.T) {
 	h, st, _ := testHandler()
 
@@ -147,6 +155,78 @@ func TestCreateProvider(t *testing.T) {
 
 	if _, ok := st.providers["new-provider"]; !ok {
 		t.Error("provider was not created in store")
+	}
+}
+
+func TestCreateProvider_WithAPITypeKeyOverride(t *testing.T) {
+	h, st, _ := testHandler()
+
+	body := `{
+		"id": "split-creds",
+		"name": "Split Credentials",
+		"api_key": "",
+		"api_types": [{
+			"api_type": "claude",
+			"base_url": "https://api.example.com",
+			"api_key": "type-only-key"
+		}]
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.CreateProvider(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	created := st.providers["split-creds"]
+	if created == nil {
+		t.Fatal("provider was not created in store")
+	}
+	if created.APIKey != "" {
+		t.Errorf("APIKey = %q, want empty default key", created.APIKey)
+	}
+	if len(created.APITypes) != 1 || created.APITypes[0].APIKey != "type-only-key" {
+		t.Fatalf("APITypes = %+v, want api_type override key to persist", created.APITypes)
+	}
+}
+
+func TestCreateProvider_WhitespaceOverrideFallsBackToDefaultKey(t *testing.T) {
+	h, st, _ := testHandler()
+
+	body := `{
+		"id": "trimmed-default",
+		"name": "Trimmed Default",
+		"api_key": "  default-key  ",
+		"api_types": [{
+			"api_type": "claude",
+			"base_url": "https://api.example.com",
+			"api_key": "   "
+		}]
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.CreateProvider(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	created := st.providers["trimmed-default"]
+	if created == nil {
+		t.Fatal("provider was not created in store")
+	}
+	if created.APIKey != "default-key" {
+		t.Errorf("APIKey = %q, want %q", created.APIKey, "default-key")
+	}
+	if len(created.APITypes) != 1 || created.APITypes[0].APIKey != "" {
+		t.Fatalf("APITypes = %+v, want whitespace override to normalize to empty", created.APITypes)
 	}
 }
 
@@ -374,6 +454,7 @@ func TestUpdateProvider(t *testing.T) {
 		ID:       "test-provider",
 		Name:     "Old Name",
 		APIKey:   "old-key",
+		APITypes: defaultProviderAPITypes("test-provider"),
 		Weight:   1,
 		Priority: 0,
 	}
@@ -397,6 +478,84 @@ func TestUpdateProvider(t *testing.T) {
 	}
 	if updated.Weight != 5 {
 		t.Errorf("Weight = %d, want 5", updated.Weight)
+	}
+}
+
+func TestUpdateProvider_AllowsAPITypeKeyOverrideToReplaceDefault(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.providers["test-provider"] = &model.Provider{
+		ID:       "test-provider",
+		Name:     "Old Name",
+		APIKey:   "old-key",
+		APITypes: defaultProviderAPITypes("test-provider"),
+	}
+
+	body := `{
+		"api_key": "",
+		"api_types": [{
+			"api_type": "claude",
+			"base_url": "https://api.example.com",
+			"api_key": "claude-override-key"
+		}]
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test-provider", bytes.NewBufferString(body))
+	setPathValue(req, "id", "test-provider")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.UpdateProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	updated := st.providers["test-provider"]
+	if updated.APIKey != "" {
+		t.Errorf("APIKey = %q, want cleared default key", updated.APIKey)
+	}
+	if len(updated.APITypes) != 1 || updated.APITypes[0].APIKey != "claude-override-key" {
+		t.Fatalf("APITypes = %+v, want override key to persist", updated.APITypes)
+	}
+}
+
+func TestUpdateProvider_WhitespaceOverrideFallsBackToDefaultKey(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.providers["test-provider"] = &model.Provider{
+		ID:       "test-provider",
+		Name:     "Old Name",
+		APIKey:   "old-key",
+		APITypes: defaultProviderAPITypes("test-provider"),
+	}
+
+	body := `{
+		"api_key": "  fresh-default  ",
+		"api_types": [{
+			"api_type": "claude",
+			"base_url": "https://api.example.com",
+			"api_key": "   "
+		}]
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test-provider", bytes.NewBufferString(body))
+	setPathValue(req, "id", "test-provider")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.UpdateProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	updated := st.providers["test-provider"]
+	if updated.APIKey != "fresh-default" {
+		t.Errorf("APIKey = %q, want %q", updated.APIKey, "fresh-default")
+	}
+	if len(updated.APITypes) != 1 || updated.APITypes[0].APIKey != "" {
+		t.Fatalf("APITypes = %+v, want whitespace override to normalize to empty", updated.APITypes)
 	}
 }
 
@@ -436,7 +595,11 @@ func TestUpdateProvider_EmptyID(t *testing.T) {
 func TestUpdateProvider_InvalidJSON(t *testing.T) {
 	h, st, _ := testHandler()
 
-	st.providers["test"] = &model.Provider{ID: "test", Name: "Test"}
+	st.providers["test"] = &model.Provider{
+		ID:       "test",
+		Name:     "Test",
+		APITypes: defaultProviderAPITypes("test"),
+	}
 
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString("invalid"))
 	setPathValue(req, "id", "test")
@@ -454,7 +617,13 @@ func TestUpdateProvider_ClearGroupID(t *testing.T) {
 	h, st, _ := testHandler()
 
 	groupID := "group-1"
-	st.providers["test"] = &model.Provider{ID: "test", Name: "Test", GroupID: &groupID}
+	st.providers["test"] = &model.Provider{
+		ID:       "test",
+		Name:     "Test",
+		APIKey:   "key",
+		GroupID:  &groupID,
+		APITypes: defaultProviderAPITypes("test"),
+	}
 
 	body := `{"group_id": ""}`
 
@@ -477,7 +646,12 @@ func TestUpdateProvider_ClearGroupID(t *testing.T) {
 func TestUpdateProvider_UpdateError(t *testing.T) {
 	h, st, _ := testHandler()
 
-	st.providers["test"] = &model.Provider{ID: "test", Name: "Test"}
+	st.providers["test"] = &model.Provider{
+		ID:       "test",
+		Name:     "Test",
+		APIKey:   "key",
+		APITypes: defaultProviderAPITypes("test"),
+	}
 	st.updateErr = errors.New("database error")
 
 	body := `{"name": "New Name"}`
@@ -523,6 +697,7 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 		ID:          "test",
 		Name:        "Old Name",
 		APIKey:      "old-key",
+		APITypes:    defaultProviderAPITypes("test"),
 		AuthMode:    "bearer",
 		GroupID:     nil,
 		Weight:      1,
@@ -530,7 +705,6 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 		Concurrency: 0,
 		MaxRetries:  0,
 		Enabled:     true,
-		APITypes:    []model.ProviderAPIType{{ProviderID: "test", APIType: "claude", BaseURL: "https://old.api.com"}},
 	}
 
 	body := `{
@@ -594,10 +768,11 @@ func TestUpdateProvider_WithBackoff(t *testing.T) {
 	h, st, _ := testHandler()
 
 	st.providers["test"] = &model.Provider{
-		ID:      "test",
-		Name:    "Test",
-		APIKey:  "key",
-		Backoff: model.BackoffPolicy{},
+		ID:       "test",
+		Name:     "Test",
+		APIKey:   "key",
+		APITypes: defaultProviderAPITypes("test"),
+		Backoff:  model.BackoffPolicy{},
 	}
 
 	body := `{
@@ -661,7 +836,12 @@ func TestUpdateProvider_BackoffValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h, st, _ := testHandler()
-			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", APIKey: "key"}
+			st.providers["test"] = &model.Provider{
+				ID:       "test",
+				Name:     "Test",
+				APIKey:   "key",
+				APITypes: defaultProviderAPITypes("test"),
+			}
 
 			req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(tt.body))
 			setPathValue(req, "id", "test")
@@ -694,7 +874,7 @@ func TestUpdateProvider_ValidationErrors(t *testing.T) {
 		{
 			name:    "empty api_key",
 			body:    `{"api_key": ""}`,
-			wantMsg: "APIKey cannot be empty",
+			wantMsg: "api_key is required for api_type: claude",
 		},
 		{
 			name:    "zero weight",
@@ -736,7 +916,12 @@ func TestUpdateProvider_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h, st, _ := testHandler()
-			st.providers["test"] = &model.Provider{ID: "test", Name: "Test", APIKey: "key"}
+			st.providers["test"] = &model.Provider{
+				ID:       "test",
+				Name:     "Test",
+				APIKey:   "key",
+				APITypes: defaultProviderAPITypes("test"),
+			}
 
 			req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/test", bytes.NewBufferString(tt.body))
 			setPathValue(req, "id", "test")
@@ -758,7 +943,13 @@ func TestUpdateProvider_ValidationErrors(t *testing.T) {
 func TestUpdateProvider_SyncsHealthManager(t *testing.T) {
 	h, st, health := testHandler()
 
-	st.providers["test"] = &model.Provider{ID: "test", Name: "Test", Enabled: true}
+	st.providers["test"] = &model.Provider{
+		ID:       "test",
+		Name:     "Test",
+		APIKey:   "key",
+		Enabled:  true,
+		APITypes: defaultProviderAPITypes("test"),
+	}
 
 	// Disable the provider
 	body := `{"enabled": false}`

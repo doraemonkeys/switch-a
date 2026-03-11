@@ -9,10 +9,15 @@ import (
 func TestProvider_JSON(t *testing.T) {
 	groupID := "g1"
 	p := Provider{
-		ID:       "p1",
-		Name:     "Test Provider",
-		APIKey:   "key123",
-		APITypes: []ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"}},
+		ID:     "p1",
+		Name:   "Test Provider",
+		APIKey: "key123",
+		APITypes: []ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "claude",
+			BaseURL:    "https://api.example.com",
+			APIKey:     "type-key",
+		}},
 		AuthMode: "bearer",
 		GroupID:  &groupID,
 		Enabled:  true,
@@ -38,6 +43,7 @@ func TestProviderAPIType_JSON(t *testing.T) {
 		ProviderID: "p1",
 		APIType:    "claude",
 		BaseURL:    "https://api.example.com",
+		APIKey:     "type-key",
 	}
 
 	data, err := json.Marshal(pat)
@@ -50,7 +56,10 @@ func TestProviderAPIType_JSON(t *testing.T) {
 		t.Fatalf("unmarshal error: %v", err)
 	}
 
-	if pat2.ProviderID != pat.ProviderID || pat2.APIType != pat.APIType || pat2.BaseURL != pat.BaseURL {
+	if pat2.ProviderID != pat.ProviderID ||
+		pat2.APIType != pat.APIType ||
+		pat2.BaseURL != pat.BaseURL ||
+		pat2.APIKey != pat.APIKey {
 		t.Errorf("round-trip failed: got %+v", pat2)
 	}
 }
@@ -243,6 +252,52 @@ func TestProvider_BaseURLForAPIType(t *testing.T) {
 	empty := Provider{ID: "p2"}
 	if got := empty.BaseURLForAPIType("claude"); got != "" {
 		t.Errorf("BaseURLForAPIType on empty provider = %q, want empty", got)
+	}
+}
+
+func TestProvider_APIKeyForAPIType(t *testing.T) {
+	p := Provider{
+		ID:     "p1",
+		APIKey: "default-key",
+		APITypes: []ProviderAPIType{
+			{ProviderID: "p1", APIType: "claude", BaseURL: "https://claude.example.com"},
+			{
+				ProviderID: "p1",
+				APIType:    "codex",
+				BaseURL:    "https://codex.example.com",
+				APIKey:     "codex-key",
+			},
+		},
+	}
+
+	if got := p.APIKeyForAPIType("claude"); got != "default-key" {
+		t.Errorf("APIKeyForAPIType(claude) = %q, want %q", got, "default-key")
+	}
+	if got := p.APIKeyForAPIType("codex"); got != "codex-key" {
+		t.Errorf("APIKeyForAPIType(codex) = %q, want %q", got, "codex-key")
+	}
+
+	// Unknown API type falls back to the provider default because callers may
+	// resolve credentials separately from endpoint validation.
+	if got := p.APIKeyForAPIType("gemini"); got != "default-key" {
+		t.Errorf("APIKeyForAPIType(gemini) = %q, want %q", got, "default-key")
+	}
+}
+
+func TestProvider_APIKeyForAPIType_IgnoresWhitespaceOverride(t *testing.T) {
+	p := Provider{
+		ID:     "p1",
+		APIKey: " default-key ",
+		APITypes: []ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "claude",
+			BaseURL:    "https://claude.example.com",
+			APIKey:     "   ",
+		}},
+	}
+
+	if got := p.APIKeyForAPIType("claude"); got != "default-key" {
+		t.Errorf("APIKeyForAPIType(claude) = %q, want %q", got, "default-key")
 	}
 }
 

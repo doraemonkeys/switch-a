@@ -1,4 +1,5 @@
 import type { Provider } from "../../api/client";
+import { hasProviderApiKey } from "../../lib/providerApiKey";
 import { stringToColor } from "../../lib/utils";
 import { RecoveryTimer } from "../../components/RecoveryTimer";
 import {
@@ -182,6 +183,100 @@ function ActionsCell({
   );
 }
 
+function formatEndpointSummary(provider: Provider): string {
+  const apiTypes = provider.api_types ?? [];
+  const apiTypeCount = apiTypes.length;
+  if (apiTypeCount === 0) {
+    return "No endpoint configured";
+  }
+  if (apiTypeCount === 1) {
+    return apiTypes[0]?.base_url || "No endpoint configured";
+  }
+
+  const apiKeyOverrideCount = apiTypes.filter((apiType) =>
+    hasProviderApiKey(apiType.api_key),
+  ).length;
+  const endpointSummary = `${apiTypeCount} endpoints configured`;
+  if (apiKeyOverrideCount === 0) {
+    return endpointSummary;
+  }
+
+  const keySummary =
+    apiKeyOverrideCount === 1
+      ? "1 custom key"
+      : `${apiKeyOverrideCount} custom keys`;
+  return `${endpointSummary}, ${keySummary}`;
+}
+
+function GroupCell({
+  provider,
+  groupName,
+  onGroupClick,
+}: {
+  provider: Provider;
+  groupName: string;
+  onGroupClick?: (groupId: string) => void;
+}) {
+  if (!provider.group_id) {
+    return <span className="text-text-muted/50 text-sm">—</span>;
+  }
+
+  const groupColors = stringToColor(provider.group_id);
+  return (
+    <span
+      className="px-2.5 py-1 rounded-md text-[11px] font-medium border whitespace-nowrap truncate max-w-[120px] inline-flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity shadow-sm"
+      style={{
+        backgroundColor: groupColors.bg,
+        color: groupColors.text,
+        borderColor: groupColors.border,
+      }}
+      title={`Filter by group: ${groupName}`}
+      onClick={() => onGroupClick?.(provider.group_id!)}
+    >
+      <FolderOpen className="w-3 h-3 opacity-70" />
+      {groupName}
+    </span>
+  );
+}
+
+function APITypesCell({ provider }: { provider: Provider }) {
+  const apiTypes = provider.api_types ?? [];
+  if (apiTypes.length === 0) {
+    return <span className="text-text-muted/50 text-sm">—</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {apiTypes.slice(0, 2).map((apiType) => (
+        <span
+          key={apiType.api_type}
+          className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-md bg-bg-tertiary text-text-secondary border border-border/50"
+        >
+          {apiType.api_type}
+        </span>
+      ))}
+      {apiTypes.length > 2 && (
+        <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-md bg-bg-tertiary text-text-muted border border-border/50">
+          +{apiTypes.length - 2}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function FailCountCell({ failCount }: { failCount: number }) {
+  if (failCount === 0) {
+    return <span className="text-text-muted/50 text-sm">—</span>;
+  }
+
+  return (
+    <div className="inline-flex items-center gap-1 text-[11px] font-bold text-danger bg-danger-light/50 px-2 py-0.5 rounded-md border border-danger/10">
+      <AlertCircle className="w-3 h-3" />
+      {failCount}
+    </div>
+  );
+}
+
 // Provider row component
 function ProviderRow({
   provider,
@@ -209,9 +304,7 @@ function ProviderRow({
   );
   const failCount = provider.health?.fail_count || 0;
   const groupName = getGroupName(provider.group_id);
-  const groupColors = provider.group_id
-    ? stringToColor(provider.group_id)
-    : undefined;
+  const endpointSummary = formatEndpointSummary(provider);
 
   return (
     <tr className="group hover:bg-bg-secondary/60 transition-colors border-b border-border/40 last:border-b-0">
@@ -229,48 +322,20 @@ function ProviderRow({
               {provider.name}
             </p>
             <p className="text-[11px] text-text-muted truncate mt-0.5">
-              {provider.api_types?.length > 1
-                ? `${provider.api_types.length} endpoints configured`
-                : provider.api_types?.[0]?.base_url || "No endpoint configured"}
+              {endpointSummary}
             </p>
           </div>
         </div>
       </td>
       <td className="px-4 py-3 align-middle">
-        {provider.group_id && groupColors ? (
-          <span
-            className="px-2.5 py-1 rounded-md text-[11px] font-medium border whitespace-nowrap truncate max-w-[120px] inline-flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity shadow-sm"
-            style={{
-              backgroundColor: groupColors.bg,
-              color: groupColors.text,
-              borderColor: groupColors.border,
-            }}
-            title={`Filter by group: ${groupName}`}
-            onClick={() => onGroupClick?.(provider.group_id!)}
-          >
-            <FolderOpen className="w-3 h-3 opacity-70" />
-            {groupName}
-          </span>
-        ) : (
-          <span className="text-text-muted/50 text-sm">—</span>
-        )}
+        <GroupCell
+          provider={provider}
+          groupName={groupName}
+          onGroupClick={onGroupClick}
+        />
       </td>
       <td className="px-4 py-3 align-middle">
-        <div className="flex flex-wrap gap-1.5">
-          {provider.api_types?.slice(0, 2).map((apiType) => (
-            <span
-              key={apiType.api_type}
-              className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-md bg-bg-tertiary text-text-secondary border border-border/50"
-            >
-              {apiType.api_type}
-            </span>
-          )) ?? <span className="text-text-muted/50 text-sm">—</span>}
-          {provider.api_types && provider.api_types.length > 2 && (
-            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-md bg-bg-tertiary text-text-muted border border-border/50">
-              +{provider.api_types.length - 2}
-            </span>
-          )}
-        </div>
+        <APITypesCell provider={provider} />
       </td>
       <td className="px-4 py-3 align-middle">
         <StatusCell
@@ -280,14 +345,7 @@ function ProviderRow({
         />
       </td>
       <td className="px-4 py-3 align-middle text-center">
-        {failCount > 0 ? (
-          <div className="inline-flex items-center gap-1 text-[11px] font-bold text-danger bg-danger-light/50 px-2 py-0.5 rounded-md border border-danger/10">
-            <AlertCircle className="w-3 h-3" />
-            {failCount}
-          </div>
-        ) : (
-          <span className="text-text-muted/50 text-sm">—</span>
-        )}
+        <FailCountCell failCount={failCount} />
       </td>
       <td className="px-4 py-3 align-middle whitespace-nowrap">
         <RecoveryCell

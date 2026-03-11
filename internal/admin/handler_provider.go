@@ -104,10 +104,11 @@ type CreateProviderRequest struct {
 	Enabled        *bool                `json:"enabled"`
 }
 
-// APITypeInput represents an API type entry with its base URL.
+// APITypeInput represents an API type entry with endpoint details.
 type APITypeInput struct {
 	APIType string `json:"api_type"`
 	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
 }
 
 // isValidBaseURL checks that a base URL has a scheme and host,
@@ -120,6 +121,55 @@ func isValidBaseURL(raw string) bool {
 	return u.Scheme != "" && u.Host != ""
 }
 
+func validateAPITypeInputs(apiTypes []APITypeInput) string {
+	if len(apiTypes) == 0 {
+		return "At least one api_type is required"
+	}
+	seen := make(map[string]struct{}, len(apiTypes))
+	for _, at := range apiTypes {
+		if !IsValidAPIType(at.APIType) {
+			return "Invalid api_type: " + at.APIType
+		}
+		if _, exists := seen[at.APIType]; exists {
+			return "Duplicate api_type: " + at.APIType
+		}
+		seen[at.APIType] = struct{}{}
+		if at.BaseURL == "" {
+			return "base_url is required for api_type: " + at.APIType
+		}
+		if !isValidBaseURL(at.BaseURL) {
+			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
+		}
+	}
+	return ""
+}
+
+func validateProviderConfiguration(provider *model.Provider) string {
+	if len(provider.APITypes) == 0 {
+		return "At least one api_type is required"
+	}
+	seen := make(map[string]struct{}, len(provider.APITypes))
+	for _, at := range provider.APITypes {
+		if !IsValidAPIType(at.APIType) {
+			return "Invalid api_type: " + at.APIType
+		}
+		if _, exists := seen[at.APIType]; exists {
+			return "Duplicate api_type: " + at.APIType
+		}
+		seen[at.APIType] = struct{}{}
+		if at.BaseURL == "" {
+			return "base_url is required for api_type: " + at.APIType
+		}
+		if !isValidBaseURL(at.BaseURL) {
+			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
+		}
+		if !model.HasAPIKey(provider.APIKey) && !model.HasAPIKey(at.APIKey) {
+			return "api_key is required for api_type: " + at.APIType + " when provider default api_key is empty"
+		}
+	}
+	return ""
+}
+
 // validate checks that all required fields are present and all provided fields have valid values.
 // Returns an error message if validation fails, empty string otherwise.
 func (req *CreateProviderRequest) validate() string {
@@ -129,22 +179,8 @@ func (req *CreateProviderRequest) validate() string {
 	if req.Name == "" {
 		return "Provider name is required"
 	}
-	if req.APIKey == "" {
-		return "Provider api_key is required"
-	}
-	if len(req.APITypes) == 0 {
-		return "At least one api_type is required"
-	}
-	for _, at := range req.APITypes {
-		if !IsValidAPIType(at.APIType) {
-			return "Invalid api_type: " + at.APIType
-		}
-		if at.BaseURL == "" {
-			return "base_url is required for api_type: " + at.APIType
-		}
-		if !isValidBaseURL(at.BaseURL) {
-			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
-		}
+	if errMsg := validateAPITypeInputs(req.APITypes); errMsg != "" {
+		return errMsg
 	}
 	if req.MaxRetries != nil && *req.MaxRetries < 0 {
 		return "MaxRetries must be non-negative"
@@ -163,7 +199,7 @@ func (req *CreateProviderRequest) validate() string {
 	if req.AuthMode != "" && !IsValidAuthMode(req.AuthMode) {
 		return "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'"
 	}
-	return ""
+	return validateProviderConfiguration(req.toProvider())
 }
 
 // toProvider converts the request to a Provider model with appropriate defaults applied.
@@ -174,13 +210,14 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 			ProviderID: req.ID,
 			APIType:    at.APIType,
 			BaseURL:    at.BaseURL,
+			APIKey:     model.NormalizeAPIKey(at.APIKey),
 		}
 	}
 
 	provider := &model.Provider{
 		ID:             req.ID,
 		Name:           req.Name,
-		APIKey:         req.APIKey,
+		APIKey:         model.NormalizeAPIKey(req.APIKey),
 		APITypes:       apiTypes,
 		AuthMode:       req.AuthMode,
 		GroupID:        req.GroupID,
@@ -248,6 +285,10 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	provider := req.toProvider()
+	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
+		return
+	}
 
 	// Validate GroupID exists if provided
 	if provider.GroupID != nil {
@@ -299,9 +340,6 @@ func (req *UpdateProviderRequest) validate() string {
 	if req.Name != nil && *req.Name == "" {
 		return "Name cannot be empty"
 	}
-	if req.APIKey != nil && *req.APIKey == "" {
-		return "APIKey cannot be empty"
-	}
 	if req.Weight != nil && *req.Weight <= 0 {
 		return "Weight must be positive"
 	}
@@ -311,18 +349,9 @@ func (req *UpdateProviderRequest) validate() string {
 	if req.MaxRetries != nil && *req.MaxRetries < 0 {
 		return "MaxRetries must be non-negative"
 	}
-	if req.APITypes != nil && len(req.APITypes) == 0 {
-		return "At least one api_type is required"
-	}
-	for _, at := range req.APITypes {
-		if !IsValidAPIType(at.APIType) {
-			return "Invalid api_type: " + at.APIType
-		}
-		if at.BaseURL == "" {
-			return "base_url is required for api_type: " + at.APIType
-		}
-		if !isValidBaseURL(at.BaseURL) {
-			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
+	if req.APITypes != nil {
+		if errMsg := validateAPITypeInputs(req.APITypes); errMsg != "" {
+			return errMsg
 		}
 	}
 	if req.AuthMode != nil && !IsValidAuthMode(*req.AuthMode) {
@@ -348,7 +377,7 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 		provider.Name = *req.Name
 	}
 	if req.APIKey != nil {
-		provider.APIKey = *req.APIKey
+		provider.APIKey = model.NormalizeAPIKey(*req.APIKey)
 	}
 	if req.APITypes != nil {
 		apiTypes := make([]model.ProviderAPIType, len(req.APITypes))
@@ -357,6 +386,7 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 				ProviderID: provider.ID,
 				APIType:    at.APIType,
 				BaseURL:    at.BaseURL,
+				APIKey:     model.NormalizeAPIKey(at.APIKey),
 			}
 		}
 		provider.APITypes = apiTypes
@@ -427,6 +457,10 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	originalEnabled := provider.Enabled
 
 	req.applyTo(provider)
+	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
+		return
+	}
 
 	// Validate and resolve GroupID separately (requires store access)
 	if req.GroupID != nil {

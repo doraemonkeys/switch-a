@@ -66,11 +66,12 @@ export interface BackoffPolicy {
 }
 
 // ProviderAPIType represents the association between Provider and API types.
-// Each entry carries its own BaseURL, allowing different endpoints per API type.
+// Each entry can override both endpoint and credentials for that API contract.
 export interface ProviderAPIType {
   provider_id: string;
   api_type: string;
   base_url: string;
+  api_key?: string;
 }
 
 export interface Provider {
@@ -98,10 +99,11 @@ export interface Provider {
   health?: HealthState | null;
 }
 
-/** API type entry with its base URL, matching backend APITypeInput */
+/** API type entry with endpoint/auth overrides, matching backend APITypeInput */
 export interface APITypeInput {
   api_type: string;
   base_url: string;
+  api_key?: string;
 }
 
 export interface ProviderInput {
@@ -431,6 +433,7 @@ export interface StatsResponse {
 export interface ExportedAPIType {
   api_type: string;
   base_url: string;
+  api_key?: string;
 }
 
 /** ExportedProvider represents a provider in the export format */

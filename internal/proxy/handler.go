@@ -594,8 +594,9 @@ func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp
 	return newTokenCaptureInterceptor(upstreamResp.ContentLength, NewZapLoggerAdapter(h.logger.Sugar())), nil
 }
 
-// buildProviderRequest validates the provider's base URL and constructs the upstream HTTP request.
-func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, error) {
+// buildProviderRequest validates the provider's endpoint/auth config and
+// constructs the upstream HTTP request.
+func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, string, error) {
 	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
 	baseURL := provider.BaseURLForAPIType(pctx.apiType)
 
@@ -607,7 +608,16 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 			zap.String("provider_id", provider.ID),
 			zap.String("api_type", pctx.apiType),
 		)
-		return nil, fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
+		return nil, "", fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
+	}
+
+	apiKey := provider.APIKeyForAPIType(pctx.apiType)
+	if apiKey == "" {
+		h.logger.Error("missing api_key for api_type",
+			zap.String("provider_id", provider.ID),
+			zap.String("api_type", pctx.apiType),
+		)
+		return nil, "", fmt.Errorf("provider %q has no api_key configured for api_type %q", provider.ID, pctx.apiType)
 	}
 
 	upstreamURL := h.buildFullURL(baseURL, upstreamPath, pctx.r.URL.RawQuery)
@@ -615,10 +625,10 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 	req, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
 	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
 		h.logger.Error("failed to build upstream request", zap.Error(err))
-		return nil, err
+		return nil, "", err
 	}
 
-	return req, nil
+	return req, apiKey, nil
 }
 
 // extractTokenUsage waits for interceptors to finish and returns parsed token usage, if available.
@@ -649,7 +659,7 @@ func (h *Handler) extractTokenUsage(statusCode int, interceptor ResponseIntercep
 func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider) forwardResult {
 	result := forwardResult{}
 
-	upstreamReq, err := h.buildProviderRequest(ctx, pctx, provider)
+	upstreamReq, apiKey, err := h.buildProviderRequest(ctx, pctx, provider)
 	if err != nil {
 		result.err = err
 		result.success = false
@@ -660,7 +670,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	}
 
 	// Set authentication header
-	SetAuthHeader(upstreamReq.Header, provider.APIKey, provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
+	SetAuthHeader(upstreamReq.Header, apiKey, provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
 
 	// Fetch upstream response WITHOUT writing to client yet
 	// This allows us to check status code and retry if needed

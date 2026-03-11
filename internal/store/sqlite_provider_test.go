@@ -23,7 +23,12 @@ func TestProviderCRUD(t *testing.T) {
 		GroupID:  &groupID,
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{
-			{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"},
+			{
+				ProviderID: "p1",
+				APIType:    "claude",
+				BaseURL:    "https://api.example.com",
+				APIKey:     "claude-key",
+			},
 		},
 	}
 
@@ -47,6 +52,9 @@ func TestProviderCRUD(t *testing.T) {
 	}
 	if got.APITypes[0].BaseURL != "https://api.example.com" {
 		t.Errorf("APITypes[0].BaseURL = %q, want %q", got.APITypes[0].BaseURL, "https://api.example.com")
+	}
+	if got.APITypes[0].APIKey != "claude-key" {
+		t.Errorf("APITypes[0].APIKey = %q, want %q", got.APITypes[0].APIKey, "claude-key")
 	}
 
 	// List
@@ -172,11 +180,16 @@ func TestUpdateProvider(t *testing.T) {
 
 	// Create provider
 	p := &model.Provider{
-		ID:       "p1",
-		Name:     "Original",
-		APIKey:   "key",
-		Enabled:  true,
-		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://test.com"}},
+		ID:      "p1",
+		Name:    "Original",
+		APIKey:  "key",
+		Enabled: true,
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "claude",
+			BaseURL:    "https://test.com",
+			APIKey:     "claude-key",
+		}},
 	}
 	if err := store.CreateProvider(ctx, p); err != nil {
 		t.Fatalf("CreateProvider failed: %v", err)
@@ -184,7 +197,12 @@ func TestUpdateProvider(t *testing.T) {
 
 	// Update provider
 	p.Name = "Updated"
-	p.APITypes = []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "https://test.com"}}
+	p.APITypes = []model.ProviderAPIType{{
+		ProviderID: "p1",
+		APIType:    "codex",
+		BaseURL:    "https://test.com",
+		APIKey:     "codex-key",
+	}}
 	if err := store.UpdateProvider(ctx, p); err != nil {
 		t.Fatalf("UpdateProvider failed: %v", err)
 	}
@@ -199,6 +217,9 @@ func TestUpdateProvider(t *testing.T) {
 	}
 	if len(got.APITypes) != 1 || got.APITypes[0].APIType != "codex" {
 		t.Errorf("APITypes not updated correctly")
+	}
+	if got.APITypes[0].APIKey != "codex-key" {
+		t.Errorf("APITypes[0].APIKey = %q, want %q", got.APITypes[0].APIKey, "codex-key")
 	}
 }
 

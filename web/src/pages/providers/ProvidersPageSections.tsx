@@ -164,9 +164,10 @@ export function HelpCard() {
             Getting Started
           </h4>
           <p className="text-sm text-text-secondary mt-1 leading-relaxed max-w-3xl">
-            Configure your AI providers with their base URL and API key. You can
-            group providers and set up load balancing strategies to
-            automatically switch between them.
+            Configure a default API key per provider, then override it only for
+            the API types that need separate credentials. You can group
+            providers and set up load balancing strategies to automatically
+            switch between them.
           </p>
         </div>
       </div>

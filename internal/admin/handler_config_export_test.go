@@ -38,10 +38,15 @@ func TestExportConfig(t *testing.T) {
 
 	// Setup test data
 	st.providers["p1"] = &model.Provider{
-		ID:       "p1",
-		Name:     "Provider 1",
-		APIKey:   "key1",
-		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.p1.com"}},
+		ID:     "p1",
+		Name:   "Provider 1",
+		APIKey: "key1",
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "claude",
+			BaseURL:    "https://api.p1.com",
+			APIKey:     "claude-key",
+		}},
 		AuthMode: "bearer",
 		Weight:   1,
 		Enabled:  true,
@@ -116,6 +121,9 @@ func TestExportConfig(t *testing.T) {
 	}
 	if len(p1.APITypes) != 1 || p1.APITypes[0].APIType != "claude" {
 		t.Errorf("p1.APITypes = %v, want [{claude, ...}]", p1.APITypes)
+	}
+	if p1.APITypes[0].APIKey != "claude-key" {
+		t.Errorf("p1.APITypes[0].APIKey = %q, want %q", p1.APITypes[0].APIKey, "claude-key")
 	}
 }
 
@@ -721,12 +729,18 @@ func strPtr(s string) *string {
 func TestExportConfig_BackoffRoundtrip(t *testing.T) {
 	h, st, _ := testHandler()
 
-	// Setup provider with backoff settings
+	// Setup provider with backoff settings and an API-type-only credential to
+	// ensure export/import round-trips the split-key model.
 	st.providers["p1"] = &model.Provider{
-		ID:       "p1",
-		Name:     "Backoff Provider",
-		APIKey:   "key",
-		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"}},
+		ID:     "p1",
+		Name:   "Backoff Provider",
+		APIKey: "",
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "claude",
+			BaseURL:    "https://api.example.com",
+			APIKey:     "claude-key",
+		}},
 		AuthMode: "bearer",
 		Weight:   1,
 		Enabled:  true,
@@ -757,6 +771,12 @@ func TestExportConfig_BackoffRoundtrip(t *testing.T) {
 	}
 
 	ep := export.Providers[0]
+	if ep.APIKey != "" {
+		t.Errorf("exported APIKey = %q, want empty default key", ep.APIKey)
+	}
+	if len(ep.APITypes) != 1 || ep.APITypes[0].APIKey != "claude-key" {
+		t.Fatalf("exported APITypes = %+v, want API-type override to survive export", ep.APITypes)
+	}
 	if ep.Backoff.InitialDelay != model.Duration(500*time.Millisecond) {
 		t.Errorf("exported InitialDelay = %v, want 500ms", time.Duration(ep.Backoff.InitialDelay))
 	}
@@ -793,6 +813,12 @@ func TestExportConfig_BackoffRoundtrip(t *testing.T) {
 	if imported == nil {
 		t.Fatal("provider p1 not found after import")
 	}
+	if imported.APIKey != "" {
+		t.Errorf("imported APIKey = %q, want empty default key", imported.APIKey)
+	}
+	if len(imported.APITypes) != 1 || imported.APITypes[0].APIKey != "claude-key" {
+		t.Fatalf("imported APITypes = %+v, want API-type override to survive import", imported.APITypes)
+	}
 	if imported.Backoff.InitialDelay != model.Duration(500*time.Millisecond) {
 		t.Errorf("imported InitialDelay = %v, want 500ms", time.Duration(imported.Backoff.InitialDelay))
 	}
@@ -824,6 +850,31 @@ func TestValidateExportedProvider_MalformedURL(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected malformed base_url warning, got: %v", warnings)
+	}
+}
+
+func TestValidateExportedProvider_WhitespaceKeysWarnAsMissing(t *testing.T) {
+	p := &ExportedProvider{
+		ID:     "p1",
+		Name:   "Test",
+		APIKey: "   ",
+		APITypes: []ExportedAPIType{{
+			APIType: "claude",
+			BaseURL: "https://api.example.com",
+			APIKey:  "   ",
+		}},
+	}
+
+	warnings := validateExportedProvider(p)
+	found := false
+	for _, w := range warnings {
+		if w == "Provider 'p1' has no api_key for api_type: claude" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected missing api_key warning, got: %v", warnings)
 	}
 }
 

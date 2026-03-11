@@ -394,6 +394,49 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	}
 }
 
+func TestHandler_ServeHTTP_UsesAPITypeKeyOverride(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer claude-override-key" {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer claude-override-key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"response":"success"}`))
+	}))
+	defer upstreamServer.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{{
+		ID:       "p1",
+		Name:     "Test Provider",
+		APIKey:   "default-key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "claude",
+			BaseURL:    upstreamServer.URL,
+			APIKey:     "claude-override-key",
+		}},
+	}}
+	logger := zap.NewNop()
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-3","message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
 func TestHandler_ServeHTTP_SSEProxy(t *testing.T) {
 	// Create upstream server with SSE
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

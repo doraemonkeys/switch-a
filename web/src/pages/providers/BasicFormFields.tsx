@@ -1,5 +1,6 @@
 import type { ProviderInput, AuthMode } from "../../api";
 import { AUTH_MODE_OPTIONS, COMMON_API_TYPES } from "../../config/constants";
+import { hasProviderApiKey } from "../../lib/providerApiKey";
 import { FormField } from "./FormField";
 import { generateClientKey, type TrackedAPITypeEntry } from "./types";
 import type { APITypeInput } from "../../api";
@@ -35,7 +36,7 @@ export function ApiTypesField({ entries, onChange }: ApiTypesFieldProps) {
       ...entries,
       {
         clientKey: generateClientKey(),
-        data: { api_type: apiType, base_url: lastUrl },
+        data: { api_type: apiType, base_url: lastUrl, api_key: "" },
       },
     ]);
   };
@@ -56,38 +57,62 @@ export function ApiTypesField({ entries, onChange }: ApiTypesFieldProps) {
       <legend className="block text-sm font-medium text-text-secondary mb-1">
         API Types
       </legend>
-      <div className="space-y-2">
+      <p className="text-xs text-text-muted mb-3">
+        Base URL is required. API key override is optional and falls back to the
+        default API key above.
+      </p>
+      <div className="space-y-3">
         {entries.map((entry, index) => (
-          <div key={entry.clientKey} className="flex items-center gap-2">
-            <input
-              type="text"
-              className="input w-36 shrink-0"
-              value={entry.data.api_type}
-              onChange={(e) =>
-                updateEntry(entry.clientKey, "api_type", e.target.value)
-              }
-              placeholder="API type"
-              aria-label={`API type ${index + 1}`}
-            />
-            <input
-              type="url"
-              className="input flex-1"
-              value={entry.data.base_url}
-              onChange={(e) =>
-                updateEntry(entry.clientKey, "base_url", e.target.value)
-              }
-              placeholder="https://api.example.com"
-              required
-              aria-label={`Base URL for ${entry.data.api_type || "entry " + String(index + 1)}`}
-            />
-            <button
-              type="button"
-              onClick={() => removeEntry(entry.clientKey)}
-              className="p-1.5 text-text-muted hover:text-danger transition-colors shrink-0 cursor-pointer"
-              aria-label={`Remove ${entry.data.api_type || "entry"}`}
-            >
-              ✕
-            </button>
+          <div
+            key={entry.clientKey}
+            className="rounded-xl border border-border/70 bg-bg-secondary/30 p-3"
+          >
+            <div className="grid gap-2 md:grid-cols-[10rem_minmax(0,1fr)_14rem_auto] md:items-start">
+              <input
+                type="text"
+                className="input"
+                value={entry.data.api_type}
+                onChange={(e) =>
+                  updateEntry(entry.clientKey, "api_type", e.target.value)
+                }
+                placeholder="API type"
+                aria-label={`API type ${index + 1}`}
+              />
+              <input
+                type="url"
+                className="input"
+                value={entry.data.base_url}
+                onChange={(e) =>
+                  updateEntry(entry.clientKey, "base_url", e.target.value)
+                }
+                placeholder="https://api.example.com"
+                aria-label={`Base URL for ${entry.data.api_type || "entry " + String(index + 1)}`}
+              />
+              <input
+                type="password"
+                className="input"
+                value={entry.data.api_key ?? ""}
+                onChange={(e) =>
+                  updateEntry(entry.clientKey, "api_key", e.target.value)
+                }
+                autoComplete="new-password"
+                placeholder="Use default key"
+                aria-label={`API key override for ${entry.data.api_type || "entry " + String(index + 1)}`}
+              />
+              <button
+                type="button"
+                onClick={() => removeEntry(entry.clientKey)}
+                className="h-10 px-3 rounded-lg border border-border text-text-muted hover:text-danger hover:border-danger/30 transition-colors shrink-0 cursor-pointer"
+                aria-label={`Remove ${entry.data.api_type || "entry"}`}
+              >
+                Remove
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-text-muted">
+              {hasProviderApiKey(entry.data.api_key)
+                ? "Custom API key override is active for this API type."
+                : "Using the provider default API key."}
+            </p>
           </div>
         ))}
       </div>
@@ -281,61 +306,65 @@ export function ApiKeyField({
   onToggleVisibility,
 }: ApiKeyFieldProps) {
   return (
-    <FormField label="API Key">
+    <FormField label="Default API Key">
       {(id) => (
-        <div className="relative">
-          <input
-            id={id}
-            type={showApiKey ? "text" : "password"}
-            className="input pr-10"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            required
-            autoComplete="new-password"
-            placeholder="sk-..."
-          />
-          <button
-            type="button"
-            onClick={onToggleVisibility}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors p-1"
-            title={showApiKey ? "Hide API Key" : "Show API Key"}
-          >
-            {showApiKey ? (
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                />
-              </svg>
-            ) : (
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                />
-              </svg>
-            )}
-          </button>
+        <div className="space-y-1.5">
+          <div className="relative">
+            <input
+              id={id}
+              type={showApiKey ? "text" : "password"}
+              className="input pr-10"
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              autoComplete="new-password"
+              placeholder="sk-..."
+            />
+            <button
+              type="button"
+              onClick={onToggleVisibility}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors p-1"
+              title={showApiKey ? "Hide API Key" : "Show API Key"}
+            >
+              {showApiKey ? (
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                  />
+                </svg>
+              )}
+            </button>
+          </div>
+          <p className="text-xs text-text-muted">
+            Used by all API types unless a row below provides its own override.
+          </p>
         </div>
       )}
     </FormField>

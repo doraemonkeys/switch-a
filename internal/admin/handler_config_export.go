@@ -63,6 +63,7 @@ type ExportedBackoff struct {
 type ExportedAPIType struct {
 	APIType string `json:"api_type"`
 	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key,omitempty"`
 }
 
 // ExportedGroup represents a group in the export format.
@@ -159,6 +160,7 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 			apiTypes[j] = ExportedAPIType{
 				APIType: at.APIType,
 				BaseURL: at.BaseURL,
+				APIKey:  at.APIKey,
 			}
 		}
 		exportedProviders[i] = ExportedProvider{
@@ -335,6 +337,9 @@ func validateExportedProvider(p *ExportedProvider) []string {
 			// Match the same validation used in CRUD handlers to prevent imports
 			// of providers with malformed URLs that would fail at proxy routing time.
 			warnings = append(warnings, "Provider '"+p.ID+"' has malformed base_url for api_type: "+at.APIType)
+		}
+		if !model.HasAPIKey(p.APIKey) && !model.HasAPIKey(at.APIKey) {
+			warnings = append(warnings, "Provider '"+p.ID+"' has no api_key for api_type: "+at.APIType)
 		}
 	}
 	if p.AuthMode != "" && !IsValidAuthMode(p.AuthMode) {
@@ -538,7 +543,7 @@ func (h *Handler) importProvider(
 	existingProviders map[string]*model.Provider,
 	validGroups map[string]bool,
 ) (int, int, error) {
-	if p.ID == "" || p.Name == "" || p.APIKey == "" {
+	if p.ID == "" || p.Name == "" {
 		return 0, 0, nil
 	}
 
@@ -600,6 +605,7 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 			ProviderID: p.ID,
 			APIType:    at.APIType,
 			BaseURL:    at.BaseURL,
+			APIKey:     model.NormalizeAPIKey(at.APIKey),
 		}
 	}
 
@@ -613,10 +619,10 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		acceptFailover = model.ScopeAny
 	}
 
-	return &model.Provider{
+	provider := &model.Provider{
 		ID:          p.ID,
 		Name:        p.Name,
-		APIKey:      p.APIKey,
+		APIKey:      model.NormalizeAPIKey(p.APIKey),
 		APITypes:    apiTypes,
 		AuthMode:    authMode,
 		GroupID:     groupID,
@@ -634,7 +640,11 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		FailoverScope:  failoverScope,
 		AcceptFailover: acceptFailover,
 		Enabled:        p.Enabled,
-	}, true
+	}
+	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
+		return nil, false
+	}
+	return provider, true
 }
 
 // buildValidGroupsMap builds a map of valid group IDs from request and existing groups.

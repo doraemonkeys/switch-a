@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type { Provider, ProviderInput } from "../../api";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { isValidId } from "../../lib/utils";
+import { normalizeProviderApiKey } from "../../lib/providerApiKey";
 import { CloseIcon } from "../../components/icons/CloseIcon";
 import { PROVIDER_DEFAULTS, FAILOVER_SCOPES } from "../../config/constants";
 
@@ -57,10 +58,11 @@ function deriveFormData(initialData?: Provider): ProviderInput {
   return {
     id: initialData.id,
     name: initialData.name,
-    api_key: initialData.api_key,
+    api_key: normalizeProviderApiKey(initialData.api_key),
     api_types: initialData.api_types.map((t) => ({
       api_type: t.api_type,
       base_url: t.base_url,
+      api_key: normalizeProviderApiKey(t.api_key),
     })),
     auth_mode: initialData.auth_mode || "auto",
     group_id: initialData.group_id,
@@ -146,18 +148,37 @@ export function ProviderModal({
 
     // Filter out entries with empty api_type, then validate remaining entries
     const validApiTypes = formData.api_types.filter((t) => t.api_type.trim());
+    if (validApiTypes.length === 0) {
+      setError("At least one API type is required");
+      return;
+    }
     const missingUrl = validApiTypes.find((t) => !t.base_url.trim());
     if (missingUrl) {
       setError(`Base URL is required for API type "${missingUrl.api_type}"`);
+      return;
+    }
+    const defaultAPIKey = normalizeProviderApiKey(formData.api_key);
+    const missingKey = validApiTypes.find(
+      (t) => !defaultAPIKey && !normalizeProviderApiKey(t.api_key),
+    );
+    if (missingKey) {
+      setError(
+        `API key is required for API type "${missingKey.api_type}". Set a default API key or add an override for that API type.`,
+      );
       return;
     }
 
     setSubmitting(true);
     setError(null);
     try {
+      const normalizedApiTypes = validApiTypes.map((apiType) => ({
+        ...apiType,
+        api_key: normalizeProviderApiKey(apiType.api_key),
+      }));
       await onSubmit({
         ...formData,
-        api_types: validApiTypes,
+        api_key: defaultAPIKey,
+        api_types: normalizedApiTypes,
       });
       onClose();
     } catch (err) {
