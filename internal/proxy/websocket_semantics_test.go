@@ -16,7 +16,7 @@ func TestCodexWebSocketMessageObserver_SnapshotAggregatesModelAndUsage(t *testin
 
 	observer.ObserveClientMessage(websocket.MessageText, []byte(`{"type":"response.create","response":{"model":"gpt-realtime-preview"}}`))
 	observer.ObserveUpstreamMessage(websocket.MessageText, []byte(`{"type":"session.created","event_id":"evt_session","session":{"model":"gpt-realtime-2025-08-28"}}`))
-	observer.ObserveUpstreamMessage(websocket.MessageText, []byte(`{"type":"response.completed","event_id":"evt_resp_1","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_token_details":{"cached_tokens":3}}}}`))
+	observer.ObserveUpstreamMessage(websocket.MessageText, []byte(`{"type":"response.completed","event_id":"evt_resp_1","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3}}}}`))
 	observer.ObserveUpstreamMessage(websocket.MessageText, []byte(`{"type":"response.completed","event_id":"evt_resp_1_dup","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}`))
 	// Transcription events are billed under a separate ASR model and must NOT
 	// be merged into the realtime model usage total.

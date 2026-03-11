@@ -283,6 +283,26 @@ func TestParseTokenUsage_OpenAIRealtime_WithInputTokenDetails(t *testing.T) {
 	}
 }
 
+func TestParseTokenUsage_OpenAIResponses_WithInputTokensDetails(t *testing.T) {
+	data := []byte(`{"id":"resp_123","object":"response","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_tokens_details":{"cached_tokens":9}}}`)
+	usage := parseTokenUsage(data)
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if usage.PromptTokens != 64 {
+		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 16 {
+		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 80 {
+		t.Errorf("expected TotalTokens=80, got %d", usage.TotalTokens)
+	}
+	if usage.CacheReadInputTokens != 9 {
+		t.Errorf("expected CacheReadInputTokens=9, got %d", usage.CacheReadInputTokens)
+	}
+}
+
 // ============================================================
 // parseTokenUsage tests - Claude format
 // ============================================================

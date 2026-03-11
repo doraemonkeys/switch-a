@@ -522,7 +522,7 @@ func TestHandler_ServeHTTP_WebSocket_CapturesObservedModelAndTokenUsage(t *testi
 			t.Errorf("write session.created: %v", err)
 			return
 		}
-		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","event_id":"evt_response","response":{"id":"resp_1","model":"gpt-realtime-2025-08-28","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_token_details":{"cached_tokens":11}}}}`)); err != nil {
+		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","event_id":"evt_response","response":{"id":"resp_1","model":"gpt-realtime-2025-08-28","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_tokens_details":{"cached_tokens":11}}}}`)); err != nil {
 			t.Errorf("write response.completed: %v", err)
 			return
 		}

@@ -196,9 +196,9 @@ type cacheCreationField struct {
 	Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
 }
 
-// tokenDetailsField models OpenAI's nested token detail objects.
-// Responses and Realtime APIs expose cached token counts under nested detail fields
-// instead of the flat Claude-style cache_read_input_tokens field.
+// tokenDetailsField models provider-specific nested token detail objects.
+// OpenAI has shipped both singular and plural input-token detail keys across APIs,
+// so normalization must accept either alias before Request Logs are persisted.
 type tokenDetailsField struct {
 	CachedTokens int64 `json:"cached_tokens"`
 }
@@ -209,8 +209,11 @@ type usageField struct {
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
 	TotalTokens      int64 `json:"total_tokens"`
-	// OpenAI nested token details
+	// OpenAI nested token details.
+	// `input_tokens_details` is the current Responses/Codex shape while
+	// `input_token_details` still appears in some Realtime payloads.
 	PromptTokensDetails *tokenDetailsField `json:"prompt_tokens_details"`
+	InputTokensDetails  *tokenDetailsField `json:"input_tokens_details"`
 	InputTokenDetails   *tokenDetailsField `json:"input_token_details"`
 
 	// Claude basic
@@ -402,13 +405,7 @@ func convertUsageFieldToTokenUsage(u *usageField) *TokenUsage {
 	if total == 0 {
 		total = prompt + completion
 	}
-	cacheRead := u.CacheReadInputTokens
-	if cacheRead == 0 && u.PromptTokensDetails != nil {
-		cacheRead = u.PromptTokensDetails.CachedTokens
-	}
-	if cacheRead == 0 && u.InputTokenDetails != nil {
-		cacheRead = u.InputTokenDetails.CachedTokens
-	}
+	cacheRead := resolveCacheReadFromUsageField(u)
 	// Return only if at least one field has a value
 	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 {
 		return nil
@@ -508,18 +505,47 @@ func lookupNestedUsageInt64(m map[string]interface{}, parentKey, childKey string
 	return lookupUsageInt64(childMap, childKey)
 }
 
+func lookupFirstNestedUsageInt64(m map[string]interface{}, childKey string, parentKeys ...string) int64 {
+	for _, parentKey := range parentKeys {
+		value := lookupNestedUsageInt64(m, parentKey, childKey)
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func resolveCacheReadFromUsageField(u *usageField) int64 {
+	if u == nil {
+		return 0
+	}
+	if u.CacheReadInputTokens != 0 {
+		return u.CacheReadInputTokens
+	}
+	for _, details := range []*tokenDetailsField{
+		u.PromptTokensDetails,
+		u.InputTokensDetails,
+		u.InputTokenDetails,
+	} {
+		if details != nil && details.CachedTokens != 0 {
+			return details.CachedTokens
+		}
+	}
+	return 0
+}
+
 func resolveCacheReadTokens(m map[string]interface{}) int64 {
 	cacheRead := lookupUsageInt64(m, "cache_read_input_tokens", "cachedContentTokenCount")
 	if cacheRead != 0 {
 		return cacheRead
 	}
-
-	cacheRead = lookupNestedUsageInt64(m, "prompt_tokens_details", "cached_tokens")
-	if cacheRead != 0 {
-		return cacheRead
-	}
-
-	return lookupNestedUsageInt64(m, "input_token_details", "cached_tokens")
+	return lookupFirstNestedUsageInt64(
+		m,
+		"cached_tokens",
+		"prompt_tokens_details",
+		"input_tokens_details",
+		"input_token_details",
+	)
 }
 
 func buildCacheCreationFromUsageMap(m map[string]interface{}) *CacheCreation {
