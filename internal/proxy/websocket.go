@@ -67,6 +67,14 @@ type WebSocketResult struct {
 	// When false, the client was never upgraded (received an HTTP error).
 	ConnectSuccess bool
 
+	// HandshakeStatusCode records the upstream HTTP status when the WebSocket upgrade
+	// was rejected before the bidirectional session started.
+	HandshakeStatusCode int
+
+	// HandshakeBodySnippet captures the upstream HTTP error body from a rejected
+	// WebSocket upgrade so logs can show the provider's actual reason.
+	HandshakeBodySnippet string
+
 	// CloseCode is the WebSocket close status code, if available.
 	CloseCode websocket.StatusCode
 
@@ -130,16 +138,24 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 	upstreamConn, resp, err := f.dialer.Dial(ctx, upstreamURL, &websocket.DialOptions{
 		HTTPHeader: extraHeaders,
 	})
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
 	if err != nil {
+		var handshakeStatusCode int
+		var handshakeBodySnippet string
+		if resp != nil {
+			handshakeStatusCode = resp.StatusCode
+			handshakeBodySnippet = drainReadCloserWithSnippet(resp.Body, 0)
+		}
 		// Upstream unreachable — close client connection with a gateway error status.
 		_ = clientConn.Close(websocket.StatusBadGateway, "upstream connection failed")
 		return &WebSocketResult{
-			Duration: time.Since(start),
-			Err:      err,
+			Duration:             time.Since(start),
+			HandshakeStatusCode:  handshakeStatusCode,
+			HandshakeBodySnippet: handshakeBodySnippet,
+			Err:                  err,
 		}, nil
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
 	}
 	upstreamConn.SetReadLimit(wsReadLimit)
 

@@ -207,6 +207,29 @@ func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiTyp
 	return headers
 }
 
+func websocketLogStatusCode(result *WebSocketResult) int {
+	if result == nil {
+		return StatusCodeNoResponse
+	}
+	if result.ConnectSuccess {
+		return http.StatusSwitchingProtocols
+	}
+	if result.HandshakeStatusCode > 0 {
+		return result.HandshakeStatusCode
+	}
+	return StatusCodeNoResponse
+}
+
+func websocketLogErrorMessage(result *WebSocketResult, fallback error) string {
+	if result != nil && result.HandshakeBodySnippet != "" {
+		return result.HandshakeBodySnippet
+	}
+	if fallback != nil {
+		return fallback.Error()
+	}
+	return ""
+}
+
 // logWebSocketRequest logs a WebSocket connection lifecycle event asynchronously.
 func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provider *model.Provider, isSticky bool, result *WebSocketResult, err error, latency time.Duration) {
 	log := &model.RequestLog{
@@ -215,7 +238,7 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 		Model:           info.Model,
 		ClientIP:        info.ClientIP,
 		UserID:          info.UserID,
-		StatusCode:      StatusCodeNoResponse,
+		StatusCode:      websocketLogStatusCode(result),
 		LatencyMs:       latency.Milliseconds(),
 		IsWebSocket:     true,
 		IsSticky:        isSticky,
@@ -232,14 +255,11 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 
 	if result != nil && result.ConnectSuccess {
 		log.Success = true
-		log.StatusCode = http.StatusSwitchingProtocols
 		log.ResponseBytes = result.BytesUpstreamToClient
 		log.RequestBytes = result.BytesClientToUpstream
 	}
 
-	if err != nil {
-		log.ErrorMsg = err.Error()
-	}
+	log.ErrorMsg = websocketLogErrorMessage(result, err)
 	if result != nil && result.TokenUsage != nil {
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
 			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()

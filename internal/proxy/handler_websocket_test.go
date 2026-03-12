@@ -249,6 +249,52 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 	}
 }
 
+func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	const handshakeBody = `{"error":{"message":"Account quota exhausted","type":"billing_error"}}`
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-4o-realtime",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	result := &WebSocketResult{
+		HandshakeStatusCode:  http.StatusPaymentRequired,
+		HandshakeBodySnippet: handshakeBody,
+		Err:                  errors.New("failed to WebSocket dial: expected handshake response status code 101 but got 402"),
+	}
+
+	handler.logWebSocketRequest("req-ws-handshake", info, &model.Provider{ID: "ws-p1"}, false, result, result.Err, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusPaymentRequired)
+	}
+	if log.ErrorMsg != handshakeBody {
+		t.Fatalf("ErrorMsg = %q, want %q", log.ErrorMsg, handshakeBody)
+	}
+	if log.Success {
+		t.Fatal("expected Success=false for failed handshake")
+	}
+	if !log.IsWebSocket {
+		t.Fatal("expected IsWebSocket=true")
+	}
+}
+
 // TestHandler_ServeHTTP_WebSocket_NoProvider tests that a 503 is returned
 // when no provider is available for WebSocket.
 func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {

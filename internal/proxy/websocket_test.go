@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -284,6 +285,64 @@ func TestWebSocketForwarder_Forward_UpstreamDialFailure(t *testing.T) {
 		if closeErr.Code != websocket.StatusBadGateway {
 			t.Errorf("close code = %d, want StatusBadGateway (%d)", closeErr.Code, websocket.StatusBadGateway)
 		}
+	}
+}
+
+func TestWebSocketForwarder_Forward_HandshakeFailureCapturesUpstreamResponse(t *testing.T) {
+	t.Parallel()
+
+	const handshakeBody = `{"error":{"message":"Account quota exhausted","type":"billing_error"}}`
+	dialErr := errors.New("failed to WebSocket dial: expected handshake response status code 101 but got 402")
+	doneCh := make(chan *WebSocketResult, 1)
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Dialer: &mockDialer{
+			dialFunc: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+				return nil, &http.Response{
+					StatusCode: http.StatusPaymentRequired,
+					Body:       io.NopCloser(strings.NewReader(handshakeBody)),
+				}, dialErr
+			},
+		},
+		Logger: zaptest.NewLogger(t),
+	})
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result, _ := fwd.Forward(r.Context(), w, r, "ws://provider.invalid/realtime", nil)
+		doneCh <- result
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer), nil)
+	if err == nil {
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		_, _, _ = conn.Read(ctx)
+	} else {
+		t.Logf("client dial failed (acceptable race): %v", err)
+	}
+
+	select {
+	case result := <-doneCh:
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if result.ConnectSuccess {
+			t.Fatal("expected ConnectSuccess=false when upstream rejects handshake")
+		}
+		if result.HandshakeStatusCode != http.StatusPaymentRequired {
+			t.Fatalf("HandshakeStatusCode = %d, want %d", result.HandshakeStatusCode, http.StatusPaymentRequired)
+		}
+		if result.HandshakeBodySnippet != handshakeBody {
+			t.Fatalf("HandshakeBodySnippet = %q, want %q", result.HandshakeBodySnippet, handshakeBody)
+		}
+		if !errors.Is(result.Err, dialErr) {
+			t.Fatalf("Err = %v, want dialErr", result.Err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Forward did not return a result")
 	}
 }
 

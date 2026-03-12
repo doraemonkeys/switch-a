@@ -138,6 +138,35 @@ func (r *UpstreamResponse) Drain() {
 // maxSnippetBytes is the default size for response body snippets captured during failover.
 const maxSnippetBytes = 512
 
+func normalizeSnippetLimit(maxSnippet int) int {
+	if maxSnippet <= 0 {
+		return maxSnippetBytes
+	}
+	return maxSnippet
+}
+
+// drainReadCloserWithSnippet captures the leading bytes from an HTTP response body,
+// then drains a bounded amount of the remainder before closing. Sharing this helper
+// keeps diagnostics consistent between plain HTTP failures and WebSocket handshake
+// rejections, both of which surface provider errors as HTTP responses.
+func drainReadCloserWithSnippet(body io.ReadCloser, maxSnippet int) string {
+	if body == nil {
+		return ""
+	}
+	maxSnippet = normalizeSnippetLimit(maxSnippet)
+
+	snippet := make([]byte, maxSnippet)
+	n, _ := io.ReadFull(body, snippet)
+
+	remaining := maxDrainBytes - int64(n)
+	if remaining > 0 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(body, remaining))
+	}
+	_ = body.Close()
+
+	return string(snippet[:n])
+}
+
 // limitedBuffer captures up to `limit` bytes, discarding excess.
 // Used by TeeBody to capture response snippets while forwarding to client.
 type limitedBuffer struct {
@@ -192,25 +221,7 @@ func (t *teeReadCloser) Close() error {
 //
 // Returns the captured snippet as a string. If maxSnippet is 0, uses default size.
 func (r *UpstreamResponse) DrainWithSnippet(maxSnippet int) string {
-	if r.Body == nil {
-		return ""
-	}
-	if maxSnippet <= 0 {
-		maxSnippet = maxSnippetBytes
-	}
-
-	// Read first maxSnippet bytes for the snippet
-	snippet := make([]byte, maxSnippet)
-	n, _ := io.ReadFull(r.Body, snippet)
-
-	// Drain remaining content (up to maxDrainBytes - already read bytes) to enable connection reuse
-	remaining := maxDrainBytes - int64(n)
-	if remaining > 0 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, remaining))
-	}
-	_ = r.Body.Close()
-
-	return string(snippet[:n])
+	return drainReadCloserWithSnippet(r.Body, maxSnippet)
 }
 
 // TeeBody wraps the response body with a TeeReader that captures the first maxBytes
@@ -223,9 +234,7 @@ func (r *UpstreamResponse) TeeBody(maxBytes int) *limitedBuffer {
 	if r.Body == nil {
 		return nil
 	}
-	if maxBytes <= 0 {
-		maxBytes = maxSnippetBytes
-	}
+	maxBytes = normalizeSnippetLimit(maxBytes)
 	lb := &limitedBuffer{limit: maxBytes}
 	r.Body = &teeReadCloser{
 		original: r.Body,
