@@ -295,6 +295,58 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	}
 }
 
+func TestHandler_logWebSocketRequest_UsesSemanticUpstreamError(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	const errorPayload = `{"error":{"message":"Model 'gpt-5.4' is not allowed","type":"model_not_allowed"},"status":403,"type":"error"}`
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-5.4",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	result := &WebSocketResult{
+		ConnectSuccess: true,
+		CloseCode:      websocket.StatusNoStatusRcvd,
+		Err:            errors.New("failed to get reader: received close frame: status = StatusNoStatusRcvd and reason = \"\""),
+		UpstreamError: &WebSocketUpstreamError{
+			EventType:  "model_not_allowed",
+			StatusCode: http.StatusForbidden,
+			Message:    "Model 'gpt-5.4' is not allowed",
+			Raw:        errorPayload,
+		},
+	}
+
+	handler.logWebSocketRequest("req-ws-semantic-error", info, &model.Provider{ID: "ws-p1"}, false, result, result.Err, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.StatusCode != http.StatusForbidden {
+		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusForbidden)
+	}
+	if log.ErrorMsg != errorPayload {
+		t.Fatalf("ErrorMsg = %q, want %q", log.ErrorMsg, errorPayload)
+	}
+	if log.Success {
+		t.Fatal("expected Success=false for semantic upstream error")
+	}
+	if !log.IsWebSocket {
+		t.Fatal("expected IsWebSocket=true")
+	}
+}
+
 // TestHandler_ServeHTTP_WebSocket_NoProvider tests that a 503 is returned
 // when no provider is available for WebSocket.
 func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {

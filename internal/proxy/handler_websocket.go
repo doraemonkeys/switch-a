@@ -211,11 +211,17 @@ func websocketLogStatusCode(result *WebSocketResult) int {
 	if result == nil {
 		return StatusCodeNoResponse
 	}
+	if !result.ConnectSuccess {
+		if result.HandshakeStatusCode > 0 {
+			return result.HandshakeStatusCode
+		}
+		return StatusCodeNoResponse
+	}
+	if result.UpstreamError != nil && result.UpstreamError.StatusCode > 0 {
+		return result.UpstreamError.StatusCode
+	}
 	if result.ConnectSuccess {
 		return http.StatusSwitchingProtocols
-	}
-	if result.HandshakeStatusCode > 0 {
-		return result.HandshakeStatusCode
 	}
 	return StatusCodeNoResponse
 }
@@ -224,10 +230,25 @@ func websocketLogErrorMessage(result *WebSocketResult, fallback error) string {
 	if result != nil && result.HandshakeBodySnippet != "" {
 		return result.HandshakeBodySnippet
 	}
+	if result != nil && result.UpstreamError != nil {
+		if result.UpstreamError.Raw != "" {
+			return result.UpstreamError.Raw
+		}
+		if result.UpstreamError.Message != "" {
+			return result.UpstreamError.Message
+		}
+	}
 	if fallback != nil {
 		return fallback.Error()
 	}
 	return ""
+}
+
+func websocketLogSuccess(result *WebSocketResult) bool {
+	if result == nil || !result.ConnectSuccess {
+		return false
+	}
+	return result.Err == nil && result.UpstreamError == nil
 }
 
 // logWebSocketRequest logs a WebSocket connection lifecycle event asynchronously.
@@ -254,7 +275,7 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 	}
 
 	if result != nil && result.ConnectSuccess {
-		log.Success = true
+		log.Success = websocketLogSuccess(result)
 		log.ResponseBytes = result.BytesUpstreamToClient
 		log.RequestBytes = result.BytesClientToUpstream
 	}

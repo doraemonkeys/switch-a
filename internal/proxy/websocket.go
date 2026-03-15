@@ -96,6 +96,11 @@ type WebSocketResult struct {
 
 	// TokenUsage aggregates billable usage emitted during the WebSocket session.
 	TokenUsage *TokenUsage
+
+	// UpstreamError captures an error event emitted after the WebSocket upgrade
+	// succeeded. This preserves the provider's semantic failure when the transport
+	// itself only reports a generic close frame.
+	UpstreamError *WebSocketUpstreamError
 }
 
 // Forward accepts a client WebSocket upgrade, dials the upstream, and relays messages
@@ -167,6 +172,7 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 		observation := observer.Snapshot()
 		result.Model = observation.Model
 		result.TokenUsage = observation.TokenUsage
+		result.UpstreamError = observation.UpstreamError
 	}
 	return result, nil
 }
