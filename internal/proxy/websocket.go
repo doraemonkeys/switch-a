@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -103,6 +104,17 @@ type WebSocketResult struct {
 	UpstreamError *WebSocketUpstreamError
 }
 
+type webSocketRelayResult struct {
+	bytes      int64
+	err        error
+	errorOrder uint32
+}
+
+type webSocketRelayOutcome struct {
+	closeCode websocket.StatusCode
+	err       error
+}
+
 // Forward accepts a client WebSocket upgrade, dials the upstream, and relays messages
 // bidirectionally until either side closes or the context is cancelled.
 //
@@ -140,8 +152,13 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 	clientConn.SetReadLimit(wsReadLimit)
 
 	// Dial the upstream WebSocket endpoint.
+	dialHeaders := extraHeaders.Clone()
+	if dialHeaders == nil {
+		dialHeaders = make(http.Header)
+	}
+	EnsureExplicitUserAgentHeader(dialHeaders)
 	upstreamConn, resp, err := f.dialer.Dial(ctx, upstreamURL, &websocket.DialOptions{
-		HTTPHeader: extraHeaders,
+		HTTPHeader: dialHeaders,
 	})
 	if err != nil {
 		var handshakeStatusCode int
@@ -184,12 +201,10 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	defer cancel()
 
 	var (
-		clientToUpstreamBytes atomic.Int64
-		upstreamToClientBytes atomic.Int64
-		wg                    sync.WaitGroup
-		// First error wins: the relay direction that fails first determines the close code.
-		once     sync.Once
-		firstErr error
+		clientToUpstream webSocketRelayResult
+		upstreamToClient webSocketRelayResult
+		wg               sync.WaitGroup
+		errorOrder       atomic.Uint32
 	)
 
 	var observeClient func(websocket.MessageType, []byte)
@@ -205,9 +220,8 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	go func() {
 		defer wg.Done()
 		n, err := relayMessages(ctx, upstreamConn, clientConn, observeClient)
-		clientToUpstreamBytes.Store(n)
+		clientToUpstream = newWebSocketRelayResult(n, err, &errorOrder)
 		if err != nil {
-			once.Do(func() { firstErr = err })
 			cancel()
 		}
 	}()
@@ -216,48 +230,36 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	go func() {
 		defer wg.Done()
 		n, err := relayMessages(ctx, clientConn, upstreamConn, observeUpstream)
-		upstreamToClientBytes.Store(n)
+		upstreamToClient = newWebSocketRelayResult(n, err, &errorOrder)
 		if err != nil {
-			once.Do(func() { firstErr = err })
 			cancel()
 		}
 	}()
 
 	wg.Wait()
 
-	// Determine close code from the first error.
-	closeCode := websocket.StatusNormalClosure
-	if firstErr != nil {
-		closeCode = extractCloseCode(firstErr)
-	}
+	outcome := reduceWebSocketRelayErrors(clientToUpstream, upstreamToClient)
 
 	// Best-effort clean close: propagate the close code to both peers.
 	// coder/websocket's Close is non-blocking — it writes the close frame
 	// and returns immediately. No need to wait for close handshake completion.
 	closeMsg := ""
-	if firstErr != nil {
-		closeMsg = firstErr.Error()
+	if outcome.err != nil {
+		closeMsg = outcome.err.Error()
 		// Truncate to a valid UTF-8 boundary to avoid splitting multi-byte codepoints.
 		// RFC 6455 §5.5 limits close reason to 125 bytes.
 		closeMsg = truncateUTF8(closeMsg, 123)
 	}
+	propagatedCloseCode := sanitizeWebSocketCloseCode(outcome.closeCode, outcome.err)
 
-	_ = clientConn.Close(closeCode, closeMsg)
-	_ = upstreamConn.Close(closeCode, closeMsg)
-
-	// Normalize clean closes: a normal/going-away close is not an error.
-	// Without this, the caller's Err field would contain a CloseError for every
-	// orderly disconnect, polluting logs and health metrics.
-	var resultErr error
-	if firstErr != nil && !isNormalClose(firstErr) {
-		resultErr = firstErr
-	}
+	_ = clientConn.Close(propagatedCloseCode, closeMsg)
+	_ = upstreamConn.Close(propagatedCloseCode, closeMsg)
 
 	return &WebSocketResult{
-		CloseCode:             closeCode,
-		BytesClientToUpstream: clientToUpstreamBytes.Load(),
-		BytesUpstreamToClient: upstreamToClientBytes.Load(),
-		Err:                   resultErr,
+		CloseCode:             outcome.closeCode,
+		BytesClientToUpstream: clientToUpstream.bytes,
+		BytesUpstreamToClient: upstreamToClient.bytes,
+		Err:                   outcome.err,
 	}
 }
 
@@ -305,6 +307,82 @@ func isNormalClose(err error) bool {
 	}
 	return closeErr.Code == websocket.StatusNormalClosure ||
 		closeErr.Code == websocket.StatusGoingAway
+}
+
+func isCloseWithoutStatus(err error) bool {
+	return websocket.CloseStatus(err) == websocket.StatusNoStatusRcvd
+}
+
+func isUnexpectedPeerDisconnect(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || isCloseWithoutStatus(err)
+}
+
+func newWebSocketRelayResult(bytes int64, err error, errorOrder *atomic.Uint32) webSocketRelayResult {
+	result := webSocketRelayResult{
+		bytes: bytes,
+		err:   err,
+	}
+	if err != nil {
+		// Capture order before canceling the sibling relay leg so reduction can preserve
+		// the actual trigger instead of whichever struct happens to be examined first.
+		result.errorOrder = errorOrder.Add(1)
+	}
+	return result
+}
+
+func reduceWebSocketRelayErrors(clientToUpstream, upstreamToClient webSocketRelayResult) webSocketRelayOutcome {
+	primary, secondary := orderWebSocketRelayResults(clientToUpstream, upstreamToClient)
+	return reduceOrderedWebSocketRelayResults(primary, secondary)
+}
+
+func orderWebSocketRelayResults(first, second webSocketRelayResult) (webSocketRelayResult, webSocketRelayResult) {
+	switch {
+	case first.errorOrder == 0:
+		return second, first
+	case second.errorOrder == 0:
+		return first, second
+	case first.errorOrder <= second.errorOrder:
+		return first, second
+	default:
+		return second, first
+	}
+}
+
+func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult) webSocketRelayOutcome {
+	for _, candidate := range []webSocketRelayResult{primary, secondary} {
+		if candidate.err == nil {
+			continue
+		}
+		if isNormalClose(candidate.err) {
+			return webSocketRelayOutcome{
+				closeCode: extractCloseCode(candidate.err),
+			}
+		}
+		if isUnexpectedPeerDisconnect(candidate.err) {
+			return webSocketRelayOutcome{
+				closeCode: websocket.StatusNoStatusRcvd,
+			}
+		}
+		return webSocketRelayOutcome{
+			closeCode: extractCloseCode(candidate.err),
+			err:       candidate.err,
+		}
+	}
+	return webSocketRelayOutcome{
+		closeCode: websocket.StatusNormalClosure,
+	}
+}
+
+func sanitizeWebSocketCloseCode(code websocket.StatusCode, sessionErr error) websocket.StatusCode {
+	switch code {
+	case websocket.StatusNoStatusRcvd, websocket.StatusAbnormalClosure, websocket.StatusTLSHandshake:
+		if sessionErr == nil {
+			return websocket.StatusNormalClosure
+		}
+		return websocket.StatusInternalError
+	default:
+		return code
+	}
 }
 
 // truncateUTF8 truncates s to at most maxBytes without splitting multi-byte codepoints.

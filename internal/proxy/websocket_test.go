@@ -428,6 +428,47 @@ func TestWebSocketForwarder_Forward_AuthHeadersPassed(t *testing.T) {
 	if captured.Get("OpenAI-Beta") != "realtime=v1" {
 		t.Errorf("expected OpenAI-Beta header, got %q", captured.Get("OpenAI-Beta"))
 	}
+	if got := captured.Get(headerUserAgent); got != "" {
+		t.Errorf("expected empty User-Agent, got %q", got)
+	}
+}
+
+func TestWebSocketForwarder_Forward_PreservesExplicitUserAgent(t *testing.T) {
+	t.Parallel()
+
+	var captured http.Header
+	var mu sync.Mutex
+	upstream := newHeaderCapturingWSServer(t, &captured, &mu)
+	defer upstream.Close()
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers := http.Header{}
+		headers.Set(headerUserAgent, "switch-a-proxy/1.0")
+		fwd.Forward(r.Context(), w, r, wsURL(upstream), headers)
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if got := captured.Get(headerUserAgent); got != "switch-a-proxy/1.0" {
+		t.Fatalf("User-Agent = %q, want %q", got, "switch-a-proxy/1.0")
+	}
 }
 
 func TestWebSocketForwarder_Forward_ContextCancel(t *testing.T) {
@@ -478,8 +519,110 @@ func TestWebSocketForwarder_Forward_ContextCancel(t *testing.T) {
 		if !result.ConnectSuccess {
 			t.Error("expected ConnectSuccess=true (connection was established before cancel)")
 		}
+		if !errors.Is(result.Err, context.Canceled) {
+			t.Errorf("expected context cancellation to remain observable, got: %v", result.Err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Forward did not return after context cancellation")
+	}
+}
+
+func TestReduceWebSocketRelayErrors_PeerEOFClearsInternalCancellation(t *testing.T) {
+	t.Parallel()
+
+	outcome := reduceWebSocketRelayErrors(
+		webSocketRelayResult{err: io.EOF, errorOrder: 1},
+		webSocketRelayResult{err: context.Canceled, errorOrder: 2},
+	)
+	if outcome.err != nil {
+		t.Fatalf("expected err=nil for peer EOF plus relay cancellation, got %v", outcome.err)
+	}
+	if outcome.closeCode != websocket.StatusNoStatusRcvd {
+		t.Fatalf("CloseCode = %d, want %d", outcome.closeCode, websocket.StatusNoStatusRcvd)
+	}
+}
+
+func TestReduceWebSocketRelayErrors_PreservesCallerCancellationWithoutPeerDisconnect(t *testing.T) {
+	t.Parallel()
+
+	outcome := reduceWebSocketRelayErrors(
+		webSocketRelayResult{err: context.Canceled, errorOrder: 1},
+		webSocketRelayResult{err: context.Canceled, errorOrder: 2},
+	)
+	if !errors.Is(outcome.err, context.Canceled) {
+		t.Fatalf("expected context cancellation to remain a failure, got %v", outcome.err)
+	}
+	if outcome.closeCode != websocket.StatusNormalClosure {
+		t.Fatalf("CloseCode = %d, want %d", outcome.closeCode, websocket.StatusNormalClosure)
+	}
+}
+
+func TestReduceWebSocketRelayErrors_PrefersActualFirstFailureOverSiblingCancellation(t *testing.T) {
+	t.Parallel()
+
+	upstreamClose := websocket.CloseError{
+		Code:   websocket.StatusPolicyViolation,
+		Reason: "blocked",
+	}
+	outcome := reduceWebSocketRelayErrors(
+		webSocketRelayResult{err: context.Canceled, errorOrder: 2},
+		webSocketRelayResult{err: upstreamClose, errorOrder: 1},
+	)
+	if websocket.CloseStatus(outcome.err) != websocket.StatusPolicyViolation {
+		t.Fatalf("CloseStatus(outcome.err) = %d, want %d", websocket.CloseStatus(outcome.err), websocket.StatusPolicyViolation)
+	}
+	if outcome.closeCode != websocket.StatusPolicyViolation {
+		t.Fatalf("CloseCode = %d, want %d", outcome.closeCode, websocket.StatusPolicyViolation)
+	}
+}
+
+func TestWebSocketForwarder_Forward_ClientCloseNowNotAnError(t *testing.T) {
+	t.Parallel()
+
+	upstream := newEchoWSServer(t)
+	defer upstream.Close()
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	doneCh := make(chan *WebSocketResult, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result, _ := fwd.Forward(r.Context(), w, r, wsURL(upstream), nil)
+		doneCh <- result
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	if err := clientConn.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, err := clientConn.Read(ctx); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if err := clientConn.CloseNow(); err != nil {
+		t.Fatalf("CloseNow: %v", err)
+	}
+
+	select {
+	case result := <-doneCh:
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if !result.ConnectSuccess {
+			t.Fatal("expected ConnectSuccess=true")
+		}
+		if result.Err != nil {
+			t.Fatalf("expected Err=nil for CloseNow teardown after successful traffic, got %v", result.Err)
+		}
+		if result.CloseCode != websocket.StatusNoStatusRcvd {
+			t.Fatalf("CloseCode = %d, want %d", result.CloseCode, websocket.StatusNoStatusRcvd)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Forward did not return after CloseNow")
 	}
 }
 
@@ -643,6 +786,52 @@ func TestWebSocketForwarder_Forward_NormalCloseNoError(t *testing.T) {
 		}
 		if result.CloseCode != websocket.StatusNormalClosure {
 			t.Errorf("CloseCode = %d, want %d", result.CloseCode, websocket.StatusNormalClosure)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Forward did not return")
+	}
+}
+
+func TestWebSocketForwarder_Forward_NonCleanClosePreservesFirstError(t *testing.T) {
+	t.Parallel()
+
+	upstream := newCloseAfterNWSServer(t, 1, websocket.StatusPolicyViolation, "blocked")
+	defer upstream.Close()
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	doneCh := make(chan *WebSocketResult, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result, _ := fwd.Forward(r.Context(), w, r, wsURL(upstream), nil)
+		doneCh <- result
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	if err := clientConn.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, err := clientConn.Read(ctx); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+
+	clientConn.Read(ctx) //nolint:errcheck
+
+	select {
+	case result := <-doneCh:
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if websocket.CloseStatus(result.Err) != websocket.StatusPolicyViolation {
+			t.Fatalf("CloseStatus(result.Err) = %d, want %d (err=%v)", websocket.CloseStatus(result.Err), websocket.StatusPolicyViolation, result.Err)
+		}
+		if result.CloseCode != websocket.StatusPolicyViolation {
+			t.Fatalf("CloseCode = %d, want %d", result.CloseCode, websocket.StatusPolicyViolation)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Forward did not return")

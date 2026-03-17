@@ -576,6 +576,7 @@ func BuildUpstreamRequest(ctx context.Context, method, upstreamURL string, body 
 
 	// Copy filtered headers
 	CopyHeaders(req.Header, originalReq.Header)
+	EnsureExplicitUserAgentHeader(req.Header)
 
 	// Set Host header to upstream host
 	req.Host = req.URL.Host

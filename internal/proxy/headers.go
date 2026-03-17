@@ -10,6 +10,8 @@ const (
 	AuthModeAuto   = "auto"
 	AuthModeBearer = "bearer"
 	AuthModeXAPI   = "x-api-key"
+
+	headerUserAgent = "User-Agent"
 )
 
 // hopByHopHeaders are HTTP headers that should not be forwarded.
@@ -43,6 +45,17 @@ func CopyHeaders(dst, src http.Header) {
 			dst.Add(key, value)
 		}
 	}
+}
+
+// EnsureExplicitUserAgentHeader preserves the caller's omission of User-Agent.
+// Go's HTTP client injects "Go-http-client/1.1" when the header is absent entirely,
+// so proxies must write an explicit empty value to keep "no User-Agent" stable
+// across outbound HTTP and WebSocket handshakes.
+func EnsureExplicitUserAgentHeader(headers http.Header) {
+	if len(headers.Values(headerUserAgent)) > 0 {
+		return
+	}
+	headers.Set(headerUserAgent, "")
 }
 
 // isAuthHeader checks if the header is an authentication header.

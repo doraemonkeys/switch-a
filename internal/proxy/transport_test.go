@@ -1129,6 +1129,12 @@ func TestBuildUpstreamRequest(t *testing.T) {
 		if upstreamReq.Header.Get("Authorization") != "" {
 			t.Errorf("Authorization should be filtered, got %q", upstreamReq.Header.Get("Authorization"))
 		}
+		if got := upstreamReq.Header.Get(headerUserAgent); got != "" {
+			t.Errorf("User-Agent = %q, want empty", got)
+		}
+		if values := upstreamReq.Header.Values(headerUserAgent); len(values) != 1 || values[0] != "" {
+			t.Errorf("User-Agent values = %#v, want explicit empty value", values)
+		}
 
 		// Check body
 		bodyBytes, _ := io.ReadAll(upstreamReq.Body)
@@ -1154,5 +1160,47 @@ func TestBuildUpstreamRequest(t *testing.T) {
 				t.Errorf("expected nil or empty body, got %q", string(body))
 			}
 		}
+		if values := upstreamReq.Header.Values(headerUserAgent); len(values) != 1 || values[0] != "" {
+			t.Errorf("User-Agent values = %#v, want explicit empty value", values)
+		}
 	})
+
+	t.Run("preserves explicit user agent", func(t *testing.T) {
+		origReq := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		origReq.Header.Set(headerUserAgent, "switch-a-client/1.0")
+
+		upstreamReq, err := BuildUpstreamRequest(context.Background(), http.MethodGet, "https://api.example.com/v1/models", nil, origReq)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := upstreamReq.Header.Get(headerUserAgent); got != "switch-a-client/1.0" {
+			t.Errorf("User-Agent = %q, want %q", got, "switch-a-client/1.0")
+		}
+	})
+}
+
+func TestBuildUpstreamRequest_SuppressesDefaultUserAgentOnWire(t *testing.T) {
+	var capturedUserAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedUserAgent = r.Header.Get(headerUserAgent)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	origReq := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	upstreamReq, err := BuildUpstreamRequest(context.Background(), http.MethodGet, server.URL, nil, origReq)
+	if err != nil {
+		t.Fatalf("BuildUpstreamRequest: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(upstreamReq)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if capturedUserAgent != "" {
+		t.Fatalf("wire User-Agent = %q, want empty", capturedUserAgent)
+	}
 }

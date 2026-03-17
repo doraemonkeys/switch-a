@@ -626,6 +626,56 @@ func TestHandler_ServeHTTP_WebSocket_SuccessLogHasNoError(t *testing.T) {
 	}
 }
 
+func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
+	upstream := newEchoWSServer(t)
+	defer upstream.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID: "ws-p1", Name: "WS Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
+		},
+	}
+
+	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, err := conn.Read(ctx); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if err := conn.CloseNow(); err != nil {
+		t.Fatalf("CloseNow: %v", err)
+	}
+
+	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.ErrorMsg != "" {
+		t.Errorf("expected empty ErrorMsg for CloseNow teardown, got %q", log.ErrorMsg)
+	}
+	if !log.Success {
+		t.Errorf("expected log.Success=true, got false (status=%d)", log.StatusCode)
+	}
+	if log.StatusCode != http.StatusSwitchingProtocols {
+		t.Errorf("StatusCode = %d, want %d", log.StatusCode, http.StatusSwitchingProtocols)
+	}
+}
+
 func TestHandler_ServeHTTP_WebSocket_CapturesObservedModelAndTokenUsage(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
