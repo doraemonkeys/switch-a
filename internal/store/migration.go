@@ -13,6 +13,8 @@ import (
 const (
 	legacyStickyEnabledConfigKey = "sticky_enabled"
 	stickyModeConfigKey          = "sticky_mode"
+	legacyMaxRetriesConfigKey    = "max_retries"
+	globalMaxAttemptsConfigKey   = "global_max_attempts"
 )
 
 // migrateBaseURLToAPIType moves base_url from the providers table to provider_api_types.
@@ -90,6 +92,33 @@ func migrateStickyConfig(db *gorm.DB) error {
 	if err := db.Where("key = ?", legacyStickyEnabledConfigKey).
 		Delete(&model.RuntimeConfig{}).Error; err != nil {
 		return fmt.Errorf("delete %s: %w", legacyStickyEnabledConfigKey, err)
+	}
+
+	return nil
+}
+
+// migrateGlobalMaxAttemptsConfig renames the legacy max_retries runtime setting.
+// The runtime only reads global_max_attempts, so leaving the stale key behind
+// makes the admin surface and the active config diverge.
+func migrateGlobalMaxAttemptsConfig(db *gorm.DB) error {
+	var cfg model.RuntimeConfig
+	err := db.First(&cfg, "key = ?", legacyMaxRetriesConfigKey).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", legacyMaxRetriesConfigKey, err)
+	}
+
+	result := db.Where("key = ?", globalMaxAttemptsConfigKey).
+		FirstOrCreate(&model.RuntimeConfig{Key: globalMaxAttemptsConfigKey, Value: cfg.Value})
+	if result.Error != nil {
+		return fmt.Errorf("upsert %s: %w", globalMaxAttemptsConfigKey, result.Error)
+	}
+
+	if err := db.Where("key = ?", legacyMaxRetriesConfigKey).
+		Delete(&model.RuntimeConfig{}).Error; err != nil {
+		return fmt.Errorf("delete %s: %w", legacyMaxRetriesConfigKey, err)
 	}
 
 	return nil

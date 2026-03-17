@@ -134,6 +134,50 @@ func TestMigrateStickyConfig_ExistingStickyModeNotOverwritten(t *testing.T) {
 	assertConfigMissing(t, db, legacyStickyEnabledConfigKey)
 }
 
+func TestMigrateGlobalMaxAttemptsConfig_RenamesLegacyKey(t *testing.T) {
+	t.Parallel()
+
+	db := setupMigrationTestDB(t)
+	seedConfig(t, db, legacyMaxRetriesConfigKey, "7")
+
+	if err := migrateGlobalMaxAttemptsConfig(db); err != nil {
+		t.Fatalf("migrateGlobalMaxAttemptsConfig error: %v", err)
+	}
+
+	if got := readConfigValue(t, db, globalMaxAttemptsConfigKey); got != "7" {
+		t.Fatalf("global_max_attempts = %q, want %q", got, "7")
+	}
+	assertConfigMissing(t, db, legacyMaxRetriesConfigKey)
+}
+
+func TestMigrateGlobalMaxAttemptsConfig_NoLegacyKey(t *testing.T) {
+	t.Parallel()
+
+	db := setupMigrationTestDB(t)
+	if err := migrateGlobalMaxAttemptsConfig(db); err != nil {
+		t.Fatalf("migrateGlobalMaxAttemptsConfig error: %v", err)
+	}
+
+	assertConfigMissing(t, db, globalMaxAttemptsConfigKey)
+}
+
+func TestMigrateGlobalMaxAttemptsConfig_ExistingCurrentKeyNotOverwritten(t *testing.T) {
+	t.Parallel()
+
+	db := setupMigrationTestDB(t)
+	seedConfig(t, db, legacyMaxRetriesConfigKey, "7")
+	seedConfig(t, db, globalMaxAttemptsConfigKey, "4")
+
+	if err := migrateGlobalMaxAttemptsConfig(db); err != nil {
+		t.Fatalf("migrateGlobalMaxAttemptsConfig error: %v", err)
+	}
+
+	if got := readConfigValue(t, db, globalMaxAttemptsConfigKey); got != "4" {
+		t.Fatalf("global_max_attempts = %q, want %q", got, "4")
+	}
+	assertConfigMissing(t, db, legacyMaxRetriesConfigKey)
+}
+
 // setupWebSocketMigrationDB creates a DB with the legacy is_web_socket column
 // (simulating GORM auto-naming before the explicit column tag was added).
 func setupWebSocketMigrationDB(t *testing.T) *gorm.DB {

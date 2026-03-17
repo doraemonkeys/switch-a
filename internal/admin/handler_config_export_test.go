@@ -127,6 +127,72 @@ func TestExportConfig(t *testing.T) {
 	}
 }
 
+func TestExportConfig_NormalizesLegacySettings(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.config["sticky_enabled"] = "false"
+	st.config["max_retries"] = "7"
+	st.config["invalid_key"] = "ignored"
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	w := httptest.NewRecorder()
+
+	h.ExportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var export ExportedConfig
+	if err := json.NewDecoder(w.Body).Decode(&export); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if got := export.Settings["sticky_mode"]; got != "off" {
+		t.Fatalf("sticky_mode = %q, want %q", got, "off")
+	}
+	if got := export.Settings["global_max_attempts"]; got != "7" {
+		t.Fatalf("global_max_attempts = %q, want %q", got, "7")
+	}
+	if _, exists := export.Settings["sticky_enabled"]; exists {
+		t.Fatal("sticky_enabled should not be exported once normalized")
+	}
+	if _, exists := export.Settings["max_retries"]; exists {
+		t.Fatal("max_retries should not be exported once normalized")
+	}
+	if _, exists := export.Settings["invalid_key"]; exists {
+		t.Fatal("invalid_key should not be exported")
+	}
+}
+
+func TestExportConfig_SkipsInvalidSettingValues(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.config["global_max_attempts"] = "-1"
+	st.config["max_retries"] = "-2"
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	w := httptest.NewRecorder()
+
+	h.ExportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var export ExportedConfig
+	if err := json.NewDecoder(w.Body).Decode(&export); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if _, exists := export.Settings["global_max_attempts"]; exists {
+		t.Fatal("global_max_attempts should be omitted when its value is invalid")
+	}
+	if _, exists := export.Settings["max_retries"]; exists {
+		t.Fatal("max_retries should not be exported once normalized")
+	}
+}
+
 func TestExportConfig_ProviderListError(t *testing.T) {
 	h, st, _ := testHandler()
 	st.listErr = errors.New("database error")
@@ -339,6 +405,230 @@ func TestImportConfig_MigratesLegacyStickyEnabled(t *testing.T) {
 	}
 	if _, exists := st.config["sticky_enabled"]; exists {
 		t.Error("sticky_enabled should not be persisted after import migration")
+	}
+}
+
+func TestImportConfig_MigratesLegacyMaxRetriesKey(t *testing.T) {
+	h, st, _ := testHandler()
+
+	importReq := ImportConfigRequest{
+		Version: "1.0",
+		Settings: map[string]string{
+			"max_retries": "5",
+		},
+	}
+
+	body, _ := json.Marshal(importReq)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var preview ImportPreviewResponse
+	if err := json.NewDecoder(w.Body).Decode(&preview); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(preview.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", preview.Warnings)
+	}
+	if preview.Changes.Settings.Add != 1 {
+		t.Fatalf("settings.add = %d, want 1", preview.Changes.Settings.Add)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	if got := st.config["global_max_attempts"]; got != "5" {
+		t.Fatalf("global_max_attempts = %q, want %q", got, "5")
+	}
+	if _, exists := st.config["max_retries"]; exists {
+		t.Fatal("max_retries should not be written back during import")
+	}
+}
+
+func TestImportConfig_WarnsAndSkipsInvalidSettingValues(t *testing.T) {
+	h, st, _ := testHandler()
+
+	importReq := ImportConfigRequest{
+		Version: "1.0",
+		Settings: map[string]string{
+			"global_max_attempts": "-1",
+		},
+	}
+
+	body, _ := json.Marshal(importReq)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var preview ImportPreviewResponse
+	if err := json.NewDecoder(w.Body).Decode(&preview); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(preview.Warnings) != 1 {
+		t.Fatalf("warnings = %v, want 1 invalid-value warning", preview.Warnings)
+	}
+	if preview.Warnings[0] != "Invalid config value will be skipped for global_max_attempts: must be a non-negative integer" {
+		t.Fatalf("warning = %q", preview.Warnings[0])
+	}
+	if preview.Changes.Settings != (ChangeCount{}) {
+		t.Fatalf("settings changes = %+v, want zero", preview.Changes.Settings)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var result ImportResult
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode result: %v", err)
+	}
+
+	if result.Applied.Settings != (AppliedCount{}) {
+		t.Fatalf("settings applied = %+v, want zero", result.Applied.Settings)
+	}
+	if _, exists := st.config["global_max_attempts"]; exists {
+		t.Fatal("invalid global_max_attempts should not be persisted")
+	}
+}
+
+func TestImportConfig_NoChanges(t *testing.T) {
+	h, st, _ := testHandler()
+
+	groupID := "g1"
+	st.providers["p1"] = &model.Provider{
+		ID:          "p1",
+		Name:        "Provider 1",
+		APIKey:      "key",
+		APITypes:    []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.com"}},
+		AuthMode:    "bearer",
+		GroupID:     &groupID,
+		Weight:      2,
+		Priority:    1,
+		Concurrency: 10,
+		MaxRetries:  3,
+		Enabled:     true,
+	}
+	st.groups["g1"] = &model.Group{
+		ID:       "g1",
+		Name:     "Group 1",
+		Strategy: "priority",
+		Priority: 1,
+		Weight:   2,
+		Enabled:  true,
+	}
+	st.config["global_max_attempts"] = "5"
+
+	importReq := ImportConfigRequest{
+		Version: "1.0",
+		Providers: []ExportedProvider{
+			{
+				ID:          "p1",
+				Name:        "Provider 1",
+				APIKey:      "key",
+				APITypes:    []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}},
+				AuthMode:    "bearer",
+				GroupID:     &groupID,
+				Weight:      2,
+				Priority:    1,
+				Concurrency: 10,
+				MaxRetries:  3,
+				Enabled:     true,
+			},
+		},
+		Groups: []ExportedGroup{
+			{
+				ID:       "g1",
+				Name:     "Group 1",
+				Strategy: "priority",
+				Priority: 1,
+				Weight:   2,
+				Enabled:  true,
+			},
+		},
+		Settings: map[string]string{
+			"global_max_attempts": "5",
+		},
+	}
+
+	body, _ := json.Marshal(importReq)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var preview ImportPreviewResponse
+	if err := json.NewDecoder(w.Body).Decode(&preview); err != nil {
+		t.Fatalf("failed to decode preview: %v", err)
+	}
+
+	if preview.Changes.Providers != (ChangeCount{}) {
+		t.Fatalf("provider changes = %+v, want zero", preview.Changes.Providers)
+	}
+	if preview.Changes.Groups != (ChangeCount{}) {
+		t.Fatalf("group changes = %+v, want zero", preview.Changes.Groups)
+	}
+	if preview.Changes.Settings != (ChangeCount{}) {
+		t.Fatalf("settings changes = %+v, want zero", preview.Changes.Settings)
+	}
+	if len(preview.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", preview.Warnings)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var result ImportResult
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode result: %v", err)
+	}
+
+	if result.Applied.Providers != (AppliedCount{}) {
+		t.Fatalf("provider applied = %+v, want zero", result.Applied.Providers)
+	}
+	if result.Applied.Groups != (AppliedCount{}) {
+		t.Fatalf("group applied = %+v, want zero", result.Applied.Groups)
+	}
+	if result.Applied.Settings != (AppliedCount{}) {
+		t.Fatalf("settings applied = %+v, want zero", result.Applied.Settings)
 	}
 }
 
@@ -878,7 +1168,7 @@ func TestValidateExportedProvider_WhitespaceKeysWarnAsMissing(t *testing.T) {
 	}
 }
 
-func TestMigrateImportKey(t *testing.T) {
+func TestMigrateConfigKey(t *testing.T) {
 	tests := []struct {
 		name      string
 		key       string
@@ -892,14 +1182,15 @@ func TestMigrateImportKey(t *testing.T) {
 		{"legacy zero", "sticky_enabled", "0", "sticky_mode", "off"},
 		{"legacy uppercase", "sticky_enabled", "TRUE", "sticky_mode", "api_type"},
 		{"legacy invalid", "sticky_enabled", "maybe", "sticky_enabled", "maybe"},
+		{"legacy max retries", "max_retries", "6", "global_max_attempts", "6"},
 		{"other key", "sticky_ttl", "300", "sticky_ttl", "300"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotKey, gotValue := migrateImportKey(tt.key, tt.value)
+			gotKey, gotValue := migrateConfigKey(tt.key, tt.value)
 			if gotKey != tt.wantKey || gotValue != tt.wantValue {
-				t.Errorf("migrateImportKey(%q, %q) = (%q, %q), want (%q, %q)", tt.key, tt.value, gotKey, gotValue, tt.wantKey, tt.wantValue)
+				t.Errorf("migrateConfigKey(%q, %q) = (%q, %q), want (%q, %q)", tt.key, tt.value, gotKey, gotValue, tt.wantKey, tt.wantValue)
 			}
 		})
 	}
