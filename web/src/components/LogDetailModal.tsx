@@ -7,6 +7,10 @@ import { ProviderChain } from "./ProviderChain";
 import { RequestAttemptTimeline } from "./RequestAttemptTimeline";
 import { TransferStats } from "./TransferStats";
 import { TokenUsageStats } from "./TokenUsageStats";
+import {
+  getDiagnosticToneClass,
+  getLogLifecyclePresentation,
+} from "./logs/diagnostics";
 
 interface LogDetailModalProps {
   log: RequestLog | null;
@@ -75,6 +79,7 @@ export function LogDetailModal({
 
   const modalTitle = getModalTitle(log);
   const hasEndpointInfo = log.request_method && log.request_path;
+  const lifecycle = getLogLifecyclePresentation(log);
 
   return (
     <div
@@ -118,13 +123,16 @@ export function LogDetailModal({
 
         {/* Content */}
         <div className="p-6 space-y-6 overflow-y-auto flex-1 min-h-0">
-          <StatusBadges log={log} />
+          <StatusBadges log={log} lifecycle={lifecycle} />
           <RequestInfo
             log={log}
             providerName={providerName}
             providerNames={providerNames}
           />
           <ResponseInfo log={log} />
+          {lifecycle.showLifecycle && (
+            <WebSocketLifecycleInfo log={log} lifecycle={lifecycle} />
+          )}
           <ClientInfo log={log} />
 
           {/* Transfer Statistics - Collapsible section for request/response sizes */}
@@ -141,7 +149,7 @@ export function LogDetailModal({
           <TokenUsageStats log={log} />
 
           {/* Error Details - Smart parsing with diagnostic tips */}
-          {!log.success && log.error_msg && (
+          {lifecycle.shouldShowErrorDetails && log.error_msg && (
             <DetailSection title="Error Details">
               <ErrorBodyParser
                 body={log.error_msg}
@@ -202,14 +210,43 @@ function CloseButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function StatusBadges({ log }: { log: RequestLog }) {
+function StatusBadges({
+  log,
+  lifecycle,
+}: {
+  log: RequestLog;
+  lifecycle: ReturnType<typeof getLogLifecyclePresentation>;
+}) {
+  const statusBadgeClass = log.is_websocket
+    ? getDiagnosticToneClass(lifecycle.outcomeTone)
+    : getSuccessBadgeClass(log.success);
+  let statusLabel = lifecycle.shortOutcomeLabel;
+  if (!log.is_websocket) {
+    statusLabel = log.success ? "✅ Success" : "❌ Failed";
+  }
+
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <span
-        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${getSuccessBadgeClass(log.success)}`}
+        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${statusBadgeClass}`}
+        title={log.is_websocket ? lifecycle.outcomeLabel : undefined}
       >
-        {log.success ? "✅ Success" : "❌ Failed"}
+        {statusLabel}
       </span>
+      {lifecycle.showLifecycle && (
+        <>
+          <span
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${getDiagnosticToneClass(lifecycle.commitmentTone)}`}
+          >
+            {lifecycle.commitmentLabel}
+          </span>
+          <span
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${getDiagnosticToneClass(lifecycle.terminalCauseTone)}`}
+          >
+            {lifecycle.terminalCauseLabel}
+          </span>
+        </>
+      )}
       {log.is_sticky && (
         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
           🔗 Sticky Session
@@ -342,6 +379,31 @@ function ResponseInfo({ log }: { log: RequestLog }) {
           </div>
         }
       />
+    </DetailSection>
+  );
+}
+
+function WebSocketLifecycleInfo({
+  log,
+  lifecycle,
+}: {
+  log: RequestLog;
+  lifecycle: ReturnType<typeof getLogLifecyclePresentation>;
+}) {
+  return (
+    <DetailSection title="WebSocket Lifecycle">
+      <DetailRow label="Outcome" value={lifecycle.outcomeLabel} />
+      <DetailRow label="Commit State" value={lifecycle.commitmentLabel} />
+      <DetailRow label="Terminal Cause" value={lifecycle.terminalCauseLabel} />
+      {lifecycle.commitSourceLabel && (
+        <DetailRow label="Commit Source" value={lifecycle.commitSourceLabel} />
+      )}
+      {lifecycle.stickyWrittenLabel && (
+        <DetailRow label="Sticky Write" value={lifecycle.stickyWrittenLabel} />
+      )}
+      {log.error_msg && !lifecycle.shouldShowErrorDetails && (
+        <DetailRow label="Connection Note" value={log.error_msg} />
+      )}
     </DetailSection>
   );
 }

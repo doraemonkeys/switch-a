@@ -1,8 +1,55 @@
-import type { LogFilter, Provider } from "../api/types";
+import type { LogFilter, Provider, TerminalCause } from "../api/types";
 import { API_TYPES } from "../config/constants";
+import { isLogFilterActive } from "./logs/filtering";
 
 // API Types list derived from constants
 const API_TYPES_LIST = Object.values(API_TYPES);
+const FILTER_VALUE_ALL = "";
+const FILTER_VALUE_TRUE = "true";
+const FILTER_VALUE_FALSE = "false";
+
+const TERMINAL_CAUSE_OPTIONS: Array<{
+  value: TerminalCause | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Causes" },
+  { value: "provider_unavailable", label: "Provider Unavailable" },
+  {
+    value: "provider_configuration_error",
+    label: "Provider Configuration Error",
+  },
+  { value: "clean_close", label: "Clean Close" },
+  { value: "client_disconnect", label: "Client Disconnect" },
+  { value: "upstream_transport_error", label: "Upstream Transport Error" },
+  { value: "upstream_semantic_error", label: "Upstream Semantic Error" },
+  {
+    value: "upstream_handshake_rejected",
+    label: "Upstream Handshake Rejected",
+  },
+  { value: "client_upgrade_rejected", label: "Client Upgrade Rejected" },
+  { value: "internal_error", label: "Internal Error" },
+  { value: "unknown", label: "Unknown" },
+];
+
+function getBooleanFilterValue(value: boolean | undefined): string {
+  if (value === true) return FILTER_VALUE_TRUE;
+  if (value === false) return FILTER_VALUE_FALSE;
+  return FILTER_VALUE_ALL;
+}
+
+function parseBooleanFilterValue(value: string): boolean | undefined {
+  if (value === FILTER_VALUE_ALL) {
+    return undefined;
+  }
+  return value === FILTER_VALUE_TRUE;
+}
+
+function getTerminalCauseLabel(terminalCause: TerminalCause): string {
+  const matchingOption = TERMINAL_CAUSE_OPTIONS.find(
+    (option) => option.value === terminalCause,
+  );
+  return matchingOption?.label ?? terminalCause;
+}
 
 // Helper function to get current retries filter value for select
 function getRetriesFilterValue(filter: LogFilter): string {
@@ -59,21 +106,6 @@ const DATE_PRESET_TOLERANCE = {
   SEVEN_DAYS: 24 * 7.1, // 7 days + ~10% tolerance
   THIRTY_DAYS: 24 * 30.1, // 30 days + ~10% tolerance
 } as const;
-
-// Helper to check if any filter is active
-function hasActiveFilters(filter: LogFilter): boolean {
-  return !!(
-    filter.provider_id ||
-    filter.api_type ||
-    filter.success !== undefined ||
-    filter.is_sse !== undefined ||
-    filter.is_websocket !== undefined ||
-    filter.start_time ||
-    filter.end_time ||
-    filter.has_retries !== undefined ||
-    filter.min_retry_count !== undefined
-  );
-}
 
 // Helper to determine current date preset from filter
 function getCurrentDatePreset(filter: LogFilter): string {
@@ -173,7 +205,7 @@ export function LogFilters({
   providers,
   onClear,
 }: LogFiltersProps) {
-  const isActive = hasActiveFilters(filter);
+  const isActive = isLogFilterActive(filter);
   const requestTypeValue = getRequestTypeFilterValue(filter);
 
   return (
@@ -193,9 +225,9 @@ export function LogFilters({
         <FilterSelect
           id="status-filter"
           label="Status"
-          value={filter.success === undefined ? "" : String(filter.success)}
-          onChange={(v) =>
-            onFilterChange({ success: v === "" ? undefined : v === "true" })
+          value={getBooleanFilterValue(filter.success)}
+          onChange={(value) =>
+            onFilterChange({ success: parseBooleanFilterValue(value) })
           }
           options={[
             { value: "", label: "All Status" },
@@ -228,6 +260,53 @@ export function LogFilters({
             { value: "ws", label: "WebSocket" },
             { value: "regular", label: "Regular" },
           ]}
+        />
+        <FilterSelect
+          id="session-committed-filter"
+          label="Commit State"
+          value={getBooleanFilterValue(filter.session_committed)}
+          onChange={(value) =>
+            onFilterChange({
+              session_committed: parseBooleanFilterValue(value),
+            })
+          }
+          options={[
+            { value: FILTER_VALUE_ALL, label: "All Sessions" },
+            { value: FILTER_VALUE_TRUE, label: "Committed" },
+            { value: FILTER_VALUE_FALSE, label: "Uncommitted" },
+          ]}
+          minWidth="140px"
+        />
+        <FilterSelect
+          id="sticky-written-filter"
+          label="Sticky Write"
+          value={getBooleanFilterValue(filter.sticky_written)}
+          onChange={(value) =>
+            onFilterChange({
+              sticky_written: parseBooleanFilterValue(value),
+            })
+          }
+          options={[
+            { value: FILTER_VALUE_ALL, label: "All Sticky" },
+            { value: FILTER_VALUE_TRUE, label: "Written" },
+            { value: FILTER_VALUE_FALSE, label: "Not Written" },
+          ]}
+          minWidth="140px"
+        />
+        <FilterSelect
+          id="terminal-cause-filter"
+          label="Terminal Cause"
+          value={filter.terminal_cause || FILTER_VALUE_ALL}
+          onChange={(value) =>
+            onFilterChange({
+              terminal_cause:
+                value === FILTER_VALUE_ALL
+                  ? undefined
+                  : (value as TerminalCause),
+            })
+          }
+          options={TERMINAL_CAUSE_OPTIONS}
+          minWidth="180px"
         />
         <FilterSelect
           id="api-type-filter"
@@ -316,8 +395,26 @@ function ActiveFiltersSummary({
             onRemove={() => onFilterChange({ success: undefined })}
           />
         )}
+        {filter.session_committed !== undefined && (
+          <FilterBadge
+            label={`Commit: ${filter.session_committed ? "Committed" : "Uncommitted"}`}
+            onRemove={() => onFilterChange({ session_committed: undefined })}
+          />
+        )}
+        {filter.sticky_written !== undefined && (
+          <FilterBadge
+            label={`Sticky Write: ${filter.sticky_written ? "Written" : "Not Written"}`}
+            onRemove={() => onFilterChange({ sticky_written: undefined })}
+          />
+        )}
+        {filter.terminal_cause && (
+          <FilterBadge
+            label={`Terminal Cause: ${getTerminalCauseLabel(filter.terminal_cause)}`}
+            onRemove={() => onFilterChange({ terminal_cause: undefined })}
+          />
+        )}
         {/* is_sse and is_websocket badges are coupled: "regular" sets both to false,
-           so removing one badge must clear both to avoid inconsistent filter state. */}
+            so removing one badge must clear both to avoid inconsistent filter state. */}
         {filter.is_sse !== undefined && (
           <FilterBadge
             label={`Type: ${filter.is_sse ? "SSE" : "Regular"}`}

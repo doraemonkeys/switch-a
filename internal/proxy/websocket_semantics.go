@@ -23,9 +23,12 @@ const (
 // WebSocketObservation captures semantic data learned while relaying a WebSocket session.
 // The transport layer emits bytes, but request logs need domain fields like model and usage.
 type WebSocketObservation struct {
-	Model         string
-	TokenUsage    *TokenUsage
-	UpstreamError *WebSocketUpstreamError
+	Model            string
+	TokenUsage       *TokenUsage
+	UpstreamError    *WebSocketUpstreamError
+	SessionCommitted bool
+	CommitEventType  string
+	ParseDegraded    bool
 }
 
 // WebSocketUpstreamError captures a provider error that was delivered inside the
@@ -53,13 +56,15 @@ type WebSocketMessageObserver interface {
 	ObserveClientMessage(messageType websocket.MessageType, data []byte)
 	ObserveUpstreamMessage(messageType websocket.MessageType, data []byte)
 	Snapshot() WebSocketObservation
+	ParseDegraded() bool
+	HasSemanticObservation() bool
 }
 
-func newWebSocketMessageObserver(apiType, initialModel string, logger Logger, onUpdate func(WebSocketObservation)) WebSocketMessageObserver {
+func newWebSocketMessageObserver(apiType, initialModel string, logger Logger, onUpdate func(WebSocketObservation), onCommit func(WebSocketObservation)) WebSocketMessageObserver {
 	if apiType != APITypeCodex {
 		return nil
 	}
-	return newCodexWebSocketMessageObserver(initialModel, logger, onUpdate)
+	return newCodexWebSocketMessageObserver(initialModel, logger, onUpdate, onCommit)
 }
 
 type codexWebSocketEventEnvelope struct {
@@ -87,15 +92,27 @@ type codexWebSocketEventTarget struct {
 	Model string `json:"model"`
 }
 
+type codexObserveState struct {
+	observation   WebSocketObservation
+	shouldPublish bool
+	commitChanged bool
+	needsUsage    bool
+	usageKey      string
+}
+
 type codexWebSocketMessageObserver struct {
-	mu            sync.Mutex
-	model         string
-	modelSource   webSocketModelSource
-	tokenUsage    *TokenUsage
-	upstreamError *WebSocketUpstreamError
-	seenUsageKeys map[string]struct{}
-	logger        Logger
-	onUpdate      func(WebSocketObservation)
+	mu               sync.Mutex
+	model            string
+	modelSource      webSocketModelSource
+	tokenUsage       *TokenUsage
+	upstreamError    *WebSocketUpstreamError
+	parseDegraded    bool
+	sessionCommitted bool
+	commitEventType  string
+	seenUsageKeys    map[string]struct{}
+	logger           Logger
+	onUpdate         func(WebSocketObservation)
+	onCommit         func(WebSocketObservation)
 }
 
 type webSocketModelSource uint8
@@ -107,7 +124,7 @@ const (
 	webSocketModelSourceUpstream
 )
 
-func newCodexWebSocketMessageObserver(initialModel string, logger Logger, onUpdate func(WebSocketObservation)) *codexWebSocketMessageObserver {
+func newCodexWebSocketMessageObserver(initialModel string, logger Logger, onUpdate func(WebSocketObservation), onCommit func(WebSocketObservation)) *codexWebSocketMessageObserver {
 	model := ""
 	modelSource := webSocketModelSourceUnknown
 	if initialModel != "" && initialModel != ModelUnknown {
@@ -120,6 +137,7 @@ func newCodexWebSocketMessageObserver(initialModel string, logger Logger, onUpda
 		seenUsageKeys: make(map[string]struct{}),
 		logger:        logger,
 		onUpdate:      onUpdate,
+		onCommit:      onCommit,
 	}
 }
 
@@ -136,10 +154,24 @@ func (o *codexWebSocketMessageObserver) Snapshot() WebSocketObservation {
 	defer o.mu.Unlock()
 
 	return WebSocketObservation{
-		Model:         o.model,
-		TokenUsage:    o.tokenUsage.Clone(),
-		UpstreamError: o.upstreamError.Clone(),
+		Model:            o.model,
+		TokenUsage:       o.tokenUsage.Clone(),
+		UpstreamError:    o.upstreamError.Clone(),
+		SessionCommitted: o.sessionCommitted,
+		CommitEventType:  o.commitEventType,
+		ParseDegraded:    o.parseDegraded,
 	}
+}
+
+func (o *codexWebSocketMessageObserver) ParseDegraded() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.parseDegraded
+}
+
+func (o *codexWebSocketMessageObserver) HasSemanticObservation() bool {
+	return true
 }
 
 // quickExtractEventType extracts the "type" field value from a JSON message by
@@ -200,67 +232,121 @@ func payloadMayContainError(data []byte) bool {
 }
 
 func (o *codexWebSocketMessageObserver) observe(messageType websocket.MessageType, data []byte, fromUpstream bool) {
-	if messageType != websocket.MessageText || len(data) == 0 {
+	if shouldSkipCodexObservedPayload(messageType, data) {
 		return
 	}
 
+	if shouldFastSkipCodexPayload(data) {
+		return
+	}
+
+	event, ok := o.decodeCodexObservedEvent(data, fromUpstream)
+	if !ok {
+		return
+	}
+
+	state := o.captureCodexObserveState(&event, data, fromUpstream)
+	if state.needsUsage {
+		usage := parseTokenUsageWithLogger(data, o.logger)
+		if usage != nil {
+			state = o.captureCodexUsageState(state, usage)
+		}
+	}
+	o.publishCodexObserveState(state)
+}
+
+func shouldSkipCodexObservedPayload(messageType websocket.MessageType, data []byte) bool {
+	return messageType != websocket.MessageText || len(data) == 0
+}
+
+func shouldFastSkipCodexPayload(data []byte) bool {
 	// Fast-path: extract event type from the first 256 bytes to avoid a full
 	// json.Unmarshal on high-volume events (e.g. input_audio_buffer.append).
 	// Fall through to full parse when extraction fails (defensive). Error frames
 	// are exempt from the early return because nested `error.type` fields can
 	// appear before the top-level `type`, so a raw substring scan cannot safely
 	// distinguish "ignore this transport event" from "this is the terminal provider error".
-	if eventType := quickExtractEventType(data); eventType != "" && !isObservableEventType(eventType) && !payloadMayContainError(data) {
-		return
-	}
+	eventType := quickExtractEventType(data)
+	return eventType != "" && !isObservableEventType(eventType) && !payloadMayContainError(data)
+}
 
+func (o *codexWebSocketMessageObserver) decodeCodexObservedEvent(data []byte, fromUpstream bool) (codexWebSocketEventEnvelope, bool) {
 	var event codexWebSocketEventEnvelope
 	if err := json.Unmarshal(data, &event); err != nil {
-		return
+		if fromUpstream {
+			o.markParseDegraded()
+		}
+		return codexWebSocketEventEnvelope{}, false
 	}
+	return event, true
+}
 
+func (o *codexWebSocketMessageObserver) markParseDegraded() {
 	o.mu.Lock()
-	modelChanged := o.captureModelLocked(&event, fromUpstream)
-	errorChanged := o.captureUpstreamErrorLocked(&event, data, fromUpstream)
-	semanticChanged := modelChanged || errorChanged
+	defer o.mu.Unlock()
+
+	o.parseDegraded = true
+}
+
+func (o *codexWebSocketMessageObserver) captureCodexObserveState(event *codexWebSocketEventEnvelope, data []byte, fromUpstream bool) codexObserveState {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	modelChanged := o.captureModelLocked(event, fromUpstream)
+	errorChanged := o.captureUpstreamErrorLocked(event, data, fromUpstream)
+	commitChanged := o.captureCommitLocked(event, fromUpstream)
+	semanticChanged := modelChanged || errorChanged || commitChanged
 	if !fromUpstream || !isCodexUsageEvent(event.Type) {
-		observation, shouldPublish := o.snapshotForPublishLocked(semanticChanged)
-		o.mu.Unlock()
-		if shouldPublish {
-			o.publish(observation)
-		}
-		return
+		return o.newCodexObserveStateLocked(semanticChanged, commitChanged, "", false)
 	}
 
-	usageKey := codexUsageEventKey(&event)
-	if usageKey != "" {
-		if _, exists := o.seenUsageKeys[usageKey]; exists {
-			observation, shouldPublish := o.snapshotForPublishLocked(semanticChanged)
-			o.mu.Unlock()
-			if shouldPublish {
-				o.publish(observation)
-			}
-			return
-		}
+	usageKey := codexUsageEventKey(event)
+	if o.hasSeenUsageKeyLocked(usageKey) {
+		return o.newCodexObserveStateLocked(semanticChanged, commitChanged, usageKey, false)
 	}
+	return o.newCodexObserveStateLocked(semanticChanged, commitChanged, usageKey, true)
+}
 
-	usage := parseTokenUsageWithLogger(data, o.logger)
-	if usage == nil {
-		observation, shouldPublish := o.snapshotForPublishLocked(semanticChanged)
-		o.mu.Unlock()
-		if shouldPublish {
-			o.publish(observation)
-		}
-		return
+func (o *codexWebSocketMessageObserver) hasSeenUsageKeyLocked(usageKey string) bool {
+	if usageKey == "" {
+		return false
 	}
+	_, exists := o.seenUsageKeys[usageKey]
+	return exists
+}
+
+func (o *codexWebSocketMessageObserver) newCodexObserveStateLocked(changed, commitChanged bool, usageKey string, needsUsage bool) codexObserveState {
+	observation, shouldPublish := o.snapshotForPublishLocked(changed)
+	return codexObserveState{
+		observation:   observation,
+		shouldPublish: shouldPublish,
+		commitChanged: commitChanged,
+		needsUsage:    needsUsage,
+		usageKey:      usageKey,
+	}
+}
+
+func (o *codexWebSocketMessageObserver) captureCodexUsageState(state codexObserveState, usage *TokenUsage) codexObserveState {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	o.tokenUsage = o.tokenUsage.Merge(usage)
-	if usageKey != "" {
-		o.seenUsageKeys[usageKey] = struct{}{}
+	if state.usageKey != "" {
+		o.seenUsageKeys[state.usageKey] = struct{}{}
 	}
 	observation, shouldPublish := o.snapshotForPublishLocked(true)
-	o.mu.Unlock()
-	if shouldPublish {
-		o.publish(observation)
+	state.observation = observation
+	state.shouldPublish = shouldPublish
+	state.needsUsage = false
+	return state
+}
+
+func (o *codexWebSocketMessageObserver) publishCodexObserveState(state codexObserveState) {
+	if state.shouldPublish {
+		o.publish(state.observation)
+	}
+	if state.commitChanged {
+		o.publishCommit(state.observation)
 	}
 }
 
@@ -321,6 +407,18 @@ func (o *codexWebSocketMessageObserver) captureUpstreamErrorLocked(event *codexW
 	return true
 }
 
+func (o *codexWebSocketMessageObserver) captureCommitLocked(event *codexWebSocketEventEnvelope, fromUpstream bool) bool {
+	if !fromUpstream || o.sessionCommitted || event == nil || event.Type != webSocketEventResponseCreated {
+		return false
+	}
+	if codexEventRepresentsError(event) {
+		return false
+	}
+	o.sessionCommitted = true
+	o.commitEventType = event.Type
+	return true
+}
+
 func isCodexUsageEvent(eventType string) bool {
 	// Transcription events (input_audio_transcription.completed) are intentionally
 	// excluded: OpenAI bills them under a separate ASR model, so merging their
@@ -345,8 +443,7 @@ func codexEventRepresentsError(event *codexWebSocketEventEnvelope) bool {
 	}
 
 	lowerType := strings.ToLower(event.Type)
-	return lowerType == "error" ||
-		strings.Contains(lowerType, "error") ||
+	return strings.Contains(lowerType, "error") ||
 		strings.Contains(lowerType, "fail")
 }
 
@@ -365,9 +462,12 @@ func (o *codexWebSocketMessageObserver) snapshotForPublishLocked(changed bool) (
 		return WebSocketObservation{}, false
 	}
 	return WebSocketObservation{
-		Model:         o.model,
-		TokenUsage:    o.tokenUsage.Clone(),
-		UpstreamError: o.upstreamError.Clone(),
+		Model:            o.model,
+		TokenUsage:       o.tokenUsage.Clone(),
+		UpstreamError:    o.upstreamError.Clone(),
+		SessionCommitted: o.sessionCommitted,
+		CommitEventType:  o.commitEventType,
+		ParseDegraded:    o.parseDegraded,
 	}, true
 }
 
@@ -376,6 +476,13 @@ func (o *codexWebSocketMessageObserver) publish(observation WebSocketObservation
 		return
 	}
 	o.onUpdate(observation)
+}
+
+func (o *codexWebSocketMessageObserver) publishCommit(observation WebSocketObservation) {
+	if o.onCommit == nil {
+		return
+	}
+	o.onCommit(observation)
 }
 
 func upstreamErrorsEqual(left, right *WebSocketUpstreamError) bool {

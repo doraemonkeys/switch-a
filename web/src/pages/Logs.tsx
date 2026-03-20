@@ -12,6 +12,10 @@ import {
   Pagination,
   ErrorBanner,
 } from "../components/logs";
+import {
+  createClearedLogFilterPatch,
+  isLogFilterActive,
+} from "../components/logs/filtering";
 
 export function Logs() {
   const limit = DEFAULT_LIMIT;
@@ -57,17 +61,7 @@ export function Logs() {
   })();
 
   // Check if any filter is active
-  const hasActiveFilters = !!(
-    filter.provider_id ||
-    filter.api_type ||
-    filter.success !== undefined ||
-    filter.is_sse !== undefined ||
-    filter.is_websocket !== undefined ||
-    filter.start_time ||
-    filter.end_time ||
-    filter.has_retries !== undefined ||
-    filter.min_retry_count !== undefined
-  );
+  const hasActiveFilters = isLogFilterActive(filter);
 
   const handlePageChange = (newPage: number) => {
     if (newPage < 1 || newPage > totalPages) return;
@@ -83,19 +77,7 @@ export function Logs() {
   };
 
   const handleClearFilters = () => {
-    updateFilter({
-      provider_id: undefined,
-      api_type: undefined,
-      success: undefined,
-      is_sse: undefined,
-      is_websocket: undefined,
-      start_time: undefined,
-      end_time: undefined,
-      min_latency: undefined,
-      user_id: undefined,
-      has_retries: undefined,
-      min_retry_count: undefined,
-    });
+    updateFilter(createClearedLogFilterPatch());
   };
 
   return (

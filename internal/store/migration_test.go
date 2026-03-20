@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -279,5 +281,182 @@ func TestMigrateWebSocketColumn_NoLegacyColumn(t *testing.T) {
 	// Should be a no-op.
 	if err := migrateWebSocketColumn(db); err != nil {
 		t.Fatalf("migrateWebSocketColumn error: %v", err)
+	}
+}
+
+func setupRequestLogLifecycleMigrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "request_log_lifecycle_migration.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+
+	createLegacyTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		is_websocket BOOLEAN DEFAULT 0,
+		provider_id TEXT DEFAULT '',
+		success BOOLEAN DEFAULT 0,
+		created_at DATETIME
+	)`, requestLogsTableName)
+	if err := db.Exec(createLegacyTableSQL).Error; err != nil {
+		t.Fatalf("create request_logs: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			t.Logf("close request log lifecycle db: %v", closeErr)
+		}
+	})
+
+	return db
+}
+
+func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing.T) {
+	t.Parallel()
+
+	db := setupRequestLogLifecycleMigrationDB(t)
+
+	insertLegacyRowSQL := fmt.Sprintf(
+		`INSERT INTO %s (provider_id, is_websocket, success, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+		requestLogsTableName,
+	)
+	if err := db.Exec(insertLegacyRowSQL, "websocket-success", true, true).Error; err != nil {
+		t.Fatalf("seed websocket row: %v", err)
+	}
+	if err := db.Exec(insertLegacyRowSQL, "regular-success", false, true).Error; err != nil {
+		t.Fatalf("seed regular row: %v", err)
+	}
+
+	if err := db.AutoMigrate(&model.RequestLog{}); err != nil {
+		t.Fatalf("auto-migrate request log: %v", err)
+	}
+	if err := migrateRequestLogLifecycleFields(db); err != nil {
+		t.Fatalf("migrateRequestLogLifecycleFields error: %v", err)
+	}
+
+	type lifecycleRow struct {
+		ProviderID       string
+		SessionCommitted sql.NullBool
+		StickyWritten    sql.NullBool
+		TerminalCause    sql.NullString
+		CommitSource     sql.NullString
+	}
+
+	var rows []lifecycleRow
+	querySQL := fmt.Sprintf(
+		`SELECT provider_id, session_committed, sticky_written, terminal_cause, commit_source FROM %s ORDER BY provider_id`,
+		requestLogsTableName,
+	)
+	if err := db.Raw(querySQL).Scan(&rows).Error; err != nil {
+		t.Fatalf("read lifecycle rows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("row count = %d, want 2", len(rows))
+	}
+
+	if rows[0].SessionCommitted.Valid {
+		t.Fatalf("regular row session_committed = %+v, want NULL", rows[0].SessionCommitted)
+	}
+	if rows[0].StickyWritten.Valid {
+		t.Fatalf("regular row sticky_written = %+v, want NULL", rows[0].StickyWritten)
+	}
+	if rows[0].TerminalCause.Valid {
+		t.Fatalf("regular row terminal_cause = %+v, want NULL", rows[0].TerminalCause)
+	}
+	if rows[0].CommitSource.Valid {
+		t.Fatalf("regular row commit_source = %+v, want NULL", rows[0].CommitSource)
+	}
+
+	if !rows[1].SessionCommitted.Valid || !rows[1].SessionCommitted.Bool {
+		t.Fatalf("websocket row session_committed = %+v, want true", rows[1].SessionCommitted)
+	}
+	if !rows[1].StickyWritten.Valid || rows[1].StickyWritten.Bool {
+		t.Fatalf("websocket row sticky_written = %+v, want false", rows[1].StickyWritten)
+	}
+	if !rows[1].TerminalCause.Valid || rows[1].TerminalCause.String != string(model.TerminalUnknown) {
+		t.Fatalf("websocket row terminal_cause = %+v, want %q", rows[1].TerminalCause, model.TerminalUnknown)
+	}
+	if !rows[1].CommitSource.Valid || rows[1].CommitSource.String != string(model.CommitUnknown) {
+		t.Fatalf("websocket row commit_source = %+v, want %q", rows[1].CommitSource, model.CommitUnknown)
+	}
+}
+
+func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
+	t.Parallel()
+
+	db := setupMigrationTestDB(t)
+	if err := db.AutoMigrate(&model.RequestLog{}); err != nil {
+		t.Fatalf("auto-migrate request log: %v", err)
+	}
+
+	committed := true
+	uncommitted := false
+	logs := []model.RequestLog{
+		{
+			IsWebSocket:      true,
+			ProviderID:       "clean-close",
+			Success:          true,
+			StickyWritten:    boolPtr(true),
+			SessionCommitted: &committed,
+			TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
+			CommitSource:     commitSourcePtr(model.CommitSemantic),
+		},
+		{
+			IsWebSocket:      true,
+			ProviderID:       "semantic-error",
+			Success:          false,
+			StickyWritten:    boolPtr(false),
+			SessionCommitted: &uncommitted,
+			TerminalCause:    terminalCausePtr(model.TerminalUpstreamSemanticError),
+			CommitSource:     commitSourcePtr(model.CommitUnknown),
+		},
+	}
+	for i := range logs {
+		if err := db.Create(&logs[i]).Error; err != nil {
+			t.Fatalf("seed log %q: %v", logs[i].ProviderID, err)
+		}
+	}
+
+	if err := migrateRequestLogLifecycleFields(db); err != nil {
+		t.Fatalf("migrateRequestLogLifecycleFields error: %v", err)
+	}
+
+	var persisted []model.RequestLog
+	if err := db.Order("provider_id ASC").Find(&persisted).Error; err != nil {
+		t.Fatalf("read logs: %v", err)
+	}
+	if len(persisted) != len(logs) {
+		t.Fatalf("log count = %d, want %d", len(persisted), len(logs))
+	}
+
+	if persisted[0].SessionCommitted == nil || !*persisted[0].SessionCommitted {
+		t.Fatalf("clean-close session_committed = %v, want true", persisted[0].SessionCommitted)
+	}
+	if persisted[0].StickyWritten == nil || !*persisted[0].StickyWritten {
+		t.Fatalf("clean-close sticky_written = %v, want true", persisted[0].StickyWritten)
+	}
+	if persisted[0].TerminalCause == nil || *persisted[0].TerminalCause != model.TerminalCleanClose {
+		t.Fatalf("clean-close terminal_cause = %v, want %q", persisted[0].TerminalCause, model.TerminalCleanClose)
+	}
+	if persisted[0].CommitSource == nil || *persisted[0].CommitSource != model.CommitSemantic {
+		t.Fatalf("clean-close commit_source = %v, want %q", persisted[0].CommitSource, model.CommitSemantic)
+	}
+
+	if persisted[1].SessionCommitted == nil || *persisted[1].SessionCommitted {
+		t.Fatalf("semantic-error session_committed = %v, want false", persisted[1].SessionCommitted)
+	}
+	if persisted[1].TerminalCause == nil || *persisted[1].TerminalCause != model.TerminalUpstreamSemanticError {
+		t.Fatalf("semantic-error terminal_cause = %v, want %q", persisted[1].TerminalCause, model.TerminalUpstreamSemanticError)
+	}
+	if persisted[1].CommitSource == nil || *persisted[1].CommitSource != model.CommitUnknown {
+		t.Fatalf("semantic-error commit_source = %v, want %q", persisted[1].CommitSource, model.CommitUnknown)
 	}
 }

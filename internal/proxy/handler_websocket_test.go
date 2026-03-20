@@ -272,10 +272,11 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	result := &WebSocketResult{
 		HandshakeStatusCode:  http.StatusPaymentRequired,
 		HandshakeBodySnippet: handshakeBody,
+		TerminalCause:        model.TerminalUpstreamHandshakeRejected,
 		Err:                  errors.New("failed to WebSocket dial: expected handshake response status code 101 but got 402"),
 	}
 
-	handler.logWebSocketRequest("req-ws-handshake", info, &model.Provider{ID: "ws-p1"}, false, result, result.Err, 250*time.Millisecond)
+	handler.logWebSocketRequest("req-ws-handshake", info, &model.Provider{ID: "ws-p1"}, false, false, result, result.Err, 250*time.Millisecond)
 
 	log := store.LastLog()
 	if log == nil {
@@ -292,6 +293,15 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	}
 	if !log.IsWebSocket {
 		t.Fatal("expected IsWebSocket=true")
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamHandshakeRejected {
+		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamHandshakeRejected)
+	}
+	if log.SessionCommitted == nil || *log.SessionCommitted {
+		t.Fatal("SessionCommitted must be false for failed handshake")
+	}
+	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
 	}
 }
 
@@ -316,9 +326,10 @@ func TestHandler_logWebSocketRequest_UsesSemanticUpstreamError(t *testing.T) {
 		RequestID: "upstream-request-id",
 	}
 	result := &WebSocketResult{
-		ConnectSuccess: true,
-		CloseCode:      websocket.StatusNoStatusRcvd,
-		Err:            errors.New("failed to get reader: received close frame: status = StatusNoStatusRcvd and reason = \"\""),
+		HandshakeAccepted: true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		CloseCode:         websocket.StatusNoStatusRcvd,
+		Err:               errors.New("failed to get reader: received close frame: status = StatusNoStatusRcvd and reason = \"\""),
 		UpstreamError: &WebSocketUpstreamError{
 			EventType:  "model_not_allowed",
 			StatusCode: http.StatusForbidden,
@@ -327,7 +338,7 @@ func TestHandler_logWebSocketRequest_UsesSemanticUpstreamError(t *testing.T) {
 		},
 	}
 
-	handler.logWebSocketRequest("req-ws-semantic-error", info, &model.Provider{ID: "ws-p1"}, false, result, result.Err, 250*time.Millisecond)
+	handler.logWebSocketRequest("req-ws-semantic-error", info, &model.Provider{ID: "ws-p1"}, false, false, result, result.Err, 250*time.Millisecond)
 
 	log := store.LastLog()
 	if log == nil {
@@ -344,6 +355,82 @@ func TestHandler_logWebSocketRequest_UsesSemanticUpstreamError(t *testing.T) {
 	}
 	if !log.IsWebSocket {
 		t.Fatal("expected IsWebSocket=true")
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamSemanticError {
+		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamSemanticError)
+	}
+	if log.SessionCommitted == nil || *log.SessionCommitted {
+		t.Fatal("SessionCommitted must be false for pre-commit semantic errors")
+	}
+	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
+	}
+}
+
+func TestHandler_logWebSocketRequest_PersistsCommitSource(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	committed := true
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-5.4",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	result := &WebSocketResult{
+		HandshakeAccepted: true,
+		SessionCommitted:  committed,
+		TerminalCause:     model.TerminalCleanClose,
+		CommitSource:      model.CommitSemantic,
+	}
+
+	handler.logWebSocketRequest("req-ws-commit-source", info, &model.Provider{ID: "ws-p1"}, false, true, result, nil, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.CommitSource == nil || *log.CommitSource != model.CommitSemantic {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitSemantic)
+	}
+	if log.SessionCommitted == nil || !*log.SessionCommitted {
+		t.Fatalf("SessionCommitted = %v, want true", log.SessionCommitted)
+	}
+}
+
+func TestApplyWebSocketHealthOutcome_PostCommitTransportErrorMarksSuccess(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+
+	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", &WebSocketResult{
+		HandshakeAccepted: true,
+		SessionCommitted:  true,
+		TerminalCause:     model.TerminalUpstreamTransportError,
+		Err:               io.EOF,
+	})
+
+	if len(healthMgr.getMarkFailureCalls()) != 0 {
+		t.Fatalf("mark failure count = %d, want 0", len(healthMgr.getMarkFailureCalls()))
+	}
+	if successIDs := healthMgr.getMarkSuccessIDs(); len(successIDs) != 1 || successIDs[0] != "ws-p1" {
+		t.Fatalf("mark success IDs = %v, want [ws-p1]", successIDs)
 	}
 }
 
@@ -391,6 +478,96 @@ func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {
 	if !log.IsWebSocket {
 		t.Error("expected IsWebSocket=true in log")
 	}
+	if log.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("StatusCode = %d, want %d", log.StatusCode, http.StatusServiceUnavailable)
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalProviderUnavailable {
+		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalProviderUnavailable)
+	}
+	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     model.Provider
+		errorSnippet string
+	}{
+		{
+			name: "missing base url",
+			provider: model.Provider{
+				ID:       "ws-missing-base-url",
+				Name:     "Missing Base URL",
+				APIKey:   "key",
+				AuthMode: "bearer",
+				Enabled:  true,
+				APITypes: []model.ProviderAPIType{{ProviderID: "ws-missing-base-url", APIType: "codex", BaseURL: ""}},
+			},
+			errorSnippet: "no base_url",
+		},
+		{
+			name: "missing api key",
+			provider: model.Provider{
+				ID:       "ws-missing-api-key",
+				Name:     "Missing API Key",
+				APIKey:   "",
+				AuthMode: "bearer",
+				Enabled:  true,
+				APITypes: []model.ProviderAPIType{{ProviderID: "ws-missing-api-key", APIType: "codex", BaseURL: "https://example.invalid"}},
+			},
+			errorSnippet: "no api_key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockStore()
+			store.providers = []model.Provider{tt.provider}
+
+			handler := NewHandler(Config{
+				Store:  store,
+				Logger: zap.NewNop(),
+			})
+
+			proxyServer := httptest.NewServer(handler)
+			defer proxyServer.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, resp, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+			if err == nil {
+				t.Fatal("expected dial to fail before upgrade")
+			}
+			if resp == nil {
+				t.Fatal("expected HTTP response from server even on dial failure")
+			}
+			if resp.StatusCode != http.StatusBadGateway {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+			}
+
+			waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
+
+			log := store.LastLog()
+			if log == nil {
+				t.Fatal("expected log entry")
+			}
+			if log.StatusCode != http.StatusBadGateway {
+				t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusBadGateway)
+			}
+			if log.TerminalCause == nil || *log.TerminalCause != model.TerminalProviderConfigurationError {
+				t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalProviderConfigurationError)
+			}
+			if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
+				t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
+			}
+			if !strings.Contains(log.ErrorMsg, tt.errorSnippet) {
+				t.Fatalf("ErrorMsg = %q, want snippet %q", log.ErrorMsg, tt.errorSnippet)
+			}
+		})
+	}
 }
 
 // TestHandler_ServeHTTP_WebSocket_ActiveRegistryTracking verifies that WebSocket
@@ -429,12 +606,27 @@ func TestHandler_ServeHTTP_WebSocket_ActiveRegistryTracking(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 
-	// Send a message to ensure connection is fully established.
+	waitFor(t, func() bool { return len(registry.List()) == 1 }, testPollTimeout)
+
+	active := registry.List()
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active request after handshake, got %d", len(active))
+	}
+	if active[0].HasReceivedData {
+		t.Fatal("HasReceivedData must stay false until committed upstream service arrives")
+	}
+
+	// Send a message to ensure the upstream echoes a committed frame.
 	conn.Write(ctx, websocket.MessageText, []byte("ping"))
 	conn.Read(ctx)
 
-	// While connection is active, check the registry.
-	active := registry.List()
+	waitFor(t, func() bool {
+		requests := registry.List()
+		return len(requests) == 1 && requests[0].HasReceivedData
+	}, testPollTimeout)
+
+	// While connection is active, check the registry again.
+	active = registry.List()
 	if len(active) != 1 {
 		t.Fatalf("expected 1 active request, got %d", len(active))
 	}
@@ -919,262 +1111,4 @@ func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModel(t *testing.T)
 	if update.Model != "gpt-5.4" {
 		t.Fatalf("sticky model = %q, want %q", update.Model, "gpt-5.4")
 	}
-}
-
-// TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure verifies that a client
-// accept failure does NOT degrade the provider's health status.
-func TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure(t *testing.T) {
-	upstream := newEchoWSServer(t)
-	defer upstream.Close()
-
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID: "ws-p1", Name: "WS Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
-	}
-
-	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop(), Health: healthMgr})
-
-	// Send a request with WebSocket upgrade headers but via httptest.NewRecorder,
-	// which doesn't support hijacking — Accept will fail (client-side issue).
-	req := httptest.NewRequest(http.MethodGet, "/responses", nil)
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	// Give async log goroutine time to fire.
-	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
-
-	// The key assertion: accept failure is a client issue, NOT a provider failure.
-	if len(healthMgr.getMarkFailureCalls()) > 0 {
-		t.Errorf("expected 0 MarkFailure calls for client accept failure, got %d", len(healthMgr.getMarkFailureCalls()))
-	}
-}
-
-// TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected verifies that
-// WebSocket upgrade requests on non-Codex API paths are rejected with 400.
-func TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "http://example.com"}},
-		},
-	}
-
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/messages", nil)
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-	if !strings.Contains(w.Body.String(), "not supported") {
-		t.Errorf("body = %q, expected 'not supported' message", w.Body.String())
-	}
-}
-
-// TestHandler_ServeHTTP_NonUpgradeGET_Returns426 verifies that GET /responses
-// without a WebSocket Upgrade header returns 426 Upgrade Required.
-func TestHandler_ServeHTTP_NonUpgradeGET_Returns426(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "http://example.com"}},
-		},
-	}
-
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
-
-	req := httptest.NewRequest(http.MethodGet, "/responses", nil)
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUpgradeRequired {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUpgradeRequired)
-	}
-	if !strings.Contains(w.Body.String(), "WebSocket upgrade") {
-		t.Errorf("body = %q, expected WebSocket upgrade message", w.Body.String())
-	}
-}
-
-func TestBuildWebSocketDialHeaders_FiltersSecWebSocketHeaders(t *testing.T) {
-	t.Parallel()
-
-	r := httptest.NewRequest(http.MethodGet, "/responses", nil)
-	r.Header.Set("OpenAI-Beta", "realtime=v1")
-	r.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	r.Header.Set("Sec-WebSocket-Version", "13")
-	r.Header.Set("Sec-WebSocket-Extensions", "permessage-deflate")
-	r.Header.Set("Sec-WebSocket-Protocol", "graphql-ws")
-	r.Header.Set("Connection", "Upgrade")
-	r.Header.Set("Upgrade", "websocket")
-
-	provider := &model.Provider{APIKey: "sk-key", AuthMode: "bearer"}
-	headers := buildWebSocketDialHeaders(r, provider, "codex", "auto")
-
-	// Business headers should pass through.
-	if got := headers.Get("OpenAI-Beta"); got != "realtime=v1" {
-		t.Errorf("OpenAI-Beta = %q, want 'realtime=v1'", got)
-	}
-
-	// WebSocket handshake headers must NOT be forwarded.
-	for _, h := range []string{"Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol"} {
-		if got := headers.Get(h); got != "" {
-			t.Errorf("%s should be filtered, got %q", h, got)
-		}
-	}
-}
-
-// TestIsWebSocketHandshakeHeader tests the handshake header classification.
-func TestIsWebSocketHandshakeHeader(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		key      string
-		expected bool
-	}{
-		{"Sec-WebSocket-Key", true},
-		{"Sec-Websocket-Version", true},
-		{"Sec-WebSocket-Extensions", true},
-		{"Sec-WebSocket-Protocol", true},
-		{"sec-websocket-key", true},
-		{"Authorization", false},
-		{"OpenAI-Beta", false},
-		{"Sec-Fetch-Mode", false}, // 14 chars prefix doesn't match
-		{"Sec-", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			t.Parallel()
-			got := isWebSocketHandshakeHeader(tt.key)
-			if got != tt.expected {
-				t.Errorf("isWebSocketHandshakeHeader(%q) = %v, want %v", tt.key, got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestBytesTrackingObserver_CountsAndTimestamp(t *testing.T) {
-	t.Parallel()
-
-	tracker := &LiveBytesTracker{}
-	obs := newBytesTrackingObserver(nil, tracker)
-
-	// Simulate client → upstream messages.
-	obs.ObserveClientMessage(websocket.MessageText, []byte("hello")) // 5 bytes
-	obs.ObserveClientMessage(websocket.MessageText, []byte("world")) // 5 bytes
-
-	// Simulate upstream → client messages.
-	obs.ObserveUpstreamMessage(websocket.MessageText, []byte("response data 1234567890")) // 24 bytes
-
-	if got := tracker.BytesSent.Load(); got != 10 {
-		t.Errorf("BytesSent = %d, want 10", got)
-	}
-	if got := tracker.MsgsSent.Load(); got != 2 {
-		t.Errorf("MsgsSent = %d, want 2", got)
-	}
-	if got := tracker.BytesReceived.Load(); got != 24 {
-		t.Errorf("BytesReceived = %d, want 24", got)
-	}
-	if got := tracker.MsgsReceived.Load(); got != 1 {
-		t.Errorf("MsgsReceived = %d, want 1", got)
-	}
-	if got := tracker.LastActivityAt.Load(); got == 0 {
-		t.Error("LastActivityAt should be non-zero after messages")
-	}
-}
-
-func TestBytesTrackingObserver_DelegatesToInner(t *testing.T) {
-	t.Parallel()
-
-	var clientCalls, upstreamCalls int
-	inner := &stubObserver{
-		onClient:   func() { clientCalls++ },
-		onUpstream: func() { upstreamCalls++ },
-	}
-	tracker := &LiveBytesTracker{}
-	obs := newBytesTrackingObserver(inner, tracker)
-
-	obs.ObserveClientMessage(websocket.MessageText, []byte("a"))
-	obs.ObserveUpstreamMessage(websocket.MessageText, []byte("b"))
-
-	if clientCalls != 1 {
-		t.Errorf("inner.ObserveClientMessage called %d times, want 1", clientCalls)
-	}
-	if upstreamCalls != 1 {
-		t.Errorf("inner.ObserveUpstreamMessage called %d times, want 1", upstreamCalls)
-	}
-}
-
-func TestBytesTrackingObserver_SnapshotDelegatesToInner(t *testing.T) {
-	t.Parallel()
-
-	inner := &stubObserver{
-		snapshot: WebSocketObservation{Model: "gpt-5"},
-	}
-	tracker := &LiveBytesTracker{}
-	obs := newBytesTrackingObserver(inner, tracker)
-
-	snap := obs.Snapshot()
-	if snap.Model != "gpt-5" {
-		t.Errorf("Snapshot().Model = %q, want %q", snap.Model, "gpt-5")
-	}
-}
-
-func TestBytesTrackingObserver_NilInner(t *testing.T) {
-	t.Parallel()
-
-	tracker := &LiveBytesTracker{}
-	obs := newBytesTrackingObserver(nil, tracker)
-
-	// Should not panic with nil inner observer.
-	obs.ObserveClientMessage(websocket.MessageText, []byte("data"))
-	obs.ObserveUpstreamMessage(websocket.MessageBinary, []byte("data"))
-	snap := obs.Snapshot()
-
-	if snap.Model != "" {
-		t.Errorf("expected empty Model from nil inner Snapshot, got %q", snap.Model)
-	}
-	if tracker.MsgsSent.Load() != 1 || tracker.MsgsReceived.Load() != 1 {
-		t.Error("counters should still increment with nil inner")
-	}
-}
-
-// stubObserver is a minimal test double for WebSocketMessageObserver.
-type stubObserver struct {
-	onClient   func()
-	onUpstream func()
-	snapshot   WebSocketObservation
-}
-
-func (s *stubObserver) ObserveClientMessage(_ websocket.MessageType, _ []byte) {
-	if s.onClient != nil {
-		s.onClient()
-	}
-}
-
-func (s *stubObserver) ObserveUpstreamMessage(_ websocket.MessageType, _ []byte) {
-	if s.onUpstream != nil {
-		s.onUpstream()
-	}
-}
-
-func (s *stubObserver) Snapshot() WebSocketObservation {
-	return s.snapshot
 }

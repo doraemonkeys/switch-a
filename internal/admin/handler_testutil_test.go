@@ -213,6 +213,30 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 	if filter.Success != nil && log.Success != *filter.Success {
 		return false
 	}
+	if filter.IsSSE != nil && log.IsSSE != *filter.IsSSE {
+		return false
+	}
+	if filter.IsWebSocket != nil && log.IsWebSocket != *filter.IsWebSocket {
+		return false
+	}
+	if filter.HasWebSocketLifecycleFilter() && !log.IsWebSocket {
+		return false
+	}
+	if filter.StickyWritten != nil {
+		if log.StickyWritten == nil || *log.StickyWritten != *filter.StickyWritten {
+			return false
+		}
+	}
+	if filter.SessionCommitted != nil {
+		if log.SessionCommitted == nil || *log.SessionCommitted != *filter.SessionCommitted {
+			return false
+		}
+	}
+	if filter.TerminalCause != "" {
+		if log.TerminalCause == nil || *log.TerminalCause != filter.TerminalCause {
+			return false
+		}
+	}
 	if filter.UserID != "" && log.UserID != filter.UserID {
 		return false
 	}
@@ -224,6 +248,17 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 	}
 	if filter.MinLatency != nil && log.LatencyMs < *filter.MinLatency {
 		return false
+	}
+	if filter.MinRetryCount != nil && log.RetryCount < *filter.MinRetryCount {
+		return false
+	}
+	if filter.HasRetries != nil {
+		if *filter.HasRetries && log.RetryCount == 0 {
+			return false
+		}
+		if !*filter.HasRetries && log.RetryCount > 0 {
+			return false
+		}
 	}
 	return true
 }

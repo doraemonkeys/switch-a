@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"switch-a/internal/model"
+
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
@@ -64,12 +66,26 @@ func NewWebSocketForwarder(cfg WebSocketForwarderConfig) *WebSocketForwarder {
 // WebSocketResult reports the outcome of a WebSocket forwarding session.
 // The caller uses this for health tracking, request logging, and active registry cleanup.
 type WebSocketResult struct {
-	// ConnectSuccess indicates whether the upstream handshake succeeded.
-	// When false, the client was never upgraded (received an HTTP error).
-	ConnectSuccess bool
+	// HandshakeAccepted indicates whether the selected provider completed the
+	// upstream WebSocket handshake. Client accept can still have succeeded when
+	// this is false because the proxy upgrades the client before dialing upstream.
+	HandshakeAccepted bool
 
-	// HandshakeStatusCode records the upstream HTTP status when the WebSocket upgrade
-	// was rejected before the bidirectional session started.
+	// SessionCommitted marks the point where the provider delivered meaningful
+	// upstream service. Handshake success alone is not sufficient for sticky or
+	// health policy because semantic failures can arrive immediately after 101.
+	SessionCommitted bool
+
+	// TerminalCause records why the session ended so callers can derive sticky,
+	// health, and logging decisions from an explicit lifecycle model.
+	TerminalCause model.TerminalCause
+
+	// CommitSource explains whether commitment came from a semantic observer or
+	// from the first upstream message fallback path.
+	CommitSource model.CommitSource
+
+	// HandshakeStatusCode records the HTTP status observed before the bidirectional
+	// session started, whether the rejection came from the gateway or upstream.
 	HandshakeStatusCode int
 
 	// HandshakeBodySnippet captures the upstream HTTP error body from a rejected
@@ -105,14 +121,55 @@ type WebSocketResult struct {
 }
 
 type webSocketRelayResult struct {
-	bytes      int64
-	err        error
-	errorOrder uint32
+	bytes       int64
+	err         error
+	failurePeer webSocketPeer
+	errorOrder  uint32
 }
 
 type webSocketRelayOutcome struct {
-	closeCode websocket.StatusCode
-	err       error
+	closeCode     websocket.StatusCode
+	err           error
+	terminalCause model.TerminalCause
+}
+
+type webSocketPeer uint8
+
+const (
+	webSocketPeerUnknown webSocketPeer = iota
+	webSocketPeerClient
+	webSocketPeerUpstream
+)
+
+type webSocketCommitState struct {
+	mu        sync.Mutex
+	committed bool
+	source    model.CommitSource
+}
+
+func newWebSocketCommitState() *webSocketCommitState {
+	return &webSocketCommitState{
+		source: model.CommitUnknown,
+	}
+}
+
+func (s *webSocketCommitState) Commit(source model.CommitSource) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.committed {
+		return false
+	}
+	s.committed = true
+	s.source = source
+	return true
+}
+
+func (s *webSocketCommitState) Snapshot() (bool, model.CommitSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.committed, s.source
 }
 
 // Forward accepts a client WebSocket upgrade, dials the upstream, and relays messages
@@ -121,21 +178,21 @@ type webSocketRelayOutcome struct {
 // Error contract (two channels):
 //   - err != nil: client accept failed. The caller should treat this as a client-side
 //     issue (not a provider failure) and must NOT write any further HTTP response.
-//   - err == nil, result.ConnectSuccess == false: upstream dial failed after the client
+//   - err == nil, result.HandshakeAccepted == false: upstream dial failed after the client
 //     was already upgraded. The client received a close frame with StatusBadGateway.
-//   - err == nil, result.ConnectSuccess == true: relay completed. result.Err is non-nil
+//   - err == nil, result.HandshakeAccepted == true: relay completed. result.Err is non-nil
 //     only for abnormal terminations (not for normal close codes).
 //
 // The caller is responsible for provider selection, health reporting, and cleanup.
 // Forward only handles the transport-level concerns: accept, dial, relay, close.
 func (f *WebSocketForwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.Request, upstreamURL string, extraHeaders http.Header) (*WebSocketResult, error) {
-	return f.ForwardObserved(ctx, w, r, upstreamURL, extraHeaders, nil)
+	return f.ForwardObserved(ctx, w, r, upstreamURL, extraHeaders, nil, nil)
 }
 
-// ForwardObserved behaves like Forward but additionally feeds relayed messages into an observer.
-// This keeps transport responsibilities centralized while allowing higher layers to extract
-// domain fields such as model resolution and usage from event-driven protocols.
-func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.ResponseWriter, r *http.Request, upstreamURL string, extraHeaders http.Header, observer WebSocketMessageObserver) (*WebSocketResult, error) {
+// ForwardObserved behaves like Forward but additionally feeds relayed messages into an
+// observer and emits a fallback commitment signal when the first upstream message is the
+// only safe commitment boundary.
+func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.ResponseWriter, r *http.Request, upstreamURL string, extraHeaders http.Header, observer WebSocketMessageObserver, onFirstUpstreamMessage func(WebSocketObservation)) (*WebSocketResult, error) {
 	start := time.Now()
 
 	// Accept the client's WebSocket upgrade.
@@ -145,8 +202,10 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 	})
 	if err != nil {
 		return &WebSocketResult{
-			Duration: time.Since(start),
-			Err:      err,
+			Duration:      time.Since(start),
+			Err:           err,
+			TerminalCause: model.TerminalClientUpgradeRejected,
+			CommitSource:  model.CommitUnknown,
 		}, err
 	}
 	clientConn.SetReadLimit(wsReadLimit)
@@ -174,6 +233,8 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 			HandshakeStatusCode:  handshakeStatusCode,
 			HandshakeBodySnippet: handshakeBodySnippet,
 			Err:                  err,
+			TerminalCause:        classifyDialFailure(resp),
+			CommitSource:         model.CommitUnknown,
 		}, nil
 	}
 	if resp != nil && resp.Body != nil {
@@ -182,21 +243,22 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 	upstreamConn.SetReadLimit(wsReadLimit)
 
 	// Both connections established — relay messages bidirectionally.
-	result := f.relay(ctx, clientConn, upstreamConn, observer)
-	result.ConnectSuccess = true
+	result := f.relay(ctx, clientConn, upstreamConn, observer, onFirstUpstreamMessage)
+	result.HandshakeAccepted = true
 	result.Duration = time.Since(start)
 	if observer != nil {
 		observation := observer.Snapshot()
-		result.Model = observation.Model
-		result.TokenUsage = observation.TokenUsage
-		result.UpstreamError = observation.UpstreamError
+		mergeWebSocketObservation(result, observation)
+	}
+	if result.UpstreamError != nil {
+		result.TerminalCause = model.TerminalUpstreamSemanticError
 	}
 	return result, nil
 }
 
 // relay copies messages between client and upstream until one side closes.
 // Uses a context-derived cancel to ensure both goroutines exit promptly.
-func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn *websocket.Conn, observer WebSocketMessageObserver) *WebSocketResult {
+func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn *websocket.Conn, observer WebSocketMessageObserver, onFirstUpstreamMessage func(WebSocketObservation)) *WebSocketResult {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -206,6 +268,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		wg               sync.WaitGroup
 		errorOrder       atomic.Uint32
 	)
+	fallbackCommit := newWebSocketCommitState()
 
 	var observeClient func(websocket.MessageType, []byte)
 	var observeUpstream func(websocket.MessageType, []byte)
@@ -213,14 +276,42 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		observeClient = observer.ObserveClientMessage
 		observeUpstream = observer.ObserveUpstreamMessage
 	}
+	onUpstreamForwarded := func(_ websocket.MessageType, _ []byte) {
+		observation := WebSocketObservation{SessionCommitted: true}
+		if observer != nil {
+			observation = observer.Snapshot()
+			if observation.SessionCommitted {
+				return
+			}
+			if observer.HasSemanticObservation() && !observation.ParseDegraded {
+				return
+			}
+		}
+		if !fallbackCommit.Commit(model.CommitUpstreamMessage) {
+			return
+		}
+		if onFirstUpstreamMessage == nil {
+			return
+		}
+		observation.SessionCommitted = true
+		onFirstUpstreamMessage(observation)
+	}
 
 	wg.Add(2)
 
 	// client → upstream
 	go func() {
 		defer wg.Done()
-		n, err := relayMessages(ctx, upstreamConn, clientConn, observeClient)
-		clientToUpstream = newWebSocketRelayResult(n, err, &errorOrder)
+		n, failurePeer, err := relayMessages(
+			ctx,
+			upstreamConn,
+			webSocketPeerUpstream,
+			clientConn,
+			webSocketPeerClient,
+			observeClient,
+			nil,
+		)
+		clientToUpstream = newWebSocketRelayResult(n, err, failurePeer, &errorOrder)
 		if err != nil {
 			cancel()
 		}
@@ -229,8 +320,16 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	// upstream → client
 	go func() {
 		defer wg.Done()
-		n, err := relayMessages(ctx, clientConn, upstreamConn, observeUpstream)
-		upstreamToClient = newWebSocketRelayResult(n, err, &errorOrder)
+		n, failurePeer, err := relayMessages(
+			ctx,
+			clientConn,
+			webSocketPeerClient,
+			upstreamConn,
+			webSocketPeerUpstream,
+			observeUpstream,
+			onUpstreamForwarded,
+		)
+		upstreamToClient = newWebSocketRelayResult(n, err, failurePeer, &errorOrder)
 		if err != nil {
 			cancel()
 		}
@@ -255,7 +354,11 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	_ = clientConn.Close(propagatedCloseCode, closeMsg)
 	_ = upstreamConn.Close(propagatedCloseCode, closeMsg)
 
+	sessionCommitted, commitSource := fallbackCommit.Snapshot()
 	return &WebSocketResult{
+		SessionCommitted:      sessionCommitted,
+		TerminalCause:         outcome.terminalCause,
+		CommitSource:          commitSource,
 		CloseCode:             outcome.closeCode,
 		BytesClientToUpstream: clientToUpstream.bytes,
 		BytesUpstreamToClient: upstreamToClient.bytes,
@@ -265,19 +368,30 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 
 // relayMessages copies messages from src to dst until src closes or ctx is cancelled.
 // Returns total bytes relayed and any error that terminated the relay.
-func relayMessages(ctx context.Context, dst, src *websocket.Conn, observe func(messageType websocket.MessageType, data []byte)) (int64, error) {
+func relayMessages(
+	ctx context.Context,
+	dst *websocket.Conn,
+	dstPeer webSocketPeer,
+	src *websocket.Conn,
+	srcPeer webSocketPeer,
+	observe func(messageType websocket.MessageType, data []byte),
+	onForwarded func(messageType websocket.MessageType, data []byte),
+) (int64, webSocketPeer, error) {
 	var totalBytes int64
 	for {
 		msgType, data, err := src.Read(ctx)
 		if err != nil {
-			return totalBytes, err
+			return totalBytes, srcPeer, err
 		}
 		totalBytes += int64(len(data))
 		if observe != nil {
 			observe(msgType, data)
 		}
 		if err := dst.Write(ctx, msgType, data); err != nil {
-			return totalBytes, err
+			return totalBytes, dstPeer, err
+		}
+		if onForwarded != nil {
+			onForwarded(msgType, data)
 		}
 	}
 }
@@ -317,10 +431,11 @@ func isUnexpectedPeerDisconnect(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || isCloseWithoutStatus(err)
 }
 
-func newWebSocketRelayResult(bytes int64, err error, errorOrder *atomic.Uint32) webSocketRelayResult {
+func newWebSocketRelayResult(bytes int64, err error, failurePeer webSocketPeer, errorOrder *atomic.Uint32) webSocketRelayResult {
 	result := webSocketRelayResult{
-		bytes: bytes,
-		err:   err,
+		bytes:       bytes,
+		err:         err,
+		failurePeer: failurePeer,
 	}
 	if err != nil {
 		// Capture order before canceling the sibling relay leg so reduction can preserve
@@ -353,23 +468,62 @@ func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult)
 		if candidate.err == nil {
 			continue
 		}
+		terminalCause := classifyRelayTerminalCause(candidate.err, candidate.failurePeer)
 		if isNormalClose(candidate.err) {
 			return webSocketRelayOutcome{
-				closeCode: extractCloseCode(candidate.err),
+				closeCode:     extractCloseCode(candidate.err),
+				terminalCause: terminalCause,
 			}
 		}
 		if isUnexpectedPeerDisconnect(candidate.err) {
 			return webSocketRelayOutcome{
-				closeCode: websocket.StatusNoStatusRcvd,
+				closeCode:     websocket.StatusNoStatusRcvd,
+				terminalCause: terminalCause,
 			}
 		}
 		return webSocketRelayOutcome{
-			closeCode: extractCloseCode(candidate.err),
-			err:       candidate.err,
+			closeCode:     extractCloseCode(candidate.err),
+			err:           candidate.err,
+			terminalCause: terminalCause,
 		}
 	}
 	return webSocketRelayOutcome{
-		closeCode: websocket.StatusNormalClosure,
+		closeCode:     websocket.StatusNormalClosure,
+		terminalCause: model.TerminalCleanClose,
+	}
+}
+
+func mergeWebSocketObservation(result *WebSocketResult, observation WebSocketObservation) {
+	result.Model = observation.Model
+	result.TokenUsage = observation.TokenUsage
+	result.UpstreamError = observation.UpstreamError
+	if observation.SessionCommitted {
+		result.SessionCommitted = true
+		result.CommitSource = model.CommitSemantic
+	}
+}
+
+func classifyDialFailure(resp *http.Response) model.TerminalCause {
+	if resp != nil && resp.StatusCode > 0 {
+		return model.TerminalUpstreamHandshakeRejected
+	}
+	return model.TerminalUpstreamTransportError
+}
+
+func classifyRelayTerminalCause(err error, failurePeer webSocketPeer) model.TerminalCause {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return model.TerminalInternalError
+	}
+	switch failurePeer {
+	case webSocketPeerClient:
+		return model.TerminalClientDisconnect
+	case webSocketPeerUpstream:
+		if isNormalClose(err) {
+			return model.TerminalCleanClose
+		}
+		return model.TerminalUpstreamTransportError
+	default:
+		return model.TerminalInternalError
 	}
 }
 

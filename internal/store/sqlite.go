@@ -85,6 +85,9 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	if err := migrateWebSocketColumn(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate websocket column: %w", err)
 	}
+	if err := migrateRequestLogLifecycleFields(db); err != nil { // coverage-ignore -- one-time migration
+		return nil, fmt.Errorf("migrate request log lifecycle fields: %w", err)
+	}
 
 	return &SQLiteStore{db: db, clock: clock}, nil
 }

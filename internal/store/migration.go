@@ -15,6 +15,17 @@ const (
 	stickyModeConfigKey          = "sticky_mode"
 	legacyMaxRetriesConfigKey    = "max_retries"
 	globalMaxAttemptsConfigKey   = "global_max_attempts"
+	requestLogsTableName         = "request_logs"
+	legacyWebSocketColumnName    = "is_web_socket"
+	webSocketColumnName          = "is_websocket"
+	sessionCommittedColumnName   = "session_committed"
+	stickyWrittenColumnName      = "sticky_written"
+	terminalCauseColumnName      = "terminal_cause"
+	commitSourceColumnName       = "commit_source"
+)
+
+const (
+	legacySuccessValue = 1
 )
 
 // migrateBaseURLToAPIType moves base_url from the providers table to provider_api_types.
@@ -128,22 +139,145 @@ func migrateGlobalMaxAttemptsConfig(db *gorm.DB) error {
 // (GORM's default snake_case for IsWebSocket) to the explicit is_websocket column.
 // Idempotent: skips if the legacy column does not exist.
 func migrateWebSocketColumn(db *gorm.DB) error {
-	var count int64
-	err := db.Raw(`SELECT COUNT(*) FROM pragma_table_info('request_logs') WHERE name = 'is_web_socket'`).Scan(&count).Error
+	hasLegacyColumn, err := requestLogsColumnExists(db, legacyWebSocketColumnName)
 	if err != nil {
 		return err
 	}
-	if count == 0 {
+	if !hasLegacyColumn {
 		return nil // No legacy column; nothing to migrate.
 	}
 
 	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`UPDATE request_logs SET is_websocket = is_web_socket WHERE is_web_socket = 1`).Error; err != nil {
+		if err := tx.Exec(
+			fmt.Sprintf(
+				`UPDATE %s SET %s = %s WHERE %s = ?`,
+				requestLogsTableName,
+				webSocketColumnName,
+				legacyWebSocketColumnName,
+				legacyWebSocketColumnName,
+			),
+			legacySuccessValue,
+		).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec(`ALTER TABLE request_logs DROP COLUMN is_web_socket`).Error; err != nil {
+		if err := tx.Exec(
+			fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, requestLogsTableName, legacyWebSocketColumnName),
+		).Error; err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+// migrateRequestLogLifecycleFields backfills only the historical WebSocket rows
+// whose lifecycle cannot be reconstructed from the pre-refactor schema, while
+// clearing lifecycle pollution from regular HTTP/SSE rows.
+func migrateRequestLogLifecycleFields(db *gorm.DB) error {
+	hasSessionCommitted, err := requestLogsColumnExists(db, sessionCommittedColumnName)
+	if err != nil {
+		return err
+	}
+	hasStickyWritten, err := requestLogsColumnExists(db, stickyWrittenColumnName)
+	if err != nil {
+		return err
+	}
+	hasTerminalCause, err := requestLogsColumnExists(db, terminalCauseColumnName)
+	if err != nil {
+		return err
+	}
+	hasCommitSource, err := requestLogsColumnExists(db, commitSourceColumnName)
+	if err != nil {
+		return err
+	}
+	if !hasSessionCommitted && !hasStickyWritten && !hasTerminalCause && !hasCommitSource {
+		return nil
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := migrateOptionalWebSocketLifecycleColumn(
+			tx,
+			hasSessionCommitted,
+			sessionCommittedColumnName,
+			true,
+			fmt.Sprintf("success = ? AND %s IS NULL", sessionCommittedColumnName),
+			legacySuccessValue,
+		); err != nil {
+			return err
+		}
+		if err := migrateOptionalWebSocketLifecycleColumn(
+			tx,
+			hasStickyWritten,
+			stickyWrittenColumnName,
+			false,
+			fmt.Sprintf("%s IS NULL", stickyWrittenColumnName),
+		); err != nil {
+			return err
+		}
+		if err := migrateOptionalWebSocketLifecycleColumn(
+			tx,
+			hasTerminalCause,
+			terminalCauseColumnName,
+			model.TerminalUnknown,
+			fmt.Sprintf("(%s IS NULL OR %s = '')", terminalCauseColumnName, terminalCauseColumnName),
+		); err != nil {
+			return err
+		}
+		if err := migrateOptionalWebSocketLifecycleColumn(
+			tx,
+			hasCommitSource,
+			commitSourceColumnName,
+			model.CommitUnknown,
+			fmt.Sprintf("(%s IS NULL OR %s = '')", commitSourceColumnName, commitSourceColumnName),
+		); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func migrateOptionalWebSocketLifecycleColumn(tx *gorm.DB, present bool, columnName string, defaultValue any, backfillPredicate string, backfillArgs ...any) error {
+	if !present {
+		return nil
+	}
+	if err := clearNonWebSocketLifecycleColumn(tx, columnName); err != nil {
+		return err
+	}
+	return backfillWebSocketLifecycleColumn(tx, columnName, defaultValue, backfillPredicate, backfillArgs...)
+}
+
+func clearNonWebSocketLifecycleColumn(tx *gorm.DB, columnName string) error {
+	return tx.Exec(
+		fmt.Sprintf(
+			`UPDATE %s SET %s = NULL WHERE %s = 0`,
+			requestLogsTableName,
+			columnName,
+			webSocketColumnName,
+		),
+	).Error
+}
+
+func backfillWebSocketLifecycleColumn(tx *gorm.DB, columnName string, defaultValue any, predicate string, predicateArgs ...any) error {
+	args := append([]any{defaultValue}, predicateArgs...)
+	return tx.Exec(
+		fmt.Sprintf(
+			`UPDATE %s SET %s = ? WHERE %s = 1 AND %s`,
+			requestLogsTableName,
+			columnName,
+			webSocketColumnName,
+			predicate,
+		),
+		args...,
+	).Error
+}
+
+func requestLogsColumnExists(db *gorm.DB, columnName string) (bool, error) {
+	var count int64
+	err := db.Raw(
+		fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, requestLogsTableName),
+		columnName,
+	).Scan(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }

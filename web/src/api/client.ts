@@ -80,31 +80,41 @@ export function createTokenManager(storage: Storage) {
 }
 
 // Build query string for logs API
+function appendLogQueryParam(
+  query: URLSearchParams,
+  key: string,
+  value: string | number | boolean | undefined | null,
+): void {
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+  query.set(key, String(value));
+}
+
 function buildLogsQuery(filter?: LogFilter): string {
   const query = new URLSearchParams();
-  if (filter?.limit != null) query.set("limit", String(filter.limit));
-  if (filter?.offset != null) query.set("offset", String(filter.offset));
-  if (filter?.provider_id) query.set("provider_id", filter.provider_id);
-  if (filter?.api_type) query.set("api_type", filter.api_type);
-  if (filter?.success != null) query.set("success", String(filter.success));
-  if (filter?.is_sse != null) query.set("is_sse", String(filter.is_sse));
-  if (filter?.is_websocket != null) {
-    query.set("is_websocket", String(filter.is_websocket));
+  if (!filter) {
+    return query.toString();
   }
-  if (filter?.user_id) query.set("user_id", filter.user_id);
-  if (filter?.start_time) query.set("start_time", filter.start_time);
-  if (filter?.end_time) query.set("end_time", filter.end_time);
-  if (filter?.min_latency != null) {
-    query.set("min_latency", String(filter.min_latency));
-  }
-  if (filter?.min_retry_count != null) {
-    query.set("min_retry_count", String(filter.min_retry_count));
-  }
-  if (filter?.has_retries != null) {
-    query.set("has_retries", String(filter.has_retries));
-  }
-  if (filter?.sort_by) query.set("sort_by", filter.sort_by);
-  if (filter?.sort_order) query.set("sort_order", filter.sort_order);
+
+  appendLogQueryParam(query, "limit", filter.limit);
+  appendLogQueryParam(query, "offset", filter.offset);
+  appendLogQueryParam(query, "provider_id", filter.provider_id);
+  appendLogQueryParam(query, "api_type", filter.api_type);
+  appendLogQueryParam(query, "success", filter.success);
+  appendLogQueryParam(query, "is_sse", filter.is_sse);
+  appendLogQueryParam(query, "is_websocket", filter.is_websocket);
+  appendLogQueryParam(query, "user_id", filter.user_id);
+  appendLogQueryParam(query, "start_time", filter.start_time);
+  appendLogQueryParam(query, "end_time", filter.end_time);
+  appendLogQueryParam(query, "min_latency", filter.min_latency);
+  appendLogQueryParam(query, "min_retry_count", filter.min_retry_count);
+  appendLogQueryParam(query, "has_retries", filter.has_retries);
+  appendLogQueryParam(query, "session_committed", filter.session_committed);
+  appendLogQueryParam(query, "sticky_written", filter.sticky_written);
+  appendLogQueryParam(query, "terminal_cause", filter.terminal_cause);
+  appendLogQueryParam(query, "sort_by", filter.sort_by);
+  appendLogQueryParam(query, "sort_order", filter.sort_order);
   return query.toString();
 }
 

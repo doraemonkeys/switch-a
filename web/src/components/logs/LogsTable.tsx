@@ -1,5 +1,9 @@
 import type { RequestLog } from "../../api/types";
 import { getSuccessBadgeClass } from "../../lib/utils";
+import {
+  getDiagnosticToneClass,
+  getLogLifecyclePresentation,
+} from "./diagnostics";
 import { getAriaSortValue, shortenModelName } from "./utils";
 import {
   LOG_TABLE_COLUMNS,
@@ -244,6 +248,7 @@ function getMethodStyle(method: string): string {
 function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
   const formatTime = (dateStr: string) =>
     dateFormatter.format(new Date(dateStr));
+  const lifecycle = getLogLifecyclePresentation(log);
 
   // Determine if we should show path hint
   const showPathHint =
@@ -319,12 +324,28 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
         </div>
       </td>
       <td className="px-3 py-3 whitespace-nowrap text-sm">
-        <span
-          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getSuccessBadgeClass(log.success)}`}
-        >
-          {log.success ? "✅" : "❌"}
-          {log.status_code}
-        </span>
+        {log.is_websocket ? (
+          <div className="flex flex-col items-start gap-1">
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getDiagnosticToneClass(lifecycle.outcomeTone)}`}
+              title={lifecycle.outcomeLabel}
+            >
+              {lifecycle.shortOutcomeLabel}
+            </span>
+            {lifecycle.tableDetailLabel && (
+              <span className="text-xs text-text-muted">
+                {lifecycle.tableDetailLabel}
+              </span>
+            )}
+          </div>
+        ) : (
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getSuccessBadgeClass(log.success)}`}
+          >
+            {log.success ? "✅" : "❌"}
+            {log.status_code}
+          </span>
+        )}
       </td>
       {/* Tokens column - hidden on mobile */}
       <td className="hidden md:table-cell px-3 py-3 whitespace-nowrap text-sm">

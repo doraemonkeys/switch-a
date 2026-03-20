@@ -257,6 +257,20 @@ export interface UsageDetails {
 // Request Log Types
 // =============================================================================
 
+export type TerminalCause =
+  | "unknown"
+  | "provider_unavailable"
+  | "provider_configuration_error"
+  | "clean_close"
+  | "client_disconnect"
+  | "upstream_transport_error"
+  | "upstream_semantic_error"
+  | "upstream_handshake_rejected"
+  | "client_upgrade_rejected"
+  | "internal_error";
+
+export type CommitSource = "semantic_event" | "upstream_message" | "unknown";
+
 export interface RequestLog {
   id: number;
   request_id: string;
@@ -293,6 +307,11 @@ export interface RequestLog {
   cache_read_input_tokens?: number | null; // Claude: tokens read from cache (billed at 10%)
   cache_creation_input_tokens?: number | null; // Claude: tokens written to cache (billed at 125%)
   usage_details?: UsageDetails | null; // Parsed usage details (service_tier, etc.)
+  // WebSocket lifecycle semantics (nullable outside the WebSocket lifecycle domain)
+  sticky_written?: boolean | null;
+  session_committed?: boolean | null;
+  terminal_cause?: TerminalCause | null;
+  commit_source?: CommitSource | null;
   attempts?: RequestAttempt[];
 }
 
@@ -334,6 +353,12 @@ export interface LogFilter {
   min_retry_count?: number;
   /** Filter by has retries (true = retry_count > 0, false = retry_count = 0) */
   has_retries?: boolean;
+  /** Filter by whether a WebSocket session committed upstream service */
+  session_committed?: boolean;
+  /** Filter by whether a WebSocket session wrote sticky affinity */
+  sticky_written?: boolean;
+  /** Filter by WebSocket terminal cause */
+  terminal_cause?: TerminalCause;
   /** Sort field (created_at/latency_ms, default: created_at) */
   sort_by?: "created_at" | "latency_ms";
   /** Sort direction (asc/desc, default: desc) */

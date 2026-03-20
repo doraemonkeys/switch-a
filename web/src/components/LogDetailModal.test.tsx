@@ -118,6 +118,60 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("❌ Failed")).toBeInTheDocument();
   });
 
+  it("shows websocket lifecycle badges for committed client disconnects", () => {
+    const log = createMockLog({
+      is_websocket: true,
+      success: false,
+      status_code: 101,
+      session_committed: true,
+      terminal_cause: "client_disconnect",
+      commit_source: "semantic_event",
+      sticky_written: true,
+      error_msg: "websocket: close 1006",
+    });
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Test Provider"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getAllByText("Client disconnect").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Committed").length).toBeGreaterThan(0);
+    expect(screen.getByText("WebSocket Lifecycle")).toBeInTheDocument();
+    expect(
+      screen.getByText("Committed session ended on client disconnect"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Semantic event")).toBeInTheDocument();
+    expect(screen.getByText("Written")).toBeInTheDocument();
+    expect(screen.getByText("Connection Note")).toBeInTheDocument();
+    expect(screen.queryByText("Error Details")).not.toBeInTheDocument();
+  });
+
+  it("keeps uncommitted websocket semantic errors in the error section", () => {
+    const log = createMockLog({
+      is_websocket: true,
+      success: false,
+      status_code: 502,
+      session_committed: false,
+      terminal_cause: "upstream_semantic_error",
+      error_msg: '{"error":"provider failed"}',
+    });
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Test Provider"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getByText("No service")).toBeInTheDocument();
+    expect(screen.getAllByText("Uncommitted")).toHaveLength(2);
+    expect(screen.getAllByText("Upstream semantic error")).toHaveLength(2);
+    expect(screen.getByText("Error Details")).toBeInTheDocument();
+  });
+
   it("shows error details section for failed logs with error message", () => {
     const log = createMockLog({
       success: false,

@@ -11,20 +11,33 @@ import (
 	"switch-a/internal/model"
 )
 
+func lifecycleBoolPtr(v bool) *bool {
+	return &v
+}
+
+func lifecycleTerminalCausePtr(v model.TerminalCause) *model.TerminalCause {
+	return &v
+}
+
 func TestGetLog_Success(t *testing.T) {
 	h, st, _ := testHandler()
 
 	now := time.Now()
+	committed := true
 	st.logs = []model.RequestLog{
 		{
-			ID:         1,
-			RequestID:  "req-123",
-			ProviderID: "provider-1",
-			APIType:    "claude",
-			Model:      "claude-3",
-			StatusCode: 200,
-			Success:    true,
-			CreatedAt:  now,
+			ID:               1,
+			RequestID:        "req-123",
+			ProviderID:       "provider-1",
+			APIType:          "claude",
+			Model:            "claude-3",
+			StatusCode:       200,
+			Success:          true,
+			IsWebSocket:      true,
+			StickyWritten:    lifecycleBoolPtr(true),
+			SessionCommitted: &committed,
+			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
+			CreatedAt:        now,
 		},
 	}
 
@@ -51,6 +64,15 @@ func TestGetLog_Success(t *testing.T) {
 	}
 	if log.ProviderID != "provider-1" {
 		t.Errorf("log.ProviderID = %q, want %q", log.ProviderID, "provider-1")
+	}
+	if log.SessionCommitted == nil || !*log.SessionCommitted {
+		t.Fatalf("log.SessionCommitted = %v, want true", log.SessionCommitted)
+	}
+	if log.StickyWritten == nil || !*log.StickyWritten {
+		t.Fatalf("log.StickyWritten = %v, want true", log.StickyWritten)
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalCleanClose {
+		t.Fatalf("log.TerminalCause = %v, want %q", log.TerminalCause, model.TerminalCleanClose)
 	}
 }
 
@@ -348,10 +370,45 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 	h, st, _ := testHandler()
 
 	now := time.Now()
+	committed := true
+	uncommitted := false
 	st.logs = []model.RequestLog{
-		{ID: 1, ProviderID: "provider-1", APIType: "claude", Success: true, UserID: "user-1", CreatedAt: now},
-		{ID: 2, ProviderID: "provider-2", APIType: "codex", Success: false, UserID: "user-2", CreatedAt: now.Add(-time.Hour)},
-		{ID: 3, ProviderID: "provider-1", APIType: "claude", Success: true, UserID: "user-1", CreatedAt: now.Add(-2 * time.Hour)},
+		{
+			ID:               1,
+			ProviderID:       "provider-1",
+			APIType:          "claude",
+			Success:          true,
+			UserID:           "user-1",
+			IsWebSocket:      true,
+			StickyWritten:    lifecycleBoolPtr(true),
+			SessionCommitted: &committed,
+			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
+			CreatedAt:        now,
+		},
+		{
+			ID:               2,
+			ProviderID:       "provider-2",
+			APIType:          "codex",
+			Success:          false,
+			UserID:           "user-2",
+			IsWebSocket:      true,
+			StickyWritten:    lifecycleBoolPtr(false),
+			SessionCommitted: &uncommitted,
+			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalUpstreamSemanticError),
+			CreatedAt:        now.Add(-time.Hour),
+		},
+		{
+			ID:               3,
+			ProviderID:       "provider-1",
+			APIType:          "claude",
+			Success:          true,
+			UserID:           "user-1",
+			IsWebSocket:      true,
+			StickyWritten:    lifecycleBoolPtr(false),
+			SessionCommitted: &committed,
+			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalClientDisconnect),
+			CreatedAt:        now.Add(-2 * time.Hour),
+		},
 	}
 
 	tests := []struct {
@@ -364,6 +421,10 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 		{"filter by success true", "?success=true", 2},
 		{"filter by success false", "?success=false", 1},
 		{"filter by user_id", "?user_id=user-1", 2},
+		{"filter by sticky_written", "?sticky_written=true", 1},
+		{"filter by session_committed true", "?session_committed=true", 2},
+		{"filter by session_committed false", "?session_committed=false", 1},
+		{"filter by terminal_cause", "?terminal_cause=client_disconnect", 1},
 		{"multiple filters", "?provider_id=provider-1&api_type=claude", 2},
 	}
 
@@ -528,6 +589,9 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 		{"invalid success", "?success=maybe"},
 		{"invalid is_sse", "?is_sse=maybe"},
 		{"invalid is_websocket", "?is_websocket=maybe"},
+		{"invalid sticky_written", "?sticky_written=maybe"},
+		{"invalid session_committed", "?session_committed=maybe"},
+		{"invalid terminal_cause", "?terminal_cause=not_real"},
 		{"invalid start_time", "?start_time=not-a-date"},
 		{"invalid end_time", "?end_time=invalid"},
 		{"invalid min_latency non-numeric", "?min_latency=slow"},
@@ -598,6 +662,15 @@ func TestParseLogFilter_Defaults(t *testing.T) {
 	if filter.SortOrder != "desc" {
 		t.Errorf("expected sort_order 'desc', got %q", filter.SortOrder)
 	}
+	if filter.StickyWritten != nil {
+		t.Errorf("expected sticky_written to be nil, got %v", filter.StickyWritten)
+	}
+	if filter.SessionCommitted != nil {
+		t.Errorf("expected session_committed to be nil, got %v", filter.SessionCommitted)
+	}
+	if filter.TerminalCause != "" {
+		t.Errorf("expected empty terminal_cause, got %q", filter.TerminalCause)
+	}
 }
 
 func TestParseLogFilter_AllParams(t *testing.T) {
@@ -605,21 +678,24 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 	endTime := "2024-12-31T23:59:59Z"
 
 	query := map[string][]string{
-		"limit":           {"50"},
-		"offset":          {"10"},
-		"provider_id":     {"provider-1"},
-		"api_type":        {"claude"},
-		"success":         {"true"},
-		"is_sse":          {"false"},
-		"is_websocket":    {"true"},
-		"user_id":         {"user-123"},
-		"start_time":      {startTime},
-		"end_time":        {endTime},
-		"min_latency":     {"100"},
-		"min_retry_count": {"1"},
-		"has_retries":     {"true"},
-		"sort_by":         {"latency_ms"},
-		"sort_order":      {"asc"},
+		"limit":             {"50"},
+		"offset":            {"10"},
+		"provider_id":       {"provider-1"},
+		"api_type":          {"claude"},
+		"success":           {"true"},
+		"is_sse":            {"false"},
+		"is_websocket":      {"true"},
+		"sticky_written":    {"true"},
+		"session_committed": {"false"},
+		"terminal_cause":    {"upstream_semantic_error"},
+		"user_id":           {"user-123"},
+		"start_time":        {startTime},
+		"end_time":          {endTime},
+		"min_latency":       {"100"},
+		"min_retry_count":   {"1"},
+		"has_retries":       {"true"},
+		"sort_by":           {"latency_ms"},
+		"sort_order":        {"asc"},
 	}
 
 	filter, errMsg := parseLogFilter(query)
@@ -647,6 +723,15 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 	}
 	if filter.IsWebSocket == nil || *filter.IsWebSocket != true {
 		t.Error("expected is_websocket true")
+	}
+	if filter.StickyWritten == nil || *filter.StickyWritten != true {
+		t.Error("expected sticky_written true")
+	}
+	if filter.SessionCommitted == nil || *filter.SessionCommitted != false {
+		t.Error("expected session_committed false")
+	}
+	if filter.TerminalCause != model.TerminalUpstreamSemanticError {
+		t.Errorf("expected terminal_cause %q, got %q", model.TerminalUpstreamSemanticError, filter.TerminalCause)
 	}
 	if filter.UserID != "user-123" {
 		t.Errorf("expected user_id 'user-123', got %q", filter.UserID)
@@ -703,6 +788,18 @@ func TestParseLogFilter_BoolParsing(t *testing.T) {
 				t.Errorf("expected success %v, got %v", tt.expected, *filter.Success)
 			}
 		})
+	}
+}
+
+func TestParseLogFilter_TerminalCause(t *testing.T) {
+	query := map[string][]string{"terminal_cause": {string(model.TerminalClientDisconnect)}}
+	filter, errMsg := parseLogFilter(query)
+
+	if errMsg != "" {
+		t.Errorf("unexpected error: %s", errMsg)
+	}
+	if filter.TerminalCause != model.TerminalClientDisconnect {
+		t.Errorf("expected terminal_cause %q, got %q", model.TerminalClientDisconnect, filter.TerminalCause)
 	}
 }
 

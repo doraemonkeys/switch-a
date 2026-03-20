@@ -33,6 +33,10 @@ type LogsResponse struct {
 //   - api_type: filter by API type (claude/codex/gemini/custom:*)
 //   - success: filter by success/failure (true/false)
 //   - is_sse: filter by SSE/regular request (true/false)
+//   - is_websocket: filter by WebSocket/regular request (true/false)
+//   - sticky_written: filter by whether the request wrote sticky affinity (true/false)
+//   - session_committed: filter by whether committed service is known to have started (true/false)
+//   - terminal_cause: filter by explicit terminal cause enum
 //   - user_id: filter by user ID
 //   - start_time: filter by start time (RFC3339)
 //   - end_time: filter by end time (RFC3339)
@@ -111,6 +115,21 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	}
 
 	filter.IsWebSocket, errMsg = parseBoolPtr(getQueryParam(query, "is_websocket"), "is_websocket")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.StickyWritten, errMsg = parseBoolPtr(getQueryParam(query, "sticky_written"), "sticky_written")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.SessionCommitted, errMsg = parseBoolPtr(getQueryParam(query, "session_committed"), "session_committed")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.TerminalCause, errMsg = parseTerminalCause(getQueryParam(query, "terminal_cause"))
 	if errMsg != "" {
 		return filter, errMsg
 	}
@@ -220,6 +239,18 @@ func parseBoolPtr(s string, name string) (*bool, string) {
 	default:
 		return nil, "Invalid " + name + ": must be 'true' or 'false'"
 	}
+}
+
+func parseTerminalCause(s string) (model.TerminalCause, string) {
+	if s == "" {
+		return "", ""
+	}
+
+	cause := model.TerminalCause(s)
+	if !model.IsValidTerminalCause(cause) {
+		return "", "Invalid terminal_cause: must be a valid terminal cause"
+	}
+	return cause, ""
 }
 
 // parseTimePtr parses a RFC3339 time pointer from string.

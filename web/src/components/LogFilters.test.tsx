@@ -69,6 +69,9 @@ describe("LogFilters - Basic Rendering", () => {
     expect(screen.getByText("Provider")).toBeInTheDocument();
     expect(screen.getByText("Status")).toBeInTheDocument();
     expect(screen.getByText("Request Type")).toBeInTheDocument();
+    expect(screen.getByText("Commit State")).toBeInTheDocument();
+    expect(screen.getByText("Sticky Write")).toBeInTheDocument();
+    expect(screen.getByText("Terminal Cause")).toBeInTheDocument();
     expect(screen.getByText("API Type")).toBeInTheDocument();
     expect(screen.getByText("Time Range")).toBeInTheDocument();
   });
@@ -172,6 +175,70 @@ describe("LogFilters - Status Filter", () => {
     fireEvent.change(statusSelect, { target: { value: "" } });
 
     expect(mockOnFilterChange).toHaveBeenCalledWith({ success: undefined });
+  });
+});
+
+describe("LogFilters - Lifecycle Filters", () => {
+  it("handles commit state filter changes", () => {
+    render(
+      <LogFilters
+        filter={defaultFilter}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    const commitStateSelect = screen.getByRole("combobox", {
+      name: /commit state/i,
+    });
+    fireEvent.change(commitStateSelect, { target: { value: "true" } });
+
+    expect(mockOnFilterChange).toHaveBeenCalledWith({
+      session_committed: true,
+    });
+  });
+
+  it("handles sticky write filter changes", () => {
+    render(
+      <LogFilters
+        filter={defaultFilter}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    const stickyWriteSelect = screen.getByRole("combobox", {
+      name: /sticky write/i,
+    });
+    fireEvent.change(stickyWriteSelect, { target: { value: "false" } });
+
+    expect(mockOnFilterChange).toHaveBeenCalledWith({
+      sticky_written: false,
+    });
+  });
+
+  it("handles terminal cause filter changes", () => {
+    render(
+      <LogFilters
+        filter={defaultFilter}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    const terminalCauseSelect = screen.getByRole("combobox", {
+      name: /terminal cause/i,
+    });
+    fireEvent.change(terminalCauseSelect, {
+      target: { value: "upstream_semantic_error" },
+    });
+
+    expect(mockOnFilterChange).toHaveBeenCalledWith({
+      terminal_cause: "upstream_semantic_error",
+    });
   });
 });
 
@@ -400,6 +467,27 @@ describe("LogFilters - Clear Filters", () => {
     expect(screen.getByText("Type: claude")).toBeInTheDocument();
   });
 
+  it("shows lifecycle filter badges", () => {
+    render(
+      <LogFilters
+        filter={{
+          session_committed: true,
+          sticky_written: false,
+          terminal_cause: "client_disconnect",
+        }}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    expect(screen.getByText("Commit: Committed")).toBeInTheDocument();
+    expect(screen.getByText("Sticky Write: Not Written")).toBeInTheDocument();
+    expect(
+      screen.getByText("Terminal Cause: Client Disconnect"),
+    ).toBeInTheDocument();
+  });
+
   it("shows start_time filter badge with formatted date", () => {
     render(
       <LogFilters
@@ -463,6 +551,39 @@ describe("LogFilters - Filter Badge Removal", () => {
     fireEvent.click(removeButton);
 
     expect(mockOnFilterChange).toHaveBeenCalledWith({ api_type: undefined });
+  });
+
+  it("removes lifecycle filters when their badge buttons are clicked", () => {
+    render(
+      <LogFilters
+        filter={{
+          session_committed: false,
+          sticky_written: true,
+          terminal_cause: "clean_close",
+        }}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Remove Commit: Uncommitted filter"));
+    fireEvent.click(
+      screen.getByLabelText("Remove Sticky Write: Written filter"),
+    );
+    fireEvent.click(
+      screen.getByLabelText("Remove Terminal Cause: Clean Close filter"),
+    );
+
+    expect(mockOnFilterChange).toHaveBeenNthCalledWith(1, {
+      session_committed: undefined,
+    });
+    expect(mockOnFilterChange).toHaveBeenNthCalledWith(2, {
+      sticky_written: undefined,
+    });
+    expect(mockOnFilterChange).toHaveBeenNthCalledWith(3, {
+      terminal_cause: undefined,
+    });
   });
 
   it("removes time filter when badge remove button is clicked", () => {
@@ -675,6 +796,19 @@ describe("LogFilters - Date Preset Detection", () => {
     render(
       <LogFilters
         filter={{ end_time: "2024-01-15T12:00:00Z" }}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    expect(screen.getByText("Clear Filters")).toBeInTheDocument();
+  });
+
+  it("considers lifecycle filters as active filter indicators", () => {
+    render(
+      <LogFilters
+        filter={{ terminal_cause: "unknown" }}
         onFilterChange={mockOnFilterChange}
         providers={mockProviders}
         onClear={mockOnClear}

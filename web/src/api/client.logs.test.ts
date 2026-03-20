@@ -113,4 +113,23 @@ describe("createApiClient logs API", () => {
       expect.any(Object),
     );
   });
+
+  it("should serialize websocket lifecycle filters", async () => {
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ logs: [], total: 0, limit: 20, offset: 0 }),
+    });
+
+    await api.logs.list({
+      session_committed: true,
+      sticky_written: false,
+      terminal_cause: "client_disconnect",
+    });
+
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/logs?session_committed=true&sticky_written=false&terminal_cause=client_disconnect",
+      expect.any(Object),
+    );
+  });
 });
