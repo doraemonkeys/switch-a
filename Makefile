@@ -42,13 +42,13 @@ ci: check-go-env
 	@set -o pipefail && go test -race ./... -coverprofile=./cover.out -covermode=atomic 2>&1 | tail -n 10
 	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 	@golangci-lint run
-	@sloc-guard -q check
 	@cd web && pnpm test:coverage --silent
 	@cd web && pnpm exec tsc --noEmit -p tsconfig.app.json
 	@cd web && pnpm lint --quiet
+	@sloc-guard -q check
 
 # 正常模式
-verify: check-go-env coverage lint sloc fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude
+verify: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc
 
 rm-tmpclaude:
 	@rm -f tmpclaude-*
