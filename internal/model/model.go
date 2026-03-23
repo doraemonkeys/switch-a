@@ -57,16 +57,23 @@ func IsValidStickyMode(m StickyMode) bool {
 
 // Provider represents an AI provider configuration.
 type Provider struct {
-	ID          string            `gorm:"primaryKey" json:"id"`
-	Name        string            `gorm:"not null" json:"name"`
-	APIKey      string            `gorm:"not null" json:"api_key"`
-	APITypes    []ProviderAPIType `gorm:"foreignKey:ProviderID" json:"api_types"`
-	AuthMode    string            `gorm:"default:auto" json:"auth_mode"`
-	GroupID     *string           `gorm:"index" json:"group_id"`
-	Group       *Group            `gorm:"foreignKey:GroupID" json:"-"`
-	Weight      int               `gorm:"default:1" json:"weight"`
-	Priority    int               `gorm:"default:0" json:"priority"`
-	Concurrency int               `gorm:"default:0" json:"concurrency"`
+	ID       string            `gorm:"primaryKey" json:"id"`
+	Name     string            `gorm:"not null" json:"name"`
+	APIKey   string            `gorm:"not null" json:"api_key"`
+	APITypes []ProviderAPIType `gorm:"foreignKey:ProviderID" json:"api_types"`
+	AuthMode string            `gorm:"default:auto" json:"auth_mode"`
+	// CredentialType defines how this provider authenticates upstream requests.
+	// Static API key providers continue using APIKey/API type overrides, while
+	// login-backed providers resolve credentials from CredentialData at runtime.
+	CredentialType ProviderCredentialType `gorm:"type:text;default:api_key" json:"credential_type"`
+	// CredentialData stores provider-type-specific credential material. It remains
+	// server-side only because login-backed providers contain refresh-capable tokens.
+	CredentialData string  `gorm:"type:text;default:''" json:"-"`
+	GroupID        *string `gorm:"index" json:"group_id"`
+	Group          *Group  `gorm:"foreignKey:GroupID" json:"-"`
+	Weight         int     `gorm:"default:1" json:"weight"`
+	Priority       int     `gorm:"default:0" json:"priority"`
+	Concurrency    int     `gorm:"default:0" json:"concurrency"`
 	// MaxRetries is the number of retries allowed for this provider (0 = try once, no retry).
 	MaxRetries int `gorm:"default:0" json:"max_retries"`
 	// Backoff defines exponential backoff for same-provider retries.
@@ -85,6 +92,8 @@ type Provider struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 	// Health is populated by admin API handlers, not stored in database.
 	Health *HealthState `gorm:"-" json:"health,omitempty"`
+	// AuthProfile is a derived, non-sensitive summary of the provider credential state.
+	AuthProfile *ProviderAuthProfile `gorm:"-" json:"auth_profile,omitempty"`
 }
 
 // BaseURLForAPIType returns the base URL for the given API type.

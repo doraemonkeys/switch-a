@@ -76,8 +76,12 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 	upstreamURL := httpToWSURL(h.buildFullURL(baseURL, upstreamPath, r.URL.RawQuery))
 
 	// Build headers for the upstream handshake:
-	// auth + non-hop-by-hop headers from the original request (e.g., OpenAI-Beta).
-	dialHeaders := buildWebSocketDialHeaders(r, provider, apiType, cfg.globalAuthMode)
+	// provider auth is injected centrally while protocol headers remain pass-through.
+	dialHeaders, err := h.prepareWebSocketDialHeaders(ctx, r, provider, apiType, cfg.globalAuthMode)
+	if err != nil {
+		h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "websocket credential preparation failed", "credentials", err)
+		return
+	}
 	applyObservation := func(observation WebSocketObservation) {
 		if h.activeRegistry == nil {
 			return
@@ -109,6 +113,26 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 
 	// Forward the WebSocket connection.
 	result, fwdErr := h.wsForwarder.ForwardObserved(ctx, w, r, upstreamURL, dialHeaders, observer, applyObservation)
+	result, fwdErr, handled := h.retryUnauthorizedWebSocketForward(
+		ctx,
+		w,
+		r,
+		provider,
+		fromSticky,
+		info,
+		apiType,
+		requestID,
+		cfg.globalAuthMode,
+		startTime,
+		upstreamURL,
+		observer,
+		applyObservation,
+		result,
+		fwdErr,
+	)
+	if handled {
+		return
+	}
 	if fwdErr != nil {
 		// Accept failed — client never upgraded. This is a client-side issue (protocol
 		// mismatch, malformed request), NOT a provider failure. Do not call markFailure
@@ -118,6 +142,12 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 			zap.Error(fwdErr),
 		)
 		go h.logWebSocketRequest(requestID, info, provider, fromSticky, false, result, fwdErr, time.Since(startTime))
+		return
+	}
+	if result != nil && !result.HandshakeAccepted {
+		h.writeWebSocketHandshakeFailure(w, result)
+		applyWebSocketHealthOutcome(ctx, h, provider.ID, result)
+		go h.logWebSocketRequest(requestID, info, provider, fromSticky, false, result, result.Err, time.Since(startTime))
 		return
 	}
 	if result != nil && result.Model != "" {
@@ -170,6 +200,49 @@ func (h *Handler) selectWebSocketProvider(ctx context.Context, w http.ResponseWr
 	return nil, fromSticky, false
 }
 
+func (h *Handler) retryUnauthorizedWebSocketForward(
+	ctx context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	provider *model.Provider,
+	fromSticky bool,
+	info RequestInfo,
+	apiType, requestID, globalAuthMode string,
+	startTime time.Time,
+	upstreamURL string,
+	observer WebSocketMessageObserver,
+	applyObservation func(WebSocketObservation),
+	result *WebSocketResult,
+	fwdErr error,
+) (*WebSocketResult, error, bool) {
+	if fwdErr != nil || result == nil || result.HandshakeAccepted || result.HandshakeStatusCode != http.StatusUnauthorized || h.auth == nil {
+		return result, fwdErr, false
+	}
+
+	refreshed, refreshErr := h.auth.RefreshProviderCredentials(ctx, provider)
+	if !refreshed {
+		return result, fwdErr, false
+	}
+	if refreshErr != nil {
+		h.logger.Warn("websocket provider credential refresh failed",
+			zap.String("provider_id", provider.ID),
+			zap.Error(refreshErr),
+		)
+		return result, fwdErr, false
+	}
+
+	// Rebuild dial headers from provider state after refresh so the retry cannot
+	// accidentally reuse the expired credential material from the first attempt.
+	dialHeaders, err := h.prepareWebSocketDialHeaders(ctx, r, provider, apiType, globalAuthMode)
+	if err != nil {
+		h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "websocket credential refresh prepare failed", "credentials", err)
+		return nil, nil, true
+	}
+
+	result, fwdErr = h.wsForwarder.ForwardObserved(ctx, w, r, upstreamURL, dialHeaders, observer, applyObservation)
+	return result, fwdErr, false
+}
+
 // beginWebSocketTracking keeps registry cleanup and concurrency release in one
 // place so the LIFO ordering cannot drift as handleWebSocket evolves.
 func (h *Handler) beginWebSocketTracking(providerID, requestID, apiType string, info RequestInfo, startTime time.Time) func() {
@@ -202,9 +275,17 @@ func (h *Handler) validateWebSocketProvider(ctx context.Context, w http.Response
 		h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "missing base_url for websocket", "base_url", fmt.Errorf("no base_url for api_type %q", apiType))
 		return "", false
 	}
-	if provider.APIKeyForAPIType(apiType) == "" {
-		h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "missing api_key for websocket", "api_key", fmt.Errorf("no api_key for api_type %q", apiType))
-		return "", false
+	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
+	case model.ProviderCredentialTypeChatGPT:
+		if h.auth == nil {
+			h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "missing provider auth service for websocket", "credentials", fmt.Errorf("provider %q requires managed credentials for websocket", provider.ID))
+			return "", false
+		}
+	default:
+		if provider.APIKeyForAPIType(apiType) == "" {
+			h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "missing api_key for websocket", "api_key", fmt.Errorf("no api_key for api_type %q", apiType))
+			return "", false
+		}
 	}
 	return baseURL, true
 }
@@ -214,7 +295,7 @@ func (h *Handler) failWebSocketProviderConfiguration(ctx context.Context, w http
 		zap.String("provider_id", provider.ID),
 		zap.String("api_type", apiType),
 	)
-	h.writeGatewayError(w, http.StatusBadGateway, ErrCodeWebSocketUpgrade, fmt.Sprintf("Provider %q has no %s for api_type %q", provider.ID, missingField, apiType))
+	h.writeGatewayError(w, http.StatusBadGateway, ErrCodeWebSocketUpgrade, fmt.Sprintf("Provider %q is not ready for websocket %q: %s", provider.ID, apiType, missingField))
 	h.markFailure(ctx, provider.ID, err)
 	go h.logWebSocketRequest(
 		requestID,
@@ -238,10 +319,9 @@ func extractWebSocketModel(r *http.Request) string {
 	return ModelUnknown
 }
 
-// buildWebSocketDialHeaders builds HTTP headers for the upstream WebSocket handshake.
-// Includes auth headers and passes through non-hop-by-hop, non-auth, non-handshake
-// original request headers (e.g., OpenAI-Beta: realtime=v1) that the upstream may require.
-func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiType, globalAuthMode string) http.Header {
+// buildWebSocketPassthroughHeaders copies the client-controlled handshake headers that
+// belong to the wire protocol rather than provider authentication.
+func buildWebSocketPassthroughHeaders(r *http.Request) http.Header {
 	headers := make(http.Header)
 
 	// Copy non-hop-by-hop, non-auth, non-WebSocket-handshake headers from the original request.
@@ -253,11 +333,51 @@ func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiTyp
 			headers.Add(key, v)
 		}
 	}
+	return headers
+}
+
+// buildWebSocketDialHeaders preserves the legacy static-auth behavior for tests and
+// fallback code paths that do not use the managed provider auth service.
+func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiType, globalAuthMode string) http.Header {
+	headers := buildWebSocketPassthroughHeaders(r)
 
 	// Inject provider auth credentials.
 	SetAuthHeader(headers, provider.APIKeyForAPIType(apiType), provider.AuthMode, globalAuthMode, r)
 
 	return headers
+}
+
+func (h *Handler) prepareWebSocketDialHeaders(ctx context.Context, r *http.Request, provider *model.Provider, apiType, globalAuthMode string) (http.Header, error) {
+	headers := buildWebSocketPassthroughHeaders(r)
+	if h.auth != nil {
+		if err := h.auth.ApplyProviderCredentials(ctx, headers, provider, apiType, globalAuthMode, r); err != nil {
+			return nil, err
+		}
+		return headers, nil
+	}
+
+	SetAuthHeader(headers, provider.APIKeyForAPIType(apiType), provider.AuthMode, globalAuthMode, r)
+	return headers, nil
+}
+
+func (h *Handler) writeWebSocketHandshakeFailure(w http.ResponseWriter, result *WebSocketResult) {
+	statusCode := http.StatusBadGateway
+	if result != nil && result.HandshakeStatusCode > 0 {
+		statusCode = result.HandshakeStatusCode
+	}
+
+	message := "Upstream WebSocket handshake failed"
+	switch statusCode {
+	case http.StatusUnauthorized:
+		message = "Upstream WebSocket authentication failed"
+	case http.StatusUpgradeRequired:
+		message = "Upstream provider requires HTTP fallback for this request"
+	}
+	if result != nil && result.HandshakeBodySnippet != "" {
+		message = result.HandshakeBodySnippet
+	}
+
+	h.writeGatewayError(w, statusCode, ErrCodeWebSocketUpgrade, message)
 }
 
 func websocketLogStatusCode(result *WebSocketResult) int {

@@ -10,6 +10,7 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
 	"switch-a/internal/proxy"
 	"switch-a/internal/store"
 
@@ -73,6 +74,16 @@ type ActiveRequestLister interface {
 // ActiveRequest is an alias for proxy.ActiveRequest for convenience.
 type ActiveRequest = proxy.ActiveRequest
 
+// ProviderAuthService captures the provider-auth behaviors the admin surface needs
+// without binding handlers to the concrete OAuth service implementation.
+type ProviderAuthService interface {
+	StartChatGPTLogin() (*providerauth.ChatGPTLoginStartResponse, error)
+	GetChatGPTLoginStatus(loginID string) (*providerauth.ChatGPTLoginStatusResponse, error)
+	ApplyChatGPTLogin(provider *model.Provider, loginID string) error
+	FinalizeChatGPTLogin(loginID string) error
+	PopulateProviderAuthProfile(ctx context.Context, provider *model.Provider)
+}
+
 // Handler handles admin API requests.
 type Handler struct {
 	store         Store
@@ -80,6 +91,7 @@ type Handler struct {
 	concurrency   ConcurrencyTracker
 	cleaner       ConcurrencyCleaner
 	activeReqList ActiveRequestLister
+	auth          ProviderAuthService
 	logger        *zap.Logger
 }
 
@@ -90,6 +102,7 @@ type Config struct {
 	Concurrency   ConcurrencyTracker
 	Cleaner       ConcurrencyCleaner
 	ActiveReqList ActiveRequestLister
+	Auth          ProviderAuthService
 	Logger        *zap.Logger
 }
 
@@ -101,6 +114,7 @@ func NewHandler(cfg Config) *Handler {
 		concurrency:   cfg.Concurrency,
 		cleaner:       cfg.Cleaner,
 		activeReqList: cfg.ActiveReqList,
+		auth:          cfg.Auth,
 		logger:        cfg.Logger,
 	}
 }

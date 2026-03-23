@@ -16,6 +16,7 @@ import (
 	"switch-a/internal/config"
 	"switch-a/internal/health"
 	"switch-a/internal/logger"
+	"switch-a/internal/providerauth"
 	"switch-a/internal/proxy"
 	"switch-a/internal/selector"
 	"switch-a/internal/server"
@@ -194,6 +195,14 @@ func run() error {
 		Logger:        log,
 	})
 
+	authService := providerauth.NewService(providerauth.Config{
+		CredentialStore: st,
+		Clock:           clock,
+		Logger:          log,
+	})
+
+	callbackSrv := providerauth.NewCallbackServer(authService, log)
+
 	// Create proxy HTTP server (public port)
 	proxySrv := server.New(server.Config{
 		Port:           cfg.Port,
@@ -202,6 +211,7 @@ func run() error {
 		Health:         healthMgr,
 		Selector:       sel,
 		ActiveRegistry: activeRegistry,
+		Auth:           authService,
 	})
 
 	// Create admin HTTP server (separate port for security)
@@ -214,67 +224,94 @@ func run() error {
 		Selector:      sel,
 		Concurrency:   limiter,
 		ActiveReqList: activeRegistry,
+		Auth:          authService,
 	})
 
-	// Start servers in goroutines
-	errCh := make(chan error, 2)
+	errCh := startServers(proxySrv, adminSrv, callbackSrv)
+	printServerURLs(cfg.Port, cfg.AdminPort)
+	if err := waitForShutdown(errCh, log); err != nil {
+		return err
+	}
+	if err := shutdownServers(proxySrv, adminSrv, callbackSrv); err != nil {
+		return err
+	}
+
+	log.Info("switch-a stopped")
+	return nil
+}
+
+func startServers(
+	proxySrv *server.Server,
+	adminSrv *server.AdminServer,
+	callbackSrv *providerauth.CallbackServer,
+) chan error {
+	errCh := make(chan error, 3)
 	go func() {
 		errCh <- proxySrv.Start()
 	}()
 	go func() {
 		errCh <- adminSrv.Start()
 	}()
+	go func() {
+		errCh <- callbackSrv.Start()
+	}()
+	return errCh
+}
 
-	// Print user-friendly URLs after servers start
+func printServerURLs(proxyPort string, adminPort string) {
 	fmt.Println()
 	fmt.Println("=========================================")
-	fmt.Printf("  Proxy URL:  http://localhost:%s\n", cfg.Port)
-	fmt.Printf("  Admin URL:  http://localhost:%s/admin\n", cfg.AdminPort)
+	fmt.Printf("  Proxy URL:  http://localhost:%s\n", proxyPort)
+	fmt.Printf("  Admin URL:  http://localhost:%s/admin\n", adminPort)
 	fmt.Println("=========================================")
 	fmt.Println()
+}
 
-	// Wait for interrupt signal or server error
+func waitForShutdown(errCh <-chan error, log *zap.Logger) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	select {
 	case err := <-errCh:
-		// Drain the channel to collect all errors if both servers failed simultaneously
-		var errs []error
-		errs = append(errs, err)
-		// Non-blocking drain of remaining errors
-		for {
-			select {
-			case e := <-errCh:
-				errs = append(errs, e)
-			default:
-				// No more errors in channel
-				return errors.Join(errs...)
-			}
-		}
+		return joinServerErrors(err, errCh)
 	case sig := <-sigCh:
 		log.Info("received signal, shutting down", zap.String("signal", sig.String()))
+		return nil
 	}
+}
 
-	// Graceful shutdown of both servers
+func joinServerErrors(first error, errCh <-chan error) error {
+	// Drain already-queued startup failures so callers see the full picture when
+	// multiple listeners fail at nearly the same time.
+	errs := []error{first}
+	for {
+		select {
+		case err := <-errCh:
+			errs = append(errs, err)
+		default:
+			return errors.Join(errs...)
+		}
+	}
+}
+
+func shutdownServers(
+	proxySrv *server.Server,
+	adminSrv *server.AdminServer,
+	callbackSrv *providerauth.CallbackServer,
+) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer cancel()
 
-	var shutdownErr error
+	var errs []error
 	if err := proxySrv.Shutdown(shutdownCtx); err != nil {
-		shutdownErr = fmt.Errorf("proxy server shutdown error: %w", err)
+		errs = append(errs, fmt.Errorf("proxy server shutdown error: %w", err))
 	}
 	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
-		if shutdownErr != nil {
-			shutdownErr = fmt.Errorf("%w; admin server shutdown error: %w", shutdownErr, err)
-		} else {
-			shutdownErr = fmt.Errorf("admin server shutdown error: %w", err)
-		}
+		errs = append(errs, fmt.Errorf("admin server shutdown error: %w", err))
 	}
-	if shutdownErr != nil {
-		return shutdownErr
+	if err := callbackSrv.Shutdown(shutdownCtx); err != nil {
+		errs = append(errs, fmt.Errorf("oauth callback server shutdown error: %w", err))
 	}
-
-	log.Info("switch-a stopped")
-	return nil
+	return errors.Join(errs...)
 }

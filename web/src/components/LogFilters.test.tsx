@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { LogFilters } from "./LogFilters";
 import type { LogFilter, Provider } from "../api/types";
+import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 
 // Helper to create mock providers
 function createMockProviders(): Provider[] {
@@ -12,6 +13,7 @@ function createMockProviders(): Provider[] {
       api_key: "key-1",
       api_types: [],
       auth_mode: "bearer",
+      credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
       group_id: null,
       weight: 100,
       priority: 1,
@@ -30,6 +32,7 @@ function createMockProviders(): Provider[] {
       api_key: "key-2",
       api_types: [],
       auth_mode: "bearer",
+      credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
       group_id: null,
       weight: 100,
       priority: 2,

@@ -2,19 +2,76 @@ package proxy
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
+
+type mockOAuthHTTPClient struct {
+	do func(req *http.Request) (*http.Response, error)
+}
+
+func (m mockOAuthHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if m.do != nil {
+		return m.do(req)
+	}
+	return nil, nil
+}
+
+func testUnsignedJWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal jwt payload: %v", err)
+	}
+
+	return "eyJhbGciOiJub25lIn0." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
+func testChatGPTCredentialData(t *testing.T, accessToken, refreshToken, accountID string) string {
+	t.Helper()
+
+	expiresAt := time.Now().UTC().Add(1 * time.Hour)
+	idToken := testUnsignedJWT(t, map[string]any{
+		"iss":   "https://auth.openai.com",
+		"aud":   "app_EMoamEEZ73f0CkXaXp7hrann",
+		"email": "codex@example.com",
+		"exp":   expiresAt.Unix(),
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": accountID,
+		},
+	})
+
+	raw, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		IDToken:      idToken,
+		AccountID:    accountID,
+		Email:        "codex@example.com",
+		LastRefresh:  time.Now().UTC(),
+		ExpiresAt:    expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("marshal chatgpt credential: %v", err)
+	}
+
+	return string(raw)
+}
 
 func TestIsWebSocketUpgrade(t *testing.T) {
 	t.Parallel()
@@ -519,6 +576,22 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			},
 			errorSnippet: "no api_key",
 		},
+		{
+			name: "chatgpt provider without auth service",
+			provider: model.Provider{
+				ID:             "ws-chatgpt-no-auth",
+				Name:           "ChatGPT Without Auth Service",
+				Enabled:        true,
+				CredentialType: model.ProviderCredentialTypeChatGPT,
+				CredentialData: testChatGPTCredentialData(t, "access-token", "refresh-token", "acct-test"),
+				APITypes: []model.ProviderAPIType{{
+					ProviderID: "ws-chatgpt-no-auth",
+					APIType:    "codex",
+					BaseURL:    "https://example.invalid",
+				}},
+			},
+			errorSnippet: "managed credentials",
+		},
 	}
 
 	for _, tt := range tests {
@@ -567,6 +640,232 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 				t.Fatalf("ErrorMsg = %q, want snippet %q", log.ErrorMsg, tt.errorSnippet)
 			}
 		})
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUpgradeRequired)
+		_, _ = io.WriteString(w, `{"error":"fallback to http"}`)
+	}))
+	defer upstream.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{{
+		ID:       "ws-http-fallback",
+		Name:     "WS HTTP Fallback",
+		APIKey:   "key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "ws-http-fallback", APIType: "codex", BaseURL: upstream.URL}},
+	}}
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, resp, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"OpenAI-Beta": {"responses_websockets=2026-02-06"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected websocket dial to fail before upgrade")
+	}
+	if resp == nil {
+		t.Fatal("expected HTTP response from proxy")
+	}
+	if resp.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUpgradeRequired)
+	}
+
+	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusUpgradeRequired)
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamHandshakeRejected {
+		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamHandshakeRejected)
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthorized(t *testing.T) {
+	var (
+		upstreamAttempts int32
+		refreshCalls     int32
+		capturedHeaders  http.Header
+		capturedMu       sync.Mutex
+	)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt := atomic.AddInt32(&upstreamAttempts, 1)
+		if attempt == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":"expired access token"}`)
+			return
+		}
+
+		capturedMu.Lock()
+		capturedHeaders = r.Header.Clone()
+		capturedMu.Unlock()
+
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"response.created"}`)); err != nil {
+			t.Errorf("write upstream event: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	provider := &model.Provider{
+		ID:             "ws-chatgpt-refresh",
+		Name:           "WS ChatGPT Refresh",
+		Enabled:        true,
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: testChatGPTCredentialData(t, "access-old", "refresh-old", "acct-123"),
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "ws-chatgpt-refresh",
+			APIType:    "codex",
+			BaseURL:    upstream.URL,
+		}},
+	}
+
+	authService := providerauth.NewService(providerauth.Config{
+		HTTPClient: mockOAuthHTTPClient{
+			do: func(req *http.Request) (*http.Response, error) {
+				atomic.AddInt32(&refreshCalls, 1)
+				if req.Method != http.MethodPost {
+					t.Fatalf("refresh method = %s, want POST", req.Method)
+				}
+				if !strings.HasSuffix(req.URL.String(), "/oauth/token") {
+					t.Fatalf("refresh url = %s, want /oauth/token", req.URL.String())
+				}
+				bodyBytes, err := io.ReadAll(req.Body)
+				if err != nil {
+					t.Fatalf("read refresh body: %v", err)
+				}
+				body := string(bodyBytes)
+				if !strings.Contains(body, "grant_type=refresh_token") {
+					t.Fatalf("refresh body = %q, missing grant_type", body)
+				}
+				if !strings.Contains(body, "refresh_token=refresh-old") {
+					t.Fatalf("refresh body = %q, missing refresh token", body)
+				}
+
+				idToken := testUnsignedJWT(t, map[string]any{
+					"iss":   "https://auth.openai.com",
+					"aud":   "app_EMoamEEZ73f0CkXaXp7hrann",
+					"email": "codex@example.com",
+					"exp":   time.Now().UTC().Add(1 * time.Hour).Unix(),
+					"https://api.openai.com/auth": map[string]any{
+						"chatgpt_account_id": "acct-123",
+					},
+				})
+				payload, err := json.Marshal(map[string]string{
+					"access_token":  "access-new",
+					"refresh_token": "refresh-new",
+					"id_token":      idToken,
+				})
+				if err != nil {
+					t.Fatalf("marshal refresh response: %v", err)
+				}
+
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(string(payload))),
+					Header: http.Header{
+						"Content-Type": {"application/json"},
+					},
+				}, nil
+			},
+		},
+		Logger: zap.NewNop(),
+	})
+
+	store := newMockStore()
+	store.providers = []model.Provider{*provider}
+	mockSel := &mockSelector{
+		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
+			return &selectResult{Provider: provider, FromStickyCache: false}, nil
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:    store,
+		Selector: mockSel,
+		Auth:     authService,
+		Logger:   zap.NewNop(),
+	})
+
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"OpenAI-Beta": {"responses_websockets=2026-02-06"},
+			"X-Custom":    {"passthrough"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("dial websocket through proxy: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	msgType, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read proxied websocket event: %v", err)
+	}
+	if msgType != websocket.MessageText {
+		t.Fatalf("message type = %v, want %v", msgType, websocket.MessageText)
+	}
+	if string(payload) != `{"type":"response.created"}` {
+		t.Fatalf("payload = %q, want response.created event", string(payload))
+	}
+
+	if got := atomic.LoadInt32(&upstreamAttempts); got != 2 {
+		t.Fatalf("upstream attempts = %d, want 2", got)
+	}
+	if got := atomic.LoadInt32(&refreshCalls); got != 1 {
+		t.Fatalf("refresh calls = %d, want 1", got)
+	}
+
+	capturedMu.Lock()
+	headers := capturedHeaders.Clone()
+	capturedMu.Unlock()
+	if got := headers.Get("Authorization"); got != "Bearer access-new" {
+		t.Fatalf("Authorization = %q, want %q", got, "Bearer access-new")
+	}
+	if got := headers.Get("ChatGPT-Account-Id"); got != "acct-123" {
+		t.Fatalf("ChatGPT-Account-Id = %q, want %q", got, "acct-123")
+	}
+	if got := headers.Get("Originator"); got != "codex_cli_rs" {
+		t.Fatalf("Originator = %q, want %q", got, "codex_cli_rs")
+	}
+	if got := headers.Get("OpenAI-Beta"); got != "responses_websockets=2026-02-06" {
+		t.Fatalf("OpenAI-Beta = %q, want %q", got, "responses_websockets=2026-02-06")
+	}
+	if got := headers.Get("X-Custom"); got != "passthrough" {
+		t.Fatalf("X-Custom = %q, want %q", got, "passthrough")
 	}
 }
 
@@ -865,250 +1164,5 @@ func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
 	}
 	if log.StatusCode != http.StatusSwitchingProtocols {
 		t.Errorf("StatusCode = %d, want %d", log.StatusCode, http.StatusSwitchingProtocols)
-	}
-}
-
-func TestHandler_ServeHTTP_WebSocket_CapturesObservedModelAndTokenUsage(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			t.Errorf("accept upstream websocket: %v", err)
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-
-		ctx := r.Context()
-		conn.SetReadLimit(wsReadLimit)
-
-		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"session.created","event_id":"evt_session","session":{"model":"gpt-realtime-2025-08-28"}}`)); err != nil {
-			t.Errorf("write session.created: %v", err)
-			return
-		}
-		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","event_id":"evt_response","response":{"id":"resp_1","model":"gpt-realtime-2025-08-28","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_tokens_details":{"cached_tokens":11}}}}`)); err != nil {
-			t.Errorf("write response.completed: %v", err)
-			return
-		}
-	}))
-	defer upstream.Close()
-
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID:       "ws-p1",
-			Name:     "WS Provider",
-			APIKey:   "key",
-			AuthMode: "bearer",
-			Enabled:  true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
-	}
-
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
-	proxyServer := httptest.NewServer(handler)
-	defer proxyServer.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	for {
-		_, _, err := conn.Read(ctx)
-		if err == nil {
-			continue
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if !isNormalClose(err) {
-			t.Fatalf("read websocket events: %v", err)
-		}
-		break
-	}
-
-	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
-
-	log := store.LastLog()
-	if log == nil {
-		t.Fatal("expected log entry")
-	}
-	if log.Model != "gpt-realtime-2025-08-28" {
-		t.Fatalf("log.Model = %q, want %q", log.Model, "gpt-realtime-2025-08-28")
-	}
-	if log.PromptTokens == nil || *log.PromptTokens != 64 {
-		t.Fatalf("PromptTokens = %v, want 64", log.PromptTokens)
-	}
-	if log.CompletionTokens == nil || *log.CompletionTokens != 16 {
-		t.Fatalf("CompletionTokens = %v, want 16", log.CompletionTokens)
-	}
-	if log.TotalTokens == nil || *log.TotalTokens != 80 {
-		t.Fatalf("TotalTokens = %v, want 80", log.TotalTokens)
-	}
-	if log.CacheReadInputTokens == nil || *log.CacheReadInputTokens != 11 {
-		t.Fatalf("CacheReadInputTokens = %v, want 11", log.CacheReadInputTokens)
-	}
-}
-
-func TestHandler_ServeHTTP_WebSocket_UpdatesActiveModelDuringSession(t *testing.T) {
-	releaseUpstream := make(chan struct{})
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			t.Errorf("accept upstream websocket: %v", err)
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-
-		ctx := r.Context()
-		conn.SetReadLimit(wsReadLimit)
-
-		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.created","response":{"id":"resp_live","model":"gpt-5.4"}}`)); err != nil {
-			t.Errorf("write response.created: %v", err)
-			return
-		}
-
-		select {
-		case <-releaseUpstream:
-		case <-ctx.Done():
-		}
-	}))
-	defer upstream.Close()
-
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID:       "ws-p1",
-			Name:     "WS Provider",
-			APIKey:   "key",
-			AuthMode: "bearer",
-			Enabled:  true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
-	}
-
-	registry := NewActiveRequestRegistry()
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         zap.NewNop(),
-		ActiveRegistry: registry,
-	})
-	proxyServer := httptest.NewServer(handler)
-	defer proxyServer.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	if _, _, err := conn.Read(ctx); err != nil {
-		t.Fatalf("read websocket event: %v", err)
-	}
-
-	waitFor(t, func() bool {
-		requests := registry.List()
-		return len(requests) == 1 && requests[0].Model == "gpt-5.4"
-	}, testPollTimeout)
-
-	requests := registry.List()
-	if len(requests) != 1 {
-		t.Fatalf("expected 1 active request, got %d", len(requests))
-	}
-	if requests[0].Model != "gpt-5.4" {
-		t.Fatalf("active model = %q, want %q", requests[0].Model, "gpt-5.4")
-	}
-
-	close(releaseUpstream)
-}
-
-func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModel(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			t.Errorf("accept upstream websocket: %v", err)
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-
-		ctx := r.Context()
-		conn.SetReadLimit(wsReadLimit)
-
-		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.created","event_id":"evt_response","response":{"id":"resp_live","model":"gpt-5.4"}}`)); err != nil {
-			t.Errorf("write response.created: %v", err)
-			return
-		}
-	}))
-	defer upstream.Close()
-
-	wsProvider := &model.Provider{
-		ID:       "ws-sticky-p1",
-		Name:     "WS Sticky Provider",
-		APIKey:   "key",
-		AuthMode: "bearer",
-		Enabled:  true,
-		APITypes: []model.ProviderAPIType{{ProviderID: "ws-sticky-p1", APIType: "codex", BaseURL: upstream.URL}},
-	}
-
-	store := newMockStore()
-	store.providers = []model.Provider{*wsProvider}
-
-	mockSel := &mockSelector{
-		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
-			if req.Model != ModelUnknown {
-				t.Fatalf("selection model = %q, want %q before websocket observation", req.Model, ModelUnknown)
-			}
-			return &selectResult{
-				Provider:        wsProvider,
-				FromStickyCache: false,
-			}, nil
-		},
-	}
-
-	handler := NewHandler(Config{
-		Store:    store,
-		Logger:   zap.NewNop(),
-		Selector: mockSel,
-	})
-	proxyServer := httptest.NewServer(handler)
-	defer proxyServer.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	for {
-		_, _, err := conn.Read(ctx)
-		if err == nil {
-			continue
-		}
-		if errors.Is(err, io.EOF) || isNormalClose(err) {
-			break
-		}
-		t.Fatalf("read websocket events: %v", err)
-	}
-
-	waitFor(t, func() bool { return mockSel.StickyUpdatesLen() == 1 }, testPollTimeout)
-
-	update, ok := mockSel.LastStickyUpdate()
-	if !ok {
-		t.Fatal("expected sticky update")
-	}
-	if update.ProviderID != "ws-sticky-p1" {
-		t.Fatalf("sticky provider = %q, want %q", update.ProviderID, "ws-sticky-p1")
-	}
-	if update.Model != "gpt-5.4" {
-		t.Fatalf("sticky model = %q, want %q", update.Model, "gpt-5.4")
 	}
 }

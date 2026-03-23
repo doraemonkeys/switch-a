@@ -5,10 +5,17 @@
 import type {
   Strategy,
   AuthMode,
+  ProviderCredentialType,
   ErrorCode,
   FailoverScope,
 } from "../config/constants";
-export type { Strategy, AuthMode, ErrorCode, FailoverScope };
+export type {
+  Strategy,
+  AuthMode,
+  ProviderCredentialType,
+  ErrorCode,
+  FailoverScope,
+};
 
 /** Built-in API type values (custom:* pattern handled separately) */
 export type BuiltInAPIType = "claude" | "codex" | "gemini";
@@ -74,12 +81,37 @@ export interface ProviderAPIType {
   api_key?: string;
 }
 
+export interface ProviderAuthProfile {
+  type: ProviderCredentialType;
+  ready: boolean;
+  email?: string;
+  account_id?: string;
+  plan_type?: string;
+  usage?: ProviderUsageSnapshot | null;
+  expires_at?: string;
+  last_refresh?: string;
+}
+
+export interface ProviderUsageWindow {
+  used_percent: number;
+  window_seconds: number;
+  reset_at?: string;
+}
+
+export interface ProviderUsageSnapshot {
+  fetched_at?: string;
+  plan_type?: string;
+  five_hour?: ProviderUsageWindow | null;
+  one_week?: ProviderUsageWindow | null;
+}
+
 export interface Provider {
   id: string;
   name: string;
   api_key: string;
   api_types: ProviderAPIType[];
   auth_mode: AuthMode;
+  credential_type: ProviderCredentialType;
   group_id: string | null;
   weight: number;
   priority: number;
@@ -97,6 +129,7 @@ export interface Provider {
   created_at: string;
   updated_at: string;
   health?: HealthState | null;
+  auth_profile?: ProviderAuthProfile | null;
 }
 
 /** API type entry with endpoint/auth overrides, matching backend APITypeInput */
@@ -112,6 +145,8 @@ export interface ProviderInput {
   api_key: string;
   api_types: APITypeInput[];
   auth_mode?: AuthMode;
+  credential_type?: ProviderCredentialType;
+  credential_login_id?: string;
   group_id?: string | null;
   weight?: number;
   priority?: number;
@@ -126,6 +161,19 @@ export interface ProviderInput {
   /** Inbound failover control */
   accept_failover?: FailoverScope;
   enabled?: boolean;
+}
+
+export interface ChatGPTLoginStartResponse {
+  login_id: string;
+  auth_url: string;
+}
+
+export type ChatGPTLoginStatus = "pending" | "completed" | "expired";
+
+export interface ChatGPTLoginStatusResponse {
+  login_id: string;
+  status: ChatGPTLoginStatus;
+  auth_profile?: ProviderAuthProfile | null;
 }
 
 // =============================================================================
@@ -468,6 +516,8 @@ export interface ExportedProvider {
   api_key: string;
   api_types: ExportedAPIType[];
   auth_mode: AuthMode;
+  credential_type?: ProviderCredentialType;
+  credential_data?: string;
   group_id?: string | null;
   weight: number;
   priority: number;

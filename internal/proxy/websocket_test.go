@@ -261,35 +261,28 @@ func TestWebSocketForwarder_Forward_UpstreamDialFailure(t *testing.T) {
 		if result.TerminalCause != model.TerminalUpstreamTransportError {
 			t.Errorf("TerminalCause = %q, want %q", result.TerminalCause, model.TerminalUpstreamTransportError)
 		}
+		statusCode := http.StatusBadGateway
+		if result.HandshakeStatusCode > 0 {
+			statusCode = result.HandshakeStatusCode
+		}
+		w.WriteHeader(statusCode)
 	}))
 	defer proxyServer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Client connects to proxy — should get accepted then immediately closed
-	// with StatusBadGateway because the upstream is unreachable.
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer), nil)
-	if err != nil {
-		// Accept + close can race with Dial; a Dial failure is also acceptable
-		// as long as the proxy didn't panic.
-		t.Logf("client dial failed (acceptable race): %v", err)
-		return
+	// Client should receive the upstream handshake failure as an HTTP response because
+	// the proxy has not upgraded the socket yet.
+	_, resp, err := websocket.Dial(ctx, wsURL(proxyServer), nil)
+	if err == nil {
+		t.Fatal("expected dial to fail before the proxy upgraded the client")
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	// Read should fail with a close frame from the proxy.
-	_, _, readErr := conn.Read(ctx)
-	if readErr == nil {
-		t.Fatal("expected error from read after upstream dial failure")
+	if resp == nil {
+		t.Fatal("expected HTTP response on handshake failure")
 	}
-	// Verify the close code is StatusBadGateway, indicating the proxy
-	// correctly reported the upstream failure to the client.
-	var closeErr websocket.CloseError
-	if errors.As(readErr, &closeErr) {
-		if closeErr.Code != websocket.StatusBadGateway {
-			t.Errorf("close code = %d, want StatusBadGateway (%d)", closeErr.Code, websocket.StatusBadGateway)
-		}
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
 	}
 }
 
@@ -315,18 +308,26 @@ func TestWebSocketForwarder_Forward_HandshakeFailureCapturesUpstreamResponse(t *
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		result, _ := fwd.Forward(r.Context(), w, r, "ws://provider.invalid/realtime", nil)
 		doneCh <- result
+		statusCode := http.StatusBadGateway
+		if result != nil && result.HandshakeStatusCode > 0 {
+			statusCode = result.HandshakeStatusCode
+		}
+		w.WriteHeader(statusCode)
 	}))
 	defer proxyServer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer), nil)
+	_, resp, err := websocket.Dial(ctx, wsURL(proxyServer), nil)
 	if err == nil {
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		_, _, _ = conn.Read(ctx)
-	} else {
-		t.Logf("client dial failed (acceptable race): %v", err)
+		t.Fatal("expected upstream handshake rejection to fail the proxy dial")
+	}
+	if resp == nil {
+		t.Fatal("expected HTTP response on upstream handshake rejection")
+	}
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusPaymentRequired)
 	}
 
 	select {

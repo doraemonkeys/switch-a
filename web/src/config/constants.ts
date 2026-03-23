@@ -108,6 +108,32 @@ export const AUTH_MODE_OPTIONS = [
 ] as const;
 
 /**
+ * Valid provider credential source types.
+ * @see internal/admin/constants.go validProviderCredentialTypes
+ */
+export const PROVIDER_CREDENTIAL_TYPES = {
+  API_KEY: "api_key",
+  CHATGPT: "chatgpt",
+} as const;
+
+export type ProviderCredentialType =
+  (typeof PROVIDER_CREDENTIAL_TYPES)[keyof typeof PROVIDER_CREDENTIAL_TYPES];
+
+export const PROVIDER_CREDENTIAL_TYPE_OPTIONS = [
+  {
+    value: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    label: "API Key",
+    description: "Use a static provider API key or API-type key overrides.",
+  },
+  {
+    value: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    label: "GPT Login",
+    description:
+      "Sign in with a ChatGPT account locally and proxy Codex through the captured OAuth session.",
+  },
+] as const;
+
+/**
  * Valid API types for providers.
  * These must match the types recognized by the proxy router.
  * @see internal/admin/constants.go ValidAPITypes
@@ -202,6 +228,9 @@ export const API_TYPE_OPTIONS = [
     description: "Google Gemini API (/gemini/*)",
   },
 ] as const;
+
+/** Fixed upstream base URL used by GPT-login-backed Codex providers. */
+export const CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 
 /**
  * Check if an API type is valid.

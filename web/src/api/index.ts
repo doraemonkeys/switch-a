@@ -23,8 +23,12 @@ export type {
   BackoffPolicy,
   Provider,
   ProviderAPIType,
+  ProviderAuthProfile,
   ProviderInput,
   APITypeInput,
+  ChatGPTLoginStartResponse,
+  ChatGPTLoginStatus,
+  ChatGPTLoginStatusResponse,
   // Group types
   Group,
   GroupInput,

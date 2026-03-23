@@ -17,6 +17,7 @@ type Store interface {
 	GetProvider(ctx context.Context, id string) (*model.Provider, error)
 	CreateProvider(ctx context.Context, p *model.Provider) error
 	UpdateProvider(ctx context.Context, p *model.Provider) error
+	UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error
 	DeleteProvider(ctx context.Context, id string) error
 
 	// Group operations

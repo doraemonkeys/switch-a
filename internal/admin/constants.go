@@ -66,6 +66,12 @@ var validAuthModes = map[string]bool{
 	"x-api-key": true,
 }
 
+// validProviderCredentialTypes contains the supported provider credential source values.
+var validProviderCredentialTypes = map[model.ProviderCredentialType]bool{
+	model.ProviderCredentialTypeAPIKey:  true,
+	model.ProviderCredentialTypeChatGPT: true,
+}
+
 // validAPITypes contains the allowed API type values.
 // Unexported to prevent external mutation; use IsValidAPIType() for validation.
 // These must match the types recognized by the proxy router (see proxy/router.go):
@@ -112,6 +118,11 @@ func IsValidStrategy(s string) bool {
 // IsValidAuthMode checks if the given auth mode is valid.
 func IsValidAuthMode(m string) bool {
 	return validAuthModes[m]
+}
+
+// IsValidProviderCredentialType checks whether the provider credential source is supported.
+func IsValidProviderCredentialType(value model.ProviderCredentialType) bool {
+	return validProviderCredentialTypes[model.NormalizeProviderCredentialType(value)]
 }
 
 // CustomAPITypePrefix is the prefix for custom API types (e.g., "custom:mytool").

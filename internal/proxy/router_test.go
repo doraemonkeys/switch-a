@@ -62,6 +62,12 @@ func TestParseAPIType(t *testing.T) {
 			wantType: APITypeCodex,
 			wantOK:   true,
 		},
+		{
+			name:     "codex v1 responses",
+			path:     "/v1/responses",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
 
 		// Gemini API paths
 		{
@@ -175,6 +181,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 		{
 			name:         "codex passthrough",
 			originalPath: "/responses",
+			apiType:      APITypeCodex,
+			wantPath:     "/responses",
+		},
+		{
+			name:         "codex v1 normalizes to responses",
+			originalPath: "/v1/responses",
 			apiType:      APITypeCodex,
 			wantPath:     "/responses",
 		},

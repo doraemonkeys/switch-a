@@ -12,6 +12,7 @@ import (
 	"switch-a/internal"
 	"switch-a/internal/defaults"
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
 	"switch-a/internal/selector"
 
 	"github.com/google/uuid"
@@ -30,6 +31,7 @@ type Handler struct {
 	lastCfg         *transportCacheKey
 	fallbackCounter atomic.Int64 // Counter for true round-robin in fallback mode
 	wsForwarder     *WebSocketForwarder
+	auth            *providerauth.Service
 }
 
 // transportCacheKey is used to detect if Transport config changed.
@@ -108,6 +110,7 @@ type Config struct {
 	Selector       Selector
 	Health         internal.HealthManager
 	ActiveRegistry *ActiveRequestRegistry
+	Auth           *providerauth.Service
 	Logger         *zap.Logger
 }
 
@@ -127,6 +130,7 @@ func NewHandler(cfg Config) *Handler {
 		activeRegistry: cfg.ActiveRegistry,
 		logger:         cfg.Logger,
 		wsForwarder:    NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger}),
+		auth:           cfg.Auth,
 	}
 }
 
@@ -596,7 +600,7 @@ func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp
 
 // buildProviderRequest validates the provider's endpoint/auth config and
 // constructs the upstream HTTP request.
-func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, string, error) {
+func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, error) {
 	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
 	baseURL := provider.BaseURLForAPIType(pctx.apiType)
 
@@ -608,16 +612,15 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 			zap.String("provider_id", provider.ID),
 			zap.String("api_type", pctx.apiType),
 		)
-		return nil, "", fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
+		return nil, fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
 	}
 
-	apiKey := provider.APIKeyForAPIType(pctx.apiType)
-	if apiKey == "" {
+	if model.NormalizeProviderCredentialType(provider.CredentialType) == model.ProviderCredentialTypeAPIKey && provider.APIKeyForAPIType(pctx.apiType) == "" {
 		h.logger.Error("missing api_key for api_type",
 			zap.String("provider_id", provider.ID),
 			zap.String("api_type", pctx.apiType),
 		)
-		return nil, "", fmt.Errorf("provider %q has no api_key configured for api_type %q", provider.ID, pctx.apiType)
+		return nil, fmt.Errorf("provider %q has no api_key configured for api_type %q", provider.ID, pctx.apiType)
 	}
 
 	upstreamURL := h.buildFullURL(baseURL, upstreamPath, pctx.r.URL.RawQuery)
@@ -625,10 +628,10 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 	req, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
 	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
 		h.logger.Error("failed to build upstream request", zap.Error(err))
-		return nil, "", err
+		return nil, err
 	}
 
-	return req, apiKey, nil
+	return req, nil
 }
 
 // extractTokenUsage waits for interceptors to finish and returns parsed token usage, if available.
@@ -657,152 +660,17 @@ func (h *Handler) extractTokenUsage(statusCode int, interceptor ResponseIntercep
 // forwardToProvider forwards the request to a single provider.
 // Note: Retry orchestration (per-provider retries and provider switching) is handled in executeProxy.
 func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider) forwardResult {
-	result := forwardResult{}
-
-	upstreamReq, apiKey, err := h.buildProviderRequest(ctx, pctx, provider)
-	if err != nil {
-		result.err = err
-		result.success = false
-		// Mark failure so circuit breaker can trigger.
-		// This prevents bad configurations from being infinitely retried.
-		h.markFailure(ctx, provider.ID, err)
+	upstreamReq, result, ok := h.prepareForwardRequest(ctx, pctx, provider)
+	if !ok {
 		return result
 	}
 
-	// Set authentication header
-	SetAuthHeader(upstreamReq.Header, apiKey, provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
-
-	// Fetch upstream response WITHOUT writing to client yet
-	// This allows us to check status code and retry if needed
-	upstreamResp, err := pctx.transport.FetchUpstream(ctx, upstreamReq)
-	if err != nil {
-		h.logger.Warn("upstream request failed",
-			zap.String("provider_id", provider.ID),
-			zap.Error(err),
-		)
-		result.err = err
-		result.success = false // Explicitly mark as failure
-		// Only mark failure for upstream errors, not client cancellations.
-		// Client cancellations (context.Canceled, context.DeadlineExceeded) indicate
-		// the client disconnected, not a provider issue.
-		if !isClientCancellation(err) {
-			h.markFailure(ctx, provider.ID, err)
-		}
-		return result // headersWritten is false, so retry is possible
-	}
-
-	result.statusCode = upstreamResp.StatusCode
-	result.isSSE = upstreamResp.IsSSE()
-
-	// Check if response indicates failover-eligible error BEFORE writing to client.
-	// Failover-eligible: 5xx, 402, 429, 401, 403 - these are provider-side issues.
-	if shouldFailover(result.statusCode) {
-		statusErr := fmt.Errorf("upstream returned status %d", result.statusCode)
-		h.logger.Warn("upstream returned error status",
-			zap.String("provider_id", provider.ID),
-			zap.Int("status_code", result.statusCode),
-		)
-		result.err = statusErr // Record error for proper "all providers failed" message
-		result.success = false // Explicitly mark as failure for logging
-		h.markFailure(ctx, provider.ID, statusErr)
-		// Capture response body snippet for debugging before draining.
-		// This helps diagnose why upstream returned an error (e.g., quota exceeded, invalid key).
-		result.bodySnippet = upstreamResp.DrainWithSnippet(0) // 0 = use default size (512 bytes)
-		// headersWritten is still false, allowing retry with another provider
+	upstreamResp, result, ok := h.fetchForwardResponse(ctx, pctx, provider, upstreamReq)
+	if !ok {
 		return result
 	}
 
-	// For non-failover 4xx errors (e.g., 400 Bad Request, 404 Not Found), use TeeReader
-	// to capture a body snippet while still forwarding the complete response to the client.
-	// This helps users diagnose client errors without blocking the response.
-	// Note: 401/402/403/429 are handled above via shouldFailover and DrainWithSnippet.
-	var snippetBuf *limitedBuffer
-	if result.statusCode >= defaults.StatusClientError && result.statusCode < defaults.StatusServerError {
-		snippetBuf = upstreamResp.TeeBody(0) // 0 = use default size (512 bytes)
-	}
-
-	// Set up token capture interceptor for successful responses.
-	// Token usage is typically in the response body for API responses.
-	// Different interceptors are used for non-SSE and SSE responses.
-	interceptor, sseInterceptor := h.setupTokenInterceptor(result.statusCode, result.isSSE, upstreamResp)
-	if interceptor != nil {
-		upstreamResp.Body = interceptor.Wrap(upstreamResp.Body)
-	}
-
-	// Update SSE status in active registry BEFORE starting to stream.
-	// This is crucial for SSE requests: WriteToClient blocks until the entire stream completes,
-	// so we need to update the SSE flag now while the request is still "active" and visible
-	// in monitoring. If we waited until after WriteToClient, the request would be unregistered
-	// almost immediately after being marked as SSE, making it invisible in the Monitor page.
-	if h.activeRegistry != nil && result.isSSE {
-		h.activeRegistry.UpdateSSE(pctx.requestID, true)
-	}
-
-	// Wrap ResponseWriter to detect first data write for sticky session fallback
-	wrappedWriter := &firstWriteResponseWriter{
-		ResponseWriter: pctx.w,
-		onFirstWrite: func() {
-			if h.activeRegistry != nil {
-				h.activeRegistry.MarkDataReceived(pctx.requestID)
-			}
-		},
-	}
-
-	// Commit: write response to client
-	writeErr := pctx.transport.WriteToClient(ctx, wrappedWriter, upstreamResp)
-	upstreamResp.Close()
-	result.headersWritten = true
-	result.done = true // No retry possible after headers are written
-
-	// Extract token usage from interceptor (Phase 4a).
-	// This must be done after Body is fully read (i.e., after WriteToClient).
-	result.tokenUsage = h.extractTokenUsage(result.statusCode, interceptor, sseInterceptor)
-
-	// Calculate TTFT (Time To First Token) for SSE requests
-	// Only meaningful for SSE where first data write indicates model starting to respond
-	if result.isSSE && wrappedWriter.written && !wrappedWriter.firstWriteTime.IsZero() {
-		ttft := wrappedWriter.firstWriteTime.Sub(pctx.startTime).Milliseconds()
-		result.firstTokenMs = &ttft
-	}
-
-	// Capture response bytes for transfer statistics
-	result.responseBytes = wrappedWriter.bytesWritten
-
-	// Update sticky cache before handling writeErr, because client disconnect
-	// (e.g., Codex SSE stream closed by client after [DONE]) should still
-	// pin the provider — the upstream succeeded.
-	if pctx.cfg.stickyMode != model.StickyModeOff && h.selector != nil {
-		h.selector.UpdateStickyWithTTL(pctx.selectReq, provider.ID, pctx.cfg.stickyTTL)
-	}
-
-	if writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
-		h.handleWriteError(ctx, writeErr, provider.ID, &result)
-		return result
-	}
-
-	// Mark as success only for 2xx/3xx status codes.
-	// Other status codes (4xx like 400 Bad Request) indicate the request was processed
-	// but wasn't a true "success" for health tracking purposes.
-	// Note: Retryable error codes (401, 403, 429, 5xx) are already handled above
-	// and will not reach this point.
-	if result.statusCode < defaults.StatusClientError {
-		result.success = true
-		h.markSuccess(ctx, provider.ID)
-	} else {
-		// Non-retryable client errors (e.g., 400 Bad Request, 404 Not Found)
-		// Set result flag to false but skip health tracking - client errors don't reflect provider health
-		result.success = false
-		// Capture the snippet that was populated by TeeReader during WriteToClient
-		if snippetBuf != nil {
-			result.bodySnippet = snippetBuf.String()
-		}
-		h.logger.Info("upstream returned client error",
-			zap.String("provider_id", provider.ID),
-			zap.Int("status_code", result.statusCode),
-		)
-	}
-
-	return result
+	return h.commitForwardResponse(ctx, pctx, provider, upstreamResp)
 }
 
 // handleWriteError classifies a write error and updates the result accordingly. // coverage-ignore

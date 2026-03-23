@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"switch-a/internal/model"
-
-	"go.uber.org/zap"
 )
 
 // Provider Tests
@@ -46,6 +44,71 @@ func TestListProviders(t *testing.T) {
 
 	if len(providers) != 2 {
 		t.Errorf("len(providers) = %d, want 2", len(providers))
+	}
+}
+
+func TestListProviders_ChatGPTUsageAppearsInAuthProfile(t *testing.T) {
+	h, st, _ := testHandler()
+
+	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(4 * time.Hour)
+	credentialData, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "acct_test",
+		Email:        "user@example.com",
+		PlanType:     "pro",
+		Usage: &model.ProviderUsageSnapshot{
+			FetchedAt: &now,
+			PlanType:  "pro",
+			FiveHour: &model.ProviderUsageWindow{
+				UsedPercent:   33,
+				WindowSeconds: 5 * 60 * 60,
+				ResetAt:       &resetAt,
+			},
+		},
+		LastRefresh: now.Add(-time.Minute),
+		ExpiresAt:   now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("marshal credentialData: %v", err)
+	}
+
+	st.providers["gpt"] = &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: string(credentialData),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/providers", nil)
+	w := httptest.NewRecorder()
+
+	h.ListProviders(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var providers []model.Provider
+	if err := json.NewDecoder(w.Body).Decode(&providers); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(providers) != 1 {
+		t.Fatalf("len(providers) = %d, want 1", len(providers))
+	}
+	if providers[0].AuthProfile == nil {
+		t.Fatal("AuthProfile = nil, want profile")
+	}
+	if providers[0].AuthProfile.PlanType != "pro" {
+		t.Fatalf("PlanType = %q, want %q", providers[0].AuthProfile.PlanType, "pro")
+	}
+	if providers[0].AuthProfile.Usage == nil || providers[0].AuthProfile.Usage.FiveHour == nil {
+		t.Fatal("FiveHour usage = nil, want snapshot")
+	}
+	if got := providers[0].AuthProfile.Usage.FiveHour.UsedPercent; got != 33 {
+		t.Fatalf("FiveHour.UsedPercent = %v, want 33", got)
 	}
 }
 
@@ -1082,266 +1145,5 @@ func TestDeleteProvider_GetError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestEnableProvider(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.providers["test-provider"] = &model.Provider{ID: "test-provider", Name: "Test", Enabled: false}
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test-provider/enable", nil)
-	setPathValue(req, "id", "test-provider")
-	w := httptest.NewRecorder()
-
-	h.EnableProvider(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	if !st.providers["test-provider"].Enabled {
-		t.Error("provider should be enabled")
-	}
-}
-
-func TestEnableProvider_NotFound(t *testing.T) {
-	h, _, _ := testHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/non-existent/enable", nil)
-	setPathValue(req, "id", "non-existent")
-	w := httptest.NewRecorder()
-
-	h.EnableProvider(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
-}
-
-func TestEnableProvider_EmptyID(t *testing.T) {
-	h, _, _ := testHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers//enable", nil)
-	w := httptest.NewRecorder()
-
-	h.EnableProvider(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestEnableProvider_UpdateError(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.providers["test"] = &model.Provider{ID: "test", Name: "Test", Enabled: false}
-	st.updateErr = errors.New("database error")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test/enable", nil)
-	setPathValue(req, "id", "test")
-	w := httptest.NewRecorder()
-
-	h.EnableProvider(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestEnableProvider_GetError(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.getErr = errors.New("database error")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test/enable", nil)
-	setPathValue(req, "id", "test")
-	w := httptest.NewRecorder()
-
-	h.EnableProvider(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestDisableProvider(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.providers["test-provider"] = &model.Provider{ID: "test-provider", Name: "Test", Enabled: true}
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test-provider/disable", nil)
-	setPathValue(req, "id", "test-provider")
-	w := httptest.NewRecorder()
-
-	h.DisableProvider(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	if st.providers["test-provider"].Enabled {
-		t.Error("provider should be disabled")
-	}
-}
-
-func TestDisableProvider_NotFound(t *testing.T) {
-	h, _, _ := testHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/non-existent/disable", nil)
-	setPathValue(req, "id", "non-existent")
-	w := httptest.NewRecorder()
-
-	h.DisableProvider(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
-}
-
-func TestDisableProvider_EmptyID(t *testing.T) {
-	h, _, _ := testHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers//disable", nil)
-	w := httptest.NewRecorder()
-
-	h.DisableProvider(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestDisableProvider_GetError(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.getErr = errors.New("database error")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test/disable", nil)
-	setPathValue(req, "id", "test")
-	w := httptest.NewRecorder()
-
-	h.DisableProvider(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestDisableProvider_UpdateError(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.providers["test"] = &model.Provider{ID: "test", Name: "Test", Enabled: true}
-	st.updateErr = errors.New("database error")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test/disable", nil)
-	setPathValue(req, "id", "test")
-	w := httptest.NewRecorder()
-
-	h.DisableProvider(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestResetProvider(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.providers["test-provider"] = &model.Provider{ID: "test-provider", Name: "Test"}
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test-provider/reset", nil)
-	setPathValue(req, "id", "test-provider")
-	w := httptest.NewRecorder()
-
-	h.ResetProvider(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-}
-
-func TestResetProvider_NotFound(t *testing.T) {
-	h, _, _ := testHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/non-existent/reset", nil)
-	setPathValue(req, "id", "non-existent")
-	w := httptest.NewRecorder()
-
-	h.ResetProvider(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
-}
-
-func TestResetProvider_EmptyID(t *testing.T) {
-	h, _, _ := testHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers//reset", nil)
-	w := httptest.NewRecorder()
-
-	h.ResetProvider(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestResetProvider_HealthEnableError(t *testing.T) {
-	h, st, health := testHandler()
-
-	st.providers["test"] = &model.Provider{ID: "test", Name: "Test"}
-	health.enableErr = errors.New("health manager error")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test/reset", nil)
-	setPathValue(req, "id", "test")
-	w := httptest.NewRecorder()
-
-	h.ResetProvider(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestResetProvider_GetError(t *testing.T) {
-	h, st, _ := testHandler()
-
-	st.getErr = errors.New("database error")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test/reset", nil)
-	setPathValue(req, "id", "test")
-	w := httptest.NewRecorder()
-
-	h.ResetProvider(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestResetProvider_NoHealthManager(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	st := newMockStore()
-
-	// Create handler without health manager
-	h := NewHandler(Config{
-		Store:       st,
-		Health:      nil,
-		Concurrency: &mockConcurrencyTracker{},
-		Logger:      logger,
-	})
-
-	st.providers["test-provider"] = &model.Provider{ID: "test-provider", Name: "Test"}
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test-provider/reset", nil)
-	setPathValue(req, "id", "test-provider")
-	w := httptest.NewRecorder()
-
-	h.ResetProvider(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }

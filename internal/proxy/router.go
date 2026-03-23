@@ -23,7 +23,8 @@ const (
 	RouteClaudeCountTokens = "/v1/messages/count_tokens"
 	RouteClaudeModels      = "/v1/models"
 	// Codex API routes
-	RouteCodexResponses = "/responses"
+	RouteCodexResponses   = "/responses"
+	RouteCodexResponsesV1 = "/v1/responses"
 	// Gemini API routes (prefix)
 	RouteGeminiPrefix = "/gemini/"
 	RouteGeminiV1Beta = "/v1beta/"
@@ -49,7 +50,7 @@ func ParseAPIType(path string) (apiType string, ok bool) {
 	}
 
 	// Codex API
-	if strings.HasPrefix(path, "responses") {
+	if strings.HasPrefix(path, "responses") || strings.HasPrefix(path, "v1/responses") {
 		return APITypeCodex, true
 	}
 
@@ -73,6 +74,9 @@ func ParseAPIType(path string) (apiType string, ok bool) {
 // For most API types, the path is passed through unchanged.
 // For custom APIs, the /custom/:toolId prefix is stripped.
 func BuildUpstreamPath(originalPath, apiType string) string {
+	if apiType == APITypeCodex && strings.HasPrefix(originalPath, RouteCodexResponsesV1) {
+		return strings.TrimPrefix(originalPath, "/v1")
+	}
 	if !strings.HasPrefix(apiType, CustomAPITypePrefix) {
 		return originalPath
 	}

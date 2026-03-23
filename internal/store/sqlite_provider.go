@@ -67,13 +67,13 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 
 		if err := tx.Exec(`
 			INSERT INTO providers (
-				id, name, api_key, auth_mode, group_id,
+				id, name, api_key, auth_mode, credential_type, credential_data, group_id,
 				weight, priority, concurrency, max_retries,
 				backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter,
 				vendor, failover_scope, accept_failover,
 				enabled, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.ID, p.Name, p.APIKey, p.AuthMode, p.GroupID,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, p.Name, p.APIKey, p.AuthMode, model.NormalizeProviderCredentialType(p.CredentialType), p.CredentialData, p.GroupID,
 			p.Weight, p.Priority, p.Concurrency, p.MaxRetries,
 			p.Backoff.InitialDelay, p.Backoff.MaxDelay, p.Backoff.Multiplier, p.Backoff.Jitter,
 			p.Vendor, failoverScope, acceptFailover,
@@ -113,6 +113,7 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 		if acceptFailover == "" {
 			acceptFailover = model.ScopeAny
 		}
+		credentialType := model.NormalizeProviderCredentialType(p.CredentialType)
 
 		// Temporarily clear APITypes to avoid GORM trying to update them via Save
 		apiTypes := p.APITypes
@@ -121,8 +122,10 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 		// Apply scopes for the Save call, then restore originals
 		origFailover := p.FailoverScope
 		origAccept := p.AcceptFailover
+		origCredentialType := p.CredentialType
 		p.FailoverScope = failoverScope
 		p.AcceptFailover = acceptFailover
+		p.CredentialType = credentialType
 
 		// Save provider (without APITypes)
 		if err := tx.Save(p).Error; err != nil {
@@ -132,6 +135,7 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 		// Restore original values so the caller's struct is not mutated
 		p.FailoverScope = origFailover
 		p.AcceptFailover = origAccept
+		p.CredentialType = origCredentialType
 
 		// Restore and create new API types explicitly
 		p.APITypes = apiTypes
@@ -145,6 +149,22 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 	})
 	if err != nil {
 		return fmt.Errorf("update provider %q: %w", p.ID, err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error {
+	now := s.clock.Now()
+	if err := s.db.WithContext(ctx).Exec(
+		`UPDATE providers
+		 SET credential_type = ?, credential_data = ?, updated_at = ?
+		 WHERE id = ?`,
+		model.NormalizeProviderCredentialType(credentialType),
+		credentialData,
+		now,
+		id,
+	).Error; err != nil {
+		return fmt.Errorf("update provider credential %q: %w", id, err)
 	}
 	return nil
 }

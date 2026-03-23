@@ -92,7 +92,8 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 
 // validateImportRequest validates the import request and returns warnings.
 func (h *Handler) validateImportRequest(req *ImportConfigRequest) []string {
-	var warnings []string
+	estimatedWarnings := len(req.Providers)*2 + len(req.Groups) + len(req.Settings)
+	warnings := make([]string, 0, estimatedWarnings)
 
 	// Validate providers
 	for _, p := range req.Providers {
@@ -123,6 +124,21 @@ func validateExportedProvider(p *ExportedProvider) []string {
 	if p.Name == "" {
 		warnings = append(warnings, "Provider '"+p.ID+"' has empty name")
 	}
+	if p.ID == "" || p.Name == "" {
+		return warnings
+	}
+
+	credentialType := model.NormalizeProviderCredentialType(p.CredentialType)
+	if !IsValidProviderCredentialType(credentialType) {
+		return append(warnings, "Provider '"+p.ID+"' has invalid credential_type: "+string(p.CredentialType))
+	}
+	if credentialType == model.ProviderCredentialTypeChatGPT {
+		if _, ok := buildProviderFromExport(p, map[string]bool{}); !ok {
+			warnings = append(warnings, "Provider '"+p.ID+"' has incomplete or invalid GPT login")
+		}
+		return warnings
+	}
+
 	for _, at := range p.APITypes {
 		if !IsValidAPIType(at.APIType) {
 			warnings = append(warnings, "Provider '"+p.ID+"' has invalid api_type: "+at.APIType)

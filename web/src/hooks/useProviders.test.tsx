@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useProviders, useProvider } from "./useProviders";
 import { ApiContext } from "../api/context";
 import type { ApiClient, Provider } from "../api/client";
+import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 
 const mockProvider: Provider = {
   id: "1",
@@ -17,6 +18,7 @@ const mockProvider: Provider = {
     },
   ],
   auth_mode: "bearer",
+  credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
   group_id: null,
   weight: 1,
   priority: 1,

@@ -178,8 +178,9 @@ func (s *webSocketCommitState) Snapshot() (bool, model.CommitSource) {
 // Error contract (two channels):
 //   - err != nil: client accept failed. The caller should treat this as a client-side
 //     issue (not a provider failure) and must NOT write any further HTTP response.
-//   - err == nil, result.HandshakeAccepted == false: upstream dial failed after the client
-//     was already upgraded. The client received a close frame with StatusBadGateway.
+//   - err == nil, result.HandshakeAccepted == false: upstream dial failed before the proxy
+//     upgraded the client. The caller still owns the HTTP response and can surface the
+//     real handshake status (for example 401/426) instead of collapsing it into a close frame.
 //   - err == nil, result.HandshakeAccepted == true: relay completed. result.Err is non-nil
 //     only for abnormal terminations (not for normal close codes).
 //
@@ -195,22 +196,10 @@ func (f *WebSocketForwarder) Forward(ctx context.Context, w http.ResponseWriter,
 func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.ResponseWriter, r *http.Request, upstreamURL string, extraHeaders http.Header, observer WebSocketMessageObserver, onFirstUpstreamMessage func(WebSocketObservation)) (*WebSocketResult, error) {
 	start := time.Now()
 
-	// Accept the client's WebSocket upgrade.
-	// InsecureSkipVerify allows any Origin since this is an API proxy, not a browser-facing app.
-	clientConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
-	if err != nil {
-		return &WebSocketResult{
-			Duration:      time.Since(start),
-			Err:           err,
-			TerminalCause: model.TerminalClientUpgradeRejected,
-			CommitSource:  model.CommitUnknown,
-		}, err
-	}
-	clientConn.SetReadLimit(wsReadLimit)
-
-	// Dial the upstream WebSocket endpoint.
+	// Dial the upstream WebSocket endpoint before accepting the client upgrade.
+	// This preserves upstream handshake semantics for the caller, which is required for:
+	//   - surfacing 426 so Codex CLI can fall back to HTTP
+	//   - retrying 401 after refreshing provider-managed credentials
 	dialHeaders := extraHeaders.Clone()
 	if dialHeaders == nil {
 		dialHeaders = make(http.Header)
@@ -226,8 +215,6 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 			handshakeStatusCode = resp.StatusCode
 			handshakeBodySnippet = drainReadCloserWithSnippet(resp.Body, 0)
 		}
-		// Upstream unreachable — close client connection with a gateway error status.
-		_ = clientConn.Close(websocket.StatusBadGateway, "upstream connection failed")
 		return &WebSocketResult{
 			Duration:             time.Since(start),
 			HandshakeStatusCode:  handshakeStatusCode,
@@ -241,6 +228,22 @@ func (f *WebSocketForwarder) ForwardObserved(ctx context.Context, w http.Respons
 		_ = resp.Body.Close()
 	}
 	upstreamConn.SetReadLimit(wsReadLimit)
+
+	// Accept the client's WebSocket upgrade only after the provider handshake succeeds.
+	// This avoids hiding upstream handshake failures behind an already-open proxy socket.
+	clientConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		_ = upstreamConn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
+		return &WebSocketResult{
+			Duration:      time.Since(start),
+			Err:           err,
+			TerminalCause: model.TerminalClientUpgradeRejected,
+			CommitSource:  model.CommitUnknown,
+		}, err
+	}
+	clientConn.SetReadLimit(wsReadLimit)
 
 	// Both connections established — relay messages bidirectionally.
 	result := f.relay(ctx, clientConn, upstreamConn, observer, onFirstUpstreamMessage)

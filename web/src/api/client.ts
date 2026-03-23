@@ -25,6 +25,8 @@ import type {
   ConfigResponse,
   ActiveRequestsResponse,
   RequestLog,
+  ChatGPTLoginStartResponse,
+  ChatGPTLoginStatusResponse,
 } from "./types";
 
 // Re-export types for consumers
@@ -53,6 +55,8 @@ export type {
   ConfigResponse,
   ActiveRequest,
   ActiveRequestsResponse,
+  ChatGPTLoginStartResponse,
+  ChatGPTLoginStatusResponse,
   RequestAttempt,
 } from "./types";
 
@@ -212,6 +216,14 @@ function createProvidersApi(request: AuthenticatedRequestFn) {
       request<Provider>(`/providers/${id}/disable`, { method: "POST" }),
     reset: (id: string) =>
       request<HealthState>(`/providers/${id}/reset`, { method: "POST" }),
+    startChatGPTLogin: () =>
+      request<ChatGPTLoginStartResponse>("/provider-auth/chatgpt/start", {
+        method: "POST",
+      }),
+    getChatGPTLoginStatus: (loginId: string) =>
+      request<ChatGPTLoginStatusResponse>(
+        `/provider-auth/chatgpt/sessions/${encodeURIComponent(loginId)}`,
+      ),
     batch: (data: BatchProviderRequest) =>
       request<BatchProviderResponse>("/providers/batch", {
         method: "POST",

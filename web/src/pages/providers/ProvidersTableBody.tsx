@@ -1,5 +1,11 @@
 import type { Provider } from "../../api/client";
 import { hasProviderApiKey } from "../../lib/providerApiKey";
+import {
+  formatProviderPlanType,
+  formatProviderUsageWindowSummary,
+  resolveProviderPlanType,
+  resolveProviderUsage,
+} from "../../lib/providerUsage";
 import { stringToColor } from "../../lib/utils";
 import { RecoveryTimer } from "../../components/RecoveryTimer";
 import {
@@ -208,6 +214,21 @@ function formatEndpointSummary(provider: Provider): string {
   return `${endpointSummary}, ${keySummary}`;
 }
 
+function formatChatGPTUsageSummary(provider: Provider): string | null {
+  if (provider.credential_type !== "chatgpt" || !provider.auth_profile?.ready) {
+    return null;
+  }
+
+  const planType = resolveProviderPlanType(provider.auth_profile);
+  const usage = resolveProviderUsage(provider.auth_profile);
+  const parts = [
+    planType ? formatProviderPlanType(planType) : "GPT",
+    formatProviderUsageWindowSummary("5h", usage?.five_hour),
+    formatProviderUsageWindowSummary("1w", usage?.one_week),
+  ];
+  return parts.join(" • ");
+}
+
 function GroupCell({
   provider,
   groupName,
@@ -305,6 +326,7 @@ function ProviderRow({
   const failCount = provider.health?.fail_count || 0;
   const groupName = getGroupName(provider.group_id);
   const endpointSummary = formatEndpointSummary(provider);
+  const chatGPTUsageSummary = formatChatGPTUsageSummary(provider);
 
   return (
     <tr className="group hover:bg-bg-secondary/60 transition-colors border-b border-border/40 last:border-b-0">
@@ -324,6 +346,14 @@ function ProviderRow({
             <p className="text-[11px] text-text-muted truncate mt-0.5">
               {endpointSummary}
             </p>
+            {chatGPTUsageSummary && (
+              <p
+                className="text-[11px] text-text-secondary truncate mt-0.5"
+                title={chatGPTUsageSummary}
+              >
+                {chatGPTUsageSummary}
+              </p>
+            )}
           </div>
         </div>
       </td>

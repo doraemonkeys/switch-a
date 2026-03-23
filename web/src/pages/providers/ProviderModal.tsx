@@ -1,11 +1,68 @@
-import { useState, useEffect, useRef, useId } from "react";
+import { useState, useEffect, useRef, useId, useContext } from "react";
 import type { FormEvent } from "react";
-import type { Provider, ProviderInput } from "../../api";
+import type { Provider, ProviderAuthProfile, ProviderInput } from "../../api";
+import { ApiContext } from "../../api/context";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { isValidId } from "../../lib/utils";
 import { normalizeProviderApiKey } from "../../lib/providerApiKey";
 import { CloseIcon } from "../../components/icons/CloseIcon";
-import { PROVIDER_DEFAULTS, FAILOVER_SCOPES } from "../../config/constants";
+import {
+  PROVIDER_DEFAULTS,
+  FAILOVER_SCOPES,
+  AUTH_MODES,
+  API_TYPES,
+  CHATGPT_CODEX_BASE_URL,
+  PROVIDER_CREDENTIAL_TYPES,
+} from "../../config/constants";
+
+const CHATGPT_LOGIN_POLL_INTERVAL_MS = 1000;
+const CHATGPT_LOGIN_WINDOW_TARGET = "_blank";
+const CHATGPT_LOGIN_WINDOW_FEATURES = "noopener,noreferrer";
+const CHATGPT_LOGIN_READY_MESSAGE =
+  "Sign-in link ready. Open it in any browser on this machine. Switch-A will detect completion automatically.";
+const CHATGPT_LOGIN_EXPIRED_MESSAGE =
+  "GPT sign-in expired before it was saved. Start a new sign-in link.";
+const CHATGPT_LOGIN_STATUS_ERROR_MESSAGE = "Failed to check GPT login status";
+const CHATGPT_LOGIN_START_ERROR_MESSAGE = "Failed to start GPT login";
+const CHATGPT_LOGIN_COMPLETED_MESSAGE =
+  "GPT login completed. Save the provider to persist it.";
+
+interface ChatGPTLoginSession {
+  loginId: string;
+  authURL: string;
+}
+
+function createChatGPTAPIType(): ProviderInput["api_types"] {
+  return [
+    {
+      api_type: API_TYPES.CODEX,
+      base_url: CHATGPT_CODEX_BASE_URL,
+      api_key: "",
+    },
+  ];
+}
+
+function describeConnectedChatGPTAccount(
+  authProfile?: ProviderAuthProfile | null,
+): string {
+  if (!authProfile?.ready) {
+    return CHATGPT_LOGIN_COMPLETED_MESSAGE;
+  }
+  return authProfile.email
+    ? `Connected as ${authProfile.email}. Save the provider to persist it.`
+    : CHATGPT_LOGIN_COMPLETED_MESSAGE;
+}
+
+function describePersistedChatGPTAccount(
+  authProfile?: ProviderAuthProfile | null,
+): string | null {
+  if (!authProfile?.ready) {
+    return null;
+  }
+  return authProfile.email
+    ? `Connected as ${authProfile.email}.`
+    : "A GPT account is already connected for this provider.";
+}
 
 function ModalHeader({
   title,
@@ -41,6 +98,8 @@ const DEFAULT_FORM_DATA: ProviderInput = {
   api_key: "",
   api_types: [],
   auth_mode: "auto",
+  credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+  credential_login_id: "",
   group_id: null,
   weight: PROVIDER_DEFAULTS.WEIGHT,
   priority: PROVIDER_DEFAULTS.PRIORITY,
@@ -65,6 +124,9 @@ function deriveFormData(initialData?: Provider): ProviderInput {
       api_key: normalizeProviderApiKey(t.api_key),
     })),
     auth_mode: initialData.auth_mode || "auto",
+    credential_type:
+      initialData.credential_type || PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    credential_login_id: "",
     group_id: initialData.group_id,
     weight: initialData.weight,
     priority: initialData.priority,
@@ -75,6 +137,90 @@ function deriveFormData(initialData?: Provider): ProviderInput {
     failover_scope: initialData.failover_scope || FAILOVER_SCOPES.ANY,
     accept_failover: initialData.accept_failover || FAILOVER_SCOPES.ANY,
     enabled: initialData.enabled,
+  };
+}
+
+type ProviderSubmissionPreparation =
+  | { kind: "ok"; payload: ProviderInput }
+  | { kind: "id-error"; message: string }
+  | { kind: "form-error"; message: string };
+
+function prepareProviderSubmission({
+  formData,
+  isEditMode,
+  hasPersistedChatGPTLogin,
+}: {
+  formData: ProviderInput;
+  isEditMode: boolean;
+  hasPersistedChatGPTLogin: boolean;
+}): ProviderSubmissionPreparation {
+  if (!isEditMode && formData.id && !isValidId(formData.id)) {
+    return {
+      kind: "id-error",
+      message: "ID can only contain lowercase letters, numbers, and hyphens",
+    };
+  }
+
+  const isChatGPTProvider =
+    formData.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
+  const validApiTypes = isChatGPTProvider
+    ? createChatGPTAPIType()
+    : formData.api_types.filter((apiType) => apiType.api_type.trim());
+  if (!isChatGPTProvider && validApiTypes.length === 0) {
+    return {
+      kind: "form-error",
+      message: "At least one API type is required",
+    };
+  }
+
+  if (!isChatGPTProvider) {
+    const missingURL = validApiTypes.find(
+      (apiType) => !apiType.base_url.trim(),
+    );
+    if (missingURL) {
+      return {
+        kind: "form-error",
+        message: `Base URL is required for API type "${missingURL.api_type}"`,
+      };
+    }
+  }
+
+  const defaultAPIKey = normalizeProviderApiKey(formData.api_key);
+  if (!isChatGPTProvider) {
+    const missingKey = validApiTypes.find(
+      (apiType) => !defaultAPIKey && !normalizeProviderApiKey(apiType.api_key),
+    );
+    if (missingKey) {
+      return {
+        kind: "form-error",
+        message: `API key is required for API type "${missingKey.api_type}". Set a default API key or add an override for that API type.`,
+      };
+    }
+  }
+
+  if (
+    isChatGPTProvider &&
+    !formData.credential_login_id &&
+    !hasPersistedChatGPTLogin
+  ) {
+    return {
+      kind: "form-error",
+      message: "Complete GPT login before saving this provider.",
+    };
+  }
+
+  const normalizedApiTypes = validApiTypes.map((apiType) => ({
+    ...apiType,
+    api_key: normalizeProviderApiKey(apiType.api_key),
+  }));
+  return {
+    kind: "ok",
+    payload: {
+      ...formData,
+      api_key: isChatGPTProvider ? "" : defaultAPIKey,
+      api_types: normalizedApiTypes,
+      auth_mode: isChatGPTProvider ? AUTH_MODES.BEARER : formData.auth_mode,
+    },
   };
 }
 
@@ -91,6 +237,7 @@ export function ProviderModal({
   onSubmit,
   groups,
 }: ProviderModalProps) {
+  const api = useContext(ApiContext);
   const isEditMode = !!initialData;
   const titleId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
@@ -102,6 +249,15 @@ export function ProviderModal({
   const [error, setError] = useState<string | null>(null);
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
+  const [chatGPTStatus, setChatGPTStatus] = useState<string | null>(() =>
+    describePersistedChatGPTAccount(initialData?.auth_profile),
+  );
+  const [chatGPTLoginError, setChatGPTLoginError] = useState<string | null>(
+    null,
+  );
+  const [startingChatGPTLogin, setStartingChatGPTLogin] = useState(false);
+  const [chatGPTLoginSession, setChatGPTLoginSession] =
+    useState<ChatGPTLoginSession | null>(null);
 
   // Auto-focus first focusable element when modal opens
   useEffect(() => {
@@ -139,47 +295,144 @@ export function ProviderModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose, submitting]);
 
+  useEffect(() => {
+    if (
+      !api ||
+      !chatGPTLoginSession ||
+      formData.credential_type !== PROVIDER_CREDENTIAL_TYPES.CHATGPT
+    ) {
+      return;
+    }
+
+    const activeLoginID = chatGPTLoginSession.loginId;
+    let cancelled = false;
+    let timeoutID: number | undefined;
+
+    const scheduleNextPoll = () => {
+      timeoutID = window.setTimeout(() => {
+        void pollLoginStatus();
+      }, CHATGPT_LOGIN_POLL_INTERVAL_MS);
+    };
+
+    const pollLoginStatus = async () => {
+      try {
+        const loginStatus =
+          await api.providers.getChatGPTLoginStatus(activeLoginID);
+        if (cancelled) {
+          return;
+        }
+
+        if (loginStatus.status === "completed") {
+          setChatGPTLoginSession(null);
+          setChatGPTLoginError(null);
+          setChatGPTStatus(
+            describeConnectedChatGPTAccount(loginStatus.auth_profile),
+          );
+          setFormData((prev) => ({
+            ...prev,
+            credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+            credential_login_id: activeLoginID,
+          }));
+          return;
+        }
+
+        if (loginStatus.status === "expired") {
+          setChatGPTLoginSession(null);
+          setChatGPTStatus(null);
+          setChatGPTLoginError(CHATGPT_LOGIN_EXPIRED_MESSAGE);
+          return;
+        }
+
+        scheduleNextPoll();
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        setChatGPTLoginError(
+          err instanceof Error
+            ? err.message
+            : CHATGPT_LOGIN_STATUS_ERROR_MESSAGE,
+        );
+        scheduleNextPoll();
+      }
+    };
+
+    void pollLoginStatus();
+
+    return () => {
+      cancelled = true;
+      if (timeoutID !== undefined) {
+        window.clearTimeout(timeoutID);
+      }
+    };
+  }, [api, chatGPTLoginSession, formData.credential_type]);
+
+  const handleStartChatGPTLogin = async () => {
+    setStartingChatGPTLogin(true);
+    setChatGPTLoginError(null);
+    try {
+      if (!api) {
+        throw new Error("API client is unavailable for GPT login");
+      }
+      setFormData((prev) => ({ ...prev, credential_login_id: "" }));
+      const start = await api.providers.startChatGPTLogin();
+      setChatGPTLoginSession({
+        loginId: start.login_id,
+        authURL: start.auth_url,
+      });
+      const loginWindow = window.open(
+        start.auth_url,
+        CHATGPT_LOGIN_WINDOW_TARGET,
+        CHATGPT_LOGIN_WINDOW_FEATURES,
+      );
+      if (loginWindow) {
+        loginWindow.focus();
+      }
+      setChatGPTStatus(CHATGPT_LOGIN_READY_MESSAGE);
+    } catch (err) {
+      setChatGPTLoginSession(null);
+      setChatGPTStatus(null);
+      setChatGPTLoginError(
+        err instanceof Error ? err.message : CHATGPT_LOGIN_START_ERROR_MESSAGE,
+      );
+    } finally {
+      setStartingChatGPTLogin(false);
+    }
+  };
+
+  const handleOpenChatGPTLoginPage = () => {
+    if (!chatGPTLoginSession?.authURL) {
+      return;
+    }
+    const loginWindow = window.open(
+      chatGPTLoginSession.authURL,
+      CHATGPT_LOGIN_WINDOW_TARGET,
+      CHATGPT_LOGIN_WINDOW_FEATURES,
+    );
+    loginWindow?.focus();
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!isEditMode && formData.id && !isValidId(formData.id)) {
-      setIdError("ID can only contain lowercase letters, numbers, and hyphens");
+    const preparedSubmission = prepareProviderSubmission({
+      formData,
+      isEditMode,
+      hasPersistedChatGPTLogin: Boolean(initialData?.auth_profile?.ready),
+    });
+    if (preparedSubmission.kind === "id-error") {
+      setIdError(preparedSubmission.message);
+      return;
+    }
+    if (preparedSubmission.kind === "form-error") {
+      setError(preparedSubmission.message);
       return;
     }
 
-    // Filter out entries with empty api_type, then validate remaining entries
-    const validApiTypes = formData.api_types.filter((t) => t.api_type.trim());
-    if (validApiTypes.length === 0) {
-      setError("At least one API type is required");
-      return;
-    }
-    const missingUrl = validApiTypes.find((t) => !t.base_url.trim());
-    if (missingUrl) {
-      setError(`Base URL is required for API type "${missingUrl.api_type}"`);
-      return;
-    }
-    const defaultAPIKey = normalizeProviderApiKey(formData.api_key);
-    const missingKey = validApiTypes.find(
-      (t) => !defaultAPIKey && !normalizeProviderApiKey(t.api_key),
-    );
-    if (missingKey) {
-      setError(
-        `API key is required for API type "${missingKey.api_type}". Set a default API key or add an override for that API type.`,
-      );
-      return;
-    }
-
+    setIdError(null);
     setSubmitting(true);
     setError(null);
     try {
-      const normalizedApiTypes = validApiTypes.map((apiType) => ({
-        ...apiType,
-        api_key: normalizeProviderApiKey(apiType.api_key),
-      }));
-      await onSubmit({
-        ...formData,
-        api_key: defaultAPIKey,
-        api_types: normalizedApiTypes,
-      });
+      await onSubmit(preparedSubmission.payload);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save provider");
@@ -223,6 +476,15 @@ export function ProviderModal({
             submitting={submitting}
             onCancel={onClose}
             groups={groups}
+            authProfile={initialData?.auth_profile}
+            onStartChatGPTLogin={handleStartChatGPTLogin}
+            onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
+            chatGPTLoginState={{
+              status: chatGPTStatus,
+              error: chatGPTLoginError,
+              loading: startingChatGPTLogin,
+              authURL: chatGPTLoginSession?.authURL ?? null,
+            }}
           />
         </form>
       </div>

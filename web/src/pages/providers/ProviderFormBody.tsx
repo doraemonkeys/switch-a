@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { ProviderInput } from "../../api";
+import type { ProviderAuthProfile, ProviderInput } from "../../api";
+import { CopyButton } from "../../components";
 import { FormField } from "./FormField";
 import {
   ApiTypesField,
@@ -15,7 +16,17 @@ import { FailoverSection } from "./FailoverFields";
 import { hasFailoverConfig } from "./failoverConfig";
 import { BackoffSection } from "./BackoffFields";
 import { slugify, isValidId } from "../../lib/utils";
-import { PROVIDER_DEFAULTS } from "../../config/constants";
+import {
+  formatProviderPlanType,
+  formatProviderUsageWindowSummary,
+  resolveProviderPlanType,
+  resolveProviderUsage,
+} from "../../lib/providerUsage";
+import {
+  PROVIDER_DEFAULTS,
+  PROVIDER_CREDENTIAL_TYPES,
+  PROVIDER_CREDENTIAL_TYPE_OPTIONS,
+} from "../../config/constants";
 
 export interface FormState {
   data: ProviderInput;
@@ -37,6 +48,124 @@ interface ProviderFormBodyProps {
   submitting: boolean;
   onCancel: () => void;
   groups: Array<{ id: string; name: string }>;
+  authProfile?: ProviderAuthProfile | null;
+  onStartChatGPTLogin: () => Promise<void>;
+  onOpenChatGPTLoginPage: () => void;
+  chatGPTLoginState: ChatGPTLoginState;
+}
+
+interface ChatGPTLoginState {
+  status: string | null;
+  error: string | null;
+  loading: boolean;
+  authURL: string | null;
+}
+
+function getChatGPTLoginButtonLabel(
+  chatGPTLoginState: ChatGPTLoginState,
+  authProfile?: ProviderAuthProfile | null,
+): string {
+  if (chatGPTLoginState.loading) {
+    return "Preparing...";
+  }
+  if (chatGPTLoginState.authURL) {
+    return "Restart Sign-In";
+  }
+  if (authProfile?.ready) {
+    return "Reconnect GPT";
+  }
+  return "Start Sign-In";
+}
+
+function ChatGPTLoginSection({
+  authProfile,
+  chatGPTLoginState,
+  onStartChatGPTLogin,
+  onOpenChatGPTLoginPage,
+}: {
+  authProfile?: ProviderAuthProfile | null;
+  chatGPTLoginState: ChatGPTLoginState;
+  onStartChatGPTLogin: () => Promise<void>;
+  onOpenChatGPTLoginPage: () => void;
+}) {
+  const authPlanType = resolveProviderPlanType(authProfile);
+  const authUsage = resolveProviderUsage(authProfile);
+
+  return (
+    <section className="rounded-xl border border-border/70 bg-bg-secondary/40 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold text-text-primary">GPT Login</h4>
+          <p className="text-xs text-text-muted mt-1">
+            Switch-A will create a Codex-only provider backed by a local ChatGPT
+            OAuth session. The sign-in link can be completed in any browser on
+            this machine.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void onStartChatGPTLogin()}
+          disabled={chatGPTLoginState.loading}
+          className={`btn btn-secondary ${chatGPTLoginState.loading ? "opacity-60 cursor-wait" : ""}`}
+        >
+          {getChatGPTLoginButtonLabel(chatGPTLoginState, authProfile)}
+        </button>
+      </div>
+      {chatGPTLoginState.authURL && (
+        <div className="rounded-lg border border-border/70 bg-bg-primary/40 p-3 space-y-3">
+          <p className="text-xs text-text-muted">
+            This sign-in link can be opened in any browser on this machine.
+            Switch-A tracks the login session by ID and updates this form
+            automatically after OAuth completes.
+          </p>
+          <div className="flex flex-col gap-2">
+            <input
+              aria-label="GPT sign-in link"
+              readOnly
+              value={chatGPTLoginState.authURL}
+              className="input font-mono text-xs"
+            />
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <button
+                type="button"
+                onClick={onOpenChatGPTLoginPage}
+                className="btn btn-secondary"
+              >
+                Open Sign-In Page
+              </button>
+              <CopyButton text={chatGPTLoginState.authURL} />
+            </div>
+          </div>
+        </div>
+      )}
+      {authProfile?.ready && (
+        <div className="text-xs text-text-secondary space-y-1">
+          {authProfile.email && <p>Account: {authProfile.email}</p>}
+          {authProfile.account_id && <p>Workspace: {authProfile.account_id}</p>}
+          {authPlanType && <p>Plan: {formatProviderPlanType(authPlanType)}</p>}
+          {authUsage && (
+            <p>
+              Usage:{" "}
+              {formatProviderUsageWindowSummary("5h", authUsage.five_hour)}
+              {" / "}
+              {formatProviderUsageWindowSummary("1w", authUsage.one_week)}
+            </p>
+          )}
+          {authProfile.expires_at && (
+            <p>
+              Token expiry: {new Date(authProfile.expires_at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+      {chatGPTLoginState.status && (
+        <p className="text-xs text-success">{chatGPTLoginState.status}</p>
+      )}
+      {chatGPTLoginState.error && (
+        <p className="text-xs text-danger">{chatGPTLoginState.error}</p>
+      )}
+    </section>
+  );
 }
 
 export function ProviderFormBody({
@@ -47,6 +176,10 @@ export function ProviderFormBody({
   submitting,
   onCancel,
   groups,
+  authProfile,
+  onStartChatGPTLogin,
+  onOpenChatGPTLoginPage,
+  chatGPTLoginState,
 }: ProviderFormBodyProps) {
   const { data: formData, setData: setFormData } = formState;
   const {
@@ -80,6 +213,8 @@ export function ProviderFormBody({
     setTrackedEntries(entries);
     setFormData((prev) => ({ ...prev, api_types: entries.map((e) => e.data) }));
   };
+  const isChatGPTProvider =
+    formData.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
 
   return (
     <>
@@ -155,21 +290,68 @@ export function ProviderFormBody({
           )}
         </FormField>
       )}
-      <ApiKeyField
-        value={formData.api_key}
-        onChange={(value) =>
-          setFormData((prev) => ({ ...prev, api_key: value }))
-        }
-        showApiKey={showApiKey}
-        onToggleVisibility={() => setShowApiKey(!showApiKey)}
-      />
-      <ApiTypesField entries={trackedEntries} onChange={handleApiTypesChange} />
-      <AuthModeField
-        value={formData.auth_mode || "auto"}
-        onChange={(value) =>
-          setFormData((prev) => ({ ...prev, auth_mode: value }))
-        }
-      />
+      <FormField label="Credential Type">
+        {(id) => (
+          <>
+            <select
+              id={id}
+              className="input"
+              value={
+                formData.credential_type || PROVIDER_CREDENTIAL_TYPES.API_KEY
+              }
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  credential_type: e.target
+                    .value as ProviderInput["credential_type"],
+                }))
+              }
+            >
+              {PROVIDER_CREDENTIAL_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-text-muted mt-1">
+              {
+                PROVIDER_CREDENTIAL_TYPE_OPTIONS.find(
+                  (option) => option.value === formData.credential_type,
+                )?.description
+              }
+            </p>
+          </>
+        )}
+      </FormField>
+      {isChatGPTProvider ? (
+        <ChatGPTLoginSection
+          authProfile={authProfile}
+          chatGPTLoginState={chatGPTLoginState}
+          onStartChatGPTLogin={onStartChatGPTLogin}
+          onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
+        />
+      ) : (
+        <>
+          <ApiKeyField
+            value={formData.api_key}
+            onChange={(value) =>
+              setFormData((prev) => ({ ...prev, api_key: value }))
+            }
+            showApiKey={showApiKey}
+            onToggleVisibility={() => setShowApiKey(!showApiKey)}
+          />
+          <ApiTypesField
+            entries={trackedEntries}
+            onChange={handleApiTypesChange}
+          />
+          <AuthModeField
+            value={formData.auth_mode || "auto"}
+            onChange={(value) =>
+              setFormData((prev) => ({ ...prev, auth_mode: value }))
+            }
+          />
+        </>
+      )}
       <GroupSelectField
         value={formData.group_id ?? null}
         onChange={(value) =>

@@ -12,6 +12,7 @@ import (
 	"switch-a/internal"
 	"switch-a/internal/admin"
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
 	"switch-a/internal/proxy"
 	"switch-a/web"
 
@@ -110,6 +111,7 @@ type Config struct {
 	Health         internal.HealthManager
 	Selector       Selector
 	ActiveRegistry *proxy.ActiveRequestRegistry
+	Auth           *providerauth.Service
 }
 
 // AdminConfig holds admin server configuration.
@@ -122,6 +124,7 @@ type AdminConfig struct {
 	Selector      Selector
 	Concurrency   ConcurrencyTracker
 	ActiveReqList admin.ActiveRequestLister
+	Auth          *providerauth.Service
 }
 
 // HealthResponse represents the health check response.
@@ -145,6 +148,7 @@ func New(cfg Config) *Server {
 		Selector:       cfg.Selector,
 		Health:         cfg.Health,
 		ActiveRegistry: cfg.ActiveRegistry,
+		Auth:           cfg.Auth,
 		Logger:         cfg.Logger,
 	})
 
@@ -171,6 +175,8 @@ func New(cfg Config) *Server {
 	// Codex API
 	mux.HandleFunc("POST "+proxy.RouteCodexResponses, s.handleProxy)
 	mux.HandleFunc("GET "+proxy.RouteCodexResponses, s.handleProxy) // WebSocket upgrade (OpenAI Realtime API)
+	mux.HandleFunc("POST "+proxy.RouteCodexResponsesV1, s.handleProxy)
+	mux.HandleFunc("GET "+proxy.RouteCodexResponsesV1, s.handleProxy)
 	// Gemini API
 	mux.HandleFunc("POST "+proxy.RouteGeminiPrefix, s.handleProxy)
 	mux.HandleFunc("POST "+proxy.RouteGeminiV1Beta, s.handleProxy)
@@ -222,6 +228,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 		Concurrency:   cfg.Concurrency,
 		Cleaner:       cfg.Selector,
 		ActiveReqList: cfg.ActiveReqList,
+		Auth:          cfg.Auth,
 		Logger:        cfg.Logger,
 	})
 
@@ -231,6 +238,8 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Provider routes
 	mux.Handle("GET /admin/api/providers", auth.WrapFunc(adminHandler.ListProviders))
 	mux.Handle("POST /admin/api/providers", auth.WrapFunc(adminHandler.CreateProvider))
+	mux.Handle("POST /admin/api/provider-auth/chatgpt/start", auth.WrapFunc(adminHandler.StartChatGPTProviderLogin))
+	mux.Handle("GET /admin/api/provider-auth/chatgpt/sessions/{login_id}", auth.WrapFunc(adminHandler.GetChatGPTProviderLoginStatus))
 	mux.Handle("POST /admin/api/providers/batch", auth.WrapFunc(adminHandler.BatchProviderAction))
 	mux.Handle("GET /admin/api/providers/{id}", auth.WrapFunc(adminHandler.GetProvider))
 	mux.Handle("PUT /admin/api/providers/{id}", auth.WrapFunc(adminHandler.UpdateProvider))

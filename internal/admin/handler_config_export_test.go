@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
 
 	"go.uber.org/zap"
 )
@@ -1123,6 +1124,146 @@ func TestExportConfig_BackoffRoundtrip(t *testing.T) {
 	}
 }
 
+func TestExportConfig_ChatGPTProviderCanonicalizesTransportFields(t *testing.T) {
+	h, st, _ := testHandler()
+
+	credentialData, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "acct_test",
+	})
+	if err != nil {
+		t.Fatalf("marshal credentialData: %v", err)
+	}
+
+	st.providers["gpt"] = &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		APIKey:         "stale-key",
+		APITypes:       []model.ProviderAPIType{{ProviderID: "gpt", APIType: "claude", BaseURL: "https://stale.example.com", APIKey: "stale-override"}},
+		AuthMode:       "auto",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: string(credentialData),
+		Enabled:        true,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	w := httptest.NewRecorder()
+
+	h.ExportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var export ExportedConfig
+	if err := json.NewDecoder(w.Body).Decode(&export); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+
+	if len(export.Providers) != 1 {
+		t.Fatalf("len(export.Providers) = %d, want 1", len(export.Providers))
+	}
+
+	provider := export.Providers[0]
+	if provider.CredentialType != model.ProviderCredentialTypeChatGPT {
+		t.Fatalf("CredentialType = %q, want %q", provider.CredentialType, model.ProviderCredentialTypeChatGPT)
+	}
+	if provider.CredentialData != string(credentialData) {
+		t.Fatalf("CredentialData = %q, want original credential payload", provider.CredentialData)
+	}
+	if provider.AuthMode != "bearer" {
+		t.Fatalf("AuthMode = %q, want %q", provider.AuthMode, "bearer")
+	}
+	if provider.APIKey != "" {
+		t.Fatalf("APIKey = %q, want empty", provider.APIKey)
+	}
+	if len(provider.APITypes) != 1 {
+		t.Fatalf("len(provider.APITypes) = %d, want 1", len(provider.APITypes))
+	}
+	if provider.APITypes[0].APIType != "codex" {
+		t.Fatalf("APIType = %q, want %q", provider.APITypes[0].APIType, "codex")
+	}
+	if provider.APITypes[0].BaseURL != providerauth.ChatGPTCodexBaseURL() {
+		t.Fatalf("BaseURL = %q, want %q", provider.APITypes[0].BaseURL, providerauth.ChatGPTCodexBaseURL())
+	}
+	if provider.APITypes[0].APIKey != "" {
+		t.Fatalf("APITypes[0].APIKey = %q, want empty", provider.APITypes[0].APIKey)
+	}
+}
+
+func TestImportConfig_ChatGPTProviderDerivesTransportFields(t *testing.T) {
+	h, st, _ := testHandler()
+
+	credentialData, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "acct_test",
+	})
+	if err != nil {
+		t.Fatalf("marshal credentialData: %v", err)
+	}
+
+	importReq := ImportConfigRequest{
+		Version: ConfigExportVersion,
+		Providers: []ExportedProvider{{
+			ID:             "gpt",
+			Name:           "GPT Provider",
+			APIKey:         "stale-key",
+			AuthMode:       "auto",
+			CredentialType: model.ProviderCredentialTypeChatGPT,
+			CredentialData: string(credentialData),
+			Enabled:        true,
+		}},
+	}
+
+	body, err := json.Marshal(importReq)
+	if err != nil {
+		t.Fatalf("marshal import request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	imported := st.providers["gpt"]
+	if imported == nil {
+		t.Fatal("provider gpt not found after import")
+	}
+	if imported.CredentialType != model.ProviderCredentialTypeChatGPT {
+		t.Fatalf("CredentialType = %q, want %q", imported.CredentialType, model.ProviderCredentialTypeChatGPT)
+	}
+	if imported.CredentialData != string(credentialData) {
+		t.Fatalf("CredentialData = %q, want original credential payload", imported.CredentialData)
+	}
+	if imported.AuthMode != "bearer" {
+		t.Fatalf("AuthMode = %q, want %q", imported.AuthMode, "bearer")
+	}
+	if imported.APIKey != "" {
+		t.Fatalf("APIKey = %q, want empty", imported.APIKey)
+	}
+	if len(imported.APITypes) != 1 {
+		t.Fatalf("len(imported.APITypes) = %d, want 1", len(imported.APITypes))
+	}
+	if imported.APITypes[0].APIType != "codex" {
+		t.Fatalf("APIType = %q, want %q", imported.APITypes[0].APIType, "codex")
+	}
+	if imported.APITypes[0].BaseURL != providerauth.ChatGPTCodexBaseURL() {
+		t.Fatalf("BaseURL = %q, want %q", imported.APITypes[0].BaseURL, providerauth.ChatGPTCodexBaseURL())
+	}
+	if imported.APITypes[0].APIKey != "" {
+		t.Fatalf("APITypes[0].APIKey = %q, want empty", imported.APITypes[0].APIKey)
+	}
+}
+
 func TestValidateExportedProvider_MalformedURL(t *testing.T) {
 	p := &ExportedProvider{
 		ID:       "p1",
@@ -1140,6 +1281,30 @@ func TestValidateExportedProvider_MalformedURL(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected malformed base_url warning, got: %v", warnings)
+	}
+}
+
+func TestValidateExportedProvider_ChatGPTDoesNotRequireAPIKey(t *testing.T) {
+	credentialData, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "acct_test",
+	})
+	if err != nil {
+		t.Fatalf("marshal credentialData: %v", err)
+	}
+
+	p := &ExportedProvider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: string(credentialData),
+	}
+
+	warnings := validateExportedProvider(p)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
 	}
 }
 

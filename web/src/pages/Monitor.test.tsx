@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Monitor } from "./Monitor";
 import type { ActiveRequest, Provider, SystemStatus } from "../api/types";
+import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 
 // Mock data
 // eslint-disable-next-line sonarjs/no-hardcoded-ip -- safe for testing
@@ -45,6 +46,7 @@ const mockProviders: Provider[] = [
       },
     ],
     auth_mode: "bearer",
+    credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
     group_id: null,
     weight: 1,
     priority: 1,
@@ -69,6 +71,7 @@ const mockProviders: Provider[] = [
       },
     ],
     auth_mode: "bearer",
+    credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
     group_id: null,
     weight: 1,
     priority: 1,

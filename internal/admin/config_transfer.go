@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
 )
 
 const (
@@ -31,21 +32,23 @@ type ExportedConfig struct {
 // ExportedProvider represents a provider in the export format.
 // This is a flattened version without health state or timestamps.
 type ExportedProvider struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	APIKey         string            `json:"api_key"`
-	APITypes       []ExportedAPIType `json:"api_types"`
-	AuthMode       string            `json:"auth_mode"`
-	GroupID        *string           `json:"group_id,omitempty"`
-	Weight         int               `json:"weight"`
-	Priority       int               `json:"priority"`
-	Concurrency    int               `json:"concurrency"`
-	MaxRetries     int               `json:"max_retries"`
-	Backoff        ExportedBackoff   `json:"backoff,omitempty"`
-	Vendor         string            `json:"vendor,omitempty"`
-	FailoverScope  string            `json:"failover_scope,omitempty"`
-	AcceptFailover string            `json:"accept_failover,omitempty"`
-	Enabled        bool              `json:"enabled"`
+	ID             string                       `json:"id"`
+	Name           string                       `json:"name"`
+	APIKey         string                       `json:"api_key"`
+	APITypes       []ExportedAPIType            `json:"api_types"`
+	AuthMode       string                       `json:"auth_mode"`
+	CredentialType model.ProviderCredentialType `json:"credential_type,omitempty"`
+	CredentialData string                       `json:"credential_data,omitempty"`
+	GroupID        *string                      `json:"group_id,omitempty"`
+	Weight         int                          `json:"weight"`
+	Priority       int                          `json:"priority"`
+	Concurrency    int                          `json:"concurrency"`
+	MaxRetries     int                          `json:"max_retries"`
+	Backoff        ExportedBackoff              `json:"backoff,omitempty"`
+	Vendor         string                       `json:"vendor,omitempty"`
+	FailoverScope  string                       `json:"failover_scope,omitempty"`
+	AcceptFailover string                       `json:"accept_failover,omitempty"`
+	Enabled        bool                         `json:"enabled"`
 }
 
 // ExportedBackoff represents backoff settings in the export format.
@@ -126,23 +129,34 @@ type AppliedCount struct {
 // buildProviderFromExport builds a model.Provider from an ExportedProvider.
 // Returns false if the provider is invalid and should be skipped.
 func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (*model.Provider, bool) {
-	// Validate API types
-	var validAPITypes []ExportedAPIType
-	for _, at := range p.APITypes {
-		if IsValidAPIType(at.APIType) && at.BaseURL != "" {
-			validAPITypes = append(validAPITypes, at)
-		}
-	}
-	if len(validAPITypes) == 0 {
+	credentialType := model.NormalizeProviderCredentialType(p.CredentialType)
+	if !IsValidProviderCredentialType(credentialType) {
 		return nil, false
 	}
 
-	// Validate auth mode
 	authMode := p.AuthMode
 	if authMode == "" {
 		authMode = DefaultAuthMode
-	} else if !IsValidAuthMode(authMode) {
+	} else if credentialType != model.ProviderCredentialTypeChatGPT && !IsValidAuthMode(authMode) {
 		return nil, false
+	}
+
+	var apiTypes []model.ProviderAPIType
+	if credentialType != model.ProviderCredentialTypeChatGPT {
+		apiTypes = make([]model.ProviderAPIType, 0, len(p.APITypes))
+		for _, at := range p.APITypes {
+			if IsValidAPIType(at.APIType) && at.BaseURL != "" {
+				apiTypes = append(apiTypes, model.ProviderAPIType{
+					ProviderID: p.ID,
+					APIType:    at.APIType,
+					BaseURL:    at.BaseURL,
+					APIKey:     model.NormalizeAPIKey(at.APIKey),
+				})
+			}
+		}
+		if len(apiTypes) == 0 {
+			return nil, false
+		}
 	}
 
 	// Validate group reference
@@ -156,16 +170,6 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		weight = DefaultWeight
 	}
 
-	apiTypes := make([]model.ProviderAPIType, len(validAPITypes))
-	for i, at := range validAPITypes {
-		apiTypes[i] = model.ProviderAPIType{
-			ProviderID: p.ID,
-			APIType:    at.APIType,
-			BaseURL:    at.BaseURL,
-			APIKey:     model.NormalizeAPIKey(at.APIKey),
-		}
-	}
-
 	// Validate failover scopes (use defaults if invalid)
 	failoverScope := model.Scope(p.FailoverScope)
 	if !model.IsValidScope(failoverScope) {
@@ -177,16 +181,18 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	}
 
 	provider := &model.Provider{
-		ID:          p.ID,
-		Name:        p.Name,
-		APIKey:      model.NormalizeAPIKey(p.APIKey),
-		APITypes:    apiTypes,
-		AuthMode:    authMode,
-		GroupID:     groupID,
-		Weight:      weight,
-		Priority:    p.Priority,
-		Concurrency: p.Concurrency,
-		MaxRetries:  p.MaxRetries,
+		ID:             p.ID,
+		Name:           p.Name,
+		APIKey:         model.NormalizeAPIKey(p.APIKey),
+		APITypes:       apiTypes,
+		AuthMode:       authMode,
+		CredentialType: credentialType,
+		CredentialData: p.CredentialData,
+		GroupID:        groupID,
+		Weight:         weight,
+		Priority:       p.Priority,
+		Concurrency:    p.Concurrency,
+		MaxRetries:     p.MaxRetries,
 		Backoff: model.BackoffPolicy{
 			InitialDelay: p.Backoff.InitialDelay,
 			MaxDelay:     p.Backoff.MaxDelay,
@@ -198,6 +204,7 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		AcceptFailover: acceptFailover,
 		Enabled:        p.Enabled,
 	}
+	providerauth.NormalizeProviderForPersistence(provider)
 	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
 		return nil, false
 	}
@@ -238,8 +245,12 @@ func buildGroupFromExport(g *ExportedGroup) (*model.Group, bool) {
 }
 
 func buildExportedProvider(p *model.Provider) ExportedProvider {
-	apiTypes := make([]ExportedAPIType, len(p.APITypes))
-	for i, at := range p.APITypes {
+	canonical := *p
+	canonical.APITypes = append([]model.ProviderAPIType(nil), p.APITypes...)
+	providerauth.NormalizeProviderForPersistence(&canonical)
+
+	apiTypes := make([]ExportedAPIType, len(canonical.APITypes))
+	for i, at := range canonical.APITypes {
 		apiTypes[i] = ExportedAPIType{
 			APIType: at.APIType,
 			BaseURL: at.BaseURL,
@@ -251,32 +262,34 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 	})
 
 	var groupID *string
-	if p.GroupID != nil && *p.GroupID != "" {
-		value := *p.GroupID
+	if canonical.GroupID != nil && *canonical.GroupID != "" {
+		value := *canonical.GroupID
 		groupID = &value
 	}
 
 	return ExportedProvider{
-		ID:          p.ID,
-		Name:        p.Name,
-		APIKey:      model.NormalizeAPIKey(p.APIKey),
-		APITypes:    apiTypes,
-		AuthMode:    p.AuthMode,
-		GroupID:     groupID,
-		Weight:      p.Weight,
-		Priority:    p.Priority,
-		Concurrency: p.Concurrency,
-		MaxRetries:  p.MaxRetries,
+		ID:             canonical.ID,
+		Name:           canonical.Name,
+		APIKey:         model.NormalizeAPIKey(canonical.APIKey),
+		APITypes:       apiTypes,
+		AuthMode:       canonical.AuthMode,
+		CredentialType: model.NormalizeProviderCredentialType(canonical.CredentialType),
+		CredentialData: canonical.CredentialData,
+		GroupID:        groupID,
+		Weight:         canonical.Weight,
+		Priority:       canonical.Priority,
+		Concurrency:    canonical.Concurrency,
+		MaxRetries:     canonical.MaxRetries,
 		Backoff: ExportedBackoff{
-			InitialDelay: p.Backoff.InitialDelay,
-			MaxDelay:     p.Backoff.MaxDelay,
-			Multiplier:   p.Backoff.Multiplier,
-			Jitter:       p.Backoff.Jitter,
+			InitialDelay: canonical.Backoff.InitialDelay,
+			MaxDelay:     canonical.Backoff.MaxDelay,
+			Multiplier:   canonical.Backoff.Multiplier,
+			Jitter:       canonical.Backoff.Jitter,
 		},
-		Vendor:         p.Vendor,
-		FailoverScope:  string(p.FailoverScope),
-		AcceptFailover: string(p.AcceptFailover),
-		Enabled:        p.Enabled,
+		Vendor:         canonical.Vendor,
+		FailoverScope:  string(canonical.FailoverScope),
+		AcceptFailover: string(canonical.AcceptFailover),
+		Enabled:        canonical.Enabled,
 	}
 }
 
