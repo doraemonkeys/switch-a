@@ -1,0 +1,480 @@
+package proxy
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
+
+	"github.com/coder/websocket"
+	"go.uber.org/zap"
+)
+
+func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	const handshakeBody = `{"error":{"message":"Account quota exhausted","type":"billing_error"}}`
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-4o-realtime",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	result := &WebSocketResult{
+		HandshakeStatusCode:  http.StatusPaymentRequired,
+		HandshakeBodySnippet: handshakeBody,
+		TerminalCause:        model.TerminalUpstreamHandshakeRejected,
+		Err:                  errors.New("failed to WebSocket dial: expected handshake response status code 101 but got 402"),
+	}
+
+	handler.logWebSocketSession(info, &WebSocketSessionResult{
+		RequestID:     "req-ws-handshake",
+		FinalProvider: &model.Provider{ID: "ws-p1"},
+		FinalResult:   result,
+		FinalErr:      result.Err,
+	}, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusPaymentRequired)
+	}
+	if log.ErrorMsg != handshakeBody {
+		t.Fatalf("ErrorMsg = %q, want %q", log.ErrorMsg, handshakeBody)
+	}
+	if log.Success {
+		t.Fatal("expected Success=false for failed handshake")
+	}
+	if !log.IsWebSocket {
+		t.Fatal("expected IsWebSocket=true")
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamHandshakeRejected {
+		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamHandshakeRejected)
+	}
+	if log.SessionCommitted == nil || *log.SessionCommitted {
+		t.Fatal("SessionCommitted must be false for failed handshake")
+	}
+	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
+	}
+}
+
+func TestHandler_logWebSocketRequest_UsesSemanticUpstreamError(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	const errorPayload = `{"error":{"message":"Model 'gpt-5.4' is not allowed","type":"model_not_allowed"},"status":403,"type":"error"}`
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-5.4",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	result := &WebSocketResult{
+		HandshakeAccepted: true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		CloseCode:         websocket.StatusNoStatusRcvd,
+		Err:               errors.New("failed to get reader: received close frame: status = StatusNoStatusRcvd and reason = \"\""),
+		UpstreamError: &WebSocketUpstreamError{
+			EventType:  "model_not_allowed",
+			StatusCode: http.StatusForbidden,
+			Message:    "Model 'gpt-5.4' is not allowed",
+			Raw:        errorPayload,
+		},
+	}
+
+	handler.logWebSocketSession(info, &WebSocketSessionResult{
+		RequestID:     "req-ws-semantic-error",
+		FinalProvider: &model.Provider{ID: "ws-p1"},
+		FinalResult:   result,
+		FinalErr:      result.Err,
+	}, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.StatusCode != http.StatusForbidden {
+		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusForbidden)
+	}
+	if log.ErrorMsg != errorPayload {
+		t.Fatalf("ErrorMsg = %q, want %q", log.ErrorMsg, errorPayload)
+	}
+	if log.Success {
+		t.Fatal("expected Success=false for semantic upstream error")
+	}
+	if !log.IsWebSocket {
+		t.Fatal("expected IsWebSocket=true")
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamSemanticError {
+		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamSemanticError)
+	}
+	if log.SessionCommitted == nil || *log.SessionCommitted {
+		t.Fatal("SessionCommitted must be false for pre-commit semantic errors")
+	}
+	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
+	}
+}
+
+func TestHandler_logWebSocketRequest_PersistsCommitSource(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	committed := true
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-5.4",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	result := &WebSocketResult{
+		HandshakeAccepted: true,
+		SessionCommitted:  committed,
+		TerminalCause:     model.TerminalCleanClose,
+		CommitSource:      model.CommitSemantic,
+	}
+
+	handler.logWebSocketSession(info, &WebSocketSessionResult{
+		RequestID:     "req-ws-commit-source",
+		FinalProvider: &model.Provider{ID: "ws-p1"},
+		FinalResult:   result,
+		StickyWritten: true,
+	}, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.CommitSource == nil || *log.CommitSource != model.CommitSemantic {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitSemantic)
+	}
+	if log.SessionCommitted == nil || !*log.SessionCommitted {
+		t.Fatalf("SessionCommitted = %v, want true", log.SessionCommitted)
+	}
+}
+
+func TestHandler_logWebSocketRequest_UsesLifecycleProviderAttributionAndPersistsAttempts(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-5.4",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	attempts := []WebSocketAttemptResult{
+		{
+			Provider:   &model.Provider{ID: "provider-origin"},
+			Attempt:    0,
+			Result:     newWebSocketGatewayFailureResult(http.StatusForbidden, model.TerminalUpstreamHandshakeRejected, errors.New("provider-scoped semantic error")),
+			ForwardErr: errors.New("provider-scoped semantic error"),
+			CreatedAt:  time.Now(),
+		},
+		{
+			Provider:  &model.Provider{ID: "provider-final"},
+			Attempt:   1,
+			Result:    &WebSocketResult{HandshakeAccepted: true},
+			CreatedAt: time.Now().Add(time.Millisecond),
+		},
+	}
+	result := &WebSocketResult{
+		HandshakeAccepted: true,
+		SessionCommitted:  true,
+		TerminalCause:     model.TerminalCleanClose,
+		CommitSource:      model.CommitSemantic,
+	}
+
+	handler.logWebSocketSession(info, &WebSocketSessionResult{
+		RequestID:     "req-ws-attribution",
+		FinalProvider: &model.Provider{ID: "provider-final"},
+		FinalResult:   result,
+		Attempts:      attempts,
+		StickyWritten: true,
+	}, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.ProviderID != "provider-final" {
+		t.Fatalf("ProviderID = %q, want %q", log.ProviderID, "provider-final")
+	}
+	if log.RetryCount != 1 {
+		t.Fatalf("RetryCount = %d, want 1", log.RetryCount)
+	}
+
+	storedAttempts := store.LastAttempts(2)
+	if len(storedAttempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(storedAttempts))
+	}
+	if storedAttempts[0].ProviderID != "provider-origin" || storedAttempts[1].ProviderID != "provider-final" {
+		t.Fatalf("attempt provider order = [%s %s], want [provider-origin provider-final]", storedAttempts[0].ProviderID, storedAttempts[1].ProviderID)
+	}
+}
+
+func TestHandler_logWebSocketRequest_PrefersLifecycleProviderOverLastAttempt(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-5.4",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	attempts := []WebSocketAttemptResult{
+		{
+			Provider:   &model.Provider{ID: "provider-origin"},
+			Attempt:    0,
+			Result:     newWebSocketGatewayFailureResult(http.StatusForbidden, model.TerminalUpstreamHandshakeRejected, errors.New("provider-scoped semantic error")),
+			ForwardErr: errors.New("provider-scoped semantic error"),
+			CreatedAt:  time.Now(),
+		},
+		{
+			Provider:   &model.Provider{ID: "provider-fallback"},
+			Attempt:    1,
+			Result:     newWebSocketGatewayFailureResult(http.StatusBadGateway, model.TerminalUpstreamTransportError, errors.New("fallback replay failed")),
+			ForwardErr: errors.New("fallback replay failed"),
+			CreatedAt:  time.Now().Add(time.Millisecond),
+		},
+	}
+	result := &WebSocketResult{
+		HandshakeAccepted: true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		Err:               errors.New("original provider semantic payload returned to client"),
+	}
+
+	handler.logWebSocketSession(info, &WebSocketSessionResult{
+		RequestID:     "req-ws-origin-attribution",
+		FinalProvider: &model.Provider{ID: "provider-origin"},
+		FinalResult:   result,
+		FinalErr:      result.Err,
+		Attempts:      attempts,
+	}, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.ProviderID != "provider-origin" {
+		t.Fatalf("ProviderID = %q, want %q", log.ProviderID, "provider-origin")
+	}
+
+	storedAttempts := store.LastAttempts(2)
+	if len(storedAttempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(storedAttempts))
+	}
+	if storedAttempts[1].ProviderID != "provider-fallback" {
+		t.Fatalf("last attempt provider = %q, want %q", storedAttempts[1].ProviderID, "provider-fallback")
+	}
+}
+
+func TestApplyWebSocketHealthOutcome_PostCommitTransportErrorMarksSuccess(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+
+	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", &WebSocketResult{
+		HandshakeAccepted: true,
+		SessionCommitted:  true,
+		TerminalCause:     model.TerminalUpstreamTransportError,
+		Err:               io.EOF,
+	})
+
+	if len(healthMgr.getMarkFailureCalls()) != 0 {
+		t.Fatalf("mark failure count = %d, want 0", len(healthMgr.getMarkFailureCalls()))
+	}
+	if successIDs := healthMgr.getMarkSuccessIDs(); len(successIDs) != 1 || successIDs[0] != "ws-p1" {
+		t.Fatalf("mark success IDs = %v, want [ws-p1]", successIDs)
+	}
+}
+
+func TestApplyWebSocketHealthOutcome_PostCommitSemanticErrorMarksFailure(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+
+	semanticErr := errors.New("model not allowed")
+	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", &WebSocketResult{
+		HandshakeAccepted: true,
+		SessionCommitted:  true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		Err:               semanticErr,
+	})
+
+	if successIDs := healthMgr.getMarkSuccessIDs(); len(successIDs) != 0 {
+		t.Fatalf("mark success IDs = %v, want none", successIDs)
+	}
+	failures := healthMgr.getMarkFailureCalls()
+	if len(failures) != 1 {
+		t.Fatalf("mark failure count = %d, want 1", len(failures))
+	}
+	if failures[0].providerID != "ws-p1" {
+		t.Fatalf("providerID = %q, want ws-p1", failures[0].providerID)
+	}
+	if !errors.Is(failures[0].err, semanticErr) {
+		t.Fatalf("err = %v, want %v", failures[0].err, semanticErr)
+	}
+}
+
+func TestPrepareWebSocketDialHeaders_ManagedAuthErrorAndLogHelpers(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Auth:   providerauth.NewService(providerauth.Config{}),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.test/v1/realtime?model=gpt-5.4", nil)
+	provider := &model.Provider{
+		ID:             "ws-chatgpt-invalid",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+
+	headers, err := handler.prepareWebSocketDialHeaders(context.Background(), req, provider, APITypeCodex, "bearer")
+	if err == nil {
+		t.Fatal("prepareWebSocketDialHeaders() error = nil, want managed auth error")
+	}
+	if headers != nil {
+		t.Fatalf("prepareWebSocketDialHeaders() headers = %v, want nil on error", headers)
+	}
+
+	if got := websocketLogStatusCode(nil); got != StatusCodeNoResponse {
+		t.Fatalf("websocketLogStatusCode(nil) = %d, want %d", got, StatusCodeNoResponse)
+	}
+	fallbackErr := errors.New("fallback transport error")
+	if got := websocketLogErrorMessage(nil, fallbackErr); got != fallbackErr.Error() {
+		t.Fatalf("websocketLogErrorMessage(nil, fallback) = %q, want %q", got, fallbackErr.Error())
+	}
+	if got := websocketLogSuccess(nil); got {
+		t.Fatal("websocketLogSuccess(nil) = true, want false")
+	}
+
+	recorder := httptest.NewRecorder()
+	statusCode, errorCode, message := websocketGatewayFailure(&WebSocketResult{
+		HandshakeStatusCode: http.StatusUpgradeRequired,
+		TerminalCause:       model.TerminalUpstreamHandshakeRejected,
+	})
+	handler.writeGatewayError(recorder, statusCode, errorCode, message)
+	if recorder.Code != http.StatusUpgradeRequired {
+		t.Fatalf("writeGatewayError status = %d, want %d", recorder.Code, http.StatusUpgradeRequired)
+	}
+	if !strings.Contains(recorder.Body.String(), "HTTP fallback") {
+		t.Fatalf("writeGatewayError body = %q, want upgrade-required message", recorder.Body.String())
+	}
+}
+
+func TestApplyWebSocketSessionHealthOutcomesAndBytesTrackingObserver_NoOpBranches(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+
+	applyWebSocketSessionHealthOutcomes(context.Background(), handler, nil)
+	applyWebSocketSessionHealthOutcomes(context.Background(), handler, &WebSocketSessionResult{
+		Attempts: []WebSocketAttemptResult{
+			{},
+			{
+				Provider: &model.Provider{ID: "ws-p1"},
+			},
+		},
+	})
+	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", nil)
+	if failures := healthMgr.getMarkFailureCalls(); len(failures) != 0 {
+		t.Fatalf("mark failure calls = %v, want none", failures)
+	}
+	if successes := healthMgr.getMarkSuccessIDs(); len(successes) != 0 {
+		t.Fatalf("mark success IDs = %v, want none", successes)
+	}
+
+	tracker := &LiveBytesTracker{}
+	observer := newBytesTrackingObserver(nil, tracker)
+	observer.ObserveClientMessage(websocket.MessageText, []byte("ping"))
+	observer.ObserveUpstreamMessage(websocket.MessageText, []byte("pong"))
+	if snapshot := observer.Snapshot(); snapshot != (WebSocketObservation{}) {
+		t.Fatalf("Snapshot() = %+v, want zero observation without inner observer", snapshot)
+	}
+	if observer.ParseDegraded() {
+		t.Fatal("ParseDegraded() = true, want false without inner observer")
+	}
+	if observer.HasSemanticObservation() {
+		t.Fatal("HasSemanticObservation() = true, want false without inner observer")
+	}
+}
