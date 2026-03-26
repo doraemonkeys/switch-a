@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"switch-a/internal/defaults"
 	"switch-a/internal/model"
@@ -142,6 +143,11 @@ func (h *Handler) commitForwardResponse(
 		onFirstWrite: func() {
 			if h.activeRegistry != nil {
 				h.activeRegistry.MarkDataReceived(pctx.requestID)
+			}
+		},
+		onWrite: func(writeTime time.Time) {
+			if h.activeRegistry != nil {
+				h.activeRegistry.Touch(pctx.requestID, writeTime)
 			}
 		},
 	}

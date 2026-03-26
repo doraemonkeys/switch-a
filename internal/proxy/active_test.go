@@ -344,6 +344,73 @@ func TestActiveRequestRegistry_CleanupStale(t *testing.T) {
 	})
 }
 
+func TestActiveRequestRegistry_CleanupStale_PreservesRecentTransportActivity(t *testing.T) {
+	const staleAfter = 30 * time.Minute
+
+	baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	t.Run("websocket recent activity keeps request active", func(t *testing.T) {
+		clock := &mockClock{current: baseTime}
+		registry := NewActiveRequestRegistryWithClock(clock)
+
+		const (
+			requestID  = "ws-live"
+			providerID = "provider-ws"
+		)
+
+		registry.Register(&ActiveRequest{
+			RequestID:   requestID,
+			ProviderID:  providerID,
+			IsWebSocket: true,
+			StartedAt:   baseTime.Add(-45 * time.Minute),
+		})
+
+		tracker := &LiveBytesTracker{}
+		tracker.LastActivityAt.Store(baseTime.Add(-5 * time.Minute).UnixMilli())
+		registry.RegisterLiveBytes(requestID, tracker)
+
+		removed := registry.CleanupStale(staleAfter)
+		if removed != 0 {
+			t.Fatalf("removed = %d, want 0", removed)
+		}
+
+		list := registry.List()
+		if len(list) != 1 {
+			t.Fatalf("len(list) = %d, want 1", len(list))
+		}
+		if list[0].RequestID != requestID {
+			t.Fatalf("RequestID = %q, want %q", list[0].RequestID, requestID)
+		}
+	})
+
+	t.Run("recent body activity keeps long-running response active", func(t *testing.T) {
+		clock := &mockClock{current: baseTime}
+		registry := NewActiveRequestRegistryWithClock(clock)
+
+		const requestID = "sse-live"
+
+		registry.Register(&ActiveRequest{
+			RequestID: requestID,
+			IsSSE:     true,
+			StartedAt: baseTime.Add(-45 * time.Minute),
+		})
+		registry.Touch(requestID, baseTime.Add(-2*time.Minute))
+
+		removed := registry.CleanupStale(staleAfter)
+		if removed != 0 {
+			t.Fatalf("removed = %d, want 0", removed)
+		}
+
+		list := registry.List()
+		if len(list) != 1 {
+			t.Fatalf("len(list) = %d, want 1", len(list))
+		}
+		if list[0].RequestID != requestID {
+			t.Fatalf("RequestID = %q, want %q", list[0].RequestID, requestID)
+		}
+	})
+}
+
 func TestActiveRequestRegistry_StartStopCleanup(t *testing.T) {
 	t.Run("start and stop cleanup", func(t *testing.T) {
 		r := NewActiveRequestRegistry()
@@ -687,6 +754,7 @@ func TestStickyIndex_ModeSwitchCleanupStaleUsesRegisteredKey(t *testing.T) {
 		Model:      "model-a",
 		StartedAt:  baseTime.Add(-45 * time.Minute),
 	})
+	r.Touch("req-1", baseTime.Add(-45*time.Minute))
 	r.MarkDataReceived("req-1")
 
 	r.SetStickyPerModel(true)
@@ -835,6 +903,7 @@ func TestStickyIndex_CleanupOnCleanupStale(t *testing.T) {
 		APIType:    "claude",
 		StartedAt:  baseTime.Add(-45 * time.Minute),
 	})
+	r.Touch("old-req", baseTime.Add(-45*time.Minute))
 	r.MarkDataReceived("old-req")
 
 	// Verify it's findable

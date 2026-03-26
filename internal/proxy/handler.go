@@ -59,20 +59,25 @@ func (k *transportCacheKey) Equals(other *transportCacheKey) bool {
 type firstWriteResponseWriter struct {
 	http.ResponseWriter
 	onFirstWrite   func()
+	onWrite        func(time.Time)
 	written        bool
 	firstWriteTime time.Time // Time of first data write (for TTFT calculation)
 	bytesWritten   int64     // Total bytes written to client
 }
 
 func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
+	writeTime := time.Now()
 	if !w.written {
-		w.firstWriteTime = time.Now()
+		w.firstWriteTime = writeTime
 		if w.onFirstWrite != nil {
 			w.onFirstWrite()
 		}
 		w.written = true
 	}
 	n, err := w.ResponseWriter.Write(p)
+	if n > 0 && w.onWrite != nil {
+		w.onWrite(writeTime)
+	}
 	w.bytesWritten += int64(n)
 	return n, err
 }

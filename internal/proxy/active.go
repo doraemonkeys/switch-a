@@ -33,7 +33,7 @@ type ActiveRequest struct {
 	BytesReceived   int64     `json:"bytes_received,omitempty"`   // WS: cumulative bytes upstream → client
 	MsgsSent        int64     `json:"msgs_sent,omitempty"`        // WS: WebSocket frames client → upstream
 	MsgsReceived    int64     `json:"msgs_received,omitempty"`    // WS: WebSocket frames upstream → client
-	LastActivityAt  int64     `json:"last_activity_at,omitempty"` // WS: Unix ms of most recent message, 0 = no activity yet
+	LastActivityAt  int64     `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
 }
 
 // LiveBytesTracker provides lock-free counters for tracking WebSocket data flow
@@ -175,6 +175,29 @@ func (r *ActiveRequestRegistry) RegisterLiveBytes(requestID string, tracker *Liv
 	r.wsBytes[requestID] = tracker
 }
 
+// Touch records transport activity for non-WebSocket requests.
+// WebSocket activity stays lock-free via LiveBytesTracker and is merged when
+// producing snapshots or evaluating staleness.
+func (r *ActiveRequestRegistry) Touch(requestID string, at time.Time) {
+	if at.IsZero() {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.touchLocked(requestID, at.UnixMilli())
+}
+
+func (r *ActiveRequestRegistry) touchLocked(requestID string, at int64) {
+	req, ok := r.requests[requestID]
+	if !ok || at <= req.LastActivityAt {
+		return
+	}
+
+	req.LastActivityAt = at
+	r.requests[requestID] = req
+}
+
 // UpdateSSE is called after response headers reveal whether the upstream is streaming.
 // Idempotent; safe to call with non-existent IDs.
 func (r *ActiveRequestRegistry) UpdateSSE(requestID string, isSSE bool) {
@@ -228,7 +251,9 @@ func (r *ActiveRequestRegistry) List() []ActiveRequest {
 			req.BytesReceived = tracker.BytesReceived.Load()
 			req.MsgsSent = tracker.MsgsSent.Load()
 			req.MsgsReceived = tracker.MsgsReceived.Load()
-			req.LastActivityAt = tracker.LastActivityAt.Load()
+			if trackerActivityAt := tracker.LastActivityAt.Load(); trackerActivityAt > req.LastActivityAt {
+				req.LastActivityAt = trackerActivityAt
+			}
 		}
 		result = append(result, req)
 	}
@@ -246,7 +271,7 @@ func (r *ActiveRequestRegistry) CleanupStale(maxAge time.Duration) int {
 	cutoff := r.clock.Now().Add(-maxAge)
 	removed := 0
 	for id, req := range r.requests {
-		if !req.StartedAt.Before(cutoff) {
+		if !r.observedAtLocked(id, req).Before(cutoff) {
 			continue
 		}
 
@@ -288,8 +313,31 @@ func (r *ActiveRequestRegistry) MarkDataReceived(requestID string) {
 
 	if req, ok := r.requests[requestID]; ok {
 		req.HasReceivedData = true
+		if req.LastActivityAt == 0 {
+			req.LastActivityAt = r.clock.Now().UnixMilli()
+		}
 		r.requests[requestID] = req
 	}
+}
+
+func (r *ActiveRequestRegistry) observedAtLocked(requestID string, req ActiveRequest) time.Time {
+	observedAt := req.StartedAt
+	if req.LastActivityAt > 0 {
+		lastActivity := time.UnixMilli(req.LastActivityAt)
+		if lastActivity.After(observedAt) {
+			observedAt = lastActivity
+		}
+	}
+	if tracker, ok := r.wsBytes[requestID]; ok {
+		lastActivityAt := tracker.LastActivityAt.Load()
+		if lastActivityAt > 0 {
+			lastActivity := time.UnixMilli(lastActivityAt)
+			if lastActivity.After(observedAt) {
+				observedAt = lastActivity
+			}
+		}
+	}
+	return observedAt
 }
 
 // Default cleanup configuration constants.
