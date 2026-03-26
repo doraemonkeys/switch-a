@@ -2,13 +2,11 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"switch-a/internal"
 	"switch-a/internal/model"
 
 	"github.com/coder/websocket"
@@ -35,9 +33,12 @@ func headerContains(h http.Header, key, value string) bool {
 	return false
 }
 
+type webSocketObserverFactory func(modelName string) WebSocketMessageObserver
+
 // handleWebSocket processes a WebSocket upgrade request.
-// This is the WebSocket equivalent of executeProxy, but without the retry loop:
-// WebSocket connections are stateful, so provider selection happens once.
+// Unlike HTTP retries, WebSocket failover has to stop at the client-upgrade
+// boundary, so the handler delegates attempt control to a session orchestrator
+// instead of reusing the HTTP execution loop.
 func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *http.Request, cfg *runtimeConfig, apiType, requestID string, startTime time.Time) {
 	info := RequestInfo{
 		ClientIP:  ExtractClientIP(r, cfg.trustProxy),
@@ -57,31 +58,56 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		Model:      info.Model,
 		StickyMode: cfg.stickyMode,
 	}
-
-	// Single-attempt provider selection (no retries for stateful connections).
-	provider, fromSticky, ok := h.selectWebSocketProvider(ctx, w, selectReq, info, apiType, requestID, startTime)
-	if !ok {
+	newObserver, tracker, applyObservation, onClientVisible := h.newWebSocketObserverPipeline(apiType, requestID)
+	session := newWebSocketSessionOrchestrator(h, webSocketSessionOrchestratorConfig{
+		info:             info,
+		selectReq:        selectReq,
+		apiType:          apiType,
+		requestID:        requestID,
+		startTime:        startTime,
+		maxAttempts:      cfg.globalMaxAttempts,
+		globalAuthMode:   cfg.globalAuthMode,
+		newObserver:      newObserver,
+		applyObservation: applyObservation,
+		onClientVisible:  onClientVisible,
+		tracker:          tracker,
+	}).Run(ctx, w, r)
+	if session == nil {
 		return
 	}
 
-	defer h.beginWebSocketTracking(provider.ID, requestID, apiType, info, startTime)()
-
-	// Build upstream WebSocket URL.
-	baseURL, ok := h.validateWebSocketProvider(ctx, w, provider, fromSticky, info, apiType, requestID, startTime)
-	if !ok {
-		return
+	if session.ResolvedModel != "" {
+		info.Model = session.ResolvedModel
+		selectReq.Model = session.ResolvedModel
 	}
 
-	upstreamPath := BuildUpstreamPath(r.URL.Path, apiType)
-	upstreamURL := httpToWSURL(h.buildFullURL(baseURL, upstreamPath, r.URL.RawQuery))
-
-	// Build headers for the upstream handshake:
-	// provider auth is injected centrally while protocol headers remain pass-through.
-	dialHeaders, err := h.prepareWebSocketDialHeaders(ctx, r, provider, apiType, cfg.globalAuthMode)
-	if err != nil {
-		h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "websocket credential preparation failed", "credentials", err)
-		return
+	if session.ClientAccepted &&
+		session.FinalResult != nil &&
+		session.FinalResult.SessionCommitted &&
+		cfg.stickyMode != model.StickyModeOff &&
+		h.selector != nil &&
+		session.FinalProvider != nil {
+		h.selector.UpdateStickyWithTTL(selectReq, session.FinalProvider.ID, cfg.stickyTTL)
+		session.StickyWritten = true
 	}
+
+	if !session.ClientAccepted && session.GatewayStatusCode > 0 {
+		h.writeGatewayError(w, session.GatewayStatusCode, session.GatewayErrorCode, session.GatewayMessage)
+	}
+
+	applyWebSocketSessionHealthOutcomes(ctx, h, session)
+	go h.logWebSocketSession(info, session, time.Since(startTime))
+}
+
+func (h *Handler) newWebSocketObserverPipeline(
+	apiType,
+	requestID string,
+) (webSocketObserverFactory, *LiveBytesTracker, func(WebSocketObservation), func(webSocketVisibleWriteContext)) {
+	var tracker *LiveBytesTracker
+	if h.activeRegistry != nil {
+		tracker = &LiveBytesTracker{}
+	}
+
 	applyObservation := func(observation WebSocketObservation) {
 		if h.activeRegistry == nil {
 			return
@@ -89,224 +115,76 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		if observation.Model != "" && observation.Model != ModelUnknown {
 			h.activeRegistry.UpdateModel(requestID, observation.Model)
 		}
-		if observation.SessionCommitted {
-			h.activeRegistry.MarkDataReceived(requestID)
-		}
-	}
-	observer := newWebSocketMessageObserver(
-		apiType,
-		info.Model,
-		NewZapLoggerAdapter(h.logger.Sugar()),
-		applyObservation,
-		applyObservation,
-	)
-
-	// Wrap the semantic observer with byte/message/idle tracking so the
-	// active registry can expose live data-flow metrics without touching
-	// the transport layer.
-	var tracker *LiveBytesTracker
-	if h.activeRegistry != nil {
-		tracker = &LiveBytesTracker{}
-		h.activeRegistry.RegisterLiveBytes(requestID, tracker)
-		observer = newBytesTrackingObserver(observer, tracker)
 	}
 
-	// Forward the WebSocket connection.
-	result, fwdErr := h.wsForwarder.ForwardObserved(ctx, w, r, upstreamURL, dialHeaders, observer, applyObservation)
-	result, fwdErr, handled := h.retryUnauthorizedWebSocketForward(
-		ctx,
-		w,
-		r,
-		provider,
-		fromSticky,
-		info,
-		apiType,
-		requestID,
-		cfg.globalAuthMode,
-		startTime,
-		upstreamURL,
-		observer,
-		applyObservation,
-		result,
-		fwdErr,
-	)
-	if handled {
-		return
-	}
-	if fwdErr != nil {
-		// Accept failed — client never upgraded. This is a client-side issue (protocol
-		// mismatch, malformed request), NOT a provider failure. Do not call markFailure
-		// because polluting provider health with client errors can trigger false circuit breaks.
-		h.logger.Warn("websocket client accept failed",
-			zap.String("provider_id", provider.ID),
-			zap.Error(fwdErr),
+	newObserver := func(modelName string) WebSocketMessageObserver {
+		observer := newWebSocketMessageObserver(
+			apiType,
+			modelName,
+			NewZapLoggerAdapter(h.logger.Sugar()),
+			applyObservation,
+			applyObservation,
 		)
-		go h.logWebSocketRequest(requestID, info, provider, fromSticky, false, result, fwdErr, time.Since(startTime))
-		return
-	}
-	if result != nil && !result.HandshakeAccepted {
-		h.writeWebSocketHandshakeFailure(w, result)
-		applyWebSocketHealthOutcome(ctx, h, provider.ID, result)
-		go h.logWebSocketRequest(requestID, info, provider, fromSticky, false, result, result.Err, time.Since(startTime))
-		return
-	}
-	if result != nil && result.Model != "" {
-		info.Model = result.Model
-		// Keep selectReq in sync so the sticky cache key uses the resolved model,
-		// not the stale pre-upgrade value (often ModelUnknown for WebSocket).
-		selectReq.Model = result.Model
-	}
-
-	stickyWritten := false
-	if result.SessionCommitted && cfg.stickyMode != model.StickyModeOff && h.selector != nil {
-		h.selector.UpdateStickyWithTTL(selectReq, provider.ID, cfg.stickyTTL)
-		stickyWritten = true
-	}
-	applyWebSocketHealthOutcome(ctx, h, provider.ID, result)
-
-	go h.logWebSocketRequest(requestID, info, provider, fromSticky, stickyWritten, result, result.Err, time.Since(startTime))
-}
-
-func (h *Handler) selectWebSocketProvider(ctx context.Context, w http.ResponseWriter, selectReq *model.SelectRequest, info RequestInfo, apiType, requestID string, startTime time.Time) (*model.Provider, bool, bool) {
-	provider, fromSticky, err := h.selectProviderWithTracking(ctx, selectReq, 0, nil)
-	if err == nil {
-		return provider, fromSticky, true
-	}
-
-	statusCode := http.StatusInternalServerError
-	terminalCause := model.TerminalInternalError
-	errorCode := ErrCodeInternalError
-	message := "Provider selection failed"
-	if errors.Is(err, internal.ErrNoProvider) {
-		statusCode = http.StatusServiceUnavailable
-		terminalCause = model.TerminalProviderUnavailable
-		errorCode = ErrCodeProviderUnavailable
-		message = fmt.Sprintf("No available provider for api_type: %s", apiType)
-		h.logger.Warn("no providers available for websocket", zap.String("api_type", apiType))
-	} else {
-		h.logger.Error("provider selection failed for websocket", zap.Error(err))
-	}
-	h.writeGatewayError(w, statusCode, errorCode, message)
-	go h.logWebSocketRequest(
-		requestID,
-		info,
-		nil,
-		fromSticky,
-		false,
-		newWebSocketGatewayFailureResult(statusCode, terminalCause, err),
-		err,
-		time.Since(startTime),
-	)
-	return nil, fromSticky, false
-}
-
-func (h *Handler) retryUnauthorizedWebSocketForward(
-	ctx context.Context,
-	w http.ResponseWriter,
-	r *http.Request,
-	provider *model.Provider,
-	fromSticky bool,
-	info RequestInfo,
-	apiType, requestID, globalAuthMode string,
-	startTime time.Time,
-	upstreamURL string,
-	observer WebSocketMessageObserver,
-	applyObservation func(WebSocketObservation),
-	result *WebSocketResult,
-	fwdErr error,
-) (*WebSocketResult, error, bool) {
-	if fwdErr != nil || result == nil || result.HandshakeAccepted || result.HandshakeStatusCode != http.StatusUnauthorized || h.auth == nil {
-		return result, fwdErr, false
-	}
-
-	refreshed, refreshErr := h.auth.RefreshProviderCredentials(ctx, provider)
-	if !refreshed {
-		return result, fwdErr, false
-	}
-	if refreshErr != nil {
-		h.logger.Warn("websocket provider credential refresh failed",
-			zap.String("provider_id", provider.ID),
-			zap.Error(refreshErr),
-		)
-		return result, fwdErr, false
-	}
-
-	// Rebuild dial headers from provider state after refresh so the retry cannot
-	// accidentally reuse the expired credential material from the first attempt.
-	dialHeaders, err := h.prepareWebSocketDialHeaders(ctx, r, provider, apiType, globalAuthMode)
-	if err != nil {
-		h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "websocket credential refresh prepare failed", "credentials", err)
-		return nil, nil, true
-	}
-
-	result, fwdErr = h.wsForwarder.ForwardObserved(ctx, w, r, upstreamURL, dialHeaders, observer, applyObservation)
-	return result, fwdErr, false
-}
-
-// beginWebSocketTracking keeps registry cleanup and concurrency release in one
-// place so the LIFO ordering cannot drift as handleWebSocket evolves.
-func (h *Handler) beginWebSocketTracking(providerID, requestID, apiType string, info RequestInfo, startTime time.Time) func() {
-	if h.activeRegistry == nil {
-		return func() {
-			h.releaseConcurrency(providerID)
+		if tracker == nil {
+			return observer
 		}
+		return newBytesTrackingObserver(observer, tracker)
 	}
 
-	h.activeRegistry.Register(&ActiveRequest{
-		RequestID:       requestID,
-		ProviderID:      providerID,
-		Model:           info.Model,
-		APIType:         apiType,
-		UserID:          info.UserID,
-		ClientIP:        info.ClientIP,
-		IsWebSocket:     true,
-		StartedAt:       startTime,
-		HasReceivedData: false,
-	})
-	return func() {
-		h.activeRegistry.Unregister(requestID)
-		h.releaseConcurrency(providerID)
+	onClientVisible := func(_ webSocketVisibleWriteContext) {
+		if h.activeRegistry == nil {
+			return
+		}
+		h.activeRegistry.MarkDataReceived(requestID)
 	}
+
+	return newObserver, tracker, applyObservation, onClientVisible
 }
 
-func (h *Handler) validateWebSocketProvider(ctx context.Context, w http.ResponseWriter, provider *model.Provider, fromSticky bool, info RequestInfo, apiType, requestID string, startTime time.Time) (string, bool) {
+type webSocketProviderConfigError struct {
+	missingField string
+	err          error
+}
+
+func (e *webSocketProviderConfigError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *webSocketProviderConfigError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func (h *Handler) validateWebSocketProviderReady(provider *model.Provider, apiType string) (string, error) {
 	baseURL := provider.BaseURLForAPIType(apiType)
 	if baseURL == "" {
-		h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "missing base_url for websocket", "base_url", fmt.Errorf("no base_url for api_type %q", apiType))
-		return "", false
+		return "", &webSocketProviderConfigError{
+			missingField: "base_url",
+			err:          fmt.Errorf("no base_url for api_type %q", apiType),
+		}
 	}
 	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
 	case model.ProviderCredentialTypeChatGPT:
 		if h.auth == nil {
-			h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "missing provider auth service for websocket", "credentials", fmt.Errorf("provider %q requires managed credentials for websocket", provider.ID))
-			return "", false
+			return "", &webSocketProviderConfigError{
+				missingField: "credentials",
+				err:          fmt.Errorf("provider %q requires managed credentials for websocket", provider.ID),
+			}
 		}
 	default:
 		if provider.APIKeyForAPIType(apiType) == "" {
-			h.failWebSocketProviderConfiguration(ctx, w, provider, fromSticky, info, apiType, requestID, startTime, "missing api_key for websocket", "api_key", fmt.Errorf("no api_key for api_type %q", apiType))
-			return "", false
+			return "", &webSocketProviderConfigError{
+				missingField: "api_key",
+				err:          fmt.Errorf("no api_key for api_type %q", apiType),
+			}
 		}
 	}
-	return baseURL, true
-}
-
-func (h *Handler) failWebSocketProviderConfiguration(ctx context.Context, w http.ResponseWriter, provider *model.Provider, fromSticky bool, info RequestInfo, apiType, requestID string, startTime time.Time, logMessage, missingField string, err error) {
-	h.logger.Error(logMessage,
-		zap.String("provider_id", provider.ID),
-		zap.String("api_type", apiType),
-	)
-	h.writeGatewayError(w, http.StatusBadGateway, ErrCodeWebSocketUpgrade, fmt.Sprintf("Provider %q is not ready for websocket %q: %s", provider.ID, apiType, missingField))
-	h.markFailure(ctx, provider.ID, err)
-	go h.logWebSocketRequest(
-		requestID,
-		info,
-		provider,
-		fromSticky,
-		false,
-		newWebSocketGatewayFailureResult(http.StatusBadGateway, model.TerminalProviderConfigurationError, err),
-		err,
-		time.Since(startTime),
-	)
+	return baseURL, nil
 }
 
 // extractWebSocketModel extracts the model identifier from a WebSocket request.
@@ -360,7 +238,7 @@ func (h *Handler) prepareWebSocketDialHeaders(ctx context.Context, r *http.Reque
 	return headers, nil
 }
 
-func (h *Handler) writeWebSocketHandshakeFailure(w http.ResponseWriter, result *WebSocketResult) {
+func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
 	statusCode := http.StatusBadGateway
 	if result != nil && result.HandshakeStatusCode > 0 {
 		statusCode = result.HandshakeStatusCode
@@ -377,7 +255,7 @@ func (h *Handler) writeWebSocketHandshakeFailure(w http.ResponseWriter, result *
 		message = result.HandshakeBodySnippet
 	}
 
-	h.writeGatewayError(w, statusCode, ErrCodeWebSocketUpgrade, message)
+	return statusCode, ErrCodeWebSocketUpgrade, message
 }
 
 func websocketLogStatusCode(result *WebSocketResult) int {
@@ -432,8 +310,16 @@ func newWebSocketGatewayFailureResult(statusCode int, terminalCause model.Termin
 	}
 }
 
-// logWebSocketRequest logs a WebSocket connection lifecycle event asynchronously.
-func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provider *model.Provider, isSticky, stickyWritten bool, result *WebSocketResult, err error, latency time.Duration) {
+// logWebSocketSession persists the session lifecycle in RequestLog while
+// keeping RequestAttempt rows scoped to provider attempts only.
+func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessionResult, latency time.Duration) {
+	if session == nil {
+		return
+	}
+
+	result := session.FinalResult
+	err := session.FinalErr
+	attempts := session.RequestAttempts()
 	sessionCommitted := false
 	terminalCause := model.TerminalUnknown
 	commitSource := model.CommitUnknown
@@ -448,7 +334,7 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 	}
 
 	log := &model.RequestLog{
-		RequestID:        requestID,
+		RequestID:        session.RequestID,
 		APIType:          info.APIType,
 		Model:            info.Model,
 		ClientIP:         info.ClientIP,
@@ -457,8 +343,9 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 		LatencyMs:        latency.Milliseconds(),
 		Success:          websocketLogSuccess(result),
 		IsWebSocket:      true,
-		IsSticky:         isSticky,
-		StickyWritten:    &stickyWritten,
+		IsSticky:         session.IsSticky,
+		RetryCount:       session.RetryCount(),
+		StickyWritten:    &session.StickyWritten,
 		SessionCommitted: &sessionCommitted,
 		TerminalCause:    &terminalCause,
 		CommitSource:     &commitSource,
@@ -469,8 +356,8 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 		RequestIDHeader:  info.RequestID,
 	}
 
-	if provider != nil {
-		log.ProviderID = provider.ID
+	if session.FinalProvider != nil {
+		log.ProviderID = session.FinalProvider.ID
 	}
 
 	if result != nil {
@@ -491,10 +378,52 @@ func (h *Handler) logWebSocketRequest(requestID string, info RequestInfo, provid
 		h.logger.Error("failed to insert websocket request log", zap.Error(insertErr))
 		return
 	}
+	if len(attempts) > 0 {
+		if insertErr := h.store.InsertAttempts(ctx, attempts); insertErr != nil { // coverage-ignore -- attempt insert errors are logged but don't affect response
+			h.logger.Error("failed to insert websocket request attempts", zap.Error(insertErr))
+		}
+	}
+}
+
+func applyWebSocketSessionHealthOutcomes(ctx context.Context, h *Handler, session *WebSocketSessionResult) {
+	if session == nil {
+		return
+	}
+	finalProviderSawSemanticOutcome := false
+	for _, attempt := range session.Attempts {
+		if attempt.Provider == nil {
+			continue
+		}
+		if session.FinalProvider != nil &&
+			attempt.Provider.ID == session.FinalProvider.ID &&
+			attempt.Result != nil &&
+			(attempt.Result.UpstreamError != nil || attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError) {
+			finalProviderSawSemanticOutcome = true
+		}
+		applyWebSocketHealthOutcome(ctx, h, attempt.Provider.ID, attempt.Result)
+	}
+	if session.FinalProvider == nil || session.FinalResult == nil || finalProviderSawSemanticOutcome {
+		return
+	}
+	if session.FinalResult.UpstreamError != nil || session.FinalResult.TerminalCause == model.TerminalUpstreamSemanticError {
+		applyWebSocketHealthOutcome(ctx, h, session.FinalProvider.ID, session.FinalResult)
+	}
 }
 
 func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID string, result *WebSocketResult) {
 	if result == nil {
+		return
+	}
+	if result.UpstreamError != nil {
+		h.markFailure(ctx, providerID, result.Err)
+		return
+	}
+	if result.HandshakeAccepted &&
+		result.ClientVisible &&
+		!result.SessionCommitted &&
+		result.TerminalCause != model.TerminalClientDisconnect &&
+		result.TerminalCause != model.TerminalInternalError {
+		h.markFailure(ctx, providerID, result.Err)
 		return
 	}
 	if result.SessionCommitted {
@@ -507,7 +436,10 @@ func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID str
 	}
 
 	switch result.TerminalCause {
-	case model.TerminalUpstreamHandshakeRejected, model.TerminalUpstreamTransportError, model.TerminalUpstreamSemanticError:
+	case model.TerminalProviderConfigurationError,
+		model.TerminalUpstreamHandshakeRejected,
+		model.TerminalUpstreamTransportError,
+		model.TerminalUpstreamSemanticError:
 		h.markFailure(ctx, providerID, result.Err)
 	}
 }

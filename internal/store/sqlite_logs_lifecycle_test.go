@@ -169,3 +169,72 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 		})
 	}
 }
+
+func TestListLogs_FilterByProviderUsesRequestLogLifecycleAttribution(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	committed := true
+	log := &model.RequestLog{
+		RequestID:        "req-ws-attribution",
+		ProviderID:       "provider-final",
+		APIType:          "codex",
+		IsWebSocket:      true,
+		Success:          true,
+		SessionCommitted: &committed,
+		TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
+		CommitSource:     commitSourcePtr(model.CommitSemantic),
+		CreatedAt:        time.Now(),
+	}
+	if err := store.InsertLog(ctx, log); err != nil {
+		t.Fatalf("InsertLog failed: %v", err)
+	}
+
+	attempts := []model.RequestAttempt{
+		{
+			RequestID:  log.RequestID,
+			ProviderID: "provider-origin",
+			Attempt:    0,
+			StatusCode: 403,
+			Error:      "provider-scoped semantic error",
+			CreatedAt:  time.Now(),
+		},
+		{
+			RequestID:  log.RequestID,
+			ProviderID: "provider-final",
+			Attempt:    1,
+			StatusCode: 101,
+			CreatedAt:  time.Now().Add(time.Millisecond),
+		},
+	}
+	if err := store.InsertAttempts(ctx, attempts); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	finalLogs, err := store.ListLogs(ctx, model.LogFilter{ProviderID: "provider-final", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs final provider failed: %v", err)
+	}
+	if len(finalLogs) != 1 {
+		t.Fatalf("expected 1 final-provider log, got %d", len(finalLogs))
+	}
+
+	originLogs, err := store.ListLogs(ctx, model.LogFilter{ProviderID: "provider-origin", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListLogs origin provider failed: %v", err)
+	}
+	if len(originLogs) != 0 {
+		t.Fatalf("expected 0 origin-provider logs, got %d", len(originLogs))
+	}
+
+	storedAttempts, err := store.GetAttemptsByRequestID(ctx, log.RequestID)
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(storedAttempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(storedAttempts))
+	}
+	if storedAttempts[0].ProviderID != "provider-origin" || storedAttempts[1].ProviderID != "provider-final" {
+		t.Fatalf("attempt provider order = [%s %s], want [provider-origin provider-final]", storedAttempts[0].ProviderID, storedAttempts[1].ProviderID)
+	}
+}

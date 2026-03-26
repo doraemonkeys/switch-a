@@ -80,12 +80,18 @@ func TestHandler_ServeHTTP_WebSocket_PreCommitSemanticErrorSkipsStickyAndMarksFa
 	}
 
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
-
 	if mockSel.StickyUpdatesLen() != 0 {
 		t.Fatalf("sticky update count = %d, want 0", mockSel.StickyUpdatesLen())
 	}
 	if len(healthMgr.getMarkFailureCalls()) != 1 {
-		t.Fatalf("mark failure count = %d, want 1", len(healthMgr.getMarkFailureCalls()))
+		t.Fatalf(
+			"mark failure count = %d, want 1 (logs=%d attempts=%d lastLog=%#v storedAttempts=%#v)",
+			len(healthMgr.getMarkFailureCalls()),
+			store.LogsLen(),
+			store.AttemptsLen(),
+			store.LastLog(),
+			store.LastAttempts(4),
+		)
 	}
 	if len(healthMgr.getMarkSuccessIDs()) != 0 {
 		t.Fatalf("mark success count = %d, want 0", len(healthMgr.getMarkSuccessIDs()))
@@ -119,6 +125,12 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
+		conn.SetReadLimit(wsReadLimit)
+
+		if _, _, err := conn.Read(r.Context()); err != nil {
+			t.Errorf("read post-commit client message: %v", err)
+			return
+		}
 
 		ctx := r.Context()
 		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.created","response":{"id":"resp_live","model":"gpt-5.4"}}`)); err != nil {
@@ -166,6 +178,10 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
+	if err := conn.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
 	for {
 		_, _, err := conn.Read(ctx)
 		if err == nil {
@@ -179,6 +195,7 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	waitFor(t, func() bool { return mockSel.StickyUpdatesLen() == 1 }, testPollTimeout)
+	waitFor(t, func() bool { return len(healthMgr.getMarkFailureCalls()) == 1 }, 10*testPollTimeout)
 
 	if len(healthMgr.getMarkFailureCalls()) != 1 {
 		t.Fatalf("mark failure count = %d, want 1", len(healthMgr.getMarkFailureCalls()))

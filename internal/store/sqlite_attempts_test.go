@@ -8,6 +8,18 @@ import (
 	"switch-a/internal/model"
 )
 
+func attemptBoolPtr(value bool) *bool {
+	return &value
+}
+
+func phasePtr(value model.RequestAttemptPhase) *model.RequestAttemptPhase {
+	return &value
+}
+
+func outcomePtr(value model.RequestAttemptOutcome) *model.RequestAttemptOutcome {
+	return &value
+}
+
 func TestInsertAttempts_EmptySlice(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -110,6 +122,71 @@ func TestInsertAttempts_MultipleAttempts(t *testing.T) {
 	}
 }
 
+func TestInsertAttempts_PreservesWebSocketAttemptSemantics(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	attempts := []model.RequestAttempt{
+		{
+			RequestID:             "req-ws",
+			ProviderID:            "provider-1",
+			Attempt:               0,
+			StatusCode:            101,
+			Error:                 "provider semantic error suppressed",
+			Phase:                 phasePtr(model.RequestAttemptPhasePostUpgradePreVisible),
+			Outcome:               outcomePtr(model.RequestAttemptOutcomeUpstreamSemanticError),
+			ResultVisibleToClient: attemptBoolPtr(false),
+			SwitchReason:          "provider_scoped_semantic_error",
+			LatencyMs:             42,
+			CreatedAt:             now,
+		},
+		{
+			RequestID:             "req-ws",
+			ProviderID:            "provider-2",
+			Attempt:               1,
+			StatusCode:            101,
+			Error:                 "",
+			Phase:                 phasePtr(model.RequestAttemptPhaseVisible),
+			Outcome:               outcomePtr(model.RequestAttemptOutcomeVisibleSession),
+			ResultVisibleToClient: attemptBoolPtr(true),
+			LatencyMs:             84,
+			CreatedAt:             now.Add(100 * time.Millisecond),
+		},
+	}
+
+	if err := store.InsertAttempts(ctx, attempts); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	result, err := store.GetAttemptsByRequestID(ctx, "req-ws")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(result) != len(attempts) {
+		t.Fatalf("expected %d attempts, got %d", len(attempts), len(result))
+	}
+
+	if result[0].Phase == nil || *result[0].Phase != model.RequestAttemptPhasePostUpgradePreVisible {
+		t.Fatalf("expected first attempt phase to round-trip, got %#v", result[0].Phase)
+	}
+	if result[0].Outcome == nil || *result[0].Outcome != model.RequestAttemptOutcomeUpstreamSemanticError {
+		t.Fatalf("expected first attempt outcome to round-trip, got %#v", result[0].Outcome)
+	}
+	if result[0].ResultVisibleToClient == nil || *result[0].ResultVisibleToClient {
+		t.Fatalf("expected first attempt to remain not visible to client, got %#v", result[0].ResultVisibleToClient)
+	}
+	if result[1].Phase == nil || *result[1].Phase != model.RequestAttemptPhaseVisible {
+		t.Fatalf("expected second attempt phase to round-trip, got %#v", result[1].Phase)
+	}
+	if result[1].Outcome == nil || *result[1].Outcome != model.RequestAttemptOutcomeVisibleSession {
+		t.Fatalf("expected second attempt outcome to round-trip, got %#v", result[1].Outcome)
+	}
+	if result[1].ResultVisibleToClient == nil || !*result[1].ResultVisibleToClient {
+		t.Fatalf("expected second attempt to remain visible to client, got %#v", result[1].ResultVisibleToClient)
+	}
+}
+
 func TestGetAttemptsByRequestID_NotFound(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -174,6 +251,43 @@ func TestGetAttemptsByRequestID_Ordering(t *testing.T) {
 		if attempt.Attempt != expectedAttempt {
 			t.Errorf("attempt[%d].Attempt = %d, want %d", i, attempt.Attempt, expectedAttempt)
 		}
+	}
+}
+
+func TestGetAttemptsByRequestID_StableOrderingOnAttemptTie(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	attempts := []model.RequestAttempt{
+		{
+			RequestID:  "req-tie",
+			ProviderID: "provider-2",
+			Attempt:    1,
+			StatusCode: 403,
+			CreatedAt:  time.Now(),
+		},
+		{
+			RequestID:  "req-tie",
+			ProviderID: "provider-1",
+			Attempt:    1,
+			StatusCode: 101,
+			CreatedAt:  time.Now(),
+		},
+	}
+
+	if err := store.InsertAttempts(ctx, attempts); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	result, err := store.GetAttemptsByRequestID(ctx, "req-tie")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(result))
+	}
+	if result[0].ProviderID != "provider-2" || result[1].ProviderID != "provider-1" {
+		t.Fatalf("provider order = [%s %s], want [provider-2 provider-1]", result[0].ProviderID, result[1].ProviderID)
 	}
 }
 

@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import type { RequestLog } from "../api/types";
-import { getSuccessBadgeClass, getStatusCodeBadgeClass } from "../lib/utils";
+import {
+  BADGE_STYLES,
+  getSuccessBadgeClass,
+  getStatusCodeBadgeClass,
+} from "../lib/utils";
 import { CopyButton } from "./CopyButton";
 import { ErrorBodyParser } from "./ErrorBodyParser";
 import { ProviderChain } from "./ProviderChain";
@@ -10,6 +14,7 @@ import { TokenUsageStats } from "./TokenUsageStats";
 import {
   getDiagnosticToneClass,
   getLogLifecyclePresentation,
+  getPrimaryProviderLabel,
 } from "./logs/diagnostics";
 
 interface LogDetailModalProps {
@@ -19,6 +24,10 @@ interface LogDetailModalProps {
   providerNames?: Map<string, string>;
   onClose: () => void;
 }
+
+const WEBSOCKET_HANDSHAKE_STATUS_CODE = 101;
+const WEBSOCKET_ATTEMPTS_NOTE =
+  "RequestLog defines the final WebSocket lifecycle attribution. These rows show provider-attempt detail only.";
 
 /**
  * Format the modal title based on request method and path
@@ -80,6 +89,8 @@ export function LogDetailModal({
   const modalTitle = getModalTitle(log);
   const hasEndpointInfo = log.request_method && log.request_path;
   const lifecycle = getLogLifecyclePresentation(log);
+  const resolvedProviderName =
+    providerNames?.get(log.provider_id) || providerName || log.provider_id;
 
   return (
     <div
@@ -126,12 +137,16 @@ export function LogDetailModal({
           <StatusBadges log={log} lifecycle={lifecycle} />
           <RequestInfo
             log={log}
-            providerName={providerName}
+            providerName={resolvedProviderName}
             providerNames={providerNames}
           />
           <ResponseInfo log={log} />
           {lifecycle.showLifecycle && (
-            <WebSocketLifecycleInfo log={log} lifecycle={lifecycle} />
+            <WebSocketLifecycleInfo
+              log={log}
+              lifecycle={lifecycle}
+              providerName={resolvedProviderName}
+            />
           )}
           <ClientInfo log={log} />
 
@@ -161,11 +176,24 @@ export function LogDetailModal({
 
           {/* Attempt Timeline */}
           {log.attempts && log.attempts.length > 0 && (
-            <DetailSection title="Request Attempts">
+            <DetailSection
+              title={
+                log.is_websocket ? "Provider Attempts" : "Request Attempts"
+              }
+            >
+              {log.is_websocket && (
+                <p className="text-xs text-text-muted">
+                  {WEBSOCKET_ATTEMPTS_NOTE}
+                </p>
+              )}
               <RequestAttemptTimeline
                 attempts={log.attempts}
                 providerNames={providerNames}
                 userAgent={log.user_agent}
+                isWebSocket={log.is_websocket}
+                attributedProviderId={
+                  log.is_websocket ? log.provider_id : undefined
+                }
               />
             </DetailSection>
           )}
@@ -301,25 +329,37 @@ function RequestInfo({
   providerName: string;
   providerNames?: Map<string, string>;
 }) {
-  const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
+  const requestAttempts = log.attempts ?? [];
+  const hasMultipleAttempts = requestAttempts.length > 1;
+  const showProviderChain = hasMultipleAttempts && !log.is_websocket;
+  const resolvedProviderName =
+    providerNames?.get(log.provider_id) || providerName || log.provider_id;
+  const providerLabel = getPrimaryProviderLabel(log);
+  let providerContent: React.ReactNode = null;
+
+  if (showProviderChain) {
+    providerContent = (
+      <div className="py-2">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm text-text-secondary">Provider Chain</span>
+        </div>
+        <ProviderChain
+          attempts={requestAttempts}
+          providerNames={providerNames}
+          success={log.success}
+        />
+      </div>
+    );
+  } else if (!log.is_websocket) {
+    providerContent = (
+      <DetailRow label={providerLabel} value={resolvedProviderName} />
+    );
+  }
 
   return (
     <DetailSection title="Request Information">
       {/* Provider Chain - show visual failover path when there are retries */}
-      {hasMultipleAttempts && log.attempts ? (
-        <div className="py-2">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-text-secondary">Provider Chain</span>
-          </div>
-          <ProviderChain
-            attempts={log.attempts}
-            providerNames={providerNames}
-            success={log.success}
-          />
-        </div>
-      ) : (
-        <DetailRow label="Provider" value={providerName || log.provider_id} />
-      )}
+      {providerContent}
       <DetailRow label="Model" value={log.model} mono />
       <DetailRow
         label="API Type"
@@ -339,16 +379,23 @@ function ResponseInfo({ log }: { log: RequestLog }) {
     log.is_sse &&
     log.first_token_ms !== null &&
     log.first_token_ms !== undefined;
+  const isWebSocketUpgrade =
+    log.is_websocket && log.status_code === WEBSOCKET_HANDSHAKE_STATUS_CODE;
+  const statusLabel = isWebSocketUpgrade ? "101 Upgrade" : log.status_code;
+  const statusBadgeClass = isWebSocketUpgrade
+    ? BADGE_STYLES.INFO
+    : getStatusCodeBadgeClass(log.status_code);
+  const statusRowLabel = log.is_websocket ? "Upgrade Status" : "Status Code";
 
   return (
     <DetailSection title="Response">
       <DetailRow
-        label="Status Code"
+        label={statusRowLabel}
         value={
           <span
-            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getStatusCodeBadgeClass(log.status_code)}`}
+            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusBadgeClass}`}
           >
-            {log.status_code}
+            {statusLabel}
           </span>
         }
       />
@@ -386,13 +433,19 @@ function ResponseInfo({ log }: { log: RequestLog }) {
 function WebSocketLifecycleInfo({
   log,
   lifecycle,
+  providerName,
 }: {
   log: RequestLog;
   lifecycle: ReturnType<typeof getLogLifecyclePresentation>;
+  providerName: string;
 }) {
   return (
     <DetailSection title="WebSocket Lifecycle">
       <DetailRow label="Outcome" value={lifecycle.outcomeLabel} />
+      <DetailRow
+        label={getPrimaryProviderLabel(log)}
+        value={providerName || log.provider_id}
+      />
       <DetailRow label="Commit State" value={lifecycle.commitmentLabel} />
       <DetailRow label="Terminal Cause" value={lifecycle.terminalCauseLabel} />
       {lifecycle.commitSourceLabel && (

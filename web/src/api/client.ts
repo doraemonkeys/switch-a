@@ -57,6 +57,8 @@ export type {
   ActiveRequestsResponse,
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatusResponse,
+  RequestAttemptOutcome,
+  RequestAttemptPhase,
   RequestAttempt,
 } from "./types";
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"switch-a/internal"
 	"switch-a/internal/model"
 	"switch-a/internal/selector"
 
@@ -380,6 +381,66 @@ func TestSelectProviderWithTracking_RetryWithExclusion(t *testing.T) {
 	}
 	if useStickyBehavior {
 		t.Error("expected useStickyBehavior=false for retry selection")
+	}
+}
+
+func TestSelectProviderWithTracking_FirstAttemptNilSelectionBecomesNoProvider(t *testing.T) {
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	handler := NewHandler(Config{
+		Store:    store,
+		Logger:   logger,
+		Selector: &mockSelector{},
+	})
+
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(
+		context.Background(),
+		&model.SelectRequest{APIType: "claude"},
+		0,
+		nil,
+	)
+
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("expected ErrNoProvider, got %v", err)
+	}
+	if provider != nil {
+		t.Fatalf("expected nil provider, got %#v", provider)
+	}
+	if useStickyBehavior {
+		t.Fatal("expected useStickyBehavior=false when selection fails")
+	}
+}
+
+func TestSelectProviderWithTracking_RetryNilSelectionBecomesNoProvider(t *testing.T) {
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: logger,
+		Selector: &mockSelector{
+			selectExcludingFunc: func(_ context.Context, _ *model.SelectRequest, _ map[string]bool) (*model.Provider, error) {
+				return nil, nil
+			},
+		},
+	})
+
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(
+		context.Background(),
+		&model.SelectRequest{APIType: "claude"},
+		1,
+		map[string]bool{"failed-p1": true},
+	)
+
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("expected ErrNoProvider, got %v", err)
+	}
+	if provider != nil {
+		t.Fatalf("expected nil provider, got %#v", provider)
+	}
+	if useStickyBehavior {
+		t.Fatal("expected useStickyBehavior=false when retry selection fails")
 	}
 }
 

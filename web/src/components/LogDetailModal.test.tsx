@@ -172,6 +172,60 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("Error Details")).toBeInTheDocument();
   });
 
+  it("separates websocket provider attempts from final lifecycle attribution", () => {
+    const log = createMockLog({
+      is_websocket: true,
+      success: false,
+      status_code: 101,
+      session_committed: true,
+      terminal_cause: "client_disconnect",
+      provider_id: "provider-final",
+      attempts: [
+        {
+          id: 1,
+          request_id: "test-request-id-1",
+          provider_id: "provider-old",
+          attempt: 1,
+          status_code: 503,
+          error: "provider unavailable",
+          latency_ms: 80,
+          created_at: "2024-01-15T10:30:00Z",
+        },
+        {
+          id: 2,
+          request_id: "test-request-id-1",
+          provider_id: "provider-final",
+          attempt: 2,
+          status_code: 101,
+          error: "",
+          latency_ms: 120,
+          created_at: "2024-01-15T10:30:01Z",
+        },
+      ],
+    });
+
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Final Provider"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getByText("Provider Attempts")).toBeInTheDocument();
+    expect(screen.getAllByText("Outcome Provider").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Final Provider").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        "RequestLog defines the final WebSocket lifecycle attribution. These rows show provider-attempt detail only.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Outcome owner")).toBeInTheDocument();
+    expect(screen.queryByText("Provider Chain")).not.toBeInTheDocument();
+    expect(screen.getByText("Upgrade Status")).toBeInTheDocument();
+    expect(screen.getAllByText("101 Upgrade").length).toBeGreaterThan(0);
+  });
+
   it("shows error details section for failed logs with error message", () => {
     const log = createMockLog({
       success: false,
@@ -595,6 +649,69 @@ describe("LogDetailModal", () => {
       );
 
       expect(screen.getByText(/Provider: My Provider/)).toBeInTheDocument();
+    });
+
+    it("keeps websocket outcome attribution on RequestLog while timeline rows stay provider-scoped", () => {
+      const log = createMockLog({
+        is_websocket: true,
+        status_code: 101,
+        provider_id: "provider-final",
+        attempts: [
+          {
+            id: 1,
+            request_id: "test-request-id-1",
+            provider_id: "provider-old",
+            attempt: 0,
+            status_code: 101,
+            error: "semantic error",
+            phase: "post_upgrade_pre_visible",
+            outcome: "upstream_semantic_error",
+            result_visible_to_client: false,
+            latency_ms: 90,
+            created_at: "2024-01-15T10:29:30Z",
+          },
+          {
+            id: 2,
+            request_id: "test-request-id-1",
+            provider_id: "provider-final",
+            attempt: 1,
+            status_code: 101,
+            error: "",
+            phase: "visible",
+            outcome: "visible_session",
+            result_visible_to_client: true,
+            latency_ms: 150,
+            created_at: "2024-01-15T10:30:00Z",
+          },
+        ],
+      });
+      const providerNames = new Map([
+        ["provider-old", "Old Provider"],
+        ["provider-final", "Final Provider"],
+      ]);
+
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Final Provider"
+          providerNames={providerNames}
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getAllByText("Outcome Provider").length).toBeGreaterThan(0);
+      expect(screen.getByText("Provider Attempts")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "RequestLog defines the final WebSocket lifecycle attribution. These rows show provider-attempt detail only.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Outcome owner")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Semantic error suppressed before client-visible data",
+        ),
+      ).toBeInTheDocument();
     });
   });
 });

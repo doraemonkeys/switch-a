@@ -257,18 +257,47 @@ export interface ActiveRequest {
   last_activity_at?: number; // Unix ms, 0 = no activity yet
 }
 
-/** Represents a single attempt within a request (for retry tracking) */
+export type RequestAttemptSwitchReason =
+  | "circuit_breaker_triggered"
+  | "max_retries_exhausted"
+  | "permanent_error_401"
+  | "permanent_error_402"
+  | "permanent_error_403"
+  | "provider_scoped_semantic_error"
+  | (string & {});
+
+export type RequestAttemptPhase =
+  | "pre_accept"
+  | "post_upgrade_pre_visible"
+  | "visible";
+
+export type RequestAttemptOutcome =
+  | "upstream_handshake_rejected"
+  | "upstream_transport_error"
+  | "upstream_semantic_error"
+  | "visible_session";
+
+/**
+ * Represents a single provider attempt within a request.
+ *
+ * WebSocket lifecycle attribution stays on RequestLog. Attempt rows only carry
+ * provider-scoped dial / handshake / error detail for the UI timeline.
+ */
 export interface RequestAttempt {
   id: number;
   request_id: string;
   provider_id: string;
+  /** Backend ordinal as recorded; UIs should normalize display instead of assuming a base. */
   attempt: number;
   status_code: number;
   error: string;
+  phase?: RequestAttemptPhase | null;
+  outcome?: RequestAttemptOutcome | null;
+  result_visible_to_client?: boolean | null;
   body_snippet?: string; // First ~512 bytes of error response
   req_body_snippet?: string; // First ~512 bytes of request body (error attempts only)
   latency_ms: number;
-  switch_reason?: string; // Reason for switching to next provider (if any)
+  switch_reason?: RequestAttemptSwitchReason; // Reason for switching to next provider (if any)
   created_at: string; // ISO timestamp
 }
 
@@ -322,6 +351,7 @@ export type CommitSource = "semantic_event" | "upstream_message" | "unknown";
 export interface RequestLog {
   id: number;
   request_id: string;
+  /** Final provider attribution for the request lifecycle, including WebSocket sessions. */
   provider_id: string;
   api_type: string;
   model: string;
@@ -360,6 +390,7 @@ export interface RequestLog {
   session_committed?: boolean | null;
   terminal_cause?: TerminalCause | null;
   commit_source?: CommitSource | null;
+  // Provider-attempt records only. RequestLog remains the session lifecycle summary.
   attempts?: RequestAttempt[];
 }
 

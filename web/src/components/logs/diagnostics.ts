@@ -21,6 +21,10 @@ export interface LogLifecyclePresentation {
   shouldShowErrorDetails: boolean;
 }
 
+export function getPrimaryProviderLabel(log: RequestLog): string {
+  return log.is_websocket ? "Outcome Provider" : "Provider";
+}
+
 const UNKNOWN_STATUS_CODE = 0;
 
 const COMMITMENT_LABELS: Record<CommitmentState, string> = {

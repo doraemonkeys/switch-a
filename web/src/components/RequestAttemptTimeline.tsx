@@ -1,6 +1,6 @@
-import { useState } from "react";
-import type { RequestAttempt } from "../api/types";
-import { getStatusCodeBadgeClass } from "../lib/utils";
+import { useState, type ReactNode } from "react";
+import type { RequestAttempt, RequestAttemptPhase } from "../api/types";
+import { BADGE_STYLES, getStatusCodeBadgeClass } from "../lib/utils";
 import { ErrorBodyParser } from "./ErrorBodyParser";
 
 interface RequestAttemptTimelineProps {
@@ -9,7 +9,31 @@ interface RequestAttemptTimelineProps {
   providerNames?: Map<string, string>;
   /** User-Agent from parent request log (for diagnostic tips) */
   userAgent?: string;
+  /** WebSocket attempts are provider detail only; session lifecycle stays on RequestLog. */
+  isWebSocket?: boolean;
+  /** RequestLog.provider_id for highlighting final lifecycle attribution in the attempt list. */
+  attributedProviderId?: string;
 }
+
+const NO_RESPONSE_STATUS_CODE = 0;
+const WEBSOCKET_UPGRADE_STATUS_CODE = 101;
+const ATTEMPT_DISPLAY_NUMBER_START = 1;
+const MILLISECONDS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const OUTCOME_OWNER_LABEL = "Outcome owner";
+const ATTRIBUTION_NOTE =
+  "RequestLog.provider_id attributes the final client-visible outcome to this provider.";
+const WEBSOCKET_UPGRADE_LABEL = "101 Upgrade";
+const PROVIDER_SCOPED_SEMANTIC_SWITCH_REASON = "provider_scoped_semantic_error";
+const INFO_BADGE_CLASS = BADGE_STYLES.INFO;
+const WEBSOCKET_PHASE_BADGE_CLASS =
+  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300";
+const WEBSOCKET_SUCCESS_BADGE_CLASS =
+  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+const WEBSOCKET_WARNING_BADGE_CLASS =
+  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+const WEBSOCKET_ERROR_BADGE_CLASS =
+  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
 
 /**
  * Format time as HH:MM:SS.mmm for display
@@ -51,16 +75,149 @@ function getTimeOffset(currentTime: string, firstTime: string): number {
  * Format offset duration in human-readable form
  */
 function formatOffset(offsetMs: number): string {
-  if (offsetMs < 1000) {
+  if (offsetMs < MILLISECONDS_PER_SECOND) {
     return `+${offsetMs}ms`;
   }
-  const seconds = offsetMs / 1000;
-  if (seconds < 60) {
+  const seconds = offsetMs / MILLISECONDS_PER_SECOND;
+  if (seconds < SECONDS_PER_MINUTE) {
     return `+${seconds.toFixed(1)}s`;
   }
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  const remainingSeconds = seconds % SECONDS_PER_MINUTE;
   return `+${minutes}m ${remainingSeconds.toFixed(0)}s`;
+}
+
+function getAttemptPhaseLabel(
+  phase?: RequestAttemptPhase | null,
+): string | null {
+  switch (phase) {
+    case "pre_accept":
+      return "Pre-accept";
+    case "post_upgrade_pre_visible":
+      return "Post-upgrade, pre-visible";
+    case "visible":
+      return "Visible";
+    default:
+      return null;
+  }
+}
+
+function getAttemptOutcomePresentation(
+  attempt: RequestAttempt,
+): { text: string; className: string } | null {
+  switch (attempt.outcome) {
+    case "upstream_handshake_rejected":
+      return {
+        text:
+          attempt.phase === "pre_accept"
+            ? "Handshake rejected before client upgrade"
+            : "Handshake rejected",
+        className: WEBSOCKET_ERROR_BADGE_CLASS,
+      };
+    case "upstream_transport_error":
+      if (attempt.phase === "pre_accept") {
+        return {
+          text: "Transport error before client upgrade",
+          className: WEBSOCKET_ERROR_BADGE_CLASS,
+        };
+      }
+      if (attempt.result_visible_to_client === false) {
+        return {
+          text: "Transport error before client-visible data",
+          className: WEBSOCKET_ERROR_BADGE_CLASS,
+        };
+      }
+      return {
+        text: "Transport error after client-visible data",
+        className: WEBSOCKET_ERROR_BADGE_CLASS,
+      };
+    case "upstream_semantic_error":
+      if (attempt.result_visible_to_client === false) {
+        return {
+          text: "Semantic error suppressed before client-visible data",
+          className: WEBSOCKET_WARNING_BADGE_CLASS,
+        };
+      }
+      if (attempt.result_visible_to_client === true) {
+        return {
+          text: "Semantic error reached the client",
+          className: WEBSOCKET_WARNING_BADGE_CLASS,
+        };
+      }
+      return {
+        text: "Semantic error ended this provider attempt",
+        className: WEBSOCKET_WARNING_BADGE_CLASS,
+      };
+    case "visible_session":
+      return {
+        text: "This provider owned the client-visible session",
+        className: INFO_BADGE_CLASS,
+      };
+    default:
+      return null;
+  }
+}
+
+function ownsVisibleWebSocketSession(attempt: RequestAttempt): boolean {
+  return attempt.outcome === "visible_session";
+}
+
+function hasWebSocketAttemptFailure(
+  attempt: RequestAttempt,
+  hasError: boolean,
+  isNoResponse: boolean,
+): boolean {
+  return (
+    (attempt.outcome !== undefined &&
+      attempt.outcome !== null &&
+      !ownsVisibleWebSocketSession(attempt)) ||
+    hasError ||
+    isNoResponse ||
+    attempt.status_code >= 400 ||
+    Boolean(attempt.switch_reason)
+  );
+}
+
+/**
+ * WebSocket attempt rows record provider ownership of the visible session, not the
+ * request-level verdict. A provider can cross the visible boundary and still end
+ * the session on a later semantic or transport failure.
+ */
+function isSuccessfulAttempt(
+  attempt: RequestAttempt,
+  isWebSocket: boolean,
+  hasError: boolean,
+  isNoResponse: boolean,
+): boolean {
+  if (isWebSocket) {
+    return (
+      ownsVisibleWebSocketSession(attempt) &&
+      !hasWebSocketAttemptFailure(attempt, hasError, isNoResponse)
+    );
+  }
+  if (attempt.outcome) {
+    return false;
+  }
+  return attempt.status_code >= 200 && attempt.status_code < 400;
+}
+
+function getWebSocketUpgradeBadgeClass(
+  attempt: RequestAttempt,
+  hasAttemptFailure: boolean,
+): string {
+  if (ownsVisibleWebSocketSession(attempt) && !hasAttemptFailure) {
+    return WEBSOCKET_SUCCESS_BADGE_CLASS;
+  }
+  return INFO_BADGE_CLASS;
+}
+
+function formatReqBody(body: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return body;
+  }
 }
 
 /** Maps switch reason codes to human-readable labels with icons */
@@ -84,6 +241,11 @@ function getSwitchReasonLabel(
       };
     case "permanent_error_403":
       return { text: "Forbidden (403) — switched provider", icon: "🚫" };
+    case PROVIDER_SCOPED_SEMANTIC_SWITCH_REASON:
+      return {
+        text: "Provider-scoped semantic error — switched provider",
+        icon: "🛡️",
+      };
     default:
       return null;
   }
@@ -103,6 +265,8 @@ export function RequestAttemptTimeline({
   attempts,
   providerNames,
   userAgent,
+  isWebSocket = false,
+  attributedProviderId,
 }: RequestAttemptTimelineProps) {
   if (!attempts || attempts.length === 0) {
     return null;
@@ -111,6 +275,12 @@ export function RequestAttemptTimeline({
   // Sort by attempt number
   const sortedAttempts = [...attempts].sort((a, b) => a.attempt - b.attempt);
   const firstAttemptTime = sortedAttempts[0]?.created_at;
+  const attributedAttemptId =
+    isWebSocket && attributedProviderId
+      ? [...sortedAttempts]
+          .reverse()
+          .find((attempt) => attempt.provider_id === attributedProviderId)?.id
+      : undefined;
 
   return (
     <div className="relative">
@@ -127,6 +297,9 @@ export function RequestAttemptTimeline({
             providerName={providerNames?.get(attempt.provider_id)}
             userAgent={userAgent}
             firstAttemptTime={firstAttemptTime}
+            displayAttemptNumber={index + ATTEMPT_DISPLAY_NUMBER_START}
+            isWebSocket={isWebSocket}
+            isAttributedAttempt={attempt.id === attributedAttemptId}
           />
         ))}
       </div>
@@ -141,6 +314,133 @@ interface AttemptNodeProps {
   providerName?: string;
   userAgent?: string;
   firstAttemptTime?: string;
+  displayAttemptNumber: number;
+  isWebSocket: boolean;
+  isAttributedAttempt: boolean;
+}
+
+interface AttemptHeaderProps {
+  isWebSocket: boolean;
+  displayAttemptNumber: number;
+  latencyMs: number;
+  statusBadge: ReactNode;
+}
+
+function AttemptHeader({
+  isWebSocket,
+  displayAttemptNumber,
+  latencyMs,
+  statusBadge,
+}: AttemptHeaderProps) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium text-text-primary">
+          {`${isWebSocket ? "Provider Attempt" : "Attempt"} ${displayAttemptNumber}`}
+        </span>
+        {statusBadge}
+      </div>
+      <span className="text-sm text-text-secondary font-mono">
+        {latencyMs}ms
+      </span>
+    </div>
+  );
+}
+
+interface AttemptProviderMetaProps {
+  providerName?: string;
+  providerId: string;
+  isAttributedAttempt: boolean;
+  createdAt?: string;
+  isFirst: boolean;
+  firstAttemptTime?: string;
+}
+
+function AttemptProviderMeta({
+  providerName,
+  providerId,
+  isAttributedAttempt,
+  createdAt,
+  isFirst,
+  firstAttemptTime,
+}: AttemptProviderMetaProps) {
+  return (
+    <>
+      <div className="flex items-center justify-between mt-1 gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-sm text-text-secondary">
+            Provider: {providerName || providerId}
+          </p>
+          {isAttributedAttempt && (
+            <span
+              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${INFO_BADGE_CLASS}`}
+              title={ATTRIBUTION_NOTE}
+            >
+              {OUTCOME_OWNER_LABEL}
+            </span>
+          )}
+        </div>
+        {createdAt && (
+          <span
+            className="text-xs text-text-muted font-mono flex items-center gap-1.5"
+            title={formatFullTimestamp(createdAt)}
+          >
+            <svg
+              className="w-3 h-3"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            {isFirst ? (
+              formatTime(createdAt)
+            ) : (
+              <span className="text-amber-600 dark:text-amber-400">
+                {formatOffset(getTimeOffset(createdAt, firstAttemptTime!))}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+
+      {isAttributedAttempt && (
+        <p className="mt-2 text-xs text-blue-700 dark:text-blue-300">
+          {ATTRIBUTION_NOTE}
+        </p>
+      )}
+    </>
+  );
+}
+
+function AttemptLifecycleBadges({
+  phaseLabel,
+  outcomePresentation,
+}: {
+  phaseLabel: string | null;
+  outcomePresentation: { text: string; className: string } | null;
+}) {
+  if (!phaseLabel && !outcomePresentation) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {phaseLabel && (
+        <span className={WEBSOCKET_PHASE_BADGE_CLASS}>Phase: {phaseLabel}</span>
+      )}
+      {outcomePresentation && (
+        <span className={outcomePresentation.className}>
+          {outcomePresentation.text}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function AttemptNode({
@@ -150,21 +450,50 @@ function AttemptNode({
   providerName,
   userAgent,
   firstAttemptTime,
+  displayAttemptNumber,
+  isWebSocket,
+  isAttributedAttempt,
 }: AttemptNodeProps) {
   const [showReqBody, setShowReqBody] = useState(false);
 
-  const isSuccess = attempt.status_code >= 200 && attempt.status_code < 400;
-  const hasError = attempt.error && attempt.error.length > 0;
-  const hasBodySnippet =
-    attempt.body_snippet && attempt.body_snippet.length > 0;
-  const hasReqBodySnippet =
-    attempt.req_body_snippet && attempt.req_body_snippet.length > 0;
+  const hasError = (attempt.error?.length ?? 0) > 0;
+  const hasBodySnippet = (attempt.body_snippet?.length ?? 0) > 0;
+  const hasReqBodySnippet = (attempt.req_body_snippet?.length ?? 0) > 0;
+  const isNoResponse = attempt.status_code === NO_RESPONSE_STATUS_CODE;
+  const hasAttemptFailure = isWebSocket
+    ? hasWebSocketAttemptFailure(attempt, hasError, isNoResponse)
+    : false;
+  const isSuccess = isSuccessfulAttempt(
+    attempt,
+    isWebSocket,
+    hasError,
+    isNoResponse,
+  );
+  const isWebSocketUpgrade =
+    isWebSocket && attempt.status_code === WEBSOCKET_UPGRADE_STATUS_CODE;
+  const phaseLabel = getAttemptPhaseLabel(attempt.phase);
+  const outcomePresentation = getAttemptOutcomePresentation(attempt);
   const switchReasonInfo = attempt.switch_reason
     ? getSwitchReasonLabel(attempt.switch_reason)
     : null;
 
   // Determine the card border/background based on status
   const getCardClasses = () => {
+    if (isWebSocket) {
+      if (isLast && isSuccess) {
+        return "border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/10";
+      }
+      if (attempt.outcome === "upstream_semantic_error") {
+        return "border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-900/10";
+      }
+      if (hasAttemptFailure) {
+        return "border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-900/10";
+      }
+      if (isWebSocketUpgrade) {
+        return "border-blue-100 bg-blue-50/30 dark:border-blue-900 dark:bg-blue-900/5";
+      }
+      return "border-border-light bg-bg-tertiary";
+    }
     if (isLast && isSuccess) {
       return "border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/10";
     }
@@ -176,8 +505,28 @@ function AttemptNode({
 
   // Determine the dot color based on status
   const getDotColor = () => {
-    if (attempt.status_code === 0) {
-      // No response (connection error)
+    if (isWebSocket) {
+      if (isSuccess) {
+        return "bg-green-500";
+      }
+      if (attempt.outcome === "upstream_semantic_error") {
+        return "bg-amber-500";
+      }
+      if (isNoResponse) {
+        return "bg-gray-400";
+      }
+      if (isWebSocketUpgrade) {
+        return "bg-sky-500";
+      }
+      if (attempt.status_code >= 500 || hasError || attempt.switch_reason) {
+        return "bg-red-500";
+      }
+      if (attempt.status_code >= 400) {
+        return "bg-amber-500";
+      }
+      return "bg-gray-400";
+    }
+    if (isNoResponse) {
       return "bg-gray-400";
     }
     if (isSuccess) {
@@ -192,14 +541,33 @@ function AttemptNode({
     return "bg-gray-400";
   };
 
-  // Format request body for display
-  const formatReqBody = (body: string): string => {
-    try {
-      const parsed = JSON.parse(body);
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return body;
+  const renderStatusBadge = () => {
+    if (isNoResponse) {
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300">
+          No Response
+        </span>
+      );
     }
+    if (isWebSocketUpgrade) {
+      return (
+        <span
+          className={getWebSocketUpgradeBadgeClass(attempt, hasAttemptFailure)}
+        >
+          {WEBSOCKET_UPGRADE_LABEL}
+        </span>
+      );
+    }
+    if (attempt.status_code > 0) {
+      return (
+        <span
+          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getStatusCodeBadgeClass(attempt.status_code)}`}
+        >
+          {attempt.status_code}
+        </span>
+      );
+    }
+    return null;
   };
 
   return (
@@ -210,66 +578,24 @@ function AttemptNode({
       />
 
       <div className={`p-3 rounded-lg border ${getCardClasses()}`}>
-        {/* Header row */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-text-primary">
-              Attempt {attempt.attempt + 1}
-            </span>
-            {attempt.status_code > 0 && (
-              <span
-                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getStatusCodeBadgeClass(attempt.status_code)}`}
-              >
-                {attempt.status_code}
-              </span>
-            )}
-            {attempt.status_code === 0 && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300">
-                No Response
-              </span>
-            )}
-          </div>
-          <span className="text-sm text-text-secondary font-mono">
-            {attempt.latency_ms}ms
-          </span>
-        </div>
-
-        {/* Provider and Timing info */}
-        <div className="flex items-center justify-between mt-1">
-          <p className="text-sm text-text-secondary">
-            Provider: {providerName || attempt.provider_id}
-          </p>
-          {/* Time display: absolute time for first attempt, offset for subsequent */}
-          {attempt.created_at && (
-            <span
-              className="text-xs text-text-muted font-mono flex items-center gap-1.5"
-              title={formatFullTimestamp(attempt.created_at)}
-            >
-              <svg
-                className="w-3 h-3"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              {isFirst ? (
-                formatTime(attempt.created_at)
-              ) : (
-                <span className="text-amber-600 dark:text-amber-400">
-                  {formatOffset(
-                    getTimeOffset(attempt.created_at, firstAttemptTime!),
-                  )}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
+        <AttemptHeader
+          isWebSocket={isWebSocket}
+          displayAttemptNumber={displayAttemptNumber}
+          latencyMs={attempt.latency_ms}
+          statusBadge={renderStatusBadge()}
+        />
+        <AttemptProviderMeta
+          providerName={providerName}
+          providerId={attempt.provider_id}
+          isAttributedAttempt={isAttributedAttempt}
+          createdAt={attempt.created_at}
+          isFirst={isFirst}
+          firstAttemptTime={firstAttemptTime}
+        />
+        <AttemptLifecycleBadges
+          phaseLabel={phaseLabel}
+          outcomePresentation={outcomePresentation}
+        />
 
         {/* Error message */}
         {hasError && (

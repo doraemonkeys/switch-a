@@ -83,6 +83,60 @@ func newHeaderCapturingWSServer(t *testing.T, captured *http.Header, mu *sync.Mu
 	}))
 }
 
+func newSemanticErrorWSServer(t *testing.T, payload []byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		conn.SetReadLimit(wsReadLimit)
+		if _, _, err := conn.Read(r.Context()); err != nil {
+			return
+		}
+		_ = conn.Write(r.Context(), websocket.MessageText, payload)
+		<-r.Context().Done()
+	}))
+}
+
+func newRecordingWSServer(t *testing.T, received chan<- webSocketReplayMessage) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		conn.SetReadLimit(wsReadLimit)
+		messageType, data, err := conn.Read(r.Context())
+		if err != nil {
+			return
+		}
+		received <- webSocketReplayMessage{
+			MessageType: messageType,
+			Data:        append([]byte(nil), data...),
+		}
+	}))
+}
+
+func newPushMessagesWSServer(t *testing.T, messages []webSocketReplayMessage) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		for _, message := range messages {
+			if err := conn.Write(r.Context(), message.MessageType, message.Data); err != nil {
+				return
+			}
+		}
+	}))
+}
+
 // wsURL converts an httptest.Server URL to a WebSocket URL.
 func wsURL(s *httptest.Server) string {
 	return "ws" + strings.TrimPrefix(s.URL, "http")
@@ -242,6 +296,462 @@ func TestWebSocketForwarder_Forward_BinaryMessages(t *testing.T) {
 	}
 	if !bytes.Equal(data, payload) {
 		t.Errorf("binary payload mismatch: got %x, want %x", data, payload)
+	}
+}
+
+func TestWebSocketForwarder_Forward_TracksClientLifecycleBoundaries(t *testing.T) {
+	t.Parallel()
+
+	upstream := newEchoWSServer(t)
+	defer upstream.Close()
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	resultCh := make(chan *WebSocketResult, 1)
+	errCh := make(chan error, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result, err := fwd.Forward(r.Context(), w, r, wsURL(upstream), nil)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- result
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	if err := clientConn.Write(ctx, websocket.MessageText, []byte("hello")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, err := clientConn.Read(ctx); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if err := clientConn.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close client websocket: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("forward returned error: %v", err)
+	case result := <-resultCh:
+		if !result.HandshakeAccepted {
+			t.Fatal("expected HandshakeAccepted=true")
+		}
+		if !result.ClientAccepted {
+			t.Fatal("expected ClientAccepted=true")
+		}
+		if !result.ClientVisible {
+			t.Fatal("expected ClientVisible=true after echoed upstream payload")
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for forward result")
+	}
+}
+
+func TestWebSocketForwarder_Relay_OnClientVisibleRunsOnce(t *testing.T) {
+	t.Parallel()
+
+	upstreamMessages := []webSocketReplayMessage{
+		{MessageType: websocket.MessageText, Data: []byte("first")},
+		{MessageType: websocket.MessageText, Data: []byte("second")},
+	}
+	upstream := newPushMessagesWSServer(t, upstreamMessages)
+	defer upstream.Close()
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	visibleCh := make(chan webSocketVisibleWriteContext, len(upstreamMessages))
+	resultCh := make(chan *webSocketRelaySessionResult, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamConn, dialResult := fwd.dialUpstream(r.Context(), wsURL(upstream), nil)
+		if dialResult != nil {
+			t.Errorf("unexpected dial result: %+v", dialResult)
+			return
+		}
+
+		clientConn, err := fwd.acceptClient(w, r)
+		if err != nil {
+			t.Errorf("unexpected client accept error: %v", err)
+			_ = upstreamConn.Close(websocket.StatusGoingAway, "client accept failed")
+			return
+		}
+
+		lifecycle := newWebSocketLifecycleState()
+		lifecycle.MarkClientAccepted()
+		resultCh <- fwd.relay(r.Context(), clientConn, upstreamConn, webSocketRelayOptions{
+			Lifecycle: lifecycle,
+			OnClientVisible: func(ctx webSocketVisibleWriteContext) {
+				visibleCh <- webSocketVisibleWriteContext{
+					MessageType: ctx.MessageType,
+					Data:        append([]byte(nil), ctx.Data...),
+					Observation: ctx.Observation,
+				}
+			},
+		})
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	defer clientConn.Close(websocket.StatusNormalClosure, "")
+
+	for i, want := range upstreamMessages {
+		messageType, data, err := clientConn.Read(ctx)
+		if err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if messageType != want.MessageType {
+			t.Fatalf("message type %d = %v, want %v", i, messageType, want.MessageType)
+		}
+		if !bytes.Equal(data, want.Data) {
+			t.Fatalf("payload %d = %q, want %q", i, data, want.Data)
+		}
+	}
+
+	select {
+	case relayResult := <-resultCh:
+		if relayResult == nil {
+			t.Fatal("expected non-nil relay result")
+		}
+		if !relayResult.ClientVisible {
+			t.Fatal("expected ClientVisible=true")
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for relay result")
+	}
+
+	visibleEvents := make([]webSocketVisibleWriteContext, 0, len(upstreamMessages))
+drainVisible:
+	for {
+		select {
+		case event := <-visibleCh:
+			visibleEvents = append(visibleEvents, event)
+		default:
+			break drainVisible
+		}
+	}
+	if len(visibleEvents) != 1 {
+		t.Fatalf("visible hook count = %d, want 1", len(visibleEvents))
+	}
+	if visibleEvents[0].MessageType != upstreamMessages[0].MessageType {
+		t.Fatalf("visible hook message type = %v, want %v", visibleEvents[0].MessageType, upstreamMessages[0].MessageType)
+	}
+	if !bytes.Equal(visibleEvents[0].Data, upstreamMessages[0].Data) {
+		t.Fatalf("visible hook payload = %q, want %q", visibleEvents[0].Data, upstreamMessages[0].Data)
+	}
+}
+
+func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorBeforeClientVisible(t *testing.T) {
+	t.Parallel()
+
+	semanticPayload := []byte(`{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`)
+	upstream := newSemanticErrorWSServer(t, semanticPayload)
+	defer upstream.Close()
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	type relayAttempt struct {
+		result *webSocketRelaySessionResult
+		buffer *preVisibleClientMessageBuffer
+	}
+
+	attemptCh := make(chan relayAttempt, 1)
+	releaseClient := make(chan struct{})
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamConn, dialResult := fwd.dialUpstream(r.Context(), wsURL(upstream), nil)
+		if dialResult != nil {
+			t.Errorf("unexpected dial result: %+v", dialResult)
+			return
+		}
+
+		clientConn, err := fwd.acceptClient(w, r)
+		if err != nil {
+			t.Errorf("unexpected client accept error: %v", err)
+			_ = upstreamConn.Close(websocket.StatusGoingAway, "client accept failed")
+			return
+		}
+
+		lifecycle := newWebSocketLifecycleState()
+		lifecycle.MarkClientAccepted()
+		buffer := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes)
+		observer := newCodexWebSocketMessageObserver(ModelUnknown, nil, nil, nil)
+
+		relayResult := fwd.relay(r.Context(), clientConn, upstreamConn, webSocketRelayOptions{
+			Observer:                 observer,
+			PreWriteToClient:         newAllowlistedProviderScopedSuppressDecision(buffer),
+			PreVisibleReplayBuffer:   buffer,
+			Lifecycle:                lifecycle,
+			PreserveClientOnSuppress: true,
+		})
+		attemptCh <- relayAttempt{
+			result: relayResult,
+			buffer: buffer,
+		}
+		<-releaseClient
+		_ = clientConn.Close(websocket.StatusGoingAway, "test cleanup")
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	defer clientConn.Close(websocket.StatusNormalClosure, "")
+
+	const prompt = "buffer this request"
+	if err := clientConn.Write(ctx, websocket.MessageText, []byte(prompt)); err != nil {
+		t.Fatalf("write client message: %v", err)
+	}
+
+	var attempt relayAttempt
+	select {
+	case attempt = <-attemptCh:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for suppressed relay result")
+	}
+
+	if attempt.result.Disposition != webSocketRelayDispositionSuppressedUpstreamError {
+		t.Fatalf("Disposition = %v, want suppressed upstream error", attempt.result.Disposition)
+	}
+	if !attempt.result.ClientAccepted {
+		t.Fatal("expected ClientAccepted=true")
+	}
+	if attempt.result.ClientVisible {
+		t.Fatal("client must remain invisible when the upstream semantic error is suppressed")
+	}
+	if attempt.result.BytesUpstreamToClient != 0 {
+		t.Fatalf("BytesUpstreamToClient = %d, want 0 for suppressed pre-visible payload", attempt.result.BytesUpstreamToClient)
+	}
+	if attempt.result.SuppressedUpstreamError == nil {
+		t.Fatal("expected suppressed upstream error to be preserved")
+	}
+	if attempt.result.SuppressedUpstreamError.Raw != string(semanticPayload) {
+		t.Fatalf("suppressed Raw = %q, want original payload", attempt.result.SuppressedUpstreamError.Raw)
+	}
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer readCancel()
+	if _, _, err := clientConn.Read(readCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected suppressed payload to stay invisible, got %v", err)
+	}
+
+	replayReceived := make(chan webSocketReplayMessage, 1)
+	replayServer := newRecordingWSServer(t, replayReceived)
+	defer replayServer.Close()
+
+	replayConn := connectWSClient(t, ctx, wsURL(replayServer))
+	if err := attempt.buffer.Replay(ctx, replayConn); err != nil {
+		t.Fatalf("replay buffered client messages: %v", err)
+	}
+	if err := replayConn.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close replay connection: %v", err)
+	}
+
+	select {
+	case replayed := <-replayReceived:
+		if replayed.MessageType != websocket.MessageText {
+			t.Fatalf("replayed MessageType = %v, want text", replayed.MessageType)
+		}
+		if string(replayed.Data) != prompt {
+			t.Fatalf("replayed payload = %q, want %q", replayed.Data, prompt)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for replay payload")
+	}
+
+	close(releaseClient)
+}
+
+func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorWithoutBufferedClientMessage(t *testing.T) {
+	t.Parallel()
+
+	semanticPayload := []byte(`{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		conn.SetReadLimit(wsReadLimit)
+		_ = conn.Write(r.Context(), websocket.MessageText, semanticPayload)
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+
+	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	type relayAttempt struct {
+		result *webSocketRelaySessionResult
+		buffer *preVisibleClientMessageBuffer
+	}
+
+	attemptCh := make(chan relayAttempt, 1)
+	releaseClient := make(chan struct{})
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamConn, dialResult := fwd.dialUpstream(r.Context(), wsURL(upstream), nil)
+		if dialResult != nil {
+			t.Errorf("unexpected dial result: %+v", dialResult)
+			return
+		}
+
+		clientConn, err := fwd.acceptClient(w, r)
+		if err != nil {
+			t.Errorf("unexpected client accept error: %v", err)
+			_ = upstreamConn.Close(websocket.StatusGoingAway, "client accept failed")
+			return
+		}
+
+		lifecycle := newWebSocketLifecycleState()
+		lifecycle.MarkClientAccepted()
+		buffer := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes)
+		observer := newCodexWebSocketMessageObserver(ModelUnknown, nil, nil, nil)
+
+		relayResult := fwd.relay(r.Context(), clientConn, upstreamConn, webSocketRelayOptions{
+			Observer:                 observer,
+			PreWriteToClient:         newAllowlistedProviderScopedSuppressDecision(buffer),
+			PreVisibleReplayBuffer:   buffer,
+			Lifecycle:                lifecycle,
+			PreserveClientOnSuppress: true,
+		})
+		attemptCh <- relayAttempt{
+			result: relayResult,
+			buffer: buffer,
+		}
+		<-releaseClient
+		_ = clientConn.Close(websocket.StatusGoingAway, "test cleanup")
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	defer clientConn.Close(websocket.StatusNormalClosure, "")
+
+	var attempt relayAttempt
+	select {
+	case attempt = <-attemptCh:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for suppressed relay result")
+	}
+
+	if attempt.result.Disposition != webSocketRelayDispositionSuppressedUpstreamError {
+		t.Fatalf("Disposition = %v, want suppressed upstream error", attempt.result.Disposition)
+	}
+	if !attempt.result.ClientAccepted {
+		t.Fatal("expected ClientAccepted=true")
+	}
+	if attempt.result.ClientVisible {
+		t.Fatal("client must remain invisible when the upstream semantic error is suppressed")
+	}
+	if attempt.result.BytesClientToUpstream != 0 {
+		t.Fatalf("BytesClientToUpstream = %d, want 0 when no client payload was buffered", attempt.result.BytesClientToUpstream)
+	}
+	if attempt.result.BytesUpstreamToClient != 0 {
+		t.Fatalf("BytesUpstreamToClient = %d, want 0 for suppressed pre-visible payload", attempt.result.BytesUpstreamToClient)
+	}
+	if attempt.result.SuppressedUpstreamError == nil {
+		t.Fatal("expected suppressed upstream error to be preserved")
+	}
+
+	snapshot := attempt.buffer.Snapshot()
+	if len(snapshot.Messages) != 0 {
+		t.Fatalf("buffered messages = %d, want 0 when provider fails before the first client frame", len(snapshot.Messages))
+	}
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer readCancel()
+	if _, _, err := clientConn.Read(readCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected suppressed payload to stay invisible, got %v", err)
+	}
+
+	close(releaseClient)
+}
+
+func TestPreVisibleClientMessageBuffer_DisablesSemanticFailoverOnOverflow(t *testing.T) {
+	t.Parallel()
+
+	buffer := newPreVisibleClientMessageBuffer(4)
+	buffer.Record(websocket.MessageText, []byte("hello"), false)
+
+	if buffer.Enabled() {
+		t.Fatal("buffer must disable semantic failover after exceeding its limit")
+	}
+
+	decision := newAllowlistedProviderScopedSuppressDecision(buffer)(webSocketPreWriteContext{
+		MessageType: websocket.MessageText,
+		Data:        []byte(`{"type":"error"}`),
+		Observation: WebSocketObservation{
+			UpstreamError: &WebSocketUpstreamError{
+				EventType: "auth_error",
+				Code:      "model_not_allowed",
+				Message:   "denied",
+			},
+		},
+	})
+	if decision.Action != webSocketPreWriteActionForward {
+		t.Fatalf("Action = %v, want forward when replay buffer is disabled", decision.Action)
+	}
+}
+
+func TestAllowlistedProviderScopedSuppressDecision_EmptyReplayBufferStillSuppresses(t *testing.T) {
+	t.Parallel()
+
+	semanticPayload := []byte(`{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`)
+	buffer := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes)
+	decision := newAllowlistedProviderScopedSuppressDecision(buffer)(webSocketPreWriteContext{
+		MessageType: websocket.MessageText,
+		Data:        semanticPayload,
+		Observation: WebSocketObservation{
+			UpstreamError: &WebSocketUpstreamError{
+				EventType: "auth_error",
+				Code:      "model_not_allowed",
+				Message:   "model access denied",
+				Raw:       string(semanticPayload),
+			},
+		},
+		ClientAccepted: true,
+		ClientVisible:  false,
+	})
+	if decision.Action != webSocketPreWriteActionSuppress {
+		t.Fatalf("Action = %v, want suppress when no client payload needs replay", decision.Action)
+	}
+	if decision.SuppressedUpstreamError == nil {
+		t.Fatal("expected suppressed upstream error to be preserved for semantic failover")
+	}
+}
+
+func TestAllowlistedProviderScopedSuppressDecision_ParseDegradedFallsThrough(t *testing.T) {
+	t.Parallel()
+
+	buffer := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes)
+	decision := newAllowlistedProviderScopedSuppressDecision(buffer)(webSocketPreWriteContext{
+		MessageType: websocket.MessageText,
+		Data:        []byte(`{"type":"error"}`),
+		Observation: WebSocketObservation{
+			ParseDegraded: true,
+			UpstreamError: &WebSocketUpstreamError{
+				EventType: "auth_error",
+				Code:      "model_not_allowed",
+				Message:   "denied",
+			},
+		},
+	})
+	if decision.Action != webSocketPreWriteActionForward {
+		t.Fatalf("Action = %v, want forward when semantic parsing degraded", decision.Action)
 	}
 }
 
@@ -880,7 +1390,7 @@ func TestWebSocketForwarder_ForwardObserved_CommitsFromSemanticObserver(t *testi
 		observer := newCodexWebSocketMessageObserver(ModelUnknown, nil, nil, func(observation WebSocketObservation) {
 			commitCh <- observation
 		})
-		result, _ := fwd.ForwardObserved(r.Context(), w, r, wsURL(upstream), nil, observer, nil)
+		result, _ := fwd.ForwardObserved(r.Context(), w, r, wsURL(upstream), nil, observer, nil, nil)
 		doneCh <- result
 	}))
 	defer proxyServer.Close()
@@ -954,7 +1464,7 @@ func TestWebSocketForwarder_ForwardObserved_FallsBackWhenObserverParseDegrades(t
 		observer := newCodexWebSocketMessageObserver(ModelUnknown, nil, nil, nil)
 		result, _ := fwd.ForwardObserved(r.Context(), w, r, wsURL(upstream), nil, observer, func(observation WebSocketObservation) {
 			commitCh <- observation
-		})
+		}, nil)
 		doneCh <- result
 	}))
 	defer proxyServer.Close()
@@ -1028,7 +1538,7 @@ func TestWebSocketForwarder_ForwardObserved_FallsBackWhenTrackingWrapperHasNoSem
 		observer := newBytesTrackingObserver(nil, &LiveBytesTracker{})
 		result, _ := fwd.ForwardObserved(r.Context(), w, r, wsURL(upstream), nil, observer, func(observation WebSocketObservation) {
 			commitCh <- observation
-		})
+		}, nil)
 		doneCh <- result
 	}))
 	defer proxyServer.Close()

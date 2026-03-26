@@ -185,8 +185,9 @@ type RuntimeConfig struct {
 
 // RequestLog represents a request log entry.
 type RequestLog struct {
-	ID         uint   `gorm:"primaryKey;autoIncrement" json:"id"`
-	RequestID  string `gorm:"index" json:"request_id"`
+	ID        uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	RequestID string `gorm:"index" json:"request_id"`
+	// ProviderID belongs to the final request/session outcome visible to the client.
 	ProviderID string `gorm:"index" json:"provider_id"`
 	APIType    string `json:"api_type"`
 	Model      string `json:"model"`
@@ -229,22 +230,56 @@ type RequestLog struct {
 	CacheCreationInputTokens *int64  `gorm:"default:null" json:"cache_creation_input_tokens,omitempty"` // Claude: tokens written to cache (billed at 125%)
 	UsageDetails             *string `gorm:"type:text;default:null" json:"usage_details,omitempty"`     // JSON: full usage details (service_tier, TTL breakdown, etc.)
 	// Attempts is populated by API, not stored directly in database.
+	// These rows describe per-provider attempts only; the final lifecycle conclusion
+	// stays on RequestLog so websocket outcome attribution has a single source of truth.
 	Attempts []RequestAttempt `gorm:"-" json:"attempts,omitempty"`
 }
 
-// RequestAttempt represents a single attempt within a request (for retry tracking).
+// RequestAttemptPhase records which websocket failover window an attempt ended in.
+// It stays nullable so HTTP attempts do not need to emulate websocket semantics.
+type RequestAttemptPhase string
+
+const (
+	RequestAttemptPhasePreAccept             RequestAttemptPhase = "pre_accept"
+	RequestAttemptPhasePostUpgradePreVisible RequestAttemptPhase = "post_upgrade_pre_visible"
+	RequestAttemptPhaseVisible               RequestAttemptPhase = "visible"
+)
+
+// RequestAttemptOutcome records the provider-attempt result without duplicating the
+// request-level lifecycle summary that lives on RequestLog.
+type RequestAttemptOutcome string
+
+const (
+	RequestAttemptOutcomeUpstreamHandshakeRejected RequestAttemptOutcome = "upstream_handshake_rejected"
+	RequestAttemptOutcomeUpstreamTransportError    RequestAttemptOutcome = "upstream_transport_error"
+	RequestAttemptOutcomeUpstreamSemanticError     RequestAttemptOutcome = "upstream_semantic_error"
+	RequestAttemptOutcomeVisibleSession            RequestAttemptOutcome = "visible_session"
+)
+
+// RequestAttempt switch reasons stay free-form because most retries reuse shared
+// transport/lifecycle causes, but semantic failover needs a stable persisted label
+// that distinguishes "provider-scoped error was suppressed" from generic terminal
+// causes shown elsewhere in the UI.
+const RequestAttemptSwitchReasonProviderScopedSemanticError = "provider_scoped_semantic_error"
+
+// RequestAttempt represents a single provider attempt within a request.
 type RequestAttempt struct {
-	ID             uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	RequestID      string    `gorm:"index" json:"request_id"`
-	ProviderID     string    `json:"provider_id"`
-	Attempt        int       `json:"attempt"`
-	StatusCode     int       `json:"status_code"`
-	Error          string    `json:"error"`
-	BodySnippet    string    `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
-	ReqBodySnippet string    `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
-	LatencyMs      int64     `json:"latency_ms"`
-	SwitchReason   string    `json:"switch_reason,omitempty"` // Reason for switching to next provider (if any)
-	CreatedAt      time.Time `json:"created_at"`
+	ID        uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	RequestID string `gorm:"index" json:"request_id"`
+	// ProviderID identifies the provider used for this individual attempt only.
+	ProviderID string `json:"provider_id"`
+	Attempt    int    `json:"attempt"`
+	StatusCode int    `json:"status_code"`
+	Error      string `json:"error"`
+	// WebSocket attempt fields stay nullable so generic retry rows can stay protocol-agnostic.
+	Phase                 *RequestAttemptPhase   `gorm:"type:text;default:null" json:"phase,omitempty"`
+	Outcome               *RequestAttemptOutcome `gorm:"type:text;default:null" json:"outcome,omitempty"`
+	ResultVisibleToClient *bool                  `gorm:"default:null" json:"result_visible_to_client,omitempty"`
+	BodySnippet           string                 `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
+	ReqBodySnippet        string                 `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
+	LatencyMs             int64                  `json:"latency_ms"`
+	SwitchReason          string                 `json:"switch_reason,omitempty"` // Reason for switching to next provider (if any)
+	CreatedAt             time.Time              `json:"created_at"`
 }
 
 // LogFilter represents filter and sort parameters for log queries.

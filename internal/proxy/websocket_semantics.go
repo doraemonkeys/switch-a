@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+
+	"switch-a/internal/defaults"
 )
 
 const (
@@ -37,6 +39,7 @@ type WebSocketObservation struct {
 // upstream event is actually an authorization/model/billing failure.
 type WebSocketUpstreamError struct {
 	EventType  string
+	Code       string
 	StatusCode int
 	Message    string
 	Raw        string
@@ -50,6 +53,10 @@ func (e *WebSocketUpstreamError) Clone() *WebSocketUpstreamError {
 	return &cloned
 }
 
+func (e *WebSocketUpstreamError) IsAllowlistedProviderScoped() bool {
+	return classifyWebSocketUpstreamError(e) == webSocketSemanticClassificationProviderScopedAllowlisted
+}
+
 // WebSocketMessageObserver consumes relayed messages and reconstructs semantic fields that
 // are not present in the initial HTTP upgrade request.
 type WebSocketMessageObserver interface {
@@ -58,6 +65,29 @@ type WebSocketMessageObserver interface {
 	Snapshot() WebSocketObservation
 	ParseDegraded() bool
 	HasSemanticObservation() bool
+}
+
+type webSocketSemanticClassification uint8
+
+const (
+	webSocketSemanticClassificationUnknown webSocketSemanticClassification = iota
+	webSocketSemanticClassificationClientScoped
+	webSocketSemanticClassificationProviderScopedAllowlisted
+)
+
+type webSocketSemanticFrameDecision uint8
+
+const (
+	webSocketSemanticFrameDecisionForward webSocketSemanticFrameDecision = iota
+	webSocketSemanticFrameDecisionSuppress
+)
+
+// webSocketSemanticDecision keeps semantic classification separate from relay action.
+// The recovery loop can reason about provider scope while the relay only needs to know
+// whether the current upstream frame should still be forwarded to the client.
+type webSocketSemanticDecision struct {
+	Classification webSocketSemanticClassification
+	FrameDecision  webSocketSemanticFrameDecision
 }
 
 func newWebSocketMessageObserver(apiType, initialModel string, logger Logger, onUpdate func(WebSocketObservation), onCommit func(WebSocketObservation)) WebSocketMessageObserver {
@@ -182,6 +212,31 @@ const typeFieldScanLimit = 256
 const errorFieldScanLimit = 1024
 
 var typeFieldKey = []byte(`"type":"`)
+
+var webSocketProviderScopedAllowlistedErrorKeys = map[string]struct{}{
+	"auth_error":           {},
+	"authentication_error": {},
+	"billing_error":        {},
+	"insufficient_quota":   {},
+	"invalid_api_key":      {},
+	"model_not_allowed":    {},
+	"permission_denied":    {},
+	"quota_exceeded":       {},
+	"rate_limit_error":     {},
+	"rate_limit_exceeded":  {},
+}
+
+var webSocketClientScopedErrorKeys = map[string]struct{}{
+	"bad_request_error":       {},
+	"content_filter_error":    {},
+	"context_length_exceeded": {},
+	"invalid_event":           {},
+	"invalid_message":         {},
+	"invalid_request_error":   {},
+	"unprocessable_entity":    {},
+	"unsupported_format":      {},
+	"validation_error":        {},
+}
 
 func quickExtractEventType(data []byte) string {
 	limit := len(data)
@@ -385,20 +440,7 @@ func (o *codexWebSocketMessageObserver) captureUpstreamErrorLocked(event *codexW
 		return false
 	}
 
-	next := &WebSocketUpstreamError{
-		EventType:  event.Type,
-		StatusCode: event.Status,
-		Raw:        string(data),
-	}
-	if event.Error != nil {
-		if event.Error.Type != "" {
-			next.EventType = event.Error.Type
-		}
-		next.Message = strings.TrimSpace(event.Error.Message)
-	}
-	if next.Message == "" {
-		next.Message = next.EventType
-	}
+	next := buildWebSocketUpstreamError(event, data)
 
 	if upstreamErrorsEqual(o.upstreamError, next) {
 		return false
@@ -490,7 +532,151 @@ func upstreamErrorsEqual(left, right *WebSocketUpstreamError) bool {
 		return left == right
 	}
 	return left.EventType == right.EventType &&
+		left.Code == right.Code &&
 		left.StatusCode == right.StatusCode &&
 		left.Message == right.Message &&
 		left.Raw == right.Raw
+}
+
+func classifyWebSocketUpstreamMessage(messageType websocket.MessageType, data []byte, parseDegraded bool) webSocketSemanticClassification {
+	if parseDegraded || shouldSkipCodexObservedPayload(messageType, data) {
+		return webSocketSemanticClassificationUnknown
+	}
+
+	var event codexWebSocketEventEnvelope
+	if err := json.Unmarshal(data, &event); err != nil {
+		return webSocketSemanticClassificationUnknown
+	}
+	if !codexEventRepresentsError(&event) {
+		return webSocketSemanticClassificationUnknown
+	}
+	return classifyWebSocketUpstreamError(buildWebSocketUpstreamError(&event, data))
+}
+
+func classifyWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError) webSocketSemanticClassification {
+	if upstreamErr == nil {
+		return webSocketSemanticClassificationUnknown
+	}
+
+	statusClassification, statusMatched := classifyWebSocketUpstreamErrorStatus(upstreamErr.StatusCode)
+	identifierClassification, identifierMatched := classifyWebSocketUpstreamErrorIdentifiers(upstreamErr)
+	if statusMatched && identifierMatched && statusClassification != identifierClassification {
+		return webSocketSemanticClassificationUnknown
+	}
+	if identifierMatched {
+		return identifierClassification
+	}
+	if statusMatched {
+		return statusClassification
+	}
+	return webSocketSemanticClassificationUnknown
+}
+
+func classifyWebSocketUpstreamErrorStatus(statusCode int) (webSocketSemanticClassification, bool) {
+	switch {
+	case statusCode <= 0:
+		return webSocketSemanticClassificationUnknown, false
+	case statusCode >= defaults.StatusServerError ||
+		statusCode == defaults.StatusPaymentRequired ||
+		statusCode == defaults.StatusTooManyRequests ||
+		statusCode == defaults.StatusUnauthorized ||
+		statusCode == defaults.StatusForbidden:
+		// Status-based provider scope intentionally reuses the HTTP failover allowlist
+		// so pre-upgrade and post-upgrade provider responsibility follow one policy.
+		return webSocketSemanticClassificationProviderScopedAllowlisted, true
+	case statusCode >= defaults.StatusClientError && statusCode < defaults.StatusServerError:
+		return webSocketSemanticClassificationClientScoped, true
+	default:
+		return webSocketSemanticClassificationUnknown, false
+	}
+}
+
+func classifyWebSocketUpstreamErrorIdentifiers(upstreamErr *WebSocketUpstreamError) (webSocketSemanticClassification, bool) {
+	classification := webSocketSemanticClassificationUnknown
+	matched := false
+	for _, key := range []string{normalizeWebSocketSemanticErrorKey(upstreamErr.EventType), normalizeWebSocketSemanticErrorKey(upstreamErr.Code)} {
+		nextClassification, ok := classifyWebSocketSemanticErrorKey(key)
+		if !ok {
+			continue
+		}
+		if matched && classification != nextClassification {
+			return webSocketSemanticClassificationUnknown, true
+		}
+		classification = nextClassification
+		matched = true
+	}
+	return classification, matched
+}
+
+func classifyWebSocketSemanticErrorKey(key string) (webSocketSemanticClassification, bool) {
+	if key == "" {
+		return webSocketSemanticClassificationUnknown, false
+	}
+	if _, ok := webSocketProviderScopedAllowlistedErrorKeys[key]; ok {
+		return webSocketSemanticClassificationProviderScopedAllowlisted, true
+	}
+	if _, ok := webSocketClientScopedErrorKeys[key]; ok {
+		return webSocketSemanticClassificationClientScoped, true
+	}
+	return webSocketSemanticClassificationUnknown, false
+}
+
+// decideWebSocketUpstreamMessage preserves clientVisible as an explicit runtime fact.
+// Semantic parsing decides eligibility, but only the relay can decide whether the
+// client has already observed upstream data and therefore whether suppression is legal.
+func decideWebSocketUpstreamMessage(messageType websocket.MessageType, data []byte, parseDegraded, clientVisible bool) webSocketSemanticDecision {
+	classification := classifyWebSocketUpstreamMessage(messageType, data, parseDegraded)
+	return decideWebSocketSemanticClassification(classification, clientVisible)
+}
+
+func decideWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError, parseDegraded, clientVisible bool) webSocketSemanticDecision {
+	classification := webSocketSemanticClassificationUnknown
+	if !parseDegraded {
+		classification = classifyWebSocketUpstreamError(upstreamErr)
+	}
+	return decideWebSocketSemanticClassification(classification, clientVisible)
+}
+
+func decideWebSocketSemanticClassification(classification webSocketSemanticClassification, clientVisible bool) webSocketSemanticDecision {
+	decision := webSocketSemanticDecision{
+		Classification: classification,
+		FrameDecision:  webSocketSemanticFrameDecisionForward,
+	}
+	if classification == webSocketSemanticClassificationProviderScopedAllowlisted && !clientVisible {
+		decision.FrameDecision = webSocketSemanticFrameDecisionSuppress
+	}
+	return decision
+}
+
+func buildWebSocketUpstreamError(event *codexWebSocketEventEnvelope, data []byte) *WebSocketUpstreamError {
+	if event == nil {
+		return nil
+	}
+
+	upstreamErr := &WebSocketUpstreamError{
+		EventType:  event.Type,
+		StatusCode: event.Status,
+		Raw:        string(data),
+	}
+	if event.Error != nil {
+		if event.Error.Type != "" {
+			upstreamErr.EventType = event.Error.Type
+		}
+		upstreamErr.Code = strings.TrimSpace(event.Error.Code)
+		upstreamErr.Message = strings.TrimSpace(event.Error.Message)
+	}
+	if upstreamErr.Message == "" {
+		if upstreamErr.Code != "" {
+			upstreamErr.Message = upstreamErr.Code
+		} else {
+			upstreamErr.Message = upstreamErr.EventType
+		}
+	}
+	return upstreamErr
+}
+
+func normalizeWebSocketSemanticErrorKey(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	return normalized
 }

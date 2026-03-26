@@ -5,6 +5,7 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"go.uber.org/zap"
 )
@@ -16,12 +17,12 @@ import (
 func (h *Handler) selectProviderWithTracking(ctx context.Context, selectReq *model.SelectRequest, attempt int, excluded map[string]bool) (*model.Provider, bool, error) {
 	if h.selector == nil {
 		// Fallback: direct provider list (no selector configured)
-		provider, err := h.selectProviderFallback(ctx, selectReq, attempt, excluded)
+		provider, err := normalizeSelectedProvider(h.selectProviderFallback(ctx, selectReq, attempt, excluded))
 		return provider, false, err
 	}
 
 	if attempt == 0 {
-		result, err := h.selector.SelectWithMetadata(ctx, selectReq)
+		result, err := normalizeSelectorSelectResult(h.selector.SelectWithMetadata(ctx, selectReq))
 		if err != nil {
 			return nil, false, err
 		}
@@ -42,8 +43,32 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, selectReq *mod
 		return result.Provider, false, nil
 	}
 
-	provider, err := h.selector.SelectExcluding(ctx, selectReq, excluded)
+	provider, err := normalizeSelectedProvider(h.selector.SelectExcluding(ctx, selectReq, excluded))
 	return provider, false, err
+}
+
+func normalizeSelectorSelectResult(result *selector.SelectResult, err error) (*selector.SelectResult, error) {
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Provider == nil {
+		// Provider exhaustion must collapse to ErrNoProvider so retry orchestration can
+		// terminate cleanly instead of treating a nil provider as a partially valid selection.
+		return nil, internal.ErrNoProvider
+	}
+	return result, nil
+}
+
+func normalizeSelectedProvider(provider *model.Provider, err error) (*model.Provider, error) {
+	if err != nil {
+		return nil, err
+	}
+	if provider == nil {
+		// Keeping "no candidate" on the error channel makes selection semantics consistent
+		// across first picks, retries, and fallback mode.
+		return nil, internal.ErrNoProvider
+	}
+	return provider, nil
 }
 
 // tryActiveProviderFallback checks active requests for a valid provider.

@@ -52,6 +52,7 @@ type Store interface {
 	InitDefaultConfig(ctx context.Context) error
 
 	// Log operations
+	// RequestLog remains the single source of truth for request/session lifecycle.
 	InsertLog(ctx context.Context, log *model.RequestLog) error
 	ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error)
 	CountLogs(ctx context.Context, filter model.LogFilter) (int64, error)
@@ -60,7 +61,7 @@ type Store interface {
 	CleanOldLogs(ctx context.Context, beforeDays int) error
 	GetLogByID(ctx context.Context, id uint) (*model.RequestLog, error)
 
-	// Request attempt operations (for retry tracking)
+	// Request attempt operations only persist provider-attempt diagnostics.
 	InsertAttempts(ctx context.Context, attempts []model.RequestAttempt) error
 	GetAttemptsByRequestID(ctx context.Context, requestID string) ([]model.RequestAttempt, error)
 	CleanOldAttempts(ctx context.Context, before time.Time) (int64, error)

@@ -21,6 +21,95 @@ function createMockAttempt(
   };
 }
 
+function registerWebSocketLifecycleAttributionTests() {
+  describe("websocket lifecycle attribution", () => {
+    it("surfaces provider-attempt semantics and final outcome ownership", () => {
+      const attempts = [
+        createMockAttempt({
+          id: 1,
+          provider_id: "provider-old",
+          attempt: 0,
+          status_code: 101,
+          error: "provider semantic error",
+          phase: "post_upgrade_pre_visible",
+          outcome: "upstream_semantic_error",
+          result_visible_to_client: false,
+          switch_reason: "provider_scoped_semantic_error",
+        }),
+        createMockAttempt({
+          id: 2,
+          provider_id: "provider-final",
+          attempt: 1,
+          status_code: 101,
+          phase: "visible",
+          outcome: "visible_session",
+          result_visible_to_client: true,
+        }),
+      ];
+
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={attempts}
+          isWebSocket
+          attributedProviderId="provider-final"
+        />,
+      );
+
+      expect(screen.getByText("Provider Attempt 1")).toBeInTheDocument();
+      expect(screen.getByText("Provider Attempt 2")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Semantic error suppressed before client-visible data",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Provider-scoped semantic error — switched provider"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("This provider owned the client-visible session"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Phase: Post-upgrade, pre-visible"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Phase: Visible")).toBeInTheDocument();
+      expect(screen.getByText("Outcome owner")).toBeInTheDocument();
+
+      const cards = container.querySelectorAll(".p-3.rounded-lg.border");
+      expect(cards[0]).toHaveClass("border-amber-200");
+      expect(cards[1]).toHaveClass("border-green-200");
+    });
+
+    it("does not style visible-session ownership as success after a post-commit failure", () => {
+      const attempts = [
+        createMockAttempt({
+          id: 1,
+          provider_id: "provider-final",
+          attempt: 0,
+          status_code: 101,
+          error: "upstream transport closed after commit",
+          phase: "visible",
+          outcome: "visible_session",
+          result_visible_to_client: true,
+        }),
+      ];
+
+      const { container } = render(
+        <RequestAttemptTimeline attempts={attempts} isWebSocket />,
+      );
+
+      const cards = container.querySelectorAll(".p-3.rounded-lg.border");
+      expect(cards[0]).toHaveClass("border-red-200");
+      expect(cards[0]).not.toHaveClass("border-green-200");
+
+      const upgradeBadge = screen.getByText("101 Upgrade");
+      expect(upgradeBadge).not.toHaveClass("bg-green-100");
+      expect(
+        screen.getByText("This provider owned the client-visible session"),
+      ).toHaveClass("bg-blue-100");
+    });
+  });
+}
+
 describe("RequestAttemptTimeline", () => {
   describe("empty/null handling", () => {
     it("returns null when attempts is empty array", () => {
@@ -67,6 +156,19 @@ describe("RequestAttemptTimeline", () => {
       expect(screen.getByText("Attempt 1")).toBeInTheDocument();
       expect(screen.getByText("Attempt 2")).toBeInTheDocument();
       expect(screen.getByText("Attempt 3")).toBeInTheDocument();
+    });
+
+    it("preserves one-based backend attempt numbers without adding an extra offset", () => {
+      const attempts = [
+        createMockAttempt({ id: 1, attempt: 1 }),
+        createMockAttempt({ id: 2, attempt: 2 }),
+      ];
+
+      render(<RequestAttemptTimeline attempts={attempts} />);
+
+      expect(screen.getByText("Attempt 1")).toBeInTheDocument();
+      expect(screen.getByText("Attempt 2")).toBeInTheDocument();
+      expect(screen.queryByText("Attempt 3")).not.toBeInTheDocument();
     });
 
     it("displays provider name when available in map", () => {
@@ -319,4 +421,6 @@ describe("RequestAttemptTimeline", () => {
       expect(screen.getByText("0ms")).toBeInTheDocument();
     });
   });
+
+  registerWebSocketLifecycleAttributionTests();
 });
