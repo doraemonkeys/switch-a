@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -455,6 +456,22 @@ func TestWebSocketSwitchReasonUsesPermanentStatusesAndTerminalCause(t *testing.T
 				},
 			},
 			want: formatPermanentErrorReason(http.StatusUnauthorized),
+		},
+		{
+			name: "usage-limit handshake uses canonical reason",
+			attempt: WebSocketAttemptResult{
+				Result: &WebSocketResult{
+					HandshakeStatusCode: http.StatusTooManyRequests,
+					HandshakeHeaders: http.Header{
+						headerCodexPrimaryUsedPercent: []string{"100"},
+						headerCodexPrimaryResetAt:     []string{strconv.FormatInt(time.Date(2026, time.March, 26, 12, 5, 0, 0, time.UTC).Unix(), 10)},
+					},
+					HandshakeBodySnippet: `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` +
+						strconv.FormatInt(time.Date(2026, time.March, 26, 12, 5, 0, 0, time.UTC).Unix(), 10) + `}}`,
+					HandshakeObservedAt: time.Date(2026, time.March, 26, 12, 0, 0, 0, time.UTC),
+				},
+			},
+			want: SwitchReasonUsageLimitReached,
 		},
 		{
 			name: "other terminal causes fall back to lifecycle cause",

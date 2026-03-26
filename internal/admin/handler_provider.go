@@ -333,6 +333,28 @@ func (h *Handler) commitProviderPersistencePlan(plan providerPersistencePlan) {
 	}
 }
 
+func (h *Handler) handleProviderPersistenceError(
+	w http.ResponseWriter,
+	id string,
+	action string,
+	err error,
+) bool {
+	var conflict *store.CredentialBindingConflictError
+	if errors.As(err, &conflict) {
+		h.logger.Warn("rejected provider persistence due to duplicate GPT credential binding",
+			zap.String("id", id),
+			zap.String("account_id", conflict.AccountID),
+			zap.String("bound_provider_id", conflict.ProviderID),
+		)
+		writeError(w, http.StatusConflict, ErrCodeConflict, conflict.Error())
+		return true
+	}
+
+	h.logger.Error("failed to "+action+" provider", zap.String("id", id), zap.Error(err))
+	writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to "+action+" provider")
+	return false
+}
+
 func (h *Handler) attachProviderAuthProfile(ctx context.Context, provider *model.Provider) {
 	if provider == nil {
 		return
@@ -408,8 +430,7 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateProvider(r.Context(), provider); err != nil {
-		h.logger.Error("failed to create provider", zap.String("id", req.ID), zap.Error(err))
-		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to create provider")
+		h.handleProviderPersistenceError(w, req.ID, "create", err)
 		return
 	}
 
@@ -595,8 +616,7 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.UpdateProvider(r.Context(), provider); err != nil {
-		h.logger.Error("failed to update provider", zap.String("id", id), zap.Error(err))
-		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update provider")
+		h.handleProviderPersistenceError(w, id, "update", err)
 		return
 	}
 

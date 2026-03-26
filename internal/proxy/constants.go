@@ -11,6 +11,10 @@ const (
 
 	// SwitchReasonCircuitBreakerTriggered indicates the circuit breaker marked the provider unavailable.
 	SwitchReasonCircuitBreakerTriggered = "circuit_breaker_triggered"
+
+	// SwitchReasonUsageLimitReached indicates the provider exhausted an upstream
+	// usage window and should be skipped until the advertised reset time.
+	SwitchReasonUsageLimitReached = "usage_limit_reached"
 )
 
 // formatPermanentErrorReason formats a switch reason for permanent HTTP errors (401, 402, 403).

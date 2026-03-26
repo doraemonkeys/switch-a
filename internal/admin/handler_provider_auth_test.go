@@ -11,6 +11,7 @@ import (
 
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
+	storepkg "switch-a/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -342,6 +343,50 @@ func TestCreateProvider_ChatGPTLoginRemainsReusableWhenPersistenceFails(t *testi
 	}
 }
 
+func TestCreateProvider_ChatGPTLoginConflictReturnsConflictAndDoesNotFinalize(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	auth := &mockProviderAuthService{
+		appliedPayload: mustMarshalChatGPTCredentialData(t),
+	}
+	trackingStore := &loginCommitTrackingStore{
+		mockStore: newMockStore(),
+		auth:      auth,
+	}
+	trackingStore.createErr = &storepkg.CredentialBindingConflictError{
+		AccountID:  "acct_test",
+		ProviderID: "existing-provider",
+	}
+	handler := NewHandler(Config{
+		Store:  trackingStore,
+		Auth:   auth,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers", strings.NewReader(`{
+		"id": "gpt-provider",
+		"name": "GPT Provider",
+		"credential_type": "chatgpt",
+		"credential_login_id": "login-123"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.CreateProvider(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `existing-provider`) {
+		t.Fatalf("response body = %q, want conflicting provider id", w.Body.String())
+	}
+	if auth.applyCalls != 1 {
+		t.Fatalf("ApplyChatGPTLogin calls = %d, want 1", auth.applyCalls)
+	}
+	if auth.finalizeCalls != 0 {
+		t.Fatalf("FinalizeChatGPTLogin calls = %d, want 0", auth.finalizeCalls)
+	}
+}
+
 func TestUpdateProvider_ChatGPTLoginCommitsAfterPersistence(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	auth := &mockProviderAuthService{
@@ -436,6 +481,61 @@ func TestUpdateProvider_ChatGPTLoginRemainsReusableWhenPersistenceFails(t *testi
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status code = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if auth.applyCalls != 1 {
+		t.Fatalf("ApplyChatGPTLogin calls = %d, want 1", auth.applyCalls)
+	}
+	if auth.finalizeCalls != 0 {
+		t.Fatalf("FinalizeChatGPTLogin calls = %d, want 0", auth.finalizeCalls)
+	}
+}
+
+func TestUpdateProvider_ChatGPTLoginConflictReturnsConflictAndDoesNotFinalize(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	auth := &mockProviderAuthService{
+		appliedPayload: mustMarshalChatGPTCredentialData(t),
+	}
+	trackingStore := &loginCommitTrackingStore{
+		mockStore: newMockStore(),
+		auth:      auth,
+	}
+	trackingStore.updateErr = &storepkg.CredentialBindingConflictError{
+		AccountID:  "acct_test",
+		ProviderID: "existing-provider",
+	}
+	trackingStore.providers["gpt-provider"] = &model.Provider{
+		ID:             "gpt-provider",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeAPIKey,
+		APIKey:         "legacy-key",
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "gpt-provider",
+			APIType:    "responses",
+			BaseURL:    "https://api.example.com",
+		}},
+	}
+	handler := NewHandler(Config{
+		Store:  trackingStore,
+		Auth:   auth,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/gpt-provider", strings.NewReader(`{
+		"name": "GPT Provider",
+		"credential_type": "chatgpt",
+		"credential_login_id": "login-456"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	setPathValue(req, "id", "gpt-provider")
+	w := httptest.NewRecorder()
+
+	handler.UpdateProvider(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `existing-provider`) {
+		t.Fatalf("response body = %q, want conflicting provider id", w.Body.String())
 	}
 	if auth.applyCalls != 1 {
 		t.Fatalf("ApplyChatGPTLogin calls = %d, want 1", auth.applyCalls)

@@ -38,8 +38,9 @@ type Store interface {
 	// IncrementFailCount atomically increments fail_count, sets last_failure and last_error.
 	// Returns the updated state.
 	IncrementFailCount(ctx context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error)
-	// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
-	TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
+	// AutoDisableUntil atomically marks a provider unavailable until the given time.
+	// The reason identifies the automatic recovery policy that put the provider on hold.
+	AutoDisableUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
 	// AtomicRecoverIfExpired atomically checks if a provider's auto-disable period has expired
 	// and recovers it. Returns true if recovery was performed, false otherwise.
 	AtomicRecoverIfExpired(ctx context.Context, providerID string, now time.Time) (bool, error)
@@ -95,6 +96,9 @@ type HealthManager interface {
 	// IsAvailable checks if the provider is currently available.
 	// This is a pure query with no side effects.
 	IsAvailable(ctx context.Context, providerID string) bool
+	// SuspendUntil marks a provider unavailable until the given time using automatic
+	// recovery semantics so it becomes selectable again after the cooldown expires.
+	SuspendUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
 	// ManualDisable manually disables a provider.
 	ManualDisable(ctx context.Context, providerID string, reason string) error
 	// ManualEnable manually enables a provider (clears disabled state).

@@ -200,11 +200,8 @@ func websocketSwitchReason(attempt WebSocketAttemptResult) string {
 		attempt.Result.UpstreamError.IsAllowlistedProviderScoped() {
 		return model.RequestAttemptSwitchReasonProviderScopedSemanticError
 	}
-
-	statusCode := attempt.statusCode()
-	switch statusCode {
-	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
-		return formatPermanentErrorReason(statusCode)
+	if failureDisposition := classifyWebSocketHandshakeFailure(attempt.Result); failureDisposition.forcesProviderSwitch() {
+		return failureDisposition.switchReason
 	}
 	if attempt.Result != nil && attempt.Result.TerminalCause != "" {
 		return string(attempt.Result.TerminalCause)

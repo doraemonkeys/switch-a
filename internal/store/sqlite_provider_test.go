@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -404,4 +406,149 @@ func TestGetProviderNotFound(t *testing.T) {
 	if got != nil {
 		t.Error("expected nil for non-existent provider")
 	}
+}
+
+func TestCreateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p1",
+		Name:           "GPT One",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-shared"),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p1 failed: %v", err)
+	}
+
+	err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p2",
+		Name:           "GPT Two",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-shared"),
+		Enabled:        true,
+	})
+	if !errors.Is(err, ErrCredentialBindingConflict) {
+		t.Fatalf("CreateProvider duplicate = %v, want ErrCredentialBindingConflict", err)
+	}
+
+	var conflict *CredentialBindingConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("CreateProvider duplicate error = %v, want CredentialBindingConflictError", err)
+	}
+	if conflict.ProviderID != "p1" {
+		t.Fatalf("conflict.ProviderID = %q, want p1", conflict.ProviderID)
+	}
+	if conflict.AccountID != "acct-shared" {
+		t.Fatalf("conflict.AccountID = %q, want acct-shared", conflict.AccountID)
+	}
+
+	providers, listErr := store.ListProviders(ctx)
+	if listErr != nil {
+		t.Fatalf("ListProviders failed: %v", listErr)
+	}
+	if len(providers) != 1 {
+		t.Fatalf("provider count = %d, want 1", len(providers))
+	}
+}
+
+func TestUpdateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p1",
+		Name:           "GPT One",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-one"),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p1 failed: %v", err)
+	}
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p2",
+		Name:           "GPT Two",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-two"),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p2 failed: %v", err)
+	}
+
+	err := store.UpdateProvider(ctx, &model.Provider{
+		ID:             "p2",
+		Name:           "GPT Two Updated",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-one"),
+		Enabled:        true,
+	})
+	if !errors.Is(err, ErrCredentialBindingConflict) {
+		t.Fatalf("UpdateProvider duplicate = %v, want ErrCredentialBindingConflict", err)
+	}
+
+	got, getErr := store.GetProvider(ctx, "p2")
+	if getErr != nil {
+		t.Fatalf("GetProvider p2 failed: %v", getErr)
+	}
+	if !strings.Contains(got.CredentialData, "\"acct-two\"") {
+		t.Fatalf("CredentialData = %q, want original account to remain", got.CredentialData)
+	}
+}
+
+func TestUpdateProviderCredential_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p1",
+		Name:           "GPT One",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-one"),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p1 failed: %v", err)
+	}
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p2",
+		Name:           "GPT Two",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-two"),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p2 failed: %v", err)
+	}
+
+	err := store.UpdateProviderCredential(
+		ctx,
+		"p2",
+		model.ProviderCredentialTypeChatGPT,
+		mustMarshalChatGPTCredentialData(t, "acct-one"),
+	)
+	if !errors.Is(err, ErrCredentialBindingConflict) {
+		t.Fatalf("UpdateProviderCredential duplicate = %v, want ErrCredentialBindingConflict", err)
+	}
+
+	got, getErr := store.GetProvider(ctx, "p2")
+	if getErr != nil {
+		t.Fatalf("GetProvider p2 failed: %v", getErr)
+	}
+	if !strings.Contains(got.CredentialData, "\"acct-two\"") {
+		t.Fatalf("CredentialData = %q, want original account to remain", got.CredentialData)
+	}
+}
+
+func mustMarshalChatGPTCredentialData(t *testing.T, accountID string) string {
+	t.Helper()
+
+	payload, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    accountID,
+	})
+	if err != nil {
+		t.Fatalf("marshal GPT credential payload: %v", err)
+	}
+	return string(payload)
 }

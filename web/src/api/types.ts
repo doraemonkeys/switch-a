@@ -260,6 +260,7 @@ export interface ActiveRequest {
 export type RequestAttemptSwitchReason =
   | "circuit_breaker_triggered"
   | "max_retries_exhausted"
+  | "usage_limit_reached"
   | "permanent_error_401"
   | "permanent_error_402"
   | "permanent_error_403"

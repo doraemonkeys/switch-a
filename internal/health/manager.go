@@ -35,6 +35,7 @@ const (
 // Reason strings for disabled state.
 const (
 	ReasonCircuitBreakerTriggered = "circuit breaker triggered"
+	ReasonUsageLimitReached       = "usage limit reached"
 )
 
 // healthTrackingTimeout is the timeout for internal health tracking operations.
@@ -53,8 +54,8 @@ type Store interface {
 	// IncrementFailCount atomically increments fail_count, sets last_failure and last_error.
 	// Returns the updated state.
 	IncrementFailCount(ctx context.Context, providerID string, now time.Time, lastError string) (*model.HealthState, error)
-	// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
-	TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
+	// AutoDisableUntil atomically marks a provider unavailable until the given time.
+	AutoDisableUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error
 	// AtomicRecoverIfExpired atomically checks if a provider's auto-disable period has expired
 	// and recovers it. Returns true if recovery was performed, false otherwise.
 	AtomicRecoverIfExpired(ctx context.Context, providerID string, now time.Time) (bool, error)
@@ -150,9 +151,9 @@ func (m *Manager) MarkFailure(_ context.Context, providerID string, err error) b
 		disableUntil := now.Add(circuitDisable)
 		reason := DisabledReasonPrefixAuto + ReasonCircuitBreakerTriggered
 
-		// Use atomic update to set circuit breaker state.
+		// Use atomic update to set auto-disable state.
 		// This prevents a concurrent MarkSuccess from overwriting the disabled state.
-		if triggerErr := m.store.TriggerCircuitBreaker(internalCtx, providerID, disableUntil, reason); triggerErr != nil {
+		if triggerErr := m.store.AutoDisableUntil(internalCtx, providerID, disableUntil, reason); triggerErr != nil {
 			m.logger.Error("failed to trigger circuit breaker", zap.String("provider_id", providerID), zap.Error(triggerErr))
 		}
 
@@ -164,6 +165,39 @@ func (m *Manager) MarkFailure(_ context.Context, providerID string, err error) b
 	}
 
 	return triggered
+}
+
+// SuspendUntil marks a provider unavailable until the given time using automatic
+// recovery semantics. This keeps temporary upstream conditions in the same health
+// workflow as circuit-breaking instead of leaking them into manual admin state.
+func (m *Manager) SuspendUntil(_ context.Context, providerID string, disabledUntil time.Time, reason string) error {
+	if !disabledUntil.After(m.clock.Now()) {
+		return nil
+	}
+
+	internalCtx, cancel := context.WithTimeout(context.Background(), healthTrackingTimeout)
+	defer cancel()
+
+	if reason == "" {
+		reason = "temporarily unavailable"
+	}
+	reason = DisabledReasonPrefixAuto + reason
+
+	if err := m.store.AutoDisableUntil(internalCtx, providerID, disabledUntil, reason); err != nil {
+		m.logger.Error("failed to suspend provider",
+			zap.String("provider_id", providerID),
+			zap.Time("disabled_until", disabledUntil),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	m.logger.Info("provider auto-suspended",
+		zap.String("provider_id", providerID),
+		zap.Time("disabled_until", disabledUntil),
+		zap.String("reason", reason),
+	)
+	return nil
 }
 
 // RecoverIfExpired checks if a provider's auto-disable period has expired

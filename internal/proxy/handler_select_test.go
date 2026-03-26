@@ -105,12 +105,16 @@ func (m *mockSelector) LastStickyUpdate() (stickyUpdate, bool) {
 type mockHealthManager struct {
 	availableProviders map[string]bool
 	recoverCalled      map[string]bool
+	suspendedUntil     map[string]time.Time
+	suspendReasons     map[string]string
 }
 
 func newMockHealthManager() *mockHealthManager {
 	return &mockHealthManager{
 		availableProviders: make(map[string]bool),
 		recoverCalled:      make(map[string]bool),
+		suspendedUntil:     make(map[string]time.Time),
+		suspendReasons:     make(map[string]string),
 	}
 }
 
@@ -134,6 +138,13 @@ func (m *mockHealthManager) IsAvailable(_ context.Context, providerID string) bo
 }
 
 func (m *mockHealthManager) ManualDisable(_ context.Context, _ string, _ string) error {
+	return nil
+}
+
+func (m *mockHealthManager) SuspendUntil(_ context.Context, providerID string, disabledUntil time.Time, reason string) error {
+	m.availableProviders[providerID] = false
+	m.suspendedUntil[providerID] = disabledUntil
+	m.suspendReasons[providerID] = reason
 	return nil
 }
 

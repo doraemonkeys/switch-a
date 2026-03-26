@@ -185,7 +185,7 @@ func TestIncrementFailCount(t *testing.T) {
 	}
 }
 
-func TestTriggerCircuitBreaker(t *testing.T) {
+func TestAutoDisableUntil(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
 
@@ -209,8 +209,8 @@ func TestTriggerCircuitBreaker(t *testing.T) {
 
 	// Trigger circuit breaker
 	disabledUntil := now.Add(5 * time.Minute)
-	if err := store.TriggerCircuitBreaker(ctx, "p1", disabledUntil, "auto: circuit breaker triggered"); err != nil {
-		t.Fatalf("TriggerCircuitBreaker failed: %v", err)
+	if err := store.AutoDisableUntil(ctx, "p1", disabledUntil, "auto: circuit breaker triggered"); err != nil {
+		t.Fatalf("AutoDisableUntil failed: %v", err)
 	}
 
 	// Verify state
@@ -226,6 +226,104 @@ func TestTriggerCircuitBreaker(t *testing.T) {
 	}
 	if state.DisabledUntil == nil {
 		t.Error("expected DisabledUntil to be set")
+	}
+}
+
+func TestAutoDisableUntil_PreservesManualDisable(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	provider := &model.Provider{ID: "p1", Name: "Test Provider", Enabled: true}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	now := time.Now()
+	manualDisabledUntil := now.Add(30 * time.Minute)
+	if err := store.UpdateHealthState(ctx, &model.HealthState{
+		ProviderID:     "p1",
+		Available:      false,
+		DisabledUntil:  &manualDisabledUntil,
+		DisabledReason: "manual: maintenance",
+	}); err != nil {
+		t.Fatalf("UpdateHealthState failed: %v", err)
+	}
+
+	if err := store.AutoDisableUntil(ctx, "p1", now.Add(5*time.Minute), "auto: usage limit reached"); err != nil {
+		t.Fatalf("AutoDisableUntil failed: %v", err)
+	}
+
+	state, err := store.GetHealthState(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetHealthState failed: %v", err)
+	}
+	if state.DisabledReason != "manual: maintenance" {
+		t.Fatalf("DisabledReason = %q, want manual disable to be preserved", state.DisabledReason)
+	}
+	if state.DisabledUntil == nil || !state.DisabledUntil.Equal(manualDisabledUntil) {
+		t.Fatalf("DisabledUntil = %v, want %v", state.DisabledUntil, manualDisabledUntil)
+	}
+}
+
+func TestAutoDisableUntil_PreservesLongerAutomaticDisable(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	provider := &model.Provider{ID: "p1", Name: "Test Provider", Enabled: true}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	now := time.Now()
+	longerDisableUntil := now.Add(30 * time.Minute)
+	if err := store.AutoDisableUntil(ctx, "p1", longerDisableUntil, "auto: usage limit reached"); err != nil {
+		t.Fatalf("AutoDisableUntil failed: %v", err)
+	}
+
+	if err := store.AutoDisableUntil(ctx, "p1", now.Add(5*time.Minute), "auto: circuit breaker triggered"); err != nil {
+		t.Fatalf("AutoDisableUntil failed: %v", err)
+	}
+
+	state, err := store.GetHealthState(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetHealthState failed: %v", err)
+	}
+	if state.DisabledReason != "auto: usage limit reached" {
+		t.Fatalf("DisabledReason = %q, want longer automatic disable to be preserved", state.DisabledReason)
+	}
+	if state.DisabledUntil == nil || !state.DisabledUntil.Equal(longerDisableUntil) {
+		t.Fatalf("DisabledUntil = %v, want %v", state.DisabledUntil, longerDisableUntil)
+	}
+}
+
+func TestAutoDisableUntil_ExtendsAutomaticDisable(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	provider := &model.Provider{ID: "p1", Name: "Test Provider", Enabled: true}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	now := time.Now()
+	if err := store.AutoDisableUntil(ctx, "p1", now.Add(5*time.Minute), "auto: circuit breaker triggered"); err != nil {
+		t.Fatalf("AutoDisableUntil failed: %v", err)
+	}
+
+	longerDisableUntil := now.Add(30 * time.Minute)
+	if err := store.AutoDisableUntil(ctx, "p1", longerDisableUntil, "auto: usage limit reached"); err != nil {
+		t.Fatalf("AutoDisableUntil failed: %v", err)
+	}
+
+	state, err := store.GetHealthState(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetHealthState failed: %v", err)
+	}
+	if state.DisabledReason != "auto: usage limit reached" {
+		t.Fatalf("DisabledReason = %q, want extending disable reason to replace the shorter one", state.DisabledReason)
+	}
+	if state.DisabledUntil == nil || !state.DisabledUntil.Equal(longerDisableUntil) {
+		t.Fatalf("DisabledUntil = %v, want %v", state.DisabledUntil, longerDisableUntil)
 	}
 }
 

@@ -609,6 +609,7 @@ func TestWebSocketForwarder_Forward_HandshakeFailureCapturesUpstreamResponse(t *
 
 	const handshakeBody = `{"error":{"message":"Account quota exhausted","type":"billing_error"}}`
 	dialErr := errors.New("failed to WebSocket dial: expected handshake response status code 101 but got 402")
+	const usagePercent = "100"
 	doneCh := make(chan *WebSocketResult, 1)
 
 	fwd := NewWebSocketForwarder(WebSocketForwarderConfig{
@@ -616,7 +617,10 @@ func TestWebSocketForwarder_Forward_HandshakeFailureCapturesUpstreamResponse(t *
 			dialFunc: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
 				return nil, &http.Response{
 					StatusCode: http.StatusPaymentRequired,
-					Body:       io.NopCloser(strings.NewReader(handshakeBody)),
+					Header: http.Header{
+						headerCodexPrimaryUsedPercent: []string{usagePercent},
+					},
+					Body: io.NopCloser(strings.NewReader(handshakeBody)),
 				}, dialErr
 			},
 		},
@@ -664,6 +668,12 @@ func TestWebSocketForwarder_Forward_HandshakeFailureCapturesUpstreamResponse(t *
 		}
 		if result.HandshakeBodySnippet != handshakeBody {
 			t.Fatalf("HandshakeBodySnippet = %q, want %q", result.HandshakeBodySnippet, handshakeBody)
+		}
+		if result.HandshakeHeaders.Get(headerCodexPrimaryUsedPercent) != usagePercent {
+			t.Fatalf("HandshakeHeaders[%q] = %q, want %q", headerCodexPrimaryUsedPercent, result.HandshakeHeaders.Get(headerCodexPrimaryUsedPercent), usagePercent)
+		}
+		if result.HandshakeObservedAt.IsZero() {
+			t.Fatal("HandshakeObservedAt should be recorded for failed handshakes")
 		}
 		if !errors.Is(result.Err, dialErr) {
 			t.Fatalf("Err = %v, want dialErr", result.Err)

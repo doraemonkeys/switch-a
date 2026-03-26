@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -383,6 +384,66 @@ func TestApplyWebSocketHealthOutcome_PostCommitSemanticErrorMarksFailure(t *test
 	}
 	if !errors.Is(failures[0].err, semanticErr) {
 		t.Fatalf("err = %v, want %v", failures[0].err, semanticErr)
+	}
+}
+
+func TestApplyWebSocketHealthOutcome_UsageLimitHandshakeSuspendsProvider(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+
+	observedAt := time.Date(2026, time.March, 26, 12, 0, 0, 0, time.UTC)
+	bodyReset := observedAt.Add(5 * time.Minute)
+	laterHeaderReset := observedAt.Add(35 * time.Minute)
+	usageLimitErr := errors.New("failed to WebSocket dial: expected handshake response status code 101 but got 429")
+
+	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", &WebSocketResult{
+		HandshakeStatusCode: http.StatusTooManyRequests,
+		HandshakeBodySnippet: `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` +
+			strconv.FormatInt(bodyReset.Unix(), 10) + `}}`,
+		HandshakeHeaders: http.Header{
+			headerCodexPrimaryUsedPercent:   []string{"100"},
+			headerCodexSecondaryUsedPercent: []string{"100"},
+			headerCodexPrimaryResetAt:       []string{strconv.FormatInt(bodyReset.Unix(), 10)},
+			headerCodexSecondaryResetAt:     []string{strconv.FormatInt(laterHeaderReset.Unix(), 10)},
+		},
+		HandshakeObservedAt: observedAt,
+		TerminalCause:       model.TerminalUpstreamHandshakeRejected,
+		Err:                 usageLimitErr,
+	})
+
+	if successIDs := healthMgr.getMarkSuccessIDs(); len(successIDs) != 0 {
+		t.Fatalf("mark success IDs = %v, want none", successIDs)
+	}
+	failures := healthMgr.getMarkFailureCalls()
+	if len(failures) != 1 {
+		t.Fatalf("mark failure count = %d, want 1", len(failures))
+	}
+	if failures[0].providerID != "ws-p1" {
+		t.Fatalf("providerID = %q, want ws-p1", failures[0].providerID)
+	}
+	if !errors.Is(failures[0].err, usageLimitErr) {
+		t.Fatalf("err = %v, want %v", failures[0].err, usageLimitErr)
+	}
+
+	suspensions := healthMgr.getSuspendCalls()
+	if len(suspensions) != 1 {
+		t.Fatalf("suspend call count = %d, want 1", len(suspensions))
+	}
+	if suspensions[0].providerID != "ws-p1" {
+		t.Fatalf("suspend providerID = %q, want ws-p1", suspensions[0].providerID)
+	}
+	if suspensions[0].reason != usageLimitAutoDisableReason {
+		t.Fatalf("suspend reason = %q, want %q", suspensions[0].reason, usageLimitAutoDisableReason)
+	}
+	if !suspensions[0].disabledUntil.Equal(laterHeaderReset) {
+		t.Fatalf("disabledUntil = %v, want %v", suspensions[0].disabledUntil, laterHeaderReset)
 	}
 }
 

@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 
@@ -19,6 +21,7 @@ func TestTryIncrementAndExhaustsProvider_ReturnsCorrectSwitchReason(t *testing.T
 		providerAttempt  int
 		maxRetries       int
 		isAvailable      bool
+		disposition      providerFailureDisposition
 		wantExhausted    bool
 		wantSwitchReason string
 	}{
@@ -85,6 +88,18 @@ func TestTryIncrementAndExhaustsProvider_ReturnsCorrectSwitchReason(t *testing.T
 			wantExhausted:    false,
 			wantSwitchReason: "",
 		},
+		{
+			name:            "429_usage_limit_switches_immediately",
+			statusCode:      429,
+			providerAttempt: 0,
+			maxRetries:      2,
+			isAvailable:     true,
+			disposition: providerFailureDisposition{
+				switchReason: SwitchReasonUsageLimitReached,
+			},
+			wantExhausted:    true,
+			wantSwitchReason: SwitchReasonUsageLimitReached,
+		},
 	}
 
 	for _, tt := range tests {
@@ -98,8 +113,9 @@ func TestTryIncrementAndExhaustsProvider_ReturnsCorrectSwitchReason(t *testing.T
 			}
 
 			state := &retryState{
-				statusCode:      tt.statusCode,
-				providerAttempt: tt.providerAttempt,
+				statusCode:         tt.statusCode,
+				providerAttempt:    tt.providerAttempt,
+				failureDisposition: tt.disposition,
 				currentProvider: &model.Provider{
 					ID:         "test-provider",
 					MaxRetries: tt.maxRetries,
@@ -311,5 +327,91 @@ func TestHandler_RecordsPermanentErrorSwitchReason(t *testing.T) {
 				t.Errorf("expected 2 upstream calls (immediate switch on permanent error), got %d", callCount)
 			}
 		})
+	}
+}
+
+func TestHandler_RecordsUsageLimitSwitchReasonAndSuspendsProvider(t *testing.T) {
+	resetAt := time.Now().Add(20 * time.Minute).UTC().Truncate(time.Second)
+	resetAtEpoch := resetAt.Unix()
+	callCount := 0
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.Header().Set(headerCodexPrimaryUsedPercent, "100")
+			w.Header().Set(headerCodexSecondaryUsedPercent, "67")
+			w.Header().Set(headerCodexPrimaryResetAt, strconv.FormatInt(resetAtEpoch, 10))
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(resetAtEpoch, 10) + `}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"response":"success"}`))
+	}))
+	defer upstreamServer.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:         "p1",
+			Name:       "Provider 1",
+			APIKey:     "key1",
+			AuthMode:   "bearer",
+			Enabled:    true,
+			MaxRetries: 2,
+			Priority:   1,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
+		},
+		{
+			ID:         "p2",
+			Name:       "Provider 2",
+			APIKey:     "key2",
+			AuthMode:   "bearer",
+			Enabled:    true,
+			MaxRetries: 0,
+			Priority:   0,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
+		},
+	}
+	healthMgr := newMockHealthManager()
+	healthMgr.availableProviders["p1"] = true
+	healthMgr.availableProviders["p2"] = true
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Health: healthMgr,
+		Logger: zap.NewNop(),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	waitFor(t, func() bool {
+		return store.AttemptsLen() >= 2
+	}, testPollTimeout)
+
+	attempts := store.LastAttempts(2)
+	if len(attempts) < 2 {
+		t.Fatalf("expected at least 2 attempts, got %d", len(attempts))
+	}
+
+	if attempts[0].SwitchReason != SwitchReasonUsageLimitReached {
+		t.Fatalf("first attempt switch_reason = %q, want %q", attempts[0].SwitchReason, SwitchReasonUsageLimitReached)
+	}
+	if callCount != 2 {
+		t.Fatalf("expected 2 upstream calls (immediate switch on usage limit), got %d", callCount)
+	}
+	if got := healthMgr.suspendReasons["p1"]; got != usageLimitAutoDisableReason {
+		t.Fatalf("suspend reason = %q, want %q", got, usageLimitAutoDisableReason)
+	}
+	if got := healthMgr.suspendedUntil["p1"]; !got.Equal(resetAt) {
+		t.Fatalf("suspended until = %v, want %v", got, resetAt)
 	}
 }

@@ -472,6 +472,10 @@ func (m *mockHealthManager) ManualDisable(_ context.Context, _ string, _ string)
 	return m.disableErr
 }
 
+func (m *mockHealthManager) SuspendUntil(_ context.Context, _ string, _ time.Time, _ string) error {
+	return nil
+}
+
 func (m *mockHealthManager) ManualEnable(_ context.Context, _ string) error {
 	return m.enableErr
 }

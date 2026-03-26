@@ -53,6 +53,20 @@ func (h *Handler) markFailure(ctx context.Context, providerID string, err error)
 	}
 }
 
+// suspendProviderUntil marks a provider unavailable until the given time.
+func (h *Handler) suspendProviderUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason string) {
+	if h.health == nil {
+		return
+	}
+	if err := h.health.SuspendUntil(ctx, providerID, disabledUntil, reason); err != nil {
+		h.logger.Warn("failed to suspend provider after upstream failure",
+			zap.String("provider_id", providerID),
+			zap.Time("disabled_until", disabledUntil),
+			zap.Error(err),
+		)
+	}
+}
+
 // releaseConcurrency releases the concurrency slot for a provider.
 func (h *Handler) releaseConcurrency(providerID string) {
 	if h.selector != nil {

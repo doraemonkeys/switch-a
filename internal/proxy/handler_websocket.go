@@ -414,6 +414,17 @@ func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID str
 	if result == nil {
 		return
 	}
+	failureDisposition := classifyWebSocketHandshakeFailure(result)
+	if failureDisposition.autoDisableUntil != nil {
+		h.markFailure(ctx, providerID, result.Err)
+		h.suspendProviderUntil(
+			ctx,
+			providerID,
+			*failureDisposition.autoDisableUntil,
+			failureDisposition.autoDisableReason,
+		)
+		return
+	}
 	if result.UpstreamError != nil {
 		h.markFailure(ctx, providerID, result.Err)
 		return

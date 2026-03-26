@@ -192,7 +192,16 @@ func (h *Handler) failoverForwardResponse(
 	result.err = statusErr
 	result.success = false
 	result.bodySnippet = upstreamResp.DrainWithSnippet(0)
+	result.failureDisposition = classifyProviderFailure(result.statusCode, upstreamResp.Header, result.bodySnippet, time.Now())
 	h.markFailure(ctx, providerID, statusErr)
+	if result.failureDisposition.autoDisableUntil != nil {
+		h.suspendProviderUntil(
+			ctx,
+			providerID,
+			*result.failureDisposition.autoDisableUntil,
+			result.failureDisposition.autoDisableReason,
+		)
+	}
 	return result, true
 }
 

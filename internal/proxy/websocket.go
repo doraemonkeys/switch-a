@@ -120,6 +120,15 @@ type WebSocketResult struct {
 	// WebSocket upgrade so logs can show the provider's actual reason.
 	HandshakeBodySnippet string
 
+	// HandshakeHeaders preserves the upstream handshake response headers so the
+	// handler can apply the same provider-failure semantics it uses on HTTP.
+	HandshakeHeaders http.Header
+
+	// HandshakeObservedAt fixes the response timestamp for relative reset-window
+	// headers. WebSocket health handling runs after orchestration, so recomputing
+	// these windows from a later wall clock would incorrectly extend cooldowns.
+	HandshakeObservedAt time.Time
+
 	// CloseCode is the WebSocket close status code, if available.
 	CloseCode websocket.StatusCode
 
@@ -236,13 +245,19 @@ func (f *WebSocketForwarder) dialUpstream(ctx context.Context, upstreamURL strin
 	if err != nil {
 		var handshakeStatusCode int
 		var handshakeBodySnippet string
+		var handshakeHeaders http.Header
+		var handshakeObservedAt time.Time
 		if resp != nil {
+			handshakeObservedAt = time.Now()
 			handshakeStatusCode = resp.StatusCode
+			handshakeHeaders = resp.Header.Clone()
 			handshakeBodySnippet = drainReadCloserWithSnippet(resp.Body, 0)
 		}
 		return nil, &WebSocketResult{
 			HandshakeStatusCode:  handshakeStatusCode,
 			HandshakeBodySnippet: handshakeBodySnippet,
+			HandshakeHeaders:     handshakeHeaders,
+			HandshakeObservedAt:  handshakeObservedAt,
 			Err:                  err,
 			TerminalCause:        classifyDialFailure(resp),
 			CommitSource:         model.CommitUnknown,

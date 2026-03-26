@@ -17,7 +17,7 @@ type mockStore struct {
 	configs                   map[string]string
 	updateErr                 error
 	getHealthStateErr         error
-	triggerCircuitBreakerErr  error
+	autoDisableUntilErr       error
 	atomicRecoverIfExpiredErr error
 }
 
@@ -96,9 +96,9 @@ func (m *mockStore) IncrementFailCount(_ context.Context, providerID string, now
 	return state, nil
 }
 
-func (m *mockStore) TriggerCircuitBreaker(_ context.Context, providerID string, disabledUntil time.Time, reason string) error {
-	if m.triggerCircuitBreakerErr != nil {
-		return m.triggerCircuitBreakerErr
+func (m *mockStore) AutoDisableUntil(_ context.Context, providerID string, disabledUntil time.Time, reason string) error {
+	if m.autoDisableUntilErr != nil {
+		return m.autoDisableUntilErr
 	}
 	if m.updateErr != nil {
 		return m.updateErr
@@ -243,6 +243,59 @@ func TestManager_MarkFailure_CircuitBreaker(t *testing.T) {
 	}
 	if state.DisabledReason == "" {
 		t.Error("DisabledReason should be set")
+	}
+}
+
+func TestManager_SuspendUntil(t *testing.T) {
+	now := time.Now()
+	clock := &mockClock{now: now}
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	ctx := context.Background()
+	disabledUntil := now.Add(15 * time.Minute)
+	if err := mgr.SuspendUntil(ctx, "p1", disabledUntil, ReasonUsageLimitReached); err != nil {
+		t.Fatalf("SuspendUntil returned error: %v", err)
+	}
+
+	state := store.healthStates["p1"]
+	if state == nil {
+		t.Fatal("expected health state to be saved")
+	}
+	if state.Available {
+		t.Error("Available should be false after suspension")
+	}
+	if state.DisabledUntil == nil || !state.DisabledUntil.Equal(disabledUntil) {
+		t.Fatalf("DisabledUntil = %v, want %v", state.DisabledUntil, disabledUntil)
+	}
+	if state.DisabledReason != DisabledReasonPrefixAuto+ReasonUsageLimitReached {
+		t.Fatalf("DisabledReason = %q, want %q", state.DisabledReason, DisabledReasonPrefixAuto+ReasonUsageLimitReached)
+	}
+}
+
+func TestManager_SuspendUntil_IgnoresExpiredWindow(t *testing.T) {
+	now := time.Now()
+	clock := &mockClock{now: now}
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	mgr := NewManager(Config{
+		Store:  store,
+		Clock:  clock,
+		Logger: logger,
+	})
+
+	if err := mgr.SuspendUntil(context.Background(), "p1", now.Add(-time.Minute), ReasonUsageLimitReached); err != nil {
+		t.Fatalf("SuspendUntil returned error for expired window: %v", err)
+	}
+	if _, exists := store.healthStates["p1"]; exists {
+		t.Fatal("SuspendUntil should not persist an already expired disable window")
 	}
 }
 
@@ -577,8 +630,8 @@ func TestManager_MarkFailure_CircuitBreaker_StoreError(t *testing.T) {
 	ctx := context.Background()
 	testErr := errors.New("connection refused")
 
-	// Set store error for TriggerCircuitBreaker, but not for IncrementFailCount
-	store.triggerCircuitBreakerErr = errors.New("store error")
+	// Set store error for AutoDisableUntil, but not for IncrementFailCount
+	store.autoDisableUntilErr = errors.New("store error")
 
 	// Should still return true (circuit triggered) but log error
 	triggered := mgr.MarkFailure(ctx, "p1", testErr)

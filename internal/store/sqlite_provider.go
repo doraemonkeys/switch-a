@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"switch-a/internal/model"
 
@@ -46,6 +48,10 @@ func (s *SQLiteStore) GetProvider(ctx context.Context, id string) (*model.Provid
 
 func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := validateExclusiveCredentialBinding(tx, p.ID, p.CredentialType, p.CredentialData); err != nil {
+			return err
+		}
+
 		// Use raw SQL to properly handle boolean false values
 		now := s.clock.Now()
 		if p.CreatedAt.IsZero() {
@@ -98,6 +104,10 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 
 func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := validateExclusiveCredentialBinding(tx, p.ID, p.CredentialType, p.CredentialData); err != nil {
+			return err
+		}
+
 		// Delete existing API types
 		if err := tx.Where("provider_id = ?", p.ID).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
 			return err
@@ -155,18 +165,85 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 
 func (s *SQLiteStore) UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error {
 	now := s.clock.Now()
-	if err := s.db.WithContext(ctx).Exec(
-		`UPDATE providers
-		 SET credential_type = ?, credential_data = ?, updated_at = ?
-		 WHERE id = ?`,
-		model.NormalizeProviderCredentialType(credentialType),
-		credentialData,
-		now,
-		id,
-	).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := validateExclusiveCredentialBinding(tx, id, credentialType, credentialData); err != nil {
+			return err
+		}
+		return tx.Exec(
+			`UPDATE providers
+			 SET credential_type = ?, credential_data = ?, updated_at = ?
+			 WHERE id = ?`,
+			model.NormalizeProviderCredentialType(credentialType),
+			credentialData,
+			now,
+			id,
+		).Error
+	}); err != nil {
 		return fmt.Errorf("update provider credential %q: %w", id, err)
 	}
 	return nil
+}
+
+func validateExclusiveCredentialBinding(
+	tx *gorm.DB,
+	providerID string,
+	credentialType model.ProviderCredentialType,
+	credentialData string,
+) error {
+	if model.NormalizeProviderCredentialType(credentialType) != model.ProviderCredentialTypeChatGPT {
+		return nil
+	}
+
+	accountID, err := chatGPTAccountIDFromCredentialData(credentialData)
+	if err != nil {
+		return err
+	}
+
+	type providerCredentialRecord struct {
+		ID             string
+		CredentialData string
+	}
+
+	var candidates []providerCredentialRecord
+	if err := tx.Model(&model.Provider{}).
+		Select("id, credential_data").
+		Where("credential_type = ?", model.ProviderCredentialTypeChatGPT).
+		Where("id <> ?", providerID).
+		Find(&candidates).Error; err != nil {
+		return fmt.Errorf("list providers for credential binding validation: %w", err)
+	}
+
+	for _, candidate := range candidates {
+		candidateAccountID, err := chatGPTAccountIDFromCredentialData(candidate.CredentialData)
+		if err != nil {
+			return fmt.Errorf("decode existing GPT credential for provider %q: %w", candidate.ID, err)
+		}
+		if candidateAccountID == accountID {
+			return &CredentialBindingConflictError{
+				AccountID:  accountID,
+				ProviderID: candidate.ID,
+			}
+		}
+	}
+
+	return nil
+}
+
+func chatGPTAccountIDFromCredentialData(credentialData string) (string, error) {
+	if strings.TrimSpace(credentialData) == "" {
+		return "", fmt.Errorf("missing GPT credential data")
+	}
+
+	var credential model.ChatGPTProviderCredential
+	if err := json.Unmarshal([]byte(credentialData), &credential); err != nil {
+		return "", fmt.Errorf("decode GPT credential data: %w", err)
+	}
+
+	accountID := strings.TrimSpace(credential.AccountID)
+	if accountID == "" {
+		return "", fmt.Errorf("missing GPT account_id")
+	}
+	return accountID, nil
 }
 
 func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {

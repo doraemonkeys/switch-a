@@ -3,7 +3,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -17,9 +16,6 @@ import (
 
 // Compile-time interface check.
 var _ internal.Store = (*SQLiteStore)(nil)
-
-// ErrNotFound is returned when a requested resource does not exist.
-var ErrNotFound = errors.New("not found")
 
 // SQLiteStore implements the Store interface using GORM and SQLite.
 type SQLiteStore struct {

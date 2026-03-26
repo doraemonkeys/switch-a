@@ -232,6 +232,11 @@ function getSwitchReasonLabel(
       };
     case "max_retries_exhausted":
       return { text: "Max retries reached — switched provider", icon: "🔄" };
+    case "usage_limit_reached":
+      return {
+        text: "Usage window exhausted — switched provider",
+        icon: "⏳",
+      };
     case "permanent_error_401":
       return { text: "Auth error (401) — switched provider", icon: "🔐" };
     case "permanent_error_402":

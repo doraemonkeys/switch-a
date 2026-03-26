@@ -126,20 +126,33 @@ func (s *SQLiteStore) IncrementFailCount(ctx context.Context, providerID string,
 	return s.GetHealthState(ctx, providerID)
 }
 
-// TriggerCircuitBreaker atomically sets available=false, disabled_until, and disabled_reason.
-// This is designed to not be overwritten by concurrent MarkSuccess calls.
-func (s *SQLiteStore) TriggerCircuitBreaker(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error {
-	// Use atomic SQL UPDATE to set circuit breaker state.
-	// This is called after IncrementFailCount, so the row should already exist.
+// AutoDisableUntil atomically marks a provider unavailable until the given time.
+// This is used by all temporary provider suspensions, including circuit breaking
+// and usage-window exhaustion. Manual disables win over automatic state changes,
+// and automatic expiries only move later so concurrent failures cannot shrink an
+// existing cooldown window.
+func (s *SQLiteStore) AutoDisableUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason string) error {
 	err := s.db.WithContext(ctx).Exec(`
-		UPDATE health_states 
-		SET available = false,
-			disabled_until = ?,
-			disabled_reason = ?
-		WHERE provider_id = ?
-	`, disabledUntil, reason, providerID).Error
+		INSERT INTO health_states (provider_id, available, success_count, fail_count, last_success, last_failure, last_error, disabled_until, disabled_reason)
+		VALUES (?, false, 0, 0, NULL, NULL, '', ?, ?)
+		ON CONFLICT(provider_id) DO UPDATE SET
+			available = CASE
+				WHEN health_states.disabled_reason LIKE 'manual:%' THEN health_states.available
+				ELSE false
+			END,
+			disabled_until = CASE
+				WHEN health_states.disabled_reason LIKE 'manual:%' THEN health_states.disabled_until
+				WHEN health_states.disabled_until IS NOT NULL AND health_states.disabled_until >= excluded.disabled_until THEN health_states.disabled_until
+				ELSE excluded.disabled_until
+			END,
+			disabled_reason = CASE
+				WHEN health_states.disabled_reason LIKE 'manual:%' THEN health_states.disabled_reason
+				WHEN health_states.disabled_until IS NOT NULL AND health_states.disabled_until >= excluded.disabled_until THEN health_states.disabled_reason
+				ELSE excluded.disabled_reason
+			END
+	`, providerID, disabledUntil, reason).Error
 	if err != nil {
-		return fmt.Errorf("trigger circuit breaker for provider %q: %w", providerID, err)
+		return fmt.Errorf("auto-disable provider %q: %w", providerID, err)
 	}
 	return nil
 }

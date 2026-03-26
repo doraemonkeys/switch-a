@@ -321,6 +321,9 @@ type retryState struct {
 	// tokenUsage tracks token usage extracted from response (Phase 4a).
 	// Only set for successful 2xx responses that contain usage data.
 	tokenUsage *TokenUsage
+	// failureDisposition carries provider-scoped retry semantics inferred from the
+	// last upstream failure, such as "switch now" or "suspend until reset".
+	failureDisposition providerFailureDisposition
 }
 
 // selectAndRegisterProvider selects a provider and registers the active request.
@@ -427,6 +430,9 @@ func (h *Handler) tryIncrementAndExhaustProvider(ctx context.Context, state *ret
 	maxRetries := max(0, state.currentProvider.MaxRetries)
 
 	// Check for permanent errors that should force immediate provider switch
+	if state.failureDisposition.forcesProviderSwitch() {
+		return true, state.failureDisposition.switchReason
+	}
 	if shouldForceProviderSwitch(state.statusCode) {
 		return true, formatPermanentErrorReason(state.statusCode)
 	}
@@ -512,6 +518,7 @@ retryLoop:
 		state.firstTokenMs = result.firstTokenMs
 		state.responseBytes = result.responseBytes
 		state.tokenUsage = result.tokenUsage
+		state.failureDisposition = result.failureDisposition
 
 		// Note: SSE status is updated in forwardToProvider() BEFORE streaming starts.
 		// This ensures long-running SSE streams are visible in the Monitor page with the SSE badge.
@@ -581,6 +588,8 @@ type forwardResult struct {
 	firstTokenMs   *int64      // Time To First Token for SSE requests (ms from request start)
 	responseBytes  int64       // Total bytes written to client (for transfer statistics)
 	tokenUsage     *TokenUsage // Token usage extracted from response (Phase 4a)
+	// failureDisposition records retry semantics derived from the upstream failure.
+	failureDisposition providerFailureDisposition
 }
 
 // setupTokenInterceptor creates and configures a token capture interceptor for successful responses.
