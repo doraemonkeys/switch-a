@@ -161,10 +161,6 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	}
 	cfg.stickyTTL = time.Duration(parseIntOrDefault(stickyTTL, defaultStickyTTLSeconds)) * time.Second
 
-	if h.activeRegistry != nil {
-		h.activeRegistry.SetStickyPerModel(cfg.stickyMode == model.StickyModeModel)
-	}
-
 	return cfg, nil
 }
 

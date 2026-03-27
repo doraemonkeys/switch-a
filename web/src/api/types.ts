@@ -81,15 +81,19 @@ export interface ProviderAPIType {
   api_key?: string;
 }
 
-export interface ProviderAuthProfile {
+export type ProviderAuthStatus = "not_connected" | "active" | "reauth_required";
+
+export interface ProviderAuthView {
   type: ProviderCredentialType;
-  ready: boolean;
+  status: ProviderAuthStatus;
+  reason?: string;
   email?: string;
   account_id?: string;
   plan_type?: string;
   usage?: ProviderUsageSnapshot | null;
   expires_at?: string;
-  last_refresh?: string;
+  last_refresh_at?: string;
+  last_error?: string;
 }
 
 export interface ProviderUsageWindow {
@@ -129,7 +133,7 @@ export interface Provider {
   created_at: string;
   updated_at: string;
   health?: HealthState | null;
-  auth_profile?: ProviderAuthProfile | null;
+  auth?: ProviderAuthView | null;
 }
 
 /** API type entry with endpoint/auth overrides, matching backend APITypeInput */
@@ -173,7 +177,28 @@ export type ChatGPTLoginStatus = "pending" | "completed" | "expired";
 export interface ChatGPTLoginStatusResponse {
   login_id: string;
   status: ChatGPTLoginStatus;
-  auth_profile?: ProviderAuthProfile | null;
+  auth?: ProviderAuthView | null;
+}
+
+export type RoutingPolicyModelMatchType = "exact" | "prefix";
+
+export interface RoutingPolicy {
+  id: string;
+  api_type: string;
+  model_match_type?: RoutingPolicyModelMatchType | null;
+  model_match_value?: string | null;
+  allowed_group_ids: string[];
+  allowed_vendors: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface RoutingPolicyInput {
+  api_type: string;
+  model_match_type?: RoutingPolicyModelMatchType | null;
+  model_match_value?: string | null;
+  allowed_group_ids: string[];
+  allowed_vendors: string[];
 }
 
 // =============================================================================
@@ -549,7 +574,6 @@ export interface ExportedProvider {
   api_types: ExportedAPIType[];
   auth_mode: AuthMode;
   credential_type?: ProviderCredentialType;
-  credential_data?: string;
   group_id?: string | null;
   weight: number;
   priority: number;

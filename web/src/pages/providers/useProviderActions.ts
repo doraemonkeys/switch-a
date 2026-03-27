@@ -20,6 +20,8 @@ export function useProviderActions() {
     enableProvider,
     disableProvider,
     resetProvider,
+    refreshCredential,
+    refreshUsage,
   } = useProviders();
   const toast = useToast();
 
@@ -118,6 +120,32 @@ export function useProviderActions() {
     }
   };
 
+  const handleRefreshCredential = async (provider: Provider) => {
+    try {
+      await refreshCredential(provider.id);
+      toast.success(`Credential refreshed for "${provider.name}"`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Failed to refresh provider credential",
+      );
+      throw err;
+    }
+  };
+
+  const handleRefreshUsage = async (provider: Provider) => {
+    try {
+      await refreshUsage(provider.id);
+      toast.success(`Usage snapshot refreshed for "${provider.name}"`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to refresh provider usage",
+      );
+      throw err;
+    }
+  };
+
   return {
     providers,
     loading,
@@ -141,5 +169,7 @@ export function useProviderActions() {
     // Actions
     handleToggleProvider,
     handleSaveProvider,
+    handleRefreshCredential,
+    handleRefreshUsage,
   };
 }

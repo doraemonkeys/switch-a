@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"switch-a/internal/model"
 )
 
 // mockClock implements internal.Clock for testing.
@@ -33,8 +35,8 @@ func TestNewActiveRequestRegistry(t *testing.T) {
 	if r.keyIndex == nil {
 		t.Error("keyIndex map should be initialized")
 	}
-	if !r.perModel.Load() {
-		t.Error("perModel should default to true")
+	if r.stickyIndex == nil {
+		t.Error("stickyIndex map should be initialized")
 	}
 }
 
@@ -50,8 +52,8 @@ func TestNewActiveRequestRegistryWithClock(t *testing.T) {
 	if r.keyIndex == nil {
 		t.Error("keyIndex map should be initialized")
 	}
-	if !r.perModel.Load() {
-		t.Error("perModel should default to true")
+	if r.stickyIndex == nil {
+		t.Error("stickyIndex map should be initialized")
 	}
 }
 
@@ -669,9 +671,8 @@ func TestFindActiveProvider_DifferentStickyKeys(t *testing.T) {
 	}
 }
 
-func TestFindActiveProvider_StickyModeSwitch(t *testing.T) {
+func TestFindActiveProvider_UsesRegisteredRequestDimensions(t *testing.T) {
 	r := NewActiveRequestRegistry()
-	r.SetStickyPerModel(false)
 
 	r.Register(&ActiveRequest{
 		RequestID:  "req-1",
@@ -680,22 +681,29 @@ func TestFindActiveProvider_StickyModeSwitch(t *testing.T) {
 		UserID:     "user-1",
 		APIType:    "claude",
 		Model:      "model-a",
+		StickyMode: model.StickyModeAPIType,
 	})
 	r.MarkDataReceived("req-1")
 
-	// api_type mode ignores model and should match.
-	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "different-model")
+	providerID, found := r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "claude",
+		Model:      "different-model",
+		StickyMode: model.StickyModeAPIType,
+	})
 	if !found || providerID != "provider-1" {
 		t.Fatalf("expected provider-1 in api_type mode, got %q (found=%v)", providerID, found)
 	}
 
-	// Switching to model mode should require exact model match.
-	r.SetStickyPerModel(true)
-	if _, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "different-model"); found {
+	if _, found = r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "claude",
+		Model:      "different-model",
+		StickyMode: model.StickyModeModel,
+	}); found {
 		t.Fatal("expected miss for different model after switching to model mode")
-	}
-	if _, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "model-a"); found {
-		t.Fatal("expected miss for pre-switch registration after key mode changed")
 	}
 
 	r.Register(&ActiveRequest{
@@ -705,18 +713,24 @@ func TestFindActiveProvider_StickyModeSwitch(t *testing.T) {
 		UserID:     "user-1",
 		APIType:    "claude",
 		Model:      "model-a",
+		StickyMode: model.StickyModeModel,
 	})
 	r.MarkDataReceived("req-2")
 
-	providerID, found = r.FindActiveProvider("1.2.3.4", "user-1", "claude", "model-a")
+	providerID, found = r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "claude",
+		Model:      "model-a",
+		StickyMode: model.StickyModeModel,
+	})
 	if !found || providerID != "provider-2" {
 		t.Fatalf("expected provider-2 for post-switch model registration, got %q (found=%v)", providerID, found)
 	}
 }
 
-func TestStickyIndex_ModeSwitchCleanupUsesRegisteredKey(t *testing.T) {
+func TestStickyIndex_CleanupUsesRegisteredContinuityKey(t *testing.T) {
 	r := NewActiveRequestRegistry()
-	r.SetStickyPerModel(false)
 
 	r.Register(&ActiveRequest{
 		RequestID:  "req-1",
@@ -725,25 +739,28 @@ func TestStickyIndex_ModeSwitchCleanupUsesRegisteredKey(t *testing.T) {
 		UserID:     "user-1",
 		APIType:    "claude",
 		Model:      "model-a",
+		StickyMode: model.StickyModeModel,
 	})
 	r.MarkDataReceived("req-1")
 
-	// Switch mode before unregister to simulate runtime config updates.
-	r.SetStickyPerModel(true)
+	r.UpdateModel("req-1", "model-b")
 	r.Unregister("req-1")
 
-	// If cleanup used the new key shape, a stale api_type entry would remain.
-	r.SetStickyPerModel(false)
-	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "ignored-model"); found {
-		t.Fatal("expected sticky entry to be fully cleaned after unregister across mode switch")
+	if _, found := r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "claude",
+		Model:      "model-a",
+		StickyMode: model.StickyModeModel,
+	}); found {
+		t.Fatal("expected sticky entry to be fully cleaned after unregister")
 	}
 }
 
-func TestStickyIndex_ModeSwitchCleanupStaleUsesRegisteredKey(t *testing.T) {
+func TestStickyIndex_StaleCleanupUsesRegisteredContinuityKey(t *testing.T) {
 	baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	clock := &mockClock{current: baseTime}
 	r := NewActiveRequestRegistryWithClock(clock)
-	r.SetStickyPerModel(false)
 
 	r.Register(&ActiveRequest{
 		RequestID:  "req-1",
@@ -752,20 +769,26 @@ func TestStickyIndex_ModeSwitchCleanupStaleUsesRegisteredKey(t *testing.T) {
 		UserID:     "user-1",
 		APIType:    "claude",
 		Model:      "model-a",
+		StickyMode: model.StickyModeModel,
 		StartedAt:  baseTime.Add(-45 * time.Minute),
 	})
 	r.Touch("req-1", baseTime.Add(-45*time.Minute))
 	r.MarkDataReceived("req-1")
 
-	r.SetStickyPerModel(true)
+	r.UpdateModel("req-1", "model-b")
 	removed := r.CleanupStale(30 * time.Minute)
 	if removed != 1 {
 		t.Fatalf("expected 1 removed, got %d", removed)
 	}
 
-	r.SetStickyPerModel(false)
-	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "claude", "ignored-model"); found {
-		t.Fatal("expected sticky entry to be fully cleaned after stale cleanup across mode switch")
+	if _, found := r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "claude",
+		Model:      "model-a",
+		StickyMode: model.StickyModeModel,
+	}); found {
+		t.Fatal("expected sticky entry to be fully cleaned after stale cleanup")
 	}
 }
 
@@ -849,7 +872,7 @@ func TestStickyIndex_CleanupOnUnregister(t *testing.T) {
 	}
 }
 
-func TestStickyIndex_UpdateModelReindexesRequest(t *testing.T) {
+func TestStickyIndex_UpdateModelKeepsRegisteredContinuityKey(t *testing.T) {
 	r := NewActiveRequestRegistry()
 
 	r.Register(&ActiveRequest{
@@ -859,25 +882,44 @@ func TestStickyIndex_UpdateModelReindexesRequest(t *testing.T) {
 		UserID:     "user-1",
 		APIType:    "codex",
 		Model:      ModelUnknown,
+		StickyMode: model.StickyModeModel,
 	})
 	r.MarkDataReceived("req-1")
 
-	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "codex", "gpt-5.4"); found {
-		t.Fatal("should not find provider before model update")
+	if _, found := r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "codex",
+		Model:      ModelUnknown,
+		StickyMode: model.StickyModeModel,
+	}); !found {
+		t.Fatal("should find provider with the original handshake-time key before model update")
 	}
 
 	r.UpdateModel("req-1", "gpt-5.4")
 
-	providerID, found := r.FindActiveProvider("1.2.3.4", "user-1", "codex", "gpt-5.4")
+	if _, found := r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "codex",
+		Model:      "gpt-5.4",
+		StickyMode: model.StickyModeModel,
+	}); found {
+		t.Fatal("should not find provider under a post-handshake model key")
+	}
+
+	providerID, found := r.FindActiveProviderForRequest(&model.SelectRequest{
+		ClientIP:   "1.2.3.4",
+		User:       "user-1",
+		APIType:    "codex",
+		Model:      ModelUnknown,
+		StickyMode: model.StickyModeModel,
+	})
 	if !found {
-		t.Fatal("should find provider after model update")
+		t.Fatal("should still find provider through the original handshake-time key after model update")
 	}
 	if providerID != "provider-1" {
 		t.Fatalf("providerID = %q, want %q", providerID, "provider-1")
-	}
-
-	if _, found := r.FindActiveProvider("1.2.3.4", "user-1", "codex", ModelUnknown); found {
-		t.Fatal("should not find provider with stale model key after update")
 	}
 
 	list := r.List()

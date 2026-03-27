@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ProviderModal } from "./ProviderModal";
 import { ApiContext } from "../../api/context";
 import type { ApiClient } from "../../api/client";
+import type { Provider } from "../../api";
 import {
   AUTH_MODES,
   CHATGPT_CODEX_BASE_URL,
@@ -14,6 +15,42 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+function buildPersistedChatGPTProvider(): Provider {
+  return {
+    id: "provider-gpt",
+    name: "GPT Provider",
+    api_key: "",
+    api_types: [
+      {
+        provider_id: "provider-gpt",
+        api_type: "codex",
+        base_url: CHATGPT_CODEX_BASE_URL,
+        api_key: "",
+      },
+    ],
+    auth_mode: AUTH_MODES.BEARER,
+    credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    group_id: null,
+    weight: 1,
+    priority: 1,
+    concurrency: 1,
+    max_retries: 0,
+    vendor: "",
+    failover_scope: "any",
+    accept_failover: "any",
+    enabled: true,
+    created_at: "2026-03-22T12:00:00Z",
+    updated_at: "2026-03-22T12:00:00Z",
+    auth: {
+      type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+      status: "reauth_required",
+      email: "user@example.com",
+      reason: "invalid_grant",
+      last_error: "refresh_token_reused",
+    },
+  } as Provider;
+}
 
 describe("ProviderModal", () => {
   it("submits when an API type provides its own key override", async () => {
@@ -152,9 +189,9 @@ describe("ProviderModal", () => {
           .mockResolvedValueOnce({
             login_id: "login-1",
             status: "completed",
-            auth_profile: {
+            auth: {
               type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-              ready: true,
+              status: "active",
               email: "user@example.com",
               account_id: "acct_test",
             },
@@ -237,9 +274,9 @@ describe("ProviderModal", () => {
         getChatGPTLoginStatus: vi.fn().mockResolvedValue({
           login_id: "login-2",
           status: "completed",
-          auth_profile: {
+          auth: {
             type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-            ready: true,
+            status: "active",
             email: "user@example.com",
             account_id: "acct_test",
           },
@@ -308,5 +345,25 @@ describe("ProviderModal", () => {
         }),
       ),
     );
+  });
+
+  it("renders reconnect-required auth state for persisted GPT providers", async () => {
+    render(
+      <ProviderModal
+        initialData={buildPersistedChatGPTProvider()}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+        groups={[]}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Reconnect required for user@example.com."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("reauth_required")).toBeInTheDocument();
+    expect(screen.getByText("Reason: invalid_grant")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /reconnect gpt/i }),
+    ).toBeInTheDocument();
   });
 });

@@ -64,16 +64,13 @@ type Provider struct {
 	AuthMode string            `gorm:"default:auto" json:"auth_mode"`
 	// CredentialType defines how this provider authenticates upstream requests.
 	// Static API key providers continue using APIKey/API type overrides, while
-	// login-backed providers resolve credentials from CredentialData at runtime.
+	// login-backed providers resolve credentials from the split provider_credentials table.
 	CredentialType ProviderCredentialType `gorm:"type:text;default:api_key" json:"credential_type"`
-	// CredentialData stores provider-type-specific credential material. It remains
-	// server-side only because login-backed providers contain refresh-capable tokens.
-	CredentialData string  `gorm:"type:text;default:''" json:"-"`
-	GroupID        *string `gorm:"index" json:"group_id"`
-	Group          *Group  `gorm:"foreignKey:GroupID" json:"-"`
-	Weight         int     `gorm:"default:1" json:"weight"`
-	Priority       int     `gorm:"default:0" json:"priority"`
-	Concurrency    int     `gorm:"default:0" json:"concurrency"`
+	GroupID        *string                `gorm:"index" json:"group_id"`
+	Group          *Group                 `gorm:"foreignKey:GroupID" json:"-"`
+	Weight         int                    `gorm:"default:1" json:"weight"`
+	Priority       int                    `gorm:"default:0" json:"priority"`
+	Concurrency    int                    `gorm:"default:0" json:"concurrency"`
 	// MaxRetries is the number of retries allowed for this provider (0 = try once, no retry).
 	MaxRetries int `gorm:"default:0" json:"max_retries"`
 	// Backoff defines exponential backoff for same-provider retries.
@@ -90,10 +87,14 @@ type Provider struct {
 	Enabled        bool      `gorm:"default:true;index" json:"enabled"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	// Credential persists refresh-capable secret material outside the provider row
+	// so auth-state updates no longer need to rewrite the entire provider record.
+	Credential *ProviderCredential `gorm:"foreignKey:ProviderID" json:"-"`
+	// AuthState captures lifecycle and summary fields separately from Health so
+	// reauthentication does not pollute temporary availability semantics.
+	AuthState *ProviderAuthState `gorm:"foreignKey:ProviderID" json:"-"`
 	// Health is populated by admin API handlers, not stored in database.
 	Health *HealthState `gorm:"-" json:"health,omitempty"`
-	// AuthProfile is a derived, non-sensitive summary of the provider credential state.
-	AuthProfile *ProviderAuthProfile `gorm:"-" json:"auth_profile,omitempty"`
 }
 
 // BaseURLForAPIType returns the base URL for the given API type.

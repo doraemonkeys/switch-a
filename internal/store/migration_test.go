@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 
@@ -72,6 +73,48 @@ func assertConfigMissing(t *testing.T, db *gorm.DB, key string) {
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("config %q should be missing, err=%v", key, err)
 	}
+}
+
+func setupProviderStateMigrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db := setupMigrationTestDB(t)
+	if err := db.AutoMigrate(
+		&model.Provider{},
+		&model.ProviderAPIType{},
+		&model.ProviderCredential{},
+		&model.ProviderAuthState{},
+	); err != nil {
+		t.Fatalf("auto-migrate provider state tables: %v", err)
+	}
+	hasCredentialData, err := tableColumnExists(db, providersTableName, providerCredentialDataColumn)
+	if err != nil {
+		t.Fatalf("check legacy provider credential column: %v", err)
+	}
+	if !hasCredentialData {
+		if err := db.Exec(
+			fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s TEXT DEFAULT ''`, providersTableName, providerCredentialDataColumn),
+		).Error; err != nil {
+			t.Fatalf("add legacy provider credential column: %v", err)
+		}
+	}
+	return db
+}
+
+func insertLegacyProvider(t *testing.T, db *gorm.DB, provider *model.Provider, credentialData string) {
+	t.Helper()
+	if err := db.Omit("Credential", "AuthState").Create(provider).Error; err != nil {
+		t.Fatalf("create legacy provider: %v", err)
+	}
+	if err := db.Model(&model.Provider{}).
+		Where("id = ?", provider.ID).
+		Update(providerCredentialDataColumn, credentialData).Error; err != nil {
+		t.Fatalf("seed legacy credential shadow for %q: %v", provider.ID, err)
+	}
+}
+
+func strPtr(value string) *string {
+	return &value
 }
 
 func TestMigrateStickyConfig_ValueMapping(t *testing.T) {
@@ -458,5 +501,375 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 	}
 	if persisted[1].CommitSource == nil || *persisted[1].CommitSource != model.CommitUnknown {
 		t.Fatalf("semantic-error commit_source = %v, want %q", persisted[1].CommitSource, model.CommitUnknown)
+	}
+}
+
+func TestMigrateProviderStateTables_BackfillsChatGPTCredentialAndAuthState(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+	now := time.Date(2026, time.March, 27, 4, 0, 0, 0, time.UTC)
+	resetAt := now.Add(2 * time.Hour)
+	credentialData, err := model.EncodeChatGPTProviderCredential(&model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		AccountID:    "acct_test",
+		Email:        "user@example.com",
+		PlanType:     "pro",
+		LastRefresh:  now.Add(-time.Minute),
+		ExpiresAt:    now.Add(time.Hour),
+		Usage: &model.ProviderUsageSnapshot{
+			FetchedAt: &now,
+			FiveHour: &model.ProviderUsageWindow{
+				UsedPercent:   50,
+				WindowSeconds: 5 * 60 * 60,
+				ResetAt:       &resetAt,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode credential data: %v", err)
+	}
+
+	provider := &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Enabled:        true,
+	}
+	insertLegacyProvider(t, db, provider, credentialData)
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("migrateProviderStateTables error: %v", err)
+	}
+	hasCredentialData, err := tableColumnExists(db, providersTableName, providerCredentialDataColumn)
+	if err != nil {
+		t.Fatalf("check legacy provider credential column after migration: %v", err)
+	}
+	if hasCredentialData {
+		t.Fatal("providers.credential_data column still exists after migration")
+	}
+
+	var credential model.ProviderCredential
+	if err := db.First(&credential, "provider_id = ?", provider.ID).Error; err != nil {
+		t.Fatalf("read provider credential: %v", err)
+	}
+	if credential.SecretData != credentialData {
+		t.Fatalf("SecretData = %q, want original payload", credential.SecretData)
+	}
+	if credential.BindingAccountID == nil || *credential.BindingAccountID != "acct_test" {
+		t.Fatalf("BindingAccountID = %v, want acct_test", credential.BindingAccountID)
+	}
+	if credential.Version != 1 {
+		t.Fatalf("Version = %d, want 1", credential.Version)
+	}
+
+	var authState model.ProviderAuthState
+	if err := db.First(&authState, "provider_id = ?", provider.ID).Error; err != nil {
+		t.Fatalf("read provider auth state: %v", err)
+	}
+	if authState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("Status = %q, want %q", authState.Status, model.ProviderAuthStatusActive)
+	}
+	if authState.Email != "user@example.com" {
+		t.Fatalf("Email = %q, want user@example.com", authState.Email)
+	}
+	if authState.AccountID != "acct_test" {
+		t.Fatalf("AccountID = %q, want acct_test", authState.AccountID)
+	}
+	if authState.PlanType != "pro" {
+		t.Fatalf("PlanType = %q, want pro", authState.PlanType)
+	}
+	if authState.UsageSnapshot == nil || authState.UsageSnapshot.FiveHour == nil {
+		t.Fatalf("UsageSnapshot = %#v, want migrated snapshot", authState.UsageSnapshot)
+	}
+}
+
+func TestMigrateProviderStateTables_BackfillsNotConnectedForIncompleteChatGPTLogin(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+	credentialData, err := model.EncodeChatGPTProviderCredential(&model.ChatGPTProviderCredential{
+		AccountID: "acct_test",
+		Email:     "user@example.com",
+	})
+	if err != nil {
+		t.Fatalf("encode credential data: %v", err)
+	}
+
+	provider := &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Enabled:        true,
+	}
+	insertLegacyProvider(t, db, provider, credentialData)
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("migrateProviderStateTables error: %v", err)
+	}
+
+	var authState model.ProviderAuthState
+	if err := db.First(&authState, "provider_id = ?", provider.ID).Error; err != nil {
+		t.Fatalf("read provider auth state: %v", err)
+	}
+	if authState.Status != model.ProviderAuthStatusNotConnected {
+		t.Fatalf("Status = %q, want %q", authState.Status, model.ProviderAuthStatusNotConnected)
+	}
+	if authState.AccountID != "acct_test" {
+		t.Fatalf("AccountID = %q, want acct_test", authState.AccountID)
+	}
+}
+
+func TestMigrateProviderStateTables_DoesNotOverwriteExistingRows(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+	legacyCredentialData, err := model.EncodeChatGPTProviderCredential(&model.ChatGPTProviderCredential{
+		AccessToken:  "legacy-access",
+		RefreshToken: "legacy-refresh",
+		AccountID:    "acct_test",
+	})
+	if err != nil {
+		t.Fatalf("encode legacy credential data: %v", err)
+	}
+
+	provider := &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Enabled:        true,
+	}
+	insertLegacyProvider(t, db, provider, legacyCredentialData)
+
+	existingAccountID := "acct_other"
+	existingCredential := &model.ProviderCredential{
+		ProviderID:       provider.ID,
+		SecretData:       "new-secret",
+		BindingAccountID: &existingAccountID,
+		Version:          7,
+	}
+	if err := db.Create(existingCredential).Error; err != nil {
+		t.Fatalf("create provider credential: %v", err)
+	}
+
+	transitionAt := time.Date(2026, time.March, 27, 4, 10, 0, 0, time.UTC)
+	existingAuthState := &model.ProviderAuthState{
+		ProviderID:       provider.ID,
+		Status:           model.ProviderAuthStatusReauthRequired,
+		StatusReason:     "invalid_grant",
+		LastError:        "refresh_token_reused",
+		LastTransitionAt: &transitionAt,
+	}
+	if err := db.Create(existingAuthState).Error; err != nil {
+		t.Fatalf("create provider auth state: %v", err)
+	}
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("migrateProviderStateTables error: %v", err)
+	}
+
+	var credential model.ProviderCredential
+	if err := db.First(&credential, "provider_id = ?", provider.ID).Error; err != nil {
+		t.Fatalf("read provider credential: %v", err)
+	}
+	if credential.SecretData != "new-secret" {
+		t.Fatalf("SecretData = %q, want existing row to remain", credential.SecretData)
+	}
+	if credential.Version != 7 {
+		t.Fatalf("Version = %d, want 7", credential.Version)
+	}
+
+	var authState model.ProviderAuthState
+	if err := db.First(&authState, "provider_id = ?", provider.ID).Error; err != nil {
+		t.Fatalf("read provider auth state: %v", err)
+	}
+	if authState.Status != model.ProviderAuthStatusReauthRequired {
+		t.Fatalf("Status = %q, want %q", authState.Status, model.ProviderAuthStatusReauthRequired)
+	}
+	if authState.LastError != "refresh_token_reused" {
+		t.Fatalf("LastError = %q, want refresh_token_reused", authState.LastError)
+	}
+}
+
+func TestMigrateProviderStateTables_BackfillsLegacyProviders(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+
+	now := time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC)
+	credentialData, err := model.EncodeChatGPTProviderCredential(&model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		AccountID:    "acct_test",
+		Email:        "user@example.com",
+		PlanType:     "team",
+		LastRefresh:  now.Add(-time.Minute),
+		ExpiresAt:    now.Add(time.Hour),
+		Usage: &model.ProviderUsageSnapshot{
+			PlanType: "team",
+		},
+	})
+	if err != nil {
+		t.Fatalf("EncodeChatGPTProviderCredential() error: %v", err)
+	}
+
+	providers := []model.Provider{
+		{ID: "api", Name: "API Provider", APIKey: "key", CredentialType: model.ProviderCredentialTypeAPIKey, Enabled: true},
+		{ID: "gpt-active", Name: "GPT Active", CredentialType: model.ProviderCredentialTypeChatGPT, Enabled: true},
+		{ID: "gpt-pending", Name: "GPT Pending", CredentialType: model.ProviderCredentialTypeChatGPT, Enabled: true},
+	}
+	for i := range providers {
+		shadow := ""
+		if providers[i].ID == "gpt-active" {
+			shadow = credentialData
+		}
+		insertLegacyProvider(t, db, &providers[i], shadow)
+	}
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("migrateProviderStateTables() error: %v", err)
+	}
+
+	var credential model.ProviderCredential
+	if err := db.First(&credential, "provider_id = ?", "gpt-active").Error; err != nil {
+		t.Fatalf("read gpt-active credential: %v", err)
+	}
+	if credential.SecretData != credentialData {
+		t.Fatalf("SecretData = %q, want original payload", credential.SecretData)
+	}
+	if credential.BindingAccountID == nil || *credential.BindingAccountID != "acct_test" {
+		t.Fatalf("BindingAccountID = %v, want acct_test", credential.BindingAccountID)
+	}
+	if credential.Version != 1 {
+		t.Fatalf("Version = %d, want 1", credential.Version)
+	}
+
+	var apiAuthState model.ProviderAuthState
+	if err := db.First(&apiAuthState, "provider_id = ?", "api").Error; err != nil {
+		t.Fatalf("read api auth state: %v", err)
+	}
+	if apiAuthState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("api auth status = %q, want %q", apiAuthState.Status, model.ProviderAuthStatusActive)
+	}
+
+	var activeAuthState model.ProviderAuthState
+	if err := db.First(&activeAuthState, "provider_id = ?", "gpt-active").Error; err != nil {
+		t.Fatalf("read gpt-active auth state: %v", err)
+	}
+	if activeAuthState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("gpt-active auth status = %q, want %q", activeAuthState.Status, model.ProviderAuthStatusActive)
+	}
+	if activeAuthState.AccountID != "acct_test" {
+		t.Fatalf("AccountID = %q, want acct_test", activeAuthState.AccountID)
+	}
+	if activeAuthState.Email != "user@example.com" {
+		t.Fatalf("Email = %q, want user@example.com", activeAuthState.Email)
+	}
+	if activeAuthState.UsageSnapshot == nil || activeAuthState.UsageSnapshot.PlanType != "team" {
+		t.Fatalf("UsageSnapshot = %+v, want team snapshot", activeAuthState.UsageSnapshot)
+	}
+
+	var pendingAuthState model.ProviderAuthState
+	if err := db.First(&pendingAuthState, "provider_id = ?", "gpt-pending").Error; err != nil {
+		t.Fatalf("read gpt-pending auth state: %v", err)
+	}
+	if pendingAuthState.Status != model.ProviderAuthStatusNotConnected {
+		t.Fatalf("gpt-pending auth status = %q, want %q", pendingAuthState.Status, model.ProviderAuthStatusNotConnected)
+	}
+}
+
+func TestMigrateProviderStateTables_PreservesExistingRows(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+
+	credentialData, err := model.EncodeChatGPTProviderCredential(&model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		AccountID:    "acct_test",
+	})
+	if err != nil {
+		t.Fatalf("EncodeChatGPTProviderCredential() error: %v", err)
+	}
+
+	provider := model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Enabled:        true,
+	}
+	insertLegacyProvider(t, db, &provider, credentialData)
+	if err := db.Create(&model.ProviderCredential{
+		ProviderID:       "gpt",
+		SecretData:       "preserved-secret",
+		BindingAccountID: strPtr("acct_preserved"),
+		Version:          7,
+	}).Error; err != nil {
+		t.Fatalf("seed provider credential: %v", err)
+	}
+	if err := db.Create(&model.ProviderAuthState{
+		ProviderID:   "gpt",
+		Status:       model.ProviderAuthStatusReauthRequired,
+		StatusReason: "refresh_token_reused",
+		LastError:    "terminal oauth error",
+	}).Error; err != nil {
+		t.Fatalf("seed provider auth state: %v", err)
+	}
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("migrateProviderStateTables() error: %v", err)
+	}
+
+	var credential model.ProviderCredential
+	if err := db.First(&credential, "provider_id = ?", "gpt").Error; err != nil {
+		t.Fatalf("read provider credential: %v", err)
+	}
+	if credential.SecretData != "preserved-secret" {
+		t.Fatalf("SecretData = %q, want preserved-secret", credential.SecretData)
+	}
+	if credential.Version != 7 {
+		t.Fatalf("Version = %d, want 7", credential.Version)
+	}
+
+	var authState model.ProviderAuthState
+	if err := db.First(&authState, "provider_id = ?", "gpt").Error; err != nil {
+		t.Fatalf("read provider auth state: %v", err)
+	}
+	if authState.Status != model.ProviderAuthStatusReauthRequired {
+		t.Fatalf("Status = %q, want %q", authState.Status, model.ProviderAuthStatusReauthRequired)
+	}
+	if authState.StatusReason != "refresh_token_reused" {
+		t.Fatalf("StatusReason = %q, want refresh_token_reused", authState.StatusReason)
+	}
+}
+
+func TestRoutingPolicySchema_RejectsDuplicateMatchCombination(t *testing.T) {
+	t.Parallel()
+
+	db := setupMigrationTestDB(t)
+	if err := db.AutoMigrate(&model.RoutingPolicy{}, &model.RoutingPolicyGroup{}, &model.RoutingPolicyVendor{}); err != nil {
+		t.Fatalf("auto-migrate routing policy tables: %v", err)
+	}
+
+	first := model.RoutingPolicy{
+		APIType:         "responses",
+		ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
+		ModelMatchValue: "gpt-5",
+	}
+	if err := db.Create(&first).Error; err != nil {
+		t.Fatalf("create first routing policy: %v", err)
+	}
+
+	duplicate := model.RoutingPolicy{
+		APIType:         "responses",
+		ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
+		ModelMatchValue: "gpt-5",
+	}
+	if err := db.Create(&duplicate).Error; err == nil {
+		t.Fatal("duplicate routing policy insert succeeded, want unique constraint failure")
 	}
 }

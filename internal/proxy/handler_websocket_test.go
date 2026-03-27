@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -440,6 +441,120 @@ func TestHandler_ServeHTTP_WebSocket_WithSelector(t *testing.T) {
 	}
 	if log.ErrorMsg != "" {
 		t.Errorf("expected empty ErrorMsg for successful WS, got %q", log.ErrorMsg)
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_StickyUpdateKeepsHandshakeModelDimensions(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name            string
+		queryModel      string
+		wantStickyModel string
+	}{
+		{
+			name:            "unknown handshake model falls back to api_type stickiness",
+			queryModel:      "",
+			wantStickyModel: ModelUnknown,
+		},
+		{
+			name:            "known handshake model keeps model stickiness",
+			queryModel:      "handshake-model",
+			wantStickyModel: "handshake-model",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					t.Errorf("accept upstream websocket: %v", err)
+					return
+				}
+				defer conn.Close(websocket.StatusNormalClosure, "")
+
+				writeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				if err := conn.Write(writeCtx, websocket.MessageText, []byte(`{"type":"response.created","response":{"model":"resolved-model"}}`)); err != nil {
+					t.Errorf("write upstream semantic event: %v", err)
+				}
+			}))
+			defer upstream.Close()
+
+			wsProvider := &model.Provider{
+				ID:       "ws-sticky-model-p1",
+				Name:     "WS Sticky Model Provider",
+				APIKey:   "ws-key",
+				AuthMode: "bearer",
+				Enabled:  true,
+				APITypes: []model.ProviderAPIType{{ProviderID: "ws-sticky-model-p1", APIType: "codex", BaseURL: upstream.URL}},
+			}
+
+			store := newMockStore()
+			store.providers = []model.Provider{*wsProvider}
+
+			mockSel := &mockSelector{
+				selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
+					return &selectResult{
+						Provider:        wsProvider,
+						FromStickyCache: false,
+					}, nil
+				},
+			}
+
+			handler := NewHandler(Config{
+				Store:    store,
+				Logger:   zap.NewNop(),
+				Selector: mockSel,
+			})
+
+			proxyServer := httptest.NewServer(handler)
+			defer proxyServer.Close()
+
+			wsPath := wsURL(proxyServer) + "/responses"
+			if tc.queryModel != "" {
+				wsPath += "?model=" + url.QueryEscape(tc.queryModel)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			conn, _, err := websocket.Dial(ctx, wsPath, nil)
+			if err != nil {
+				t.Fatalf("dial proxy: %v", err)
+			}
+			defer conn.Close(websocket.StatusNormalClosure, "")
+
+			msgType, data, err := conn.Read(ctx)
+			if err != nil {
+				t.Fatalf("read semantic event: %v", err)
+			}
+			if msgType != websocket.MessageText || !strings.Contains(string(data), `"response.created"`) {
+				t.Fatalf("unexpected websocket payload: type=%v body=%q", msgType, string(data))
+			}
+			_ = conn.Close(websocket.StatusNormalClosure, "done")
+
+			waitFor(t, func() bool {
+				return mockSel.StickyUpdatesLen() == 1 && store.LogsLen() > 0
+			}, testPollTimeout)
+
+			update, ok := mockSel.LastStickyUpdate()
+			if !ok {
+				t.Fatal("expected sticky update after committed websocket session")
+			}
+			if update.Model != tc.wantStickyModel {
+				t.Fatalf("sticky update model = %q, want %q", update.Model, tc.wantStickyModel)
+			}
+
+			log := store.LastLog()
+			if log == nil {
+				t.Fatal("expected websocket log entry")
+			}
+			if log.Model != "resolved-model" {
+				t.Fatalf("log.Model = %q, want %q", log.Model, "resolved-model")
+			}
+		})
 	}
 }
 

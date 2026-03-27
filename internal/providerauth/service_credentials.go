@@ -53,14 +53,45 @@ func (s *Service) RefreshProviderCredentials(ctx context.Context, provider *mode
 }
 
 func (s *Service) ensureFreshChatGPTCredential(ctx context.Context, provider *model.Provider, force bool) (*model.ChatGPTProviderCredential, error) {
-	credential, err := decodeChatGPTCredential(provider.CredentialData)
-	if err != nil {
-		return nil, err
+	if provider == nil {
+		return nil, fmt.Errorf("provider is required")
 	}
-	decodedCredential := credential
-	credential = s.reuseRecentChatGPTRefresh(provider.ID, credential)
+
+	credential, err := decodeProviderChatGPTCredential(provider)
+	if err != nil {
+		return nil, &ProviderAuthStateError{
+			ProviderID: provider.ID,
+			Status:     ProviderAuthStatusNotConnected,
+			Reason:     ProviderAuthReasonCredentialInvalid,
+			LastError:  err.Error(),
+		}
+	}
+	if credential == nil {
+		return nil, &ProviderAuthStateError{
+			ProviderID: provider.ID,
+			Status:     ProviderAuthStatusNotConnected,
+			Reason:     ProviderAuthReasonLoginRequired,
+		}
+	}
+
+	authState := providerAuthStateSnapshot(provider)
+	if authState.Status != ProviderAuthStatusActive {
+		return nil, &ProviderAuthStateError{
+			ProviderID: provider.ID,
+			Status:     authState.Status,
+			Reason:     providerAuthReason(providerCredentialTypeChatGPT, authState),
+			LastError:  authState.LastError,
+		}
+	}
+
+	decodedCredential := cloneChatGPTCredential(credential)
+	credential = s.reuseRecentChatGPTRefresh(provider.ID, decodedCredential)
 	if !credential.Ready() {
-		return nil, fmt.Errorf("provider %q has an incomplete chatgpt credential", provider.ID)
+		return nil, &ProviderAuthStateError{
+			ProviderID: provider.ID,
+			Status:     ProviderAuthStatusNotConnected,
+			Reason:     ProviderAuthReasonCredentialInvalid,
+		}
 	}
 	if shouldPreferChatGPTCredential(credential, decodedCredential) {
 		if err := applyChatGPTCredential(provider, credential); err != nil {
@@ -120,16 +151,29 @@ func (s *Service) refreshAndPersistChatGPTCredentialDirect(
 ) (*model.ChatGPTProviderCredential, error) {
 	refreshed, err := s.refreshChatGPTCredential(ctx, credential)
 	if err != nil {
-		return nil, err
+		return nil, s.persistChatGPTRefreshFailure(ctx, provider, credential, err)
 	}
 
-	persistedProvider := &model.Provider{ID: provider.ID}
+	persistedProvider := &model.Provider{
+		ID:        provider.ID,
+		AuthState: providerAuthStateSnapshot(provider),
+	}
+	if provider.Credential != nil {
+		persistedProvider.Credential = provider.Credential.Clone()
+	}
 	if err := applyChatGPTCredential(persistedProvider, refreshed); err != nil {
 		return nil, err
 	}
-	if err := s.persistChatGPTCredential(ctx, persistedProvider, refreshed); err != nil {
+	if err := s.persistChatGPTCredential(ctx, persistedProvider); err != nil {
 		return nil, err
 	}
+	if err := s.persistProviderAuthState(ctx, provider.ID, persistedProvider.AuthState); err != nil {
+		return nil, err
+	}
+	if persistedProvider.Credential != nil {
+		provider.Credential = persistedProvider.Credential.Clone()
+	}
+	applyProviderAuthState(provider, persistedProvider.AuthState)
 
 	s.storeRecentChatGPTRefresh(provider.ID, refreshed)
 	return refreshed, nil
@@ -246,6 +290,13 @@ func cloneChatGPTCredential(credential *model.ChatGPTProviderCredential) *model.
 }
 
 func applyChatGPTCredential(provider *model.Provider, credential *model.ChatGPTProviderCredential) error {
+	return applyStoredChatGPTCredential(
+		provider,
+		newStoredChatGPTCredential(credential, ProviderAuthStatusActive, "", ""),
+	)
+}
+
+func applyStoredChatGPTCredential(provider *model.Provider, credential *storedChatGPTCredential) error {
 	if provider == nil {
 		return fmt.Errorf("provider is required")
 	}
@@ -253,22 +304,64 @@ func applyChatGPTCredential(provider *model.Provider, credential *model.ChatGPTP
 		return fmt.Errorf("chatgpt credential is required")
 	}
 
-	raw, err := encodeChatGPTCredential(*credential)
-	if err != nil {
+	storedCredential := cloneChatGPTCredential(&credential.ChatGPTProviderCredential)
+	if storedCredential != nil {
+		// Usage belongs to auth-state only, so explicit usage refreshes never need to rewrite secrets.
+		storedCredential.Usage = nil
+	}
+	provider.CredentialType = providerCredentialTypeChatGPT
+	if err := applyProviderCredential(provider, &credential.ChatGPTProviderCredential); err != nil {
 		return err
 	}
-
-	provider.CredentialType = providerCredentialTypeChatGPT
-	provider.CredentialData = raw
-	provider.AuthProfile = buildChatGPTAuthProfile(credential)
+	status := credential.AuthStatus
+	if status == "" {
+		if storedCredential.Ready() {
+			status = ProviderAuthStatusActive
+		} else {
+			status = ProviderAuthStatusNotConnected
+		}
+	}
+	applyProviderAuthState(
+		provider,
+		buildChatGPTAuthState(
+			provider.ID,
+			providerAuthStateSnapshot(provider),
+			&credential.ChatGPTProviderCredential,
+			status,
+			strings.TrimSpace(credential.AuthReason),
+			credential.LastError,
+			cloneProviderUsageSnapshot(chatGPTUsageSnapshot(&credential.ChatGPTProviderCredential)),
+			time.Time{},
+		),
+	)
 	return nil
 }
 
-func (s *Service) persistChatGPTCredential(ctx context.Context, provider *model.Provider, credential *model.ChatGPTProviderCredential) error {
-	if s.credentialStore != nil && provider.ID != "" {
-		if err := s.credentialStore.UpdateProviderCredential(ctx, provider.ID, providerCredentialTypeChatGPT, provider.CredentialData); err != nil {
+func (s *Service) persistChatGPTCredential(ctx context.Context, provider *model.Provider) error {
+	if s.credentialStore == nil || provider == nil || provider.ID == "" {
+		return nil
+	}
+	if splitStore, ok := s.credentialStore.(interface {
+		UpdateProviderCredentialState(ctx context.Context, providerID string, credential *model.ProviderCredential, authState *model.ProviderAuthState) error
+	}); ok && provider.Credential != nil && provider.AuthState != nil {
+		if err := splitStore.UpdateProviderCredentialState(ctx, provider.ID, provider.Credential, provider.AuthState); err != nil {
 			return fmt.Errorf("persist refreshed chatgpt credential for provider %q: %w", provider.ID, err)
 		}
+		return nil
+	}
+	if provider.Credential == nil {
+		return fmt.Errorf("persist refreshed chatgpt credential for provider %q: missing split credential", provider.ID)
+	}
+	if err := s.credentialStore.UpdateProviderCredential(
+		ctx,
+		provider.ID,
+		providerCredentialTypeChatGPT,
+		provider.Credential.SecretData,
+	); err != nil {
+		return fmt.Errorf("persist refreshed chatgpt credential for provider %q: %w", provider.ID, err)
+	}
+	if err := s.persistProviderAuthState(ctx, provider.ID, provider.AuthState); err != nil {
+		return err
 	}
 	return nil
 }
@@ -318,6 +411,92 @@ func (s *Service) refreshChatGPTCredential(ctx context.Context, credential *mode
 		clientID,
 		s.clock.Now(),
 	)
+}
+
+func (s *Service) persistChatGPTRefreshFailure(
+	ctx context.Context,
+	provider *model.Provider,
+	credential *model.ChatGPTProviderCredential,
+	refreshErr error,
+) error {
+	reason, terminal := classifyChatGPTRefreshFailure(refreshErr)
+	if provider == nil {
+		return refreshErr
+	}
+
+	now := s.clock.Now()
+	authState := providerAuthStateSnapshot(provider).Clone()
+	failureAt := now.UTC()
+
+	if terminal {
+		authState = buildChatGPTAuthState(
+			provider.ID,
+			authState,
+			credential,
+			ProviderAuthStatusReauthRequired,
+			reason,
+			refreshErr.Error(),
+			nil,
+			now,
+		)
+	} else {
+		authState = buildChatGPTAuthState(
+			provider.ID,
+			authState,
+			credential,
+			authState.Status,
+			authState.StatusReason,
+			refreshErr.Error(),
+			nil,
+			time.Time{},
+		)
+	}
+	authState.RefreshFailCount++
+	authState.LastRefreshFailureAt = &failureAt
+	authState.LastError = strings.TrimSpace(refreshErr.Error())
+	if err := s.persistProviderAuthState(ctx, provider.ID, authState); err != nil {
+		return err
+	}
+	if terminal && credential != nil {
+		if err := applyStoredChatGPTCredential(
+			provider,
+			newStoredChatGPTCredential(credential, ProviderAuthStatusReauthRequired, reason, refreshErr.Error()),
+		); err != nil {
+			return err
+		}
+	}
+	applyProviderAuthState(provider, authState)
+
+	if !terminal {
+		return refreshErr
+	}
+	return &ProviderAuthStateError{
+		ProviderID: provider.ID,
+		Status:     ProviderAuthStatusReauthRequired,
+		Reason:     reason,
+		LastError:  authState.LastError,
+	}
+}
+
+func classifyChatGPTRefreshFailure(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, ProviderAuthReasonRefreshTokenReused):
+		return ProviderAuthReasonRefreshTokenReused, true
+	case strings.Contains(message, ProviderAuthReasonInvalidGrant):
+		return ProviderAuthReasonInvalidGrant, true
+	case strings.Contains(message, ProviderAuthReasonInteractionRequired),
+		strings.Contains(message, "login_required"),
+		strings.Contains(message, "consent_required"),
+		strings.Contains(message, "reauth"),
+		strings.Contains(message, "re-auth"):
+		return ProviderAuthReasonInteractionRequired, true
+	default:
+		return "", false
+	}
 }
 
 type refreshedTokenPayload struct {

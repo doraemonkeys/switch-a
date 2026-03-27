@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"switch-a/internal"
+	"switch-a/internal/model"
 )
 
 // Default cache configuration values.
@@ -163,4 +164,58 @@ func (s *CachedStore) InitDefaultConfig(ctx context.Context) error {
 	}
 	s.InvalidateAllConfig()
 	return nil
+}
+
+func (s *CachedStore) GetProviderAuthState(ctx context.Context, providerID string) (*model.ProviderAuthState, error) {
+	source, ok := s.Store.(interface {
+		GetProviderAuthState(ctx context.Context, providerID string) (*model.ProviderAuthState, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return source.GetProviderAuthState(ctx, providerID)
+}
+
+func (s *CachedStore) UpdateProviderAuthState(
+	ctx context.Context,
+	providerID string,
+	authState *model.ProviderAuthState,
+) error {
+	source, ok := s.Store.(interface {
+		UpdateProviderAuthState(ctx context.Context, providerID string, authState *model.ProviderAuthState) error
+	})
+	if !ok {
+		return nil
+	}
+	return source.UpdateProviderAuthState(ctx, providerID, authState)
+}
+
+func (s *CachedStore) UpdateProviderCredentialState(
+	ctx context.Context,
+	providerID string,
+	credential *model.ProviderCredential,
+	authState *model.ProviderAuthState,
+) error {
+	source, ok := s.Store.(interface {
+		UpdateProviderCredentialState(
+			ctx context.Context,
+			providerID string,
+			credential *model.ProviderCredential,
+			authState *model.ProviderAuthState,
+		) error
+	})
+	if !ok {
+		return nil
+	}
+	return source.UpdateProviderCredentialState(ctx, providerID, credential, authState)
+}
+
+func (s *CachedStore) ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error) {
+	source, ok := s.Store.(interface {
+		ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return source.ListRoutingPoliciesByAPIType(ctx, apiType)
 }

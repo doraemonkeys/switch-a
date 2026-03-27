@@ -18,7 +18,7 @@ const (
 )
 
 // ConfigExportVersion is the current version of the config export format.
-const ConfigExportVersion = "1.0"
+const ConfigExportVersion = "2.0"
 
 // ExportedConfig represents the full exported configuration.
 type ExportedConfig struct {
@@ -38,7 +38,8 @@ type ExportedProvider struct {
 	APITypes       []ExportedAPIType            `json:"api_types"`
 	AuthMode       string                       `json:"auth_mode"`
 	CredentialType model.ProviderCredentialType `json:"credential_type,omitempty"`
-	CredentialData string                       `json:"credential_data,omitempty"`
+	Credential     *ExportedProviderCredential  `json:"credential,omitempty"`
+	AuthState      *ExportedProviderAuthState   `json:"auth_state,omitempty"`
 	GroupID        *string                      `json:"group_id,omitempty"`
 	Weight         int                          `json:"weight"`
 	Priority       int                          `json:"priority"`
@@ -49,6 +50,29 @@ type ExportedProvider struct {
 	FailoverScope  string                       `json:"failover_scope,omitempty"`
 	AcceptFailover string                       `json:"accept_failover,omitempty"`
 	Enabled        bool                         `json:"enabled"`
+}
+
+// ExportedProviderCredential mirrors provider_credentials without repeating provider_id.
+type ExportedProviderCredential struct {
+	SecretData       string  `json:"secret_data,omitempty"`
+	BindingAccountID *string `json:"binding_account_id,omitempty"`
+	Version          int64   `json:"version,omitempty"`
+}
+
+// ExportedProviderAuthState mirrors provider_auth_states without repeating provider_id.
+type ExportedProviderAuthState struct {
+	Status               model.ProviderAuthStatus     `json:"status,omitempty"`
+	StatusReason         string                       `json:"status_reason,omitempty"`
+	LastError            string                       `json:"last_error,omitempty"`
+	LastTransitionAt     *time.Time                   `json:"last_transition_at,omitempty"`
+	Email                string                       `json:"email,omitempty"`
+	AccountID            string                       `json:"account_id,omitempty"`
+	PlanType             string                       `json:"plan_type,omitempty"`
+	ExpiresAt            *time.Time                   `json:"expires_at,omitempty"`
+	LastRefreshAt        *time.Time                   `json:"last_refresh_at,omitempty"`
+	UsageSnapshot        *model.ProviderUsageSnapshot `json:"usage_snapshot,omitempty"`
+	RefreshFailCount     int                          `json:"refresh_fail_count,omitempty"`
+	LastRefreshFailureAt *time.Time                   `json:"last_refresh_failure_at,omitempty"`
 }
 
 // ExportedBackoff represents backoff settings in the export format.
@@ -134,50 +158,14 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		return nil, false
 	}
 
-	authMode := p.AuthMode
-	if authMode == "" {
-		authMode = DefaultAuthMode
-	} else if credentialType != model.ProviderCredentialTypeChatGPT && !IsValidAuthMode(authMode) {
+	authMode, ok := buildProviderAuthModeFromExport(credentialType, p.AuthMode)
+	if !ok {
 		return nil, false
 	}
 
-	var apiTypes []model.ProviderAPIType
-	if credentialType != model.ProviderCredentialTypeChatGPT {
-		apiTypes = make([]model.ProviderAPIType, 0, len(p.APITypes))
-		for _, at := range p.APITypes {
-			if IsValidAPIType(at.APIType) && at.BaseURL != "" {
-				apiTypes = append(apiTypes, model.ProviderAPIType{
-					ProviderID: p.ID,
-					APIType:    at.APIType,
-					BaseURL:    at.BaseURL,
-					APIKey:     model.NormalizeAPIKey(at.APIKey),
-				})
-			}
-		}
-		if len(apiTypes) == 0 {
-			return nil, false
-		}
-	}
-
-	// Validate group reference
-	var groupID *string
-	if p.GroupID != nil && *p.GroupID != "" && validGroups[*p.GroupID] {
-		groupID = p.GroupID
-	}
-
-	weight := p.Weight
-	if weight <= 0 {
-		weight = DefaultWeight
-	}
-
-	// Validate failover scopes (use defaults if invalid)
-	failoverScope := model.Scope(p.FailoverScope)
-	if !model.IsValidScope(failoverScope) {
-		failoverScope = model.ScopeAny
-	}
-	acceptFailover := model.Scope(p.AcceptFailover)
-	if !model.IsValidScope(acceptFailover) {
-		acceptFailover = model.ScopeAny
+	apiTypes, ok := buildProviderAPITypesFromExport(p.ID, credentialType, p.APITypes)
+	if !ok {
+		return nil, false
 	}
 
 	provider := &model.Provider{
@@ -187,9 +175,8 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		APITypes:       apiTypes,
 		AuthMode:       authMode,
 		CredentialType: credentialType,
-		CredentialData: p.CredentialData,
-		GroupID:        groupID,
-		Weight:         weight,
+		GroupID:        buildProviderGroupIDFromExport(p.GroupID, validGroups),
+		Weight:         normalizeProviderWeightFromExport(p.Weight),
 		Priority:       p.Priority,
 		Concurrency:    p.Concurrency,
 		MaxRetries:     p.MaxRetries,
@@ -200,15 +187,106 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 			Jitter:       p.Backoff.Jitter,
 		},
 		Vendor:         p.Vendor,
-		FailoverScope:  failoverScope,
-		AcceptFailover: acceptFailover,
+		FailoverScope:  normalizeProviderScopeFromExport(p.FailoverScope),
+		AcceptFailover: normalizeProviderScopeFromExport(p.AcceptFailover),
 		Enabled:        p.Enabled,
 	}
+	provider.Credential = buildProviderCredentialFromExport(p, credentialType)
+	provider.AuthState = buildProviderAuthStateFromExport(p, credentialType)
 	providerauth.NormalizeProviderForPersistence(provider)
-	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
+	if !validateImportedProvider(provider, p, credentialType) {
 		return nil, false
 	}
 	return provider, true
+}
+
+func buildProviderAuthModeFromExport(
+	credentialType model.ProviderCredentialType,
+	exportedAuthMode string,
+) (string, bool) {
+	if exportedAuthMode == "" {
+		return DefaultAuthMode, true
+	}
+	if credentialType != model.ProviderCredentialTypeChatGPT && !IsValidAuthMode(exportedAuthMode) {
+		return "", false
+	}
+	return exportedAuthMode, true
+}
+
+func buildProviderAPITypesFromExport(
+	providerID string,
+	credentialType model.ProviderCredentialType,
+	exportedAPITypes []ExportedAPIType,
+) ([]model.ProviderAPIType, bool) {
+	if credentialType == model.ProviderCredentialTypeChatGPT {
+		return nil, true
+	}
+
+	apiTypes := make([]model.ProviderAPIType, 0, len(exportedAPITypes))
+	for _, at := range exportedAPITypes {
+		if !IsValidAPIType(at.APIType) || at.BaseURL == "" {
+			continue
+		}
+		apiTypes = append(apiTypes, model.ProviderAPIType{
+			ProviderID: providerID,
+			APIType:    at.APIType,
+			BaseURL:    at.BaseURL,
+			APIKey:     model.NormalizeAPIKey(at.APIKey),
+		})
+	}
+
+	return apiTypes, len(apiTypes) > 0
+}
+
+func buildProviderGroupIDFromExport(groupID *string, validGroups map[string]bool) *string {
+	if groupID == nil || *groupID == "" || !validGroups[*groupID] {
+		return nil
+	}
+	return groupID
+}
+
+func normalizeProviderWeightFromExport(weight int) int {
+	if weight <= 0 {
+		return DefaultWeight
+	}
+	return weight
+}
+
+func normalizeProviderScopeFromExport(exportedScope string) model.Scope {
+	scope := model.Scope(exportedScope)
+	if !model.IsValidScope(scope) {
+		return model.ScopeAny
+	}
+	return scope
+}
+
+func validateImportedProvider(
+	provider *model.Provider,
+	exported *ExportedProvider,
+	credentialType model.ProviderCredentialType,
+) bool {
+	if credentialType == model.ProviderCredentialTypeChatGPT {
+		return validateImportedChatGPTProvider(provider, exported)
+	}
+	if errMsg := validateProviderAPITypeConfiguration(provider); errMsg != "" {
+		return false
+	}
+	for _, at := range provider.APITypes {
+		if !model.HasAPIKey(provider.APIKey) && !model.HasAPIKey(at.APIKey) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateImportedChatGPTProvider(provider *model.Provider, exported *ExportedProvider) bool {
+	if provider.AuthState == nil {
+		return false
+	}
+	if provider.AuthState.Status != model.ProviderAuthStatusActive {
+		return true
+	}
+	return exportedChatGPTCredentialReady(exported.Credential)
 }
 
 // buildGroupFromExport applies the same normalization that Create/Update paths use
@@ -248,6 +326,15 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 	canonical := *p
 	canonical.APITypes = append([]model.ProviderAPIType(nil), p.APITypes...)
 	providerauth.NormalizeProviderForPersistence(&canonical)
+	credential := exportedProviderCredential(canonical.Credential)
+	authState := exportedProviderAuthState(canonical.AuthState)
+	if authState == nil {
+		authState = exportedProviderAuthState(model.ProviderAuthStateFromCredential(
+			canonical.ID,
+			canonical.CredentialType,
+			canonical.Credential,
+		))
+	}
 
 	apiTypes := make([]ExportedAPIType, len(canonical.APITypes))
 	for i, at := range canonical.APITypes {
@@ -274,7 +361,8 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 		APITypes:       apiTypes,
 		AuthMode:       canonical.AuthMode,
 		CredentialType: model.NormalizeProviderCredentialType(canonical.CredentialType),
-		CredentialData: canonical.CredentialData,
+		Credential:     credential,
+		AuthState:      authState,
 		GroupID:        groupID,
 		Weight:         canonical.Weight,
 		Priority:       canonical.Priority,
@@ -320,6 +408,83 @@ func providerImportDiffers(imported *ExportedProvider, existing *model.Provider,
 		return false
 	}
 	return !reflect.DeepEqual(buildExportedProvider(expected), buildExportedProvider(existing))
+}
+
+func buildProviderCredentialFromExport(
+	p *ExportedProvider,
+	credentialType model.ProviderCredentialType,
+) *model.ProviderCredential {
+	if credentialType != model.ProviderCredentialTypeChatGPT || p.Credential == nil {
+		return nil
+	}
+	record := &model.ProviderCredential{
+		ProviderID:       p.ID,
+		SecretData:       p.Credential.SecretData,
+		BindingAccountID: p.Credential.BindingAccountID,
+		Version:          p.Credential.Version,
+	}
+	if strings.TrimSpace(record.SecretData) == "" {
+		return nil
+	}
+	return model.NormalizeProviderCredentialRecord(p.ID, record)
+}
+
+func buildProviderAuthStateFromExport(
+	p *ExportedProvider,
+	credentialType model.ProviderCredentialType,
+) *model.ProviderAuthState {
+	if p.AuthState == nil {
+		return model.NormalizeProviderAuthStateRecord(p.ID, credentialType, nil)
+	}
+	state := &model.ProviderAuthState{
+		ProviderID:           p.ID,
+		Status:               p.AuthState.Status,
+		StatusReason:         p.AuthState.StatusReason,
+		LastError:            p.AuthState.LastError,
+		LastTransitionAt:     p.AuthState.LastTransitionAt,
+		Email:                p.AuthState.Email,
+		AccountID:            p.AuthState.AccountID,
+		PlanType:             p.AuthState.PlanType,
+		ExpiresAt:            p.AuthState.ExpiresAt,
+		LastRefreshAt:        p.AuthState.LastRefreshAt,
+		UsageSnapshot:        model.CloneProviderUsageSnapshot(p.AuthState.UsageSnapshot),
+		RefreshFailCount:     p.AuthState.RefreshFailCount,
+		LastRefreshFailureAt: p.AuthState.LastRefreshFailureAt,
+	}
+	return model.NormalizeProviderAuthStateRecord(p.ID, credentialType, state)
+}
+
+func exportedProviderCredential(credential *model.ProviderCredential) *ExportedProviderCredential {
+	if credential == nil {
+		return nil
+	}
+	normalized := model.NormalizeProviderCredentialRecord(credential.ProviderID, credential)
+	return &ExportedProviderCredential{
+		SecretData:       normalized.SecretData,
+		BindingAccountID: normalized.BindingAccountID,
+		Version:          normalized.Version,
+	}
+}
+
+func exportedProviderAuthState(authState *model.ProviderAuthState) *ExportedProviderAuthState {
+	if authState == nil {
+		return nil
+	}
+	normalized := authState.Clone()
+	return &ExportedProviderAuthState{
+		Status:               normalized.Status,
+		StatusReason:         normalized.StatusReason,
+		LastError:            normalized.LastError,
+		LastTransitionAt:     normalized.LastTransitionAt,
+		Email:                normalized.Email,
+		AccountID:            normalized.AccountID,
+		PlanType:             normalized.PlanType,
+		ExpiresAt:            normalized.ExpiresAt,
+		LastRefreshAt:        normalized.LastRefreshAt,
+		UsageSnapshot:        model.CloneProviderUsageSnapshot(normalized.UsageSnapshot),
+		RefreshFailCount:     normalized.RefreshFailCount,
+		LastRefreshFailureAt: normalized.LastRefreshFailureAt,
+	}
 }
 
 func groupImportDiffers(imported *ExportedGroup, existing *model.Group) bool {

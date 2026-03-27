@@ -8,6 +8,8 @@ import {
 import type {
   Provider,
   ProviderInput,
+  RoutingPolicy,
+  RoutingPolicyInput,
   Group,
   GroupInput,
   HealthState,
@@ -33,7 +35,12 @@ import type {
 export type {
   BackoffPolicy,
   Provider,
+  ProviderAuthStatus,
+  ProviderAuthView,
   ProviderInput,
+  RoutingPolicy,
+  RoutingPolicyInput,
+  RoutingPolicyModelMatchType,
   Group,
   GroupInput,
   HealthState,
@@ -226,6 +233,10 @@ function createProvidersApi(request: AuthenticatedRequestFn) {
       request<ChatGPTLoginStatusResponse>(
         `/provider-auth/chatgpt/sessions/${encodeURIComponent(loginId)}`,
       ),
+    refreshCredential: (id: string) =>
+      request<void>(`/providers/${id}/refresh-credential`, { method: "POST" }),
+    refreshUsage: (id: string) =>
+      request<void>(`/providers/${id}/refresh-usage`, { method: "POST" }),
     batch: (data: BatchProviderRequest) =>
       request<BatchProviderResponse>("/providers/batch", {
         method: "POST",
@@ -255,6 +266,25 @@ function createGroupsApi(request: AuthenticatedRequestFn) {
   };
 }
 
+function createRoutingPoliciesApi(request: AuthenticatedRequestFn) {
+  return {
+    list: () => request<RoutingPolicy[]>("/routing-policies"),
+    get: (id: string) => request<RoutingPolicy>(`/routing-policies/${id}`),
+    create: (data: RoutingPolicyInput) =>
+      request<RoutingPolicy>("/routing-policies", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: RoutingPolicyInput) =>
+      request<RoutingPolicy>(`/routing-policies/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      request<void>(`/routing-policies/${id}`, { method: "DELETE" }),
+  };
+}
+
 // API Client factory with dependency injection
 export function createApiClient(deps: ApiClientDeps) {
   const tokenManager = createTokenManager(deps.storage);
@@ -279,6 +309,7 @@ export function createApiClient(deps: ApiClientDeps) {
       }
     },
     providers: createProvidersApi(request),
+    routingPolicies: createRoutingPoliciesApi(request),
     groups: createGroupsApi(request),
     config: {
       get: () => request<ConfigResponse>("/config"),

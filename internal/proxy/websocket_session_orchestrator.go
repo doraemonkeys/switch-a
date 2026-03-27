@@ -9,6 +9,7 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -109,7 +110,6 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 
 		if attemptResult.Result != nil && attemptResult.Result.Model != "" {
 			o.info.Model = attemptResult.Result.Model
-			o.selectReq.Model = attemptResult.Result.Model
 		}
 
 		if fromSticky {
@@ -515,6 +515,8 @@ func (o *WebSocketSessionOrchestrator) trackCurrentAttempt(providerID string) {
 		APIType:         o.apiType,
 		UserID:          o.info.UserID,
 		ClientIP:        o.info.ClientIP,
+		StickyMode:      o.selectReq.StickyMode,
+		ContinuityKey:   selector.BuildContinuityKey(o.selectReq),
 		IsWebSocket:     true,
 		StartedAt:       o.startTime,
 		HasReceivedData: false,

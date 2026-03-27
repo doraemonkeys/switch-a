@@ -1,4 +1,5 @@
 export { useProviders, useProvider } from "./useProviders";
+export { useRoutingPolicies } from "./useRoutingPolicies";
 export { useProviderBatch } from "./useProviderBatch";
 export { useGroups, useGroup } from "./useGroups";
 export { useConfig } from "./useConfig";

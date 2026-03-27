@@ -10,15 +10,9 @@ import {
   type ProviderStatusType,
 } from "../pages/providers/types";
 import { hasProviderApiKey } from "../lib/providerApiKey";
-import {
-  formatProviderPlanType,
-  formatProviderResetAt,
-  formatProviderUsagePercent,
-  resolveProviderPlanType,
-  resolveProviderUsage,
-} from "../lib/providerUsage";
 import { stringToColor, getSuccessBadgeClass } from "../lib/utils";
 import { DetailSection, DetailRow } from "./DrawerSection";
+import { AuthSection } from "./ProviderDetailDrawerAuthSection";
 import { RecoveryTimer } from "./RecoveryTimer";
 import { CloseIcon } from "./icons/CloseIcon";
 import {
@@ -35,6 +29,8 @@ interface ProviderDetailDrawerProps {
   onDelete: (provider: Provider) => void;
   onToggle: (provider: Provider) => void;
   onReset: (provider: Provider) => void;
+  onRefreshCredential?: (provider: Provider) => Promise<void>;
+  onRefreshUsage?: (provider: Provider) => Promise<void>;
   getGroupName: (groupId: string | null) => string;
 }
 
@@ -269,101 +265,6 @@ function ScopeBadge({
       <span>{config.icon}</span>
       {config.label}
     </span>
-  );
-}
-
-function UsageWindowCard({
-  label,
-  percentLabel,
-  resetAt,
-  progressWidth,
-}: {
-  label: string;
-  percentLabel: string;
-  resetAt?: string;
-  progressWidth: number;
-}) {
-  return (
-    <div className="rounded-lg border border-border/60 bg-bg-secondary/40 p-3 space-y-2">
-      <div className="flex items-center justify-between gap-3 text-sm">
-        <span className="font-medium text-text-secondary">{label}</span>
-        <span className="font-semibold text-text-primary">
-          {percentLabel} used
-        </span>
-      </div>
-      <div className="h-2 rounded-full bg-bg-tertiary overflow-hidden">
-        <div
-          className="h-full rounded-full bg-primary transition-all duration-300"
-          style={{ width: `${progressWidth}%` }}
-        />
-      </div>
-      <div className="text-[11px] text-text-muted">
-        Reset: {formatProviderResetAt(resetAt)}
-      </div>
-    </div>
-  );
-}
-
-function GPTAccountSection({ provider }: { provider: Provider }) {
-  if (provider.credential_type !== "chatgpt" || !provider.auth_profile?.ready) {
-    return null;
-  }
-
-  const authProfile = provider.auth_profile;
-  const usage = resolveProviderUsage(authProfile);
-  const planType = resolveProviderPlanType(authProfile);
-  const hasUsage = Boolean(usage?.five_hour || usage?.one_week);
-
-  return (
-    <DetailSection title="GPT Account">
-      {authProfile.email && (
-        <DetailRow label="Account" value={authProfile.email} />
-      )}
-      {authProfile.account_id && (
-        <DetailRow label="Workspace" value={authProfile.account_id} mono />
-      )}
-      <DetailRow
-        label="Plan"
-        value={planType ? formatProviderPlanType(planType) : "Unknown"}
-      />
-      {usage?.fetched_at && (
-        <DetailRow
-          label="Usage Updated"
-          value={new Date(usage.fetched_at).toLocaleString()}
-        />
-      )}
-      {hasUsage ? (
-        <div className="space-y-3 pt-1">
-          {usage?.five_hour && (
-            <UsageWindowCard
-              label="5 Hours"
-              percentLabel={formatProviderUsagePercent(usage.five_hour)}
-              resetAt={usage.five_hour.reset_at}
-              progressWidth={Math.max(
-                0,
-                Math.min(100, usage.five_hour.used_percent),
-              )}
-            />
-          )}
-          {usage?.one_week && (
-            <UsageWindowCard
-              label="1 Week"
-              percentLabel={formatProviderUsagePercent(usage.one_week)}
-              resetAt={usage.one_week.reset_at}
-              progressWidth={Math.max(
-                0,
-                Math.min(100, usage.one_week.used_percent),
-              )}
-            />
-          )}
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border/60 bg-bg-secondary/40 p-3 text-xs text-text-muted">
-          Usage data is not available yet. Refresh the Providers page after the
-          next successful GPT metadata sync.
-        </div>
-      )}
-    </DetailSection>
   );
 }
 
@@ -677,6 +578,8 @@ export function ProviderDetailDrawer({
   onDelete,
   onToggle,
   onReset,
+  onRefreshCredential,
+  onRefreshUsage,
   getGroupName,
 }: ProviderDetailDrawerProps) {
   const { logs: recentLogs, loading: logsLoading } = useRecentLogs(
@@ -743,7 +646,11 @@ export function ProviderDetailDrawer({
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           <BasicInfoSection provider={provider} getGroupName={getGroupName} />
-          <GPTAccountSection provider={provider} />
+          <AuthSection
+            provider={provider}
+            onRefreshCredential={onRefreshCredential}
+            onRefreshUsage={onRefreshUsage}
+          />
           <BackoffInfoSection provider={provider} />
           <FailoverInfoSection provider={provider} />
           <HealthStatusSection

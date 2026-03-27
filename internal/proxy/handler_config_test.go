@@ -39,9 +39,6 @@ func TestHandlerLoadConfig_StickyModeValidValue(t *testing.T) {
 	if cfg.stickyMode != model.StickyModeAPIType {
 		t.Fatalf("expected sticky mode %q, got %q", model.StickyModeAPIType, cfg.stickyMode)
 	}
-	if registry.perModel.Load() {
-		t.Fatal("expected registry perModel=false for api_type mode")
-	}
 }
 
 func TestHandlerLoadConfig_StickyModeInvalidFallsBack(t *testing.T) {
@@ -65,7 +62,6 @@ func TestHandlerLoadConfig_StickyModeInvalidFallsBack(t *testing.T) {
 func TestHandlerLoadConfig_StickyModeReadErrorFallsBack(t *testing.T) {
 	store := &stickyModeErrorStore{mockStore: newMockStore()}
 	registry := NewActiveRequestRegistry()
-	registry.SetStickyPerModel(false)
 
 	handler := NewHandler(Config{
 		Store:          store,
@@ -79,8 +75,5 @@ func TestHandlerLoadConfig_StickyModeReadErrorFallsBack(t *testing.T) {
 	}
 	if cfg.stickyMode != DefaultStickyMode {
 		t.Fatalf("expected fallback sticky mode %q, got %q", DefaultStickyMode, cfg.stickyMode)
-	}
-	if !registry.perModel.Load() {
-		t.Fatal("expected registry perModel=true when fallback mode is model")
 	}
 }

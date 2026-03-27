@@ -48,18 +48,6 @@ type ProviderUsageSnapshot struct {
 	OneWeek   *ProviderUsageWindow `json:"one_week,omitempty"`
 }
 
-// ProviderAuthProfile is the non-sensitive credential summary returned by the admin API.
-type ProviderAuthProfile struct {
-	Type        ProviderCredentialType `json:"type"`
-	Ready       bool                   `json:"ready"`
-	Email       string                 `json:"email,omitempty"`
-	AccountID   string                 `json:"account_id,omitempty"`
-	PlanType    string                 `json:"plan_type,omitempty"`
-	Usage       *ProviderUsageSnapshot `json:"usage,omitempty"`
-	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
-	LastRefresh *time.Time             `json:"last_refresh,omitempty"`
-}
-
 // ChatGPTProviderCredential persists the OAuth tokens needed to proxy Codex requests.
 type ChatGPTProviderCredential struct {
 	AccessToken   string                 `json:"access_token"`

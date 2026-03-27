@@ -24,10 +24,36 @@ type chatGPTIdentitySnapshot struct {
 	ExpiresAt     time.Time
 }
 
+type storedChatGPTCredential struct {
+	model.ChatGPTProviderCredential
+	AuthStatus ProviderAuthStatus `json:"auth_status,omitempty"`
+	AuthReason string             `json:"auth_reason,omitempty"`
+	LastError  string             `json:"last_error,omitempty"`
+}
+
+// chatGPTCredentialSecret keeps only refresh-capable material in the secret blob.
+// Account identity, plan, and usage belong in provider_auth_states so usage syncs
+// never need to rewrite secrets.
+type chatGPTCredentialSecret struct {
+	AccessToken   string `json:"access_token"`
+	RefreshToken  string `json:"refresh_token"`
+	IDToken       string `json:"id_token"`
+	OAuthIssuer   string `json:"oauth_issuer,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
+}
+
 func encodeChatGPTCredential(credential model.ChatGPTProviderCredential) (string, error) {
 	payload, err := json.Marshal(credential)
 	if err != nil {
 		return "", fmt.Errorf("marshal chatgpt credential: %w", err)
+	}
+	return string(payload), nil
+}
+
+func encodeStoredChatGPTCredential(credential storedChatGPTCredential) (string, error) {
+	payload, err := json.Marshal(credential)
+	if err != nil {
+		return "", fmt.Errorf("marshal stored chatgpt credential: %w", err)
 	}
 	return string(payload), nil
 }
@@ -41,6 +67,62 @@ func decodeChatGPTCredential(raw string) (*model.ChatGPTProviderCredential, erro
 		return nil, fmt.Errorf("decode chatgpt credential payload: %w", err)
 	}
 	return &credential, nil
+}
+
+func decodeStoredChatGPTCredential(raw string) (*storedChatGPTCredential, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("missing chatgpt credential payload")
+	}
+	var credential storedChatGPTCredential
+	if err := json.Unmarshal([]byte(raw), &credential); err != nil {
+		return nil, fmt.Errorf("decode stored chatgpt credential payload: %w", err)
+	}
+	return &credential, nil
+}
+
+func newStoredChatGPTCredential(
+	credential *model.ChatGPTProviderCredential,
+	status ProviderAuthStatus,
+	reason string,
+	lastError string,
+) *storedChatGPTCredential {
+	if credential == nil {
+		return nil
+	}
+	return &storedChatGPTCredential{
+		ChatGPTProviderCredential: *cloneChatGPTCredential(credential),
+		AuthStatus:                status,
+		AuthReason:                strings.TrimSpace(reason),
+		LastError:                 strings.TrimSpace(lastError),
+	}
+}
+
+func encodeChatGPTCredentialSecret(credential *model.ChatGPTProviderCredential) (string, error) {
+	if credential == nil {
+		return "", nil
+	}
+	payload, err := json.Marshal(chatGPTCredentialSecret{
+		AccessToken:   credential.AccessToken,
+		RefreshToken:  credential.RefreshToken,
+		IDToken:       credential.IDToken,
+		OAuthIssuer:   strings.TrimSpace(credential.OAuthIssuer),
+		OAuthClientID: strings.TrimSpace(credential.OAuthClientID),
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal chatgpt credential secret: %w", err)
+	}
+	return string(payload), nil
+}
+
+func decodeChatGPTCredentialSecret(raw string) (*chatGPTCredentialSecret, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("missing chatgpt credential payload")
+	}
+	var secret chatGPTCredentialSecret
+	if err := json.Unmarshal([]byte(raw), &secret); err != nil {
+		return nil, fmt.Errorf("decode chatgpt credential secret: %w", err)
+	}
+	return &secret, nil
 }
 
 func newChatGPTCredentialFromTokens(accessToken, refreshToken, idToken string) (*model.ChatGPTProviderCredential, error) {

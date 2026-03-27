@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
@@ -46,8 +45,7 @@ func (h *Handler) ListProviders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.attachProviderAuthProfiles(r.Context(), providers)
-	writeJSON(w, http.StatusOK, providers)
+	writeJSON(w, http.StatusOK, h.providerPayloads(providers))
 }
 
 // GetProvider handles GET /admin/api/providers/{id}.
@@ -79,14 +77,7 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 		provider.Health = state
 	}
 
-	h.attachProviderAuthProfile(r.Context(), provider)
-	writeJSON(w, http.StatusOK, provider)
-}
-
-// ProviderResponse wraps a Provider with optional warnings for API responses.
-type ProviderResponse struct {
-	*model.Provider
-	Warnings []string `json:"warnings,omitempty"`
+	writeJSON(w, http.StatusOK, h.providerPayload(provider))
 }
 
 // CreateProviderRequest represents the request to create a provider.
@@ -180,10 +171,7 @@ func validateProviderConfiguration(provider *model.Provider) string {
 
 	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
 	case model.ProviderCredentialTypeChatGPT:
-		if strings.TrimSpace(provider.CredentialData) == "" {
-			return "GPT login is required for chatgpt credential providers"
-		}
-		if profile := providerauth.BuildAuthProfile(provider); profile == nil || !profile.Ready {
+		if !providerauth.HasCompleteChatGPTCredential(provider) {
 			return "GPT login is incomplete or invalid for this provider"
 		}
 	default:
@@ -310,13 +298,12 @@ func (h *Handler) prepareProviderForPersistence(provider *model.Provider, creden
 			}
 			plan.chatGPTLoginID = credentialLoginID
 		}
-		if strings.TrimSpace(provider.CredentialData) == "" {
+		if !providerauth.HasCompleteChatGPTCredential(provider) {
 			return plan, "GPT login is required for chatgpt credential providers"
 		}
 	default:
-		provider.CredentialData = ""
+		provider.Credential = nil
 	}
-	provider.AuthProfile = providerauth.BuildAuthProfile(provider)
 	return plan, ""
 }
 
@@ -353,26 +340,6 @@ func (h *Handler) handleProviderPersistenceError(
 	h.logger.Error("failed to "+action+" provider", zap.String("id", id), zap.Error(err))
 	writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to "+action+" provider")
 	return false
-}
-
-func (h *Handler) attachProviderAuthProfile(ctx context.Context, provider *model.Provider) {
-	if provider == nil {
-		return
-	}
-
-	if h.auth != nil {
-		h.auth.PopulateProviderAuthProfile(ctx, provider)
-		return
-	}
-
-	provider.CredentialType = model.NormalizeProviderCredentialType(provider.CredentialType)
-	provider.AuthProfile = providerauth.BuildAuthProfile(provider)
-}
-
-func (h *Handler) attachProviderAuthProfiles(ctx context.Context, providers []model.Provider) {
-	for i := range providers {
-		h.attachProviderAuthProfile(ctx, &providers[i])
-	}
 }
 
 // CreateProvider handles POST /admin/api/providers.
@@ -435,8 +402,10 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.commitProviderPersistencePlan(plan)
-	h.attachProviderAuthProfile(r.Context(), provider)
-	writeJSON(w, http.StatusCreated, ProviderResponse{Provider: provider, Warnings: warnings})
+	writeJSON(w, http.StatusCreated, ProviderResponse{
+		ProviderPayload: h.providerPayload(provider),
+		Warnings:        warnings,
+	})
 }
 
 // UpdateProviderRequest represents the request to update a provider.
@@ -625,8 +594,10 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		h.syncHealthManagerState(r.Context(), id, provider.Enabled)
 	}
 
-	h.attachProviderAuthProfile(r.Context(), provider)
-	writeJSON(w, http.StatusOK, ProviderResponse{Provider: provider, Warnings: warnings})
+	writeJSON(w, http.StatusOK, ProviderResponse{
+		ProviderPayload: h.providerPayload(provider),
+		Warnings:        warnings,
+	})
 }
 
 // DeleteProvider handles DELETE /admin/api/providers/{id}.

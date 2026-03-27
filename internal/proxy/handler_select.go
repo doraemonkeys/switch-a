@@ -81,17 +81,18 @@ func (h *Handler) tryActiveProviderFallback(ctx context.Context, selectReq *mode
 		return nil
 	}
 
-	activeProviderID, found := h.activeRegistry.FindActiveProvider(
-		selectReq.ClientIP,
-		selectReq.User,
-		selectReq.APIType,
-		selectReq.Model,
-	)
+	activeProviderID, found := h.activeRegistry.FindActiveProviderForRequest(selectReq)
 	if !found {
 		return nil
 	}
 
-	return h.getProviderIfValid(ctx, activeProviderID, selectReq.APIType)
+	scope, err := h.selectionScope(ctx, selectReq)
+	if err != nil {
+		h.logger.Warn("failed to resolve provider eligibility for active fallback", zap.Error(err))
+		return nil
+	}
+
+	return h.getProviderIfValid(ctx, scope, activeProviderID)
 }
 
 // getProviderIfValid validates that a provider is still valid and available.
@@ -101,22 +102,24 @@ func (h *Handler) tryActiveProviderFallback(ctx context.Context, selectReq *mode
 // Note: This iterates through all providers by API type to find the target provider.
 // A direct GetProvider(id) lookup would be O(1) but requires additional store interface
 // changes. The current O(n) approach is acceptable given typical provider counts (<100).
-func (h *Handler) getProviderIfValid(ctx context.Context, providerID string, apiType string) *model.Provider {
-	providers, err := h.store.ListProvidersByAPIType(ctx, apiType)
+func (h *Handler) getProviderIfValid(ctx context.Context, scope *selector.ProviderSelectionEligibility, providerID string) *model.Provider {
+	if scope == nil || scope.Request() == nil {
+		return nil
+	}
+
+	providers, err := h.store.ListProvidersByAPIType(ctx, scope.Request().APIType)
 	if err != nil {
 		h.logger.Warn("failed to list providers for active fallback", zap.Error(err))
 		return nil
 	}
 
 	for _, p := range providers {
-		if p.ID == providerID && p.Enabled {
-			// Check health status
-			if h.health != nil {
-				h.health.RecoverIfExpired(ctx, p.ID)
-				if !h.health.IsAvailable(ctx, p.ID) {
-					return nil
-				}
-			}
+		allowed, eligibilityErr := scope.AllowsProvider(ctx, &p)
+		if eligibilityErr != nil {
+			h.logger.Warn("failed to validate active fallback provider", zap.String("provider_id", p.ID), zap.Error(eligibilityErr))
+			return nil
+		}
+		if p.ID == providerID && allowed {
 			provider := p
 			return &provider
 		}
@@ -126,18 +129,23 @@ func (h *Handler) getProviderIfValid(ctx context.Context, providerID string, api
 
 // selectProviderFallback selects a provider when no Selector is configured.
 //
-// This fallback exists for minimal deployments where advanced selection features
-// (health checks, concurrency limits, sticky sessions, group-based strategies) are not needed.
-// It uses simple round-robin selection based on attempt number.
+// This fallback exists for minimal deployments that skip selector-owned strategy
+// and concurrency features. It still reuses the shared eligibility closure so
+// auth-state and hard-routing rules cannot be bypassed just because no selector
+// was wired into the handler.
 //
 // Limitations compared to the full Selector:
-//   - No health checks: unhealthy providers may be selected
 //   - No concurrency limits: may overload providers
 //   - No sticky sessions: same client may hit different providers
 //   - No group-based strategies: ignores priority/weight/random settings
 //
 // For production deployments with multiple providers, configure a Selector for robust behavior.
 func (h *Handler) selectProviderFallback(ctx context.Context, selectReq *model.SelectRequest, attempt int, excluded map[string]bool) (*model.Provider, error) {
+	scope, err := h.selectionScope(ctx, selectReq)
+	if err != nil {
+		return nil, err
+	}
+
 	providers, err := h.store.ListProvidersByAPIType(ctx, selectReq.APIType)
 	if err != nil { // coverage-ignore -- database errors are rare after successful startup
 		h.logger.Error("failed to list providers", zap.Error(err), zap.String("api_type", selectReq.APIType))
@@ -147,7 +155,11 @@ func (h *Handler) selectProviderFallback(ctx context.Context, selectReq *model.S
 	// Filter out excluded providers (those that have already failed in this request)
 	available := providers[:0]
 	for _, p := range providers {
-		if !excluded[p.ID] {
+		allowed, eligibilityErr := scope.AllowsProvider(ctx, &p)
+		if eligibilityErr != nil {
+			return nil, eligibilityErr
+		}
+		if !excluded[p.ID] && allowed {
 			available = append(available, p)
 		}
 	}
@@ -162,4 +174,8 @@ func (h *Handler) selectProviderFallback(ctx context.Context, selectReq *model.S
 	idx := h.fallbackCounter.Add(1)
 	provider := available[int(uint64(idx-1+int64(attempt))%uint64(len(available)))]
 	return &provider, nil
+}
+
+func (h *Handler) selectionScope(ctx context.Context, req *model.SelectRequest) (*selector.ProviderSelectionEligibility, error) {
+	return selector.NewProviderSelectionEligibility(ctx, h.store, h.health, req)
 }

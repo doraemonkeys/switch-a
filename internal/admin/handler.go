@@ -81,7 +81,9 @@ type ProviderAuthService interface {
 	GetChatGPTLoginStatus(loginID string) (*providerauth.ChatGPTLoginStatusResponse, error)
 	ApplyChatGPTLogin(provider *model.Provider, loginID string) error
 	FinalizeChatGPTLogin(loginID string) error
-	PopulateProviderAuthProfile(ctx context.Context, provider *model.Provider)
+	BuildProviderAuthView(provider *model.Provider) *providerauth.ProviderAuthView
+	RefreshProviderCredentials(ctx context.Context, provider *model.Provider) (bool, error)
+	RefreshProviderUsage(ctx context.Context, provider *model.Provider) (bool, error)
 }
 
 // Handler handles admin API requests.

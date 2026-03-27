@@ -4,6 +4,7 @@ import { Dashboard } from "@/pages/Dashboard";
 import { Monitor } from "@/pages/Monitor";
 import { Providers } from "@/pages/providers";
 import { Groups } from "@/pages/Groups";
+import { RoutingPolicies } from "@/pages/RoutingPolicies";
 import { Config } from "@/pages/Config";
 import { Logs } from "@/pages/Logs";
 import { Login } from "@/pages/Login";
@@ -30,6 +31,7 @@ function App() {
               <Route path="monitor" element={<Monitor />} />
               <Route path="providers" element={<Providers />} />
               <Route path="groups" element={<Groups />} />
+              <Route path="routing" element={<RoutingPolicies />} />
               <Route path="config" element={<Config />} />
               <Route path="logs" element={<Logs />} />
               <Route path="*" element={<Navigate to="/" replace />} />

@@ -42,7 +42,13 @@ func TestValidateExportedProvider_ChatGPTDoesNotRequireAPIKey(t *testing.T) {
 		ID:             "gpt",
 		Name:           "GPT Provider",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: string(credentialData),
+		Credential: &ExportedProviderCredential{
+			SecretData:       string(credentialData),
+			BindingAccountID: strPtr("acct_test"),
+		},
+		AuthState: &ExportedProviderAuthState{
+			Status: model.ProviderAuthStatusActive,
+		},
 	}
 
 	warnings := validateExportedProvider(p)

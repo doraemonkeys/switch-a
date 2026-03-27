@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ProviderAuthProfile, ProviderInput } from "../../api";
+import type { ProviderAuthView, ProviderInput } from "../../api";
 import { CopyButton } from "../../components";
 import { FormField } from "./FormField";
 import {
@@ -27,6 +27,7 @@ import {
   PROVIDER_CREDENTIAL_TYPES,
   PROVIDER_CREDENTIAL_TYPE_OPTIONS,
 } from "../../config/constants";
+import { AUTH_STATUS_BADGE_CLASS } from "../../lib/providerAuth";
 
 export interface FormState {
   data: ProviderInput;
@@ -48,7 +49,7 @@ interface ProviderFormBodyProps {
   submitting: boolean;
   onCancel: () => void;
   groups: Array<{ id: string; name: string }>;
-  authProfile?: ProviderAuthProfile | null;
+  authView?: ProviderAuthView | null;
   onStartChatGPTLogin: () => Promise<void>;
   onOpenChatGPTLoginPage: () => void;
   chatGPTLoginState: ChatGPTLoginState;
@@ -63,7 +64,7 @@ interface ChatGPTLoginState {
 
 function getChatGPTLoginButtonLabel(
   chatGPTLoginState: ChatGPTLoginState,
-  authProfile?: ProviderAuthProfile | null,
+  authView?: ProviderAuthView | null,
 ): string {
   if (chatGPTLoginState.loading) {
     return "Preparing...";
@@ -71,25 +72,35 @@ function getChatGPTLoginButtonLabel(
   if (chatGPTLoginState.authURL) {
     return "Restart Sign-In";
   }
-  if (authProfile?.ready) {
+  if (authView?.status === "active" || authView?.status === "reauth_required") {
     return "Reconnect GPT";
   }
   return "Start Sign-In";
 }
 
+function AuthStatusBadge({ status }: { status: ProviderAuthView["status"] }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide ${AUTH_STATUS_BADGE_CLASS[status]}`}
+    >
+      {status}
+    </span>
+  );
+}
+
 function ChatGPTLoginSection({
-  authProfile,
+  authView,
   chatGPTLoginState,
   onStartChatGPTLogin,
   onOpenChatGPTLoginPage,
 }: {
-  authProfile?: ProviderAuthProfile | null;
+  authView?: ProviderAuthView | null;
   chatGPTLoginState: ChatGPTLoginState;
   onStartChatGPTLogin: () => Promise<void>;
   onOpenChatGPTLoginPage: () => void;
 }) {
-  const authPlanType = resolveProviderPlanType(authProfile);
-  const authUsage = resolveProviderUsage(authProfile);
+  const authPlanType = resolveProviderPlanType(authView);
+  const authUsage = resolveProviderUsage(authView);
 
   return (
     <section className="rounded-xl border border-border/70 bg-bg-secondary/40 p-4 space-y-3">
@@ -108,7 +119,7 @@ function ChatGPTLoginSection({
           disabled={chatGPTLoginState.loading}
           className={`btn btn-secondary ${chatGPTLoginState.loading ? "opacity-60 cursor-wait" : ""}`}
         >
-          {getChatGPTLoginButtonLabel(chatGPTLoginState, authProfile)}
+          {getChatGPTLoginButtonLabel(chatGPTLoginState, authView)}
         </button>
       </div>
       {chatGPTLoginState.authURL && (
@@ -138,10 +149,15 @@ function ChatGPTLoginSection({
           </div>
         </div>
       )}
-      {authProfile?.ready && (
-        <div className="text-xs text-text-secondary space-y-1">
-          {authProfile.email && <p>Account: {authProfile.email}</p>}
-          {authProfile.account_id && <p>Workspace: {authProfile.account_id}</p>}
+      {authView && (
+        <div className="rounded-lg border border-border/70 bg-bg-primary/50 p-3 text-xs text-text-secondary space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium text-text-primary">Auth Snapshot</span>
+            <AuthStatusBadge status={authView.status} />
+          </div>
+          {authView.reason && <p>Reason: {authView.reason}</p>}
+          {authView.email && <p>Account: {authView.email}</p>}
+          {authView.account_id && <p>Workspace: {authView.account_id}</p>}
           {authPlanType && <p>Plan: {formatProviderPlanType(authPlanType)}</p>}
           {authUsage && (
             <p>
@@ -151,11 +167,18 @@ function ChatGPTLoginSection({
               {formatProviderUsageWindowSummary("1w", authUsage.one_week)}
             </p>
           )}
-          {authProfile.expires_at && (
+          {authView.expires_at && (
             <p>
-              Token expiry: {new Date(authProfile.expires_at).toLocaleString()}
+              Token expiry: {new Date(authView.expires_at).toLocaleString()}
             </p>
           )}
+          {authView.last_refresh_at && (
+            <p>
+              Last refresh:{" "}
+              {new Date(authView.last_refresh_at).toLocaleString()}
+            </p>
+          )}
+          {authView.last_error && <p>Last error: {authView.last_error}</p>}
         </div>
       )}
       {chatGPTLoginState.status && (
@@ -176,7 +199,7 @@ export function ProviderFormBody({
   submitting,
   onCancel,
   groups,
-  authProfile,
+  authView,
   onStartChatGPTLogin,
   onOpenChatGPTLoginPage,
   chatGPTLoginState,
@@ -325,7 +348,7 @@ export function ProviderFormBody({
       </FormField>
       {isChatGPTProvider ? (
         <ChatGPTLoginSection
-          authProfile={authProfile}
+          authView={authView}
           chatGPTLoginState={chatGPTLoginState}
           onStartChatGPTLogin={onStartChatGPTLogin}
           onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}

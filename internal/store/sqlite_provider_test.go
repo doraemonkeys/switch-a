@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -408,6 +407,158 @@ func TestGetProviderNotFound(t *testing.T) {
 	}
 }
 
+func TestCreateProvider_PersistsCredentialAndAuthState(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	credentialData := mustMarshalChatGPTCredentialDataWithTokens(
+		t,
+		"acct_test",
+		"access-token-one",
+		"refresh-token-one",
+	)
+	provider := &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("gpt", credentialData),
+		Enabled:        true,
+	}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	stored, err := store.GetProvider(ctx, provider.ID)
+	if err != nil {
+		t.Fatalf("GetProvider failed: %v", err)
+	}
+	if stored.Credential == nil {
+		t.Fatal("Credential = nil, want hydrated provider credential")
+	}
+	if stored.Credential.SecretData != credentialData {
+		t.Fatalf("Credential.SecretData = %q, want original payload", stored.Credential.SecretData)
+	}
+	if stored.Credential.BindingAccountID == nil || *stored.Credential.BindingAccountID != "acct_test" {
+		t.Fatalf("Credential.BindingAccountID = %v, want acct_test", stored.Credential.BindingAccountID)
+	}
+	if stored.AuthState == nil {
+		t.Fatal("AuthState = nil, want hydrated provider auth state")
+	}
+	if stored.AuthState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("AuthState.Status = %q, want %q", stored.AuthState.Status, model.ProviderAuthStatusActive)
+	}
+}
+
+func TestUpdateProviderCredential_PreservesReauthRequiredState(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	initialCredentialData := mustMarshalChatGPTCredentialDataWithTokens(
+		t,
+		"acct_test",
+		"access-token-one",
+		"refresh-token-one",
+	)
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("gpt", initialCredentialData),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	if err := store.db.Save(&model.ProviderAuthState{
+		ProviderID:   "gpt",
+		Status:       model.ProviderAuthStatusReauthRequired,
+		StatusReason: "invalid_grant",
+		LastError:    "refresh_token_reused",
+	}).Error; err != nil {
+		t.Fatalf("seed reauth state: %v", err)
+	}
+
+	refreshedCredentialData := mustMarshalChatGPTCredentialDataWithTokens(
+		t,
+		"acct_test",
+		"access-token-two",
+		"refresh-token-two",
+	)
+	if err := store.UpdateProviderCredential(
+		ctx,
+		"gpt",
+		model.ProviderCredentialTypeChatGPT,
+		refreshedCredentialData,
+	); err != nil {
+		t.Fatalf("UpdateProviderCredential failed: %v", err)
+	}
+
+	stored, err := store.GetProvider(ctx, "gpt")
+	if err != nil {
+		t.Fatalf("GetProvider failed: %v", err)
+	}
+	if stored.Credential == nil {
+		t.Fatal("Credential = nil, want hydrated provider credential")
+	}
+	if stored.Credential.SecretData != refreshedCredentialData {
+		t.Fatalf("Credential.SecretData = %q, want refreshed payload", stored.Credential.SecretData)
+	}
+	if stored.Credential.Version != 2 {
+		t.Fatalf("Credential.Version = %d, want 2", stored.Credential.Version)
+	}
+	if stored.AuthState == nil {
+		t.Fatal("AuthState = nil, want persisted auth state")
+	}
+	if stored.AuthState.Status != model.ProviderAuthStatusReauthRequired {
+		t.Fatalf("AuthState.Status = %q, want %q", stored.AuthState.Status, model.ProviderAuthStatusReauthRequired)
+	}
+	if stored.AuthState.StatusReason != "invalid_grant" {
+		t.Fatalf("AuthState.StatusReason = %q, want invalid_grant", stored.AuthState.StatusReason)
+	}
+}
+
+func TestDeleteProvider_RemovesCredentialAndAuthState(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("gpt", mustMarshalChatGPTCredentialData(t, "acct_test")),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	if err := store.DeleteProvider(ctx, "gpt"); err != nil {
+		t.Fatalf("DeleteProvider failed: %v", err)
+	}
+
+	var credentialCount int64
+	if err := store.db.Model(&model.ProviderCredential{}).
+		Where("provider_id = ?", "gpt").
+		Count(&credentialCount).Error; err != nil {
+		t.Fatalf("count provider credentials: %v", err)
+	}
+	if credentialCount != 0 {
+		t.Fatalf("provider credential count = %d, want 0", credentialCount)
+	}
+
+	var authStateCount int64
+	if err := store.db.Model(&model.ProviderAuthState{}).
+		Where("provider_id = ?", "gpt").
+		Count(&authStateCount).Error; err != nil {
+		t.Fatalf("count provider auth states: %v", err)
+	}
+	if authStateCount != 0 {
+		t.Fatalf("provider auth state count = %d, want 0", authStateCount)
+	}
+}
+
 func TestCreateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -416,7 +567,7 @@ func TestCreateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 		ID:             "p1",
 		Name:           "GPT One",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-shared"),
+		Credential:     testProviderCredential("p1", mustMarshalChatGPTCredentialData(t, "acct-shared")),
 		Enabled:        true,
 	}); err != nil {
 		t.Fatalf("CreateProvider p1 failed: %v", err)
@@ -426,7 +577,7 @@ func TestCreateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 		ID:             "p2",
 		Name:           "GPT Two",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-shared"),
+		Credential:     testProviderCredential("p2", mustMarshalChatGPTCredentialData(t, "acct-shared")),
 		Enabled:        true,
 	})
 	if !errors.Is(err, ErrCredentialBindingConflict) {
@@ -461,7 +612,7 @@ func TestUpdateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 		ID:             "p1",
 		Name:           "GPT One",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-one"),
+		Credential:     testProviderCredential("p1", mustMarshalChatGPTCredentialData(t, "acct-one")),
 		Enabled:        true,
 	}); err != nil {
 		t.Fatalf("CreateProvider p1 failed: %v", err)
@@ -470,7 +621,7 @@ func TestUpdateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 		ID:             "p2",
 		Name:           "GPT Two",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-two"),
+		Credential:     testProviderCredential("p2", mustMarshalChatGPTCredentialData(t, "acct-two")),
 		Enabled:        true,
 	}); err != nil {
 		t.Fatalf("CreateProvider p2 failed: %v", err)
@@ -480,7 +631,7 @@ func TestUpdateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 		ID:             "p2",
 		Name:           "GPT Two Updated",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-one"),
+		Credential:     testProviderCredential("p2", mustMarshalChatGPTCredentialData(t, "acct-one")),
 		Enabled:        true,
 	})
 	if !errors.Is(err, ErrCredentialBindingConflict) {
@@ -491,8 +642,8 @@ func TestUpdateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 	if getErr != nil {
 		t.Fatalf("GetProvider p2 failed: %v", getErr)
 	}
-	if !strings.Contains(got.CredentialData, "\"acct-two\"") {
-		t.Fatalf("CredentialData = %q, want original account to remain", got.CredentialData)
+	if got.Credential == nil || got.Credential.BindingAccountID == nil || *got.Credential.BindingAccountID != "acct-two" {
+		t.Fatalf("Credential.BindingAccountID = %v, want acct-two", got.Credential)
 	}
 }
 
@@ -504,7 +655,7 @@ func TestUpdateProviderCredential_RejectsDuplicateChatGPTCredentialBinding(t *te
 		ID:             "p1",
 		Name:           "GPT One",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-one"),
+		Credential:     testProviderCredential("p1", mustMarshalChatGPTCredentialData(t, "acct-one")),
 		Enabled:        true,
 	}); err != nil {
 		t.Fatalf("CreateProvider p1 failed: %v", err)
@@ -513,7 +664,7 @@ func TestUpdateProviderCredential_RejectsDuplicateChatGPTCredentialBinding(t *te
 		ID:             "p2",
 		Name:           "GPT Two",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustMarshalChatGPTCredentialData(t, "acct-two"),
+		Credential:     testProviderCredential("p2", mustMarshalChatGPTCredentialData(t, "acct-two")),
 		Enabled:        true,
 	}); err != nil {
 		t.Fatalf("CreateProvider p2 failed: %v", err)
@@ -533,17 +684,106 @@ func TestUpdateProviderCredential_RejectsDuplicateChatGPTCredentialBinding(t *te
 	if getErr != nil {
 		t.Fatalf("GetProvider p2 failed: %v", getErr)
 	}
-	if !strings.Contains(got.CredentialData, "\"acct-two\"") {
-		t.Fatalf("CredentialData = %q, want original account to remain", got.CredentialData)
+	if got.Credential == nil || got.Credential.BindingAccountID == nil || *got.Credential.BindingAccountID != "acct-two" {
+		t.Fatalf("Credential.BindingAccountID = %v, want acct-two", got.Credential)
+	}
+}
+
+func TestCreateProvider_ChatGPTWithoutCredentialBackfillsNotConnectedAuthState(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "gpt-pending",
+		Name:           "GPT Pending",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+
+	got, err := store.GetProvider(ctx, "gpt-pending")
+	if err != nil {
+		t.Fatalf("GetProvider() error = %v", err)
+	}
+	if got.Credential != nil {
+		t.Fatalf("Credential = %+v, want nil for not-connected provider", got.Credential)
+	}
+	if got.AuthState == nil {
+		t.Fatal("AuthState = nil, want not_connected snapshot")
+	}
+	if got.AuthState.Status != model.ProviderAuthStatusNotConnected {
+		t.Fatalf("AuthState.Status = %q, want %q", got.AuthState.Status, model.ProviderAuthStatusNotConnected)
+	}
+}
+
+func TestUpdateProviderCredential_SyncsCredentialAndAuthState(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "gpt-active",
+		Name:           "GPT Active",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("gpt-active", mustMarshalChatGPTCredentialData(t, "acct-one")),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+
+	if err := store.UpdateProviderCredential(
+		ctx,
+		"gpt-active",
+		model.ProviderCredentialTypeChatGPT,
+		mustMarshalChatGPTCredentialDataWithSummary(t, "acct-one", "user@example.com"),
+	); err != nil {
+		t.Fatalf("UpdateProviderCredential() error = %v", err)
+	}
+
+	got, err := store.GetProvider(ctx, "gpt-active")
+	if err != nil {
+		t.Fatalf("GetProvider() error = %v", err)
+	}
+	if got.Credential == nil {
+		t.Fatal("Credential = nil, want persisted provider credential")
+	}
+	if got.Credential.BindingAccountID == nil || *got.Credential.BindingAccountID != "acct-one" {
+		t.Fatalf("BindingAccountID = %v, want acct-one", got.Credential.BindingAccountID)
+	}
+	if got.Credential.Version != 2 {
+		t.Fatalf("Version = %d, want 2 after credential refresh", got.Credential.Version)
+	}
+	if got.AuthState == nil {
+		t.Fatal("AuthState = nil, want active snapshot")
+	}
+	if got.AuthState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("AuthState.Status = %q, want %q", got.AuthState.Status, model.ProviderAuthStatusActive)
+	}
+	if got.AuthState.Email != "user@example.com" {
+		t.Fatalf("AuthState.Email = %q, want user@example.com", got.AuthState.Email)
 	}
 }
 
 func mustMarshalChatGPTCredentialData(t *testing.T, accountID string) string {
+	return mustMarshalChatGPTCredentialDataWithTokens(
+		t,
+		accountID,
+		"access-token",
+		"refresh-token",
+	)
+}
+
+func mustMarshalChatGPTCredentialDataWithTokens(
+	t *testing.T,
+	accountID string,
+	accessToken string,
+	refreshToken string,
+) string {
 	t.Helper()
 
 	payload, err := json.Marshal(model.ChatGPTProviderCredential{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
 		IDToken:      "id-token",
 		AccountID:    accountID,
 	})
@@ -551,4 +791,24 @@ func mustMarshalChatGPTCredentialData(t *testing.T, accountID string) string {
 		t.Fatalf("marshal GPT credential payload: %v", err)
 	}
 	return string(payload)
+}
+
+func mustMarshalChatGPTCredentialDataWithSummary(t *testing.T, accountID, email string) string {
+	t.Helper()
+
+	payload, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token-next",
+		RefreshToken: "refresh-token-next",
+		IDToken:      "id-token-next",
+		AccountID:    accountID,
+		Email:        email,
+	})
+	if err != nil {
+		t.Fatalf("marshal GPT credential payload with summary: %v", err)
+	}
+	return string(payload)
+}
+
+func testProviderCredential(providerID, raw string) *model.ProviderCredential {
+	return model.ProviderCredentialFromLegacy(providerID, model.ProviderCredentialTypeChatGPT, raw)
 }

@@ -2,10 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"switch-a/internal/model"
 
@@ -14,16 +12,16 @@ import (
 
 func (s *SQLiteStore) ListProviders(ctx context.Context) ([]model.Provider, error) {
 	var providers []model.Provider
-	if err := s.db.WithContext(ctx).Preload("APITypes").Find(&providers).Error; err != nil {
+	if err := providerQueryWithState(s.db.WithContext(ctx)).Find(&providers).Error; err != nil {
 		return nil, fmt.Errorf("list providers: %w", err)
 	}
+	hydrateProviderStates(providers)
 	return providers, nil
 }
 
 func (s *SQLiteStore) ListProvidersByAPIType(ctx context.Context, apiType string) ([]model.Provider, error) {
 	var providers []model.Provider
-	err := s.db.WithContext(ctx).
-		Preload("APITypes").
+	err := providerQueryWithState(s.db.WithContext(ctx)).
 		Distinct().
 		Joins("JOIN provider_api_types ON provider_api_types.provider_id = providers.id").
 		Where("provider_api_types.api_type = ? AND providers.enabled = ?", apiType, true).
@@ -31,24 +29,31 @@ func (s *SQLiteStore) ListProvidersByAPIType(ctx context.Context, apiType string
 	if err != nil {
 		return nil, fmt.Errorf("list providers by api type %q: %w", apiType, err)
 	}
+	hydrateProviderStates(providers)
 	return providers, nil
 }
 
 func (s *SQLiteStore) GetProvider(ctx context.Context, id string) (*model.Provider, error) {
 	var provider model.Provider
-	err := s.db.WithContext(ctx).Preload("APITypes").First(&provider, "id = ?", id).Error
+	err := providerQueryWithState(s.db.WithContext(ctx)).First(&provider, "id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get provider %q: %w", id, err)
 	}
+	hydrateProviderState(&provider)
 	return &provider, nil
 }
 
 func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := validateExclusiveCredentialBinding(tx, p.ID, p.CredentialType, p.CredentialData); err != nil {
+		supplemental := resolveProviderSupplementalState(p, &persistedProviderState{})
+		bindingAccountID := (*string)(nil)
+		if supplemental.credential != nil {
+			bindingAccountID = supplemental.credential.BindingAccountID
+		}
+		if err := validateExclusiveCredentialBinding(tx, p.ID, bindingAccountID); err != nil {
 			return err
 		}
 
@@ -73,13 +78,13 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 
 		if err := tx.Exec(`
 			INSERT INTO providers (
-				id, name, api_key, auth_mode, credential_type, credential_data, group_id,
+				id, name, api_key, auth_mode, credential_type, group_id,
 				weight, priority, concurrency, max_retries,
 				backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter,
 				vendor, failover_scope, accept_failover,
 				enabled, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.ID, p.Name, p.APIKey, p.AuthMode, model.NormalizeProviderCredentialType(p.CredentialType), p.CredentialData, p.GroupID,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, p.Name, p.APIKey, p.AuthMode, model.NormalizeProviderCredentialType(p.CredentialType), p.GroupID,
 			p.Weight, p.Priority, p.Concurrency, p.MaxRetries,
 			p.Backoff.InitialDelay, p.Backoff.MaxDelay, p.Backoff.Multiplier, p.Backoff.Jitter,
 			p.Vendor, failoverScope, acceptFailover,
@@ -94,7 +99,7 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 				return err
 			}
 		}
-		return nil
+		return persistProviderSupplementalState(tx, p.ID, supplemental)
 	})
 	if err != nil {
 		return fmt.Errorf("create provider %q: %w", p.ID, err)
@@ -104,7 +109,16 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 
 func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := validateExclusiveCredentialBinding(tx, p.ID, p.CredentialType, p.CredentialData); err != nil {
+		current, err := loadPersistedProviderState(tx, p.ID)
+		if err != nil {
+			return err
+		}
+		supplemental := resolveProviderSupplementalState(p, current)
+		bindingAccountID := (*string)(nil)
+		if supplemental.credential != nil {
+			bindingAccountID = supplemental.credential.BindingAccountID
+		}
+		if err := validateExclusiveCredentialBinding(tx, p.ID, bindingAccountID); err != nil {
 			return err
 		}
 
@@ -155,7 +169,7 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 				return err
 			}
 		}
-		return nil
+		return persistProviderSupplementalState(tx, p.ID, supplemental)
 	})
 	if err != nil {
 		return fmt.Errorf("update provider %q: %w", p.ID, err)
@@ -166,90 +180,63 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 func (s *SQLiteStore) UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error {
 	now := s.clock.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := validateExclusiveCredentialBinding(tx, id, credentialType, credentialData); err != nil {
+		current, err := loadPersistedProviderState(tx, id)
+		if err != nil {
 			return err
 		}
-		return tx.Exec(
+
+		provider := &model.Provider{
+			ID:             id,
+			CredentialType: credentialType,
+			Credential: model.ProviderCredentialFromLegacy(
+				id,
+				credentialType,
+				credentialData,
+			),
+		}
+		if provider.Credential != nil {
+			// Refresh callers provide a raw secret payload, not a versioned record.
+			// Reset the version so resolveProviderCredentialRecord can apply the
+			// current persisted version and bump it when the secret changes.
+			provider.Credential.Version = 0
+		}
+		supplemental := resolveProviderSupplementalState(provider, current)
+		bindingAccountID := (*string)(nil)
+		if supplemental.credential != nil {
+			bindingAccountID = supplemental.credential.BindingAccountID
+		}
+		if err := validateExclusiveCredentialBinding(tx, id, bindingAccountID); err != nil {
+			return err
+		}
+		if err := tx.Exec(
 			`UPDATE providers
-			 SET credential_type = ?, credential_data = ?, updated_at = ?
+			 SET credential_type = ?, updated_at = ?
 			 WHERE id = ?`,
 			model.NormalizeProviderCredentialType(credentialType),
-			credentialData,
 			now,
 			id,
-		).Error
+		).Error; err != nil {
+			return err
+		}
+		return persistProviderSupplementalState(tx, id, supplemental)
 	}); err != nil {
 		return fmt.Errorf("update provider credential %q: %w", id, err)
 	}
 	return nil
 }
 
-func validateExclusiveCredentialBinding(
-	tx *gorm.DB,
-	providerID string,
-	credentialType model.ProviderCredentialType,
-	credentialData string,
-) error {
-	if model.NormalizeProviderCredentialType(credentialType) != model.ProviderCredentialTypeChatGPT {
-		return nil
-	}
-
-	accountID, err := chatGPTAccountIDFromCredentialData(credentialData)
-	if err != nil {
-		return err
-	}
-
-	type providerCredentialRecord struct {
-		ID             string
-		CredentialData string
-	}
-
-	var candidates []providerCredentialRecord
-	if err := tx.Model(&model.Provider{}).
-		Select("id, credential_data").
-		Where("credential_type = ?", model.ProviderCredentialTypeChatGPT).
-		Where("id <> ?", providerID).
-		Find(&candidates).Error; err != nil {
-		return fmt.Errorf("list providers for credential binding validation: %w", err)
-	}
-
-	for _, candidate := range candidates {
-		candidateAccountID, err := chatGPTAccountIDFromCredentialData(candidate.CredentialData)
-		if err != nil {
-			return fmt.Errorf("decode existing GPT credential for provider %q: %w", candidate.ID, err)
-		}
-		if candidateAccountID == accountID {
-			return &CredentialBindingConflictError{
-				AccountID:  accountID,
-				ProviderID: candidate.ID,
-			}
-		}
-	}
-
-	return nil
-}
-
-func chatGPTAccountIDFromCredentialData(credentialData string) (string, error) {
-	if strings.TrimSpace(credentialData) == "" {
-		return "", fmt.Errorf("missing GPT credential data")
-	}
-
-	var credential model.ChatGPTProviderCredential
-	if err := json.Unmarshal([]byte(credentialData), &credential); err != nil {
-		return "", fmt.Errorf("decode GPT credential data: %w", err)
-	}
-
-	accountID := strings.TrimSpace(credential.AccountID)
-	if accountID == "" {
-		return "", fmt.Errorf("missing GPT account_id")
-	}
-	return accountID, nil
-}
-
 func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Delete API types first
 		if err := tx.Where("provider_id = ?", id).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
+			return err
+		}
+		// Delete provider credential state first so the migration shadow never leaves
+		// orphaned secret/auth rows behind even if SQLite foreign-key pragmas differ.
+		if err := tx.Where("provider_id = ?", id).Delete(&model.ProviderCredential{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("provider_id = ?", id).Delete(&model.ProviderAuthState{}).Error; err != nil {
 			return err
 		}
 		// Delete health state

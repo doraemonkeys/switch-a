@@ -32,9 +32,9 @@ function buildProvider(): Provider {
     enabled: true,
     created_at: "2026-03-22T12:00:00Z",
     updated_at: "2026-03-22T12:00:00Z",
-    auth_profile: {
+    auth: {
       type: "chatgpt",
-      ready: true,
+      status: "active",
       email: "user@example.com",
       account_id: "acct_test",
       plan_type: "plus",
@@ -79,8 +79,45 @@ describe("ProvidersTableBody", () => {
     );
 
     expect(screen.getByText("GPT Provider")).toBeInTheDocument();
+    expect(screen.getByText("active")).toBeInTheDocument();
     expect(screen.getByText(/Plus/)).toBeInTheDocument();
     expect(screen.getByText(/5h 18% used/)).toBeInTheDocument();
     expect(screen.getByText(/1w 42% used/)).toBeInTheDocument();
+  });
+
+  it("shows reconnect-required auth state without relying on usage readiness", () => {
+    const provider = {
+      ...buildProvider(),
+      auth: {
+        type: "chatgpt",
+        status: "reauth_required",
+        reason: "invalid_grant",
+        last_error: "refresh_token_reused",
+        email: "user@example.com",
+      },
+    } as Provider;
+
+    render(
+      <table>
+        <tbody>
+          <ProvidersTableBody
+            loading={false}
+            providers={[provider]}
+            filteredProviders={[provider]}
+            onToggle={vi.fn()}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onReset={vi.fn()}
+            onAddClick={vi.fn()}
+            getGroupName={() => "Ungrouped"}
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.getByText("reauth_required")).toBeInTheDocument();
+    expect(screen.getByText("invalid_grant")).toBeInTheDocument();
+    expect(screen.getByText("refresh_token_reused")).toBeInTheDocument();
+    expect(screen.queryByText(/5h 18% used/)).not.toBeInTheDocument();
   });
 });

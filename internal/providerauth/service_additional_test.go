@@ -2,6 +2,7 @@ package providerauth
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,49 +57,74 @@ func TestLoopbackHelpers(t *testing.T) {
 	}
 }
 
-func TestBuildAuthProfile_StaticAndFallbackPaths(t *testing.T) {
-	if got := BuildAuthProfile(nil); got != nil {
-		t.Fatalf("BuildAuthProfile(nil) = %#v, want nil", got)
+func TestBuildProviderAuthView_StaticAndFallbackPaths(t *testing.T) {
+	if got := BuildProviderAuthView(nil); got != nil {
+		t.Fatalf("BuildProviderAuthView(nil) = %#v, want nil", got)
 	}
 
-	t.Run("static provider reports readiness", func(t *testing.T) {
-		profile := BuildAuthProfile(&model.Provider{
+	t.Run("static provider reports active auth", func(t *testing.T) {
+		profile := BuildProviderAuthView(&model.Provider{
 			CredentialType: model.ProviderCredentialTypeAPIKey,
 			APITypes: []model.ProviderAPIType{
 				{APIType: "responses", APIKey: "api-type-key"},
 			},
 		})
 		if profile == nil {
-			t.Fatal("BuildAuthProfile returned nil")
+			t.Fatal("BuildProviderAuthView returned nil")
 		}
 		if profile.Type != model.ProviderCredentialTypeAPIKey {
 			t.Fatalf("Type = %q, want %q", profile.Type, model.ProviderCredentialTypeAPIKey)
 		}
-		if !profile.Ready {
-			t.Fatal("Ready = false, want true")
+		if profile.Status != ProviderAuthStatusActive {
+			t.Fatalf("Status = %q, want %q", profile.Status, ProviderAuthStatusActive)
 		}
 	})
 
-	t.Run("invalid chatgpt payload keeps type without leaking readiness", func(t *testing.T) {
-		profile := BuildAuthProfile(&model.Provider{
-			CredentialType: model.ProviderCredentialTypeChatGPT,
-			CredentialData: "{",
+	t.Run("api-key provider without a usable key reports not connected", func(t *testing.T) {
+		profile := BuildProviderAuthView(&model.Provider{
+			ID:             "provider-missing-key",
+			CredentialType: model.ProviderCredentialTypeAPIKey,
+			AuthState: &model.ProviderAuthState{
+				Status: model.ProviderAuthStatusActive,
+			},
+			APITypes: []model.ProviderAPIType{
+				{APIType: "responses", APIKey: "   "},
+			},
 		})
 		if profile == nil {
-			t.Fatal("BuildAuthProfile returned nil")
+			t.Fatal("BuildProviderAuthView returned nil")
+		}
+		if profile.Status != ProviderAuthStatusNotConnected {
+			t.Fatalf("Status = %q, want %q", profile.Status, ProviderAuthStatusNotConnected)
+		}
+		if profile.Reason != ProviderAuthReasonMissingAPIKey {
+			t.Fatalf("Reason = %q, want %q", profile.Reason, ProviderAuthReasonMissingAPIKey)
+		}
+	})
+
+	t.Run("invalid chatgpt payload keeps type without reporting active auth", func(t *testing.T) {
+		profile := BuildProviderAuthView(&model.Provider{
+			CredentialType: model.ProviderCredentialTypeChatGPT,
+			Credential:     &model.ProviderCredential{SecretData: "{"},
+		})
+		if profile == nil {
+			t.Fatal("BuildProviderAuthView returned nil")
 		}
 		if profile.Type != model.ProviderCredentialTypeChatGPT {
 			t.Fatalf("Type = %q, want %q", profile.Type, model.ProviderCredentialTypeChatGPT)
 		}
-		if profile.Ready {
-			t.Fatal("Ready = true, want false")
+		if profile.Status != ProviderAuthStatusNotConnected {
+			t.Fatalf("Status = %q, want %q", profile.Status, ProviderAuthStatusNotConnected)
+		}
+		if profile.Reason != ProviderAuthReasonCredentialInvalid {
+			t.Fatalf("Reason = %q, want %q", profile.Reason, ProviderAuthReasonCredentialInvalid)
 		}
 	})
 }
 
-func TestBuildChatGPTAuthProfile_UsesUsagePlanFallback(t *testing.T) {
+func TestBuildProviderAuthView_UsesUsagePlanFallback(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
-	profile := buildChatGPTAuthProfile(&model.ChatGPTProviderCredential{
+	profile := buildChatGPTAuthView(newStoredChatGPTCredential(&model.ChatGPTProviderCredential{
 		AccessToken:  "access-token",
 		RefreshToken: "refresh-token",
 		IDToken:      "id-token",
@@ -109,10 +135,10 @@ func TestBuildChatGPTAuthProfile_UsesUsagePlanFallback(t *testing.T) {
 		},
 		LastRefresh: now.Add(-time.Minute),
 		ExpiresAt:   now.Add(time.Hour),
-	})
+	}, ProviderAuthStatusActive, "", ""))
 
-	if !profile.Ready {
-		t.Fatal("Ready = false, want true")
+	if profile.Status != ProviderAuthStatusActive {
+		t.Fatalf("Status = %q, want %q", profile.Status, ProviderAuthStatusActive)
 	}
 	if profile.PlanType != "team" {
 		t.Fatalf("PlanType = %q, want %q", profile.PlanType, "team")
@@ -120,38 +146,35 @@ func TestBuildChatGPTAuthProfile_UsesUsagePlanFallback(t *testing.T) {
 	if profile.ExpiresAt == nil || !profile.ExpiresAt.Equal(now.Add(time.Hour)) {
 		t.Fatalf("ExpiresAt = %#v, want %s", profile.ExpiresAt, now.Add(time.Hour))
 	}
-	if profile.LastRefresh == nil || !profile.LastRefresh.Equal(now.Add(-time.Minute)) {
-		t.Fatalf("LastRefresh = %#v, want %s", profile.LastRefresh, now.Add(-time.Minute))
+	if profile.LastRefreshAt == nil || !profile.LastRefreshAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("LastRefreshAt = %#v, want %s", profile.LastRefreshAt, now.Add(-time.Minute))
 	}
 
-	if got := buildChatGPTAuthProfile(nil); got == nil || got.Type != model.ProviderCredentialTypeChatGPT {
-		t.Fatalf("buildChatGPTAuthProfile(nil) = %#v, want empty chatgpt profile", got)
+	if got := buildChatGPTAuthView(nil); got == nil || got.Type != model.ProviderCredentialTypeChatGPT {
+		t.Fatalf("buildChatGPTAuthView(nil) = %#v, want empty chatgpt profile", got)
 	}
 }
 
-func TestPopulateProviderAuthProfile_FallsBackForNonChatGPTAndErrors(t *testing.T) {
-	service := NewService(Config{})
-
+func TestBuildProviderAuthView_FallsBackForNonChatGPTAndErrors(t *testing.T) {
 	provider := &model.Provider{
 		CredentialType: model.ProviderCredentialTypeAPIKey,
 		APIKey:         "api-key",
 	}
-	service.PopulateProviderAuthProfile(context.Background(), provider)
-	if provider.AuthProfile == nil || !provider.AuthProfile.Ready {
-		t.Fatalf("AuthProfile = %#v, want ready static profile", provider.AuthProfile)
+	if view := BuildProviderAuthView(provider); view == nil || view.Status != ProviderAuthStatusActive {
+		t.Fatalf("BuildProviderAuthView = %#v, want active static profile", view)
 	}
 
 	chatGPTProvider := &model.Provider{
 		ID:             "provider-gpt",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: "{",
+		Credential:     &model.ProviderCredential{SecretData: "{"},
 	}
-	service.PopulateProviderAuthProfile(context.Background(), chatGPTProvider)
-	if chatGPTProvider.AuthProfile == nil {
-		t.Fatal("AuthProfile = nil, want fallback profile")
+	view := BuildProviderAuthView(chatGPTProvider)
+	if view == nil {
+		t.Fatal("BuildProviderAuthView = nil, want fallback profile")
 	}
-	if chatGPTProvider.AuthProfile.Type != model.ProviderCredentialTypeChatGPT {
-		t.Fatalf("Type = %q, want %q", chatGPTProvider.AuthProfile.Type, model.ProviderCredentialTypeChatGPT)
+	if view.Type != model.ProviderCredentialTypeChatGPT {
+		t.Fatalf("Type = %q, want %q", view.Type, model.ProviderCredentialTypeChatGPT)
 	}
 }
 
@@ -185,11 +208,11 @@ func TestNormalizeProviderForPersistence_AppliesCredentialTypeInvariants(t *test
 
 	apiKeyProvider := &model.Provider{
 		CredentialType: model.ProviderCredentialTypeAPIKey,
-		CredentialData: "should-clear",
+		Credential:     &model.ProviderCredential{SecretData: "should-clear"},
 	}
 	NormalizeProviderForPersistence(apiKeyProvider)
-	if apiKeyProvider.CredentialData != "" {
-		t.Fatalf("CredentialData = %q, want empty string", apiKeyProvider.CredentialData)
+	if apiKeyProvider.Credential != nil {
+		t.Fatalf("Credential = %#v, want nil", apiKeyProvider.Credential)
 	}
 }
 
@@ -291,9 +314,9 @@ func TestApplyAndFinalizeChatGPTLogin_ConsumesSessionOnlyAfterFinalize(t *testin
 	if err := service.ApplyChatGPTLogin(provider, "login-1"); err != nil {
 		t.Fatalf("ApplyChatGPTLogin returned error: %v", err)
 	}
-	applied, err := decodeChatGPTCredential(provider.CredentialData)
+	applied, err := decodeProviderChatGPTCredential(provider)
 	if err != nil {
-		t.Fatalf("decodeChatGPTCredential returned error: %v", err)
+		t.Fatalf("decodeProviderChatGPTCredential returned error: %v", err)
 	}
 	if applied.AccessToken != credential.AccessToken {
 		t.Fatalf("AccessToken = %q, want %q", applied.AccessToken, credential.AccessToken)
@@ -327,17 +350,18 @@ func TestApplyProviderCredentials_StaticModesAndErrors(t *testing.T) {
 	service := NewService(Config{})
 
 	t.Run("chatgpt rejects non-codex api type", func(t *testing.T) {
-		err := service.ApplyProviderCredentials(context.Background(), make(http.Header), &model.Provider{
+		provider := &model.Provider{
 			ID:             "provider-gpt",
 			CredentialType: model.ProviderCredentialTypeChatGPT,
-			CredentialData: mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
-				AccessToken:  "access-token",
-				RefreshToken: "refresh-token",
-				IDToken:      "id-token",
-				AccountID:    "acct_test",
-				ExpiresAt:    time.Now().UTC().Add(time.Hour),
-			}),
-		}, "responses", authModeBearer, nil)
+		}
+		mustApplyLegacyChatGPTCredential(t, provider, mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			IDToken:      "id-token",
+			AccountID:    "acct_test",
+			ExpiresAt:    time.Now().UTC().Add(time.Hour),
+		}))
+		err := service.ApplyProviderCredentials(context.Background(), make(http.Header), provider, "responses", authModeBearer, nil)
 		if err == nil || !strings.Contains(err.Error(), "only supports api_type") {
 			t.Fatalf("error = %v, want api_type validation", err)
 		}
@@ -389,6 +413,166 @@ func TestRefreshProviderCredentials_StaticProviderReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestBuildProviderAuthView_NotConnectedWithoutChatGPTLogin(t *testing.T) {
+	view := BuildProviderAuthView(&model.Provider{
+		ID:             "provider-gpt",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	})
+	if view == nil {
+		t.Fatal("BuildProviderAuthView returned nil")
+	}
+	if view.Status != ProviderAuthStatusNotConnected {
+		t.Fatalf("Status = %q, want %q", view.Status, ProviderAuthStatusNotConnected)
+	}
+	if view.Reason != ProviderAuthReasonLoginRequired {
+		t.Fatalf("Reason = %q, want %q", view.Reason, ProviderAuthReasonLoginRequired)
+	}
+}
+
+func TestRefreshProviderCredentials_MarksReauthRequiredOnTerminalRefreshFailure_WithAuthStateRow(t *testing.T) {
+	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
+	idToken := makeTestJWT(t, map[string]any{
+		"iss": "https://issuer.example.com/",
+		"aud": "client-refresh",
+		"exp": now.Add(30 * time.Second).Unix(),
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": "acct_test",
+			"chatgpt_plan_type":  "plus",
+		},
+	})
+	credentialData, err := encodeStoredChatGPTCredential(storedChatGPTCredential{
+		ChatGPTProviderCredential: model.ChatGPTProviderCredential{
+			AccessToken:   "access-token",
+			RefreshToken:  "refresh-token",
+			IDToken:       idToken,
+			OAuthIssuer:   "https://issuer.example.com/",
+			OAuthClientID: "client-refresh",
+			AccountID:     "acct_test",
+			Email:         "user@example.com",
+			LastRefresh:   now.Add(-time.Hour),
+			ExpiresAt:     now.Add(30 * time.Second),
+		},
+		AuthStatus: ProviderAuthStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("encodeStoredChatGPTCredential returned error: %v", err)
+	}
+
+	store := &recordingCredentialStore{}
+	service := NewService(Config{
+		Clock:           fixedClock{now: now},
+		CredentialStore: store,
+		HTTPClient: stubHTTPDoer{
+			do: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Body:       io.NopCloser(strings.NewReader(`refresh_token_reused`)),
+				}, nil
+			},
+		},
+	})
+
+	provider := &model.Provider{
+		ID:             "provider-gpt",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		AuthState: &model.ProviderAuthState{
+			Status: model.ProviderAuthStatusActive,
+		},
+	}
+	mustApplyStoredLegacyChatGPTCredential(t, provider, credentialData)
+
+	refreshed, err := service.RefreshProviderCredentials(context.Background(), provider)
+	if !refreshed {
+		t.Fatal("RefreshProviderCredentials returned false, want true")
+	}
+	var stateErr *ProviderAuthStateError
+	if !errors.As(err, &stateErr) {
+		t.Fatalf("error = %v, want ProviderAuthStateError", err)
+	}
+	if stateErr.Status != ProviderAuthStatusReauthRequired {
+		t.Fatalf("Status = %q, want %q", stateErr.Status, ProviderAuthStatusReauthRequired)
+	}
+	if stateErr.Reason != ProviderAuthReasonRefreshTokenReused {
+		t.Fatalf("Reason = %q, want %q", stateErr.Reason, ProviderAuthReasonRefreshTokenReused)
+	}
+	if store.calls != 0 {
+		t.Fatalf("UpdateProviderCredential calls = %d, want 0", store.calls)
+	}
+	if store.authStateCalls != 1 {
+		t.Fatalf("UpdateProviderAuthState calls = %d, want 1", store.authStateCalls)
+	}
+	if provider.AuthState == nil {
+		t.Fatal("AuthState = nil, want persisted reauth_required snapshot")
+	}
+	if provider.AuthState.Status != model.ProviderAuthStatusReauthRequired {
+		t.Fatalf("AuthState.Status = %q, want %q", provider.AuthState.Status, model.ProviderAuthStatusReauthRequired)
+	}
+	if provider.AuthState.StatusReason != ProviderAuthReasonRefreshTokenReused {
+		t.Fatalf("AuthState.StatusReason = %q, want %q", provider.AuthState.StatusReason, ProviderAuthReasonRefreshTokenReused)
+	}
+	if !strings.Contains(provider.AuthState.LastError, "refresh_token_reused") {
+		t.Fatalf("AuthState.LastError = %q, want refresh_token_reused marker", provider.AuthState.LastError)
+	}
+}
+
+func TestRefreshProviderCredentials_DoesNotReviveReauthRequiredProvider_WithExplicitAuthState(t *testing.T) {
+	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
+	idToken := makeTestJWT(t, map[string]any{
+		"iss": "https://issuer.example.com/",
+		"aud": "client-refresh",
+		"exp": now.Add(30 * time.Second).Unix(),
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": "acct_test",
+		},
+	})
+	credentialData, err := encodeStoredChatGPTCredential(storedChatGPTCredential{
+		ChatGPTProviderCredential: model.ChatGPTProviderCredential{
+			AccessToken:   "access-token",
+			RefreshToken:  "refresh-token",
+			IDToken:       idToken,
+			OAuthIssuer:   "https://issuer.example.com/",
+			OAuthClientID: "client-refresh",
+			AccountID:     "acct_test",
+			LastRefresh:   now.Add(-time.Hour),
+			ExpiresAt:     now.Add(30 * time.Second),
+		},
+		AuthStatus: ProviderAuthStatusReauthRequired,
+		AuthReason: ProviderAuthReasonInvalidGrant,
+		LastError:  "invalid_grant",
+	})
+	if err != nil {
+		t.Fatalf("encodeStoredChatGPTCredential returned error: %v", err)
+	}
+
+	service := NewService(Config{
+		Clock: fixedClock{now: now},
+		HTTPClient: stubHTTPDoer{
+			do: func(req *http.Request) (*http.Response, error) {
+				t.Fatalf("unexpected refresh request: %s", req.URL.String())
+				return nil, nil
+			},
+		},
+	})
+
+	provider := &model.Provider{
+		ID:             "provider-gpt",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+	mustApplyStoredLegacyChatGPTCredential(t, provider, credentialData)
+
+	refreshed, err := service.RefreshProviderCredentials(context.Background(), provider)
+	if !refreshed {
+		t.Fatal("RefreshProviderCredentials returned false, want true")
+	}
+	var stateErr *ProviderAuthStateError
+	if !errors.As(err, &stateErr) {
+		t.Fatalf("error = %v, want ProviderAuthStateError", err)
+	}
+	if stateErr.Status != ProviderAuthStatusReauthRequired {
+		t.Fatalf("Status = %q, want %q", stateErr.Status, ProviderAuthStatusReauthRequired)
+	}
+}
+
 func TestEnsureFreshChatGPTCredential_SkipsRefreshWhenStillValid(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	service := NewService(Config{
@@ -410,14 +594,14 @@ func TestEnsureFreshChatGPTCredential_SkipsRefreshWhenStillValid(t *testing.T) {
 	provider := &model.Provider{
 		ID:             "provider-gpt",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
-			AccessToken:  "access-token",
-			RefreshToken: "refresh-token",
-			IDToken:      idToken,
-			AccountID:    "acct_test",
-			ExpiresAt:    now.Add(2 * time.Hour),
-		}),
 	}
+	mustApplyLegacyChatGPTCredential(t, provider, mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      idToken,
+		AccountID:    "acct_test",
+		ExpiresAt:    now.Add(2 * time.Hour),
+	}))
 
 	credential, err := service.ensureFreshChatGPTCredential(context.Background(), provider, false)
 	if err != nil {
@@ -498,17 +682,17 @@ func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 	provider := &model.Provider{
 		ID:             "provider-gpt",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
-			AccessToken:  "access-token",
-			RefreshToken: "refresh-token",
-			IDToken:      oldIDToken,
-			AccountID:    "acct_test",
-			Email:        "user@example.com",
-			PlanType:     "plus",
-			LastRefresh:  now.Add(-time.Hour),
-			ExpiresAt:    now.Add(30 * time.Second),
-		}),
 	}
+	mustApplyLegacyChatGPTCredential(t, provider, mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      oldIDToken,
+		AccountID:    "acct_test",
+		Email:        "user@example.com",
+		PlanType:     "plus",
+		LastRefresh:  now.Add(-time.Hour),
+		ExpiresAt:    now.Add(30 * time.Second),
+	}))
 
 	refreshed, err := service.ensureFreshChatGPTCredential(context.Background(), provider, false)
 	if err != nil {
@@ -535,8 +719,9 @@ func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 	if store.calls != 1 {
 		t.Fatalf("UpdateProviderCredential calls = %d, want 1", store.calls)
 	}
-	if provider.AuthProfile == nil || provider.AuthProfile.PlanType != "team" {
-		t.Fatalf("AuthProfile = %#v, want refreshed plan type", provider.AuthProfile)
+	view := mustBuildProviderAuthView(t, provider)
+	if view.PlanType != "team" {
+		t.Fatalf("AuthView = %#v, want refreshed plan type", view)
 	}
 }
 
@@ -574,19 +759,19 @@ func TestEnsureFreshChatGPTCredential_PreservesIdentitySnapshotWhenRefreshOmitsI
 	provider := &model.Provider{
 		ID:             "provider-gpt",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
-			AccessToken:   "access-token",
-			RefreshToken:  "refresh-token",
-			IDToken:       oldIDToken,
-			OAuthIssuer:   "https://issuer.example.com/",
-			OAuthClientID: "client-refresh",
-			AccountID:     "acct_test",
-			Email:         "user@example.com",
-			PlanType:      "plus",
-			LastRefresh:   now.Add(-time.Hour),
-			ExpiresAt:     now.Add(30 * time.Second),
-		}),
 	}
+	mustApplyLegacyChatGPTCredential(t, provider, mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
+		AccessToken:   "access-token",
+		RefreshToken:  "refresh-token",
+		IDToken:       oldIDToken,
+		OAuthIssuer:   "https://issuer.example.com/",
+		OAuthClientID: "client-refresh",
+		AccountID:     "acct_test",
+		Email:         "user@example.com",
+		PlanType:      "plus",
+		LastRefresh:   now.Add(-time.Hour),
+		ExpiresAt:     now.Add(30 * time.Second),
+	}))
 
 	refreshed, err := service.ensureFreshChatGPTCredential(context.Background(), provider, false)
 	if err != nil {

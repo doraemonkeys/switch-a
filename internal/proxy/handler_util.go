@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"switch-a/internal"
 	"switch-a/internal/defaults"
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
 
 	"go.uber.org/zap"
 )
@@ -48,9 +50,40 @@ func (h *Handler) markSuccess(ctx context.Context, providerID string) {
 
 // markFailure marks a failed request for the provider.
 func (h *Handler) markFailure(ctx context.Context, providerID string, err error) {
-	if h.health != nil {
+	if h.health != nil && shouldTrackHealthError(err) {
 		h.health.MarkFailure(ctx, providerID, err)
 	}
+}
+
+func shouldTrackStatusFailureInHealth(statusCode int) bool {
+	return statusCode != defaults.StatusUnauthorized && statusCode != defaults.StatusForbidden
+}
+
+func shouldTrackWebSocketFailureInHealth(result *WebSocketResult) bool {
+	if result == nil {
+		return false
+	}
+	if result.HandshakeStatusCode == defaults.StatusUnauthorized {
+		return false
+	}
+	if result.UpstreamError == nil {
+		return true
+	}
+	errorType := strings.TrimSpace(strings.ToLower(result.UpstreamError.EventType))
+	if result.UpstreamError.StatusCode > 0 &&
+		(result.UpstreamError.StatusCode == defaults.StatusUnauthorized ||
+			(result.UpstreamError.StatusCode == defaults.StatusForbidden && errorType == "auth_error")) {
+		return false
+	}
+	return errorType != "auth_error"
+}
+
+func shouldTrackHealthError(err error) bool {
+	if err == nil {
+		return true
+	}
+	var authStateErr *providerauth.ProviderAuthStateError
+	return !errors.As(err, &authStateErr)
 }
 
 // suspendProviderUntil marks a provider unavailable until the given time.

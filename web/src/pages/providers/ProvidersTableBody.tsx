@@ -1,4 +1,4 @@
-import type { Provider } from "../../api/client";
+import type { Provider, ProviderAuthView } from "../../api/client";
 import { hasProviderApiKey } from "../../lib/providerApiKey";
 import {
   formatProviderPlanType,
@@ -6,6 +6,10 @@ import {
   resolveProviderPlanType,
   resolveProviderUsage,
 } from "../../lib/providerUsage";
+import {
+  AUTH_STATUS_BADGE_CLASS,
+  resolveProviderAuthView,
+} from "../../lib/providerAuth";
 import { stringToColor } from "../../lib/utils";
 import { RecoveryTimer } from "../../components/RecoveryTimer";
 import {
@@ -48,10 +52,12 @@ export interface ProvidersTableBodyProps {
 // Status badge with optional tooltip
 function StatusCell({
   status,
+  authView,
   disabledReason,
   lastError,
 }: {
   status: ProviderStatusType;
+  authView: ProviderAuthView | null;
   disabledReason?: string;
   lastError?: string;
 }) {
@@ -66,30 +72,52 @@ function StatusCell({
   };
 
   return (
-    <div className="group relative flex items-center gap-1.5">
-      <div
-        className={`px-2.5 py-1 rounded-full text-xs font-semibold tracking-wide border inline-flex items-center gap-1.5 ${statusBadgeClass[status]} ${getBorderColor(status)}`}
-      >
+    <div className="space-y-2">
+      <div className="group relative flex items-center gap-1.5">
         <div
-          className={`w-1.5 h-1.5 rounded-full ${statusDotClass[status]} ${status === "pending-recovery" ? "animate-pulse" : ""}`}
-        />
-        {statusLabel[status]}
-      </div>
-      {showTooltip && (
-        <div className="relative group/tooltip">
-          <Info className="w-4 h-4 text-text-muted hover:text-text-primary cursor-help transition-colors" />
-          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-56 p-2.5 bg-gray-900 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-all z-10 pointer-events-none">
-            <div className="font-medium">{disabledReason}</div>
-            {lastError && (
-              <>
-                <div className="h-px bg-gray-700 my-2" />
-                <span className="opacity-80 break-words line-clamp-3 leading-relaxed">
-                  Error: {lastError}
-                </span>
-              </>
-            )}
-            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45" />
+          className={`px-2.5 py-1 rounded-full text-xs font-semibold tracking-wide border inline-flex items-center gap-1.5 ${statusBadgeClass[status]} ${getBorderColor(status)}`}
+        >
+          <div
+            className={`w-1.5 h-1.5 rounded-full ${statusDotClass[status]} ${status === "pending-recovery" ? "animate-pulse" : ""}`}
+          />
+          {statusLabel[status]}
+        </div>
+        {showTooltip && (
+          <div className="relative group/tooltip">
+            <Info className="w-4 h-4 text-text-muted hover:text-text-primary cursor-help transition-colors" />
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-56 p-2.5 bg-gray-900 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-all z-10 pointer-events-none">
+              <div className="font-medium">{disabledReason}</div>
+              {lastError && (
+                <>
+                  <div className="h-px bg-gray-700 my-2" />
+                  <span className="opacity-80 break-words line-clamp-3 leading-relaxed">
+                    Error: {lastError}
+                  </span>
+                </>
+              )}
+              <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45" />
+            </div>
           </div>
+        )}
+      </div>
+      {authView && (
+        <div className="space-y-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+            Auth
+          </span>
+          <div
+            className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide ${AUTH_STATUS_BADGE_CLASS[authView.status]}`}
+          >
+            {authView.status}
+          </div>
+          {authView.reason && (
+            <p className="text-[11px] text-text-secondary">{authView.reason}</p>
+          )}
+        </div>
+      )}
+      {authView?.last_error && (
+        <div className="text-[11px] text-danger" title={authView.last_error}>
+          {authView.last_error}
         </div>
       )}
     </div>
@@ -215,12 +243,13 @@ function formatEndpointSummary(provider: Provider): string {
 }
 
 function formatChatGPTUsageSummary(provider: Provider): string | null {
-  if (provider.credential_type !== "chatgpt" || !provider.auth_profile?.ready) {
+  const authView = resolveProviderAuthView(provider);
+  if (provider.credential_type !== "chatgpt" || authView?.status !== "active") {
     return null;
   }
 
-  const planType = resolveProviderPlanType(provider.auth_profile);
-  const usage = resolveProviderUsage(provider.auth_profile);
+  const planType = resolveProviderPlanType(authView);
+  const usage = resolveProviderUsage(authView);
   const parts = [
     planType ? formatProviderPlanType(planType) : "GPT",
     formatProviderUsageWindowSummary("5h", usage?.five_hour),
@@ -327,6 +356,7 @@ function ProviderRow({
   const groupName = getGroupName(provider.group_id);
   const endpointSummary = formatEndpointSummary(provider);
   const chatGPTUsageSummary = formatChatGPTUsageSummary(provider);
+  const authView = resolveProviderAuthView(provider);
 
   return (
     <tr className="group hover:bg-bg-secondary/60 transition-colors border-b border-border/40 last:border-b-0">
@@ -370,6 +400,7 @@ function ProviderRow({
       <td className="px-4 py-3 align-middle">
         <StatusCell
           status={status}
+          authView={authView}
           disabledReason={provider.health?.disabled_reason ?? undefined}
           lastError={provider.health?.last_error ?? undefined}
         />

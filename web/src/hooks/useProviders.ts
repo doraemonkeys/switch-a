@@ -13,6 +13,8 @@ interface UseProvidersResult {
   enableProvider: (id: string) => Promise<void>;
   disableProvider: (id: string) => Promise<void>;
   resetProvider: (id: string) => Promise<void>;
+  refreshCredential: (id: string) => Promise<void>;
+  refreshUsage: (id: string) => Promise<void>;
 }
 
 export function useProviders(): UseProvidersResult {
@@ -90,6 +92,22 @@ export function useProviders(): UseProvidersResult {
     [api, refetch],
   );
 
+  const refreshCredential = useCallback(
+    async (id: string): Promise<void> => {
+      await api.providers.refreshCredential(id);
+      await refetch();
+    },
+    [api, refetch],
+  );
+
+  const refreshUsage = useCallback(
+    async (id: string): Promise<void> => {
+      await api.providers.refreshUsage(id);
+      await refetch();
+    },
+    [api, refetch],
+  );
+
   return {
     providers,
     loading,
@@ -101,6 +119,8 @@ export function useProviders(): UseProvidersResult {
     enableProvider,
     disableProvider,
     resetProvider,
+    refreshCredential,
+    refreshUsage,
   };
 }
 

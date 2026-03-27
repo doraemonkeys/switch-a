@@ -45,6 +45,8 @@ function createMockApiClient() {
       enable: vi.fn().mockResolvedValue(undefined),
       disable: vi.fn().mockResolvedValue(undefined),
       reset: vi.fn().mockResolvedValue(undefined),
+      refreshCredential: vi.fn().mockResolvedValue(undefined),
+      refreshUsage: vi.fn().mockResolvedValue(undefined),
     },
     groups: {
       list: vi.fn(),
@@ -247,6 +249,40 @@ describe("useProviders", () => {
     });
 
     expect(mockApi.providers.reset).toHaveBeenCalledWith("1");
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
+
+  it("should refresh provider credential and refetch", async () => {
+    const { result } = renderHook(() => useProviders(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.refreshCredential("1");
+    });
+
+    expect(mockApi.providers.refreshCredential).toHaveBeenCalledWith("1");
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
+
+  it("should refresh provider usage and refetch", async () => {
+    const { result } = renderHook(() => useProviders(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.refreshUsage("1");
+    });
+
+    expect(mockApi.providers.refreshUsage).toHaveBeenCalledWith("1");
     expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
   });
 });

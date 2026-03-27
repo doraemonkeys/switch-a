@@ -5,6 +5,7 @@ import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Providers } from "@/pages/providers";
 import { Groups } from "@/pages/Groups";
+import { RoutingPolicies } from "@/pages/RoutingPolicies";
 import { Config } from "@/pages/Config";
 import { Logs } from "@/pages/Logs";
 import { ApiContext } from "@/api/context";
@@ -24,6 +25,15 @@ function createMockApiClient(): ApiClient {
       enable: vi.fn(),
       disable: vi.fn(),
       reset: vi.fn(),
+      refreshCredential: vi.fn(),
+      refreshUsage: vi.fn(),
+    },
+    routingPolicies: {
+      list: vi.fn().mockResolvedValue([]),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
     },
     groups: {
       list: vi.fn().mockResolvedValue([]),
@@ -70,6 +80,7 @@ function TestApp({ initialPath = "/" }: { initialPath?: string }) {
               <Route index element={<Dashboard />} />
               <Route path="providers" element={<Providers />} />
               <Route path="groups" element={<Groups />} />
+              <Route path="routing" element={<RoutingPolicies />} />
               <Route path="config" element={<Config />} />
               <Route path="logs" element={<Logs />} />
               <Route path="*" element={<Navigate to="/" replace />} />
@@ -109,6 +120,7 @@ describe("App", () => {
       screen.getByRole("link", { name: /Providers/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Groups/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Routing/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Config/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Logs/i })).toBeInTheDocument();
   });
@@ -139,6 +151,16 @@ describe("App", () => {
     await waitFor(() => {
       expect(
         screen.getByRole("heading", { name: /Configuration/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("should navigate to routing policies page", async () => {
+    render(<TestApp initialPath="/routing" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Routing Policies/i }),
       ).toBeInTheDocument();
     });
   });

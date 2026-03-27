@@ -107,7 +107,11 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 				Name:           "ChatGPT Without Auth Service",
 				Enabled:        true,
 				CredentialType: model.ProviderCredentialTypeChatGPT,
-				CredentialData: testChatGPTCredentialData(t, "access-token", "refresh-token", "acct-test"),
+				Credential: model.ProviderCredentialFromLegacy(
+					"ws-chatgpt-no-auth",
+					model.ProviderCredentialTypeChatGPT,
+					testChatGPTCredentialData(t, "access-token", "refresh-token", "acct-test"),
+				),
 				APITypes: []model.ProviderAPIType{{
 					ProviderID: "ws-chatgpt-no-auth",
 					APIType:    "codex",
@@ -507,7 +511,11 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 		Enabled:        true,
 		AuthMode:       "bearer",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: testChatGPTCredentialData(t, "access-old", "refresh-old", "acct-123"),
+		Credential: model.ProviderCredentialFromLegacy(
+			"ws-chatgpt-refresh",
+			model.ProviderCredentialTypeChatGPT,
+			testChatGPTCredentialData(t, "access-old", "refresh-old", "acct-123"),
+		),
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "ws-chatgpt-refresh",
 			APIType:    "codex",

@@ -19,7 +19,9 @@ type concurrentCredentialStore struct {
 	id             string
 	credentialType model.ProviderCredentialType
 	credentialData string
+	authState      *model.ProviderAuthState
 	calls          int
+	authStateCalls int
 }
 
 func (s *concurrentCredentialStore) UpdateProviderCredential(
@@ -35,6 +37,19 @@ func (s *concurrentCredentialStore) UpdateProviderCredential(
 	s.credentialType = credentialType
 	s.credentialData = credentialData
 	s.calls++
+	return nil
+}
+
+func (s *concurrentCredentialStore) UpdateProviderAuthState(
+	_ context.Context,
+	_ string,
+	authState *model.ProviderAuthState,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.authState = authState.Clone()
+	s.authStateCalls++
 	return nil
 }
 
@@ -98,8 +113,8 @@ func TestApplyProviderCredentials_DeduplicatesConcurrentChatGPTRefresh(t *testin
 						provider := &model.Provider{
 							ID:             "provider-gpt",
 							CredentialType: model.ProviderCredentialTypeChatGPT,
-							CredentialData: oldCredentialData,
 						}
+						mustApplyLegacyChatGPTCredential(t, provider, oldCredentialData)
 						secondErrCh <- service.ApplyProviderCredentials(
 							context.Background(),
 							secondHeaders,
@@ -138,8 +153,8 @@ func TestApplyProviderCredentials_DeduplicatesConcurrentChatGPTRefresh(t *testin
 	firstProvider := &model.Provider{
 		ID:             "provider-gpt",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: oldCredentialData,
 	}
+	mustApplyLegacyChatGPTCredential(t, firstProvider, oldCredentialData)
 	firstRequest := httptest.NewRequest(http.MethodPost, "/responses", nil)
 
 	if err := service.ApplyProviderCredentials(
@@ -190,9 +205,9 @@ func TestApplyProviderCredentials_DeduplicatesConcurrentChatGPTRefresh(t *testin
 		t.Fatalf("persisted credential type = %q, want %q", credentialType, model.ProviderCredentialTypeChatGPT)
 	}
 
-	refreshed, err := decodeChatGPTCredential(credentialData)
+	refreshed, err := decodeChatGPTCredentialSecret(credentialData)
 	if err != nil {
-		t.Fatalf("decodeChatGPTCredential returned error: %v", err)
+		t.Fatalf("decodeChatGPTCredentialSecret returned error: %v", err)
 	}
 	if refreshed.RefreshToken != "new-refresh-token" {
 		t.Fatalf("persisted RefreshToken = %q, want %q", refreshed.RefreshToken, "new-refresh-token")
@@ -257,8 +272,8 @@ func TestApplyProviderCredentials_ReusesRecentChatGPTRefreshForStaleProviderCopy
 	firstProvider := &model.Provider{
 		ID:             "provider-gpt",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: oldCredentialData,
 	}
+	mustApplyLegacyChatGPTCredential(t, firstProvider, oldCredentialData)
 	firstHeaders := make(http.Header)
 	if err := service.ApplyProviderCredentials(
 		context.Background(),
@@ -274,8 +289,8 @@ func TestApplyProviderCredentials_ReusesRecentChatGPTRefreshForStaleProviderCopy
 	secondProvider := &model.Provider{
 		ID:             "provider-gpt",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: oldCredentialData,
 	}
+	mustApplyLegacyChatGPTCredential(t, secondProvider, oldCredentialData)
 	secondHeaders := make(http.Header)
 	if err := service.ApplyProviderCredentials(
 		context.Background(),
@@ -295,9 +310,9 @@ func TestApplyProviderCredentials_ReusesRecentChatGPTRefreshForStaleProviderCopy
 		t.Fatalf("second Authorization = %q, want %q", got, "Bearer new-access-token")
 	}
 
-	refreshed, err := decodeChatGPTCredential(secondProvider.CredentialData)
+	refreshed, err := decodeProviderChatGPTCredential(secondProvider)
 	if err != nil {
-		t.Fatalf("decodeChatGPTCredential returned error: %v", err)
+		t.Fatalf("decodeProviderChatGPTCredential returned error: %v", err)
 	}
 	if refreshed.RefreshToken != "new-refresh-token" {
 		t.Fatalf("second provider RefreshToken = %q, want %q", refreshed.RefreshToken, "new-refresh-token")

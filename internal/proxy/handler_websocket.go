@@ -78,7 +78,6 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 
 	if session.ResolvedModel != "" {
 		info.Model = session.ResolvedModel
-		selectReq.Model = session.ResolvedModel
 	}
 
 	if session.ClientAccepted &&
@@ -426,7 +425,9 @@ func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID str
 		return
 	}
 	if result.UpstreamError != nil {
-		h.markFailure(ctx, providerID, result.Err)
+		if shouldTrackWebSocketFailureInHealth(result) {
+			h.markFailure(ctx, providerID, result.Err)
+		}
 		return
 	}
 	if result.HandshakeAccepted &&
@@ -434,12 +435,16 @@ func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID str
 		!result.SessionCommitted &&
 		result.TerminalCause != model.TerminalClientDisconnect &&
 		result.TerminalCause != model.TerminalInternalError {
-		h.markFailure(ctx, providerID, result.Err)
+		if shouldTrackWebSocketFailureInHealth(result) {
+			h.markFailure(ctx, providerID, result.Err)
+		}
 		return
 	}
 	if result.SessionCommitted {
 		if result.TerminalCause == model.TerminalUpstreamSemanticError {
-			h.markFailure(ctx, providerID, result.Err)
+			if shouldTrackWebSocketFailureInHealth(result) {
+				h.markFailure(ctx, providerID, result.Err)
+			}
 			return
 		}
 		h.markSuccess(ctx, providerID)
@@ -447,11 +452,14 @@ func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID str
 	}
 
 	switch result.TerminalCause {
-	case model.TerminalProviderConfigurationError,
-		model.TerminalUpstreamHandshakeRejected,
+	case model.TerminalProviderConfigurationError:
+		return
+	case model.TerminalUpstreamHandshakeRejected,
 		model.TerminalUpstreamTransportError,
 		model.TerminalUpstreamSemanticError:
-		h.markFailure(ctx, providerID, result.Err)
+		if shouldTrackWebSocketFailureInHealth(result) {
+			h.markFailure(ctx, providerID, result.Err)
+		}
 	}
 }
 

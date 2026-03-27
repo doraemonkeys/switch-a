@@ -333,3 +333,34 @@ func TestAdminHandleNotFound(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 }
+
+func TestAdminProviderRefreshRoutesRequireAuth(t *testing.T) {
+	s := testAdminServer(t)
+
+	testCases := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "refresh credential",
+			path: "/admin/api/providers/test-provider/refresh-credential",
+		},
+		{
+			name: "refresh usage",
+			path: "/admin/api/providers/test-provider/refresh-usage",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			w := httptest.NewRecorder()
+
+			s.server.Handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+			}
+		})
+	}
+}

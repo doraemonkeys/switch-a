@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
@@ -17,19 +18,29 @@ import (
 )
 
 type mockProviderAuthService struct {
-	startResp        *providerauth.ChatGPTLoginStartResponse
-	startErr         error
-	statusResp       *providerauth.ChatGPTLoginStatusResponse
-	statusErr        error
-	statusLoginID    string
-	appliedProvider  *model.Provider
-	appliedLoginID   string
-	appliedPayload   string
-	applyCalls       int
-	applyErr         error
-	finalizedLoginID string
-	finalizeCalls    int
-	finalizeErr      error
+	startResp                    *providerauth.ChatGPTLoginStartResponse
+	startErr                     error
+	statusResp                   *providerauth.ChatGPTLoginStatusResponse
+	statusErr                    error
+	statusLoginID                string
+	appliedProvider              *model.Provider
+	appliedLoginID               string
+	appliedPayload               string
+	applyCalls                   int
+	applyErr                     error
+	finalizedLoginID             string
+	finalizeCalls                int
+	finalizeErr                  error
+	buildAuthViewResp            *providerauth.ProviderAuthView
+	buildAuthViewCalls           int
+	refreshCredentialCalls       int
+	refreshCredentialErr         error
+	refreshCredentialUnsupported bool
+	refreshCredentialPayload     string
+	refreshUsageCalls            int
+	refreshUsageErr              error
+	refreshUsageUnsupported      bool
+	refreshUsagePayload          string
 }
 
 func (m *mockProviderAuthService) StartChatGPTLogin() (*providerauth.ChatGPTLoginStartResponse, error) {
@@ -49,7 +60,11 @@ func (m *mockProviderAuthService) ApplyChatGPTLogin(provider *model.Provider, lo
 		return m.applyErr
 	}
 	if provider != nil && m.appliedPayload != "" {
-		provider.CredentialData = m.appliedPayload
+		provider.Credential = model.ProviderCredentialFromLegacy(
+			provider.ID,
+			model.ProviderCredentialTypeChatGPT,
+			m.appliedPayload,
+		)
 	}
 	return nil
 }
@@ -60,15 +75,42 @@ func (m *mockProviderAuthService) FinalizeChatGPTLogin(loginID string) error {
 	return m.finalizeErr
 }
 
-func (m *mockProviderAuthService) PopulateProviderAuthProfile(_ context.Context, provider *model.Provider) {
-	if provider == nil {
-		return
+func (m *mockProviderAuthService) BuildProviderAuthView(provider *model.Provider) *providerauth.ProviderAuthView {
+	m.buildAuthViewCalls++
+	if m.buildAuthViewResp != nil {
+		return m.buildAuthViewResp
 	}
-	if provider.AuthProfile == nil {
-		provider.AuthProfile = &model.ProviderAuthProfile{
-			Type: provider.CredentialType,
-		}
+	return providerauth.BuildProviderAuthView(provider)
+}
+
+func (m *mockProviderAuthService) RefreshProviderCredentials(_ context.Context, provider *model.Provider) (bool, error) {
+	m.refreshCredentialCalls++
+	if m.refreshCredentialUnsupported {
+		return false, nil
 	}
+	if provider != nil && m.refreshCredentialPayload != "" {
+		provider.Credential = model.ProviderCredentialFromLegacy(
+			provider.ID,
+			model.ProviderCredentialTypeChatGPT,
+			m.refreshCredentialPayload,
+		)
+	}
+	return true, m.refreshCredentialErr
+}
+
+func (m *mockProviderAuthService) RefreshProviderUsage(_ context.Context, provider *model.Provider) (bool, error) {
+	m.refreshUsageCalls++
+	if m.refreshUsageUnsupported {
+		return false, nil
+	}
+	if provider != nil && m.refreshUsagePayload != "" {
+		provider.Credential = model.ProviderCredentialFromLegacy(
+			provider.ID,
+			model.ProviderCredentialTypeChatGPT,
+			m.refreshUsagePayload,
+		)
+	}
+	return true, m.refreshUsageErr
 }
 
 type loginCommitTrackingStore struct {
@@ -184,9 +226,9 @@ func TestGetChatGPTProviderLoginStatus(t *testing.T) {
 		statusResp: &providerauth.ChatGPTLoginStatusResponse{
 			LoginID: "login-123",
 			Status:  providerauth.ChatGPTLoginStatusCompleted,
-			AuthProfile: &model.ProviderAuthProfile{
+			Auth: &providerauth.ProviderAuthView{
 				Type:      model.ProviderCredentialTypeChatGPT,
-				Ready:     true,
+				Status:    providerauth.ProviderAuthStatusActive,
 				Email:     "user@example.com",
 				AccountID: "acct_test",
 			},
@@ -218,8 +260,8 @@ func TestGetChatGPTProviderLoginStatus(t *testing.T) {
 	if response.Status != providerauth.ChatGPTLoginStatusCompleted {
 		t.Fatalf("response status = %q, want %q", response.Status, providerauth.ChatGPTLoginStatusCompleted)
 	}
-	if response.AuthProfile == nil || response.AuthProfile.Email != "user@example.com" {
-		t.Fatal("response should include the completed auth profile")
+	if response.Auth == nil || response.Auth.Email != "user@example.com" {
+		t.Fatal("response should include the completed auth view")
 	}
 }
 
@@ -256,6 +298,148 @@ func TestGetChatGPTProviderLoginStatus_WithoutAuthService(t *testing.T) {
 
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("status code = %d, want %d", w.Code, http.StatusNotImplemented)
+	}
+}
+
+func TestRefreshProviderCredential(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	payload, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "acct_test",
+		Email:        "user@example.com",
+	})
+	if err != nil {
+		t.Fatalf("marshal credential payload: %v", err)
+	}
+	auth := &mockProviderAuthService{
+		refreshCredentialPayload: string(payload),
+	}
+	store := newMockStore()
+	store.providers["gpt-provider"] = &model.Provider{
+		ID:             "gpt-provider",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+	handler := NewHandler(Config{
+		Store:  store,
+		Auth:   auth,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/gpt-provider/refresh-credential", nil)
+	setPathValue(req, "id", "gpt-provider")
+	w := httptest.NewRecorder()
+
+	handler.RefreshProviderCredential(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if auth.refreshCredentialCalls != 1 {
+		t.Fatalf("RefreshProviderCredentials calls = %d, want 1", auth.refreshCredentialCalls)
+	}
+	if auth.refreshUsageCalls != 0 {
+		t.Fatalf("RefreshProviderUsage calls = %d, want 0", auth.refreshUsageCalls)
+	}
+
+	var response ProviderPayload
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Auth == nil || response.Auth.Status != providerauth.ProviderAuthStatusActive {
+		t.Fatalf("Auth = %#v, want active auth view", response.Auth)
+	}
+}
+
+func TestRefreshProviderUsage(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
+	payload, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "acct_test",
+		Email:        "user@example.com",
+		PlanType:     "team",
+		Usage: &model.ProviderUsageSnapshot{
+			FetchedAt: &now,
+			PlanType:  "team",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal credential payload: %v", err)
+	}
+	auth := &mockProviderAuthService{
+		refreshUsagePayload: string(payload),
+	}
+	store := newMockStore()
+	store.providers["gpt-provider"] = &model.Provider{
+		ID:             "gpt-provider",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+	handler := NewHandler(Config{
+		Store:  store,
+		Auth:   auth,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/gpt-provider/refresh-usage", nil)
+	setPathValue(req, "id", "gpt-provider")
+	w := httptest.NewRecorder()
+
+	handler.RefreshProviderUsage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if auth.refreshUsageCalls != 1 {
+		t.Fatalf("RefreshProviderUsage calls = %d, want 1", auth.refreshUsageCalls)
+	}
+	if auth.refreshCredentialCalls != 0 {
+		t.Fatalf("RefreshProviderCredentials calls = %d, want 0", auth.refreshCredentialCalls)
+	}
+
+	var response ProviderPayload
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Auth == nil || response.Auth.PlanType != "team" {
+		t.Fatalf("Auth = %#v, want refreshed usage auth view", response.Auth)
+	}
+}
+
+func TestRefreshProviderCredential_AuthStateConflict(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	auth := &mockProviderAuthService{
+		refreshCredentialErr: &providerauth.ProviderAuthStateError{
+			ProviderID: "gpt-provider",
+			Status:     providerauth.ProviderAuthStatusReauthRequired,
+			Reason:     providerauth.ProviderAuthReasonInvalidGrant,
+		},
+	}
+	store := newMockStore()
+	store.providers["gpt-provider"] = &model.Provider{
+		ID:             "gpt-provider",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+	handler := NewHandler(Config{
+		Store:  store,
+		Auth:   auth,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/gpt-provider/refresh-credential", nil)
+	setPathValue(req, "id", "gpt-provider")
+	w := httptest.NewRecorder()
+
+	handler.RefreshProviderCredential(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
 	}
 }
 

@@ -39,6 +39,7 @@ describe("Layout", () => {
       screen.getByRole("link", { name: /Providers/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Groups/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Routing/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Config/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Logs/i })).toBeInTheDocument();
   });
@@ -55,12 +56,14 @@ describe("Layout", () => {
     const dashboardLink = screen.getByRole("link", { name: /Dashboard/i });
     const providersLink = screen.getByRole("link", { name: /Providers/i });
     const groupsLink = screen.getByRole("link", { name: /Groups/i });
+    const routingLink = screen.getByRole("link", { name: /Routing/i });
     const configLink = screen.getByRole("link", { name: /Config/i });
     const logsLink = screen.getByRole("link", { name: /Logs/i });
 
     expect(dashboardLink).toHaveAttribute("href", "/");
     expect(providersLink).toHaveAttribute("href", "/providers");
     expect(groupsLink).toHaveAttribute("href", "/groups");
+    expect(routingLink).toHaveAttribute("href", "/routing");
     expect(configLink).toHaveAttribute("href", "/config");
     expect(logsLink).toHaveAttribute("href", "/logs");
   });
@@ -72,6 +75,7 @@ describe("Layout", () => {
     expect(screen.getByText("📊")).toBeInTheDocument();
     expect(screen.getByText("🔌")).toBeInTheDocument();
     expect(screen.getByText("📁")).toBeInTheDocument();
+    expect(screen.getByText("🧭")).toBeInTheDocument();
     expect(screen.getByText("⚙️")).toBeInTheDocument();
     expect(screen.getByText("📋")).toBeInTheDocument();
   });

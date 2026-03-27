@@ -7,6 +7,7 @@ const navItems = [
   { to: "/monitor", label: "Monitor", icon: "📡" },
   { to: "/providers", label: "Providers", icon: "🔌" },
   { to: "/groups", label: "Groups", icon: "📁" },
+  { to: "/routing", label: "Routing", icon: "🧭" },
   { to: "/config", label: "Config", icon: "⚙️" },
   { to: "/logs", label: "Logs", icon: "📋" },
 ];

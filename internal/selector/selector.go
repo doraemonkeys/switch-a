@@ -106,8 +106,17 @@ func (s *Selector) Select(ctx context.Context, req *model.SelectRequest) (*model
 // SelectWithMetadata chooses an available provider and returns metadata about the selection.
 // It works like Select but also indicates whether the provider came from the sticky cache.
 func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequest) (*SelectResult, error) {
-	// Check sticky cache first
-	if provider := s.checkStickyCache(ctx, req); provider != nil {
+	scope, err := s.selectionScope(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check sticky cache first.
+	provider, err := s.checkStickyCache(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if provider != nil {
 		return &SelectResult{
 			Provider:        provider,
 			FromStickyCache: true,
@@ -115,7 +124,7 @@ func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequ
 	}
 
 	// Fall through to normal provider selection (without sticky cache check)
-	provider, err := s.selectExcludingInternal(ctx, req, nil)
+	provider, err = s.selectExcludingInternal(ctx, scope, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -128,19 +137,30 @@ func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequ
 
 // SelectExcluding selects a provider excluding the given provider IDs (for retry).
 func (s *Selector) SelectExcluding(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
+	scope, err := s.selectionScope(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check sticky cache first (if no exclusions)
 	if len(excludeIDs) == 0 {
-		if provider := s.checkStickyCache(ctx, req); provider != nil {
+		provider, err := s.checkStickyCache(ctx, scope)
+		if err != nil {
+			return nil, err
+		}
+		if provider != nil {
 			return provider, nil
 		}
 	}
 
-	return s.selectExcludingInternal(ctx, req, excludeIDs)
+	return s.selectExcludingInternal(ctx, scope, excludeIDs)
 }
 
 // selectExcludingInternal performs the actual provider selection without sticky cache check.
 // This is extracted to allow SelectWithMetadata to track whether the result came from sticky cache.
-func (s *Selector) selectExcludingInternal(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
+func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderSelectionEligibility, excludeIDs map[string]bool) (*model.Provider, error) {
+	req := scope.req
+
 	// Get all enabled providers for this API type
 	providers, err := s.store.ListProvidersByAPIType(ctx, req.APIType)
 	if err != nil {
@@ -163,7 +183,10 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, req *model.Selec
 	}
 
 	// Build group candidates with failover filtering
-	groupCandidates, ungroupedProviders := s.buildGroupCandidates(ctx, providers, excludeIDs, req.FailoverContext, req.MaxProviderSwitches)
+	groupCandidates, ungroupedProviders, err := s.buildGroupCandidates(ctx, scope, providers, excludeIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Add ungrouped providers as individual virtual groups (lowest priority)
 	// Each gets a unique virtual group ID to allow independent removal during retry
@@ -194,7 +217,10 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, req *model.Selec
 		groupCandidates = removeGroupCandidate(groupCandidates, group.GroupID)
 
 		// Try to select a provider from this group
-		provider := s.selectFromGroup(ctx, group, excludeIDs)
+		provider, err := s.selectFromGroup(ctx, scope, group, excludeIDs)
+		if err != nil {
+			return nil, err
+		}
 		if provider != nil {
 			return provider, nil
 		}
@@ -211,45 +237,38 @@ func isStickyEnabled(mode model.StickyMode) bool {
 }
 
 func buildStickyKey(req *model.SelectRequest) model.StickyKey {
-	key := model.StickyKey{
-		IP:      req.ClientIP,
-		User:    req.User,
-		APIType: req.APIType,
-	}
-	if req.StickyMode == model.StickyModeModel {
-		key.Model = req.Model
-	}
-	return key
+	return BuildContinuityKey(req)
 }
 
 // checkStickyCache checks for a cached sticky provider and returns it if available.
-// Returns nil if sticky sessions are disabled or if no valid cached provider exists.
-func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectRequest) *model.Provider {
-	if s.sticky == nil || !isStickyEnabled(req.StickyMode) {
-		return nil
+// It returns an error when eligibility cannot be evaluated safely, preserving the
+// non-sticky path's contract for transient auth-state read failures.
+func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectionEligibility) (*model.Provider, error) {
+	if scope == nil || scope.req == nil || s.sticky == nil || !isStickyEnabled(scope.req.StickyMode) {
+		return nil, nil
 	}
 
-	stickyKey := buildStickyKey(req)
+	stickyKey := buildStickyKey(scope.req)
 
 	providerID, found := s.sticky.Get(stickyKey)
 	if !found {
-		return nil
-	}
-
-	// Verify provider health (trigger recovery first, then check availability)
-	if s.health != nil {
-		s.health.RecoverIfExpired(ctx, providerID)
-		if !s.health.IsAvailable(ctx, providerID) {
-			s.sticky.Delete(stickyKey)
-			return nil
-		}
+		return nil, nil
 	}
 
 	// Get and verify provider
-	provider, err := s.getProviderByIDIfValid(ctx, providerID, req.APIType)
+	provider, err := s.store.GetProvider(ctx, providerID)
 	if err != nil || provider == nil {
 		s.sticky.Delete(stickyKey)
-		return nil
+		return nil, nil
+	}
+
+	allowed, err := scope.AllowsProvider(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		s.sticky.Delete(stickyKey)
+		return nil, nil
 	}
 
 	// Check concurrency limit
@@ -263,14 +282,14 @@ func (s *Selector) checkStickyCache(ctx context.Context, req *model.SelectReques
 			zap.String("api_type", stickyKey.APIType),
 		)
 		s.sticky.Delete(stickyKey)
-		return nil
+		return nil, nil
 	}
 
-	return provider
+	return provider, nil
 }
 
 // buildGroupCandidates organizes providers into groups.
-func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.Provider, excludeIDs map[string]bool, failoverCtx *model.FailoverContext, maxProviderSwitches int) ([]*groupCandidate, []model.Provider) {
+func (s *Selector) buildGroupCandidates(ctx context.Context, scope *ProviderSelectionEligibility, providers []model.Provider, excludeIDs map[string]bool) ([]*groupCandidate, []model.Provider, error) {
 	groupMap := make(map[string]*groupCandidate)
 	var ungrouped []model.Provider
 
@@ -280,26 +299,12 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.P
 			continue
 		}
 
-		// Check health (trigger recovery first, then check availability)
-		if s.health != nil {
-			s.health.RecoverIfExpired(ctx, p.ID)
-			if !s.health.IsAvailable(ctx, p.ID) {
-				continue
-			}
+		allowed, err := scope.AllowsProvider(ctx, &p)
+		if err != nil {
+			return nil, nil, err
 		}
-
-		// Check failover isolation rules (if this is a failover attempt)
-		if failoverCtx != nil {
-			if !model.IsFailoverAllowed(&p, failoverCtx, maxProviderSwitches) {
-				s.logger.Debug("provider excluded by failover rules",
-					zap.String("provider_id", p.ID),
-					zap.String("vendor", p.Vendor),
-					zap.String("candidate_accept_failover", string(p.AcceptFailover)),
-					zap.Strings("contaminated_vendors", failoverCtx.ContaminatedVendors),
-					zap.String("strictest_scope", string(failoverCtx.StrictestScope)),
-					zap.Int("retry_count", failoverCtx.RetryCount))
-				continue
-			}
+		if !allowed {
+			continue
 		}
 
 		if p.GroupID == nil || *p.GroupID == "" {
@@ -344,13 +349,13 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, providers []model.P
 		}
 	}
 
-	return candidates, ungrouped
+	return candidates, ungrouped, nil
 }
 
 // selectFromGroup selects a provider from a group using the group's strategy.
 // It first filters and selects a provider using the strategy, then acquires
 // the concurrency slot only for the selected provider.
-func (s *Selector) selectFromGroup(ctx context.Context, group *groupCandidate, excludeIDs map[string]bool) *model.Provider {
+func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelectionEligibility, group *groupCandidate, excludeIDs map[string]bool) (*model.Provider, error) {
 	// Filter providers by exclusion list only (no slot acquisition yet)
 	candidates := make([]*model.Provider, 0, len(group.Providers))
 	for _, p := range group.Providers {
@@ -361,7 +366,7 @@ func (s *Selector) selectFromGroup(ctx context.Context, group *groupCandidate, e
 	}
 
 	if len(candidates) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Try to select and acquire a slot, retrying with remaining candidates if needed
@@ -369,27 +374,34 @@ func (s *Selector) selectFromGroup(ctx context.Context, group *groupCandidate, e
 		// Apply group strategy to select a provider
 		selected := SelectProvider(candidates, group.Strategy)
 		if selected == nil {
-			return nil
+			return nil, nil
 		}
 
-		// Double-check: capture concurrent circuit breaker trips
-		// This handles the race condition where a provider becomes unhealthy
-		// between buildGroupCandidates and this selection point
-		if s.health != nil && !s.health.IsAvailable(ctx, selected.ID) {
+		// Re-run eligibility at selection time so routing/auth/health changes that
+		// happen after the initial candidate build cannot leak through retries.
+		allowed, err := scope.AllowsProvider(ctx, selected)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
 			candidates = removeProvider(candidates, selected.ID)
 			continue
 		}
 
 		// Try to acquire concurrency slot for the selected provider only
 		if s.limiter == nil || s.limiter.TryAcquire(selected.ID, selected.Concurrency) {
-			return selected
+			return selected, nil
 		}
 
 		// Acquisition failed - remove from candidates and retry with remaining
 		candidates = removeProvider(candidates, selected.ID)
 	}
 
-	return nil
+	return nil, nil
+}
+
+func (s *Selector) selectionScope(ctx context.Context, req *model.SelectRequest) (*ProviderSelectionEligibility, error) {
+	return NewProviderSelectionEligibility(ctx, s.store, s.health, req)
 }
 
 // removeProvider removes a provider from the candidates list by ID.
@@ -401,24 +413,6 @@ func removeProvider(candidates []*model.Provider, providerID string) []*model.Pr
 		}
 	}
 	return result
-}
-
-// getProviderByIDIfValid checks if a provider exists and matches the API type.
-// Uses direct O(1) lookup instead of iterating through all providers.
-func (s *Selector) getProviderByIDIfValid(ctx context.Context, providerID, apiType string) (*model.Provider, error) {
-	provider, err := s.store.GetProvider(ctx, providerID)
-	if err != nil || provider == nil || !provider.Enabled {
-		return nil, err
-	}
-
-	// Verify provider supports this API type
-	for _, at := range provider.APITypes {
-		if at.APIType == apiType {
-			return provider, nil
-		}
-	}
-
-	return nil, nil
 }
 
 // UpdateSticky updates the sticky cache after a successful request using the default TTL.

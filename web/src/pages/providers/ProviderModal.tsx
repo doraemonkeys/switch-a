@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useId, useContext } from "react";
 import type { FormEvent } from "react";
-import type { Provider, ProviderAuthProfile, ProviderInput } from "../../api";
+import type { Provider, ProviderAuthView, ProviderInput } from "../../api";
 import { ApiContext } from "../../api/context";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { isValidId } from "../../lib/utils";
@@ -14,6 +14,11 @@ import {
   CHATGPT_CODEX_BASE_URL,
   PROVIDER_CREDENTIAL_TYPES,
 } from "../../config/constants";
+import {
+  hasProviderCredentialSnapshot,
+  resolveLoginAuthView,
+  resolveProviderAuthView,
+} from "../../lib/providerAuth";
 
 const CHATGPT_LOGIN_POLL_INTERVAL_MS = 1000;
 const CHATGPT_LOGIN_WINDOW_TARGET = "_blank";
@@ -43,24 +48,27 @@ function createChatGPTAPIType(): ProviderInput["api_types"] {
 }
 
 function describeConnectedChatGPTAccount(
-  authProfile?: ProviderAuthProfile | null,
+  authView?: ProviderAuthView | null,
 ): string {
-  if (!authProfile?.ready) {
-    return CHATGPT_LOGIN_COMPLETED_MESSAGE;
+  if (authView?.email) {
+    return `Connected as ${authView.email}. Save the provider to persist it.`;
   }
-  return authProfile.email
-    ? `Connected as ${authProfile.email}. Save the provider to persist it.`
-    : CHATGPT_LOGIN_COMPLETED_MESSAGE;
+  return CHATGPT_LOGIN_COMPLETED_MESSAGE;
 }
 
 function describePersistedChatGPTAccount(
-  authProfile?: ProviderAuthProfile | null,
+  authView?: ProviderAuthView | null,
 ): string | null {
-  if (!authProfile?.ready) {
+  if (!authView || authView.status === "not_connected") {
     return null;
   }
-  return authProfile.email
-    ? `Connected as ${authProfile.email}.`
+  if (authView.status === "reauth_required") {
+    return authView.email
+      ? `Reconnect required for ${authView.email}.`
+      : "Reconnect required for this provider.";
+  }
+  return authView.email
+    ? `Connected as ${authView.email}.`
     : "A GPT account is already connected for this provider.";
 }
 
@@ -148,11 +156,11 @@ type ProviderSubmissionPreparation =
 function prepareProviderSubmission({
   formData,
   isEditMode,
-  hasPersistedChatGPTLogin,
+  hasPersistedChatGPTProvider,
 }: {
   formData: ProviderInput;
   isEditMode: boolean;
-  hasPersistedChatGPTLogin: boolean;
+  hasPersistedChatGPTProvider: boolean;
 }): ProviderSubmissionPreparation {
   if (!isEditMode && formData.id && !isValidId(formData.id)) {
     return {
@@ -201,7 +209,7 @@ function prepareProviderSubmission({
   if (
     isChatGPTProvider &&
     !formData.credential_login_id &&
-    !hasPersistedChatGPTLogin
+    !(isEditMode && hasPersistedChatGPTProvider)
   ) {
     return {
       kind: "form-error",
@@ -241,6 +249,7 @@ export function ProviderModal({
   const isEditMode = !!initialData;
   const titleId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
+  const initialAuthView = resolveProviderAuthView(initialData);
 
   const [formData, setFormData] = useState<ProviderInput>(() =>
     deriveFormData(initialData),
@@ -250,7 +259,7 @@ export function ProviderModal({
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
   const [chatGPTStatus, setChatGPTStatus] = useState<string | null>(() =>
-    describePersistedChatGPTAccount(initialData?.auth_profile),
+    describePersistedChatGPTAccount(initialAuthView),
   );
   const [chatGPTLoginError, setChatGPTLoginError] = useState<string | null>(
     null,
@@ -258,6 +267,8 @@ export function ProviderModal({
   const [startingChatGPTLogin, setStartingChatGPTLogin] = useState(false);
   const [chatGPTLoginSession, setChatGPTLoginSession] =
     useState<ChatGPTLoginSession | null>(null);
+  const [pendingChatGPTAuth, setPendingChatGPTAuth] =
+    useState<ProviderAuthView | null>(null);
 
   // Auto-focus first focusable element when modal opens
   useEffect(() => {
@@ -323,11 +334,11 @@ export function ProviderModal({
         }
 
         if (loginStatus.status === "completed") {
+          const authView = resolveLoginAuthView(loginStatus);
           setChatGPTLoginSession(null);
           setChatGPTLoginError(null);
-          setChatGPTStatus(
-            describeConnectedChatGPTAccount(loginStatus.auth_profile),
-          );
+          setPendingChatGPTAuth(authView);
+          setChatGPTStatus(describeConnectedChatGPTAccount(authView));
           setFormData((prev) => ({
             ...prev,
             credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
@@ -338,6 +349,7 @@ export function ProviderModal({
 
         if (loginStatus.status === "expired") {
           setChatGPTLoginSession(null);
+          setPendingChatGPTAuth(null);
           setChatGPTStatus(null);
           setChatGPTLoginError(CHATGPT_LOGIN_EXPIRED_MESSAGE);
           return;
@@ -374,6 +386,7 @@ export function ProviderModal({
       if (!api) {
         throw new Error("API client is unavailable for GPT login");
       }
+      setPendingChatGPTAuth(null);
       setFormData((prev) => ({ ...prev, credential_login_id: "" }));
       const start = await api.providers.startChatGPTLogin();
       setChatGPTLoginSession({
@@ -417,7 +430,7 @@ export function ProviderModal({
     const preparedSubmission = prepareProviderSubmission({
       formData,
       isEditMode,
-      hasPersistedChatGPTLogin: Boolean(initialData?.auth_profile?.ready),
+      hasPersistedChatGPTProvider: hasProviderCredentialSnapshot(initialData),
     });
     if (preparedSubmission.kind === "id-error") {
       setIdError(preparedSubmission.message);
@@ -476,7 +489,7 @@ export function ProviderModal({
             submitting={submitting}
             onCancel={onClose}
             groups={groups}
-            authProfile={initialData?.auth_profile}
+            authView={pendingChatGPTAuth ?? initialAuthView}
             onStartChatGPTLogin={handleStartChatGPTLogin}
             onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
             chatGPTLoginState={{

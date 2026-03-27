@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -43,10 +42,11 @@ const (
 	providerCredentialTypeChatGPT = model.ProviderCredentialTypeChatGPT
 )
 
-// CredentialStore persists refreshed provider credentials without overwriting the
-// rest of the provider configuration.
+// CredentialStore persists refresh-capable secrets and the non-sensitive auth
+// state snapshot without overwriting unrelated provider configuration.
 type CredentialStore interface {
 	UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error
+	UpdateProviderAuthState(ctx context.Context, providerID string, authState *model.ProviderAuthState) error
 }
 
 // OAuthHTTPDoer performs outbound OAuth token requests.
@@ -135,59 +135,6 @@ func ChatGPTCodexBaseURL() string {
 	return chatGPTCodexBaseURL
 }
 
-// BuildAuthProfile derives a non-sensitive credential summary for API responses.
-func BuildAuthProfile(provider *model.Provider) *model.ProviderAuthProfile {
-	if provider == nil {
-		return nil
-	}
-
-	credentialType := model.NormalizeProviderCredentialType(provider.CredentialType)
-	profile := &model.ProviderAuthProfile{
-		Type: credentialType,
-	}
-
-	switch credentialType {
-	case providerCredentialTypeChatGPT:
-		credential, err := decodeChatGPTCredential(provider.CredentialData)
-		if err != nil {
-			return profile
-		}
-		return buildChatGPTAuthProfile(credential)
-	default:
-		profile.Ready = staticProviderCredentialReady(provider)
-		return profile
-	}
-}
-
-func buildChatGPTAuthProfile(credential *model.ChatGPTProviderCredential) *model.ProviderAuthProfile {
-	profile := &model.ProviderAuthProfile{
-		Type: providerCredentialTypeChatGPT,
-	}
-	if credential == nil {
-		return profile
-	}
-
-	profile.Ready = credential.Ready()
-	profile.Email = credential.Email
-	profile.AccountID = credential.AccountID
-	if credential.Usage != nil {
-		profile.Usage = cloneProviderUsageSnapshot(credential.Usage)
-	}
-	profile.PlanType = strings.TrimSpace(credential.PlanType)
-	if profile.PlanType == "" && profile.Usage != nil {
-		profile.PlanType = strings.TrimSpace(profile.Usage.PlanType)
-	}
-	if !credential.ExpiresAt.IsZero() {
-		expiresAt := credential.ExpiresAt
-		profile.ExpiresAt = &expiresAt
-	}
-	if !credential.LastRefresh.IsZero() {
-		lastRefresh := credential.LastRefresh
-		profile.LastRefresh = &lastRefresh
-	}
-	return profile
-}
-
 // staticProviderCredentialReady reports whether a non-ChatGPT provider already
 // carries usable API-key material in its persisted configuration.
 func staticProviderCredentialReady(provider *model.Provider) bool {
@@ -217,6 +164,6 @@ func NormalizeProviderForPersistence(provider *model.Provider) {
 			APIKey:     "",
 		}}
 	case providerCredentialTypeAPIKey:
-		provider.CredentialData = ""
+		provider.Credential = nil
 	}
 }

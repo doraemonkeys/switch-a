@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"switch-a/internal/model"
@@ -33,7 +34,7 @@ func TestImportConfig_DryRun(t *testing.T) {
 	st.config["sticky_mode"] = "api_type"
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{ID: "p1", Name: "Updated Provider", APIKey: "key", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, Enabled: true},
 			{ID: "p2", Name: "New Provider", APIKey: "key2", APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://api2.com"}}, Enabled: true},
@@ -101,7 +102,7 @@ func TestImportConfig_ActualImport(t *testing.T) {
 	st.groups["g1"] = &model.Group{ID: "g1", Name: "Existing Group"}
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{ID: "p1", Name: "Updated Provider", APIKey: "key", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, AuthMode: "bearer", Weight: 1, Enabled: true},
 			{ID: "p2", Name: "New Provider", APIKey: "key2", APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://api2.com"}}, AuthMode: "auto", Weight: 2, Enabled: false},
@@ -165,7 +166,7 @@ func TestImportConfig_MigratesLegacyStickyEnabled(t *testing.T) {
 	st.config["sticky_mode"] = "model"
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Settings: map[string]string{
 			"sticky_enabled": "1",
 		},
@@ -194,7 +195,7 @@ func TestImportConfig_MigratesLegacyMaxRetriesKey(t *testing.T) {
 	h, st, _ := testHandler()
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Settings: map[string]string{
 			"max_retries": "5",
 		},
@@ -245,7 +246,7 @@ func TestImportConfig_WarnsAndSkipsInvalidSettingValues(t *testing.T) {
 	h, st, _ := testHandler()
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Settings: map[string]string{
 			"global_max_attempts": "-1",
 		},
@@ -328,7 +329,7 @@ func TestImportConfig_NoChanges(t *testing.T) {
 	st.config["global_max_attempts"] = "5"
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{
 				ID:          "p1",
@@ -434,7 +435,7 @@ func TestImportConfig_WithWarnings(t *testing.T) {
 	st.groups["g1"] = &model.Group{ID: "g1", Name: "Existing Group"}
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{ID: "", Name: "Empty ID Provider"}, // Empty ID
 			{ID: "p1", Name: "Invalid API Type", APITypes: []ExportedAPIType{{APIType: "invalid", BaseURL: "https://api.com"}}},                          // Invalid API type
@@ -476,7 +477,7 @@ func TestImportConfig_EmptyRequest(t *testing.T) {
 	h, _, _ := testHandler()
 
 	importReq := ImportConfigRequest{
-		Version:   "1.0",
+		Version:   ConfigExportVersion,
 		Providers: []ExportedProvider{},
 		Groups:    []ExportedGroup{},
 		Settings:  map[string]string{},
@@ -508,7 +509,7 @@ func TestImportConfig_ProviderWithGroupReference(t *testing.T) {
 
 	// Import a provider that references a group in the same import
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{
 				ID:       "p1",
@@ -549,7 +550,7 @@ func TestImportConfig_ListProvidersError(t *testing.T) {
 	h, st, _ := testHandler()
 	st.listErr = errors.New("database error")
 
-	importReq := ImportConfigRequest{Version: "1.0"}
+	importReq := ImportConfigRequest{Version: ConfigExportVersion}
 	body, _ := json.Marshal(importReq)
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -573,7 +574,7 @@ func TestImportConfig_ListGroupsError(t *testing.T) {
 		Logger:      logger,
 	})
 
-	importReq := ImportConfigRequest{Version: "1.0"}
+	importReq := ImportConfigRequest{Version: ConfigExportVersion}
 	body, _ := json.Marshal(importReq)
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -590,7 +591,7 @@ func TestImportConfig_GetConfigError(t *testing.T) {
 	h, st, _ := testHandler()
 	st.configErr = errors.New("database error")
 
-	importReq := ImportConfigRequest{Version: "1.0"}
+	importReq := ImportConfigRequest{Version: ConfigExportVersion}
 	body, _ := json.Marshal(importReq)
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -608,7 +609,7 @@ func TestImportConfig_CreateGroupError(t *testing.T) {
 	st.createErr = errors.New("database error")
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Groups: []ExportedGroup{
 			{ID: "g1", Name: "New Group", Strategy: "priority", Weight: 1, Enabled: true},
 		},
@@ -638,7 +639,7 @@ func TestImportConfig_CreateProviderError(t *testing.T) {
 	})
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{ID: "p1", Name: "New Provider", APIKey: "key", APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.com"}}, Weight: 1, Enabled: true},
 		},
@@ -660,7 +661,7 @@ func TestImportConfig_SkipsInvalidProviders(t *testing.T) {
 	h, st, _ := testHandler()
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{ID: "", Name: "Empty ID"},                      // Skipped: empty ID
 			{ID: "p1", Name: ""},                            // Skipped: empty name
@@ -700,7 +701,7 @@ func TestImportConfig_SkipsInvalidGroups(t *testing.T) {
 	h, st, _ := testHandler()
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Groups: []ExportedGroup{
 			{ID: "", Name: "Empty ID"},                                // Skipped: empty ID
 			{ID: "g1", Name: ""},                                      // Skipped: empty name
@@ -739,7 +740,7 @@ func TestImportConfig_DefaultValues(t *testing.T) {
 	h, st, _ := testHandler()
 
 	importReq := ImportConfigRequest{
-		Version: "1.0",
+		Version: ConfigExportVersion,
 		Providers: []ExportedProvider{
 			{
 				ID:       "p1",
@@ -819,8 +820,16 @@ func TestImportConfig_ChatGPTProviderDerivesTransportFields(t *testing.T) {
 			APIKey:         "stale-key",
 			AuthMode:       "auto",
 			CredentialType: model.ProviderCredentialTypeChatGPT,
-			CredentialData: string(credentialData),
-			Enabled:        true,
+			Credential: &ExportedProviderCredential{
+				SecretData:       string(credentialData),
+				BindingAccountID: strPtr("acct_test"),
+				Version:          3,
+			},
+			AuthState: &ExportedProviderAuthState{
+				Status:    model.ProviderAuthStatusActive,
+				AccountID: "acct_test",
+			},
+			Enabled: true,
 		}},
 	}
 
@@ -846,8 +855,23 @@ func TestImportConfig_ChatGPTProviderDerivesTransportFields(t *testing.T) {
 	if imported.CredentialType != model.ProviderCredentialTypeChatGPT {
 		t.Fatalf("CredentialType = %q, want %q", imported.CredentialType, model.ProviderCredentialTypeChatGPT)
 	}
-	if imported.CredentialData != string(credentialData) {
-		t.Fatalf("CredentialData = %q, want original credential payload", imported.CredentialData)
+	if imported.Credential == nil {
+		t.Fatal("Credential = nil, want imported credential payload")
+	}
+	if imported.Credential.SecretData != string(credentialData) {
+		t.Fatalf("Credential.SecretData = %q, want original credential payload", imported.Credential.SecretData)
+	}
+	if imported.Credential.Version != 3 {
+		t.Fatalf("Credential.Version = %d, want 3", imported.Credential.Version)
+	}
+	if imported.AuthState == nil {
+		t.Fatal("AuthState = nil, want imported auth state")
+	}
+	if imported.AuthState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("AuthState.Status = %q, want %q", imported.AuthState.Status, model.ProviderAuthStatusActive)
+	}
+	if imported.Credential == nil || imported.Credential.SecretData != string(credentialData) {
+		t.Fatalf("Credential = %#v, want secret payload %q", imported.Credential, string(credentialData))
 	}
 	if imported.AuthMode != "bearer" {
 		t.Fatalf("AuthMode = %q, want %q", imported.AuthMode, "bearer")
@@ -866,5 +890,27 @@ func TestImportConfig_ChatGPTProviderDerivesTransportFields(t *testing.T) {
 	}
 	if imported.APITypes[0].APIKey != "" {
 		t.Fatalf("APITypes[0].APIKey = %q, want empty", imported.APITypes[0].APIKey)
+	}
+}
+
+func TestImportConfig_RejectsLegacyVersion(t *testing.T) {
+	h, _, _ := testHandler()
+
+	body, err := json.Marshal(ImportConfigRequest{Version: "1.0"})
+	if err != nil {
+		t.Fatalf("marshal import request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), ConfigExportVersion) {
+		t.Fatalf("response body = %q, want expected version %q", w.Body.String(), ConfigExportVersion)
 	}
 }

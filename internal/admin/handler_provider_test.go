@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/providerauth"
+
+	"go.uber.org/zap"
 )
 
 // Provider Tests
@@ -37,7 +40,7 @@ func TestListProviders(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var providers []model.Provider
+	var providers []ProviderPayload
 	if err := json.NewDecoder(w.Body).Decode(&providers); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -47,7 +50,58 @@ func TestListProviders(t *testing.T) {
 	}
 }
 
-func TestListProviders_ChatGPTUsageAppearsInAuthProfile(t *testing.T) {
+func TestListProviders_UsesPureReadAuthView(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	auth := &mockProviderAuthService{
+		buildAuthViewResp: &providerauth.ProviderAuthView{
+			Type:   model.ProviderCredentialTypeChatGPT,
+			Status: providerauth.ProviderAuthStatusActive,
+			Email:  "user@example.com",
+		},
+	}
+	store := newMockStore()
+	store.providers["gpt"] = &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+	handler := NewHandler(Config{
+		Store:  store,
+		Auth:   auth,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/providers", nil)
+	w := httptest.NewRecorder()
+
+	handler.ListProviders(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if auth.buildAuthViewCalls != 1 {
+		t.Fatalf("BuildProviderAuthView calls = %d, want 1", auth.buildAuthViewCalls)
+	}
+	if auth.refreshCredentialCalls != 0 {
+		t.Fatalf("RefreshProviderCredentials calls = %d, want 0", auth.refreshCredentialCalls)
+	}
+	if auth.refreshUsageCalls != 0 {
+		t.Fatalf("RefreshProviderUsage calls = %d, want 0", auth.refreshUsageCalls)
+	}
+
+	var providers []ProviderPayload
+	if err := json.NewDecoder(w.Body).Decode(&providers); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(providers) != 1 {
+		t.Fatalf("len(providers) = %d, want 1", len(providers))
+	}
+	if providers[0].Auth == nil || providers[0].Auth.Email != "user@example.com" {
+		t.Fatalf("Auth = %#v, want pure-read auth view", providers[0].Auth)
+	}
+}
+
+func TestListProviders_ChatGPTUsageAppearsInAuthView(t *testing.T) {
 	h, st, _ := testHandler()
 
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
@@ -79,7 +133,7 @@ func TestListProviders_ChatGPTUsageAppearsInAuthProfile(t *testing.T) {
 		ID:             "gpt",
 		Name:           "GPT Provider",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: string(credentialData),
+		Credential:     model.ProviderCredentialFromLegacy("gpt", model.ProviderCredentialTypeChatGPT, string(credentialData)),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/providers", nil)
@@ -91,23 +145,23 @@ func TestListProviders_ChatGPTUsageAppearsInAuthProfile(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var providers []model.Provider
+	var providers []ProviderPayload
 	if err := json.NewDecoder(w.Body).Decode(&providers); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if len(providers) != 1 {
 		t.Fatalf("len(providers) = %d, want 1", len(providers))
 	}
-	if providers[0].AuthProfile == nil {
-		t.Fatal("AuthProfile = nil, want profile")
+	if providers[0].Auth == nil {
+		t.Fatal("Auth = nil, want auth view")
 	}
-	if providers[0].AuthProfile.PlanType != "pro" {
-		t.Fatalf("PlanType = %q, want %q", providers[0].AuthProfile.PlanType, "pro")
+	if providers[0].Auth.PlanType != "pro" {
+		t.Fatalf("PlanType = %q, want %q", providers[0].Auth.PlanType, "pro")
 	}
-	if providers[0].AuthProfile.Usage == nil || providers[0].AuthProfile.Usage.FiveHour == nil {
+	if providers[0].Auth.Usage == nil || providers[0].Auth.Usage.FiveHour == nil {
 		t.Fatal("FiveHour usage = nil, want snapshot")
 	}
-	if got := providers[0].AuthProfile.Usage.FiveHour.UsedPercent; got != 33 {
+	if got := providers[0].Auth.Usage.FiveHour.UsedPercent; got != 33 {
 		t.Fatalf("FiveHour.UsedPercent = %v, want 33", got)
 	}
 }
@@ -144,7 +198,7 @@ func TestGetProvider(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var provider model.Provider
+	var provider ProviderPayload
 	if err := json.NewDecoder(w.Body).Decode(&provider); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}

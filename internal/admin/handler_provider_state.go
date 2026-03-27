@@ -56,8 +56,7 @@ func (h *Handler) setProviderEnabled(w http.ResponseWriter, r *http.Request, ena
 	// do not leave the circuit breaker believing a provider is still unavailable.
 	h.syncHealthManagerState(r.Context(), id, enabled)
 
-	h.attachProviderAuthProfile(r.Context(), provider)
-	writeJSON(w, http.StatusOK, provider)
+	writeJSON(w, http.StatusOK, h.providerPayload(provider))
 }
 
 // syncHealthManagerState updates the health manager to reflect the provider's enabled state.

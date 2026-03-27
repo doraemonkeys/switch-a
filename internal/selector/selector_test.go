@@ -14,10 +14,13 @@ import (
 
 // mockStore implements the Store interface for testing.
 type mockStore struct {
-	providers []model.Provider
-	groups    map[string]*model.Group
-	configs   map[string]string
-	err       error
+	providers       []model.Provider
+	groups          map[string]*model.Group
+	configs         map[string]string
+	authStates      map[string]*model.ProviderAuthState
+	routingPolicies []model.RoutingPolicy
+	err             error
+	authStateErr    error
 }
 
 func newMockStore() *mockStore {
@@ -29,6 +32,7 @@ func newMockStore() *mockStore {
 			"sticky_mode":          "model",
 			"sticky_ttl":           "300",
 		},
+		authStates: make(map[string]*model.ProviderAuthState),
 	}
 }
 
@@ -67,6 +71,32 @@ func (m *mockStore) GetProvider(_ context.Context, id string) (*model.Provider, 
 		}
 	}
 	return nil, nil
+}
+
+func (m *mockStore) GetProviderAuthState(_ context.Context, providerID string) (*model.ProviderAuthState, error) {
+	if m.authStateErr != nil {
+		return nil, m.authStateErr
+	}
+	if m.err != nil {
+		return nil, m.err
+	}
+	if authState, ok := m.authStates[providerID]; ok {
+		return authState.Clone(), nil
+	}
+	return nil, nil
+}
+
+func (m *mockStore) ListRoutingPoliciesByAPIType(_ context.Context, apiType string) ([]model.RoutingPolicy, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	policies := make([]model.RoutingPolicy, 0, len(m.routingPolicies))
+	for _, policy := range m.routingPolicies {
+		if policy.APIType == apiType {
+			policies = append(policies, policy)
+		}
+	}
+	return policies, nil
 }
 
 // mockHealthChecker implements the HealthChecker interface for testing.

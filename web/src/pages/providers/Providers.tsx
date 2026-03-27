@@ -36,6 +36,8 @@ export function Providers() {
     handleResetCancel,
     handleToggleProvider,
     handleSaveProvider,
+    handleRefreshCredential,
+    handleRefreshUsage,
   } = useProviderActions();
   const { groups } = useGroups();
   const [searchParams] = useSearchParams();
@@ -70,7 +72,9 @@ export function Providers() {
   }, [refreshInterval, refetch]);
 
   // Detail drawer state
-  const [detailProvider, setDetailProvider] = useState<Provider | null>(null);
+  const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
+  const detailProvider =
+    providers.find((provider) => provider.id === detailProviderId) ?? null;
 
   const filteredProviders = providers.filter((provider) => {
     if (searchQuery) {
@@ -111,26 +115,27 @@ export function Providers() {
   const handleEditClick = (provider: Provider) => {
     setEditingProvider(provider);
     setShowModal(true);
-    setDetailProvider(null);
+    setDetailProviderId(null);
   };
 
-  const handleViewDetail = (provider: Provider) => setDetailProvider(provider);
-  const handleCloseDetail = () => setDetailProvider(null);
+  const handleViewDetail = (provider: Provider) =>
+    setDetailProviderId(provider.id);
+  const handleCloseDetail = () => setDetailProviderId(null);
 
   const handleDrawerToggle = async (provider: Provider) => {
     await handleToggleProvider(provider);
     const updatedProvider = providers.find((p) => p.id === provider.id);
-    if (updatedProvider) setDetailProvider(updatedProvider);
+    if (updatedProvider) setDetailProviderId(updatedProvider.id);
   };
 
   const handleDrawerDelete = (provider: Provider) => {
     handleDeleteClick(provider);
-    setDetailProvider(null);
+    setDetailProviderId(null);
   };
 
   const handleDrawerReset = (provider: Provider) => {
     handleResetClick(provider);
-    setDetailProvider(null);
+    setDetailProviderId(null);
   };
 
   const getGroupName = (groupId: string | null) => {
@@ -232,6 +237,8 @@ export function Providers() {
         onDelete={handleDrawerDelete}
         onToggle={handleDrawerToggle}
         onReset={handleDrawerReset}
+        onRefreshCredential={handleRefreshCredential}
+        onRefreshUsage={handleRefreshUsage}
         getGroupName={getGroupName}
       />
     </div>

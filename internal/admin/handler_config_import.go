@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"switch-a/internal/model"
@@ -20,6 +21,19 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	var req ImportConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
+		return
+	}
+	if req.Version != ConfigExportVersion {
+		writeError(
+			w,
+			http.StatusBadRequest,
+			ErrCodeValidation,
+			fmt.Sprintf(
+				"Unsupported config export version %q; expected %q",
+				req.Version,
+				ConfigExportVersion,
+			),
+		)
 		return
 	}
 
@@ -132,8 +146,11 @@ func validateExportedProvider(p *ExportedProvider) []string {
 	if !IsValidProviderCredentialType(credentialType) {
 		return append(warnings, "Provider '"+p.ID+"' has invalid credential_type: "+string(p.CredentialType))
 	}
+	if p.AuthState != nil && p.AuthState.Status != "" && !model.IsValidProviderAuthStatus(p.AuthState.Status) {
+		warnings = append(warnings, "Provider '"+p.ID+"' has invalid auth_state.status: "+string(p.AuthState.Status))
+	}
 	if credentialType == model.ProviderCredentialTypeChatGPT {
-		if _, ok := buildProviderFromExport(p, map[string]bool{}); !ok {
+		if chatGPTCredentialMustBeReady(p) && !exportedChatGPTCredentialReady(p.Credential) {
 			warnings = append(warnings, "Provider '"+p.ID+"' has incomplete or invalid GPT login")
 		}
 		return warnings
@@ -159,6 +176,24 @@ func validateExportedProvider(p *ExportedProvider) []string {
 	}
 
 	return warnings
+}
+
+func chatGPTCredentialMustBeReady(p *ExportedProvider) bool {
+	if p == nil || p.AuthState == nil {
+		return false
+	}
+	return p.AuthState.Status == "" || p.AuthState.Status == model.ProviderAuthStatusActive
+}
+
+func exportedChatGPTCredentialReady(credential *ExportedProviderCredential) bool {
+	if credential == nil {
+		return false
+	}
+	decoded, err := model.DecodeChatGPTProviderCredential(credential.SecretData)
+	if err != nil {
+		return false
+	}
+	return decoded != nil && decoded.Ready()
 }
 
 // validateExportedGroup validates a single group and returns warnings.

@@ -44,12 +44,14 @@ func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
 // reading logs could race with the background goroutine writing logs, causing flaky tests
 // or data races detectable by the race detector.
 type mockStore struct {
-	mu        sync.Mutex
-	providers []model.Provider
-	configs   map[string]string
-	logs      []model.RequestLog
-	attempts  []model.RequestAttempt // Captures attempts for verification
-	err       error
+	mu              sync.Mutex
+	providers       []model.Provider
+	configs         map[string]string
+	authStates      map[string]*model.ProviderAuthState
+	routingPolicies []model.RoutingPolicy
+	logs            []model.RequestLog
+	attempts        []model.RequestAttempt // Captures attempts for verification
+	err             error
 }
 
 func newMockStore() *mockStore {
@@ -66,8 +68,9 @@ func newMockStore() *mockStore {
 			ConfigKeyStickyMode:             "model",
 			ConfigKeyStickyTTL:              "300",
 		},
-		logs:     []model.RequestLog{},
-		attempts: []model.RequestAttempt{},
+		authStates: make(map[string]*model.ProviderAuthState),
+		logs:       []model.RequestLog{},
+		attempts:   []model.RequestAttempt{},
 	}
 }
 
@@ -103,6 +106,33 @@ func (m *mockStore) InsertAttempts(_ context.Context, attempts []model.RequestAt
 	}
 	m.attempts = append(m.attempts, attempts...)
 	return nil
+}
+
+func (m *mockStore) GetProviderAuthState(_ context.Context, providerID string) (*model.ProviderAuthState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	if authState, ok := m.authStates[providerID]; ok {
+		return authState.Clone(), nil
+	}
+	return nil, nil
+}
+
+func (m *mockStore) ListRoutingPoliciesByAPIType(_ context.Context, apiType string) ([]model.RoutingPolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	policies := make([]model.RoutingPolicy, 0, len(m.routingPolicies))
+	for _, policy := range m.routingPolicies {
+		if policy.APIType == apiType {
+			policies = append(policies, policy)
+		}
+	}
+	return policies, nil
 }
 
 // AttemptsLen returns the number of attempts in a thread-safe manner.

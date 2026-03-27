@@ -361,8 +361,18 @@ func TestExportConfig_ChatGPTProviderCanonicalizesTransportFields(t *testing.T) 
 		APITypes:       []model.ProviderAPIType{{ProviderID: "gpt", APIType: "claude", BaseURL: "https://stale.example.com", APIKey: "stale-override"}},
 		AuthMode:       "auto",
 		CredentialType: model.ProviderCredentialTypeChatGPT,
-		CredentialData: string(credentialData),
-		Enabled:        true,
+		Credential: &model.ProviderCredential{
+			ProviderID:       "gpt",
+			SecretData:       string(credentialData),
+			BindingAccountID: strPtr("acct_test"),
+			Version:          3,
+		},
+		AuthState: &model.ProviderAuthState{
+			ProviderID: "gpt",
+			Status:     model.ProviderAuthStatusActive,
+			AccountID:  "acct_test",
+		},
+		Enabled: true,
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
@@ -387,8 +397,23 @@ func TestExportConfig_ChatGPTProviderCanonicalizesTransportFields(t *testing.T) 
 	if provider.CredentialType != model.ProviderCredentialTypeChatGPT {
 		t.Fatalf("CredentialType = %q, want %q", provider.CredentialType, model.ProviderCredentialTypeChatGPT)
 	}
-	if provider.CredentialData != string(credentialData) {
-		t.Fatalf("CredentialData = %q, want original credential payload", provider.CredentialData)
+	if provider.Credential == nil {
+		t.Fatal("Credential = nil, want exported credential payload")
+	}
+	if provider.Credential.SecretData != string(credentialData) {
+		t.Fatalf("Credential.SecretData = %q, want original credential payload", provider.Credential.SecretData)
+	}
+	if provider.Credential.BindingAccountID == nil || *provider.Credential.BindingAccountID != "acct_test" {
+		t.Fatalf("Credential.BindingAccountID = %v, want acct_test", provider.Credential.BindingAccountID)
+	}
+	if provider.Credential.Version != 3 {
+		t.Fatalf("Credential.Version = %d, want 3", provider.Credential.Version)
+	}
+	if provider.AuthState == nil {
+		t.Fatal("AuthState = nil, want exported auth state")
+	}
+	if provider.AuthState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("AuthState.Status = %q, want %q", provider.AuthState.Status, model.ProviderAuthStatusActive)
 	}
 	if provider.AuthMode != "bearer" {
 		t.Fatalf("AuthMode = %q, want %q", provider.AuthMode, "bearer")
@@ -407,5 +432,104 @@ func TestExportConfig_ChatGPTProviderCanonicalizesTransportFields(t *testing.T) 
 	}
 	if provider.APITypes[0].APIKey != "" {
 		t.Fatalf("APITypes[0].APIKey = %q, want empty", provider.APITypes[0].APIKey)
+	}
+}
+
+func TestExportConfig_ChatGPTProviderRoundTripPreservesCredentialAndAuthState(t *testing.T) {
+	h, st, _ := testHandler()
+
+	credentialData, err := model.EncodeChatGPTProviderCredential(&model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "acct_test",
+	})
+	if err != nil {
+		t.Fatalf("encode credentialData: %v", err)
+	}
+
+	now := time.Date(2026, time.March, 27, 4, 0, 0, 0, time.UTC)
+	bindingAccountID := "acct_test"
+	st.providers["gpt"] = &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		APIKey:         "stale-key",
+		APITypes:       []model.ProviderAPIType{{ProviderID: "gpt", APIType: "claude", BaseURL: "https://stale.example.com", APIKey: "stale-override"}},
+		AuthMode:       "auto",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential: &model.ProviderCredential{
+			ProviderID:       "gpt",
+			SecretData:       credentialData,
+			BindingAccountID: &bindingAccountID,
+			Version:          5,
+		},
+		AuthState: &model.ProviderAuthState{
+			ProviderID:       "gpt",
+			Status:           model.ProviderAuthStatusReauthRequired,
+			StatusReason:     "invalid_grant",
+			LastError:        "refresh_token_reused",
+			LastTransitionAt: &now,
+			AccountID:        "acct_test",
+			Email:            "user@example.com",
+		},
+		Enabled: true,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	w := httptest.NewRecorder()
+	h.ExportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var export ExportedConfig
+	if err := json.NewDecoder(w.Body).Decode(&export); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+
+	h2, st2, _ := testHandler()
+	importReq := ImportConfigRequest{
+		Version:   export.Version,
+		Providers: export.Providers,
+	}
+	body, err := json.Marshal(importReq)
+	if err != nil {
+		t.Fatalf("marshal import request: %v", err)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	h2.ImportConfig(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want %d; body: %s", w2.Code, http.StatusOK, w2.Body.String())
+	}
+
+	imported := st2.providers["gpt"]
+	if imported == nil {
+		t.Fatal("provider gpt not found after roundtrip import")
+	}
+	if imported.Credential == nil {
+		t.Fatal("Credential = nil, want imported credential payload")
+	}
+	if imported.Credential.SecretData != credentialData {
+		t.Fatalf("Credential.SecretData = %q, want round-tripped payload", imported.Credential.SecretData)
+	}
+	if imported.Credential.Version != 5 {
+		t.Fatalf("Credential.Version = %d, want 5", imported.Credential.Version)
+	}
+	if imported.AuthState == nil {
+		t.Fatal("AuthState = nil, want imported auth state")
+	}
+	if imported.AuthState.Status != model.ProviderAuthStatusReauthRequired {
+		t.Fatalf("AuthState.Status = %q, want %q", imported.AuthState.Status, model.ProviderAuthStatusReauthRequired)
+	}
+	if imported.AuthState.StatusReason != "invalid_grant" {
+		t.Fatalf("AuthState.StatusReason = %q, want invalid_grant", imported.AuthState.StatusReason)
+	}
+	if imported.Credential == nil || imported.Credential.SecretData != credentialData {
+		t.Fatalf("Credential = %#v, want secret payload %q", imported.Credential, credentialData)
 	}
 }

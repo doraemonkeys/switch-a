@@ -2,80 +2,93 @@ package providerauth
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"switch-a/internal/model"
-
-	"go.uber.org/zap"
 )
 
-func (s *Service) PopulateProviderAuthProfile(ctx context.Context, provider *model.Provider) {
-	if provider == nil {
-		return
-	}
-
-	provider.CredentialType = model.NormalizeProviderCredentialType(provider.CredentialType)
-	if provider.CredentialType != providerCredentialTypeChatGPT {
-		provider.AuthProfile = BuildAuthProfile(provider)
-		return
-	}
-
-	credential, err := s.ensureFreshChatGPTCredential(ctx, provider, false)
-	if err != nil {
-		s.logger.Debug("failed to refresh chatgpt credential while preparing provider auth profile",
-			zap.String("provider_id", provider.ID),
-			zap.Error(err),
-		)
-		provider.AuthProfile = BuildAuthProfile(provider)
-		return
-	}
-
-	credential = s.refreshChatGPTUsageProfile(ctx, provider, credential)
-	provider.AuthProfile = buildChatGPTAuthProfile(credential)
+// BuildProviderAuthView exposes the pure-read auth projection needed by admin handlers.
+func (s *Service) BuildProviderAuthView(provider *model.Provider) *ProviderAuthView {
+	return BuildProviderAuthView(provider)
 }
 
-func (s *Service) refreshChatGPTUsageProfile(
-	ctx context.Context,
-	provider *model.Provider,
-	credential *model.ChatGPTProviderCredential,
-) *model.ChatGPTProviderCredential {
-	if !shouldRefreshChatGPTUsageSnapshot(credential.Usage, s.clock.Now()) {
-		return credential
+// RefreshProviderUsage fetches a fresh usage snapshot without coupling admin read paths
+// to token refresh or other implicit write-back behavior.
+func (s *Service) RefreshProviderUsage(ctx context.Context, provider *model.Provider) (bool, error) {
+	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
+	case providerCredentialTypeChatGPT:
+		return true, s.refreshChatGPTUsageSnapshot(ctx, provider)
+	default:
+		return false, nil
+	}
+}
+
+func (s *Service) refreshChatGPTUsageSnapshot(ctx context.Context, provider *model.Provider) error {
+	if provider == nil {
+		return fmt.Errorf("provider is required")
+	}
+
+	credential, err := decodeProviderChatGPTCredential(provider)
+	if err != nil {
+		return &ProviderAuthStateError{
+			ProviderID: provider.ID,
+			Status:     ProviderAuthStatusNotConnected,
+			Reason:     ProviderAuthReasonCredentialInvalid,
+			LastError:  err.Error(),
+		}
+	}
+	if credential == nil || !credential.Ready() {
+		return &ProviderAuthStateError{
+			ProviderID: provider.ID,
+			Status:     ProviderAuthStatusNotConnected,
+			Reason:     ProviderAuthReasonLoginRequired,
+		}
+	}
+
+	authState := providerAuthStateSnapshot(provider)
+	if authState.Status != ProviderAuthStatusActive {
+		return &ProviderAuthStateError{
+			ProviderID: provider.ID,
+			Status:     authState.Status,
+			Reason:     providerAuthReason(providerCredentialTypeChatGPT, authState),
+			LastError:  authState.LastError,
+		}
 	}
 
 	snapshot, err := s.fetchChatGPTUsageSnapshot(ctx, credential)
 	if err != nil {
-		s.logger.Debug("failed to refresh chatgpt usage snapshot while preparing provider auth profile",
-			zap.String("provider_id", provider.ID),
-			zap.String("account_id", credential.AccountID),
-			zap.Error(err),
-		)
-		return credential
+		return err
 	}
 
-	credential = applyChatGPTUsageSnapshot(credential, snapshot)
-	s.persistChatGPTUsageSnapshot(ctx, provider, credential)
-	return credential
+	updatedState := buildChatGPTAuthState(
+		provider.ID,
+		authState,
+		credential,
+		ProviderAuthStatusActive,
+		"",
+		"",
+		snapshot,
+		time.Time{},
+	)
+	if err := s.persistProviderAuthState(ctx, provider.ID, updatedState); err != nil {
+		return err
+	}
+
+	applyProviderAuthState(provider, updatedState)
+	return nil
 }
 
-func (s *Service) persistChatGPTUsageSnapshot(
+func (s *Service) persistProviderAuthState(
 	ctx context.Context,
-	provider *model.Provider,
-	credential *model.ChatGPTProviderCredential,
-) {
-	// Apply the refreshed snapshot before persisting so the admin view and the
-	// stored credential stay aligned even when the write-back later fails.
-	if err := applyChatGPTCredential(provider, credential); err != nil {
-		s.logger.Warn("failed to apply refreshed chatgpt usage snapshot",
-			zap.String("provider_id", provider.ID),
-			zap.Error(err),
-		)
-		return
+	providerID string,
+	authState *model.ProviderAuthState,
+) error {
+	if s.credentialStore == nil || providerID == "" {
+		return nil
 	}
-
-	if err := s.persistChatGPTCredential(ctx, provider, credential); err != nil {
-		s.logger.Warn("failed to persist chatgpt usage snapshot",
-			zap.String("provider_id", provider.ID),
-			zap.Error(err),
-		)
+	if err := s.credentialStore.UpdateProviderAuthState(ctx, providerID, authState); err != nil {
+		return fmt.Errorf("persist provider auth state for provider %q: %w", providerID, err)
 	}
+	return nil
 }

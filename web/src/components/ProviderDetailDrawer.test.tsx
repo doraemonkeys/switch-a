@@ -34,9 +34,9 @@ function buildProvider(): Provider {
     enabled: true,
     created_at: "2026-03-22T12:00:00Z",
     updated_at: "2026-03-22T12:00:00Z",
-    auth_profile: {
+    auth: {
       type: "chatgpt",
-      ready: true,
+      status: "active",
       email: "user@example.com",
       account_id: "acct_test",
       plan_type: "team",
@@ -86,12 +86,60 @@ describe("ProviderDetailDrawer", () => {
     await waitFor(() => expect(listLogs).toHaveBeenCalled());
     await screen.findByText("No recent requests");
 
-    expect(screen.getByText("GPT Account")).toBeInTheDocument();
+    expect(screen.getByText("Authentication")).toBeInTheDocument();
+    expect(screen.getByText("active")).toBeInTheDocument();
     expect(screen.getByText("Team")).toBeInTheDocument();
     expect(screen.getByText("5 Hours")).toBeInTheDocument();
     expect(screen.getByText("1 Week")).toBeInTheDocument();
     expect(screen.getByText(/22% used/)).toBeInTheDocument();
     expect(screen.getByText(/58% used/)).toBeInTheDocument();
     expect(screen.getByText("Usage Updated")).toBeInTheDocument();
+  });
+
+  it("renders reconnect-required auth diagnostics from the explicit auth snapshot", async () => {
+    const listLogs = vi.fn().mockResolvedValue({ logs: [] });
+    const mockApi = {
+      logs: {
+        list: listLogs,
+      },
+    } as unknown as ApiClient;
+    const provider = {
+      ...buildProvider(),
+      auth: {
+        type: "chatgpt",
+        status: "reauth_required",
+        reason: "invalid_grant",
+        last_error: "refresh_token_reused",
+        email: "user@example.com",
+      },
+    } as Provider;
+
+    render(
+      <MemoryRouter>
+        <ApiContext.Provider value={mockApi}>
+          <ProviderDetailDrawer
+            provider={provider}
+            onClose={vi.fn()}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onToggle={vi.fn()}
+            onReset={vi.fn()}
+            getGroupName={() => "Ungrouped"}
+          />
+        </ApiContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(listLogs).toHaveBeenCalled());
+    await screen.findByText("No recent requests");
+
+    expect(screen.getByText("reauth_required")).toBeInTheDocument();
+    expect(screen.getByText("invalid_grant")).toBeInTheDocument();
+    expect(screen.getByText("refresh_token_reused")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Reconnect this provider from Edit before manual sync can resume/i,
+      ),
+    ).toBeInTheDocument();
   });
 });

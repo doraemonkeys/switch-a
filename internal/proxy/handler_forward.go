@@ -33,9 +33,8 @@ func (h *Handler) applyForwardCredentials(ctx context.Context, headers http.Head
 }
 
 func (h *Handler) failedProviderRequest(ctx context.Context, providerID string, err error) forwardResult {
-	// Request construction and credential application are provider configuration failures,
-	// so they should trip health tracking instead of being retried forever.
-	h.markFailure(ctx, providerID, err)
+	// Provider configuration/auth preparation failures are not runtime health
+	// signals, so we fail the current selection without degrading health state.
 	return forwardResult{
 		err:     err,
 		success: false,
@@ -193,7 +192,9 @@ func (h *Handler) failoverForwardResponse(
 	result.success = false
 	result.bodySnippet = upstreamResp.DrainWithSnippet(0)
 	result.failureDisposition = classifyProviderFailure(result.statusCode, upstreamResp.Header, result.bodySnippet, time.Now())
-	h.markFailure(ctx, providerID, statusErr)
+	if shouldTrackStatusFailureInHealth(result.statusCode) {
+		h.markFailure(ctx, providerID, statusErr)
+	}
 	if result.failureDisposition.autoDisableUntil != nil {
 		h.suspendProviderUntil(
 			ctx,

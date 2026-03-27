@@ -588,6 +588,7 @@ func TestTryActiveProviderFallback_ModelDimension(t *testing.T) {
 		UserID:          "user1",
 		APIType:         "claude",
 		Model:           "model-a",
+		StickyMode:      model.StickyModeModel,
 		HasReceivedData: true,
 	})
 
@@ -611,6 +612,96 @@ func TestTryActiveProviderFallback_ModelDimension(t *testing.T) {
 	}
 }
 
+func TestTryActiveProviderFallback_SkipsProviderWithReauthRequired(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{ID: "active-p1", Name: "Active Provider", Enabled: true},
+	}
+	store.authStates["active-p1"] = &model.ProviderAuthState{
+		ProviderID: "active-p1",
+		Status:     model.ProviderAuthStatusReauthRequired,
+	}
+
+	activeRegistry := NewActiveRequestRegistry()
+	activeRegistry.Register(&ActiveRequest{
+		RequestID:       "req-123",
+		ProviderID:      "active-p1",
+		ClientIP:        "192.168.1.1",
+		UserID:          "user1",
+		APIType:         "claude",
+		StickyMode:      model.StickyModeAPIType,
+		HasReceivedData: true,
+	})
+
+	handler := NewHandler(Config{
+		Store:          store,
+		Logger:         zap.NewNop(),
+		ActiveRegistry: activeRegistry,
+	})
+
+	provider := handler.tryActiveProviderFallback(context.Background(), &model.SelectRequest{
+		ClientIP:   "192.168.1.1",
+		User:       "user1",
+		APIType:    "claude",
+		StickyMode: model.StickyModeAPIType,
+	})
+	if provider != nil {
+		t.Fatalf("expected nil when active fallback provider requires reauthentication, got %#v", provider)
+	}
+}
+
+func TestTryActiveProviderFallback_SkipsProviderRejectedByRoutingPolicy(t *testing.T) {
+	blockedGroup := "g-blocked"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "active-p1",
+			Name:     "Active Provider",
+			Enabled:  true,
+			GroupID:  &blockedGroup,
+			APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "codex"}},
+		},
+	}
+	store.authStates["active-p1"] = &model.ProviderAuthState{
+		ProviderID: "active-p1",
+		Status:     model.ProviderAuthStatusActive,
+	}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			APIType: "codex",
+			Groups:  []model.RoutingPolicyGroup{{GroupID: "g-allowed"}},
+		},
+	}
+
+	activeRegistry := NewActiveRequestRegistry()
+	activeRegistry.Register(&ActiveRequest{
+		RequestID:       "req-123",
+		ProviderID:      "active-p1",
+		ClientIP:        "192.168.1.1",
+		UserID:          "user1",
+		APIType:         "codex",
+		StickyMode:      model.StickyModeAPIType,
+		HasReceivedData: true,
+	})
+
+	handler := NewHandler(Config{
+		Store:          store,
+		Logger:         zap.NewNop(),
+		ActiveRegistry: activeRegistry,
+	})
+
+	provider := handler.tryActiveProviderFallback(context.Background(), &model.SelectRequest{
+		ClientIP:   "192.168.1.1",
+		User:       "user1",
+		APIType:    "codex",
+		StickyMode: model.StickyModeAPIType,
+	})
+	if provider != nil {
+		t.Fatalf("expected nil when routing policy rejects the active fallback provider, got %#v", provider)
+	}
+}
+
 // TestGetProviderIfValid_ProviderFound tests finding a valid provider.
 func TestGetProviderIfValid_ProviderFound(t *testing.T) {
 	store := newMockStore()
@@ -626,8 +717,12 @@ func TestGetProviderIfValid_ProviderFound(t *testing.T) {
 	})
 
 	ctx := context.Background()
+	scope, err := selector.NewProviderSelectionEligibility(ctx, nil, nil, &model.SelectRequest{APIType: "claude"})
+	if err != nil {
+		t.Fatalf("unexpected scope error: %v", err)
+	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", "claude")
+	provider := handler.getProviderIfValid(ctx, scope, "p1")
 	if provider == nil {
 		t.Fatal("expected provider to be found")
 	}
@@ -650,8 +745,12 @@ func TestGetProviderIfValid_ProviderNotFound(t *testing.T) {
 	})
 
 	ctx := context.Background()
+	scope, err := selector.NewProviderSelectionEligibility(ctx, nil, nil, &model.SelectRequest{APIType: "claude"})
+	if err != nil {
+		t.Fatalf("unexpected scope error: %v", err)
+	}
 
-	provider := handler.getProviderIfValid(ctx, "nonexistent", "claude")
+	provider := handler.getProviderIfValid(ctx, scope, "nonexistent")
 	if provider != nil {
 		t.Error("expected nil for nonexistent provider")
 	}
@@ -671,8 +770,12 @@ func TestGetProviderIfValid_ProviderDisabled(t *testing.T) {
 	})
 
 	ctx := context.Background()
+	scope, err := selector.NewProviderSelectionEligibility(ctx, nil, nil, &model.SelectRequest{APIType: "claude"})
+	if err != nil {
+		t.Fatalf("unexpected scope error: %v", err)
+	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", "claude")
+	provider := handler.getProviderIfValid(ctx, scope, "p1")
 	if provider != nil {
 		t.Error("expected nil for disabled provider")
 	}
@@ -696,8 +799,12 @@ func TestGetProviderIfValid_ProviderUnhealthy(t *testing.T) {
 	})
 
 	ctx := context.Background()
+	scope, err := handler.selectionScope(ctx, &model.SelectRequest{APIType: "claude"})
+	if err != nil {
+		t.Fatalf("unexpected scope error: %v", err)
+	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", "claude")
+	provider := handler.getProviderIfValid(ctx, scope, "p1")
 	if provider != nil {
 		t.Error("expected nil for unhealthy provider")
 	}
@@ -711,7 +818,6 @@ func TestGetProviderIfValid_ProviderUnhealthy(t *testing.T) {
 // TestGetProviderIfValid_StoreError tests when store returns an error.
 func TestGetProviderIfValid_StoreError(t *testing.T) {
 	store := newMockStore()
-	store.err = errors.New("database error")
 	logger := zap.NewNop()
 
 	handler := NewHandler(Config{
@@ -720,8 +826,14 @@ func TestGetProviderIfValid_StoreError(t *testing.T) {
 	})
 
 	ctx := context.Background()
+	scope, err := handler.selectionScope(ctx, &model.SelectRequest{APIType: "claude"})
+	if err != nil {
+		t.Fatalf("unexpected scope error: %v", err)
+	}
 
-	provider := handler.getProviderIfValid(ctx, "p1", "claude")
+	store.err = errors.New("database error")
+
+	provider := handler.getProviderIfValid(ctx, scope, "p1")
 	if provider != nil {
 		t.Error("expected nil on store error")
 	}
@@ -749,6 +861,72 @@ func TestSelectProviderFallback_NoProviders(t *testing.T) {
 	}
 	if provider != nil {
 		t.Error("expected nil provider")
+	}
+}
+
+func TestSelectProviderFallback_FiltersByRoutingPolicyAndAuthState(t *testing.T) {
+	allowedGroup := "g-allowed"
+	blockedGroup := "g-blocked"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p-allowed",
+			Name:     "Allowed Provider",
+			Enabled:  true,
+			GroupID:  &allowedGroup,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-allowed", APIType: "codex"}},
+		},
+		{
+			ID:       "p-reauth",
+			Name:     "Reauth Provider",
+			Enabled:  true,
+			GroupID:  &allowedGroup,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-reauth", APIType: "codex"}},
+		},
+		{
+			ID:       "p-outside",
+			Name:     "Outside Policy Provider",
+			Enabled:  true,
+			GroupID:  &blockedGroup,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-outside", APIType: "codex"}},
+		},
+	}
+	store.authStates["p-allowed"] = &model.ProviderAuthState{
+		ProviderID: "p-allowed",
+		Status:     model.ProviderAuthStatusActive,
+	}
+	store.authStates["p-reauth"] = &model.ProviderAuthState{
+		ProviderID: "p-reauth",
+		Status:     model.ProviderAuthStatusReauthRequired,
+	}
+	store.authStates["p-outside"] = &model.ProviderAuthState{
+		ProviderID: "p-outside",
+		Status:     model.ProviderAuthStatusActive,
+	}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			APIType: "codex",
+			Groups:  []model.RoutingPolicyGroup{{GroupID: "g-allowed"}},
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	provider, err := handler.selectProviderFallback(context.Background(), &model.SelectRequest{
+		APIType: "codex",
+	}, 0, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected provider to be selected")
+	}
+	if provider.ID != "p-allowed" {
+		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p-allowed")
 	}
 }
 

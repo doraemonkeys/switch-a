@@ -15,6 +15,8 @@ const (
 	stickyModeConfigKey          = "sticky_mode"
 	legacyMaxRetriesConfigKey    = "max_retries"
 	globalMaxAttemptsConfigKey   = "global_max_attempts"
+	providersTableName           = "providers"
+	providerCredentialDataColumn = "credential_data"
 	requestLogsTableName         = "request_logs"
 	legacyWebSocketColumnName    = "is_web_socket"
 	webSocketColumnName          = "is_websocket"
@@ -270,14 +272,107 @@ func backfillWebSocketLifecycleColumn(tx *gorm.DB, columnName string, defaultVal
 	).Error
 }
 
-func requestLogsColumnExists(db *gorm.DB, columnName string) (bool, error) {
+func tableColumnExists(db *gorm.DB, tableName, columnName string) (bool, error) {
 	var count int64
 	err := db.Raw(
-		fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, requestLogsTableName),
+		fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, tableName),
 		columnName,
 	).Scan(&count).Error
 	if err != nil {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func requestLogsColumnExists(db *gorm.DB, columnName string) (bool, error) {
+	return tableColumnExists(db, requestLogsTableName, columnName)
+}
+
+// migrateProviderStateTables backfills the new credential/auth tables without
+// overwriting rows that were already created by a newer binary, then drops the
+// legacy providers.credential_data shadow once split storage is populated.
+func migrateProviderStateTables(db *gorm.DB) error {
+	hasLegacyCredentialData, err := tableColumnExists(db, providersTableName, providerCredentialDataColumn)
+	if err != nil {
+		return fmt.Errorf("check providers credential shadow column: %w", err)
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if hasLegacyCredentialData {
+			var providers []legacyProviderCredentialShadow
+			if err := tx.Table(providersTableName).
+				Select("id, credential_type, credential_data").
+				Scan(&providers).Error; err != nil {
+				return fmt.Errorf("list providers for provider state migration: %w", err)
+			}
+			for i := range providers {
+				if err := backfillProviderState(tx, &providers[i]); err != nil {
+					return err
+				}
+			}
+			if err := tx.Exec(
+				fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, providersTableName, providerCredentialDataColumn),
+			).Error; err != nil {
+				return fmt.Errorf("drop providers credential shadow column: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+type legacyProviderCredentialShadow struct {
+	ID             string
+	CredentialType model.ProviderCredentialType
+	CredentialData string
+}
+
+func backfillProviderState(tx *gorm.DB, provider *legacyProviderCredentialShadow) error {
+	if provider == nil {
+		return nil
+	}
+
+	var credentialCount int64
+	if err := tx.Model(&model.ProviderCredential{}).
+		Where("provider_id = ?", provider.ID).
+		Count(&credentialCount).Error; err != nil {
+		return fmt.Errorf("count provider credentials for %q: %w", provider.ID, err)
+	}
+	if credentialCount == 0 {
+		credential := model.ProviderCredentialFromLegacy(
+			provider.ID,
+			provider.CredentialType,
+			provider.CredentialData,
+		)
+		if credential != nil {
+			if err := tx.Create(credential).Error; err != nil {
+				return fmt.Errorf("backfill provider credential for %q: %w", provider.ID, err)
+			}
+		}
+	}
+
+	var authStateCount int64
+	if err := tx.Model(&model.ProviderAuthState{}).
+		Where("provider_id = ?", provider.ID).
+		Count(&authStateCount).Error; err != nil {
+		return fmt.Errorf("count provider auth states for %q: %w", provider.ID, err)
+	}
+	if authStateCount == 0 {
+		authState := model.ProviderAuthStateFromCredential(
+			provider.ID,
+			provider.CredentialType,
+			model.ProviderCredentialFromLegacy(provider.ID, provider.CredentialType, provider.CredentialData),
+		)
+		if authState == nil {
+			authState = model.NormalizeProviderAuthStateRecord(
+				provider.ID,
+				provider.CredentialType,
+				nil,
+			)
+		}
+		if err := tx.Create(authState).Error; err != nil {
+			return fmt.Errorf("backfill provider auth state for %q: %w", provider.ID, err)
+		}
+	}
+
+	return nil
 }

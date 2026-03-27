@@ -49,9 +49,9 @@ const (
 // ChatGPTLoginStatusResponse describes whether a login session is still pending,
 // ready to assign, or has already expired from the local session cache.
 type ChatGPTLoginStatusResponse struct {
-	LoginID     string                     `json:"login_id"`
-	Status      ChatGPTLoginStatus         `json:"status"`
-	AuthProfile *model.ProviderAuthProfile `json:"auth_profile,omitempty"`
+	LoginID string             `json:"login_id"`
+	Status  ChatGPTLoginStatus `json:"status"`
+	Auth    *ProviderAuthView  `json:"auth,omitempty"`
 }
 
 // StartChatGPTLogin prepares a ChatGPT OAuth login flow for the admin UI popup.
@@ -114,9 +114,9 @@ func (s *Service) GetChatGPTLoginStatus(loginID string) (*ChatGPTLoginStatusResp
 	if completed, ok := s.completed[loginID]; ok {
 		s.mu.Unlock()
 		return &ChatGPTLoginStatusResponse{
-			LoginID:     loginID,
-			Status:      ChatGPTLoginStatusCompleted,
-			AuthProfile: buildChatGPTAuthProfile(&completed.credential),
+			LoginID: loginID,
+			Status:  ChatGPTLoginStatusCompleted,
+			Auth:    buildChatGPTAuthViewFromCredential(&completed.credential),
 		}, nil
 	}
 

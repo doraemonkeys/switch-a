@@ -244,6 +244,8 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("GET /admin/api/providers/{id}", auth.WrapFunc(adminHandler.GetProvider))
 	mux.Handle("PUT /admin/api/providers/{id}", auth.WrapFunc(adminHandler.UpdateProvider))
 	mux.Handle("DELETE /admin/api/providers/{id}", auth.WrapFunc(adminHandler.DeleteProvider))
+	mux.Handle("POST /admin/api/providers/{id}/refresh-credential", auth.WrapFunc(adminHandler.RefreshProviderCredential))
+	mux.Handle("POST /admin/api/providers/{id}/refresh-usage", auth.WrapFunc(adminHandler.RefreshProviderUsage))
 	mux.Handle("POST /admin/api/providers/{id}/enable", auth.WrapFunc(adminHandler.EnableProvider))
 	mux.Handle("POST /admin/api/providers/{id}/disable", auth.WrapFunc(adminHandler.DisableProvider))
 	mux.Handle("POST /admin/api/providers/{id}/reset", auth.WrapFunc(adminHandler.ResetProvider))

@@ -1,5 +1,5 @@
 import type {
-  ProviderAuthProfile,
+  ProviderAuthView,
   ProviderUsageSnapshot,
   ProviderUsageWindow,
 } from "../api/types";
@@ -23,20 +23,20 @@ function formatPercentValue(value: number): string {
 }
 
 export function resolveProviderUsage(
-  authProfile?: ProviderAuthProfile | null,
+  authView?: ProviderAuthView | null,
 ): ProviderUsageSnapshot | null {
-  return authProfile?.usage ?? null;
+  return authView?.usage ?? null;
 }
 
 export function resolveProviderPlanType(
-  authProfile?: ProviderAuthProfile | null,
+  authView?: ProviderAuthView | null,
 ): string | null {
-  const usagePlan = authProfile?.usage?.plan_type?.trim();
+  const usagePlan = authView?.usage?.plan_type?.trim();
   if (usagePlan) {
     return usagePlan;
   }
 
-  const directPlan = authProfile?.plan_type?.trim();
+  const directPlan = authView?.plan_type?.trim();
   return directPlan || null;
 }
 

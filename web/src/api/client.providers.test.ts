@@ -161,6 +161,28 @@ describe("createApiClient providers API", () => {
     expect(result).toEqual(mockHealthState);
   });
 
+  it("should refresh provider credential", async () => {
+    mockHttpClient.mockResponse({ ok: true, status: 204 });
+
+    await api.providers.refreshCredential("1");
+
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/providers/1/refresh-credential",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("should refresh provider usage", async () => {
+    mockHttpClient.mockResponse({ ok: true, status: 204 });
+
+    await api.providers.refreshUsage("1");
+
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/providers/1/refresh-usage",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("should batch enable providers", async () => {
     const batchRequest = { action: "enable" as const, ids: ["1", "2", "3"] };
     const batchResponse = {

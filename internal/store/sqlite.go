@@ -61,12 +61,21 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 		&model.Group{},
 		&model.Provider{},
 		&model.ProviderAPIType{},
+		&model.ProviderCredential{},
+		&model.ProviderAuthState{},
 		&model.HealthState{},
+		&model.RoutingPolicy{},
+		&model.RoutingPolicyGroup{},
+		&model.RoutingPolicyVendor{},
 		&model.RuntimeConfig{},
 		&model.RequestLog{},
 		&model.RequestAttempt{},
 	); err != nil { // coverage-ignore -- AutoMigrate rarely fails on valid schema
 		return nil, err
+	}
+
+	if err := migrateProviderStateTables(db); err != nil { // coverage-ignore -- one-time migration
+		return nil, fmt.Errorf("migrate provider credential/auth state tables: %w", err)
 	}
 
 	if err := migrateBaseURLToAPIType(db); err != nil { // coverage-ignore -- one-time migration

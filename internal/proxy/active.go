@@ -1,39 +1,36 @@
 package proxy
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"switch-a/internal"
+	"switch-a/internal/model"
+	"switch-a/internal/selector"
 )
-
-// stickyKey is used to index active requests for O(1) lookup by sticky session key.
-type stickyKey struct {
-	ClientIP string
-	UserID   string
-	APIType  string
-	Model    string
-}
 
 // ActiveRequest represents a request currently being processed by the proxy.
 // It captures metadata needed for live monitoring without storing the full request/response.
 type ActiveRequest struct {
-	RequestID       string    `json:"request_id"`                 // UUID identifying this request
-	ProviderID      string    `json:"provider_id"`                // Selected provider handling the request
-	Model           string    `json:"model"`                      // Model being called (e.g., "claude-3-opus")
-	APIType         string    `json:"api_type"`                   // API type (claude, codex, gemini, custom:*)
-	UserID          string    `json:"user_id"`                    // User identifier from header
-	ClientIP        string    `json:"client_ip"`                  // Client IP address
-	IsSSE           bool      `json:"is_sse"`                     // Whether this is an SSE streaming request
-	IsWebSocket     bool      `json:"is_websocket"`               // Whether this is a WebSocket connection
-	StartedAt       time.Time `json:"started_at"`                 // When the request started
-	HasReceivedData bool      `json:"has_data"`                   // Whether data has been received from upstream
-	BytesSent       int64     `json:"bytes_sent,omitempty"`       // WS: cumulative bytes client → upstream
-	BytesReceived   int64     `json:"bytes_received,omitempty"`   // WS: cumulative bytes upstream → client
-	MsgsSent        int64     `json:"msgs_sent,omitempty"`        // WS: WebSocket frames client → upstream
-	MsgsReceived    int64     `json:"msgs_received,omitempty"`    // WS: WebSocket frames upstream → client
-	LastActivityAt  int64     `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
+	RequestID       string           `json:"request_id"`                 // UUID identifying this request
+	ProviderID      string           `json:"provider_id"`                // Selected provider handling the request
+	Model           string           `json:"model"`                      // Model being called (e.g., "claude-3-opus")
+	APIType         string           `json:"api_type"`                   // API type (claude, codex, gemini, custom:*)
+	UserID          string           `json:"user_id"`                    // User identifier from header
+	ClientIP        string           `json:"client_ip"`                  // Client IP address
+	StickyMode      model.StickyMode `json:"-"`                          // Sticky dimensions captured when selection happened
+	ContinuityKey   model.StickyKey  `json:"-"`                          // Routing dimensions known at selection time
+	IsSSE           bool             `json:"is_sse"`                     // Whether this is an SSE streaming request
+	IsWebSocket     bool             `json:"is_websocket"`               // Whether this is a WebSocket connection
+	StartedAt       time.Time        `json:"started_at"`                 // When the request started
+	HasReceivedData bool             `json:"has_data"`                   // Whether data has been received from upstream
+	BytesSent       int64            `json:"bytes_sent,omitempty"`       // WS: cumulative bytes client → upstream
+	BytesReceived   int64            `json:"bytes_received,omitempty"`   // WS: cumulative bytes upstream → client
+	MsgsSent        int64            `json:"msgs_sent,omitempty"`        // WS: WebSocket frames client → upstream
+	MsgsReceived    int64            `json:"msgs_received,omitempty"`    // WS: WebSocket frames upstream → client
+	LastActivityAt  int64            `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
 }
 
 // LiveBytesTracker provides lock-free counters for tracking WebSocket data flow
@@ -55,56 +52,59 @@ type LiveBytesTracker struct {
 type ActiveRequestRegistry struct {
 	mu          sync.RWMutex
 	requests    map[string]ActiveRequest
-	stickyIndex map[stickyKey]map[string]struct{} // stickyKey -> requestIDs for O(1) lookup
-	keyIndex    map[string]stickyKey              // requestID -> sticky key used during registration
-	wsBytes     map[string]*LiveBytesTracker      // requestID -> live WS counters (populated only for WS)
-	perModel    atomic.Bool
-	stopCh      chan struct{}  // Channel to signal cleanup goroutine to stop
-	cleanupWg   sync.WaitGroup // WaitGroup to confirm cleanup goroutine has exited
-	clock       internal.Clock // Injected clock for testability
+	stickyIndex map[model.StickyKey]map[string]struct{} // stickyKey -> requestIDs for O(1) lookup
+	keyIndex    map[string]model.StickyKey              // requestID -> sticky key used during registration
+	wsBytes     map[string]*LiveBytesTracker            // requestID -> live WS counters (populated only for WS)
+	stopCh      chan struct{}                           // Channel to signal cleanup goroutine to stop
+	cleanupWg   sync.WaitGroup                          // WaitGroup to confirm cleanup goroutine has exited
+	clock       internal.Clock                          // Injected clock for testability
 }
 
 // NewActiveRequestRegistry creates a new registry for tracking active requests.
 func NewActiveRequestRegistry() *ActiveRequestRegistry {
-	r := &ActiveRequestRegistry{
+	return &ActiveRequestRegistry{
 		requests:    make(map[string]ActiveRequest),
-		stickyIndex: make(map[stickyKey]map[string]struct{}),
-		keyIndex:    make(map[string]stickyKey),
+		stickyIndex: make(map[model.StickyKey]map[string]struct{}),
+		keyIndex:    make(map[string]model.StickyKey),
 		wsBytes:     make(map[string]*LiveBytesTracker),
 		clock:       internal.RealClock{},
 	}
-	r.perModel.Store(true)
-	return r
 }
 
 // NewActiveRequestRegistryWithClock creates a new registry with a custom clock for testing.
 func NewActiveRequestRegistryWithClock(clock internal.Clock) *ActiveRequestRegistry {
-	r := &ActiveRequestRegistry{
+	return &ActiveRequestRegistry{
 		requests:    make(map[string]ActiveRequest),
-		stickyIndex: make(map[stickyKey]map[string]struct{}),
-		keyIndex:    make(map[string]stickyKey),
+		stickyIndex: make(map[model.StickyKey]map[string]struct{}),
+		keyIndex:    make(map[string]model.StickyKey),
 		wsBytes:     make(map[string]*LiveBytesTracker),
 		clock:       clock,
 	}
-	r.perModel.Store(true)
-	return r
 }
 
-// SetStickyPerModel updates whether sticky matching includes the model dimension.
-func (r *ActiveRequestRegistry) SetStickyPerModel(enabled bool) {
-	r.perModel.Store(enabled)
+// SetStickyPerModel is retained as a compatibility no-op while continuity keys
+// are derived per request instead of from a mutable registry-wide switch.
+func (r *ActiveRequestRegistry) SetStickyPerModel(_ bool) {
 }
 
-func (r *ActiveRequestRegistry) buildKeyFromParams(clientIP, userID, apiType, reqModel string) stickyKey {
-	key := stickyKey{ClientIP: clientIP, UserID: userID, APIType: apiType}
-	if r.perModel.Load() {
-		key.Model = reqModel
+func (r *ActiveRequestRegistry) buildKeyFromRequest(req *model.SelectRequest) model.StickyKey {
+	return selector.BuildContinuityKey(req)
+}
+
+func (r *ActiveRequestRegistry) buildKey(req *ActiveRequest) model.StickyKey {
+	if req == nil {
+		return model.StickyKey{}
 	}
-	return key
-}
-
-func (r *ActiveRequestRegistry) buildKey(req *ActiveRequest) stickyKey {
-	return r.buildKeyFromParams(req.ClientIP, req.UserID, req.APIType, req.Model)
+	if req.ContinuityKey != (model.StickyKey{}) {
+		return req.ContinuityKey
+	}
+	return r.buildKeyFromRequest(&model.SelectRequest{
+		ClientIP:   req.ClientIP,
+		User:       req.UserID,
+		APIType:    req.APIType,
+		Model:      req.Model,
+		StickyMode: req.StickyMode,
+	})
 }
 
 // removeFromStickyIndex removes a request ID from sticky/key indexes if present.
@@ -210,8 +210,8 @@ func (r *ActiveRequestRegistry) UpdateSSE(requestID string, isSSE bool) {
 }
 
 // UpdateModel refreshes the semantic model for an active request after the transport
-// has already been registered. WebSocket protocols often reveal the billed model only
-// after the upgrade succeeds, so live monitoring and sticky lookup must be re-indexed.
+// has already been registered. Continuity keeps the handshake-time key so later
+// protocol observations can enrich logs without rewriting sticky lookup state.
 func (r *ActiveRequestRegistry) UpdateModel(requestID, model string) {
 	if model == "" {
 		return
@@ -225,16 +225,8 @@ func (r *ActiveRequestRegistry) UpdateModel(requestID, model string) {
 		return
 	}
 
-	r.removeFromStickyIndex(requestID)
 	req.Model = model
 	r.requests[requestID] = req
-
-	key := r.buildKey(&req)
-	r.keyIndex[requestID] = key
-	if r.stickyIndex[key] == nil {
-		r.stickyIndex[key] = make(map[string]struct{})
-	}
-	r.stickyIndex[key][requestID] = struct{}{}
 }
 
 // List returns a snapshot copy safe to use without synchronization.
@@ -288,10 +280,27 @@ func (r *ActiveRequestRegistry) CleanupStale(maxAge time.Duration) int {
 // This prevents new requests from inheriting connections that are still waiting for upstream response.
 // Returns (providerID, found).
 func (r *ActiveRequestRegistry) FindActiveProvider(clientIP, userID, apiType, reqModel string) (providerID string, found bool) {
+	req := &model.SelectRequest{
+		ClientIP: clientIP,
+		User:     userID,
+		APIType:  apiType,
+		Model:    reqModel,
+	}
+	if continuityModelKnown(reqModel) {
+		req.StickyMode = model.StickyModeModel
+	} else {
+		req.StickyMode = model.StickyModeAPIType
+	}
+	return r.FindActiveProviderForRequest(req)
+}
+
+// FindActiveProviderForRequest finds an active provider using the same request
+// dimensions that originally selected the provider.
+func (r *ActiveRequestRegistry) FindActiveProviderForRequest(req *model.SelectRequest) (providerID string, found bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	key := r.buildKeyFromParams(clientIP, userID, apiType, reqModel)
+	key := r.buildKeyFromRequest(req)
 	requestIDs, ok := r.stickyIndex[key]
 	if !ok {
 		return "", false
@@ -303,6 +312,11 @@ func (r *ActiveRequestRegistry) FindActiveProvider(clientIP, userID, apiType, re
 		}
 	}
 	return "", false
+}
+
+func continuityModelKnown(modelName string) bool {
+	trimmed := strings.TrimSpace(modelName)
+	return trimmed != "" && !strings.EqualFold(trimmed, ModelUnknown)
 }
 
 // MarkDataReceived marks a request as having received data from upstream.
