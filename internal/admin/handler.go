@@ -29,6 +29,13 @@ type Store interface {
 	UpdateProvider(ctx context.Context, p *model.Provider) error
 	DeleteProvider(ctx context.Context, id string) error
 
+	// Routing policy operations
+	ListRoutingPolicies(ctx context.Context) ([]model.RoutingPolicy, error)
+	GetRoutingPolicy(ctx context.Context, id uint) (*model.RoutingPolicy, error)
+	CreateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error
+	UpdateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error
+	DeleteRoutingPolicy(ctx context.Context, id uint) error
+
 	// Group operations
 	ListGroups(ctx context.Context) ([]model.Group, error)
 	GetGroup(ctx context.Context, id string) (*model.Group, error)

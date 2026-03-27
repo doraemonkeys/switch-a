@@ -219,3 +219,53 @@ func (s *CachedStore) ListRoutingPoliciesByAPIType(ctx context.Context, apiType 
 	}
 	return source.ListRoutingPoliciesByAPIType(ctx, apiType)
 }
+
+func (s *CachedStore) ListRoutingPolicies(ctx context.Context) ([]model.RoutingPolicy, error) {
+	source, ok := s.Store.(interface {
+		ListRoutingPolicies(ctx context.Context) ([]model.RoutingPolicy, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return source.ListRoutingPolicies(ctx)
+}
+
+func (s *CachedStore) GetRoutingPolicy(ctx context.Context, id uint) (*model.RoutingPolicy, error) {
+	source, ok := s.Store.(interface {
+		GetRoutingPolicy(ctx context.Context, id uint) (*model.RoutingPolicy, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return source.GetRoutingPolicy(ctx, id)
+}
+
+func (s *CachedStore) CreateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error {
+	source, ok := s.Store.(interface {
+		CreateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error
+	})
+	if !ok {
+		return nil
+	}
+	return source.CreateRoutingPolicy(ctx, policy)
+}
+
+func (s *CachedStore) UpdateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error {
+	source, ok := s.Store.(interface {
+		UpdateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error
+	})
+	if !ok {
+		return nil
+	}
+	return source.UpdateRoutingPolicy(ctx, policy)
+}
+
+func (s *CachedStore) DeleteRoutingPolicy(ctx context.Context, id uint) error {
+	source, ok := s.Store.(interface {
+		DeleteRoutingPolicy(ctx context.Context, id uint) error
+	})
+	if !ok {
+		return nil
+	}
+	return source.DeleteRoutingPolicy(ctx, id)
+}

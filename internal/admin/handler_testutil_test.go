@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 
 	"switch-a/internal/model"
@@ -13,31 +14,34 @@ import (
 
 // mockStore implements Store interface for testing.
 type mockStore struct {
-	providers    map[string]*model.Provider
-	groups       map[string]*model.Group
-	healthStates map[string]*model.HealthState
-	config       map[string]string
-	logs         []model.RequestLog
-	attempts     map[string][]model.RequestAttempt // Keyed by request_id for GetAttemptsByRequestID
-	listErr      error
-	getErr       error
-	createErr    error
-	updateErr    error
-	deleteErr    error
-	configErr    error
-	logsErr      error
-	healthErr    error
-	attemptsErr  error // Separate error field for attempts operations
+	providers           map[string]*model.Provider
+	routingPolicies     map[uint]*model.RoutingPolicy
+	nextRoutingPolicyID uint
+	groups              map[string]*model.Group
+	healthStates        map[string]*model.HealthState
+	config              map[string]string
+	logs                []model.RequestLog
+	attempts            map[string][]model.RequestAttempt // Keyed by request_id for GetAttemptsByRequestID
+	listErr             error
+	getErr              error
+	createErr           error
+	updateErr           error
+	deleteErr           error
+	configErr           error
+	logsErr             error
+	healthErr           error
+	attemptsErr         error // Separate error field for attempts operations
 }
 
 func newMockStore() *mockStore {
 	return &mockStore{
-		providers:    make(map[string]*model.Provider),
-		groups:       make(map[string]*model.Group),
-		healthStates: make(map[string]*model.HealthState),
-		config:       make(map[string]string),
-		logs:         []model.RequestLog{},
-		attempts:     make(map[string][]model.RequestAttempt),
+		providers:       make(map[string]*model.Provider),
+		routingPolicies: make(map[uint]*model.RoutingPolicy),
+		groups:          make(map[string]*model.Group),
+		healthStates:    make(map[string]*model.HealthState),
+		config:          make(map[string]string),
+		logs:            []model.RequestLog{},
+		attempts:        make(map[string][]model.RequestAttempt),
 	}
 }
 
@@ -83,6 +87,71 @@ func (m *mockStore) DeleteProvider(_ context.Context, id string) error {
 		return m.deleteErr
 	}
 	delete(m.providers, id)
+	return nil
+}
+
+func (m *mockStore) ListRoutingPolicies(_ context.Context) ([]model.RoutingPolicy, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	ids := make([]int, 0, len(m.routingPolicies))
+	for id := range m.routingPolicies {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+	result := make([]model.RoutingPolicy, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, *cloneRoutingPolicy(m.routingPolicies[uint(id)]))
+	}
+	return result, nil
+}
+
+func (m *mockStore) GetRoutingPolicy(_ context.Context, id uint) (*model.RoutingPolicy, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	if policy, ok := m.routingPolicies[id]; ok {
+		return cloneRoutingPolicy(policy), nil
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockStore) CreateRoutingPolicy(_ context.Context, policy *model.RoutingPolicy) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	created := cloneRoutingPolicy(policy)
+	if created.ID == 0 {
+		m.nextRoutingPolicyID++
+		created.ID = m.nextRoutingPolicyID
+	}
+	if created.ID > m.nextRoutingPolicyID {
+		m.nextRoutingPolicyID = created.ID
+	}
+	m.routingPolicies[created.ID] = created
+	policy.ID = created.ID
+	return nil
+}
+
+func (m *mockStore) UpdateRoutingPolicy(_ context.Context, policy *model.RoutingPolicy) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	if _, ok := m.routingPolicies[policy.ID]; !ok {
+		return store.ErrNotFound
+	}
+	m.routingPolicies[policy.ID] = cloneRoutingPolicy(policy)
+	return nil
+}
+
+func (m *mockStore) DeleteRoutingPolicy(_ context.Context, id uint) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	if _, ok := m.routingPolicies[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.routingPolicies, id)
 	return nil
 }
 
@@ -542,6 +611,16 @@ func newConfigErrorStore() *configErrorStore {
 		mockStore:  *newMockStore(),
 		configData: make(map[string]string),
 	}
+}
+
+func cloneRoutingPolicy(policy *model.RoutingPolicy) *model.RoutingPolicy {
+	if policy == nil {
+		return nil
+	}
+	clone := *policy
+	clone.Groups = append([]model.RoutingPolicyGroup(nil), policy.Groups...)
+	clone.Vendors = append([]model.RoutingPolicyVendor(nil), policy.Vendors...)
+	return &clone
 }
 
 func (s *configErrorStore) SetConfig(_ context.Context, key, value string) error {

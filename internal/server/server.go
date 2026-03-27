@@ -46,6 +46,13 @@ type store interface {
 	UpdateProvider(ctx context.Context, p *model.Provider) error
 	DeleteProvider(ctx context.Context, id string) error
 
+	// Routing policy operations
+	ListRoutingPolicies(ctx context.Context) ([]model.RoutingPolicy, error)
+	GetRoutingPolicy(ctx context.Context, id uint) (*model.RoutingPolicy, error)
+	CreateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error
+	UpdateRoutingPolicy(ctx context.Context, policy *model.RoutingPolicy) error
+	DeleteRoutingPolicy(ctx context.Context, id uint) error
+
 	// Group operations
 	ListGroups(ctx context.Context) ([]model.Group, error)
 	GetGroup(ctx context.Context, id string) (*model.Group, error)
@@ -258,6 +265,13 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("DELETE /admin/api/groups/{id}", auth.WrapFunc(adminHandler.DeleteGroup))
 	mux.Handle("POST /admin/api/groups/{id}/enable", auth.WrapFunc(adminHandler.EnableGroup))
 	mux.Handle("POST /admin/api/groups/{id}/disable", auth.WrapFunc(adminHandler.DisableGroup))
+
+	// Routing policy routes
+	mux.Handle("GET /admin/api/routing-policies", auth.WrapFunc(adminHandler.ListRoutingPolicies))
+	mux.Handle("POST /admin/api/routing-policies", auth.WrapFunc(adminHandler.CreateRoutingPolicy))
+	mux.Handle("GET /admin/api/routing-policies/{id}", auth.WrapFunc(adminHandler.GetRoutingPolicy))
+	mux.Handle("PUT /admin/api/routing-policies/{id}", auth.WrapFunc(adminHandler.UpdateRoutingPolicy))
+	mux.Handle("DELETE /admin/api/routing-policies/{id}", auth.WrapFunc(adminHandler.DeleteRoutingPolicy))
 
 	// Config routes
 	mux.Handle("GET /admin/api/config", auth.WrapFunc(adminHandler.GetConfig))

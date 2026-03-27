@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
@@ -412,6 +413,187 @@ func TestImportConfig_NoChanges(t *testing.T) {
 	}
 	if result.Applied.Settings != (AppliedCount{}) {
 		t.Fatalf("settings applied = %+v, want zero", result.Applied.Settings)
+	}
+}
+
+func TestImportConfig_ExportRoundTripPreservesLegacyProviderDefaultsAsNoOp(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.providers["p1"] = &model.Provider{
+		ID:       "p1",
+		Name:     "Provider 1",
+		APIKey:   "key",
+		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.com"}},
+		Enabled:  true,
+	}
+
+	exportReq := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	exportW := httptest.NewRecorder()
+	h.ExportConfig(exportW, exportReq)
+
+	if exportW.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want %d; body: %s", exportW.Code, http.StatusOK, exportW.Body.String())
+	}
+
+	var exported ExportedConfig
+	if err := json.NewDecoder(exportW.Body).Decode(&exported); err != nil {
+		t.Fatalf("failed to decode export: %v", err)
+	}
+
+	body, _ := json.Marshal(exported)
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
+	previewReq.Header.Set("Content-Type", "application/json")
+	previewW := httptest.NewRecorder()
+	h.ImportConfig(previewW, previewReq)
+
+	if previewW.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, want %d; body: %s", previewW.Code, http.StatusOK, previewW.Body.String())
+	}
+
+	var preview ImportPreviewResponse
+	if err := json.NewDecoder(previewW.Body).Decode(&preview); err != nil {
+		t.Fatalf("failed to decode preview: %v", err)
+	}
+
+	if preview.Changes.Providers != (ChangeCount{}) {
+		t.Fatalf("provider changes = %+v, want zero", preview.Changes.Providers)
+	}
+
+	importReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	importReq.Header.Set("Content-Type", "application/json")
+	importW := httptest.NewRecorder()
+	h.ImportConfig(importW, importReq)
+
+	if importW.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want %d; body: %s", importW.Code, http.StatusOK, importW.Body.String())
+	}
+
+	var result ImportResult
+	if err := json.NewDecoder(importW.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode result: %v", err)
+	}
+
+	if result.Applied.Providers != (AppliedCount{}) {
+		t.Fatalf("provider applied = %+v, want zero", result.Applied.Providers)
+	}
+}
+
+func TestImportConfig_ExportRoundTripPreservesChatGPTAuthTimestampsAsNoOp(t *testing.T) {
+	h, st, _ := testHandler()
+
+	sourceTZ := time.FixedZone("SourceTZ", 8*60*60)
+	lastTransitionAt := time.Date(2026, time.March, 27, 15, 4, 5, 0, sourceTZ)
+	lastRefreshAt := time.Date(2026, time.March, 27, 15, 9, 5, 0, sourceTZ)
+	expiresAt := time.Date(2026, time.March, 28, 15, 4, 5, 0, sourceTZ)
+	lastRefreshFailureAt := time.Date(2026, time.March, 27, 14, 54, 5, 0, sourceTZ)
+	fetchedAt := time.Date(2026, time.March, 27, 15, 14, 5, 0, sourceTZ)
+	resetAt := time.Date(2026, time.March, 27, 20, 0, 0, 0, sourceTZ)
+	bindingAccountID := "acct_test"
+	usageSnapshot := &model.ProviderUsageSnapshot{
+		FetchedAt: &fetchedAt,
+		PlanType:  "plus",
+		FiveHour: &model.ProviderUsageWindow{
+			UsedPercent:   12.5,
+			WindowSeconds: 5 * 60 * 60,
+			ResetAt:       &resetAt,
+		},
+	}
+	credentialData, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    bindingAccountID,
+		Email:        "user@example.com",
+		PlanType:     "plus",
+		LastRefresh:  lastRefreshAt,
+		ExpiresAt:    expiresAt,
+		Usage:        usageSnapshot,
+	})
+	if err != nil {
+		t.Fatalf("marshal credentialData: %v", err)
+	}
+
+	st.providers["gpt"] = &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		AuthMode:       "bearer",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Enabled:        true,
+		Credential: &model.ProviderCredential{
+			ProviderID:       "gpt",
+			SecretData:       string(credentialData),
+			BindingAccountID: &bindingAccountID,
+			Version:          3,
+		},
+		AuthState: &model.ProviderAuthState{
+			ProviderID:           "gpt",
+			Status:               model.ProviderAuthStatusActive,
+			StatusReason:         "healthy",
+			LastTransitionAt:     &lastTransitionAt,
+			Email:                "user@example.com",
+			AccountID:            bindingAccountID,
+			PlanType:             "plus",
+			ExpiresAt:            &expiresAt,
+			LastRefreshAt:        &lastRefreshAt,
+			UsageSnapshot:        model.CloneProviderUsageSnapshot(usageSnapshot),
+			RefreshFailCount:     1,
+			LastRefreshFailureAt: &lastRefreshFailureAt,
+		},
+	}
+
+	exportReq := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	exportW := httptest.NewRecorder()
+	h.ExportConfig(exportW, exportReq)
+
+	if exportW.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want %d; body: %s", exportW.Code, http.StatusOK, exportW.Body.String())
+	}
+
+	var exported ExportedConfig
+	if err := json.NewDecoder(exportW.Body).Decode(&exported); err != nil {
+		t.Fatalf("failed to decode export: %v", err)
+	}
+
+	body, err := json.Marshal(exported)
+	if err != nil {
+		t.Fatalf("marshal export: %v", err)
+	}
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
+	previewReq.Header.Set("Content-Type", "application/json")
+	previewW := httptest.NewRecorder()
+	h.ImportConfig(previewW, previewReq)
+
+	if previewW.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, want %d; body: %s", previewW.Code, http.StatusOK, previewW.Body.String())
+	}
+
+	var preview ImportPreviewResponse
+	if err := json.NewDecoder(previewW.Body).Decode(&preview); err != nil {
+		t.Fatalf("failed to decode preview: %v", err)
+	}
+
+	if preview.Changes.Providers != (ChangeCount{}) {
+		t.Fatalf("provider changes = %+v, want zero", preview.Changes.Providers)
+	}
+
+	importReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	importReq.Header.Set("Content-Type", "application/json")
+	importW := httptest.NewRecorder()
+	h.ImportConfig(importW, importReq)
+
+	if importW.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want %d; body: %s", importW.Code, http.StatusOK, importW.Body.String())
+	}
+
+	var result ImportResult
+	if err := json.NewDecoder(importW.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode result: %v", err)
+	}
+
+	if result.Applied.Providers != (AppliedCount{}) {
+		t.Fatalf("provider applied = %+v, want zero", result.Applied.Providers)
 	}
 }
 

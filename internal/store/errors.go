@@ -3,6 +3,8 @@ package store
 import (
 	"errors"
 	"fmt"
+
+	"switch-a/internal/model"
 )
 
 // ErrNotFound is returned when a requested resource does not exist.
@@ -17,6 +19,10 @@ var ErrCredentialBindingConflict = errors.New("credential binding conflict")
 // ErrCredentialVersionConflict reports that a credential write raced with another
 // successful update and the caller must re-read before retrying.
 var ErrCredentialVersionConflict = errors.New("credential version conflict")
+
+// ErrRoutingPolicyConflict reports that a routing policy write violated the
+// uniqueness of the (api_type, model_match_type, model_match_value) rule key.
+var ErrRoutingPolicyConflict = errors.New("routing policy conflict")
 
 // CredentialBindingConflictError describes which provider already owns the login.
 type CredentialBindingConflictError struct {
@@ -50,4 +56,28 @@ func (e *CredentialVersionConflictError) Error() string {
 
 func (e *CredentialVersionConflictError) Is(target error) bool {
 	return target == ErrCredentialVersionConflict
+}
+
+// RoutingPolicyConflictError describes which routing rule key is already claimed.
+type RoutingPolicyConflictError struct {
+	ExistingID      uint
+	APIType         string
+	ModelMatchType  model.RoutingPolicyModelMatchType
+	ModelMatchValue string
+}
+
+func (e *RoutingPolicyConflictError) Error() string {
+	if e.ModelMatchType == model.RoutingPolicyModelMatchTypeNone {
+		return fmt.Sprintf("routing policy for api_type %q already exists", e.APIType)
+	}
+	return fmt.Sprintf(
+		"routing policy for api_type %q and %s model match %q already exists",
+		e.APIType,
+		e.ModelMatchType,
+		e.ModelMatchValue,
+	)
+}
+
+func (e *RoutingPolicyConflictError) Is(target error) bool {
+	return target == ErrRoutingPolicyConflict
 }

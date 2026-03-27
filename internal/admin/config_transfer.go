@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"bytes"
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -403,11 +405,31 @@ func canImportGroup(g *ExportedGroup) bool {
 }
 
 func providerImportDiffers(imported *ExportedProvider, existing *model.Provider, validGroups map[string]bool) bool {
-	expected, ok := buildProviderFromExport(imported, validGroups)
+	importedCanonical, ok := canonicalProviderImportExportJSON(imported, validGroups)
 	if !ok {
 		return false
 	}
-	return !reflect.DeepEqual(buildExportedProvider(expected), buildExportedProvider(existing))
+	existingExport := buildExportedProvider(existing)
+	existingCanonical, ok := canonicalProviderImportExportJSON(&existingExport, validGroups)
+	if !ok {
+		return true
+	}
+	return !bytes.Equal(importedCanonical, existingCanonical)
+}
+
+func canonicalProviderImportExportJSON(
+	exported *ExportedProvider,
+	validGroups map[string]bool,
+) ([]byte, bool) {
+	provider, ok := buildProviderFromExport(exported, validGroups)
+	if !ok {
+		return nil, false
+	}
+	payload, err := json.Marshal(buildExportedProvider(provider))
+	if err != nil {
+		return nil, false
+	}
+	return payload, true
 }
 
 func buildProviderCredentialFromExport(

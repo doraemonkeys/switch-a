@@ -27,6 +27,20 @@ func (m *mockStore) CreateProvider(context.Context, *model.Provider) error      
 func (m *mockStore) UpdateProvider(context.Context, *model.Provider) error        { return nil }
 func (m *mockStore) DeleteProvider(context.Context, string) error                 { return nil }
 
+func (m *mockStore) ListRoutingPolicies(context.Context) ([]model.RoutingPolicy, error) {
+	return []model.RoutingPolicy{}, nil
+}
+func (m *mockStore) GetRoutingPolicy(context.Context, uint) (*model.RoutingPolicy, error) {
+	return nil, nil
+}
+func (m *mockStore) CreateRoutingPolicy(context.Context, *model.RoutingPolicy) error {
+	return nil
+}
+func (m *mockStore) UpdateRoutingPolicy(context.Context, *model.RoutingPolicy) error {
+	return nil
+}
+func (m *mockStore) DeleteRoutingPolicy(context.Context, uint) error { return nil }
+
 func (m *mockStore) ListGroups(context.Context) ([]model.Group, error)      { return nil, nil }
 func (m *mockStore) GetGroup(context.Context, string) (*model.Group, error) { return nil, nil }
 func (m *mockStore) CreateGroup(context.Context, *model.Group) error        { return nil }
@@ -369,7 +383,7 @@ func TestAdminProviderRefreshRoutesRequireAuth(t *testing.T) {
 func TestAdminUnknownAPIRouteRequiresAuth(t *testing.T) {
 	s := testAdminServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/routing-policies", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/unknown-route", nil)
 	w := httptest.NewRecorder()
 
 	s.server.Handler.ServeHTTP(w, req)
@@ -386,7 +400,7 @@ func TestAdminUnknownAPIRouteRequiresAuth(t *testing.T) {
 func TestAdminUnknownAPIRouteReturnsJSONNotFound(t *testing.T) {
 	s := testAdminServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/routing-policies", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/unknown-route", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 
@@ -407,5 +421,25 @@ func TestAdminUnknownAPIRouteReturnsJSONNotFound(t *testing.T) {
 
 	if resp.Code != admin.ErrCodeNotFound {
 		t.Fatalf("error code = %q, want %q", resp.Code, admin.ErrCodeNotFound)
+	}
+}
+
+func TestAdminRoutingPoliciesRouteReturnsJSON(t *testing.T) {
+	s := testAdminServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/routing-policies", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got := w.Header().Get("Content-Type"); got != admin.ContentTypeJSON {
+		t.Fatalf("Content-Type = %q, want %q", got, admin.ContentTypeJSON)
+	}
+	if body := w.Body.String(); body != "[]\n" {
+		t.Fatalf("body = %q, want %q", body, "[]\n")
 	}
 }

@@ -42,9 +42,7 @@ func (s *SQLiteStore) GetProviderAuthState(ctx context.Context, providerID strin
 
 func (s *SQLiteStore) ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error) {
 	var policies []model.RoutingPolicy
-	if err := s.db.WithContext(ctx).
-		Preload("Groups").
-		Preload("Vendors").
+	if err := routingPolicyQuery(s.db.WithContext(ctx)).
 		Where("api_type = ?", apiType).
 		Order("id ASC").
 		Find(&policies).Error; err != nil {
