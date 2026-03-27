@@ -57,8 +57,15 @@ func (s *Service) ensureFreshChatGPTCredential(ctx context.Context, provider *mo
 	if err != nil {
 		return nil, err
 	}
+	decodedCredential := credential
+	credential = s.reuseRecentChatGPTRefresh(provider.ID, credential)
 	if !credential.Ready() {
 		return nil, fmt.Errorf("provider %q has an incomplete chatgpt credential", provider.ID)
+	}
+	if shouldPreferChatGPTCredential(credential, decodedCredential) {
+		if err := applyChatGPTCredential(provider, credential); err != nil {
+			return nil, err
+		}
 	}
 
 	now := s.clock.Now()
@@ -66,18 +73,176 @@ func (s *Service) ensureFreshChatGPTCredential(ctx context.Context, provider *mo
 		return credential, nil
 	}
 
-	refreshed, err := s.refreshChatGPTCredential(ctx, credential)
+	refreshed, err := s.refreshAndPersistChatGPTCredential(ctx, provider, credential)
 	if err != nil {
 		return nil, err
 	}
 	if err := applyChatGPTCredential(provider, refreshed); err != nil {
 		return nil, err
 	}
-	if err := s.persistChatGPTCredential(ctx, provider, refreshed); err != nil {
+
+	return refreshed, nil
+}
+
+func (s *Service) refreshAndPersistChatGPTCredential(
+	ctx context.Context,
+	provider *model.Provider,
+	credential *model.ChatGPTProviderCredential,
+) (*model.ChatGPTProviderCredential, error) {
+	if provider == nil {
+		return nil, fmt.Errorf("provider is required")
+	}
+
+	refreshKey := strings.TrimSpace(provider.ID)
+	if refreshKey == "" {
+		return s.refreshAndPersistChatGPTCredentialDirect(ctx, provider, credential)
+	}
+
+	call, leader := s.beginChatGPTRefresh(refreshKey)
+	if leader {
+		refreshed, err := s.refreshAndPersistChatGPTCredentialDirect(ctx, provider, credential)
+		s.finishChatGPTRefresh(refreshKey, call, refreshed, err)
+		return refreshed, err
+	}
+
+	select {
+	case <-call.done:
+		return cloneChatGPTCredential(call.credential), call.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *Service) refreshAndPersistChatGPTCredentialDirect(
+	ctx context.Context,
+	provider *model.Provider,
+	credential *model.ChatGPTProviderCredential,
+) (*model.ChatGPTProviderCredential, error) {
+	refreshed, err := s.refreshChatGPTCredential(ctx, credential)
+	if err != nil {
 		return nil, err
 	}
 
+	persistedProvider := &model.Provider{ID: provider.ID}
+	if err := applyChatGPTCredential(persistedProvider, refreshed); err != nil {
+		return nil, err
+	}
+	if err := s.persistChatGPTCredential(ctx, persistedProvider, refreshed); err != nil {
+		return nil, err
+	}
+
+	s.storeRecentChatGPTRefresh(provider.ID, refreshed)
 	return refreshed, nil
+}
+
+func (s *Service) beginChatGPTRefresh(providerID string) (*inFlightChatGPTRefresh, bool) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	s.pruneRecentChatGPTRefreshesLocked(s.clock.Now())
+	if call, ok := s.inFlightRefreshes[providerID]; ok {
+		return call, false
+	}
+
+	// Refresh tokens are single-use, so concurrent callers for the same provider
+	// must collapse onto one outbound refresh exchange.
+	call := &inFlightChatGPTRefresh{done: make(chan struct{})}
+	s.inFlightRefreshes[providerID] = call
+	return call, true
+}
+
+func (s *Service) finishChatGPTRefresh(
+	providerID string,
+	call *inFlightChatGPTRefresh,
+	credential *model.ChatGPTProviderCredential,
+	err error,
+) {
+	call.credential = cloneChatGPTCredential(credential)
+	call.err = err
+	close(call.done)
+
+	s.refreshMu.Lock()
+	delete(s.inFlightRefreshes, providerID)
+	s.refreshMu.Unlock()
+}
+
+func (s *Service) storeRecentChatGPTRefresh(providerID string, credential *model.ChatGPTProviderCredential) {
+	if strings.TrimSpace(providerID) == "" || credential == nil {
+		return
+	}
+
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	now := s.clock.Now()
+	s.pruneRecentChatGPTRefreshesLocked(now)
+	s.recentChatGPTRefreshes[providerID] = recentChatGPTRefresh{
+		credential: cloneChatGPTCredential(credential),
+		expiresAt:  now.Add(recentRefreshReuseWindow),
+	}
+}
+
+func (s *Service) reuseRecentChatGPTRefresh(
+	providerID string,
+	credential *model.ChatGPTProviderCredential,
+) *model.ChatGPTProviderCredential {
+	if strings.TrimSpace(providerID) == "" || credential == nil {
+		return credential
+	}
+
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	now := s.clock.Now()
+	s.pruneRecentChatGPTRefreshesLocked(now)
+	recent, ok := s.recentChatGPTRefreshes[providerID]
+	if !ok || !shouldPreferChatGPTCredential(recent.credential, credential) {
+		return credential
+	}
+	// Requests can hold a provider snapshot that predates a successful refresh.
+	// Reusing the newest in-process credential prevents an immediate retry with the
+	// just-invalidated refresh token before the next store read catches up.
+	return cloneChatGPTCredential(recent.credential)
+}
+
+func (s *Service) pruneRecentChatGPTRefreshesLocked(now time.Time) {
+	for providerID, recent := range s.recentChatGPTRefreshes {
+		if !recent.expiresAt.After(now) {
+			delete(s.recentChatGPTRefreshes, providerID)
+		}
+	}
+}
+
+func shouldPreferChatGPTCredential(
+	candidate *model.ChatGPTProviderCredential,
+	current *model.ChatGPTProviderCredential,
+) bool {
+	if candidate == nil || !candidate.Ready() {
+		return false
+	}
+	if current == nil || !current.Ready() {
+		return true
+	}
+	if candidate.LastRefresh.After(current.LastRefresh) {
+		return true
+	}
+	if candidate.LastRefresh.Equal(current.LastRefresh) && candidate.ExpiresAt.After(current.ExpiresAt) {
+		return true
+	}
+	if candidate.RefreshToken == current.RefreshToken && candidate.ExpiresAt.After(current.ExpiresAt) {
+		return true
+	}
+	return false
+}
+
+func cloneChatGPTCredential(credential *model.ChatGPTProviderCredential) *model.ChatGPTProviderCredential {
+	if credential == nil {
+		return nil
+	}
+
+	cloned := *credential
+	cloned.Usage = cloneProviderUsageSnapshot(credential.Usage)
+	return &cloned
 }
 
 func applyChatGPTCredential(provider *model.Provider, credential *model.ChatGPTProviderCredential) error {

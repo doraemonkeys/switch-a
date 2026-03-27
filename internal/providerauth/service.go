@@ -32,6 +32,9 @@ const (
 	loginSessionTTL          = 10 * time.Minute
 	completedLoginSessionTTL = 15 * time.Minute
 	proactiveRefreshWindow   = 60 * time.Second
+	// Keep the newest credential briefly so stale provider copies within the same
+	// process do not re-use a refresh token that was just rotated successfully.
+	recentRefreshReuseWindow = 2 * proactiveRefreshWindow
 	callbackPageTitle        = "Switch-A GPT Login"
 )
 
@@ -59,6 +62,17 @@ type Config struct {
 	Logger          *zap.Logger
 }
 
+type inFlightChatGPTRefresh struct {
+	done       chan struct{}
+	credential *model.ChatGPTProviderCredential
+	err        error
+}
+
+type recentChatGPTRefresh struct {
+	credential *model.ChatGPTProviderCredential
+	expiresAt  time.Time
+}
+
 // Service manages provider-backed authentication flows and credential injection.
 type Service struct {
 	credentialStore CredentialStore
@@ -70,6 +84,10 @@ type Service struct {
 	pendingByState   map[string]pendingLogin
 	pendingByLoginID map[string]pendingLogin
 	completed        map[string]completedLogin
+
+	refreshMu              sync.Mutex
+	inFlightRefreshes      map[string]*inFlightChatGPTRefresh
+	recentChatGPTRefreshes map[string]recentChatGPTRefresh
 }
 
 // NewService creates a provider auth service.
@@ -90,13 +108,15 @@ func NewService(cfg Config) *Service {
 	}
 
 	return &Service{
-		credentialStore:  cfg.CredentialStore,
-		httpClient:       httpClient,
-		clock:            clock,
-		logger:           logger,
-		pendingByState:   make(map[string]pendingLogin),
-		pendingByLoginID: make(map[string]pendingLogin),
-		completed:        make(map[string]completedLogin),
+		credentialStore:        cfg.CredentialStore,
+		httpClient:             httpClient,
+		clock:                  clock,
+		logger:                 logger,
+		pendingByState:         make(map[string]pendingLogin),
+		pendingByLoginID:       make(map[string]pendingLogin),
+		completed:              make(map[string]completedLogin),
+		inFlightRefreshes:      make(map[string]*inFlightChatGPTRefresh),
+		recentChatGPTRefreshes: make(map[string]recentChatGPTRefresh),
 	}
 }
 
