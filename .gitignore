@@ -53,3 +53,4 @@ cmd/switch-a/config.yaml
 tmpclaude-*
 review_agent.md
 .agents
+.tmp

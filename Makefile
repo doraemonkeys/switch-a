@@ -39,7 +39,7 @@ check-go-env:
 # 静默模式
 ci: check-go-env
 	@mkdir -p .tmp
-	@set -o pipefail && go test -race ./... -coverprofile=./cover.out -covermode=atomic 2>&1 | tail -n 10
+	@set -o pipefail && go test -race -coverprofile=./cover.out -covermode=atomic ./... 2>&1 | tail -n 10
 	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 	@golangci-lint run
 	@cd web && pnpm test:coverage --silent
