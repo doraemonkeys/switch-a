@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"switch-a/internal/admin"
 	"switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -362,5 +363,49 @@ func TestAdminProviderRefreshRoutesRequireAuth(t *testing.T) {
 				t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 			}
 		})
+	}
+}
+
+func TestAdminUnknownAPIRouteRequiresAuth(t *testing.T) {
+	s := testAdminServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/routing-policies", nil)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+
+	if got := w.Header().Get("Content-Type"); got != admin.ContentTypeJSON {
+		t.Fatalf("Content-Type = %q, want %q", got, admin.ContentTypeJSON)
+	}
+}
+
+func TestAdminUnknownAPIRouteReturnsJSONNotFound(t *testing.T) {
+	s := testAdminServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/routing-policies", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+
+	if got := w.Header().Get("Content-Type"); got != admin.ContentTypeJSON {
+		t.Fatalf("Content-Type = %q, want %q", got, admin.ContentTypeJSON)
+	}
+
+	var resp model.ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode JSON error response: %v", err)
+	}
+
+	if resp.Code != admin.ErrCodeNotFound {
+		t.Fatalf("error code = %q, want %q", resp.Code, admin.ErrCodeNotFound)
 	}
 }

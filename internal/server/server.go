@@ -279,6 +279,9 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Stats route
 	mux.Handle("GET /admin/api/stats", auth.WrapFunc(adminHandler.GetStats))
 
+	// Unknown admin API paths must not fall through into the SPA handler.
+	mux.Handle("/admin/api/", auth.WrapFunc(s.handleAdminAPINotFound))
+
 	// Frontend static files (no auth required)
 	// Serves the embedded React SPA with history fallback for client-side routing.
 	// The frontend is built with base path "/admin/" so all assets are correctly prefixed.
@@ -390,6 +393,22 @@ func (s *AdminServer) handleNotFound(w http.ResponseWriter, r *http.Request) {
 		zap.String("remote_addr", r.RemoteAddr),
 	)
 	http.NotFound(w, r)
+}
+
+// handleAdminAPINotFound preserves JSON semantics for unknown admin API routes.
+func (s *AdminServer) handleAdminAPINotFound(w http.ResponseWriter, r *http.Request) {
+	s.logger.Warn("unmatched admin api route",
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.String("remote_addr", r.RemoteAddr),
+	)
+
+	w.Header().Set("Content-Type", admin.ContentTypeJSON)
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(model.ErrorResponse{
+		Code:    admin.ErrCodeNotFound,
+		Message: "Admin API endpoint not found",
+	})
 }
 
 // Addr returns the admin server's address.
