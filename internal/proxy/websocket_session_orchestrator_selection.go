@@ -81,10 +81,20 @@ func (o *WebSocketSessionOrchestrator) selectionProbeDecision(ctx context.Contex
 }
 
 func (o *WebSocketSessionOrchestrator) supportsReplaySafeSelectionProbe() bool {
-	if o == nil || o.replayBuffer == nil || o.apiType != APITypeCodex {
+	if o == nil || o.replayBuffer == nil {
 		return false
 	}
-	return newWebSocketMessageObserver(o.apiType, ModelUnknown, nil, nil, nil) != nil
+	return o.selectionProbeObserver(ModelUnknown) != nil
+}
+
+func (o *WebSocketSessionOrchestrator) selectionProbeObserver(initialModel string) WebSocketMessageObserver {
+	if o == nil {
+		return nil
+	}
+	if o.newSelectionProbeObserver != nil {
+		return o.newSelectionProbeObserver(o.apiType, initialModel)
+	}
+	return newWebSocketMessageObserver(o.apiType, initialModel, nil, nil, nil)
 }
 
 func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.Context) (*WebSocketSessionResult, string, webSocketSelectionProbeOutcome) {
@@ -125,7 +135,7 @@ func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.C
 			o.replayBuffer.Record(messageType, data, false)
 		}
 
-		observer := newWebSocketMessageObserver(o.apiType, o.info.Model, nil, nil, nil)
+		observer := o.selectionProbeObserver(o.info.Model)
 		if observer == nil {
 			return nil, "", webSocketSelectionProbeOutcomeUnsupported
 		}

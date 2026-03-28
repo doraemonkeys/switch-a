@@ -445,12 +445,13 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		apiType   string
-		req       *model.SelectRequest
-		configure func(*mockStore)
-		probeOn   bool
-		want      webSocketSelectionProbeDecision
+		name                      string
+		apiType                   string
+		req                       *model.SelectRequest
+		configure                 func(*mockStore)
+		newSelectionProbeObserver webSocketSelectionProbeObserverFactory
+		probeOn                   bool
+		want                      webSocketSelectionProbeDecision
 	}{
 		{
 			name:    "handshake model bypasses probe",
@@ -505,6 +506,26 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			},
 		},
 		{
+			name:    "non-codex api can probe when capability seam supports it",
+			apiType: "claude",
+			req: &model.SelectRequest{
+				APIType:    "claude",
+				Model:      ModelUnknown,
+				StickyMode: model.StickyModeModel,
+			},
+			newSelectionProbeObserver: func(apiType, initialModel string) WebSocketMessageObserver {
+				if apiType != "claude" {
+					return nil
+				}
+				return &stubObserver{snapshot: WebSocketObservation{Model: initialModel}}
+			},
+			probeOn: true,
+			want: webSocketSelectionProbeDecision{
+				outcome:     webSocketSelectionProbeOutcomeCompletedWithoutUsableModel,
+				shouldProbe: true,
+			},
+		},
+		{
 			name:    "routing policy hidden-model demand enables probe",
 			apiType: APITypeCodex,
 			req: &model.SelectRequest{
@@ -542,9 +563,10 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 				store:  store,
 				logger: zap.NewNop(),
 			}, webSocketSessionOrchestratorConfig{
-				apiType:          tt.apiType,
-				selectReq:        tt.req,
-				probeClientModel: tt.probeOn,
+				apiType:                   tt.apiType,
+				selectReq:                 tt.req,
+				probeClientModel:          tt.probeOn,
+				newSelectionProbeObserver: tt.newSelectionProbeObserver,
 			})
 
 			if got := orchestrator.selectionProbeDecision(context.Background()); got != tt.want {
@@ -636,6 +658,41 @@ func TestWebSocketSessionOrchestrator_ProbeClientSelectionContextOutcomes(t *tes
 		}
 		if !errors.Is(session.FinalErr, probeErr) {
 			t.Fatalf("FinalErr = %v, want %v", session.FinalErr, probeErr)
+		}
+	})
+
+	t.Run("custom capability supports non-codex probe", func(t *testing.T) {
+		ch := make(chan webSocketInitialReadResult, 1)
+		ch <- webSocketInitialReadResult{
+			messageType: websocket.MessageText,
+			data:        []byte(`{"type":"response.create","response":{"model":"claude-realtime","instructions":"hello"}}`),
+		}
+
+		orchestrator := &WebSocketSessionOrchestrator{
+			requestID:           "req-custom-capability",
+			apiType:             "claude",
+			info:                RequestInfo{Model: ModelUnknown},
+			clientConn:          newClientConn(t),
+			initialClientReadCh: ch,
+			replayBuffer:        newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
+			lifecycle:           newWebSocketLifecycleState(),
+			newSelectionProbeObserver: func(apiType, initialModel string) WebSocketMessageObserver {
+				if apiType != "claude" {
+					return nil
+				}
+				return &stubObserver{snapshot: WebSocketObservation{Model: "claude-realtime"}}
+			},
+		}
+
+		session, modelName, outcome := orchestrator.probeClientSelectionContext(context.Background())
+		if session != nil {
+			t.Fatalf("probeClientSelectionContext() session = %#v, want nil", session)
+		}
+		if modelName != "claude-realtime" {
+			t.Fatalf("probeClientSelectionContext() model = %q, want %q", modelName, "claude-realtime")
+		}
+		if outcome != webSocketSelectionProbeOutcomeObservedUsableModel {
+			t.Fatalf("probeClientSelectionContext() outcome = %q, want %q", outcome, webSocketSelectionProbeOutcomeObservedUsableModel)
 		}
 	})
 }

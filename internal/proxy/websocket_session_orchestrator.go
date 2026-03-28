@@ -12,19 +12,22 @@ import (
 )
 
 type webSocketSessionOrchestratorConfig struct {
-	info             RequestInfo
-	selectReq        *model.SelectRequest
-	apiType          string
-	requestID        string
-	startTime        time.Time
-	maxAttempts      int
-	globalAuthMode   string
-	probeClientModel bool
-	newObserver      webSocketObserverFactory
-	applyObservation func(WebSocketObservation)
-	onClientVisible  func(webSocketVisibleWriteContext)
-	tracker          *LiveBytesTracker
+	info                      RequestInfo
+	selectReq                 *model.SelectRequest
+	apiType                   string
+	requestID                 string
+	startTime                 time.Time
+	maxAttempts               int
+	globalAuthMode            string
+	probeClientModel          bool
+	newObserver               webSocketObserverFactory
+	newSelectionProbeObserver webSocketSelectionProbeObserverFactory
+	applyObservation          func(WebSocketObservation)
+	onClientVisible           func(webSocketVisibleWriteContext)
+	tracker                   *LiveBytesTracker
 }
+
+type webSocketSelectionProbeObserverFactory func(apiType, initialModel string) WebSocketMessageObserver
 
 // WebSocketSessionOrchestrator owns the provider-attempt loop because WebSocket
 // failover has different commitment boundaries from HTTP retries even though the
@@ -32,50 +35,58 @@ type webSocketSessionOrchestratorConfig struct {
 type WebSocketSessionOrchestrator struct {
 	handler *Handler
 
-	info                RequestInfo
-	selectReq           *model.SelectRequest
-	apiType             string
-	requestID           string
-	startTime           time.Time
-	maxAttempts         int
-	globalAuthMode      string
-	probeClientModel    bool
-	newObserver         webSocketObserverFactory
-	applyObservation    func(WebSocketObservation)
-	onClientVisible     func(webSocketVisibleWriteContext)
-	tracker             *LiveBytesTracker
-	excludedProviders   map[string]bool
-	failoverContext     *model.FailoverContext
-	attempts            []WebSocketAttemptResult
-	isSticky            bool
-	currentProvider     *model.Provider
-	lifecycle           *webSocketLifecycleState
-	clientConn          *websocket.Conn
-	initialClientReadCh <-chan webSocketInitialReadResult
-	replayBuffer        *preVisibleClientMessageBuffer
-	suppressedAttempt   *webSocketSuppressedAttempt
-	probeOutcome        webSocketSelectionProbeOutcome
+	info                      RequestInfo
+	selectReq                 *model.SelectRequest
+	apiType                   string
+	requestID                 string
+	startTime                 time.Time
+	maxAttempts               int
+	globalAuthMode            string
+	probeClientModel          bool
+	newObserver               webSocketObserverFactory
+	newSelectionProbeObserver webSocketSelectionProbeObserverFactory
+	applyObservation          func(WebSocketObservation)
+	onClientVisible           func(webSocketVisibleWriteContext)
+	tracker                   *LiveBytesTracker
+	excludedProviders         map[string]bool
+	failoverContext           *model.FailoverContext
+	attempts                  []WebSocketAttemptResult
+	isSticky                  bool
+	currentProvider           *model.Provider
+	lifecycle                 *webSocketLifecycleState
+	clientConn                *websocket.Conn
+	initialClientReadCh       <-chan webSocketInitialReadResult
+	replayBuffer              *preVisibleClientMessageBuffer
+	suppressedAttempt         *webSocketSuppressedAttempt
+	probeOutcome              webSocketSelectionProbeOutcome
 }
 
 func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrchestratorConfig) *WebSocketSessionOrchestrator {
+	selectionProbeObserverFactory := cfg.newSelectionProbeObserver
+	if selectionProbeObserverFactory == nil {
+		selectionProbeObserverFactory = func(apiType, initialModel string) WebSocketMessageObserver {
+			return newWebSocketMessageObserver(apiType, initialModel, nil, nil, nil)
+		}
+	}
 	return &WebSocketSessionOrchestrator{
-		handler:           handler,
-		info:              cfg.info,
-		selectReq:         cfg.selectReq,
-		apiType:           cfg.apiType,
-		requestID:         cfg.requestID,
-		startTime:         cfg.startTime,
-		maxAttempts:       cfg.maxAttempts,
-		globalAuthMode:    cfg.globalAuthMode,
-		probeClientModel:  cfg.probeClientModel,
-		newObserver:       cfg.newObserver,
-		applyObservation:  cfg.applyObservation,
-		onClientVisible:   cfg.onClientVisible,
-		tracker:           cfg.tracker,
-		excludedProviders: make(map[string]bool),
-		attempts:          make([]WebSocketAttemptResult, 0),
-		lifecycle:         newWebSocketLifecycleState(),
-		replayBuffer:      newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
+		handler:                   handler,
+		info:                      cfg.info,
+		selectReq:                 cfg.selectReq,
+		apiType:                   cfg.apiType,
+		requestID:                 cfg.requestID,
+		startTime:                 cfg.startTime,
+		maxAttempts:               cfg.maxAttempts,
+		globalAuthMode:            cfg.globalAuthMode,
+		probeClientModel:          cfg.probeClientModel,
+		newObserver:               cfg.newObserver,
+		newSelectionProbeObserver: selectionProbeObserverFactory,
+		applyObservation:          cfg.applyObservation,
+		onClientVisible:           cfg.onClientVisible,
+		tracker:                   cfg.tracker,
+		excludedProviders:         make(map[string]bool),
+		attempts:                  make([]WebSocketAttemptResult, 0),
+		lifecycle:                 newWebSocketLifecycleState(),
+		replayBuffer:              newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
 	}
 }
 
