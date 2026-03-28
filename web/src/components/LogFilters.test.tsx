@@ -74,6 +74,7 @@ describe("LogFilters - Basic Rendering", () => {
     expect(screen.getByText("Request Type")).toBeInTheDocument();
     expect(screen.getByText("Commit State")).toBeInTheDocument();
     expect(screen.getByText("Sticky Write")).toBeInTheDocument();
+    expect(screen.getByText("Probe Outcome")).toBeInTheDocument();
     expect(screen.getByText("Terminal Cause")).toBeInTheDocument();
     expect(screen.getByText("API Type")).toBeInTheDocument();
     expect(screen.getByText("Time Range")).toBeInTheDocument();
@@ -219,6 +220,28 @@ describe("LogFilters - Lifecycle Filters", () => {
 
     expect(mockOnFilterChange).toHaveBeenCalledWith({
       sticky_written: false,
+    });
+  });
+
+  it("handles probe outcome filter changes", () => {
+    render(
+      <LogFilters
+        filter={defaultFilter}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    const probeOutcomeSelect = screen.getByRole("combobox", {
+      name: /probe outcome/i,
+    });
+    fireEvent.change(probeOutcomeSelect, {
+      target: { value: "transport_failed" },
+    });
+
+    expect(mockOnFilterChange).toHaveBeenCalledWith({
+      probe_outcome: "transport_failed",
     });
   });
 
@@ -562,6 +585,7 @@ describe("LogFilters - Filter Badge Removal", () => {
         filter={{
           session_committed: false,
           sticky_written: true,
+          probe_outcome: "unsupported",
           terminal_cause: "clean_close",
         }}
         onFilterChange={mockOnFilterChange}
@@ -575,6 +599,9 @@ describe("LogFilters - Filter Badge Removal", () => {
       screen.getByLabelText("Remove Sticky Write: Written filter"),
     );
     fireEvent.click(
+      screen.getByLabelText("Remove Probe Outcome: Unsupported filter"),
+    );
+    fireEvent.click(
       screen.getByLabelText("Remove Terminal Cause: Clean Close filter"),
     );
 
@@ -585,6 +612,9 @@ describe("LogFilters - Filter Badge Removal", () => {
       sticky_written: undefined,
     });
     expect(mockOnFilterChange).toHaveBeenNthCalledWith(3, {
+      probe_outcome: undefined,
+    });
+    expect(mockOnFilterChange).toHaveBeenNthCalledWith(4, {
       terminal_cause: undefined,
     });
   });
@@ -811,7 +841,7 @@ describe("LogFilters - Date Preset Detection", () => {
   it("considers lifecycle filters as active filter indicators", () => {
     render(
       <LogFilters
-        filter={{ terminal_cause: "unknown" }}
+        filter={{ probe_outcome: "completed_without_usable_model" }}
         onFilterChange={mockOnFilterChange}
         providers={mockProviders}
         onClear={mockOnClear}

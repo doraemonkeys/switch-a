@@ -124,11 +124,12 @@ describe("createApiClient logs API", () => {
     await api.logs.list({
       session_committed: true,
       sticky_written: false,
+      probe_outcome: "transport_failed",
       terminal_cause: "client_disconnect",
     });
 
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
-      "https://test-api.example.com/logs?session_committed=true&sticky_written=false&terminal_cause=client_disconnect",
+      "https://test-api.example.com/logs?session_committed=true&sticky_written=false&probe_outcome=transport_failed&terminal_cause=client_disconnect",
       expect.any(Object),
     );
   });

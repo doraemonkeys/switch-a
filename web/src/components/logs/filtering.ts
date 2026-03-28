@@ -13,6 +13,7 @@ export function isLogFilterActive(filter: LogFilter): boolean {
     filter.min_retry_count !== undefined ||
     filter.session_committed !== undefined ||
     filter.sticky_written !== undefined ||
+    filter.probe_outcome ||
     filter.terminal_cause
   );
 }
@@ -32,6 +33,7 @@ export function createClearedLogFilterPatch(): Partial<LogFilter> {
     min_retry_count: undefined,
     session_committed: undefined,
     sticky_written: undefined,
+    probe_outcome: undefined,
     terminal_cause: undefined,
   };
 }

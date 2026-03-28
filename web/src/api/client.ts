@@ -125,6 +125,7 @@ function buildLogsQuery(filter?: LogFilter): string {
   appendLogQueryParam(query, "has_retries", filter.has_retries);
   appendLogQueryParam(query, "session_committed", filter.session_committed);
   appendLogQueryParam(query, "sticky_written", filter.sticky_written);
+  appendLogQueryParam(query, "probe_outcome", filter.probe_outcome);
   appendLogQueryParam(query, "terminal_cause", filter.terminal_cause);
   appendLogQueryParam(query, "sort_by", filter.sort_by);
   appendLogQueryParam(query, "sort_order", filter.sort_order);

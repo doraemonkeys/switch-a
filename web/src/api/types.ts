@@ -375,6 +375,14 @@ export type TerminalCause =
 
 export type CommitSource = "semantic_event" | "upstream_message" | "unknown";
 
+export type WebSocketProbeOutcome =
+  | "unknown"
+  | "bypassed"
+  | "unsupported"
+  | "observed_usable_model"
+  | "completed_without_usable_model"
+  | "transport_failed";
+
 export interface RequestLog {
   id: number;
   request_id: string;
@@ -415,6 +423,7 @@ export interface RequestLog {
   // WebSocket lifecycle semantics (nullable outside the WebSocket lifecycle domain)
   sticky_written?: boolean | null;
   session_committed?: boolean | null;
+  probe_outcome?: WebSocketProbeOutcome | null;
   terminal_cause?: TerminalCause | null;
   commit_source?: CommitSource | null;
   // Provider-attempt records only. RequestLog remains the session lifecycle summary.
@@ -463,6 +472,8 @@ export interface LogFilter {
   session_committed?: boolean;
   /** Filter by whether a WebSocket session wrote sticky affinity */
   sticky_written?: boolean;
+  /** Filter by WebSocket probe outcome */
+  probe_outcome?: WebSocketProbeOutcome;
   /** Filter by WebSocket terminal cause */
   terminal_cause?: TerminalCause;
   /** Sort field (created_at/latency_ms, default: created_at) */

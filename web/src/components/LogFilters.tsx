@@ -1,4 +1,9 @@
-import type { LogFilter, Provider, TerminalCause } from "../api/types";
+import type {
+  LogFilter,
+  Provider,
+  TerminalCause,
+  WebSocketProbeOutcome,
+} from "../api/types";
 import { API_TYPES } from "../config/constants";
 import { isLogFilterActive } from "./logs/filtering";
 
@@ -31,6 +36,22 @@ const TERMINAL_CAUSE_OPTIONS: Array<{
   { value: "unknown", label: "Unknown" },
 ];
 
+const PROBE_OUTCOME_OPTIONS: Array<{
+  value: WebSocketProbeOutcome | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Outcomes" },
+  { value: "bypassed", label: "Bypassed" },
+  { value: "unsupported", label: "Unsupported" },
+  { value: "observed_usable_model", label: "Observed Usable Model" },
+  {
+    value: "completed_without_usable_model",
+    label: "Completed Without Usable Model",
+  },
+  { value: "transport_failed", label: "Transport Failed" },
+  { value: "unknown", label: "Unknown" },
+];
+
 function getBooleanFilterValue(value: boolean | undefined): string {
   if (value === true) return FILTER_VALUE_TRUE;
   if (value === false) return FILTER_VALUE_FALSE;
@@ -49,6 +70,13 @@ function getTerminalCauseLabel(terminalCause: TerminalCause): string {
     (option) => option.value === terminalCause,
   );
   return matchingOption?.label ?? terminalCause;
+}
+
+function getProbeOutcomeLabel(probeOutcome: WebSocketProbeOutcome): string {
+  const matchingOption = PROBE_OUTCOME_OPTIONS.find(
+    (option) => option.value === probeOutcome,
+  );
+  return matchingOption?.label ?? probeOutcome;
 }
 
 // Helper function to get current retries filter value for select
@@ -294,6 +322,21 @@ export function LogFilters({
           minWidth="140px"
         />
         <FilterSelect
+          id="probe-outcome-filter"
+          label="Probe Outcome"
+          value={filter.probe_outcome || FILTER_VALUE_ALL}
+          onChange={(value) =>
+            onFilterChange({
+              probe_outcome:
+                value === FILTER_VALUE_ALL
+                  ? undefined
+                  : (value as WebSocketProbeOutcome),
+            })
+          }
+          options={PROBE_OUTCOME_OPTIONS}
+          minWidth="220px"
+        />
+        <FilterSelect
           id="terminal-cause-filter"
           label="Terminal Cause"
           value={filter.terminal_cause || FILTER_VALUE_ALL}
@@ -405,6 +448,12 @@ function ActiveFiltersSummary({
           <FilterBadge
             label={`Sticky Write: ${filter.sticky_written ? "Written" : "Not Written"}`}
             onRemove={() => onFilterChange({ sticky_written: undefined })}
+          />
+        )}
+        {filter.probe_outcome && (
+          <FilterBadge
+            label={`Probe Outcome: ${getProbeOutcomeLabel(filter.probe_outcome)}`}
+            onRemove={() => onFilterChange({ probe_outcome: undefined })}
           />
         )}
         {filter.terminal_cause && (

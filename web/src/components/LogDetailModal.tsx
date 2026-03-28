@@ -447,6 +447,9 @@ function WebSocketLifecycleInfo({
         value={providerName || log.provider_id}
       />
       <DetailRow label="Commit State" value={lifecycle.commitmentLabel} />
+      {lifecycle.probeOutcomeLabel && (
+        <DetailRow label="Probe Outcome" value={lifecycle.probeOutcomeLabel} />
+      )}
       <DetailRow label="Terminal Cause" value={lifecycle.terminalCauseLabel} />
       {lifecycle.commitSourceLabel && (
         <DetailRow label="Commit Source" value={lifecycle.commitSourceLabel} />

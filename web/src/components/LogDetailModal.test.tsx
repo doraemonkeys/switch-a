@@ -124,6 +124,7 @@ describe("LogDetailModal", () => {
       success: false,
       status_code: 101,
       session_committed: true,
+      probe_outcome: "observed_usable_model",
       terminal_cause: "client_disconnect",
       commit_source: "semantic_event",
       sticky_written: true,
@@ -144,6 +145,7 @@ describe("LogDetailModal", () => {
       screen.getByText("Committed session ended on client disconnect"),
     ).toBeInTheDocument();
     expect(screen.getByText("Semantic event")).toBeInTheDocument();
+    expect(screen.getByText("Observed usable model")).toBeInTheDocument();
     expect(screen.getByText("Written")).toBeInTheDocument();
     expect(screen.getByText("Connection Note")).toBeInTheDocument();
     expect(screen.queryByText("Error Details")).not.toBeInTheDocument();

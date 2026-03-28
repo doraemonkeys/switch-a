@@ -1,4 +1,9 @@
-import type { CommitSource, RequestLog, TerminalCause } from "../../api/types";
+import type {
+  CommitSource,
+  RequestLog,
+  TerminalCause,
+  WebSocketProbeOutcome,
+} from "../../api/types";
 import { BADGE_STYLES } from "../../lib/utils";
 
 export type DiagnosticTone = "success" | "danger" | "warning" | "info";
@@ -15,6 +20,8 @@ export interface LogLifecyclePresentation {
   terminalCause: TerminalCause;
   terminalCauseLabel: string;
   terminalCauseTone: DiagnosticTone;
+  probeOutcome: WebSocketProbeOutcome;
+  probeOutcomeLabel: string | null;
   commitSourceLabel: string | null;
   stickyWrittenLabel: string | null;
   tableDetailLabel: string | null;
@@ -71,6 +78,15 @@ const COMMIT_SOURCE_LABELS: Record<CommitSource, string> = {
   unknown: "Unknown",
 };
 
+const PROBE_OUTCOME_LABELS: Record<WebSocketProbeOutcome, string> = {
+  unknown: "Unknown",
+  bypassed: "Bypassed",
+  unsupported: "Unsupported",
+  observed_usable_model: "Observed usable model",
+  completed_without_usable_model: "Completed without usable model",
+  transport_failed: "Transport failed",
+};
+
 interface OutcomePresentation {
   label: string;
   shortLabel: string;
@@ -105,6 +121,17 @@ function getStickyWrittenLabel(log: RequestLog): string | null {
     return null;
   }
   return log.sticky_written ? "Written" : "Not written";
+}
+
+function getProbeOutcome(log: RequestLog): WebSocketProbeOutcome {
+  return log.probe_outcome ?? "unknown";
+}
+
+function getProbeOutcomeLabel(log: RequestLog): string | null {
+  if (log.probe_outcome == null) {
+    return null;
+  }
+  return PROBE_OUTCOME_LABELS[getProbeOutcome(log)];
 }
 
 function getCommittedOutcome(
@@ -287,6 +314,7 @@ function getUnknownCommitOutcome(
 function formatTableDetailLabel(
   statusCode: number,
   commitmentLabel: string,
+  probeOutcomeLabel: string | null,
 ): string | null {
   const details: string[] = [];
 
@@ -295,6 +323,10 @@ function formatTableDetailLabel(
   }
 
   details.push(commitmentLabel);
+
+  if (probeOutcomeLabel) {
+    details.push(probeOutcomeLabel);
+  }
 
   return details.join(" • ");
 }
@@ -327,6 +359,8 @@ export function getLogLifecyclePresentation(
       terminalCause: "unknown",
       terminalCauseLabel: TERMINAL_CAUSE_LABELS.unknown,
       terminalCauseTone: TERMINAL_CAUSE_TONES.unknown,
+      probeOutcome: "unknown",
+      probeOutcomeLabel: null,
       commitSourceLabel: null,
       stickyWrittenLabel: getStickyWrittenLabel(log),
       tableDetailLabel:
@@ -339,6 +373,8 @@ export function getLogLifecyclePresentation(
 
   const commitmentState = getCommitmentState(log.session_committed);
   const terminalCause = getTerminalCause(log);
+  const probeOutcome = getProbeOutcome(log);
+  const probeOutcomeLabel = getProbeOutcomeLabel(log);
 
   let outcome: OutcomePresentation;
   if (commitmentState === "committed") {
@@ -360,11 +396,14 @@ export function getLogLifecyclePresentation(
     terminalCause,
     terminalCauseLabel: TERMINAL_CAUSE_LABELS[terminalCause],
     terminalCauseTone: TERMINAL_CAUSE_TONES[terminalCause],
+    probeOutcome,
+    probeOutcomeLabel,
     commitSourceLabel: getCommitSourceLabel(log),
     stickyWrittenLabel: getStickyWrittenLabel(log),
     tableDetailLabel: formatTableDetailLabel(
       log.status_code,
       COMMITMENT_LABELS[commitmentState],
+      probeOutcomeLabel,
     ),
     shouldShowErrorDetails: outcome.tone === "danger" && Boolean(log.error_msg),
   };
