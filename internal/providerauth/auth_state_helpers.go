@@ -34,7 +34,11 @@ func providerAuthStateSnapshot(provider *model.Provider) *model.ProviderAuthStat
 	return model.ProviderAuthStateFromCredential(provider.ID, credentialType, provider.Credential)
 }
 
-func decodeProviderChatGPTCredential(provider *model.Provider) (*model.ChatGPTProviderCredential, error) {
+// DecodeProviderChatGPTCredential reconstructs the effective ChatGPT credential
+// view from the persisted provider secret plus its split auth-state summary.
+// Import/export, admin views, and runtime auth injection must share this
+// interpretation so secret-only rows behave identically everywhere.
+func DecodeProviderChatGPTCredential(provider *model.Provider) (*model.ChatGPTProviderCredential, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("provider is required")
 	}

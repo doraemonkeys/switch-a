@@ -285,10 +285,18 @@ func validateImportedChatGPTProvider(provider *model.Provider, exported *Exporte
 	if provider.AuthState == nil {
 		return false
 	}
-	if provider.AuthState.Status != model.ProviderAuthStatusActive {
+	// Blank exported statuses are a legacy/manual-import shape. Preserve that
+	// intent before normalization rewrites the empty value to not_connected.
+	requiresReadyCredential := provider.AuthState.Status == model.ProviderAuthStatusActive ||
+		chatGPTCredentialMustBeReady(exported)
+	if !requiresReadyCredential {
 		return true
 	}
-	return exportedChatGPTCredentialReady(exported.Credential)
+	credential, err := providerauth.DecodeProviderChatGPTCredential(provider)
+	if err != nil || credential == nil {
+		return false
+	}
+	return credential.Ready()
 }
 
 // buildGroupFromExport applies the same normalization that Create/Update paths use

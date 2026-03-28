@@ -533,3 +533,121 @@ func TestExportConfig_ChatGPTProviderRoundTripPreservesCredentialAndAuthState(t 
 		t.Fatalf("Credential = %#v, want secret payload %q", imported.Credential, credentialData)
 	}
 }
+
+func TestExportConfig_ChatGPTProviderRoundTripWithSecretOnlyCredentialDoesNotWarn(t *testing.T) {
+	h, st, _ := testHandler()
+
+	secretData, err := json.Marshal(struct {
+		AccessToken   string `json:"access_token"`
+		RefreshToken  string `json:"refresh_token"`
+		IDToken       string `json:"id_token"`
+		OAuthIssuer   string `json:"oauth_issuer,omitempty"`
+		OAuthClientID string `json:"oauth_client_id,omitempty"`
+	}{
+		AccessToken:   "access-token",
+		RefreshToken:  "refresh-token",
+		IDToken:       "id-token",
+		OAuthIssuer:   "https://auth.openai.com",
+		OAuthClientID: "app_client_id",
+	})
+	if err != nil {
+		t.Fatalf("marshal secretData: %v", err)
+	}
+
+	bindingAccountID := "acct_test"
+	lastTransitionAt := time.Date(2026, time.March, 27, 4, 0, 0, 0, time.UTC)
+	st.providers["gpt"] = &model.Provider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential: &model.ProviderCredential{
+			ProviderID:       "gpt",
+			SecretData:       string(secretData),
+			BindingAccountID: &bindingAccountID,
+			Version:          6,
+		},
+		AuthState: &model.ProviderAuthState{
+			ProviderID:       "gpt",
+			Status:           model.ProviderAuthStatusActive,
+			LastTransitionAt: &lastTransitionAt,
+			AccountID:        "acct_test",
+			Email:            "user@example.com",
+		},
+		Enabled: false,
+	}
+
+	exportReq := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	exportW := httptest.NewRecorder()
+	h.ExportConfig(exportW, exportReq)
+
+	if exportW.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want %d; body: %s", exportW.Code, http.StatusOK, exportW.Body.String())
+	}
+
+	var export ExportedConfig
+	if err := json.NewDecoder(exportW.Body).Decode(&export); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+
+	h2, st2, _ := testHandler()
+	importReq := ImportConfigRequest{
+		Version:   export.Version,
+		Providers: export.Providers,
+	}
+	body, err := json.Marshal(importReq)
+	if err != nil {
+		t.Fatalf("marshal import request: %v", err)
+	}
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
+	previewReq.Header.Set("Content-Type", "application/json")
+	previewW := httptest.NewRecorder()
+	h2.ImportConfig(previewW, previewReq)
+
+	if previewW.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, want %d; body: %s", previewW.Code, http.StatusOK, previewW.Body.String())
+	}
+
+	var preview ImportPreviewResponse
+	if err := json.NewDecoder(previewW.Body).Decode(&preview); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	if len(preview.Warnings) != 0 {
+		t.Fatalf("Warnings = %v, want no GPT login warning for secret-only credential export", preview.Warnings)
+	}
+
+	importPostReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
+	importPostReq.Header.Set("Content-Type", "application/json")
+	importW := httptest.NewRecorder()
+	h2.ImportConfig(importW, importPostReq)
+
+	if importW.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want %d; body: %s", importW.Code, http.StatusOK, importW.Body.String())
+	}
+
+	imported := st2.providers["gpt"]
+	if imported == nil {
+		t.Fatal("provider gpt not found after roundtrip import")
+	}
+	if imported.Credential == nil {
+		t.Fatal("Credential = nil, want imported secret-only credential payload")
+	}
+	if imported.Credential.SecretData != string(secretData) {
+		t.Fatalf("Credential.SecretData = %q, want round-tripped secret-only payload", imported.Credential.SecretData)
+	}
+	if imported.Credential.BindingAccountID == nil || *imported.Credential.BindingAccountID != "acct_test" {
+		t.Fatalf("Credential.BindingAccountID = %v, want acct_test", imported.Credential.BindingAccountID)
+	}
+	if imported.AuthState == nil {
+		t.Fatal("AuthState = nil, want imported auth state")
+	}
+	if imported.AuthState.Status != model.ProviderAuthStatusActive {
+		t.Fatalf("AuthState.Status = %q, want %q", imported.AuthState.Status, model.ProviderAuthStatusActive)
+	}
+	if imported.AuthState.AccountID != "acct_test" {
+		t.Fatalf("AuthState.AccountID = %q, want acct_test", imported.AuthState.AccountID)
+	}
+	if imported.Enabled {
+		t.Fatal("Enabled = true, want disabled provider to stay disabled after roundtrip import")
+	}
+}

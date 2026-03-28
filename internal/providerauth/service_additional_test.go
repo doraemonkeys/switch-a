@@ -314,7 +314,7 @@ func TestApplyAndFinalizeChatGPTLogin_ConsumesSessionOnlyAfterFinalize(t *testin
 	if err := service.ApplyChatGPTLogin(provider, "login-1"); err != nil {
 		t.Fatalf("ApplyChatGPTLogin returned error: %v", err)
 	}
-	applied, err := decodeProviderChatGPTCredential(provider)
+	applied, err := DecodeProviderChatGPTCredential(provider)
 	if err != nil {
 		t.Fatalf("decodeProviderChatGPTCredential returned error: %v", err)
 	}

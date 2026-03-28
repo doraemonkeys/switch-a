@@ -29,7 +29,7 @@ func (s *Service) refreshChatGPTUsageSnapshot(ctx context.Context, provider *mod
 		return fmt.Errorf("provider is required")
 	}
 
-	credential, err := decodeProviderChatGPTCredential(provider)
+	credential, err := DecodeProviderChatGPTCredential(provider)
 	if err != nil {
 		return &ProviderAuthStateError{
 			ProviderID: provider.ID,

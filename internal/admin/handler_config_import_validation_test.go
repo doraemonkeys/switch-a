@@ -7,6 +7,16 @@ import (
 	"switch-a/internal/model"
 )
 
+func mustMarshalChatGPTCredential(t *testing.T, credential model.ChatGPTProviderCredential) string {
+	t.Helper()
+
+	payload, err := json.Marshal(credential)
+	if err != nil {
+		t.Fatalf("marshal credential: %v", err)
+	}
+	return string(payload)
+}
+
 func TestValidateExportedProvider_MalformedURL(t *testing.T) {
 	p := &ExportedProvider{
 		ID:       "p1",
@@ -54,6 +64,69 @@ func TestValidateExportedProvider_ChatGPTDoesNotRequireAPIKey(t *testing.T) {
 	warnings := validateExportedProvider(p)
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", warnings)
+	}
+}
+
+func TestValidateExportedProvider_ChatGPTBlankStatusRequiresReadyCredential(t *testing.T) {
+	p := &ExportedProvider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		AuthState:      &ExportedProviderAuthState{},
+	}
+
+	warnings := validateExportedProvider(p)
+	found := false
+	for _, w := range warnings {
+		if w == "Provider 'gpt' has incomplete or invalid GPT login" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("warnings = %v, want GPT login warning", warnings)
+	}
+}
+
+func TestBuildProviderFromExport_ChatGPTBlankStatusAcceptsReadyCredential(t *testing.T) {
+	p := &ExportedProvider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential: &ExportedProviderCredential{
+			SecretData: mustMarshalChatGPTCredential(t, model.ChatGPTProviderCredential{
+				AccessToken:  "access-token",
+				RefreshToken: "refresh-token",
+				IDToken:      "id-token",
+				AccountID:    "acct_test",
+			}),
+			BindingAccountID: strPtr("acct_test"),
+		},
+		AuthState: &ExportedProviderAuthState{},
+	}
+
+	provider, ok := buildProviderFromExport(p, map[string]bool{})
+	if !ok || provider == nil {
+		t.Fatal("buildProviderFromExport() rejected ready legacy ChatGPT payload")
+	}
+	if provider.AuthState == nil {
+		t.Fatal("AuthState = nil, want normalized auth snapshot")
+	}
+	if provider.AuthState.Status != model.ProviderAuthStatusNotConnected {
+		t.Fatalf("AuthState.Status = %q, want %q after normalization", provider.AuthState.Status, model.ProviderAuthStatusNotConnected)
+	}
+}
+
+func TestBuildProviderFromExport_ChatGPTBlankStatusRejectsIncompleteCredential(t *testing.T) {
+	p := &ExportedProvider{
+		ID:             "gpt",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		AuthState:      &ExportedProviderAuthState{},
+	}
+
+	if provider, ok := buildProviderFromExport(p, map[string]bool{}); ok || provider != nil {
+		t.Fatalf("buildProviderFromExport() = (%#v, %v), want rejection", provider, ok)
 	}
 }
 

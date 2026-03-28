@@ -57,7 +57,7 @@ func (s *Service) ensureFreshChatGPTCredential(ctx context.Context, provider *mo
 		return nil, fmt.Errorf("provider is required")
 	}
 
-	credential, err := decodeProviderChatGPTCredential(provider)
+	credential, err := DecodeProviderChatGPTCredential(provider)
 	if err != nil {
 		return nil, &ProviderAuthStateError{
 			ProviderID: provider.ID,

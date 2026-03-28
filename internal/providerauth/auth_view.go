@@ -90,7 +90,7 @@ func BuildProviderAuthView(provider *model.Provider) *ProviderAuthView {
 	}
 
 	if credentialType == providerCredentialTypeChatGPT {
-		if credential, err := decodeProviderChatGPTCredential(provider); err != nil {
+		if credential, err := DecodeProviderChatGPTCredential(provider); err != nil {
 			authState = buildChatGPTAuthState(
 				provider.ID,
 				authState,
@@ -140,7 +140,7 @@ func apiKeyAuthStateSnapshot(
 // HasCompleteChatGPTCredential gates config writes on persisted secret material without
 // conflating that with the current auth lifecycle.
 func HasCompleteChatGPTCredential(provider *model.Provider) bool {
-	credential, err := decodeProviderChatGPTCredential(provider)
+	credential, err := DecodeProviderChatGPTCredential(provider)
 	return err == nil && credential != nil && credential.Ready()
 }
 

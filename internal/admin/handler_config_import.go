@@ -150,7 +150,7 @@ func validateExportedProvider(p *ExportedProvider) []string {
 		warnings = append(warnings, "Provider '"+p.ID+"' has invalid auth_state.status: "+string(p.AuthState.Status))
 	}
 	if credentialType == model.ProviderCredentialTypeChatGPT {
-		if chatGPTCredentialMustBeReady(p) && !exportedChatGPTCredentialReady(p.Credential) {
+		if chatGPTCredentialMustBeReady(p) && !exportedChatGPTProviderReady(p) {
 			warnings = append(warnings, "Provider '"+p.ID+"' has incomplete or invalid GPT login")
 		}
 		return warnings
@@ -178,6 +178,8 @@ func validateExportedProvider(p *ExportedProvider) []string {
 	return warnings
 }
 
+// chatGPTCredentialMustBeReady preserves legacy/manual import intent encoded in
+// the raw export payload before auth-state normalization rewrites blank values.
 func chatGPTCredentialMustBeReady(p *ExportedProvider) bool {
 	if p == nil || p.AuthState == nil {
 		return false
@@ -185,15 +187,11 @@ func chatGPTCredentialMustBeReady(p *ExportedProvider) bool {
 	return p.AuthState.Status == "" || p.AuthState.Status == model.ProviderAuthStatusActive
 }
 
-func exportedChatGPTCredentialReady(credential *ExportedProviderCredential) bool {
-	if credential == nil {
+func exportedChatGPTProviderReady(provider *ExportedProvider) bool {
+	if provider == nil {
 		return false
 	}
-	decoded, err := model.DecodeChatGPTProviderCredential(credential.SecretData)
-	if err != nil {
-		return false
-	}
-	return decoded != nil && decoded.Ready()
+	return canImportProvider(provider, nil)
 }
 
 // validateExportedGroup validates a single group and returns warnings.

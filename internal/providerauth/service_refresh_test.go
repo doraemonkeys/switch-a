@@ -310,7 +310,7 @@ func TestApplyProviderCredentials_ReusesRecentChatGPTRefreshForStaleProviderCopy
 		t.Fatalf("second Authorization = %q, want %q", got, "Bearer new-access-token")
 	}
 
-	refreshed, err := decodeProviderChatGPTCredential(secondProvider)
+	refreshed, err := DecodeProviderChatGPTCredential(secondProvider)
 	if err != nil {
 		t.Fatalf("decodeProviderChatGPTCredential returned error: %v", err)
 	}
