@@ -301,6 +301,11 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 			return false
 		}
 	}
+	if filter.ProbeOutcome != "" {
+		if log.ProbeOutcome == nil || *log.ProbeOutcome != filter.ProbeOutcome {
+			return false
+		}
+	}
 	if filter.TerminalCause != "" {
 		if log.TerminalCause == nil || *log.TerminalCause != filter.TerminalCause {
 			return false

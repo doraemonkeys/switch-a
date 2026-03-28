@@ -389,13 +389,14 @@ func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing
 		ProviderID       string
 		SessionCommitted sql.NullBool
 		StickyWritten    sql.NullBool
+		ProbeOutcome     sql.NullString
 		TerminalCause    sql.NullString
 		CommitSource     sql.NullString
 	}
 
 	var rows []lifecycleRow
 	querySQL := fmt.Sprintf(
-		`SELECT provider_id, session_committed, sticky_written, terminal_cause, commit_source FROM %s ORDER BY provider_id`,
+		`SELECT provider_id, session_committed, sticky_written, probe_outcome, terminal_cause, commit_source FROM %s ORDER BY provider_id`,
 		requestLogsTableName,
 	)
 	if err := db.Raw(querySQL).Scan(&rows).Error; err != nil {
@@ -411,6 +412,9 @@ func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing
 	if rows[0].StickyWritten.Valid {
 		t.Fatalf("regular row sticky_written = %+v, want NULL", rows[0].StickyWritten)
 	}
+	if rows[0].ProbeOutcome.Valid {
+		t.Fatalf("regular row probe_outcome = %+v, want NULL", rows[0].ProbeOutcome)
+	}
 	if rows[0].TerminalCause.Valid {
 		t.Fatalf("regular row terminal_cause = %+v, want NULL", rows[0].TerminalCause)
 	}
@@ -423,6 +427,9 @@ func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing
 	}
 	if !rows[1].StickyWritten.Valid || rows[1].StickyWritten.Bool {
 		t.Fatalf("websocket row sticky_written = %+v, want false", rows[1].StickyWritten)
+	}
+	if !rows[1].ProbeOutcome.Valid || rows[1].ProbeOutcome.String != string(model.WebSocketProbeOutcomeUnknown) {
+		t.Fatalf("websocket row probe_outcome = %+v, want %q", rows[1].ProbeOutcome, model.WebSocketProbeOutcomeUnknown)
 	}
 	if !rows[1].TerminalCause.Valid || rows[1].TerminalCause.String != string(model.TerminalUnknown) {
 		t.Fatalf("websocket row terminal_cause = %+v, want %q", rows[1].TerminalCause, model.TerminalUnknown)
@@ -449,6 +456,7 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 			Success:          true,
 			StickyWritten:    boolPtr(true),
 			SessionCommitted: &committed,
+			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeObservedUsableModel),
 			TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
 			CommitSource:     commitSourcePtr(model.CommitSemantic),
 		},
@@ -458,6 +466,7 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 			Success:          false,
 			StickyWritten:    boolPtr(false),
 			SessionCommitted: &uncommitted,
+			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeTransportFailed),
 			TerminalCause:    terminalCausePtr(model.TerminalUpstreamSemanticError),
 			CommitSource:     commitSourcePtr(model.CommitUnknown),
 		},
@@ -486,6 +495,9 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 	if persisted[0].StickyWritten == nil || !*persisted[0].StickyWritten {
 		t.Fatalf("clean-close sticky_written = %v, want true", persisted[0].StickyWritten)
 	}
+	if persisted[0].ProbeOutcome == nil || *persisted[0].ProbeOutcome != model.WebSocketProbeOutcomeObservedUsableModel {
+		t.Fatalf("clean-close probe_outcome = %v, want %q", persisted[0].ProbeOutcome, model.WebSocketProbeOutcomeObservedUsableModel)
+	}
 	if persisted[0].TerminalCause == nil || *persisted[0].TerminalCause != model.TerminalCleanClose {
 		t.Fatalf("clean-close terminal_cause = %v, want %q", persisted[0].TerminalCause, model.TerminalCleanClose)
 	}
@@ -495,6 +507,9 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 
 	if persisted[1].SessionCommitted == nil || *persisted[1].SessionCommitted {
 		t.Fatalf("semantic-error session_committed = %v, want false", persisted[1].SessionCommitted)
+	}
+	if persisted[1].ProbeOutcome == nil || *persisted[1].ProbeOutcome != model.WebSocketProbeOutcomeTransportFailed {
+		t.Fatalf("semantic-error probe_outcome = %v, want %q", persisted[1].ProbeOutcome, model.WebSocketProbeOutcomeTransportFailed)
 	}
 	if persisted[1].TerminalCause == nil || *persisted[1].TerminalCause != model.TerminalUpstreamSemanticError {
 		t.Fatalf("semantic-error terminal_cause = %v, want %q", persisted[1].TerminalCause, model.TerminalUpstreamSemanticError)

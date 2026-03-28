@@ -84,6 +84,9 @@ func (s *SQLiteStore) applyLogFilters(query *gorm.DB, filter model.LogFilter) *g
 	if filter.SessionCommitted != nil {
 		query = query.Where("session_committed = ?", *filter.SessionCommitted)
 	}
+	if filter.ProbeOutcome != "" {
+		query = query.Where("probe_outcome = ?", filter.ProbeOutcome)
+	}
 	if filter.TerminalCause != "" {
 		query = query.Where("terminal_cause = ?", filter.TerminalCause)
 	}

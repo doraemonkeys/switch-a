@@ -8,11 +8,16 @@ import (
 	"switch-a/internal/model"
 )
 
+func probeOutcomePtr(v model.WebSocketProbeOutcome) *model.WebSocketProbeOutcome {
+	return &v
+}
+
 func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
 
 	committed := true
+	probeOutcome := model.WebSocketProbeOutcomeUnsupported
 	log := &model.RequestLog{
 		ProviderID:       "p1",
 		APIType:          "claude",
@@ -21,6 +26,7 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 		IsSticky:         true,
 		StickyWritten:    boolPtr(true),
 		SessionCommitted: &committed,
+		ProbeOutcome:     &probeOutcome,
 		TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
 		CommitSource:     commitSourcePtr(model.CommitSemantic),
 		CreatedAt:        time.Now(),
@@ -38,6 +44,9 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 	}
 	if found.StickyWritten == nil || !*found.StickyWritten {
 		t.Fatalf("sticky_written = %v, want true", found.StickyWritten)
+	}
+	if found.ProbeOutcome == nil || *found.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
+		t.Fatalf("probe_outcome = %v, want %q", found.ProbeOutcome, model.WebSocketProbeOutcomeUnsupported)
 	}
 	if found.TerminalCause == nil || *found.TerminalCause != model.TerminalCleanClose {
 		t.Fatalf("terminal_cause = %v, want %q", found.TerminalCause, model.TerminalCleanClose)
@@ -66,6 +75,9 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 	if regularFound.StickyWritten != nil {
 		t.Fatalf("regular sticky_written = %v, want nil", regularFound.StickyWritten)
 	}
+	if regularFound.ProbeOutcome != nil {
+		t.Fatalf("regular probe_outcome = %v, want nil", regularFound.ProbeOutcome)
+	}
 	if regularFound.TerminalCause != nil {
 		t.Fatalf("regular terminal_cause = %v, want nil", regularFound.TerminalCause)
 	}
@@ -86,6 +98,7 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    boolPtr(true),
 			SessionCommitted: &committed,
+			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeBypassed),
 			TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
 			CreatedAt:        time.Now(),
 		},
@@ -94,6 +107,7 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    boolPtr(false),
 			SessionCommitted: &uncommitted,
+			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeTransportFailed),
 			TerminalCause:    terminalCausePtr(model.TerminalUpstreamSemanticError),
 			CreatedAt:        time.Now(),
 		},
@@ -101,6 +115,7 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 			ProviderID:    "p3",
 			IsWebSocket:   true,
 			StickyWritten: boolPtr(false),
+			ProbeOutcome:  probeOutcomePtr(model.WebSocketProbeOutcomeCompletedWithoutUsableModel),
 			TerminalCause: terminalCausePtr(model.TerminalUnknown),
 			CommitSource:  commitSourcePtr(model.CommitUnknown),
 			CreatedAt:     time.Now(),
@@ -145,6 +160,11 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 		{
 			name:          "filter by terminal_cause",
 			filter:        model.LogFilter{TerminalCause: model.TerminalUpstreamSemanticError, Limit: 10},
+			expectedCount: 1,
+		},
+		{
+			name:          "filter by probe_outcome",
+			filter:        model.LogFilter{ProbeOutcome: model.WebSocketProbeOutcomeTransportFailed, Limit: 10},
 			expectedCount: 1,
 		},
 	}

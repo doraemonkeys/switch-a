@@ -385,6 +385,7 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 	err := session.FinalErr
 	attempts := session.RequestAttempts()
 	sessionCommitted := false
+	probeOutcome := model.WebSocketProbeOutcomeUnknown
 	terminalCause := model.TerminalUnknown
 	commitSource := model.CommitUnknown
 	if result != nil {
@@ -395,6 +396,9 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 		if result.CommitSource != "" {
 			commitSource = result.CommitSource
 		}
+	}
+	if model.IsValidWebSocketProbeOutcome(session.ProbeOutcome) {
+		probeOutcome = session.ProbeOutcome
 	}
 
 	log := &model.RequestLog{
@@ -411,6 +415,7 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 		RetryCount:       session.RetryCount(),
 		StickyWritten:    &session.StickyWritten,
 		SessionCommitted: &sessionCommitted,
+		ProbeOutcome:     &probeOutcome,
 		TerminalCause:    &terminalCause,
 		CommitSource:     &commitSource,
 		CreatedAt:        time.Now(),

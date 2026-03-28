@@ -206,11 +206,12 @@ type RequestLog struct {
 	IsSticky    bool   `json:"is_sticky"`
 	// WebSocket lifecycle fields stay nullable so regular HTTP/SSE rows cannot
 	// masquerade as "not written" or "unknown" WebSocket outcomes.
-	StickyWritten    *bool          `gorm:"default:null" json:"sticky_written"`
-	SessionCommitted *bool          `gorm:"default:null" json:"session_committed"`
-	TerminalCause    *TerminalCause `gorm:"type:text;default:null" json:"terminal_cause"`
-	CommitSource     *CommitSource  `gorm:"type:text;default:null" json:"commit_source"`
-	CreatedAt        time.Time      `gorm:"index" json:"created_at"`
+	StickyWritten    *bool                  `gorm:"default:null" json:"sticky_written"`
+	SessionCommitted *bool                  `gorm:"default:null" json:"session_committed"`
+	ProbeOutcome     *WebSocketProbeOutcome `gorm:"type:text;default:null" json:"probe_outcome"`
+	TerminalCause    *TerminalCause         `gorm:"type:text;default:null" json:"terminal_cause"`
+	CommitSource     *CommitSource          `gorm:"type:text;default:null" json:"commit_source"`
+	CreatedAt        time.Time              `gorm:"index" json:"created_at"`
 	// Phase 1 diagnostic fields (P0)
 	RequestPath     string `gorm:"default:''" json:"request_path"`      // Relative path like /v1/messages (without base_url)
 	RequestMethod   string `gorm:"default:''" json:"request_method"`    // HTTP method: GET/POST/PUT/DELETE
@@ -285,30 +286,31 @@ type RequestAttempt struct {
 
 // LogFilter represents filter and sort parameters for log queries.
 type LogFilter struct {
-	ProviderID       string        // Filter by provider ID
-	APIType          string        // Filter by API type (claude/codex/gemini/custom:*)
-	Success          *bool         // Filter by success/failure (nil = no filter)
-	IsSSE            *bool         // Filter by SSE/regular request (nil = no filter)
-	IsWebSocket      *bool         // Filter by WebSocket/regular request (nil = no filter)
-	StickyWritten    *bool         // Filter by sticky cache write-side effect on WebSocket rows (nil = no filter)
-	SessionCommitted *bool         // Filter by known commitment state on WebSocket rows (nil = no filter; NULL rows stay excluded)
-	TerminalCause    TerminalCause // Filter by explicit terminal cause on WebSocket rows (empty = no filter)
-	UserID           string        // Filter by user ID
-	StartTime        *time.Time    // Filter by start time (inclusive)
-	EndTime          *time.Time    // Filter by end time (exclusive)
-	MinLatency       *int64        // Filter by minimum latency in ms
-	MinRetryCount    *int          // Filter by minimum retry count (e.g., 1 for "has retries")
-	HasRetries       *bool         // Filter by has retries (true = retry_count > 0, false = retry_count = 0)
-	SortBy           string        // Sort field: "created_at" or "latency_ms"
-	SortOrder        string        // Sort direction: "asc" or "desc"
-	Limit            int           // Maximum number of results
-	Offset           int           // Offset for pagination
+	ProviderID       string                // Filter by provider ID
+	APIType          string                // Filter by API type (claude/codex/gemini/custom:*)
+	Success          *bool                 // Filter by success/failure (nil = no filter)
+	IsSSE            *bool                 // Filter by SSE/regular request (nil = no filter)
+	IsWebSocket      *bool                 // Filter by WebSocket/regular request (nil = no filter)
+	StickyWritten    *bool                 // Filter by sticky cache write-side effect on WebSocket rows (nil = no filter)
+	SessionCommitted *bool                 // Filter by known commitment state on WebSocket rows (nil = no filter; NULL rows stay excluded)
+	ProbeOutcome     WebSocketProbeOutcome // Filter by explicit probe outcome on WebSocket rows (empty = no filter)
+	TerminalCause    TerminalCause         // Filter by explicit terminal cause on WebSocket rows (empty = no filter)
+	UserID           string                // Filter by user ID
+	StartTime        *time.Time            // Filter by start time (inclusive)
+	EndTime          *time.Time            // Filter by end time (exclusive)
+	MinLatency       *int64                // Filter by minimum latency in ms
+	MinRetryCount    *int                  // Filter by minimum retry count (e.g., 1 for "has retries")
+	HasRetries       *bool                 // Filter by has retries (true = retry_count > 0, false = retry_count = 0)
+	SortBy           string                // Sort field: "created_at" or "latency_ms"
+	SortOrder        string                // Sort direction: "asc" or "desc"
+	Limit            int                   // Maximum number of results
+	Offset           int                   // Offset for pagination
 }
 
 // HasWebSocketLifecycleFilter centralizes the rule that lifecycle predicates only
 // make sense for WebSocket rows, so query builders and test doubles stay aligned.
 func (f LogFilter) HasWebSocketLifecycleFilter() bool {
-	return f.StickyWritten != nil || f.SessionCommitted != nil || f.TerminalCause != ""
+	return f.StickyWritten != nil || f.SessionCommitted != nil || f.ProbeOutcome != "" || f.TerminalCause != ""
 }
 
 // StickyKey represents the cache key for sticky session.

@@ -19,11 +19,16 @@ func lifecycleTerminalCausePtr(v model.TerminalCause) *model.TerminalCause {
 	return &v
 }
 
+func lifecycleProbeOutcomePtr(v model.WebSocketProbeOutcome) *model.WebSocketProbeOutcome {
+	return &v
+}
+
 func TestGetLog_Success(t *testing.T) {
 	h, st, _ := testHandler()
 
 	now := time.Now()
 	committed := true
+	probeOutcome := model.WebSocketProbeOutcomeUnsupported
 	st.logs = []model.RequestLog{
 		{
 			ID:               1,
@@ -36,6 +41,7 @@ func TestGetLog_Success(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(true),
 			SessionCommitted: &committed,
+			ProbeOutcome:     &probeOutcome,
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
 			CreatedAt:        now,
 		},
@@ -70,6 +76,9 @@ func TestGetLog_Success(t *testing.T) {
 	}
 	if log.StickyWritten == nil || !*log.StickyWritten {
 		t.Fatalf("log.StickyWritten = %v, want true", log.StickyWritten)
+	}
+	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
+		t.Fatalf("log.ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeUnsupported)
 	}
 	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalCleanClose {
 		t.Fatalf("log.TerminalCause = %v, want %q", log.TerminalCause, model.TerminalCleanClose)
@@ -334,7 +343,15 @@ func TestGetLogs_Success(t *testing.T) {
 
 	now := time.Now()
 	st.logs = []model.RequestLog{
-		{ID: 1, ProviderID: "provider-1", APIType: "claude", Success: true, CreatedAt: now},
+		{
+			ID:           1,
+			ProviderID:   "provider-1",
+			APIType:      "claude",
+			Success:      true,
+			IsWebSocket:  true,
+			ProbeOutcome: lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeBypassed),
+			CreatedAt:    now,
+		},
 		{ID: 2, ProviderID: "provider-2", APIType: "codex", Success: false, CreatedAt: now.Add(-time.Hour)},
 	}
 
@@ -364,6 +381,9 @@ func TestGetLogs_Success(t *testing.T) {
 	if resp.Offset != 0 {
 		t.Errorf("expected offset 0, got %d", resp.Offset)
 	}
+	if resp.Logs[0].ProbeOutcome == nil || *resp.Logs[0].ProbeOutcome != model.WebSocketProbeOutcomeBypassed {
+		t.Fatalf("resp.Logs[0].ProbeOutcome = %v, want %q", resp.Logs[0].ProbeOutcome, model.WebSocketProbeOutcomeBypassed)
+	}
 }
 
 func TestGetLogs_WithQueryFilters(t *testing.T) {
@@ -382,6 +402,7 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(true),
 			SessionCommitted: &committed,
+			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeBypassed),
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
 			CreatedAt:        now,
 		},
@@ -394,6 +415,7 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(false),
 			SessionCommitted: &uncommitted,
+			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeTransportFailed),
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalUpstreamSemanticError),
 			CreatedAt:        now.Add(-time.Hour),
 		},
@@ -406,6 +428,7 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(false),
 			SessionCommitted: &committed,
+			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeObservedUsableModel),
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalClientDisconnect),
 			CreatedAt:        now.Add(-2 * time.Hour),
 		},
@@ -424,6 +447,7 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 		{"filter by sticky_written", "?sticky_written=true", 1},
 		{"filter by session_committed true", "?session_committed=true", 2},
 		{"filter by session_committed false", "?session_committed=false", 1},
+		{"filter by probe_outcome", "?probe_outcome=transport_failed", 1},
 		{"filter by terminal_cause", "?terminal_cause=client_disconnect", 1},
 		{"multiple filters", "?provider_id=provider-1&api_type=claude", 2},
 	}
@@ -591,6 +615,7 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 		{"invalid is_websocket", "?is_websocket=maybe"},
 		{"invalid sticky_written", "?sticky_written=maybe"},
 		{"invalid session_committed", "?session_committed=maybe"},
+		{"invalid probe_outcome", "?probe_outcome=not_real"},
 		{"invalid terminal_cause", "?terminal_cause=not_real"},
 		{"invalid start_time", "?start_time=not-a-date"},
 		{"invalid end_time", "?end_time=invalid"},
@@ -668,6 +693,9 @@ func TestParseLogFilter_Defaults(t *testing.T) {
 	if filter.SessionCommitted != nil {
 		t.Errorf("expected session_committed to be nil, got %v", filter.SessionCommitted)
 	}
+	if filter.ProbeOutcome != "" {
+		t.Errorf("expected empty probe_outcome, got %q", filter.ProbeOutcome)
+	}
 	if filter.TerminalCause != "" {
 		t.Errorf("expected empty terminal_cause, got %q", filter.TerminalCause)
 	}
@@ -687,6 +715,7 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 		"is_websocket":      {"true"},
 		"sticky_written":    {"true"},
 		"session_committed": {"false"},
+		"probe_outcome":     {"transport_failed"},
 		"terminal_cause":    {"upstream_semantic_error"},
 		"user_id":           {"user-123"},
 		"start_time":        {startTime},
@@ -729,6 +758,9 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 	}
 	if filter.SessionCommitted == nil || *filter.SessionCommitted != false {
 		t.Error("expected session_committed false")
+	}
+	if filter.ProbeOutcome != model.WebSocketProbeOutcomeTransportFailed {
+		t.Errorf("expected probe_outcome %q, got %q", model.WebSocketProbeOutcomeTransportFailed, filter.ProbeOutcome)
 	}
 	if filter.TerminalCause != model.TerminalUpstreamSemanticError {
 		t.Errorf("expected terminal_cause %q, got %q", model.TerminalUpstreamSemanticError, filter.TerminalCause)
@@ -800,6 +832,28 @@ func TestParseLogFilter_TerminalCause(t *testing.T) {
 	}
 	if filter.TerminalCause != model.TerminalClientDisconnect {
 		t.Errorf("expected terminal_cause %q, got %q", model.TerminalClientDisconnect, filter.TerminalCause)
+	}
+}
+
+func TestParseLogFilter_ProbeOutcome(t *testing.T) {
+	query := map[string][]string{"probe_outcome": {"unsupported"}}
+	filter, errMsg := parseLogFilter(query)
+
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if filter.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
+		t.Errorf("expected probe_outcome %q, got %q", model.WebSocketProbeOutcomeUnsupported, filter.ProbeOutcome)
+	}
+
+	query = map[string][]string{"probe_outcome": {"bogus"}}
+	filter, errMsg = parseLogFilter(query)
+
+	if errMsg == "" {
+		t.Fatal("expected validation error for invalid probe_outcome")
+	}
+	if filter.ProbeOutcome != "" {
+		t.Errorf("expected empty probe_outcome on error, got %q", filter.ProbeOutcome)
 	}
 }
 

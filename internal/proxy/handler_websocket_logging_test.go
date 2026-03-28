@@ -50,6 +50,7 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 		FinalProvider: &model.Provider{ID: "ws-p1"},
 		FinalResult:   result,
 		FinalErr:      result.Err,
+		ProbeOutcome:  model.WebSocketProbeOutcomeUnsupported,
 	}, 250*time.Millisecond)
 
 	log := store.LastLog()
@@ -76,6 +77,9 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	}
 	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
 		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
+	}
+	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
+		t.Fatalf("ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeUnsupported)
 	}
 }
 
@@ -178,6 +182,7 @@ func TestHandler_logWebSocketRequest_PersistsCommitSource(t *testing.T) {
 		FinalProvider: &model.Provider{ID: "ws-p1"},
 		FinalResult:   result,
 		StickyWritten: true,
+		ProbeOutcome:  model.WebSocketProbeOutcomeObservedUsableModel,
 	}, 250*time.Millisecond)
 
 	log := store.LastLog()
@@ -189,6 +194,9 @@ func TestHandler_logWebSocketRequest_PersistsCommitSource(t *testing.T) {
 	}
 	if log.SessionCommitted == nil || !*log.SessionCommitted {
 		t.Fatalf("SessionCommitted = %v, want true", log.SessionCommitted)
+	}
+	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeObservedUsableModel {
+		t.Fatalf("ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeObservedUsableModel)
 	}
 }
 

@@ -84,6 +84,13 @@ func TestLogFilterHasWebSocketLifecycleFilter(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			name: "probe outcome",
+			filter: LogFilter{
+				ProbeOutcome: WebSocketProbeOutcomeUnsupported,
+			},
+			want: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -108,5 +115,19 @@ func TestIsValidTerminalCause(t *testing.T) {
 	}
 	if IsValidTerminalCause(TerminalCause("bogus")) {
 		t.Fatal("IsValidTerminalCause(invalid) = true, want false")
+	}
+}
+
+func TestIsValidWebSocketProbeOutcome(t *testing.T) {
+	t.Parallel()
+
+	if !IsValidWebSocketProbeOutcome(WebSocketProbeOutcomeUnknown) {
+		t.Fatal("IsValidWebSocketProbeOutcome(unknown) = false, want true")
+	}
+	if !IsValidWebSocketProbeOutcome(WebSocketProbeOutcomeTransportFailed) {
+		t.Fatal("IsValidWebSocketProbeOutcome(transport_failed) = false, want true")
+	}
+	if IsValidWebSocketProbeOutcome(WebSocketProbeOutcome("bogus")) {
+		t.Fatal("IsValidWebSocketProbeOutcome(invalid) = true, want false")
 	}
 }

@@ -27,15 +27,15 @@ type WebSocketAttemptResult struct {
 	ReplayFailed      bool
 }
 
-type webSocketSelectionProbeOutcome string
+type webSocketSelectionProbeOutcome = model.WebSocketProbeOutcome
 
 const (
-	webSocketSelectionProbeOutcomeUnknown                     webSocketSelectionProbeOutcome = ""
-	webSocketSelectionProbeOutcomeBypassed                    webSocketSelectionProbeOutcome = "bypassed"
-	webSocketSelectionProbeOutcomeUnsupported                 webSocketSelectionProbeOutcome = "unsupported"
-	webSocketSelectionProbeOutcomeObservedUsableModel         webSocketSelectionProbeOutcome = "observed_usable_model"
-	webSocketSelectionProbeOutcomeCompletedWithoutUsableModel webSocketSelectionProbeOutcome = "completed_without_usable_model"
-	webSocketSelectionProbeOutcomeTransportFailed             webSocketSelectionProbeOutcome = "transport_failed"
+	webSocketSelectionProbeOutcomeUnknown                     webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeUnknown
+	webSocketSelectionProbeOutcomeBypassed                    webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeBypassed
+	webSocketSelectionProbeOutcomeUnsupported                 webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeUnsupported
+	webSocketSelectionProbeOutcomeObservedUsableModel         webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeObservedUsableModel
+	webSocketSelectionProbeOutcomeCompletedWithoutUsableModel webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeCompletedWithoutUsableModel
+	webSocketSelectionProbeOutcomeTransportFailed             webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeTransportFailed
 )
 
 func (r WebSocketAttemptResult) clientAccepted() bool {

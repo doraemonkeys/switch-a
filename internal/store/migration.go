@@ -22,6 +22,7 @@ const (
 	webSocketColumnName          = "is_websocket"
 	sessionCommittedColumnName   = "session_committed"
 	stickyWrittenColumnName      = "sticky_written"
+	probeOutcomeColumnName       = "probe_outcome"
 	terminalCauseColumnName      = "terminal_cause"
 	commitSourceColumnName       = "commit_source"
 )
@@ -183,6 +184,10 @@ func migrateRequestLogLifecycleFields(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	hasProbeOutcome, err := requestLogsColumnExists(db, probeOutcomeColumnName)
+	if err != nil {
+		return err
+	}
 	hasTerminalCause, err := requestLogsColumnExists(db, terminalCauseColumnName)
 	if err != nil {
 		return err
@@ -191,7 +196,7 @@ func migrateRequestLogLifecycleFields(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if !hasSessionCommitted && !hasStickyWritten && !hasTerminalCause && !hasCommitSource {
+	if !hasSessionCommitted && !hasStickyWritten && !hasProbeOutcome && !hasTerminalCause && !hasCommitSource {
 		return nil
 	}
 
@@ -212,6 +217,15 @@ func migrateRequestLogLifecycleFields(db *gorm.DB) error {
 			stickyWrittenColumnName,
 			false,
 			fmt.Sprintf("%s IS NULL", stickyWrittenColumnName),
+		); err != nil {
+			return err
+		}
+		if err := migrateOptionalWebSocketLifecycleColumn(
+			tx,
+			hasProbeOutcome,
+			probeOutcomeColumnName,
+			model.WebSocketProbeOutcomeUnknown,
+			fmt.Sprintf("(%s IS NULL OR %s = '')", probeOutcomeColumnName, probeOutcomeColumnName),
 		); err != nil {
 			return err
 		}

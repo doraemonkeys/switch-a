@@ -36,6 +36,7 @@ type LogsResponse struct {
 //   - is_websocket: filter by WebSocket/regular request (true/false)
 //   - sticky_written: filter by whether the request wrote sticky affinity (true/false)
 //   - session_committed: filter by whether committed service is known to have started (true/false)
+//   - probe_outcome: filter by explicit WebSocket probe outcome enum
 //   - terminal_cause: filter by explicit terminal cause enum
 //   - user_id: filter by user ID
 //   - start_time: filter by start time (RFC3339)
@@ -125,6 +126,11 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	}
 
 	filter.SessionCommitted, errMsg = parseBoolPtr(getQueryParam(query, "session_committed"), "session_committed")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.ProbeOutcome, errMsg = parseWebSocketProbeOutcome(getQueryParam(query, "probe_outcome"))
 	if errMsg != "" {
 		return filter, errMsg
 	}
@@ -251,6 +257,18 @@ func parseTerminalCause(s string) (model.TerminalCause, string) {
 		return "", "Invalid terminal_cause: must be a valid terminal cause"
 	}
 	return cause, ""
+}
+
+func parseWebSocketProbeOutcome(s string) (model.WebSocketProbeOutcome, string) {
+	if s == "" {
+		return "", ""
+	}
+
+	outcome := model.WebSocketProbeOutcome(s)
+	if !model.IsValidWebSocketProbeOutcome(outcome) {
+		return "", "Invalid probe_outcome: must be a valid websocket probe outcome"
+	}
+	return outcome, ""
 }
 
 // parseTimePtr parses a RFC3339 time pointer from string.
