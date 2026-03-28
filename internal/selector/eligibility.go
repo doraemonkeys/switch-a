@@ -208,6 +208,10 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 		if routingPolicyConsumesModel(policy) {
 			hasModelSpecificPolicy = true
 			if !requestModelKnown {
+				// Model-specific policy still creates hidden-model demand, but it cannot
+				// authoritatively constrain the current request until selection-time model
+				// information actually exists. Already-visible gates such as api_type,
+				// auth, and health remain authoritative through the rest of eligibility.
 				continue
 			}
 		}
