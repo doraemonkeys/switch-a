@@ -20,10 +20,6 @@ const (
 	webSocketGatewayErrorType      = "gateway_error"
 )
 
-type routingPolicySource interface {
-	ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error)
-}
-
 type webSocketGatewayErrorEnvelope struct {
 	Type   string `json:"type"`
 	Status int    `json:"status"`
