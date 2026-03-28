@@ -42,6 +42,9 @@ var (
 	DefaultStickyMode = defaults.StickyMode
 	// DefaultStickyTTL is the default sticky session TTL in seconds.
 	DefaultStickyTTL = strconv.Itoa(defaults.StickyTTLSeconds)
+	// DefaultWebSocketProbeClientModel preserves the current pre-selection
+	// behavior unless an operator explicitly disables probing.
+	DefaultWebSocketProbeClientModel = boolToString(defaults.WebSocketProbeClientModel)
 	// DefaultCircuitFailure is the default number of failures before circuit opens.
 	DefaultCircuitFailure = strconv.Itoa(defaults.CircuitFailure)
 	// DefaultCircuitWindow is the default circuit breaker window in seconds.

@@ -101,13 +101,14 @@ var validConfigKeys = map[string]bool{
 	"sse_idle_timeout":         true,
 	"sticky_mode":              true,
 	"sticky_ttl":               true,
-	"circuit_failure":          true,
-	"circuit_window":           true,
-	"circuit_disable":          true,
-	"max_body_size":            true,
-	"global_max_attempts":      true,
-	"log_retention_days":       true,
-	"inter_group_strategy":     true,
+	defaults.ConfigKeyWebSocketProbeClientModel: true,
+	"circuit_failure":      true,
+	"circuit_window":       true,
+	"circuit_disable":      true,
+	"max_body_size":        true,
+	"global_max_attempts":  true,
+	"log_retention_days":   true,
+	"inter_group_strategy": true,
 }
 
 // IsValidStrategy checks if the given strategy is valid.
@@ -160,13 +161,14 @@ var configValidators = map[string]ConfigValidator{
 	"sse_idle_timeout":         validateNonNegativeIntConfig, // 0 means no timeout
 	"sticky_mode":              validateStickyModeConfig,
 	"sticky_ttl":               validatePositiveIntConfig,
-	"circuit_failure":          validatePositiveIntConfig,
-	"circuit_window":           validatePositiveIntConfig,
-	"circuit_disable":          validatePositiveIntConfig,
-	"max_body_size":            validatePositiveIntConfig,
-	"global_max_attempts":      validateNonNegativeIntConfig,
-	"log_retention_days":       validatePositiveIntConfig,
-	"inter_group_strategy":     validateStrategyConfig,
+	defaults.ConfigKeyWebSocketProbeClientModel: validateBoolConfig,
+	"circuit_failure":      validatePositiveIntConfig,
+	"circuit_window":       validatePositiveIntConfig,
+	"circuit_disable":      validatePositiveIntConfig,
+	"max_body_size":        validatePositiveIntConfig,
+	"global_max_attempts":  validateNonNegativeIntConfig,
+	"log_retention_days":   validatePositiveIntConfig,
+	"inter_group_strategy": validateStrategyConfig,
 }
 
 // ValidateConfigValue validates a config value for the given key.

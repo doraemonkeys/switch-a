@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"switch-a/internal/defaults"
 )
 
 func TestInitDefaultConfig(t *testing.T) {
@@ -28,6 +30,18 @@ func TestInitDefaultConfig(t *testing.T) {
 	}
 	if value != DefaultStickyMode {
 		t.Errorf("sticky_mode = %q, want %q", value, DefaultStickyMode)
+	}
+
+	value, err = store.GetConfig(ctx, defaults.ConfigKeyWebSocketProbeClientModel)
+	if err != nil {
+		t.Fatalf("GetConfig websocket_probe_client_model failed: %v", err)
+	}
+	if value != DefaultWebSocketProbeClientModel {
+		t.Errorf(
+			"websocket_probe_client_model = %q, want %q",
+			value,
+			DefaultWebSocketProbeClientModel,
+		)
 	}
 }
 
@@ -56,6 +70,18 @@ func TestConfig(t *testing.T) {
 	}
 	if value != "300" {
 		t.Errorf("default sticky_ttl = %q, want %q", value, "300")
+	}
+
+	value, err = store.GetConfig(ctx, defaults.ConfigKeyWebSocketProbeClientModel)
+	if err != nil {
+		t.Fatalf("GetConfig for websocket_probe_client_model default failed: %v", err)
+	}
+	if value != DefaultWebSocketProbeClientModel {
+		t.Errorf(
+			"default websocket_probe_client_model = %q, want %q",
+			value,
+			DefaultWebSocketProbeClientModel,
+		)
 	}
 
 	// Get all config

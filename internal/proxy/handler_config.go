@@ -15,11 +15,12 @@ import (
 
 // Default configuration values - derived from centralized defaults package.
 const (
-	DefaultMaxBodySizeMB     = defaults.MaxBodySizeMB
-	DefaultGlobalMaxAttempts = defaults.GlobalMaxAttempts
-	DefaultUserHeader        = defaults.UserHeader
-	DefaultStickyMode        = model.StickyModeModel // Default stickiness includes model dimension
-	DefaultGlobalAuthMode    = defaults.AuthMode     // Default auth mode for provider authentication
+	DefaultMaxBodySizeMB             = defaults.MaxBodySizeMB
+	DefaultGlobalMaxAttempts         = defaults.GlobalMaxAttempts
+	DefaultUserHeader                = defaults.UserHeader
+	DefaultStickyMode                = model.StickyModeModel // Default stickiness includes model dimension
+	DefaultGlobalAuthMode            = defaults.AuthMode     // Default auth mode for provider authentication
+	DefaultWebSocketProbeClientModel = defaults.WebSocketProbeClientModel
 )
 
 // Default timeout values - derived from centralized defaults package.
@@ -35,18 +36,19 @@ const StatusCodeNoResponse = 0
 
 // Config keys for runtime configuration stored in the database.
 const (
-	ConfigKeyTrustProxyHeaders      = "trust_proxy_headers"
-	ConfigKeyUserHeader             = "user_header"
-	ConfigKeyMaxBodySize            = "max_body_size"
-	ConfigKeyAuthMode               = "auth_mode"
-	ConfigKeyGlobalMaxAttempts      = "global_max_attempts"
-	ConfigKeyUpstreamConnectTimeout = "upstream_connect_timeout"
-	ConfigKeyFirstByteTimeout       = "first_byte_timeout"
-	ConfigKeyUpstreamReadTimeout    = "upstream_read_timeout"
-	ConfigKeySSEIdleTimeout         = "sse_idle_timeout"
-	ConfigKeyStickyMode             = "sticky_mode"
-	ConfigKeyStickyTTL              = "sticky_ttl"
-	ConfigKeyInterGroupStrategy     = selector.ConfigKeyInterGroupStrategy
+	ConfigKeyTrustProxyHeaders         = "trust_proxy_headers"
+	ConfigKeyUserHeader                = "user_header"
+	ConfigKeyMaxBodySize               = "max_body_size"
+	ConfigKeyAuthMode                  = "auth_mode"
+	ConfigKeyGlobalMaxAttempts         = "global_max_attempts"
+	ConfigKeyUpstreamConnectTimeout    = "upstream_connect_timeout"
+	ConfigKeyFirstByteTimeout          = "first_byte_timeout"
+	ConfigKeyUpstreamReadTimeout       = "upstream_read_timeout"
+	ConfigKeySSEIdleTimeout            = "sse_idle_timeout"
+	ConfigKeyStickyMode                = "sticky_mode"
+	ConfigKeyStickyTTL                 = "sticky_ttl"
+	ConfigKeyWebSocketProbeClientModel = defaults.ConfigKeyWebSocketProbeClientModel
+	ConfigKeyInterGroupStrategy        = selector.ConfigKeyInterGroupStrategy
 )
 
 // defaultStickyTTLSeconds uses canonical value from selector package for consistency.
@@ -54,17 +56,18 @@ const defaultStickyTTLSeconds = selector.DefaultStickyTTLSeconds
 
 // runtimeConfig holds configuration loaded from the store per-request (immutable once created).
 type runtimeConfig struct {
-	trustProxy        bool
-	userHeader        string
-	maxBodySizeMB     int64
-	globalAuthMode    string
-	globalMaxAttempts int
-	connectTimeout    time.Duration
-	firstByteTimeout  time.Duration
-	readTimeout       time.Duration
-	sseIdleTimeout    time.Duration
-	stickyMode        model.StickyMode
-	stickyTTL         time.Duration
+	trustProxy                bool
+	userHeader                string
+	maxBodySizeMB             int64
+	globalAuthMode            string
+	globalMaxAttempts         int
+	connectTimeout            time.Duration
+	firstByteTimeout          time.Duration
+	readTimeout               time.Duration
+	sseIdleTimeout            time.Duration
+	stickyMode                model.StickyMode
+	stickyTTL                 time.Duration
+	websocketProbeClientModel bool
 }
 
 // loadConfig loads runtime configuration from the store.
@@ -160,6 +163,17 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 		h.logger.Warn("failed to get sticky_ttl, using default", zap.Error(err))
 	}
 	cfg.stickyTTL = time.Duration(parseIntOrDefault(stickyTTL, defaultStickyTTLSeconds)) * time.Second
+
+	// Probe enablement is operational policy, so store issues degrade to the
+	// documented default instead of failing the whole request path.
+	websocketProbeClientModel, err := h.store.GetConfig(ctx, ConfigKeyWebSocketProbeClientModel)
+	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+		h.logger.Warn("failed to get websocket_probe_client_model, using default", zap.Error(err))
+	}
+	cfg.websocketProbeClientModel = parseBoolOrDefault(
+		websocketProbeClientModel,
+		DefaultWebSocketProbeClientModel,
+	)
 
 	return cfg, nil
 }

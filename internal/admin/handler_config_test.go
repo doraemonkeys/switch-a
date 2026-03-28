@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"switch-a/internal/defaults"
 	"switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -50,6 +51,14 @@ func TestGetConfig(t *testing.T) {
 	}
 	if _, ok := resp.Defaults["sticky_mode"]; !ok {
 		t.Error("Defaults should contain sticky_mode")
+	}
+	if got := resp.Defaults[defaults.ConfigKeyWebSocketProbeClientModel]; got != "true" {
+		t.Errorf(
+			"Defaults[%s] = %q, want %q",
+			defaults.ConfigKeyWebSocketProbeClientModel,
+			got,
+			"true",
+		)
 	}
 }
 
@@ -106,7 +115,7 @@ func TestGetConfig_Error(t *testing.T) {
 func TestUpdateConfig(t *testing.T) {
 	h, st, _ := testHandler()
 
-	body := `{"global_max_attempts": "5", "sticky_ttl": "600"}`
+	body := `{"global_max_attempts": "5", "sticky_ttl": "600", "websocket_probe_client_model": "false"}`
 
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -124,6 +133,14 @@ func TestUpdateConfig(t *testing.T) {
 	}
 	if st.config["sticky_ttl"] != "600" {
 		t.Errorf("sticky_ttl = %q, want %q", st.config["sticky_ttl"], "600")
+	}
+	if got := st.config[defaults.ConfigKeyWebSocketProbeClientModel]; got != "false" {
+		t.Errorf(
+			"%s = %q, want %q",
+			defaults.ConfigKeyWebSocketProbeClientModel,
+			got,
+			"false",
+		)
 	}
 
 	// Verify response format
@@ -235,6 +252,11 @@ func TestUpdateConfig_InvalidValues(t *testing.T) {
 			wantMsg: "must be 'true' or 'false'",
 		},
 		{
+			name:    "websocket_probe_client_model invalid",
+			body:    `{"websocket_probe_client_model": "maybe"}`,
+			wantMsg: "must be 'true' or 'false'",
+		},
+		{
 			name:    "sticky_mode invalid",
 			body:    `{"sticky_mode": "yes"}`,
 			wantMsg: "must be 'off', 'api_type', or 'model'",
@@ -325,6 +347,12 @@ func TestUpdateConfig_ValidValues(t *testing.T) {
 			body:  `{"sticky_mode": "model"}`,
 			key:   "sticky_mode",
 			value: "model",
+		},
+		{
+			name:  "websocket_probe_client_model false",
+			body:  `{"websocket_probe_client_model": "false"}`,
+			key:   defaults.ConfigKeyWebSocketProbeClientModel,
+			value: "false",
 		},
 	}
 

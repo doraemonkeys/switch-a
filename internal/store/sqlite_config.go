@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"switch-a/internal/defaults"
 	"switch-a/internal/model"
 
 	"gorm.io/gorm"
@@ -24,13 +25,14 @@ func GetDefaultConfigs() map[string]string {
 		"sse_idle_timeout":         DefaultSSEIdleTimeout,
 		"sticky_mode":              DefaultStickyMode,
 		"sticky_ttl":               DefaultStickyTTL,
-		"circuit_failure":          DefaultCircuitFailure,
-		"circuit_window":           DefaultCircuitWindow,
-		"circuit_disable":          DefaultCircuitDisable,
-		"max_body_size":            DefaultMaxBodySize,
-		"global_max_attempts":      DefaultGlobalMaxAttempts,
-		"log_retention_days":       DefaultLogRetentionDays,
-		"inter_group_strategy":     DefaultInterGroupStrategy,
+		defaults.ConfigKeyWebSocketProbeClientModel: DefaultWebSocketProbeClientModel,
+		"circuit_failure":      DefaultCircuitFailure,
+		"circuit_window":       DefaultCircuitWindow,
+		"circuit_disable":      DefaultCircuitDisable,
+		"max_body_size":        DefaultMaxBodySize,
+		"global_max_attempts":  DefaultGlobalMaxAttempts,
+		"log_retention_days":   DefaultLogRetentionDays,
+		"inter_group_strategy": DefaultInterGroupStrategy,
 	}
 }
 

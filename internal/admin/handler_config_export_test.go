@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"switch-a/internal/defaults"
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
 
@@ -66,6 +67,7 @@ func TestExportConfig(t *testing.T) {
 
 	st.config["sticky_mode"] = "model"
 	st.config["global_max_attempts"] = "3"
+	st.config[defaults.ConfigKeyWebSocketProbeClientModel] = "false"
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
 	w := httptest.NewRecorder()
@@ -95,6 +97,13 @@ func TestExportConfig(t *testing.T) {
 
 	if export.Settings["sticky_mode"] != "model" {
 		t.Errorf("sticky_mode = %q, want %q", export.Settings["sticky_mode"], "model")
+	}
+	if got := export.Settings[defaults.ConfigKeyWebSocketProbeClientModel]; got != "false" {
+		t.Errorf(
+			"websocket_probe_client_model = %q, want %q",
+			got,
+			"false",
+		)
 	}
 
 	// Verify provider data is correct

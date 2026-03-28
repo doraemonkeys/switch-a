@@ -49,6 +49,16 @@ const (
 	StickyTTL        = StickyTTLSeconds * time.Second
 )
 
+// WebSocket pre-selection probe defaults.
+const (
+	// ConfigKeyWebSocketProbeClientModel is the stable runtime-config identifier
+	// shared across persistence, admin APIs, and request-time loading.
+	ConfigKeyWebSocketProbeClientModel = "websocket_probe_client_model"
+	// WebSocketProbeClientModel keeps the current hidden-model-aware behavior
+	// unless an operator explicitly opts into handshake-only selection.
+	WebSocketProbeClientModel = true
+)
+
 // Circuit breaker defaults.
 const (
 	CircuitFailure  = 3

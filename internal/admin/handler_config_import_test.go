@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"switch-a/internal/defaults"
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
 
@@ -45,8 +46,9 @@ func TestImportConfig_DryRun(t *testing.T) {
 			{ID: "g2", Name: "New Group", Strategy: "weight", Enabled: true},
 		},
 		Settings: map[string]string{
-			"sticky_enabled":      "false",
-			"global_max_attempts": "5",
+			"sticky_enabled":                            "false",
+			"global_max_attempts":                       "5",
+			defaults.ConfigKeyWebSocketProbeClientModel: "false",
 		},
 	}
 
@@ -82,8 +84,8 @@ func TestImportConfig_DryRun(t *testing.T) {
 	if resp.Changes.Groups.Update != 1 {
 		t.Errorf("groups.update = %d, want 1", resp.Changes.Groups.Update)
 	}
-	if resp.Changes.Settings.Add != 1 {
-		t.Errorf("settings.add = %d, want 1", resp.Changes.Settings.Add)
+	if resp.Changes.Settings.Add != 2 {
+		t.Errorf("settings.add = %d, want 2", resp.Changes.Settings.Add)
 	}
 	if resp.Changes.Settings.Update != 1 {
 		t.Errorf("settings.update = %d, want 1", resp.Changes.Settings.Update)
@@ -113,7 +115,8 @@ func TestImportConfig_ActualImport(t *testing.T) {
 			{ID: "g2", Name: "New Group", Strategy: "weight", Weight: 2, Enabled: false},
 		},
 		Settings: map[string]string{
-			"global_max_attempts": "5",
+			"global_max_attempts":                       "5",
+			defaults.ConfigKeyWebSocketProbeClientModel: "false",
 		},
 	}
 
@@ -149,6 +152,9 @@ func TestImportConfig_ActualImport(t *testing.T) {
 	if resp.Applied.Groups.Updated != 1 {
 		t.Errorf("groups.updated = %d, want 1", resp.Applied.Groups.Updated)
 	}
+	if resp.Applied.Settings.Added != 2 {
+		t.Errorf("settings.added = %d, want 2", resp.Applied.Settings.Added)
+	}
 
 	// Verify data was actually changed
 	if st.providers["p2"] == nil {
@@ -159,6 +165,9 @@ func TestImportConfig_ActualImport(t *testing.T) {
 	}
 	if st.groups["g2"] == nil {
 		t.Error("g2 should exist after import")
+	}
+	if got := st.config[defaults.ConfigKeyWebSocketProbeClientModel]; got != "false" {
+		t.Errorf("websocket_probe_client_model = %q, want %q", got, "false")
 	}
 }
 
