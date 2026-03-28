@@ -219,20 +219,11 @@ func hasUsableWebSocketSelectionModel(modelName string) bool {
 	return trimmed != "" && !strings.EqualFold(trimmed, ModelUnknown)
 }
 
-func (h *Handler) webSocketSelectionConsumesHiddenModel(ctx context.Context, req *model.SelectRequest) bool {
-	if req == nil || hasUsableWebSocketSelectionModel(req.Model) {
-		return false
+func (h *Handler) webSocketSelectionConsumesHiddenModel(ctx context.Context, req *model.SelectRequest) (bool, error) {
+	if h == nil || req == nil || hasUsableWebSocketSelectionModel(req.Model) {
+		return false, nil
 	}
-	eligibility, err := selector.NewProviderSelectionEligibility(ctx, h.store, nil, req)
-	if err != nil {
-		h.logger.Warn(
-			"failed to evaluate websocket hidden-model selection demand",
-			zap.String("api_type", req.APIType),
-			zap.Error(err),
-		)
-		return false
-	}
-	return eligibility.WouldConsumeHiddenModel()
+	return selector.ResolveSelectionHiddenModelDemand(ctx, h.store, req)
 }
 
 func marshalWebSocketGatewayError(statusCode int, code, message string) []byte {

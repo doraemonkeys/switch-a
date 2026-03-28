@@ -8,6 +8,7 @@ type WebSocketProbeOutcome string
 const (
 	WebSocketProbeOutcomeUnknown                     WebSocketProbeOutcome = "unknown"
 	WebSocketProbeOutcomeBypassed                    WebSocketProbeOutcome = "bypassed"
+	WebSocketProbeOutcomeDemandResolutionFailed      WebSocketProbeOutcome = "demand_resolution_failed"
 	WebSocketProbeOutcomeUnsupported                 WebSocketProbeOutcome = "unsupported"
 	WebSocketProbeOutcomeObservedUsableModel         WebSocketProbeOutcome = "observed_usable_model"
 	WebSocketProbeOutcomeCompletedWithoutUsableModel WebSocketProbeOutcome = "completed_without_usable_model"
@@ -20,6 +21,7 @@ func IsValidWebSocketProbeOutcome(outcome WebSocketProbeOutcome) bool {
 	switch outcome {
 	case WebSocketProbeOutcomeUnknown,
 		WebSocketProbeOutcomeBypassed,
+		WebSocketProbeOutcomeDemandResolutionFailed,
 		WebSocketProbeOutcomeUnsupported,
 		WebSocketProbeOutcomeObservedUsableModel,
 		WebSocketProbeOutcomeCompletedWithoutUsableModel,

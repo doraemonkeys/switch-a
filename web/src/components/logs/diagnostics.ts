@@ -81,6 +81,7 @@ const COMMIT_SOURCE_LABELS: Record<CommitSource, string> = {
 const PROBE_OUTCOME_LABELS: Record<WebSocketProbeOutcome, string> = {
   unknown: "Unknown",
   bypassed: "Bypassed",
+  demand_resolution_failed: "Demand resolution failed",
   unsupported: "Unsupported",
   observed_usable_model: "Observed usable model",
   completed_without_usable_model: "Completed without usable model",

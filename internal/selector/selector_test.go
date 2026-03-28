@@ -14,13 +14,14 @@ import (
 
 // mockStore implements the Store interface for testing.
 type mockStore struct {
-	providers       []model.Provider
-	groups          map[string]*model.Group
-	configs         map[string]string
-	authStates      map[string]*model.ProviderAuthState
-	routingPolicies []model.RoutingPolicy
-	err             error
-	authStateErr    error
+	providers        []model.Provider
+	groups           map[string]*model.Group
+	configs          map[string]string
+	authStates       map[string]*model.ProviderAuthState
+	routingPolicies  []model.RoutingPolicy
+	err              error
+	authStateErr     error
+	routingPolicyErr error
 }
 
 func newMockStore() *mockStore {
@@ -87,6 +88,9 @@ func (m *mockStore) GetProviderAuthState(_ context.Context, providerID string) (
 }
 
 func (m *mockStore) ListRoutingPoliciesByAPIType(_ context.Context, apiType string) ([]model.RoutingPolicy, error) {
+	if m.routingPolicyErr != nil {
+		return nil, m.routingPolicyErr
+	}
 	if m.err != nil {
 		return nil, m.err
 	}

@@ -42,6 +42,7 @@ const PROBE_OUTCOME_OPTIONS: Array<{
 }> = [
   { value: FILTER_VALUE_ALL, label: "All Outcomes" },
   { value: "bypassed", label: "Bypassed" },
+  { value: "demand_resolution_failed", label: "Demand Resolution Failed" },
   { value: "unsupported", label: "Unsupported" },
   { value: "observed_usable_model", label: "Observed Usable Model" },
   {

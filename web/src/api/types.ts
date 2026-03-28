@@ -378,6 +378,7 @@ export type CommitSource = "semantic_event" | "upstream_message" | "unknown";
 export type WebSocketProbeOutcome =
   | "unknown"
   | "bypassed"
+  | "demand_resolution_failed"
   | "unsupported"
   | "observed_usable_model"
   | "completed_without_usable_model"

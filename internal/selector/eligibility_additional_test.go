@@ -2,6 +2,7 @@ package selector
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -242,6 +243,45 @@ func TestProviderSelectionEligibilityWouldConsumeHiddenModelForRoutingPolicy(t *
 	eligibility.req = req
 	if eligibility.WouldConsumeHiddenModel() {
 		t.Fatal("WouldConsumeHiddenModel() = true, want false once the request already has a usable model")
+	}
+}
+
+func TestResolveSelectionHiddenModelDemandModelStickyShortCircuitsRoutingPolicyLookup(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	store.routingPolicyErr = errors.New("routing policy store unavailable")
+
+	consumesHiddenModel, err := ResolveSelectionHiddenModelDemand(context.Background(), store, &model.SelectRequest{
+		APIType:    "codex",
+		Model:      unknownModelSentinel,
+		StickyMode: model.StickyModeModel,
+	})
+	if err != nil {
+		t.Fatalf("ResolveSelectionHiddenModelDemand() error = %v, want nil", err)
+	}
+	if !consumesHiddenModel {
+		t.Fatal("ResolveSelectionHiddenModelDemand() = false, want true when model sticky still needs continuity precision")
+	}
+}
+
+func TestResolveSelectionHiddenModelDemandReturnsErrorWhenRoutingPolicyLookupIsRequired(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("routing policy store unavailable")
+	store := newMockStore()
+	store.routingPolicyErr = wantErr
+
+	consumesHiddenModel, err := ResolveSelectionHiddenModelDemand(context.Background(), store, &model.SelectRequest{
+		APIType:    "codex",
+		Model:      unknownModelSentinel,
+		StickyMode: model.StickyModeOff,
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ResolveSelectionHiddenModelDemand() error = %v, want %v", err, wantErr)
+	}
+	if consumesHiddenModel {
+		t.Fatal("ResolveSelectionHiddenModelDemand() = true, want false when policy lookup failed before demand was known")
 	}
 }
 

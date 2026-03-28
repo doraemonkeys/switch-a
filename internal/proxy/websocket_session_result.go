@@ -199,6 +199,27 @@ func newWebSocketSelectionFailureSession(
 	}
 }
 
+func newWebSocketProbeDecisionFailureSession(
+	requestID string,
+	isSticky bool,
+	attempts []WebSocketAttemptResult,
+	probeOutcome webSocketSelectionProbeOutcome,
+	err error,
+) *WebSocketSessionResult {
+	session := newWebSocketSelectionFailureSession(
+		requestID,
+		isSticky,
+		attempts,
+		http.StatusInternalServerError,
+		model.TerminalInternalError,
+		ErrCodeInternalError,
+		webSocketProbeDemandResolutionFailureMessage,
+		err,
+	)
+	session.ProbeOutcome = probeOutcome
+	return session
+}
+
 func newWebSocketForwardAttemptResult(
 	provider *model.Provider,
 	attempt int,

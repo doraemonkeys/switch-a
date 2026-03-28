@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -175,6 +176,61 @@ func TestHandler_ServeHTTP_WebSocket_ProbeDisabledKeepsHandshakeOnlySelection(t 
 	}
 	if msgType != websocket.MessageText || !strings.Contains(string(data), `"response.created"`) {
 		t.Fatalf("unexpected websocket payload: type=%v body=%q", msgType, string(data))
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_DemandResolutionFailureReturnsGatewayError(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	store.configs[ConfigKeyStickyMode] = string(model.StickyModeOff)
+	store.configs[ConfigKeyWebSocketProbeClientModel] = "true"
+	store.routingPolicies = []model.RoutingPolicy{{
+		APIType:         APITypeCodex,
+		ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+		ModelMatchValue: "gpt-",
+	}}
+	store.routingPolicyErr = errors.New("routing policy store unavailable")
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/responses", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+
+	var errResp model.GatewayError
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if errResp.Error.Code != ErrCodeInternalError {
+		t.Fatalf("error code = %q, want %q", errResp.Error.Code, ErrCodeInternalError)
+	}
+	if errResp.Error.Message != webSocketProbeDemandResolutionFailureMessage {
+		t.Fatalf("error message = %q, want %q", errResp.Error.Message, webSocketProbeDemandResolutionFailureMessage)
+	}
+
+	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected websocket request log entry")
+	}
+	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeDemandResolutionFailed {
+		t.Fatalf("ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeDemandResolutionFailed)
+	}
+	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalInternalError {
+		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalInternalError)
 	}
 }
 

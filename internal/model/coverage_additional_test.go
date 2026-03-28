@@ -124,6 +124,9 @@ func TestIsValidWebSocketProbeOutcome(t *testing.T) {
 	if !IsValidWebSocketProbeOutcome(WebSocketProbeOutcomeUnknown) {
 		t.Fatal("IsValidWebSocketProbeOutcome(unknown) = false, want true")
 	}
+	if !IsValidWebSocketProbeOutcome(WebSocketProbeOutcomeDemandResolutionFailed) {
+		t.Fatal("IsValidWebSocketProbeOutcome(demand_resolution_failed) = false, want true")
+	}
 	if !IsValidWebSocketProbeOutcome(WebSocketProbeOutcomeTransportFailed) {
 		t.Fatal("IsValidWebSocketProbeOutcome(transport_failed) = false, want true")
 	}

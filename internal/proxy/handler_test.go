@@ -44,14 +44,15 @@ func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
 // reading logs could race with the background goroutine writing logs, causing flaky tests
 // or data races detectable by the race detector.
 type mockStore struct {
-	mu              sync.Mutex
-	providers       []model.Provider
-	configs         map[string]string
-	authStates      map[string]*model.ProviderAuthState
-	routingPolicies []model.RoutingPolicy
-	logs            []model.RequestLog
-	attempts        []model.RequestAttempt // Captures attempts for verification
-	err             error
+	mu               sync.Mutex
+	providers        []model.Provider
+	configs          map[string]string
+	authStates       map[string]*model.ProviderAuthState
+	routingPolicies  []model.RoutingPolicy
+	routingPolicyErr error
+	logs             []model.RequestLog
+	attempts         []model.RequestAttempt // Captures attempts for verification
+	err              error
 }
 
 func newMockStore() *mockStore {
@@ -123,6 +124,9 @@ func (m *mockStore) GetProviderAuthState(_ context.Context, providerID string) (
 func (m *mockStore) ListRoutingPoliciesByAPIType(_ context.Context, apiType string) ([]model.RoutingPolicy, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.routingPolicyErr != nil {
+		return nil, m.routingPolicyErr
+	}
 	if m.err != nil {
 		return nil, m.err
 	}

@@ -32,6 +32,7 @@ type webSocketSelectionProbeOutcome = model.WebSocketProbeOutcome
 const (
 	webSocketSelectionProbeOutcomeUnknown                     webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeUnknown
 	webSocketSelectionProbeOutcomeBypassed                    webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeBypassed
+	webSocketSelectionProbeOutcomeDemandResolutionFailed      webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeDemandResolutionFailed
 	webSocketSelectionProbeOutcomeUnsupported                 webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeUnsupported
 	webSocketSelectionProbeOutcomeObservedUsableModel         webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeObservedUsableModel
 	webSocketSelectionProbeOutcomeCompletedWithoutUsableModel webSocketSelectionProbeOutcome = model.WebSocketProbeOutcomeCompletedWithoutUsableModel

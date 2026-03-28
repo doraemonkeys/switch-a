@@ -57,6 +57,30 @@ func (e *ProviderSelectionEligibility) WouldConsumeHiddenModel() bool {
 	return stickyModeConsumesModel(reqStickyMode(e.req)) || e.routing.consumesHiddenModel
 }
 
+// ResolveSelectionHiddenModelDemand reports whether initial provider selection
+// would consume a model that is not currently present on the request. Model
+// sticky is an independent continuity consumer, so callers can answer the probe
+// decision immediately instead of letting a routing-policy lookup failure erase
+// a known model-affinity demand.
+func ResolveSelectionHiddenModelDemand(
+	ctx context.Context,
+	policySource any,
+	req *model.SelectRequest,
+) (bool, error) {
+	if hasUsableRequestModel(req) {
+		return false, nil
+	}
+	if stickyModeConsumesModel(reqStickyMode(req)) {
+		return true, nil
+	}
+
+	policies, err := listRoutingPoliciesByAPIType(ctx, policySource, reqAPIType(req))
+	if err != nil {
+		return false, err
+	}
+	return resolveRoutingPolicy(policies, req).consumesHiddenModel, nil
+}
+
 // NewProviderSelectionEligibility resolves the request-scoped hard constraints
 // once so callers can reuse the same policy/auth/health decision across all
 // selection entry points in the current attempt.

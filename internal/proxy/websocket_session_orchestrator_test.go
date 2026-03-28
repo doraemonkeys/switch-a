@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -452,6 +453,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 		newSelectionProbeObserver webSocketSelectionProbeObserverFactory
 		probeOn                   bool
 		want                      webSocketSelectionProbeDecision
+		wantErr                   string
 	}{
 		{
 			name:    "handshake model bypasses probe",
@@ -526,6 +528,23 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			},
 		},
 		{
+			name:    "model sticky demand survives routing policy lookup failure",
+			apiType: APITypeCodex,
+			req: &model.SelectRequest{
+				APIType:    APITypeCodex,
+				Model:      ModelUnknown,
+				StickyMode: model.StickyModeModel,
+			},
+			configure: func(store *mockStore) {
+				store.routingPolicyErr = errors.New("routing policy store unavailable")
+			},
+			probeOn: true,
+			want: webSocketSelectionProbeDecision{
+				outcome:     webSocketSelectionProbeOutcomeCompletedWithoutUsableModel,
+				shouldProbe: true,
+			},
+		},
+		{
 			name:    "routing policy hidden-model demand enables probe",
 			apiType: APITypeCodex,
 			req: &model.SelectRequest{
@@ -548,6 +567,23 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 				shouldProbe: true,
 			},
 		},
+		{
+			name:    "routing policy lookup failure is explicit",
+			apiType: APITypeCodex,
+			req: &model.SelectRequest{
+				APIType:    APITypeCodex,
+				Model:      ModelUnknown,
+				StickyMode: model.StickyModeOff,
+			},
+			configure: func(store *mockStore) {
+				store.routingPolicyErr = errors.New("routing policy store unavailable")
+			},
+			probeOn: true,
+			want: webSocketSelectionProbeDecision{
+				outcome: webSocketSelectionProbeOutcomeDemandResolutionFailed,
+			},
+			wantErr: "routing policy store unavailable",
+		},
 	}
 
 	for _, tt := range tests {
@@ -569,8 +605,18 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 				newSelectionProbeObserver: tt.newSelectionProbeObserver,
 			})
 
-			if got := orchestrator.selectionProbeDecision(context.Background()); got != tt.want {
+			got, err := orchestrator.selectionProbeDecision(context.Background())
+			if got != tt.want {
 				t.Fatalf("selectionProbeDecision() = %#v, want %#v", got, tt.want)
+			}
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("selectionProbeDecision() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("selectionProbeDecision() error = %v, want substring %q", err, tt.wantErr)
 			}
 		})
 	}

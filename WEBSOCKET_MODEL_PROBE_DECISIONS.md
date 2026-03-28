@@ -97,13 +97,39 @@ information that was available before the initial provider decision was made.
 Later semantic observation may enrich logs or diagnostics, but it must not
 retroactively rewrite the selection scope that already happened.
 
-### Constraint 3: Probe Failure Must Be Typed
+### Constraint 2A: Routing Policy Is a Hard Candidate Constraint
 
-"Did not observe a model" and "transport failed while probing" are different
-runtime outcomes.
+Routing policy constrains the provider candidate set used by:
 
-They must not collapse into the same behavior because one is an allowed
-selection downgrade and the other is a session failure.
+- sticky cache reuse
+- fresh provider selection
+- pre-visible failover
+
+A sticky cache hit is valid only when the cached provider remains eligible under
+the same routing-policy closure as a fresh selection for the current request.
+
+### Constraint 2B: Sticky Model Continuity Is an Independent Hidden-Model Consumer
+
+`sticky_mode=model` independently means the initial selection wants model
+precision for continuity.
+
+That demand exists even when routing policy lookup later fails.
+
+Probe-decision code therefore must not erase model-sticky hidden-model demand
+just because routing-policy lookup could not complete.
+
+### Constraint 3: Probe-Decision Failure Must Be Typed
+
+The system must distinguish at least these cases:
+
+- hidden-model demand was not needed, so probing was bypassed
+- hidden-model demand existed but the current API could not probe replay-safely
+- probing ran and did not observe a usable model
+- probing transport failed
+- hidden-model demand itself could not be resolved safely
+
+Those states must not collapse into one another because some are allowed
+unknown-model downgrades while others are terminal request failures.
 
 ### Constraint 4: Probe Must Preserve Transparent Forwarding
 
@@ -153,6 +179,13 @@ provide a usable model:
 
 - Determine whether any pre-selection model consumer would use a hidden model
   for the current request.
+- `sticky_mode=model` answers that question immediately because continuity alone
+  already wants model precision.
+- Otherwise, routing policy must be consulted because it is a hard constraint on
+  the provider candidate set, not an optional post-selection hint.
+- If routing-policy lookup is required to answer the question and that lookup
+  fails, the proxy must fail the request explicitly instead of silently
+  downgrading into handshake-only semantics.
 - If no such consumer exists, skip probing entirely.
 - The proxy may attempt a best-effort early read from the client connection
   before the initial provider selection only when the current WebSocket API
@@ -182,8 +215,9 @@ Consequences of probe-disabled mode:
 
 - `model-sticky` degrades to `api_type` continuity when the handshake did not
   provide a usable model.
-- Routing policies that depend on a model not visible in the handshake do not
-  constrain the current request.
+- Routing policies that depend on a model not visible in the handshake therefore
+  do not constrain the current request under those explicit unknown-model
+  semantics.
 - Later observed model data may still update logs, metrics, or diagnostics, but
   it is non-authoritative for the already-completed selection decision.
 
@@ -197,6 +231,9 @@ current WebSocket API does not provide a replay-safe probe path:
 - Record this as an explicit unsupported capability outcome in diagnostics,
   distinct from "probe was bypassed" and distinct from "probe ran but did not
   find a usable model."
+
+Unsupported applies only after the system successfully resolved that hidden-
+model demand exists for the current request.
 
 Probe support is capability-based, not API-name-based.
 
@@ -227,7 +264,20 @@ This applies when:
 
 Selection continues without pre-selection probing.
 
-### Outcome 2: Probe Unsupported
+### Outcome 2: Demand Resolution Failed
+
+This applies when the proxy cannot safely determine whether hidden-model demand
+exists before initial provider selection.
+
+Current examples include required routing-policy lookup failures when
+`sticky_mode=model` did not already make the answer obvious.
+
+This is a terminal request failure, not an unknown-model downgrade.
+
+The proxy must surface the failure through the ordinary gateway error path and
+record a distinct diagnostic outcome.
+
+### Outcome 3: Probe Unsupported
 
 This applies when probing is enabled, the handshake did not expose a usable
 model, and a pre-selection model consumer exists, but the current WebSocket API
@@ -238,7 +288,7 @@ This is a capability mismatch, not a policy choice.
 Selection continues with unknown-model semantics, and diagnostics should record
 that probing was needed but unsupported.
 
-### Outcome 3: Probe Completed Without a Usable Model
+### Outcome 4: Probe Completed Without a Usable Model
 
 This applies when pre-selection probing ran but did not reveal a usable model
 within the defined early-read window.
@@ -250,7 +300,7 @@ Selection continues with unknown-model semantics:
 - `model-sticky` continuity degrades to `api_type`
 - hidden-model routing policy does not apply to the current request
 
-### Outcome 4: Probe Transport Failed
+### Outcome 5: Probe Transport Failed
 
 This applies when the client connection fails, closes, or the request context
 is canceled while the proxy is still in the pre-selection probe step.
@@ -269,9 +319,14 @@ error path.
 3. If `websocket_probe_client_model = false`, skip pre-selection probing.
 4. Determine whether any pre-selection model consumer would use a hidden model
    for the current request.
-5. If no such consumer exists, bypass probing.
-6. Verify whether the current WebSocket API provides a replay-safe probe path.
-7. If probing is needed but unsupported, continue with unknown-model semantics
+5. If `sticky_mode=model`, hidden-model demand exists immediately.
+6. Otherwise, resolve routing policy because it constrains the candidate set
+   used by sticky reuse and fresh selection alike.
+7. If that required demand-resolution step fails, fail the request explicitly
+   and record a distinct demand-resolution-failed outcome.
+8. If no such consumer exists, bypass probing.
+9. Verify whether the current WebSocket API provides a replay-safe probe path.
+10. If probing is needed but unsupported, continue with unknown-model semantics
    and record an explicit unsupported-capability outcome.
 
 ### Probe Enabled
@@ -320,10 +375,20 @@ The design rejects a single "probe failed" bucket.
 
 The system must distinguish:
 
+- demand resolution failed before the probe decision was known
 - no usable model observed
 - probe transport failure
 
 Those outcomes have different routing and session consequences.
+
+### Rejected: Silent Policy-Lookup Downgrade
+
+The design rejects treating routing-policy lookup failure as equivalent to "no
+hidden-model consumer."
+
+If the system cannot safely determine whether hidden-model demand exists for the
+current request, it must fail explicitly rather than silently pretending the
+request was handshake-only.
 
 ### Rejected: Retroactive Selection Rewrite
 
@@ -352,6 +417,9 @@ The system exposes one explicit switch for one explicit capability:
   client message to discover a hidden model before the initial provider
   selection when some pre-selection model consumer needs that model and the
   current WebSocket API supports probing.
+- Probe demand resolution failed: the proxy fails explicitly instead of silently
+  downgrading when it cannot determine whether policy-constrained selection
+  needs hidden-model discovery.
 - Probe disabled: the proxy performs initial selection from handshake-visible
   information only and never discovers hidden model data before selection.
 

@@ -18,6 +18,8 @@ type webSocketSelectionProbeDecision struct {
 	shouldProbe bool
 }
 
+const webSocketProbeDemandResolutionFailureMessage = "Failed to resolve hidden-model demand before provider selection"
+
 // bootstrapSelectionContext is isolated from the main attempt loop because only
 // model-sensitive routing is allowed to read the client socket before a provider
 // has been chosen.
@@ -26,8 +28,24 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 	w http.ResponseWriter,
 	r *http.Request,
 ) *WebSocketSessionResult {
-	decision := o.selectionProbeDecision(ctx)
+	decision, err := o.selectionProbeDecision(ctx)
 	o.probeOutcome = decision.outcome
+	if err != nil {
+		if o.handler != nil && o.handler.logger != nil {
+			o.handler.logger.Error(
+				"failed to resolve websocket hidden-model demand",
+				zap.String("api_type", o.apiType),
+				zap.Error(err),
+			)
+		}
+		return newWebSocketProbeDecisionFailureSession(
+			o.requestID,
+			o.isSticky,
+			o.attempts,
+			decision.outcome,
+			err,
+		)
+	}
 	if !decision.shouldProbe {
 		return nil
 	}
@@ -58,26 +76,34 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 	return result
 }
 
-func (o *WebSocketSessionOrchestrator) selectionProbeDecision(ctx context.Context) webSocketSelectionProbeDecision {
+func (o *WebSocketSessionOrchestrator) selectionProbeDecision(
+	ctx context.Context,
+) (webSocketSelectionProbeDecision, error) {
 	if o == nil || o.selectReq == nil || o.handler == nil {
-		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
 	if hasUsableWebSocketSelectionModel(o.selectReq.Model) {
-		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
 	if !o.probeClientModel {
-		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
-	if !o.handler.webSocketSelectionConsumesHiddenModel(ctx, o.selectReq) {
-		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
+	consumesHiddenModel, err := o.handler.webSocketSelectionConsumesHiddenModel(ctx, o.selectReq)
+	if err != nil {
+		return webSocketSelectionProbeDecision{
+			outcome: webSocketSelectionProbeOutcomeDemandResolutionFailed,
+		}, fmt.Errorf("resolve websocket selection hidden-model demand: %w", err)
+	}
+	if !consumesHiddenModel {
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
 	if !o.supportsReplaySafeSelectionProbe() {
-		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeUnsupported}
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeUnsupported}, nil
 	}
 	return webSocketSelectionProbeDecision{
 		outcome:     webSocketSelectionProbeOutcomeCompletedWithoutUsableModel,
 		shouldProbe: true,
-	}
+	}, nil
 }
 
 func (o *WebSocketSessionOrchestrator) supportsReplaySafeSelectionProbe() bool {
