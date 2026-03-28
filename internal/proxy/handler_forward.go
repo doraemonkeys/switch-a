@@ -123,7 +123,7 @@ func (h *Handler) commitForwardResponse(
 		statusCode: upstreamResp.StatusCode,
 		isSSE:      upstreamResp.IsSSE(),
 	}
-	if failoverResult, handled := h.failoverForwardResponse(ctx, provider.ID, upstreamResp, result); handled {
+	if failoverResult, handled := h.failoverForwardResponse(ctx, provider, upstreamResp, result); handled {
 		return failoverResult
 	}
 
@@ -175,7 +175,7 @@ func (h *Handler) commitForwardResponse(
 
 func (h *Handler) failoverForwardResponse(
 	ctx context.Context,
-	providerID string,
+	provider *model.Provider,
 	upstreamResp *UpstreamResponse,
 	result forwardResult,
 ) (forwardResult, bool) {
@@ -185,20 +185,26 @@ func (h *Handler) failoverForwardResponse(
 
 	statusErr := fmt.Errorf("upstream returned status %d", result.statusCode)
 	h.logger.Warn("upstream returned error status",
-		zap.String("provider_id", providerID),
+		zap.String("provider_id", provider.ID),
 		zap.Int("status_code", result.statusCode),
 	)
 	result.err = statusErr
 	result.success = false
 	result.bodySnippet = upstreamResp.DrainWithSnippet(0)
-	result.failureDisposition = classifyProviderFailure(result.statusCode, upstreamResp.Header, result.bodySnippet, time.Now())
+	result.failureDisposition = classifyProviderFailureForProvider(
+		provider,
+		result.statusCode,
+		upstreamResp.Header,
+		result.bodySnippet,
+		time.Now(),
+	)
 	if shouldTrackStatusFailureInHealth(result.statusCode) {
-		h.markFailure(ctx, providerID, statusErr)
+		h.markFailure(ctx, provider.ID, statusErr)
 	}
 	if result.failureDisposition.autoDisableUntil != nil {
 		h.suspendProviderUntil(
 			ctx,
-			providerID,
+			provider.ID,
 			*result.failureDisposition.autoDisableUntil,
 			result.failureDisposition.autoDisableReason,
 		)

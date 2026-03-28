@@ -13,6 +13,13 @@ import (
 	"github.com/coder/websocket"
 )
 
+const (
+	webSocketReconnectRequiredStatusCode = http.StatusBadGateway
+	webSocketReconnectRequiredMessage    = "Upstream provider continuity failed after the session became visible; reconnect required"
+	webSocketPreVisibleFailureStatusCode = http.StatusBadGateway
+	webSocketPreVisibleFailureMessage    = "Upstream WebSocket session failed before becoming visible"
+)
+
 func (o *WebSocketSessionOrchestrator) finalSessionFromLastAttempt(ctx context.Context) *WebSocketSessionResult {
 	if o.suppressedAttempt != nil {
 		return o.sessionFromSuppressedPayload(ctx)
@@ -34,6 +41,10 @@ func (o *WebSocketSessionOrchestrator) finalSessionFromLastAttempt(ctx context.C
 }
 
 func (o *WebSocketSessionOrchestrator) finalizeSelectionFailureSession(session *WebSocketSessionResult) *WebSocketSessionResult {
+	return o.finalizeTerminalSession(session)
+}
+
+func (o *WebSocketSessionOrchestrator) finalizeTerminalSession(session *WebSocketSessionResult) *WebSocketSessionResult {
 	if o == nil || session == nil {
 		return session
 	}
@@ -43,7 +54,9 @@ func (o *WebSocketSessionOrchestrator) finalizeSelectionFailureSession(session *
 	o.applySessionLifecycleToResult(session.FinalResult)
 	if session.FinalResult != nil {
 		session.ClientAccepted = session.FinalResult.ClientAccepted
+		session.FinalResult.RecoveryAction = deriveWebSocketSessionRecoveryAction(session)
 	}
+	populateCanonicalWebSocketGatewayMetadata(session)
 	if err := o.emitTerminalGatewayErrorIfNeeded(
 		session.FinalResult,
 		session.GatewayStatusCode,
@@ -55,73 +68,92 @@ func (o *WebSocketSessionOrchestrator) finalizeSelectionFailureSession(session *
 	return session
 }
 
-//nolint:nestif // The fallback payload handoff is intentionally linear because it mirrors the terminal recovery contract.
-func (o *WebSocketSessionOrchestrator) sessionFromSuppressedPayload(ctx context.Context) *WebSocketSessionResult {
+func (o *WebSocketSessionOrchestrator) sessionFromSuppressedPayload(_ context.Context) *WebSocketSessionResult {
 	finalProvider := (*model.Provider)(nil)
-	finalErr := error(nil)
-	result := &WebSocketResult{CommitSource: model.CommitUnknown}
-	if o.suppressedAttempt != nil {
-		finalProvider = o.suppressedAttempt.provider
-		result = &WebSocketResult{
-			HandshakeAccepted: true,
-			ClientAccepted:    true,
-			TerminalCause:     model.TerminalUpstreamSemanticError,
-			CommitSource:      model.CommitUnknown,
-			UpstreamError:     o.suppressedAttempt.upstreamError.Clone(),
-		}
-		o.applySessionLifecycleToResult(result)
+	finalErr := internal.ErrNoProvider
+	gatewayStatusCode := http.StatusServiceUnavailable
+	gatewayErrorCode := ErrCodeProviderUnavailable
+	gatewayMessage := fmt.Sprintf("No available provider for api_type: %s", o.apiType)
+	result := newWebSocketGatewayFailureResult(
+		gatewayStatusCode,
+		model.TerminalProviderUnavailable,
+		finalErr,
+	)
 
-		if o.clientConn != nil {
-			writeCtx, cancel := context.WithTimeout(context.Background(), webSocketFallbackWriteTimeout)
-			defer cancel()
-			if err := o.clientConn.Write(writeCtx, o.suppressedAttempt.messageType, o.suppressedAttempt.payload); err != nil {
-				result.Err = err
-				result.TerminalCause = classifyRelayTerminalCause(err, webSocketPeerClient)
-				finalErr = err
-			} else {
-				result.BytesUpstreamToClient = int64(len(o.suppressedAttempt.payload))
-				result.ClientVisible = true
-				o.lifecycle.MarkClientVisible()
-				if o.replayBuffer != nil {
-					snapshot := o.replayBuffer.Snapshot()
-					result.BytesClientToUpstream = int64(snapshot.TotalBytes)
-					o.replayBuffer.Disable()
-				}
-				if o.onClientVisible != nil {
-					o.onClientVisible(webSocketVisibleWriteContext{
-						MessageType: o.suppressedAttempt.messageType,
-						Data:        append([]byte(nil), o.suppressedAttempt.payload...),
-						Observation: WebSocketObservation{UpstreamError: o.suppressedAttempt.upstreamError.Clone()},
-					})
-				}
-				// Once the suppressed payload becomes the terminal fallback there is no
-				// upstream left to own the session, so the gateway must finish the socket
-				// after delivery instead of leaving clients parked on a dead provider.
-				closeTerminalSuppressedClientConn(o.clientConn)
-				o.clientConn = nil
-			}
-			if o.clientConn != nil {
-				_ = o.clientConn.Close(websocket.StatusNormalClosure, "")
-				o.clientConn = nil
-			}
-		}
+	lastAttempt, hasLastAttempt := o.lastAttempt()
+	if hasLastAttempt {
+		finalProvider, gatewayStatusCode, gatewayErrorCode, gatewayMessage, finalErr = applyLastAttemptToSuppressedPayload(
+			lastAttempt,
+			finalProvider,
+			finalErr,
+			result,
+			gatewayStatusCode,
+			gatewayErrorCode,
+			gatewayMessage,
+		)
+	}
+	if finalProvider == nil && o.suppressedAttempt != nil {
+		finalProvider = o.suppressedAttempt.provider
 	}
 	o.clearSuppressedAttempt()
 
 	session := &WebSocketSessionResult{
-		RequestID:      o.requestID,
-		FinalProvider:  finalProvider,
-		FinalResult:    result,
-		FinalErr:       finalErr,
-		Attempts:       append([]WebSocketAttemptResult(nil), o.attempts...),
-		IsSticky:       o.isSticky,
-		ClientAccepted: result.ClientAccepted,
-		ProbeOutcome:   o.probeOutcome,
+		RequestID:         o.requestID,
+		FinalProvider:     finalProvider,
+		FinalResult:       result,
+		FinalErr:          finalErr,
+		Attempts:          append([]WebSocketAttemptResult(nil), o.attempts...),
+		IsSticky:          o.isSticky,
+		ClientAccepted:    result.ClientAccepted,
+		ProbeOutcome:      o.probeOutcome,
+		GatewayStatusCode: gatewayStatusCode,
+		GatewayErrorCode:  gatewayErrorCode,
+		GatewayMessage:    gatewayMessage,
 	}
-	if result.Model != "" {
-		session.ResolvedModel = result.Model
+	if hasLastAttempt && lastAttempt.Result != nil {
+		session.ResolvedModel = lastAttempt.Result.Model
 	}
-	return session
+	return o.finalizeTerminalSession(session)
+}
+
+func (o *WebSocketSessionOrchestrator) lastAttempt() (WebSocketAttemptResult, bool) {
+	if len(o.attempts) == 0 {
+		return WebSocketAttemptResult{}, false
+	}
+	return o.attempts[len(o.attempts)-1], true
+}
+
+func applyLastAttemptToSuppressedPayload(
+	lastAttempt WebSocketAttemptResult,
+	finalProvider *model.Provider,
+	finalErr error,
+	result *WebSocketResult,
+	gatewayStatusCode int,
+	gatewayErrorCode string,
+	gatewayMessage string,
+) (*model.Provider, int, string, string, error) {
+	if lastAttempt.Provider != nil {
+		finalProvider = lastAttempt.Provider
+	}
+	if terminalErr := lastAttempt.terminalErr(); terminalErr != nil {
+		finalErr = terminalErr
+		result.Err = terminalErr
+	}
+	if lastAttempt.Result != nil {
+		result.HandshakeAccepted = lastAttempt.Result.HandshakeAccepted
+		result.ClientAccepted = lastAttempt.Result.ClientAccepted
+		result.TerminalCause = lastAttempt.Result.TerminalCause
+		if result.TerminalCause == "" {
+			result.TerminalCause = model.TerminalProviderUnavailable
+		}
+		result.CommitSource = lastAttempt.Result.CommitSource
+	}
+	if lastAttempt.GatewayStatusCode > 0 {
+		gatewayStatusCode = lastAttempt.GatewayStatusCode
+		gatewayErrorCode = lastAttempt.GatewayErrorCode
+		gatewayMessage = lastAttempt.GatewayMessage
+	}
+	return finalProvider, gatewayStatusCode, gatewayErrorCode, gatewayMessage, finalErr
 }
 
 func (o *WebSocketSessionOrchestrator) sessionFromAttempt(attempt WebSocketAttemptResult) *WebSocketSessionResult {
@@ -141,15 +173,7 @@ func (o *WebSocketSessionOrchestrator) sessionFromAttempt(attempt WebSocketAttem
 	if attempt.Result != nil {
 		session.ResolvedModel = attempt.Result.Model
 	}
-	if err := o.emitTerminalGatewayErrorIfNeeded(
-		session.FinalResult,
-		session.GatewayStatusCode,
-		session.GatewayErrorCode,
-		session.GatewayMessage,
-	); err != nil && session.FinalErr == nil {
-		session.FinalErr = err
-	}
-	return session
+	return o.finalizeTerminalSession(session)
 }
 
 func (o *WebSocketSessionOrchestrator) emitTerminalGatewayErrorIfNeeded(
@@ -158,7 +182,10 @@ func (o *WebSocketSessionOrchestrator) emitTerminalGatewayErrorIfNeeded(
 	errorCode,
 	message string,
 ) error {
-	if o == nil || o.clientConn == nil || result == nil || result.ClientVisible || statusCode <= 0 {
+	if o == nil || o.clientConn == nil || result == nil || statusCode <= 0 {
+		return nil
+	}
+	if result.ClientVisible && result.RecoveryAction != model.RecoveryActionReconnectRequired {
 		return nil
 	}
 
@@ -276,17 +303,80 @@ func newWebSocketProviderConfigurationAttempt(
 func websocketSwitchReason(attempt WebSocketAttemptResult) string {
 	if attempt.Result != nil &&
 		!attempt.Result.ClientVisible &&
-		attempt.Result.UpstreamError != nil &&
-		attempt.Result.UpstreamError.IsAllowlistedProviderScoped() {
-		return model.RequestAttemptSwitchReasonProviderScopedSemanticError
+		attempt.Result.UpstreamError != nil {
+		if disposition := classifyWebSocketUpstreamFailureForProvider(attempt.Provider, attempt.Result.UpstreamError); disposition.forcesProviderSwitch() {
+			return disposition.switchReason
+		}
 	}
-	if failureDisposition := classifyWebSocketHandshakeFailure(attempt.Result); failureDisposition.forcesProviderSwitch() {
+	if failureDisposition := classifyWebSocketHandshakeFailureForProvider(attempt.Provider, attempt.Result); failureDisposition.forcesProviderSwitch() {
 		return failureDisposition.switchReason
 	}
 	if attempt.Result != nil && attempt.Result.TerminalCause != "" {
 		return string(attempt.Result.TerminalCause)
 	}
 	return ""
+}
+
+func webSocketRecoveryAction(provider *model.Provider, result *WebSocketResult) model.RecoveryAction {
+	if result == nil || !result.ClientVisible {
+		return model.RecoveryActionNone
+	}
+	if result.UpstreamError != nil {
+		return classifyWebSocketUpstreamFailureForProvider(provider, result.UpstreamError).recoveryAction(result.ClientVisible)
+	}
+	return classifyWebSocketHandshakeFailureForProvider(provider, result).recoveryAction(result.ClientVisible)
+}
+
+func deriveWebSocketSessionRecoveryAction(session *WebSocketSessionResult) model.RecoveryAction {
+	if session == nil || session.FinalResult == nil {
+		return model.RecoveryActionNone
+	}
+	if action := webSocketRecoveryAction(session.FinalProvider, session.FinalResult); action != model.RecoveryActionNone {
+		return action
+	}
+	for _, attempt := range session.Attempts {
+		if attempt.SwitchReason != "" {
+			return model.RecoveryActionTransparentRetry
+		}
+	}
+	return model.RecoveryActionNone
+}
+
+func populateCanonicalWebSocketGatewayMetadata(session *WebSocketSessionResult) {
+	if session == nil || session.FinalResult == nil {
+		return
+	}
+	if session.FinalResult.RecoveryAction == model.RecoveryActionReconnectRequired {
+		session.GatewayStatusCode = webSocketReconnectRequiredStatusCode
+		session.GatewayErrorCode = ErrCodeWebSocketReconnect
+		session.GatewayMessage = webSocketReconnectRequiredMessage
+		return
+	}
+	if session.GatewayStatusCode > 0 {
+		if session.GatewayErrorCode == "" {
+			session.GatewayErrorCode = ErrCodeWebSocketUpgrade
+		}
+		if session.GatewayMessage == "" {
+			session.GatewayMessage = canonicalWebSocketGatewayMessage(session.FinalResult)
+		}
+		return
+	}
+	if session.FinalResult.ClientVisible {
+		return
+	}
+	session.GatewayStatusCode = webSocketPreVisibleFailureStatusCode
+	session.GatewayErrorCode = ErrCodeWebSocketUpgrade
+	session.GatewayMessage = canonicalWebSocketGatewayMessage(session.FinalResult)
+}
+
+func canonicalWebSocketGatewayMessage(result *WebSocketResult) string {
+	if result == nil {
+		return webSocketPreVisibleFailureMessage
+	}
+	if result.TerminalCause == model.TerminalProviderConfigurationError && result.Err != nil {
+		return result.Err.Error()
+	}
+	return webSocketPreVisibleFailureMessage
 }
 
 func errorString(err error) string {

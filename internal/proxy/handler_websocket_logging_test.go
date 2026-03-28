@@ -75,11 +75,17 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	if log.SessionCommitted == nil || *log.SessionCommitted {
 		t.Fatal("SessionCommitted must be false for failed handshake")
 	}
+	if log.ClientVisible == nil || *log.ClientVisible {
+		t.Fatal("ClientVisible must be false for failed handshake")
+	}
 	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
 		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
 	}
 	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
 		t.Fatalf("ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeUnsupported)
+	}
+	if log.RecoveryAction == nil || *log.RecoveryAction != model.RecoveryActionNone {
+		t.Fatalf("RecoveryAction = %v, want %q", log.RecoveryAction, model.RecoveryActionNone)
 	}
 }
 
@@ -145,8 +151,14 @@ func TestHandler_logWebSocketRequest_UsesSemanticUpstreamError(t *testing.T) {
 	if log.SessionCommitted == nil || *log.SessionCommitted {
 		t.Fatal("SessionCommitted must be false for pre-commit semantic errors")
 	}
+	if log.ClientVisible == nil || *log.ClientVisible {
+		t.Fatal("ClientVisible must be false for pre-commit semantic errors")
+	}
 	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
 		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
+	}
+	if log.RecoveryAction == nil || *log.RecoveryAction != model.RecoveryActionNone {
+		t.Fatalf("RecoveryAction = %v, want %q", log.RecoveryAction, model.RecoveryActionNone)
 	}
 }
 
@@ -195,8 +207,64 @@ func TestHandler_logWebSocketRequest_PersistsCommitSource(t *testing.T) {
 	if log.SessionCommitted == nil || !*log.SessionCommitted {
 		t.Fatalf("SessionCommitted = %v, want true", log.SessionCommitted)
 	}
+	if log.ClientVisible == nil || *log.ClientVisible {
+		t.Fatalf("ClientVisible = %v, want false", log.ClientVisible)
+	}
 	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeObservedUsableModel {
 		t.Fatalf("ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeObservedUsableModel)
+	}
+	if log.RecoveryAction == nil || *log.RecoveryAction != model.RecoveryActionNone {
+		t.Fatalf("RecoveryAction = %v, want %q", log.RecoveryAction, model.RecoveryActionNone)
+	}
+}
+
+func TestHandler_logWebSocketRequest_PersistsVisibilityAndRecoveryAction(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	info := RequestInfo{
+		APIType:   "codex",
+		Model:     "gpt-5.4",
+		ClientIP:  "127.0.0.1",
+		UserID:    "user-1",
+		Path:      "/responses",
+		Method:    http.MethodGet,
+		UserAgent: "codex-test",
+		RequestID: "upstream-request-id",
+	}
+	result := &WebSocketResult{
+		HandshakeAccepted: true,
+		ClientVisible:     true,
+		SessionCommitted:  false,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		CommitSource:      model.CommitUnknown,
+		RecoveryAction:    model.RecoveryActionReconnectRequired,
+	}
+
+	handler.logWebSocketSession(info, &WebSocketSessionResult{
+		RequestID:     "req-ws-reconnect",
+		FinalProvider: &model.Provider{ID: "ws-p1"},
+		FinalResult:   result,
+		ProbeOutcome:  model.WebSocketProbeOutcomeTransportFailed,
+	}, 250*time.Millisecond)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if log.ClientVisible == nil || !*log.ClientVisible {
+		t.Fatalf("ClientVisible = %v, want true", log.ClientVisible)
+	}
+	if log.SessionCommitted == nil || *log.SessionCommitted {
+		t.Fatalf("SessionCommitted = %v, want false", log.SessionCommitted)
+	}
+	if log.RecoveryAction == nil || *log.RecoveryAction != model.RecoveryActionReconnectRequired {
+		t.Fatalf("RecoveryAction = %v, want %q", log.RecoveryAction, model.RecoveryActionReconnectRequired)
 	}
 }
 
@@ -345,8 +413,9 @@ func TestApplyWebSocketHealthOutcome_PostCommitTransportErrorMarksSuccess(t *tes
 		Logger: zap.NewNop(),
 		Health: healthMgr,
 	})
+	provider := &model.Provider{ID: "ws-p1"}
 
-	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", &WebSocketResult{
+	applyWebSocketHealthOutcome(context.Background(), handler, provider, &WebSocketResult{
 		HandshakeAccepted: true,
 		SessionCommitted:  true,
 		TerminalCause:     model.TerminalUpstreamTransportError,
@@ -371,9 +440,10 @@ func TestApplyWebSocketHealthOutcome_PostCommitSemanticErrorMarksFailure(t *test
 		Logger: zap.NewNop(),
 		Health: healthMgr,
 	})
+	provider := &model.Provider{ID: "ws-p1"}
 
 	semanticErr := errors.New("model not allowed")
-	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", &WebSocketResult{
+	applyWebSocketHealthOutcome(context.Background(), handler, provider, &WebSocketResult{
 		HandshakeAccepted: true,
 		SessionCommitted:  true,
 		TerminalCause:     model.TerminalUpstreamSemanticError,
@@ -405,13 +475,17 @@ func TestApplyWebSocketHealthOutcome_UsageLimitHandshakeSuspendsProvider(t *test
 		Logger: zap.NewNop(),
 		Health: healthMgr,
 	})
+	provider := &model.Provider{
+		ID:             "ws-p1",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
 
 	observedAt := time.Date(2026, time.March, 26, 12, 0, 0, 0, time.UTC)
 	bodyReset := observedAt.Add(5 * time.Minute)
 	laterHeaderReset := observedAt.Add(35 * time.Minute)
 	usageLimitErr := errors.New("failed to WebSocket dial: expected handshake response status code 101 but got 429")
 
-	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", &WebSocketResult{
+	applyWebSocketHealthOutcome(context.Background(), handler, provider, &WebSocketResult{
 		HandshakeStatusCode: http.StatusTooManyRequests,
 		HandshakeBodySnippet: `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` +
 			strconv.FormatInt(bodyReset.Unix(), 10) + `}}`,
@@ -455,6 +529,141 @@ func TestApplyWebSocketHealthOutcome_UsageLimitHandshakeSuspendsProvider(t *test
 	}
 }
 
+func TestApplyWebSocketHealthOutcome_UsageLimitSemanticErrorSuspendsProvider(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+	provider := &model.Provider{
+		ID:             "ws-p1",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+
+	observedAt := time.Date(2026, time.March, 26, 14, 0, 0, 0, time.UTC)
+	resetAt := observedAt.Add(40 * time.Minute).Truncate(time.Second)
+	semanticErr := errors.New("provider reported usage limit reached")
+
+	applyWebSocketHealthOutcome(context.Background(), handler, provider, &WebSocketResult{
+		HandshakeAccepted: true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		Err:               semanticErr,
+		UpstreamError: &WebSocketUpstreamError{
+			EventType:  codexUsageLimitErrorType,
+			StatusCode: http.StatusTooManyRequests,
+			ObservedAt: observedAt,
+			ResetAt:    &resetAt,
+			Raw:        `{"type":"error"}`,
+		},
+	})
+
+	failures := healthMgr.getMarkFailureCalls()
+	if len(failures) != 1 {
+		t.Fatalf("mark failure count = %d, want 1", len(failures))
+	}
+	if !errors.Is(failures[0].err, semanticErr) {
+		t.Fatalf("err = %v, want %v", failures[0].err, semanticErr)
+	}
+
+	suspensions := healthMgr.getSuspendCalls()
+	if len(suspensions) != 1 {
+		t.Fatalf("suspend call count = %d, want 1", len(suspensions))
+	}
+	if suspensions[0].providerID != "ws-p1" {
+		t.Fatalf("suspend providerID = %q, want ws-p1", suspensions[0].providerID)
+	}
+	if suspensions[0].reason != usageLimitAutoDisableReason {
+		t.Fatalf("suspend reason = %q, want %q", suspensions[0].reason, usageLimitAutoDisableReason)
+	}
+	if !suspensions[0].disabledUntil.Equal(resetAt) {
+		t.Fatalf("disabledUntil = %v, want %v", suspensions[0].disabledUntil, resetAt)
+	}
+}
+
+func TestApplyWebSocketHealthOutcome_UsageLimitSemanticErrorSwitchOnlyDoesNotSuspendProvider(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+	provider := &model.Provider{
+		ID:             "ws-p1",
+		CredentialType: model.ProviderCredentialTypeAPIKey,
+	}
+
+	observedAt := time.Date(2026, time.March, 26, 14, 0, 0, 0, time.UTC)
+	resetAt := observedAt.Add(40 * time.Minute).Truncate(time.Second)
+	semanticErr := errors.New("provider reported usage limit reached")
+
+	applyWebSocketHealthOutcome(context.Background(), handler, provider, &WebSocketResult{
+		HandshakeAccepted: true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		Err:               semanticErr,
+		UpstreamError: &WebSocketUpstreamError{
+			EventType:  codexUsageLimitErrorType,
+			StatusCode: http.StatusTooManyRequests,
+			ObservedAt: observedAt,
+			ResetAt:    &resetAt,
+			Raw:        `{"type":"error"}`,
+		},
+	})
+
+	if suspensions := healthMgr.getSuspendCalls(); len(suspensions) != 0 {
+		t.Fatalf("suspend calls = %v, want none", suspensions)
+	}
+	failures := healthMgr.getMarkFailureCalls()
+	if len(failures) != 1 {
+		t.Fatalf("mark failure count = %d, want 1", len(failures))
+	}
+	if !errors.Is(failures[0].err, semanticErr) {
+		t.Fatalf("err = %v, want %v", failures[0].err, semanticErr)
+	}
+}
+
+func TestApplyWebSocketHealthOutcome_ClientScopedSemanticErrorDoesNotSuspendProvider(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	healthMgr := newTrackingHealthManager()
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+		Health: healthMgr,
+	})
+	provider := &model.Provider{ID: "ws-p1"}
+
+	semanticErr := errors.New("client sent invalid request")
+	applyWebSocketHealthOutcome(context.Background(), handler, provider, &WebSocketResult{
+		HandshakeAccepted: true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		Err:               semanticErr,
+		UpstreamError: &WebSocketUpstreamError{
+			EventType:  "invalid_request_error",
+			StatusCode: http.StatusBadRequest,
+			Raw:        `{"type":"error"}`,
+		},
+	})
+
+	if suspensions := healthMgr.getSuspendCalls(); len(suspensions) != 0 {
+		t.Fatalf("suspend calls = %v, want none", suspensions)
+	}
+	failures := healthMgr.getMarkFailureCalls()
+	if len(failures) != 1 {
+		t.Fatalf("mark failure count = %d, want 1", len(failures))
+	}
+	if !errors.Is(failures[0].err, semanticErr) {
+		t.Fatalf("err = %v, want %v", failures[0].err, semanticErr)
+	}
+}
+
 func TestPrepareWebSocketDialHeaders_ManagedAuthErrorAndLogHelpers(t *testing.T) {
 	t.Parallel()
 
@@ -480,12 +689,12 @@ func TestPrepareWebSocketDialHeaders_ManagedAuthErrorAndLogHelpers(t *testing.T)
 		t.Fatalf("prepareWebSocketDialHeaders() headers = %v, want nil on error", headers)
 	}
 
-	if got := websocketLogStatusCode(nil); got != StatusCodeNoResponse {
-		t.Fatalf("websocketLogStatusCode(nil) = %d, want %d", got, StatusCodeNoResponse)
+	if got := websocketLogStatusCode(nil, nil); got != StatusCodeNoResponse {
+		t.Fatalf("websocketLogStatusCode(nil, nil) = %d, want %d", got, StatusCodeNoResponse)
 	}
 	fallbackErr := errors.New("fallback transport error")
-	if got := websocketLogErrorMessage(nil, fallbackErr); got != fallbackErr.Error() {
-		t.Fatalf("websocketLogErrorMessage(nil, fallback) = %q, want %q", got, fallbackErr.Error())
+	if got := websocketLogErrorMessage(nil, nil, fallbackErr); got != fallbackErr.Error() {
+		t.Fatalf("websocketLogErrorMessage(nil, nil, fallback) = %q, want %q", got, fallbackErr.Error())
 	}
 	if got := websocketLogSuccess(nil); got {
 		t.Fatal("websocketLogSuccess(nil) = true, want false")
@@ -525,7 +734,7 @@ func TestApplyWebSocketSessionHealthOutcomesAndBytesTrackingObserver_NoOpBranche
 			},
 		},
 	})
-	applyWebSocketHealthOutcome(context.Background(), handler, "ws-p1", nil)
+	applyWebSocketHealthOutcome(context.Background(), handler, &model.Provider{ID: "ws-p1"}, nil)
 	if failures := healthMgr.getMarkFailureCalls(); len(failures) != 0 {
 		t.Fatalf("mark failure calls = %v, want none", failures)
 	}

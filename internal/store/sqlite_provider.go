@@ -75,16 +75,15 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 		if acceptFailover == "" {
 			acceptFailover = model.ScopeAny
 		}
-
 		if err := tx.Exec(`
 			INSERT INTO providers (
-				id, name, api_key, auth_mode, credential_type, group_id,
+				id, name, api_key, auth_mode, credential_type, usage_limit_policy, group_id,
 				weight, priority, concurrency, max_retries,
 				backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter,
 				vendor, failover_scope, accept_failover,
 				enabled, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.ID, p.Name, p.APIKey, p.AuthMode, model.NormalizeProviderCredentialType(p.CredentialType), p.GroupID,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, p.Name, p.APIKey, p.AuthMode, model.NormalizeProviderCredentialType(p.CredentialType), p.UsageLimitPolicy, p.GroupID,
 			p.Weight, p.Priority, p.Concurrency, p.MaxRetries,
 			p.Backoff.InitialDelay, p.Backoff.MaxDelay, p.Backoff.Multiplier, p.Backoff.Jitter,
 			p.Vendor, failoverScope, acceptFailover,

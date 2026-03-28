@@ -130,19 +130,14 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 		t.Errorf("expected 0 active requests after cleanup, got %d", len(registry.List()))
 	}
 }
-func TestHandler_ServeHTTP_WebSocket_StickySelectionSkipsPreAcceptFailover(t *testing.T) {
-	var fallbackAttempts int32
-
+func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptFailover(t *testing.T) {
 	initialUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUpgradeRequired)
 		_, _ = io.WriteString(w, `{"error":"fallback to http"}`)
 	}))
 	defer initialUpstream.Close()
 
-	fallbackUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fallbackAttempts, 1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
+	fallbackUpstream := newEchoWSServer(t)
 	defer fallbackUpstream.Close()
 
 	initialProvider := &model.Provider{
@@ -195,45 +190,52 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionSkipsPreAcceptFailover(t *te
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
-	event := readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusUpgradeRequired, ErrCodeWebSocketUpgrade)
-	if !strings.Contains(event.Error.Message, "fallback to http") {
-		t.Fatalf("gateway error message = %q, want upstream fallback detail", event.Error.Message)
+	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create","response":{"instructions":"hello"}}`)); err != nil {
+		t.Fatalf("write proxied websocket message: %v", err)
 	}
+	_, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read fallback websocket response: %v", err)
+	}
+	if got := string(payload); got != `{"type":"response.create","response":{"instructions":"hello"}}` {
+		t.Fatalf("payload = %q, want echoed fallback payload", got)
+	}
+	_ = conn.Close(websocket.StatusNormalClosure, "done")
 
 	waitFor(t, func() bool {
-		return store.LogsLen() > 0 && store.AttemptsLen() > 0
+		return store.LogsLen() > 0 && store.AttemptsLen() >= 2
 	}, testPollTimeout)
 
-	if got := atomic.LoadInt32(&selectExcludingCalls); got != 0 {
-		t.Fatalf("SelectExcluding calls = %d, want 0", got)
-	}
-	if got := atomic.LoadInt32(&fallbackAttempts); got != 0 {
-		t.Fatalf("fallback upstream attempts = %d, want 0", got)
+	if got := atomic.LoadInt32(&selectExcludingCalls); got != 1 {
+		t.Fatalf("SelectExcluding calls = %d, want 1", got)
 	}
 
 	log := store.LastLog()
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.ProviderID != initialProvider.ID {
-		t.Fatalf("ProviderID = %q, want %q", log.ProviderID, initialProvider.ID)
+	if log.ProviderID != fallbackProvider.ID {
+		t.Fatalf("ProviderID = %q, want %q", log.ProviderID, fallbackProvider.ID)
 	}
 	if !log.IsSticky {
-		t.Fatal("expected sticky selection to remain sticky after terminal pre-accept failure")
+		t.Fatal("expected continuity origin to remain sticky after pre-accept failover")
 	}
-	if log.RetryCount != 0 {
-		t.Fatalf("RetryCount = %d, want 0", log.RetryCount)
+	if log.RetryCount != 1 {
+		t.Fatalf("RetryCount = %d, want 1", log.RetryCount)
 	}
 
-	attempts := store.LastAttempts(1)
-	if len(attempts) != 1 {
-		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	attempts := store.LastAttempts(2)
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(attempts))
 	}
 	if attempts[0].ProviderID != initialProvider.ID {
-		t.Fatalf("attempt.ProviderID = %q, want %q", attempts[0].ProviderID, initialProvider.ID)
+		t.Fatalf("first attempt.ProviderID = %q, want %q", attempts[0].ProviderID, initialProvider.ID)
 	}
-	if attempts[0].SwitchReason != "" {
-		t.Fatalf("attempt.SwitchReason = %q, want empty", attempts[0].SwitchReason)
+	if attempts[1].ProviderID != fallbackProvider.ID {
+		t.Fatalf("second attempt.ProviderID = %q, want %q", attempts[1].ProviderID, fallbackProvider.ID)
+	}
+	if attempts[0].SwitchReason == "" {
+		t.Fatal("expected initial sticky attempt to record a provider switch reason")
 	}
 }
 
@@ -753,7 +755,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticFailoverSwitchesProviderBeforeClien
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_SemanticFailoverFallsBackToOriginalPayloadWhenReplacementFails(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_SemanticFailoverEmitsCanonicalGatewayErrorWhenReplacementFails(t *testing.T) {
 	var (
 		primaryAttempts  int32
 		selectRetryCalls int32
@@ -853,8 +855,13 @@ func TestHandler_ServeHTTP_WebSocket_SemanticFailoverFallsBackToOriginalPayloadW
 	if msgType != websocket.MessageText {
 		t.Fatalf("message type = %v, want %v", msgType, websocket.MessageText)
 	}
-	if string(payload) != string(semanticPayload) {
-		t.Fatalf("payload = %q, want original semantic payload", string(payload))
+	wantGatewayPayload := string(marshalWebSocketGatewayError(
+		http.StatusBadGateway,
+		ErrCodeWebSocketUpgrade,
+		"Upstream WebSocket handshake failed",
+	))
+	if string(payload) != wantGatewayPayload {
+		t.Fatalf("payload = %q, want canonical gateway payload %q", string(payload), wantGatewayPayload)
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "done")
 
@@ -872,17 +879,17 @@ func TestHandler_ServeHTTP_WebSocket_SemanticFailoverFallsBackToOriginalPayloadW
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.ProviderID != primaryProvider.ID {
-		t.Fatalf("ProviderID = %q, want %q", log.ProviderID, primaryProvider.ID)
+	if log.ProviderID != fallbackProvider.ID {
+		t.Fatalf("ProviderID = %q, want %q", log.ProviderID, fallbackProvider.ID)
 	}
 	if log.RetryCount != 1 {
 		t.Fatalf("RetryCount = %d, want 1", log.RetryCount)
 	}
-	if log.StatusCode != http.StatusForbidden {
-		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusForbidden)
+	if log.StatusCode != http.StatusBadGateway {
+		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusBadGateway)
 	}
-	if log.ErrorMsg != string(semanticPayload) {
-		t.Fatalf("ErrorMsg = %q, want original semantic payload", log.ErrorMsg)
+	if log.ErrorMsg != "Upstream WebSocket handshake failed" {
+		t.Fatalf("ErrorMsg = %q, want canonical gateway message", log.ErrorMsg)
 	}
 
 	attempts := store.LastAttempts(2)

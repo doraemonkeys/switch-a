@@ -9,6 +9,7 @@ import {
   AUTH_MODES,
   CHATGPT_CODEX_BASE_URL,
   PROVIDER_CREDENTIAL_TYPES,
+  PROVIDER_USAGE_LIMIT_POLICIES,
 } from "../../config/constants";
 
 afterEach(() => {
@@ -31,6 +32,8 @@ function buildPersistedChatGPTProvider(): Provider {
     ],
     auth_mode: AUTH_MODES.BEARER,
     credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    usage_limit_policy: PROVIDER_USAGE_LIMIT_POLICIES.SUSPEND,
+    usage_limit_policy_explicit: true,
     group_id: null,
     weight: 1,
     priority: 1,
@@ -243,23 +246,22 @@ describe("ProviderModal", () => {
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
-    await waitFor(() =>
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-          credential_login_id: "login-1",
-          auth_mode: "bearer",
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    expect(submitted).toMatchObject({
+      credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+      credential_login_id: "login-1",
+      auth_mode: "bearer",
+      api_key: "",
+      api_types: [
+        {
+          api_type: "codex",
+          base_url: CHATGPT_CODEX_BASE_URL,
           api_key: "",
-          api_types: [
-            {
-              api_type: "codex",
-              base_url: CHATGPT_CODEX_BASE_URL,
-              api_key: "",
-            },
-          ],
-        }),
-      ),
-    );
+        },
+      ],
+    });
+    expect(submitted?.usage_limit_policy).toBeUndefined();
   });
 
   it("preserves the API-key draft when switching back after GPT login completes", async () => {
@@ -329,22 +331,21 @@ describe("ProviderModal", () => {
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
-    await waitFor(() =>
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-          api_key: "default-key",
-          auth_mode: AUTH_MODES.X_API_KEY,
-          api_types: [
-            {
-              api_type: "claude",
-              base_url: "https://api.example.com",
-              api_key: "",
-            },
-          ],
-        }),
-      ),
-    );
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    expect(submitted).toMatchObject({
+      credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+      api_key: "default-key",
+      auth_mode: AUTH_MODES.X_API_KEY,
+      api_types: [
+        {
+          api_type: "claude",
+          base_url: "https://api.example.com",
+          api_key: "",
+        },
+      ],
+    });
+    expect(submitted?.usage_limit_policy).toBeUndefined();
   });
 
   it("renders reconnect-required auth state for persisted GPT providers", async () => {

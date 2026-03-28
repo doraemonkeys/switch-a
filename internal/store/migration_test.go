@@ -151,6 +151,72 @@ func TestMigrateStickyConfig_ValueMapping(t *testing.T) {
 	}
 }
 
+func TestMigrateProviderUsageLimitPolicyStorage_BackfillsDerivedDefaults(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+	providers := []model.Provider{
+		{
+			ID:               "relay-default",
+			Name:             "Relay Default",
+			APIKey:           "key",
+			CredentialType:   model.ProviderCredentialTypeAPIKey,
+			UsageLimitPolicy: model.ProviderUsageLimitPolicySwitchProvider,
+			APITypes:         []model.ProviderAPIType{{ProviderID: "relay-default", APIType: "claude", BaseURL: "https://api.example.com"}},
+			Enabled:          true,
+		},
+		{
+			ID:               "gpt-default",
+			Name:             "GPT Default",
+			CredentialType:   model.ProviderCredentialTypeChatGPT,
+			UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend,
+			APITypes:         []model.ProviderAPIType{{ProviderID: "gpt-default", APIType: "codex", BaseURL: "https://chatgpt.com/backend-api/codex"}},
+			Enabled:          true,
+		},
+		{
+			ID:               "gpt-explicit",
+			Name:             "GPT Explicit",
+			CredentialType:   model.ProviderCredentialTypeChatGPT,
+			UsageLimitPolicy: model.ProviderUsageLimitPolicySwitchProvider,
+			APITypes:         []model.ProviderAPIType{{ProviderID: "gpt-explicit", APIType: "codex", BaseURL: "https://chatgpt.com/backend-api/codex"}},
+			Enabled:          true,
+		},
+	}
+	for i := range providers {
+		if err := db.Omit("Credential", "AuthState").Create(&providers[i]).Error; err != nil {
+			t.Fatalf("create provider %q: %v", providers[i].ID, err)
+		}
+	}
+
+	if err := migrateProviderUsageLimitPolicyStorage(db); err != nil {
+		t.Fatalf("migrateProviderUsageLimitPolicyStorage: %v", err)
+	}
+
+	var relayDefault model.Provider
+	if err := db.First(&relayDefault, "id = ?", "relay-default").Error; err != nil {
+		t.Fatalf("read relay-default: %v", err)
+	}
+	if relayDefault.UsageLimitPolicy != "" {
+		t.Fatalf("relay-default UsageLimitPolicy = %q, want empty inherit-default value", relayDefault.UsageLimitPolicy)
+	}
+
+	var gptDefault model.Provider
+	if err := db.First(&gptDefault, "id = ?", "gpt-default").Error; err != nil {
+		t.Fatalf("read gpt-default: %v", err)
+	}
+	if gptDefault.UsageLimitPolicy != "" {
+		t.Fatalf("gpt-default UsageLimitPolicy = %q, want empty inherit-default value", gptDefault.UsageLimitPolicy)
+	}
+
+	var gptExplicit model.Provider
+	if err := db.First(&gptExplicit, "id = ?", "gpt-explicit").Error; err != nil {
+		t.Fatalf("read gpt-explicit: %v", err)
+	}
+	if gptExplicit.UsageLimitPolicy != model.ProviderUsageLimitPolicySwitchProvider {
+		t.Fatalf("gpt-explicit UsageLimitPolicy = %q, want %q", gptExplicit.UsageLimitPolicy, model.ProviderUsageLimitPolicySwitchProvider)
+	}
+}
+
 func TestMigrateStickyConfig_NoLegacyKey(t *testing.T) {
 	t.Parallel()
 
@@ -388,15 +454,17 @@ func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing
 	type lifecycleRow struct {
 		ProviderID       string
 		SessionCommitted sql.NullBool
+		ClientVisible    sql.NullBool
 		StickyWritten    sql.NullBool
 		ProbeOutcome     sql.NullString
 		TerminalCause    sql.NullString
 		CommitSource     sql.NullString
+		RecoveryAction   sql.NullString
 	}
 
 	var rows []lifecycleRow
 	querySQL := fmt.Sprintf(
-		`SELECT provider_id, session_committed, sticky_written, probe_outcome, terminal_cause, commit_source FROM %s ORDER BY provider_id`,
+		`SELECT provider_id, session_committed, client_visible, sticky_written, probe_outcome, terminal_cause, commit_source, recovery_action FROM %s ORDER BY provider_id`,
 		requestLogsTableName,
 	)
 	if err := db.Raw(querySQL).Scan(&rows).Error; err != nil {
@@ -412,6 +480,9 @@ func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing
 	if rows[0].StickyWritten.Valid {
 		t.Fatalf("regular row sticky_written = %+v, want NULL", rows[0].StickyWritten)
 	}
+	if rows[0].ClientVisible.Valid {
+		t.Fatalf("regular row client_visible = %+v, want NULL", rows[0].ClientVisible)
+	}
 	if rows[0].ProbeOutcome.Valid {
 		t.Fatalf("regular row probe_outcome = %+v, want NULL", rows[0].ProbeOutcome)
 	}
@@ -421,12 +492,18 @@ func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing
 	if rows[0].CommitSource.Valid {
 		t.Fatalf("regular row commit_source = %+v, want NULL", rows[0].CommitSource)
 	}
+	if rows[0].RecoveryAction.Valid {
+		t.Fatalf("regular row recovery_action = %+v, want NULL", rows[0].RecoveryAction)
+	}
 
 	if !rows[1].SessionCommitted.Valid || !rows[1].SessionCommitted.Bool {
 		t.Fatalf("websocket row session_committed = %+v, want true", rows[1].SessionCommitted)
 	}
 	if !rows[1].StickyWritten.Valid || rows[1].StickyWritten.Bool {
 		t.Fatalf("websocket row sticky_written = %+v, want false", rows[1].StickyWritten)
+	}
+	if rows[1].ClientVisible.Valid {
+		t.Fatalf("websocket row client_visible = %+v, want NULL", rows[1].ClientVisible)
 	}
 	if !rows[1].ProbeOutcome.Valid || rows[1].ProbeOutcome.String != string(model.WebSocketProbeOutcomeUnknown) {
 		t.Fatalf("websocket row probe_outcome = %+v, want %q", rows[1].ProbeOutcome, model.WebSocketProbeOutcomeUnknown)
@@ -436,6 +513,9 @@ func TestMigrateRequestLogLifecycleFields_BackfillsHistoricalDefaults(t *testing
 	}
 	if !rows[1].CommitSource.Valid || rows[1].CommitSource.String != string(model.CommitUnknown) {
 		t.Fatalf("websocket row commit_source = %+v, want %q", rows[1].CommitSource, model.CommitUnknown)
+	}
+	if rows[1].RecoveryAction.Valid {
+		t.Fatalf("websocket row recovery_action = %+v, want NULL", rows[1].RecoveryAction)
 	}
 }
 
@@ -456,9 +536,11 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 			Success:          true,
 			StickyWritten:    boolPtr(true),
 			SessionCommitted: &committed,
+			ClientVisible:    boolPtr(true),
 			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeObservedUsableModel),
 			TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
 			CommitSource:     commitSourcePtr(model.CommitSemantic),
+			RecoveryAction:   recoveryActionPtr(model.RecoveryActionNone),
 		},
 		{
 			IsWebSocket:      true,
@@ -466,9 +548,11 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 			Success:          false,
 			StickyWritten:    boolPtr(false),
 			SessionCommitted: &uncommitted,
+			ClientVisible:    boolPtr(true),
 			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeTransportFailed),
 			TerminalCause:    terminalCausePtr(model.TerminalUpstreamSemanticError),
 			CommitSource:     commitSourcePtr(model.CommitUnknown),
+			RecoveryAction:   recoveryActionPtr(model.RecoveryActionReconnectRequired),
 		},
 	}
 	for i := range logs {
@@ -495,6 +579,9 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 	if persisted[0].StickyWritten == nil || !*persisted[0].StickyWritten {
 		t.Fatalf("clean-close sticky_written = %v, want true", persisted[0].StickyWritten)
 	}
+	if persisted[0].ClientVisible == nil || !*persisted[0].ClientVisible {
+		t.Fatalf("clean-close client_visible = %v, want true", persisted[0].ClientVisible)
+	}
 	if persisted[0].ProbeOutcome == nil || *persisted[0].ProbeOutcome != model.WebSocketProbeOutcomeObservedUsableModel {
 		t.Fatalf("clean-close probe_outcome = %v, want %q", persisted[0].ProbeOutcome, model.WebSocketProbeOutcomeObservedUsableModel)
 	}
@@ -504,9 +591,15 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 	if persisted[0].CommitSource == nil || *persisted[0].CommitSource != model.CommitSemantic {
 		t.Fatalf("clean-close commit_source = %v, want %q", persisted[0].CommitSource, model.CommitSemantic)
 	}
+	if persisted[0].RecoveryAction == nil || *persisted[0].RecoveryAction != model.RecoveryActionNone {
+		t.Fatalf("clean-close recovery_action = %v, want %q", persisted[0].RecoveryAction, model.RecoveryActionNone)
+	}
 
 	if persisted[1].SessionCommitted == nil || *persisted[1].SessionCommitted {
 		t.Fatalf("semantic-error session_committed = %v, want false", persisted[1].SessionCommitted)
+	}
+	if persisted[1].ClientVisible == nil || !*persisted[1].ClientVisible {
+		t.Fatalf("semantic-error client_visible = %v, want true", persisted[1].ClientVisible)
 	}
 	if persisted[1].ProbeOutcome == nil || *persisted[1].ProbeOutcome != model.WebSocketProbeOutcomeTransportFailed {
 		t.Fatalf("semantic-error probe_outcome = %v, want %q", persisted[1].ProbeOutcome, model.WebSocketProbeOutcomeTransportFailed)
@@ -516,6 +609,9 @@ func TestMigrateRequestLogLifecycleFields_PreservesKnownValues(t *testing.T) {
 	}
 	if persisted[1].CommitSource == nil || *persisted[1].CommitSource != model.CommitUnknown {
 		t.Fatalf("semantic-error commit_source = %v, want %q", persisted[1].CommitSource, model.CommitUnknown)
+	}
+	if persisted[1].RecoveryAction == nil || *persisted[1].RecoveryAction != model.RecoveryActionReconnectRequired {
+		t.Fatalf("semantic-error recovery_action = %v, want %q", persisted[1].RecoveryAction, model.RecoveryActionReconnectRequired)
 	}
 }
 

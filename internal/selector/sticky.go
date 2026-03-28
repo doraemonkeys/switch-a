@@ -22,16 +22,18 @@ type stickyEntry struct {
 // to prevent memory growth from expired entries. Alternatively, use
 // StartCleanupLoop() to automatically clean up expired entries.
 type MemoryStickyCache struct {
-	mu      sync.RWMutex
-	entries map[model.StickyKey]*stickyEntry
-	clock   internal.Clock
+	mu           sync.RWMutex
+	entries      map[model.StickyKey]*stickyEntry
+	providerKeys map[string]map[model.StickyKey]struct{}
+	clock        internal.Clock
 }
 
 // NewMemoryStickyCache creates a new in-memory sticky cache.
 func NewMemoryStickyCache(clock internal.Clock) *MemoryStickyCache {
 	return &MemoryStickyCache{
-		entries: make(map[model.StickyKey]*stickyEntry),
-		clock:   clock,
+		entries:      make(map[model.StickyKey]*stickyEntry),
+		providerKeys: make(map[string]map[model.StickyKey]struct{}),
+		clock:        clock,
 	}
 }
 
@@ -58,10 +60,14 @@ func (c *MemoryStickyCache) Set(key model.StickyKey, providerID string, ttl time
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if previous, ok := c.entries[key]; ok {
+		c.removeProviderKeyLocked(previous.providerID, key)
+	}
 	c.entries[key] = &stickyEntry{
 		providerID: providerID,
 		expiresAt:  c.clock.Now().Add(ttl),
 	}
+	c.addProviderKeyLocked(providerID, key)
 }
 
 // Delete removes a cached entry.
@@ -69,7 +75,7 @@ func (c *MemoryStickyCache) Delete(key model.StickyKey) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.entries, key)
+	c.deleteEntryLocked(key)
 }
 
 // Cleanup removes expired entries. Call periodically to prevent memory bloat.
@@ -82,9 +88,26 @@ func (c *MemoryStickyCache) Cleanup() {
 	now := c.clock.Now()
 	for key, entry := range c.entries {
 		if now.After(entry.expiresAt) {
+			c.removeProviderKeyLocked(entry.providerID, key)
 			delete(c.entries, key)
 		}
 	}
+}
+
+// EvictProvider removes every sticky key that currently points at the provider.
+func (c *MemoryStickyCache) EvictProvider(providerID string) {
+	if providerID == "" {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	keys := c.providerKeys[providerID]
+	for key := range keys {
+		delete(c.entries, key)
+	}
+	delete(c.providerKeys, providerID)
 }
 
 // StartCleanupLoop spawns a goroutine that periodically calls Cleanup().
@@ -120,4 +143,37 @@ func (c *MemoryStickyCache) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.entries)
+}
+
+func (c *MemoryStickyCache) addProviderKeyLocked(providerID string, key model.StickyKey) {
+	if providerID == "" {
+		return
+	}
+	if c.providerKeys[providerID] == nil {
+		c.providerKeys[providerID] = make(map[model.StickyKey]struct{})
+	}
+	c.providerKeys[providerID][key] = struct{}{}
+}
+
+func (c *MemoryStickyCache) removeProviderKeyLocked(providerID string, key model.StickyKey) {
+	if providerID == "" {
+		return
+	}
+	keys := c.providerKeys[providerID]
+	if keys == nil {
+		return
+	}
+	delete(keys, key)
+	if len(keys) == 0 {
+		delete(c.providerKeys, providerID)
+	}
+}
+
+func (c *MemoryStickyCache) deleteEntryLocked(key model.StickyKey) {
+	entry, ok := c.entries[key]
+	if !ok {
+		return
+	}
+	c.removeProviderKeyLocked(entry.providerID, key)
+	delete(c.entries, key)
 }

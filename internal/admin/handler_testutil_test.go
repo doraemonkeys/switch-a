@@ -301,6 +301,11 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 			return false
 		}
 	}
+	if filter.ClientVisible != nil {
+		if log.ClientVisible == nil || *log.ClientVisible != *filter.ClientVisible {
+			return false
+		}
+	}
 	if filter.ProbeOutcome != "" {
 		if log.ProbeOutcome == nil || *log.ProbeOutcome != filter.ProbeOutcome {
 			return false
@@ -308,6 +313,16 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 	}
 	if filter.TerminalCause != "" {
 		if log.TerminalCause == nil || *log.TerminalCause != filter.TerminalCause {
+			return false
+		}
+	}
+	if filter.CommitSource != "" {
+		if log.CommitSource == nil || *log.CommitSource != filter.CommitSource {
+			return false
+		}
+	}
+	if filter.RecoveryAction != "" {
+		if log.RecoveryAction == nil || *log.RecoveryAction != filter.RecoveryAction {
 			return false
 		}
 	}

@@ -331,8 +331,11 @@ func TestSelectorSelectWithMetadataReportsStickyOrigin(t *testing.T) {
 	if result == nil || result.Provider == nil {
 		t.Fatal("expected non-nil select result")
 	}
-	if !result.FromStickyCache {
-		t.Fatal("expected sticky cache hit to be reported")
+	if !result.Metadata.UsesContinuity() {
+		t.Fatal("expected continuity metadata for sticky cache hit")
+	}
+	if result.Metadata.Source != SelectionSourceStickyContinuity {
+		t.Fatalf("metadata source = %q, want %q", result.Metadata.Source, SelectionSourceStickyContinuity)
 	}
 	if result.Provider.ID != "p-sticky" {
 		t.Fatalf("provider = %q, want sticky provider", result.Provider.ID)
@@ -377,8 +380,11 @@ func TestSelectorSelectWithMetadataReportsFreshSelection(t *testing.T) {
 	if result == nil || result.Provider == nil {
 		t.Fatal("expected non-nil select result")
 	}
-	if result.FromStickyCache {
-		t.Fatal("expected fresh selection to report no sticky cache hit")
+	if result.Metadata.UsesContinuity() {
+		t.Fatal("expected fresh selection to report no continuity metadata")
+	}
+	if result.Metadata.Source != SelectionSourceStrategy {
+		t.Fatalf("metadata source = %q, want %q", result.Metadata.Source, SelectionSourceStrategy)
 	}
 	if result.Provider.ID != "p-primary" {
 		t.Fatalf("provider = %q, want highest priority provider", result.Provider.ID)

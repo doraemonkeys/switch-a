@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"switch-a/internal/model"
 )
 
 const (
@@ -19,14 +21,34 @@ const (
 	headerCodexSecondaryResetAfterSecs  = "X-Codex-Secondary-Reset-After-Seconds"
 )
 
+type providerFailureScope uint8
+
+const (
+	providerFailureScopeUnknown providerFailureScope = iota
+	providerFailureScopeClient
+	providerFailureScopeProvider
+)
+
 type providerFailureDisposition struct {
 	switchReason      string
 	autoDisableUntil  *time.Time
 	autoDisableReason string
+	scope             providerFailureScope
 }
 
 func (d providerFailureDisposition) forcesProviderSwitch() bool {
 	return d.switchReason != ""
+}
+
+func (d providerFailureDisposition) isProviderScoped() bool {
+	return d.scope == providerFailureScopeProvider
+}
+
+func (d providerFailureDisposition) recoveryAction(clientVisible bool) model.RecoveryAction {
+	if clientVisible && d.isProviderScoped() {
+		return model.RecoveryActionReconnectRequired
+	}
+	return model.RecoveryActionNone
 }
 
 type codexUsageLimitPayload struct {
@@ -42,27 +64,26 @@ func classifyProviderFailure(
 	bodySnippet string,
 	observedAt time.Time,
 ) providerFailureDisposition {
-	if shouldForceProviderSwitch(statusCode) {
-		return providerFailureDisposition{
-			switchReason: formatPermanentErrorReason(statusCode),
-		}
-	}
-	if statusCode != http.StatusTooManyRequests {
-		return providerFailureDisposition{}
-	}
-
-	disableUntil := resolveUsageLimitDisableUntil(header, bodySnippet, observedAt)
-	if disableUntil == nil {
-		return providerFailureDisposition{}
-	}
-	return providerFailureDisposition{
-		switchReason:      SwitchReasonUsageLimitReached,
-		autoDisableUntil:  disableUntil,
-		autoDisableReason: usageLimitAutoDisableReason,
-	}
+	return classifyProviderFailureForProvider(nil, statusCode, header, bodySnippet, observedAt)
 }
 
-func classifyWebSocketHandshakeFailure(result *WebSocketResult) providerFailureDisposition {
+func classifyProviderFailureForProvider(
+	provider *model.Provider,
+	statusCode int,
+	header http.Header,
+	bodySnippet string,
+	observedAt time.Time,
+) providerFailureDisposition {
+	return classifyProviderFailureEvidence(
+		provider.UsageLimitPolicyOrDefault(),
+		providerFailureEvidenceFromHTTP(statusCode, header, bodySnippet, observedAt),
+	)
+}
+
+func classifyWebSocketHandshakeFailureForProvider(
+	provider *model.Provider,
+	result *WebSocketResult,
+) providerFailureDisposition {
 	if result == nil || result.HandshakeAccepted || result.HandshakeStatusCode == 0 {
 		return providerFailureDisposition{}
 	}
@@ -72,7 +93,8 @@ func classifyWebSocketHandshakeFailure(result *WebSocketResult) providerFailureD
 		observedAt = time.Now()
 	}
 
-	return classifyProviderFailure(
+	return classifyProviderFailureForProvider(
+		provider,
 		result.HandshakeStatusCode,
 		result.HandshakeHeaders,
 		result.HandshakeBodySnippet,
@@ -80,34 +102,121 @@ func classifyWebSocketHandshakeFailure(result *WebSocketResult) providerFailureD
 	)
 }
 
-func resolveUsageLimitDisableUntil(header http.Header, bodySnippet string, observedAt time.Time) *time.Time {
-	bodyPayload, bodyIndicatesUsageLimit := parseUsageLimitPayload(bodySnippet)
-
-	var candidates []time.Time
-	headerReset, headerConfirmsUsageLimit := usageLimitResetFromHeaders(header, observedAt)
-	if headerConfirmsUsageLimit && headerReset != nil {
-		candidates = append(candidates, *headerReset)
-	}
-	if bodyIndicatesUsageLimit {
-		if headerReset != nil {
-			candidates = append(candidates, *headerReset)
-		}
-		if resetAt := unixSecondsToFutureTime(bodyPayload.Error.ResetsAt, observedAt); resetAt != nil {
-			candidates = append(candidates, *resetAt)
-		}
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	disableUntil := latestTime(candidates)
-	// Current deployment keeps one OAuth account per provider. Provider-scoped
-	// suspension is therefore the least surprising behavior until credential
-	// sharing is introduced and the suspension scope expands accordingly.
-	return &disableUntil
+func classifyWebSocketUpstreamFailure(upstreamErr *WebSocketUpstreamError) providerFailureDisposition {
+	return classifyWebSocketUpstreamFailureForProvider(nil, upstreamErr)
 }
 
-func usageLimitResetFromHeaders(header http.Header, observedAt time.Time) (*time.Time, bool) {
+func classifyWebSocketUpstreamFailureForProvider(
+	provider *model.Provider,
+	upstreamErr *WebSocketUpstreamError,
+) providerFailureDisposition {
+	disposition := classifyProviderFailureEvidence(
+		provider.UsageLimitPolicyOrDefault(),
+		providerFailureEvidenceFromWebSocketUpstreamError(upstreamErr),
+	)
+	if !disposition.isProviderScoped() {
+		return disposition
+	}
+	if disposition.switchReason == SwitchReasonUsageLimitReached {
+		return disposition
+	}
+	disposition.switchReason = model.RequestAttemptSwitchReasonProviderScopedSemanticError
+	return disposition
+}
+
+type providerFailureEvidence struct {
+	observedAt      time.Time
+	statusCode      int
+	errorKeys       []string
+	resetCandidates []time.Time
+}
+
+func providerFailureEvidenceFromHTTP(
+	statusCode int,
+	header http.Header,
+	bodySnippet string,
+	observedAt time.Time,
+) providerFailureEvidence {
+	evidence := providerFailureEvidence{
+		observedAt: normalizeObservedAt(observedAt),
+		statusCode: statusCode,
+	}
+
+	bodyPayload, bodyIndicatesUsageLimit := parseUsageLimitPayload(bodySnippet)
+	if bodyIndicatesUsageLimit {
+		evidence.errorKeys = append(evidence.errorKeys, codexUsageLimitErrorType)
+		if resetAt := unixSecondsToFutureTime(bodyPayload.Error.ResetsAt, evidence.observedAt); resetAt != nil {
+			evidence.resetCandidates = append(evidence.resetCandidates, *resetAt)
+		}
+	}
+
+	headerResets, headerConfirmsUsageLimit := usageLimitResetCandidatesFromHeaders(header, evidence.observedAt)
+	evidence.resetCandidates = append(evidence.resetCandidates, headerResets...)
+	if headerConfirmsUsageLimit {
+		evidence.errorKeys = append(evidence.errorKeys, codexUsageLimitErrorType)
+	}
+	return evidence
+}
+
+func providerFailureEvidenceFromWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError) providerFailureEvidence {
+	if upstreamErr == nil {
+		return providerFailureEvidence{}
+	}
+	evidence := providerFailureEvidence{
+		observedAt: normalizeObservedAt(upstreamErr.ObservedAt),
+		statusCode: upstreamErr.StatusCode,
+		errorKeys: []string{
+			normalizeWebSocketSemanticErrorKey(upstreamErr.EventType),
+			normalizeWebSocketSemanticErrorKey(upstreamErr.Code),
+		},
+	}
+	if upstreamErr.ResetAt != nil {
+		evidence.resetCandidates = append(evidence.resetCandidates, upstreamErr.ResetAt.UTC())
+	}
+	return evidence
+}
+
+func classifyProviderFailureEvidence(
+	usageLimitPolicy model.ProviderUsageLimitPolicy,
+	evidence providerFailureEvidence,
+) providerFailureDisposition {
+	if shouldForceProviderSwitch(evidence.statusCode) {
+		return providerFailureDisposition{
+			switchReason: formatPermanentErrorReason(evidence.statusCode),
+			scope:        providerFailureScopeProvider,
+		}
+	}
+
+	if isUsageLimitEvidence(evidence.errorKeys) {
+		disposition := providerFailureDisposition{
+			switchReason: SwitchReasonUsageLimitReached,
+			scope:        providerFailureScopeProvider,
+		}
+		if usageLimitPolicy == model.ProviderUsageLimitPolicySuspend {
+			disableUntil := latestFutureResetCandidate(evidence.resetCandidates, evidence.observedAt)
+			if disableUntil != nil {
+				disposition.autoDisableUntil = disableUntil
+				disposition.autoDisableReason = usageLimitAutoDisableReason
+			}
+		}
+		return disposition
+	}
+
+	statusScope, statusMatched := classifyProviderFailureScopeFromStatus(evidence.statusCode)
+	identifierScope, identifierMatched := classifyProviderFailureScopeFromIdentifiers(evidence.errorKeys)
+	if statusMatched && identifierMatched && statusScope != identifierScope {
+		return providerFailureDisposition{}
+	}
+	if identifierMatched {
+		return providerFailureDisposition{scope: identifierScope}
+	}
+	if statusMatched {
+		return providerFailureDisposition{scope: statusScope}
+	}
+	return providerFailureDisposition{}
+}
+
+func usageLimitResetCandidatesFromHeaders(header http.Header, observedAt time.Time) ([]time.Time, bool) {
 	if header == nil {
 		return nil, false
 	}
@@ -124,15 +233,7 @@ func usageLimitResetFromHeaders(header http.Header, observedAt time.Time) (*time
 	if secondaryUsedOK && secondaryUsed >= 100 && secondaryReset != nil {
 		candidates = append(candidates, *secondaryReset)
 	}
-	if len(candidates) > 0 {
-		latest := latestTime(candidates)
-		return &latest, true
-	}
-
-	if primaryReset != nil {
-		return primaryReset, false
-	}
-	return secondaryReset, false
+	return candidates, len(candidates) > 0
 }
 
 func parseUsageLimitPayload(bodySnippet string) (codexUsageLimitPayload, bool) {
@@ -202,4 +303,86 @@ func latestTime(times []time.Time) time.Time {
 		}
 	}
 	return latest
+}
+
+func normalizeObservedAt(observedAt time.Time) time.Time {
+	if observedAt.IsZero() {
+		return time.Now().UTC()
+	}
+	return observedAt.UTC()
+}
+
+func latestFutureResetCandidate(candidates []time.Time, observedAt time.Time) *time.Time {
+	filtered := make([]time.Time, 0, len(candidates))
+	normalizedObservedAt := normalizeObservedAt(observedAt)
+	for _, candidate := range candidates {
+		if candidate.After(normalizedObservedAt) {
+			filtered = append(filtered, candidate.UTC())
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	latest := latestTime(filtered)
+	return &latest
+}
+
+func isUsageLimitEvidence(errorKeys []string) bool {
+	for _, key := range errorKeys {
+		if normalizeWebSocketSemanticErrorKey(key) == codexUsageLimitErrorType {
+			return true
+		}
+	}
+	return false
+}
+
+func classifyProviderFailureScopeFromStatus(statusCode int) (providerFailureScope, bool) {
+	switch {
+	case statusCode <= 0:
+		return providerFailureScopeUnknown, false
+	case statusCode >= 500 ||
+		statusCode == http.StatusPaymentRequired ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode == http.StatusUnauthorized ||
+		statusCode == http.StatusForbidden:
+		return providerFailureScopeProvider, true
+	case statusCode >= 400:
+		return providerFailureScopeClient, true
+	default:
+		return providerFailureScopeUnknown, false
+	}
+}
+
+func classifyProviderFailureScopeFromIdentifiers(errorKeys []string) (providerFailureScope, bool) {
+	classification := providerFailureScopeUnknown
+	matched := false
+	for _, key := range errorKeys {
+		normalized := normalizeWebSocketSemanticErrorKey(key)
+		if normalized == "" {
+			continue
+		}
+		nextClassification, ok := classifyProviderFailureScopeFromIdentifier(normalized)
+		if !ok {
+			continue
+		}
+		if matched && classification != nextClassification {
+			return providerFailureScopeUnknown, true
+		}
+		classification = nextClassification
+		matched = true
+	}
+	return classification, matched
+}
+
+func classifyProviderFailureScopeFromIdentifier(key string) (providerFailureScope, bool) {
+	if _, ok := webSocketProviderScopedAllowlistedErrorKeys[key]; ok {
+		return providerFailureScopeProvider, true
+	}
+	if key == codexUsageLimitErrorType {
+		return providerFailureScopeProvider, true
+	}
+	if _, ok := webSocketClientScopedErrorKeys[key]; ok {
+		return providerFailureScopeClient, true
+	}
+	return providerFailureScopeUnknown, false
 }

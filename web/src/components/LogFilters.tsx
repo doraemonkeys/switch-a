@@ -1,6 +1,8 @@
 import type {
+  CommitSource,
   LogFilter,
   Provider,
+  RecoveryAction,
   TerminalCause,
   WebSocketProbeOutcome,
 } from "../api/types";
@@ -53,6 +55,26 @@ const PROBE_OUTCOME_OPTIONS: Array<{
   { value: "unknown", label: "Unknown" },
 ];
 
+const RECOVERY_ACTION_OPTIONS: Array<{
+  value: RecoveryAction | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Actions" },
+  { value: "none", label: "None" },
+  { value: "transparent_retry", label: "Transparent Retry" },
+  { value: "reconnect_required", label: "Reconnect Required" },
+];
+
+const COMMIT_SOURCE_OPTIONS: Array<{
+  value: CommitSource | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Sources" },
+  { value: "semantic_event", label: "Semantic Event" },
+  { value: "upstream_message", label: "First Upstream Message" },
+  { value: "unknown", label: "Unknown" },
+];
+
 function getBooleanFilterValue(value: boolean | undefined): string {
   if (value === true) return FILTER_VALUE_TRUE;
   if (value === false) return FILTER_VALUE_FALSE;
@@ -78,6 +100,20 @@ function getProbeOutcomeLabel(probeOutcome: WebSocketProbeOutcome): string {
     (option) => option.value === probeOutcome,
   );
   return matchingOption?.label ?? probeOutcome;
+}
+
+function getRecoveryActionLabel(recoveryAction: RecoveryAction): string {
+  const matchingOption = RECOVERY_ACTION_OPTIONS.find(
+    (option) => option.value === recoveryAction,
+  );
+  return matchingOption?.label ?? recoveryAction;
+}
+
+function getCommitSourceLabel(commitSource: CommitSource): string {
+  const matchingOption = COMMIT_SOURCE_OPTIONS.find(
+    (option) => option.value === commitSource,
+  );
+  return matchingOption?.label ?? commitSource;
 }
 
 // Helper function to get current retries filter value for select
@@ -307,6 +343,22 @@ export function LogFilters({
           minWidth="140px"
         />
         <FilterSelect
+          id="client-visible-filter"
+          label="Client Visible"
+          value={getBooleanFilterValue(filter.client_visible)}
+          onChange={(value) =>
+            onFilterChange({
+              client_visible: parseBooleanFilterValue(value),
+            })
+          }
+          options={[
+            { value: FILTER_VALUE_ALL, label: "All Visibility" },
+            { value: FILTER_VALUE_TRUE, label: "Visible" },
+            { value: FILTER_VALUE_FALSE, label: "Not Visible" },
+          ]}
+          minWidth="140px"
+        />
+        <FilterSelect
           id="sticky-written-filter"
           label="Sticky Write"
           value={getBooleanFilterValue(filter.sticky_written)}
@@ -351,6 +403,36 @@ export function LogFilters({
           }
           options={TERMINAL_CAUSE_OPTIONS}
           minWidth="180px"
+        />
+        <FilterSelect
+          id="commit-source-filter"
+          label="Commit Source"
+          value={filter.commit_source || FILTER_VALUE_ALL}
+          onChange={(value) =>
+            onFilterChange({
+              commit_source:
+                value === FILTER_VALUE_ALL
+                  ? undefined
+                  : (value as CommitSource),
+            })
+          }
+          options={COMMIT_SOURCE_OPTIONS}
+          minWidth="220px"
+        />
+        <FilterSelect
+          id="recovery-action-filter"
+          label="Recovery Action"
+          value={filter.recovery_action || FILTER_VALUE_ALL}
+          onChange={(value) =>
+            onFilterChange({
+              recovery_action:
+                value === FILTER_VALUE_ALL
+                  ? undefined
+                  : (value as RecoveryAction),
+            })
+          }
+          options={RECOVERY_ACTION_OPTIONS}
+          minWidth="190px"
         />
         <FilterSelect
           id="api-type-filter"
@@ -445,6 +527,12 @@ function ActiveFiltersSummary({
             onRemove={() => onFilterChange({ session_committed: undefined })}
           />
         )}
+        {filter.client_visible !== undefined && (
+          <FilterBadge
+            label={`Client Visible: ${filter.client_visible ? "Visible" : "Not Visible"}`}
+            onRemove={() => onFilterChange({ client_visible: undefined })}
+          />
+        )}
         {filter.sticky_written !== undefined && (
           <FilterBadge
             label={`Sticky Write: ${filter.sticky_written ? "Written" : "Not Written"}`}
@@ -461,6 +549,18 @@ function ActiveFiltersSummary({
           <FilterBadge
             label={`Terminal Cause: ${getTerminalCauseLabel(filter.terminal_cause)}`}
             onRemove={() => onFilterChange({ terminal_cause: undefined })}
+          />
+        )}
+        {filter.commit_source && (
+          <FilterBadge
+            label={`Commit Source: ${getCommitSourceLabel(filter.commit_source)}`}
+            onRemove={() => onFilterChange({ commit_source: undefined })}
+          />
+        )}
+        {filter.recovery_action && (
+          <FilterBadge
+            label={`Recovery Action: ${getRecoveryActionLabel(filter.recovery_action)}`}
+            onRemove={() => onFilterChange({ recovery_action: undefined })}
           />
         )}
         {/* is_sse and is_websocket badges are coupled: "regular" sets both to false,

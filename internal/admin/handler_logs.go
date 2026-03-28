@@ -36,8 +36,11 @@ type LogsResponse struct {
 //   - is_websocket: filter by WebSocket/regular request (true/false)
 //   - sticky_written: filter by whether the request wrote sticky affinity (true/false)
 //   - session_committed: filter by whether committed service is known to have started (true/false)
+//   - client_visible: filter by whether upstream payload became client-visible (true/false)
 //   - probe_outcome: filter by explicit WebSocket probe outcome enum
 //   - terminal_cause: filter by explicit terminal cause enum
+//   - commit_source: filter by explicit commit source enum
+//   - recovery_action: filter by explicit session-level recovery action enum
 //   - user_id: filter by user ID
 //   - start_time: filter by start time (RFC3339)
 //   - end_time: filter by end time (RFC3339)
@@ -130,12 +133,27 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 		return filter, errMsg
 	}
 
+	filter.ClientVisible, errMsg = parseBoolPtr(getQueryParam(query, "client_visible"), "client_visible")
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
 	filter.ProbeOutcome, errMsg = parseWebSocketProbeOutcome(getQueryParam(query, "probe_outcome"))
 	if errMsg != "" {
 		return filter, errMsg
 	}
 
 	filter.TerminalCause, errMsg = parseTerminalCause(getQueryParam(query, "terminal_cause"))
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.CommitSource, errMsg = parseCommitSource(getQueryParam(query, "commit_source"))
+	if errMsg != "" {
+		return filter, errMsg
+	}
+
+	filter.RecoveryAction, errMsg = parseRecoveryAction(getQueryParam(query, "recovery_action"))
 	if errMsg != "" {
 		return filter, errMsg
 	}
@@ -269,6 +287,30 @@ func parseWebSocketProbeOutcome(s string) (model.WebSocketProbeOutcome, string) 
 		return "", "Invalid probe_outcome: must be a valid websocket probe outcome"
 	}
 	return outcome, ""
+}
+
+func parseRecoveryAction(s string) (model.RecoveryAction, string) {
+	if s == "" {
+		return "", ""
+	}
+
+	action := model.RecoveryAction(s)
+	if !model.IsValidRecoveryAction(action) {
+		return "", "Invalid recovery_action: must be a valid recovery action"
+	}
+	return action, ""
+}
+
+func parseCommitSource(s string) (model.CommitSource, string) {
+	if s == "" {
+		return "", ""
+	}
+
+	source := model.CommitSource(s)
+	if !model.IsValidCommitSource(source) {
+		return "", "Invalid commit_source: must be a valid commit source"
+	}
+	return source, ""
 }
 
 // parseTimePtr parses a RFC3339 time pointer from string.

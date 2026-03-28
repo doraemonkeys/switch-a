@@ -1,5 +1,6 @@
 import type {
   CommitSource,
+  RecoveryAction,
   RequestLog,
   TerminalCause,
   WebSocketProbeOutcome,
@@ -8,6 +9,7 @@ import { BADGE_STYLES } from "../../lib/utils";
 
 export type DiagnosticTone = "success" | "danger" | "warning" | "info";
 export type CommitmentState = "committed" | "uncommitted" | "unknown";
+export type ClientVisibilityState = "visible" | "not_visible" | "unknown";
 
 export interface LogLifecyclePresentation {
   showLifecycle: boolean;
@@ -17,12 +19,18 @@ export interface LogLifecyclePresentation {
   commitmentState: CommitmentState;
   commitmentLabel: string;
   commitmentTone: DiagnosticTone;
+  clientVisibilityState: ClientVisibilityState;
+  clientVisibilityLabel: string;
+  clientVisibilityTone: DiagnosticTone;
   terminalCause: TerminalCause;
   terminalCauseLabel: string;
   terminalCauseTone: DiagnosticTone;
   probeOutcome: WebSocketProbeOutcome;
   probeOutcomeLabel: string | null;
   commitSourceLabel: string | null;
+  recoveryAction: RecoveryAction | null;
+  recoveryActionLabel: string | null;
+  recoveryActionTone: DiagnosticTone | null;
   stickyWrittenLabel: string | null;
   tableDetailLabel: string | null;
   shouldShowErrorDetails: boolean;
@@ -43,6 +51,18 @@ const COMMITMENT_LABELS: Record<CommitmentState, string> = {
 const COMMITMENT_TONES: Record<CommitmentState, DiagnosticTone> = {
   committed: "success",
   uncommitted: "warning",
+  unknown: "info",
+};
+
+const CLIENT_VISIBILITY_LABELS: Record<ClientVisibilityState, string> = {
+  visible: "Visible",
+  not_visible: "Not Visible",
+  unknown: "Visibility Unknown",
+};
+
+const CLIENT_VISIBILITY_TONES: Record<ClientVisibilityState, DiagnosticTone> = {
+  visible: "info",
+  not_visible: "warning",
   unknown: "info",
 };
 
@@ -78,6 +98,18 @@ const COMMIT_SOURCE_LABELS: Record<CommitSource, string> = {
   unknown: "Unknown",
 };
 
+const RECOVERY_ACTION_LABELS: Record<RecoveryAction, string> = {
+  none: "None",
+  transparent_retry: "Transparent Retry",
+  reconnect_required: "Reconnect Required",
+};
+
+const RECOVERY_ACTION_TONES: Record<RecoveryAction, DiagnosticTone> = {
+  none: "info",
+  transparent_retry: "info",
+  reconnect_required: "danger",
+};
+
 const PROBE_OUTCOME_LABELS: Record<WebSocketProbeOutcome, string> = {
   unknown: "Unknown",
   bypassed: "Bypassed",
@@ -102,6 +134,18 @@ function getCommitmentState(
   }
   if (sessionCommitted === false) {
     return "uncommitted";
+  }
+  return "unknown";
+}
+
+function getClientVisibilityState(
+  clientVisible: RequestLog["client_visible"],
+): ClientVisibilityState {
+  if (clientVisible === true) {
+    return "visible";
+  }
+  if (clientVisible === false) {
+    return "not_visible";
   }
   return "unknown";
 }
@@ -133,6 +177,34 @@ function getProbeOutcomeLabel(log: RequestLog): string | null {
     return null;
   }
   return PROBE_OUTCOME_LABELS[getProbeOutcome(log)];
+}
+
+function getRecoveryAction(log: RequestLog): RecoveryAction | null {
+  return log.recovery_action ?? null;
+}
+
+function getDisplayRecoveryAction(log: RequestLog): RecoveryAction | null {
+  const recoveryAction = getRecoveryAction(log);
+  if (recoveryAction == null || recoveryAction === "none") {
+    return null;
+  }
+  return recoveryAction;
+}
+
+function getRecoveryActionLabel(log: RequestLog): string | null {
+  const recoveryAction = getDisplayRecoveryAction(log);
+  if (recoveryAction == null) {
+    return null;
+  }
+  return RECOVERY_ACTION_LABELS[recoveryAction];
+}
+
+function getRecoveryActionTone(log: RequestLog): DiagnosticTone | null {
+  const recoveryAction = getDisplayRecoveryAction(log);
+  if (recoveryAction == null) {
+    return null;
+  }
+  return RECOVERY_ACTION_TONES[recoveryAction];
 }
 
 function getCommittedOutcome(
@@ -312,9 +384,38 @@ function getUnknownCommitOutcome(
   }
 }
 
+function getReconnectRequiredOutcome(
+  clientVisibilityState: ClientVisibilityState,
+): OutcomePresentation {
+  switch (clientVisibilityState) {
+    case "visible":
+      return {
+        label: "Client-visible session ended with reconnect required",
+        shortLabel: "Reconnect required",
+        tone: "danger",
+      };
+    case "not_visible":
+      return {
+        label:
+          "Session failed before output became visible and requires reconnect",
+        shortLabel: "Reconnect required",
+        tone: "danger",
+      };
+    case "unknown":
+    default:
+      return {
+        label: "Session ended with reconnect required",
+        shortLabel: "Reconnect required",
+        tone: "danger",
+      };
+  }
+}
+
 function formatTableDetailLabel(
   statusCode: number,
+  clientVisibilityLabel: string | null,
   commitmentLabel: string,
+  recoveryActionLabel: string | null,
   probeOutcomeLabel: string | null,
 ): string | null {
   const details: string[] = [];
@@ -323,7 +424,18 @@ function formatTableDetailLabel(
     details.push(`Code ${statusCode}`);
   }
 
+  if (clientVisibilityLabel) {
+    details.push(clientVisibilityLabel);
+  }
+
   details.push(commitmentLabel);
+
+  if (
+    recoveryActionLabel &&
+    recoveryActionLabel !== RECOVERY_ACTION_LABELS.none
+  ) {
+    details.push(recoveryActionLabel);
+  }
 
   if (probeOutcomeLabel) {
     details.push(probeOutcomeLabel);
@@ -345,46 +457,79 @@ export function getDiagnosticToneClass(tone: DiagnosticTone): string {
   }
 }
 
+function getNonWebSocketLifecyclePresentation(
+  log: RequestLog,
+): LogLifecyclePresentation {
+  return {
+    showLifecycle: false,
+    outcomeLabel: log.success ? "Success" : "Failed",
+    shortOutcomeLabel: log.success ? "Success" : "Failed",
+    outcomeTone: log.success ? "success" : "danger",
+    commitmentState: "unknown",
+    commitmentLabel: COMMITMENT_LABELS.unknown,
+    commitmentTone: COMMITMENT_TONES.unknown,
+    clientVisibilityState: "unknown",
+    clientVisibilityLabel: CLIENT_VISIBILITY_LABELS.unknown,
+    clientVisibilityTone: CLIENT_VISIBILITY_TONES.unknown,
+    terminalCause: "unknown",
+    terminalCauseLabel: TERMINAL_CAUSE_LABELS.unknown,
+    terminalCauseTone: TERMINAL_CAUSE_TONES.unknown,
+    probeOutcome: "unknown",
+    probeOutcomeLabel: null,
+    commitSourceLabel: null,
+    recoveryAction: null,
+    recoveryActionLabel: null,
+    recoveryActionTone: null,
+    stickyWrittenLabel: getStickyWrittenLabel(log),
+    tableDetailLabel:
+      log.status_code > UNKNOWN_STATUS_CODE ? `Code ${log.status_code}` : null,
+    shouldShowErrorDetails: !log.success && Boolean(log.error_msg),
+  };
+}
+
+function getLifecycleOutcomePresentation(
+  recoveryAction: RecoveryAction | null,
+  clientVisibilityState: ClientVisibilityState,
+  commitmentState: CommitmentState,
+  terminalCause: TerminalCause,
+  success: boolean,
+): OutcomePresentation {
+  if (recoveryAction === "reconnect_required") {
+    return getReconnectRequiredOutcome(clientVisibilityState);
+  }
+
+  if (commitmentState === "committed") {
+    return getCommittedOutcome(terminalCause, success);
+  }
+
+  if (commitmentState === "uncommitted") {
+    return getUncommittedOutcome(terminalCause);
+  }
+
+  return getUnknownCommitOutcome(terminalCause, success);
+}
+
 export function getLogLifecyclePresentation(
   log: RequestLog,
 ): LogLifecyclePresentation {
   if (!log.is_websocket) {
-    return {
-      showLifecycle: false,
-      outcomeLabel: log.success ? "Success" : "Failed",
-      shortOutcomeLabel: log.success ? "Success" : "Failed",
-      outcomeTone: log.success ? "success" : "danger",
-      commitmentState: "unknown",
-      commitmentLabel: COMMITMENT_LABELS.unknown,
-      commitmentTone: COMMITMENT_TONES.unknown,
-      terminalCause: "unknown",
-      terminalCauseLabel: TERMINAL_CAUSE_LABELS.unknown,
-      terminalCauseTone: TERMINAL_CAUSE_TONES.unknown,
-      probeOutcome: "unknown",
-      probeOutcomeLabel: null,
-      commitSourceLabel: null,
-      stickyWrittenLabel: getStickyWrittenLabel(log),
-      tableDetailLabel:
-        log.status_code > UNKNOWN_STATUS_CODE
-          ? `Code ${log.status_code}`
-          : null,
-      shouldShowErrorDetails: !log.success && Boolean(log.error_msg),
-    };
+    return getNonWebSocketLifecyclePresentation(log);
   }
 
   const commitmentState = getCommitmentState(log.session_committed);
+  const clientVisibilityState = getClientVisibilityState(log.client_visible);
   const terminalCause = getTerminalCause(log);
   const probeOutcome = getProbeOutcome(log);
   const probeOutcomeLabel = getProbeOutcomeLabel(log);
-
-  let outcome: OutcomePresentation;
-  if (commitmentState === "committed") {
-    outcome = getCommittedOutcome(terminalCause, log.success);
-  } else if (commitmentState === "uncommitted") {
-    outcome = getUncommittedOutcome(terminalCause);
-  } else {
-    outcome = getUnknownCommitOutcome(terminalCause, log.success);
-  }
+  const recoveryAction = getRecoveryAction(log);
+  const recoveryActionLabel = getRecoveryActionLabel(log);
+  const outcome = getLifecycleOutcomePresentation(
+    recoveryAction,
+    clientVisibilityState,
+    commitmentState,
+    terminalCause,
+    log.success,
+  );
 
   return {
     showLifecycle: true,
@@ -394,16 +539,26 @@ export function getLogLifecyclePresentation(
     commitmentState,
     commitmentLabel: COMMITMENT_LABELS[commitmentState],
     commitmentTone: COMMITMENT_TONES[commitmentState],
+    clientVisibilityState,
+    clientVisibilityLabel: CLIENT_VISIBILITY_LABELS[clientVisibilityState],
+    clientVisibilityTone: CLIENT_VISIBILITY_TONES[clientVisibilityState],
     terminalCause,
     terminalCauseLabel: TERMINAL_CAUSE_LABELS[terminalCause],
     terminalCauseTone: TERMINAL_CAUSE_TONES[terminalCause],
     probeOutcome,
     probeOutcomeLabel,
     commitSourceLabel: getCommitSourceLabel(log),
+    recoveryAction,
+    recoveryActionLabel,
+    recoveryActionTone: getRecoveryActionTone(log),
     stickyWrittenLabel: getStickyWrittenLabel(log),
     tableDetailLabel: formatTableDetailLabel(
       log.status_code,
+      log.client_visible == null
+        ? null
+        : CLIENT_VISIBILITY_LABELS[clientVisibilityState],
       COMMITMENT_LABELS[commitmentState],
+      recoveryActionLabel,
       probeOutcomeLabel,
     ),
     shouldShowErrorDetails: outcome.tone === "danger" && Boolean(log.error_msg),

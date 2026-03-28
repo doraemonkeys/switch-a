@@ -20,6 +20,7 @@ function buildProvider(): Provider {
     ],
     auth_mode: "auto",
     credential_type: "chatgpt",
+    usage_limit_policy: "suspend",
     group_id: null,
     weight: 1,
     priority: 1,
@@ -94,6 +95,7 @@ describe("ProviderDetailDrawer", () => {
     expect(screen.getByText(/22% used/)).toBeInTheDocument();
     expect(screen.getByText(/58% used/)).toBeInTheDocument();
     expect(screen.getByText("Usage Updated")).toBeInTheDocument();
+    expect(screen.getByText("Suspend Until Reset")).toBeInTheDocument();
   });
 
   it("renders reconnect-required auth diagnostics from the explicit auth snapshot", async () => {

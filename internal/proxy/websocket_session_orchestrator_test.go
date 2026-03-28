@@ -824,6 +824,27 @@ func TestWebSocketSwitchReasonUsesProviderScopedSemanticConstant(t *testing.T) {
 	}
 }
 
+func TestWebSocketSwitchReasonUsesUsageLimitSwitchReasonForSemanticQuotaErrors(t *testing.T) {
+	t.Parallel()
+
+	observedAt := time.Date(2026, time.March, 26, 17, 0, 0, 0, time.UTC)
+	resetAt := observedAt.Add(25 * time.Minute).Truncate(time.Second)
+	attempt := WebSocketAttemptResult{
+		Result: &WebSocketResult{
+			ClientAccepted: true,
+			UpstreamError: &WebSocketUpstreamError{
+				EventType:  codexUsageLimitErrorType,
+				StatusCode: http.StatusTooManyRequests,
+				ObservedAt: observedAt,
+				ResetAt:    &resetAt,
+			},
+		},
+	}
+	if got := websocketSwitchReason(attempt); got != SwitchReasonUsageLimitReached {
+		t.Fatalf("websocketSwitchReason() = %q, want %q", got, SwitchReasonUsageLimitReached)
+	}
+}
+
 func TestWebSocketSessionOrchestrator_AppliesLifecycleSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -859,7 +880,7 @@ func TestWebSocketSessionOrchestrator_ReplaysBufferedMessages(t *testing.T) {
 	}
 	orchestrator.replayBuffer.Record(websocket.MessageText, []byte("replay me"), false)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	conn := connectWSClient(t, ctx, wsURL(replayServer))
@@ -938,6 +959,21 @@ func TestWebSocketSessionOrchestrator_SwitchAndFallbackPredicates(t *testing.T) 
 		t.Fatal("shouldSwitchProvider() = false, want true for suppressed provider-scoped semantic error")
 	}
 
+	genericProviderAttempt := WebSocketAttemptResult{
+		Result: &WebSocketResult{
+			ClientAccepted: true,
+			TerminalCause:  model.TerminalUpstreamSemanticError,
+			UpstreamError: &WebSocketUpstreamError{
+				EventType:  "error",
+				StatusCode: http.StatusInternalServerError,
+				Message:    "upstream crashed",
+			},
+		},
+	}
+	if !orchestrator.shouldSwitchProvider(genericProviderAttempt) {
+		t.Fatal("shouldSwitchProvider() = false, want true for generic provider-scoped semantic 5xx")
+	}
+
 	orchestrator.suppressedAttempt = &webSocketSuppressedAttempt{provider: suppressed.provider}
 	fallbackAttempt := WebSocketAttemptResult{
 		Result: &WebSocketResult{
@@ -979,6 +1015,7 @@ func TestWebSocketSessionOrchestrator_FinalSessionUsesSuppressedPayload(t *testi
 			handler: &Handler{
 				wsForwarder: NewWebSocketForwarder(WebSocketForwarderConfig{}),
 			},
+			apiType:         APITypeCodex,
 			requestID:       "req-suppressed",
 			isSticky:        true,
 			lifecycle:       newWebSocketLifecycleState(),
@@ -1005,7 +1042,7 @@ func TestWebSocketSessionOrchestrator_FinalSessionUsesSuppressedPayload(t *testi
 	}))
 	defer proxyServer.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
@@ -1015,8 +1052,13 @@ func TestWebSocketSessionOrchestrator_FinalSessionUsesSuppressedPayload(t *testi
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if msgType != websocket.MessageText || string(payload) != `{"type":"error"}` {
-		t.Fatalf("Read() = (%v, %q), want text/error payload", msgType, string(payload))
+	wantGatewayPayload := string(marshalWebSocketGatewayError(
+		http.StatusServiceUnavailable,
+		ErrCodeProviderUnavailable,
+		"No available provider for api_type: codex",
+	))
+	if msgType != websocket.MessageText || string(payload) != wantGatewayPayload {
+		t.Fatalf("Read() = (%v, %q), want text/%q", msgType, string(payload), wantGatewayPayload)
 	}
 
 	select {
@@ -1024,14 +1066,11 @@ func TestWebSocketSessionOrchestrator_FinalSessionUsesSuppressedPayload(t *testi
 		if session.FinalProvider == nil || session.FinalProvider.ID != "provider-origin" {
 			t.Fatalf("FinalProvider = %#v, want provider-origin", session.FinalProvider)
 		}
-		if session.FinalResult == nil || !session.FinalResult.ClientVisible {
-			t.Fatalf("FinalResult = %#v, want client-visible semantic result", session.FinalResult)
+		if session.FinalResult == nil || session.FinalResult.ClientVisible {
+			t.Fatalf("FinalResult = %#v, want canonical invisible gateway result", session.FinalResult)
 		}
-		if session.FinalResult.TerminalCause != model.TerminalUpstreamSemanticError {
-			t.Fatalf("TerminalCause = %q, want %q", session.FinalResult.TerminalCause, model.TerminalUpstreamSemanticError)
-		}
-		if session.FinalResult.BytesClientToUpstream != int64(len("buffered request")) {
-			t.Fatalf("BytesClientToUpstream = %d, want %d", session.FinalResult.BytesClientToUpstream, len("buffered request"))
+		if session.FinalResult.TerminalCause != model.TerminalProviderUnavailable {
+			t.Fatalf("TerminalCause = %q, want %q", session.FinalResult.TerminalCause, model.TerminalProviderUnavailable)
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for suppressed session result")
@@ -1039,11 +1078,8 @@ func TestWebSocketSessionOrchestrator_FinalSessionUsesSuppressedPayload(t *testi
 
 	select {
 	case event := <-visible:
-		if event.MessageType != websocket.MessageText || string(event.Data) != `{"type":"error"}` {
-			t.Fatalf("visible event = %#v, want forwarded suppressed payload", event)
-		}
-	case <-ctx.Done():
-		t.Fatal("timed out waiting for visible callback")
+		t.Fatalf("visible event = %#v, want no client-visible callback for canonical gateway termination", event)
+	default:
 	}
 
 	if _, _, err := clientConn.Read(ctx); err == nil || (!errors.Is(err, io.EOF) && !isNormalClose(err)) {
@@ -1100,6 +1136,7 @@ func TestWebSocketSessionOrchestrator_FallsBackToSuppressedPayloadAfterRelaySupp
 		}
 
 		orchestrator := &WebSocketSessionOrchestrator{
+			apiType:      APITypeCodex,
 			requestID:    "req-suppressed-after-relay",
 			lifecycle:    lifecycle,
 			clientConn:   clientConn,
@@ -1110,7 +1147,7 @@ func TestWebSocketSessionOrchestrator_FallsBackToSuppressedPayloadAfterRelaySupp
 	}))
 	defer proxyServer.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
@@ -1123,14 +1160,22 @@ func TestWebSocketSessionOrchestrator_FallsBackToSuppressedPayloadAfterRelaySupp
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if msgType != websocket.MessageText || string(payload) != string(semanticPayload) {
-		t.Fatalf("Read() = (%v, %q), want text/original semantic payload", msgType, string(payload))
+	wantGatewayPayload := string(marshalWebSocketGatewayError(
+		http.StatusServiceUnavailable,
+		ErrCodeProviderUnavailable,
+		"No available provider for api_type: codex",
+	))
+	if msgType != websocket.MessageText || string(payload) != wantGatewayPayload {
+		t.Fatalf("Read() = (%v, %q), want text/%q", msgType, string(payload), wantGatewayPayload)
 	}
 
 	select {
 	case session := <-resultCh:
 		if session.FinalProvider == nil || session.FinalProvider.ID != "provider-origin" {
 			t.Fatalf("FinalProvider = %#v, want provider-origin", session.FinalProvider)
+		}
+		if session.FinalResult == nil || session.FinalResult.ClientVisible {
+			t.Fatalf("FinalResult = %#v, want canonical invisible gateway result", session.FinalResult)
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for session result")

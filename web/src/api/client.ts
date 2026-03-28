@@ -64,6 +64,7 @@ export type {
   ActiveRequestsResponse,
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatusResponse,
+  RecoveryAction,
   RequestAttemptOutcome,
   RequestAttemptPhase,
   RequestAttempt,
@@ -124,9 +125,12 @@ function buildLogsQuery(filter?: LogFilter): string {
   appendLogQueryParam(query, "min_retry_count", filter.min_retry_count);
   appendLogQueryParam(query, "has_retries", filter.has_retries);
   appendLogQueryParam(query, "session_committed", filter.session_committed);
+  appendLogQueryParam(query, "client_visible", filter.client_visible);
   appendLogQueryParam(query, "sticky_written", filter.sticky_written);
   appendLogQueryParam(query, "probe_outcome", filter.probe_outcome);
   appendLogQueryParam(query, "terminal_cause", filter.terminal_cause);
+  appendLogQueryParam(query, "commit_source", filter.commit_source);
+  appendLogQueryParam(query, "recovery_action", filter.recovery_action);
   appendLogQueryParam(query, "sort_by", filter.sort_by);
   appendLogQueryParam(query, "sort_order", filter.sort_order);
   return query.toString();

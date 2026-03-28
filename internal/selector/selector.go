@@ -71,8 +71,32 @@ type Config struct {
 
 // SelectResult contains the selected provider along with metadata about the selection.
 type SelectResult struct {
-	Provider        *model.Provider
-	FromStickyCache bool
+	Provider *model.Provider
+	Metadata SelectionMetadata
+}
+
+// SelectionSource explains how the selector reached the chosen provider.
+type SelectionSource string
+
+const (
+	SelectionSourceStrategy         SelectionSource = "strategy"
+	SelectionSourceStickyContinuity SelectionSource = "sticky_continuity"
+	SelectionSourceActiveContinuity SelectionSource = "active_continuity"
+)
+
+// SelectionMetadata keeps continuity provenance explicit so retry policy can be
+// derived from lifecycle state instead of overloading "sticky" as a control flag.
+type SelectionMetadata struct {
+	Source SelectionSource
+}
+
+func (m SelectionMetadata) UsesContinuity() bool {
+	switch m.Source {
+	case SelectionSourceStickyContinuity, SelectionSourceActiveContinuity:
+		return true
+	default:
+		return false
+	}
 }
 
 // Selector selects providers based on strategies and health status.
@@ -118,8 +142,8 @@ func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequ
 	}
 	if provider != nil {
 		return &SelectResult{
-			Provider:        provider,
-			FromStickyCache: true,
+			Provider: provider,
+			Metadata: SelectionMetadata{Source: SelectionSourceStickyContinuity},
 		}, nil
 	}
 
@@ -130,8 +154,8 @@ func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequ
 	}
 
 	return &SelectResult{
-		Provider:        provider,
-		FromStickyCache: false,
+		Provider: provider,
+		Metadata: SelectionMetadata{Source: SelectionSourceStrategy},
 	}, nil
 }
 
@@ -434,6 +458,16 @@ func (s *Selector) UpdateStickyWithTTL(req *model.SelectRequest, providerID stri
 
 	stickyKey := buildStickyKey(req)
 	s.sticky.Set(stickyKey, providerID, ttl)
+}
+
+// EvictProviderContinuity removes every sticky continuity entry for the provider.
+// Suspension paths use this instead of reaching into the cache implementation so
+// eager invalidation stays aligned with the same abstraction selectors read from.
+func (s *Selector) EvictProviderContinuity(providerID string) {
+	if s.sticky == nil || providerID == "" {
+		return
+	}
+	s.sticky.EvictProvider(providerID)
 }
 
 // ReleaseConcurrency releases the concurrency slot for a provider.

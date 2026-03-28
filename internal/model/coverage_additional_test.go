@@ -78,6 +78,13 @@ func TestLogFilterHasWebSocketLifecycleFilter(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "client visible",
+			filter: LogFilter{
+				ClientVisible: &trueValue,
+			},
+			want: true,
+		},
+		{
 			name: "terminal cause",
 			filter: LogFilter{
 				TerminalCause: TerminalInternalError,
@@ -85,9 +92,23 @@ func TestLogFilterHasWebSocketLifecycleFilter(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "commit source",
+			filter: LogFilter{
+				CommitSource: CommitSemantic,
+			},
+			want: true,
+		},
+		{
 			name: "probe outcome",
 			filter: LogFilter{
 				ProbeOutcome: WebSocketProbeOutcomeUnsupported,
+			},
+			want: true,
+		},
+		{
+			name: "recovery action",
+			filter: LogFilter{
+				RecoveryAction: RecoveryActionReconnectRequired,
 			},
 			want: true,
 		},
@@ -115,6 +136,40 @@ func TestIsValidTerminalCause(t *testing.T) {
 	}
 	if IsValidTerminalCause(TerminalCause("bogus")) {
 		t.Fatal("IsValidTerminalCause(invalid) = true, want false")
+	}
+}
+
+func TestIsValidRecoveryAction(t *testing.T) {
+	t.Parallel()
+
+	if !IsValidRecoveryAction(RecoveryActionNone) {
+		t.Fatal("IsValidRecoveryAction(RecoveryActionNone) = false, want true")
+	}
+	if !IsValidRecoveryAction(RecoveryActionTransparentRetry) {
+		t.Fatal("IsValidRecoveryAction(RecoveryActionTransparentRetry) = false, want true")
+	}
+	if !IsValidRecoveryAction(RecoveryActionReconnectRequired) {
+		t.Fatal("IsValidRecoveryAction(RecoveryActionReconnectRequired) = false, want true")
+	}
+	if IsValidRecoveryAction(RecoveryAction("bogus")) {
+		t.Fatal("IsValidRecoveryAction(invalid) = true, want false")
+	}
+}
+
+func TestIsValidCommitSource(t *testing.T) {
+	t.Parallel()
+
+	if !IsValidCommitSource(CommitSemantic) {
+		t.Fatal("IsValidCommitSource(CommitSemantic) = false, want true")
+	}
+	if !IsValidCommitSource(CommitUpstreamMessage) {
+		t.Fatal("IsValidCommitSource(CommitUpstreamMessage) = false, want true")
+	}
+	if !IsValidCommitSource(CommitUnknown) {
+		t.Fatal("IsValidCommitSource(CommitUnknown) = false, want true")
+	}
+	if IsValidCommitSource(CommitSource("bogus")) {
+		t.Fatal("IsValidCommitSource(invalid) = true, want false")
 	}
 }
 

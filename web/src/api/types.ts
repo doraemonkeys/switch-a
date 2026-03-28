@@ -6,6 +6,7 @@ import type {
   Strategy,
   AuthMode,
   ProviderCredentialType,
+  ProviderUsageLimitPolicy,
   ErrorCode,
   FailoverScope,
 } from "../config/constants";
@@ -13,6 +14,7 @@ export type {
   Strategy,
   AuthMode,
   ProviderCredentialType,
+  ProviderUsageLimitPolicy,
   ErrorCode,
   FailoverScope,
 };
@@ -117,6 +119,8 @@ export interface Provider {
   api_types: ProviderAPIType[];
   auth_mode: AuthMode;
   credential_type: ProviderCredentialType;
+  usage_limit_policy?: ProviderUsageLimitPolicy;
+  usage_limit_policy_explicit?: boolean;
   group_id: string | null;
   weight: number;
   priority: number;
@@ -151,6 +155,7 @@ export interface ProviderInput {
   api_types: APITypeInput[];
   auth_mode?: AuthMode;
   credential_type?: ProviderCredentialType;
+  usage_limit_policy?: ProviderUsageLimitPolicy;
   credential_login_id?: string;
   group_id?: string | null;
   weight?: number;
@@ -375,6 +380,11 @@ export type TerminalCause =
 
 export type CommitSource = "semantic_event" | "upstream_message" | "unknown";
 
+export type RecoveryAction =
+  | "none"
+  | "transparent_retry"
+  | "reconnect_required";
+
 export type WebSocketProbeOutcome =
   | "unknown"
   | "bypassed"
@@ -424,9 +434,11 @@ export interface RequestLog {
   // WebSocket lifecycle semantics (nullable outside the WebSocket lifecycle domain)
   sticky_written?: boolean | null;
   session_committed?: boolean | null;
+  client_visible?: boolean | null;
   probe_outcome?: WebSocketProbeOutcome | null;
   terminal_cause?: TerminalCause | null;
   commit_source?: CommitSource | null;
+  recovery_action?: RecoveryAction | null;
   // Provider-attempt records only. RequestLog remains the session lifecycle summary.
   attempts?: RequestAttempt[];
 }
@@ -471,12 +483,18 @@ export interface LogFilter {
   has_retries?: boolean;
   /** Filter by whether a WebSocket session committed upstream service */
   session_committed?: boolean;
+  /** Filter by whether a WebSocket session crossed the client-visible boundary */
+  client_visible?: boolean;
   /** Filter by whether a WebSocket session wrote sticky affinity */
   sticky_written?: boolean;
   /** Filter by WebSocket probe outcome */
   probe_outcome?: WebSocketProbeOutcome;
   /** Filter by WebSocket terminal cause */
   terminal_cause?: TerminalCause;
+  /** Filter by WebSocket commit source */
+  commit_source?: CommitSource;
+  /** Filter by session-level recovery action */
+  recovery_action?: RecoveryAction;
   /** Sort field (created_at/latency_ms, default: created_at) */
   sort_by?: "created_at" | "latency_ms";
   /** Sort direction (asc/desc, default: desc) */
@@ -587,6 +605,7 @@ export interface ExportedProvider {
   api_types: ExportedAPIType[];
   auth_mode: AuthMode;
   credential_type?: ProviderCredentialType;
+  usage_limit_policy?: ProviderUsageLimitPolicy;
   group_id?: string | null;
   weight: number;
   priority: number;

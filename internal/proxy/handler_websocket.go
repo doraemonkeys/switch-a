@@ -312,7 +312,10 @@ func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
 	return statusCode, ErrCodeWebSocketUpgrade, message
 }
 
-func websocketLogStatusCode(result *WebSocketResult) int {
+func websocketLogStatusCode(session *WebSocketSessionResult, result *WebSocketResult) int {
+	if session != nil && session.GatewayStatusCode > 0 {
+		return session.GatewayStatusCode
+	}
 	if result == nil {
 		return StatusCodeNoResponse
 	}
@@ -328,7 +331,10 @@ func websocketLogStatusCode(result *WebSocketResult) int {
 	return http.StatusSwitchingProtocols
 }
 
-func websocketLogErrorMessage(result *WebSocketResult, fallback error) string {
+func websocketLogErrorMessage(session *WebSocketSessionResult, result *WebSocketResult, fallback error) string {
+	if session != nil && session.GatewayMessage != "" {
+		return session.GatewayMessage
+	}
 	if result != nil && result.HandshakeBodySnippet != "" {
 		return result.HandshakeBodySnippet
 	}
@@ -375,16 +381,22 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 	err := session.FinalErr
 	attempts := session.RequestAttempts()
 	sessionCommitted := false
+	clientVisible := false
 	probeOutcome := model.WebSocketProbeOutcomeUnknown
 	terminalCause := model.TerminalUnknown
 	commitSource := model.CommitUnknown
+	recoveryAction := model.RecoveryActionNone
 	if result != nil {
 		sessionCommitted = result.SessionCommitted
+		clientVisible = result.ClientVisible
 		if result.TerminalCause != "" {
 			terminalCause = result.TerminalCause
 		}
 		if result.CommitSource != "" {
 			commitSource = result.CommitSource
+		}
+		if result.RecoveryAction != "" {
+			recoveryAction = result.RecoveryAction
 		}
 	}
 	if model.IsValidWebSocketProbeOutcome(session.ProbeOutcome) {
@@ -397,7 +409,7 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 		Model:            info.Model,
 		ClientIP:         info.ClientIP,
 		UserID:           info.UserID,
-		StatusCode:       websocketLogStatusCode(result),
+		StatusCode:       websocketLogStatusCode(session, result),
 		LatencyMs:        latency.Milliseconds(),
 		Success:          websocketLogSuccess(result),
 		IsWebSocket:      true,
@@ -405,9 +417,11 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 		RetryCount:       session.RetryCount(),
 		StickyWritten:    &session.StickyWritten,
 		SessionCommitted: &sessionCommitted,
+		ClientVisible:    &clientVisible,
 		ProbeOutcome:     &probeOutcome,
 		TerminalCause:    &terminalCause,
 		CommitSource:     &commitSource,
+		RecoveryAction:   &recoveryAction,
 		CreatedAt:        time.Now(),
 		RequestPath:      info.Path,
 		RequestMethod:    info.Method,
@@ -424,7 +438,7 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 		log.RequestBytes = result.BytesClientToUpstream
 	}
 
-	log.ErrorMsg = websocketLogErrorMessage(result, err)
+	log.ErrorMsg = websocketLogErrorMessage(session, result, err)
 	if result != nil && result.TokenUsage != nil {
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
 			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()
@@ -459,34 +473,54 @@ func applyWebSocketSessionHealthOutcomes(ctx context.Context, h *Handler, sessio
 			(attempt.Result.UpstreamError != nil || attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError) {
 			finalProviderSawSemanticOutcome = true
 		}
-		applyWebSocketHealthOutcome(ctx, h, attempt.Provider.ID, attempt.Result)
+		applyWebSocketHealthOutcome(ctx, h, attempt.Provider, attempt.Result)
 	}
 	if session.FinalProvider == nil || session.FinalResult == nil || finalProviderSawSemanticOutcome {
 		return
 	}
 	if session.FinalResult.UpstreamError != nil || session.FinalResult.TerminalCause == model.TerminalUpstreamSemanticError {
-		applyWebSocketHealthOutcome(ctx, h, session.FinalProvider.ID, session.FinalResult)
+		applyWebSocketHealthOutcome(ctx, h, session.FinalProvider, session.FinalResult)
 	}
 }
 
-func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID string, result *WebSocketResult) {
-	if result == nil {
+func applyWebSocketHealthOutcome(
+	ctx context.Context,
+	h *Handler,
+	provider *model.Provider,
+	result *WebSocketResult,
+) {
+	if provider == nil || result == nil {
 		return
 	}
-	failureDisposition := classifyWebSocketHandshakeFailure(result)
+	failureDisposition := classifyWebSocketHandshakeFailureForProvider(provider, result)
+	if result.UpstreamError != nil {
+		failureDisposition = classifyWebSocketUpstreamFailureForProvider(provider, result.UpstreamError)
+	}
 	if failureDisposition.autoDisableUntil != nil {
-		h.markFailure(ctx, providerID, result.Err)
+		h.markFailure(ctx, provider.ID, result.Err)
 		h.suspendProviderUntil(
 			ctx,
-			providerID,
+			provider.ID,
 			*failureDisposition.autoDisableUntil,
 			failureDisposition.autoDisableReason,
 		)
 		return
 	}
 	if result.UpstreamError != nil {
+		if failureDisposition := classifyWebSocketUpstreamFailureForProvider(provider, result.UpstreamError); failureDisposition.autoDisableUntil != nil {
+			if shouldTrackWebSocketFailureInHealth(result) {
+				h.markFailure(ctx, provider.ID, result.Err)
+			}
+			h.suspendProviderUntil(
+				ctx,
+				provider.ID,
+				*failureDisposition.autoDisableUntil,
+				failureDisposition.autoDisableReason,
+			)
+			return
+		}
 		if shouldTrackWebSocketFailureInHealth(result) {
-			h.markFailure(ctx, providerID, result.Err)
+			h.markFailure(ctx, provider.ID, result.Err)
 		}
 		return
 	}
@@ -496,18 +530,18 @@ func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID str
 		result.TerminalCause != model.TerminalClientDisconnect &&
 		result.TerminalCause != model.TerminalInternalError {
 		if shouldTrackWebSocketFailureInHealth(result) {
-			h.markFailure(ctx, providerID, result.Err)
+			h.markFailure(ctx, provider.ID, result.Err)
 		}
 		return
 	}
 	if result.SessionCommitted {
 		if result.TerminalCause == model.TerminalUpstreamSemanticError {
 			if shouldTrackWebSocketFailureInHealth(result) {
-				h.markFailure(ctx, providerID, result.Err)
+				h.markFailure(ctx, provider.ID, result.Err)
 			}
 			return
 		}
-		h.markSuccess(ctx, providerID)
+		h.markSuccess(ctx, provider.ID)
 		return
 	}
 
@@ -518,7 +552,7 @@ func applyWebSocketHealthOutcome(ctx context.Context, h *Handler, providerID str
 		model.TerminalUpstreamTransportError,
 		model.TerminalUpstreamSemanticError:
 		if shouldTrackWebSocketFailureInHealth(result) {
-			h.markFailure(ctx, providerID, result.Err)
+			h.markFailure(ctx, provider.ID, result.Err)
 		}
 	}
 }

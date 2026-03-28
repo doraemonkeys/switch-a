@@ -9,6 +9,7 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"go.uber.org/zap"
 )
@@ -197,26 +198,29 @@ func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.C
 	}
 }
 
-func (o *WebSocketSessionOrchestrator) selectProvider(ctx context.Context, attempt int) (*model.Provider, bool, *WebSocketSessionResult) {
+func (o *WebSocketSessionOrchestrator) selectProvider(
+	ctx context.Context,
+	attempt int,
+) (*model.Provider, selector.SelectionMetadata, *WebSocketSessionResult) {
 	o.selectReq.FailoverContext = o.failoverContext
 	o.selectReq.MaxProviderSwitches = o.maxAttempts
 
-	provider, fromSticky, err := o.handler.selectProviderWithTracking(ctx, o.selectReq, attempt, o.excludedProviders)
+	provider, selectionMetadata, err := o.handler.selectProviderWithTracking(ctx, o.selectReq, attempt, o.excludedProviders)
 	if err == nil {
 		if o.failoverContext == nil {
 			o.failoverContext = model.NewFailoverContext(provider)
 		} else {
 			o.failoverContext.Update(provider)
 		}
-		return provider, fromSticky, nil
+		return provider, selectionMetadata, nil
 	}
 
 	if errors.Is(err, internal.ErrNoProvider) {
 		if len(o.attempts) > 0 {
-			return nil, false, o.finalSessionFromLastAttempt(ctx)
+			return nil, selector.SelectionMetadata{}, o.finalSessionFromLastAttempt(ctx)
 		}
 		o.handler.logger.Warn("no providers available for websocket", zap.String("api_type", o.apiType))
-		return nil, false, newWebSocketSelectionFailureSession(
+		return nil, selector.SelectionMetadata{}, newWebSocketSelectionFailureSession(
 			o.requestID,
 			o.isSticky,
 			o.attempts,
@@ -229,7 +233,7 @@ func (o *WebSocketSessionOrchestrator) selectProvider(ctx context.Context, attem
 	}
 
 	o.handler.logger.Error("provider selection failed for websocket", zap.Error(err))
-	return nil, false, newWebSocketSelectionFailureSession(
+	return nil, selector.SelectionMetadata{}, newWebSocketSelectionFailureSession(
 		o.requestID,
 		o.isSticky,
 		o.attempts,

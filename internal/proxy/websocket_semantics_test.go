@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -118,6 +120,15 @@ func TestClassifyWebSocketUpstreamError_StatusAndIdentifierSignals(t *testing.T)
 			want: webSocketSemanticClassificationProviderScopedAllowlisted,
 		},
 		{
+			name: "provider scoped from generic 5xx status",
+			err: &WebSocketUpstreamError{
+				EventType:  "error",
+				StatusCode: 500,
+				Message:    "upstream crashed",
+			},
+			want: webSocketSemanticClassificationProviderScoped,
+		},
+		{
 			name: "provider scoped from allowlisted identifier",
 			err: &WebSocketUpstreamError{
 				EventType: "error",
@@ -170,6 +181,7 @@ func TestDecideWebSocketUpstreamMessage_UsesClientVisibilityAndParseDegradation(
 	t.Parallel()
 
 	providerPayload := []byte(`{"error":{"message":"Model 'gpt-5.4' is not allowed","type":"model_not_allowed"},"status":403,"type":"error"}`)
+	genericProviderPayload := []byte(`{"error":{"message":"upstream crashed"},"status":500,"type":"error"}`)
 	clientPayload := []byte(`{"error":{"message":"invalid client payload","type":"invalid_request_error"},"status":400,"type":"error"}`)
 
 	tests := []struct {
@@ -192,6 +204,12 @@ func TestDecideWebSocketUpstreamMessage_UsesClientVisibilityAndParseDegradation(
 			clientVisible: true,
 			wantClass:     webSocketSemanticClassificationProviderScopedAllowlisted,
 			wantDecision:  webSocketSemanticFrameDecisionForward,
+		},
+		{
+			name:         "generic provider scoped before visible stays switchable but not suppressed",
+			payload:      genericProviderPayload,
+			wantClass:    webSocketSemanticClassificationProviderScoped,
+			wantDecision: webSocketSemanticFrameDecisionForward,
 		},
 		{
 			name:         "forward client scoped before visible",
@@ -346,7 +364,7 @@ func TestBuildWebSocketUpstreamError_PrefersNestedErrorFieldsAndFallbacks(t *tes
 		},
 	}
 
-	upstreamErr := buildWebSocketUpstreamError(event, data)
+	upstreamErr := buildWebSocketUpstreamError(event, data, time.Now().UTC())
 	if upstreamErr == nil {
 		t.Fatal("expected upstream error")
 	}
@@ -365,12 +383,40 @@ func TestBuildWebSocketUpstreamError_PrefersNestedErrorFieldsAndFallbacks(t *tes
 
 	fallback := buildWebSocketUpstreamError(&codexWebSocketEventEnvelope{
 		Type: "error",
-	}, []byte(`{"type":"error"}`))
+	}, []byte(`{"type":"error"}`), time.Now().UTC())
 	if fallback == nil {
 		t.Fatal("expected fallback upstream error")
 	}
 	if fallback.Message != "error" {
 		t.Fatalf("fallback Message = %q, want event type fallback", fallback.Message)
+	}
+}
+
+func TestBuildWebSocketUpstreamError_UsesStatusCodeAndResetAtFields(t *testing.T) {
+	t.Parallel()
+
+	observedAt := time.Date(2026, time.March, 26, 10, 0, 0, 0, time.UTC)
+	resetAt := observedAt.Add(20 * time.Minute).Truncate(time.Second)
+	payload := []byte(`{"type":"error","status_code":429,"error":{"type":"usage_limit_reached","resets_at":` +
+		strconv.FormatInt(resetAt.Unix(), 10) + `}}`)
+	event := &codexWebSocketEventEnvelope{
+		Type:       "error",
+		StatusCode: 429,
+		Error: &codexWebSocketEventError{
+			Type:     "usage_limit_reached",
+			ResetsAt: resetAt.Unix(),
+		},
+	}
+
+	upstreamErr := buildWebSocketUpstreamError(event, payload, observedAt)
+	if upstreamErr == nil {
+		t.Fatal("expected upstream error")
+	}
+	if upstreamErr.StatusCode != 429 {
+		t.Fatalf("StatusCode = %d, want 429", upstreamErr.StatusCode)
+	}
+	if upstreamErr.ResetAt == nil || !upstreamErr.ResetAt.Equal(resetAt) {
+		t.Fatalf("ResetAt = %v, want %v", upstreamErr.ResetAt, resetAt)
 	}
 }
 
@@ -422,32 +468,52 @@ func TestNormalizeAndClassifyWebSocketSemanticErrorKey(t *testing.T) {
 func TestDecideWebSocketUpstreamError_UsesVisibilityAndParseDegradation(t *testing.T) {
 	t.Parallel()
 
-	upstreamErr := &WebSocketUpstreamError{
-		EventType:  "auth_error",
-		Code:       "invalid_api_key",
-		StatusCode: 401,
-	}
-
 	tests := []struct {
 		name          string
+		err           *WebSocketUpstreamError
 		parseDegraded bool
 		clientVisible bool
 		wantClass     webSocketSemanticClassification
 		wantDecision  webSocketSemanticFrameDecision
 	}{
 		{
-			name:         "suppresses allowlisted provider error before visible",
+			name: "suppresses allowlisted provider error before visible",
+			err: &WebSocketUpstreamError{
+				EventType:  "auth_error",
+				Code:       "invalid_api_key",
+				StatusCode: 401,
+			},
 			wantClass:    webSocketSemanticClassificationProviderScopedAllowlisted,
 			wantDecision: webSocketSemanticFrameDecisionSuppress,
 		},
 		{
-			name:          "forwards allowlisted provider error after visible",
+			name: "forwards allowlisted provider error after visible",
+			err: &WebSocketUpstreamError{
+				EventType:  "auth_error",
+				Code:       "invalid_api_key",
+				StatusCode: 401,
+			},
 			clientVisible: true,
 			wantClass:     webSocketSemanticClassificationProviderScopedAllowlisted,
 			wantDecision:  webSocketSemanticFrameDecisionForward,
 		},
 		{
-			name:          "parse degradation downgrades to unknown",
+			name: "forwards generic provider 5xx before visible",
+			err: &WebSocketUpstreamError{
+				EventType:  "error",
+				StatusCode: 500,
+				Message:    "upstream crashed",
+			},
+			wantClass:    webSocketSemanticClassificationProviderScoped,
+			wantDecision: webSocketSemanticFrameDecisionForward,
+		},
+		{
+			name: "parse degradation downgrades to unknown",
+			err: &WebSocketUpstreamError{
+				EventType:  "auth_error",
+				Code:       "invalid_api_key",
+				StatusCode: 401,
+			},
 			parseDegraded: true,
 			wantClass:     webSocketSemanticClassificationUnknown,
 			wantDecision:  webSocketSemanticFrameDecisionForward,
@@ -458,7 +524,7 @@ func TestDecideWebSocketUpstreamError_UsesVisibilityAndParseDegradation(t *testi
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			decision := decideWebSocketUpstreamError(upstreamErr, tt.parseDegraded, tt.clientVisible)
+			decision := decideWebSocketUpstreamError(tt.err, tt.parseDegraded, tt.clientVisible)
 			if decision.Classification != tt.wantClass {
 				t.Fatalf("Classification = %v, want %v", decision.Classification, tt.wantClass)
 			}
@@ -532,7 +598,7 @@ func TestBuildWebSocketUpstreamError_FallsBackToCodeOrEventType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := buildWebSocketUpstreamError(tt.event, payload); !upstreamErrorsEqual(got, tt.want) {
+			if got := buildWebSocketUpstreamError(tt.event, payload, time.Now().UTC()); !upstreamErrorsEqual(got, tt.want) {
 				t.Fatalf("buildWebSocketUpstreamError() = %#v, want %#v", got, tt.want)
 			}
 		})
@@ -661,6 +727,12 @@ func TestCodexWebSocketSemantics_HelperBranches(t *testing.T) {
 
 	if got := (&WebSocketUpstreamError{StatusCode: 403}).IsAllowlistedProviderScoped(); !got {
 		t.Fatal("IsAllowlistedProviderScoped() = false, want true for 403")
+	}
+	if got := (&WebSocketUpstreamError{StatusCode: 500}).IsAllowlistedProviderScoped(); got {
+		t.Fatal("IsAllowlistedProviderScoped() = true, want false for generic 500")
+	}
+	if got := (&WebSocketUpstreamError{StatusCode: 500}).IsSwitchableProviderScoped(); !got {
+		t.Fatal("IsSwitchableProviderScoped() = false, want true for generic 500")
 	}
 	if got := shouldSkipCodexObservedPayload(websocket.MessageBinary, []byte(`{"type":"response.created"}`)); !got {
 		t.Fatal("shouldSkipCodexObservedPayload(binary) = false, want true")

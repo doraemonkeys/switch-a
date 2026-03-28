@@ -21,11 +21,15 @@ const (
 	legacyWebSocketColumnName    = "is_web_socket"
 	webSocketColumnName          = "is_websocket"
 	sessionCommittedColumnName   = "session_committed"
+	clientVisibleColumnName      = "client_visible"
 	stickyWrittenColumnName      = "sticky_written"
 	probeOutcomeColumnName       = "probe_outcome"
 	terminalCauseColumnName      = "terminal_cause"
 	commitSourceColumnName       = "commit_source"
+	recoveryActionColumnName     = "recovery_action"
 )
+
+const usageLimitPolicyColumnName = "usage_limit_policy"
 
 const (
 	legacySuccessValue = 1
@@ -180,6 +184,10 @@ func migrateRequestLogLifecycleFields(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	hasClientVisible, err := requestLogsColumnExists(db, clientVisibleColumnName)
+	if err != nil {
+		return err
+	}
 	hasStickyWritten, err := requestLogsColumnExists(db, stickyWrittenColumnName)
 	if err != nil {
 		return err
@@ -196,7 +204,17 @@ func migrateRequestLogLifecycleFields(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if !hasSessionCommitted && !hasStickyWritten && !hasProbeOutcome && !hasTerminalCause && !hasCommitSource {
+	hasRecoveryAction, err := requestLogsColumnExists(db, recoveryActionColumnName)
+	if err != nil {
+		return err
+	}
+	if !hasSessionCommitted &&
+		!hasClientVisible &&
+		!hasStickyWritten &&
+		!hasProbeOutcome &&
+		!hasTerminalCause &&
+		!hasCommitSource &&
+		!hasRecoveryAction {
 		return nil
 	}
 
@@ -246,6 +264,21 @@ func migrateRequestLogLifecycleFields(db *gorm.DB) error {
 			fmt.Sprintf("(%s IS NULL OR %s = '')", commitSourceColumnName, commitSourceColumnName),
 		); err != nil {
 			return err
+		}
+		if hasClientVisible {
+			// Historical rows do not encode the visibility boundary, so we keep the
+			// WebSocket column nullable instead of backfilling a fake false value.
+			if err := clearNonWebSocketLifecycleColumn(tx, clientVisibleColumnName); err != nil {
+				return err
+			}
+		}
+		if hasRecoveryAction {
+			// Historical rows also lack the session-level recovery contract. Leaving
+			// old WebSocket rows NULL preserves that uncertainty instead of inventing
+			// a retry decision that never existed in the old schema.
+			if err := clearNonWebSocketLifecycleColumn(tx, recoveryActionColumnName); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -331,6 +364,39 @@ func migrateProviderStateTables(db *gorm.DB) error {
 			}
 		}
 		return nil
+	})
+}
+
+// migrateProviderUsageLimitPolicyStorage rewrites rows that accidentally
+// persisted a credential-derived default back to the empty "inherit default"
+// representation so later credential_type changes can recompute the effective
+// policy without clobbering explicit overrides.
+func migrateProviderUsageLimitPolicyStorage(db *gorm.DB) error {
+	present, err := tableColumnExists(db, providersTableName, usageLimitPolicyColumnName)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE providers
+			SET usage_limit_policy = ''
+			WHERE TRIM(COALESCE(usage_limit_policy, '')) != ''
+			  AND (
+				(COALESCE(NULLIF(TRIM(credential_type), ''), ?) = ? AND TRIM(usage_limit_policy) = ?)
+				OR
+				(COALESCE(NULLIF(TRIM(credential_type), ''), ?) != ? AND TRIM(usage_limit_policy) = ?)
+			  )
+		`,
+			string(model.ProviderCredentialTypeAPIKey),
+			string(model.ProviderCredentialTypeChatGPT),
+			string(model.ProviderUsageLimitPolicySuspend),
+			string(model.ProviderCredentialTypeAPIKey),
+			string(model.ProviderCredentialTypeChatGPT),
+			string(model.ProviderUsageLimitPolicySwitchProvider),
+		).Error
 	})
 }
 

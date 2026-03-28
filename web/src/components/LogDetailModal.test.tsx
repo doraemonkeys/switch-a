@@ -174,6 +174,54 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("Error Details")).toBeInTheDocument();
   });
 
+  it("shows visibility and reconnect guidance for client-visible lifecycle failures", () => {
+    const log = createMockLog({
+      is_websocket: true,
+      success: false,
+      status_code: 101,
+      session_committed: false,
+      client_visible: true,
+      terminal_cause: "upstream_semantic_error",
+      recovery_action: "reconnect_required",
+      error_msg: '{"error":"gateway reconnect required"}',
+    });
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Test Provider"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getAllByText("Reconnect required").length).toBeGreaterThan(0);
+    expect(screen.getByText("Client Visibility")).toBeInTheDocument();
+    expect(screen.getAllByText("Visible").length).toBeGreaterThan(0);
+    expect(screen.getByText("Recovery Action")).toBeInTheDocument();
+    expect(screen.getByText("Error Details")).toBeInTheDocument();
+  });
+
+  it("suppresses no-op recovery action details for healthy websocket sessions", () => {
+    const log = createMockLog({
+      is_websocket: true,
+      success: true,
+      status_code: 101,
+      session_committed: true,
+      client_visible: true,
+      terminal_cause: "clean_close",
+      recovery_action: "none",
+    });
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Test Provider"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.queryByText("Recovery Action")).not.toBeInTheDocument();
+    expect(screen.queryByText("None")).not.toBeInTheDocument();
+  });
+
   it("separates websocket provider attempts from final lifecycle attribution", () => {
     const log = createMockLog({
       is_websocket: true,

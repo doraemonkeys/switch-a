@@ -11,25 +11,28 @@ import (
 )
 
 // selectProviderWithTracking selects a provider for the given attempt.
-// Returns (provider, useStickyBehavior, error). useStickyBehavior indicates the provider
-// was selected via sticky cache or active request fallback, meaning retries should be skipped
-// on failure since the client explicitly requested this provider continuity.
-func (h *Handler) selectProviderWithTracking(ctx context.Context, selectReq *model.SelectRequest, attempt int, excluded map[string]bool) (*model.Provider, bool, error) {
+// Returns (provider, selection metadata, error). Metadata keeps continuity origin
+// explicit without turning that provenance into retry policy.
+func (h *Handler) selectProviderWithTracking(
+	ctx context.Context,
+	selectReq *model.SelectRequest,
+	attempt int,
+	excluded map[string]bool,
+) (*model.Provider, selector.SelectionMetadata, error) {
 	if h.selector == nil {
 		// Fallback: direct provider list (no selector configured)
 		provider, err := normalizeSelectedProvider(h.selectProviderFallback(ctx, selectReq, attempt, excluded))
-		return provider, false, err
+		return provider, selector.SelectionMetadata{Source: selector.SelectionSourceStrategy}, err
 	}
 
 	if attempt == 0 {
 		result, err := normalizeSelectorSelectResult(h.selector.SelectWithMetadata(ctx, selectReq))
 		if err != nil {
-			return nil, false, err
+			return nil, selector.SelectionMetadata{}, err
 		}
 
-		// Sticky cache hit, directly return
-		if result.FromStickyCache {
-			return result.Provider, true, nil
+		if result.Metadata.UsesContinuity() {
+			return result.Provider, result.Metadata, nil
 		}
 
 		// Check active requests when sticky cache misses (see tryActiveProviderFallback doc).
@@ -37,15 +40,15 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, selectReq *mod
 			// Release the concurrency slot acquired by SelectWithMetadata above,
 			// since we're returning a different provider from the active registry.
 			h.releaseConcurrency(result.Provider.ID)
-			return activeProvider, true, nil
+			return activeProvider, selector.SelectionMetadata{Source: selector.SelectionSourceActiveContinuity}, nil
 		}
 
-		return result.Provider, false, nil
+		return result.Provider, result.Metadata, nil
 	}
 
 	provider, err := normalizeSelectedProvider(h.selector.SelectExcluding(ctx, selectReq, excluded))
 	if err != nil {
-		return nil, false, err
+		return nil, selector.SelectionMetadata{}, err
 	}
 	if provider != nil && excluded != nil && excluded[provider.ID] {
 		// A retry that reselects an already-excluded provider cannot make
@@ -58,9 +61,9 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, selectReq *mod
 			zap.String("provider_id", provider.ID),
 			zap.Int("attempt", attempt),
 		)
-		return nil, false, internal.ErrNoProvider
+		return nil, selector.SelectionMetadata{}, internal.ErrNoProvider
 	}
-	return provider, false, nil
+	return provider, selector.SelectionMetadata{Source: selector.SelectionSourceStrategy}, nil
 }
 
 func normalizeSelectorSelectResult(result *selector.SelectResult, err error) (*selector.SelectResult, error) {

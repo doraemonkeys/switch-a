@@ -35,6 +35,25 @@ describe("getLogLifecyclePresentation", () => {
     expect(lifecycle.tableDetailLabel).toContain("Transport failed");
   });
 
+  it("prioritizes reconnect-required visibility semantics over commit heuristics", () => {
+    const lifecycle = getLogLifecyclePresentation({
+      ...baseLog,
+      session_committed: false,
+      client_visible: true,
+      terminal_cause: "upstream_semantic_error",
+      recovery_action: "reconnect_required",
+    });
+
+    expect(lifecycle.shortOutcomeLabel).toBe("Reconnect required");
+    expect(lifecycle.outcomeLabel).toBe(
+      "Client-visible session ended with reconnect required",
+    );
+    expect(lifecycle.clientVisibilityLabel).toBe("Visible");
+    expect(lifecycle.recoveryActionLabel).toBe("Reconnect Required");
+    expect(lifecycle.tableDetailLabel).toContain("Visible");
+    expect(lifecycle.tableDetailLabel).toContain("Reconnect Required");
+  });
+
   it("keeps probe outcome hidden for non-websocket logs", () => {
     const lifecycle = getLogLifecyclePresentation({
       ...baseLog,

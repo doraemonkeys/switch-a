@@ -30,6 +30,10 @@ func commitSourcePtr(v model.CommitSource) *model.CommitSource {
 	return &v
 }
 
+func recoveryActionPtr(v model.RecoveryAction) *model.RecoveryAction {
+	return &v
+}
+
 func TestListLogs_FilterByProviderID(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()

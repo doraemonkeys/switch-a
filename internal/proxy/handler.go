@@ -103,6 +103,7 @@ type Selector interface {
 	SelectExcluding(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
 	SelectWithMetadata(ctx context.Context, req *model.SelectRequest) (*selector.SelectResult, error)
 	UpdateStickyWithTTL(req *model.SelectRequest, providerID string, ttl time.Duration)
+	EvictProviderContinuity(providerID string)
 	ReleaseConcurrency(providerID string)
 	// ClearConcurrency removes the concurrency counter for a deleted provider.
 	// This should be called when a provider is deleted to prevent unbounded memory growth.
@@ -334,7 +335,7 @@ func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyCont
 	pctx.selectReq.FailoverContext = state.failoverContext
 	pctx.selectReq.MaxProviderSwitches = pctx.cfg.globalMaxAttempts
 
-	provider, fromSticky, err := h.selectProviderWithTracking(ctx, pctx.selectReq, attempt, state.excludedProviders)
+	provider, selectionMetadata, err := h.selectProviderWithTracking(ctx, pctx.selectReq, attempt, state.excludedProviders)
 	if err != nil {
 		if errors.Is(err, internal.ErrNoProvider) {
 			// No provider available before any upstream attempt -> immediate error.
@@ -366,7 +367,7 @@ func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyCont
 
 	// Track sticky cache hit on first attempt
 	if attempt == 0 {
-		pctx.isSticky = fromSticky
+		pctx.isSticky = selectionMetadata.UsesContinuity()
 	}
 
 	h.registerActiveRequest(pctx, state, provider)

@@ -34,24 +34,25 @@ type ExportedConfig struct {
 // ExportedProvider represents a provider in the export format.
 // This is a flattened version without health state or timestamps.
 type ExportedProvider struct {
-	ID             string                       `json:"id"`
-	Name           string                       `json:"name"`
-	APIKey         string                       `json:"api_key"`
-	APITypes       []ExportedAPIType            `json:"api_types"`
-	AuthMode       string                       `json:"auth_mode"`
-	CredentialType model.ProviderCredentialType `json:"credential_type,omitempty"`
-	Credential     *ExportedProviderCredential  `json:"credential,omitempty"`
-	AuthState      *ExportedProviderAuthState   `json:"auth_state,omitempty"`
-	GroupID        *string                      `json:"group_id,omitempty"`
-	Weight         int                          `json:"weight"`
-	Priority       int                          `json:"priority"`
-	Concurrency    int                          `json:"concurrency"`
-	MaxRetries     int                          `json:"max_retries"`
-	Backoff        ExportedBackoff              `json:"backoff,omitempty"`
-	Vendor         string                       `json:"vendor,omitempty"`
-	FailoverScope  string                       `json:"failover_scope,omitempty"`
-	AcceptFailover string                       `json:"accept_failover,omitempty"`
-	Enabled        bool                         `json:"enabled"`
+	ID               string                         `json:"id"`
+	Name             string                         `json:"name"`
+	APIKey           string                         `json:"api_key"`
+	APITypes         []ExportedAPIType              `json:"api_types"`
+	AuthMode         string                         `json:"auth_mode"`
+	CredentialType   model.ProviderCredentialType   `json:"credential_type,omitempty"`
+	UsageLimitPolicy model.ProviderUsageLimitPolicy `json:"usage_limit_policy,omitempty"`
+	Credential       *ExportedProviderCredential    `json:"credential,omitempty"`
+	AuthState        *ExportedProviderAuthState     `json:"auth_state,omitempty"`
+	GroupID          *string                        `json:"group_id,omitempty"`
+	Weight           int                            `json:"weight"`
+	Priority         int                            `json:"priority"`
+	Concurrency      int                            `json:"concurrency"`
+	MaxRetries       int                            `json:"max_retries"`
+	Backoff          ExportedBackoff                `json:"backoff,omitempty"`
+	Vendor           string                         `json:"vendor,omitempty"`
+	FailoverScope    string                         `json:"failover_scope,omitempty"`
+	AcceptFailover   string                         `json:"accept_failover,omitempty"`
+	Enabled          bool                           `json:"enabled"`
 }
 
 // ExportedProviderCredential mirrors provider_credentials without repeating provider_id.
@@ -159,6 +160,9 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	if !IsValidProviderCredentialType(credentialType) {
 		return nil, false
 	}
+	if !model.IsValidProviderUsageLimitPolicy(p.UsageLimitPolicy) {
+		return nil, false
+	}
 
 	authMode, ok := buildProviderAuthModeFromExport(credentialType, p.AuthMode)
 	if !ok {
@@ -171,17 +175,18 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	}
 
 	provider := &model.Provider{
-		ID:             p.ID,
-		Name:           p.Name,
-		APIKey:         model.NormalizeAPIKey(p.APIKey),
-		APITypes:       apiTypes,
-		AuthMode:       authMode,
-		CredentialType: credentialType,
-		GroupID:        buildProviderGroupIDFromExport(p.GroupID, validGroups),
-		Weight:         normalizeProviderWeightFromExport(p.Weight),
-		Priority:       p.Priority,
-		Concurrency:    p.Concurrency,
-		MaxRetries:     p.MaxRetries,
+		ID:               p.ID,
+		Name:             p.Name,
+		APIKey:           model.NormalizeAPIKey(p.APIKey),
+		APITypes:         apiTypes,
+		AuthMode:         authMode,
+		CredentialType:   credentialType,
+		UsageLimitPolicy: p.UsageLimitPolicy,
+		GroupID:          buildProviderGroupIDFromExport(p.GroupID, validGroups),
+		Weight:           normalizeProviderWeightFromExport(p.Weight),
+		Priority:         p.Priority,
+		Concurrency:      p.Concurrency,
+		MaxRetries:       p.MaxRetries,
 		Backoff: model.BackoffPolicy{
 			InitialDelay: p.Backoff.InitialDelay,
 			MaxDelay:     p.Backoff.MaxDelay,
@@ -365,19 +370,20 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 	}
 
 	return ExportedProvider{
-		ID:             canonical.ID,
-		Name:           canonical.Name,
-		APIKey:         model.NormalizeAPIKey(canonical.APIKey),
-		APITypes:       apiTypes,
-		AuthMode:       canonical.AuthMode,
-		CredentialType: model.NormalizeProviderCredentialType(canonical.CredentialType),
-		Credential:     credential,
-		AuthState:      authState,
-		GroupID:        groupID,
-		Weight:         canonical.Weight,
-		Priority:       canonical.Priority,
-		Concurrency:    canonical.Concurrency,
-		MaxRetries:     canonical.MaxRetries,
+		ID:               canonical.ID,
+		Name:             canonical.Name,
+		APIKey:           model.NormalizeAPIKey(canonical.APIKey),
+		APITypes:         apiTypes,
+		AuthMode:         canonical.AuthMode,
+		CredentialType:   model.NormalizeProviderCredentialType(canonical.CredentialType),
+		UsageLimitPolicy: canonical.UsageLimitPolicy,
+		Credential:       credential,
+		AuthState:        authState,
+		GroupID:          groupID,
+		Weight:           canonical.Weight,
+		Priority:         canonical.Priority,
+		Concurrency:      canonical.Concurrency,
+		MaxRetries:       canonical.MaxRetries,
 		Backoff: ExportedBackoff{
 			InitialDelay: canonical.Backoff.InitialDelay,
 			MaxDelay:     canonical.Backoff.MaxDelay,

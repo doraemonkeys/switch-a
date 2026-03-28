@@ -330,7 +330,94 @@ func TestHandler_RecordsPermanentErrorSwitchReason(t *testing.T) {
 	}
 }
 
-func TestHandler_RecordsUsageLimitSwitchReasonAndSuspendsProvider(t *testing.T) {
+func TestHandler_RecordsUsageLimitSwitchReasonAndSuspendsConfiguredProvider(t *testing.T) {
+	resetAt := time.Now().Add(20 * time.Minute).UTC().Truncate(time.Second)
+	resetAtEpoch := resetAt.Unix()
+	callCount := 0
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.Header().Set(headerCodexPrimaryUsedPercent, "100")
+			w.Header().Set(headerCodexSecondaryUsedPercent, "67")
+			w.Header().Set(headerCodexPrimaryResetAt, strconv.FormatInt(resetAtEpoch, 10))
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(resetAtEpoch, 10) + `}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"response":"success"}`))
+	}))
+	defer upstreamServer.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:               "p1",
+			Name:             "Provider 1",
+			APIKey:           "key1",
+			AuthMode:         "bearer",
+			UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend,
+			Enabled:          true,
+			MaxRetries:       2,
+			Priority:         1,
+			APITypes:         []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
+		},
+		{
+			ID:         "p2",
+			Name:       "Provider 2",
+			APIKey:     "key2",
+			AuthMode:   "bearer",
+			Enabled:    true,
+			MaxRetries: 0,
+			Priority:   0,
+			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
+		},
+	}
+	healthMgr := newMockHealthManager()
+	healthMgr.availableProviders["p1"] = true
+	healthMgr.availableProviders["p2"] = true
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Health: healthMgr,
+		Logger: zap.NewNop(),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	waitFor(t, func() bool {
+		return store.AttemptsLen() >= 2
+	}, testPollTimeout)
+
+	attempts := store.LastAttempts(2)
+	if len(attempts) < 2 {
+		t.Fatalf("expected at least 2 attempts, got %d", len(attempts))
+	}
+
+	if attempts[0].SwitchReason != SwitchReasonUsageLimitReached {
+		t.Fatalf("first attempt switch_reason = %q, want %q", attempts[0].SwitchReason, SwitchReasonUsageLimitReached)
+	}
+	if callCount != 2 {
+		t.Fatalf("expected 2 upstream calls (immediate switch on usage limit), got %d", callCount)
+	}
+	if got := healthMgr.suspendReasons["p1"]; got != usageLimitAutoDisableReason {
+		t.Fatalf("suspend reason = %q, want %q", got, usageLimitAutoDisableReason)
+	}
+	if got := healthMgr.suspendedUntil["p1"]; !got.Equal(resetAt) {
+		t.Fatalf("suspended until = %v, want %v", got, resetAt)
+	}
+}
+
+func TestHandler_RecordsUsageLimitSwitchReasonWithoutSuspendingSwitchOnlyProvider(t *testing.T) {
 	resetAt := time.Now().Add(20 * time.Minute).UTC().Truncate(time.Second)
 	resetAtEpoch := resetAt.Unix()
 	callCount := 0
@@ -408,10 +495,10 @@ func TestHandler_RecordsUsageLimitSwitchReasonAndSuspendsProvider(t *testing.T) 
 	if callCount != 2 {
 		t.Fatalf("expected 2 upstream calls (immediate switch on usage limit), got %d", callCount)
 	}
-	if got := healthMgr.suspendReasons["p1"]; got != usageLimitAutoDisableReason {
-		t.Fatalf("suspend reason = %q, want %q", got, usageLimitAutoDisableReason)
+	if got := healthMgr.suspendReasons["p1"]; got != "" {
+		t.Fatalf("suspend reason = %q, want empty", got)
 	}
-	if got := healthMgr.suspendedUntil["p1"]; !got.Equal(resetAt) {
-		t.Fatalf("suspended until = %v, want %v", got, resetAt)
+	if got := healthMgr.suspendedUntil["p1"]; !got.IsZero() {
+		t.Fatalf("suspended until = %v, want zero time", got)
 	}
 }

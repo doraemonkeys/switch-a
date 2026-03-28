@@ -264,6 +264,18 @@ function StatusBadges({
       {lifecycle.showLifecycle && (
         <>
           <span
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${getDiagnosticToneClass(lifecycle.clientVisibilityTone)}`}
+          >
+            {lifecycle.clientVisibilityLabel}
+          </span>
+          {lifecycle.recoveryActionLabel && lifecycle.recoveryActionTone && (
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${getDiagnosticToneClass(lifecycle.recoveryActionTone)}`}
+            >
+              {lifecycle.recoveryActionLabel}
+            </span>
+          )}
+          <span
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${getDiagnosticToneClass(lifecycle.commitmentTone)}`}
           >
             {lifecycle.commitmentLabel}
@@ -446,6 +458,16 @@ function WebSocketLifecycleInfo({
         label={getPrimaryProviderLabel(log)}
         value={providerName || log.provider_id}
       />
+      <DetailRow
+        label="Client Visibility"
+        value={lifecycle.clientVisibilityLabel}
+      />
+      {lifecycle.recoveryActionLabel && (
+        <DetailRow
+          label="Recovery Action"
+          value={lifecycle.recoveryActionLabel}
+        />
+      )}
       <DetailRow label="Commit State" value={lifecycle.commitmentLabel} />
       {lifecycle.probeOutcomeLabel && (
         <DetailRow label="Probe Outcome" value={lifecycle.probeOutcomeLabel} />

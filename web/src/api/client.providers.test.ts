@@ -56,6 +56,7 @@ describe("createApiClient providers API", () => {
       name: "Test",
       api_key: "key",
       api_types: [{ api_type: "claude", base_url: "https://test.example.com" }],
+      usage_limit_policy: "switch_provider" as const,
     };
     const created = { id: "1", ...input };
     mockHttpClient.mockResponse({
@@ -81,6 +82,7 @@ describe("createApiClient providers API", () => {
       name: "Updated",
       api_key: "key",
       api_types: [{ api_type: "claude", base_url: "https://test.example.com" }],
+      usage_limit_policy: "suspend" as const,
     };
     mockHttpClient.mockResponse({
       ok: true,

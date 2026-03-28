@@ -294,6 +294,132 @@ func TestWebSocketSessionOrchestratorSessionFromAttemptKeepsProviderAttemptInvis
 	}
 }
 
+func TestWebSocketSessionOrchestratorFinalizeSelectionFailureSessionKeepsRecoveryActionSessionScoped(t *testing.T) {
+	t.Parallel()
+
+	attemptResult := &WebSocketResult{
+		TerminalCause: model.TerminalUpstreamSemanticError,
+	}
+	orchestrator := &WebSocketSessionOrchestrator{
+		lifecycle: newWebSocketLifecycleState(),
+	}
+	session := newWebSocketSelectionFailureSession(
+		"req-transparent-retry",
+		true,
+		[]WebSocketAttemptResult{{
+			Provider:     &model.Provider{ID: "provider-1"},
+			Attempt:      0,
+			Result:       attemptResult,
+			SwitchReason: SwitchReasonUsageLimitReached,
+		}},
+		http.StatusServiceUnavailable,
+		model.TerminalProviderUnavailable,
+		ErrCodeProviderUnavailable,
+		"no providers remain",
+		internal.ErrNoProvider,
+	)
+
+	finalized := orchestrator.finalizeSelectionFailureSession(session)
+	if finalized.FinalResult == nil {
+		t.Fatal("FinalResult = nil, want session lifecycle result")
+	}
+	if finalized.FinalResult.RecoveryAction != model.RecoveryActionTransparentRetry {
+		t.Fatalf("RecoveryAction = %q, want %q", finalized.FinalResult.RecoveryAction, model.RecoveryActionTransparentRetry)
+	}
+	if finalized.Attempts[0].Result == nil {
+		t.Fatal("attempt Result = nil, want original provider attempt")
+	}
+	if finalized.Attempts[0].Result.RecoveryAction != "" {
+		t.Fatalf("attempt RecoveryAction = %q, want empty provider-attempt lifecycle", finalized.Attempts[0].Result.RecoveryAction)
+	}
+}
+
+func TestWebSocketSessionOrchestratorSessionFromAttemptEmitsReconnectRequiredGatewayError(t *testing.T) {
+	t.Parallel()
+
+	sessionCh := make(chan *WebSocketSessionResult, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientConn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept websocket: %v", err)
+			return
+		}
+
+		providerErr := errors.New("quota exhausted")
+		resetAt := time.Date(2026, time.March, 26, 16, 0, 0, 0, time.UTC)
+		attempt := WebSocketAttemptResult{
+			Provider: &model.Provider{ID: "provider-1"},
+			Attempt:  0,
+			Result: &WebSocketResult{
+				ClientAccepted: true,
+				ClientVisible:  true,
+				TerminalCause:  model.TerminalUpstreamSemanticError,
+				Err:            providerErr,
+				UpstreamError: &WebSocketUpstreamError{
+					EventType:  codexUsageLimitErrorType,
+					StatusCode: http.StatusTooManyRequests,
+					ObservedAt: resetAt.Add(-15 * time.Minute),
+					ResetAt:    &resetAt,
+					Raw:        `{"type":"error"}`,
+				},
+			},
+		}
+		orchestrator := &WebSocketSessionOrchestrator{
+			requestID:  "req-attempt-reconnect",
+			lifecycle:  newWebSocketLifecycleState(),
+			clientConn: clientConn,
+			attempts:   []WebSocketAttemptResult{attempt},
+		}
+		sessionCh <- orchestrator.sessionFromAttempt(attempt)
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	defer clientConn.Close(websocket.StatusNormalClosure, "")
+
+	envelope := readTerminalGatewayErrorEvent(
+		t,
+		ctx,
+		clientConn,
+		webSocketReconnectRequiredStatusCode,
+		ErrCodeWebSocketReconnect,
+	)
+	if envelope.Error.Message != webSocketReconnectRequiredMessage {
+		t.Fatalf("gateway message = %q, want %q", envelope.Error.Message, webSocketReconnectRequiredMessage)
+	}
+
+	select {
+	case session := <-sessionCh:
+		if session.FinalResult == nil {
+			t.Fatal("FinalResult = nil, want cloned provider result")
+		}
+		if session.FinalResult.RecoveryAction != model.RecoveryActionReconnectRequired {
+			t.Fatalf("RecoveryAction = %q, want %q", session.FinalResult.RecoveryAction, model.RecoveryActionReconnectRequired)
+		}
+		if !session.FinalResult.ClientVisible {
+			t.Fatal("FinalResult.ClientVisible = false, want true for post-visible reconnect-required termination")
+		}
+		if session.GatewayStatusCode != webSocketReconnectRequiredStatusCode {
+			t.Fatalf("GatewayStatusCode = %d, want %d", session.GatewayStatusCode, webSocketReconnectRequiredStatusCode)
+		}
+		if session.GatewayErrorCode != ErrCodeWebSocketReconnect {
+			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeWebSocketReconnect)
+		}
+		if session.Attempts[0].Result == nil || !session.Attempts[0].Result.ClientVisible {
+			t.Fatalf("attempt result = %#v, want provider attempt to remain client-visible", session.Attempts[0].Result)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for reconnect-required session")
+	}
+
+	if _, _, err := clientConn.Read(ctx); err == nil || (!errors.Is(err, io.EOF) && !isNormalClose(err) && !errors.Is(err, net.ErrClosed)) {
+		t.Fatalf("expected websocket close after reconnect-required gateway error, got %v", err)
+	}
+}
+
 func TestWebSocketSessionOrchestratorSessionFromAttemptPreservesProviderFailureWhenTerminalGatewayWriteFails(t *testing.T) {
 	t.Parallel()
 
@@ -476,8 +602,8 @@ func TestWebSocketSessionOrchestratorSessionFromSuppressedPayloadHandlesClosedCl
 		if session.FinalResult == nil {
 			t.Fatal("FinalResult = nil, want fallback result")
 		}
-		if session.FinalResult.TerminalCause != model.TerminalClientDisconnect {
-			t.Fatalf("TerminalCause = %q, want %q", session.FinalResult.TerminalCause, model.TerminalClientDisconnect)
+		if session.FinalResult.TerminalCause != model.TerminalProviderUnavailable {
+			t.Fatalf("TerminalCause = %q, want %q", session.FinalResult.TerminalCause, model.TerminalProviderUnavailable)
 		}
 		if orchestrator.clientConn != nil {
 			t.Fatal("clientConn should be cleared after failed suppressed payload write")

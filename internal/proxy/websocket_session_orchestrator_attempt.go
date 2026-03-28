@@ -297,7 +297,7 @@ func (o *WebSocketSessionOrchestrator) shouldSwitchProvider(attempt WebSocketAtt
 	if attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError {
 		return o.suppressedAttempt != nil &&
 			attempt.Result.UpstreamError != nil &&
-			attempt.Result.UpstreamError.IsAllowlistedProviderScoped()
+			attempt.Result.UpstreamError.IsSwitchableProviderScoped()
 	}
 	return false
 }

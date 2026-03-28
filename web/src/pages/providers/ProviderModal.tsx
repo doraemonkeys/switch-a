@@ -134,6 +134,9 @@ function deriveFormData(initialData?: Provider): ProviderInput {
     auth_mode: initialData.auth_mode || "auto",
     credential_type:
       initialData.credential_type || PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    usage_limit_policy: initialData.usage_limit_policy_explicit
+      ? initialData.usage_limit_policy
+      : undefined,
     credential_login_id: "",
     group_id: initialData.group_id,
     weight: initialData.weight,

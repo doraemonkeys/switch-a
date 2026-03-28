@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"switch-a/internal/model"
 )
 
 func TestClassifyProviderFailure_UsageLimitReachedUsesPrimaryReset(t *testing.T) {
@@ -16,7 +18,9 @@ func TestClassifyProviderFailure_UsageLimitReachedUsesPrimaryReset(t *testing.T)
 	header.Set(headerCodexPrimaryResetAt, strconv.FormatInt(resetAt.Unix(), 10))
 
 	body := `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(resetAt.Unix(), 10) + `}}`
-	disposition := classifyProviderFailure(http.StatusTooManyRequests, header, body, observedAt)
+	disposition := classifyProviderFailureForProvider(&model.Provider{
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}, http.StatusTooManyRequests, header, body, observedAt)
 
 	if disposition.switchReason != SwitchReasonUsageLimitReached {
 		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, SwitchReasonUsageLimitReached)
@@ -40,7 +44,9 @@ func TestClassifyProviderFailure_UsageLimitReachedUsesLaterResetWhenBothWindowsA
 	header.Set(headerCodexSecondaryResetAt, strconv.FormatInt(secondaryReset.Unix(), 10))
 
 	body := `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(primaryReset.Unix(), 10) + `}}`
-	disposition := classifyProviderFailure(http.StatusTooManyRequests, header, body, observedAt)
+	disposition := classifyProviderFailureForProvider(&model.Provider{
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}, http.StatusTooManyRequests, header, body, observedAt)
 
 	if disposition.autoDisableUntil == nil || !disposition.autoDisableUntil.Equal(secondaryReset) {
 		t.Fatalf("autoDisableUntil = %v, want %v", disposition.autoDisableUntil, secondaryReset)
@@ -61,13 +67,104 @@ func TestClassifyProviderFailure_Generic429DoesNotSuspendProvider(t *testing.T) 
 	}
 }
 
-func TestResolveUsageLimitDisableUntil_FallsBackToBodyReset(t *testing.T) {
+func TestClassifyProviderFailure_UsageLimitReachedSwitchesWithoutSuspendingByDefault(t *testing.T) {
+	observedAt := time.Date(2026, time.March, 26, 10, 0, 0, 0, time.UTC)
+	resetAt := observedAt.Add(15 * time.Minute).Truncate(time.Second)
+	header := make(http.Header)
+	header.Set(headerCodexPrimaryUsedPercent, "100")
+	header.Set(headerCodexPrimaryResetAt, strconv.FormatInt(resetAt.Unix(), 10))
+
+	body := `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(resetAt.Unix(), 10) + `}}`
+	disposition := classifyProviderFailure(http.StatusTooManyRequests, header, body, observedAt)
+
+	if disposition.switchReason != SwitchReasonUsageLimitReached {
+		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, SwitchReasonUsageLimitReached)
+	}
+	if disposition.autoDisableUntil != nil {
+		t.Fatalf("autoDisableUntil = %v, want nil", disposition.autoDisableUntil)
+	}
+	if !disposition.isProviderScoped() {
+		t.Fatal("disposition should remain provider scoped for switch-only policy")
+	}
+}
+
+func TestProviderFailureEvidenceFromHTTP_FallsBackToBodyReset(t *testing.T) {
 	observedAt := time.Date(2026, time.March, 26, 10, 0, 0, 0, time.UTC)
 	bodyReset := observedAt.Add(45 * time.Minute).Truncate(time.Second)
 	body := `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(bodyReset.Unix(), 10) + `}}`
 
-	disableUntil := resolveUsageLimitDisableUntil(nil, body, observedAt)
+	evidence := providerFailureEvidenceFromHTTP(http.StatusTooManyRequests, nil, body, observedAt)
+	disableUntil := latestFutureResetCandidate(evidence.resetCandidates, evidence.observedAt)
 	if disableUntil == nil || !disableUntil.Equal(bodyReset) {
 		t.Fatalf("disableUntil = %v, want %v", disableUntil, bodyReset)
+	}
+}
+
+func TestClassifyWebSocketUpstreamFailure_UsageLimitReachedUsesSemanticResetEvidence(t *testing.T) {
+	observedAt := time.Date(2026, time.March, 26, 10, 0, 0, 0, time.UTC)
+	resetAt := observedAt.Add(30 * time.Minute).Truncate(time.Second)
+
+	disposition := classifyWebSocketUpstreamFailure(&WebSocketUpstreamError{
+		EventType:  codexUsageLimitErrorType,
+		StatusCode: http.StatusTooManyRequests,
+		ObservedAt: observedAt,
+		ResetAt:    &resetAt,
+	})
+
+	if disposition.switchReason != SwitchReasonUsageLimitReached {
+		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, SwitchReasonUsageLimitReached)
+	}
+	if disposition.autoDisableUntil != nil {
+		t.Fatalf("autoDisableUntil = %v, want nil", disposition.autoDisableUntil)
+	}
+}
+
+func TestClassifyWebSocketUpstreamFailure_ManagedProviderSuspendsOnUsageLimit(t *testing.T) {
+	observedAt := time.Date(2026, time.March, 26, 10, 0, 0, 0, time.UTC)
+	resetAt := observedAt.Add(30 * time.Minute).Truncate(time.Second)
+
+	disposition := classifyWebSocketUpstreamFailureForProvider(&model.Provider{
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}, &WebSocketUpstreamError{
+		EventType:  codexUsageLimitErrorType,
+		StatusCode: http.StatusTooManyRequests,
+		ObservedAt: observedAt,
+		ResetAt:    &resetAt,
+	})
+
+	if disposition.switchReason != SwitchReasonUsageLimitReached {
+		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, SwitchReasonUsageLimitReached)
+	}
+	if disposition.autoDisableUntil == nil || !disposition.autoDisableUntil.Equal(resetAt) {
+		t.Fatalf("autoDisableUntil = %v, want %v", disposition.autoDisableUntil, resetAt)
+	}
+}
+
+func TestClassifyWebSocketUpstreamFailure_UsesStatusCodeFieldAndLatestResetEvidence(t *testing.T) {
+	observedAt := time.Date(2026, time.March, 26, 10, 0, 0, 0, time.UTC)
+	eventReset := observedAt.Add(30 * time.Minute).Truncate(time.Second)
+	laterReset := observedAt.Add(2 * time.Hour).Truncate(time.Second)
+	payload := []byte(`{"type":"error","status_code":429,"error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(eventReset.Unix(), 10) + `}}`)
+
+	upstreamErr := buildWebSocketUpstreamError(&codexWebSocketEventEnvelope{
+		Type: "error",
+		Error: &codexWebSocketEventError{
+			Type:       codexUsageLimitErrorType,
+			StatusCode: http.StatusTooManyRequests,
+			ResetsAt:   laterReset.Unix(),
+		},
+	}, payload, observedAt)
+	if upstreamErr == nil {
+		t.Fatal("buildWebSocketUpstreamError() = nil, want semantic error")
+	}
+
+	disposition := classifyWebSocketUpstreamFailureForProvider(&model.Provider{
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}, upstreamErr)
+	if disposition.switchReason != SwitchReasonUsageLimitReached {
+		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, SwitchReasonUsageLimitReached)
+	}
+	if disposition.autoDisableUntil == nil || !disposition.autoDisableUntil.Equal(laterReset) {
+		t.Fatalf("autoDisableUntil = %v, want %v", disposition.autoDisableUntil, laterReset)
 	}
 }

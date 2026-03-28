@@ -20,6 +20,8 @@ import {
   FAILOVER_SCOPES,
   VENDOR_WILDCARD,
   PROVIDER_DEFAULTS,
+  PROVIDER_USAGE_LIMIT_POLICY_OPTIONS,
+  defaultProviderUsageLimitPolicy,
 } from "../config/constants";
 
 interface ProviderDetailDrawerProps {
@@ -216,6 +218,17 @@ function BasicInfoSection({
           <span className="px-1.5 py-0.5 text-xs rounded bg-primary-light text-primary-dark uppercase">
             {provider.auth_mode}
           </span>
+        }
+      />
+      <DetailRow
+        label="Usage Limit Policy"
+        value={
+          PROVIDER_USAGE_LIMIT_POLICY_OPTIONS.find(
+            (option) =>
+              option.value ===
+              (provider.usage_limit_policy ||
+                defaultProviderUsageLimitPolicy(provider.credential_type)),
+          )?.label || "Unknown"
         }
       />
     </DetailSection>

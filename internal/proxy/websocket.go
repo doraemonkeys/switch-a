@@ -34,6 +34,12 @@ const (
 	// bounding how long the proxy waits on a broken downstream socket.
 	webSocketFallbackWriteTimeout = 5 * time.Second
 
+	// webSocketTerminalCloseFlushTimeout gives a terminal gateway event a brief
+	// window to flush its close handshake before the handler proceeds. Without a
+	// bounded wait, reconnect-required can degrade into a raw socket reset; with
+	// an unbounded wait, the handler can hang on a peer that never answers.
+	webSocketTerminalCloseFlushTimeout = 50 * time.Millisecond
+
 	// webSocketPreVisibleClientReadWindow bounds how long the serialized pre-visible
 	// path waits for a prompt-first client message before falling back to normal
 	// concurrent relay, which keeps server-first sessions moving.
@@ -111,6 +117,11 @@ type WebSocketResult struct {
 	// CommitSource explains whether commitment came from a semantic observer or
 	// from the first upstream message fallback path.
 	CommitSource model.CommitSource
+
+	// RecoveryAction is the client-facing next step for the session as a whole.
+	// It intentionally does not live on individual attempts because reconnect
+	// guidance only becomes meaningful after the gateway resolves recovery.
+	RecoveryAction model.RecoveryAction
 
 	// HandshakeStatusCode records the HTTP status observed before the bidirectional
 	// session started, whether the rejection came from the gateway or upstream.

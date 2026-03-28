@@ -22,6 +22,7 @@ type mockSelector struct {
 
 	mu                  sync.Mutex
 	stickyUpdates       []stickyUpdate // Records all UpdateStickyWithTTL calls
+	continuityEvictions []string       // Records provider IDs evicted from sticky continuity
 	concurrencyReleased []string       // Records provider IDs passed to ReleaseConcurrency
 }
 
@@ -35,6 +36,7 @@ type stickyUpdate struct {
 // selectResult mirrors selector.SelectResult for testing.
 type selectResult struct {
 	Provider        *model.Provider
+	Metadata        selector.SelectionMetadata
 	FromStickyCache bool
 }
 
@@ -58,9 +60,16 @@ func (m *mockSelector) SelectWithMetadata(ctx context.Context, req *model.Select
 		if result == nil {
 			return nil, err
 		}
+		metadata := result.Metadata
+		if metadata.Source == "" && result.FromStickyCache {
+			metadata = selector.SelectionMetadata{Source: selector.SelectionSourceStickyContinuity}
+		}
+		if metadata.Source == "" {
+			metadata = selector.SelectionMetadata{Source: selector.SelectionSourceStrategy}
+		}
 		return &selectorSelectResult{
-			Provider:        result.Provider,
-			FromStickyCache: result.FromStickyCache,
+			Provider: result.Provider,
+			Metadata: metadata,
 		}, err
 	}
 	return nil, nil
@@ -74,6 +83,12 @@ func (m *mockSelector) UpdateStickyWithTTL(req *model.SelectRequest, providerID 
 		update.Model = req.Model
 	}
 	m.stickyUpdates = append(m.stickyUpdates, update)
+}
+
+func (m *mockSelector) EvictProviderContinuity(providerID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.continuityEvictions = append(m.continuityEvictions, providerID)
 }
 
 func (m *mockSelector) ReleaseConcurrency(providerID string) {
@@ -99,6 +114,14 @@ func (m *mockSelector) LastStickyUpdate() (stickyUpdate, bool) {
 		return stickyUpdate{}, false
 	}
 	return m.stickyUpdates[len(m.stickyUpdates)-1], true
+}
+
+func (m *mockSelector) ContinuityEvictions() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]string, len(m.continuityEvictions))
+	copy(result, m.continuityEvictions)
+	return result
 }
 
 // mockHealthManager implements the HealthManager interface for testing.
@@ -178,15 +201,15 @@ func TestSelectProviderWithTracking_NoSelector(t *testing.T) {
 	}
 
 	// First attempt should select a provider
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if provider == nil {
 		t.Fatal("expected provider to be selected")
 	}
-	if useStickyBehavior {
-		t.Error("expected useStickyBehavior=false for fallback mode")
+	if selectionMetadata.UsesContinuity() {
+		t.Error("expected continuity metadata=false for fallback mode")
 	}
 }
 
@@ -218,7 +241,7 @@ func TestSelectProviderWithTracking_SelectorStickyCacheHit(t *testing.T) {
 		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -228,8 +251,8 @@ func TestSelectProviderWithTracking_SelectorStickyCacheHit(t *testing.T) {
 	if provider.ID != "sticky-p1" {
 		t.Errorf("expected sticky-p1, got %s", provider.ID)
 	}
-	if !useStickyBehavior {
-		t.Error("expected useStickyBehavior=true for sticky cache hit")
+	if !selectionMetadata.UsesContinuity() {
+		t.Error("expected continuity metadata=true for sticky cache hit")
 	}
 }
 
@@ -278,7 +301,7 @@ func TestSelectProviderWithTracking_ActiveProviderFallback(t *testing.T) {
 		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -288,8 +311,8 @@ func TestSelectProviderWithTracking_ActiveProviderFallback(t *testing.T) {
 	if provider.ID != "active-p1" {
 		t.Errorf("expected active-p1, got %s", provider.ID)
 	}
-	if !useStickyBehavior {
-		t.Error("expected useStickyBehavior=true for active provider fallback")
+	if !selectionMetadata.UsesContinuity() {
+		t.Error("expected continuity metadata=true for active provider fallback")
 	}
 
 	// Verify that the originally selected provider's concurrency slot was released
@@ -331,7 +354,7 @@ func TestSelectProviderWithTracking_NormalSelection(t *testing.T) {
 		StickyMode: model.StickyModeOff,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -341,8 +364,8 @@ func TestSelectProviderWithTracking_NormalSelection(t *testing.T) {
 	if provider.ID != "normal-p1" {
 		t.Errorf("expected normal-p1, got %s", provider.ID)
 	}
-	if useStickyBehavior {
-		t.Error("expected useStickyBehavior=false for normal selection")
+	if selectionMetadata.UsesContinuity() {
+		t.Error("expected continuity metadata=false for normal selection")
 	}
 }
 
@@ -380,7 +403,7 @@ func TestSelectProviderWithTracking_RetryWithExclusion(t *testing.T) {
 
 	excluded := map[string]bool{"failed-p1": true}
 	// attempt > 0 triggers SelectExcluding path
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 1, excluded)
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 1, excluded)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -390,8 +413,8 @@ func TestSelectProviderWithTracking_RetryWithExclusion(t *testing.T) {
 	if provider.ID != "retry-p1" {
 		t.Errorf("expected retry-p1, got %s", provider.ID)
 	}
-	if useStickyBehavior {
-		t.Error("expected useStickyBehavior=false for retry selection")
+	if selectionMetadata.UsesContinuity() {
+		t.Error("expected continuity metadata=false for retry selection")
 	}
 }
 
@@ -405,7 +428,7 @@ func TestSelectProviderWithTracking_FirstAttemptNilSelectionBecomesNoProvider(t 
 		Selector: &mockSelector{},
 	})
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(
 		context.Background(),
 		&model.SelectRequest{APIType: "claude"},
 		0,
@@ -418,8 +441,8 @@ func TestSelectProviderWithTracking_FirstAttemptNilSelectionBecomesNoProvider(t 
 	if provider != nil {
 		t.Fatalf("expected nil provider, got %#v", provider)
 	}
-	if useStickyBehavior {
-		t.Fatal("expected useStickyBehavior=false when selection fails")
+	if selectionMetadata.UsesContinuity() {
+		t.Fatal("expected continuity metadata=false when selection fails")
 	}
 }
 
@@ -437,7 +460,7 @@ func TestSelectProviderWithTracking_RetryNilSelectionBecomesNoProvider(t *testin
 		},
 	})
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(
 		context.Background(),
 		&model.SelectRequest{APIType: "claude"},
 		1,
@@ -450,8 +473,8 @@ func TestSelectProviderWithTracking_RetryNilSelectionBecomesNoProvider(t *testin
 	if provider != nil {
 		t.Fatalf("expected nil provider, got %#v", provider)
 	}
-	if useStickyBehavior {
-		t.Fatal("expected useStickyBehavior=false when retry selection fails")
+	if selectionMetadata.UsesContinuity() {
+		t.Fatal("expected continuity metadata=false when retry selection fails")
 	}
 }
 
@@ -469,7 +492,7 @@ func TestSelectProviderWithTracking_RetryExcludedSelectionBecomesNoProvider(t *t
 		},
 	})
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(
 		context.Background(),
 		&model.SelectRequest{APIType: "claude"},
 		1,
@@ -482,8 +505,8 @@ func TestSelectProviderWithTracking_RetryExcludedSelectionBecomesNoProvider(t *t
 	if provider != nil {
 		t.Fatalf("expected nil provider, got %#v", provider)
 	}
-	if useStickyBehavior {
-		t.Fatal("expected useStickyBehavior=false when retry selector returns an excluded provider")
+	if selectionMetadata.UsesContinuity() {
+		t.Fatal("expected continuity metadata=false when retry selector returns an excluded provider")
 	}
 }
 
@@ -510,15 +533,15 @@ func TestSelectProviderWithTracking_SelectorError(t *testing.T) {
 		StickyMode: model.StickyModeAPIType,
 	}
 
-	provider, useStickyBehavior, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
+	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if provider != nil {
 		t.Error("expected nil provider on error")
 	}
-	if useStickyBehavior {
-		t.Error("expected useStickyBehavior=false on error")
+	if selectionMetadata.UsesContinuity() {
+		t.Error("expected continuity metadata=false on error")
 	}
 }
 
@@ -641,6 +664,33 @@ func TestTryActiveProviderFallback_ModelDimension(t *testing.T) {
 	provider := handler.tryActiveProviderFallback(ctx, selectReq)
 	if provider == nil || provider.ID != "active-p1" {
 		t.Fatalf("expected active-p1 for matching model, got %#v", provider)
+	}
+}
+
+func TestHandler_SuspendProviderUntilEvictsContinuity(t *testing.T) {
+	t.Parallel()
+
+	mockSel := &mockSelector{}
+	healthMgr := newMockHealthManager()
+	handler := NewHandler(Config{
+		Store:    newMockStore(),
+		Selector: mockSel,
+		Health:   healthMgr,
+		Logger:   zap.NewNop(),
+	})
+
+	disabledUntil := time.Now().Add(15 * time.Minute).UTC().Truncate(time.Second)
+	handler.suspendProviderUntil(context.Background(), "p1", disabledUntil, usageLimitAutoDisableReason)
+
+	if got := healthMgr.suspendReasons["p1"]; got != usageLimitAutoDisableReason {
+		t.Fatalf("suspend reason = %q, want %q", got, usageLimitAutoDisableReason)
+	}
+	if got := healthMgr.suspendedUntil["p1"]; !got.Equal(disabledUntil) {
+		t.Fatalf("suspended until = %v, want %v", got, disabledUntil)
+	}
+	evictions := mockSel.ContinuityEvictions()
+	if len(evictions) != 1 || evictions[0] != "p1" {
+		t.Fatalf("continuity evictions = %v, want [p1]", evictions)
 	}
 }
 

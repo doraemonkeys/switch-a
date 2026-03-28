@@ -23,6 +23,14 @@ func lifecycleProbeOutcomePtr(v model.WebSocketProbeOutcome) *model.WebSocketPro
 	return &v
 }
 
+func lifecycleRecoveryActionPtr(v model.RecoveryAction) *model.RecoveryAction {
+	return &v
+}
+
+func lifecycleCommitSourcePtr(v model.CommitSource) *model.CommitSource {
+	return &v
+}
+
 func TestGetLog_Success(t *testing.T) {
 	h, st, _ := testHandler()
 
@@ -41,8 +49,10 @@ func TestGetLog_Success(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(true),
 			SessionCommitted: &committed,
+			ClientVisible:    lifecycleBoolPtr(true),
 			ProbeOutcome:     &probeOutcome,
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
+			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionNone),
 			CreatedAt:        now,
 		},
 	}
@@ -74,6 +84,9 @@ func TestGetLog_Success(t *testing.T) {
 	if log.SessionCommitted == nil || !*log.SessionCommitted {
 		t.Fatalf("log.SessionCommitted = %v, want true", log.SessionCommitted)
 	}
+	if log.ClientVisible == nil || !*log.ClientVisible {
+		t.Fatalf("log.ClientVisible = %v, want true", log.ClientVisible)
+	}
 	if log.StickyWritten == nil || !*log.StickyWritten {
 		t.Fatalf("log.StickyWritten = %v, want true", log.StickyWritten)
 	}
@@ -82,6 +95,9 @@ func TestGetLog_Success(t *testing.T) {
 	}
 	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalCleanClose {
 		t.Fatalf("log.TerminalCause = %v, want %q", log.TerminalCause, model.TerminalCleanClose)
+	}
+	if log.RecoveryAction == nil || *log.RecoveryAction != model.RecoveryActionNone {
+		t.Fatalf("log.RecoveryAction = %v, want %q", log.RecoveryAction, model.RecoveryActionNone)
 	}
 }
 
@@ -402,8 +418,11 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(true),
 			SessionCommitted: &committed,
+			ClientVisible:    lifecycleBoolPtr(true),
 			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeBypassed),
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
+			CommitSource:     lifecycleCommitSourcePtr(model.CommitSemantic),
+			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionNone),
 			CreatedAt:        now,
 		},
 		{
@@ -415,8 +434,11 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(false),
 			SessionCommitted: &uncommitted,
+			ClientVisible:    lifecycleBoolPtr(true),
 			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeTransportFailed),
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalUpstreamSemanticError),
+			CommitSource:     lifecycleCommitSourcePtr(model.CommitUpstreamMessage),
+			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionReconnectRequired),
 			CreatedAt:        now.Add(-time.Hour),
 		},
 		{
@@ -428,8 +450,11 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    lifecycleBoolPtr(false),
 			SessionCommitted: &committed,
+			ClientVisible:    lifecycleBoolPtr(true),
 			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeObservedUsableModel),
 			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalClientDisconnect),
+			CommitSource:     lifecycleCommitSourcePtr(model.CommitSemantic),
+			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionTransparentRetry),
 			CreatedAt:        now.Add(-2 * time.Hour),
 		},
 	}
@@ -447,8 +472,11 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 		{"filter by sticky_written", "?sticky_written=true", 1},
 		{"filter by session_committed true", "?session_committed=true", 2},
 		{"filter by session_committed false", "?session_committed=false", 1},
+		{"filter by client_visible", "?client_visible=true", 3},
 		{"filter by probe_outcome", "?probe_outcome=transport_failed", 1},
 		{"filter by terminal_cause", "?terminal_cause=client_disconnect", 1},
+		{"filter by commit_source", "?commit_source=upstream_message", 1},
+		{"filter by recovery_action", "?recovery_action=transparent_retry", 1},
 		{"multiple filters", "?provider_id=provider-1&api_type=claude", 2},
 	}
 
@@ -615,8 +643,11 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 		{"invalid is_websocket", "?is_websocket=maybe"},
 		{"invalid sticky_written", "?sticky_written=maybe"},
 		{"invalid session_committed", "?session_committed=maybe"},
+		{"invalid client_visible", "?client_visible=maybe"},
 		{"invalid probe_outcome", "?probe_outcome=not_real"},
 		{"invalid terminal_cause", "?terminal_cause=not_real"},
+		{"invalid commit_source", "?commit_source=not_real"},
+		{"invalid recovery_action", "?recovery_action=not_real"},
 		{"invalid start_time", "?start_time=not-a-date"},
 		{"invalid end_time", "?end_time=invalid"},
 		{"invalid min_latency non-numeric", "?min_latency=slow"},
@@ -693,11 +724,17 @@ func TestParseLogFilter_Defaults(t *testing.T) {
 	if filter.SessionCommitted != nil {
 		t.Errorf("expected session_committed to be nil, got %v", filter.SessionCommitted)
 	}
+	if filter.ClientVisible != nil {
+		t.Errorf("expected client_visible to be nil, got %v", filter.ClientVisible)
+	}
 	if filter.ProbeOutcome != "" {
 		t.Errorf("expected empty probe_outcome, got %q", filter.ProbeOutcome)
 	}
 	if filter.TerminalCause != "" {
 		t.Errorf("expected empty terminal_cause, got %q", filter.TerminalCause)
+	}
+	if filter.RecoveryAction != "" {
+		t.Errorf("expected empty recovery_action, got %q", filter.RecoveryAction)
 	}
 }
 
@@ -715,8 +752,11 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 		"is_websocket":      {"true"},
 		"sticky_written":    {"true"},
 		"session_committed": {"false"},
+		"client_visible":    {"true"},
 		"probe_outcome":     {"transport_failed"},
 		"terminal_cause":    {"upstream_semantic_error"},
+		"commit_source":     {"upstream_message"},
+		"recovery_action":   {"transparent_retry"},
 		"user_id":           {"user-123"},
 		"start_time":        {startTime},
 		"end_time":          {endTime},
@@ -759,11 +799,20 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 	if filter.SessionCommitted == nil || *filter.SessionCommitted != false {
 		t.Error("expected session_committed false")
 	}
+	if filter.ClientVisible == nil || *filter.ClientVisible != true {
+		t.Error("expected client_visible true")
+	}
 	if filter.ProbeOutcome != model.WebSocketProbeOutcomeTransportFailed {
 		t.Errorf("expected probe_outcome %q, got %q", model.WebSocketProbeOutcomeTransportFailed, filter.ProbeOutcome)
 	}
 	if filter.TerminalCause != model.TerminalUpstreamSemanticError {
 		t.Errorf("expected terminal_cause %q, got %q", model.TerminalUpstreamSemanticError, filter.TerminalCause)
+	}
+	if filter.CommitSource != model.CommitUpstreamMessage {
+		t.Errorf("expected commit_source %q, got %q", model.CommitUpstreamMessage, filter.CommitSource)
+	}
+	if filter.RecoveryAction != model.RecoveryActionTransparentRetry {
+		t.Errorf("expected recovery_action %q, got %q", model.RecoveryActionTransparentRetry, filter.RecoveryAction)
 	}
 	if filter.UserID != "user-123" {
 		t.Errorf("expected user_id 'user-123', got %q", filter.UserID)
@@ -854,6 +903,50 @@ func TestParseLogFilter_ProbeOutcome(t *testing.T) {
 	}
 	if filter.ProbeOutcome != "" {
 		t.Errorf("expected empty probe_outcome on error, got %q", filter.ProbeOutcome)
+	}
+}
+
+func TestParseLogFilter_RecoveryAction(t *testing.T) {
+	query := map[string][]string{"recovery_action": {string(model.RecoveryActionReconnectRequired)}}
+	filter, errMsg := parseLogFilter(query)
+
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if filter.RecoveryAction != model.RecoveryActionReconnectRequired {
+		t.Errorf("expected recovery_action %q, got %q", model.RecoveryActionReconnectRequired, filter.RecoveryAction)
+	}
+
+	query = map[string][]string{"recovery_action": {"bogus"}}
+	filter, errMsg = parseLogFilter(query)
+
+	if errMsg == "" {
+		t.Fatal("expected validation error for invalid recovery_action")
+	}
+	if filter.RecoveryAction != "" {
+		t.Errorf("expected empty recovery_action on error, got %q", filter.RecoveryAction)
+	}
+}
+
+func TestParseLogFilter_CommitSource(t *testing.T) {
+	query := map[string][]string{"commit_source": {string(model.CommitSemantic)}}
+	filter, errMsg := parseLogFilter(query)
+
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if filter.CommitSource != model.CommitSemantic {
+		t.Errorf("expected commit_source %q, got %q", model.CommitSemantic, filter.CommitSource)
+	}
+
+	query = map[string][]string{"commit_source": {"bogus"}}
+	filter, errMsg = parseLogFilter(query)
+
+	if errMsg == "" {
+		t.Fatal("expected validation error for invalid commit_source")
+	}
+	if filter.CommitSource != "" {
+		t.Errorf("expected empty commit_source on error, got %q", filter.CommitSource)
 	}
 }
 

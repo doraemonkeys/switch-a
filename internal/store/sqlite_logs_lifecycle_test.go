@@ -26,9 +26,11 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 		IsSticky:         true,
 		StickyWritten:    boolPtr(true),
 		SessionCommitted: &committed,
+		ClientVisible:    boolPtr(true),
 		ProbeOutcome:     &probeOutcome,
 		TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
 		CommitSource:     commitSourcePtr(model.CommitSemantic),
+		RecoveryAction:   recoveryActionPtr(model.RecoveryActionTransparentRetry),
 		CreatedAt:        time.Now(),
 	}
 	if err := store.InsertLog(ctx, log); err != nil {
@@ -45,6 +47,9 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 	if found.StickyWritten == nil || !*found.StickyWritten {
 		t.Fatalf("sticky_written = %v, want true", found.StickyWritten)
 	}
+	if found.ClientVisible == nil || !*found.ClientVisible {
+		t.Fatalf("client_visible = %v, want true", found.ClientVisible)
+	}
 	if found.ProbeOutcome == nil || *found.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
 		t.Fatalf("probe_outcome = %v, want %q", found.ProbeOutcome, model.WebSocketProbeOutcomeUnsupported)
 	}
@@ -53,6 +58,9 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 	}
 	if found.CommitSource == nil || *found.CommitSource != model.CommitSemantic {
 		t.Fatalf("commit_source = %v, want %q", found.CommitSource, model.CommitSemantic)
+	}
+	if found.RecoveryAction == nil || *found.RecoveryAction != model.RecoveryActionTransparentRetry {
+		t.Fatalf("recovery_action = %v, want %q", found.RecoveryAction, model.RecoveryActionTransparentRetry)
 	}
 
 	regular := &model.RequestLog{
@@ -75,6 +83,9 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 	if regularFound.StickyWritten != nil {
 		t.Fatalf("regular sticky_written = %v, want nil", regularFound.StickyWritten)
 	}
+	if regularFound.ClientVisible != nil {
+		t.Fatalf("regular client_visible = %v, want nil", regularFound.ClientVisible)
+	}
 	if regularFound.ProbeOutcome != nil {
 		t.Fatalf("regular probe_outcome = %v, want nil", regularFound.ProbeOutcome)
 	}
@@ -83,6 +94,9 @@ func TestGetLogByID_PreservesLifecycleFields(t *testing.T) {
 	}
 	if regularFound.CommitSource != nil {
 		t.Fatalf("regular commit_source = %v, want nil", regularFound.CommitSource)
+	}
+	if regularFound.RecoveryAction != nil {
+		t.Fatalf("regular recovery_action = %v, want nil", regularFound.RecoveryAction)
 	}
 }
 
@@ -98,8 +112,11 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    boolPtr(true),
 			SessionCommitted: &committed,
+			ClientVisible:    boolPtr(true),
 			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeBypassed),
 			TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
+			CommitSource:     commitSourcePtr(model.CommitSemantic),
+			RecoveryAction:   recoveryActionPtr(model.RecoveryActionNone),
 			CreatedAt:        time.Now(),
 		},
 		{
@@ -107,18 +124,36 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 			IsWebSocket:      true,
 			StickyWritten:    boolPtr(false),
 			SessionCommitted: &uncommitted,
+			ClientVisible:    boolPtr(true),
 			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeTransportFailed),
 			TerminalCause:    terminalCausePtr(model.TerminalUpstreamSemanticError),
+			CommitSource:     commitSourcePtr(model.CommitUpstreamMessage),
+			RecoveryAction:   recoveryActionPtr(model.RecoveryActionReconnectRequired),
 			CreatedAt:        time.Now(),
 		},
 		{
-			ProviderID:    "p3",
-			IsWebSocket:   true,
-			StickyWritten: boolPtr(false),
-			ProbeOutcome:  probeOutcomePtr(model.WebSocketProbeOutcomeCompletedWithoutUsableModel),
-			TerminalCause: terminalCausePtr(model.TerminalUnknown),
-			CommitSource:  commitSourcePtr(model.CommitUnknown),
-			CreatedAt:     time.Now(),
+			ProviderID:       "p3",
+			IsWebSocket:      true,
+			StickyWritten:    boolPtr(false),
+			SessionCommitted: &committed,
+			ClientVisible:    boolPtr(true),
+			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeObservedUsableModel),
+			TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
+			CommitSource:     commitSourcePtr(model.CommitSemantic),
+			RecoveryAction:   recoveryActionPtr(model.RecoveryActionTransparentRetry),
+			CreatedAt:        time.Now(),
+		},
+		{
+			ProviderID:       "p4",
+			IsWebSocket:      true,
+			StickyWritten:    boolPtr(false),
+			SessionCommitted: &uncommitted,
+			ClientVisible:    boolPtr(false),
+			ProbeOutcome:     probeOutcomePtr(model.WebSocketProbeOutcomeCompletedWithoutUsableModel),
+			TerminalCause:    terminalCausePtr(model.TerminalUnknown),
+			CommitSource:     commitSourcePtr(model.CommitUnknown),
+			RecoveryAction:   recoveryActionPtr(model.RecoveryActionNone),
+			CreatedAt:        time.Now(),
 		},
 		{
 			ProviderID: "http-1",
@@ -145,16 +180,26 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 		{
 			name:          "filter by sticky_written false",
 			filter:        model.LogFilter{StickyWritten: &uncommitted, Limit: 10},
-			expectedCount: 2,
+			expectedCount: 3,
 		},
 		{
 			name:          "filter by session_committed true",
 			filter:        model.LogFilter{SessionCommitted: &committed, Limit: 10},
-			expectedCount: 1,
+			expectedCount: 2,
 		},
 		{
 			name:          "filter by session_committed false",
 			filter:        model.LogFilter{SessionCommitted: &uncommitted, Limit: 10},
+			expectedCount: 2,
+		},
+		{
+			name:          "filter by client_visible true",
+			filter:        model.LogFilter{ClientVisible: &committed, Limit: 10},
+			expectedCount: 3,
+		},
+		{
+			name:          "filter by client_visible false",
+			filter:        model.LogFilter{ClientVisible: &uncommitted, Limit: 10},
 			expectedCount: 1,
 		},
 		{
@@ -163,8 +208,23 @@ func TestListLogs_FilterByLifecycleFields(t *testing.T) {
 			expectedCount: 1,
 		},
 		{
+			name:          "filter by commit_source",
+			filter:        model.LogFilter{CommitSource: model.CommitUpstreamMessage, Limit: 10},
+			expectedCount: 1,
+		},
+		{
 			name:          "filter by probe_outcome",
 			filter:        model.LogFilter{ProbeOutcome: model.WebSocketProbeOutcomeTransportFailed, Limit: 10},
+			expectedCount: 1,
+		},
+		{
+			name:          "filter by recovery_action reconnect_required",
+			filter:        model.LogFilter{RecoveryAction: model.RecoveryActionReconnectRequired, Limit: 10},
+			expectedCount: 1,
+		},
+		{
+			name:          "filter by recovery_action transparent_retry",
+			filter:        model.LogFilter{RecoveryAction: model.RecoveryActionTransparentRetry, Limit: 10},
 			expectedCount: 1,
 		},
 	}
@@ -202,8 +262,10 @@ func TestListLogs_FilterByProviderUsesRequestLogLifecycleAttribution(t *testing.
 		IsWebSocket:      true,
 		Success:          true,
 		SessionCommitted: &committed,
+		ClientVisible:    boolPtr(true),
 		TerminalCause:    terminalCausePtr(model.TerminalCleanClose),
 		CommitSource:     commitSourcePtr(model.CommitSemantic),
+		RecoveryAction:   recoveryActionPtr(model.RecoveryActionTransparentRetry),
 		CreatedAt:        time.Now(),
 	}
 	if err := store.InsertLog(ctx, log); err != nil {

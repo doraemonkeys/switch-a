@@ -31,6 +31,16 @@ const (
 	CommitUnknown         CommitSource = "unknown"
 )
 
+// RecoveryAction stays orthogonal to TerminalCause because reconnect guidance is
+// a session-level client contract, not the reason the session ended.
+type RecoveryAction string
+
+const (
+	RecoveryActionNone              RecoveryAction = "none"
+	RecoveryActionTransparentRetry  RecoveryAction = "transparent_retry"
+	RecoveryActionReconnectRequired RecoveryAction = "reconnect_required"
+)
+
 // IsValidTerminalCause keeps admin/query parsing aligned with the persisted enum
 // so callers fail fast instead of silently issuing filters that can never match.
 func IsValidTerminalCause(cause TerminalCause) bool {
@@ -45,6 +55,34 @@ func IsValidTerminalCause(cause TerminalCause) bool {
 		TerminalUpstreamHandshakeRejected,
 		TerminalClientUpgradeRejected,
 		TerminalInternalError:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsValidRecoveryAction keeps persistence and client contracts aligned with the
+// shared enum while still allowing the empty value to mean "no explicit action".
+func IsValidRecoveryAction(action RecoveryAction) bool {
+	switch action {
+	case "",
+		RecoveryActionNone,
+		RecoveryActionTransparentRetry,
+		RecoveryActionReconnectRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsValidCommitSource keeps filter parsing aligned with the persisted enum while
+// still allowing the empty value to mean "no explicit source filter".
+func IsValidCommitSource(source CommitSource) bool {
+	switch source {
+	case "",
+		CommitSemantic,
+		CommitUpstreamMessage,
+		CommitUnknown:
 		return true
 	default:
 		return false

@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
-
-	"switch-a/internal/defaults"
 )
 
 const (
@@ -42,6 +41,8 @@ type WebSocketUpstreamError struct {
 	Code       string
 	StatusCode int
 	Message    string
+	ObservedAt time.Time
+	ResetAt    *time.Time
 	Raw        string
 }
 
@@ -50,11 +51,25 @@ func (e *WebSocketUpstreamError) Clone() *WebSocketUpstreamError {
 		return nil
 	}
 	cloned := *e
+	if e.ResetAt != nil {
+		resetAt := *e.ResetAt
+		cloned.ResetAt = &resetAt
+	}
 	return &cloned
 }
 
 func (e *WebSocketUpstreamError) IsAllowlistedProviderScoped() bool {
 	return classifyWebSocketUpstreamError(e) == webSocketSemanticClassificationProviderScopedAllowlisted
+}
+
+func (e *WebSocketUpstreamError) IsSwitchableProviderScoped() bool {
+	switch classifyWebSocketUpstreamError(e) {
+	case webSocketSemanticClassificationProviderScoped,
+		webSocketSemanticClassificationProviderScopedAllowlisted:
+		return true
+	default:
+		return false
+	}
 }
 
 // WebSocketMessageObserver consumes relayed messages and reconstructs semantic fields that
@@ -72,6 +87,7 @@ type webSocketSemanticClassification uint8
 const (
 	webSocketSemanticClassificationUnknown webSocketSemanticClassification = iota
 	webSocketSemanticClassificationClientScoped
+	webSocketSemanticClassificationProviderScoped
 	webSocketSemanticClassificationProviderScopedAllowlisted
 )
 
@@ -98,19 +114,22 @@ func newWebSocketMessageObserver(apiType, initialModel string, logger Logger, on
 }
 
 type codexWebSocketEventEnvelope struct {
-	Type     string                     `json:"type"`
-	EventID  string                     `json:"event_id"`
-	Model    string                     `json:"model"`
-	Status   int                        `json:"status"`
-	Error    *codexWebSocketEventError  `json:"error"`
-	Session  *codexWebSocketSession     `json:"session"`
-	Response *codexWebSocketEventTarget `json:"response"`
+	Type       string                     `json:"type"`
+	EventID    string                     `json:"event_id"`
+	Model      string                     `json:"model"`
+	Status     int                        `json:"status"`
+	StatusCode int                        `json:"status_code"`
+	Error      *codexWebSocketEventError  `json:"error"`
+	Session    *codexWebSocketSession     `json:"session"`
+	Response   *codexWebSocketEventTarget `json:"response"`
 }
 
 type codexWebSocketEventError struct {
-	Message string `json:"message"`
-	Type    string `json:"type"`
-	Code    string `json:"code"`
+	Message    string `json:"message"`
+	Type       string `json:"type"`
+	Code       string `json:"code"`
+	StatusCode int    `json:"status_code"`
+	ResetsAt   int64  `json:"resets_at"`
 }
 
 type codexWebSocketSession struct {
@@ -282,6 +301,8 @@ func payloadMayContainError(data []byte) bool {
 	snippet := data[:limit]
 	return bytes.Contains(snippet, []byte(`"error"`)) ||
 		bytes.Contains(snippet, []byte(`"type":"error"`)) ||
+		bytes.Contains(snippet, []byte(`"status_code":4`)) ||
+		bytes.Contains(snippet, []byte(`"status_code":5`)) ||
 		bytes.Contains(snippet, []byte(`"status":4`)) ||
 		bytes.Contains(snippet, []byte(`"status":5`))
 }
@@ -440,7 +461,7 @@ func (o *codexWebSocketMessageObserver) captureUpstreamErrorLocked(event *codexW
 		return false
 	}
 
-	next := buildWebSocketUpstreamError(event, data)
+	next := buildWebSocketUpstreamError(event, data, time.Now().UTC())
 
 	if upstreamErrorsEqual(o.upstreamError, next) {
 		return false
@@ -480,7 +501,7 @@ func codexEventRepresentsError(event *codexWebSocketEventEnvelope) bool {
 	if event.Error != nil {
 		return true
 	}
-	if event.Status >= 400 {
+	if codexEventStatusCode(event) >= 400 {
 		return true
 	}
 
@@ -535,148 +556,6 @@ func upstreamErrorsEqual(left, right *WebSocketUpstreamError) bool {
 		left.Code == right.Code &&
 		left.StatusCode == right.StatusCode &&
 		left.Message == right.Message &&
+		timesEqual(left.ResetAt, right.ResetAt) &&
 		left.Raw == right.Raw
-}
-
-func classifyWebSocketUpstreamMessage(messageType websocket.MessageType, data []byte, parseDegraded bool) webSocketSemanticClassification {
-	if parseDegraded || shouldSkipCodexObservedPayload(messageType, data) {
-		return webSocketSemanticClassificationUnknown
-	}
-
-	var event codexWebSocketEventEnvelope
-	if err := json.Unmarshal(data, &event); err != nil {
-		return webSocketSemanticClassificationUnknown
-	}
-	if !codexEventRepresentsError(&event) {
-		return webSocketSemanticClassificationUnknown
-	}
-	return classifyWebSocketUpstreamError(buildWebSocketUpstreamError(&event, data))
-}
-
-func classifyWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError) webSocketSemanticClassification {
-	if upstreamErr == nil {
-		return webSocketSemanticClassificationUnknown
-	}
-
-	statusClassification, statusMatched := classifyWebSocketUpstreamErrorStatus(upstreamErr.StatusCode)
-	identifierClassification, identifierMatched := classifyWebSocketUpstreamErrorIdentifiers(upstreamErr)
-	if statusMatched && identifierMatched && statusClassification != identifierClassification {
-		return webSocketSemanticClassificationUnknown
-	}
-	if identifierMatched {
-		return identifierClassification
-	}
-	if statusMatched {
-		return statusClassification
-	}
-	return webSocketSemanticClassificationUnknown
-}
-
-func classifyWebSocketUpstreamErrorStatus(statusCode int) (webSocketSemanticClassification, bool) {
-	switch {
-	case statusCode <= 0:
-		return webSocketSemanticClassificationUnknown, false
-	case statusCode >= defaults.StatusServerError ||
-		statusCode == defaults.StatusPaymentRequired ||
-		statusCode == defaults.StatusTooManyRequests ||
-		statusCode == defaults.StatusUnauthorized ||
-		statusCode == defaults.StatusForbidden:
-		// Status-based provider scope intentionally reuses the HTTP failover allowlist
-		// so pre-upgrade and post-upgrade provider responsibility follow one policy.
-		return webSocketSemanticClassificationProviderScopedAllowlisted, true
-	case statusCode >= defaults.StatusClientError && statusCode < defaults.StatusServerError:
-		return webSocketSemanticClassificationClientScoped, true
-	default:
-		return webSocketSemanticClassificationUnknown, false
-	}
-}
-
-func classifyWebSocketUpstreamErrorIdentifiers(upstreamErr *WebSocketUpstreamError) (webSocketSemanticClassification, bool) {
-	classification := webSocketSemanticClassificationUnknown
-	matched := false
-	for _, key := range []string{normalizeWebSocketSemanticErrorKey(upstreamErr.EventType), normalizeWebSocketSemanticErrorKey(upstreamErr.Code)} {
-		nextClassification, ok := classifyWebSocketSemanticErrorKey(key)
-		if !ok {
-			continue
-		}
-		if matched && classification != nextClassification {
-			return webSocketSemanticClassificationUnknown, true
-		}
-		classification = nextClassification
-		matched = true
-	}
-	return classification, matched
-}
-
-func classifyWebSocketSemanticErrorKey(key string) (webSocketSemanticClassification, bool) {
-	if key == "" {
-		return webSocketSemanticClassificationUnknown, false
-	}
-	if _, ok := webSocketProviderScopedAllowlistedErrorKeys[key]; ok {
-		return webSocketSemanticClassificationProviderScopedAllowlisted, true
-	}
-	if _, ok := webSocketClientScopedErrorKeys[key]; ok {
-		return webSocketSemanticClassificationClientScoped, true
-	}
-	return webSocketSemanticClassificationUnknown, false
-}
-
-// decideWebSocketUpstreamMessage preserves clientVisible as an explicit runtime fact.
-// Semantic parsing decides eligibility, but only the relay can decide whether the
-// client has already observed upstream data and therefore whether suppression is legal.
-func decideWebSocketUpstreamMessage(messageType websocket.MessageType, data []byte, parseDegraded, clientVisible bool) webSocketSemanticDecision {
-	classification := classifyWebSocketUpstreamMessage(messageType, data, parseDegraded)
-	return decideWebSocketSemanticClassification(classification, clientVisible)
-}
-
-func decideWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError, parseDegraded, clientVisible bool) webSocketSemanticDecision {
-	classification := webSocketSemanticClassificationUnknown
-	if !parseDegraded {
-		classification = classifyWebSocketUpstreamError(upstreamErr)
-	}
-	return decideWebSocketSemanticClassification(classification, clientVisible)
-}
-
-func decideWebSocketSemanticClassification(classification webSocketSemanticClassification, clientVisible bool) webSocketSemanticDecision {
-	decision := webSocketSemanticDecision{
-		Classification: classification,
-		FrameDecision:  webSocketSemanticFrameDecisionForward,
-	}
-	if classification == webSocketSemanticClassificationProviderScopedAllowlisted && !clientVisible {
-		decision.FrameDecision = webSocketSemanticFrameDecisionSuppress
-	}
-	return decision
-}
-
-func buildWebSocketUpstreamError(event *codexWebSocketEventEnvelope, data []byte) *WebSocketUpstreamError {
-	if event == nil {
-		return nil
-	}
-
-	upstreamErr := &WebSocketUpstreamError{
-		EventType:  event.Type,
-		StatusCode: event.Status,
-		Raw:        string(data),
-	}
-	if event.Error != nil {
-		if event.Error.Type != "" {
-			upstreamErr.EventType = event.Error.Type
-		}
-		upstreamErr.Code = strings.TrimSpace(event.Error.Code)
-		upstreamErr.Message = strings.TrimSpace(event.Error.Message)
-	}
-	if upstreamErr.Message == "" {
-		if upstreamErr.Code != "" {
-			upstreamErr.Message = upstreamErr.Code
-		} else {
-			upstreamErr.Message = upstreamErr.EventType
-		}
-	}
-	return upstreamErr
-}
-
-func normalizeWebSocketSemanticErrorKey(key string) string {
-	normalized := strings.ToLower(strings.TrimSpace(key))
-	normalized = strings.ReplaceAll(normalized, " ", "_")
-	return normalized
 }

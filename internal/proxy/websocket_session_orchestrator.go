@@ -109,13 +109,13 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 			return o.finalSessionFromLastAttempt(ctx)
 		}
 
-		provider, fromSticky, selectionResult := o.selectProvider(ctx, attempt)
+		provider, selectionMetadata, selectionResult := o.selectProvider(ctx, attempt)
 		if selectionResult != nil {
 			return o.finalizeSelectionFailureSession(selectionResult)
 		}
 
 		if attempt == 0 {
-			o.isSticky = fromSticky
+			o.isSticky = selectionMetadata.UsesContinuity()
 		}
 
 		o.currentProvider = provider
@@ -128,9 +128,6 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 			o.info.Model = attemptResult.Result.Model
 		}
 
-		if fromSticky {
-			return o.sessionFromAttempt(attemptResult)
-		}
 		if o.shouldSwitchProvider(attemptResult) {
 			o.attempts[len(o.attempts)-1].SwitchReason = websocketSwitchReason(attemptResult)
 			o.excludeCurrentProvider()
@@ -225,7 +222,20 @@ func closeTerminalSuppressedClientConn(conn *websocket.Conn) {
 	if conn == nil {
 		return
 	}
+	// Post-terminal gateway ownership is only protocol-stable if the close frame is
+	// queued before the handler returns, but waiting for the full close handshake
+	// on the main goroutine would wedge terminal session finalization. CloseRead
+	// keeps the control-plane handshake moving while the bounded wait preserves the
+	// canonical close frame in the common case.
+	conn.CloseRead(context.Background())
+	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		_ = conn.Close(websocket.StatusNormalClosure, "")
 	}()
+
+	select {
+	case <-closed:
+	case <-time.After(webSocketTerminalCloseFlushTimeout):
+	}
 }

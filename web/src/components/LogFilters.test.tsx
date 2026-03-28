@@ -54,41 +54,41 @@ const mockOnClear = vi.fn();
 const mockProviders = createMockProviders();
 const defaultFilter: LogFilter = {};
 
+function renderFilters(filter: LogFilter = defaultFilter) {
+  return render(
+    <LogFilters
+      filter={filter}
+      onFilterChange={mockOnFilterChange}
+      providers={mockProviders}
+      onClear={mockOnClear}
+    />,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe("LogFilters - Basic Rendering", () => {
   it("renders all filter dropdowns", () => {
-    render(
-      <LogFilters
-        filter={defaultFilter}
-        onFilterChange={mockOnFilterChange}
-        providers={mockProviders}
-        onClear={mockOnClear}
-      />,
-    );
+    renderFilters();
 
     expect(screen.getByText("Provider")).toBeInTheDocument();
     expect(screen.getByText("Status")).toBeInTheDocument();
     expect(screen.getByText("Request Type")).toBeInTheDocument();
     expect(screen.getByText("Commit State")).toBeInTheDocument();
+    expect(screen.getByText("Client Visible")).toBeInTheDocument();
     expect(screen.getByText("Sticky Write")).toBeInTheDocument();
     expect(screen.getByText("Probe Outcome")).toBeInTheDocument();
     expect(screen.getByText("Terminal Cause")).toBeInTheDocument();
+    expect(screen.getByText("Commit Source")).toBeInTheDocument();
+    expect(screen.getByText("Recovery Action")).toBeInTheDocument();
     expect(screen.getByText("API Type")).toBeInTheDocument();
     expect(screen.getByText("Time Range")).toBeInTheDocument();
   });
 
   it("renders provider options", () => {
-    render(
-      <LogFilters
-        filter={defaultFilter}
-        onFilterChange={mockOnFilterChange}
-        providers={mockProviders}
-        onClear={mockOnClear}
-      />,
-    );
+    renderFilters();
 
     expect(screen.getByText("All Providers")).toBeInTheDocument();
     expect(screen.getByText("Provider One")).toBeInTheDocument();
@@ -98,14 +98,7 @@ describe("LogFilters - Basic Rendering", () => {
 
 describe("LogFilters - Provider Filter", () => {
   it("handles provider filter change", () => {
-    render(
-      <LogFilters
-        filter={defaultFilter}
-        onFilterChange={mockOnFilterChange}
-        providers={mockProviders}
-        onClear={mockOnClear}
-      />,
-    );
+    renderFilters();
 
     const providerSelect = screen.getByDisplayValue("All Providers");
     fireEvent.change(providerSelect, { target: { value: "provider-1" } });
@@ -116,14 +109,7 @@ describe("LogFilters - Provider Filter", () => {
   });
 
   it("clears provider filter when All Providers is selected", () => {
-    render(
-      <LogFilters
-        filter={{ provider_id: "provider-1" }}
-        onFilterChange={mockOnFilterChange}
-        providers={mockProviders}
-        onClear={mockOnClear}
-      />,
-    );
+    renderFilters({ provider_id: "provider-1" });
 
     const providerSelect = screen.getByDisplayValue("Provider One");
     fireEvent.change(providerSelect, { target: { value: "" } });
@@ -223,6 +209,26 @@ describe("LogFilters - Lifecycle Filters", () => {
     });
   });
 
+  it("handles client visible filter changes", () => {
+    render(
+      <LogFilters
+        filter={defaultFilter}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    const clientVisibleSelect = screen.getByRole("combobox", {
+      name: /client visible/i,
+    });
+    fireEvent.change(clientVisibleSelect, { target: { value: "true" } });
+
+    expect(mockOnFilterChange).toHaveBeenCalledWith({
+      client_visible: true,
+    });
+  });
+
   it("handles probe outcome filter changes", () => {
     render(
       <LogFilters
@@ -264,6 +270,50 @@ describe("LogFilters - Lifecycle Filters", () => {
 
     expect(mockOnFilterChange).toHaveBeenCalledWith({
       terminal_cause: "upstream_semantic_error",
+    });
+  });
+
+  it("handles commit source filter changes", () => {
+    render(
+      <LogFilters
+        filter={defaultFilter}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    const commitSourceSelect = screen.getByRole("combobox", {
+      name: /commit source/i,
+    });
+    fireEvent.change(commitSourceSelect, {
+      target: { value: "upstream_message" },
+    });
+
+    expect(mockOnFilterChange).toHaveBeenCalledWith({
+      commit_source: "upstream_message",
+    });
+  });
+
+  it("handles recovery action filter changes", () => {
+    render(
+      <LogFilters
+        filter={defaultFilter}
+        onFilterChange={mockOnFilterChange}
+        providers={mockProviders}
+        onClear={mockOnClear}
+      />,
+    );
+
+    const recoveryActionSelect = screen.getByRole("combobox", {
+      name: /recovery action/i,
+    });
+    fireEvent.change(recoveryActionSelect, {
+      target: { value: "transparent_retry" },
+    });
+
+    expect(mockOnFilterChange).toHaveBeenCalledWith({
+      recovery_action: "transparent_retry",
     });
   });
 });
@@ -498,8 +548,11 @@ describe("LogFilters - Clear Filters", () => {
       <LogFilters
         filter={{
           session_committed: true,
+          client_visible: false,
           sticky_written: false,
           terminal_cause: "client_disconnect",
+          commit_source: "semantic_event",
+          recovery_action: "reconnect_required",
         }}
         onFilterChange={mockOnFilterChange}
         providers={mockProviders}
@@ -508,9 +561,16 @@ describe("LogFilters - Clear Filters", () => {
     );
 
     expect(screen.getByText("Commit: Committed")).toBeInTheDocument();
+    expect(screen.getByText("Client Visible: Not Visible")).toBeInTheDocument();
     expect(screen.getByText("Sticky Write: Not Written")).toBeInTheDocument();
     expect(
       screen.getByText("Terminal Cause: Client Disconnect"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Commit Source: Semantic Event"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Recovery Action: Reconnect Required"),
     ).toBeInTheDocument();
   });
 
@@ -584,9 +644,12 @@ describe("LogFilters - Filter Badge Removal", () => {
       <LogFilters
         filter={{
           session_committed: false,
+          client_visible: true,
           sticky_written: true,
           probe_outcome: "unsupported",
           terminal_cause: "clean_close",
+          commit_source: "unknown",
+          recovery_action: "none",
         }}
         onFilterChange={mockOnFilterChange}
         providers={mockProviders}
@@ -596,6 +659,9 @@ describe("LogFilters - Filter Badge Removal", () => {
 
     fireEvent.click(screen.getByLabelText("Remove Commit: Uncommitted filter"));
     fireEvent.click(
+      screen.getByLabelText("Remove Client Visible: Visible filter"),
+    );
+    fireEvent.click(
       screen.getByLabelText("Remove Sticky Write: Written filter"),
     );
     fireEvent.click(
@@ -604,18 +670,33 @@ describe("LogFilters - Filter Badge Removal", () => {
     fireEvent.click(
       screen.getByLabelText("Remove Terminal Cause: Clean Close filter"),
     );
+    fireEvent.click(
+      screen.getByLabelText("Remove Commit Source: Unknown filter"),
+    );
+    fireEvent.click(
+      screen.getByLabelText("Remove Recovery Action: None filter"),
+    );
 
     expect(mockOnFilterChange).toHaveBeenNthCalledWith(1, {
       session_committed: undefined,
     });
     expect(mockOnFilterChange).toHaveBeenNthCalledWith(2, {
-      sticky_written: undefined,
+      client_visible: undefined,
     });
     expect(mockOnFilterChange).toHaveBeenNthCalledWith(3, {
-      probe_outcome: undefined,
+      sticky_written: undefined,
     });
     expect(mockOnFilterChange).toHaveBeenNthCalledWith(4, {
+      probe_outcome: undefined,
+    });
+    expect(mockOnFilterChange).toHaveBeenNthCalledWith(5, {
       terminal_cause: undefined,
+    });
+    expect(mockOnFilterChange).toHaveBeenNthCalledWith(6, {
+      commit_source: undefined,
+    });
+    expect(mockOnFilterChange).toHaveBeenNthCalledWith(7, {
+      recovery_action: undefined,
     });
   });
 
@@ -841,7 +922,7 @@ describe("LogFilters - Date Preset Detection", () => {
   it("considers lifecycle filters as active filter indicators", () => {
     render(
       <LogFilters
-        filter={{ probe_outcome: "completed_without_usable_model" }}
+        filter={{ commit_source: "semantic_event" }}
         onFilterChange={mockOnFilterChange}
         providers={mockProviders}
         onClear={mockOnClear}

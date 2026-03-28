@@ -155,6 +155,36 @@ func TestWebSocketRuntime_SuppressDecisionPreservesProviderScopedPayloadBeforeCl
 	}
 }
 
+func TestWebSocketRuntime_SuppressDecisionUsesCanonicalRecoveryAfterClientVisible(t *testing.T) {
+	t.Parallel()
+
+	semanticPayload := []byte(`{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`)
+	decision := newAllowlistedProviderScopedSuppressDecision(nil)(webSocketPreWriteContext{
+		MessageType: websocket.MessageText,
+		Data:        semanticPayload,
+		Observation: WebSocketObservation{
+			UpstreamError: &WebSocketUpstreamError{
+				EventType:  "auth_error",
+				Code:       "model_not_allowed",
+				StatusCode: http.StatusForbidden,
+				Message:    "model access denied",
+				Raw:        string(semanticPayload),
+			},
+		},
+		ClientAccepted: true,
+		ClientVisible:  true,
+	})
+	if decision.Action != webSocketPreWriteActionSuppress {
+		t.Fatalf("Action = %v, want suppress after client-visible provider-scoped failure", decision.Action)
+	}
+	if decision.SuppressedUpstreamError == nil {
+		t.Fatal("expected suppressed upstream error to be preserved")
+	}
+	if decision.SuppressedUpstreamError.Raw != string(semanticPayload) {
+		t.Fatalf("suppressed Raw = %q, want original payload", decision.SuppressedUpstreamError.Raw)
+	}
+}
+
 func TestWebSocketRuntime_ReplaysBufferedMessages(t *testing.T) {
 	t.Parallel()
 

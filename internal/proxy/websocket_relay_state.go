@@ -396,21 +396,29 @@ func (b *preVisibleClientMessageBuffer) disableLocked() {
 
 func newAllowlistedProviderScopedSuppressDecision(buffer *preVisibleClientMessageBuffer) func(webSocketPreWriteContext) webSocketPreWriteDecision {
 	return func(ctx webSocketPreWriteContext) webSocketPreWriteDecision {
-		if ctx.ClientVisible || ctx.Observation.ParseDegraded || buffer == nil {
-			return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
-		}
-		snapshot := buffer.Snapshot()
-		// An empty replay snapshot still means failover is safe: the provider failed
-		// before any replayable client payload crossed the pre-visible boundary, so
-		// there is nothing to resend to the replacement provider.
-		if !snapshot.Enabled {
+		if ctx.Observation.ParseDegraded {
 			return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
 		}
 		classification := classifyWebSocketUpstreamMessage(ctx.MessageType, ctx.Data, ctx.Observation.ParseDegraded)
+		suppressedUpstreamError := canonicalPreWriteUpstreamError(ctx)
+		if suppressedUpstreamError != nil {
+			classification = classifyWebSocketUpstreamError(suppressedUpstreamError)
+		}
 		if classification != webSocketSemanticClassificationProviderScopedAllowlisted {
 			return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
 		}
-		suppressedUpstreamError := ctx.Observation.UpstreamError.Clone()
+		if !ctx.ClientVisible {
+			if buffer == nil {
+				return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
+			}
+			snapshot := buffer.Snapshot()
+			// An empty replay snapshot still means failover is safe: the provider failed
+			// before any replayable client payload crossed the pre-visible boundary, so
+			// there is nothing to resend to the replacement provider.
+			if !snapshot.Enabled {
+				return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
+			}
+		}
 		if suppressedUpstreamError == nil {
 			suppressedUpstreamError = &WebSocketUpstreamError{
 				Raw: string(ctx.Data),
@@ -423,6 +431,14 @@ func newAllowlistedProviderScopedSuppressDecision(buffer *preVisibleClientMessag
 			SuppressedMessageData:   append([]byte(nil), ctx.Data...),
 		}
 	}
+}
+
+func canonicalPreWriteUpstreamError(ctx webSocketPreWriteContext) *WebSocketUpstreamError {
+	upstreamErr := ctx.Observation.UpstreamError
+	if upstreamErr == nil || upstreamErr.Raw != string(ctx.Data) {
+		return nil
+	}
+	return upstreamErr.Clone()
 }
 
 func isReplayableWebSocketMessageType(messageType websocket.MessageType) bool {

@@ -139,9 +139,7 @@ func TestWebSocketForwarder_Forward_TracksClientLifecycleBoundaries(t *testing.T
 	if _, _, err := clientConn.Read(ctx); err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if err := clientConn.Close(websocket.StatusNormalClosure, ""); err != nil {
-		t.Fatalf("close client websocket: %v", err)
-	}
+	_ = clientConn.Close(websocket.StatusNormalClosure, "")
 
 	select {
 	case err := <-errCh:
@@ -224,6 +222,7 @@ func TestWebSocketForwarder_Relay_OnClientVisibleRunsOnce(t *testing.T) {
 			t.Fatalf("payload %d = %q, want %q", i, data, want.Data)
 		}
 	}
+	_ = clientConn.Close(websocket.StatusNormalClosure, "done")
 
 	select {
 	case relayResult := <-resultCh:

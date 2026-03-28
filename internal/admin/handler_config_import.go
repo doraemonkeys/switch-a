@@ -146,6 +146,9 @@ func validateExportedProvider(p *ExportedProvider) []string {
 	if !IsValidProviderCredentialType(credentialType) {
 		return append(warnings, "Provider '"+p.ID+"' has invalid credential_type: "+string(p.CredentialType))
 	}
+	if !model.IsValidProviderUsageLimitPolicy(p.UsageLimitPolicy) {
+		warnings = append(warnings, "Provider '"+p.ID+"' has invalid usage_limit_policy: "+string(p.UsageLimitPolicy))
+	}
 	if p.AuthState != nil && p.AuthState.Status != "" && !model.IsValidProviderAuthStatus(p.AuthState.Status) {
 		warnings = append(warnings, "Provider '"+p.ID+"' has invalid auth_state.status: "+string(p.AuthState.Status))
 	}

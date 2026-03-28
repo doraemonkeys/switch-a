@@ -63,7 +63,7 @@ func (r WebSocketAttemptResult) statusCode() int {
 	if r.Result == nil {
 		return StatusCodeNoResponse
 	}
-	return websocketLogStatusCode(r.Result)
+	return websocketLogStatusCode(nil, r.Result)
 }
 
 func (r WebSocketAttemptResult) bodySnippet() string {

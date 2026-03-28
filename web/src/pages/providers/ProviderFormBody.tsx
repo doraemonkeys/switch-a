@@ -26,6 +26,8 @@ import {
   PROVIDER_DEFAULTS,
   PROVIDER_CREDENTIAL_TYPES,
   PROVIDER_CREDENTIAL_TYPE_OPTIONS,
+  PROVIDER_USAGE_LIMIT_POLICY_OPTIONS,
+  defaultProviderUsageLimitPolicy,
 } from "../../config/constants";
 import { AUTH_STATUS_BADGE_CLASS } from "../../lib/providerAuth";
 
@@ -85,6 +87,82 @@ function AuthStatusBadge({ status }: { status: ProviderAuthView["status"] }) {
     >
       {status}
     </span>
+  );
+}
+
+function CredentialTypeField({
+  value,
+  onChange,
+}: {
+  value: ProviderInput["credential_type"];
+  onChange: (value: ProviderInput["credential_type"]) => void;
+}) {
+  return (
+    <FormField label="Credential Type">
+      {(id) => (
+        <>
+          <select
+            id={id}
+            className="input"
+            value={value || PROVIDER_CREDENTIAL_TYPES.API_KEY}
+            onChange={(e) =>
+              onChange(e.target.value as ProviderInput["credential_type"])
+            }
+          >
+            {PROVIDER_CREDENTIAL_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-text-muted mt-1">
+            {
+              PROVIDER_CREDENTIAL_TYPE_OPTIONS.find(
+                (option) => option.value === value,
+              )?.description
+            }
+          </p>
+        </>
+      )}
+    </FormField>
+  );
+}
+
+function UsageLimitPolicyField({
+  value,
+  onChange,
+}: {
+  value: ProviderInput["usage_limit_policy"];
+  onChange: (value: ProviderInput["usage_limit_policy"]) => void;
+}) {
+  return (
+    <FormField label="Usage Limit Policy">
+      {(id) => (
+        <>
+          <select
+            id={id}
+            className="input"
+            value={value}
+            onChange={(e) =>
+              onChange(e.target.value as ProviderInput["usage_limit_policy"])
+            }
+          >
+            {PROVIDER_USAGE_LIMIT_POLICY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-text-muted mt-1">
+            {
+              PROVIDER_USAGE_LIMIT_POLICY_OPTIONS.find(
+                (option) => option.value === value,
+              )?.description
+            }
+          </p>
+        </>
+      )}
+    </FormField>
   );
 }
 
@@ -238,6 +316,9 @@ export function ProviderFormBody({
   };
   const isChatGPTProvider =
     formData.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
+  const effectiveUsageLimitPolicy =
+    formData.usage_limit_policy ||
+    defaultProviderUsageLimitPolicy(formData.credential_type);
 
   return (
     <>
@@ -313,39 +394,15 @@ export function ProviderFormBody({
           )}
         </FormField>
       )}
-      <FormField label="Credential Type">
-        {(id) => (
-          <>
-            <select
-              id={id}
-              className="input"
-              value={
-                formData.credential_type || PROVIDER_CREDENTIAL_TYPES.API_KEY
-              }
-              onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  credential_type: e.target
-                    .value as ProviderInput["credential_type"],
-                }))
-              }
-            >
-              {PROVIDER_CREDENTIAL_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-text-muted mt-1">
-              {
-                PROVIDER_CREDENTIAL_TYPE_OPTIONS.find(
-                  (option) => option.value === formData.credential_type,
-                )?.description
-              }
-            </p>
-          </>
-        )}
-      </FormField>
+      <CredentialTypeField
+        value={formData.credential_type}
+        onChange={(value) =>
+          setFormData((prev) => ({
+            ...prev,
+            credential_type: value,
+          }))
+        }
+      />
       {isChatGPTProvider ? (
         <ChatGPTLoginSection
           authView={authView}
@@ -375,6 +432,12 @@ export function ProviderFormBody({
           />
         </>
       )}
+      <UsageLimitPolicyField
+        value={effectiveUsageLimitPolicy}
+        onChange={(value) =>
+          setFormData((prev) => ({ ...prev, usage_limit_policy: value }))
+        }
+      />
       <GroupSelectField
         value={formData.group_id ?? null}
         onChange={(value) =>

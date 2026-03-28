@@ -15,6 +15,7 @@ export type {
   Strategy,
   AuthMode,
   FailoverScope,
+  ProviderUsageLimitPolicy,
   BuiltInAPIType,
   ConfigKey,
   ErrorCode,
@@ -45,6 +46,8 @@ export type {
   RequestLog,
   LogsResponse,
   LogFilter,
+  CommitSource,
+  RecoveryAction,
   // Stats types
   StatsPeriod,
   StatsGranularity,

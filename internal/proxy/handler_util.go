@@ -97,6 +97,15 @@ func (h *Handler) suspendProviderUntil(ctx context.Context, providerID string, d
 			zap.Time("disabled_until", disabledUntil),
 			zap.Error(err),
 		)
+		return
+	}
+	if h.selector != nil {
+		h.selector.EvictProviderContinuity(providerID)
+		h.logger.Info(
+			"evicted provider continuity after suspension",
+			zap.String("provider_id", providerID),
+			zap.Time("disabled_until", disabledUntil),
+		)
 	}
 }
 

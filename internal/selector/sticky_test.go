@@ -222,3 +222,64 @@ func TestMemoryStickyCache_StartCleanupLoop_Stop(t *testing.T) {
 
 	// Should not panic or hang
 }
+
+func TestMemoryStickyCache_EvictProviderRemovesAllContinuityKeys(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	cache := NewMemoryStickyCache(clock)
+
+	key1 := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key2 := model.StickyKey{IP: "192.168.1.2", User: "user2", APIType: "claude"}
+	key3 := model.StickyKey{IP: "192.168.1.3", User: "user3", APIType: "codex"}
+
+	cache.Set(key1, "provider-a", 5*time.Minute)
+	cache.Set(key2, "provider-a", 5*time.Minute)
+	cache.Set(key3, "provider-b", 5*time.Minute)
+
+	cache.EvictProvider("provider-a")
+
+	if _, found := cache.Get(key1); found {
+		t.Fatal("expected key1 to be evicted with provider-a")
+	}
+	if _, found := cache.Get(key2); found {
+		t.Fatal("expected key2 to be evicted with provider-a")
+	}
+	if providerID, found := cache.Get(key3); !found || providerID != "provider-b" {
+		t.Fatalf("expected provider-b entry to remain, got %q (found=%v)", providerID, found)
+	}
+	if _, ok := cache.providerKeys["provider-a"]; ok {
+		t.Fatal("provider-a reverse index should be removed after eviction")
+	}
+}
+
+func TestMemoryStickyCache_ReverseIndexStaysConsistentAcrossOverwriteDeleteAndCleanup(t *testing.T) {
+	clock := &mockClock{now: time.Now()}
+	cache := NewMemoryStickyCache(clock)
+
+	key := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	expiringKey := model.StickyKey{IP: "192.168.1.2", User: "user2", APIType: "claude"}
+
+	cache.Set(key, "provider-a", 5*time.Minute)
+	if _, ok := cache.providerKeys["provider-a"][key]; !ok {
+		t.Fatal("provider-a reverse index missing initial key")
+	}
+
+	cache.Set(key, "provider-b", 5*time.Minute)
+	if _, ok := cache.providerKeys["provider-a"]; ok {
+		t.Fatal("provider-a reverse index should be cleared after overwrite")
+	}
+	if _, ok := cache.providerKeys["provider-b"][key]; !ok {
+		t.Fatal("provider-b reverse index missing overwritten key")
+	}
+
+	cache.Delete(key)
+	if _, ok := cache.providerKeys["provider-b"]; ok {
+		t.Fatal("provider-b reverse index should be cleared after delete")
+	}
+
+	cache.Set(expiringKey, "provider-c", 2*time.Minute)
+	clock.Advance(3 * time.Minute)
+	cache.Cleanup()
+	if _, ok := cache.providerKeys["provider-c"]; ok {
+		t.Fatal("provider-c reverse index should be cleared after cleanup")
+	}
+}

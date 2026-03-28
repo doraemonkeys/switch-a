@@ -77,6 +77,9 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	if err := migrateProviderStateTables(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate provider credential/auth state tables: %w", err)
 	}
+	if err := migrateProviderUsageLimitPolicyStorage(db); err != nil { // coverage-ignore -- one-time migration
+		return nil, fmt.Errorf("migrate provider usage-limit policy storage: %w", err)
+	}
 
 	if err := migrateBaseURLToAPIType(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate base_url: %w", err)

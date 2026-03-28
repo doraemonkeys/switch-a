@@ -116,6 +116,10 @@ type StickyCache interface {
 	Set(key model.StickyKey, providerID string, ttl time.Duration)
 	// Delete removes a cached entry.
 	Delete(key model.StickyKey)
+	// EvictProvider removes every continuity key that currently points at the
+	// provider so suspension can invalidate affinity immediately instead of
+	// waiting for lazy revalidation on the next request.
+	EvictProvider(providerID string)
 }
 
 // Clock provides time-related functions for testing.

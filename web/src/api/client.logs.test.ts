@@ -123,13 +123,16 @@ describe("createApiClient logs API", () => {
 
     await api.logs.list({
       session_committed: true,
+      client_visible: false,
       sticky_written: false,
       probe_outcome: "transport_failed",
       terminal_cause: "client_disconnect",
+      commit_source: "upstream_message",
+      recovery_action: "reconnect_required",
     });
 
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
-      "https://test-api.example.com/logs?session_committed=true&sticky_written=false&probe_outcome=transport_failed&terminal_cause=client_disconnect",
+      "https://test-api.example.com/logs?session_committed=true&client_visible=false&sticky_written=false&probe_outcome=transport_failed&terminal_cause=client_disconnect&commit_source=upstream_message&recovery_action=reconnect_required",
       expect.any(Object),
     );
   });

@@ -133,6 +133,38 @@ export const PROVIDER_CREDENTIAL_TYPE_OPTIONS = [
   },
 ] as const;
 
+export const PROVIDER_USAGE_LIMIT_POLICIES = {
+  SWITCH_PROVIDER: "switch_provider",
+  SUSPEND: "suspend",
+} as const;
+
+export type ProviderUsageLimitPolicy =
+  (typeof PROVIDER_USAGE_LIMIT_POLICIES)[keyof typeof PROVIDER_USAGE_LIMIT_POLICIES];
+
+export function defaultProviderUsageLimitPolicy(
+  credentialType?: ProviderCredentialType,
+): ProviderUsageLimitPolicy {
+  if (credentialType === PROVIDER_CREDENTIAL_TYPES.CHATGPT) {
+    return PROVIDER_USAGE_LIMIT_POLICIES.SUSPEND;
+  }
+  return PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER;
+}
+
+export const PROVIDER_USAGE_LIMIT_POLICY_OPTIONS = [
+  {
+    value: PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER,
+    label: "Switch Provider",
+    description:
+      "Record the usage-limit error and route the request to another provider without opening a timed suspension window.",
+  },
+  {
+    value: PROVIDER_USAGE_LIMIT_POLICIES.SUSPEND,
+    label: "Suspend Until Reset",
+    description:
+      "Open the circuit until the upstream reset window, then recover through the normal health flow.",
+  },
+] as const;
+
 /**
  * Valid API types for providers.
  * These must match the types recognized by the proxy router.
