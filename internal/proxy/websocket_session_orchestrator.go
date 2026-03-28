@@ -19,6 +19,7 @@ type webSocketSessionOrchestratorConfig struct {
 	startTime        time.Time
 	maxAttempts      int
 	globalAuthMode   string
+	probeClientModel bool
 	newObserver      webSocketObserverFactory
 	applyObservation func(WebSocketObservation)
 	onClientVisible  func(webSocketVisibleWriteContext)
@@ -38,6 +39,7 @@ type WebSocketSessionOrchestrator struct {
 	startTime           time.Time
 	maxAttempts         int
 	globalAuthMode      string
+	probeClientModel    bool
 	newObserver         webSocketObserverFactory
 	applyObservation    func(WebSocketObservation)
 	onClientVisible     func(webSocketVisibleWriteContext)
@@ -52,6 +54,7 @@ type WebSocketSessionOrchestrator struct {
 	initialClientReadCh <-chan webSocketInitialReadResult
 	replayBuffer        *preVisibleClientMessageBuffer
 	suppressedAttempt   *webSocketSuppressedAttempt
+	probeOutcome        webSocketSelectionProbeOutcome
 }
 
 func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrchestratorConfig) *WebSocketSessionOrchestrator {
@@ -64,6 +67,7 @@ func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrche
 		startTime:         cfg.startTime,
 		maxAttempts:       cfg.maxAttempts,
 		globalAuthMode:    cfg.globalAuthMode,
+		probeClientModel:  cfg.probeClientModel,
 		newObserver:       cfg.newObserver,
 		applyObservation:  cfg.applyObservation,
 		onClientVisible:   cfg.onClientVisible,

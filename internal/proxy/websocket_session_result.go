@@ -37,6 +37,9 @@ func (o *WebSocketSessionOrchestrator) finalizeSelectionFailureSession(session *
 	if o == nil || session == nil {
 		return session
 	}
+	if session.ProbeOutcome == webSocketSelectionProbeOutcomeUnknown {
+		session.ProbeOutcome = o.probeOutcome
+	}
 	o.applySessionLifecycleToResult(session.FinalResult)
 	if session.FinalResult != nil {
 		session.ClientAccepted = session.FinalResult.ClientAccepted
@@ -113,6 +116,7 @@ func (o *WebSocketSessionOrchestrator) sessionFromSuppressedPayload(ctx context.
 		Attempts:       append([]WebSocketAttemptResult(nil), o.attempts...),
 		IsSticky:       o.isSticky,
 		ClientAccepted: result.ClientAccepted,
+		ProbeOutcome:   o.probeOutcome,
 	}
 	if result.Model != "" {
 		session.ResolvedModel = result.Model
@@ -129,6 +133,7 @@ func (o *WebSocketSessionOrchestrator) sessionFromAttempt(attempt WebSocketAttem
 		Attempts:          append([]WebSocketAttemptResult(nil), o.attempts...),
 		IsSticky:          o.isSticky,
 		ClientAccepted:    attempt.clientAccepted(),
+		ProbeOutcome:      o.probeOutcome,
 		GatewayStatusCode: attempt.GatewayStatusCode,
 		GatewayErrorCode:  attempt.GatewayErrorCode,
 		GatewayMessage:    attempt.GatewayMessage,
@@ -187,6 +192,7 @@ func newWebSocketSelectionFailureSession(
 		FinalErr:          err,
 		Attempts:          append([]WebSocketAttemptResult(nil), attempts...),
 		IsSticky:          isSticky,
+		ProbeOutcome:      webSocketSelectionProbeOutcomeUnknown,
 		GatewayStatusCode: statusCode,
 		GatewayErrorCode:  errorCode,
 		GatewayMessage:    message,

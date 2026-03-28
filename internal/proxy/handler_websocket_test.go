@@ -636,6 +636,167 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	}
 }
 
+func TestHandler_ServeHTTP_WebSocket_ProbeDisabledKeepsHandshakeOnlySelection(t *testing.T) {
+	t.Parallel()
+
+	const prompt = `{"type":"response.create","response":{"model":"client-model","instructions":"hello"}}`
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		msgType, payload, err := conn.Read(r.Context())
+		if err != nil {
+			t.Errorf("read client prompt: %v", err)
+			return
+		}
+		if msgType != websocket.MessageText || string(payload) != prompt {
+			t.Errorf("prompt = (%v, %q), want text/%q", msgType, string(payload), prompt)
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"response.created","response":{"model":"client-model"}}`)); err != nil {
+			t.Errorf("write upstream semantic event: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	provider := &model.Provider{
+		ID:       "ws-probe-disabled-p1",
+		Name:     "WS Probe Disabled Provider",
+		APIKey:   "ws-key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-disabled-p1", APIType: "codex", BaseURL: upstream.URL}},
+	}
+
+	store := newMockStore()
+	store.providers = []model.Provider{*provider}
+	store.configs[ConfigKeyWebSocketProbeClientModel] = "false"
+
+	mockSel := &mockSelector{
+		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
+			if req.Model != ModelUnknown {
+				t.Fatalf("initial selection model = %q, want %q when probing is disabled", req.Model, ModelUnknown)
+			}
+			return &selectResult{Provider: provider, FromStickyCache: false}, nil
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:    store,
+		Logger:   zap.NewNop(),
+		Selector: mockSel,
+	})
+
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := conn.Write(ctx, websocket.MessageText, []byte(prompt)); err != nil {
+		t.Fatalf("write client message: %v", err)
+	}
+
+	msgType, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read semantic event: %v", err)
+	}
+	if msgType != websocket.MessageText || !strings.Contains(string(data), `"response.created"`) {
+		t.Fatalf("unexpected websocket payload: type=%v body=%q", msgType, string(data))
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_HandshakeModelWinsOverProbe(t *testing.T) {
+	t.Parallel()
+
+	const prompt = `{"type":"response.create","response":{"model":"client-model","instructions":"hello"}}`
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		msgType, payload, err := conn.Read(r.Context())
+		if err != nil {
+			t.Errorf("read client prompt: %v", err)
+			return
+		}
+		if msgType != websocket.MessageText || string(payload) != prompt {
+			t.Errorf("prompt = (%v, %q), want text/%q", msgType, string(payload), prompt)
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"response.created","response":{"model":"handshake-model"}}`)); err != nil {
+			t.Errorf("write upstream semantic event: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	provider := &model.Provider{
+		ID:       "ws-probe-handshake-p1",
+		Name:     "WS Probe Handshake Provider",
+		APIKey:   "ws-key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-handshake-p1", APIType: "codex", BaseURL: upstream.URL}},
+	}
+
+	store := newMockStore()
+	store.providers = []model.Provider{*provider}
+
+	mockSel := &mockSelector{
+		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
+			if req.Model != "handshake-model" {
+				t.Fatalf("initial selection model = %q, want %q from handshake", req.Model, "handshake-model")
+			}
+			return &selectResult{Provider: provider, FromStickyCache: false}, nil
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:    store,
+		Logger:   zap.NewNop(),
+		Selector: mockSel,
+	})
+
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=handshake-model", nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := conn.Write(ctx, websocket.MessageText, []byte(prompt)); err != nil {
+		t.Fatalf("write client message: %v", err)
+	}
+
+	msgType, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read semantic event: %v", err)
+	}
+	if msgType != websocket.MessageText || !strings.Contains(string(data), `"response.created"`) {
+		t.Fatalf("unexpected websocket payload: type=%v body=%q", msgType, string(data))
+	}
+}
+
 func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesProvider(t *testing.T) {
 	t.Parallel()
 

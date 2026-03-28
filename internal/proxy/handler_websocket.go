@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -87,6 +88,7 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		startTime:        startTime,
 		maxAttempts:      cfg.globalMaxAttempts,
 		globalAuthMode:   cfg.globalAuthMode,
+		probeClientModel: cfg.websocketProbeClientModel,
 		newObserver:      newObserver,
 		applyObservation: applyObservation,
 		onClientVisible:  onClientVisible,
@@ -216,33 +218,25 @@ func extractWebSocketModel(r *http.Request) string {
 	return ModelUnknown
 }
 
-func (h *Handler) webSocketSelectionDependsOnModel(ctx context.Context, req *model.SelectRequest, apiType string) bool {
-	if req != nil && req.StickyMode == model.StickyModeModel {
-		return true
-	}
+func hasUsableWebSocketSelectionModel(modelName string) bool {
+	trimmed := strings.TrimSpace(modelName)
+	return trimmed != "" && !strings.EqualFold(trimmed, ModelUnknown)
+}
 
-	policyStore, ok := h.store.(routingPolicySource)
-	if !ok {
+func (h *Handler) webSocketSelectionConsumesHiddenModel(ctx context.Context, req *model.SelectRequest) bool {
+	if req == nil || hasUsableWebSocketSelectionModel(req.Model) {
 		return false
 	}
-
-	policies, err := policyStore.ListRoutingPoliciesByAPIType(ctx, apiType)
+	eligibility, err := selector.NewProviderSelectionEligibility(ctx, h.store, nil, req)
 	if err != nil {
 		h.logger.Warn(
-			"failed to inspect websocket routing policies before selection",
-			zap.String("api_type", apiType),
+			"failed to evaluate websocket hidden-model selection demand",
+			zap.String("api_type", req.APIType),
 			zap.Error(err),
 		)
 		return false
 	}
-
-	for _, policy := range policies {
-		if policy.ModelMatchType != model.RoutingPolicyModelMatchTypeNone {
-			return true
-		}
-	}
-
-	return false
+	return eligibility.WouldConsumeHiddenModel()
 }
 
 func marshalWebSocketGatewayError(statusCode int, code, message string) []byte {

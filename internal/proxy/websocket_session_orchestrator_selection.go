@@ -9,10 +9,14 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
-	"switch-a/internal/selector"
 
 	"go.uber.org/zap"
 )
+
+type webSocketSelectionProbeDecision struct {
+	outcome     webSocketSelectionProbeOutcome
+	shouldProbe bool
+}
 
 // bootstrapSelectionContext is isolated from the main attempt loop because only
 // model-sensitive routing is allowed to read the client socket before a provider
@@ -22,7 +26,9 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 	w http.ResponseWriter,
 	r *http.Request,
 ) *WebSocketSessionResult {
-	if !o.shouldProbeClientSelectionContext(ctx) {
+	decision := o.selectionProbeDecision(ctx)
+	o.probeOutcome = decision.outcome
+	if !decision.shouldProbe {
 		return nil
 	}
 
@@ -39,10 +45,12 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 			Attempts:       append([]WebSocketAttemptResult(nil), o.attempts...),
 			IsSticky:       o.isSticky,
 			ClientAccepted: false,
+			ProbeOutcome:   o.probeOutcome,
 		}
 	}
 
-	result, observedModel := o.probeClientSelectionContext(ctx)
+	result, observedModel, outcome := o.probeClientSelectionContext(ctx)
+	o.probeOutcome = outcome
 	if observedModel != "" {
 		o.info.Model = observedModel
 		o.selectReq.Model = observedModel
@@ -50,22 +58,38 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 	return result
 }
 
-func (o *WebSocketSessionOrchestrator) shouldProbeClientSelectionContext(ctx context.Context) bool {
+func (o *WebSocketSessionOrchestrator) selectionProbeDecision(ctx context.Context) webSocketSelectionProbeDecision {
 	if o == nil || o.selectReq == nil || o.handler == nil {
-		return false
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
 	}
-	if o.apiType != APITypeCodex {
-		return false
+	if hasUsableWebSocketSelectionModel(o.selectReq.Model) {
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
 	}
-	if selector.BuildContinuityKey(o.selectReq).Model != "" {
-		return false
+	if !o.probeClientModel {
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
 	}
-	return o.handler.webSocketSelectionDependsOnModel(ctx, o.selectReq, o.apiType)
+	if !o.handler.webSocketSelectionConsumesHiddenModel(ctx, o.selectReq) {
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}
+	}
+	if !o.supportsReplaySafeSelectionProbe() {
+		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeUnsupported}
+	}
+	return webSocketSelectionProbeDecision{
+		outcome:     webSocketSelectionProbeOutcomeCompletedWithoutUsableModel,
+		shouldProbe: true,
+	}
 }
 
-func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.Context) (*WebSocketSessionResult, string) {
+func (o *WebSocketSessionOrchestrator) supportsReplaySafeSelectionProbe() bool {
+	if o == nil || o.replayBuffer == nil || o.apiType != APITypeCodex {
+		return false
+	}
+	return newWebSocketMessageObserver(o.apiType, ModelUnknown, nil, nil, nil) != nil
+}
+
+func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.Context) (*WebSocketSessionResult, string, webSocketSelectionProbeOutcome) {
 	if o.clientConn == nil {
-		return nil, ""
+		return nil, "", webSocketSelectionProbeOutcomeCompletedWithoutUsableModel
 	}
 	if o.initialClientReadCh == nil {
 		o.initialClientReadCh = startWebSocketInitialRead(ctx, o.clientConn)
@@ -93,7 +117,8 @@ func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.C
 				Attempts:       append([]WebSocketAttemptResult(nil), o.attempts...),
 				IsSticky:       o.isSticky,
 				ClientAccepted: result.ClientAccepted,
-			}, ""
+				ProbeOutcome:   webSocketSelectionProbeOutcomeTransportFailed,
+			}, "", webSocketSelectionProbeOutcomeTransportFailed
 		}
 
 		if o.replayBuffer != nil {
@@ -102,17 +127,17 @@ func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.C
 
 		observer := newWebSocketMessageObserver(o.apiType, o.info.Model, nil, nil, nil)
 		if observer == nil {
-			return nil, ""
+			return nil, "", webSocketSelectionProbeOutcomeUnsupported
 		}
 
 		observer.ObserveClientMessage(messageType, data)
 		observation := observer.Snapshot()
 		if observation.Model == "" || observation.Model == ModelUnknown {
-			return nil, ""
+			return nil, "", webSocketSelectionProbeOutcomeCompletedWithoutUsableModel
 		}
-		return nil, observation.Model
+		return nil, observation.Model, webSocketSelectionProbeOutcomeObservedUsableModel
 	case <-timer.C:
-		return nil, ""
+		return nil, "", webSocketSelectionProbeOutcomeCompletedWithoutUsableModel
 	case <-ctx.Done():
 		result := &WebSocketResult{
 			HandshakeAccepted: true,
@@ -128,7 +153,8 @@ func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.C
 			Attempts:       append([]WebSocketAttemptResult(nil), o.attempts...),
 			IsSticky:       o.isSticky,
 			ClientAccepted: result.ClientAccepted,
-		}, ""
+			ProbeOutcome:   webSocketSelectionProbeOutcomeTransportFailed,
+		}, "", webSocketSelectionProbeOutcomeTransportFailed
 	}
 }
 

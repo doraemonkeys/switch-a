@@ -27,6 +27,17 @@ type WebSocketAttemptResult struct {
 	ReplayFailed      bool
 }
 
+type webSocketSelectionProbeOutcome string
+
+const (
+	webSocketSelectionProbeOutcomeUnknown                     webSocketSelectionProbeOutcome = ""
+	webSocketSelectionProbeOutcomeBypassed                    webSocketSelectionProbeOutcome = "bypassed"
+	webSocketSelectionProbeOutcomeUnsupported                 webSocketSelectionProbeOutcome = "unsupported"
+	webSocketSelectionProbeOutcomeObservedUsableModel         webSocketSelectionProbeOutcome = "observed_usable_model"
+	webSocketSelectionProbeOutcomeCompletedWithoutUsableModel webSocketSelectionProbeOutcome = "completed_without_usable_model"
+	webSocketSelectionProbeOutcomeTransportFailed             webSocketSelectionProbeOutcome = "transport_failed"
+)
+
 func (r WebSocketAttemptResult) clientAccepted() bool {
 	if r.Result == nil {
 		return false
@@ -139,6 +150,7 @@ type WebSocketSessionResult struct {
 	StickyWritten     bool
 	ClientAccepted    bool
 	ResolvedModel     string
+	ProbeOutcome      webSocketSelectionProbeOutcome
 	GatewayStatusCode int
 	GatewayErrorCode  string
 	GatewayMessage    string

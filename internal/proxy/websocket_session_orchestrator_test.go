@@ -13,6 +13,7 @@ import (
 	"switch-a/internal/model"
 
 	"github.com/coder/websocket"
+	"go.uber.org/zap"
 )
 
 func TestWebSocketAttemptResult_ClientAcceptedUsesExplicitBoundary(t *testing.T) {
@@ -438,6 +439,205 @@ func TestNewWebSocketForwardAttemptResultCapturesHandshakeGatewayFailure(t *test
 	if attempt.LatencyMs != 1500 {
 		t.Fatalf("LatencyMs = %d, want 1500", attempt.LatencyMs)
 	}
+}
+
+func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		apiType   string
+		req       *model.SelectRequest
+		configure func(*mockStore)
+		probeOn   bool
+		want      webSocketSelectionProbeDecision
+	}{
+		{
+			name:    "handshake model bypasses probe",
+			apiType: APITypeCodex,
+			req: &model.SelectRequest{
+				APIType:    APITypeCodex,
+				Model:      "handshake-model",
+				StickyMode: model.StickyModeModel,
+			},
+			probeOn: true,
+			want: webSocketSelectionProbeDecision{
+				outcome: webSocketSelectionProbeOutcomeBypassed,
+			},
+		},
+		{
+			name:    "probe disabled bypasses hidden-model demand",
+			apiType: APITypeCodex,
+			req: &model.SelectRequest{
+				APIType:    APITypeCodex,
+				Model:      ModelUnknown,
+				StickyMode: model.StickyModeModel,
+			},
+			probeOn: false,
+			want: webSocketSelectionProbeDecision{
+				outcome: webSocketSelectionProbeOutcomeBypassed,
+			},
+		},
+		{
+			name:    "no hidden-model consumer bypasses probe",
+			apiType: APITypeCodex,
+			req: &model.SelectRequest{
+				APIType:    APITypeCodex,
+				Model:      ModelUnknown,
+				StickyMode: model.StickyModeOff,
+			},
+			probeOn: true,
+			want: webSocketSelectionProbeDecision{
+				outcome: webSocketSelectionProbeOutcomeBypassed,
+			},
+		},
+		{
+			name:    "unsupported replay-safe capability is explicit",
+			apiType: "claude",
+			req: &model.SelectRequest{
+				APIType:    "claude",
+				Model:      ModelUnknown,
+				StickyMode: model.StickyModeModel,
+			},
+			probeOn: true,
+			want: webSocketSelectionProbeDecision{
+				outcome: webSocketSelectionProbeOutcomeUnsupported,
+			},
+		},
+		{
+			name:    "routing policy hidden-model demand enables probe",
+			apiType: APITypeCodex,
+			req: &model.SelectRequest{
+				APIType:    APITypeCodex,
+				Model:      ModelUnknown,
+				StickyMode: model.StickyModeOff,
+			},
+			configure: func(store *mockStore) {
+				store.routingPolicies = []model.RoutingPolicy{
+					{
+						APIType:         APITypeCodex,
+						ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+						ModelMatchValue: "gpt-",
+					},
+				}
+			},
+			probeOn: true,
+			want: webSocketSelectionProbeDecision{
+				outcome:     webSocketSelectionProbeOutcomeCompletedWithoutUsableModel,
+				shouldProbe: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := newMockStore()
+			if tt.configure != nil {
+				tt.configure(store)
+			}
+			orchestrator := newWebSocketSessionOrchestrator(&Handler{
+				store:  store,
+				logger: zap.NewNop(),
+			}, webSocketSessionOrchestratorConfig{
+				apiType:          tt.apiType,
+				selectReq:        tt.req,
+				probeClientModel: tt.probeOn,
+			})
+
+			if got := orchestrator.selectionProbeDecision(context.Background()); got != tt.want {
+				t.Fatalf("selectionProbeDecision() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWebSocketSessionOrchestrator_ProbeClientSelectionContextOutcomes(t *testing.T) {
+	idleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		<-r.Context().Done()
+	}))
+	defer idleServer.Close()
+
+	newClientConn := func(t *testing.T) *websocket.Conn {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		t.Cleanup(cancel)
+		conn := connectWSClient(t, ctx, wsURL(idleServer))
+		t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
+		return conn
+	}
+
+	t.Run("completed without usable model", func(t *testing.T) {
+		ch := make(chan webSocketInitialReadResult, 1)
+		ch <- webSocketInitialReadResult{
+			messageType: websocket.MessageText,
+			data:        []byte(`{"type":"response.create","response":{"instructions":"hello"}}`),
+		}
+
+		orchestrator := &WebSocketSessionOrchestrator{
+			requestID:           "req-no-model",
+			apiType:             APITypeCodex,
+			clientConn:          newClientConn(t),
+			initialClientReadCh: ch,
+			replayBuffer:        newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
+			lifecycle:           newWebSocketLifecycleState(),
+		}
+
+		session, modelName, outcome := orchestrator.probeClientSelectionContext(context.Background())
+		if session != nil {
+			t.Fatalf("probeClientSelectionContext() session = %#v, want nil", session)
+		}
+		if modelName != "" {
+			t.Fatalf("probeClientSelectionContext() model = %q, want empty", modelName)
+		}
+		if outcome != webSocketSelectionProbeOutcomeCompletedWithoutUsableModel {
+			t.Fatalf("probeClientSelectionContext() outcome = %q, want %q", outcome, webSocketSelectionProbeOutcomeCompletedWithoutUsableModel)
+		}
+	})
+
+	t.Run("transport failure is terminal", func(t *testing.T) {
+		probeErr := io.EOF
+		ch := make(chan webSocketInitialReadResult, 1)
+		ch <- webSocketInitialReadResult{err: probeErr}
+
+		orchestrator := &WebSocketSessionOrchestrator{
+			requestID:           "req-transport-failure",
+			apiType:             APITypeCodex,
+			clientConn:          newClientConn(t),
+			initialClientReadCh: ch,
+			replayBuffer:        newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
+			lifecycle:           newWebSocketLifecycleState(),
+		}
+		orchestrator.lifecycle.MarkClientAccepted()
+
+		session, modelName, outcome := orchestrator.probeClientSelectionContext(context.Background())
+		if session == nil {
+			t.Fatal("probeClientSelectionContext() session = nil, want terminal session")
+		}
+		if modelName != "" {
+			t.Fatalf("probeClientSelectionContext() model = %q, want empty", modelName)
+		}
+		if outcome != webSocketSelectionProbeOutcomeTransportFailed {
+			t.Fatalf("probeClientSelectionContext() outcome = %q, want %q", outcome, webSocketSelectionProbeOutcomeTransportFailed)
+		}
+		if session.ProbeOutcome != webSocketSelectionProbeOutcomeTransportFailed {
+			t.Fatalf("session.ProbeOutcome = %q, want %q", session.ProbeOutcome, webSocketSelectionProbeOutcomeTransportFailed)
+		}
+		wantCause := classifyRelayTerminalCause(probeErr, webSocketPeerClient)
+		if session.FinalResult == nil || session.FinalResult.TerminalCause != wantCause {
+			t.Fatalf("FinalResult.TerminalCause = %v, want %q", session.FinalResult.TerminalCause, wantCause)
+		}
+		if !errors.Is(session.FinalErr, probeErr) {
+			t.Fatalf("FinalErr = %v, want %v", session.FinalErr, probeErr)
+		}
+	})
 }
 
 func TestWebSocketSwitchReasonUsesPermanentStatusesAndTerminalCause(t *testing.T) {
