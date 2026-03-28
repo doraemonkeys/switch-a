@@ -364,3 +364,66 @@ func TestBuildContinuityKey_ModelModeFallsBackWhenModelUnknown(t *testing.T) {
 		t.Fatalf("key.Model = %q, want %q", key.Model, "gpt-5.4")
 	}
 }
+
+func TestSelectorSelectUnknownModelIgnoresModelOnlyRoutingRules(t *testing.T) {
+	t.Parallel()
+
+	gDefault := "g-default"
+	gModelOnly := "g-model-only"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p-default",
+			Name:     "Default Provider",
+			Enabled:  true,
+			GroupID:  &gDefault,
+			Priority: 0,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-default", APIType: "codex"}},
+		},
+		{
+			ID:       "p-model-only",
+			Name:     "Model Only Provider",
+			Enabled:  true,
+			GroupID:  &gModelOnly,
+			Priority: 10,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-model-only", APIType: "codex"}},
+		},
+	}
+	store.groups = map[string]*model.Group{
+		"g-default":    {ID: "g-default", Name: "Default Group", Strategy: StrategyPriority, Enabled: true},
+		"g-model-only": {ID: "g-model-only", Name: "Model Group", Strategy: StrategyPriority, Enabled: true},
+	}
+	store.authStates["p-default"] = &model.ProviderAuthState{ProviderID: "p-default", Status: model.ProviderAuthStatusActive}
+	store.authStates["p-model-only"] = &model.ProviderAuthState{ProviderID: "p-model-only", Status: model.ProviderAuthStatusActive}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
+			ModelMatchValue: "gpt-5.4",
+			Groups:          []model.RoutingPolicyGroup{{GroupID: "g-model-only"}},
+		},
+	}
+
+	sel := NewSelector(Config{
+		Store:         store,
+		HealthChecker: newMockHealthChecker(),
+		Clock:         internal.RealClock{},
+		Logger:        zap.NewNop(),
+	})
+
+	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+		APIType:    "codex",
+		Model:      unknownModelSentinel,
+		StickyMode: model.StickyModeOff,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected provider to be selected under unknown-model fallback semantics")
+	}
+	if provider.ID != "p-default" {
+		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p-default")
+	}
+}

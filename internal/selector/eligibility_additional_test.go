@@ -140,8 +140,108 @@ func TestResolveRoutingPolicyUnknownModelFallsBackToAPITypeRule(t *testing.T) {
 	if !resolution.constrained || !resolution.matched {
 		t.Fatalf("resolution = %#v, want constrained matched result", resolution)
 	}
+	if !resolution.consumesHiddenModel {
+		t.Fatalf("resolution.consumesHiddenModel = false, want true when a model-specific rule is bypassed")
+	}
 	if _, ok := resolution.groupIDs["group-api"]; !ok || len(resolution.groupIDs) != 1 {
 		t.Fatalf("groupIDs = %#v, want only api-type fallback group", resolution.groupIDs)
+	}
+}
+
+func TestResolveRoutingPolicyUnknownModelSkipsModelOnlyRules(t *testing.T) {
+	t.Parallel()
+
+	req := &model.SelectRequest{APIType: "codex", Model: unknownModelSentinel}
+	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
+		{
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
+			ModelMatchValue: "gpt-5.4",
+			Groups:          []model.RoutingPolicyGroup{{GroupID: "group-model"}},
+		},
+	}, req)
+
+	if resolution.constrained {
+		t.Fatalf("resolution = %#v, want unconstrained result when only hidden-model rules exist", resolution)
+	}
+	if resolution.matched {
+		t.Fatalf("resolution = %#v, want unmatched result when no api-type rule applies", resolution)
+	}
+	if !resolution.consumesHiddenModel {
+		t.Fatalf("resolution.consumesHiddenModel = false, want true when selection would use a hidden model if available")
+	}
+}
+
+func TestProviderSelectionEligibilityWouldConsumeHiddenModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  *model.SelectRequest
+		want bool
+	}{
+		{
+			name: "model sticky without usable model",
+			req: &model.SelectRequest{
+				APIType:    "codex",
+				Model:      unknownModelSentinel,
+				StickyMode: model.StickyModeModel,
+			},
+			want: true,
+		},
+		{
+			name: "model sticky with usable model already present",
+			req: &model.SelectRequest{
+				APIType:    "codex",
+				Model:      "gpt-5.4",
+				StickyMode: model.StickyModeModel,
+			},
+			want: false,
+		},
+		{
+			name: "api type sticky does not consume hidden model",
+			req: &model.SelectRequest{
+				APIType:    "codex",
+				Model:      unknownModelSentinel,
+				StickyMode: model.StickyModeAPIType,
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eligibility := &ProviderSelectionEligibility{req: tt.req}
+			if got := eligibility.WouldConsumeHiddenModel(); got != tt.want {
+				t.Fatalf("WouldConsumeHiddenModel() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProviderSelectionEligibilityWouldConsumeHiddenModelForRoutingPolicy(t *testing.T) {
+	t.Parallel()
+
+	req := &model.SelectRequest{APIType: "codex", Model: unknownModelSentinel}
+	eligibility := &ProviderSelectionEligibility{
+		req: req,
+		routing: resolveRoutingPolicy([]model.RoutingPolicy{
+			{
+				APIType:         "codex",
+				ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+				ModelMatchValue: "gpt-",
+			},
+		}, req),
+	}
+
+	if !eligibility.WouldConsumeHiddenModel() {
+		t.Fatal("WouldConsumeHiddenModel() = false, want true when a routing rule depends on a hidden model")
+	}
+
+	req.Model = "gpt-5.4"
+	eligibility.req = req
+	if eligibility.WouldConsumeHiddenModel() {
+		t.Fatal("WouldConsumeHiddenModel() = true, want false once the request already has a usable model")
 	}
 }
 
