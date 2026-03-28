@@ -1,5 +1,9 @@
 # WebSocket Pre-Selection Model Probe Decisions
 
+## Status
+
+Completed on 2026-03-28.
+
 ## Purpose
 
 This document defines a single runtime switch for WebSocket model probing in
