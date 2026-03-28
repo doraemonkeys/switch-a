@@ -274,6 +274,7 @@ export const CONFIG_KEYS = {
   SSE_IDLE_TIMEOUT: "sse_idle_timeout",
   STICKY_MODE: "sticky_mode",
   STICKY_TTL: "sticky_ttl",
+  WEBSOCKET_PROBE_CLIENT_MODEL: "websocket_probe_client_model",
   CIRCUIT_FAILURE: "circuit_failure",
   CIRCUIT_WINDOW: "circuit_window",
   CIRCUIT_DISABLE: "circuit_disable",
@@ -308,6 +309,7 @@ export const DEFAULTS = {
   // Sticky Session
   STICKY_MODE: STICKY_MODES.MODEL,
   STICKY_TTL: 300,
+  WEBSOCKET_PROBE_CLIENT_MODEL: true,
 
   // Circuit Breaker
   CIRCUIT_FAILURE: 3,

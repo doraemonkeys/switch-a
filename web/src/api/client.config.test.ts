@@ -23,9 +23,11 @@ describe("createApiClient config API", () => {
         sticky_ttl: "300",
         auth_mode: "auto",
         global_max_attempts: "3",
+        websocket_probe_client_model: "true",
       },
       values: {
         global_max_attempts: "5",
+        websocket_probe_client_model: "false",
       },
     };
     mockHttpClient.mockResponse({
@@ -39,6 +41,7 @@ describe("createApiClient config API", () => {
     expect(result).toEqual(configResponse);
     expect(result.defaults.sticky_ttl).toBe("300");
     expect(result.values.global_max_attempts).toBe("5");
+    expect(result.values.websocket_probe_client_model).toBe("false");
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config",
       expect.any(Object),
@@ -50,9 +53,11 @@ describe("createApiClient config API", () => {
       defaults: {
         sticky_ttl: "300",
         auth_mode: "auto",
+        websocket_probe_client_model: "true",
       },
       values: {
         sticky_ttl: "600",
+        websocket_probe_client_model: "false",
       },
     };
     mockHttpClient.mockResponse({
@@ -61,14 +66,20 @@ describe("createApiClient config API", () => {
       json: () => Promise.resolve(updatedConfigResponse),
     });
 
-    const result = await api.config.update({ sticky_ttl: "600" });
+    const result = await api.config.update({
+      sticky_ttl: "600",
+      websocket_probe_client_model: "false",
+    });
 
     expect(result).toEqual(updatedConfigResponse);
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ sticky_ttl: "600" }),
+        body: JSON.stringify({
+          sticky_ttl: "600",
+          websocket_probe_client_model: "false",
+        }),
       }),
     );
   });
@@ -103,7 +114,10 @@ describe("createApiClient config API", () => {
           enabled: true,
         },
       ],
-      settings: { sticky_ttl: "300" },
+      settings: {
+        sticky_ttl: "300",
+        websocket_probe_client_model: "true",
+      },
     };
     mockHttpClient.mockResponse({
       ok: true,
@@ -139,7 +153,10 @@ describe("createApiClient config API", () => {
         },
       ],
       groups: [],
-      settings: { sticky_ttl: "600" },
+      settings: {
+        sticky_ttl: "600",
+        websocket_probe_client_model: "false",
+      },
     };
     const previewResponse = {
       dry_run: true,
@@ -187,7 +204,10 @@ describe("createApiClient config API", () => {
         },
       ],
       groups: [],
-      settings: { sticky_ttl: "600" },
+      settings: {
+        sticky_ttl: "600",
+        websocket_probe_client_model: "false",
+      },
     };
     const importResult = {
       success: true,

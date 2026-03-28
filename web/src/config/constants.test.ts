@@ -234,13 +234,16 @@ describe("CONFIG_KEYS", () => {
     expect(CONFIG_KEYS.USER_HEADER).toBe("user_header");
     expect(CONFIG_KEYS.STICKY_MODE).toBe("sticky_mode");
     expect(CONFIG_KEYS.STICKY_TTL).toBe("sticky_ttl");
+    expect(CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(
+      "websocket_probe_client_model",
+    );
     expect(CONFIG_KEYS.CIRCUIT_FAILURE).toBe("circuit_failure");
     expect(CONFIG_KEYS.GLOBAL_MAX_ATTEMPTS).toBe("global_max_attempts");
     expect(CONFIG_KEYS.INTER_GROUP_STRATEGY).toBe("inter_group_strategy");
   });
 
-  it("should have exactly 16 config keys", () => {
-    expect(Object.keys(CONFIG_KEYS)).toHaveLength(16);
+  it("should have exactly 17 config keys", () => {
+    expect(Object.keys(CONFIG_KEYS)).toHaveLength(17);
   });
 });
 
@@ -261,6 +264,7 @@ describe("DEFAULTS", () => {
   it("should have sticky session defaults", () => {
     expect(DEFAULTS.STICKY_MODE).toBe("model");
     expect(DEFAULTS.STICKY_TTL).toBe(300);
+    expect(DEFAULTS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(true);
   });
 
   it("should have circuit breaker defaults", () => {

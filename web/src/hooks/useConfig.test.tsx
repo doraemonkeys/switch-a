@@ -11,9 +11,11 @@ const mockConfigResponse = {
     sticky_ttl: "300",
     failure_threshold: "3",
     auth_mode: "auto",
+    websocket_probe_client_model: "true",
   },
   values: {
     sticky_ttl: "600", // User modified this value
+    websocket_probe_client_model: "false",
   },
 };
 
@@ -80,6 +82,7 @@ describe("useConfig", () => {
       sticky_ttl: "600", // from values (user modified)
       failure_threshold: "3", // from defaults
       auth_mode: "auto", // from defaults
+      websocket_probe_client_model: "false", // from values (user modified)
     });
     expect(result.current.error).toBeNull();
     expect(mockApi.config.get).toHaveBeenCalled();
@@ -96,6 +99,9 @@ describe("useConfig", () => {
 
     // sticky_ttl is in values, so it's modified
     expect(result.current.isModified("sticky_ttl")).toBe(true);
+    expect(result.current.isModified("websocket_probe_client_model")).toBe(
+      true,
+    );
     // failure_threshold is only in defaults, not modified
     expect(result.current.isModified("failure_threshold")).toBe(false);
     // auth_mode is only in defaults, not modified

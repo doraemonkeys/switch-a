@@ -31,6 +31,7 @@ export type ConfigKey =
   | "sse_idle_timeout"
   | "sticky_mode"
   | "sticky_ttl"
+  | "websocket_probe_client_model"
   | "circuit_failure"
   | "circuit_window"
   | "circuit_disable"

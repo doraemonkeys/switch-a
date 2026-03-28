@@ -76,6 +76,45 @@ export function StickySessionSection({
             disabled={currentMode === STICKY_MODES.OFF}
           />
         </div>
+
+        <label className="flex items-start gap-3 p-4 rounded-xl bg-bg-secondary border border-border-light cursor-pointer hover:border-primary/30 transition-colors">
+          <input
+            type="checkbox"
+            id="websocket_probe_client_model"
+            checked={
+              getValue(
+                CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL,
+                DEFAULTS.WEBSOCKET_PROBE_CLIENT_MODEL,
+              ) === "true"
+            }
+            onChange={(e) =>
+              handleChange(
+                CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL,
+                String(e.target.checked),
+              )
+            }
+          />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-text-primary">
+                Probe WebSocket Client Model Before Selection
+              </span>
+              <ModifiedBadge
+                configKey={CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL}
+                currentValue={getValue(
+                  CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL,
+                  DEFAULTS.WEBSOCKET_PROBE_CLIENT_MODEL,
+                )}
+                getDefault={getDefault}
+              />
+            </div>
+            <p className="text-xs text-text-muted">
+              Allow replay-safe pre-selection probing when the WebSocket
+              handshake does not expose a usable model. Disable this to force
+              handshake-only selection semantics.
+            </p>
+          </div>
+        </label>
       </div>
     </ConfigSection>
   );
