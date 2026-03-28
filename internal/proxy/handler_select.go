@@ -44,7 +44,23 @@ func (h *Handler) selectProviderWithTracking(ctx context.Context, selectReq *mod
 	}
 
 	provider, err := normalizeSelectedProvider(h.selector.SelectExcluding(ctx, selectReq, excluded))
-	return provider, false, err
+	if err != nil {
+		return nil, false, err
+	}
+	if provider != nil && excluded != nil && excluded[provider.ID] {
+		// A retry that reselects an already-excluded provider cannot make
+		// progress. Treat it as provider exhaustion so websocket semantic
+		// failover can surface the preserved original payload instead of
+		// spinning until the client context expires.
+		h.releaseConcurrency(provider.ID)
+		h.logger.Warn(
+			"selector returned excluded provider during retry",
+			zap.String("provider_id", provider.ID),
+			zap.Int("attempt", attempt),
+		)
+		return nil, false, internal.ErrNoProvider
+	}
+	return provider, false, nil
 }
 
 func normalizeSelectorSelectResult(result *selector.SelectResult, err error) (*selector.SelectResult, error) {

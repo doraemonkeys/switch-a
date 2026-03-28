@@ -150,8 +150,8 @@ func TestWebSocketAttemptResult_ShouldFailoverBeforeClientAccept(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tt.attempt.shouldFailoverBeforeClientAccept(); got != tt.want {
-				t.Fatalf("shouldFailoverBeforeClientAccept() = %v, want %v", got, tt.want)
+			if got := tt.attempt.shouldFailoverBeforeClientVisible(); got != tt.want {
+				t.Fatalf("shouldFailoverBeforeClientVisible() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -562,7 +562,7 @@ func TestWebSocketSessionOrchestrator_ReplaysBufferedMessages(t *testing.T) {
 	conn := connectWSClient(t, ctx, wsURL(replayServer))
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	replayed, err := orchestrator.replayBufferedMessages(
+	replayedBytes, replayed, err := orchestrator.replayBufferedMessages(
 		ctx,
 		conn,
 		newBytesTrackingObserver(newCodexWebSocketMessageObserver(ModelUnknown, nil, nil, nil), &LiveBytesTracker{}),
@@ -572,6 +572,9 @@ func TestWebSocketSessionOrchestrator_ReplaysBufferedMessages(t *testing.T) {
 	}
 	if !replayed {
 		t.Fatal("replayBufferedMessages() = false, want true")
+	}
+	if replayedBytes != int64(len("replay me")) {
+		t.Fatalf("replayBufferedMessages() bytes = %d, want %d", replayedBytes, len("replay me"))
 	}
 
 	select {
@@ -594,12 +597,15 @@ func TestWebSocketSessionOrchestrator_ReplayBufferedMessages_EmptyBufferIsNoOp(t
 		replayBuffer: newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
 	}
 
-	replayed, err := orchestrator.replayBufferedMessages(context.Background(), nil, nil)
+	replayedBytes, replayed, err := orchestrator.replayBufferedMessages(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("replayBufferedMessages() error = %v, want nil when no client messages were buffered", err)
 	}
 	if replayed {
 		t.Fatal("replayBufferedMessages() = true, want false when there is nothing to replay")
+	}
+	if replayedBytes != 0 {
+		t.Fatalf("replayBufferedMessages() bytes = %d, want 0 when there is nothing to replay", replayedBytes)
 	}
 }
 

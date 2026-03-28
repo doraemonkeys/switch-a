@@ -157,6 +157,21 @@ type WebSocketResult struct {
 	UpstreamError *WebSocketUpstreamError
 }
 
+// Clone returns an isolated snapshot so session-level gateway fallback handling
+// cannot rewrite the provider-attempt facts that drive persistence and health.
+func (r *WebSocketResult) Clone() *WebSocketResult {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	if r.HandshakeHeaders != nil {
+		clone.HandshakeHeaders = r.HandshakeHeaders.Clone()
+	}
+	clone.TokenUsage = r.TokenUsage.Clone()
+	clone.UpstreamError = r.UpstreamError.Clone()
+	return &clone
+}
+
 // Forward accepts a client WebSocket upgrade, dials the upstream, and relays messages
 // bidirectionally until either side closes or the context is cancelled.
 //

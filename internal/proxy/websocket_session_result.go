@@ -18,7 +18,7 @@ func (o *WebSocketSessionOrchestrator) finalSessionFromLastAttempt(ctx context.C
 		return o.sessionFromSuppressedPayload(ctx)
 	}
 	if len(o.attempts) == 0 {
-		return newWebSocketSelectionFailureSession(
+		session := newWebSocketSelectionFailureSession(
 			o.requestID,
 			o.isSticky,
 			o.attempts,
@@ -28,8 +28,28 @@ func (o *WebSocketSessionOrchestrator) finalSessionFromLastAttempt(ctx context.C
 			fmt.Sprintf("No available provider for api_type: %s", o.apiType),
 			internal.ErrNoProvider,
 		)
+		return o.finalizeSelectionFailureSession(session)
 	}
 	return o.sessionFromAttempt(o.attempts[len(o.attempts)-1])
+}
+
+func (o *WebSocketSessionOrchestrator) finalizeSelectionFailureSession(session *WebSocketSessionResult) *WebSocketSessionResult {
+	if o == nil || session == nil {
+		return session
+	}
+	o.applySessionLifecycleToResult(session.FinalResult)
+	if session.FinalResult != nil {
+		session.ClientAccepted = session.FinalResult.ClientAccepted
+	}
+	if err := o.emitTerminalGatewayErrorIfNeeded(
+		session.FinalResult,
+		session.GatewayStatusCode,
+		session.GatewayErrorCode,
+		session.GatewayMessage,
+	); err != nil && session.FinalErr == nil {
+		session.FinalErr = err
+	}
+	return session
 }
 
 //nolint:nestif // The fallback payload handoff is intentionally linear because it mirrors the terminal recovery contract.
@@ -104,7 +124,7 @@ func (o *WebSocketSessionOrchestrator) sessionFromAttempt(attempt WebSocketAttem
 	session := &WebSocketSessionResult{
 		RequestID:         o.requestID,
 		FinalProvider:     attempt.Provider,
-		FinalResult:       attempt.Result,
+		FinalResult:       attempt.Result.Clone(),
 		FinalErr:          attempt.terminalErr(),
 		Attempts:          append([]WebSocketAttemptResult(nil), o.attempts...),
 		IsSticky:          o.isSticky,
@@ -116,7 +136,40 @@ func (o *WebSocketSessionOrchestrator) sessionFromAttempt(attempt WebSocketAttem
 	if attempt.Result != nil {
 		session.ResolvedModel = attempt.Result.Model
 	}
+	if err := o.emitTerminalGatewayErrorIfNeeded(
+		session.FinalResult,
+		session.GatewayStatusCode,
+		session.GatewayErrorCode,
+		session.GatewayMessage,
+	); err != nil && session.FinalErr == nil {
+		session.FinalErr = err
+	}
 	return session
+}
+
+func (o *WebSocketSessionOrchestrator) emitTerminalGatewayErrorIfNeeded(
+	result *WebSocketResult,
+	statusCode int,
+	errorCode,
+	message string,
+) error {
+	if o == nil || o.clientConn == nil || result == nil || result.ClientVisible || statusCode <= 0 {
+		return nil
+	}
+
+	payload := marshalWebSocketGatewayError(statusCode, errorCode, message)
+	writeCtx, cancel := context.WithTimeout(context.Background(), webSocketFallbackWriteTimeout)
+	defer cancel()
+
+	if err := o.clientConn.Write(writeCtx, websocket.MessageText, payload); err != nil {
+		_ = o.clientConn.Close(websocket.StatusInternalError, "")
+		o.clientConn = nil
+		return err
+	}
+
+	closeTerminalSuppressedClientConn(o.clientConn)
+	o.clientConn = nil
+	return nil
 }
 
 func newWebSocketSelectionFailureSession(

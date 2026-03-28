@@ -109,6 +109,7 @@ type webSocketRelayOptions struct {
 	OnFirstUpstreamMessage   func(WebSocketObservation)
 	PreWriteToClient         func(webSocketPreWriteContext) webSocketPreWriteDecision
 	OnClientVisible          func(webSocketVisibleWriteContext)
+	InitialClientReadCh      <-chan webSocketInitialReadResult
 	PreVisibleReplayBuffer   *preVisibleClientMessageBuffer
 	Lifecycle                *webSocketLifecycleState
 	PreserveClientOnSuppress bool

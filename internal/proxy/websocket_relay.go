@@ -37,7 +37,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	}
 	lifecycle.MarkClientAccepted()
 	preVisibleProgress := webSocketPreVisibleRelayProgress{}
-	var initialClientReadCh <-chan webSocketInitialReadResult
+	initialClientReadCh := options.InitialClientReadCh
 	var initialUpstreamReadCh <-chan webSocketInitialReadResult
 
 	var observeClient func(websocket.MessageType, []byte)
@@ -293,7 +293,13 @@ func (f *WebSocketForwarder) runPreVisibleSuppressionWindow(
 		return initialClientReadCh, initialUpstreamReadCh, progress
 	}
 
-	initialClientReadCh = startWebSocketInitialRead(ctx, clientConn)
+	if initialClientReadCh == nil {
+		// The orchestrator may already own a pending first-client read from the
+		// bootstrap selection probe. Replacing that channel would leave the
+		// original goroutine consuming the first application frame off-path,
+		// which makes the real relay miss the payload entirely.
+		initialClientReadCh = startWebSocketInitialRead(ctx, clientConn)
+	}
 	progress.merge(f.relayPreVisibleWindow(
 		ctx,
 		clientConn,

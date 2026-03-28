@@ -2,6 +2,9 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -141,6 +144,47 @@ func connectWSClient(t *testing.T, ctx context.Context, url string) *websocket.C
 		t.Fatalf("dial websocket: %v", err)
 	}
 	return conn
+}
+
+func readTerminalGatewayErrorEvent(
+	t *testing.T,
+	ctx context.Context,
+	conn *websocket.Conn,
+	wantStatus int,
+	wantCode string,
+) webSocketGatewayErrorEnvelope {
+	t.Helper()
+
+	msgType, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read terminal gateway event: %v", err)
+	}
+	if msgType != websocket.MessageText {
+		t.Fatalf("message type = %v, want %v", msgType, websocket.MessageText)
+	}
+
+	var envelope webSocketGatewayErrorEnvelope
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatalf("decode terminal gateway event %q: %v", string(payload), err)
+	}
+	if envelope.Type != webSocketGatewayErrorEventType {
+		t.Fatalf("event type = %q, want %q", envelope.Type, webSocketGatewayErrorEventType)
+	}
+	if envelope.Error.Type != webSocketGatewayErrorType {
+		t.Fatalf("error.type = %q, want %q", envelope.Error.Type, webSocketGatewayErrorType)
+	}
+	if envelope.Status != wantStatus {
+		t.Fatalf("status = %d, want %d", envelope.Status, wantStatus)
+	}
+	if envelope.Error.Code != wantCode {
+		t.Fatalf("error.code = %q, want %q", envelope.Error.Code, wantCode)
+	}
+
+	if _, _, err := conn.Read(ctx); err == nil || (!errors.Is(err, io.EOF) && !isNormalClose(err)) {
+		t.Fatalf("expected websocket close after terminal gateway error, got %v", err)
+	}
+
+	return envelope
 }
 
 type mockDialer struct {

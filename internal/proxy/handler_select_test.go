@@ -455,6 +455,38 @@ func TestSelectProviderWithTracking_RetryNilSelectionBecomesNoProvider(t *testin
 	}
 }
 
+func TestSelectProviderWithTracking_RetryExcludedSelectionBecomesNoProvider(t *testing.T) {
+	store := newMockStore()
+	logger := zap.NewNop()
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: logger,
+		Selector: &mockSelector{
+			selectExcludingFunc: func(_ context.Context, _ *model.SelectRequest, _ map[string]bool) (*model.Provider, error) {
+				return &model.Provider{ID: "failed-p1", Name: "failed"}, nil
+			},
+		},
+	})
+
+	provider, useStickyBehavior, err := handler.selectProviderWithTracking(
+		context.Background(),
+		&model.SelectRequest{APIType: "claude"},
+		1,
+		map[string]bool{"failed-p1": true},
+	)
+
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("expected ErrNoProvider, got %v", err)
+	}
+	if provider != nil {
+		t.Fatalf("expected nil provider, got %#v", provider)
+	}
+	if useStickyBehavior {
+		t.Fatal("expected useStickyBehavior=false when retry selector returns an excluded provider")
+	}
+}
+
 // TestSelectProviderWithTracking_SelectorError tests error handling from selector.
 func TestSelectProviderWithTracking_SelectorError(t *testing.T) {
 	store := newMockStore()

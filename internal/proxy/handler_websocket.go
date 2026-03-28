@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,25 @@ import (
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
+
+const (
+	webSocketGatewayErrorEventType = "error"
+	webSocketGatewayErrorType      = "gateway_error"
+)
+
+type routingPolicySource interface {
+	ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error)
+}
+
+type webSocketGatewayErrorEnvelope struct {
+	Type   string `json:"type"`
+	Status int    `json:"status"`
+	Error  struct {
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
 
 // isWebSocketUpgrade checks if the request is a WebSocket upgrade.
 // Uses case-insensitive comparison per RFC 6455 Section 4.2.1.
@@ -194,6 +214,57 @@ func extractWebSocketModel(r *http.Request) string {
 		return m
 	}
 	return ModelUnknown
+}
+
+func (h *Handler) webSocketSelectionDependsOnModel(ctx context.Context, req *model.SelectRequest, apiType string) bool {
+	if req != nil && req.StickyMode == model.StickyModeModel {
+		return true
+	}
+
+	policyStore, ok := h.store.(routingPolicySource)
+	if !ok {
+		return false
+	}
+
+	policies, err := policyStore.ListRoutingPoliciesByAPIType(ctx, apiType)
+	if err != nil {
+		h.logger.Warn(
+			"failed to inspect websocket routing policies before selection",
+			zap.String("api_type", apiType),
+			zap.Error(err),
+		)
+		return false
+	}
+
+	for _, policy := range policies {
+		if policy.ModelMatchType != model.RoutingPolicyModelMatchTypeNone {
+			return true
+		}
+	}
+
+	return false
+}
+
+func marshalWebSocketGatewayError(statusCode int, code, message string) []byte {
+	envelope := webSocketGatewayErrorEnvelope{
+		Type:   webSocketGatewayErrorEventType,
+		Status: statusCode,
+	}
+	envelope.Error.Type = webSocketGatewayErrorType
+	envelope.Error.Code = code
+	envelope.Error.Message = message
+
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"type":"%s","status":%d,"error":{"type":"%s","code":"%s","message":"%s"}}`,
+			webSocketGatewayErrorEventType,
+			statusCode,
+			webSocketGatewayErrorType,
+			ErrCodeInternalError,
+			"failed to encode websocket gateway error",
+		))
+	}
+	return payload
 }
 
 // buildWebSocketPassthroughHeaders copies the client-controlled handshake headers that

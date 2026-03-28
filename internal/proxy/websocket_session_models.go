@@ -111,8 +111,8 @@ func (r WebSocketAttemptResult) resultVisibleToClient() *bool {
 	return &visible
 }
 
-func (r WebSocketAttemptResult) shouldFailoverBeforeClientAccept() bool {
-	if r.ForwardErr != nil || r.Result == nil || r.Result.HandshakeAccepted {
+func (r WebSocketAttemptResult) shouldFailoverBeforeClientVisible() bool {
+	if r.Result == nil || r.Result.ClientVisible {
 		return false
 	}
 

@@ -34,15 +34,13 @@ func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, resp, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-	if err == nil {
-		t.Fatal("expected dial to fail with no providers")
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial websocket through proxy: %v", err)
 	}
-	if resp == nil {
-		t.Fatal("expected HTTP response from server even on dial failure")
-	}
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
+	event := readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusServiceUnavailable, ErrCodeProviderUnavailable)
+	if !strings.Contains(event.Error.Message, "No available provider") {
+		t.Fatalf("gateway error message = %q, want no-provider detail", event.Error.Message)
 	}
 
 	waitFor(t, func() bool {
@@ -86,7 +84,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 				Enabled:  true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "ws-missing-base-url", APIType: "codex", BaseURL: ""}},
 			},
-			errorSnippet: "no base_url",
+			errorSnippet: "base_url",
 		},
 		{
 			name: "missing api key",
@@ -98,7 +96,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 				Enabled:  true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "ws-missing-api-key", APIType: "codex", BaseURL: "https://example.invalid"}},
 			},
-			errorSnippet: "no api_key",
+			errorSnippet: "api_key",
 		},
 		{
 			name: "chatgpt provider without auth service",
@@ -118,7 +116,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 					BaseURL:    "https://example.invalid",
 				}},
 			},
-			errorSnippet: "managed credentials",
+			errorSnippet: "credentials",
 		},
 	}
 
@@ -138,15 +136,13 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			_, resp, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-			if err == nil {
-				t.Fatal("expected dial to fail before upgrade")
+			conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+			if err != nil {
+				t.Fatalf("dial websocket through proxy: %v", err)
 			}
-			if resp == nil {
-				t.Fatal("expected HTTP response from server even on dial failure")
-			}
-			if resp.StatusCode != http.StatusBadGateway {
-				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+			event := readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusBadGateway, ErrCodeWebSocketUpgrade)
+			if !strings.Contains(event.Error.Message, tt.errorSnippet) {
+				t.Fatalf("gateway error message = %q, want snippet %q", event.Error.Message, tt.errorSnippet)
 			}
 
 			waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
@@ -315,7 +311,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureDoesNotSwitchProvider(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSwitchesProvider(t *testing.T) {
 	var (
 		fallbackHits     int32
 		selectRetryCalls int32
@@ -368,44 +364,48 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureDoesNotSwitchPr
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, resp, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-	if err == nil {
-		t.Fatal("expected websocket dial to fail before upgrade")
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial websocket through proxy: %v", err)
 	}
-	if resp == nil {
-		t.Fatal("expected HTTP response from proxy")
-	}
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
-	}
+	readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusOK, ErrCodeWebSocketUpgrade)
 
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	waitFor(t, func() bool { return store.AttemptsLen() > 0 }, testPollTimeout)
 
-	if got := atomic.LoadInt32(&selectRetryCalls); got != 0 {
-		t.Fatalf("retry selections = %d, want 0", got)
+	if got := atomic.LoadInt32(&selectRetryCalls); got != 2 {
+		t.Fatalf("retry selections = %d, want 2 (fallback attempt plus exhaustion check)", got)
 	}
-	if got := atomic.LoadInt32(&fallbackHits); got != 0 {
-		t.Fatalf("fallback hits = %d, want 0", got)
+	if got := atomic.LoadInt32(&fallbackHits); got != 1 {
+		t.Fatalf("fallback hits = %d, want 1", got)
 	}
 
 	log := store.LastLog()
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.ProviderID != providerPrimary.ID {
-		t.Fatalf("log.ProviderID = %q, want %q", log.ProviderID, providerPrimary.ID)
+	if log.ProviderID != providerFallback.ID {
+		t.Fatalf("log.ProviderID = %q, want %q", log.ProviderID, providerFallback.ID)
 	}
-	if log.RetryCount != 0 {
-		t.Fatalf("log.RetryCount = %d, want 0", log.RetryCount)
+	if log.RetryCount != 1 {
+		t.Fatalf("log.RetryCount = %d, want 1", log.RetryCount)
+	}
+	if log.StatusCode != http.StatusOK {
+		t.Fatalf("log.StatusCode = %d, want %d", log.StatusCode, http.StatusOK)
 	}
 
-	attempts := store.LastAttempts(1)
-	if len(attempts) != 1 {
-		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	attempts := store.LastAttempts(2)
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(attempts))
 	}
 	if attempts[0].ProviderID != providerPrimary.ID {
 		t.Fatalf("attempt.ProviderID = %q, want %q", attempts[0].ProviderID, providerPrimary.ID)
+	}
+	if attempts[0].SwitchReason != string(model.TerminalProviderConfigurationError) {
+		t.Fatalf("first attempt switch reason = %q, want %q", attempts[0].SwitchReason, model.TerminalProviderConfigurationError)
+	}
+	if attempts[1].ProviderID != providerFallback.ID {
+		t.Fatalf("attempt.ProviderID = %q, want %q", attempts[1].ProviderID, providerFallback.ID)
 	}
 }
 
@@ -437,19 +437,17 @@ func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, resp, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
 		HTTPHeader: http.Header{
 			"OpenAI-Beta": {"responses_websockets=2026-02-06"},
 		},
 	})
-	if err == nil {
-		t.Fatal("expected websocket dial to fail before upgrade")
+	if err != nil {
+		t.Fatalf("dial websocket through proxy: %v", err)
 	}
-	if resp == nil {
-		t.Fatal("expected HTTP response from proxy")
-	}
-	if resp.StatusCode != http.StatusUpgradeRequired {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUpgradeRequired)
+	event := readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusUpgradeRequired, ErrCodeWebSocketUpgrade)
+	if !strings.Contains(event.Error.Message, "fallback to http") {
+		t.Fatalf("gateway error message = %q, want upstream fallback detail", event.Error.Message)
 	}
 
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
