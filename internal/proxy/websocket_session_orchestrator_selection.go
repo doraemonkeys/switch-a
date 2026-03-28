@@ -90,6 +90,9 @@ func (o *WebSocketSessionOrchestrator) selectionProbeDecision(
 	}
 	consumesHiddenModel, err := o.handler.webSocketSelectionConsumesHiddenModel(ctx, o.selectReq)
 	if err != nil {
+		// Demand resolution failures stay explicit. Treating them like "no probe
+		// needed" would silently collapse pre-selection back to handshake-only
+		// semantics even though policy-sensitive routing demand was never resolved.
 		return webSocketSelectionProbeDecision{
 			outcome: webSocketSelectionProbeOutcomeDemandResolutionFailed,
 		}, fmt.Errorf("resolve websocket selection hidden-model demand: %w", err)

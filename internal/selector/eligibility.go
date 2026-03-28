@@ -71,6 +71,8 @@ func ResolveSelectionHiddenModelDemand(
 		return false, nil
 	}
 	if stickyModeConsumesModel(reqStickyMode(req)) {
+		// Model sticky needs the hidden model even without routing-policy input,
+		// because continuity precision depends on the model dimension of the key.
 		return true, nil
 	}
 
@@ -124,6 +126,9 @@ func (e *ProviderSelectionEligibility) AllowsProvider(ctx context.Context, provi
 	if !providerSupportsAPIType(provider, reqAPIType(e.req)) {
 		return false, nil
 	}
+	// Routing policy defines the candidate boundary itself. Every entry point,
+	// including sticky reuse, must re-check it so cached providers cannot outlive
+	// a stricter policy match.
 	if !e.routing.allowsProvider(provider) {
 		return false, nil
 	}
@@ -225,6 +230,9 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 		if !requestModelKnown && hasModelSpecificPolicy {
 			return routingPolicyResolution{consumesHiddenModel: true}
 		}
+		// Once this API type is governed by routing policy, "no match" is still a
+		// policy outcome: selection fails closed instead of widening back to every
+		// provider for the API type.
 		return routingPolicyResolution{constrained: true}
 	}
 
