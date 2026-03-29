@@ -77,14 +77,14 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 
 	// Trust proxy headers
 	trustProxy, err := h.store.GetConfig(ctx, ConfigKeyTrustProxyHeaders)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		return nil, err
 	}
 	cfg.trustProxy = parseBoolOrDefault(trustProxy, false)
 
 	// User header
 	userHeader, err := h.store.GetConfig(ctx, ConfigKeyUserHeader)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		return nil, err
 	}
 	if cfg.userHeader = DefaultUserHeader; userHeader != "" {
@@ -93,14 +93,14 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 
 	// Max body size
 	maxBodySize, err := h.store.GetConfig(ctx, ConfigKeyMaxBodySize)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		return nil, err
 	}
 	cfg.maxBodySizeMB = parseInt64OrDefault(maxBodySize, DefaultMaxBodySizeMB)
 
 	// Global auth mode
 	authMode, err := h.store.GetConfig(ctx, ConfigKeyAuthMode)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		return nil, err
 	}
 	if cfg.globalAuthMode = DefaultGlobalAuthMode; authMode != "" {
@@ -109,7 +109,7 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 
 	// Global max attempts
 	globalMaxAttempts, err := h.store.GetConfig(ctx, ConfigKeyGlobalMaxAttempts)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		return nil, err
 	}
 	cfg.globalMaxAttempts = parseIntOrDefault(globalMaxAttempts, DefaultGlobalMaxAttempts)
@@ -122,15 +122,15 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	// which affect security/correctness, these are performance tuning parameters that can safely
 	// fall back to sensible defaults without impacting request correctness.
 	connectTimeout, err := h.store.GetConfig(ctx, ConfigKeyUpstreamConnectTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		h.logger.Warn("failed to get upstream_connect_timeout, using default", zap.Error(err))
 	}
 	firstByteTimeout, err := h.store.GetConfig(ctx, ConfigKeyFirstByteTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		h.logger.Warn("failed to get first_byte_timeout, using default", zap.Error(err))
 	}
 	readTimeout, err := h.store.GetConfig(ctx, ConfigKeyUpstreamReadTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		h.logger.Warn("failed to get upstream_read_timeout, using default", zap.Error(err))
 	}
 
@@ -140,14 +140,14 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 
 	// SSE idle timeout - protects against silent upstream connections
 	sseIdleTimeout, err := h.store.GetConfig(ctx, ConfigKeySSEIdleTimeout)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		h.logger.Warn("failed to get sse_idle_timeout, using default", zap.Error(err))
 	}
 	cfg.sseIdleTimeout = parseDurationSecondsOrDefault(sseIdleTimeout, DefaultSSEIdleTimeout)
 
 	// Sticky session config
 	stickyModeStr, err := h.store.GetConfig(ctx, ConfigKeyStickyMode)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		h.logger.Warn("failed to get sticky_mode, using default", zap.Error(err))
 		stickyModeStr = string(DefaultStickyMode)
 	}
@@ -159,7 +159,7 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	cfg.stickyMode = stickyMode
 
 	stickyTTL, err := h.store.GetConfig(ctx, ConfigKeyStickyTTL)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		h.logger.Warn("failed to get sticky_ttl, using default", zap.Error(err))
 	}
 	cfg.stickyTTL = time.Duration(parseIntOrDefault(stickyTTL, defaultStickyTTLSeconds)) * time.Second
@@ -167,7 +167,7 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	// Probe enablement is operational policy, so store issues degrade to the
 	// documented default instead of failing the whole request path.
 	websocketProbeClientModel, err := h.store.GetConfig(ctx, ConfigKeyWebSocketProbeClientModel)
-	if err != nil { // coverage-ignore -- config errors are rare after successful startup
+	if err != nil {
 		h.logger.Warn("failed to get websocket_probe_client_model, using default", zap.Error(err))
 	}
 	cfg.websocketProbeClientModel = parseBoolOrDefault(
