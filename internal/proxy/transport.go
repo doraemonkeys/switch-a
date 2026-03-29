@@ -257,7 +257,7 @@ func (t *Transport) FetchUpstream(ctx context.Context, upstreamReq *http.Request
 	upstreamReq = upstreamReq.WithContext(ctx)
 
 	resp, err := t.client.Do(upstreamReq) //nolint:bodyclose // Body is returned to caller via UpstreamResponse; caller must call Close()
-	if err != nil {                       // coverage-ignore -- network errors are tested at integration level
+	if err != nil {
 		return nil, err
 	}
 
@@ -490,7 +490,7 @@ func (w *idleWatchdog) TimedOut() bool {
 // It uses an idle watchdog to detect silent upstream connections and prevent goroutine leaks.
 func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body io.ReadCloser) error {
 	flusher, ok := w.(http.Flusher)
-	if !ok { // coverage-ignore -- standard http.ResponseWriter always implements Flusher
+	if !ok {
 		// Fallback to regular copy if flushing not supported
 		return t.forwardRegular(ctx, w, body)
 	}
@@ -524,7 +524,7 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 		// Note: ctx.Done() check here is ineffective once Read() blocks.
 		// The context cancellation goroutine above handles this by closing body.
 		select {
-		case <-ctx.Done(): // coverage-ignore -- context cancellation tested at integration level
+		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
@@ -534,7 +534,7 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 			// Data received - reset idle watchdog timer
 			watchdog.Reset()
 
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				return writeErr
 			}
 			flusher.Flush()
@@ -557,7 +557,7 @@ func (t *Transport) forwardSSE(ctx context.Context, w http.ResponseWriter, body 
 				return ErrSSEIdleTimeout
 			}
 			// Wrap as upstream read error to distinguish from client write errors
-			return NewUpstreamReadError(err) // coverage-ignore -- read errors during SSE are rare
+			return NewUpstreamReadError(err)
 		}
 	}
 }
@@ -570,7 +570,7 @@ func BuildUpstreamRequest(ctx context.Context, method, upstreamURL string, body 
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, upstreamURL, bodyReader)
-	if err != nil { // coverage-ignore -- only fails with invalid URL/method, which are validated earlier
+	if err != nil {
 		return nil, err
 	}
 

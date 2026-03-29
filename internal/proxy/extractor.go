@@ -165,11 +165,11 @@ func extractGeminiModel(path string) string {
 		modelPart = modelPart[:idx]
 	}
 	// Remove query string if present
-	if idx := strings.Index(modelPart, "?"); idx > 0 { // coverage-ignore -- query strings in path are rare
+	if idx := strings.Index(modelPart, "?"); idx > 0 {
 		modelPart = modelPart[:idx]
 	}
 
-	if modelPart == "" { // coverage-ignore -- empty model after parsing is rare
+	if modelPart == "" {
 		return ModelUnknown
 	}
 	return modelPart
@@ -181,7 +181,7 @@ func extractGeminiModel(path string) string {
 func extractModelFromJSON(body []byte) string {
 	// Limit search to maxModelExtractBytes
 	searchBytes := body
-	if len(searchBytes) > maxModelExtractBytes { // coverage-ignore -- very large bodies are tested at integration level
+	if len(searchBytes) > maxModelExtractBytes {
 		searchBytes = searchBytes[:maxModelExtractBytes]
 	}
 
@@ -214,7 +214,7 @@ func ConsumeAndReplaceBody(r *http.Request, maxBodySizeMB int64) ([]byte, error)
 	// Use LimitReader to prevent reading too much
 	limitedReader := io.LimitReader(originalBody, maxBytes+1)
 	body, err := io.ReadAll(limitedReader)
-	if err != nil { // coverage-ignore -- read errors on LimitReader are rare
+	if err != nil {
 		return nil, err
 	}
 

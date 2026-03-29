@@ -206,7 +206,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Load runtime configuration (immutable per-request)
 	cfg, err := h.loadConfig(ctx)
-	if err != nil { // coverage-ignore -- config load errors are rare after successful startup
+	if err != nil {
 		h.logger.Error("failed to load config", zap.Error(err))
 		h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to load configuration")
 		return
@@ -293,7 +293,7 @@ func (h *Handler) handleBodyError(w http.ResponseWriter, err error, maxSize int6
 		h.writeGatewayError(w, http.StatusRequestEntityTooLarge, ErrCodeBodyTooLarge, fmt.Sprintf("Request body exceeds %d MB limit", maxSize))
 		return
 	}
-	h.logger.Error("failed to read request body", zap.Error(err)) // coverage-ignore -- body read errors are rare
+	h.logger.Error("failed to read request body", zap.Error(err))
 	h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to read request body")
 }
 
@@ -594,7 +594,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	go h.logRequest(pctx, state.providerUsed, state.statusCode, state.success, state.isSSE, state.firstTokenMs, state.responseBytes, state.tokenUsage, state.lastErr, time.Since(pctx.startTime))
 
 	// Handle exhausted retries
-	if !state.success && !state.headersWritten { // coverage-ignore -- retry exhaustion tested at integration level
+	if !state.success && !state.headersWritten {
 		h.handleExhaustedRetries(pctx, state.lastErr)
 	}
 }
@@ -663,7 +663,7 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 	upstreamURL := h.buildFullURL(baseURL, upstreamPath, pctx.r.URL.RawQuery)
 
 	req, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
-	if err != nil { // coverage-ignore -- request building rarely fails with valid inputs
+	if err != nil {
 		h.logger.Error("failed to build upstream request", zap.Error(err))
 		return nil, err
 	}
@@ -710,7 +710,7 @@ func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, pro
 	return h.commitForwardResponse(ctx, pctx, provider, upstreamResp)
 }
 
-// handleWriteError classifies a write error and updates the result accordingly. // coverage-ignore
+// handleWriteError classifies a write error and updates the result accordingly.
 func (h *Handler) handleWriteError(ctx context.Context, writeErr error, providerID string, result *forwardResult) {
 	// Distinguish client disconnect from real errors.
 	// Client disconnect (context.Canceled) is normal — the upstream succeeded,

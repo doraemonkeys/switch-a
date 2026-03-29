@@ -322,14 +322,14 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 // Start starts the HTTP server.
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.server.Addr)
-	if err != nil { // coverage-ignore -- port binding errors require specific conditions
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
 	s.listener = ln
 	s.mu.Unlock()
 	s.logger.Info("starting HTTP server", zap.String("addr", ln.Addr().String()))
-	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed { // coverage-ignore -- serve errors after successful listen are rare
+	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
@@ -351,7 +351,7 @@ func writeHealthResponse(w http.ResponseWriter, logger *zap.Logger) {
 
 	w.Header().Set("Content-Type", admin.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil { // coverage-ignore -- JSON encoding of simple struct rarely fails
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Error("failed to encode health response", zap.Error(err))
 	}
 }
@@ -377,14 +377,14 @@ func (s *Server) Addr() string {
 // Start starts the admin HTTP server.
 func (s *AdminServer) Start() error {
 	ln, err := net.Listen("tcp", s.server.Addr)
-	if err != nil { // coverage-ignore -- port binding errors require specific conditions
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
 	s.listener = ln
 	s.mu.Unlock()
 	s.logger.Info("starting admin HTTP server", zap.String("addr", ln.Addr().String()))
-	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed { // coverage-ignore -- serve errors after successful listen are rare
+	if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
