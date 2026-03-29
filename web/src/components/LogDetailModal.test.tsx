@@ -171,19 +171,20 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("No service")).toBeInTheDocument();
     expect(screen.getAllByText("Uncommitted")).toHaveLength(2);
     expect(screen.getAllByText("Upstream semantic error")).toHaveLength(2);
-    expect(screen.getByText("Error Details")).toBeInTheDocument();
+    expect(screen.getByText("Root Cause Details")).toBeInTheDocument();
   });
 
-  it("shows visibility and reconnect guidance for client-visible lifecycle failures", () => {
+  it("shows one reconnect outcome while keeping websocket root cause visible", () => {
     const log = createMockLog({
       is_websocket: true,
       success: false,
-      status_code: 101,
-      session_committed: false,
+      status_code: 502,
+      session_committed: true,
       client_visible: true,
       terminal_cause: "upstream_semantic_error",
       recovery_action: "reconnect_required",
-      error_msg: '{"error":"gateway reconnect required"}',
+      error_msg:
+        '{"type":"error","error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}',
     });
     render(
       <LogDetailModal
@@ -193,11 +194,22 @@ describe("LogDetailModal", () => {
       />,
     );
 
-    expect(screen.getAllByText("Reconnect required").length).toBeGreaterThan(0);
+    expect(screen.getByText("Reconnect required")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnect Required")).not.toBeInTheDocument();
     expect(screen.getByText("Client Visibility")).toBeInTheDocument();
     expect(screen.getAllByText("Visible").length).toBeGreaterThan(0);
-    expect(screen.getByText("Recovery Action")).toBeInTheDocument();
-    expect(screen.getByText("Error Details")).toBeInTheDocument();
+    expect(screen.queryByText("Recovery Action")).not.toBeInTheDocument();
+    expect(screen.getByText("Root Cause")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Upstream semantic error").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("Root Cause Details")).toBeInTheDocument();
+    expect(screen.getByText("usage_limit_reached")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Recovery action describes what the client must do next. This section shows the upstream/provider cause that triggered it.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("suppresses no-op recovery action details for healthy websocket sessions", () => {

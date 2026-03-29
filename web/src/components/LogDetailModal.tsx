@@ -91,6 +91,15 @@ export function LogDetailModal({
   const lifecycle = getLogLifecyclePresentation(log);
   const resolvedProviderName =
     providerNames?.get(log.provider_id) || providerName || log.provider_id;
+  const errorDetailsTitle =
+    log.is_websocket && lifecycle.showLifecycle
+      ? "Root Cause Details"
+      : "Error Details";
+  const showRootCauseGuidance =
+    log.is_websocket &&
+    lifecycle.showLifecycle &&
+    lifecycle.shouldShowErrorDetails &&
+    lifecycle.recoveryActionLabel != null;
 
   return (
     <div
@@ -165,7 +174,13 @@ export function LogDetailModal({
 
           {/* Error Details - Smart parsing with diagnostic tips */}
           {lifecycle.shouldShowErrorDetails && log.error_msg && (
-            <DetailSection title="Error Details">
+            <DetailSection title={errorDetailsTitle}>
+              {showRootCauseGuidance && (
+                <p className="mb-3 text-xs text-text-muted">
+                  Recovery action describes what the client must do next. This
+                  section shows the upstream/provider cause that triggered it.
+                </p>
+              )}
               <ErrorBodyParser
                 body={log.error_msg}
                 statusCode={log.status_code}
@@ -252,6 +267,14 @@ function StatusBadges({
   if (!log.is_websocket) {
     statusLabel = log.success ? "✅ Success" : "❌ Failed";
   }
+  const recoveryActionDuplicatesOutcome =
+    lifecycle.recoveryActionLabel != null &&
+    lifecycle.recoveryActionLabel.trim().toLowerCase() ===
+      lifecycle.shortOutcomeLabel.trim().toLowerCase();
+  const showRecoveryActionBadge =
+    lifecycle.recoveryActionLabel != null &&
+    lifecycle.recoveryActionTone != null &&
+    !recoveryActionDuplicatesOutcome;
 
   return (
     <div className="flex items-center gap-3 flex-wrap">
@@ -268,9 +291,9 @@ function StatusBadges({
           >
             {lifecycle.clientVisibilityLabel}
           </span>
-          {lifecycle.recoveryActionLabel && lifecycle.recoveryActionTone && (
+          {showRecoveryActionBadge && (
             <span
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${getDiagnosticToneClass(lifecycle.recoveryActionTone)}`}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${getDiagnosticToneClass(lifecycle.recoveryActionTone!)}`}
             >
               {lifecycle.recoveryActionLabel}
             </span>
@@ -451,6 +474,13 @@ function WebSocketLifecycleInfo({
   lifecycle: ReturnType<typeof getLogLifecyclePresentation>;
   providerName: string;
 }) {
+  const recoveryActionDuplicatesOutcome =
+    lifecycle.recoveryActionLabel != null &&
+    lifecycle.recoveryActionLabel.trim().toLowerCase() ===
+      lifecycle.shortOutcomeLabel.trim().toLowerCase();
+  const showRecoveryActionDetail =
+    lifecycle.recoveryActionLabel != null && !recoveryActionDuplicatesOutcome;
+
   return (
     <DetailSection title="WebSocket Lifecycle">
       <DetailRow label="Outcome" value={lifecycle.outcomeLabel} />
@@ -462,7 +492,7 @@ function WebSocketLifecycleInfo({
         label="Client Visibility"
         value={lifecycle.clientVisibilityLabel}
       />
-      {lifecycle.recoveryActionLabel && (
+      {showRecoveryActionDetail && (
         <DetailRow
           label="Recovery Action"
           value={lifecycle.recoveryActionLabel}
@@ -472,7 +502,7 @@ function WebSocketLifecycleInfo({
       {lifecycle.probeOutcomeLabel && (
         <DetailRow label="Probe Outcome" value={lifecycle.probeOutcomeLabel} />
       )}
-      <DetailRow label="Terminal Cause" value={lifecycle.terminalCauseLabel} />
+      <DetailRow label="Root Cause" value={lifecycle.terminalCauseLabel} />
       {lifecycle.commitSourceLabel && (
         <DetailRow label="Commit Source" value={lifecycle.commitSourceLabel} />
       )}
