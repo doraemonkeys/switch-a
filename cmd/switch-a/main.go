@@ -177,7 +177,12 @@ func run() error {
 	limiter := selector.NewConcurrencyLimiter()
 
 	// Initialize active request registry for live request monitoring
-	activeRegistry := proxy.NewActiveRequestRegistry()
+	activeRegistry := proxy.NewActiveRequestRegistryWithHook(func(req proxy.ActiveRequest, reason proxy.ActiveRequestRemovalReason) {
+		if reason == proxy.ActiveRequestRemovalReasonStale {
+			return
+		}
+		limiter.Release(req.ProviderID)
+	})
 	activeRegistry.StartCleanup()
 	defer activeRegistry.StopCleanup()
 

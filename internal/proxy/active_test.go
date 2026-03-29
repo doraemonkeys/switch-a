@@ -57,6 +57,125 @@ func TestNewActiveRequestRegistryWithClock(t *testing.T) {
 	}
 }
 
+func TestActiveRequestRegistry_RemovalHook(t *testing.T) {
+	t.Run("unregister runs hook for tracked provider", func(t *testing.T) {
+		removed := make([]ActiveRequest, 0, 1)
+		reasons := make([]ActiveRequestRemovalReason, 0, 1)
+		registry := NewActiveRequestRegistryWithHook(func(req ActiveRequest, reason ActiveRequestRemovalReason) {
+			removed = append(removed, req)
+			reasons = append(reasons, reason)
+		})
+
+		registry.Register(&ActiveRequest{
+			RequestID:  "req-1",
+			ProviderID: "provider-1",
+		})
+
+		registry.Unregister("req-1")
+
+		if len(removed) != 1 {
+			t.Fatalf("len(removed) = %d, want 1", len(removed))
+		}
+		if removed[0].ProviderID != "provider-1" {
+			t.Fatalf("ProviderID = %q, want %q", removed[0].ProviderID, "provider-1")
+		}
+		if reasons[0] != ActiveRequestRemovalReasonExplicit {
+			t.Fatalf("reason = %q, want %q", reasons[0], ActiveRequestRemovalReasonExplicit)
+		}
+	})
+
+	t.Run("cleanup orphaned runs hook for removed provider", func(t *testing.T) {
+		baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+		clock := &mockClock{current: baseTime}
+		removed := make([]ActiveRequest, 0, 1)
+		reasons := make([]ActiveRequestRemovalReason, 0, 1)
+		registry := NewActiveRequestRegistryWithClockAndHook(clock, func(req ActiveRequest, reason ActiveRequestRemovalReason) {
+			removed = append(removed, req)
+			reasons = append(reasons, reason)
+		})
+		requestDone := make(chan struct{})
+
+		registry.RegisterWithDone(&ActiveRequest{
+			RequestID:  "req-stale",
+			ProviderID: "provider-stale",
+			StartedAt:  baseTime.Add(-45 * time.Minute),
+		}, requestDone)
+		close(requestDone)
+
+		cleaned := registry.CleanupStale(30 * time.Minute)
+
+		if cleaned != 1 {
+			t.Fatalf("cleaned = %d, want 1", cleaned)
+		}
+		if len(removed) != 1 {
+			t.Fatalf("len(removed) = %d, want 1", len(removed))
+		}
+		if removed[0].ProviderID != "provider-stale" {
+			t.Fatalf("ProviderID = %q, want %q", removed[0].ProviderID, "provider-stale")
+		}
+		if reasons[0] != ActiveRequestRemovalReasonOrphaned {
+			t.Fatalf("reason = %q, want %q", reasons[0], ActiveRequestRemovalReasonOrphaned)
+		}
+	})
+
+	t.Run("provider handoff releases displaced provider once", func(t *testing.T) {
+		removed := make([]ActiveRequest, 0, 1)
+		reasons := make([]ActiveRequestRemovalReason, 0, 1)
+		registry := NewActiveRequestRegistryWithHook(func(req ActiveRequest, reason ActiveRequestRemovalReason) {
+			removed = append(removed, req)
+			reasons = append(reasons, reason)
+		})
+
+		registry.Register(&ActiveRequest{
+			RequestID:  "req-handoff",
+			ProviderID: "provider-old",
+		})
+		registry.Register(&ActiveRequest{
+			RequestID:  "req-handoff",
+			ProviderID: "provider-new",
+		})
+
+		if len(removed) != 1 {
+			t.Fatalf("len(removed) = %d, want 1", len(removed))
+		}
+		if removed[0].ProviderID != "provider-old" {
+			t.Fatalf("ProviderID = %q, want %q", removed[0].ProviderID, "provider-old")
+		}
+		if reasons[0] != ActiveRequestRemovalReasonProviderHandoff {
+			t.Fatalf("reason = %q, want %q", reasons[0], ActiveRequestRemovalReasonProviderHandoff)
+		}
+	})
+
+	t.Run("quiet request with open lifecycle is not stale-cleaned", func(t *testing.T) {
+		baseTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+		clock := &mockClock{current: baseTime}
+		removed := make([]ActiveRequest, 0, 1)
+		registry := NewActiveRequestRegistryWithClockAndHook(clock, func(req ActiveRequest, reason ActiveRequestRemovalReason) {
+			removed = append(removed, req)
+		})
+		requestDone := make(chan struct{})
+
+		registry.RegisterWithDone(&ActiveRequest{
+			RequestID:  "req-live",
+			ProviderID: "provider-live",
+			StartedAt:  baseTime.Add(-45 * time.Minute),
+		}, requestDone)
+
+		cleaned := registry.CleanupStale(30 * time.Minute)
+
+		if cleaned != 0 {
+			t.Fatalf("cleaned = %d, want 0", cleaned)
+		}
+		if len(removed) != 0 {
+			t.Fatalf("len(removed) = %d, want 0", len(removed))
+		}
+		list := registry.List()
+		if len(list) != 1 {
+			t.Fatalf("len(list) = %d, want 1", len(list))
+		}
+	})
+}
+
 func TestActiveRequestRegistry_Register(t *testing.T) {
 	t.Run("register valid request", func(t *testing.T) {
 		r := NewActiveRequestRegistry()

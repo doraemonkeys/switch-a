@@ -81,6 +81,7 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		selectReq:        selectReq,
 		apiType:          apiType,
 		requestID:        requestID,
+		requestDone:      ctx.Done(),
 		startTime:        startTime,
 		maxAttempts:      cfg.globalMaxAttempts,
 		globalAuthMode:   cfg.globalAuthMode,

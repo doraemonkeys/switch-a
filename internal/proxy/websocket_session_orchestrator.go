@@ -16,6 +16,7 @@ type webSocketSessionOrchestratorConfig struct {
 	selectReq                 *model.SelectRequest
 	apiType                   string
 	requestID                 string
+	requestDone               <-chan struct{}
 	startTime                 time.Time
 	maxAttempts               int
 	globalAuthMode            string
@@ -39,6 +40,7 @@ type WebSocketSessionOrchestrator struct {
 	selectReq                 *model.SelectRequest
 	apiType                   string
 	requestID                 string
+	requestDone               <-chan struct{}
 	startTime                 time.Time
 	maxAttempts               int
 	globalAuthMode            string
@@ -53,6 +55,7 @@ type WebSocketSessionOrchestrator struct {
 	attempts                  []WebSocketAttemptResult
 	isSticky                  bool
 	currentProvider           *model.Provider
+	activeRegistered          bool
 	lifecycle                 *webSocketLifecycleState
 	clientConn                *websocket.Conn
 	initialClientReadCh       <-chan webSocketInitialReadResult
@@ -74,6 +77,7 @@ func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrche
 		selectReq:                 cfg.selectReq,
 		apiType:                   cfg.apiType,
 		requestID:                 cfg.requestID,
+		requestDone:               cfg.requestDone,
 		startTime:                 cfg.startTime,
 		maxAttempts:               cfg.maxAttempts,
 		globalAuthMode:            cfg.globalAuthMode,
@@ -189,7 +193,7 @@ func (o *WebSocketSessionOrchestrator) trackCurrentAttempt(providerID string) {
 		return
 	}
 
-	o.handler.activeRegistry.Register(&ActiveRequest{
+	o.handler.activeRegistry.RegisterWithDone(&ActiveRequest{
 		RequestID:       o.requestID,
 		ProviderID:      providerID,
 		Model:           o.info.Model,
@@ -201,10 +205,11 @@ func (o *WebSocketSessionOrchestrator) trackCurrentAttempt(providerID string) {
 		IsWebSocket:     true,
 		StartedAt:       o.startTime,
 		HasReceivedData: false,
-	})
+	}, o.requestDone)
 	if o.tracker != nil {
 		o.handler.activeRegistry.RegisterLiveBytes(o.requestID, o.tracker)
 	}
+	o.activeRegistered = true
 }
 
 func (o *WebSocketSessionOrchestrator) excludeCurrentProvider() {
@@ -212,19 +217,24 @@ func (o *WebSocketSessionOrchestrator) excludeCurrentProvider() {
 		return
 	}
 	o.excludedProviders[o.currentProvider.ID] = true
-	o.handler.releaseConcurrency(o.currentProvider.ID)
+	if o.activeRegistered && o.handler.activeRegistry != nil {
+		o.handler.activeRegistry.Unregister(o.requestID)
+		o.activeRegistered = false
+	} else {
+		o.handler.releaseConcurrency(o.currentProvider.ID)
+	}
 	o.currentProvider = nil
 }
 
 func (o *WebSocketSessionOrchestrator) cleanup() {
-	if o.currentProvider != nil {
+	if o.activeRegistered && o.handler.activeRegistry != nil {
+		o.handler.activeRegistry.Unregister(o.requestID)
+		o.activeRegistered = false
+	} else if o.currentProvider != nil {
 		o.handler.releaseConcurrency(o.currentProvider.ID)
 	}
 	if o.clientConn != nil {
 		_ = o.clientConn.CloseNow()
-	}
-	if o.handler.activeRegistry != nil {
-		o.handler.activeRegistry.Unregister(o.requestID)
 	}
 }
 

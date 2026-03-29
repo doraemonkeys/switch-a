@@ -33,6 +33,28 @@ type ActiveRequest struct {
 	LastActivityAt  int64            `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
 }
 
+// ActiveRequestRemovalReason explains why a request left the registry.
+// Callers can distinguish definitive request termination from heuristic cleanup.
+type ActiveRequestRemovalReason string
+
+const (
+	// ActiveRequestRemovalReasonExplicit means request teardown called Unregister.
+	ActiveRequestRemovalReasonExplicit ActiveRequestRemovalReason = "explicit"
+	// ActiveRequestRemovalReasonProviderHandoff means the same logical request moved
+	// to a different provider and the prior provider slot can be retired.
+	ActiveRequestRemovalReasonProviderHandoff ActiveRequestRemovalReason = "provider_handoff"
+	// ActiveRequestRemovalReasonOrphaned means the request context has already ended,
+	// so the registry is only reclaiming bookkeeping that should have been removed.
+	ActiveRequestRemovalReasonOrphaned ActiveRequestRemovalReason = "orphaned"
+	// ActiveRequestRemovalReasonStale is a best-effort fallback for entries that were
+	// registered without any lifecycle signal. This is not strong enough evidence to
+	// reclaim provider concurrency on its own.
+	ActiveRequestRemovalReasonStale ActiveRequestRemovalReason = "stale"
+)
+
+// ActiveRequestRemovalHook runs after a request leaves the registry.
+type ActiveRequestRemovalHook func(ActiveRequest, ActiveRequestRemovalReason)
+
 // LiveBytesTracker provides lock-free counters for tracking WebSocket data flow
 // during a connection's lifetime. The observer writes atomically; the registry
 // reads atomically during List() to populate ActiveRequest snapshot fields.
@@ -49,36 +71,56 @@ type LiveBytesTracker struct {
 // Design note: This is a single-instance, in-memory implementation.
 // It does not support distributed deployments with multiple proxy instances.
 // For multi-instance scenarios, consider using Redis or a similar distributed store.
+type activeRequestEntry struct {
+	request ActiveRequest
+	done    <-chan struct{}
+}
+
 type ActiveRequestRegistry struct {
 	mu          sync.RWMutex
-	requests    map[string]ActiveRequest
+	requests    map[string]activeRequestEntry
 	stickyIndex map[model.StickyKey]map[string]struct{} // stickyKey -> requestIDs for O(1) lookup
 	keyIndex    map[string]model.StickyKey              // requestID -> sticky key used during registration
 	wsBytes     map[string]*LiveBytesTracker            // requestID -> live WS counters (populated only for WS)
 	stopCh      chan struct{}                           // Channel to signal cleanup goroutine to stop
 	cleanupWg   sync.WaitGroup                          // WaitGroup to confirm cleanup goroutine has exited
 	clock       internal.Clock                          // Injected clock for testability
+	removalHook ActiveRequestRemovalHook                // Unified request teardown side effects
 }
 
 // NewActiveRequestRegistry creates a new registry for tracking active requests.
 func NewActiveRequestRegistry() *ActiveRequestRegistry {
+	return NewActiveRequestRegistryWithHook(nil)
+}
+
+// NewActiveRequestRegistryWithHook creates a new registry with a removal hook.
+func NewActiveRequestRegistryWithHook(removalHook ActiveRequestRemovalHook) *ActiveRequestRegistry {
 	return &ActiveRequestRegistry{
-		requests:    make(map[string]ActiveRequest),
+		requests:    make(map[string]activeRequestEntry),
 		stickyIndex: make(map[model.StickyKey]map[string]struct{}),
 		keyIndex:    make(map[string]model.StickyKey),
 		wsBytes:     make(map[string]*LiveBytesTracker),
 		clock:       internal.RealClock{},
+		removalHook: removalHook,
 	}
 }
 
 // NewActiveRequestRegistryWithClock creates a new registry with a custom clock for testing.
 func NewActiveRequestRegistryWithClock(clock internal.Clock) *ActiveRequestRegistry {
+	return NewActiveRequestRegistryWithClockAndHook(clock, nil)
+}
+
+// NewActiveRequestRegistryWithClockAndHook creates a new registry with a custom
+// clock and removal hook for tests that need deterministic cleanup plus real
+// lifecycle side effects.
+func NewActiveRequestRegistryWithClockAndHook(clock internal.Clock, removalHook ActiveRequestRemovalHook) *ActiveRequestRegistry {
 	return &ActiveRequestRegistry{
-		requests:    make(map[string]ActiveRequest),
+		requests:    make(map[string]activeRequestEntry),
 		stickyIndex: make(map[model.StickyKey]map[string]struct{}),
 		keyIndex:    make(map[string]model.StickyKey),
 		wsBytes:     make(map[string]*LiveBytesTracker),
 		clock:       clock,
+		removalHook: removalHook,
 	}
 }
 
@@ -124,22 +166,58 @@ func (r *ActiveRequestRegistry) removeFromStickyIndex(requestID string) {
 	delete(r.keyIndex, requestID)
 }
 
+// removeLocked detaches a request from every registry index while the caller holds r.mu.
+func (r *ActiveRequestRegistry) removeLocked(requestID string) (ActiveRequest, bool) {
+	entry, ok := r.requests[requestID]
+	if !ok {
+		return ActiveRequest{}, false
+	}
+
+	r.removeFromStickyIndex(requestID)
+	delete(r.requests, requestID)
+	delete(r.wsBytes, requestID)
+	return entry.request, true
+}
+
+func (r *ActiveRequestRegistry) runRemovalHook(req ActiveRequest, reason ActiveRequestRemovalReason) {
+	if r.removalHook == nil || req.ProviderID == "" {
+		return
+	}
+	r.removalHook(req, reason)
+}
+
 // Register overwrites any existing entry with the same ID to handle retry scenarios
 // where the same request ID may be re-registered with updated provider information.
 func (r *ActiveRequestRegistry) Register(req *ActiveRequest) {
+	r.RegisterWithDone(req, nil)
+}
+
+// RegisterWithDone records a request plus the lifecycle signal that closes when
+// the surrounding transport context ends. Cleanup only treats ended contexts as
+// orphaned work, so quiet-but-live requests cannot be reclaimed heuristically.
+func (r *ActiveRequestRegistry) RegisterWithDone(req *ActiveRequest, done <-chan struct{}) {
 	if req == nil {
 		return
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 
-	// If request already exists, remove old sticky index and stale WS tracker
-	if _, exists := r.requests[req.RequestID]; exists {
-		r.removeFromStickyIndex(req.RequestID)
-		delete(r.wsBytes, req.RequestID)
+	var displaced ActiveRequest
+	shouldRunRemovalHook := false
+
+	r.mu.Lock()
+	if previous, exists := r.removeLocked(req.RequestID); exists {
+		// Re-registering the same logical request with a different provider is a
+		// provider handoff. Releasing the old slot through the registry keeps
+		// monitoring state and concurrency accounting on the same lifecycle edge.
+		if previous.ProviderID != req.ProviderID {
+			displaced = previous
+			shouldRunRemovalHook = true
+		}
 	}
 
-	r.requests[req.RequestID] = *req
+	r.requests[req.RequestID] = activeRequestEntry{
+		request: *req,
+		done:    done,
+	}
 
 	// Build sticky key using current mode and keep it for later cleanup.
 	key := r.buildKey(req)
@@ -148,20 +226,25 @@ func (r *ActiveRequestRegistry) Register(req *ActiveRequest) {
 		r.stickyIndex[key] = make(map[string]struct{})
 	}
 	r.stickyIndex[key][req.RequestID] = struct{}{}
+	r.mu.Unlock()
+
+	// Hooks run after unlocking so provider-side teardown cannot block unrelated
+	// registry readers or deadlock if the hook needs its own synchronization.
+	if shouldRunRemovalHook {
+		r.runRemovalHook(displaced, ActiveRequestRemovalReasonProviderHandoff)
+	}
 }
 
 // Unregister is idempotent; safe to call multiple times or with non-existent IDs.
 func (r *ActiveRequestRegistry) Unregister(requestID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	req, ok := r.removeLocked(requestID)
+	r.mu.Unlock()
 
-	if _, ok := r.requests[requestID]; !ok {
+	if !ok {
 		return
 	}
-
-	r.removeFromStickyIndex(requestID)
-	delete(r.requests, requestID)
-	delete(r.wsBytes, requestID)
+	r.runRemovalHook(req, ActiveRequestRemovalReasonExplicit)
 }
 
 // RegisterLiveBytes associates a LiveBytesTracker with an active request.
@@ -189,13 +272,13 @@ func (r *ActiveRequestRegistry) Touch(requestID string, at time.Time) {
 }
 
 func (r *ActiveRequestRegistry) touchLocked(requestID string, at int64) {
-	req, ok := r.requests[requestID]
-	if !ok || at <= req.LastActivityAt {
+	entry, ok := r.requests[requestID]
+	if !ok || at <= entry.request.LastActivityAt {
 		return
 	}
 
-	req.LastActivityAt = at
-	r.requests[requestID] = req
+	entry.request.LastActivityAt = at
+	r.requests[requestID] = entry
 }
 
 // UpdateSSE is called after response headers reveal whether the upstream is streaming.
@@ -203,9 +286,9 @@ func (r *ActiveRequestRegistry) touchLocked(requestID string, at int64) {
 func (r *ActiveRequestRegistry) UpdateSSE(requestID string, isSSE bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if req, ok := r.requests[requestID]; ok {
-		req.IsSSE = isSSE
-		r.requests[requestID] = req
+	if entry, ok := r.requests[requestID]; ok {
+		entry.request.IsSSE = isSSE
+		r.requests[requestID] = entry
 	}
 }
 
@@ -220,13 +303,13 @@ func (r *ActiveRequestRegistry) UpdateModel(requestID, model string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	req, ok := r.requests[requestID]
-	if !ok || req.Model == model {
+	entry, ok := r.requests[requestID]
+	if !ok || entry.request.Model == model {
 		return
 	}
 
-	req.Model = model
-	r.requests[requestID] = req
+	entry.request.Model = model
+	r.requests[requestID] = entry
 }
 
 // List returns a snapshot copy safe to use without synchronization.
@@ -237,7 +320,8 @@ func (r *ActiveRequestRegistry) List() []ActiveRequest {
 	defer r.mu.RUnlock()
 
 	result := make([]ActiveRequest, 0, len(r.requests))
-	for _, req := range r.requests {
+	for _, entry := range r.requests {
+		req := entry.request
 		if tracker, ok := r.wsBytes[req.RequestID]; ok {
 			req.BytesSent = tracker.BytesSent.Load()
 			req.BytesReceived = tracker.BytesReceived.Load()
@@ -252,27 +336,60 @@ func (r *ActiveRequestRegistry) List() []ActiveRequest {
 	return result
 }
 
-// CleanupStale removes requests older than maxAge and returns the count of removed requests.
-// This is a safety mechanism to prevent memory leaks from requests that were never unregistered
-// (e.g., due to panics or bugs). Under normal operation, requests should be unregistered
-// explicitly when they complete.
+type cleanupCandidate struct {
+	request ActiveRequest
+	reason  ActiveRequestRemovalReason
+}
+
+func requestDone(done <-chan struct{}) bool {
+	if done == nil {
+		return false
+	}
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *ActiveRequestRegistry) cleanupReasonLocked(requestID string, entry activeRequestEntry, cutoff time.Time) (ActiveRequestRemovalReason, bool) {
+	if requestDone(entry.done) {
+		return ActiveRequestRemovalReasonOrphaned, true
+	}
+	if entry.done == nil && r.observedAtLocked(requestID, entry.request).Before(cutoff) {
+		return ActiveRequestRemovalReasonStale, true
+	}
+	return "", false
+}
+
+// CleanupStale removes orphaned requests and returns the count of removed entries.
+// When a request was registered without a lifecycle signal, maxAge remains as a
+// defensive fallback for legacy callers and tests.
 func (r *ActiveRequestRegistry) CleanupStale(maxAge time.Duration) int {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	cutoff := r.clock.Now().Add(-maxAge)
-	removed := 0
-	for id, req := range r.requests {
-		if !r.observedAtLocked(id, req).Before(cutoff) {
+	removed := make([]cleanupCandidate, 0)
+	for id, entry := range r.requests {
+		reason, shouldRemove := r.cleanupReasonLocked(id, entry, cutoff)
+		if !shouldRemove {
 			continue
 		}
 
-		r.removeFromStickyIndex(id)
-		delete(r.requests, id)
-		delete(r.wsBytes, id)
-		removed++
+		if removedReq, ok := r.removeLocked(id); ok {
+			removed = append(removed, cleanupCandidate{
+				request: removedReq,
+				reason:  reason,
+			})
+		}
 	}
-	return removed
+	r.mu.Unlock()
+
+	for _, candidate := range removed {
+		r.runRemovalHook(candidate.request, candidate.reason)
+	}
+	return len(removed)
 }
 
 // FindActiveProvider finds an active provider for the given sticky key.
@@ -307,8 +424,8 @@ func (r *ActiveRequestRegistry) FindActiveProviderForRequest(req *model.SelectRe
 	}
 
 	for reqID := range requestIDs {
-		if req, ok := r.requests[reqID]; ok && req.HasReceivedData {
-			return req.ProviderID, true
+		if entry, ok := r.requests[reqID]; ok && entry.request.HasReceivedData {
+			return entry.request.ProviderID, true
 		}
 	}
 	return "", false
@@ -325,12 +442,12 @@ func (r *ActiveRequestRegistry) MarkDataReceived(requestID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if req, ok := r.requests[requestID]; ok {
-		req.HasReceivedData = true
-		if req.LastActivityAt == 0 {
-			req.LastActivityAt = r.clock.Now().UnixMilli()
+	if entry, ok := r.requests[requestID]; ok {
+		entry.request.HasReceivedData = true
+		if entry.request.LastActivityAt == 0 {
+			entry.request.LastActivityAt = r.clock.Now().UnixMilli()
 		}
-		r.requests[requestID] = req
+		r.requests[requestID] = entry
 	}
 }
 
@@ -358,14 +475,13 @@ func (r *ActiveRequestRegistry) observedAtLocked(requestID string, req ActiveReq
 const (
 	// defaultCleanupInterval is how often to check for stale requests.
 	defaultCleanupInterval = 1 * time.Minute
-	// defaultStaleMaxAge is how old a request must be to be considered stale.
-	// This is set conservatively high to avoid removing long-running SSE streams.
+	// defaultStaleMaxAge is only used for registrations that lack a lifecycle
+	// signal, keeping a compatibility fallback without reclaiming quiet live work.
 	defaultStaleMaxAge = 10 * time.Minute
 )
 
-// StartCleanup spawns a background goroutine that periodically removes stale requests.
-// This provides defense-in-depth against memory leaks from requests that were not properly
-// unregistered (e.g., due to panics). Call StopCleanup to stop the goroutine.
+// StartCleanup spawns a background goroutine that periodically removes orphaned
+// requests. Call StopCleanup to stop the goroutine.
 func (r *ActiveRequestRegistry) StartCleanup() {
 	r.mu.Lock()
 	if r.stopCh != nil {

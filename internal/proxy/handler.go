@@ -382,7 +382,7 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 	// Register (or update) active request.
 	// Note: We update ProviderID on provider switch so sticky fallback reflects the
 	// actual upstream provider that eventually produces data.
-	h.activeRegistry.Register(&ActiveRequest{
+	h.activeRegistry.RegisterWithDone(&ActiveRequest{
 		RequestID:     pctx.requestID,
 		ProviderID:    provider.ID,
 		Model:         pctx.info.Model,
@@ -393,7 +393,7 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 		ContinuityKey: selector.BuildContinuityKey(pctx.selectReq),
 		IsSSE:         false, // Updated after response type is known
 		StartedAt:     pctx.startTime,
-	})
+	}, pctx.r.Context().Done())
 	state.activeRegistered = true
 }
 
@@ -454,10 +454,17 @@ func (h *Handler) tryIncrementAndExhaustProvider(ctx context.Context, state *ret
 	return true, SwitchReasonMaxRetriesExhausted
 }
 
-// excludeCurrentProvider marks the current provider as excluded and releases its concurrency.
-func (h *Handler) excludeCurrentProvider(state *retryState) {
+// excludeCurrentProvider marks the current provider as excluded and tears down
+// the active attempt before the next selection so concurrency is released on the
+// same lifecycle edge that removes the request from monitoring.
+func (h *Handler) excludeCurrentProvider(pctx *proxyContext, state *retryState) {
 	state.excludedProviders[state.currentProvider.ID] = true
-	h.releaseConcurrency(state.currentProvider.ID)
+	if state.activeRegistered && h.activeRegistry != nil {
+		h.activeRegistry.Unregister(pctx.requestID)
+		state.activeRegistered = false
+	} else {
+		h.releaseConcurrency(state.currentProvider.ID)
+	}
 	state.currentProvider = nil
 }
 
@@ -518,7 +525,7 @@ retryLoop:
 				break
 			}
 			if refreshedProvider == nil {
-				h.excludeCurrentProvider(state)
+				h.excludeCurrentProvider(pctx, state)
 				continue
 			}
 			state.currentProvider = refreshedProvider
@@ -564,7 +571,7 @@ retryLoop:
 			continue // retry same provider
 		}
 
-		h.excludeCurrentProvider(state)
+		h.excludeCurrentProvider(pctx, state)
 	}
 
 	h.finalizeProxy(pctx, state)
@@ -572,14 +579,12 @@ retryLoop:
 
 // finalizeProxy performs cleanup and logging after the retry loop completes.
 func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
-	// Release concurrency for the current provider (if any).
-	if state.currentProvider != nil {
-		h.releaseConcurrency(state.currentProvider.ID)
-	}
-
-	// Unregister active request
-	if h.activeRegistry != nil {
+	// Active registry teardown owns provider-slot release for tracked requests so
+	// background stale cleanup and explicit request completion share one contract.
+	if state.activeRegistered && h.activeRegistry != nil {
 		h.activeRegistry.Unregister(pctx.requestID)
+	} else if state.currentProvider != nil {
+		h.releaseConcurrency(state.currentProvider.ID)
 	}
 
 	// Log request asynchronously.
