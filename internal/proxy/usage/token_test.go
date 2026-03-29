@@ -1,4 +1,4 @@
-package proxy
+package usage
 
 import (
 	"bytes"
@@ -237,7 +237,7 @@ func TestTokenUsage_CacheHitRatio_Nil(t *testing.T) {
 
 func TestParseTokenUsage_OpenAI(t *testing.T) {
 	data := []byte(`{"id":"chatcmpl-123","choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":25,"completion_tokens":150,"total_tokens":175}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -254,7 +254,7 @@ func TestParseTokenUsage_OpenAI(t *testing.T) {
 
 func TestParseTokenUsage_OpenAI_WithPromptTokenDetails(t *testing.T) {
 	data := []byte(`{"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":45}}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -265,7 +265,7 @@ func TestParseTokenUsage_OpenAI_WithPromptTokenDetails(t *testing.T) {
 
 func TestParseTokenUsage_OpenAIRealtime_WithInputTokenDetails(t *testing.T) {
 	data := []byte(`{"type":"response.completed","response":{"id":"resp_123","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_token_details":{"cached_tokens":9}}}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -285,7 +285,7 @@ func TestParseTokenUsage_OpenAIRealtime_WithInputTokenDetails(t *testing.T) {
 
 func TestParseTokenUsage_OpenAIResponses_WithInputTokensDetails(t *testing.T) {
 	data := []byte(`{"id":"resp_123","object":"response","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_tokens_details":{"cached_tokens":9}}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -309,7 +309,7 @@ func TestParseTokenUsage_OpenAIResponses_WithInputTokensDetails(t *testing.T) {
 
 func TestParseTokenUsage_Claude_Basic(t *testing.T) {
 	data := []byte(`{"content":[{"text":"Hello"}],"usage":{"input_tokens":25,"output_tokens":150}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -327,7 +327,7 @@ func TestParseTokenUsage_Claude_Basic(t *testing.T) {
 func TestParseTokenUsage_Claude_WithCache_Flat(t *testing.T) {
 	// message_delta format (flat fields)
 	data := []byte(`{"usage":{"input_tokens":2009,"output_tokens":125,"cache_creation_input_tokens":358,"cache_read_input_tokens":19040,"service_tier":"standard"}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -354,7 +354,7 @@ func TestParseTokenUsage_Claude_WithCache_Flat(t *testing.T) {
 func TestParseTokenUsage_Claude_WithCache_Nested(t *testing.T) {
 	// message_start format (nested cache_creation object)
 	data := []byte(`{"usage":{"input_tokens":100,"output_tokens":50,"cache_creation":{"ephemeral_1h_input_tokens":200,"ephemeral_5m_input_tokens":0},"cache_creation_input_tokens":200,"cache_read_input_tokens":500}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -384,7 +384,7 @@ func TestParseTokenUsage_Claude_WithCache_Nested(t *testing.T) {
 
 func TestParseTokenUsage_Gemini(t *testing.T) {
 	data := []byte(`{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{"promptTokenCount":25,"candidatesTokenCount":150,"totalTokenCount":175}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -401,7 +401,7 @@ func TestParseTokenUsage_Gemini(t *testing.T) {
 
 func TestParseTokenUsage_Gemini_WithCache(t *testing.T) {
 	data := []byte(`{"candidates":[{}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":50,"totalTokenCount":150,"cachedContentTokenCount":30}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -415,7 +415,7 @@ func TestParseTokenUsage_Gemini_WithCache(t *testing.T) {
 // ============================================================
 
 func TestParseTokenUsage_Empty(t *testing.T) {
-	usage := parseTokenUsage([]byte{})
+	usage := Parse([]byte{})
 	if usage != nil {
 		t.Error("expected nil for empty data")
 	}
@@ -423,7 +423,7 @@ func TestParseTokenUsage_Empty(t *testing.T) {
 
 func TestParseTokenUsage_NoUsage(t *testing.T) {
 	data := []byte(`{"id":"123","content":"hello"}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage != nil {
 		t.Error("expected nil when no usage field")
 	}
@@ -431,7 +431,7 @@ func TestParseTokenUsage_NoUsage(t *testing.T) {
 
 func TestParseTokenUsage_NullUsage(t *testing.T) {
 	data := []byte(`{"id":"123","usage":null}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage != nil {
 		t.Error("expected nil for null usage")
 	}
@@ -439,7 +439,7 @@ func TestParseTokenUsage_NullUsage(t *testing.T) {
 
 func TestParseTokenUsage_ZeroTokens(t *testing.T) {
 	data := []byte(`{"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage != nil {
 		t.Error("expected nil for zero tokens")
 	}
@@ -447,7 +447,7 @@ func TestParseTokenUsage_ZeroTokens(t *testing.T) {
 
 func TestParseTokenUsage_InvalidJSON(t *testing.T) {
 	data := []byte(`{invalid json}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage != nil {
 		t.Error("expected nil for invalid JSON")
 	}
@@ -460,7 +460,7 @@ func TestParseTokenUsage_InvalidJSON(t *testing.T) {
 func TestParseTokenUsage_TruncatedJSON_OpenAI(t *testing.T) {
 	// Simulates tail buffer capturing only the end of a response
 	data := []byte(`...truncated content..."}],"usage":{"prompt_tokens":100,"completion_tokens":200,"total_tokens":300}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
@@ -474,7 +474,7 @@ func TestParseTokenUsage_TruncatedJSON_OpenAI(t *testing.T) {
 
 func TestParseTokenUsage_TruncatedJSON_Claude(t *testing.T) {
 	data := []byte(`...truncated...","usage":{"input_tokens":50,"output_tokens":100,"cache_read_input_tokens":20}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
@@ -488,7 +488,7 @@ func TestParseTokenUsage_TruncatedJSON_Claude(t *testing.T) {
 
 func TestParseTokenUsage_TruncatedJSON_Gemini(t *testing.T) {
 	data := []byte(`...truncated...,"usageMetadata":{"promptTokenCount":30,"candidatesTokenCount":70,"totalTokenCount":100}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
@@ -501,7 +501,7 @@ func TestParseTokenUsage_UsageInContent(t *testing.T) {
 	// Test that "usage" in string content doesn't get mistakenly parsed
 	// This tests the `"usage":` pattern matching
 	data := []byte(`{"content":"Let me explain the usage of this function","usage":{"prompt_tokens":10,"completion_tokens":20}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -517,7 +517,7 @@ func TestParseTokenUsage_UsageInContent(t *testing.T) {
 func TestParseTokenUsage_WithPrefix(t *testing.T) {
 	// JSON with leading non-JSON content (like in SSE)
 	data := []byte(`data: {"id":"123","usage":{"prompt_tokens":50,"completion_tokens":100}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -530,7 +530,7 @@ func TestParseTokenUsage_UsageCrossesTailBufferBoundary(t *testing.T) {
 	// Simulates when usage JSON is split across tail buffer boundary
 	// The bracket matching fallback should handle this
 	data := []byte(`truncated_content","usage":{"prompt_tokens":500,"completion_tokens":250,"total_tokens":750}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
@@ -548,7 +548,7 @@ func TestParseTokenUsage_UsageCrossesTailBufferBoundary(t *testing.T) {
 func TestParseTokenUsage_UsageKeyTruncated(t *testing.T) {
 	// When "usage": key itself is truncated, should return nil gracefully
 	data := []byte(`sage":{"prompt_tokens":100}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	// Should not find usage since the key is incomplete
 	if usage != nil {
 		t.Error("expected nil usage when 'usage' key is truncated")
@@ -558,7 +558,7 @@ func TestParseTokenUsage_UsageKeyTruncated(t *testing.T) {
 func TestParseTokenUsage_NestedUsageField(t *testing.T) {
 	// Test that we handle nested objects that might contain "usage" text
 	data := []byte(`{"metadata":{"description":"Check usage stats"},"usage":{"prompt_tokens":100,"completion_tokens":50}}`)
-	usage := parseTokenUsage(data)
+	usage := Parse(data)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
@@ -575,7 +575,7 @@ func BenchmarkParseTokenUsage_OpenAI(b *testing.B) {
 	data := []byte(`{"id":"chatcmpl-123","choices":[{"message":{"content":"Hello world, this is a test response"}}],"usage":{"prompt_tokens":25,"completion_tokens":150,"total_tokens":175}}`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		parseTokenUsage(data)
+		Parse(data)
 	}
 }
 
@@ -583,7 +583,7 @@ func BenchmarkParseTokenUsage_Claude_WithCache(b *testing.B) {
 	data := []byte(`{"content":[{"text":"Hello"}],"usage":{"input_tokens":2009,"output_tokens":125,"cache_creation_input_tokens":358,"cache_read_input_tokens":19040,"service_tier":"standard"}}`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		parseTokenUsage(data)
+		Parse(data)
 	}
 }
 
@@ -591,7 +591,7 @@ func BenchmarkParseTokenUsage_Truncated(b *testing.B) {
 	data := []byte(`...truncated content that is quite long to simulate real response..."}],"usage":{"prompt_tokens":100,"completion_tokens":200,"total_tokens":300}}`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		parseTokenUsage(data)
+		Parse(data)
 	}
 }
 

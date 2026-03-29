@@ -1,4 +1,4 @@
-package proxy
+package usage
 
 import "testing"
 
