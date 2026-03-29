@@ -1,0 +1,166 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+)
+
+const (
+	cleanupObservationTimeout = time.Second
+	testProxyPort             = "8080"
+	testAdminPort             = "9090"
+)
+
+type stubLogStore struct {
+	mu              sync.Mutex
+	getConfigValue  string
+	getConfigErr    error
+	cleanOldLogsErr error
+	cleanCalls      int
+	lastRetention   int
+	cleanCalled     chan struct{}
+}
+
+func (s *stubLogStore) CleanOldLogs(_ context.Context, beforeDays int) error {
+	s.mu.Lock()
+	s.cleanCalls++
+	s.lastRetention = beforeDays
+	cleanCalled := s.cleanCalled
+	err := s.cleanOldLogsErr
+	s.mu.Unlock()
+
+	if cleanCalled != nil {
+		select {
+		case cleanCalled <- struct{}{}:
+		default:
+		}
+	}
+
+	return err
+}
+
+func (s *stubLogStore) GetConfig(_ context.Context, _ string) (string, error) {
+	return s.getConfigValue, s.getConfigErr
+}
+
+func (s *stubLogStore) snapshot() (cleanCalls int, lastRetention int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cleanCalls, s.lastRetention
+}
+
+func TestCleanOldLogsUsesConfiguredRetention(t *testing.T) {
+	store := &stubLogStore{getConfigValue: "14"}
+
+	cleanOldLogs(store, zap.NewNop())
+
+	cleanCalls, lastRetention := store.snapshot()
+	if cleanCalls != 1 {
+		t.Fatalf("expected one cleanup call, got %d", cleanCalls)
+	}
+	if lastRetention != 14 {
+		t.Fatalf("expected configured retention to be used, got %d", lastRetention)
+	}
+}
+
+func TestCleanOldLogsFallsBackToDefaultRetention(t *testing.T) {
+	store := &stubLogStore{
+		getConfigValue:  "invalid",
+		cleanOldLogsErr: errors.New("cleanup failed"),
+	}
+
+	cleanOldLogs(store, zap.NewNop())
+
+	cleanCalls, lastRetention := store.snapshot()
+	if cleanCalls != 1 {
+		t.Fatalf("expected one cleanup call, got %d", cleanCalls)
+	}
+	if lastRetention != DefaultLogRetentionDays {
+		t.Fatalf("expected default retention %d, got %d", DefaultLogRetentionDays, lastRetention)
+	}
+}
+
+func TestStartLogCleanupLoopRunsInitialCleanupAndStops(t *testing.T) {
+	store := &stubLogStore{cleanCalled: make(chan struct{}, 1)}
+
+	stop := startLogCleanupLoop(store, zap.NewNop())
+
+	select {
+	case <-store.cleanCalled:
+	case <-time.After(cleanupObservationTimeout):
+		t.Fatal("timed out waiting for initial cleanup")
+	}
+
+	stop()
+
+	cleanCalls, _ := store.snapshot()
+	if cleanCalls != 1 {
+		t.Fatalf("expected only the initial cleanup before stop, got %d calls", cleanCalls)
+	}
+}
+
+func TestWaitForShutdownJoinsQueuedServerErrors(t *testing.T) {
+	firstErr := errors.New("proxy failed")
+	secondErr := errors.New("admin failed")
+	errCh := make(chan error, 2)
+	errCh <- firstErr
+	errCh <- secondErr
+
+	err := waitForShutdown(errCh, zap.NewNop())
+	if !errors.Is(err, firstErr) {
+		t.Fatalf("expected joined error to contain first error")
+	}
+	if !errors.Is(err, secondErr) {
+		t.Fatalf("expected joined error to contain second error")
+	}
+}
+
+func TestPrintServerURLsWritesExpectedEndpoints(t *testing.T) {
+	output := captureStdout(t, func() {
+		printServerURLs(testProxyPort, testAdminPort)
+	})
+
+	if !strings.Contains(output, "http://localhost:"+testProxyPort) {
+		t.Fatalf("expected proxy URL in output, got %q", output)
+	}
+	if !strings.Contains(output, "http://localhost:"+testAdminPort+"/admin") {
+		t.Fatalf("expected admin URL in output, got %q", output)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	originalStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		os.Stdout = originalStdout
+		_ = reader.Close()
+	})
+
+	os.Stdout = writer
+	fn()
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
+
+	var output bytes.Buffer
+	if _, err := io.Copy(&output, reader); err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+
+	return output.String()
+}
