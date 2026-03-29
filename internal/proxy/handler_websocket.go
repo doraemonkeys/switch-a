@@ -98,6 +98,9 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		info.Model = session.ResolvedModel
 	}
 
+	// Commit-based sticky records continuity after real upstream service starts.
+	// Later reuse still flows through selector eligibility and health checks, so
+	// this write does not bypass a subsequent suspension such as usage-limit handling.
 	if session.ClientAccepted &&
 		session.FinalResult != nil &&
 		session.FinalResult.SessionCommitted &&
