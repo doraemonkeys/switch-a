@@ -66,6 +66,7 @@ export type {
   ExportedAPIType,
   ExportedProvider,
   ExportedGroup,
+  ExportedRoutingPolicy,
   ExportedConfig,
   ImportConfigRequest,
   ChangeCount,

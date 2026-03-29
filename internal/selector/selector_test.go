@@ -37,6 +37,10 @@ func newMockStore() *mockStore {
 	}
 }
 
+func stringPtr(value string) *string {
+	return &value
+}
+
 func (m *mockStore) ListProvidersByAPIType(_ context.Context, _ string) ([]model.Provider, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -187,7 +191,7 @@ func TestSelector_Select_NoProviders(t *testing.T) {
 func TestSelector_Select_SingleProvider(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -390,8 +394,8 @@ func TestSelector_Select_StickyModeWithNilCache(t *testing.T) {
 func TestSelector_Select_StickyExpired(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2},
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -436,8 +440,8 @@ func TestSelector_Select_StickyExpired(t *testing.T) {
 func TestSelector_Select_HealthFiltering(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2},
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -472,8 +476,8 @@ func TestSelector_Select_HealthFiltering(t *testing.T) {
 func TestSelector_Select_ConcurrencyLimit(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, Concurrency: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, Concurrency: 1},
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -527,9 +531,9 @@ func TestSelector_Select_ConcurrencyLimit(t *testing.T) {
 func TestSelector_SelectExcluding(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2},
-		{ID: "p3", Name: "Provider 3", Enabled: true, Priority: 3},
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
+		{ID: "p3", Name: "Provider 3", Enabled: true, Priority: 3, APITypes: []model.ProviderAPIType{{ProviderID: "p3", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -565,8 +569,8 @@ func TestSelector_Select_WithGroups(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g2ID, Priority: 1},
+		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g2ID, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 	store.groups = map[string]*model.Group{
 		"g1": {ID: "g1", Name: "Group 1", Strategy: "priority", Priority: 1, Weight: 1, Enabled: true},
@@ -605,8 +609,8 @@ func TestSelector_Select_DisabledGroup(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g2ID, Priority: 1},
+		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g2ID, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 	store.groups = map[string]*model.Group{
 		"g1": {ID: "g1", Name: "Group 1", Strategy: "priority", Priority: 1, Enabled: false}, // Disabled
@@ -703,8 +707,8 @@ func TestSelector_StoreError(t *testing.T) {
 func TestSelector_ConfigError_DefaultsToStrategy(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2},
+		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 	// Remove the inter_group_strategy config to trigger default
 	delete(store.configs, "inter_group_strategy")
@@ -739,7 +743,7 @@ func TestSelector_StickyCache_ProviderDisabled(t *testing.T) {
 	// In real store, ListProvidersByAPIType only returns enabled providers
 	// So only p2 is in the list. p1 is accessed via GetProvider for sticky check.
 	store.providers = []model.Provider{
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -850,7 +854,7 @@ func TestSelector_StickyCache_HealthCheck(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
 		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -903,7 +907,7 @@ func TestSelector_StickyCache_ConcurrencyLimit(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
 		{ID: "p1", Name: "Provider 1", Enabled: true, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1},
+		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -1244,8 +1248,8 @@ func TestSelector_ReleaseConcurrency_NoLimiter(t *testing.T) {
 func TestSelector_AllProvidersExcluded(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
-		{ID: "p2", Name: "Provider 2", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 
 	clock := &mockClock{now: time.Now()}
@@ -1277,8 +1281,8 @@ func TestSelector_SelectFromGroup_ConcurrencyRetry(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1, Concurrency: 1},
-		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g1ID, Priority: 2, Concurrency: 1},
+		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g1ID, Priority: 2, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 	store.groups = map[string]*model.Group{
 		"g1": {ID: "g1", Name: "Group 1", Strategy: "priority", Priority: 1, Enabled: true},

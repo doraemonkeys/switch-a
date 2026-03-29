@@ -24,6 +24,10 @@ var ErrCredentialVersionConflict = errors.New("credential version conflict")
 // uniqueness of the (api_type, model_match_type, model_match_value) rule key.
 var ErrRoutingPolicyConflict = errors.New("routing policy conflict")
 
+// ErrRoutingPolicyReferenceConflict reports that another resource mutation would
+// break a direct routing-policy reference or an exact-provider API-type contract.
+var ErrRoutingPolicyReferenceConflict = errors.New("routing policy reference conflict")
+
 // CredentialBindingConflictError describes which provider already owns the login.
 type CredentialBindingConflictError struct {
 	AccountID  string
@@ -80,4 +84,79 @@ func (e *RoutingPolicyConflictError) Error() string {
 
 func (e *RoutingPolicyConflictError) Is(target error) bool {
 	return target == ErrRoutingPolicyConflict
+}
+
+// RoutingPolicyGroupReferenceConflictError reports that a group cannot be
+// deleted while a routing policy still scopes to it.
+type RoutingPolicyGroupReferenceConflictError struct {
+	GroupID  string
+	PolicyID uint
+	Key      model.RoutingPolicyNaturalKey
+}
+
+func (e *RoutingPolicyGroupReferenceConflictError) Error() string {
+	return fmt.Sprintf(
+		"group %q is referenced by %s",
+		e.GroupID,
+		formatRoutingPolicyReference(e.PolicyID, e.Key),
+	)
+}
+
+func (e *RoutingPolicyGroupReferenceConflictError) Is(target error) bool {
+	return target == ErrRoutingPolicyReferenceConflict
+}
+
+// RoutingPolicyProviderReferenceConflictError reports that an exact-provider
+// rule still targets the provider being deleted.
+type RoutingPolicyProviderReferenceConflictError struct {
+	ProviderID string
+	PolicyID   uint
+	Key        model.RoutingPolicyNaturalKey
+}
+
+func (e *RoutingPolicyProviderReferenceConflictError) Error() string {
+	return fmt.Sprintf(
+		"provider %q is targeted by %s",
+		e.ProviderID,
+		formatRoutingPolicyReference(e.PolicyID, e.Key),
+	)
+}
+
+func (e *RoutingPolicyProviderReferenceConflictError) Is(target error) bool {
+	return target == ErrRoutingPolicyReferenceConflict
+}
+
+// RoutingPolicyProviderAPITypeConflictError reports that an exact-provider rule
+// would become invalid if the provider stopped advertising the referenced API type.
+type RoutingPolicyProviderAPITypeConflictError struct {
+	ProviderID string
+	APIType    string
+	PolicyID   uint
+	Key        model.RoutingPolicyNaturalKey
+}
+
+func (e *RoutingPolicyProviderAPITypeConflictError) Error() string {
+	return fmt.Sprintf(
+		"provider %q cannot remove api_type %q because %s targets it",
+		e.ProviderID,
+		e.APIType,
+		formatRoutingPolicyReference(e.PolicyID, e.Key),
+	)
+}
+
+func (e *RoutingPolicyProviderAPITypeConflictError) Is(target error) bool {
+	return target == ErrRoutingPolicyReferenceConflict
+}
+
+func formatRoutingPolicyReference(policyID uint, key model.RoutingPolicyNaturalKey) string {
+	if key.ModelMatchType == model.RoutingPolicyModelMatchTypeNone {
+		return fmt.Sprintf("routing policy %d for api_type %q", policyID, key.APIType)
+	}
+	return fmt.Sprintf(
+		"routing policy %d for api_type %q and %s model match %q",
+		policyID,
+		key.APIType,
+		key.ModelMatchType,
+		key.ModelMatchValue,
+	)
 }

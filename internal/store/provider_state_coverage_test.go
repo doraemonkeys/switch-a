@@ -441,6 +441,7 @@ func TestSQLiteStore_ListRoutingPoliciesByAPIType_LoadsAssociations(t *testing.T
 	ctx := context.Background()
 
 	prefixPolicy := model.RoutingPolicy{
+		Enabled:         true,
 		APIType:         "codex",
 		ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
 		ModelMatchValue: "gpt-",
@@ -462,6 +463,7 @@ func TestSQLiteStore_ListRoutingPoliciesByAPIType_LoadsAssociations(t *testing.T
 	}
 
 	apiOnlyPolicy := model.RoutingPolicy{
+		Enabled: true,
 		APIType: "codex",
 	}
 	if err := store.db.Create(&apiOnlyPolicy).Error; err != nil {
@@ -475,6 +477,7 @@ func TestSQLiteStore_ListRoutingPoliciesByAPIType_LoadsAssociations(t *testing.T
 	}
 
 	otherPolicy := model.RoutingPolicy{
+		Enabled: true,
 		APIType: "chat_completions",
 	}
 	if err := store.db.Create(&otherPolicy).Error; err != nil {

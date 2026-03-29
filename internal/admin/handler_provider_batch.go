@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 
+	"switch-a/internal/store"
+
 	"go.uber.org/zap"
 )
 
@@ -65,6 +67,7 @@ func (h *Handler) BatchProviderAction(w http.ResponseWriter, r *http.Request) {
 	// Execute batch operation
 	results := make([]BatchProviderResult, len(req.IDs))
 	successCount := 0
+	conflictCount := 0
 	ctx := r.Context()
 
 	for i, id := range req.IDs {
@@ -85,6 +88,9 @@ func (h *Handler) BatchProviderAction(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			result.Success = false
 			result.Error = err.Error()
+			if errors.Is(err, store.ErrRoutingPolicyReferenceConflict) {
+				conflictCount++
+			}
 		} else {
 			result.Success = true
 			successCount++
@@ -104,7 +110,11 @@ func (h *Handler) BatchProviderAction(w http.ResponseWriter, r *http.Request) {
 	if successCount > 0 && successCount < len(req.IDs) {
 		status = http.StatusMultiStatus
 	} else if successCount == 0 {
-		status = http.StatusBadRequest
+		if conflictCount > 0 {
+			status = http.StatusConflict
+		} else {
+			status = http.StatusBadRequest
+		}
 	}
 
 	writeJSON(w, status, resp)
@@ -174,6 +184,9 @@ func (h *Handler) batchDelete(ctx context.Context, id string) error {
 	}
 
 	if err := h.store.DeleteProvider(ctx, id); err != nil {
+		if errors.Is(err, store.ErrRoutingPolicyReferenceConflict) {
+			return err
+		}
 		return errors.New("failed to delete provider: " + id)
 	}
 

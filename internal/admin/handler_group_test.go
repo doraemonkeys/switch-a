@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"switch-a/internal/model"
+	"switch-a/internal/store"
 )
 
 func TestListGroups(t *testing.T) {
@@ -47,6 +48,26 @@ func TestListGroups_Error(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestDeleteGroup_RoutingPolicyConflict(t *testing.T) {
+	h, st, _ := testHandler()
+	st.groups["g1"] = &model.Group{ID: "g1", Name: "Group 1"}
+	st.deleteErr = &store.RoutingPolicyGroupReferenceConflictError{
+		GroupID:  "g1",
+		PolicyID: 5,
+		Key:      model.NewRoutingPolicyNaturalKey("claude", model.RoutingPolicyModelMatchTypeNone, ""),
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/groups/g1", nil)
+	setPathValue(req, "id", "g1")
+	w := httptest.NewRecorder()
+
+	h.DeleteGroup(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
 	}
 }
 

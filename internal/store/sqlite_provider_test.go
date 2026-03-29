@@ -224,6 +224,90 @@ func TestUpdateProvider(t *testing.T) {
 	}
 }
 
+func TestDeleteProviderRejectedWhenRoutingPolicyTargetsProvider(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	provider := &model.Provider{
+		ID:      "p1",
+		Name:    "Targeted",
+		APIKey:  "key",
+		Enabled: true,
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "p1",
+			APIType:    "codex",
+			BaseURL:    "https://api.example.com",
+		}},
+	}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+	policy := &model.RoutingPolicy{
+		APIType:          "codex",
+		Enabled:          true,
+		TargetProviderID: strPtr("p1"),
+	}
+	if err := store.CreateRoutingPolicy(ctx, policy); err != nil {
+		t.Fatalf("CreateRoutingPolicy failed: %v", err)
+	}
+
+	err := store.DeleteProvider(ctx, "p1")
+	if !errors.Is(err, ErrRoutingPolicyReferenceConflict) {
+		t.Fatalf("DeleteProvider error = %v, want ErrRoutingPolicyReferenceConflict", err)
+	}
+	var conflict *RoutingPolicyProviderReferenceConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("DeleteProvider error = %v, want RoutingPolicyProviderReferenceConflictError", err)
+	}
+	if conflict.ProviderID != "p1" {
+		t.Fatalf("conflict.ProviderID = %q, want p1", conflict.ProviderID)
+	}
+}
+
+func TestUpdateProviderRejectedWhenRemovingAPITypeRequiredByRoutingPolicy(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	provider := &model.Provider{
+		ID:      "p1",
+		Name:    "Exact Target",
+		APIKey:  "key",
+		Enabled: true,
+		APITypes: []model.ProviderAPIType{
+			{ProviderID: "p1", APIType: "codex", BaseURL: "https://api.example.com/codex"},
+			{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com/claude"},
+		},
+	}
+	if err := store.CreateProvider(ctx, provider); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+	policy := &model.RoutingPolicy{
+		APIType:          "codex",
+		Enabled:          true,
+		TargetProviderID: strPtr("p1"),
+	}
+	if err := store.CreateRoutingPolicy(ctx, policy); err != nil {
+		t.Fatalf("CreateRoutingPolicy failed: %v", err)
+	}
+
+	provider.APITypes = []model.ProviderAPIType{{
+		ProviderID: "p1",
+		APIType:    "claude",
+		BaseURL:    "https://api.example.com/claude",
+	}}
+	err := store.UpdateProvider(ctx, provider)
+	if !errors.Is(err, ErrRoutingPolicyReferenceConflict) {
+		t.Fatalf("UpdateProvider error = %v, want ErrRoutingPolicyReferenceConflict", err)
+	}
+	var conflict *RoutingPolicyProviderAPITypeConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("UpdateProvider error = %v, want RoutingPolicyProviderAPITypeConflictError", err)
+	}
+	if conflict.APIType != "codex" {
+		t.Fatalf("conflict.APIType = %q, want codex", conflict.APIType)
+	}
+}
+
 func TestCreateProvider_NewFieldsPersisted(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -761,6 +845,71 @@ func TestUpdateProviderCredential_SyncsCredentialAndAuthState(t *testing.T) {
 	}
 	if got.AuthState.Email != "user@example.com" {
 		t.Fatalf("AuthState.Email = %q, want user@example.com", got.AuthState.Email)
+	}
+}
+
+func TestDeleteProvider_RejectsExactRoutingPolicyReference(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:       "p-exact",
+		Name:     "Exact Provider",
+		APIKey:   "key",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "p-exact", APIType: "codex", BaseURL: "https://codex.example"}},
+	}); err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+	targetProviderID := "p-exact"
+	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
+		APIType:          "codex",
+		Enabled:          true,
+		TargetProviderID: &targetProviderID,
+	}); err != nil {
+		t.Fatalf("CreateRoutingPolicy() error = %v", err)
+	}
+
+	err := store.DeleteProvider(ctx, "p-exact")
+	if !errors.Is(err, ErrRoutingPolicyReferenceConflict) {
+		t.Fatalf("DeleteProvider() error = %v, want ErrRoutingPolicyReferenceConflict", err)
+	}
+}
+
+func TestUpdateProvider_RejectsRemovingAPITypeRequiredByExactRoutingPolicy(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:      "p-exact",
+		Name:    "Exact Provider",
+		APIKey:  "key",
+		Enabled: true,
+		APITypes: []model.ProviderAPIType{
+			{ProviderID: "p-exact", APIType: "codex", BaseURL: "https://codex.example"},
+			{ProviderID: "p-exact", APIType: "claude", BaseURL: "https://claude.example"},
+		},
+	}); err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+	targetProviderID := "p-exact"
+	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
+		APIType:          "codex",
+		Enabled:          false,
+		TargetProviderID: &targetProviderID,
+	}); err != nil {
+		t.Fatalf("CreateRoutingPolicy() error = %v", err)
+	}
+
+	err := store.UpdateProvider(ctx, &model.Provider{
+		ID:       "p-exact",
+		Name:     "Exact Provider Updated",
+		APIKey:   "key",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "p-exact", APIType: "claude", BaseURL: "https://claude.example"}},
+	})
+	if !errors.Is(err, ErrRoutingPolicyReferenceConflict) {
+		t.Fatalf("UpdateProvider() error = %v, want ErrRoutingPolicyReferenceConflict", err)
 	}
 }
 

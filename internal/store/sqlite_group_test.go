@@ -160,3 +160,54 @@ func TestDeleteGroupClearsProviderReference(t *testing.T) {
 		t.Error("expected GroupID to be nil after group deletion")
 	}
 }
+
+func TestDeleteGroupRejectedWhenRoutingPolicyReferencesGroup(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	group := &model.Group{ID: "g1", Name: "Referenced", Enabled: true}
+	if err := store.CreateGroup(ctx, group); err != nil {
+		t.Fatalf("CreateGroup failed: %v", err)
+	}
+	policy := &model.RoutingPolicy{
+		APIType: "codex",
+		Enabled: true,
+		Groups:  []model.RoutingPolicyGroup{{GroupID: "g1"}},
+	}
+	if err := store.CreateRoutingPolicy(ctx, policy); err != nil {
+		t.Fatalf("CreateRoutingPolicy failed: %v", err)
+	}
+
+	err := store.DeleteGroup(ctx, "g1")
+	if !errors.Is(err, ErrRoutingPolicyReferenceConflict) {
+		t.Fatalf("DeleteGroup error = %v, want ErrRoutingPolicyReferenceConflict", err)
+	}
+	var conflict *RoutingPolicyGroupReferenceConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("DeleteGroup error = %v, want RoutingPolicyGroupReferenceConflictError", err)
+	}
+	if conflict.GroupID != "g1" {
+		t.Fatalf("conflict.GroupID = %q, want g1", conflict.GroupID)
+	}
+}
+
+func TestDeleteGroup_RejectsRoutingPolicyReference(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateGroup(ctx, &model.Group{ID: "g1", Name: "Referenced Group", Enabled: true}); err != nil {
+		t.Fatalf("CreateGroup() error = %v", err)
+	}
+	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
+		APIType: "claude",
+		Enabled: true,
+		Groups:  []model.RoutingPolicyGroup{{GroupID: "g1"}},
+	}); err != nil {
+		t.Fatalf("CreateRoutingPolicy() error = %v", err)
+	}
+
+	err := store.DeleteGroup(ctx, "g1")
+	if !errors.Is(err, ErrRoutingPolicyReferenceConflict) {
+		t.Fatalf("DeleteGroup() error = %v, want ErrRoutingPolicyReferenceConflict", err)
+	}
+}

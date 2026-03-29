@@ -95,51 +95,6 @@ func (s *ProviderAuthState) Clone() *ProviderAuthState {
 	return &clone
 }
 
-// RoutingPolicyModelMatchType controls how a request model name is matched.
-type RoutingPolicyModelMatchType string
-
-const (
-	RoutingPolicyModelMatchTypeNone   RoutingPolicyModelMatchType = ""
-	RoutingPolicyModelMatchTypeExact  RoutingPolicyModelMatchType = "exact"
-	RoutingPolicyModelMatchTypePrefix RoutingPolicyModelMatchType = "prefix"
-)
-
-// IsValidRoutingPolicyModelMatchType reports whether the match operator is supported.
-func IsValidRoutingPolicyModelMatchType(value RoutingPolicyModelMatchType) bool {
-	switch value {
-	case RoutingPolicyModelMatchTypeNone, RoutingPolicyModelMatchTypeExact, RoutingPolicyModelMatchTypePrefix:
-		return true
-	default:
-		return false
-	}
-}
-
-// RoutingPolicy constrains the provider candidate set before failover rules run.
-type RoutingPolicy struct {
-	ID              uint                        `gorm:"primaryKey" json:"id"`
-	APIType         string                      `gorm:"type:text;not null;index:idx_routing_policy_match,unique" json:"api_type"`
-	ModelMatchType  RoutingPolicyModelMatchType `gorm:"type:text;not null;default:'';index:idx_routing_policy_match,unique" json:"model_match_type,omitempty"`
-	ModelMatchValue string                      `gorm:"type:text;not null;default:'';index:idx_routing_policy_match,unique" json:"model_match_value,omitempty"`
-	Groups          []RoutingPolicyGroup        `gorm:"foreignKey:RoutingPolicyID;constraint:OnDelete:CASCADE" json:"groups,omitempty"`
-	Vendors         []RoutingPolicyVendor       `gorm:"foreignKey:RoutingPolicyID;constraint:OnDelete:CASCADE" json:"vendors,omitempty"`
-	CreatedAt       time.Time                   `json:"created_at"`
-	UpdatedAt       time.Time                   `json:"updated_at"`
-}
-
-// RoutingPolicyGroup stores hard group constraints separately so future writes
-// can diff group and vendor scopes independently.
-type RoutingPolicyGroup struct {
-	RoutingPolicyID uint   `gorm:"primaryKey" json:"-"`
-	GroupID         string `gorm:"primaryKey;type:text" json:"group_id"`
-}
-
-// RoutingPolicyVendor stores hard vendor constraints separately for the same
-// reason as RoutingPolicyGroup: updates should not require rewriting the rule row.
-type RoutingPolicyVendor struct {
-	RoutingPolicyID uint   `gorm:"primaryKey" json:"-"`
-	Vendor          string `gorm:"primaryKey;type:text" json:"vendor"`
-}
-
 // CloneProviderUsageSnapshot returns a detached copy suitable for persistence or export.
 func CloneProviderUsageSnapshot(snapshot *ProviderUsageSnapshot) *ProviderUsageSnapshot {
 	if snapshot == nil {

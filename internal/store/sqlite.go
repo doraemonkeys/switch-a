@@ -80,6 +80,9 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	if err := migrateProviderUsageLimitPolicyStorage(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate provider usage-limit policy storage: %w", err)
 	}
+	if err := migrateRoutingPolicyLifecycleStorage(db); err != nil { // coverage-ignore -- one-time migration
+		return nil, fmt.Errorf("migrate routing policy lifecycle storage: %w", err)
+	}
 
 	if err := migrateBaseURLToAPIType(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate base_url: %w", err)

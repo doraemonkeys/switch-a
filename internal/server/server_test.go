@@ -11,6 +11,7 @@ import (
 
 	"switch-a/internal/admin"
 	"switch-a/internal/model"
+	storepkg "switch-a/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -59,6 +60,9 @@ func (m *mockStore) GetConfig(context.Context, string) (string, error)       { r
 func (m *mockStore) GetAllConfig(context.Context) (map[string]string, error) { return nil, nil }
 func (m *mockStore) SetConfig(context.Context, string, string) error         { return nil }
 func (m *mockStore) SetConfigs(context.Context, map[string]string) error     { return nil }
+func (m *mockStore) ApplyConfigImport(context.Context, *storepkg.ConfigImportBundle) error {
+	return nil
+}
 
 func (m *mockStore) InsertLog(context.Context, *model.RequestLog) error { return nil }
 func (m *mockStore) ListLogs(context.Context, model.LogFilter) ([]model.RequestLog, error) {

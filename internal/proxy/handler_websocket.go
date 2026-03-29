@@ -220,8 +220,9 @@ func hasUsableWebSocketSelectionModel(modelName string) bool {
 }
 
 // webSocketSelectionConsumesHiddenModel reuses the selector seam so websocket
-// probe gating cannot drift from the same routing-policy and sticky continuity
-// semantics that govern normal provider selection.
+// probe gating stays aligned with the same pre-selection consumers that govern
+// normal provider selection: model-sticky continuity and active model-scoped
+// routing rules.
 func (h *Handler) webSocketSelectionConsumesHiddenModel(ctx context.Context, req *model.SelectRequest) (bool, error) {
 	if h == nil || req == nil || hasUsableWebSocketSelectionModel(req.Model) {
 		return false, nil

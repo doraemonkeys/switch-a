@@ -14,6 +14,7 @@ import (
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
 	"switch-a/internal/proxy"
+	storepkg "switch-a/internal/store"
 	"switch-a/web"
 
 	"go.uber.org/zap"
@@ -70,6 +71,7 @@ type store interface {
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 	SetConfig(ctx context.Context, key, value string) error
 	SetConfigs(ctx context.Context, configs map[string]string) error
+	ApplyConfigImport(ctx context.Context, bundle *storepkg.ConfigImportBundle) error
 
 	// Log operations
 	InsertLog(ctx context.Context, log *model.RequestLog) error

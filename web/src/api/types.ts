@@ -191,8 +191,10 @@ export type RoutingPolicyModelMatchType = "exact" | "prefix";
 export interface RoutingPolicy {
   id: string;
   api_type: string;
+  enabled: boolean;
   model_match_type?: RoutingPolicyModelMatchType | null;
   model_match_value?: string | null;
+  target_provider_id: string | null;
   allowed_group_ids: string[];
   allowed_vendors: string[];
   created_at?: string;
@@ -201,8 +203,10 @@ export interface RoutingPolicy {
 
 export interface RoutingPolicyInput {
   api_type: string;
+  enabled: boolean;
   model_match_type?: RoutingPolicyModelMatchType | null;
   model_match_value?: string | null;
+  target_provider_id: string | null;
   allowed_group_ids: string[];
   allowed_vendors: string[];
 }
@@ -629,12 +633,24 @@ export interface ExportedGroup {
   enabled: boolean;
 }
 
+/** ExportedRoutingPolicy represents routing policy behavior in the export format */
+export interface ExportedRoutingPolicy {
+  api_type: string;
+  enabled: boolean;
+  model_match_type?: RoutingPolicyModelMatchType | null;
+  model_match_value?: string | null;
+  target_provider_id?: string | null;
+  allowed_group_ids: string[];
+  allowed_vendors: string[];
+}
+
 /** ExportedConfig represents the full exported configuration */
 export interface ExportedConfig {
   version: string;
   exported_at: string;
   providers: ExportedProvider[];
   groups: ExportedGroup[];
+  routing_policies: ExportedRoutingPolicy[];
   settings: Partial<Record<ConfigKey, string>>;
 }
 
@@ -643,6 +659,7 @@ export interface ImportConfigRequest {
   version?: string;
   providers: ExportedProvider[];
   groups: ExportedGroup[];
+  routing_policies: ExportedRoutingPolicy[];
   settings: Partial<Record<ConfigKey, string>>;
 }
 
@@ -657,6 +674,7 @@ export interface ChangeCount {
 export interface ImportChanges {
   providers: ChangeCount;
   groups: ChangeCount;
+  routing_policies: ChangeCount;
   settings: ChangeCount;
 }
 
@@ -677,6 +695,7 @@ export interface AppliedCount {
 export interface ImportedCounts {
   providers: AppliedCount;
   groups: AppliedCount;
+  routing_policies: AppliedCount;
   settings: AppliedCount;
 }
 

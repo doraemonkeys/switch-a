@@ -7,7 +7,12 @@ import (
 	"switch-a/internal/model"
 )
 
-const unknownModelSentinel = "unknown"
+const (
+	unknownModelSentinel     = "unknown"
+	routingPolicyRankAPIType = 1
+	routingPolicyRankPrefix  = 2
+	routingPolicyRankExact   = 3
+)
 
 type routingPolicySource interface {
 	ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error)
@@ -18,11 +23,11 @@ type providerAuthStateSource interface {
 }
 
 type routingPolicyResolution struct {
-	constrained         bool
-	matched             bool
-	consumesHiddenModel bool
-	groupIDs            map[string]struct{}
-	vendors             map[string]struct{}
+	constrained      bool
+	matched          bool
+	targetProviderID string
+	groupIDs         map[string]struct{}
+	vendors          map[string]struct{}
 }
 
 // ProviderSelectionEligibility keeps every routing entry point aligned on the
@@ -33,6 +38,10 @@ type ProviderSelectionEligibility struct {
 	req     *model.SelectRequest
 	health  HealthChecker
 	routing routingPolicyResolution
+	// Hidden-model demand is resolved once from the request, sticky mode, and
+	// active routing catalog so websocket probe gating can share the same
+	// pre-selection semantics as the selector closure.
+	hiddenModelDemand bool
 }
 
 // Request returns the request snapshot that this eligibility object was built for.
@@ -43,10 +52,10 @@ func (e *ProviderSelectionEligibility) Request() *model.SelectRequest {
 	return e.req
 }
 
-// WouldConsumeHiddenModel reports whether initial selection would use a model
-// that is not currently available on the request. The selector owns this seam so
-// sticky degradation and routing-policy fallback stay synchronized when callers
-// decide whether pre-selection probing is worth attempting.
+// WouldConsumeHiddenModel reports whether initial selection would benefit from a
+// hidden model before provider selection. Model-sticky continuity needs the
+// model for key precision, and active model-scoped routing rules need it to
+// determine whether they narrow the candidate set ahead of selection.
 func (e *ProviderSelectionEligibility) WouldConsumeHiddenModel() bool {
 	if e == nil {
 		return false
@@ -54,14 +63,14 @@ func (e *ProviderSelectionEligibility) WouldConsumeHiddenModel() bool {
 	if hasUsableRequestModel(e.req) {
 		return false
 	}
-	return stickyModeConsumesModel(reqStickyMode(e.req)) || e.routing.consumesHiddenModel
+	return e.hiddenModelDemand
 }
 
 // ResolveSelectionHiddenModelDemand reports whether initial provider selection
-// would consume a model that is not currently present on the request. Model
-// sticky is an independent continuity consumer, so callers can answer the probe
-// decision immediately instead of letting a routing-policy lookup failure erase
-// a known model-affinity demand.
+// would consume a model that is not currently present on the request. Probe
+// demand is driven by pre-selection consumers: model-sticky continuity and any
+// active model-scoped routing rule that could narrow the candidate set once the
+// model is known.
 func ResolveSelectionHiddenModelDemand(
 	ctx context.Context,
 	policySource any,
@@ -75,12 +84,11 @@ func ResolveSelectionHiddenModelDemand(
 		// because continuity precision depends on the model dimension of the key.
 		return true, nil
 	}
-
 	policies, err := listRoutingPoliciesByAPIType(ctx, policySource, reqAPIType(req))
 	if err != nil {
 		return false, err
 	}
-	return resolveRoutingPolicy(policies, req).consumesHiddenModel, nil
+	return routingPoliciesConsumeHiddenModel(policies, req), nil
 }
 
 // NewProviderSelectionEligibility resolves the request-scoped hard constraints
@@ -98,10 +106,11 @@ func NewProviderSelectionEligibility(
 	}
 
 	return &ProviderSelectionEligibility{
-		source:  policySource,
-		req:     req,
-		health:  health,
-		routing: resolveRoutingPolicy(policies, req),
+		source:            policySource,
+		req:               req,
+		health:            health,
+		routing:           resolveRoutingPolicy(policies, req),
+		hiddenModelDemand: selectionConsumesHiddenModel(policies, req),
 	}, nil
 }
 
@@ -173,6 +182,39 @@ func BuildContinuityKey(req *model.SelectRequest) model.StickyKey {
 	return key
 }
 
+func selectionConsumesHiddenModel(policies []model.RoutingPolicy, req *model.SelectRequest) bool {
+	if hasUsableRequestModel(req) {
+		return false
+	}
+	if stickyModeConsumesModel(reqStickyMode(req)) {
+		return true
+	}
+	return routingPoliciesConsumeHiddenModel(policies, req)
+}
+
+func routingPoliciesConsumeHiddenModel(policies []model.RoutingPolicy, req *model.SelectRequest) bool {
+	if hasUsableRequestModel(req) {
+		return false
+	}
+	apiType := reqAPIType(req)
+	if apiType == "" {
+		return false
+	}
+	for i := range policies {
+		policy := &policies[i]
+		if strings.TrimSpace(policy.APIType) != apiType {
+			continue
+		}
+		if !routingPolicyIsActive(policy) {
+			continue
+		}
+		if routingPolicyConsumesModel(policy) {
+			return true
+		}
+	}
+	return false
+}
+
 func listRoutingPoliciesByAPIType(ctx context.Context, source any, apiType string) ([]model.RoutingPolicy, error) {
 	if apiType == "" {
 		return nil, nil
@@ -196,24 +238,22 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 	bestIndex := -1
 	bestRank := -1
 	bestPrefixLen := -1
-	hasAPITypePolicy := false
-	hasModelSpecificPolicy := false
+	hasActivePolicy := false
 
 	for i := range policies {
 		policy := &policies[i]
 		if strings.TrimSpace(policy.APIType) != reqAPIType(req) {
 			continue
 		}
-		hasAPITypePolicy = true
-		if routingPolicyConsumesModel(policy) {
-			hasModelSpecificPolicy = true
-			if !requestModelKnown {
-				// Model-specific policy still creates hidden-model demand, but it cannot
-				// authoritatively constrain the current request until selection-time model
-				// information actually exists. Already-visible gates such as api_type,
-				// auth, and health remain authoritative through the rest of eligibility.
-				continue
-			}
+		if !routingPolicyIsActive(policy) {
+			continue
+		}
+		hasActivePolicy = true
+		if !requestModelKnown && routingPolicyConsumesModel(policy) {
+			// Missing request models must not trigger speculative probing for routing.
+			// Model-specific rules simply do not participate until the request already
+			// carries a usable model.
+			continue
 		}
 
 		rank, prefixLen, matched := routingPolicyRank(policy, requestModel)
@@ -228,11 +268,14 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 	}
 
 	if bestIndex < 0 {
-		if !hasAPITypePolicy {
+		if !hasActivePolicy {
 			return routingPolicyResolution{}
 		}
-		if !requestModelKnown && hasModelSpecificPolicy {
-			return routingPolicyResolution{consumesHiddenModel: true}
+		if !requestModelKnown {
+			// When the request carries no usable model, model-specific active rules are
+			// treated as unmatched rather than turning the API type into a fail-closed
+			// routing domain.
+			return routingPolicyResolution{}
 		}
 		// Once this API type is governed by routing policy, "no match" is still a
 		// policy outcome: selection fails closed instead of widening back to every
@@ -241,13 +284,23 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 	}
 
 	selected := policies[bestIndex]
-	return routingPolicyResolution{
-		constrained:         true,
-		matched:             true,
-		consumesHiddenModel: !requestModelKnown && hasModelSpecificPolicy,
-		groupIDs:            buildRoutingPolicyGroupSet(selected.Groups),
-		vendors:             buildRoutingPolicyVendorSet(selected.Vendors),
+	if targetProviderID := routingPolicyTargetProviderID(&selected); targetProviderID != "" {
+		return routingPolicyResolution{
+			constrained:      true,
+			matched:          true,
+			targetProviderID: targetProviderID,
+		}
 	}
+	return routingPolicyResolution{
+		constrained: true,
+		matched:     true,
+		groupIDs:    buildRoutingPolicyGroupSet(selected.Groups),
+		vendors:     buildRoutingPolicyVendorSet(selected.Vendors),
+	}
+}
+
+func routingPolicyIsActive(policy *model.RoutingPolicy) bool {
+	return policy != nil && policy.Enabled
 }
 
 func routingPolicyConsumesModel(policy *model.RoutingPolicy) bool {
@@ -262,6 +315,13 @@ func routingPolicyConsumesModel(policy *model.RoutingPolicy) bool {
 	}
 }
 
+func routingPolicyTargetProviderID(policy *model.RoutingPolicy) string {
+	if policy == nil || policy.TargetProviderID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*policy.TargetProviderID)
+}
+
 func routingPolicyRank(policy *model.RoutingPolicy, requestModel string) (rank int, prefixLen int, matched bool) {
 	if policy == nil {
 		return 0, 0, false
@@ -270,17 +330,17 @@ func routingPolicyRank(policy *model.RoutingPolicy, requestModel string) (rank i
 	matchValue := strings.TrimSpace(policy.ModelMatchValue)
 	switch policy.ModelMatchType {
 	case model.RoutingPolicyModelMatchTypeNone:
-		return 1, 0, matchValue == ""
+		return routingPolicyRankAPIType, 0, matchValue == ""
 	case model.RoutingPolicyModelMatchTypeExact:
 		if requestModel == "" || matchValue == "" {
 			return 0, 0, false
 		}
-		return 3, len(matchValue), requestModel == matchValue
+		return routingPolicyRankExact, len(matchValue), requestModel == matchValue
 	case model.RoutingPolicyModelMatchTypePrefix:
 		if requestModel == "" || matchValue == "" {
 			return 0, 0, false
 		}
-		return 2, len(matchValue), strings.HasPrefix(requestModel, matchValue)
+		return routingPolicyRankPrefix, len(matchValue), strings.HasPrefix(requestModel, matchValue)
 	default:
 		return 0, 0, false
 	}
@@ -331,6 +391,9 @@ func (r routingPolicyResolution) allowsProvider(provider *model.Provider) bool {
 	if !r.matched {
 		return false
 	}
+	if r.targetProviderID != "" {
+		return strings.TrimSpace(provider.ID) == r.targetProviderID
+	}
 	if len(r.groupIDs) > 0 {
 		if provider.GroupID == nil {
 			return false
@@ -350,9 +413,6 @@ func (r routingPolicyResolution) allowsProvider(provider *model.Provider) bool {
 func providerSupportsAPIType(provider *model.Provider, apiType string) bool {
 	if provider == nil || apiType == "" {
 		return false
-	}
-	if len(provider.APITypes) == 0 {
-		return true
 	}
 	_, ok := provider.APITypeConfig(apiType)
 	return ok

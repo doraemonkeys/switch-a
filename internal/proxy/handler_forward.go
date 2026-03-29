@@ -77,18 +77,30 @@ func (h *Handler) retryUnauthorizedForwardResponse(
 		return upstreamResp, forwardResult{}, true
 	}
 
+	refreshedProvider, err := h.eligibleProviderByID(ctx, pctx.selectReq, provider.ID)
+	if err != nil {
+		h.logger.Warn("failed to revalidate provider after credential refresh",
+			zap.String("provider_id", provider.ID),
+			zap.Error(err),
+		)
+		return upstreamResp, forwardResult{}, true
+	}
+	if refreshedProvider == nil {
+		return upstreamResp, forwardResult{}, true
+	}
+
 	// Drain the rejected response before retrying so keep-alive reuse is still possible
 	// when the provider issued 401 only because the credential snapshot was stale.
 	upstreamResp.Drain()
 
-	retryReq, result, ok := h.prepareForwardRequest(ctx, pctx, provider)
+	retryReq, result, ok := h.prepareForwardRequest(ctx, pctx, refreshedProvider)
 	if !ok {
 		return nil, result, false
 	}
 
 	retryResp, err := pctx.transport.FetchUpstream(ctx, retryReq)
 	if err != nil {
-		return nil, h.failedUpstreamFetch(ctx, provider.ID, err, true), false
+		return nil, h.failedUpstreamFetch(ctx, refreshedProvider.ID, err, true), false
 	}
 	return retryResp, forwardResult{}, true
 }

@@ -86,7 +86,7 @@ describe("createApiClient config API", () => {
 
   it("should export config", async () => {
     const exportedConfig = {
-      version: "1.0",
+      version: "3.0",
       exported_at: "2025-01-13T10:00:00Z",
       providers: [
         {
@@ -112,6 +112,17 @@ describe("createApiClient config API", () => {
           priority: 1,
           weight: 1,
           enabled: true,
+        },
+      ],
+      routing_policies: [
+        {
+          api_type: "claude",
+          enabled: true,
+          model_match_type: "prefix",
+          model_match_value: "sonnet",
+          target_provider_id: null,
+          allowed_group_ids: ["group-1"],
+          allowed_vendors: [],
         },
       ],
       settings: {
@@ -153,6 +164,17 @@ describe("createApiClient config API", () => {
         },
       ],
       groups: [],
+      routing_policies: [
+        {
+          api_type: "claude",
+          enabled: true,
+          model_match_type: "exact" as const,
+          model_match_value: "claude-3-7-sonnet",
+          target_provider_id: "provider-1",
+          allowed_group_ids: [],
+          allowed_vendors: [],
+        },
+      ],
       settings: {
         sticky_ttl: "600",
         websocket_probe_client_model: "false",
@@ -163,6 +185,7 @@ describe("createApiClient config API", () => {
       changes: {
         providers: { add: 0, update: 1, delete: 0 },
         groups: { add: 0, update: 0, delete: 0 },
+        routing_policies: { add: 1, update: 0, delete: 0 },
         settings: { add: 0, update: 1, delete: 0 },
       },
       warnings: [],
@@ -204,6 +227,17 @@ describe("createApiClient config API", () => {
         },
       ],
       groups: [],
+      routing_policies: [
+        {
+          api_type: "claude",
+          enabled: true,
+          model_match_type: "exact" as const,
+          model_match_value: "claude-3-7-sonnet",
+          target_provider_id: "provider-1",
+          allowed_group_ids: [],
+          allowed_vendors: [],
+        },
+      ],
       settings: {
         sticky_ttl: "600",
         websocket_probe_client_model: "false",
@@ -214,6 +248,7 @@ describe("createApiClient config API", () => {
       applied: {
         providers: { added: 0, updated: 1 },
         groups: { added: 0, updated: 0 },
+        routing_policies: { added: 1, updated: 0 },
         settings: { added: 0, updated: 1 },
       },
     };
@@ -239,6 +274,7 @@ describe("createApiClient config API", () => {
     const importRequest = {
       providers: [],
       groups: [],
+      routing_policies: [],
       settings: {},
     };
     const previewResponse = {
@@ -246,6 +282,7 @@ describe("createApiClient config API", () => {
       changes: {
         providers: { add: 0, update: 0, delete: 0 },
         groups: { add: 0, update: 0, delete: 0 },
+        routing_policies: { add: 0, update: 0, delete: 0 },
         settings: { add: 0, update: 0, delete: 0 },
       },
       warnings: ["No changes detected", "Empty configuration"],

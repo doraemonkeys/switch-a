@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -268,4 +269,20 @@ func (s *CachedStore) DeleteRoutingPolicy(ctx context.Context, id uint) error {
 		return nil
 	}
 	return source.DeleteRoutingPolicy(ctx, id)
+}
+
+func (s *CachedStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error {
+	source, ok := s.Store.(interface {
+		ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error
+	})
+	if !ok {
+		return fmt.Errorf("cached store wrapped %T, which does not support ApplyConfigImport", s.Store)
+	}
+	if err := source.ApplyConfigImport(ctx, bundle); err != nil {
+		return err
+	}
+	// Import can rewrite multiple runtime knobs in one transaction, so per-key
+	// invalidation is harder to reason about than simply dropping the full cache.
+	s.InvalidateAllConfig()
+	return nil
 }

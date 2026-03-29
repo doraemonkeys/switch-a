@@ -20,15 +20,16 @@ const (
 )
 
 // ConfigExportVersion is the current version of the config export format.
-const ConfigExportVersion = "2.0"
+const ConfigExportVersion = "3.0"
 
 // ExportedConfig represents the full exported configuration.
 type ExportedConfig struct {
-	Version    string             `json:"version"`
-	ExportedAt time.Time          `json:"exported_at"`
-	Providers  []ExportedProvider `json:"providers"`
-	Groups     []ExportedGroup    `json:"groups"`
-	Settings   map[string]string  `json:"settings"`
+	Version         string                  `json:"version"`
+	ExportedAt      time.Time               `json:"exported_at"`
+	Providers       []ExportedProvider      `json:"providers"`
+	Groups          []ExportedGroup         `json:"groups"`
+	RoutingPolicies []ExportedRoutingPolicy `json:"routing_policies"`
+	Settings        map[string]string       `json:"settings"`
 }
 
 // ExportedProvider represents a provider in the export format.
@@ -105,19 +106,33 @@ type ExportedGroup struct {
 	Enabled  bool   `json:"enabled"`
 }
 
+// ExportedRoutingPolicy captures routing behavior by natural key so config
+// transfer never depends on storage-local IDs or timestamps.
+type ExportedRoutingPolicy struct {
+	APIType          string                            `json:"api_type"`
+	ModelMatchType   model.RoutingPolicyModelMatchType `json:"model_match_type,omitempty"`
+	ModelMatchValue  string                            `json:"model_match_value,omitempty"`
+	Enabled          bool                              `json:"enabled"`
+	TargetProviderID *string                           `json:"target_provider_id,omitempty"`
+	AllowedGroupIDs  []string                          `json:"allowed_group_ids"`
+	AllowedVendors   []string                          `json:"allowed_vendors"`
+}
+
 // ImportConfigRequest represents the request body for config import.
 type ImportConfigRequest struct {
-	Version   string             `json:"version"`
-	Providers []ExportedProvider `json:"providers"`
-	Groups    []ExportedGroup    `json:"groups"`
-	Settings  map[string]string  `json:"settings"`
+	Version         string                  `json:"version"`
+	Providers       []ExportedProvider      `json:"providers"`
+	Groups          []ExportedGroup         `json:"groups"`
+	RoutingPolicies []ExportedRoutingPolicy `json:"routing_policies"`
+	Settings        map[string]string       `json:"settings"`
 }
 
 // ImportChanges represents the changes that will be applied during import.
 type ImportChanges struct {
-	Providers ChangeCount `json:"providers"`
-	Groups    ChangeCount `json:"groups"`
-	Settings  ChangeCount `json:"settings"`
+	Providers       ChangeCount `json:"providers"`
+	Groups          ChangeCount `json:"groups"`
+	RoutingPolicies ChangeCount `json:"routing_policies"`
+	Settings        ChangeCount `json:"settings"`
 }
 
 // ChangeCount represents add/update/delete counts.
@@ -142,15 +157,17 @@ type ImportResult struct {
 
 // ImportedCounts represents the counts of successfully imported items.
 type ImportedCounts struct {
-	Providers AppliedCount `json:"providers"`
-	Groups    AppliedCount `json:"groups"`
-	Settings  AppliedCount `json:"settings"`
+	Providers       AppliedCount `json:"providers"`
+	Groups          AppliedCount `json:"groups"`
+	RoutingPolicies AppliedCount `json:"routing_policies"`
+	Settings        AppliedCount `json:"settings"`
 }
 
-// AppliedCount represents added/updated counts for applied changes.
+// AppliedCount represents applied snapshot deltas after import.
 type AppliedCount struct {
 	Added   int `json:"added"`
 	Updated int `json:"updated"`
+	Deleted int `json:"deleted"`
 }
 
 // buildProviderFromExport builds a model.Provider from an ExportedProvider.
@@ -408,6 +425,33 @@ func buildExportedGroup(g *model.Group) ExportedGroup {
 	}
 }
 
+func buildExportedRoutingPolicy(policy *model.RoutingPolicy) ExportedRoutingPolicy {
+	groupIDs := make([]string, 0, len(policy.Groups))
+	for _, group := range policy.Groups {
+		groupIDs = append(groupIDs, group.GroupID)
+	}
+	vendors := make([]string, 0, len(policy.Vendors))
+	for _, vendor := range policy.Vendors {
+		vendors = append(vendors, vendor.Vendor)
+	}
+	var targetProviderID *string
+	if policy.TargetProviderID != nil {
+		trimmed := strings.TrimSpace(*policy.TargetProviderID)
+		if trimmed != "" {
+			targetProviderID = &trimmed
+		}
+	}
+	return ExportedRoutingPolicy{
+		APIType:          strings.TrimSpace(policy.APIType),
+		ModelMatchType:   policy.ModelMatchType,
+		ModelMatchValue:  strings.TrimSpace(policy.ModelMatchValue),
+		Enabled:          policy.Enabled,
+		TargetProviderID: targetProviderID,
+		AllowedGroupIDs:  normalizeRoutingPolicyStrings(groupIDs),
+		AllowedVendors:   normalizeRoutingPolicyStrings(vendors),
+	}
+}
+
 func canImportProvider(p *ExportedProvider, validGroups map[string]bool) bool {
 	_, ok := buildProviderFromExport(p, validGroups)
 	return ok
@@ -529,6 +573,13 @@ func groupImportDiffers(imported *ExportedGroup, existing *model.Group) bool {
 		return false
 	}
 	return !reflect.DeepEqual(buildExportedGroup(expected), buildExportedGroup(existing))
+}
+
+func routingPolicyImportDiffers(imported *model.RoutingPolicy, existing *model.RoutingPolicy) bool {
+	if imported == nil || existing == nil {
+		return imported != existing
+	}
+	return !reflect.DeepEqual(buildExportedRoutingPolicy(imported), buildExportedRoutingPolicy(existing))
 }
 
 // buildValidGroupsMap builds a map of valid group IDs from request and existing groups.

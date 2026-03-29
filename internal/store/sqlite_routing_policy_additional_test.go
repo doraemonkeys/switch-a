@@ -137,3 +137,58 @@ func TestRoutingPolicyConflictError_MessageAndIs(t *testing.T) {
 		t.Fatalf("exact conflict error = %q", exact.Error())
 	}
 }
+
+func TestNormalizeRoutingPolicyRecord_ExactProviderClearsFilterScope(t *testing.T) {
+	t.Parallel()
+
+	targetProviderID := " provider-exact "
+	record := normalizeRoutingPolicyRecord(&model.RoutingPolicy{
+		APIType:          " codex ",
+		Enabled:          false,
+		TargetProviderID: &targetProviderID,
+		Groups:           []model.RoutingPolicyGroup{{GroupID: "group-a"}},
+		Vendors:          []model.RoutingPolicyVendor{{Vendor: "openai"}},
+	})
+
+	if record.TargetProviderID == nil || *record.TargetProviderID != "provider-exact" {
+		t.Fatalf("TargetProviderID = %#v, want provider-exact", record.TargetProviderID)
+	}
+	if record.Enabled {
+		t.Fatal("Enabled = true, want false")
+	}
+	if len(record.Groups) != 0 || len(record.Vendors) != 0 {
+		t.Fatalf("exact-provider record should clear filter scope: %#v", record)
+	}
+}
+
+func TestListRoutingPoliciesByAPIType_OnlyReturnsEnabledRules(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	enabledPolicy := &model.RoutingPolicy{
+		APIType: "codex",
+		Enabled: true,
+		Groups:  []model.RoutingPolicyGroup{{GroupID: "group-enabled"}},
+	}
+	disabledPolicy := &model.RoutingPolicy{
+		APIType:         "codex",
+		ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+		ModelMatchValue: "gpt-disabled",
+		Enabled:         false,
+		Groups:          []model.RoutingPolicyGroup{{GroupID: "group-disabled"}},
+	}
+	if err := store.CreateRoutingPolicy(ctx, enabledPolicy); err != nil {
+		t.Fatalf("CreateRoutingPolicy(enabled) error = %v", err)
+	}
+	if err := store.CreateRoutingPolicy(ctx, disabledPolicy); err != nil {
+		t.Fatalf("CreateRoutingPolicy(disabled) error = %v", err)
+	}
+
+	policies, err := store.ListRoutingPoliciesByAPIType(ctx, "codex")
+	if err != nil {
+		t.Fatalf("ListRoutingPoliciesByAPIType() error = %v", err)
+	}
+	if len(policies) != 1 || policies[0].ID != enabledPolicy.ID {
+		t.Fatalf("policies = %#v, want only enabled policy", policies)
+	}
+}

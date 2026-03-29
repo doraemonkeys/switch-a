@@ -97,6 +97,16 @@ func (o *WebSocketSessionOrchestrator) newAttemptObserver() WebSocketMessageObse
 	return o.newObserver(o.info.Model)
 }
 
+func (o *WebSocketSessionOrchestrator) learnResolvedModel(modelName string) {
+	if o == nil || !hasUsableWebSocketSelectionModel(modelName) {
+		return
+	}
+	o.info.Model = modelName
+	if o.selectReq != nil {
+		o.selectReq.Model = modelName
+	}
+}
+
 func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseWriter, r *http.Request) *WebSocketSessionResult {
 	defer o.cleanup()
 
@@ -124,8 +134,8 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 		attemptResult := o.executeProviderAttempt(ctx, w, r, provider, attempt)
 		o.attempts = append(o.attempts, attemptResult)
 
-		if attemptResult.Result != nil && attemptResult.Result.Model != "" {
-			o.info.Model = attemptResult.Result.Model
+		if attemptResult.Result != nil {
+			o.learnResolvedModel(attemptResult.Result.Model)
 		}
 
 		if o.shouldSwitchProvider(attemptResult) {

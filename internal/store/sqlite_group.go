@@ -52,6 +52,17 @@ func (s *SQLiteStore) UpdateGroup(ctx context.Context, g *model.Group) error {
 
 func (s *SQLiteStore) DeleteGroup(ctx context.Context, id string) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		referencedBy, err := findRoutingPolicyReferencingGroup(tx, id)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if referencedBy != nil {
+			return &RoutingPolicyGroupReferenceConflictError{
+				GroupID:  id,
+				PolicyID: referencedBy.ID,
+				Key:      referencedBy.NaturalKey(),
+			}
+		}
 		// First update providers to remove group reference
 		if err := tx.Model(&model.Provider{}).
 			Where("group_id = ?", id).

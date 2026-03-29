@@ -152,16 +152,26 @@ func TestListRoutingPoliciesByAPIType(t *testing.T) {
 
 	policies := []*model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "group-1"}},
 		},
 		{
+			Enabled:         true,
 			APIType:         "codex",
 			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
 			ModelMatchValue: "gpt-5",
 			Vendors:         []model.RoutingPolicyVendor{{Vendor: "openai"}},
 		},
 		{
+			Enabled:         false,
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
+			ModelMatchValue: "gpt-disabled",
+			Vendors:         []model.RoutingPolicyVendor{{Vendor: "disabled"}},
+		},
+		{
+			Enabled: true,
 			APIType: "claude",
 			Vendors: []model.RoutingPolicyVendor{{Vendor: "anthropic"}},
 		},
@@ -181,5 +191,78 @@ func TestListRoutingPoliciesByAPIType(t *testing.T) {
 	}
 	if got[0].APIType != "codex" || got[1].APIType != "codex" {
 		t.Fatalf("unexpected API types: %#v", got)
+	}
+}
+
+func TestRoutingPolicyExactProviderModeClearsFilterScopes(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	targetProviderID := "provider-exact"
+	policy := &model.RoutingPolicy{
+		Enabled:          true,
+		APIType:          "codex",
+		TargetProviderID: &targetProviderID,
+		Groups:           []model.RoutingPolicyGroup{{GroupID: "group-1"}},
+		Vendors:          []model.RoutingPolicyVendor{{Vendor: "openai"}},
+	}
+	if err := store.CreateRoutingPolicy(ctx, policy); err != nil {
+		t.Fatalf("CreateRoutingPolicy(exact) failed: %v", err)
+	}
+
+	got, err := store.GetRoutingPolicy(ctx, policy.ID)
+	if err != nil {
+		t.Fatalf("GetRoutingPolicy(exact) failed: %v", err)
+	}
+	if got.TargetProviderID == nil || *got.TargetProviderID != "provider-exact" {
+		t.Fatalf("TargetProviderID = %#v, want provider-exact", got.TargetProviderID)
+	}
+	if len(got.Groups) != 0 || len(got.Vendors) != 0 {
+		t.Fatalf("exact-provider policy persisted filter scope: groups %#v vendors %#v", got.Groups, got.Vendors)
+	}
+}
+
+func TestRoutingPolicyLifecycleReads(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	active := &model.RoutingPolicy{
+		APIType: "codex",
+		Enabled: true,
+		Vendors: []model.RoutingPolicyVendor{{Vendor: "openai"}},
+	}
+	disabled := &model.RoutingPolicy{
+		APIType:          "codex",
+		ModelMatchType:   model.RoutingPolicyModelMatchTypePrefix,
+		ModelMatchValue:  "gpt-5",
+		Enabled:          false,
+		TargetProviderID: strPtr("provider-1"),
+	}
+	for _, policy := range []*model.RoutingPolicy{active, disabled} {
+		if err := store.CreateRoutingPolicy(ctx, policy); err != nil {
+			t.Fatalf("CreateRoutingPolicy(%q) failed: %v", policy.APIType, err)
+		}
+	}
+
+	adminPolicies, err := store.ListRoutingPolicies(ctx)
+	if err != nil {
+		t.Fatalf("ListRoutingPolicies failed: %v", err)
+	}
+	if len(adminPolicies) != 2 {
+		t.Fatalf("len(adminPolicies) = %d, want 2", len(adminPolicies))
+	}
+
+	runtimePolicies, err := store.ListRoutingPoliciesByAPIType(ctx, "codex")
+	if err != nil {
+		t.Fatalf("ListRoutingPoliciesByAPIType failed: %v", err)
+	}
+	if len(runtimePolicies) != 1 {
+		t.Fatalf("len(runtimePolicies) = %d, want 1", len(runtimePolicies))
+	}
+	if !runtimePolicies[0].Enabled {
+		t.Fatal("runtime policy should remain enabled")
+	}
+	if runtimePolicies[0].TargetProviderID != nil {
+		t.Fatalf("runtime policy target_provider_id = %v, want nil", runtimePolicies[0].TargetProviderID)
 	}
 }

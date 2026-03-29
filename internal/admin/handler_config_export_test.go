@@ -128,6 +128,67 @@ func TestExportConfig(t *testing.T) {
 	}
 }
 
+func TestExportConfig_IncludesRoutingPolicies(t *testing.T) {
+	h, st, _ := testHandler()
+
+	targetProviderID := "p-exact"
+	st.routingPolicies[1] = &model.RoutingPolicy{
+		ID:               1,
+		APIType:          "codex",
+		ModelMatchType:   model.RoutingPolicyModelMatchTypeExact,
+		ModelMatchValue:  "gpt-5",
+		Enabled:          false,
+		TargetProviderID: &targetProviderID,
+	}
+	st.routingPolicies[2] = &model.RoutingPolicy{
+		ID:      2,
+		APIType: "claude",
+		Enabled: true,
+		Groups:  []model.RoutingPolicyGroup{{GroupID: "g-filter"}},
+		Vendors: []model.RoutingPolicyVendor{{Vendor: "anthropic"}},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config/export", nil)
+	w := httptest.NewRecorder()
+
+	h.ExportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var export ExportedConfig
+	if err := json.NewDecoder(w.Body).Decode(&export); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	if len(export.RoutingPolicies) != 2 {
+		t.Fatalf("len(routing_policies) = %d, want 2", len(export.RoutingPolicies))
+	}
+
+	var exact *ExportedRoutingPolicy
+	for i := range export.RoutingPolicies {
+		if export.RoutingPolicies[i].TargetProviderID != nil {
+			exact = &export.RoutingPolicies[i]
+			break
+		}
+	}
+	if exact == nil {
+		t.Fatal("exact-provider routing policy missing from export")
+	}
+	if exact.APIType != "codex" || exact.ModelMatchValue != "gpt-5" {
+		t.Fatalf("exact routing policy = %#v", exact)
+	}
+	if exact.Enabled {
+		t.Fatal("exact routing policy should export enabled=false")
+	}
+	if exact.TargetProviderID == nil || *exact.TargetProviderID != "p-exact" {
+		t.Fatalf("target_provider_id = %v, want p-exact", exact.TargetProviderID)
+	}
+	if len(exact.AllowedGroupIDs) != 0 || len(exact.AllowedVendors) != 0 {
+		t.Fatalf("exact routing policy should not export filter scopes: %#v", exact)
+	}
+}
+
 func TestExportConfig_NormalizesLegacySettings(t *testing.T) {
 	h, st, _ := testHandler()
 

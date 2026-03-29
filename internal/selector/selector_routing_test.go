@@ -52,6 +52,7 @@ func TestSelector_Select_FiltersByRoutingPolicyAndAuthState(t *testing.T) {
 	store.authStates["p-outside"] = &model.ProviderAuthState{ProviderID: "p-outside", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "g1"}},
 		},
@@ -111,6 +112,7 @@ func TestSelector_Select_NoRoutingPolicyForAPITypeKeepsDefaultSelection(t *testi
 	store.authStates["p2"] = &model.ProviderAuthState{ProviderID: "p2", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "some-other-group"}},
 		},
@@ -135,6 +137,64 @@ func TestSelector_Select_NoRoutingPolicyForAPITypeKeepsDefaultSelection(t *testi
 	}
 	if provider.ID != "p1" {
 		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p1")
+	}
+}
+
+func TestSelector_Select_DisabledRoutingPolicyFallsBackToDefaultSelection(t *testing.T) {
+	groupID := "g-default"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p-default",
+			Name:     "Default Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 0,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-default", APIType: "codex"}},
+		},
+		{
+			ID:       "p-disabled-target",
+			Name:     "Disabled Target Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 10,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-disabled-target", APIType: "codex"}},
+		},
+	}
+	store.groups = map[string]*model.Group{
+		"g-default": {ID: "g-default", Name: "Default Group", Strategy: StrategyPriority, Enabled: true},
+	}
+	store.authStates["p-default"] = &model.ProviderAuthState{ProviderID: "p-default", Status: model.ProviderAuthStatusActive}
+	store.authStates["p-disabled-target"] = &model.ProviderAuthState{ProviderID: "p-disabled-target", Status: model.ProviderAuthStatusActive}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			ID:               1,
+			APIType:          "codex",
+			Enabled:          false,
+			TargetProviderID: stringPtr("p-disabled-target"),
+		},
+	}
+
+	sel := NewSelector(Config{
+		Store:         store,
+		HealthChecker: newMockHealthChecker(),
+		Clock:         internal.RealClock{},
+		Logger:        zap.NewNop(),
+	})
+
+	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+		APIType:    "codex",
+		StickyMode: model.StickyModeOff,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected provider to be selected")
+	}
+	if provider.ID != "p-default" {
+		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p-default")
 	}
 }
 
@@ -169,6 +229,7 @@ func TestSelector_Select_StickyCacheEvictsProviderRejectedByRoutingPolicy(t *tes
 	store.authStates["p-blocked"] = &model.ProviderAuthState{ProviderID: "p-blocked", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "g-allowed"}},
 		},
@@ -258,6 +319,73 @@ func TestSelector_Select_StickyCachePreservesAffinityOnAuthStateReadError(t *tes
 	}
 }
 
+func TestSelector_Select_StickyCacheEvictsProviderRejectedByExactProviderRule(t *testing.T) {
+	groupID := "g-exact"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p-exact",
+			Name:     "Exact Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 10,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-exact", APIType: "codex"}},
+		},
+		{
+			ID:       "p-sticky-blocked",
+			Name:     "Blocked Sticky Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 0,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-sticky-blocked", APIType: "codex"}},
+		},
+	}
+	store.groups = map[string]*model.Group{
+		"g-exact": {ID: "g-exact", Name: "Exact Group", Strategy: StrategyPriority, Enabled: true},
+	}
+	store.authStates["p-exact"] = &model.ProviderAuthState{ProviderID: "p-exact", Status: model.ProviderAuthStatusActive}
+	store.authStates["p-sticky-blocked"] = &model.ProviderAuthState{ProviderID: "p-sticky-blocked", Status: model.ProviderAuthStatusActive}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:          true,
+			APIType:          "codex",
+			TargetProviderID: stringPtr("p-exact"),
+		},
+	}
+
+	sticky := NewMemoryStickyCache(internal.RealClock{})
+	req := &model.SelectRequest{
+		ClientIP:   "192.168.1.11",
+		User:       "user-exact",
+		APIType:    "codex",
+		StickyMode: model.StickyModeAPIType,
+	}
+	sticky.Set(buildStickyKey(req), "p-sticky-blocked", time.Minute)
+
+	sel := NewSelector(Config{
+		Store:         store,
+		HealthChecker: newMockHealthChecker(),
+		StickyCache:   sticky,
+		Clock:         internal.RealClock{},
+		Logger:        zap.NewNop(),
+	})
+
+	provider, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected provider to be selected")
+	}
+	if provider.ID != "p-exact" {
+		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p-exact")
+	}
+	if _, found := sticky.Get(buildStickyKey(req)); found {
+		t.Fatal("expected sticky entry to be evicted when exact-provider routing rejects the cached provider")
+	}
+}
+
 func TestSelector_SelectExcluding_FailoverStaysWithinRoutingPolicyClosure(t *testing.T) {
 	gAllowed := "g-allowed"
 	gBlocked := "g-blocked"
@@ -307,6 +435,7 @@ func TestSelector_SelectExcluding_FailoverStaysWithinRoutingPolicyClosure(t *tes
 	store.authStates["p-outside-policy"] = &model.ProviderAuthState{ProviderID: "p-outside-policy", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "g-allowed"}},
 		},
@@ -344,6 +473,66 @@ func TestSelector_SelectExcluding_FailoverStaysWithinRoutingPolicyClosure(t *tes
 	}
 }
 
+func TestSelector_SelectExcluding_ExactProviderRuleDoesNotEscapeOnRetry(t *testing.T) {
+	groupID := "g-exact"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p-exact",
+			Name:     "Exact Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 10,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-exact", APIType: "codex"}},
+		},
+		{
+			ID:       "p-other",
+			Name:     "Other Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 0,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-other", APIType: "codex"}},
+		},
+	}
+	store.groups = map[string]*model.Group{
+		"g-exact": {ID: "g-exact", Name: "Exact Group", Strategy: StrategyPriority, Enabled: true},
+	}
+	store.authStates["p-exact"] = &model.ProviderAuthState{ProviderID: "p-exact", Status: model.ProviderAuthStatusActive}
+	store.authStates["p-other"] = &model.ProviderAuthState{ProviderID: "p-other", Status: model.ProviderAuthStatusActive}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:          true,
+			APIType:          "codex",
+			TargetProviderID: stringPtr("p-exact"),
+		},
+	}
+
+	sel := NewSelector(Config{
+		Store:         store,
+		HealthChecker: newMockHealthChecker(),
+		Clock:         internal.RealClock{},
+		Logger:        zap.NewNop(),
+	})
+
+	req := &model.SelectRequest{APIType: "codex", StickyMode: model.StickyModeOff}
+	first, err := sel.Select(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected first selection error: %v", err)
+	}
+	if first == nil || first.ID != "p-exact" {
+		t.Fatalf("first provider = %#v, want p-exact", first)
+	}
+
+	second, err := sel.SelectExcluding(context.Background(), req, map[string]bool{"p-exact": true})
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("retry error = %v, want %v", err, internal.ErrNoProvider)
+	}
+	if second != nil {
+		t.Fatalf("retry provider = %#v, want nil", second)
+	}
+}
+
 func TestBuildContinuityKey_ModelModeFallsBackWhenModelUnknown(t *testing.T) {
 	req := &model.SelectRequest{
 		ClientIP:   "192.168.1.1",
@@ -362,6 +551,56 @@ func TestBuildContinuityKey_ModelModeFallsBackWhenModelUnknown(t *testing.T) {
 	key = BuildContinuityKey(req)
 	if key.Model != "gpt-5.4" {
 		t.Fatalf("key.Model = %q, want %q", key.Model, "gpt-5.4")
+	}
+}
+
+func TestSelectorSelect_UnmatchedActiveRuleFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	groupID := "g-default"
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p-default",
+			Name:     "Default Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 0,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-default", APIType: "codex"}},
+		},
+	}
+	store.groups = map[string]*model.Group{
+		"g-default": {ID: "g-default", Name: "Default Group", Strategy: StrategyPriority, Enabled: true},
+	}
+	store.authStates["p-default"] = &model.ProviderAuthState{ProviderID: "p-default", Status: model.ProviderAuthStatusActive}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:         true,
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+			ModelMatchValue: "gpt-",
+			Groups:          []model.RoutingPolicyGroup{{GroupID: "g-default"}},
+		},
+	}
+
+	sel := NewSelector(Config{
+		Store:         store,
+		HealthChecker: newMockHealthChecker(),
+		Clock:         internal.RealClock{},
+		Logger:        zap.NewNop(),
+	})
+
+	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+		APIType:    "codex",
+		Model:      "claude-3",
+		StickyMode: model.StickyModeOff,
+	})
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("error = %v, want %v", err, internal.ErrNoProvider)
+	}
+	if provider != nil {
+		t.Fatalf("provider = %#v, want nil", provider)
 	}
 }
 
@@ -398,6 +637,7 @@ func TestSelectorSelectUnknownModelIgnoresModelOnlyRoutingRules(t *testing.T) {
 	store.authStates["p-model-only"] = &model.ProviderAuthState{ProviderID: "p-model-only", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
+			Enabled:         true,
 			APIType:         "codex",
 			ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
 			ModelMatchValue: "gpt-5.4",

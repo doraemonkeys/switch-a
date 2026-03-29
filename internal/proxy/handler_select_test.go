@@ -184,8 +184,8 @@ type selectorSelectResult = selector.SelectResult
 func TestSelectProviderWithTracking_NoSelector(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
-		{ID: "p2", Name: "Provider 2", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 	logger := zap.NewNop()
 
@@ -218,7 +218,7 @@ func TestSelectProviderWithTracking_SelectorStickyCacheHit(t *testing.T) {
 	store := newMockStore()
 	logger := zap.NewNop()
 
-	stickyProvider := &model.Provider{ID: "sticky-p1", Name: "Sticky Provider", Enabled: true}
+	stickyProvider := &model.Provider{ID: "sticky-p1", Name: "Sticky Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "sticky-p1", APIType: "claude"}}}
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
@@ -260,11 +260,11 @@ func TestSelectProviderWithTracking_SelectorStickyCacheHit(t *testing.T) {
 func TestSelectProviderWithTracking_ActiveProviderFallback(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "active-p1", Name: "Active Provider", Enabled: true},
+		{ID: "active-p1", Name: "Active Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "claude"}}},
 	}
 	logger := zap.NewNop()
 
-	freshProvider := &model.Provider{ID: "fresh-p1", Name: "Fresh Provider", Enabled: true}
+	freshProvider := &model.Provider{ID: "fresh-p1", Name: "Fresh Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fresh-p1", APIType: "claude"}}}
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
@@ -330,7 +330,7 @@ func TestSelectProviderWithTracking_NormalSelection(t *testing.T) {
 	store := newMockStore()
 	logger := zap.NewNop()
 
-	normalProvider := &model.Provider{ID: "normal-p1", Name: "Normal Provider", Enabled: true}
+	normalProvider := &model.Provider{ID: "normal-p1", Name: "Normal Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "normal-p1", APIType: "claude"}}}
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
@@ -627,7 +627,7 @@ func TestTryActiveProviderFallback_NoActiveProvider(t *testing.T) {
 func TestTryActiveProviderFallback_ModelDimension(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "active-p1", Name: "Active Provider", Enabled: true},
+		{ID: "active-p1", Name: "Active Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "claude"}}},
 	}
 
 	handler := NewHandler(Config{
@@ -751,6 +751,7 @@ func TestTryActiveProviderFallback_SkipsProviderRejectedByRoutingPolicy(t *testi
 	}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "g-allowed"}},
 		},
@@ -784,12 +785,72 @@ func TestTryActiveProviderFallback_SkipsProviderRejectedByRoutingPolicy(t *testi
 	}
 }
 
+func TestTryActiveProviderFallback_SkipsProviderRejectedByExactRoutingPolicy(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "active-p1",
+			Name:     "Active Provider",
+			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "codex"}},
+		},
+		{
+			ID:       "exact-p2",
+			Name:     "Exact Provider",
+			Enabled:  true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "exact-p2", APIType: "codex"}},
+		},
+	}
+	store.authStates["active-p1"] = &model.ProviderAuthState{
+		ProviderID: "active-p1",
+		Status:     model.ProviderAuthStatusActive,
+	}
+	store.authStates["exact-p2"] = &model.ProviderAuthState{
+		ProviderID: "exact-p2",
+		Status:     model.ProviderAuthStatusActive,
+	}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:          true,
+			APIType:          "codex",
+			TargetProviderID: stringPtr("exact-p2"),
+		},
+	}
+
+	activeRegistry := NewActiveRequestRegistry()
+	activeRegistry.Register(&ActiveRequest{
+		RequestID:       "req-123",
+		ProviderID:      "active-p1",
+		ClientIP:        "192.168.1.1",
+		UserID:          "user1",
+		APIType:         "codex",
+		StickyMode:      model.StickyModeAPIType,
+		HasReceivedData: true,
+	})
+
+	handler := NewHandler(Config{
+		Store:          store,
+		Logger:         zap.NewNop(),
+		ActiveRegistry: activeRegistry,
+	})
+
+	provider := handler.tryActiveProviderFallback(context.Background(), &model.SelectRequest{
+		ClientIP:   "192.168.1.1",
+		User:       "user1",
+		APIType:    "codex",
+		StickyMode: model.StickyModeAPIType,
+	})
+	if provider != nil {
+		t.Fatalf("expected nil when exact-provider routing rejects the active fallback provider, got %#v", provider)
+	}
+}
+
 // TestGetProviderIfValid_ProviderFound tests finding a valid provider.
 func TestGetProviderIfValid_ProviderFound(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
-		{ID: "p2", Name: "Provider 2", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 	logger := zap.NewNop()
 
@@ -817,7 +878,7 @@ func TestGetProviderIfValid_ProviderFound(t *testing.T) {
 func TestGetProviderIfValid_ProviderNotFound(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
 	}
 	logger := zap.NewNop()
 
@@ -842,7 +903,7 @@ func TestGetProviderIfValid_ProviderNotFound(t *testing.T) {
 func TestGetProviderIfValid_ProviderDisabled(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: false}, // Disabled
+		{ID: "p1", Name: "Provider 1", Enabled: false, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}}, // Disabled
 	}
 	logger := zap.NewNop()
 
@@ -867,7 +928,7 @@ func TestGetProviderIfValid_ProviderDisabled(t *testing.T) {
 func TestGetProviderIfValid_ProviderUnhealthy(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
 	}
 	logger := zap.NewNop()
 
@@ -988,6 +1049,7 @@ func TestSelectProviderFallback_FiltersByRoutingPolicyAndAuthState(t *testing.T)
 	}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "g-allowed"}},
 		},
@@ -1012,13 +1074,66 @@ func TestSelectProviderFallback_FiltersByRoutingPolicyAndAuthState(t *testing.T)
 	}
 }
 
+func TestSelectProviderFallback_ExactProviderRuleFiltersCandidates(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		{
+			ID:       "p-other",
+			Name:     "Other Provider",
+			Enabled:  true,
+			Priority: 0,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-other", APIType: "codex"}},
+		},
+		{
+			ID:       "p-exact",
+			Name:     "Exact Provider",
+			Enabled:  true,
+			Priority: 10,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-exact", APIType: "codex"}},
+		},
+	}
+	store.authStates["p-other"] = &model.ProviderAuthState{
+		ProviderID: "p-other",
+		Status:     model.ProviderAuthStatusActive,
+	}
+	store.authStates["p-exact"] = &model.ProviderAuthState{
+		ProviderID: "p-exact",
+		Status:     model.ProviderAuthStatusActive,
+	}
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:          true,
+			APIType:          "codex",
+			TargetProviderID: stringPtr("p-exact"),
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	provider, err := handler.selectProviderFallback(context.Background(), &model.SelectRequest{
+		APIType: "codex",
+	}, 0, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected provider to be selected")
+	}
+	if provider.ID != "p-exact" {
+		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p-exact")
+	}
+}
+
 // TestSelectProviderFallback_RoundRobin tests round-robin selection across attempts.
 func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
-		{ID: "p2", Name: "Provider 2", Enabled: true},
-		{ID: "p3", Name: "Provider 3", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
+		{ID: "p3", Name: "Provider 3", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p3", APIType: "claude"}}},
 	}
 	logger := zap.NewNop()
 
@@ -1054,8 +1169,8 @@ func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 func TestSelectProviderFallback_AttemptOffset(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true},
-		{ID: "p2", Name: "Provider 2", Enabled: true},
+		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
+		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
 	logger := zap.NewNop()
 

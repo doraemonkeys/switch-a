@@ -24,19 +24,115 @@ func routingPolicyQuery(db *gorm.DB) *gorm.DB {
 
 func normalizeRoutingPolicyRecord(policy *model.RoutingPolicy) model.RoutingPolicy {
 	record := model.RoutingPolicy{
-		ID:              policy.ID,
-		APIType:         strings.TrimSpace(policy.APIType),
-		ModelMatchType:  model.RoutingPolicyModelMatchType(strings.TrimSpace(string(policy.ModelMatchType))),
-		ModelMatchValue: strings.TrimSpace(policy.ModelMatchValue),
-		CreatedAt:       policy.CreatedAt,
-		UpdatedAt:       policy.UpdatedAt,
+		ID:               policy.ID,
+		APIType:          strings.TrimSpace(policy.APIType),
+		ModelMatchType:   model.RoutingPolicyModelMatchType(strings.TrimSpace(string(policy.ModelMatchType))),
+		ModelMatchValue:  strings.TrimSpace(policy.ModelMatchValue),
+		Enabled:          policy.Enabled,
+		TargetProviderID: normalizeRoutingPolicyTargetProviderID(policy.TargetProviderID),
+		CreatedAt:        policy.CreatedAt,
+		UpdatedAt:        policy.UpdatedAt,
 	}
 	if record.ModelMatchType == model.RoutingPolicyModelMatchTypeNone {
 		record.ModelMatchValue = ""
 	}
-	record.Groups = normalizeRoutingPolicyGroups(policy.Groups)
-	record.Vendors = normalizeRoutingPolicyVendors(policy.Vendors)
+	if record.TargetProviderID == nil {
+		record.Groups = normalizeRoutingPolicyGroups(policy.Groups)
+		record.Vendors = normalizeRoutingPolicyVendors(policy.Vendors)
+	}
 	return record
+}
+
+func normalizeRoutingPolicyTargetProviderID(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*value)
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
+}
+
+func routingPolicyEnabledValue(enabled bool) int {
+	if enabled {
+		return 1
+	}
+	return 0
+}
+
+func findRoutingPolicyByNaturalKey(
+	tx *gorm.DB,
+	key model.RoutingPolicyNaturalKey,
+) (*model.RoutingPolicy, error) {
+	var policy model.RoutingPolicy
+	err := routingPolicyQuery(tx).
+		Where(
+			"api_type = ? AND model_match_type = ? AND model_match_value = ?",
+			key.APIType,
+			key.ModelMatchType,
+			key.ModelMatchValue,
+		).
+		First(&policy).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func findRoutingPolicyReferencingGroup(tx *gorm.DB, groupID string) (*model.RoutingPolicy, error) {
+	var policy model.RoutingPolicy
+	err := routingPolicyQuery(tx).
+		Joins("JOIN routing_policy_groups ON routing_policy_groups.routing_policy_id = routing_policies.id").
+		Where("routing_policy_groups.group_id = ?", groupID).
+		Order("routing_policies.id ASC").
+		First(&policy).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func findRoutingPolicyTargetingProvider(tx *gorm.DB, providerID string) (*model.RoutingPolicy, error) {
+	var policy model.RoutingPolicy
+	err := routingPolicyQuery(tx).
+		Where("target_provider_id = ?", providerID).
+		Order("id ASC").
+		First(&policy).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func findExactProviderRoutingPolicyMissingAPIType(
+	tx *gorm.DB,
+	providerID string,
+	supportedAPITypes map[string]struct{},
+) (*model.RoutingPolicy, error) {
+	var policies []model.RoutingPolicy
+	if err := routingPolicyQuery(tx).
+		Where("target_provider_id = ?", providerID).
+		Order("id ASC").
+		Find(&policies).Error; err != nil {
+		return nil, err
+	}
+	for i := range policies {
+		if _, ok := supportedAPITypes[policies[i].APIType]; ok {
+			continue
+		}
+		return &policies[i], nil
+	}
+	return nil, ErrNotFound
 }
 
 func normalizeRoutingPolicyGroups(groups []model.RoutingPolicyGroup) []model.RoutingPolicyGroup {
@@ -197,7 +293,37 @@ func (s *SQLiteStore) CreateRoutingPolicy(ctx context.Context, policy *model.Rou
 		if record.UpdatedAt.IsZero() {
 			record.UpdatedAt = now
 		}
-		if err := tx.Omit("Groups", "Vendors").Create(&record).Error; err != nil {
+		if record.ID == 0 {
+			if err := tx.Exec(
+				`INSERT INTO routing_policies
+					(api_type, model_match_type, model_match_value, enabled, target_provider_id, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				record.APIType,
+				record.ModelMatchType,
+				record.ModelMatchValue,
+				routingPolicyEnabledValue(record.Enabled),
+				record.TargetProviderID,
+				record.CreatedAt,
+				record.UpdatedAt,
+			).Error; err != nil {
+				return err
+			}
+			if err := tx.Raw(`SELECT last_insert_rowid()`).Scan(&record.ID).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Exec(
+			`INSERT INTO routing_policies
+				(id, api_type, model_match_type, model_match_value, enabled, target_provider_id, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.ID,
+			record.APIType,
+			record.ModelMatchType,
+			record.ModelMatchValue,
+			routingPolicyEnabledValue(record.Enabled),
+			record.TargetProviderID,
+			record.CreatedAt,
+			record.UpdatedAt,
+		).Error; err != nil {
 			return err
 		}
 		if err := replaceRoutingPolicyScopes(tx, record.ID, record.Groups, record.Vendors); err != nil {
@@ -233,10 +359,12 @@ func (s *SQLiteStore) UpdateRoutingPolicy(ctx context.Context, policy *model.Rou
 		if err := tx.Model(&model.RoutingPolicy{}).
 			Where("id = ?", record.ID).
 			Updates(map[string]any{
-				"api_type":          record.APIType,
-				"model_match_type":  record.ModelMatchType,
-				"model_match_value": record.ModelMatchValue,
-				"updated_at":        record.UpdatedAt,
+				"api_type":           record.APIType,
+				"model_match_type":   record.ModelMatchType,
+				"model_match_value":  record.ModelMatchValue,
+				"enabled":            routingPolicyEnabledValue(record.Enabled),
+				"target_provider_id": record.TargetProviderID,
+				"updated_at":         record.UpdatedAt,
 			}).Error; err != nil {
 			return err
 		}

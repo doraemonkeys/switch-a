@@ -8,6 +8,19 @@ import type {
 
 type ImportStep = "select" | "preview" | "result";
 
+const IMPORT_SUMMARY_SECTIONS = [
+  { key: "providers", label: "Providers" },
+  { key: "groups", label: "Groups" },
+  { key: "routing_policies", label: "Routing Policies" },
+  { key: "settings", label: "Settings" },
+] as const;
+
+const REQUIRED_IMPORT_ARRAY_FIELDS = [
+  "providers",
+  "groups",
+  "routing_policies",
+] as const;
+
 interface ConfigImportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -95,12 +108,14 @@ function ChangeBadge({
   label,
   add,
   update,
+  deleteCount,
 }: {
   label: string;
   add: number;
   update: number;
+  deleteCount: number;
 }) {
-  const hasChanges = add > 0 || update > 0;
+  const hasChanges = add > 0 || update > 0 || deleteCount > 0;
   return (
     <div
       className={`p-4 rounded-lg border ${hasChanges ? "bg-bg-tertiary border-border-light" : "bg-bg-tertiary/50 border-border-dark"}`}
@@ -108,7 +123,7 @@ function ChangeBadge({
       <div className="text-sm font-medium text-text-secondary mb-2">
         {label}
       </div>
-      <div className="flex gap-4">
+      <div className="flex gap-4 flex-wrap">
         <div className="flex items-center gap-1.5">
           <span
             className={`w-2 h-2 rounded-full ${add > 0 ? "bg-success" : "bg-text-muted/30"}`}
@@ -127,6 +142,16 @@ function ChangeBadge({
             className={`text-sm ${update > 0 ? "text-primary" : "text-text-muted"}`}
           >
             {update} 更新
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={`w-2 h-2 rounded-full ${deleteCount > 0 ? "bg-danger" : "bg-text-muted/30"}`}
+          />
+          <span
+            className={`text-sm ${deleteCount > 0 ? "text-danger" : "text-text-muted"}`}
+          >
+            -{deleteCount} 删除
           </span>
         </div>
       </div>
@@ -262,21 +287,18 @@ function PreviewStep({
       <div className="space-y-3">
         <h3 className="text-sm font-medium text-text-secondary">变更预览</h3>
         <div className="grid gap-3">
-          <ChangeBadge
-            label="Providers"
-            add={preview.changes.providers.add}
-            update={preview.changes.providers.update}
-          />
-          <ChangeBadge
-            label="Groups"
-            add={preview.changes.groups.add}
-            update={preview.changes.groups.update}
-          />
-          <ChangeBadge
-            label="Settings"
-            add={preview.changes.settings.add}
-            update={preview.changes.settings.update}
-          />
+          {IMPORT_SUMMARY_SECTIONS.map((section) => {
+            const change = preview.changes[section.key];
+            return (
+              <ChangeBadge
+                key={section.key}
+                label={section.label}
+                add={change.add}
+                update={change.update}
+                deleteCount={change.delete}
+              />
+            );
+          })}
         </div>
       </div>
 
@@ -328,21 +350,17 @@ function ResultStep({ result }: { result: ImportResult }) {
       </div>
 
       <div className="bg-bg-tertiary rounded-lg p-4 divide-y divide-border-dark">
-        <AppliedBadge
-          label="Providers"
-          added={result.applied.providers.added}
-          updated={result.applied.providers.updated}
-        />
-        <AppliedBadge
-          label="Groups"
-          added={result.applied.groups.added}
-          updated={result.applied.groups.updated}
-        />
-        <AppliedBadge
-          label="Settings"
-          added={result.applied.settings.added}
-          updated={result.applied.settings.updated}
-        />
+        {IMPORT_SUMMARY_SECTIONS.map((section) => {
+          const applied = result.applied[section.key];
+          return (
+            <AppliedBadge
+              key={section.key}
+              label={section.label}
+              added={applied.added}
+              updated={applied.updated}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -470,11 +488,10 @@ export function ConfigImportModal({
       const json = JSON.parse(text) as ExportedConfig;
 
       // Basic validation
-      if (!Array.isArray(json.providers)) {
-        throw new Error("配置文件缺少 providers 数组");
-      }
-      if (!Array.isArray(json.groups)) {
-        throw new Error("配置文件缺少 groups 数组");
+      for (const field of REQUIRED_IMPORT_ARRAY_FIELDS) {
+        if (!Array.isArray(json[field])) {
+          throw new Error(`配置文件缺少 ${field} 数组`);
+        }
       }
       if (typeof json.settings !== "object" || json.settings === null) {
         throw new Error("配置文件缺少 settings 对象");
@@ -484,6 +501,7 @@ export function ConfigImportModal({
         version: json.version,
         providers: json.providers,
         groups: json.groups,
+        routing_policies: json.routing_policies,
         settings: json.settings,
       };
     } catch (err) {
@@ -581,12 +599,10 @@ export function ConfigImportModal({
 
   const hasAnyChanges = !!(
     preview &&
-    (preview.changes.providers.add > 0 ||
-      preview.changes.providers.update > 0 ||
-      preview.changes.groups.add > 0 ||
-      preview.changes.groups.update > 0 ||
-      preview.changes.settings.add > 0 ||
-      preview.changes.settings.update > 0)
+    IMPORT_SUMMARY_SECTIONS.some((section) => {
+      const change = preview.changes[section.key];
+      return change.add > 0 || change.update > 0 || change.delete > 0;
+    })
   );
 
   return (

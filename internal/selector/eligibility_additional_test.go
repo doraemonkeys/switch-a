@@ -38,13 +38,13 @@ func TestRoutingPolicyRankRecognizesSupportedMatchTypes(t *testing.T) {
 	}{
 		{
 			name:        "api-type only",
-			policy:      &model.RoutingPolicy{ModelMatchType: model.RoutingPolicyModelMatchTypeNone},
+			policy:      &model.RoutingPolicy{Enabled: true, ModelMatchType: model.RoutingPolicyModelMatchTypeNone},
 			wantRank:    1,
 			wantMatched: true,
 		},
 		{
 			name:         "exact",
-			policy:       &model.RoutingPolicy{ModelMatchType: model.RoutingPolicyModelMatchTypeExact, ModelMatchValue: "gpt-5.4"},
+			policy:       &model.RoutingPolicy{Enabled: true, ModelMatchType: model.RoutingPolicyModelMatchTypeExact, ModelMatchValue: "gpt-5.4"},
 			requestModel: "gpt-5.4",
 			wantRank:     3,
 			wantPrefix:   len("gpt-5.4"),
@@ -52,7 +52,7 @@ func TestRoutingPolicyRankRecognizesSupportedMatchTypes(t *testing.T) {
 		},
 		{
 			name:         "prefix",
-			policy:       &model.RoutingPolicy{ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-"},
+			policy:       &model.RoutingPolicy{Enabled: true, ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-"},
 			requestModel: "gpt-5.4",
 			wantRank:     2,
 			wantPrefix:   len("gpt-"),
@@ -60,7 +60,7 @@ func TestRoutingPolicyRankRecognizesSupportedMatchTypes(t *testing.T) {
 		},
 		{
 			name:         "unsupported",
-			policy:       &model.RoutingPolicy{ModelMatchType: "regex", ModelMatchValue: "gpt-.*"},
+			policy:       &model.RoutingPolicy{Enabled: true, ModelMatchType: "regex", ModelMatchValue: "gpt-.*"},
 			requestModel: "gpt-5.4",
 			wantMatched:  false,
 		},
@@ -90,11 +90,13 @@ func TestResolveRoutingPolicyPrefersMostSpecificRule(t *testing.T) {
 	req := &model.SelectRequest{APIType: "codex", Model: "gpt-5.4"}
 	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "group-api"}},
 			Vendors: []model.RoutingPolicyVendor{{Vendor: " vendor-api "}},
 		},
 		{
+			Enabled:         true,
 			APIType:         "codex",
 			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
 			ModelMatchValue: "gpt-",
@@ -102,6 +104,7 @@ func TestResolveRoutingPolicyPrefersMostSpecificRule(t *testing.T) {
 			Vendors:         []model.RoutingPolicyVendor{{Vendor: " vendor-prefix "}, {Vendor: ""}},
 		},
 		{
+			Enabled:         true,
 			APIType:         "codex",
 			ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
 			ModelMatchValue: "gpt-5.4",
@@ -121,16 +124,45 @@ func TestResolveRoutingPolicyPrefersMostSpecificRule(t *testing.T) {
 	}
 }
 
+func TestResolveRoutingPolicyExactProviderModeIsAtomic(t *testing.T) {
+	t.Parallel()
+
+	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
+		{
+			Enabled:          true,
+			APIType:          "codex",
+			TargetProviderID: stringPtr(" provider-exact "),
+			Groups:           []model.RoutingPolicyGroup{{GroupID: "stale-group"}},
+			Vendors:          []model.RoutingPolicyVendor{{Vendor: "stale-vendor"}},
+		},
+	}, &model.SelectRequest{APIType: "codex"})
+
+	if !resolution.constrained || !resolution.matched {
+		t.Fatalf("resolution = %#v, want constrained matched result", resolution)
+	}
+	if resolution.targetProviderID != "provider-exact" {
+		t.Fatalf("targetProviderID = %q, want %q", resolution.targetProviderID, "provider-exact")
+	}
+	if len(resolution.groupIDs) != 0 {
+		t.Fatalf("groupIDs = %#v, want exact-provider mode to ignore stale filter scope", resolution.groupIDs)
+	}
+	if len(resolution.vendors) != 0 {
+		t.Fatalf("vendors = %#v, want exact-provider mode to ignore stale filter scope", resolution.vendors)
+	}
+}
+
 func TestResolveRoutingPolicyUnknownModelFallsBackToAPITypeRule(t *testing.T) {
 	t.Parallel()
 
 	req := &model.SelectRequest{APIType: "codex", Model: unknownModelSentinel}
 	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
 		{
+			Enabled: true,
 			APIType: "codex",
 			Groups:  []model.RoutingPolicyGroup{{GroupID: "group-api"}},
 		},
 		{
+			Enabled:         true,
 			APIType:         "codex",
 			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
 			ModelMatchValue: "gpt-",
@@ -140,9 +172,6 @@ func TestResolveRoutingPolicyUnknownModelFallsBackToAPITypeRule(t *testing.T) {
 
 	if !resolution.constrained || !resolution.matched {
 		t.Fatalf("resolution = %#v, want constrained matched result", resolution)
-	}
-	if !resolution.consumesHiddenModel {
-		t.Fatalf("resolution.consumesHiddenModel = false, want true when a model-specific rule is bypassed")
 	}
 	if _, ok := resolution.groupIDs["group-api"]; !ok || len(resolution.groupIDs) != 1 {
 		t.Fatalf("groupIDs = %#v, want only api-type fallback group", resolution.groupIDs)
@@ -155,6 +184,7 @@ func TestResolveRoutingPolicyUnknownModelSkipsModelOnlyRules(t *testing.T) {
 	req := &model.SelectRequest{APIType: "codex", Model: unknownModelSentinel}
 	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
 		{
+			Enabled:         true,
 			APIType:         "codex",
 			ModelMatchType:  model.RoutingPolicyModelMatchTypeExact,
 			ModelMatchValue: "gpt-5.4",
@@ -168,8 +198,49 @@ func TestResolveRoutingPolicyUnknownModelSkipsModelOnlyRules(t *testing.T) {
 	if resolution.matched {
 		t.Fatalf("resolution = %#v, want unmatched result when no api-type rule applies", resolution)
 	}
-	if !resolution.consumesHiddenModel {
-		t.Fatalf("resolution.consumesHiddenModel = false, want true when selection would use a hidden model if available")
+}
+
+func TestResolveRoutingPolicyUnknownModelFallsBackWhenOnlyModelSpecificRulesAreActive(t *testing.T) {
+	t.Parallel()
+
+	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
+		{
+			ID:               1,
+			APIType:          "codex",
+			Enabled:          false,
+			TargetProviderID: stringPtr("provider-disabled"),
+		},
+		{
+			Enabled:          true,
+			APIType:          "codex",
+			TargetProviderID: stringPtr("provider-active"),
+			ModelMatchType:   model.RoutingPolicyModelMatchTypeExact,
+			ModelMatchValue:  "gpt-5.4",
+		},
+	}, &model.SelectRequest{APIType: "codex", Model: unknownModelSentinel})
+
+	if resolution.constrained || resolution.matched {
+		t.Fatalf("resolution = %#v, want unconstrained fallback when no active rule can match without a model", resolution)
+	}
+}
+
+func TestResolveRoutingPolicyFailsClosedWhenActiveRulesExistButModelMatchesNone(t *testing.T) {
+	t.Parallel()
+
+	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
+		{
+			Enabled:         true,
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+			ModelMatchValue: "gpt-",
+		},
+	}, &model.SelectRequest{APIType: "codex", Model: "claude-3"})
+
+	if !resolution.constrained {
+		t.Fatalf("resolution = %#v, want fail-closed constraint when active rules exist but none match", resolution)
+	}
+	if resolution.matched {
+		t.Fatalf("resolution = %#v, want unmatched result when no active rule matches the request", resolution)
 	}
 }
 
@@ -177,9 +248,10 @@ func TestProviderSelectionEligibilityWouldConsumeHiddenModel(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		req  *model.SelectRequest
-		want bool
+		name              string
+		req               *model.SelectRequest
+		hiddenModelDemand bool
+		want              bool
 	}{
 		{
 			name: "model sticky without usable model",
@@ -188,7 +260,8 @@ func TestProviderSelectionEligibilityWouldConsumeHiddenModel(t *testing.T) {
 				Model:      unknownModelSentinel,
 				StickyMode: model.StickyModeModel,
 			},
-			want: true,
+			hiddenModelDemand: true,
+			want:              true,
 		},
 		{
 			name: "model sticky with usable model already present",
@@ -197,7 +270,8 @@ func TestProviderSelectionEligibilityWouldConsumeHiddenModel(t *testing.T) {
 				Model:      "gpt-5.4",
 				StickyMode: model.StickyModeModel,
 			},
-			want: false,
+			hiddenModelDemand: true,
+			want:              false,
 		},
 		{
 			name: "api type sticky does not consume hidden model",
@@ -208,11 +282,24 @@ func TestProviderSelectionEligibilityWouldConsumeHiddenModel(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "routing policy can consume hidden model",
+			req: &model.SelectRequest{
+				APIType:    "codex",
+				Model:      unknownModelSentinel,
+				StickyMode: model.StickyModeOff,
+			},
+			hiddenModelDemand: true,
+			want:              true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			eligibility := &ProviderSelectionEligibility{req: tt.req}
+			eligibility := &ProviderSelectionEligibility{
+				req:               tt.req,
+				hiddenModelDemand: tt.hiddenModelDemand,
+			}
 			if got := eligibility.WouldConsumeHiddenModel(); got != tt.want {
 				t.Fatalf("WouldConsumeHiddenModel() = %v, want %v", got, tt.want)
 			}
@@ -220,29 +307,81 @@ func TestProviderSelectionEligibilityWouldConsumeHiddenModel(t *testing.T) {
 	}
 }
 
-func TestProviderSelectionEligibilityWouldConsumeHiddenModelForRoutingPolicy(t *testing.T) {
+func TestNewProviderSelectionEligibilityWouldConsumeHiddenModelWhenRoutingPolicyDependsOnMissingModel(t *testing.T) {
 	t.Parallel()
 
+	store := newMockStore()
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:         true,
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+			ModelMatchValue: "gpt-",
+		},
+	}
+
 	req := &model.SelectRequest{APIType: "codex", Model: unknownModelSentinel}
-	eligibility := &ProviderSelectionEligibility{
-		req: req,
-		routing: resolveRoutingPolicy([]model.RoutingPolicy{
-			{
-				APIType:         "codex",
-				ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
-				ModelMatchValue: "gpt-",
-			},
-		}, req),
+	eligibility, err := NewProviderSelectionEligibility(context.Background(), store, nil, req)
+	if err != nil {
+		t.Fatalf("NewProviderSelectionEligibility() error = %v", err)
 	}
 
 	if !eligibility.WouldConsumeHiddenModel() {
-		t.Fatal("WouldConsumeHiddenModel() = false, want true when a routing rule depends on a hidden model")
+		t.Fatal("WouldConsumeHiddenModel() = false, want true when active routing policy depends on the missing model")
 	}
 
 	req.Model = "gpt-5.4"
-	eligibility.req = req
+	eligibility, err = NewProviderSelectionEligibility(context.Background(), store, nil, req)
+	if err != nil {
+		t.Fatalf("NewProviderSelectionEligibility() error = %v", err)
+	}
 	if eligibility.WouldConsumeHiddenModel() {
 		t.Fatal("WouldConsumeHiddenModel() = true, want false once the request already has a usable model")
+	}
+}
+
+func TestResolveSelectionHiddenModelDemandRequiresRoutingPolicyLookupWhenModelUnavailable(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	store.routingPolicyErr = errors.New("routing policy store unavailable")
+
+	consumesHiddenModel, err := ResolveSelectionHiddenModelDemand(context.Background(), store, &model.SelectRequest{
+		APIType:    "codex",
+		Model:      unknownModelSentinel,
+		StickyMode: model.StickyModeOff,
+	})
+	if err == nil {
+		t.Fatal("ResolveSelectionHiddenModelDemand() error = nil, want routing policy lookup failure")
+	}
+	if consumesHiddenModel {
+		t.Fatal("ResolveSelectionHiddenModelDemand() = true, want false on lookup failure")
+	}
+}
+
+func TestResolveSelectionHiddenModelDemandIncludesRoutingPolicyModelRules(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:         true,
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+			ModelMatchValue: "gpt-",
+		},
+	}
+
+	consumesHiddenModel, err := ResolveSelectionHiddenModelDemand(context.Background(), store, &model.SelectRequest{
+		APIType:    "codex",
+		Model:      unknownModelSentinel,
+		StickyMode: model.StickyModeOff,
+	})
+	if err != nil {
+		t.Fatalf("ResolveSelectionHiddenModelDemand() error = %v, want nil", err)
+	}
+	if !consumesHiddenModel {
+		t.Fatal("ResolveSelectionHiddenModelDemand() = false, want true when active routing policy depends on the missing model")
 	}
 }
 
@@ -262,26 +401,6 @@ func TestResolveSelectionHiddenModelDemandModelStickyShortCircuitsRoutingPolicyL
 	}
 	if !consumesHiddenModel {
 		t.Fatal("ResolveSelectionHiddenModelDemand() = false, want true when model sticky still needs continuity precision")
-	}
-}
-
-func TestResolveSelectionHiddenModelDemandReturnsErrorWhenRoutingPolicyLookupIsRequired(t *testing.T) {
-	t.Parallel()
-
-	wantErr := errors.New("routing policy store unavailable")
-	store := newMockStore()
-	store.routingPolicyErr = wantErr
-
-	consumesHiddenModel, err := ResolveSelectionHiddenModelDemand(context.Background(), store, &model.SelectRequest{
-		APIType:    "codex",
-		Model:      unknownModelSentinel,
-		StickyMode: model.StickyModeOff,
-	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("ResolveSelectionHiddenModelDemand() error = %v, want %v", err, wantErr)
-	}
-	if consumesHiddenModel {
-		t.Fatal("ResolveSelectionHiddenModelDemand() = true, want false when policy lookup failed before demand was known")
 	}
 }
 

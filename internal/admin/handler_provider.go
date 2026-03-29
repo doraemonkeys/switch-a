@@ -342,6 +342,10 @@ func (h *Handler) handleProviderPersistenceError(
 		writeError(w, http.StatusConflict, ErrCodeConflict, conflict.Error())
 		return true
 	}
+	if errors.Is(err, store.ErrRoutingPolicyReferenceConflict) {
+		writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+		return true
+	}
 
 	h.logger.Error("failed to "+action+" provider", zap.String("id", id), zap.Error(err))
 	writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to "+action+" provider")

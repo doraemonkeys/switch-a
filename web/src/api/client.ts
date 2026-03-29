@@ -55,6 +55,7 @@ export type {
   BatchAction,
   BatchProviderRequest,
   BatchProviderResponse,
+  ExportedRoutingPolicy,
   ExportedConfig,
   ImportConfigRequest,
   ImportPreviewResponse,
@@ -142,6 +143,40 @@ function buildStatsQuery(params?: StatsParams): string {
   if (params?.period) query.set("period", params.period);
   if (params?.granularity) query.set("granularity", params.granularity);
   return query.toString();
+}
+
+type RoutingPolicyResponse = Pick<RoutingPolicy, "id" | "api_type"> &
+  Partial<RoutingPolicy>;
+
+function normalizeStringList(values?: string[] | null): string[] {
+  return Array.from(
+    new Set(
+      (values ?? [])
+        .map((value) => value.trim())
+        .filter((value) => value !== ""),
+    ),
+  );
+}
+
+function normalizeRoutingPolicy(policy: RoutingPolicyResponse): RoutingPolicy {
+  const targetProviderId = policy.target_provider_id ?? null;
+
+  return {
+    ...policy,
+    // Older backend builds may not emit the refactored lifecycle fields yet.
+    // Normalizing here lets the admin UI speak the new resource shape without
+    // scattering compatibility defaults through every caller.
+    enabled: policy.enabled ?? true,
+    model_match_type: policy.model_match_type ?? null,
+    model_match_value: policy.model_match_value ?? null,
+    target_provider_id: targetProviderId,
+    allowed_group_ids: targetProviderId
+      ? []
+      : normalizeStringList(policy.allowed_group_ids),
+    allowed_vendors: targetProviderId
+      ? []
+      : normalizeStringList(policy.allowed_vendors),
+  };
 }
 
 // Request factory with dependency injection
@@ -273,18 +308,28 @@ function createGroupsApi(request: AuthenticatedRequestFn) {
 
 function createRoutingPoliciesApi(request: AuthenticatedRequestFn) {
   return {
-    list: () => request<RoutingPolicy[]>("/routing-policies"),
-    get: (id: string) => request<RoutingPolicy>(`/routing-policies/${id}`),
-    create: (data: RoutingPolicyInput) =>
-      request<RoutingPolicy>("/routing-policies", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
-    update: (id: string, data: RoutingPolicyInput) =>
-      request<RoutingPolicy>(`/routing-policies/${id}`, {
-        method: "PUT",
-        body: JSON.stringify(data),
-      }),
+    list: async () =>
+      (await request<RoutingPolicyResponse[]>("/routing-policies")).map(
+        normalizeRoutingPolicy,
+      ),
+    get: async (id: string) =>
+      normalizeRoutingPolicy(
+        await request<RoutingPolicyResponse>(`/routing-policies/${id}`),
+      ),
+    create: async (data: RoutingPolicyInput) =>
+      normalizeRoutingPolicy(
+        await request<RoutingPolicyResponse>("/routing-policies", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      ),
+    update: async (id: string, data: RoutingPolicyInput) =>
+      normalizeRoutingPolicy(
+        await request<RoutingPolicyResponse>(`/routing-policies/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(data),
+        }),
+      ),
     delete: (id: string) =>
       request<void>(`/routing-policies/${id}`, { method: "DELETE" }),
   };

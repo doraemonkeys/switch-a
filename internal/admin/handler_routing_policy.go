@@ -19,23 +19,55 @@ import (
 // RoutingPolicyPayload keeps the admin API contract flat so the frontend does
 // not depend on storage-only join tables.
 type RoutingPolicyPayload struct {
-	ID              string                            `json:"id"`
-	APIType         string                            `json:"api_type"`
-	ModelMatchType  model.RoutingPolicyModelMatchType `json:"model_match_type,omitempty"`
-	ModelMatchValue string                            `json:"model_match_value,omitempty"`
-	AllowedGroupIDs []string                          `json:"allowed_group_ids"`
-	AllowedVendors  []string                          `json:"allowed_vendors"`
-	CreatedAt       time.Time                         `json:"created_at,omitempty"`
-	UpdatedAt       time.Time                         `json:"updated_at,omitempty"`
+	ID               string                            `json:"id"`
+	APIType          string                            `json:"api_type"`
+	ModelMatchType   model.RoutingPolicyModelMatchType `json:"model_match_type,omitempty"`
+	ModelMatchValue  string                            `json:"model_match_value,omitempty"`
+	Enabled          bool                              `json:"enabled"`
+	TargetProviderID *string                           `json:"target_provider_id,omitempty"`
+	AllowedGroupIDs  []string                          `json:"allowed_group_ids"`
+	AllowedVendors   []string                          `json:"allowed_vendors"`
+	CreatedAt        time.Time                         `json:"created_at,omitempty"`
+	UpdatedAt        time.Time                         `json:"updated_at,omitempty"`
+}
+
+type routingPolicyOptionalString struct {
+	set   bool
+	value *string
+}
+
+func (field *routingPolicyOptionalString) UnmarshalJSON(data []byte) error {
+	field.set = true
+	if string(data) == "null" {
+		field.value = nil
+		return nil
+	}
+
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	field.value = &value
+	return nil
+}
+
+func (field routingPolicyOptionalString) IsSet() bool {
+	return field.set
+}
+
+func (field routingPolicyOptionalString) Value() *string {
+	return field.value
 }
 
 // RoutingPolicyRequest mirrors the frontend write contract for full-rule upserts.
 type RoutingPolicyRequest struct {
-	APIType         string                             `json:"api_type"`
-	ModelMatchType  *model.RoutingPolicyModelMatchType `json:"model_match_type"`
-	ModelMatchValue *string                            `json:"model_match_value"`
-	AllowedGroupIDs []string                           `json:"allowed_group_ids"`
-	AllowedVendors  []string                           `json:"allowed_vendors"`
+	APIType          string                             `json:"api_type"`
+	ModelMatchType   *model.RoutingPolicyModelMatchType `json:"model_match_type"`
+	ModelMatchValue  *string                            `json:"model_match_value"`
+	Enabled          *bool                              `json:"enabled"`
+	TargetProviderID routingPolicyOptionalString        `json:"target_provider_id"`
+	AllowedGroupIDs  []string                           `json:"allowed_group_ids"`
+	AllowedVendors   []string                           `json:"allowed_vendors"`
 }
 
 type routingPolicyValidationError struct {
@@ -98,16 +130,25 @@ func routingPolicyPayload(policy *model.RoutingPolicy) RoutingPolicyPayload {
 	for _, vendor := range policy.Vendors {
 		vendors = append(vendors, vendor.Vendor)
 	}
+	var targetProviderID *string
+	if policy.TargetProviderID != nil {
+		trimmed := strings.TrimSpace(*policy.TargetProviderID)
+		if trimmed != "" {
+			targetProviderID = &trimmed
+		}
+	}
 
 	return RoutingPolicyPayload{
-		ID:              formatRoutingPolicyID(policy.ID),
-		APIType:         policy.APIType,
-		ModelMatchType:  policy.ModelMatchType,
-		ModelMatchValue: policy.ModelMatchValue,
-		AllowedGroupIDs: normalizeRoutingPolicyStrings(groupIDs),
-		AllowedVendors:  normalizeRoutingPolicyStrings(vendors),
-		CreatedAt:       policy.CreatedAt,
-		UpdatedAt:       policy.UpdatedAt,
+		ID:               formatRoutingPolicyID(policy.ID),
+		APIType:          policy.APIType,
+		ModelMatchType:   policy.ModelMatchType,
+		ModelMatchValue:  policy.ModelMatchValue,
+		Enabled:          policy.Enabled,
+		TargetProviderID: targetProviderID,
+		AllowedGroupIDs:  normalizeRoutingPolicyStrings(groupIDs),
+		AllowedVendors:   normalizeRoutingPolicyStrings(vendors),
+		CreatedAt:        policy.CreatedAt,
+		UpdatedAt:        policy.UpdatedAt,
 	}
 }
 
@@ -119,63 +160,25 @@ func routingPolicyPayloads(policies []model.RoutingPolicy) []RoutingPolicyPayloa
 	return payloads
 }
 
-func (h *Handler) buildRoutingPolicy(ctx context.Context, req RoutingPolicyRequest) (*model.RoutingPolicy, error) {
-	apiType := strings.TrimSpace(req.APIType)
-	if apiType == "" {
-		return nil, invalidRoutingPolicy("API type is required")
+func (h *Handler) buildRoutingPolicy(
+	ctx context.Context,
+	req RoutingPolicyRequest,
+	current *model.RoutingPolicy,
+) (*model.RoutingPolicy, error) {
+	catalog, err := h.loadRoutingPolicyCatalog(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if !IsValidAPIType(apiType) {
-		return nil, invalidRoutingPolicy("Invalid API type")
-	}
-
-	modelMatchType := model.RoutingPolicyModelMatchTypeNone
-	if req.ModelMatchType != nil {
-		modelMatchType = model.RoutingPolicyModelMatchType(strings.TrimSpace(string(*req.ModelMatchType)))
-	}
-	if !model.IsValidRoutingPolicyModelMatchType(modelMatchType) {
-		return nil, invalidRoutingPolicy("Invalid model match type")
-	}
-
-	modelMatchValue := ""
-	if req.ModelMatchValue != nil {
-		modelMatchValue = strings.TrimSpace(*req.ModelMatchValue)
-	}
-	if modelMatchType == model.RoutingPolicyModelMatchTypeNone && modelMatchValue != "" {
-		return nil, invalidRoutingPolicy("Model match value requires a model match type")
-	}
-	if modelMatchType != model.RoutingPolicyModelMatchTypeNone && modelMatchValue == "" {
-		return nil, invalidRoutingPolicy("Model match value is required when model match type is set")
-	}
-
-	allowedGroupIDs := normalizeRoutingPolicyStrings(req.AllowedGroupIDs)
-	allowedVendors := normalizeRoutingPolicyStrings(req.AllowedVendors)
-	if len(allowedGroupIDs) == 0 && len(allowedVendors) == 0 {
-		return nil, invalidRoutingPolicy("At least one allowed group or vendor is required")
-	}
-
-	for _, groupID := range allowedGroupIDs {
-		if _, err := h.store.GetGroup(ctx, groupID); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return nil, invalidRoutingPolicy("Group not found: " + groupID)
-			}
-			return nil, err
-		}
-	}
-
-	policy := &model.RoutingPolicy{
-		APIType:         apiType,
-		ModelMatchType:  modelMatchType,
-		ModelMatchValue: modelMatchValue,
-		Groups:          make([]model.RoutingPolicyGroup, 0, len(allowedGroupIDs)),
-		Vendors:         make([]model.RoutingPolicyVendor, 0, len(allowedVendors)),
-	}
-	for _, groupID := range allowedGroupIDs {
-		policy.Groups = append(policy.Groups, model.RoutingPolicyGroup{GroupID: groupID})
-	}
-	for _, vendor := range allowedVendors {
-		policy.Vendors = append(policy.Vendors, model.RoutingPolicyVendor{Vendor: vendor})
-	}
-	return policy, nil
+	return buildRoutingPolicyFromCatalog(routingPolicySpec{
+		APIType:             req.APIType,
+		ModelMatchType:      req.ModelMatchType,
+		ModelMatchValue:     req.ModelMatchValue,
+		Enabled:             req.Enabled,
+		TargetProviderID:    req.TargetProviderID.Value(),
+		TargetProviderIDSet: req.TargetProviderID.IsSet(),
+		AllowedGroupIDs:     req.AllowedGroupIDs,
+		AllowedVendors:      req.AllowedVendors,
+	}, catalog, current)
 }
 
 func writeRoutingPolicyError(w http.ResponseWriter, err error) bool {
@@ -229,7 +232,7 @@ func (h *Handler) CreateRoutingPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy, err := h.buildRoutingPolicy(r.Context(), req)
+	policy, err := h.buildRoutingPolicy(r.Context(), req, nil)
 	if err != nil {
 		if writeRoutingPolicyError(w, err) {
 			return
@@ -267,7 +270,18 @@ func (h *Handler) UpdateRoutingPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy, err := h.buildRoutingPolicy(r.Context(), req)
+	current, err := h.store.GetRoutingPolicy(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, ErrCodeNotFound, "Routing policy not found: "+formatRoutingPolicyID(id))
+			return
+		}
+		h.logger.Error("failed to get routing policy before update", zap.Uint("id", id), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update routing policy")
+		return
+	}
+
+	policy, err := h.buildRoutingPolicy(r.Context(), req, current)
 	if err != nil {
 		if writeRoutingPolicyError(w, err) {
 			return

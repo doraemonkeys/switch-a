@@ -17,7 +17,7 @@ describe("createApiClient routing policies API", () => {
     });
   });
 
-  it("should list routing policies", async () => {
+  it("normalizes listed routing policies to the lifecycle-aware shape", async () => {
     const policies = [
       {
         id: "policy-1",
@@ -26,6 +26,14 @@ describe("createApiClient routing policies API", () => {
         model_match_value: "gpt-5",
         allowed_group_ids: ["primary"],
         allowed_vendors: ["openai"],
+      },
+      {
+        id: "policy-2",
+        api_type: "codex",
+        enabled: false,
+        target_provider_id: "provider-1",
+        allowed_group_ids: ["stale-group"],
+        allowed_vendors: ["stale-vendor"],
       },
     ];
     mockHttpClient.mockResponse({
@@ -36,20 +44,43 @@ describe("createApiClient routing policies API", () => {
 
     const result = await api.routingPolicies.list();
 
-    expect(result).toEqual(policies);
+    expect(result).toEqual([
+      {
+        id: "policy-1",
+        api_type: "codex",
+        enabled: true,
+        model_match_type: "prefix",
+        model_match_value: "gpt-5",
+        target_provider_id: null,
+        allowed_group_ids: ["primary"],
+        allowed_vendors: ["openai"],
+      },
+      {
+        id: "policy-2",
+        api_type: "codex",
+        enabled: false,
+        model_match_type: null,
+        model_match_value: null,
+        target_provider_id: "provider-1",
+        allowed_group_ids: [],
+        allowed_vendors: [],
+      },
+    ]);
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/routing-policies",
       expect.any(Object),
     );
   });
 
-  it("should create a routing policy", async () => {
+  it("should create an exact-provider routing policy", async () => {
     const input = {
       api_type: "codex",
+      enabled: true,
       model_match_type: "exact" as const,
       model_match_value: "gpt-5.1-codex",
-      allowed_group_ids: ["primary"],
-      allowed_vendors: ["openai"],
+      target_provider_id: "provider-1",
+      allowed_group_ids: [],
+      allowed_vendors: [],
     };
     mockHttpClient.mockResponse({
       ok: true,
@@ -68,11 +99,13 @@ describe("createApiClient routing policies API", () => {
     );
   });
 
-  it("should update a routing policy", async () => {
+  it("should update a filter-mode routing policy", async () => {
     const input = {
       api_type: "codex",
+      enabled: false,
       model_match_type: null,
       model_match_value: null,
+      target_provider_id: null,
       allowed_group_ids: ["primary"],
       allowed_vendors: ["openai"],
     };

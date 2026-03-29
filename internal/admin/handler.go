@@ -52,6 +52,7 @@ type Store interface {
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 	SetConfig(ctx context.Context, key, value string) error
 	SetConfigs(ctx context.Context, configs map[string]string) error
+	ApplyConfigImport(ctx context.Context, bundle *store.ConfigImportBundle) error
 
 	// Log operations
 	ListLogs(ctx context.Context, filter model.LogFilter) ([]model.RequestLog, error)
@@ -157,6 +158,10 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, cfg delet
 	}
 
 	if err := cfg.deleteFunc(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrRoutingPolicyReferenceConflict) {
+			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+			return
+		}
 		h.logger.Error("failed to delete "+strings.ToLower(cfg.resourceType), zap.String("id", id), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to delete "+strings.ToLower(cfg.resourceType))
 		return

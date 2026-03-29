@@ -10,7 +10,7 @@ import type {
 import { createMockApiClient, createWrapper } from "./test-utils";
 
 const mockExportedConfig: ExportedConfig = {
-  version: "1.0",
+  version: "3.0",
   exported_at: "2024-01-01T00:00:00Z",
   providers: [
     {
@@ -37,6 +37,17 @@ const mockExportedConfig: ExportedConfig = {
       enabled: true,
     },
   ],
+  routing_policies: [
+    {
+      api_type: "claude",
+      enabled: true,
+      model_match_type: "prefix",
+      model_match_value: "claude-3",
+      target_provider_id: null,
+      allowed_group_ids: ["g1"],
+      allowed_vendors: [],
+    },
+  ],
   settings: {
     auth_mode: "auto",
   },
@@ -47,6 +58,7 @@ const mockPreviewResponse: ImportPreviewResponse = {
   changes: {
     providers: { add: 1, update: 0, delete: 0 },
     groups: { add: 0, update: 1, delete: 0 },
+    routing_policies: { add: 0, update: 1, delete: 0 },
     settings: { add: 0, update: 2, delete: 0 },
   },
   warnings: ["Provider API key will be overwritten"],
@@ -57,6 +69,7 @@ const mockImportResult: ImportResult = {
   applied: {
     providers: { added: 1, updated: 0 },
     groups: { added: 0, updated: 1 },
+    routing_policies: { added: 0, updated: 1 },
     settings: { added: 0, updated: 2 },
   },
 };
@@ -166,6 +179,7 @@ describe("useConfigExport", () => {
     const importData = {
       providers: mockExportedConfig.providers,
       groups: mockExportedConfig.groups,
+      routing_policies: mockExportedConfig.routing_policies,
       settings: mockExportedConfig.settings,
     };
 
@@ -187,6 +201,7 @@ describe("useConfigExport", () => {
     const importData = {
       providers: mockExportedConfig.providers,
       groups: mockExportedConfig.groups,
+      routing_policies: mockExportedConfig.routing_policies,
       settings: mockExportedConfig.settings,
     };
 
@@ -216,6 +231,7 @@ describe("useConfigExport", () => {
     const importData = {
       providers: [],
       groups: [],
+      routing_policies: [],
       settings: {},
     };
 
@@ -250,6 +266,7 @@ describe("useConfigExport", () => {
         await result.current.importConfig({
           providers: [],
           groups: [],
+          routing_policies: [],
           settings: {},
         });
       } catch {
@@ -276,6 +293,7 @@ describe("useConfigExport", () => {
         await result.current.previewImport({
           providers: [],
           groups: [],
+          routing_policies: [],
           settings: {},
         });
       } catch {

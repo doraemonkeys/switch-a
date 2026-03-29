@@ -75,6 +75,10 @@ func newMockStore() *mockStore {
 	}
 }
 
+func stringPtr(value string) *string {
+	return &value
+}
+
 func (m *mockStore) ListProvidersByAPIType(_ context.Context, _ string) ([]model.Provider, error) {
 	if m.err != nil {
 		return nil, m.err

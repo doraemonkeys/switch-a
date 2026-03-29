@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import { ConfigImportModal } from "./ConfigImportModal";
 import type { ImportPreviewResponse, ImportResult } from "../api/types";
 
@@ -9,6 +15,7 @@ const mockPreviewResponse: ImportPreviewResponse = {
   changes: {
     providers: { add: 2, update: 1, delete: 0 },
     groups: { add: 1, update: 0, delete: 0 },
+    routing_policies: { add: 0, update: 1, delete: 0 },
     settings: { add: 0, update: 3, delete: 0 },
   },
   warnings: [],
@@ -19,6 +26,7 @@ const mockImportResult: ImportResult = {
   applied: {
     providers: { added: 2, updated: 1 },
     groups: { added: 1, updated: 0 },
+    routing_policies: { added: 0, updated: 1 },
     settings: { added: 0, updated: 3 },
   },
 };
@@ -390,5 +398,145 @@ describe("Click to open file dialog", () => {
     fireEvent.click(dropZone);
 
     expect(clickSpy).toHaveBeenCalled();
+  });
+});
+
+describe("Routing policy config transfer", () => {
+  it("passes routing policies through preview and treats routing-policy-only changes as actionable", async () => {
+    vi.useRealTimers();
+    const onPreview = vi.fn().mockResolvedValue({
+      dry_run: true,
+      changes: {
+        providers: { add: 0, update: 0, delete: 0 },
+        groups: { add: 0, update: 0, delete: 0 },
+        routing_policies: { add: 0, update: 0, delete: 1 },
+        settings: { add: 0, update: 0, delete: 0 },
+      },
+      warnings: [],
+    } satisfies ImportPreviewResponse);
+    const routingPolicies = [
+      {
+        api_type: "claude",
+        enabled: true,
+        model_match_type: "exact" as const,
+        model_match_value: "claude-3-7-sonnet",
+        target_provider_id: "provider-1",
+        allowed_group_ids: [],
+        allowed_vendors: [],
+      },
+    ];
+    const fileContents = JSON.stringify({
+      version: "3.0",
+      exported_at: "2026-03-29T00:00:00Z",
+      providers: [],
+      groups: [],
+      routing_policies: routingPolicies,
+      settings: {},
+    });
+
+    render(
+      <ConfigImportModal
+        isOpen={true}
+        onClose={vi.fn()}
+        onPreview={onPreview}
+        onImport={vi.fn()}
+        importing={false}
+      />,
+    );
+
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["ignored"], "config.json", {
+      type: "application/json",
+    });
+    Object.defineProperty(file, "text", {
+      value: vi.fn().mockResolvedValue(fileContents),
+    });
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(onPreview).toHaveBeenCalledWith({
+        version: "3.0",
+        providers: [],
+        groups: [],
+        routing_policies: routingPolicies,
+        settings: {},
+      });
+    });
+
+    expect(await screen.findByText("Routing Policies")).toBeInTheDocument();
+    expect(screen.getByText("-1 删除")).toBeInTheDocument();
+    expect(
+      screen.queryByText("没有检测到任何变更，配置已是最新"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("确认导入")).toBeEnabled();
+  });
+
+  it("preserves routing policies through import and shows routing-policy apply counts", async () => {
+    vi.useRealTimers();
+    const onImport = vi.fn().mockResolvedValue(mockImportResult);
+    const routingPolicies = [
+      {
+        api_type: "claude",
+        enabled: true,
+        model_match_type: "exact" as const,
+        model_match_value: "claude-3-7-sonnet",
+        target_provider_id: "provider-1",
+        allowed_group_ids: [],
+        allowed_vendors: [],
+      },
+    ];
+    const fileContents = JSON.stringify({
+      version: "3.0",
+      exported_at: "2026-03-29T00:00:00Z",
+      providers: [],
+      groups: [],
+      routing_policies: routingPolicies,
+      settings: {},
+    });
+
+    render(
+      <ConfigImportModal
+        isOpen={true}
+        onClose={vi.fn()}
+        onPreview={vi.fn().mockResolvedValue(mockPreviewResponse)}
+        onImport={onImport}
+        importing={false}
+      />,
+    );
+
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["ignored"], "config.json", {
+      type: "application/json",
+    });
+    Object.defineProperty(file, "text", {
+      value: vi.fn().mockResolvedValue(fileContents),
+    });
+
+    fireEvent.change(input, { target: { files: [file] } });
+    await screen.findByText("确认导入");
+
+    fireEvent.click(screen.getByText("确认导入"));
+
+    await waitFor(() => {
+      expect(onImport).toHaveBeenCalledWith({
+        version: "3.0",
+        providers: [],
+        groups: [],
+        routing_policies: routingPolicies,
+        settings: {},
+      });
+    });
+
+    expect(await screen.findByText("导入成功")).toBeInTheDocument();
+    const routingPoliciesRow = screen
+      .getByText("Routing Policies")
+      .closest("div");
+    expect(routingPoliciesRow).not.toBeNull();
+    expect(routingPoliciesRow).toHaveTextContent("1 更新");
   });
 });

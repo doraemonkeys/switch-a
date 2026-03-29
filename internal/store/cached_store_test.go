@@ -30,11 +30,13 @@ func (c *mockClock) Advance(d time.Duration) {
 // configOnlyStore wraps an internal.Store and tracks config method calls.
 type configOnlyStore struct {
 	internal.Store
-	configs   map[string]string
-	getCount  int
-	setCount  int
-	setErr    error
-	setsCount int
+	configs          map[string]string
+	getCount         int
+	setCount         int
+	setErr           error
+	setsCount        int
+	applyImportCount int
+	applyImportErr   error
 }
 
 func newConfigOnlyStore(base internal.Store) *configOnlyStore {
@@ -58,12 +60,56 @@ func (s *configOnlyStore) SetConfig(ctx context.Context, key, value string) erro
 	return nil
 }
 
+type configOnlyStoreWithoutImport struct {
+	internal.Store
+	configs  map[string]string
+	getCount int
+}
+
+func newConfigOnlyStoreWithoutImport(base internal.Store) *configOnlyStoreWithoutImport {
+	return &configOnlyStoreWithoutImport{
+		Store:   base,
+		configs: make(map[string]string),
+	}
+}
+
+func (s *configOnlyStoreWithoutImport) GetConfig(ctx context.Context, key string) (string, error) {
+	s.getCount++
+	return s.configs[key], nil
+}
+
+func (s *configOnlyStoreWithoutImport) SetConfig(ctx context.Context, key, value string) error {
+	s.configs[key] = value
+	return nil
+}
+
+func (s *configOnlyStoreWithoutImport) SetConfigs(ctx context.Context, configs map[string]string) error {
+	for k, v := range configs {
+		s.configs[k] = v
+	}
+	return nil
+}
+
 func (s *configOnlyStore) SetConfigs(ctx context.Context, configs map[string]string) error {
 	s.setsCount++
 	if s.setErr != nil {
 		return s.setErr
 	}
 	for k, v := range configs {
+		s.configs[k] = v
+	}
+	return nil
+}
+
+func (s *configOnlyStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error {
+	s.applyImportCount++
+	if s.applyImportErr != nil {
+		return s.applyImportErr
+	}
+	if bundle == nil {
+		return nil
+	}
+	for k, v := range bundle.Settings {
 		s.configs[k] = v
 	}
 	return nil
@@ -255,6 +301,81 @@ func TestCachedStore_InvalidateAllConfig(t *testing.T) {
 	_, _ = cached.GetConfig(ctx, "key2")
 	if mock.getCount != 4 {
 		t.Errorf("expected 4 store calls after invalidation, got %d", mock.getCount)
+	}
+}
+
+func TestCachedStore_ApplyConfigImport_InvalidatesLiveConfigCache(t *testing.T) {
+	cached, mock, _ := setupCachedStoreTest(t)
+	ctx := context.Background()
+
+	if _, err := cached.GetConfig(ctx, "key1"); err != nil {
+		t.Fatalf("GetConfig() error = %v", err)
+	}
+	if mock.getCount != 1 {
+		t.Fatalf("getCount = %d, want 1 after warm cache", mock.getCount)
+	}
+
+	if err := cached.ApplyConfigImport(ctx, &ConfigImportBundle{
+		Settings: map[string]string{"key1": "imported"},
+	}); err != nil {
+		t.Fatalf("ApplyConfigImport() error = %v", err)
+	}
+	if mock.applyImportCount != 1 {
+		t.Fatalf("applyImportCount = %d, want 1", mock.applyImportCount)
+	}
+
+	value, err := cached.GetConfig(ctx, "key1")
+	if err != nil {
+		t.Fatalf("GetConfig() after import error = %v", err)
+	}
+	if value != "imported" {
+		t.Fatalf("GetConfig() after import = %q, want %q", value, "imported")
+	}
+	if mock.getCount != 2 {
+		t.Fatalf("getCount = %d, want 2 after cache invalidation", mock.getCount)
+	}
+}
+
+func TestCachedStore_ApplyConfigImport_UnsupportedWrappedStoreFails(t *testing.T) {
+	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
+	if err != nil {
+		t.Fatalf("failed to create SQLite store: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlStore.Close() })
+
+	base := newConfigOnlyStoreWithoutImport(sqlStore)
+	base.configs["key1"] = "value1"
+
+	cached := NewCachedStore(CachedStoreConfig{
+		Store:    base,
+		CacheTTL: 5 * time.Second,
+		Clock:    &mockClock{now: time.Now()},
+	})
+
+	ctx := context.Background()
+	if _, err := cached.GetConfig(ctx, "key1"); err != nil {
+		t.Fatalf("GetConfig() error = %v", err)
+	}
+	if base.getCount != 1 {
+		t.Fatalf("getCount = %d, want 1 after warm cache", base.getCount)
+	}
+
+	err = cached.ApplyConfigImport(ctx, &ConfigImportBundle{
+		Settings: map[string]string{"key1": "imported"},
+	})
+	if err == nil {
+		t.Fatal("ApplyConfigImport() error = nil, want unsupported-store failure")
+	}
+
+	value, err := cached.GetConfig(ctx, "key1")
+	if err != nil {
+		t.Fatalf("GetConfig() after failed import error = %v", err)
+	}
+	if value != "value1" {
+		t.Fatalf("GetConfig() after failed import = %q, want cached value1", value)
+	}
+	if base.getCount != 1 {
+		t.Fatalf("getCount = %d, want cache to remain warm after failed import", base.getCount)
 	}
 }
 

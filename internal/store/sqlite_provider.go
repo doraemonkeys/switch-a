@@ -10,6 +10,14 @@ import (
 	"gorm.io/gorm"
 )
 
+func providerAPITypeSet(apiTypes []model.ProviderAPIType) map[string]struct{} {
+	supported := make(map[string]struct{}, len(apiTypes))
+	for _, apiType := range apiTypes {
+		supported[apiType.APIType] = struct{}{}
+	}
+	return supported
+}
+
 func (s *SQLiteStore) ListProviders(ctx context.Context) ([]model.Provider, error) {
 	var providers []model.Provider
 	if err := providerQueryWithState(s.db.WithContext(ctx)).Find(&providers).Error; err != nil {
@@ -120,6 +128,18 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 		if err := validateExclusiveCredentialBinding(tx, p.ID, bindingAccountID); err != nil {
 			return err
 		}
+		missingPolicy, err := findExactProviderRoutingPolicyMissingAPIType(tx, p.ID, providerAPITypeSet(p.APITypes))
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if missingPolicy != nil {
+			return &RoutingPolicyProviderAPITypeConflictError{
+				ProviderID: p.ID,
+				APIType:    missingPolicy.APIType,
+				PolicyID:   missingPolicy.ID,
+				Key:        missingPolicy.NaturalKey(),
+			}
+		}
 
 		// Delete existing API types
 		if err := tx.Where("provider_id = ?", p.ID).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
@@ -226,6 +246,17 @@ func (s *SQLiteStore) UpdateProviderCredential(ctx context.Context, id string, c
 
 func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		referencedBy, err := findRoutingPolicyTargetingProvider(tx, id)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if referencedBy != nil {
+			return &RoutingPolicyProviderReferenceConflictError{
+				ProviderID: id,
+				PolicyID:   referencedBy.ID,
+				Key:        referencedBy.NaturalKey(),
+			}
+		}
 		// Delete API types first
 		if err := tx.Where("provider_id = ?", id).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
 			return err

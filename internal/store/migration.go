@@ -11,22 +11,25 @@ import (
 )
 
 const (
-	legacyStickyEnabledConfigKey = "sticky_enabled"
-	stickyModeConfigKey          = "sticky_mode"
-	legacyMaxRetriesConfigKey    = "max_retries"
-	globalMaxAttemptsConfigKey   = "global_max_attempts"
-	providersTableName           = "providers"
-	providerCredentialDataColumn = "credential_data"
-	requestLogsTableName         = "request_logs"
-	legacyWebSocketColumnName    = "is_web_socket"
-	webSocketColumnName          = "is_websocket"
-	sessionCommittedColumnName   = "session_committed"
-	clientVisibleColumnName      = "client_visible"
-	stickyWrittenColumnName      = "sticky_written"
-	probeOutcomeColumnName       = "probe_outcome"
-	terminalCauseColumnName      = "terminal_cause"
-	commitSourceColumnName       = "commit_source"
-	recoveryActionColumnName     = "recovery_action"
+	legacyStickyEnabledConfigKey      = "sticky_enabled"
+	stickyModeConfigKey               = "sticky_mode"
+	legacyMaxRetriesConfigKey         = "max_retries"
+	globalMaxAttemptsConfigKey        = "global_max_attempts"
+	providersTableName                = "providers"
+	providerCredentialDataColumn      = "credential_data"
+	routingPoliciesTableName          = "routing_policies"
+	routingPolicyEnabledColumn        = "enabled"
+	routingPolicyTargetProviderColumn = "target_provider_id"
+	requestLogsTableName              = "request_logs"
+	legacyWebSocketColumnName         = "is_web_socket"
+	webSocketColumnName               = "is_websocket"
+	sessionCommittedColumnName        = "session_committed"
+	clientVisibleColumnName           = "client_visible"
+	stickyWrittenColumnName           = "sticky_written"
+	probeOutcomeColumnName            = "probe_outcome"
+	terminalCauseColumnName           = "terminal_cause"
+	commitSourceColumnName            = "commit_source"
+	recoveryActionColumnName          = "recovery_action"
 )
 
 const usageLimitPolicyColumnName = "usage_limit_policy"
@@ -333,6 +336,55 @@ func tableColumnExists(db *gorm.DB, tableName, columnName string) (bool, error) 
 
 func requestLogsColumnExists(db *gorm.DB, columnName string) (bool, error) {
 	return tableColumnExists(db, requestLogsTableName, columnName)
+}
+
+// migrateRoutingPolicyLifecycleStorage adds lifecycle/reference columns without
+// dropping the natural-key uniqueness that older builds already relied on.
+func migrateRoutingPolicyLifecycleStorage(db *gorm.DB) error {
+	hasEnabled, err := tableColumnExists(db, routingPoliciesTableName, routingPolicyEnabledColumn)
+	if err != nil {
+		return fmt.Errorf("check routing policy enabled column: %w", err)
+	}
+	hasTargetProviderID, err := tableColumnExists(db, routingPoliciesTableName, routingPolicyTargetProviderColumn)
+	if err != nil {
+		return fmt.Errorf("check routing policy target provider column: %w", err)
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if !hasEnabled {
+			if err := tx.Exec(
+				fmt.Sprintf(
+					`ALTER TABLE %s ADD COLUMN %s BOOLEAN NOT NULL DEFAULT 1`,
+					routingPoliciesTableName,
+					routingPolicyEnabledColumn,
+				),
+			).Error; err != nil {
+				return fmt.Errorf("add routing policy enabled column: %w", err)
+			}
+		}
+		if err := tx.Exec(
+			fmt.Sprintf(
+				`UPDATE %s SET %s = 1 WHERE %s IS NULL`,
+				routingPoliciesTableName,
+				routingPolicyEnabledColumn,
+				routingPolicyEnabledColumn,
+			),
+		).Error; err != nil {
+			return fmt.Errorf("backfill routing policy enabled column: %w", err)
+		}
+		if !hasTargetProviderID {
+			if err := tx.Exec(
+				fmt.Sprintf(
+					`ALTER TABLE %s ADD COLUMN %s TEXT`,
+					routingPoliciesTableName,
+					routingPolicyTargetProviderColumn,
+				),
+			).Error; err != nil {
+				return fmt.Errorf("add routing policy target provider column: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 // migrateProviderStateTables backfills the new credential/auth tables without

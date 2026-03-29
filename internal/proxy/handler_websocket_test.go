@@ -444,7 +444,7 @@ func TestHandler_ServeHTTP_WebSocket_WithSelector(t *testing.T) {
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_StickyUpdateKeepsHandshakeModelDimensions(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModelDimensions(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
@@ -453,14 +453,14 @@ func TestHandler_ServeHTTP_WebSocket_StickyUpdateKeepsHandshakeModelDimensions(t
 		wantStickyModel string
 	}{
 		{
-			name:            "unknown handshake model falls back to api_type stickiness",
+			name:            "unknown handshake model upgrades to resolved model stickiness",
 			queryModel:      "",
-			wantStickyModel: ModelUnknown,
+			wantStickyModel: "resolved-model",
 		},
 		{
-			name:            "known handshake model keeps model stickiness",
+			name:            "known handshake model is replaced by resolved model stickiness",
 			queryModel:      "handshake-model",
-			wantStickyModel: "handshake-model",
+			wantStickyModel: "resolved-model",
 		},
 	}
 

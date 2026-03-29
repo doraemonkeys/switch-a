@@ -112,6 +112,11 @@ func TestGetRoutingPolicy_InvalidID(t *testing.T) {
 func TestCreateRoutingPolicy(t *testing.T) {
 	h, st, _ := testHandler()
 	st.groups["group-1"] = &model.Group{ID: "group-1", Name: "Primary"}
+	st.providers["provider-openai"] = &model.Provider{
+		ID:       "provider-openai",
+		Vendor:   "openai",
+		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://openai.example"}},
+	}
 
 	body := `{
 		"api_type": "codex",
@@ -213,6 +218,11 @@ func TestUpdateRoutingPolicy(t *testing.T) {
 	h, st, _ := testHandler()
 	st.groups["group-1"] = &model.Group{ID: "group-1", Name: "Primary"}
 	st.groups["group-2"] = &model.Group{ID: "group-2", Name: "Secondary"}
+	st.providers["provider-openai"] = &model.Provider{
+		ID:       "provider-openai",
+		Vendor:   "openai",
+		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://openai.example"}},
+	}
 	st.routingPolicies[7] = &model.RoutingPolicy{
 		ID:      7,
 		APIType: "codex",
@@ -244,6 +254,109 @@ func TestUpdateRoutingPolicy(t *testing.T) {
 	}
 	if len(policy.Groups) != 1 || policy.Groups[0].GroupID != "group-2" {
 		t.Fatalf("Groups = %#v, want group-2", policy.Groups)
+	}
+}
+
+func TestUpdateRoutingPolicy_ClearsExactProviderWhenSwitchingBackToFilterMode(t *testing.T) {
+	h, st, _ := testHandler()
+	st.groups["group-filter"] = &model.Group{ID: "group-filter", Name: "Filter"}
+	st.providers["provider-openai"] = &model.Provider{
+		ID:       "provider-openai",
+		Vendor:   "openai",
+		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://openai.example"}},
+	}
+	targetProviderID := "provider-openai"
+	st.routingPolicies[7] = &model.RoutingPolicy{
+		ID:               7,
+		APIType:          "codex",
+		ModelMatchType:   model.RoutingPolicyModelMatchTypeExact,
+		ModelMatchValue:  "gpt-5",
+		Enabled:          true,
+		TargetProviderID: &targetProviderID,
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/routing-policies/7", bytes.NewBufferString(`{
+		"api_type": "codex",
+		"model_match_type": "exact",
+		"model_match_value": "gpt-5",
+		"enabled": false,
+		"target_provider_id": null,
+		"allowed_group_ids": ["group-filter"],
+		"allowed_vendors": ["openai"]
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	setPathValue(req, "id", "7")
+	w := httptest.NewRecorder()
+
+	h.UpdateRoutingPolicy(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	policy := st.routingPolicies[7]
+	if policy.TargetProviderID != nil {
+		t.Fatalf("TargetProviderID = %#v, want nil after switching to filter mode", policy.TargetProviderID)
+	}
+	if policy.Enabled {
+		t.Fatal("Enabled = true, want false from update payload")
+	}
+	if len(policy.Groups) != 1 || policy.Groups[0].GroupID != "group-filter" {
+		t.Fatalf("Groups = %#v, want group-filter", policy.Groups)
+	}
+	if len(policy.Vendors) != 1 || policy.Vendors[0].Vendor != "openai" {
+		t.Fatalf("Vendors = %#v, want openai", policy.Vendors)
+	}
+}
+
+func TestUpdateRoutingPolicy_ClearsExactProviderWhenFilterModeOmitsTargetProviderField(t *testing.T) {
+	h, st, _ := testHandler()
+	st.groups["group-filter"] = &model.Group{ID: "group-filter", Name: "Filter"}
+	st.providers["provider-openai"] = &model.Provider{
+		ID:       "provider-openai",
+		Vendor:   "openai",
+		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://openai.example"}},
+	}
+	targetProviderID := "provider-openai"
+	st.routingPolicies[7] = &model.RoutingPolicy{
+		ID:               7,
+		APIType:          "codex",
+		ModelMatchType:   model.RoutingPolicyModelMatchTypeExact,
+		ModelMatchValue:  "gpt-5",
+		Enabled:          true,
+		TargetProviderID: &targetProviderID,
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/routing-policies/7", bytes.NewBufferString(`{
+		"api_type": "codex",
+		"model_match_type": "exact",
+		"model_match_value": "gpt-5",
+		"enabled": false,
+		"allowed_group_ids": ["group-filter"],
+		"allowed_vendors": ["openai"]
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	setPathValue(req, "id", "7")
+	w := httptest.NewRecorder()
+
+	h.UpdateRoutingPolicy(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	policy := st.routingPolicies[7]
+	if policy.TargetProviderID != nil {
+		t.Fatalf("TargetProviderID = %#v, want nil after switching to filter mode with omitted target_provider_id", policy.TargetProviderID)
+	}
+	if policy.Enabled {
+		t.Fatal("Enabled = true, want false from update payload")
+	}
+	if len(policy.Groups) != 1 || policy.Groups[0].GroupID != "group-filter" {
+		t.Fatalf("Groups = %#v, want group-filter", policy.Groups)
+	}
+	if len(policy.Vendors) != 1 || policy.Vendors[0].Vendor != "openai" {
+		t.Fatalf("Vendors = %#v, want openai", policy.Vendors)
 	}
 }
 
@@ -301,7 +414,7 @@ func TestDeleteRoutingPolicy_NotFound(t *testing.T) {
 
 func TestCreateRoutingPolicy_GroupLookupError(t *testing.T) {
 	h, st, _ := testHandler()
-	st.getErr = errors.New("db unavailable")
+	st.listErr = errors.New("db unavailable")
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/routing-policies", bytes.NewBufferString(`{
 		"api_type": "codex",

@@ -105,13 +105,12 @@ func (h *Handler) tryActiveProviderFallback(ctx context.Context, selectReq *mode
 		return nil
 	}
 
-	scope, err := h.selectionScope(ctx, selectReq)
+	provider, err := h.eligibleProviderByID(ctx, selectReq, activeProviderID)
 	if err != nil {
 		h.logger.Warn("failed to resolve provider eligibility for active fallback", zap.Error(err))
 		return nil
 	}
-
-	return h.getProviderIfValid(ctx, scope, activeProviderID)
+	return provider
 }
 
 // getProviderIfValid validates that a provider is still valid and available.
@@ -144,6 +143,24 @@ func (h *Handler) getProviderIfValid(ctx context.Context, scope *selector.Provid
 		}
 	}
 	return nil
+}
+
+func (h *Handler) eligibleProviderByID(
+	ctx context.Context,
+	selectReq *model.SelectRequest,
+	providerID string,
+) (*model.Provider, error) {
+	if selectReq == nil || providerID == "" {
+		return nil, nil
+	}
+
+	scope, err := h.selectionScope(ctx, selectReq)
+	if err != nil {
+		return nil, err
+	}
+	// Re-loading the provider from the store keeps retry validation honest when
+	// auth state or routing policy changed after the original selection.
+	return h.getProviderIfValid(ctx, scope, providerID), nil
 }
 
 // selectProviderFallback selects a provider when no Selector is configured.

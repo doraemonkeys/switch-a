@@ -545,7 +545,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			},
 		},
 		{
-			name:    "routing policy hidden-model demand enables probe",
+			name:    "routing policy model-only rule enables probe",
 			apiType: APITypeCodex,
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
@@ -555,6 +555,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			configure: func(store *mockStore) {
 				store.routingPolicies = []model.RoutingPolicy{
 					{
+						Enabled:         true,
 						APIType:         APITypeCodex,
 						ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
 						ModelMatchValue: "gpt-",
@@ -568,7 +569,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			},
 		},
 		{
-			name:    "routing policy lookup failure is explicit",
+			name:    "routing policy lookup failure stays explicit when probe gating depends on it",
 			apiType: APITypeCodex,
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,

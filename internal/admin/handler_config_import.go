@@ -3,10 +3,13 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"switch-a/internal/model"
+	"switch-a/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -37,9 +40,6 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the import request
-	warnings := h.validateImportRequest(&req)
-
 	ctx := r.Context()
 
 	// Get existing data for comparison
@@ -53,6 +53,12 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	existingGroups, err := h.store.ListGroups(ctx)
 	if err != nil {
 		h.logger.Error("failed to list groups for import", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config")
+		return
+	}
+	existingRoutingPolicies, err := h.store.ListRoutingPolicies(ctx)
+	if err != nil {
+		h.logger.Error("failed to list routing policies for import", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config")
 		return
 	}
@@ -74,24 +80,45 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	for i := range existingGroups {
 		existingGroupMap[existingGroups[i].ID] = &existingGroups[i]
 	}
+	existingRoutingPolicyMap := make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(existingRoutingPolicies))
+	for i := range existingRoutingPolicies {
+		key := existingRoutingPolicies[i].NaturalKey()
+		existingRoutingPolicyMap[key] = &existingRoutingPolicies[i]
+	}
 
-	// Calculate changes
-	changes := h.calculateImportChanges(&req, existingProviderMap, existingGroupMap, existingSettings)
+	staged := stageConfigImport(
+		&req,
+		existingProviderMap,
+		existingGroupMap,
+		existingRoutingPolicyMap,
+		existingSettings,
+	)
 
 	// If dry_run, return preview
 	if dryRun {
 		resp := ImportPreviewResponse{
 			DryRun:   true,
-			Changes:  changes,
-			Warnings: warnings,
+			Changes:  staged.changes,
+			Warnings: staged.warnings,
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	// Apply changes
-	applied, err := h.applyImportChanges(ctx, &req, existingProviderMap, existingGroupMap, existingSettings)
+	if len(staged.warnings) > 0 {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(staged.warnings, "; "))
+		return
+	}
+
+	err = h.store.ApplyConfigImport(ctx, &staged.bundle)
 	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrRoutingPolicyConflict),
+			errors.Is(err, store.ErrRoutingPolicyReferenceConflict),
+			errors.Is(err, store.ErrCredentialBindingConflict):
+			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+			return
+		}
 		h.logger.Error("failed to apply import changes", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config: "+err.Error())
 		return
@@ -99,13 +126,34 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 
 	resp := ImportResult{
 		Success: true,
-		Applied: applied,
+		Applied: ImportedCounts{
+			Providers: AppliedCount{
+				Added:   staged.changes.Providers.Add,
+				Updated: staged.changes.Providers.Update,
+				Deleted: staged.changes.Providers.Delete,
+			},
+			Groups: AppliedCount{
+				Added:   staged.changes.Groups.Add,
+				Updated: staged.changes.Groups.Update,
+				Deleted: staged.changes.Groups.Delete,
+			},
+			RoutingPolicies: AppliedCount{
+				Added:   staged.changes.RoutingPolicies.Add,
+				Updated: staged.changes.RoutingPolicies.Update,
+				Deleted: staged.changes.RoutingPolicies.Delete,
+			},
+			Settings: AppliedCount{
+				Added:   staged.changes.Settings.Add,
+				Updated: staged.changes.Settings.Update,
+				Deleted: staged.changes.Settings.Delete,
+			},
+		},
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // validateImportRequest validates the import request and returns warnings.
-func (h *Handler) validateImportRequest(req *ImportConfigRequest) []string {
+func validateImportRequest(req *ImportConfigRequest, existingGroups map[string]*model.Group) []string {
 	estimatedWarnings := len(req.Providers)*2 + len(req.Groups) + len(req.Settings)
 	warnings := make([]string, 0, estimatedWarnings)
 
@@ -123,7 +171,7 @@ func (h *Handler) validateImportRequest(req *ImportConfigRequest) []string {
 	warnings = append(warnings, validateImportSettings(req.Settings)...)
 
 	// Check for provider references to non-existent groups
-	warnings = append(warnings, validateProviderGroupRefs(req)...)
+	warnings = append(warnings, validateProviderGroupRefs(req, existingGroups)...)
 
 	return warnings
 }
@@ -218,7 +266,7 @@ func validateExportedGroup(g *ExportedGroup) []string {
 }
 
 // validateProviderGroupRefs checks for provider references to non-existent groups.
-func validateProviderGroupRefs(req *ImportConfigRequest) []string {
+func validateProviderGroupRefs(req *ImportConfigRequest, existingGroups map[string]*model.Group) []string {
 	var warnings []string
 
 	groupIDs := make(map[string]bool)
@@ -227,6 +275,9 @@ func validateProviderGroupRefs(req *ImportConfigRequest) []string {
 		if ok {
 			groupIDs[group.ID] = true
 		}
+	}
+	for id := range existingGroups {
+		groupIDs[id] = true
 	}
 	for _, p := range req.Providers {
 		if p.GroupID != nil && *p.GroupID != "" && !groupIDs[*p.GroupID] {

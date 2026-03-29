@@ -11,6 +11,7 @@ import (
 
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
+	"switch-a/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -47,6 +48,66 @@ func TestListProviders(t *testing.T) {
 
 	if len(providers) != 2 {
 		t.Errorf("len(providers) = %d, want 2", len(providers))
+	}
+}
+
+func TestDeleteProvider_RoutingPolicyConflict(t *testing.T) {
+	h, st, _ := testHandler()
+	st.providers["p1"] = &model.Provider{ID: "p1", Name: "Provider 1"}
+	st.deleteErr = &store.RoutingPolicyProviderReferenceConflictError{
+		ProviderID: "p1",
+		PolicyID:   7,
+		Key:        model.NewRoutingPolicyNaturalKey("codex", model.RoutingPolicyModelMatchTypeNone, ""),
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/providers/p1", nil)
+	setPathValue(req, "id", "p1")
+	w := httptest.NewRecorder()
+
+	h.DeleteProvider(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+}
+
+func TestUpdateProvider_RoutingPolicyConflict(t *testing.T) {
+	h, st, _ := testHandler()
+	st.providers["p1"] = &model.Provider{
+		ID:      "p1",
+		Name:    "Provider 1",
+		APIKey:  "key",
+		Enabled: true,
+		APITypes: []model.ProviderAPIType{
+			{ProviderID: "p1", APIType: "claude", BaseURL: "https://claude.example.com"},
+			{ProviderID: "p1", APIType: "codex", BaseURL: "https://codex.example.com"},
+		},
+	}
+	st.updateErr = &store.RoutingPolicyProviderAPITypeConflictError{
+		ProviderID: "p1",
+		APIType:    "claude",
+		PolicyID:   8,
+		Key: model.NewRoutingPolicyNaturalKey(
+			"claude",
+			model.RoutingPolicyModelMatchTypeNone,
+			"",
+		),
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/providers/p1", bytes.NewBufferString(`{
+		"name": "Provider 1",
+		"api_key": "key",
+		"api_types": [{"api_type": "claude", "base_url": "https://claude.example.com"}],
+		"enabled": true
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	setPathValue(req, "id", "p1")
+	w := httptest.NewRecorder()
+
+	h.UpdateProvider(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
 	}
 }
 

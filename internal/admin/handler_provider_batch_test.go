@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"switch-a/internal/model"
+	"switch-a/internal/store"
 )
 
 // Batch Provider Tests
@@ -211,6 +212,39 @@ func TestBatchProviderAction_AllFail(t *testing.T) {
 	}
 	if resp.Affected != 0 {
 		t.Errorf("affected = %d, want 0", resp.Affected)
+	}
+}
+
+func TestBatchProviderAction_DeleteConflict(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.providers["p1"] = &model.Provider{ID: "p1", Name: "Provider 1"}
+	st.deleteErr = &store.RoutingPolicyProviderReferenceConflictError{
+		ProviderID: "p1",
+		PolicyID:   9,
+		Key:        model.NewRoutingPolicyNaturalKey("codex", model.RoutingPolicyModelMatchTypeNone, ""),
+	}
+
+	body := `{"action": "delete", "ids": ["p1"]}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/batch", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.BatchProviderAction(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+
+	var resp BatchProviderResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Success {
+		t.Fatal("expected success=false")
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Error == "" {
+		t.Fatalf("results = %#v, want conflict error", resp.Results)
 	}
 }
 

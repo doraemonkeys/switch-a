@@ -22,7 +22,7 @@ type webSocketSelectionProbeDecision struct {
 const webSocketProbeDemandResolutionFailureMessage = "Failed to resolve hidden-model demand before provider selection"
 
 // bootstrapSelectionContext is isolated from the main attempt loop because only
-// model-sensitive routing is allowed to read the client socket before a provider
+// pre-selection model consumers should read the client socket before a provider
 // has been chosen.
 func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 	ctx context.Context,
@@ -70,10 +70,7 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 
 	result, observedModel, outcome := o.probeClientSelectionContext(ctx)
 	o.probeOutcome = outcome
-	if observedModel != "" {
-		o.info.Model = observedModel
-		o.selectReq.Model = observedModel
-	}
+	o.learnResolvedModel(observedModel)
 	return result
 }
 
@@ -93,7 +90,7 @@ func (o *WebSocketSessionOrchestrator) selectionProbeDecision(
 	if err != nil {
 		// Demand resolution failures stay explicit. Treating them like "no probe
 		// needed" would silently collapse pre-selection back to handshake-only
-		// semantics even though policy-sensitive routing demand was never resolved.
+		// semantics even though a model-sensitive continuity consumer was unresolved.
 		return webSocketSelectionProbeDecision{
 			outcome: webSocketSelectionProbeOutcomeDemandResolutionFailed,
 		}, fmt.Errorf("resolve websocket selection hidden-model demand: %w", err)

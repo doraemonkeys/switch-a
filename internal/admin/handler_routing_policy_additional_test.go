@@ -121,6 +121,16 @@ func TestBuildRoutingPolicy(t *testing.T) {
 	h, st, _ := testHandler()
 	st.groups["group-a"] = &model.Group{ID: "group-a", Name: "A"}
 	st.groups["group-b"] = &model.Group{ID: "group-b", Name: "B"}
+	st.providers["provider-openai"] = &model.Provider{
+		ID:       "provider-openai",
+		Vendor:   "openai",
+		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://openai.example"}},
+	}
+	st.providers["provider-azure"] = &model.Provider{
+		ID:       "provider-azure",
+		Vendor:   "azure",
+		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://azure.example"}},
+	}
 
 	exact := model.RoutingPolicyModelMatchTypeExact
 	invalidType := model.RoutingPolicyModelMatchType("regex")
@@ -170,7 +180,7 @@ func TestBuildRoutingPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy, err := h.buildRoutingPolicy(context.Background(), tt.req)
+			policy, err := h.buildRoutingPolicy(context.Background(), tt.req, nil)
 			if err == nil {
 				t.Fatalf("buildRoutingPolicy() policy = %#v, want error %q", policy, tt.wantErr)
 			}
@@ -186,7 +196,7 @@ func TestBuildRoutingPolicy(t *testing.T) {
 		ModelMatchValue: &matchValue,
 		AllowedGroupIDs: []string{" group-b ", "group-a", "group-a"},
 		AllowedVendors:  []string{" openai ", "", "azure", "azure"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("buildRoutingPolicy(valid) error = %v", err)
 	}
@@ -201,6 +211,78 @@ func TestBuildRoutingPolicy(t *testing.T) {
 	}
 	if len(policy.Vendors) != 2 || policy.Vendors[0].Vendor != "azure" || policy.Vendors[1].Vendor != "openai" {
 		t.Fatalf("policy.Vendors = %#v, want sorted unique vendors", policy.Vendors)
+	}
+	if !policy.Enabled {
+		t.Fatal("policy.Enabled = false, want true by default")
+	}
+	if policy.TargetProviderID != nil {
+		t.Fatalf("policy.TargetProviderID = %#v, want nil in filter mode", policy.TargetProviderID)
+	}
+
+	disabled := false
+	targetProviderID := " provider-openai "
+	exactPolicy, err := h.buildRoutingPolicy(context.Background(), RoutingPolicyRequest{
+		APIType:          "codex",
+		Enabled:          &disabled,
+		TargetProviderID: routingPolicyOptionalString{set: true, value: &targetProviderID},
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRoutingPolicy(exact-provider) error = %v", err)
+	}
+	if exactPolicy.Enabled {
+		t.Fatal("exact-provider policy.Enabled = true, want false")
+	}
+	if exactPolicy.TargetProviderID == nil || *exactPolicy.TargetProviderID != "provider-openai" {
+		t.Fatalf("exactPolicy.TargetProviderID = %#v, want provider-openai", exactPolicy.TargetProviderID)
+	}
+	if len(exactPolicy.Groups) != 0 || len(exactPolicy.Vendors) != 0 {
+		t.Fatalf("exactPolicy scope = groups %#v vendors %#v, want empty filter scope", exactPolicy.Groups, exactPolicy.Vendors)
+	}
+}
+
+func TestBuildRoutingPolicy_PreservesStaleVendorsUntilTheVendorSetChanges(t *testing.T) {
+	t.Parallel()
+
+	h, st, _ := testHandler()
+	st.providers["provider-openai"] = &model.Provider{
+		ID:       "provider-openai",
+		Vendor:   "openai",
+		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://openai.example"}},
+	}
+
+	prefix := model.RoutingPolicyModelMatchTypePrefix
+	prefixValue := "gpt-5"
+	disabled := false
+	current := &model.RoutingPolicy{
+		APIType: "codex",
+		Enabled: true,
+		Vendors: []model.RoutingPolicyVendor{{Vendor: "legacy-vendor"}},
+		Groups:  []model.RoutingPolicyGroup{{GroupID: "legacy-group"}},
+	}
+
+	policy, err := h.buildRoutingPolicy(context.Background(), RoutingPolicyRequest{
+		APIType:         "codex",
+		ModelMatchType:  &prefix,
+		ModelMatchValue: &prefixValue,
+		Enabled:         &disabled,
+		AllowedVendors:  []string{"legacy-vendor"},
+	}, current)
+	if err != nil {
+		t.Fatalf("buildRoutingPolicy(preserve stale vendors) error = %v", err)
+	}
+	if policy.Enabled {
+		t.Fatal("policy.Enabled = true, want false after lifecycle update")
+	}
+	if len(policy.Vendors) != 1 || policy.Vendors[0].Vendor != "legacy-vendor" {
+		t.Fatalf("policy.Vendors = %#v, want legacy-vendor preserved", policy.Vendors)
+	}
+
+	_, err = h.buildRoutingPolicy(context.Background(), RoutingPolicyRequest{
+		APIType:        "codex",
+		AllowedVendors: []string{"legacy-vendor", "openai"},
+	}, current)
+	if err == nil || err.Error() != `Vendor not available for api_type codex: legacy-vendor` {
+		t.Fatalf("buildRoutingPolicy(changed vendor set) error = %v, want stale vendor revalidation failure", err)
 	}
 }
 

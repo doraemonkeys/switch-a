@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -57,6 +56,7 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
+	store.configs[ConfigKeyStickyMode] = string(model.StickyModeModel)
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
@@ -95,6 +95,16 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	}
 	if msgType != websocket.MessageText || !strings.Contains(string(data), `"response.created"`) {
 		t.Fatalf("unexpected websocket payload: type=%v body=%q", msgType, string(data))
+	}
+
+	waitFor(t, func() bool { return mockSel.StickyUpdatesLen() == 1 }, testPollTimeout)
+
+	update, ok := mockSel.LastStickyUpdate()
+	if !ok {
+		t.Fatal("expected sticky update after committed websocket session")
+	}
+	if update.Model != "client-model" {
+		t.Fatalf("sticky update model = %q, want %q", update.Model, "client-model")
 	}
 }
 
@@ -138,6 +148,12 @@ func TestHandler_ServeHTTP_WebSocket_ProbeDisabledKeepsHandshakeOnlySelection(t 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
 	store.configs[ConfigKeyWebSocketProbeClientModel] = "false"
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled:         true,
+		APIType:         APITypeCodex,
+		ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+		ModelMatchValue: "client-",
+	}}
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
@@ -179,58 +195,92 @@ func TestHandler_ServeHTTP_WebSocket_ProbeDisabledKeepsHandshakeOnlySelection(t 
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_DemandResolutionFailureReturnsGatewayError(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_RoutingPolicyDemandUsesClientModel(t *testing.T) {
 	t.Parallel()
 
+	const prompt = `{"type":"response.create","response":{"model":"client-model","instructions":"hello"}}`
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		msgType, payload, err := conn.Read(r.Context())
+		if err != nil {
+			t.Errorf("read client prompt: %v", err)
+			return
+		}
+		if msgType != websocket.MessageText || string(payload) != prompt {
+			t.Errorf("prompt = (%v, %q), want text/%q", msgType, string(payload), prompt)
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"response.created","response":{"model":"client-model"}}`)); err != nil {
+			t.Errorf("write upstream semantic event: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	provider := &model.Provider{
+		ID:       "ws-routing-policy-lookup-p1",
+		Name:     "WS Routing Policy Lookup Provider",
+		APIKey:   "ws-key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "ws-routing-policy-lookup-p1", APIType: "codex", BaseURL: upstream.URL}},
+	}
+
 	store := newMockStore()
+	store.providers = []model.Provider{*provider}
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeOff)
-	store.configs[ConfigKeyWebSocketProbeClientModel] = "true"
-	store.routingPolicies = []model.RoutingPolicy{{
-		APIType:         APITypeCodex,
-		ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
-		ModelMatchValue: "gpt-",
-	}}
-	store.routingPolicyErr = errors.New("routing policy store unavailable")
+	store.routingPolicies = []model.RoutingPolicy{
+		{
+			Enabled:         true,
+			APIType:         "codex",
+			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
+			ModelMatchValue: "client-",
+		},
+	}
+
+	mockSel := &mockSelector{
+		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
+			if req.Model != "client-model" {
+				t.Fatalf("initial selection model = %q, want %q when routing policy triggers probing", req.Model, "client-model")
+			}
+			return &selectResult{Provider: provider, FromStickyCache: false}, nil
+		},
+	}
 
 	handler := NewHandler(Config{
-		Store:  store,
-		Logger: zap.NewNop(),
+		Store:    store,
+		Logger:   zap.NewNop(),
+		Selector: mockSel,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/responses", nil)
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	w := httptest.NewRecorder()
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
 
-	handler.ServeHTTP(w, req)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
 	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	var errResp model.GatewayError
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if errResp.Error.Code != ErrCodeInternalError {
-		t.Fatalf("error code = %q, want %q", errResp.Error.Code, ErrCodeInternalError)
-	}
-	if errResp.Error.Message != webSocketProbeDemandResolutionFailureMessage {
-		t.Fatalf("error message = %q, want %q", errResp.Error.Message, webSocketProbeDemandResolutionFailureMessage)
+	if err := conn.Write(ctx, websocket.MessageText, []byte(prompt)); err != nil {
+		t.Fatalf("write client message: %v", err)
 	}
 
-	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
-	log := store.LastLog()
-	if log == nil {
-		t.Fatal("expected websocket request log entry")
+	msgType, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read semantic event: %v", err)
 	}
-	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeDemandResolutionFailed {
-		t.Fatalf("ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeDemandResolutionFailed)
-	}
-	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalInternalError {
-		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalInternalError)
+	if msgType != websocket.MessageText || !strings.Contains(string(data), `"response.created"`) {
+		t.Fatalf("unexpected websocket payload: type=%v body=%q", msgType, string(data))
 	}
 }
 

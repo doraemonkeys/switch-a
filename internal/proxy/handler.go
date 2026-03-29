@@ -485,8 +485,9 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		excludedProviders: make(map[string]bool),
 	}
 
+	attempt := 0
 retryLoop:
-	for attempt := 0; !state.headersWritten; attempt++ {
+	for !state.headersWritten {
 		if pctx.cfg.globalMaxAttempts > 0 && attempt >= pctx.cfg.globalMaxAttempts {
 			break
 		}
@@ -508,6 +509,19 @@ retryLoop:
 			if !continueLoop {
 				break
 			}
+		}
+
+		if state.providerAttempt > 0 {
+			refreshedProvider, err := h.eligibleProviderByID(ctx, pctx.selectReq, state.currentProvider.ID)
+			if err != nil {
+				state.lastErr = err
+				break
+			}
+			if refreshedProvider == nil {
+				h.excludeCurrentProvider(state)
+				continue
+			}
+			state.currentProvider = refreshedProvider
 		}
 
 		state.providerUsed = state.currentProvider
@@ -537,6 +551,7 @@ retryLoop:
 
 		// Record the attempt with the switch reason (now known)
 		h.recordAttempt(pctx, state, result, attempt, attemptStart, switchReason)
+		attempt++
 
 		if !exhausted {
 			// Same provider retry - apply backoff delay.
