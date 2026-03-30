@@ -54,16 +54,8 @@ const TrashIcon = () => (
 );
 
 export function Groups() {
-  const {
-    groups,
-    loading,
-    error,
-    createGroup,
-    updateGroup,
-    deleteGroup,
-    enableGroup,
-    disableGroup,
-  } = useGroups();
+  const { groups, loading, error, createGroup, updateGroup, deleteGroup } =
+    useGroups();
   const toast = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
@@ -75,7 +67,6 @@ export function Groups() {
     groupId: null,
   });
   const [deleting, setDeleting] = useState(false);
-  const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
 
   // Detail drawer state
   const [detailGroup, setDetailGroup] = useState<Group | null>(null);
@@ -142,34 +133,6 @@ export function Groups() {
       const message = err instanceof Error ? err.message : "Operation failed";
       toast.error(message);
       throw err; // Re-throw to let modal handle it
-    }
-  };
-
-  const handleToggleGroup = async (group: Group) => {
-    if (togglingGroupId !== null) {
-      return;
-    }
-
-    const action = group.enabled
-      ? {
-          execute: disableGroup,
-          successMessage: `Group "${group.name}" disabled`,
-          fallbackError: "Failed to disable group",
-        }
-      : {
-          execute: enableGroup,
-          successMessage: `Group "${group.name}" enabled`,
-          fallbackError: "Failed to enable group",
-        };
-
-    setTogglingGroupId(group.id);
-    try {
-      await action.execute(group.id);
-      toast.success(action.successMessage);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : action.fallbackError);
-    } finally {
-      setTogglingGroupId(null);
     }
   };
 
@@ -243,10 +206,7 @@ export function Groups() {
             group={group}
             onEdit={() => handleEdit(group)}
             onDelete={() => handleDeleteClick(group.id)}
-            onToggle={() => handleToggleGroup(group)}
             onViewDetail={() => handleViewDetail(group)}
-            togglePending={togglingGroupId === group.id}
-            toggleDisabled={togglingGroupId !== null}
           />
         ))}
       </div>
@@ -309,33 +269,10 @@ interface GroupCardProps {
   group: Group;
   onEdit: () => void;
   onDelete: () => void;
-  onToggle: () => void;
   onViewDetail?: () => void;
-  togglePending: boolean;
-  toggleDisabled: boolean;
 }
 
-function GroupCard({
-  group,
-  onEdit,
-  onDelete,
-  onToggle,
-  onViewDetail,
-  togglePending,
-  toggleDisabled,
-}: GroupCardProps) {
-  const toggleButtonClassName = group.enabled
-    ? "btn btn-secondary btn-sm w-full text-warning hover:bg-warning-light"
-    : "btn btn-secondary btn-sm w-full text-success hover:bg-success-light";
-  const toggleButtonLabel = group.enabled ? "Disable Group" : "Enable Group";
-  const toggleButtonPendingLabel = group.enabled
-    ? "Disabling..."
-    : "Enabling...";
-  const statusBadgeClassName = group.enabled
-    ? "bg-green-500/10 text-green-400"
-    : "bg-red-500/10 text-red-400";
-  const statusLabel = group.enabled ? "Active" : "Disabled";
-
+function GroupCard({ group, onEdit, onDelete, onViewDetail }: GroupCardProps) {
   return (
     <div
       className={`card relative group hover:border-primary/30 transition-colors ${onViewDetail ? "cursor-pointer" : ""}`}
@@ -371,9 +308,13 @@ function GroupCard({
               {group.name}
             </h3>
             <span
-              className={`px-2 py-0.5 rounded text-xs font-medium ${statusBadgeClassName}`}
+              className={`px-2 py-0.5 rounded text-xs font-medium ${
+                group.enabled
+                  ? "bg-green-500/10 text-green-400"
+                  : "bg-red-500/10 text-red-400"
+              }`}
             >
-              {statusLabel}
+              {group.enabled ? "Active" : "Disabled"}
             </span>
           </div>
           <div className="text-sm text-text-secondary mt-1 capitalize">
@@ -395,21 +336,6 @@ function GroupCard({
             {group.weight}
           </div>
         </div>
-      </div>
-
-      <div className="mt-4">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-          disabled={toggleDisabled}
-          className={toggleButtonClassName}
-          aria-label={`${toggleButtonLabel} ${group.name}`}
-          title={toggleButtonLabel}
-        >
-          {togglePending ? toggleButtonPendingLabel : toggleButtonLabel}
-        </button>
       </div>
 
       <div className="flex justify-between items-center text-sm text-text-secondary">
