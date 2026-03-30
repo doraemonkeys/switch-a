@@ -150,11 +150,12 @@ type ImportChanges struct {
 	Settings        ChangeCount `json:"settings"`
 }
 
-// ChangeCount represents add/update/delete counts.
+// ChangeCount represents preview counts for imported records.
 type ChangeCount struct {
-	Add    int `json:"add"`
-	Update int `json:"update"`
-	Delete int `json:"delete"`
+	Add       int `json:"add"`
+	Update    int `json:"update"`
+	Delete    int `json:"delete"`
+	Unchanged int `json:"unchanged"`
 }
 
 // ImportPreviewResponse is the response for dry_run=true.

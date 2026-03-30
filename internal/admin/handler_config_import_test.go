@@ -362,14 +362,14 @@ func TestImportConfig_NoChanges(t *testing.T) {
 		t.Fatalf("failed to decode preview: %v", err)
 	}
 
-	if preview.Changes.Providers != (ChangeCount{}) {
-		t.Fatalf("provider changes = %+v, want zero", preview.Changes.Providers)
+	if preview.Changes.Providers != (ChangeCount{Unchanged: 1}) {
+		t.Fatalf("provider changes = %+v, want unchanged=1", preview.Changes.Providers)
 	}
-	if preview.Changes.Groups != (ChangeCount{}) {
-		t.Fatalf("group changes = %+v, want zero", preview.Changes.Groups)
+	if preview.Changes.Groups != (ChangeCount{Unchanged: 1}) {
+		t.Fatalf("group changes = %+v, want unchanged=1", preview.Changes.Groups)
 	}
-	if preview.Changes.Settings != (ChangeCount{}) {
-		t.Fatalf("settings changes = %+v, want zero", preview.Changes.Settings)
+	if preview.Changes.Settings != (ChangeCount{Unchanged: 1}) {
+		t.Fatalf("settings changes = %+v, want unchanged=1", preview.Changes.Settings)
 	}
 	if len(preview.Warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", preview.Warnings)
@@ -441,8 +441,8 @@ func TestImportConfig_ExportRoundTripPreservesLegacyProviderDefaultsAsNoOp(t *te
 		t.Fatalf("failed to decode preview: %v", err)
 	}
 
-	if preview.Changes.Providers != (ChangeCount{}) {
-		t.Fatalf("provider changes = %+v, want zero", preview.Changes.Providers)
+	if preview.Changes.Providers != (ChangeCount{Unchanged: 1}) {
+		t.Fatalf("provider changes = %+v, want unchanged=1", preview.Changes.Providers)
 	}
 
 	importReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))
@@ -559,8 +559,8 @@ func TestImportConfig_ExportRoundTripPreservesChatGPTAuthTimestampsAsNoOp(t *tes
 		t.Fatalf("failed to decode preview: %v", err)
 	}
 
-	if preview.Changes.Providers != (ChangeCount{}) {
-		t.Fatalf("provider changes = %+v, want zero", preview.Changes.Providers)
+	if preview.Changes.Providers != (ChangeCount{Unchanged: 1}) {
+		t.Fatalf("provider changes = %+v, want unchanged=1", preview.Changes.Providers)
 	}
 
 	importReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import", bytes.NewReader(body))

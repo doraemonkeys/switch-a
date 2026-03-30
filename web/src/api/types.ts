@@ -685,11 +685,12 @@ export interface ImportConfigRequest {
   settings: Partial<Record<ConfigKey, string>>;
 }
 
-/** ChangeCount represents add/update/delete counts */
+/** ChangeCount represents preview counts for imported records */
 export interface ChangeCount {
   add: number;
   update: number;
   delete: number;
+  unchanged: number;
 }
 
 /** ImportChanges represents the changes that will be applied during import */

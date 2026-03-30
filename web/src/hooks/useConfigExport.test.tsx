@@ -56,10 +56,10 @@ const mockExportedConfig: ExportedConfig = {
 const mockPreviewResponse: ImportPreviewResponse = {
   dry_run: true,
   changes: {
-    providers: { add: 1, update: 0, delete: 0 },
-    groups: { add: 0, update: 1, delete: 0 },
-    routing_policies: { add: 0, update: 1, delete: 0 },
-    settings: { add: 0, update: 2, delete: 0 },
+    providers: { add: 1, update: 0, delete: 0, unchanged: 0 },
+    groups: { add: 0, update: 1, delete: 0, unchanged: 0 },
+    routing_policies: { add: 0, update: 1, delete: 0, unchanged: 0 },
+    settings: { add: 0, update: 2, delete: 0, unchanged: 0 },
   },
   warnings: ["Provider API key will be overwritten"],
 };

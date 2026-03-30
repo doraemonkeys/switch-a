@@ -23,16 +23,18 @@ function ChangeBadge({
   add,
   update,
   deleteCount,
+  unchanged,
 }: {
   label: string;
   add: number;
   update: number;
   deleteCount: number;
+  unchanged: number;
 }) {
-  const hasChanges = add > 0 || update > 0 || deleteCount > 0;
+  const hasMutations = add > 0 || update > 0 || deleteCount > 0;
   return (
     <div
-      className={`p-4 rounded-lg border ${hasChanges ? "bg-bg-tertiary border-border-light" : "bg-bg-tertiary/50 border-border-dark"}`}
+      className={`p-4 rounded-lg border ${hasMutations ? "bg-bg-tertiary border-border-light" : "bg-bg-tertiary/50 border-border-dark"}`}
     >
       <div className="text-sm font-medium text-text-secondary mb-2">
         {label}
@@ -66,6 +68,16 @@ function ChangeBadge({
             className={`text-sm ${deleteCount > 0 ? "text-danger" : "text-text-muted"}`}
           >
             -{deleteCount} 删除
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={`w-2 h-2 rounded-full ${unchanged > 0 ? "bg-text-secondary" : "bg-text-muted/30"}`}
+          />
+          <span
+            className={`text-sm ${unchanged > 0 ? "text-text-secondary" : "text-text-muted"}`}
+          >
+            {unchanged} 无变化
           </span>
         </div>
       </div>
@@ -111,6 +123,7 @@ export function PreviewStep({
                 add={change.add}
                 update={change.update}
                 deleteCount={change.delete}
+                unchanged={change.unchanged}
               />
             );
           })}

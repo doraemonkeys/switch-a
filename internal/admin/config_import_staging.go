@@ -60,6 +60,22 @@ func stageConfigImport(
 	return staged
 }
 
+// Scoped preview must distinguish "selected but unchanged" from "not staged at all",
+// otherwise operators cannot verify that the resolved import scope matches their selection.
+func recordStagedUpsert(changeCount *ChangeCount, exists bool, differs bool) bool {
+	switch {
+	case !exists:
+		changeCount.Add++
+		return true
+	case differs:
+		changeCount.Update++
+		return true
+	default:
+		changeCount.Unchanged++
+		return false
+	}
+}
+
 func stageImportedGroups(
 	staged *stagedConfigImport,
 	exportedGroups []ExportedGroup,
@@ -78,13 +94,9 @@ func stageImportedGroups(
 		if !ok {
 			continue
 		}
-		if existing, exists := existingGroups[group.ID]; exists {
-			if groupImportDiffers(&exported, existing) {
-				staged.changes.Groups.Update++
-				staged.bundle.Groups = append(staged.bundle.Groups, *group)
-			}
-		} else {
-			staged.changes.Groups.Add++
+		existing, exists := existingGroups[group.ID]
+		differs := exists && groupImportDiffers(&exported, existing)
+		if recordStagedUpsert(&staged.changes.Groups, exists, differs) {
 			staged.bundle.Groups = append(staged.bundle.Groups, *group)
 		}
 		finalGroups[group.ID] = group
@@ -111,13 +123,9 @@ func stageImportedProviders(
 		if !ok {
 			continue
 		}
-		if existing, exists := existingProviders[provider.ID]; exists {
-			if providerImportDiffers(&exported, existing, validGroups) {
-				staged.changes.Providers.Update++
-				staged.bundle.Providers = append(staged.bundle.Providers, *provider)
-			}
-		} else {
-			staged.changes.Providers.Add++
+		existing, exists := existingProviders[provider.ID]
+		differs := exists && providerImportDiffers(&exported, existing, validGroups)
+		if recordStagedUpsert(&staged.changes.Providers, exists, differs) {
 			staged.bundle.Providers = append(staged.bundle.Providers, *provider)
 		}
 		finalProviders[provider.ID] = provider
@@ -168,13 +176,11 @@ func stageImportedRoutingPolicies(
 
 		importedRoutingPolicies[key] = policy
 		finalRoutingPolicies[key] = policy
-		if current != nil {
-			if routingPolicyImportDiffers(policy, current) {
-				staged.changes.RoutingPolicies.Update++
-			}
-			continue
-		}
-		staged.changes.RoutingPolicies.Add++
+		recordStagedUpsert(
+			&staged.changes.RoutingPolicies,
+			current != nil,
+			current != nil && routingPolicyImportDiffers(policy, current),
+		)
 	}
 
 	stageDeletedRoutingPolicies(&staged.changes, existingRoutingPolicies, seenRoutingKeys, finalRoutingPolicies)
@@ -231,13 +237,9 @@ func stageImportedSettings(
 	settingsToUpdate := normalizeSupportedSettings(importedSettings)
 	staged.bundle.Settings = make(map[string]string, len(settingsToUpdate))
 	for key, value := range settingsToUpdate {
-		if existingValue, exists := comparableExistingSettings[key]; exists {
-			if existingValue == value {
-				continue
-			}
-			staged.changes.Settings.Update++
-		} else {
-			staged.changes.Settings.Add++
+		existingValue, exists := comparableExistingSettings[key]
+		if !recordStagedUpsert(&staged.changes.Settings, exists, exists && existingValue != value) {
+			continue
 		}
 		staged.bundle.Settings[key] = value
 	}

@@ -91,16 +91,43 @@ const exportedConfig: ExportedConfig = {
 };
 
 function createPreviewResponse(
-  changes: Partial<ImportPreviewResponse["changes"]> = {},
+  changes: Partial<{
+    [Key in keyof ImportPreviewResponse["changes"]]: Partial<
+      ImportPreviewResponse["changes"][Key]
+    >;
+  }> = {},
 ): ImportPreviewResponse {
   return {
     dry_run: true,
     changes: {
-      providers: { add: 0, update: 0, delete: 0 },
-      groups: { add: 0, update: 0, delete: 0 },
-      routing_policies: { add: 0, update: 0, delete: 0 },
-      settings: { add: 0, update: 0, delete: 0 },
-      ...changes,
+      providers: {
+        add: 0,
+        update: 0,
+        delete: 0,
+        unchanged: 0,
+        ...changes.providers,
+      },
+      groups: {
+        add: 0,
+        update: 0,
+        delete: 0,
+        unchanged: 0,
+        ...changes.groups,
+      },
+      routing_policies: {
+        add: 0,
+        update: 0,
+        delete: 0,
+        unchanged: 0,
+        ...changes.routing_policies,
+      },
+      settings: {
+        add: 0,
+        update: 0,
+        delete: 0,
+        unchanged: 0,
+        ...changes.settings,
+      },
     },
     warnings: [],
   };
@@ -504,6 +531,8 @@ describe("ConfigImportModal preview behavior", () => {
   it("ignores routing-policy-only deltas for scoped preview gating", async () => {
     const onPreview = vi.fn().mockResolvedValue(
       createPreviewResponse({
+        providers: { unchanged: 2 },
+        groups: { unchanged: 1 },
         routing_policies: { add: 0, update: 1, delete: 0 },
       }),
     );
@@ -527,6 +556,8 @@ describe("ConfigImportModal preview behavior", () => {
     await screen.findByText("没有检测到任何变更，配置已是最新");
 
     expect(screen.queryByText("Routing Policies")).not.toBeInTheDocument();
+    expect(screen.getByText("2 无变化")).toBeInTheDocument();
+    expect(screen.getByText("1 无变化")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();
   });
 
