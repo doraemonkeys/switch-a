@@ -316,7 +316,8 @@ func TestCachedStore_ApplyConfigImport_InvalidatesLiveConfigCache(t *testing.T) 
 	}
 
 	if err := cached.ApplyConfigImport(ctx, &ConfigImportBundle{
-		Settings: map[string]string{"key1": "imported"},
+		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+		Settings:          map[string]string{"key1": "imported"},
 	}); err != nil {
 		t.Fatalf("ApplyConfigImport() error = %v", err)
 	}
@@ -333,6 +334,44 @@ func TestCachedStore_ApplyConfigImport_InvalidatesLiveConfigCache(t *testing.T) 
 	}
 	if mock.getCount != 2 {
 		t.Fatalf("getCount = %d, want 2 after cache invalidation", mock.getCount)
+	}
+}
+
+func TestCachedStore_ApplyConfigImport_WrappedErrorKeepsLiveConfigCache(t *testing.T) {
+	cached, mock, _ := setupCachedStoreTest(t)
+	ctx := context.Background()
+
+	if _, err := cached.GetConfig(ctx, "key1"); err != nil {
+		t.Fatalf("GetConfig() error = %v", err)
+	}
+	if mock.getCount != 1 {
+		t.Fatalf("getCount = %d, want 1 after warm cache", mock.getCount)
+	}
+
+	expected := errors.New("apply failed")
+	mock.applyImportErr = expected
+	mock.configs["key1"] = "updated"
+
+	err := cached.ApplyConfigImport(ctx, &ConfigImportBundle{
+		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+		Settings:          map[string]string{"key1": "imported"},
+	})
+	if !errors.Is(err, expected) {
+		t.Fatalf("ApplyConfigImport() error = %v, want %v", err, expected)
+	}
+	if mock.applyImportCount != 1 {
+		t.Fatalf("applyImportCount = %d, want 1", mock.applyImportCount)
+	}
+
+	value, err := cached.GetConfig(ctx, "key1")
+	if err != nil {
+		t.Fatalf("GetConfig() after failed import error = %v", err)
+	}
+	if value != "value1" {
+		t.Fatalf("GetConfig() after failed import = %q, want cached value1", value)
+	}
+	if mock.getCount != 1 {
+		t.Fatalf("getCount = %d, want 1 after failed import", mock.getCount)
 	}
 }
 
@@ -361,7 +400,8 @@ func TestCachedStore_ApplyConfigImport_UnsupportedWrappedStoreFails(t *testing.T
 	}
 
 	err = cached.ApplyConfigImport(ctx, &ConfigImportBundle{
-		Settings: map[string]string{"key1": "imported"},
+		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+		Settings:          map[string]string{"key1": "imported"},
 	})
 	if err == nil {
 		t.Fatal("ApplyConfigImport() error = nil, want unsupported-store failure")

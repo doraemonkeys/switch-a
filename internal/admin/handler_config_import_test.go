@@ -425,7 +425,7 @@ func TestImportConfig_ExportRoundTripPreservesLegacyProviderDefaultsAsNoOp(t *te
 		t.Fatalf("failed to decode export: %v", err)
 	}
 
-	body, _ := json.Marshal(exported)
+	body, _ := json.Marshal(importRequestFromExport(exported))
 
 	previewReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
 	previewReq.Header.Set("Content-Type", "application/json")
@@ -540,7 +540,7 @@ func TestImportConfig_ExportRoundTripPreservesChatGPTAuthTimestampsAsNoOp(t *tes
 		t.Fatalf("failed to decode export: %v", err)
 	}
 
-	body, err := json.Marshal(exported)
+	body, err := json.Marshal(importRequestFromExport(exported))
 	if err != nil {
 		t.Fatalf("marshal export: %v", err)
 	}

@@ -654,9 +654,31 @@ export interface ExportedConfig {
   settings: Partial<Record<ConfigKey, string>>;
 }
 
+export type ImportMode = "full" | "settings_only" | "selection";
+
+export interface FullImportScope {
+  mode: "full";
+}
+
+export interface SettingsOnlyImportScope {
+  mode: "settings_only";
+}
+
+export interface SelectionImportScope {
+  mode: "selection";
+  group_ids: string[];
+  provider_ids: string[];
+}
+
+export type ImportScope =
+  | FullImportScope
+  | SettingsOnlyImportScope
+  | SelectionImportScope;
+
 /** ImportConfigRequest represents the request body for config import */
 export interface ImportConfigRequest {
   version?: string;
+  import_scope: ImportScope;
   providers: ExportedProvider[];
   groups: ExportedGroup[];
   routing_policies: ExportedRoutingPolicy[];
@@ -685,10 +707,11 @@ export interface ImportPreviewResponse {
   warnings: string[];
 }
 
-/** AppliedCount represents added/updated counts for applied changes */
+/** AppliedCount represents added/updated/deleted counts for applied changes */
 export interface AppliedCount {
   added: number;
   updated: number;
+  deleted: number;
 }
 
 /** ImportedCounts represents the counts of successfully imported items */

@@ -506,6 +506,199 @@ func TestWebSocketSessionOrchestratorSessionFromAttemptPreservesProviderFailureW
 	}
 }
 
+func TestNewWebSocketProbeDecisionFailureSessionPreservesSelectionFailureShape(t *testing.T) {
+	t.Parallel()
+
+	probeErr := errors.New("probe demand resolution failed")
+	attempts := []WebSocketAttemptResult{
+		{
+			Provider: &model.Provider{ID: "provider-1"},
+			Attempt:  1,
+		},
+	}
+
+	session := newWebSocketProbeDecisionFailureSession(
+		"req-probe",
+		true,
+		attempts,
+		webSocketSelectionProbeOutcomeDemandResolutionFailed,
+		probeErr,
+	)
+	if session == nil {
+		t.Fatal("newWebSocketProbeDecisionFailureSession() = nil, want session")
+	}
+	if session.RequestID != "req-probe" {
+		t.Fatalf("RequestID = %q, want %q", session.RequestID, "req-probe")
+	}
+	if !session.IsSticky {
+		t.Fatal("IsSticky = false, want true")
+	}
+	if session.ProbeOutcome != webSocketSelectionProbeOutcomeDemandResolutionFailed {
+		t.Fatalf("ProbeOutcome = %q, want %q", session.ProbeOutcome, webSocketSelectionProbeOutcomeDemandResolutionFailed)
+	}
+	if session.GatewayStatusCode != http.StatusInternalServerError {
+		t.Fatalf("GatewayStatusCode = %d, want %d", session.GatewayStatusCode, http.StatusInternalServerError)
+	}
+	if session.GatewayErrorCode != ErrCodeInternalError {
+		t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeInternalError)
+	}
+	if session.GatewayMessage != webSocketProbeDemandResolutionFailureMessage {
+		t.Fatalf("GatewayMessage = %q, want %q", session.GatewayMessage, webSocketProbeDemandResolutionFailureMessage)
+	}
+	if !errors.Is(session.FinalErr, probeErr) {
+		t.Fatalf("FinalErr = %v, want %v", session.FinalErr, probeErr)
+	}
+	if session.FinalResult == nil {
+		t.Fatal("FinalResult = nil, want gateway failure result")
+	}
+	if session.FinalResult.TerminalCause != model.TerminalInternalError {
+		t.Fatalf("FinalResult.TerminalCause = %q, want %q", session.FinalResult.TerminalCause, model.TerminalInternalError)
+	}
+	if session.FinalResult.HandshakeStatusCode != http.StatusInternalServerError {
+		t.Fatalf("FinalResult.HandshakeStatusCode = %d, want %d", session.FinalResult.HandshakeStatusCode, http.StatusInternalServerError)
+	}
+
+	attempts[0].Attempt = 99
+	if session.Attempts[0].Attempt != 1 {
+		t.Fatalf("session attempts mutated to %d after caller slice change, want preserved copy", session.Attempts[0].Attempt)
+	}
+}
+
+func TestPopulateCanonicalWebSocketGatewayMetadataCoversCanonicalFallbacks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil guards leave session unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		populateCanonicalWebSocketGatewayMetadata(nil)
+
+		session := &WebSocketSessionResult{}
+		populateCanonicalWebSocketGatewayMetadata(session)
+		if session.GatewayStatusCode != 0 || session.GatewayErrorCode != "" || session.GatewayMessage != "" {
+			t.Fatalf("session = %#v, want zero-value gateway metadata", session)
+		}
+	})
+
+	t.Run("reconnect required overrides gateway metadata", func(t *testing.T) {
+		t.Parallel()
+
+		session := &WebSocketSessionResult{
+			FinalResult: &WebSocketResult{
+				ClientVisible:  true,
+				RecoveryAction: model.RecoveryActionReconnectRequired,
+				TerminalCause:  model.TerminalUpstreamSemanticError,
+			},
+			GatewayStatusCode: http.StatusForbidden,
+			GatewayErrorCode:  "IGNORED",
+			GatewayMessage:    "ignored",
+		}
+
+		populateCanonicalWebSocketGatewayMetadata(session)
+		if session.GatewayStatusCode != webSocketReconnectRequiredStatusCode {
+			t.Fatalf("GatewayStatusCode = %d, want %d", session.GatewayStatusCode, webSocketReconnectRequiredStatusCode)
+		}
+		if session.GatewayErrorCode != ErrCodeWebSocketReconnect {
+			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeWebSocketReconnect)
+		}
+		if session.GatewayMessage != webSocketReconnectRequiredMessage {
+			t.Fatalf("GatewayMessage = %q, want %q", session.GatewayMessage, webSocketReconnectRequiredMessage)
+		}
+	})
+
+	t.Run("existing gateway status backfills canonical code and message", func(t *testing.T) {
+		t.Parallel()
+
+		configErr := errors.New("missing managed credential")
+		session := &WebSocketSessionResult{
+			FinalResult: &WebSocketResult{
+				TerminalCause: model.TerminalProviderConfigurationError,
+				Err:           configErr,
+			},
+			GatewayStatusCode: http.StatusBadGateway,
+		}
+
+		populateCanonicalWebSocketGatewayMetadata(session)
+		if session.GatewayErrorCode != ErrCodeWebSocketUpgrade {
+			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeWebSocketUpgrade)
+		}
+		if session.GatewayMessage != configErr.Error() {
+			t.Fatalf("GatewayMessage = %q, want %q", session.GatewayMessage, configErr.Error())
+		}
+	})
+
+	t.Run("client visible failures do not synthesize pre-visible gateway errors", func(t *testing.T) {
+		t.Parallel()
+
+		session := &WebSocketSessionResult{
+			FinalResult: &WebSocketResult{ClientVisible: true},
+		}
+
+		populateCanonicalWebSocketGatewayMetadata(session)
+		if session.GatewayStatusCode != 0 || session.GatewayErrorCode != "" || session.GatewayMessage != "" {
+			t.Fatalf("session = %#v, want client-visible failures to keep empty gateway metadata", session)
+		}
+	})
+
+	t.Run("pre-visible failures use the canonical gateway fallback", func(t *testing.T) {
+		t.Parallel()
+
+		session := &WebSocketSessionResult{
+			FinalResult: &WebSocketResult{
+				TerminalCause: model.TerminalUpstreamTransportError,
+				Err:           errors.New("transport down"),
+			},
+		}
+
+		populateCanonicalWebSocketGatewayMetadata(session)
+		if session.GatewayStatusCode != webSocketPreVisibleFailureStatusCode {
+			t.Fatalf("GatewayStatusCode = %d, want %d", session.GatewayStatusCode, webSocketPreVisibleFailureStatusCode)
+		}
+		if session.GatewayErrorCode != ErrCodeWebSocketUpgrade {
+			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeWebSocketUpgrade)
+		}
+		if session.GatewayMessage != webSocketPreVisibleFailureMessage {
+			t.Fatalf("GatewayMessage = %q, want %q", session.GatewayMessage, webSocketPreVisibleFailureMessage)
+		}
+	})
+}
+
+func TestCanonicalWebSocketGatewayMessageAndRecoveryFallbacks(t *testing.T) {
+	t.Parallel()
+
+	if got := canonicalWebSocketGatewayMessage(nil); got != webSocketPreVisibleFailureMessage {
+		t.Fatalf("canonicalWebSocketGatewayMessage(nil) = %q, want %q", got, webSocketPreVisibleFailureMessage)
+	}
+
+	configErr := errors.New("provider credential missing")
+	if got := canonicalWebSocketGatewayMessage(&WebSocketResult{
+		TerminalCause: model.TerminalProviderConfigurationError,
+		Err:           configErr,
+	}); got != configErr.Error() {
+		t.Fatalf("canonicalWebSocketGatewayMessage(provider config error) = %q, want %q", got, configErr.Error())
+	}
+
+	if got := canonicalWebSocketGatewayMessage(&WebSocketResult{
+		TerminalCause: model.TerminalUpstreamTransportError,
+		Err:           errors.New("dial failed"),
+	}); got != webSocketPreVisibleFailureMessage {
+		t.Fatalf("canonicalWebSocketGatewayMessage(transport error) = %q, want %q", got, webSocketPreVisibleFailureMessage)
+	}
+
+	if got := deriveWebSocketSessionRecoveryAction(nil); got != model.RecoveryActionNone {
+		t.Fatalf("deriveWebSocketSessionRecoveryAction(nil) = %q, want %q", got, model.RecoveryActionNone)
+	}
+
+	session := &WebSocketSessionResult{
+		FinalResult: &WebSocketResult{},
+		Attempts: []WebSocketAttemptResult{
+			{SwitchReason: "provider_switch"},
+		},
+	}
+	if got := deriveWebSocketSessionRecoveryAction(session); got != model.RecoveryActionTransparentRetry {
+		t.Fatalf("deriveWebSocketSessionRecoveryAction() = %q, want %q", got, model.RecoveryActionTransparentRetry)
+	}
+}
+
 func TestWebSocketResultCloneDeepCopiesMutableFields(t *testing.T) {
 	t.Parallel()
 

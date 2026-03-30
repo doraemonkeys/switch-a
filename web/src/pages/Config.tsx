@@ -80,14 +80,6 @@ export function Config() {
     }
   };
 
-  // Handle import success - refetch config
-  const handleImportSuccess = async () => {
-    setImportModalOpen(false);
-    toast.success("配置导入成功");
-    // Refetch config to update the form
-    await refetch();
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -155,7 +147,8 @@ export function Config() {
         onImport={async (data) => {
           const result = await importConfig(data);
           if (result.success) {
-            await handleImportSuccess();
+            toast.success("配置导入成功");
+            await refetch();
           }
           return result;
         }}

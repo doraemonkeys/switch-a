@@ -147,6 +147,9 @@ describe("createApiClient config API", () => {
 
   it("should preview config import (dry run)", async () => {
     const importRequest = {
+      import_scope: {
+        mode: "full" as const,
+      },
       providers: [
         {
           id: "provider-1",
@@ -210,6 +213,11 @@ describe("createApiClient config API", () => {
 
   it("should import config", async () => {
     const importRequest = {
+      import_scope: {
+        mode: "selection" as const,
+        group_ids: ["group-1"],
+        provider_ids: ["provider-1"],
+      },
       providers: [
         {
           id: "provider-1",
@@ -246,10 +254,10 @@ describe("createApiClient config API", () => {
     const importResult = {
       success: true,
       applied: {
-        providers: { added: 0, updated: 1 },
-        groups: { added: 0, updated: 0 },
-        routing_policies: { added: 1, updated: 0 },
-        settings: { added: 0, updated: 1 },
+        providers: { added: 0, updated: 1, deleted: 0 },
+        groups: { added: 0, updated: 0, deleted: 0 },
+        routing_policies: { added: 1, updated: 0, deleted: 0 },
+        settings: { added: 0, updated: 1, deleted: 0 },
       },
     };
     mockHttpClient.mockResponse({
@@ -272,6 +280,9 @@ describe("createApiClient config API", () => {
 
   it("should handle import with warnings", async () => {
     const importRequest = {
+      import_scope: {
+        mode: "settings_only" as const,
+      },
       providers: [],
       groups: [],
       routing_policies: [],

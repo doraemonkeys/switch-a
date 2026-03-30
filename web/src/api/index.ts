@@ -68,6 +68,8 @@ export type {
   ExportedGroup,
   ExportedRoutingPolicy,
   ExportedConfig,
+  FullImportScope,
+  ImportMode,
   ImportConfigRequest,
   ChangeCount,
   ImportChanges,
@@ -75,6 +77,9 @@ export type {
   AppliedCount,
   ImportedCounts,
   ImportResult,
+  ImportScope,
+  SelectionImportScope,
+  SettingsOnlyImportScope,
 } from "./types";
 
 // Interface exports (for testing/mocking)

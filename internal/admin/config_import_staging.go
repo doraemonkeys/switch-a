@@ -10,9 +10,10 @@ import (
 )
 
 type stagedConfigImport struct {
-	bundle   store.ConfigImportBundle
-	changes  ImportChanges
-	warnings []string
+	bundle                store.ConfigImportBundle
+	changes               ImportChanges
+	warnings              []string
+	previewRejectsWarning bool
 }
 
 func stageConfigImport(
@@ -22,21 +23,40 @@ func stageConfigImport(
 	existingRoutingPolicies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy,
 	existingSettings map[string]string,
 ) stagedConfigImport {
+	resolved, scopeWarnings := resolveImportConfigRequest(req)
 	staged := stagedConfigImport{
-		warnings: validateImportRequest(req, existingGroups),
+		warnings:              append([]string(nil), scopeWarnings...),
+		previewRejectsWarning: !resolved.CanStage || resolved.Scope.Mode != ConfigImportModeFull,
+	}
+	if !resolved.CanStage {
+		return staged
 	}
 
-	finalGroups := stageImportedGroups(&staged, req.Groups, existingGroups)
-	validGroups := buildValidGroupsMap(req.Groups, existingGroups)
-	finalProviders := stageImportedProviders(&staged, req.Providers, existingProviders, validGroups)
+	validationRequest := &ImportConfigRequest{
+		Providers: resolved.Providers,
+		Groups:    resolved.Groups,
+		Settings:  resolved.Settings,
+	}
+	staged.warnings = append(
+		staged.warnings,
+		validateImportRequest(
+			validationRequest,
+			existingGroups,
+			buildScopedMissingProviderGroupRefs(req, resolved.Scope),
+		)...,
+	)
+
+	finalGroups := stageImportedGroups(&staged, resolved.Groups, existingGroups)
+	validGroups := buildValidGroupsMap(resolved.Groups, existingGroups)
+	finalProviders := stageImportedProviders(&staged, resolved.Providers, existingProviders, validGroups)
 	stageImportedRoutingPolicies(
 		&staged,
-		req.RoutingPolicies,
+		resolved,
 		existingRoutingPolicies,
 		finalGroups,
 		finalProviders,
 	)
-	stageImportedSettings(&staged, req.Settings, existingSettings)
+	stageImportedSettings(&staged, resolved.Settings, existingSettings)
 	return staged
 }
 
@@ -107,11 +127,23 @@ func stageImportedProviders(
 
 func stageImportedRoutingPolicies(
 	staged *stagedConfigImport,
-	exportedPolicies []ExportedRoutingPolicy,
+	resolved resolvedConfigImport,
 	existingRoutingPolicies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy,
 	finalGroups map[string]*model.Group,
 	finalProviders map[string]*model.Provider,
 ) {
+	if resolved.Scope.Mode != ConfigImportModeFull {
+		staged.bundle.RoutingPolicyMode = store.ConfigImportRoutingPolicyModePreserve
+		finalRoutingPolicies := cloneRoutingPolicyMap(existingRoutingPolicies)
+		staged.warnings = append(
+			staged.warnings,
+			validateStagedExactProviderPolicies(finalRoutingPolicies, finalProviders)...,
+		)
+		return
+	}
+
+	staged.bundle.RoutingPolicyMode = store.ConfigImportRoutingPolicyModeReplace
+	exportedPolicies := resolved.RoutingPolicies
 	routingCatalog := newRoutingPolicyCatalogFromMaps(finalGroups, finalProviders)
 	finalRoutingPolicies := make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(exportedPolicies))
 	importedRoutingPolicies := make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(exportedPolicies))
@@ -146,7 +178,7 @@ func stageImportedRoutingPolicies(
 	}
 
 	stageDeletedRoutingPolicies(&staged.changes, existingRoutingPolicies, seenRoutingKeys, finalRoutingPolicies)
-	staged.bundle.RoutingPolicies = collectImportedRoutingPolicies(importedRoutingPolicies)
+	staged.bundle.RoutingPolicies = collectStagedRoutingPolicies(importedRoutingPolicies)
 	staged.warnings = append(
 		staged.warnings,
 		validateStagedExactProviderPolicies(finalRoutingPolicies, finalProviders)...,
@@ -227,6 +259,16 @@ func cloneProviderMap(providers map[string]*model.Provider, extraCapacity int) m
 	return cloned
 }
 
+func cloneRoutingPolicyMap(
+	policies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy,
+) map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy {
+	cloned := make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(policies))
+	for key, policy := range policies {
+		cloned[key] = policy
+	}
+	return cloned
+}
+
 func duplicateImportID(seen map[string]struct{}, id string) bool {
 	if id == "" {
 		return false
@@ -291,7 +333,7 @@ func validateStagedExactProviderPolicies(
 	return warnings
 }
 
-func collectImportedRoutingPolicies(
+func collectStagedRoutingPolicies(
 	policies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy,
 ) []model.RoutingPolicy {
 	if len(policies) == 0 {

@@ -53,6 +53,7 @@ func TestCalculateImportChanges_CountsAddsUpdatesAndSkipsInvalidEntries(t *testi
 	}
 
 	req := &ImportConfigRequest{
+		ImportScope: fullConfigImportScope(),
 		Providers: []ExportedProvider{
 			importedTestProvider("p-existing", "Updated Provider", "claude", "https://new.example"),
 			importedTestProvider("p-new", "New Provider", "codex", "https://codex.example"),
@@ -129,6 +130,7 @@ func TestApplyImportChanges_TracksAddsUpdatesAndMutatesStore(t *testing.T) {
 	st.config[configStickyModeKey] = "off"
 
 	req := &ImportConfigRequest{
+		ImportScope: fullConfigImportScope(),
 		Providers: []ExportedProvider{
 			importedTestProvider("p-existing", "Updated Provider", "claude", "https://new.example"),
 			importedTestProvider("p-new", "New Provider", "codex", "https://codex.example"),

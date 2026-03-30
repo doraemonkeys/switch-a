@@ -96,6 +96,10 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 
 	// If dry_run, return preview
 	if dryRun {
+		if staged.previewRejectsWarning && len(staged.warnings) > 0 {
+			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(staged.warnings, "; "))
+			return
+		}
 		resp := ImportPreviewResponse{
 			DryRun:   true,
 			Changes:  staged.changes,
@@ -153,7 +157,11 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // validateImportRequest validates the import request and returns warnings.
-func validateImportRequest(req *ImportConfigRequest, existingGroups map[string]*model.Group) []string {
+func validateImportRequest(
+	req *ImportConfigRequest,
+	existingGroups map[string]*model.Group,
+	suppressedProviderGroupRefs map[string]struct{},
+) []string {
 	estimatedWarnings := len(req.Providers)*2 + len(req.Groups) + len(req.Settings)
 	warnings := make([]string, 0, estimatedWarnings)
 
@@ -171,7 +179,10 @@ func validateImportRequest(req *ImportConfigRequest, existingGroups map[string]*
 	warnings = append(warnings, validateImportSettings(req.Settings)...)
 
 	// Check for provider references to non-existent groups
-	warnings = append(warnings, validateProviderGroupRefs(req, existingGroups)...)
+	warnings = append(
+		warnings,
+		validateProviderGroupRefs(req, existingGroups, suppressedProviderGroupRefs)...,
+	)
 
 	return warnings
 }
@@ -266,7 +277,11 @@ func validateExportedGroup(g *ExportedGroup) []string {
 }
 
 // validateProviderGroupRefs checks for provider references to non-existent groups.
-func validateProviderGroupRefs(req *ImportConfigRequest, existingGroups map[string]*model.Group) []string {
+func validateProviderGroupRefs(
+	req *ImportConfigRequest,
+	existingGroups map[string]*model.Group,
+	suppressedProviderGroupRefs map[string]struct{},
+) []string {
 	var warnings []string
 
 	groupIDs := make(map[string]bool)
@@ -280,9 +295,14 @@ func validateProviderGroupRefs(req *ImportConfigRequest, existingGroups map[stri
 		groupIDs[id] = true
 	}
 	for _, p := range req.Providers {
-		if p.GroupID != nil && *p.GroupID != "" && !groupIDs[*p.GroupID] {
-			warnings = append(warnings, "Provider '"+p.ID+"' references non-existent group '"+*p.GroupID+"'")
+		groupID := trimmedConfigImportGroupID(p.GroupID)
+		if groupID == "" || groupIDs[groupID] {
+			continue
 		}
+		if _, suppressed := suppressedProviderGroupRefs[configImportProviderGroupRefKey(p.ID, groupID)]; suppressed {
+			continue
+		}
+		warnings = append(warnings, "Provider '"+p.ID+"' references non-existent group '"+groupID+"'")
 	}
 
 	return warnings
@@ -295,50 +315,14 @@ func (h *Handler) calculateImportChanges(
 	existingGroups map[string]*model.Group,
 	existingSettings map[string]string,
 ) ImportChanges {
-	var changes ImportChanges
-	validGroups := buildValidGroupsMap(req.Groups, existingGroups)
-	comparableExistingSettings := normalizeSupportedSettings(existingSettings)
-
-	// Calculate provider changes
-	for _, p := range req.Providers {
-		if p.ID == "" {
-			continue
-		}
-		if existing, exists := existingProviders[p.ID]; exists {
-			if providerImportDiffers(&p, existing, validGroups) {
-				changes.Providers.Update++
-			}
-		} else if canImportProvider(&p, validGroups) {
-			changes.Providers.Add++
-		}
-	}
-
-	// Calculate group changes
-	for _, g := range req.Groups {
-		if g.ID == "" {
-			continue
-		}
-		if existing, exists := existingGroups[g.ID]; exists {
-			if groupImportDiffers(&g, existing) {
-				changes.Groups.Update++
-			}
-		} else if canImportGroup(&g) {
-			changes.Groups.Add++
-		}
-	}
-
-	// Calculate settings changes
-	for key, value := range normalizeSupportedSettings(req.Settings) {
-		if existingValue, exists := comparableExistingSettings[key]; exists {
-			if existingValue != value {
-				changes.Settings.Update++
-			}
-		} else {
-			changes.Settings.Add++
-		}
-	}
-
-	return changes
+	staged := stageConfigImport(
+		req,
+		existingProviders,
+		existingGroups,
+		nil,
+		existingSettings,
+	)
+	return staged.changes
 }
 
 // applyImportChanges applies the import changes to the store.
@@ -349,122 +333,53 @@ func (h *Handler) applyImportChanges(
 	existingGroups map[string]*model.Group,
 	existingSettings map[string]string,
 ) (ImportedCounts, error) {
-	var applied ImportedCounts
-
-	// Import groups first (providers may reference them)
-	for _, g := range req.Groups {
-		added, updated, err := h.importGroup(ctx, &g, existingGroups)
-		if err != nil {
-			return applied, err
-		}
-		applied.Groups.Added += added
-		applied.Groups.Updated += updated
-		if added > 0 || updated > 0 {
-			group, ok := buildGroupFromExport(&g)
-			if ok {
-				existingGroups[group.ID] = group
-			}
-		}
+	existingRoutingPolicies, err := h.store.ListRoutingPolicies(ctx)
+	if err != nil {
+		return ImportedCounts{}, err
+	}
+	existingRoutingPolicyMap := make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(existingRoutingPolicies))
+	for i := range existingRoutingPolicies {
+		key := existingRoutingPolicies[i].NaturalKey()
+		existingRoutingPolicyMap[key] = &existingRoutingPolicies[i]
 	}
 
-	// Build group lookup including newly created groups
-	validGroups := buildValidGroupsMap(req.Groups, existingGroups)
-
-	// Import providers
-	for _, p := range req.Providers {
-		added, updated, err := h.importProvider(ctx, &p, existingProviders, validGroups)
-		if err != nil {
-			return applied, err
-		}
-		applied.Providers.Added += added
-		applied.Providers.Updated += updated
-		if added > 0 || updated > 0 {
-			provider, ok := buildProviderFromExport(&p, validGroups)
-			if ok {
-				existingProviders[provider.ID] = provider
-			}
-		}
+	staged := stageConfigImport(
+		req,
+		existingProviders,
+		existingGroups,
+		existingRoutingPolicyMap,
+		existingSettings,
+	)
+	if len(staged.warnings) > 0 {
+		return ImportedCounts{}, fmt.Errorf(
+			"import validation failed: %s",
+			strings.Join(staged.warnings, "; "),
+		)
+	}
+	if err := h.store.ApplyConfigImport(ctx, &staged.bundle); err != nil {
+		return ImportedCounts{}, err
 	}
 
-	// Import settings - distinguish add/update
-	comparableExistingSettings := normalizeSupportedSettings(existingSettings)
-	settingsToUpdate := normalizeSupportedSettings(req.Settings)
-	changedSettings := make(map[string]string, len(settingsToUpdate))
-	for key, value := range settingsToUpdate {
-		if existingValue, exists := comparableExistingSettings[key]; exists {
-			if existingValue == value {
-				continue
-			}
-			applied.Settings.Updated++
-		} else {
-			applied.Settings.Added++
-		}
-		changedSettings[key] = value
-	}
-	if len(changedSettings) > 0 {
-		if err := h.store.SetConfigs(ctx, changedSettings); err != nil {
-			return applied, err
-		}
-	}
-
-	return applied, nil
-}
-
-// importGroup imports a single group and returns (added, updated, error).
-func (h *Handler) importGroup(
-	ctx context.Context,
-	g *ExportedGroup,
-	existingGroups map[string]*model.Group,
-) (int, int, error) {
-	group, ok := buildGroupFromExport(g)
-	if !ok {
-		return 0, 0, nil
-	}
-
-	if _, exists := existingGroups[g.ID]; exists {
-		if !groupImportDiffers(g, existingGroups[g.ID]) {
-			return 0, 0, nil
-		}
-		if err := h.store.UpdateGroup(ctx, group); err != nil {
-			return 0, 0, err
-		}
-		return 0, 1, nil
-	}
-	if err := h.store.CreateGroup(ctx, group); err != nil {
-		return 0, 0, err
-	}
-	return 1, 0, nil
-}
-
-// importProvider imports a single provider and returns (added, updated, error).
-func (h *Handler) importProvider(
-	ctx context.Context,
-	p *ExportedProvider,
-	existingProviders map[string]*model.Provider,
-	validGroups map[string]bool,
-) (int, int, error) {
-	if p.ID == "" || p.Name == "" {
-		return 0, 0, nil
-	}
-
-	provider, ok := buildProviderFromExport(p, validGroups)
-	if !ok {
-		return 0, 0, nil
-	}
-
-	if existing, exists := existingProviders[p.ID]; exists {
-		if !providerImportDiffers(p, existing, validGroups) {
-			return 0, 0, nil
-		}
-		// Preserve timestamps by not setting them (GORM will handle UpdatedAt)
-		provider.CreatedAt = existing.CreatedAt
-		if err := h.store.UpdateProvider(ctx, provider); err != nil {
-			return 0, 0, err
-		}
-		return 0, 1, nil
-	}
-	if err := h.store.CreateProvider(ctx, provider); err != nil {
-		return 0, 0, err
-	}
-	return 1, 0, nil
+	return ImportedCounts{
+		Providers: AppliedCount{
+			Added:   staged.changes.Providers.Add,
+			Updated: staged.changes.Providers.Update,
+			Deleted: staged.changes.Providers.Delete,
+		},
+		Groups: AppliedCount{
+			Added:   staged.changes.Groups.Add,
+			Updated: staged.changes.Groups.Update,
+			Deleted: staged.changes.Groups.Delete,
+		},
+		RoutingPolicies: AppliedCount{
+			Added:   staged.changes.RoutingPolicies.Add,
+			Updated: staged.changes.RoutingPolicies.Update,
+			Deleted: staged.changes.RoutingPolicies.Delete,
+		},
+		Settings: AppliedCount{
+			Added:   staged.changes.Settings.Add,
+			Updated: staged.changes.Settings.Update,
+			Deleted: staged.changes.Settings.Delete,
+		},
+	}, nil
 }

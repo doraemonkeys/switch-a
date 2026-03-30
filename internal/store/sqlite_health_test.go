@@ -65,6 +65,82 @@ func TestHealthState(t *testing.T) {
 	}
 }
 
+func TestGetHealthStatesByProviderIDs(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:      "p1",
+		Name:    "Provider One",
+		APIKey:  "key-1",
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("CreateProvider(p1) failed: %v", err)
+	}
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:      "p2",
+		Name:    "Provider Two",
+		APIKey:  "key-2",
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("CreateProvider(p2) failed: %v", err)
+	}
+
+	emptyStates, err := store.GetHealthStatesByProviderIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("GetHealthStatesByProviderIDs(nil) failed: %v", err)
+	}
+	if len(emptyStates) != 0 {
+		t.Fatalf("len(emptyStates) = %d, want 0", len(emptyStates))
+	}
+
+	now := time.Now()
+	lastError := "backend timeout"
+	if err := store.UpdateHealthState(ctx, &model.HealthState{
+		ProviderID:   "p1",
+		Available:    false,
+		SuccessCount: 2,
+		FailCount:    1,
+		LastError:    lastError,
+		LastFailure:  &now,
+	}); err != nil {
+		t.Fatalf("UpdateHealthState(p1) failed: %v", err)
+	}
+
+	states, err := store.GetHealthStatesByProviderIDs(ctx, []string{"p1", "p2"})
+	if err != nil {
+		t.Fatalf("GetHealthStatesByProviderIDs(mixed) failed: %v", err)
+	}
+	if len(states) != 2 {
+		t.Fatalf("len(states) = %d, want 2", len(states))
+	}
+
+	existing := states["p1"]
+	if existing == nil {
+		t.Fatal("states[p1] = nil, want persisted state")
+	}
+	if existing.Available {
+		t.Fatal("states[p1].Available = true, want false")
+	}
+	if existing.SuccessCount != 2 || existing.FailCount != 1 {
+		t.Fatalf("states[p1] counters = %+v, want success=2 fail=1", existing)
+	}
+	if existing.LastError != lastError {
+		t.Fatalf("states[p1].LastError = %q, want %q", existing.LastError, lastError)
+	}
+
+	defaulted := states["p2"]
+	if defaulted == nil {
+		t.Fatal("states[p2] = nil, want default state")
+	}
+	if !defaulted.Available {
+		t.Fatal("states[p2].Available = false, want true")
+	}
+	if defaulted.ProviderID != "p2" {
+		t.Fatalf("states[p2].ProviderID = %q, want p2", defaulted.ProviderID)
+	}
+}
+
 func TestIncrementSuccessCount(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()

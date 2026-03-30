@@ -416,6 +416,16 @@ func TestTokenCaptureInterceptor_ImplementsInterface(t *testing.T) {
 	var _ ResponseInterceptor = (*tokenCaptureInterceptor)(nil)
 }
 
+func TestTokenCaptureInterceptor_WaitIsNoopForBufferedResponses(t *testing.T) {
+	interceptor := newTokenCaptureInterceptor(32, nil)
+
+	interceptor.Wait()
+
+	if usage, complete := interceptor.Result(); usage != nil || complete {
+		t.Fatalf("Result() after Wait() = (%#v, %v), want (nil, false)", usage, complete)
+	}
+}
+
 // ============================================================
 // Benchmark tests
 // ============================================================

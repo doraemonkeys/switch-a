@@ -1,6 +1,9 @@
 package usage
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestTokenUsageMergeHandlesNilAndCacheCreation(t *testing.T) {
 	other := &TokenUsage{
@@ -106,5 +109,62 @@ func TestBuildCacheCreationFromUsageMapParsesNestedValues(t *testing.T) {
 	})
 	if tokenOnly == nil || tokenOnly.InputTokens != 4 {
 		t.Fatalf("tokenOnly = %#v, want cache creation with input tokens", tokenOnly)
+	}
+}
+
+type recordingZapLogger struct {
+	msg           string
+	keysAndValues []interface{}
+}
+
+func (l *recordingZapLogger) Debugw(msg string, keysAndValues ...interface{}) {
+	l.msg = msg
+	l.keysAndValues = append([]interface{}(nil), keysAndValues...)
+}
+
+func TestFullCaptureBufferWriteAndBytesMirrorBackingBuffer(t *testing.T) {
+	t.Parallel()
+
+	buffer := &fullCaptureBuffer{buf: bytes.NewBuffer(nil)}
+	written, err := buffer.Write([]byte("usage"))
+	if err != nil {
+		t.Fatalf("Write() error = %v, want nil", err)
+	}
+	if written != len("usage") {
+		t.Fatalf("Write() wrote %d bytes, want %d", written, len("usage"))
+	}
+	if got := string(buffer.Bytes()); got != "usage" {
+		t.Fatalf("Bytes() = %q, want %q", got, "usage")
+	}
+}
+
+func TestZapLoggerAdapterHandlesNilAndForwardsStructuredDebug(t *testing.T) {
+	t.Parallel()
+
+	if adapter := NewZapLoggerAdapter(nil); adapter != nil {
+		t.Fatalf("NewZapLoggerAdapter(nil) = %#v, want nil", adapter)
+	}
+
+	var nilAdapter *ZapLoggerAdapter
+	nilAdapter.Debug("ignored", "k", "v")
+
+	adapter := &ZapLoggerAdapter{}
+	adapter.Debug("ignored", "k", "v")
+
+	recording := &recordingZapLogger{}
+	adapter = NewZapLoggerAdapter(recording)
+	if adapter == nil {
+		t.Fatal("NewZapLoggerAdapter(recording) = nil, want adapter")
+	}
+
+	adapter.Debug("usage parsed", "prompt_tokens", int64(42))
+	if recording.msg != "usage parsed" {
+		t.Fatalf("forwarded message = %q, want %q", recording.msg, "usage parsed")
+	}
+	if len(recording.keysAndValues) != 2 {
+		t.Fatalf("forwarded key/value count = %d, want 2", len(recording.keysAndValues))
+	}
+	if recording.keysAndValues[0] != "prompt_tokens" || recording.keysAndValues[1] != int64(42) {
+		t.Fatalf("forwarded key/values = %#v, want prompt_tokens=42", recording.keysAndValues)
 	}
 }

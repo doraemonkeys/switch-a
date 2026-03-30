@@ -118,9 +118,24 @@ type ExportedRoutingPolicy struct {
 	AllowedVendors   []string                          `json:"allowed_vendors"`
 }
 
+type ConfigImportMode string
+
+const (
+	ConfigImportModeFull         ConfigImportMode = "full"
+	ConfigImportModeSettingsOnly ConfigImportMode = "settings_only"
+	ConfigImportModeSelection    ConfigImportMode = "selection"
+)
+
+type ConfigImportScope struct {
+	Mode        ConfigImportMode `json:"mode,omitempty"`
+	GroupIDs    []string         `json:"group_ids,omitempty"`
+	ProviderIDs []string         `json:"provider_ids,omitempty"`
+}
+
 // ImportConfigRequest represents the request body for config import.
 type ImportConfigRequest struct {
 	Version         string                  `json:"version"`
+	ImportScope     *ConfigImportScope      `json:"import_scope,omitempty"`
 	Providers       []ExportedProvider      `json:"providers"`
 	Groups          []ExportedGroup         `json:"groups"`
 	RoutingPolicies []ExportedRoutingPolicy `json:"routing_policies"`
@@ -173,6 +188,9 @@ type AppliedCount struct {
 // buildProviderFromExport builds a model.Provider from an ExportedProvider.
 // Returns false if the provider is invalid and should be skipped.
 func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (*model.Provider, bool) {
+	if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.Name) == "" {
+		return nil, false
+	}
 	credentialType := model.NormalizeProviderCredentialType(p.CredentialType)
 	if !IsValidProviderCredentialType(credentialType) {
 		return nil, false
@@ -454,11 +472,6 @@ func buildExportedRoutingPolicy(policy *model.RoutingPolicy) ExportedRoutingPoli
 
 func canImportProvider(p *ExportedProvider, validGroups map[string]bool) bool {
 	_, ok := buildProviderFromExport(p, validGroups)
-	return ok
-}
-
-func canImportGroup(g *ExportedGroup) bool {
-	_, ok := buildGroupFromExport(g)
 	return ok
 }
 

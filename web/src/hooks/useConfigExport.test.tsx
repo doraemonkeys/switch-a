@@ -67,10 +67,10 @@ const mockPreviewResponse: ImportPreviewResponse = {
 const mockImportResult: ImportResult = {
   success: true,
   applied: {
-    providers: { added: 1, updated: 0 },
-    groups: { added: 0, updated: 1 },
-    routing_policies: { added: 0, updated: 1 },
-    settings: { added: 0, updated: 2 },
+    providers: { added: 1, updated: 0, deleted: 0 },
+    groups: { added: 0, updated: 1, deleted: 0 },
+    routing_policies: { added: 0, updated: 1, deleted: 0 },
+    settings: { added: 0, updated: 2, deleted: 0 },
   },
 };
 
@@ -177,6 +177,9 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
+      import_scope: {
+        mode: "full" as const,
+      },
       providers: mockExportedConfig.providers,
       groups: mockExportedConfig.groups,
       routing_policies: mockExportedConfig.routing_policies,
@@ -199,6 +202,9 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
+      import_scope: {
+        mode: "full" as const,
+      },
       providers: mockExportedConfig.providers,
       groups: mockExportedConfig.groups,
       routing_policies: mockExportedConfig.routing_policies,
@@ -229,6 +235,9 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
+      import_scope: {
+        mode: "settings_only" as const,
+      },
       providers: [],
       groups: [],
       routing_policies: [],
@@ -264,6 +273,9 @@ describe("useConfigExport", () => {
     await act(async () => {
       try {
         await result.current.importConfig({
+          import_scope: {
+            mode: "settings_only" as const,
+          },
           providers: [],
           groups: [],
           routing_policies: [],
@@ -291,6 +303,9 @@ describe("useConfigExport", () => {
     await act(async () => {
       try {
         await result.current.previewImport({
+          import_scope: {
+            mode: "settings_only" as const,
+          },
           providers: [],
           groups: [],
           routing_policies: [],

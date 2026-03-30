@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -275,7 +276,17 @@ func (m *mockStore) ApplyConfigImport(_ context.Context, bundle *store.ConfigImp
 	if bundle == nil {
 		return nil
 	}
-	if m.createErr != nil && (len(bundle.Groups) > 0 || len(bundle.Providers) > 0 || len(bundle.RoutingPolicies) > 0) {
+	routingPolicyMode := bundle.RoutingPolicyMode
+	if routingPolicyMode == "" {
+		routingPolicyMode = store.ConfigImportRoutingPolicyModeReplace
+	}
+	if routingPolicyMode == store.ConfigImportRoutingPolicyModePreserve && len(bundle.RoutingPolicies) != 0 {
+		return fmt.Errorf(
+			"routing policy import mode %q cannot include imported routing policies",
+			store.ConfigImportRoutingPolicyModePreserve,
+		)
+	}
+	if m.createErr != nil && (len(bundle.Groups) > 0 || len(bundle.Providers) > 0 || (routingPolicyMode == store.ConfigImportRoutingPolicyModeReplace && len(bundle.RoutingPolicies) > 0)) {
 		return m.createErr
 	}
 	if m.configErr != nil && len(bundle.Settings) > 0 {
@@ -293,47 +304,49 @@ func (m *mockStore) ApplyConfigImport(_ context.Context, bundle *store.ConfigImp
 		groupCopy := group
 		m.groups[group.ID] = &groupCopy
 	}
-	desiredRoutingKeys := make(map[model.RoutingPolicyNaturalKey]struct{}, len(bundle.RoutingPolicies))
-	for i := range bundle.RoutingPolicies {
-		desiredRoutingKeys[bundle.RoutingPolicies[i].NaturalKey()] = struct{}{}
-	}
-	for id, existing := range m.routingPolicies {
-		if existing == nil {
-			delete(m.routingPolicies, id)
-			continue
+	if routingPolicyMode == store.ConfigImportRoutingPolicyModeReplace {
+		desiredRoutingKeys := make(map[model.RoutingPolicyNaturalKey]struct{}, len(bundle.RoutingPolicies))
+		for i := range bundle.RoutingPolicies {
+			desiredRoutingKeys[bundle.RoutingPolicies[i].NaturalKey()] = struct{}{}
 		}
-		if _, keep := desiredRoutingKeys[existing.NaturalKey()]; keep {
-			continue
-		}
-		if m.deleteErr != nil {
-			return m.deleteErr
-		}
-		delete(m.routingPolicies, id)
-	}
-	for i := range bundle.RoutingPolicies {
-		policy := cloneRoutingPolicy(&bundle.RoutingPolicies[i])
-		key := policy.NaturalKey()
-		var existingID uint
 		for id, existing := range m.routingPolicies {
-			if existing != nil && existing.NaturalKey() == key {
-				existingID = id
-				break
+			if existing == nil {
+				delete(m.routingPolicies, id)
+				continue
 			}
-		}
-		if existingID != 0 {
-			if m.updateErr != nil {
-				return m.updateErr
+			if _, keep := desiredRoutingKeys[existing.NaturalKey()]; keep {
+				continue
 			}
-			policy.ID = existingID
-			m.routingPolicies[existingID] = policy
-			continue
+			if m.deleteErr != nil {
+				return m.deleteErr
+			}
+			delete(m.routingPolicies, id)
 		}
-		if m.createErr != nil {
-			return m.createErr
+		for i := range bundle.RoutingPolicies {
+			policy := cloneRoutingPolicy(&bundle.RoutingPolicies[i])
+			key := policy.NaturalKey()
+			var existingID uint
+			for id, existing := range m.routingPolicies {
+				if existing != nil && existing.NaturalKey() == key {
+					existingID = id
+					break
+				}
+			}
+			if existingID != 0 {
+				if m.updateErr != nil {
+					return m.updateErr
+				}
+				policy.ID = existingID
+				m.routingPolicies[existingID] = policy
+				continue
+			}
+			if m.createErr != nil {
+				return m.createErr
+			}
+			m.nextRoutingPolicyID++
+			policy.ID = m.nextRoutingPolicyID
+			m.routingPolicies[policy.ID] = policy
 		}
-		m.nextRoutingPolicyID++
-		policy.ID = m.nextRoutingPolicyID
-		m.routingPolicies[policy.ID] = policy
 	}
 	for i := range bundle.Providers {
 		provider := bundle.Providers[i]

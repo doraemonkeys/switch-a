@@ -36,6 +36,7 @@ func TestApplyConfigImport_RollsBackEarlierWritesOnProviderRoutingPolicyConflict
 		Groups: []model.Group{
 			{ID: "g-import", Name: "Imported Group", Strategy: "priority", Enabled: true},
 		},
+		RoutingPolicyMode: ConfigImportRoutingPolicyModeReplace,
 		RoutingPolicies: []model.RoutingPolicy{
 			{
 				APIType:          "codex",
@@ -110,6 +111,7 @@ func TestApplyConfigImport_NaturalKeyRoutingPolicyUpdateClearsExactProviderTarge
 	}
 
 	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		RoutingPolicyMode: ConfigImportRoutingPolicyModeReplace,
 		RoutingPolicies: []model.RoutingPolicy{
 			{
 				APIType:         "codex",
@@ -238,6 +240,7 @@ func TestApplyConfigImport_UpsertsGroupsProvidersPoliciesAndSettings(t *testing.
 				},
 			},
 		},
+		RoutingPolicyMode: ConfigImportRoutingPolicyModeReplace,
 		RoutingPolicies: []model.RoutingPolicy{
 			{
 				APIType:          "codex",
@@ -339,7 +342,293 @@ func TestApplyConfigImport_UpsertsGroupsProvidersPoliciesAndSettings(t *testing.
 	}
 }
 
-func TestApplyConfigImport_NilBundleAndSettingslessBundle(t *testing.T) {
+func TestApplyConfigImport_RoutingPolicyModeControlsEmptySliceSemantics(t *testing.T) {
+	t.Run("preserve keeps existing policies", func(t *testing.T) {
+		store := setupTestStore(t)
+		ctx := context.Background()
+
+		existingGroup := &model.Group{
+			ID:       "g-existing",
+			Name:     "Existing Group",
+			Strategy: "priority",
+			Enabled:  true,
+		}
+		if err := store.CreateGroup(ctx, existingGroup); err != nil {
+			t.Fatalf("CreateGroup() error = %v", err)
+		}
+
+		targetProviderID := "p-existing"
+		if err := store.CreateProvider(ctx, &model.Provider{
+			ID:      targetProviderID,
+			Name:    "Existing Provider",
+			APIKey:  "key-existing",
+			Enabled: true,
+			APITypes: []model.ProviderAPIType{
+				{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
+			},
+		}); err != nil {
+			t.Fatalf("CreateProvider() error = %v", err)
+		}
+
+		if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
+			APIType:          "codex",
+			Enabled:          true,
+			TargetProviderID: &targetProviderID,
+		}); err != nil {
+			t.Fatalf("CreateRoutingPolicy(exact) error = %v", err)
+		}
+		if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
+			APIType: "claude",
+			Enabled: true,
+			Groups: []model.RoutingPolicyGroup{
+				{GroupID: existingGroup.ID},
+			},
+		}); err != nil {
+			t.Fatalf("CreateRoutingPolicy(filter) error = %v", err)
+		}
+
+		err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+			RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+			RoutingPolicies:   []model.RoutingPolicy{},
+			Settings: map[string]string{
+				"sticky_mode": "api_type",
+			},
+		})
+		if err != nil {
+			t.Fatalf("ApplyConfigImport(preserve) error = %v", err)
+		}
+
+		policies, err := store.ListRoutingPolicies(ctx)
+		if err != nil {
+			t.Fatalf("ListRoutingPolicies() error = %v", err)
+		}
+		if len(policies) != 2 {
+			t.Fatalf("len(policies) = %d, want 2", len(policies))
+		}
+
+		var preservedExact *model.RoutingPolicy
+		var preservedFilter *model.RoutingPolicy
+		for i := range policies {
+			switch policies[i].APIType {
+			case "codex":
+				preservedExact = &policies[i]
+			case "claude":
+				preservedFilter = &policies[i]
+			}
+		}
+		if preservedExact == nil || preservedFilter == nil {
+			t.Fatalf("policies = %#v, want existing codex and claude rules", policies)
+		}
+		if preservedExact.TargetProviderID == nil || *preservedExact.TargetProviderID != targetProviderID {
+			t.Fatalf("preserved exact TargetProviderID = %#v, want %q", preservedExact.TargetProviderID, targetProviderID)
+		}
+		if len(preservedFilter.Groups) != 1 || preservedFilter.Groups[0].GroupID != existingGroup.ID {
+			t.Fatalf("preserved filter Groups = %#v, want %q", preservedFilter.Groups, existingGroup.ID)
+		}
+	})
+
+	t.Run("replace deletes all when the slice is empty", func(t *testing.T) {
+		store := setupTestStore(t)
+		ctx := context.Background()
+
+		existingGroup := &model.Group{
+			ID:       "g-existing",
+			Name:     "Existing Group",
+			Strategy: "priority",
+			Enabled:  true,
+		}
+		if err := store.CreateGroup(ctx, existingGroup); err != nil {
+			t.Fatalf("CreateGroup() error = %v", err)
+		}
+
+		targetProviderID := "p-existing"
+		if err := store.CreateProvider(ctx, &model.Provider{
+			ID:      targetProviderID,
+			Name:    "Existing Provider",
+			APIKey:  "key-existing",
+			Enabled: true,
+			APITypes: []model.ProviderAPIType{
+				{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
+			},
+		}); err != nil {
+			t.Fatalf("CreateProvider() error = %v", err)
+		}
+
+		for _, policy := range []*model.RoutingPolicy{
+			{
+				APIType:          "codex",
+				Enabled:          true,
+				TargetProviderID: &targetProviderID,
+			},
+			{
+				APIType: "claude",
+				Enabled: true,
+				Groups: []model.RoutingPolicyGroup{
+					{GroupID: existingGroup.ID},
+				},
+			},
+		} {
+			if err := store.CreateRoutingPolicy(ctx, policy); err != nil {
+				t.Fatalf("CreateRoutingPolicy(%q) error = %v", policy.APIType, err)
+			}
+		}
+
+		err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+			RoutingPolicyMode: ConfigImportRoutingPolicyModeReplace,
+			RoutingPolicies:   []model.RoutingPolicy{},
+		})
+		if err != nil {
+			t.Fatalf("ApplyConfigImport(replace empty) error = %v", err)
+		}
+
+		policies, err := store.ListRoutingPolicies(ctx)
+		if err != nil {
+			t.Fatalf("ListRoutingPolicies() error = %v", err)
+		}
+		if len(policies) != 0 {
+			t.Fatalf("len(policies) = %d, want 0 after replace", len(policies))
+		}
+	})
+}
+
+func TestApplyConfigImport_RollsBackEarlierWritesOnPreservedRoutingPolicyConflict(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	targetProviderID := "p-exact"
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:      targetProviderID,
+		Name:    "Exact Provider",
+		APIKey:  "key-exact",
+		Enabled: true,
+		APITypes: []model.ProviderAPIType{
+			{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
+		},
+	}); err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
+		APIType:          "codex",
+		Enabled:          true,
+		TargetProviderID: &targetProviderID,
+	}); err != nil {
+		t.Fatalf("CreateRoutingPolicy() error = %v", err)
+	}
+
+	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		Groups: []model.Group{
+			{ID: "g-import", Name: "Imported Group", Strategy: "priority", Enabled: true},
+		},
+		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+		RoutingPolicies:   []model.RoutingPolicy{},
+		Providers: []model.Provider{
+			{
+				ID:      targetProviderID,
+				Name:    "Exact Provider",
+				APIKey:  "key-exact",
+				Enabled: true,
+				APITypes: []model.ProviderAPIType{
+					{ProviderID: targetProviderID, APIType: "claude", BaseURL: "https://claude.example"},
+				},
+			},
+		},
+	})
+	if !errors.Is(err, ErrRoutingPolicyReferenceConflict) {
+		t.Fatalf("ApplyConfigImport() error = %v, want ErrRoutingPolicyReferenceConflict", err)
+	}
+
+	if _, err := store.GetGroup(ctx, "g-import"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetGroup(g-import) error = %v, want ErrNotFound after rollback", err)
+	}
+
+	provider, err := store.GetProvider(ctx, targetProviderID)
+	if err != nil {
+		t.Fatalf("GetProvider(%q) error = %v", targetProviderID, err)
+	}
+	if len(provider.APITypes) != 1 || provider.APITypes[0].APIType != "codex" {
+		t.Fatalf("provider APITypes = %+v, want original codex config after rollback", provider.APITypes)
+	}
+
+	policies, err := store.ListRoutingPolicies(ctx)
+	if err != nil {
+		t.Fatalf("ListRoutingPolicies() error = %v", err)
+	}
+	if len(policies) != 1 {
+		t.Fatalf("len(policies) = %d, want 1 preserved policy after rollback", len(policies))
+	}
+	if policies[0].TargetProviderID == nil || *policies[0].TargetProviderID != targetProviderID {
+		t.Fatalf("preserved TargetProviderID = %#v, want %q", policies[0].TargetProviderID, targetProviderID)
+	}
+}
+
+func TestApplyConfigImport_ReplaceModeDeletesConflictingPoliciesBeforeProviderUpdate(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	targetProviderID := "p-exact"
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:      targetProviderID,
+		Name:    "Exact Provider",
+		APIKey:  "key-exact",
+		Enabled: true,
+		APITypes: []model.ProviderAPIType{
+			{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
+		},
+	}); err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
+		APIType:          "codex",
+		Enabled:          true,
+		TargetProviderID: &targetProviderID,
+	}); err != nil {
+		t.Fatalf("CreateRoutingPolicy() error = %v", err)
+	}
+
+	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		Groups: []model.Group{
+			{ID: "g-import", Name: "Imported Group", Strategy: "priority", Enabled: true},
+		},
+		RoutingPolicyMode: ConfigImportRoutingPolicyModeReplace,
+		RoutingPolicies:   []model.RoutingPolicy{},
+		Providers: []model.Provider{
+			{
+				ID:      targetProviderID,
+				Name:    "Exact Provider",
+				APIKey:  "key-exact",
+				Enabled: true,
+				APITypes: []model.ProviderAPIType{
+					{ProviderID: targetProviderID, APIType: "claude", BaseURL: "https://claude.example"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyConfigImport() error = %v", err)
+	}
+
+	if _, err := store.GetGroup(ctx, "g-import"); err != nil {
+		t.Fatalf("GetGroup(g-import) error = %v", err)
+	}
+
+	provider, err := store.GetProvider(ctx, targetProviderID)
+	if err != nil {
+		t.Fatalf("GetProvider(%q) error = %v", targetProviderID, err)
+	}
+	if len(provider.APITypes) != 1 || provider.APITypes[0].APIType != "claude" {
+		t.Fatalf("provider APITypes = %+v, want updated claude config", provider.APITypes)
+	}
+
+	policies, err := store.ListRoutingPolicies(ctx)
+	if err != nil {
+		t.Fatalf("ListRoutingPolicies() error = %v", err)
+	}
+	if len(policies) != 0 {
+		t.Fatalf("len(policies) = %d, want 0 after replacement import", len(policies))
+	}
+}
+
+func TestApplyConfigImport_NilBundleAndExplicitRoutingPolicyMode(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
 
@@ -347,7 +636,26 @@ func TestApplyConfigImport_NilBundleAndSettingslessBundle(t *testing.T) {
 		t.Fatalf("ApplyConfigImport(nil) error = %v", err)
 	}
 
+	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		Groups: []model.Group{
+			{
+				ID:       "g-missing-mode",
+				Name:     "Missing Mode",
+				Strategy: "priority",
+				Weight:   1,
+				Enabled:  true,
+			},
+		},
+	})
+	if err == nil || err.Error() != "routing policy import mode is required" {
+		t.Fatalf("ApplyConfigImport(missing mode) error = %v, want required-mode failure", err)
+	}
+	if _, err := store.GetGroup(ctx, "g-missing-mode"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetGroup(g-missing-mode) error = %v, want ErrNotFound after validation failure", err)
+	}
+
 	if err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
 		Groups: []model.Group{
 			{
 				ID:       "g-no-settings",
@@ -358,10 +666,64 @@ func TestApplyConfigImport_NilBundleAndSettingslessBundle(t *testing.T) {
 			},
 		},
 	}); err != nil {
-		t.Fatalf("ApplyConfigImport(settingsless) error = %v", err)
+		t.Fatalf("ApplyConfigImport(explicit preserve) error = %v", err)
 	}
 
 	if _, err := store.GetGroup(ctx, "g-no-settings"); err != nil {
 		t.Fatalf("GetGroup(g-no-settings) error = %v", err)
+	}
+}
+
+func TestApplyConfigImport_RejectsPreserveModeRoutingPolicyPayload(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		Groups: []model.Group{
+			{
+				ID:       "g-preserve-invalid",
+				Name:     "Preserve Invalid",
+				Strategy: "priority",
+				Weight:   1,
+				Enabled:  true,
+			},
+		},
+		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+		RoutingPolicies: []model.RoutingPolicy{
+			{
+				APIType: "codex",
+				Enabled: true,
+			},
+		},
+	})
+	if err == nil || err.Error() != `routing policy import mode "preserve" cannot include imported routing policies` {
+		t.Fatalf("ApplyConfigImport(preserve with routing policies) error = %v, want preserve-mode rejection", err)
+	}
+	if _, err := store.GetGroup(ctx, "g-preserve-invalid"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetGroup(g-preserve-invalid) error = %v, want ErrNotFound after validation failure", err)
+	}
+}
+
+func TestApplyConfigImport_RejectsUnsupportedRoutingPolicyMode(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		Groups: []model.Group{
+			{
+				ID:       "g-invalid-mode",
+				Name:     "Invalid Mode",
+				Strategy: "priority",
+				Weight:   1,
+				Enabled:  true,
+			},
+		},
+		RoutingPolicyMode: ConfigImportRoutingPolicyMode("unexpected"),
+	})
+	if err == nil || err.Error() != `unsupported routing policy import mode "unexpected"` {
+		t.Fatalf("ApplyConfigImport(invalid mode) error = %v, want unsupported-mode rejection", err)
+	}
+	if _, err := store.GetGroup(ctx, "g-invalid-mode"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetGroup(g-invalid-mode) error = %v, want ErrNotFound after validation failure", err)
 	}
 }

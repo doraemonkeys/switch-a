@@ -624,6 +624,69 @@ func TestEnableGroup(t *testing.T) {
 	}
 }
 
+func TestSetGroupEnabled_DoesNotChangeProviderState(t *testing.T) {
+	testCases := []struct {
+		name                string
+		path                string
+		initialGroupEnabled bool
+		initialProvEnabled  bool
+		wantGroupEnabled    bool
+		invoke              func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:                "enable keeps provider disabled",
+			path:                "/admin/api/groups/test-group/enable",
+			initialGroupEnabled: false,
+			initialProvEnabled:  false,
+			wantGroupEnabled:    true,
+			invoke:              (*Handler).EnableGroup,
+		},
+		{
+			name:                "disable keeps provider enabled",
+			path:                "/admin/api/groups/test-group/disable",
+			initialGroupEnabled: true,
+			initialProvEnabled:  true,
+			wantGroupEnabled:    false,
+			invoke:              (*Handler).DisableGroup,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, st, _ := testHandler()
+			groupID := "test-group"
+
+			st.groups[groupID] = &model.Group{
+				ID:      groupID,
+				Name:    "Test Group",
+				Enabled: tc.initialGroupEnabled,
+			}
+			st.providers["test-provider"] = &model.Provider{
+				ID:      "test-provider",
+				Name:    "Test Provider",
+				GroupID: &groupID,
+				Enabled: tc.initialProvEnabled,
+			}
+
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			setPathValue(req, "id", groupID)
+			w := httptest.NewRecorder()
+
+			tc.invoke(h, w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+			}
+			if st.groups[groupID].Enabled != tc.wantGroupEnabled {
+				t.Fatalf("group enabled = %v, want %v", st.groups[groupID].Enabled, tc.wantGroupEnabled)
+			}
+			if st.providers["test-provider"].Enabled != tc.initialProvEnabled {
+				t.Fatalf("provider enabled = %v, want %v", st.providers["test-provider"].Enabled, tc.initialProvEnabled)
+			}
+		})
+	}
+}
+
 func TestEnableGroup_NotFound(t *testing.T) {
 	h, _, _ := testHandler()
 

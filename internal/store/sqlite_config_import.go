@@ -10,13 +10,27 @@ import (
 	"gorm.io/gorm"
 )
 
+// ConfigImportRoutingPolicyMode makes routing-policy scope explicit at the store
+// boundary so callers never rely on empty slices to mean two different things.
+type ConfigImportRoutingPolicyMode string
+
+const (
+	// Replace keeps the export file authoritative for full imports, so missing rules
+	// are removed before provider updates are validated inside the same transaction.
+	ConfigImportRoutingPolicyModeReplace ConfigImportRoutingPolicyMode = "replace"
+	// Preserve lets scoped imports leave routing policies out of scope without
+	// accidentally turning omission into a destructive delete-all.
+	ConfigImportRoutingPolicyModePreserve ConfigImportRoutingPolicyMode = "preserve"
+)
+
 // ConfigImportBundle captures the normalized, fully validated import payload
 // that the store can apply atomically without re-running admin-level staging.
 type ConfigImportBundle struct {
-	Groups          []model.Group
-	Providers       []model.Provider
-	RoutingPolicies []model.RoutingPolicy
-	Settings        map[string]string
+	Groups            []model.Group
+	Providers         []model.Provider
+	RoutingPolicyMode ConfigImportRoutingPolicyMode
+	RoutingPolicies   []model.RoutingPolicy
+	Settings          map[string]string
 }
 
 func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error {
@@ -24,12 +38,23 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 		return nil
 	}
 
+	routingPolicyMode, err := resolveConfigImportRoutingPolicyMode(bundle)
+	if err != nil {
+		return err
+	}
+
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txStore := &SQLiteStore{db: tx, clock: s.clock}
 		if err := applyImportedGroups(ctx, txStore, bundle.Groups); err != nil {
 			return err
 		}
-		if err := applyImportedRoutingPolicies(ctx, txStore, tx, bundle.RoutingPolicies); err != nil {
+		if err := applyImportedRoutingPolicies(
+			ctx,
+			txStore,
+			tx,
+			routingPolicyMode,
+			bundle.RoutingPolicies,
+		); err != nil {
 			return err
 		}
 		if err := applyImportedProviders(ctx, txStore, bundle.Providers); err != nil {
@@ -64,7 +89,48 @@ func applyImportedGroups(
 	return nil
 }
 
+func resolveConfigImportRoutingPolicyMode(
+	bundle *ConfigImportBundle,
+) (ConfigImportRoutingPolicyMode, error) {
+	switch bundle.RoutingPolicyMode {
+	case ConfigImportRoutingPolicyModeReplace:
+		return ConfigImportRoutingPolicyModeReplace, nil
+	case ConfigImportRoutingPolicyModePreserve:
+		if len(bundle.RoutingPolicies) != 0 {
+			return "", fmt.Errorf(
+				"routing policy import mode %q cannot include imported routing policies",
+				ConfigImportRoutingPolicyModePreserve,
+			)
+		}
+		return ConfigImportRoutingPolicyModePreserve, nil
+	case "":
+		return "", fmt.Errorf("routing policy import mode is required")
+	default:
+		return "", fmt.Errorf(
+			"unsupported routing policy import mode %q",
+			bundle.RoutingPolicyMode,
+		)
+	}
+}
+
 func applyImportedRoutingPolicies(
+	ctx context.Context,
+	txStore *SQLiteStore,
+	tx *gorm.DB,
+	mode ConfigImportRoutingPolicyMode,
+	policies []model.RoutingPolicy,
+) error {
+	switch mode {
+	case ConfigImportRoutingPolicyModePreserve:
+		return nil
+	case ConfigImportRoutingPolicyModeReplace:
+		return replaceImportedRoutingPolicies(ctx, txStore, tx, policies)
+	default:
+		return fmt.Errorf("unsupported routing policy import mode %q", mode)
+	}
+}
+
+func replaceImportedRoutingPolicies(
 	ctx context.Context,
 	txStore *SQLiteStore,
 	tx *gorm.DB,
