@@ -132,7 +132,7 @@ export function FilterBar({
           <option value="">All Groups</option>
           {groups.map((group) => (
             <option key={group.id} value={group.id}>
-              {group.name}
+              {group.enabled ? group.name : `${group.name} (disabled)`}
             </option>
           ))}
         </select>

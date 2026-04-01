@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +80,32 @@ func TestImportConfig_DryRun(t *testing.T) {
 	// Verify data was not actually changed
 	if st.providers["p2"] != nil {
 		t.Error("p2 should not exist after dry run")
+	}
+}
+
+func TestImportConfig_DryRunReturnsEmptyWarningsArray(t *testing.T) {
+	h, _, _ := testHandler()
+
+	importReq := ImportConfigRequest{
+		Version:         ConfigExportVersion,
+		Providers:       []ExportedProvider{},
+		Groups:          []ExportedGroup{},
+		RoutingPolicies: []ExportedRoutingPolicy{},
+		Settings:        map[string]string{},
+	}
+
+	body, _ := json.Marshal(importReq)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ImportConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"warnings":[]`) {
+		t.Fatalf("response body = %s, want warnings to serialize as []", w.Body.String())
 	}
 }
 

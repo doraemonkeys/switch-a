@@ -309,4 +309,34 @@ describe("createApiClient config API", () => {
     expect(result.warnings).toHaveLength(2);
     expect(result.warnings).toContain("No changes detected");
   });
+
+  it("should normalize null preview warnings to an empty array", async () => {
+    const importRequest = {
+      import_scope: {
+        mode: "full" as const,
+      },
+      version: "3.0",
+      providers: [],
+      groups: [],
+      routing_policies: [],
+      settings: {},
+    };
+    mockHttpClient.mockResponse({
+      ok: true,
+      json: async () => ({
+        dry_run: true,
+        changes: {
+          providers: { add: 0, update: 0, delete: 0, unchanged: 0 },
+          groups: { add: 0, update: 0, delete: 0, unchanged: 0 },
+          routing_policies: { add: 0, update: 0, delete: 0, unchanged: 0 },
+          settings: { add: 0, update: 0, delete: 0, unchanged: 0 },
+        },
+        warnings: null,
+      }),
+    });
+
+    const result = await api.config.importPreview(importRequest);
+
+    expect(result.warnings).toEqual([]);
+  });
 });

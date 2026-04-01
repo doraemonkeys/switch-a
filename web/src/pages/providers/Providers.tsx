@@ -144,6 +144,11 @@ export function Providers() {
     return group?.name ?? groupId;
   };
 
+  const getGroupEnabled = (groupId: string | null) => {
+    if (!groupId) return undefined;
+    return groups.find((group) => group.id === groupId)?.enabled;
+  };
+
   if (error)
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
@@ -190,6 +195,7 @@ export function Providers() {
                 onGroupClick={setGroupFilter}
                 onViewDetail={handleViewDetail}
                 getGroupName={getGroupName}
+                getGroupEnabled={getGroupEnabled}
               />
             </tbody>
           </table>

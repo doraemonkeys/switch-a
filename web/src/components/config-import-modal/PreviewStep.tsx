@@ -101,6 +101,7 @@ export function PreviewStep({
   onBackToSelect: () => void;
 }) {
   const visibleSummaryKeys = getVisibleSummaryKeys(mode);
+  const warnings = preview.warnings ?? [];
 
   return (
     <div className="space-y-4">
@@ -130,14 +131,14 @@ export function PreviewStep({
         </div>
       </div>
 
-      {preview.warnings.length > 0 && (
+      {warnings.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-sm font-medium text-warning flex items-center gap-1.5">
             <WarningIcon />
             警告信息
           </h3>
           <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 space-y-1.5">
-            {preview.warnings.map((warning, index) => (
+            {warnings.map((warning, index) => (
               <p
                 key={`${warning}-${index}`}
                 className="text-sm text-warning/90 flex items-start gap-2"

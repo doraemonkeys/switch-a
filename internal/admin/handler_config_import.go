@@ -103,7 +103,7 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		resp := ImportPreviewResponse{
 			DryRun:   true,
 			Changes:  staged.changes,
-			Warnings: staged.warnings,
+			Warnings: append([]string{}, staged.warnings...),
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return

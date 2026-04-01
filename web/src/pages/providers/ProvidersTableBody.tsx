@@ -47,6 +47,7 @@ export interface ProvidersTableBodyProps {
   onGroupClick?: (groupId: string) => void;
   onViewDetail?: (provider: Provider) => void;
   getGroupName: (groupId: string | null) => string;
+  getGroupEnabled: (groupId: string | null) => boolean | undefined;
 }
 
 // Status badge with optional tooltip
@@ -261,30 +262,51 @@ function formatChatGPTUsageSummary(provider: Provider): string | null {
 function GroupCell({
   provider,
   groupName,
+  groupEnabled,
   onGroupClick,
 }: {
   provider: Provider;
   groupName: string;
+  groupEnabled: boolean | undefined;
   onGroupClick?: (groupId: string) => void;
 }) {
   if (!provider.group_id) {
     return <span className="text-text-muted/50 text-sm">—</span>;
   }
 
+  const isGroupDisabled = groupEnabled === false;
   const groupColors = stringToColor(provider.group_id);
   return (
     <span
-      className="px-2.5 py-1 rounded-md text-[11px] font-medium border whitespace-nowrap truncate max-w-[120px] inline-flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity shadow-sm"
-      style={{
-        backgroundColor: groupColors.bg,
-        color: groupColors.text,
-        borderColor: groupColors.border,
-      }}
-      title={`Filter by group: ${groupName}`}
+      className={`px-2.5 py-1 rounded-md text-[11px] font-medium border whitespace-nowrap max-w-[120px] inline-flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity shadow-sm ${
+        isGroupDisabled
+          ? "bg-warning-light/70 text-warning-dark border-warning/20"
+          : ""
+      }`}
+      style={
+        isGroupDisabled
+          ? undefined
+          : {
+              backgroundColor: groupColors.bg,
+              color: groupColors.text,
+              borderColor: groupColors.border,
+            }
+      }
+      title={
+        isGroupDisabled
+          ? `Filter by group: ${groupName} (group disabled)`
+          : `Filter by group: ${groupName}`
+      }
       onClick={() => onGroupClick?.(provider.group_id!)}
     >
-      <FolderOpen className="w-3 h-3 opacity-70" />
-      {groupName}
+      <FolderOpen className={`w-3 h-3 shrink-0 ${isGroupDisabled ? "opacity-90" : "opacity-70"}`} />
+      <span className="truncate">{groupName}</span>
+      {isGroupDisabled && (
+        <AlertCircle
+          className="w-3 h-3 shrink-0 text-warning-dark"
+          aria-label="Group disabled"
+        />
+      )}
     </span>
   );
 }
@@ -337,6 +359,7 @@ function ProviderRow({
   onGroupClick,
   onViewDetail,
   getGroupName,
+  getGroupEnabled,
 }: {
   provider: Provider;
   onToggle: (provider: Provider) => void;
@@ -346,6 +369,7 @@ function ProviderRow({
   onGroupClick?: (groupId: string) => void;
   onViewDetail?: (provider: Provider) => void;
   getGroupName: (groupId: string | null) => string;
+  getGroupEnabled: (groupId: string | null) => boolean | undefined;
 }) {
   const status = getProviderStatus(
     provider.enabled,
@@ -354,6 +378,7 @@ function ProviderRow({
   );
   const failCount = provider.health?.fail_count || 0;
   const groupName = getGroupName(provider.group_id);
+  const groupEnabled = getGroupEnabled(provider.group_id);
   const endpointSummary = formatEndpointSummary(provider);
   const chatGPTUsageSummary = formatChatGPTUsageSummary(provider);
   const authView = resolveProviderAuthView(provider);
@@ -391,6 +416,7 @@ function ProviderRow({
         <GroupCell
           provider={provider}
           groupName={groupName}
+          groupEnabled={groupEnabled}
           onGroupClick={onGroupClick}
         />
       </td>
@@ -459,6 +485,7 @@ export function ProvidersTableBody({
   onGroupClick,
   onViewDetail,
   getGroupName,
+  getGroupEnabled,
 }: ProvidersTableBodyProps) {
   if (loading && providers.length === 0) {
     return (
@@ -520,6 +547,7 @@ export function ProvidersTableBody({
           onGroupClick={onGroupClick}
           onViewDetail={onViewDetail}
           getGroupName={getGroupName}
+          getGroupEnabled={getGroupEnabled}
         />
       ))}
     </>

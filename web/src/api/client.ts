@@ -374,11 +374,19 @@ export function createApiClient(deps: ApiClientDeps) {
           body: JSON.stringify(data),
         }),
       export: () => request<ExportedConfig>("/config/export"),
-      importPreview: (data: ImportConfigRequest) =>
-        request<ImportPreviewResponse>("/config/import?dry_run=true", {
-          method: "POST",
-          body: JSON.stringify(data),
-        }),
+      importPreview: async (data: ImportConfigRequest) => {
+        const preview = await request<ImportPreviewResponse>(
+          "/config/import?dry_run=true",
+          {
+            method: "POST",
+            body: JSON.stringify(data),
+          },
+        );
+        return {
+          ...preview,
+          warnings: preview.warnings ?? [],
+        };
+      },
       import: (data: ImportConfigRequest) =>
         request<ImportResult>("/config/import", {
           method: "POST",

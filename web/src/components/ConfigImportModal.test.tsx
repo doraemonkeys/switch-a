@@ -561,6 +561,31 @@ describe("ConfigImportModal preview behavior", () => {
     expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();
   });
 
+  it("tolerates null preview warnings without crashing", async () => {
+    const onPreview = vi.fn().mockResolvedValue({
+      ...createPreviewResponse({
+        providers: { unchanged: 1 },
+      }),
+      warnings: null,
+    });
+
+    render(
+      <ConfigImportModal
+        isOpen={true}
+        onClose={vi.fn()}
+        onPreview={onPreview}
+        onImport={vi.fn()}
+        importing={false}
+      />,
+    );
+
+    await uploadConfigFile();
+    fireEvent.click(screen.getByRole("button", { name: "预览变更" }));
+
+    expect(await screen.findByText("变更预览")).toBeInTheDocument();
+    expect(screen.queryByText("警告信息")).not.toBeInTheDocument();
+  });
+
   it("disables confirm when preview warnings indicate apply would be rejected", async () => {
     const onPreview = vi.fn().mockResolvedValue({
       ...createPreviewResponse({

@@ -25,7 +25,7 @@ func stageConfigImport(
 ) stagedConfigImport {
 	resolved, scopeWarnings := resolveImportConfigRequest(req)
 	staged := stagedConfigImport{
-		warnings:              append([]string(nil), scopeWarnings...),
+		warnings:              append([]string{}, scopeWarnings...),
 		previewRejectsWarning: !resolved.CanStage || resolved.Scope.Mode != ConfigImportModeFull,
 	}
 	if !resolved.CanStage {

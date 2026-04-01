@@ -383,8 +383,8 @@ export function useConfigImportModalState({
       selectedGroupIds.length > 0 ||
       selectedProviderIds.length > 0);
   const hasAnyChanges = hasVisibleChanges(preview, previewMode);
-  const canConfirmImport =
-    hasAnyChanges && (preview == null || preview.warnings.length === 0);
+  const previewWarnings = preview?.warnings ?? [];
+  const canConfirmImport = hasAnyChanges && previewWarnings.length === 0;
 
   useModalLifecycle({
     cancelPreviewRequest: state.cancelPreviewRequest,

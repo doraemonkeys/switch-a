@@ -73,6 +73,7 @@ describe("ProvidersTableBody", () => {
             onReset={vi.fn()}
             onAddClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
+            getGroupEnabled={() => undefined}
           />
         </tbody>
       </table>,
@@ -110,6 +111,7 @@ describe("ProvidersTableBody", () => {
             onReset={vi.fn()}
             onAddClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
+            getGroupEnabled={() => undefined}
           />
         </tbody>
       </table>,
@@ -119,5 +121,37 @@ describe("ProvidersTableBody", () => {
     expect(screen.getByText("invalid_grant")).toBeInTheDocument();
     expect(screen.getByText("refresh_token_reused")).toBeInTheDocument();
     expect(screen.queryByText(/5h 18% used/)).not.toBeInTheDocument();
+  });
+
+  it("marks providers whose assigned group is disabled", () => {
+    const provider = {
+      ...buildProvider(),
+      group_id: "group-disabled",
+    } as Provider;
+
+    render(
+      <table>
+        <tbody>
+          <ProvidersTableBody
+            loading={false}
+            providers={[provider]}
+            filteredProviders={[provider]}
+            onToggle={vi.fn()}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onReset={vi.fn()}
+            onAddClick={vi.fn()}
+            getGroupName={() => "GPT Account"}
+            getGroupEnabled={() => false}
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.getByText("GPT Account")).toBeInTheDocument();
+    expect(screen.getByLabelText("Group disabled")).toBeInTheDocument();
+    expect(
+      screen.getByTitle("Filter by group: GPT Account (group disabled)"),
+    ).toBeInTheDocument();
   });
 });
