@@ -11,7 +11,7 @@ export function TimeoutSettingsSection({
   return (
     <ConfigSection
       title="Timeout Settings"
-      description="Configure connection and read timeouts for upstream requests."
+      description="Configure connection, first-byte, and idle timeouts for upstream requests."
       icon="⏱️"
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -73,7 +73,7 @@ export function TimeoutSettingsSection({
 
         <div>
           <label className="block text-sm font-medium text-text-primary mb-1.5">
-            Read Timeout (seconds)
+            Response Idle Timeout (seconds)
             <ModifiedBadge
               configKey={CONFIG_KEYS.UPSTREAM_READ_TIMEOUT}
               currentValue={getValue(
@@ -96,7 +96,7 @@ export function TimeoutSettingsSection({
             }
           />
           <p className="text-xs text-text-muted mt-1.5">
-            读取响应的超时时间 (0 = 无限制)
+            响应开始后，若连续该时长未收到新数据则中断 (0 = 无限制)
           </p>
         </div>
 
