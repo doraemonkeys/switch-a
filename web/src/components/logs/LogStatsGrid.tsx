@@ -1,4 +1,5 @@
 import type { StatsResponse } from "../../api/types";
+import { formatDuration } from "../../lib/utils";
 import {
   getSuccessRateVariant,
   getErrorCountVariant,
@@ -25,7 +26,9 @@ export function LogStatsGrid({
       : "-";
 
   const avgLatencyValue =
-    stats?.avg_latency_ms !== undefined ? `${stats.avg_latency_ms}ms` : "-";
+    stats?.avg_latency_ms !== undefined
+      ? formatDuration(stats.avg_latency_ms, { smallestUnit: "ms" })
+      : "-";
 
   const errorCountValue = stats?.fail_count?.toLocaleString() ?? "-";
 

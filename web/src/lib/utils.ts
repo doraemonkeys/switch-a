@@ -45,6 +45,61 @@ export function stringToColor(str: string) {
   };
 }
 
+const MILLISECONDS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const MILLISECONDS_PER_MINUTE =
+  MILLISECONDS_PER_SECOND * SECONDS_PER_MINUTE;
+const MILLISECONDS_PER_HOUR = MILLISECONDS_PER_MINUTE * MINUTES_PER_HOUR;
+const SECOND_FRACTION_DIGITS = 1;
+
+interface FormatDurationOptions {
+  smallestUnit?: "ms" | "s";
+}
+
+function trimTrailingFractionZeros(value: string): string {
+  return value.replace(/\.0$/, "");
+}
+
+/**
+ * Keep duration copy readable by switching to larger units when the next smaller
+ * unit stops adding signal. Real-time surfaces can still opt into second-only
+ * output to avoid millisecond noise.
+ */
+export function formatDuration(
+  ms: number,
+  options: FormatDurationOptions = {},
+): string {
+  const { smallestUnit = "s" } = options;
+  const normalizedMs = Math.max(0, ms);
+
+  if (normalizedMs < MILLISECONDS_PER_SECOND) {
+    if (smallestUnit === "ms") {
+      return `${Math.round(normalizedMs)}ms`;
+    }
+    return `${Math.floor(normalizedMs / MILLISECONDS_PER_SECOND)}s`;
+  }
+
+  if (normalizedMs < MILLISECONDS_PER_MINUTE) {
+    if (smallestUnit === "s") {
+      return `${Math.floor(normalizedMs / MILLISECONDS_PER_SECOND)}s`;
+    }
+
+    const seconds = normalizedMs / MILLISECONDS_PER_SECOND;
+    return `${trimTrailingFractionZeros(seconds.toFixed(SECOND_FRACTION_DIGITS))}s`;
+  }
+
+  const totalSeconds = Math.floor(normalizedMs / MILLISECONDS_PER_SECOND);
+  const totalMinutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+
+  if (normalizedMs < MILLISECONDS_PER_HOUR) {
+    return `${totalMinutes}m ${totalSeconds % SECONDS_PER_MINUTE}s`;
+  }
+
+  const hours = Math.floor(totalMinutes / MINUTES_PER_HOUR);
+  return `${hours}h ${totalMinutes % MINUTES_PER_HOUR}m`;
+}
+
 // =============================================================================
 // Badge Style Utilities
 // =============================================================================

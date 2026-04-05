@@ -1,5 +1,5 @@
 import type { RequestLog } from "../../api/types";
-import { getSuccessBadgeClass } from "../../lib/utils";
+import { formatDuration, getSuccessBadgeClass } from "../../lib/utils";
 import {
   getDiagnosticToneClass,
   getLogLifecyclePresentation,
@@ -361,7 +361,7 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
         )}
       </td>
       <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
-        {log.latency_ms}ms
+        {formatDuration(log.latency_ms, { smallestUnit: "ms" })}
       </td>
       <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
         <div className="flex flex-col">

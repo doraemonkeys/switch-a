@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { generateRandomId, slugify, isValidId } from "./utils";
+import { formatDuration, generateRandomId, slugify, isValidId } from "./utils";
 
 describe("utils", () => {
   describe("generateRandomId", () => {
@@ -157,6 +157,34 @@ describe("utils", () => {
     it("returns false for unicode characters", () => {
       expect(isValidId("hello中文")).toBe(false);
       expect(isValidId("héllo")).toBe(false);
+    });
+  });
+
+  describe("formatDuration", () => {
+    it("keeps live elapsed time at whole-second granularity by default", () => {
+      expect(formatDuration(1_500)).toBe("1s");
+    });
+
+    it("preserves millisecond output when the caller needs latency precision", () => {
+      expect(formatDuration(999, { smallestUnit: "ms" })).toBe("999ms");
+    });
+
+    it("switches latency display to seconds once milliseconds stop being readable", () => {
+      expect(formatDuration(1_500, { smallestUnit: "ms" })).toBe("1.5s");
+      expect(formatDuration(12_000, { smallestUnit: "ms" })).toBe("12s");
+    });
+
+    it("formats long durations as minutes and seconds", () => {
+      expect(formatDuration(502_279, { smallestUnit: "ms" })).toBe("8m 22s");
+    });
+
+    it("formats very long durations as hours and minutes", () => {
+      expect(formatDuration(3_780_000, { smallestUnit: "ms" })).toBe("1h 3m");
+    });
+
+    it("clamps negative values to zero", () => {
+      expect(formatDuration(-1)).toBe("0s");
+      expect(formatDuration(-1, { smallestUnit: "ms" })).toBe("0ms");
     });
   });
 });

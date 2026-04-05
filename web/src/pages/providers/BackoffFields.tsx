@@ -1,6 +1,7 @@
 import { useId } from "react";
 import type { ProviderInput, BackoffPolicy } from "../../api";
 import { PROVIDER_DEFAULTS, FORM_CONSTRAINTS } from "../../config/constants";
+import { formatDuration } from "../../lib/utils";
 import { FormField } from "./FormField";
 
 /** Common duration presets for quick selection */
@@ -93,11 +94,6 @@ function BackoffPreview({ backoff, maxRetries }: BackoffPreviewProps) {
     return unit === "s" ? parseFloat(num) * 1000 : parseFloat(num);
   };
 
-  const formatDuration = (ms: number): string => {
-    if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${Math.round(ms)}ms`;
-  };
-
   const initialMs = parseDuration(backoff.initial_delay);
   const maxMs = parseDuration(backoff.max_delay);
   const multiplier = backoff.multiplier ?? PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER;
@@ -138,8 +134,8 @@ function BackoffPreview({ backoff, maxRetries }: BackoffPreviewProps) {
             </div>
             <span className="text-xs font-mono text-text-secondary w-14 text-right">
               {backoff.jitter
-                ? `~${formatDuration(delay)}`
-                : formatDuration(delay)}
+                ? `~${formatDuration(delay, { smallestUnit: "ms" })}`
+                : formatDuration(delay, { smallestUnit: "ms" })}
             </span>
           </li>
         ))}
