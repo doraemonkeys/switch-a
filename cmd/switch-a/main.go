@@ -16,6 +16,7 @@ import (
 	"switch-a/internal/config"
 	"switch-a/internal/health"
 	"switch-a/internal/logger"
+	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
 	"switch-a/internal/proxy"
 	"switch-a/internal/selector"
@@ -186,6 +187,12 @@ func run() error {
 	activeRegistry.StartCleanup()
 	defer activeRegistry.StopCleanup()
 
+	visibleContinuitySeedStore := proxy.NewVisibleContinuitySeedStore()
+	// Matching the sweep cadence to the heuristic TTL avoids a second retention
+	// policy while still reclaiming seeds that would otherwise sit until a lookup.
+	stopVisibleContinuitySeedCleanup := visibleContinuitySeedStore.StartCleanupLoop(model.VisibleContinuitySeedTTL)
+	defer stopVisibleContinuitySeedCleanup()
+
 	// Initialize selector for provider selection with all features:
 	// - Health checks
 	// - Sticky sessions
@@ -210,13 +217,14 @@ func run() error {
 
 	// Create proxy HTTP server (public port)
 	proxySrv := server.New(server.Config{
-		Port:           cfg.Port,
-		Logger:         log,
-		Store:          st,
-		Health:         healthMgr,
-		Selector:       sel,
-		ActiveRegistry: activeRegistry,
-		Auth:           authService,
+		Port:                       cfg.Port,
+		Logger:                     log,
+		Store:                      st,
+		Health:                     healthMgr,
+		Selector:                   sel,
+		ActiveRegistry:             activeRegistry,
+		VisibleContinuitySeedStore: visibleContinuitySeedStore,
+		Auth:                       authService,
 	})
 
 	// Create admin HTTP server (separate port for security)

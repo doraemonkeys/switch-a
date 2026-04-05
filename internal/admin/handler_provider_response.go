@@ -27,8 +27,8 @@ type ProviderPayload struct {
 	MaxRetries               int                            `json:"max_retries"`
 	Backoff                  model.BackoffPolicy            `json:"backoff,omitempty"`
 	Vendor                   string                         `json:"vendor"`
-	FailoverScope            model.Scope                    `json:"failover_scope"`
-	AcceptFailover           model.Scope                    `json:"accept_failover"`
+	FailoverScope            model.Scope                    `json:"failover_scope"`  // Outbound true-failover policy only.
+	AcceptFailover           model.Scope                    `json:"accept_failover"` // Inbound true-failover policy only; pre-visible replacement is unaffected.
 	Enabled                  bool                           `json:"enabled"`
 	CreatedAt                time.Time                      `json:"created_at"`
 	UpdatedAt                time.Time                      `json:"updated_at"`

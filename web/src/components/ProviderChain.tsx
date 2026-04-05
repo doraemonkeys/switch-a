@@ -51,8 +51,11 @@ function extractChain(
 ): ChainNode[] {
   if (!attempts || attempts.length === 0) return [];
 
-  // Sort by attempt number
-  const sorted = [...attempts].sort((a, b) => a.attempt - b.attempt);
+  // Match backend ordering so compact chain summaries never disagree with the
+  // detailed timeline when attempt ordinals tie.
+  const sorted = [...attempts].sort(
+    (a, b) => a.attempt - b.attempt || a.id - b.id,
+  );
 
   // Group by provider, keeping the last attempt for each provider
   const chain: ChainNode[] = [];

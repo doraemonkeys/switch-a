@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -20,12 +21,15 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	r *http.Request,
 	provider *model.Provider,
 	attempt int,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
 ) WebSocketAttemptResult {
 	attemptStart := time.Now()
 
 	upstreamURL, dialHeaders, err := o.prepareProviderAttempt(ctx, r, provider)
 	if err != nil {
-		attemptResult := newWebSocketProviderConfigurationAttempt(provider, o.apiType, attempt, err, time.Since(attemptStart))
+		attemptResult := newWebSocketProviderConfigurationAttempt(provider, o.apiType, attempt, selectionMode, selectionMetadata, err, time.Since(attemptStart))
+		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
 		o.applySessionLifecycleToAttempt(&attemptResult)
 		return attemptResult
 	}
@@ -33,7 +37,8 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	recoveryAttempted := false
 	upstreamConn, dialResult := o.handler.wsForwarder.dialUpstream(ctx, upstreamURL, dialHeaders)
 	if dialResult != nil {
-		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, dialResult, nil, time.Since(attemptStart))
+		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, dialResult, nil, time.Since(attemptStart))
+		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
 		o.applySessionLifecycleToAttempt(&attemptResult)
 		if !o.shouldRecoverUnauthorized(attemptResult) {
 			return attemptResult
@@ -46,6 +51,8 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 			provider,
 			upstreamURL,
 			attempt,
+			selectionMode,
+			selectionMetadata,
 			attemptStart,
 		)
 		if !recovered {
@@ -73,7 +80,9 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 			CommitSource:      model.CommitUnknown,
 		}
 		o.applySessionLifecycleToResult(result)
-		return newWebSocketForwardAttemptResult(provider, attempt, result, err, time.Since(attemptStart))
+		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, err, time.Since(attemptStart))
+		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
+		return attemptResult
 	}
 
 	observer := o.newAttemptObserver()
@@ -87,7 +96,8 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 			CommitSource:          model.CommitUnknown,
 		}
 		o.applySessionLifecycleToResult(result)
-		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, result, replayErr, time.Since(attemptStart))
+		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, replayErr, time.Since(attemptStart))
+		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
 		attemptResult.ReplayFailed = true
 		attemptResult.RecoveryAttempted = recoveryAttempted
 		return attemptResult
@@ -95,6 +105,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 
 	initialClientReadCh := o.initialClientReadCh
 	o.initialClientReadCh = nil
+	postVisibleFailover := selectionMode == model.SwitchModeFailover && o.lifecycle != nil && o.lifecycle.Snapshot().ClientVisible
 	relayResult := o.handler.wsForwarder.relay(ctx, o.clientConn, upstreamConn, webSocketRelayOptions{
 		InitialClientReadCh:               initialClientReadCh,
 		Observer:                          observer,
@@ -104,6 +115,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 		PreVisibleReplayBuffer:            o.replayBuffer,
 		Lifecycle:                         o.lifecycle,
 		PreserveClientOnSuppress:          true,
+		SkipClientToUpstream:              postVisibleFailover,
 		SkipPreVisibleWindow:              replayed && o.suppressedAttempt != nil,
 		PreserveClientOnPreVisibleFailure: o.suppressedAttempt != nil,
 	})
@@ -120,13 +132,17 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	}
 
 	o.captureSuppressedAttempt(provider, relayResult)
-	if result.ClientVisible {
+	if result.ClientVisible && relayResult.SuppressedUpstreamError == nil {
 		o.clearSuppressedAttempt()
 	}
 
-	attemptResult := newWebSocketForwardAttemptResult(provider, attempt, result, result.Err, time.Since(attemptStart))
+	attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, result.Err, time.Since(attemptStart))
+	o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
 	attemptResult.RecoveryAttempted = recoveryAttempted
 	attemptResult.RecoverySucceeded = recoveryAttempted && attemptResult.clientAccepted()
+	if result.ClientVisible {
+		o.switchTracker.markClientVisible(provider, time.Now())
+	}
 	return attemptResult
 }
 
@@ -168,6 +184,8 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 	provider *model.Provider,
 	upstreamURL string,
 	attempt int,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
 	attemptStart time.Time,
 ) (*websocket.Conn, WebSocketAttemptResult, bool) {
 	refreshed, err := o.handler.auth.RefreshProviderCredentials(ctx, provider)
@@ -185,10 +203,11 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 
 	dialHeaders, err := o.handler.prepareWebSocketDialHeaders(ctx, r, provider, o.apiType, o.globalAuthMode)
 	if err != nil {
-		configAttempt := newWebSocketProviderConfigurationAttempt(provider, o.apiType, attempt, &webSocketProviderConfigError{
+		configAttempt := newWebSocketProviderConfigurationAttempt(provider, o.apiType, attempt, selectionMode, selectionMetadata, &webSocketProviderConfigError{
 			missingField: "credentials",
 			err:          err,
 		}, time.Since(attemptStart))
+		o.stampAttemptSelectionContext(&configAttempt, selectionMode, selectionMetadata)
 		configAttempt.RecoveryAttempted = true
 		o.applySessionLifecycleToAttempt(&configAttempt)
 		return nil, configAttempt, true
@@ -199,10 +218,25 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 		return upstreamConn, WebSocketAttemptResult{RecoveryAttempted: true}, true
 	}
 
-	recoveredAttempt := newWebSocketForwardAttemptResult(provider, attempt, dialResult, nil, time.Since(attemptStart))
+	recoveredAttempt := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, dialResult, nil, time.Since(attemptStart))
+	o.stampAttemptSelectionContext(&recoveredAttempt, selectionMode, selectionMetadata)
 	recoveredAttempt.RecoveryAttempted = true
 	o.applySessionLifecycleToAttempt(&recoveredAttempt)
 	return nil, recoveredAttempt, true
+}
+
+func (o *WebSocketSessionOrchestrator) stampAttemptSelectionContext(
+	attempt *WebSocketAttemptResult,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
+) {
+	if attempt == nil {
+		return
+	}
+	attempt.SelectionMode = selectionMode
+	attempt.SelectionMetadata = selectionMetadata
+	attempt.ProviderAttempt = 1
+	attempt.ProviderSwitchCount = o.switchTracker.providerSwitchCount()
 }
 
 func (o *WebSocketSessionOrchestrator) replayBufferedMessages(
@@ -216,6 +250,12 @@ func (o *WebSocketSessionOrchestrator) replayBufferedMessages(
 
 	snapshot := o.replayBuffer.Snapshot()
 	if !snapshot.Enabled {
+		if o.lifecycle != nil && o.lifecycle.Snapshot().ClientVisible {
+			// Once the session is already visible, a disabled pre-visible replay buffer
+			// is expected rather than fatal. Post-visible failover reuses the live
+			// downstream socket without trying to resurrect the pre-visible window.
+			return 0, false, nil
+		}
 		return 0, false, errors.New("pre-visible replay buffer disabled")
 	}
 	if len(snapshot.Messages) == 0 {
@@ -288,11 +328,14 @@ func (o *WebSocketSessionOrchestrator) shouldSwitchProvider(attempt WebSocketAtt
 	if attempt.Result == nil {
 		return false
 	}
-	if attempt.Result.ClientVisible || attempt.ReplayFailed {
+	if attempt.ReplayFailed {
 		return false
 	}
-	if attempt.shouldFailoverBeforeClientVisible() {
+	if attempt.shouldReplaceBeforeClientVisible() {
 		return true
+	}
+	if attempt.Result.ClientVisible {
+		return o.shouldFailoverAfterClientVisible(attempt)
 	}
 	if attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError {
 		return o.suppressedAttempt != nil &&
@@ -300,6 +343,19 @@ func (o *WebSocketSessionOrchestrator) shouldSwitchProvider(attempt WebSocketAtt
 			attempt.Result.UpstreamError.IsSwitchableProviderScoped()
 	}
 	return false
+}
+
+func (o *WebSocketSessionOrchestrator) shouldFailoverAfterClientVisible(attempt WebSocketAttemptResult) bool {
+	if o == nil || o.suppressedAttempt == nil || attempt.Result == nil {
+		return false
+	}
+	if attempt.Result.UpstreamError == nil {
+		return false
+	}
+	if !attempt.Result.UpstreamError.IsSwitchableProviderScoped() {
+		return false
+	}
+	return o.switchTracker.continuityContext != nil
 }
 
 func (o *WebSocketSessionOrchestrator) shouldFallbackToSuppressedPayload(attempt WebSocketAttemptResult) bool {

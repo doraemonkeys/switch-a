@@ -114,6 +114,10 @@ type webSocketRelayOptions struct {
 	Lifecycle                *webSocketLifecycleState
 	PreserveClientOnSuppress bool
 	SkipPreVisibleWindow     bool
+	// SkipClientToUpstream is used for post-visible failover handoff when the
+	// downstream connection must remain open for upstream-driven continuity but
+	// the old relay must not poison the client socket by canceling a blocked read.
+	SkipClientToUpstream bool
 	// PreserveClientOnPreVisibleFailure keeps the downstream socket open when a
 	// fallback attempt dies before any upstream bytes become client-visible, so
 	// the orchestrator can keep switching providers or surface the suppressed
@@ -219,7 +223,7 @@ type webSocketSuppressedUpstreamError struct {
 }
 
 func (e *webSocketSuppressedUpstreamError) Error() string {
-	return webSocketSemanticFailoverCloseReason
+	return webSocketSemanticReplacementCloseReason
 }
 
 func (e *webSocketSuppressedUpstreamError) UpstreamError() *WebSocketUpstreamError {
@@ -229,11 +233,11 @@ func (e *webSocketSuppressedUpstreamError) UpstreamError() *WebSocketUpstreamErr
 	return e.upstreamError.Clone()
 }
 
-func closeWebSocketForSemanticFailover(conn *websocket.Conn) {
+func closeWebSocketForSemanticReplacement(conn *websocket.Conn) {
 	if conn == nil {
 		return
 	}
-	// Semantic failover must hand control back to the orchestrator immediately.
+	// Pre-visible semantic replacement must hand control back to the orchestrator immediately.
 	// A graceful close waits for the peer's close handshake, which can stall forever
 	// on the failed provider path we are intentionally abandoning.
 	_ = conn.CloseNow()

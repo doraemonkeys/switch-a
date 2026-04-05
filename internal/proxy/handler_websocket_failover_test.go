@@ -169,10 +169,9 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 
 func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t *testing.T) {
 	var (
-		primaryAttempts   int32
-		fallbackAccepts   int32
-		selectRetryCalls  int32
-		failoverCtxChains [][]string
+		primaryAttempts  int32
+		fallbackAccepts  int32
+		selectRetryCalls int32
 	)
 
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -234,10 +233,9 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 			if !excludeIDs[providerPrimary.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, providerPrimary.ID)
 			}
-			if req.FailoverContext == nil {
-				t.Fatal("expected failover context on retry selection")
+			if req.FailoverContext != nil {
+				t.Fatalf("pre-visible replacement must not carry failover context, got %+v", req.FailoverContext)
 			}
-			failoverCtxChains = append(failoverCtxChains, append([]string(nil), req.FailoverContext.AttemptChain...))
 			return providerFallback, nil
 		},
 	}
@@ -286,9 +284,6 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 	}
 	if got := atomic.LoadInt32(&selectRetryCalls); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
-	}
-	if len(failoverCtxChains) != 1 || len(failoverCtxChains[0]) != 1 || failoverCtxChains[0][0] != providerPrimary.ID {
-		t.Fatalf("failover attempt chains = %v, want [[%s]]", failoverCtxChains, providerPrimary.ID)
 	}
 
 	log := store.LastLog()
@@ -685,7 +680,7 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailoverSwitchesProvider(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvider(t *testing.T) {
 	var (
 		initialAttempts int32
 		finalAttempts   int32
@@ -752,11 +747,8 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailoverSwitchesProvider(
 			if !excludeIDs[initialProvider.ID] {
 				t.Fatalf("excludeIDs = %+v, want %q excluded", excludeIDs, initialProvider.ID)
 			}
-			if req.FailoverContext == nil {
-				t.Fatal("failover selection must receive failover context")
-			}
-			if req.FailoverContext.OriginProviderID != initialProvider.ID {
-				t.Fatalf("OriginProviderID = %q, want %q", req.FailoverContext.OriginProviderID, initialProvider.ID)
+			if req.FailoverContext != nil {
+				t.Fatalf("pre-visible replacement must not carry failover context, got %+v", req.FailoverContext)
 			}
 			return finalProvider, nil
 		},
@@ -835,7 +827,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailoverSwitchesProvider(
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportFailoverSwitchesProvider(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvider(t *testing.T) {
 	var finalAttempts int32
 
 	finalUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -887,8 +879,8 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportFailoverSwitchesProvider(
 			if !excludeIDs[initialProvider.ID] {
 				t.Fatalf("excludeIDs = %+v, want %q excluded", excludeIDs, initialProvider.ID)
 			}
-			if req.FailoverContext == nil || req.FailoverContext.OriginProviderID != initialProvider.ID {
-				t.Fatalf("unexpected failover context: %+v", req.FailoverContext)
+			if req.FailoverContext != nil {
+				t.Fatalf("pre-visible replacement must not carry failover context, got %+v", req.FailoverContext)
 			}
 			return finalProvider, nil
 		},

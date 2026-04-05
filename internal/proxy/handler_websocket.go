@@ -112,6 +112,15 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		session.StickyWritten = true
 	}
 
+	if shouldStoreWebSocketVisibleContinuitySeed(session) {
+		h.storeVisibleContinuitySeedFromContext(
+			selectReq,
+			selectReq.ProviderContinuityContext,
+			time.Now(),
+			nil,
+		)
+	}
+
 	if !session.ClientAccepted && session.GatewayStatusCode > 0 {
 		h.writeGatewayError(w, session.GatewayStatusCode, session.GatewayErrorCode, session.GatewayMessage)
 	}

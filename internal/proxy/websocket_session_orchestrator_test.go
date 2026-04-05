@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -133,7 +134,7 @@ func TestWebSocketAttemptResult_ShouldFailoverBeforeClientAccept(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "accepted handshake closes pre-accept failover window",
+			name: "accepted handshake closes pre-visible replacement window",
 			attempt: WebSocketAttemptResult{
 				Result: &WebSocketResult{HandshakeAccepted: true},
 			},
@@ -152,8 +153,8 @@ func TestWebSocketAttemptResult_ShouldFailoverBeforeClientAccept(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tt.attempt.shouldFailoverBeforeClientVisible(); got != tt.want {
-				t.Fatalf("shouldFailoverBeforeClientVisible() = %v, want %v", got, tt.want)
+			if got := tt.attempt.shouldReplaceBeforeClientVisible(); got != tt.want {
+				t.Fatalf("shouldReplaceBeforeClientVisible() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -338,6 +339,8 @@ func TestNewWebSocketProviderConfigurationAttemptMapsGatewayFailure(t *testing.T
 		&model.Provider{ID: "provider-config"},
 		"codex",
 		2,
+		providerSwitchModeReplacement,
+		selector.SelectionMetadata{},
 		&webSocketProviderConfigError{
 			missingField: "credentials",
 			err:          errors.New("missing managed credential"),
@@ -423,6 +426,8 @@ func TestNewWebSocketForwardAttemptResultCapturesHandshakeGatewayFailure(t *test
 	attempt := newWebSocketForwardAttemptResult(
 		&model.Provider{ID: "provider-a"},
 		3,
+		providerSwitchModeReplacement,
+		selector.SelectionMetadata{},
 		result,
 		nil,
 		1500*time.Millisecond,

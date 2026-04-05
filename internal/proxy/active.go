@@ -11,6 +11,8 @@ import (
 	"switch-a/internal/selector"
 )
 
+var _ model.VisibleContinuitySeedStore = (*MemoryVisibleContinuitySeedStore)(nil)
+
 // ActiveRequest represents a request currently being processed by the proxy.
 // It captures metadata needed for live monitoring without storing the full request/response.
 type ActiveRequest struct {
@@ -64,6 +66,145 @@ type LiveBytesTracker struct {
 	MsgsSent       atomic.Int64
 	MsgsReceived   atomic.Int64
 	LastActivityAt atomic.Int64 // UnixMilli of most recent message
+}
+
+// MemoryVisibleContinuitySeedStore keeps short-lived post-visible continuity
+// seeds out of the live request registry. This preserves the one-shot,
+// cross-request handoff semantics without conflating active requests with ended
+// requests that merely left a continuity breadcrumb behind.
+type MemoryVisibleContinuitySeedStore struct {
+	mu    sync.RWMutex
+	seeds map[model.StickyKey]model.VisibleContinuitySeed
+	clock internal.Clock
+}
+
+func NewVisibleContinuitySeedStore() *MemoryVisibleContinuitySeedStore {
+	return NewVisibleContinuitySeedStoreWithClock(internal.RealClock{})
+}
+
+func NewVisibleContinuitySeedStoreWithClock(clock internal.Clock) *MemoryVisibleContinuitySeedStore {
+	return &MemoryVisibleContinuitySeedStore{
+		seeds: make(map[model.StickyKey]model.VisibleContinuitySeed),
+		clock: clock,
+	}
+}
+
+func (s *MemoryVisibleContinuitySeedStore) Lookup(key model.StickyKey) (*model.VisibleContinuitySeedCandidate, bool) {
+	now := s.clock.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seed, ok := s.seeds[key]
+	if !ok {
+		return nil, false
+	}
+	if seedExpired(seed, now) {
+		delete(s.seeds, key)
+		return nil, false
+	}
+	return seed.Candidate(now), true
+}
+
+func (s *MemoryVisibleContinuitySeedStore) Store(seed model.VisibleContinuitySeed) {
+	if seed.ObservedAt.IsZero() {
+		// The store owns TTL enforcement, so it normalizes missing timestamps at the
+		// boundary rather than letting zero values live forever or lose overwrite
+		// ordering under tests.
+		seed.ObservedAt = s.clock.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, ok := s.seeds[seed.ContinuityKey]
+	if ok && !seedExpired(existing, s.clock.Now()) && existing.ObservedAt.After(seed.ObservedAt) {
+		return
+	}
+	s.seeds[seed.ContinuityKey] = *seed.Clone()
+}
+
+func (s *MemoryVisibleContinuitySeedStore) CompareAndConsume(
+	key model.StickyKey,
+	seedID string,
+) (*model.VisibleContinuitySeed, bool) {
+	now := s.clock.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seed, ok := s.seeds[key]
+	if !ok {
+		return nil, false
+	}
+	if seedExpired(seed, now) {
+		delete(s.seeds, key)
+		return nil, false
+	}
+	if seedID == "" || seed.SeedID != seedID {
+		return nil, false
+	}
+
+	delete(s.seeds, key)
+	return seed.Clone(), true
+}
+
+func (s *MemoryVisibleContinuitySeedStore) CleanupExpired() int {
+	now := s.clock.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	removed := 0
+	for key, seed := range s.seeds {
+		if !seedExpired(seed, now) {
+			continue
+		}
+		delete(s.seeds, key)
+		removed++
+	}
+	return removed
+}
+
+// Background sweeping bounds memory growth for seeds that never see another
+// lookup. Expiration semantics still come from seedExpired, so the loop only
+// reclaims entries that are already invisible to callers.
+func (s *MemoryVisibleContinuitySeedStore) StartCleanupLoop(interval time.Duration) (stop func()) {
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := s.clock.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				s.CleanupExpired()
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		wg.Wait()
+	}
+}
+
+func (s *MemoryVisibleContinuitySeedStore) Len() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.seeds)
+}
+
+func seedExpired(seed model.VisibleContinuitySeed, now time.Time) bool {
+	if seed.ObservedAt.IsZero() {
+		return true
+	}
+	return now.Sub(seed.ObservedAt) > model.VisibleContinuitySeedTTL
 }
 
 // ActiveRequestRegistry tracks requests currently being processed.

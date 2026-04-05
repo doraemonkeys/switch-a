@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -105,6 +106,107 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	}
 	if update.Model != "client-model" {
 		t.Fatalf("sticky update model = %q, want %q", update.Model, "client-model")
+	}
+}
+
+func TestHandler_ServeHTTP_WebSocket_ContinuitySeedLookupWaitsForProbeResolvedModel(t *testing.T) {
+	t.Parallel()
+
+	const prompt = `{"type":"response.create","response":{"model":"client-model","instructions":"hello"}}`
+
+	seedStore := NewVisibleContinuitySeedStore()
+	seedKey := selector.BuildContinuityKey(&model.SelectRequest{
+		ClientIP:   "198.51.100.44",
+		User:       "seed-user",
+		APIType:    APITypeCodex,
+		Model:      "client-model",
+		StickyMode: model.StickyModeModel,
+	})
+	seedStore.Store(model.VisibleContinuitySeed{
+		SeedID:           "ws-probe-seed-1",
+		ContinuityKey:    seedKey,
+		OriginProviderID: "ws-probe-seed-provider",
+		OriginVendor:     "vendor-a",
+		ObservedAt:       time.Now().Add(-1200 * time.Millisecond),
+	})
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		if _, _, err := conn.Read(r.Context()); err != nil {
+			t.Errorf("read client prompt: %v", err)
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"response.created","response":{"id":"resp_probe"}}`)); err != nil {
+			t.Errorf("write response.created: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	store := newMockStore()
+	store.configs[ConfigKeyStickyMode] = string(model.StickyModeModel)
+	store.configs[ConfigKeyTrustProxyHeaders] = "true"
+	provider := &model.Provider{
+		ID:       "ws-probe-seed-provider",
+		Name:     "WS Probe Seed Provider",
+		APIKey:   "ws-key",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-seed-provider", APIType: APITypeCodex, BaseURL: upstream.URL}},
+	}
+	store.providers = []model.Provider{*provider}
+
+	mockSel := &mockSelector{
+		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
+			if req.Model != "client-model" {
+				t.Fatalf("selection model = %q, want %q after probe resolution", req.Model, "client-model")
+			}
+			if req.VisibleContinuitySeedCandidate == nil {
+				t.Fatal("expected continuity seed candidate after probe resolved the model")
+			}
+			if req.VisibleContinuitySeedCandidate.SeedID != "ws-probe-seed-1" {
+				t.Fatalf("candidate SeedID = %q, want %q", req.VisibleContinuitySeedCandidate.SeedID, "ws-probe-seed-1")
+			}
+			if req.VisibleContinuitySeedCandidate.OriginProviderID != provider.ID {
+				t.Fatalf("candidate origin = %q, want %q", req.VisibleContinuitySeedCandidate.OriginProviderID, provider.ID)
+			}
+			return &selectResult{Provider: provider, FromStickyCache: false}, nil
+		},
+	}
+
+	handler := NewHandler(Config{
+		Store:                      store,
+		Selector:                   mockSel,
+		VisibleContinuitySeedStore: seedStore,
+		Logger:                     zap.NewNop(),
+	})
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	headers := http.Header{}
+	headers.Set("X-User-ID", "seed-user")
+	headers.Set("X-Forwarded-For", "198.51.100.44")
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
+		HTTPHeader: headers,
+	})
+	if err != nil {
+		t.Fatalf("dial websocket through proxy: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := conn.Write(ctx, websocket.MessageText, []byte(prompt)); err != nil {
+		t.Fatalf("write client prompt: %v", err)
+	}
+	if _, _, err := conn.Read(ctx); err != nil {
+		t.Fatalf("read proxied response: %v", err)
 	}
 }
 

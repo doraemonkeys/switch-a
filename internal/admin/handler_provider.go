@@ -98,7 +98,7 @@ type CreateProviderRequest struct {
 	Backoff           *model.BackoffPolicy           `json:"backoff"`         // Exponential backoff for same-provider retries
 	Vendor            string                         `json:"vendor"`          // Empty = no isolation, "*" = wildcard (see model.Provider.Vendor)
 	FailoverScope     *model.Scope                   `json:"failover_scope"`  // Pointer to distinguish unset (nil) from explicit empty
-	AcceptFailover    *model.Scope                   `json:"accept_failover"` // Pointer to distinguish unset (nil) from explicit empty
+	AcceptFailover    *model.Scope                   `json:"accept_failover"` // Governs true failover only; pre-visible replacement stays allowed
 	Enabled           *bool                          `json:"enabled"`
 }
 
@@ -435,7 +435,7 @@ type UpdateProviderRequest struct {
 	Backoff           *model.BackoffPolicy            `json:"backoff"` // Exponential backoff for same-provider retries
 	Vendor            *string                         `json:"vendor"`
 	FailoverScope     *model.Scope                    `json:"failover_scope"`
-	AcceptFailover    *model.Scope                    `json:"accept_failover"`
+	AcceptFailover    *model.Scope                    `json:"accept_failover"` // Governs true failover only; pre-visible replacement stays allowed
 	Enabled           *bool                           `json:"enabled"`
 }
 

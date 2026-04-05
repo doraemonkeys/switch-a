@@ -99,45 +99,21 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		return preVisibleProgress.Result
 	}
 
-	wg.Add(2)
+	f.startClientToUpstreamRelay(
+		ctx,
+		cancel,
+		&wg,
+		upstreamConn,
+		clientConn,
+		options,
+		lifecycle,
+		initialClientReadCh,
+		observeClient,
+		&errorOrder,
+		&clientToUpstream,
+	)
 
-	go func() {
-		defer wg.Done()
-		var initialClientRead *webSocketInitialReadResult
-		if initialClientReadCh != nil {
-			select {
-			case read := <-initialClientReadCh:
-				initialClientRead = &read
-			case <-ctx.Done():
-				initialClientRead = &webSocketInitialReadResult{err: ctx.Err()}
-			}
-		}
-		n, failurePeer, err := relayMessages(
-			ctx,
-			upstreamConn,
-			webSocketPeerUpstream,
-			clientConn,
-			webSocketPeerClient,
-			initialClientRead,
-			observeClient,
-			nil,
-			func(messageType websocket.MessageType, data []byte) {
-				lifecycleSnapshot := lifecycle.Snapshot()
-				if options.PreVisibleReplayBuffer != nil {
-					if options.Observer != nil && options.Observer.ParseDegraded() {
-						options.PreVisibleReplayBuffer.Disable()
-					}
-					options.PreVisibleReplayBuffer.Record(messageType, data, lifecycleSnapshot.ClientVisible)
-				}
-			},
-			nil,
-		)
-		clientToUpstream = newWebSocketRelayResult(n, err, failurePeer, &errorOrder)
-		if err != nil {
-			cancel()
-		}
-	}()
-
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		var initialUpstreamRead *webSocketInitialReadResult
@@ -192,10 +168,10 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	if suppressedUpstreamError := firstSuppressedUpstreamError(clientToUpstream, upstreamToClient); suppressedUpstreamError != nil {
 		if options.PreserveClientOnSuppress {
 			preserveClient = true
-			closeWebSocketForSemanticFailover(upstreamConn)
+			closeWebSocketForSemanticReplacement(upstreamConn)
 		} else {
-			closeWebSocketForSemanticFailover(clientConn)
-			closeWebSocketForSemanticFailover(upstreamConn)
+			closeWebSocketForSemanticReplacement(clientConn)
+			closeWebSocketForSemanticReplacement(upstreamConn)
 		}
 		sessionCommitted, commitSource := fallbackCommit.Snapshot()
 		return &webSocketRelaySessionResult{
@@ -214,7 +190,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	outcome := reduceWebSocketRelayErrors(clientToUpstream, upstreamToClient)
 	if shouldPreserveClientOnPreVisibleFailure(options, lifecycleSnapshot, outcome) {
 		preserveClient = true
-		closeWebSocketForSemanticFailover(upstreamConn)
+		closeWebSocketForSemanticReplacement(upstreamConn)
 		sessionCommitted, commitSource := fallbackCommit.Snapshot()
 		return &webSocketRelaySessionResult{
 			Disposition:           webSocketRelayDispositionCompleted,
@@ -405,7 +381,7 @@ func (f *WebSocketForwarder) relayPreVisibleUpstreamMessage(
 			ClientVisible:  lifecycleSnapshot.ClientVisible,
 		})
 		if decision.Action == webSocketPreWriteActionSuppress {
-			closeWebSocketForSemanticFailover(upstreamConn)
+			closeWebSocketForSemanticReplacement(upstreamConn)
 			progress.Result = newSuppressedPreVisibleRelayResult(
 				fallbackCommit,
 				lifecycleSnapshot,

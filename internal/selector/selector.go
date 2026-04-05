@@ -88,6 +88,22 @@ const (
 // derived from lifecycle state instead of overloading "sticky" as a control flag.
 type SelectionMetadata struct {
 	Source SelectionSource
+	// SwitchMode is echoed back so downstream logging and orchestration do not
+	// need to reconstruct replacement vs failover from incidental state.
+	SwitchMode model.SwitchMode
+	// ContinuitySeeded reports whether this request entered selection with a
+	// visible continuity seed candidate. The selector keeps this explicit so
+	// callers never need to infer seeded continuity from sticky hits alone.
+	ContinuitySeeded bool
+	// ContinuityOriginProviderID identifies the visible continuity source when the
+	// request is seeded or already continuity-attached.
+	ContinuityOriginProviderID string
+	// ContinuitySeedObservedAt lets callers derive age in milliseconds without
+	// asking the seed store to materialize mutable request state.
+	ContinuitySeedObservedAt time.Time
+	// ContinuitySeedAgeAtSelectionMs freezes the admin-visible seed age when the
+	// provider was chosen so long-running attempts cannot rewrite provenance.
+	ContinuitySeedAgeAtSelectionMs *int64
 }
 
 func (m SelectionMetadata) UsesContinuity() bool {
@@ -97,6 +113,47 @@ func (m SelectionMetadata) UsesContinuity() bool {
 	default:
 		return false
 	}
+}
+
+func (m SelectionMetadata) ContinuitySeedAge(at time.Time) time.Duration {
+	if !m.ContinuitySeeded || m.ContinuitySeedObservedAt.IsZero() {
+		return 0
+	}
+	age := at.Sub(m.ContinuitySeedObservedAt)
+	if age < 0 {
+		return 0
+	}
+	return age
+}
+
+// BuildSelectionMetadata keeps continuity provenance explicit at the selection
+// boundary so downstream code can log the request's continuity path without
+// reverse-engineering it from sticky booleans or adjacent attempts.
+func BuildSelectionMetadata(req *model.SelectRequest, source SelectionSource) SelectionMetadata {
+	return BuildSelectionMetadataAt(req, source, time.Now())
+}
+
+// BuildSelectionMetadataAt freezes selection-time continuity provenance so
+// downstream persistence can report the age seen when the provider was chosen,
+// not after an arbitrarily long request lifecycle finishes.
+func BuildSelectionMetadataAt(req *model.SelectRequest, source SelectionSource, selectedAt time.Time) SelectionMetadata {
+	metadata := SelectionMetadata{
+		Source:     source,
+		SwitchMode: reqSwitchMode(req),
+	}
+
+	if continuity := reqProviderContinuityContext(req); continuity != nil {
+		metadata.ContinuityOriginProviderID = continuity.VisibleOriginProviderID
+	}
+	if candidate := reqVisibleContinuitySeedCandidate(req); candidate != nil {
+		metadata.ContinuitySeeded = true
+		metadata.ContinuityOriginProviderID = candidate.OriginProviderID
+		metadata.ContinuitySeedObservedAt = candidate.ObservedAt
+		ageMs := metadata.ContinuitySeedAge(selectedAt).Milliseconds()
+		metadata.ContinuitySeedAgeAtSelectionMs = &ageMs
+	}
+
+	return metadata
 }
 
 // Selector selects providers based on strategies and health status.
@@ -143,7 +200,7 @@ func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequ
 	if provider != nil {
 		return &SelectResult{
 			Provider: provider,
-			Metadata: SelectionMetadata{Source: SelectionSourceStickyContinuity},
+			Metadata: BuildSelectionMetadataAt(req, SelectionSourceStickyContinuity, s.selectionTimestamp()),
 		}, nil
 	}
 
@@ -155,8 +212,15 @@ func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequ
 
 	return &SelectResult{
 		Provider: provider,
-		Metadata: SelectionMetadata{Source: SelectionSourceStrategy},
+		Metadata: BuildSelectionMetadataAt(req, SelectionSourceStrategy, s.selectionTimestamp()),
 	}, nil
+}
+
+func (s *Selector) selectionTimestamp() time.Time {
+	if s == nil || s.clock == nil {
+		return time.Now()
+	}
+	return s.clock.Now()
 }
 
 // SelectExcluding selects a provider excluding the given provider IDs (for retry).

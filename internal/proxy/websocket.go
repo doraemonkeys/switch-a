@@ -18,7 +18,7 @@ const (
 	wsReadLimit = 16 * 1024 * 1024
 
 	// preVisibleClientReplayBufferLimitBytes bounds buffered client application payloads
-	// so semantic failover never turns an invisible session window into unbounded memory.
+	// so semantic replacement never turns an invisible session window into unbounded memory.
 	preVisibleClientReplayBufferLimitBytes = 1 * 1024 * 1024
 
 	// preVisibleClientReplayBufferLimitMessages prevents an endless stream of tiny
@@ -45,7 +45,7 @@ const (
 	// concurrent relay, which keeps server-first sessions moving.
 	webSocketPreVisibleClientReadWindow = 50 * time.Millisecond
 
-	webSocketSemanticFailoverCloseReason = "semantic failover"
+	webSocketSemanticReplacementCloseReason = "semantic replacement"
 )
 
 // WebSocketDialer abstracts upstream WebSocket connection establishment.

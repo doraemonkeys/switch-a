@@ -271,8 +271,8 @@ function ScopeBadge({
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${config.className}`}
       title={
         direction === "out"
-          ? "Outbound failover scope"
-          : "Inbound failover acceptance"
+          ? "Outbound true-failover scope"
+          : "Inbound true-failover acceptance"
       }
     >
       <span>{config.icon}</span>
@@ -386,6 +386,11 @@ function FailoverInfoSection({ provider }: { provider: Provider }) {
 
   return (
     <DetailSection title="Failover Isolation">
+      <div className="mb-3 p-2 rounded-lg bg-info-light/30 border border-info-light/50 text-xs text-text-secondary">
+        Accept Failover only governs true failover after client-visible
+        continuity already exists. Pre-visible provider replacement is not
+        blocked by these settings.
+      </div>
       {hasWarning && (
         <div className="mb-3 p-2 rounded-lg bg-warning-light/50 border border-warning-light text-xs text-warning-dark flex items-start gap-2">
           <span>⚠️</span>
@@ -406,7 +411,7 @@ function FailoverInfoSection({ provider }: { provider: Provider }) {
         }
       />
       <DetailRow
-        label="Accept From"
+        label="Accept Failover From"
         value={
           <ScopeBadge
             scope={provider.accept_failover || FAILOVER_SCOPES.ANY}

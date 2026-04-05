@@ -698,7 +698,7 @@ func TestDecideWebSocketUpstreamError_UsesClassificationAndParseDegradation(t *t
 			wantDecision: webSocketSemanticFrameDecisionForward,
 		},
 		{
-			name:          "parse degradation disables semantic failover",
+			name:          "parse degradation disables semantic replacement",
 			err:           providerScoped,
 			parseDegraded: true,
 			wantClass:     webSocketSemanticClassificationUnknown,

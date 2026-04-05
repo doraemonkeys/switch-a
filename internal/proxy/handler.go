@@ -21,17 +21,18 @@ import (
 
 // Handler handles proxy requests.
 type Handler struct {
-	store           Store
-	selector        Selector
-	health          internal.HealthManager
-	activeRegistry  *ActiveRequestRegistry
-	logger          *zap.Logger
-	mu              sync.RWMutex
-	transport       *Transport
-	lastCfg         *transportCacheKey
-	fallbackCounter atomic.Int64 // Counter for true round-robin in fallback mode
-	wsForwarder     *WebSocketForwarder
-	auth            *providerauth.Service
+	store                      Store
+	selector                   Selector
+	health                     internal.HealthManager
+	activeRegistry             *ActiveRequestRegistry
+	visibleContinuitySeedStore model.VisibleContinuitySeedStore
+	logger                     *zap.Logger
+	mu                         sync.RWMutex
+	transport                  *Transport
+	lastCfg                    *transportCacheKey
+	fallbackCounter            atomic.Int64 // Counter for true round-robin in fallback mode
+	wsForwarder                *WebSocketForwarder
+	auth                       *providerauth.Service
 }
 
 // transportCacheKey is used to detect if Transport config changed.
@@ -59,27 +60,47 @@ func (k *transportCacheKey) Equals(other *transportCacheKey) bool {
 type firstWriteResponseWriter struct {
 	http.ResponseWriter
 	onFirstWrite   func()
+	onCommit       func()
 	onWrite        func(time.Time)
 	written        bool
+	committed      bool
 	firstWriteTime time.Time // Time of first data write (for TTFT calculation)
 	bytesWritten   int64     // Total bytes written to client
 }
 
 func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
 	writeTime := time.Now()
-	if !w.written {
-		w.firstWriteTime = writeTime
-		if w.onFirstWrite != nil {
-			w.onFirstWrite()
-		}
-		w.written = true
-	}
 	n, err := w.ResponseWriter.Write(p)
-	if n > 0 && w.onWrite != nil {
-		w.onWrite(writeTime)
+	if n > 0 {
+		w.commit()
+		if !w.written {
+			w.firstWriteTime = writeTime
+			if w.onFirstWrite != nil {
+				w.onFirstWrite()
+			}
+			w.written = true
+		}
+		if w.onWrite != nil {
+			w.onWrite(writeTime)
+		}
+		w.bytesWritten += int64(n)
 	}
-	w.bytesWritten += int64(n)
 	return n, err
+}
+
+func (w *firstWriteResponseWriter) WriteHeader(statusCode int) {
+	w.ResponseWriter.WriteHeader(statusCode)
+	w.commit()
+}
+
+func (w *firstWriteResponseWriter) commit() {
+	if w == nil || w.committed {
+		return
+	}
+	w.committed = true
+	if w.onCommit != nil {
+		w.onCommit()
+	}
 }
 
 // Flush preserves http.Flusher interface for SSE streaming.
@@ -112,12 +133,13 @@ type Selector interface {
 
 // Config holds proxy handler configuration.
 type Config struct {
-	Store          Store
-	Selector       Selector
-	Health         internal.HealthManager
-	ActiveRegistry *ActiveRequestRegistry
-	Auth           *providerauth.Service
-	Logger         *zap.Logger
+	Store                      Store
+	Selector                   Selector
+	Health                     internal.HealthManager
+	ActiveRegistry             *ActiveRequestRegistry
+	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
+	Auth                       *providerauth.Service
+	Logger                     *zap.Logger
 }
 
 // NewHandler creates a new proxy handler.
@@ -129,14 +151,19 @@ func NewHandler(cfg Config) *Handler {
 	if cfg.Logger == nil {
 		panic("proxy: Logger is required but was nil")
 	}
+	visibleContinuitySeedStore := cfg.VisibleContinuitySeedStore
+	if visibleContinuitySeedStore == nil {
+		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
+	}
 	return &Handler{
-		store:          cfg.Store,
-		selector:       cfg.Selector,
-		health:         cfg.Health,
-		activeRegistry: cfg.ActiveRegistry,
-		logger:         cfg.Logger,
-		wsForwarder:    NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger}),
-		auth:           cfg.Auth,
+		store:                      cfg.Store,
+		selector:                   cfg.Selector,
+		health:                     cfg.Health,
+		activeRegistry:             cfg.ActiveRegistry,
+		visibleContinuitySeedStore: visibleContinuitySeedStore,
+		logger:                     cfg.Logger,
+		wsForwarder:                NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger}),
+		auth:                       cfg.Auth,
 	}
 }
 
@@ -305,15 +332,18 @@ type retryState struct {
 	success           bool
 	isSSE             bool
 	headersWritten    bool
+	responseCommitted bool
 	excludedProviders map[string]bool
 	currentProvider   *model.Provider
 	// providerAttempt is 0-based within a single provider. A provider with MaxRetries=N
 	// can be attempted (N+1) times: providerAttempt 0..N.
 	providerAttempt  int
 	activeRegistered bool
-	// failoverContext tracks vendor isolation state across failover attempts.
-	// Initialized after the first provider is selected; nil for the first selection.
-	failoverContext *model.FailoverContext
+	// switchTracker keeps pre-visible replacement separate from visible failover
+	// so selector isolation only activates after the upstream becomes observable.
+	switchTracker     providerSwitchTracker
+	selectionMode     model.SwitchMode
+	selectionMetadata selector.SelectionMetadata
 	// firstTokenMs tracks Time To First Token for SSE requests (in milliseconds).
 	// Only set for successful SSE responses when data starts flowing.
 	firstTokenMs *int64
@@ -331,9 +361,7 @@ type retryState struct {
 // Returns true if selection succeeded, false if the loop should break or return early.
 // The earlyReturn flag indicates whether to return immediately from executeProxy.
 func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyContext, state *retryState, attempt int) (continueLoop, earlyReturn bool) {
-	// Set up failover context for provider selection
-	pctx.selectReq.FailoverContext = state.failoverContext
-	pctx.selectReq.MaxProviderSwitches = pctx.cfg.globalMaxAttempts
+	state.selectionMode = state.switchTracker.prepareSelection()
 
 	provider, selectionMetadata, err := h.selectProviderWithTracking(ctx, pctx.selectReq, attempt, state.excludedProviders)
 	if err != nil {
@@ -355,15 +383,8 @@ func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyCont
 
 	state.currentProvider = provider
 	state.providerAttempt = 0
-
-	// Initialize or update failover context
-	if state.failoverContext == nil {
-		// First provider: initialize failover context
-		state.failoverContext = model.NewFailoverContext(provider)
-	} else {
-		// Subsequent provider: update failover context
-		state.failoverContext.Update(provider)
-	}
+	state.selectionMode = state.switchTracker.recordSelection(provider, selectionMetadata)
+	state.selectionMetadata = selectionMetadata
 
 	// Track sticky cache hit on first attempt
 	if attempt == 0 {
@@ -399,15 +420,22 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 
 // recordAttempt records a request attempt in the proxy context.
 func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result forwardResult, attempt int, attemptStart time.Time, switchReason string) {
+	createdAt := time.Now()
 	attemptRecord := model.RequestAttempt{
-		RequestID:    pctx.requestID,
-		ProviderID:   state.currentProvider.ID,
-		Attempt:      attempt,
-		StatusCode:   result.statusCode,
-		BodySnippet:  result.bodySnippet,
-		LatencyMs:    time.Since(attemptStart).Milliseconds(),
-		SwitchReason: switchReason,
-		CreatedAt:    time.Now(),
+		RequestID:                  pctx.requestID,
+		ProviderID:                 state.currentProvider.ID,
+		Attempt:                    attempt,
+		SwitchMode:                 requestAttemptSwitchMode(state.selectionMode),
+		ProviderAttempt:            state.providerAttempt + 1,
+		ProviderSwitchCount:        state.switchTracker.providerSwitchCount(),
+		StatusCode:                 result.statusCode,
+		BodySnippet:                result.bodySnippet,
+		LatencyMs:                  time.Since(attemptStart).Milliseconds(),
+		SwitchReason:               switchReason,
+		ContinuitySeeded:           state.selectionMetadata.ContinuitySeeded,
+		ContinuityOriginProviderID: state.selectionMetadata.ContinuityOriginProviderID,
+		ContinuitySeedAgeMs:        selectionMetadataContinuitySeedAgeMs(state.selectionMetadata),
+		CreatedAt:                  createdAt,
 	}
 	if result.err != nil {
 		attemptRecord.Error = result.err.Error()
@@ -486,131 +514,19 @@ func (h *Handler) applyBackoffDelay(ctx context.Context, provider *model.Provide
 	}
 }
 
-// executeProxy runs the proxy logic with retry.
-func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
-	state := &retryState{
-		excludedProviders: make(map[string]bool),
-	}
-
-	attempt := 0
-retryLoop:
-	for !state.headersWritten {
-		if pctx.cfg.globalMaxAttempts > 0 && attempt >= pctx.cfg.globalMaxAttempts {
-			break
-		}
-
-		// Early exit on context cancellation - avoid wasted retries
-		if err := ctx.Err(); err != nil {
-			state.lastErr = err
-			break
-		}
-
-		attemptStart := time.Now()
-
-		// Select a provider if we don't have one or if we just switched.
-		if state.currentProvider == nil {
-			continueLoop, earlyReturn := h.selectAndRegisterProvider(ctx, pctx, state, attempt)
-			if earlyReturn {
-				return
-			}
-			if !continueLoop {
-				break
-			}
-		}
-
-		if state.providerAttempt > 0 {
-			refreshedProvider, err := h.eligibleProviderByID(ctx, pctx.selectReq, state.currentProvider.ID)
-			if err != nil {
-				state.lastErr = err
-				break
-			}
-			if refreshedProvider == nil {
-				h.excludeCurrentProvider(pctx, state)
-				continue
-			}
-			state.currentProvider = refreshedProvider
-		}
-
-		state.providerUsed = state.currentProvider
-
-		result := h.forwardToProvider(ctx, pctx, state.currentProvider)
-		state.headersWritten = result.headersWritten
-		state.statusCode = result.statusCode
-		state.lastErr = result.err
-		state.success = result.success
-		state.isSSE = result.isSSE
-		state.firstTokenMs = result.firstTokenMs
-		state.responseBytes = result.responseBytes
-		state.tokenUsage = result.tokenUsage
-		state.failureDisposition = result.failureDisposition
-
-		// Note: SSE status is updated in forwardToProvider() BEFORE streaming starts.
-		// This ensures long-running SSE streams are visible in the Monitor page with the SSE badge.
-
-		// Success or final failure (headers written) - no provider switch
-		if result.done {
-			h.recordAttempt(pctx, state, result, attempt, attemptStart, "")
-			break
-		}
-
-		// Determine if we need to switch providers (and why)
-		exhausted, switchReason := h.tryIncrementAndExhaustProvider(ctx, state)
-
-		// Record the attempt with the switch reason (now known)
-		h.recordAttempt(pctx, state, result, attempt, attemptStart, switchReason)
-		attempt++
-
-		if !exhausted {
-			// Same provider retry - apply backoff delay.
-			// providerAttempt is already incremented in tryIncrementAndExhaustsProvider,
-			// so retryIndex = providerAttempt - 1 (0 for first retry, 1 for second, etc.)
-			if h.applyBackoffDelay(ctx, state.currentProvider, state.providerAttempt-1) {
-				state.lastErr = ctx.Err()
-				break retryLoop
-			}
-			continue // retry same provider
-		}
-
-		h.excludeCurrentProvider(pctx, state)
-	}
-
-	h.finalizeProxy(pctx, state)
-}
-
-// finalizeProxy performs cleanup and logging after the retry loop completes.
-func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
-	// Active registry teardown owns provider-slot release for tracked requests so
-	// background stale cleanup and explicit request completion share one contract.
-	if state.activeRegistered && h.activeRegistry != nil {
-		h.activeRegistry.Unregister(pctx.requestID)
-	} else if state.currentProvider != nil {
-		h.releaseConcurrency(state.currentProvider.ID)
-	}
-
-	// Log request asynchronously.
-	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
-	// but avoids blocking the response path. For a high-throughput proxy,
-	// this is an acceptable trade-off as most logs will complete.
-	go h.logRequest(pctx, state.providerUsed, state.statusCode, state.success, state.isSSE, state.firstTokenMs, state.responseBytes, state.tokenUsage, state.lastErr, time.Since(pctx.startTime))
-
-	// Handle exhausted retries
-	if !state.success && !state.headersWritten {
-		h.handleExhaustedRetries(pctx, state.lastErr)
-	}
-}
-
 // forwardResult holds the result of forwarding to a provider.
 type forwardResult struct {
-	headersWritten bool
-	statusCode     int
-	success        bool
-	err            error
-	done           bool        // whether to stop retrying
-	isSSE          bool        // whether the response was SSE
-	bodySnippet    string      // first ~500 bytes of error response (failover scenarios only)
-	firstTokenMs   *int64      // Time To First Token for SSE requests (ms from request start)
-	responseBytes  int64       // Total bytes written to client (for transfer statistics)
-	tokenUsage     *TokenUsage // Token usage extracted from response (Phase 4a)
+	headersWritten    bool
+	responseCommitted bool
+	statusCode        int
+	success           bool
+	err               error
+	done              bool        // whether to stop retrying
+	isSSE             bool        // whether the response was SSE
+	bodySnippet       string      // first ~500 bytes of error response (failover scenarios only)
+	firstTokenMs      *int64      // Time To First Token for SSE requests (ms from request start)
+	responseBytes     int64       // Total bytes written to client (for transfer statistics)
+	tokenUsage        *TokenUsage // Token usage extracted from response (Phase 4a)
 	// failureDisposition records retry semantics derived from the upstream failure.
 	failureDisposition providerFailureDisposition
 }

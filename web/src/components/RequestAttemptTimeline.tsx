@@ -1,5 +1,9 @@
 import { useState, type ReactNode } from "react";
-import type { RequestAttempt, RequestAttemptPhase } from "../api/types";
+import type {
+  RequestAttempt,
+  RequestAttemptPhase,
+  RequestAttemptSwitchMode,
+} from "../api/types";
 import { BADGE_STYLES, getStatusCodeBadgeClass } from "../lib/utils";
 import { ErrorBodyParser } from "./ErrorBodyParser";
 
@@ -34,6 +38,10 @@ const WEBSOCKET_WARNING_BADGE_CLASS =
   "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
 const WEBSOCKET_ERROR_BADGE_CLASS =
   "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
+const SUPPLEMENTAL_BADGE_CLASS =
+  "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300";
+const CONTINUITY_PANEL_CLASS =
+  "mt-2 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-xs text-sky-800 dark:border-sky-800 dark:bg-sky-950/20 dark:text-sky-200";
 
 /**
  * Format time as HH:MM:SS.mmm for display
@@ -158,6 +166,32 @@ function getAttemptOutcomePresentation(
   }
 }
 
+function getSwitchModePresentation(
+  switchMode?: RequestAttemptSwitchMode | null,
+): { label: string; className: string } | null {
+  switch (switchMode) {
+    case "initial":
+      return {
+        label: "Initial selection",
+        className: SUPPLEMENTAL_BADGE_CLASS,
+      };
+    case "replacement":
+      return {
+        label: "Pre-visible replacement",
+        className:
+          "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-sky-100 text-sky-800 dark:bg-sky-950/30 dark:text-sky-300",
+      };
+    case "failover":
+      return {
+        label: "Failover",
+        className:
+          "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300",
+      };
+    default:
+      return null;
+  }
+}
+
 function ownsVisibleWebSocketSession(attempt: RequestAttempt): boolean {
   return attempt.outcome === "visible_session";
 }
@@ -256,6 +290,35 @@ function getSwitchReasonLabel(
   }
 }
 
+function formatSeedAge(ageMs?: number | null): string | null {
+  if (ageMs === undefined || ageMs === null) {
+    return null;
+  }
+  if (ageMs < MILLISECONDS_PER_SECOND) {
+    return `${ageMs}ms`;
+  }
+  const seconds = ageMs / MILLISECONDS_PER_SECOND;
+  if (seconds < SECONDS_PER_MINUTE) {
+    return `${seconds.toFixed(seconds % 1 === 0 ? 0 : 1)}s`;
+  }
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  const remainingSeconds = seconds % SECONDS_PER_MINUTE;
+  return `${minutes}m ${remainingSeconds.toFixed(remainingSeconds % 1 === 0 ? 0 : 1)}s`;
+}
+
+function formatProviderLabel(
+  providerId?: string,
+  providerName?: string,
+): string | null {
+  if (!providerId) {
+    return providerName ?? null;
+  }
+  if (providerName && providerName !== providerId) {
+    return `${providerName} (${providerId})`;
+  }
+  return providerId;
+}
+
 /**
  * Vertical timeline component showing request retry attempts.
  *
@@ -277,8 +340,11 @@ export function RequestAttemptTimeline({
     return null;
   }
 
-  // Sort by attempt number
-  const sortedAttempts = [...attempts].sort((a, b) => a.attempt - b.attempt);
+  // Match backend ordering so timeline rendering stays stable even when multiple
+  // rows share the same request-wide attempt ordinal.
+  const sortedAttempts = [...attempts].sort(
+    (a, b) => a.attempt - b.attempt || a.id - b.id,
+  );
   const firstAttemptTime = sortedAttempts[0]?.created_at;
   const attributedAttemptId =
     isWebSocket && attributedProviderId
@@ -305,6 +371,11 @@ export function RequestAttemptTimeline({
             displayAttemptNumber={index + ATTEMPT_DISPLAY_NUMBER_START}
             isWebSocket={isWebSocket}
             isAttributedAttempt={attempt.id === attributedAttemptId}
+            continuityOriginProviderName={
+              attempt.continuity_origin_provider_id
+                ? providerNames?.get(attempt.continuity_origin_provider_id)
+                : undefined
+            }
           />
         ))}
       </div>
@@ -322,6 +393,7 @@ interface AttemptNodeProps {
   displayAttemptNumber: number;
   isWebSocket: boolean;
   isAttributedAttempt: boolean;
+  continuityOriginProviderName?: string;
 }
 
 interface AttemptHeaderProps {
@@ -448,6 +520,80 @@ function AttemptLifecycleBadges({
   );
 }
 
+function AttemptSelectionMetadata({
+  switchMode,
+  providerAttempt,
+  providerSwitchCount,
+  continuitySeeded,
+  continuityOriginProviderId,
+  continuityOriginProviderName,
+  continuitySeedAgeMs,
+}: {
+  switchMode?: RequestAttemptSwitchMode | null;
+  providerAttempt?: number;
+  providerSwitchCount?: number;
+  continuitySeeded?: boolean;
+  continuityOriginProviderId?: string;
+  continuityOriginProviderName?: string;
+  continuitySeedAgeMs?: number | null;
+}) {
+  const switchModePresentation = getSwitchModePresentation(switchMode);
+  const hasProviderAttempt = (providerAttempt ?? 0) > 0;
+  const hasProviderSwitchCount = (providerSwitchCount ?? 0) > 0;
+  const continuityOriginLabel = formatProviderLabel(
+    continuityOriginProviderId,
+    continuityOriginProviderName,
+  );
+  const continuityAgeLabel = formatSeedAge(continuitySeedAgeMs);
+  const hasContinuityMetadata =
+    Boolean(continuitySeeded) ||
+    Boolean(continuityOriginLabel) ||
+    continuityAgeLabel !== null;
+
+  if (
+    !switchModePresentation &&
+    !hasProviderAttempt &&
+    !hasProviderSwitchCount &&
+    !hasContinuityMetadata
+  ) {
+    return null;
+  }
+
+  return (
+    <>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {switchModePresentation && (
+          <span className={switchModePresentation.className}>
+            Mode: {switchModePresentation.label}
+          </span>
+        )}
+        {hasProviderAttempt && (
+          <span className={SUPPLEMENTAL_BADGE_CLASS}>
+            Provider attempt {providerAttempt}
+          </span>
+        )}
+        {hasProviderSwitchCount && (
+          <span className={SUPPLEMENTAL_BADGE_CLASS}>
+            Provider switches {providerSwitchCount}
+          </span>
+        )}
+      </div>
+      {hasContinuityMetadata && (
+        <div className={CONTINUITY_PANEL_CLASS}>
+          <p className="font-medium">Continuity provenance</p>
+          <p className="mt-1">
+            {continuitySeeded
+              ? "Heuristic seed matched"
+              : "Continuity metadata recorded"}
+            {continuityOriginLabel ? ` from ${continuityOriginLabel}` : ""}
+            {continuityAgeLabel ? ` · seed age ${continuityAgeLabel}` : ""}
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
+
 function AttemptNode({
   attempt,
   isFirst,
@@ -458,6 +604,7 @@ function AttemptNode({
   displayAttemptNumber,
   isWebSocket,
   isAttributedAttempt,
+  continuityOriginProviderName,
 }: AttemptNodeProps) {
   const [showReqBody, setShowReqBody] = useState(false);
 
@@ -596,6 +743,15 @@ function AttemptNode({
           createdAt={attempt.created_at}
           isFirst={isFirst}
           firstAttemptTime={firstAttemptTime}
+        />
+        <AttemptSelectionMetadata
+          switchMode={attempt.switch_mode}
+          providerAttempt={attempt.provider_attempt}
+          providerSwitchCount={attempt.provider_switch_count}
+          continuitySeeded={attempt.continuity_seeded}
+          continuityOriginProviderId={attempt.continuity_origin_provider_id}
+          continuityOriginProviderName={continuityOriginProviderName}
+          continuitySeedAgeMs={attempt.continuity_seed_age_ms}
         />
         <AttemptLifecycleBadges
           phaseLabel={phaseLabel}

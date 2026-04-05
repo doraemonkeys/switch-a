@@ -12,6 +12,7 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 )
@@ -817,6 +818,8 @@ func TestNewWebSocketProviderConfigurationAttemptUsesTypedMissingField(t *testin
 		&model.Provider{ID: "provider-1"},
 		"openai",
 		2,
+		providerSwitchModeReplacement,
+		selector.SelectionMetadata{},
 		&webSocketProviderConfigError{
 			missingField: "credentials",
 			err:          baseErr,

@@ -197,19 +197,22 @@ export const FAILOVER_SCOPE_OPTIONS = [
   {
     value: FAILOVER_SCOPES.ANY,
     label: "Any",
-    description: "Allow failover to/from any provider (default)",
+    description:
+      "Allow true failover to/from any provider after client-visible continuity exists (default)",
     icon: "🌐",
   },
   {
     value: FAILOVER_SCOPES.VENDOR,
     label: "Same Vendor",
-    description: "Only allow failover within the same vendor group",
+    description:
+      "Only allow true failover within the same vendor group; pre-visible replacement still proceeds",
     icon: "🔗",
   },
   {
     value: FAILOVER_SCOPES.NONE,
     label: "None",
-    description: "Do not allow failover",
+    description:
+      "Do not allow true failover; pre-visible replacement still proceeds",
     icon: "🚫",
   },
 ] as const;

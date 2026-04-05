@@ -488,14 +488,14 @@ func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorWithou
 	close(releaseClient)
 }
 
-func TestPreVisibleClientMessageBuffer_DisablesSemanticFailoverOnOverflow(t *testing.T) {
+func TestPreVisibleClientMessageBuffer_DisablesSemanticReplacementOnOverflow(t *testing.T) {
 	t.Parallel()
 
 	buffer := newPreVisibleClientMessageBuffer(4)
 	buffer.Record(websocket.MessageText, []byte("hello"), false)
 
 	if buffer.Enabled() {
-		t.Fatal("buffer must disable semantic failover after exceeding its limit")
+		t.Fatal("buffer must disable semantic replacement after exceeding its limit")
 	}
 
 	decision := newAllowlistedProviderScopedSuppressDecision(buffer)(webSocketPreWriteContext{
@@ -537,7 +537,7 @@ func TestAllowlistedProviderScopedSuppressDecision_EmptyReplayBufferStillSuppres
 		t.Fatalf("Action = %v, want suppress when no client payload needs replay", decision.Action)
 	}
 	if decision.SuppressedUpstreamError == nil {
-		t.Fatal("expected suppressed upstream error to be preserved for semantic failover")
+		t.Fatal("expected suppressed upstream error to be preserved for semantic replacement")
 	}
 }
 

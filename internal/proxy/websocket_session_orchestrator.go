@@ -51,17 +51,19 @@ type WebSocketSessionOrchestrator struct {
 	onClientVisible           func(webSocketVisibleWriteContext)
 	tracker                   *LiveBytesTracker
 	excludedProviders         map[string]bool
-	failoverContext           *model.FailoverContext
-	attempts                  []WebSocketAttemptResult
-	isSticky                  bool
-	currentProvider           *model.Provider
-	activeRegistered          bool
-	lifecycle                 *webSocketLifecycleState
-	clientConn                *websocket.Conn
-	initialClientReadCh       <-chan webSocketInitialReadResult
-	replayBuffer              *preVisibleClientMessageBuffer
-	suppressedAttempt         *webSocketSuppressedAttempt
-	probeOutcome              webSocketSelectionProbeOutcome
+	// switchTracker keeps lifecycle-driven replacement vs failover semantics in
+	// one place so retries do not depend on handshake-only milestones.
+	switchTracker       providerSwitchTracker
+	attempts            []WebSocketAttemptResult
+	isSticky            bool
+	currentProvider     *model.Provider
+	activeRegistered    bool
+	lifecycle           *webSocketLifecycleState
+	clientConn          *websocket.Conn
+	initialClientReadCh <-chan webSocketInitialReadResult
+	replayBuffer        *preVisibleClientMessageBuffer
+	suppressedAttempt   *webSocketSuppressedAttempt
+	probeOutcome        webSocketSelectionProbeOutcome
 }
 
 func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrchestratorConfig) *WebSocketSessionOrchestrator {
@@ -88,6 +90,7 @@ func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrche
 		onClientVisible:           cfg.onClientVisible,
 		tracker:                   cfg.tracker,
 		excludedProviders:         make(map[string]bool),
+		switchTracker:             newProviderSwitchTracker(cfg.selectReq, cfg.maxAttempts, handler.visibleContinuitySeedStore),
 		attempts:                  make([]WebSocketAttemptResult, 0),
 		lifecycle:                 newWebSocketLifecycleState(),
 		replayBuffer:              newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
@@ -117,13 +120,14 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 	if bootstrapSession := o.bootstrapSelectionContext(ctx, w, r); bootstrapSession != nil {
 		return bootstrapSession
 	}
+	o.handler.maybeLookupVisibleContinuityCandidate(ctx, &o.switchTracker)
 
 	for attempt := 0; ; attempt++ {
 		if o.maxAttempts > 0 && attempt >= o.maxAttempts {
 			return o.finalSessionFromLastAttempt(ctx)
 		}
 
-		provider, selectionMetadata, selectionResult := o.selectProvider(ctx, attempt)
+		provider, selectionMode, selectionMetadata, selectionResult := o.selectProvider(ctx, attempt)
 		if selectionResult != nil {
 			return o.finalizeSelectionFailureSession(selectionResult)
 		}
@@ -135,7 +139,7 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 		o.currentProvider = provider
 		o.trackCurrentAttempt(provider.ID)
 
-		attemptResult := o.executeProviderAttempt(ctx, w, r, provider, attempt)
+		attemptResult := o.executeProviderAttempt(ctx, w, r, provider, attempt, selectionMode, selectionMetadata)
 		o.attempts = append(o.attempts, attemptResult)
 
 		if attemptResult.Result != nil {
@@ -144,6 +148,7 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 
 		if o.shouldSwitchProvider(attemptResult) {
 			o.attempts[len(o.attempts)-1].SwitchReason = websocketSwitchReason(attemptResult)
+			o.switchTracker.prepareProviderSwitch()
 			o.excludeCurrentProvider()
 			continue
 		}

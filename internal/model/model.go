@@ -266,6 +266,17 @@ const (
 	RequestAttemptOutcomeVisibleSession            RequestAttemptOutcome = "visible_session"
 )
 
+// RequestAttemptSwitchMode keeps replacement and failover explicit on each
+// provider attempt so observability never has to infer semantics from reasons or
+// neighboring rows.
+type RequestAttemptSwitchMode string
+
+const (
+	RequestAttemptSwitchModeInitial     RequestAttemptSwitchMode = "initial"
+	RequestAttemptSwitchModeReplacement RequestAttemptSwitchMode = "replacement"
+	RequestAttemptSwitchModeFailover    RequestAttemptSwitchMode = "failover"
+)
+
 // RequestAttempt switch reasons stay free-form because most retries reuse shared
 // transport/lifecycle causes, but semantic failover needs a stable persisted label
 // that distinguishes "provider-scoped error was suppressed" from generic terminal
@@ -279,17 +290,25 @@ type RequestAttempt struct {
 	// ProviderID identifies the provider used for this individual attempt only.
 	ProviderID string `json:"provider_id"`
 	Attempt    int    `json:"attempt"`
-	StatusCode int    `json:"status_code"`
-	Error      string `json:"error"`
+	// SwitchMode records how this provider attempt was entered; switch_reason stays
+	// focused on why execution left an attempt.
+	SwitchMode          RequestAttemptSwitchMode `gorm:"type:text;default:''" json:"switch_mode,omitempty"`
+	ProviderAttempt     int                      `json:"provider_attempt,omitempty"`
+	ProviderSwitchCount int                      `json:"provider_switch_count,omitempty"`
+	StatusCode          int                      `json:"status_code"`
+	Error               string                   `json:"error"`
 	// WebSocket attempt fields stay nullable so generic retry rows can stay protocol-agnostic.
-	Phase                 *RequestAttemptPhase   `gorm:"type:text;default:null" json:"phase,omitempty"`
-	Outcome               *RequestAttemptOutcome `gorm:"type:text;default:null" json:"outcome,omitempty"`
-	ResultVisibleToClient *bool                  `gorm:"default:null" json:"result_visible_to_client,omitempty"`
-	BodySnippet           string                 `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
-	ReqBodySnippet        string                 `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
-	LatencyMs             int64                  `json:"latency_ms"`
-	SwitchReason          string                 `json:"switch_reason,omitempty"` // Reason for switching to next provider (if any)
-	CreatedAt             time.Time              `json:"created_at"`
+	Phase                      *RequestAttemptPhase   `gorm:"type:text;default:null" json:"phase,omitempty"`
+	Outcome                    *RequestAttemptOutcome `gorm:"type:text;default:null" json:"outcome,omitempty"`
+	ResultVisibleToClient      *bool                  `gorm:"default:null" json:"result_visible_to_client,omitempty"`
+	BodySnippet                string                 `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
+	ReqBodySnippet             string                 `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
+	LatencyMs                  int64                  `json:"latency_ms"`
+	SwitchReason               string                 `json:"switch_reason,omitempty"` // Reason for switching to the next provider (if any)
+	ContinuitySeeded           bool                   `gorm:"default:false" json:"continuity_seeded,omitempty"`
+	ContinuityOriginProviderID string                 `gorm:"default:''" json:"continuity_origin_provider_id,omitempty"`
+	ContinuitySeedAgeMs        *int64                 `gorm:"default:null" json:"continuity_seed_age_ms,omitempty"`
+	CreatedAt                  time.Time              `json:"created_at"`
 }
 
 // LogFilter represents filter and sort parameters for log queries.
@@ -340,12 +359,30 @@ type StickyKey struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
-	ClientIP        string
-	User            string
-	APIType         string
-	Model           string
-	StickyMode      StickyMode       // Sticky session mode pre-loaded from runtime config
-	FailoverContext *FailoverContext // Optional: failover context for vendor isolation (nil = first attempt)
+	ClientIP   string
+	User       string
+	APIType    string
+	Model      string
+	StickyMode StickyMode // Sticky session mode pre-loaded from runtime config
+	// SwitchMode keeps replacement and failover explicit so selector isolation only
+	// runs when the request has actually left visible continuity.
+	SwitchMode SwitchMode
+	// ProviderSwitchHistory tracks cross-provider movement within the current
+	// request chain. It is orthogonal to continuity provenance.
+	ProviderSwitchHistory *ProviderSwitchHistory
+	// ProviderContinuityContext is request-local state created only after visible
+	// continuity has been attached. It carries vendor-isolation inputs for later
+	// failover decisions without reusing shared seed storage.
+	ProviderContinuityContext *ProviderContinuityContext
+	// VisibleContinuitySeedCandidate is an immutable snapshot from the shared
+	// continuity-seed store. It marks a request as a continuity candidate without
+	// pre-attaching failover semantics.
+	VisibleContinuitySeedCandidate *VisibleContinuitySeedCandidate
+	// FailoverContext is retained only as a temporary transport field while runtime
+	// propagation migrates. Core model helpers must not infer switch semantics from
+	// it; SwitchMode, ProviderSwitchHistory, and ProviderContinuityContext are the
+	// authoritative contract.
+	FailoverContext *FailoverContext
 	// MaxProviderSwitches limits the number of provider switches (failover attempts) allowed.
 	// 0 = no limit. This counts only provider changes, not per-provider retries.
 	// Distinct from globalMaxAttempts which limits total loop iterations including per-provider retries.

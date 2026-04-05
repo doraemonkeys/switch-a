@@ -116,7 +116,7 @@ func NewProviderSelectionEligibility(
 
 // IsEligible reports whether the provider can participate in the current
 // request's candidate set after applying routing policy, auth lifecycle, health,
-// and failover-closure checks.
+// and switch-mode-specific closure checks.
 func (e *ProviderSelectionEligibility) IsEligible(ctx context.Context, provider *model.Provider) bool {
 	allowed, err := e.AllowsProvider(ctx, provider)
 	return err == nil && allowed
@@ -158,10 +158,12 @@ func (e *ProviderSelectionEligibility) AllowsProvider(ctx context.Context, provi
 		}
 	}
 
-	if failoverCtx := e.reqFailoverContext(); failoverCtx != nil {
-		if !model.IsFailoverAllowed(provider, failoverCtx, e.reqMaxProviderSwitches()) {
-			return false, nil
-		}
+	if !model.IsProviderSwitchAllowed(provider, reqProviderSwitchHistory(e.req), e.reqMaxProviderSwitches()) {
+		return false, nil
+	}
+	if reqSwitchMode(e.req) == model.SwitchModeFailover &&
+		!model.IsFailoverVendorAllowed(provider, reqProviderContinuityContext(e.req)) {
+		return false, nil
 	}
 
 	return true, nil
@@ -473,18 +475,39 @@ func reqStickyMode(req *model.SelectRequest) model.StickyMode {
 	return req.StickyMode
 }
 
-func (e *ProviderSelectionEligibility) reqFailoverContext() *model.FailoverContext {
-	if e == nil || e.req == nil {
+func reqSwitchMode(req *model.SelectRequest) model.SwitchMode {
+	if req == nil {
+		return model.SwitchModeInitial
+	}
+	return req.EffectiveSwitchMode()
+}
+
+func reqProviderSwitchHistory(req *model.SelectRequest) *model.ProviderSwitchHistory {
+	if req == nil {
 		return nil
 	}
-	return e.req.FailoverContext
+	return req.EffectiveProviderSwitchHistory()
+}
+
+func reqProviderContinuityContext(req *model.SelectRequest) *model.ProviderContinuityContext {
+	if req == nil {
+		return nil
+	}
+	return req.EffectiveProviderContinuityContext()
+}
+
+func reqVisibleContinuitySeedCandidate(req *model.SelectRequest) *model.VisibleContinuitySeedCandidate {
+	if req == nil {
+		return nil
+	}
+	return req.EffectiveVisibleContinuitySeedCandidate()
 }
 
 func (e *ProviderSelectionEligibility) reqMaxProviderSwitches() int {
 	if e == nil || e.req == nil {
 		return 0
 	}
-	return e.req.MaxProviderSwitches
+	return e.req.EffectiveMaxProviderSwitches()
 }
 
 func (e *ProviderSelectionEligibility) providerAuthState(

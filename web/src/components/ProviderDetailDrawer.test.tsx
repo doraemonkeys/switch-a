@@ -144,4 +144,45 @@ describe("ProviderDetailDrawer", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("clarifies that accept failover does not block pre-visible replacement", async () => {
+    const listLogs = vi.fn().mockResolvedValue({ logs: [] });
+    const mockApi = {
+      logs: {
+        list: listLogs,
+      },
+    } as unknown as ApiClient;
+    const provider = {
+      ...buildProvider(),
+      vendor: "openai",
+      failover_scope: "vendor",
+      accept_failover: "none",
+    } as Provider;
+
+    render(
+      <MemoryRouter>
+        <ApiContext.Provider value={mockApi}>
+          <ProviderDetailDrawer
+            provider={provider}
+            onClose={vi.fn()}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onToggle={vi.fn()}
+            onReset={vi.fn()}
+            getGroupName={() => "Ungrouped"}
+          />
+        </ApiContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(listLogs).toHaveBeenCalled());
+    await screen.findByText("No recent requests");
+
+    expect(
+      screen.getByText(
+        /Pre-visible provider replacement is not blocked by these settings/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Accept Failover From")).toBeInTheDocument();
+  });
 });

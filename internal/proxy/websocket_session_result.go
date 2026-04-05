@@ -9,6 +9,7 @@ import (
 
 	"switch-a/internal"
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 )
@@ -21,10 +22,10 @@ const (
 )
 
 func (o *WebSocketSessionOrchestrator) finalSessionFromLastAttempt(ctx context.Context) *WebSocketSessionResult {
-	if o.suppressedAttempt != nil {
-		return o.sessionFromSuppressedPayload(ctx)
-	}
 	if len(o.attempts) == 0 {
+		if o.suppressedAttempt != nil {
+			return o.sessionFromSuppressedPayload(ctx)
+		}
 		session := newWebSocketSelectionFailureSession(
 			o.requestID,
 			o.isSticky,
@@ -37,7 +38,12 @@ func (o *WebSocketSessionOrchestrator) finalSessionFromLastAttempt(ctx context.C
 		)
 		return o.finalizeSelectionFailureSession(session)
 	}
-	return o.sessionFromAttempt(o.attempts[len(o.attempts)-1])
+
+	lastAttempt := o.attempts[len(o.attempts)-1]
+	if o.suppressedAttempt != nil && (lastAttempt.Result == nil || !lastAttempt.Result.ClientVisible) {
+		return o.sessionFromSuppressedPayload(ctx)
+	}
+	return o.sessionFromAttempt(lastAttempt)
 }
 
 func (o *WebSocketSessionOrchestrator) finalizeSelectionFailureSession(session *WebSocketSessionResult) *WebSocketSessionResult {
@@ -250,17 +256,21 @@ func newWebSocketProbeDecisionFailureSession(
 func newWebSocketForwardAttemptResult(
 	provider *model.Provider,
 	attempt int,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
 	result *WebSocketResult,
 	forwardErr error,
 	latency time.Duration,
 ) WebSocketAttemptResult {
 	attemptResult := WebSocketAttemptResult{
-		Provider:   provider,
-		Attempt:    attempt,
-		Result:     result,
-		ForwardErr: forwardErr,
-		LatencyMs:  latency.Milliseconds(),
-		CreatedAt:  time.Now(),
+		Provider:          provider,
+		Attempt:           attempt,
+		SelectionMode:     selectionMode,
+		SelectionMetadata: selectionMetadata,
+		Result:            result,
+		ForwardErr:        forwardErr,
+		LatencyMs:         latency.Milliseconds(),
+		CreatedAt:         time.Now(),
 	}
 	if forwardErr == nil && result != nil && !result.HandshakeAccepted {
 		attemptResult.GatewayStatusCode, attemptResult.GatewayErrorCode, attemptResult.GatewayMessage = websocketGatewayFailure(result)
@@ -272,6 +282,8 @@ func newWebSocketProviderConfigurationAttempt(
 	provider *model.Provider,
 	apiType string,
 	attempt int,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
 	err error,
 	latency time.Duration,
 ) WebSocketAttemptResult {
@@ -290,6 +302,8 @@ func newWebSocketProviderConfigurationAttempt(
 	return WebSocketAttemptResult{
 		Provider:          provider,
 		Attempt:           attempt,
+		SelectionMode:     selectionMode,
+		SelectionMetadata: selectionMetadata,
 		Result:            newWebSocketGatewayFailureResult(http.StatusBadGateway, model.TerminalProviderConfigurationError, err),
 		ForwardErr:        err,
 		LatencyMs:         latency.Milliseconds(),

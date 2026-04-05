@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"time"
 
 	"switch-a/internal"
 	"switch-a/internal/model"
@@ -22,7 +23,7 @@ func (h *Handler) selectProviderWithTracking(
 	if h.selector == nil {
 		// Fallback: direct provider list (no selector configured)
 		provider, err := normalizeSelectedProvider(h.selectProviderFallback(ctx, selectReq, attempt, excluded))
-		return provider, selector.SelectionMetadata{Source: selector.SelectionSourceStrategy}, err
+		return provider, selector.BuildSelectionMetadataAt(selectReq, selector.SelectionSourceStrategy, time.Now()), err
 	}
 
 	if attempt == 0 {
@@ -40,7 +41,7 @@ func (h *Handler) selectProviderWithTracking(
 			// Release the concurrency slot acquired by SelectWithMetadata above,
 			// since we're returning a different provider from the active registry.
 			h.releaseConcurrency(result.Provider.ID)
-			return activeProvider, selector.SelectionMetadata{Source: selector.SelectionSourceActiveContinuity}, nil
+			return activeProvider, selector.BuildSelectionMetadataAt(selectReq, selector.SelectionSourceActiveContinuity, time.Now()), nil
 		}
 
 		return result.Provider, result.Metadata, nil
@@ -63,7 +64,7 @@ func (h *Handler) selectProviderWithTracking(
 		)
 		return nil, selector.SelectionMetadata{}, internal.ErrNoProvider
 	}
-	return provider, selector.SelectionMetadata{Source: selector.SelectionSourceStrategy}, nil
+	return provider, selector.BuildSelectionMetadataAt(selectReq, selector.SelectionSourceStrategy, time.Now()), nil
 }
 
 func normalizeSelectorSelectResult(result *selector.SelectResult, err error) (*selector.SelectResult, error) {
@@ -154,13 +155,27 @@ func (h *Handler) eligibleProviderByID(
 		return nil, nil
 	}
 
-	scope, err := h.selectionScope(ctx, selectReq)
+	scope, err := h.selectionScope(ctx, selectRequestForSameProviderRetry(selectReq))
 	if err != nil {
 		return nil, err
 	}
 	// Re-loading the provider from the store keeps retry validation honest when
 	// auth state or routing policy changed after the original selection.
 	return h.getProviderIfValid(ctx, scope, providerID), nil
+}
+
+func selectRequestForSameProviderRetry(selectReq *model.SelectRequest) *model.SelectRequest {
+	if selectReq == nil {
+		return nil
+	}
+	cloned := *selectReq
+	cloned.SwitchMode = model.SwitchModeInitial
+	cloned.ProviderSwitchHistory = nil
+	cloned.ProviderContinuityContext = nil
+	cloned.VisibleContinuitySeedCandidate = nil
+	cloned.FailoverContext = nil
+	cloned.MaxProviderSwitches = 0
+	return &cloned
 }
 
 // selectProviderFallback selects a provider when no Selector is configured.

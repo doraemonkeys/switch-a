@@ -215,6 +215,19 @@ describe("RequestAttemptTimeline", () => {
       expect(attemptLabels[1]).toHaveTextContent("Attempt 2");
       expect(attemptLabels[2]).toHaveTextContent("Attempt 3");
     });
+
+    it("keeps tie ordering stable with id as the secondary key", () => {
+      const attempts = [
+        createMockAttempt({ id: 2, attempt: 1, provider_id: "p-second" }),
+        createMockAttempt({ id: 1, attempt: 1, provider_id: "p-first" }),
+      ];
+
+      render(<RequestAttemptTimeline attempts={attempts} />);
+
+      const providerLabels = screen.getAllByText(/Provider:/);
+      expect(providerLabels[0]).toHaveTextContent("Provider: p-first");
+      expect(providerLabels[1]).toHaveTextContent("Provider: p-second");
+    });
   });
 
   describe("status code colors", () => {
@@ -419,6 +432,36 @@ describe("RequestAttemptTimeline", () => {
       render(<RequestAttemptTimeline attempts={attempts} />);
 
       expect(screen.getByText("0ms")).toBeInTheDocument();
+    });
+  });
+
+  describe("selection semantics", () => {
+    it("renders switch mode, provider attempt counts, and continuity provenance", () => {
+      const attempts = [
+        createMockAttempt({
+          id: 1,
+          provider_id: "provider-next",
+          switch_mode: "replacement",
+          provider_attempt: 2,
+          provider_switch_count: 1,
+          continuity_seeded: true,
+          continuity_origin_provider_id: "provider-origin",
+          continuity_seed_age_ms: 345,
+        }),
+      ];
+
+      render(<RequestAttemptTimeline attempts={attempts} />);
+
+      expect(
+        screen.getByText("Mode: Pre-visible replacement"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Provider attempt 2")).toBeInTheDocument();
+      expect(screen.getByText("Provider switches 1")).toBeInTheDocument();
+      expect(screen.getByText("Continuity provenance")).toBeInTheDocument();
+      expect(
+        screen.getByText(/Heuristic seed matched from provider-origin/i),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/seed age 345ms/i)).toBeInTheDocument();
     });
   });
 

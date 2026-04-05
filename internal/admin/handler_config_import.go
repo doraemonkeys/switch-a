@@ -282,7 +282,7 @@ func validateProviderGroupRefs(
 	existingGroups map[string]*model.Group,
 	suppressedProviderGroupRefs map[string]struct{},
 ) []string {
-	var warnings []string
+	warnings := make([]string, 0, len(req.Providers))
 
 	groupIDs := make(map[string]bool)
 	for _, g := range req.Groups {

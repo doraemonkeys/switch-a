@@ -1,10 +1,11 @@
 package model
 
-// FailoverContext tracks state across failover attempts using "contamination tracking + strictest policy".
-// It aggregates information from all providers in the failover chain to enforce isolation rules.
-//
-// Thread Safety: NOT thread-safe. Each HTTP request should have its own instance.
-// The context is mutated during request processing via the Update method.
+import "time"
+
+// FailoverContext is the legacy compatibility shape for callers that still
+// construct failover state as one mutable object. New selector code should prefer
+// SwitchMode + ProviderSwitchHistory + ProviderContinuityContext so replacement
+// does not accidentally inherit failover-only isolation.
 type FailoverContext struct {
 	// OriginProviderID is the ID of the first provider that was attempted.
 	OriginProviderID string
@@ -57,6 +58,51 @@ func (ctx *FailoverContext) IsInChain(providerID string) bool {
 		}
 	}
 	return false
+}
+
+func (ctx *FailoverContext) SwitchHistory() *ProviderSwitchHistory {
+	if ctx == nil {
+		return nil
+	}
+	return &ProviderSwitchHistory{
+		OriginProviderID:    ctx.OriginProviderID,
+		AttemptChain:        append([]string(nil), ctx.AttemptChain...),
+		ProviderSwitchCount: ctx.RetryCount,
+	}
+}
+
+func (ctx *FailoverContext) ProviderContinuityContext() *ProviderContinuityContext {
+	if ctx == nil {
+		return nil
+	}
+	continuity := &ProviderContinuityContext{
+		VisibleOriginProviderID: ctx.OriginProviderID,
+		ContaminatedVendors:     append([]string(nil), ctx.ContaminatedVendors...),
+		StrictestScope:          ctx.StrictestScope,
+	}
+	if len(ctx.ContaminatedVendors) > 0 {
+		continuity.VisibleOriginVendor = ctx.ContaminatedVendors[0]
+	}
+	return continuity
+}
+
+func (ctx *FailoverContext) VisibleContinuitySeed(key StickyKey, observedAt time.Time, seedID string) *VisibleContinuitySeed {
+	if ctx == nil {
+		return nil
+	}
+	originVendor := ""
+	if len(ctx.ContaminatedVendors) > 0 {
+		originVendor = ctx.ContaminatedVendors[0]
+	}
+	return &VisibleContinuitySeed{
+		SeedID:              seedID,
+		ContinuityKey:       key,
+		OriginProviderID:    ctx.OriginProviderID,
+		OriginVendor:        originVendor,
+		ContaminatedVendors: append([]string(nil), ctx.ContaminatedVendors...),
+		StrictestScope:      ctx.StrictestScope,
+		ObservedAt:          observedAt,
+	}
 }
 
 // VendorMatch checks if two vendor strings match according to vendor isolation rules.
@@ -147,37 +193,10 @@ func StricterScope(a, b Scope) Scope {
 //
 // Returns true if the candidate can accept this failover.
 func IsFailoverAllowed(candidate *Provider, ctx *FailoverContext, maxProviderSwitches int) bool {
-	// 0. Depth limit check (counts provider switches, not total attempts)
-	if maxProviderSwitches > 0 && ctx.RetryCount >= maxProviderSwitches {
+	if !IsProviderSwitchAllowed(candidate, ctx.SwitchHistory(), maxProviderSwitches) {
 		return false
 	}
-
-	// 1. Cycle detection
-	if ctx.IsInChain(candidate.ID) {
-		return false
-	}
-
-	// 2. Outbound check (strictest scope policy)
-	switch ctx.StrictestScope {
-	case ScopeNone:
-		return false
-	case ScopeVendor:
-		if !AnyVendorMatch(ctx.ContaminatedVendors, candidate.Vendor) {
-			return false
-		}
-	}
-	// ScopeAny or empty: allow
-
-	// 3. Inbound check (candidate's acceptance policy)
-	switch candidate.AcceptFailover {
-	case ScopeNone:
-		return false
-	case ScopeVendor:
-		return AllVendorsMatch(ctx.ContaminatedVendors, candidate.Vendor)
-	}
-	// ScopeAny or empty: allow
-
-	return true
+	return IsFailoverVendorAllowed(candidate, ctx.ProviderContinuityContext())
 }
 
 // HasContradictoryConfig checks if a provider has contradictory failover configuration.

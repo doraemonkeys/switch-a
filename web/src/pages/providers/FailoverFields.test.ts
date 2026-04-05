@@ -1,6 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { createElement } from "react";
+import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
 import type { ProviderInput } from "../../api";
 import { FAILOVER_SCOPES } from "../../config/constants";
+import { FailoverScopeField } from "./FailoverFields";
 import { hasFailoverConfig } from "./failoverConfig";
 
 const BASE_INPUT: ProviderInput = {
@@ -87,5 +90,20 @@ describe("hasFailoverConfig", () => {
         accept_failover: undefined as never,
       }),
     ).toBe(false);
+  });
+
+  it("explains that inbound accept failover does not block pre-visible replacement", () => {
+    render(
+      createElement(FailoverScopeField, {
+        label: "Accept Failover (Inbound)",
+        value: FAILOVER_SCOPES.ANY,
+        onChange: vi.fn(),
+        direction: "inbound",
+      }),
+    );
+
+    expect(
+      screen.getByText(/Pre-visible provider replacement is unaffected/i),
+    ).toBeInTheDocument();
   });
 });

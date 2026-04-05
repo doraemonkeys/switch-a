@@ -200,6 +200,7 @@ func TestGetLog_WithAttempts(t *testing.T) {
 	h, st, _ := testHandler()
 
 	now := time.Now()
+	continuitySeedAgeMs := int64(320)
 	st.logs = []model.RequestLog{
 		{
 			ID:         1,
@@ -218,24 +219,32 @@ func TestGetLog_WithAttempts(t *testing.T) {
 	st.attempts = map[string][]model.RequestAttempt{
 		"req-with-attempts": {
 			{
-				ID:         1,
-				RequestID:  "req-with-attempts",
-				ProviderID: "provider-1",
-				Attempt:    1,
-				StatusCode: 503,
-				Error:      "service unavailable",
-				LatencyMs:  100,
-				CreatedAt:  now,
+				ID:              1,
+				RequestID:       "req-with-attempts",
+				ProviderID:      "provider-1",
+				Attempt:         1,
+				SwitchMode:      model.RequestAttemptSwitchModeReplacement,
+				ProviderAttempt: 1,
+				StatusCode:      503,
+				Error:           "service unavailable",
+				LatencyMs:       100,
+				CreatedAt:       now,
 			},
 			{
-				ID:         2,
-				RequestID:  "req-with-attempts",
-				ProviderID: "provider-2",
-				Attempt:    2,
-				StatusCode: 429,
-				Error:      "rate limited",
-				LatencyMs:  50,
-				CreatedAt:  now.Add(100 * time.Millisecond),
+				ID:                         2,
+				RequestID:                  "req-with-attempts",
+				ProviderID:                 "provider-2",
+				Attempt:                    2,
+				SwitchMode:                 model.RequestAttemptSwitchModeFailover,
+				ProviderAttempt:            1,
+				ProviderSwitchCount:        1,
+				StatusCode:                 429,
+				Error:                      "rate limited",
+				LatencyMs:                  50,
+				ContinuitySeeded:           true,
+				ContinuityOriginProviderID: "provider-1",
+				ContinuitySeedAgeMs:        &continuitySeedAgeMs,
+				CreatedAt:                  now.Add(100 * time.Millisecond),
 			},
 			{
 				ID:         3,
@@ -270,6 +279,21 @@ func TestGetLog_WithAttempts(t *testing.T) {
 	}
 	if log.Attempts[0].ProviderID != "provider-1" {
 		t.Errorf("first attempt provider_id = %q, want %q", log.Attempts[0].ProviderID, "provider-1")
+	}
+	if log.Attempts[0].SwitchMode != model.RequestAttemptSwitchModeReplacement {
+		t.Fatalf("first attempt SwitchMode = %q, want %q", log.Attempts[0].SwitchMode, model.RequestAttemptSwitchModeReplacement)
+	}
+	if log.Attempts[1].ProviderSwitchCount != 1 {
+		t.Fatalf("second attempt ProviderSwitchCount = %d, want 1", log.Attempts[1].ProviderSwitchCount)
+	}
+	if !log.Attempts[1].ContinuitySeeded {
+		t.Fatal("second attempt ContinuitySeeded = false, want true")
+	}
+	if log.Attempts[1].ContinuityOriginProviderID != "provider-1" {
+		t.Fatalf("second attempt ContinuityOriginProviderID = %q, want %q", log.Attempts[1].ContinuityOriginProviderID, "provider-1")
+	}
+	if log.Attempts[1].ContinuitySeedAgeMs == nil || *log.Attempts[1].ContinuitySeedAgeMs != continuitySeedAgeMs {
+		t.Fatalf("second attempt ContinuitySeedAgeMs = %#v, want %d", log.Attempts[1].ContinuitySeedAgeMs, continuitySeedAgeMs)
 	}
 }
 

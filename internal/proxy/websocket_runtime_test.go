@@ -220,14 +220,14 @@ func TestWebSocketRuntime_ReplaysBufferedMessages(t *testing.T) {
 	}
 }
 
-func TestWebSocketRuntime_DisablesSemanticFailoverOnReplayBufferOverflow(t *testing.T) {
+func TestWebSocketRuntime_DisablesSemanticReplacementOnReplayBufferOverflow(t *testing.T) {
 	t.Parallel()
 
 	buffer := newPreVisibleClientMessageBuffer(4)
 	buffer.Record(websocket.MessageText, []byte("hello"), false)
 
 	if buffer.Enabled() {
-		t.Fatal("buffer must disable semantic failover after exceeding its limit")
+		t.Fatal("buffer must disable semantic replacement after exceeding its limit")
 	}
 
 	decision := newAllowlistedProviderScopedSuppressDecision(buffer)(webSocketPreWriteContext{
@@ -246,7 +246,7 @@ func TestWebSocketRuntime_DisablesSemanticFailoverOnReplayBufferOverflow(t *test
 	}
 }
 
-func TestWebSocketRuntime_ParseDegradedDisablesSemanticFailover(t *testing.T) {
+func TestWebSocketRuntime_ParseDegradedDisablesSemanticReplacement(t *testing.T) {
 	t.Parallel()
 
 	buffer := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes)
@@ -437,10 +437,10 @@ func TestWebSocketRuntime_HelperNilAndOrderingPaths(t *testing.T) {
 		t.Fatalf("nil lifecycle snapshot = %+v, want zero value", snapshot)
 	}
 
-	closeWebSocketForSemanticFailover(nil)
+	closeWebSocketForSemanticReplacement(nil)
 
-	if got := (&webSocketSuppressedUpstreamError{}).Error(); got != webSocketSemanticFailoverCloseReason {
-		t.Fatalf("suppressed error string = %q, want %q", got, webSocketSemanticFailoverCloseReason)
+	if got := (&webSocketSuppressedUpstreamError{}).Error(); got != webSocketSemanticReplacementCloseReason {
+		t.Fatalf("suppressed error string = %q, want %q", got, webSocketSemanticReplacementCloseReason)
 	}
 	var nilSuppressed *webSocketSuppressedUpstreamError
 	if got := nilSuppressed.UpstreamError(); got != nil {

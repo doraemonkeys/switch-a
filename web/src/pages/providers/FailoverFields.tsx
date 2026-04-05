@@ -121,8 +121,8 @@ export function FailoverScopeField({
 }: FailoverScopeFieldProps) {
   const description =
     direction === "outbound"
-      ? "Controls where requests can failover TO after this provider fails"
-      : "Controls which failover requests this provider accepts FROM";
+      ? "Controls where requests can fail over TO after client-visible continuity has already started"
+      : "Controls which true failover requests this provider accepts FROM. Pre-visible provider replacement is unaffected.";
 
   return (
     <FormField label={label}>
@@ -215,9 +215,11 @@ export function FailoverSection({
         >
           <div className="p-3 rounded-lg bg-info-light/30 border border-info-light/50">
             <p className="text-xs text-text-secondary">
-              <strong>Vendor Isolation</strong> prevents cross-vendor failover
-              to protect against signature detection. Configure vendors with
-              same ID to allow failover between them.
+              <strong>Vendor Isolation</strong> only applies to true failover
+              after the client has already seen upstream continuity. A
+              pre-visible provider replacement before any upstream bytes reach
+              the client is still allowed and is not blocked by{" "}
+              <strong>Accept Failover</strong>.
             </p>
           </div>
 

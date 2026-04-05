@@ -24,9 +24,9 @@ func (s *SQLiteStore) GetAttemptsByRequestID(ctx context.Context, requestID stri
 	var attempts []model.RequestAttempt
 	err := s.db.WithContext(ctx).
 		Where("request_id = ?", requestID).
-		// WebSocket provider attempts can be recorded by newer orchestration code
-		// while older request rows still reuse the shared attempts table. `attempt`
-		// remains the primary lifecycle ordering key, and `id` keeps ties stable.
+		// `attempt` remains the primary lifecycle ordering key even after adding
+		// switch-mode and continuity provenance columns; `id` keeps ties stable so
+		// new metadata never changes the timeline order users already rely on.
 		Order("attempt ASC, id ASC").
 		Find(&attempts).Error
 	if err != nil {

@@ -166,6 +166,7 @@ func (h *Handler) commitForwardResponse(
 	writeErr := pctx.transport.WriteToClient(ctx, wrappedWriter, upstreamResp)
 	upstreamResp.Close()
 	result.headersWritten = true
+	result.responseCommitted = wrappedWriter.committed
 	result.done = true
 	result.tokenUsage = h.extractTokenUsage(result.statusCode, interceptor, sseInterceptor)
 	if result.isSSE && wrappedWriter.written && !wrappedWriter.firstWriteTime.IsZero() {

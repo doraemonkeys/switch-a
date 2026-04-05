@@ -61,11 +61,29 @@ func (m *mockSelector) SelectWithMetadata(ctx context.Context, req *model.Select
 			return nil, err
 		}
 		metadata := result.Metadata
-		if metadata.Source == "" && result.FromStickyCache {
-			metadata = selector.SelectionMetadata{Source: selector.SelectionSourceStickyContinuity}
-		}
 		if metadata.Source == "" {
-			metadata = selector.SelectionMetadata{Source: selector.SelectionSourceStrategy}
+			source := selector.SelectionSourceStrategy
+			if result.FromStickyCache {
+				source = selector.SelectionSourceStickyContinuity
+			}
+			metadata = selector.BuildSelectionMetadata(req, source)
+		} else {
+			enriched := selector.BuildSelectionMetadata(req, metadata.Source)
+			if metadata.SwitchMode == "" {
+				metadata.SwitchMode = enriched.SwitchMode
+			}
+			if !metadata.ContinuitySeeded {
+				metadata.ContinuitySeeded = enriched.ContinuitySeeded
+			}
+			if metadata.ContinuityOriginProviderID == "" {
+				metadata.ContinuityOriginProviderID = enriched.ContinuityOriginProviderID
+			}
+			if metadata.ContinuitySeedObservedAt.IsZero() {
+				metadata.ContinuitySeedObservedAt = enriched.ContinuitySeedObservedAt
+			}
+			if metadata.ContinuitySeedAgeAtSelectionMs == nil {
+				metadata.ContinuitySeedAgeAtSelectionMs = enriched.ContinuitySeedAgeAtSelectionMs
+			}
 		}
 		return &selectorSelectResult{
 			Provider: result.Provider,

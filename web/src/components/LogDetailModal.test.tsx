@@ -713,6 +713,45 @@ describe("LogDetailModal", () => {
       expect(screen.getByText(/Provider: My Provider/)).toBeInTheDocument();
     });
 
+    it("renders selection semantics and continuity provenance from attempt metadata", () => {
+      const log = createMockLog({
+        attempts: [
+          {
+            id: 1,
+            request_id: "test-request-id-1",
+            provider_id: "provider-next",
+            attempt: 1,
+            switch_mode: "failover",
+            provider_attempt: 1,
+            provider_switch_count: 1,
+            continuity_seeded: true,
+            continuity_origin_provider_id: "provider-origin",
+            continuity_seed_age_ms: 320,
+            status_code: 429,
+            error: "capacity exceeded",
+            latency_ms: 95,
+            created_at: "2024-01-15T10:30:00Z",
+          },
+        ],
+      });
+
+      render(
+        <LogDetailModal
+          log={log}
+          providerName="Test Provider"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByText("Mode: Failover")).toBeInTheDocument();
+      expect(screen.getByText("Provider switches 1")).toBeInTheDocument();
+      expect(screen.getByText("Continuity provenance")).toBeInTheDocument();
+      expect(
+        screen.getByText(/Heuristic seed matched from provider-origin/i),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/seed age 320ms/i)).toBeInTheDocument();
+    });
+
     it("keeps websocket outcome attribution on RequestLog while timeline rows stay provider-scoped", () => {
       const log = createMockLog({
         is_websocket: true,

@@ -130,9 +130,9 @@ export interface Provider {
   backoff?: BackoffPolicy;
   /** Vendor identifier for failover isolation. Empty = no isolation, "*" = wildcard */
   vendor: string;
-  /** Outbound failover control: where we can failover TO after this provider fails */
+  /** Outbound failover control after client-visible continuity exists */
   failover_scope: FailoverScope;
-  /** Inbound failover control: which sources we accept failover FROM */
+  /** Inbound failover control after client-visible continuity exists; pre-visible replacement is unaffected */
   accept_failover: FailoverScope;
   enabled: boolean;
   created_at: string;
@@ -166,9 +166,9 @@ export interface ProviderInput {
   backoff?: BackoffPolicy;
   /** Vendor identifier for failover isolation */
   vendor?: string;
-  /** Outbound failover control */
+  /** Outbound failover control after client-visible continuity exists */
   failover_scope?: FailoverScope;
-  /** Inbound failover control */
+  /** Inbound failover control after client-visible continuity exists; pre-visible replacement is unaffected */
   accept_failover?: FailoverScope;
   enabled?: boolean;
 }
@@ -307,6 +307,8 @@ export type RequestAttemptPhase =
   | "post_upgrade_pre_visible"
   | "visible";
 
+export type RequestAttemptSwitchMode = "initial" | "replacement" | "failover";
+
 export type RequestAttemptOutcome =
   | "upstream_handshake_rejected"
   | "upstream_transport_error"
@@ -325,6 +327,12 @@ export interface RequestAttempt {
   provider_id: string;
   /** Backend ordinal as recorded; UIs should normalize display instead of assuming a base. */
   attempt: number;
+  /** Explicit selection semantics for this provider attempt. */
+  switch_mode?: RequestAttemptSwitchMode;
+  /** Same-provider retry ordinal; distinct from the request-wide attempt order. */
+  provider_attempt?: number;
+  /** Cross-provider switch count; ordering still follows attempt then id. */
+  provider_switch_count?: number;
   status_code: number;
   error: string;
   phase?: RequestAttemptPhase | null;
@@ -334,6 +342,9 @@ export interface RequestAttempt {
   req_body_snippet?: string; // First ~512 bytes of request body (error attempts only)
   latency_ms: number;
   switch_reason?: RequestAttemptSwitchReason; // Reason for switching to next provider (if any)
+  continuity_seeded?: boolean;
+  continuity_origin_provider_id?: string;
+  continuity_seed_age_ms?: number | null;
   created_at: string; // ISO timestamp
 }
 

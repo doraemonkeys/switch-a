@@ -4,27 +4,32 @@ import (
 	"time"
 
 	"switch-a/internal/model"
+	"switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 )
 
 // WebSocketAttemptResult keeps provider-attempt facts separate from the final
-// session row so the handler can attribute failover, health, and persistence to
-// the provider that actually produced each pre-accept outcome.
+// session row so the handler can attribute replacement, failover, health, and
+// persistence to the provider that actually produced each pre-visible outcome.
 type WebSocketAttemptResult struct {
-	Provider          *model.Provider
-	Attempt           int
-	Result            *WebSocketResult
-	ForwardErr        error
-	LatencyMs         int64
-	SwitchReason      string
-	CreatedAt         time.Time
-	GatewayStatusCode int
-	GatewayErrorCode  string
-	GatewayMessage    string
-	RecoveryAttempted bool
-	RecoverySucceeded bool
-	ReplayFailed      bool
+	Provider            *model.Provider
+	Attempt             int
+	SelectionMode       providerSwitchMode
+	SelectionMetadata   selector.SelectionMetadata
+	ProviderAttempt     int
+	ProviderSwitchCount int
+	Result              *WebSocketResult
+	ForwardErr          error
+	LatencyMs           int64
+	SwitchReason        string
+	CreatedAt           time.Time
+	GatewayStatusCode   int
+	GatewayErrorCode    string
+	GatewayMessage      string
+	RecoveryAttempted   bool
+	RecoverySucceeded   bool
+	ReplayFailed        bool
 }
 
 type webSocketSelectionProbeOutcome = model.WebSocketProbeOutcome
@@ -123,7 +128,7 @@ func (r WebSocketAttemptResult) resultVisibleToClient() *bool {
 	return &visible
 }
 
-func (r WebSocketAttemptResult) shouldFailoverBeforeClientVisible() bool {
+func (r WebSocketAttemptResult) shouldReplaceBeforeClientVisible() bool {
 	if r.Result == nil || r.Result.ClientVisible {
 		return false
 	}
@@ -140,7 +145,7 @@ func (r WebSocketAttemptResult) shouldFailoverBeforeClientVisible() bool {
 
 // WebSocketSessionResult is the handler-owned aggregate that survives provider
 // switches. The runtime worker can extend this with post-upgrade visibility
-// boundaries later without changing the pre-accept orchestration contract.
+// boundaries later without changing the pre-visible orchestration contract.
 type WebSocketSessionResult struct {
 	RequestID         string
 	FinalProvider     *model.Provider
@@ -175,19 +180,30 @@ func (r *WebSocketSessionResult) RequestAttempts() []model.RequestAttempt {
 			continue
 		}
 
+		providerAttempt := attempt.ProviderAttempt
+		if providerAttempt <= 0 {
+			providerAttempt = 1
+		}
+
 		record := model.RequestAttempt{
-			RequestID:             r.RequestID,
-			ProviderID:            attempt.Provider.ID,
-			Attempt:               attempt.Attempt,
-			StatusCode:            attempt.statusCode(),
-			Error:                 errorString(attempt.terminalErr()),
-			Phase:                 attempt.phase(),
-			Outcome:               attempt.outcome(),
-			ResultVisibleToClient: attempt.resultVisibleToClient(),
-			BodySnippet:           attempt.bodySnippet(),
-			LatencyMs:             attempt.LatencyMs,
-			SwitchReason:          attempt.SwitchReason,
-			CreatedAt:             attempt.CreatedAt,
+			RequestID:                  r.RequestID,
+			ProviderID:                 attempt.Provider.ID,
+			Attempt:                    attempt.Attempt,
+			SwitchMode:                 requestAttemptSwitchMode(attempt.SelectionMode),
+			ProviderAttempt:            providerAttempt,
+			ProviderSwitchCount:        attempt.ProviderSwitchCount,
+			StatusCode:                 attempt.statusCode(),
+			Error:                      errorString(attempt.terminalErr()),
+			Phase:                      attempt.phase(),
+			Outcome:                    attempt.outcome(),
+			ResultVisibleToClient:      attempt.resultVisibleToClient(),
+			BodySnippet:                attempt.bodySnippet(),
+			LatencyMs:                  attempt.LatencyMs,
+			SwitchReason:               attempt.SwitchReason,
+			ContinuitySeeded:           attempt.SelectionMetadata.ContinuitySeeded,
+			ContinuityOriginProviderID: attempt.SelectionMetadata.ContinuityOriginProviderID,
+			ContinuitySeedAgeMs:        selectionMetadataContinuitySeedAgeMs(attempt.SelectionMetadata),
+			CreatedAt:                  attempt.CreatedAt,
 		}
 		attempts = append(attempts, record)
 	}

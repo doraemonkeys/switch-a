@@ -299,7 +299,9 @@ function GroupCell({
       }
       onClick={() => onGroupClick?.(provider.group_id!)}
     >
-      <FolderOpen className={`w-3 h-3 shrink-0 ${isGroupDisabled ? "opacity-90" : "opacity-70"}`} />
+      <FolderOpen
+        className={`w-3 h-3 shrink-0 ${isGroupDisabled ? "opacity-90" : "opacity-70"}`}
+      />
       <span className="truncate">{groupName}</span>
       {isGroupDisabled && (
         <AlertCircle

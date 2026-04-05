@@ -130,7 +130,7 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 		t.Errorf("expected 0 active requests after cleanup, got %d", len(registry.List()))
 	}
 }
-func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptFailover(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptReplacement(t *testing.T) {
 	initialUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUpgradeRequired)
 		_, _ = io.WriteString(w, `{"error":"fallback to http"}`)
@@ -218,7 +218,7 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptFailover(t *t
 		t.Fatalf("ProviderID = %q, want %q", log.ProviderID, fallbackProvider.ID)
 	}
 	if !log.IsSticky {
-		t.Fatal("expected continuity origin to remain sticky after pre-accept failover")
+		t.Fatal("expected continuity origin to remain sticky after pre-visible replacement")
 	}
 	if log.RetryCount != 1 {
 		t.Fatalf("RetryCount = %d, want 1", log.RetryCount)
@@ -558,7 +558,7 @@ func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModelDimensions(t *
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_SemanticFailoverSwitchesProviderBeforeClientVisible(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeClientVisible(t *testing.T) {
 	var (
 		primaryAttempts  int32
 		fallbackAccepts  int32
@@ -642,8 +642,8 @@ func TestHandler_ServeHTTP_WebSocket_SemanticFailoverSwitchesProviderBeforeClien
 			if !excludeIDs[primaryProvider.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryProvider.ID)
 			}
-			if req.FailoverContext == nil || req.FailoverContext.OriginProviderID != primaryProvider.ID {
-				t.Fatalf("unexpected failover context: %+v", req.FailoverContext)
+			if req.FailoverContext != nil {
+				t.Fatalf("pre-visible replacement must not carry failover context, got %+v", req.FailoverContext)
 			}
 			return fallbackProvider, nil
 		},
@@ -755,7 +755,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticFailoverSwitchesProviderBeforeClien
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_SemanticFailoverEmitsCanonicalGatewayErrorWhenReplacementFails(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErrorWhenReplacementFails(t *testing.T) {
 	var (
 		primaryAttempts  int32
 		selectRetryCalls int32
@@ -809,8 +809,8 @@ func TestHandler_ServeHTTP_WebSocket_SemanticFailoverEmitsCanonicalGatewayErrorW
 			if !excludeIDs[primaryProvider.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryProvider.ID)
 			}
-			if req.FailoverContext == nil || req.FailoverContext.OriginProviderID != primaryProvider.ID {
-				t.Fatalf("unexpected failover context: %+v", req.FailoverContext)
+			if req.FailoverContext != nil {
+				t.Fatalf("pre-visible replacement must not carry failover context, got %+v", req.FailoverContext)
 			}
 			return fallbackProvider, nil
 		},

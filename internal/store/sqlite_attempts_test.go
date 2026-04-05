@@ -20,6 +20,10 @@ func outcomePtr(value model.RequestAttemptOutcome) *model.RequestAttemptOutcome 
 	return &value
 }
 
+func attemptInt64Ptr(value int64) *int64 {
+	return &value
+}
+
 func TestInsertAttempts_EmptySlice(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -184,6 +188,59 @@ func TestInsertAttempts_PreservesWebSocketAttemptSemantics(t *testing.T) {
 	}
 	if result[1].ResultVisibleToClient == nil || !*result[1].ResultVisibleToClient {
 		t.Fatalf("expected second attempt to remain visible to client, got %#v", result[1].ResultVisibleToClient)
+	}
+}
+
+func TestInsertAttempts_PersistsSwitchModeAndContinuityProvenance(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	const continuitySeedAgeMs int64 = 345
+	attempt := model.RequestAttempt{
+		RequestID:                  "req-semantics",
+		ProviderID:                 "provider-b",
+		Attempt:                    2,
+		SwitchMode:                 model.RequestAttemptSwitchModeFailover,
+		ProviderAttempt:            1,
+		ProviderSwitchCount:        1,
+		StatusCode:                 429,
+		Error:                      "capacity exceeded",
+		LatencyMs:                  95,
+		SwitchReason:               model.RequestAttemptSwitchReasonProviderScopedSemanticError,
+		ContinuitySeeded:           true,
+		ContinuityOriginProviderID: "provider-a",
+		ContinuitySeedAgeMs:        attemptInt64Ptr(continuitySeedAgeMs),
+		CreatedAt:                  time.Now(),
+	}
+
+	if err := store.InsertAttempts(ctx, []model.RequestAttempt{attempt}); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	result, err := store.GetAttemptsByRequestID(ctx, "req-semantics")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(result))
+	}
+	if result[0].SwitchMode != model.RequestAttemptSwitchModeFailover {
+		t.Fatalf("SwitchMode = %q, want %q", result[0].SwitchMode, model.RequestAttemptSwitchModeFailover)
+	}
+	if result[0].ProviderAttempt != 1 {
+		t.Fatalf("ProviderAttempt = %d, want 1", result[0].ProviderAttempt)
+	}
+	if result[0].ProviderSwitchCount != 1 {
+		t.Fatalf("ProviderSwitchCount = %d, want 1", result[0].ProviderSwitchCount)
+	}
+	if !result[0].ContinuitySeeded {
+		t.Fatal("ContinuitySeeded = false, want true")
+	}
+	if result[0].ContinuityOriginProviderID != "provider-a" {
+		t.Fatalf("ContinuityOriginProviderID = %q, want %q", result[0].ContinuityOriginProviderID, "provider-a")
+	}
+	if result[0].ContinuitySeedAgeMs == nil || *result[0].ContinuitySeedAgeMs != continuitySeedAgeMs {
+		t.Fatalf("ContinuitySeedAgeMs = %#v, want %d", result[0].ContinuitySeedAgeMs, continuitySeedAgeMs)
 	}
 }
 

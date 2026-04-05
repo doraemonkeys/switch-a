@@ -114,13 +114,14 @@ type Selector = proxy.Selector
 
 // Config holds proxy server configuration.
 type Config struct {
-	Port           string
-	Logger         *zap.Logger
-	Store          store
-	Health         internal.HealthManager
-	Selector       Selector
-	ActiveRegistry *proxy.ActiveRequestRegistry
-	Auth           *providerauth.Service
+	Port                       string
+	Logger                     *zap.Logger
+	Store                      store
+	Health                     internal.HealthManager
+	Selector                   Selector
+	ActiveRegistry             *proxy.ActiveRequestRegistry
+	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
+	Auth                       *providerauth.Service
 }
 
 // AdminConfig holds admin server configuration.
@@ -153,12 +154,13 @@ func New(cfg Config) *Server {
 	// - No sticky sessions
 	// - Simple round-robin provider selection
 	proxyHandler := proxy.NewHandler(proxy.Config{
-		Store:          cfg.Store,
-		Selector:       cfg.Selector,
-		Health:         cfg.Health,
-		ActiveRegistry: cfg.ActiveRegistry,
-		Auth:           cfg.Auth,
-		Logger:         cfg.Logger,
+		Store:                      cfg.Store,
+		Selector:                   cfg.Selector,
+		Health:                     cfg.Health,
+		ActiveRegistry:             cfg.ActiveRegistry,
+		VisibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
+		Auth:                       cfg.Auth,
+		Logger:                     cfg.Logger,
 	})
 
 	s := &Server{

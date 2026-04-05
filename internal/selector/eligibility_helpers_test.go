@@ -135,9 +135,16 @@ func TestNewProviderSelectionEligibilityAndAllowsProvider(t *testing.T) {
 
 	health.available["p-eligible"] = true
 	eligibility.req = &model.SelectRequest{
-		APIType: "codex",
-		FailoverContext: &model.FailoverContext{
-			StrictestScope: model.ScopeNone,
+		APIType:    "codex",
+		SwitchMode: model.SwitchModeFailover,
+		ProviderSwitchHistory: &model.ProviderSwitchHistory{
+			OriginProviderID: "origin",
+			AttemptChain:     []string{"origin"},
+		},
+		ProviderContinuityContext: &model.ProviderContinuityContext{
+			VisibleOriginProviderID: "origin",
+			ContaminatedVendors:     []string{"origin-vendor"},
+			StrictestScope:          model.ScopeNone,
 		},
 		MaxProviderSwitches: 1,
 	}
@@ -238,8 +245,17 @@ func TestEligibilityRoutingAndRequestHelpersNormalizeInputs(t *testing.T) {
 	if got := reqStickyMode(nil); got != model.StickyModeOff {
 		t.Fatalf("reqStickyMode(nil) = %q, want %q", got, model.StickyModeOff)
 	}
-	if got := nilEligibility.reqFailoverContext(); got != nil {
-		t.Fatalf("reqFailoverContext(nil eligibility) = %#v, want nil", got)
+	if got := reqSwitchMode(nil); got != model.SwitchModeInitial {
+		t.Fatalf("reqSwitchMode(nil) = %q, want %q", got, model.SwitchModeInitial)
+	}
+	if got := reqProviderSwitchHistory(nil); got != nil {
+		t.Fatalf("reqProviderSwitchHistory(nil) = %#v, want nil", got)
+	}
+	if got := reqProviderContinuityContext(nil); got != nil {
+		t.Fatalf("reqProviderContinuityContext(nil) = %#v, want nil", got)
+	}
+	if got := reqVisibleContinuitySeedCandidate(nil); got != nil {
+		t.Fatalf("reqVisibleContinuitySeedCandidate(nil) = %#v, want nil", got)
 	}
 	if got := nilEligibility.reqMaxProviderSwitches(); got != 0 {
 		t.Fatalf("reqMaxProviderSwitches(nil eligibility) = %d, want 0", got)
