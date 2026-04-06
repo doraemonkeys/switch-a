@@ -6,6 +6,7 @@
 - **No Backward Compatibility**: Pre-v1.0 with no external consumers to protect. Prioritize first-principles domain modeling and logical orthogonality; favor refactoring core structures to capture native semantics over adding additive flags or 'patch' parameters. 
 - **Hard Requirement**: Project CI enforces minimum test coverage — **90% for Go**, **40% for React**.
 - **Avoid Hardcoding**: Extract unexplained numeric and string values into named constants.
+- `pnpm test -- --run ...` hangs because pnpm forwards the extra `--` to Vitest, so use `pnpm test --run ...` or `pnpm exec vitest run ...` instead.
 
 ## Go Specific
 - **Design for Testability (DfT)**: Favor Dependency Injection and decoupled components. Define interfaces via Traits to allow easy mocking, and prefer small, pure functions that can be unit-tested in isolation.
