@@ -1,6 +1,11 @@
 import { Link } from "react-router-dom";
 import type { SystemStatus, RequestLog, ProviderStatus } from "../api/client";
 import {
+  getDiagnosticToneClass,
+  getLogEvidenceSummary,
+  getLogLifecyclePresentation,
+} from "../components/logs/diagnostics";
+import {
   getProviderStatus,
   statusDotClass,
   statusBadgeClass,
@@ -307,29 +312,7 @@ export function RecentErrorsContent({
     return (
       <div className="space-y-3">
         {errors.map((log) => (
-          <div
-            key={log.id}
-            className="p-3 rounded-lg border border-danger-light bg-danger-light/10"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-text-primary">
-                    {log.model}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-danger-light text-danger-dark">
-                    {log.status_code}
-                  </span>
-                </div>
-                <p className="text-sm text-text-secondary">
-                  {log.error_msg || "Unknown error"}
-                </p>
-              </div>
-              <span className="text-xs text-text-muted">
-                {new Date(log.created_at).toLocaleString()}
-              </span>
-            </div>
-          </div>
+          <RecentErrorItem key={log.id} log={log} />
         ))}
       </div>
     );
@@ -356,6 +339,41 @@ export function RecentErrorsContent({
       <p className="text-sm">
         No recent errors. Everything is running smoothly!
       </p>
+    </div>
+  );
+}
+
+function RecentErrorItem({ log }: { log: RequestLog }) {
+  const lifecycle = getLogLifecyclePresentation(log);
+  const evidenceSummary = getLogEvidenceSummary(log);
+
+  return (
+    <div className="p-3 rounded-lg border border-danger-light bg-danger-light/10">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <span className="font-medium text-text-primary">{log.model}</span>
+            <span
+              className={`px-1.5 py-0.5 rounded text-xs font-medium ${getDiagnosticToneClass(lifecycle.outcomeTone)}`}
+            >
+              {lifecycle.shortOutcomeLabel}
+            </span>
+            {log.client_transport_status_code != null && (
+              <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-white/70 text-text-secondary border border-border-light">
+                {lifecycle.transportStatusLabel}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-text-secondary">
+            {evidenceSummary ||
+              lifecycle.terminationReasonLabel ||
+              lifecycle.outcomeLabel}
+          </p>
+        </div>
+        <span className="text-xs text-text-muted">
+          {new Date(log.created_at).toLocaleString()}
+        </span>
+      </div>
     </div>
   );
 }

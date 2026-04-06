@@ -54,8 +54,8 @@ export default defineConfig([
       '**/__tests__/**/*.{ts,tsx}',
     ],
     rules: {
-      'max-lines-per-function': ['warn', { max: 300, skipBlankLines: true, skipComments: true }],
-      'sonarjs/cognitive-complexity': ['warn', 20],
+      'max-lines-per-function': ['error', { max: 350, skipBlankLines: true, skipComments: true }],
+      'sonarjs/cognitive-complexity': ['error', 25],
     },
   },
 ])

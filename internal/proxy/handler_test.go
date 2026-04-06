@@ -276,6 +276,24 @@ func TestHandler_ServeHTTP_NoProviders(t *testing.T) {
 	if errResp.Error.Code != ErrCodeProviderUnavailable {
 		t.Errorf("error code = %q, want %q", errResp.Error.Code, ErrCodeProviderUnavailable)
 	}
+
+	waitFor(t, func() bool {
+		return store.LogsLen() > 0
+	}, testPollTimeout)
+
+	log := store.LastLog()
+	if log == nil {
+		t.Fatal("expected log entry")
+	}
+	if requestLogClientTransportStatusCode(log) != http.StatusServiceUnavailable {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusServiceUnavailable)
+	}
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeNeverStarted {
+		t.Fatalf("ServiceOutcome = %q, want %q", requestLogServiceOutcome(log), model.ServiceOutcomeNeverStarted)
+	}
+	if requestLogCompletionState(log) != model.CompletionStateIncomplete {
+		t.Fatalf("CompletionState = %q, want %q", requestLogCompletionState(log), model.CompletionStateIncomplete)
+	}
 }
 
 func TestHandler_ServeHTTP_BodyTooLarge(t *testing.T) {
@@ -353,8 +371,14 @@ func TestHandler_ServeHTTP_EmptyBaseURL_FailsFast(t *testing.T) {
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.Success {
-		t.Error("expected Success=false for missing base_url")
+	if requestLogClientTransportStatusCode(log) != http.StatusServiceUnavailable {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusServiceUnavailable)
+	}
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeNeverStarted {
+		t.Fatalf("ServiceOutcome = %q, want %q", requestLogServiceOutcome(log), model.ServiceOutcomeNeverStarted)
+	}
+	if requestLogCompletionState(log) != model.CompletionStateIncomplete {
+		t.Fatalf("CompletionState = %q, want %q", requestLogCompletionState(log), model.CompletionStateIncomplete)
 	}
 }
 
@@ -425,6 +449,9 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	}
 	if attempts[0].StatusCode != http.StatusOK {
 		t.Errorf("attempt status_code = %d, want %d", attempts[0].StatusCode, http.StatusOK)
+	}
+	if attempts[0].SemanticsVersion != model.RequestSemanticsVersionNormalizedV1 {
+		t.Errorf("attempt semantics_version = %q, want %q", attempts[0].SemanticsVersion, model.RequestSemanticsVersionNormalizedV1)
 	}
 	// Attempt number is 0-indexed (first attempt = 0)
 	if attempts[0].Attempt != 0 {
@@ -583,8 +610,9 @@ func TestShouldForceProviderSwitch(t *testing.T) {
 	}
 }
 
-func TestHandler_LogsSuccessFalse_ForFailoverStatusCodes(t *testing.T) {
-	// Test that failover-eligible status codes (401, 402, 403, 429, 5xx) are logged with success=false
+func TestHandler_LogsGatewayTransportStatus_ForFailoverStatusCodes(t *testing.T) {
+	// Failover-eligible upstream responses are retried or exhausted before the client sees them,
+	// so the persisted transport status must reflect the gateway's final 503 instead.
 	tests := []struct {
 		name       string
 		statusCode int
@@ -642,11 +670,14 @@ func TestHandler_LogsSuccessFalse_ForFailoverStatusCodes(t *testing.T) {
 			if log == nil {
 				t.Fatal("expected log entry to be created")
 			}
-			if log.Success {
-				t.Errorf("expected Success=false for status %d, got Success=true", tt.statusCode)
+			if requestLogServiceOutcome(log) == model.ServiceOutcomeCompleted {
+				t.Errorf("expected pre-start outcome for upstream status %d", tt.statusCode)
 			}
-			if log.StatusCode != tt.statusCode {
-				t.Errorf("expected StatusCode=%d, got %d", tt.statusCode, log.StatusCode)
+			if requestLogServiceOutcome(log) != model.ServiceOutcomeNeverStarted {
+				t.Errorf("ServiceOutcome = %q, want %q for upstream status %d", requestLogServiceOutcome(log), model.ServiceOutcomeNeverStarted, tt.statusCode)
+			}
+			if requestLogClientTransportStatusCode(log) != http.StatusServiceUnavailable {
+				t.Errorf("expected ClientTransportStatusCode=%d, got %d", http.StatusServiceUnavailable, requestLogClientTransportStatusCode(log))
 			}
 		})
 	}
@@ -695,16 +726,17 @@ func TestHandler_LogsSuccessTrue_For2xxStatusCodes(t *testing.T) {
 	if log == nil {
 		t.Fatal("expected log entry to be created")
 	}
-	if !log.Success {
-		t.Error("expected Success=true for status 200, got Success=false")
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeCompleted {
+		t.Error("expected completed outcome for status 200")
 	}
-	if log.StatusCode != http.StatusOK {
-		t.Errorf("expected StatusCode=200, got %d", log.StatusCode)
+	if requestLogClientTransportStatusCode(log) != http.StatusOK {
+		t.Errorf("expected ClientTransportStatusCode=200, got %d", requestLogClientTransportStatusCode(log))
 	}
 }
 
-func TestHandler_LogsSuccessFalse_ForNonRetryable4xxStatusCodes(t *testing.T) {
-	// Test that non-retryable 4xx status codes (400, 404, etc.) are logged with success=false
+func TestHandler_LogsNeverStartedOutcome_ForNonRetryable4xxStatusCodes(t *testing.T) {
+	// A proxied 4xx request rejection writes a client response but still ends before
+	// the upstream service actually starts.
 	tests := []struct {
 		name       string
 		statusCode int
@@ -752,16 +784,22 @@ func TestHandler_LogsSuccessFalse_ForNonRetryable4xxStatusCodes(t *testing.T) {
 				return store.LogsLen() > 0
 			}, testPollTimeout)
 
-			// Verify log entry has success=false (client errors are not "successful")
+			// Verify the rejection stays pre-start even though the response reached the client.
 			log := store.LastLog()
 			if log == nil {
 				t.Fatal("expected log entry to be created")
 			}
-			if log.Success {
-				t.Errorf("expected Success=false for status %d, got Success=true", tt.statusCode)
+			if requestLogServiceOutcome(log) != model.ServiceOutcomeNeverStarted {
+				t.Errorf("expected never_started outcome for status %d, got %q", tt.statusCode, requestLogServiceOutcome(log))
 			}
-			if log.StatusCode != tt.statusCode {
-				t.Errorf("expected StatusCode=%d, got %d", tt.statusCode, log.StatusCode)
+			if requestLogCompletionState(log) != model.CompletionStateIncomplete {
+				t.Errorf("expected CompletionState=%q, got %q", model.CompletionStateIncomplete, requestLogCompletionState(log))
+			}
+			if requestLogClientTransportStatusCode(log) != tt.statusCode {
+				t.Errorf("expected ClientTransportStatusCode=%d, got %d", tt.statusCode, requestLogClientTransportStatusCode(log))
+			}
+			if requestLogTerminationReason(log) != model.TerminationReasonClientRequestError {
+				t.Errorf("expected TerminationReason=%q, got %q", model.TerminationReasonClientRequestError, requestLogTerminationReason(log))
 			}
 		})
 	}

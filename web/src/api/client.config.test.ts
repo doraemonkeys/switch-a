@@ -2,19 +2,27 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createApiClient } from "./client";
 import { createMockStorage, createMockHttpClient } from "./test-mocks";
 
-describe("createApiClient config API", () => {
-  let mockStorage: ReturnType<typeof createMockStorage>;
+function createConfigApiTestContext() {
+  const storage = createMockStorage();
+  const httpClient = createMockHttpClient();
+  const api = createApiClient({
+    storage,
+    httpClient,
+    baseUrl: "https://test-api.example.com",
+  });
+
+  return {
+    httpClient,
+    api,
+  };
+}
+
+describe("createApiClient config API read and update operations", () => {
   let mockHttpClient: ReturnType<typeof createMockHttpClient>;
   let api: ReturnType<typeof createApiClient>;
 
   beforeEach(() => {
-    mockStorage = createMockStorage();
-    mockHttpClient = createMockHttpClient();
-    api = createApiClient({
-      storage: mockStorage,
-      httpClient: mockHttpClient,
-      baseUrl: "https://test-api.example.com",
-    });
+    ({ httpClient: mockHttpClient, api } = createConfigApiTestContext());
   });
 
   it("should get config with defaults and values", async () => {
@@ -143,6 +151,15 @@ describe("createApiClient config API", () => {
       "https://test-api.example.com/config/export",
       expect.any(Object),
     );
+  });
+});
+
+describe("createApiClient config API import operations", () => {
+  let mockHttpClient: ReturnType<typeof createMockHttpClient>;
+  let api: ReturnType<typeof createApiClient>;
+
+  beforeEach(() => {
+    ({ httpClient: mockHttpClient, api } = createConfigApiTestContext());
   });
 
   it("should preview config import (dry run)", async () => {

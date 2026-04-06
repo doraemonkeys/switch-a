@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
 
@@ -67,6 +68,7 @@ func (h *Handler) prepareExecuteProxyAttempt(
 	// provider attempt or mutates continuity state after the client is gone.
 	if err := ctx.Err(); err != nil {
 		state.lastErr = err
+		state.clientCanceled = state.clientCanceled || isClientCancellation(err)
 		return time.Time{}, executeProxyLoopActionBreak
 	}
 
@@ -118,6 +120,7 @@ func (h *Handler) applyForwardResult(state *retryState, result forwardResult) {
 	state.success = result.success
 	state.isSSE = result.isSSE
 	state.responseCommitted = result.responseCommitted
+	state.clientCanceled = state.clientCanceled || result.clientCanceled
 	if state.responseCommitted {
 		state.switchTracker.markClientVisible(state.currentProvider, time.Now())
 	}
@@ -155,6 +158,7 @@ func (h *Handler) advanceExecuteProxyAttempt(
 		// so retryIndex = providerAttempt - 1 (0 for first retry, 1 for second, etc.)
 		if h.applyBackoffDelay(ctx, state.currentProvider, state.providerAttempt-1) {
 			state.lastErr = ctx.Err()
+			state.clientCanceled = state.clientCanceled || isClientCancellation(state.lastErr)
 			return executeProxyLoopActionBreak
 		}
 		return executeProxyLoopActionContinue
@@ -180,6 +184,15 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 		h.storeVisibleContinuitySeed(&state.switchTracker, time.Now())
 	}
 
+	// Handle exhausted retries.
+	if !state.success && !state.headersWritten {
+		h.handleExhaustedRetries(pctx, state.lastErr)
+	}
+	clientTransportStatusCode := state.statusCode
+	if !state.success && !state.headersWritten {
+		clientTransportStatusCode = http.StatusServiceUnavailable
+	}
+
 	// Log request asynchronously.
 	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
 	// but avoids blocking the response path. For a high-throughput proxy,
@@ -187,18 +200,15 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	go h.logRequest(
 		pctx,
 		state.providerUsed,
-		state.statusCode,
+		clientTransportStatusCode,
 		state.success,
 		state.isSSE,
 		state.firstTokenMs,
 		state.responseBytes,
 		state.tokenUsage,
 		state.lastErr,
+		state.responseCommitted,
+		state.clientCanceled,
 		time.Since(pctx.startTime),
 	)
-
-	// Handle exhausted retries.
-	if !state.success && !state.headersWritten {
-		h.handleExhaustedRetries(pctx, state.lastErr)
-	}
 }

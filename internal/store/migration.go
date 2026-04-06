@@ -21,12 +21,25 @@ const (
 	routingPolicyEnabledColumn        = "enabled"
 	routingPolicyTargetProviderColumn = "target_provider_id"
 	requestLogsTableName              = "request_logs"
+	requestAttemptsTableName          = "request_attempts"
 	legacyWebSocketColumnName         = "is_web_socket"
 	webSocketColumnName               = "is_websocket"
+	semanticsVersionColumnName        = "semantics_version"
+	clientTransportStatusCodeColumn   = "client_transport_status_code"
+	completionStateColumnName         = "completion_state"
+	serviceOutcomeColumnName          = "service_outcome"
+	terminationActorColumnName        = "termination_actor"
+	terminationReasonColumnName       = "termination_reason"
+	clientActionColumnName            = "client_action"
+	sessionEvidenceJSONColumnName     = "session_evidence_json"
+	attemptEvidenceJSONColumnName     = "attempt_evidence_json"
 	sessionCommittedColumnName        = "session_committed"
 	clientVisibleColumnName           = "client_visible"
 	stickyWrittenColumnName           = "sticky_written"
 	probeOutcomeColumnName            = "probe_outcome"
+	legacySuccessColumnName           = "success"
+	legacyStatusCodeColumnName        = "status_code"
+	legacyErrorMsgColumnName          = "error_msg"
 	terminalCauseColumnName           = "terminal_cause"
 	commitSourceColumnName            = "commit_source"
 	recoveryActionColumnName          = "recovery_action"
@@ -179,112 +192,155 @@ func migrateWebSocketColumn(db *gorm.DB) error {
 	})
 }
 
-// migrateRequestLogLifecycleFields backfills only the historical WebSocket rows
-// whose lifecycle cannot be reconstructed from the pre-refactor schema, while
-// clearing lifecycle pollution from regular HTTP/SSE rows.
+type optionalRequestLogColumn struct {
+	name    string
+	present bool
+}
+
+type requestLogLifecycleMigrationState struct {
+	nonWebSocketLifecycleColumns  []optionalRequestLogColumn
+	retiredSemanticColumns        []optionalRequestLogColumn
+	hasLegacySemanticsColumns     bool
+	hasRequestLogSemanticsVersion bool
+	hasRequestAttemptSemanticsVer bool
+}
+
+func inspectRequestLogLifecycleMigrationState(db *gorm.DB) (requestLogLifecycleMigrationState, error) {
+	nonWebSocketLifecycleColumns, err := inspectOptionalRequestLogColumns(
+		db,
+		sessionCommittedColumnName,
+		clientVisibleColumnName,
+		commitSourceColumnName,
+	)
+	if err != nil {
+		return requestLogLifecycleMigrationState{}, err
+	}
+
+	retiredSemanticColumns, err := inspectOptionalRequestLogColumns(
+		db,
+		stickyWrittenColumnName,
+		probeOutcomeColumnName,
+		legacySuccessColumnName,
+		legacyStatusCodeColumnName,
+		legacyErrorMsgColumnName,
+		terminalCauseColumnName,
+		recoveryActionColumnName,
+	)
+	if err != nil {
+		return requestLogLifecycleMigrationState{}, err
+	}
+
+	hasRequestLogSemanticsVersion, err := requestLogsColumnExists(db, semanticsVersionColumnName)
+	if err != nil {
+		return requestLogLifecycleMigrationState{}, err
+	}
+	hasRequestAttemptSemanticsVer, err := requestAttemptsColumnExists(db, semanticsVersionColumnName)
+	if err != nil {
+		return requestLogLifecycleMigrationState{}, err
+	}
+	hasLegacySemanticsColumns, err := requestLogLegacySemanticsColumnsPresent(db)
+	if err != nil {
+		return requestLogLifecycleMigrationState{}, err
+	}
+
+	return requestLogLifecycleMigrationState{
+		nonWebSocketLifecycleColumns:  nonWebSocketLifecycleColumns,
+		retiredSemanticColumns:        retiredSemanticColumns,
+		hasLegacySemanticsColumns:     hasLegacySemanticsColumns,
+		hasRequestLogSemanticsVersion: hasRequestLogSemanticsVersion,
+		hasRequestAttemptSemanticsVer: hasRequestAttemptSemanticsVer,
+	}, nil
+}
+
+func inspectOptionalRequestLogColumns(db *gorm.DB, columnNames ...string) ([]optionalRequestLogColumn, error) {
+	columns := make([]optionalRequestLogColumn, 0, len(columnNames))
+	for _, columnName := range columnNames {
+		present, err := requestLogsColumnExists(db, columnName)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, optionalRequestLogColumn{name: columnName, present: present})
+	}
+	return columns, nil
+}
+
+func (state requestLogLifecycleMigrationState) isNoOp() bool {
+	return !state.hasLegacySemanticsColumns &&
+		!state.hasRequestLogSemanticsVersion &&
+		!state.hasRequestAttemptSemanticsVer &&
+		!optionalRequestLogColumnsPresent(state.nonWebSocketLifecycleColumns) &&
+		!optionalRequestLogColumnsPresent(state.retiredSemanticColumns)
+}
+
+func optionalRequestLogColumnsPresent(columns []optionalRequestLogColumn) bool {
+	for _, column := range columns {
+		if column.present {
+			return true
+		}
+	}
+	return false
+}
+
+func applyRequestLogLifecycleMigration(tx *gorm.DB, state requestLogLifecycleMigrationState) error {
+	if state.hasLegacySemanticsColumns {
+		if err := tagLegacyRequestAssessmentRows(tx, state.hasRequestLogSemanticsVersion, state.hasRequestAttemptSemanticsVer); err != nil {
+			return err
+		}
+	}
+	if err := clearOptionalNonWebSocketLifecycleColumns(tx, state.nonWebSocketLifecycleColumns); err != nil {
+		return err
+	}
+	if err := dropOptionalRequestLogColumns(tx, state.retiredSemanticColumns); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateRequestLogLifecycleFields keeps the cutover explicit: legacy rows are
+// tagged once, retired request-log semantics are dropped, and only the
+// websocket lifecycle facts that survive in the normalized model remain.
+// It deliberately avoids deriving normalized assessment fields from legacy
+// booleans or status codes because that would rewrite history with heuristics.
 func migrateRequestLogLifecycleFields(db *gorm.DB) error {
-	hasSessionCommitted, err := requestLogsColumnExists(db, sessionCommittedColumnName)
+	state, err := inspectRequestLogLifecycleMigrationState(db)
 	if err != nil {
 		return err
 	}
-	hasClientVisible, err := requestLogsColumnExists(db, clientVisibleColumnName)
-	if err != nil {
-		return err
-	}
-	hasStickyWritten, err := requestLogsColumnExists(db, stickyWrittenColumnName)
-	if err != nil {
-		return err
-	}
-	hasProbeOutcome, err := requestLogsColumnExists(db, probeOutcomeColumnName)
-	if err != nil {
-		return err
-	}
-	hasTerminalCause, err := requestLogsColumnExists(db, terminalCauseColumnName)
-	if err != nil {
-		return err
-	}
-	hasCommitSource, err := requestLogsColumnExists(db, commitSourceColumnName)
-	if err != nil {
-		return err
-	}
-	hasRecoveryAction, err := requestLogsColumnExists(db, recoveryActionColumnName)
-	if err != nil {
-		return err
-	}
-	if !hasSessionCommitted &&
-		!hasClientVisible &&
-		!hasStickyWritten &&
-		!hasProbeOutcome &&
-		!hasTerminalCause &&
-		!hasCommitSource &&
-		!hasRecoveryAction {
+	if state.isNoOp() {
 		return nil
 	}
 
 	return db.Transaction(func(tx *gorm.DB) error {
-		if err := migrateOptionalWebSocketLifecycleColumn(
-			tx,
-			hasSessionCommitted,
-			sessionCommittedColumnName,
-			true,
-			fmt.Sprintf("success = ? AND %s IS NULL", sessionCommittedColumnName),
-			legacySuccessValue,
-		); err != nil {
-			return err
-		}
-		if err := migrateOptionalWebSocketLifecycleColumn(
-			tx,
-			hasStickyWritten,
-			stickyWrittenColumnName,
-			false,
-			fmt.Sprintf("%s IS NULL", stickyWrittenColumnName),
-		); err != nil {
-			return err
-		}
-		if err := migrateOptionalWebSocketLifecycleColumn(
-			tx,
-			hasProbeOutcome,
-			probeOutcomeColumnName,
-			model.WebSocketProbeOutcomeUnknown,
-			fmt.Sprintf("(%s IS NULL OR %s = '')", probeOutcomeColumnName, probeOutcomeColumnName),
-		); err != nil {
-			return err
-		}
-		if err := migrateOptionalWebSocketLifecycleColumn(
-			tx,
-			hasTerminalCause,
-			terminalCauseColumnName,
-			model.TerminalUnknown,
-			fmt.Sprintf("(%s IS NULL OR %s = '')", terminalCauseColumnName, terminalCauseColumnName),
-		); err != nil {
-			return err
-		}
-		if err := migrateOptionalWebSocketLifecycleColumn(
-			tx,
-			hasCommitSource,
-			commitSourceColumnName,
-			model.CommitUnknown,
-			fmt.Sprintf("(%s IS NULL OR %s = '')", commitSourceColumnName, commitSourceColumnName),
-		); err != nil {
-			return err
-		}
-		if hasClientVisible {
-			// Historical rows do not encode the visibility boundary, so we keep the
-			// WebSocket column nullable instead of backfilling a fake false value.
-			if err := clearNonWebSocketLifecycleColumn(tx, clientVisibleColumnName); err != nil {
-				return err
-			}
-		}
-		if hasRecoveryAction {
-			// Historical rows also lack the session-level recovery contract. Leaving
-			// old WebSocket rows NULL preserves that uncertainty instead of inventing
-			// a retry decision that never existed in the old schema.
-			if err := clearNonWebSocketLifecycleColumn(tx, recoveryActionColumnName); err != nil {
-				return err
-			}
-		}
-		return nil
+		return applyRequestLogLifecycleMigration(tx, state)
 	})
+}
+
+func clearOptionalNonWebSocketLifecycleColumns(tx *gorm.DB, columns []optionalRequestLogColumn) error {
+	for _, column := range columns {
+		if err := clearOptionalNonWebSocketLifecycleColumn(tx, column.present, column.name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func clearOptionalNonWebSocketLifecycleColumn(tx *gorm.DB, present bool, columnName string) error {
+	if !present {
+		return nil
+	}
+	return clearNonWebSocketLifecycleColumn(tx, columnName)
+}
+
+func dropOptionalRequestLogColumns(tx *gorm.DB, columns []optionalRequestLogColumn) error {
+	for _, column := range columns {
+		if !column.present {
+			continue
+		}
+		if err := dropOptionalRequestLogColumn(tx, column.name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func migrateOptionalWebSocketLifecycleColumn(tx *gorm.DB, present bool, columnName string, defaultValue any, backfillPredicate string, backfillArgs ...any) error {
@@ -336,6 +392,107 @@ func tableColumnExists(db *gorm.DB, tableName, columnName string) (bool, error) 
 
 func requestLogsColumnExists(db *gorm.DB, columnName string) (bool, error) {
 	return tableColumnExists(db, requestLogsTableName, columnName)
+}
+
+func requestAttemptsColumnExists(db *gorm.DB, columnName string) (bool, error) {
+	return tableColumnExists(db, requestAttemptsTableName, columnName)
+}
+
+func requestLogLegacySemanticsColumnsPresent(db *gorm.DB) (bool, error) {
+	legacyColumns := []string{
+		legacySuccessColumnName,
+		legacyStatusCodeColumnName,
+		legacyErrorMsgColumnName,
+		terminalCauseColumnName,
+		recoveryActionColumnName,
+	}
+	for _, columnName := range legacyColumns {
+		present, err := requestLogsColumnExists(db, columnName)
+		if err != nil {
+			return false, err
+		}
+		if present {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func tagLegacyRequestAssessmentRows(tx *gorm.DB, requestLogsReady bool, requestAttemptsReady bool) error {
+	if requestLogsReady {
+		if err := tx.Exec(
+			fmt.Sprintf(
+				`UPDATE %s SET %s = ? WHERE %s AND %s`,
+				requestLogsTableName,
+				semanticsVersionColumnName,
+				requestAssessmentNeedsLegacyTagPredicate(semanticsVersionColumnName),
+				requestLogMissingNormalizedAssessmentPredicate(),
+			),
+			string(model.RequestSemanticsVersionLegacyPreAssessment),
+			string(model.RequestSemanticsVersionNormalizedV1),
+		).Error; err != nil {
+			return fmt.Errorf("tag legacy request_logs semantics version: %w", err)
+		}
+	}
+	if requestAttemptsReady {
+		statement := fmt.Sprintf(
+			`UPDATE %s SET %s = ? WHERE %s`,
+			requestAttemptsTableName,
+			semanticsVersionColumnName,
+			requestAssessmentNeedsLegacyTagPredicate(semanticsVersionColumnName),
+		)
+		args := []any{
+			string(model.RequestSemanticsVersionLegacyPreAssessment),
+			string(model.RequestSemanticsVersionNormalizedV1),
+		}
+		if requestLogsReady {
+			statement = fmt.Sprintf(
+				`%s AND EXISTS (
+					SELECT 1 FROM %s
+					WHERE %s.request_id = %s.request_id
+					  AND %s
+				)`,
+				statement,
+				requestLogsTableName,
+				requestLogsTableName,
+				requestAttemptsTableName,
+				requestLogMissingNormalizedAssessmentPredicate(),
+			)
+		}
+		if err := tx.Exec(statement, args...).Error; err != nil {
+			return fmt.Errorf("tag legacy request_attempts semantics version: %w", err)
+		}
+	}
+	return nil
+}
+
+func requestAssessmentNeedsLegacyTagPredicate(columnName string) string {
+	return fmt.Sprintf("(%s IS NULL OR %s = '' OR %s = ?)", columnName, columnName, columnName)
+}
+
+func requestLogMissingNormalizedAssessmentPredicate() string {
+	return strings.Join([]string{
+		fmt.Sprintf("%s IS NULL", clientTransportStatusCodeColumn),
+		fmt.Sprintf("%s IS NULL", completionStateColumnName),
+		fmt.Sprintf("%s IS NULL", serviceOutcomeColumnName),
+		fmt.Sprintf("%s IS NULL", clientActionColumnName),
+	}, " AND ")
+}
+
+func dropOptionalRequestLogColumn(tx *gorm.DB, columnName string) error {
+	present, err := requestLogsColumnExists(tx, columnName)
+	if err != nil {
+		return fmt.Errorf("check request_logs.%s: %w", columnName, err)
+	}
+	if !present {
+		return nil
+	}
+	if err := tx.Exec(
+		fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, requestLogsTableName, columnName),
+	).Error; err != nil {
+		return fmt.Errorf("drop request_logs.%s: %w", columnName, err)
+	}
+	return nil
 }
 
 // migrateRoutingPolicyLifecycleStorage adds lifecycle/reference columns without

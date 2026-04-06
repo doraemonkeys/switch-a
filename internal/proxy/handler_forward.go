@@ -36,8 +36,9 @@ func (h *Handler) failedProviderRequest(ctx context.Context, providerID string, 
 	// Provider configuration/auth preparation failures are not runtime health
 	// signals, so we fail the current selection without degrading health state.
 	return forwardResult{
-		err:     err,
-		success: false,
+		err:            err,
+		success:        false,
+		clientCanceled: isClientCancellation(err),
 	}
 }
 

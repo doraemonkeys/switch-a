@@ -325,6 +325,7 @@ export interface RequestAttempt {
   id: number;
   request_id: string;
   provider_id: string;
+  semantics_version: SemanticsVersion;
   /** Backend ordinal as recorded; UIs should normalize display instead of assuming a base. */
   attempt: number;
   /** Explicit selection semantics for this provider attempt. */
@@ -338,6 +339,7 @@ export interface RequestAttempt {
   phase?: RequestAttemptPhase | null;
   outcome?: RequestAttemptOutcome | null;
   result_visible_to_client?: boolean | null;
+  attempt_evidence_json: string | null;
   body_snippet?: string; // First ~512 bytes of error response
   req_body_snippet?: string; // First ~512 bytes of request body (error attempts only)
   latency_ms: number;
@@ -381,24 +383,42 @@ export interface UsageDetails {
 // Request Log Types
 // =============================================================================
 
-export type TerminalCause =
-  | "unknown"
+export type SemanticsVersion = "legacy_pre_assessment" | "normalized_v1";
+
+export type CompletionState = "unknown" | "incomplete" | "completed";
+
+export type TerminationActor =
+  | "client"
+  | "gateway"
+  | "upstream"
+  | "internal"
+  | "unknown";
+
+export type TerminationReason =
   | "provider_unavailable"
   | "provider_configuration_error"
-  | "clean_close"
+  | "usage_limit_reached"
+  | "websocket_connection_limit_reached"
+  | "client_request_error"
   | "client_disconnect"
-  | "upstream_transport_error"
+  | "transport_error"
   | "upstream_semantic_error"
   | "upstream_handshake_rejected"
   | "client_upgrade_rejected"
-  | "internal_error";
+  | "internal_error"
+  | "clean_close"
+  | "unknown";
 
 export type CommitSource = "semantic_event" | "upstream_message" | "unknown";
 
-export type RecoveryAction =
-  | "none"
-  | "transparent_retry"
-  | "reconnect_required";
+export type ClientAction = "none" | "transparent_retry" | "reconnect_required";
+
+export type ServiceOutcome =
+  | "completed"
+  | "interrupted"
+  | "never_started"
+  | "abandoned_by_client"
+  | "unknown";
 
 export type WebSocketProbeOutcome =
   | "unknown"
@@ -409,7 +429,42 @@ export type WebSocketProbeOutcome =
   | "completed_without_usable_model"
   | "transport_failed";
 
-export interface RequestLog {
+export interface RequestEvidenceGateway {
+  terminal_status_code?: number;
+  terminal_error_code?: string;
+  terminal_message_snippet?: string;
+}
+
+export interface RequestEvidenceUpstreamHandshake {
+  status_code?: number;
+  body_snippet?: string;
+}
+
+export interface RequestEvidenceTransport {
+  source?: string;
+  message_snippet?: string;
+  is_timeout?: boolean;
+  is_client_cancel?: boolean;
+  raw_error_snippet?: string;
+}
+
+export interface RequestEvidenceUpstreamEvent {
+  envelope_type?: string;
+  provider_error_type?: string;
+  provider_error_code?: string;
+  status_code?: number;
+  message_snippet?: string;
+  raw_payload_snippet?: string;
+}
+
+export interface RequestEvidence {
+  gateway?: RequestEvidenceGateway | null;
+  upstream_handshake?: RequestEvidenceUpstreamHandshake | null;
+  transport?: RequestEvidenceTransport | null;
+  upstream_event?: RequestEvidenceUpstreamEvent | null;
+}
+
+interface RequestLogBase {
   id: number;
   request_id: string;
   /** Final provider attribution for the request lifecycle, including WebSocket sessions. */
@@ -418,14 +473,11 @@ export interface RequestLog {
   model: string;
   client_ip: string;
   user_id: string;
-  status_code: number;
   latency_ms: number;
-  success: boolean;
   is_sse: boolean;
   is_websocket: boolean;
   retry_count: number;
   is_sticky: boolean;
-  error_msg: string | null;
   created_at: string;
   // Phase 1 diagnostic fields (P0)
   request_path?: string; // Relative path like /v1/messages
@@ -447,16 +499,38 @@ export interface RequestLog {
   cache_creation_input_tokens?: number | null; // Claude: tokens written to cache (billed at 125%)
   usage_details?: UsageDetails | null; // Parsed usage details (service_tier, etc.)
   // WebSocket lifecycle semantics (nullable outside the WebSocket lifecycle domain)
-  sticky_written?: boolean | null;
   session_committed?: boolean | null;
   client_visible?: boolean | null;
-  probe_outcome?: WebSocketProbeOutcome | null;
-  terminal_cause?: TerminalCause | null;
   commit_source?: CommitSource | null;
-  recovery_action?: RecoveryAction | null;
   // Provider-attempt records only. RequestLog remains the session lifecycle summary.
   attempts?: RequestAttempt[];
 }
+
+export interface LegacyRequestLog extends RequestLogBase {
+  semantics_version: "legacy_pre_assessment";
+  client_transport_status_code?: number | null;
+  completion_state?: CompletionState | null;
+  service_outcome?: ServiceOutcome | null;
+  termination_actor?: TerminationActor | null;
+  termination_reason?: TerminationReason | null;
+  client_action?: ClientAction | null;
+  session_evidence_json?: string | null;
+}
+
+export interface NormalizedRequestLog extends RequestLogBase {
+  semantics_version: "normalized_v1";
+  // Normalized rows are the backend's canonical end-state assessment, so keeping
+  // these fields required prevents the UI and tests from drifting into partial shapes.
+  client_transport_status_code: number;
+  completion_state: CompletionState;
+  service_outcome: ServiceOutcome;
+  termination_actor: TerminationActor | null;
+  termination_reason: TerminationReason | null;
+  client_action: ClientAction;
+  session_evidence_json: string | null;
+}
+
+export type RequestLog = LegacyRequestLog | NormalizedRequestLog;
 
 // LogsResponse represents the paginated logs response from the backend
 export interface LogsResponse {
@@ -478,8 +552,20 @@ export interface LogFilter {
   provider_id?: string;
   /** Filter by API type (claude/codex/gemini/custom:*) */
   api_type?: string;
-  /** Filter by success/failure */
-  success?: boolean;
+  /** Filter by request-log semantics version */
+  semantics_version?: SemanticsVersion;
+  /** Filter by request completion state */
+  completion_state?: CompletionState;
+  /** Filter by normalized request/session outcome */
+  service_outcome?: ServiceOutcome;
+  /** Filter by client follow-up contract */
+  client_action?: ClientAction;
+  /** Filter by terminal actor attribution */
+  termination_actor?: TerminationActor;
+  /** Filter by terminal reason attribution */
+  termination_reason?: TerminationReason;
+  /** Filter by client-observed transport status */
+  client_transport_status_code?: number;
   /** Filter by SSE/regular request */
   is_sse?: boolean;
   /** Filter by WebSocket connection */
@@ -500,16 +586,8 @@ export interface LogFilter {
   session_committed?: boolean;
   /** Filter by whether a WebSocket session crossed the client-visible boundary */
   client_visible?: boolean;
-  /** Filter by whether a WebSocket session wrote sticky affinity */
-  sticky_written?: boolean;
-  /** Filter by WebSocket probe outcome */
-  probe_outcome?: WebSocketProbeOutcome;
-  /** Filter by WebSocket terminal cause */
-  terminal_cause?: TerminalCause;
   /** Filter by WebSocket commit source */
   commit_source?: CommitSource;
-  /** Filter by session-level recovery action */
-  recovery_action?: RecoveryAction;
   /** Sort field (created_at/latency_ms, default: created_at) */
   sort_by?: "created_at" | "latency_ms";
   /** Sort direction (asc/desc, default: desc) */
@@ -566,11 +644,11 @@ export interface ProviderStats {
 }
 
 // ProviderRequestStats represents request statistics for a single provider
-export interface ProviderRequestStats {
+export interface ProviderOutcomeStats {
   id: string;
   name: string;
-  count: number;
-  success_rate: number;
+  total_requests: number;
+  outcome_counts: Partial<Record<ServiceOutcome, number>>;
 }
 
 // TimeRange represents the time range for statistics
@@ -580,27 +658,23 @@ export interface TimeRange {
 }
 
 // TimeSeriesPoint represents a single data point in a time series
-export interface TimeSeriesPoint {
+export interface OutcomeTimeSeriesPoint {
   time: string;
-  requests: number;
-  success_count: number;
-  fail_count: number;
-  success_rate: number;
+  total_requests: number;
   avg_latency_ms: number;
+  outcome_counts: Partial<Record<ServiceOutcome, number>>;
 }
 
 // StatsResponse represents the response for the stats API
 export interface StatsResponse {
   total_requests: number;
-  success_count: number;
-  fail_count: number;
-  success_rate: number;
   avg_latency_ms: number;
+  outcome_counts: Partial<Record<ServiceOutcome, number>>;
   providers: ProviderStats;
   requests_by_api_type: Record<string, number>;
-  requests_by_provider: ProviderRequestStats[];
+  requests_by_provider_outcome: ProviderOutcomeStats[];
   time_range: TimeRange;
-  timeseries?: TimeSeriesPoint[];
+  outcome_timeseries: OutcomeTimeSeriesPoint[];
 }
 
 // Config Export/Import types

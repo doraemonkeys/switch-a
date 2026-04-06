@@ -112,6 +112,7 @@ func mergeWebSocketObservation(result *WebSocketResult, observation WebSocketObs
 	result.Model = observation.Model
 	result.TokenUsage = observation.TokenUsage
 	result.UpstreamError = observation.UpstreamError
+	result.CompletionObserved = observation.CompletionObserved
 	if observation.SessionCommitted {
 		result.SessionCommitted = true
 		result.CommitSource = model.CommitSemantic

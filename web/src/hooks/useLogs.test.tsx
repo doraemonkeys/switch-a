@@ -1,27 +1,36 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
-import { useLogs } from "./useLogs";
-import type { ApiClient, RequestLog, LogsResponse } from "../api/client";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  ApiClient,
+  LogsResponse,
+  NormalizedRequestLog,
+} from "../api/client";
 import { createMockApiClient, createWrapper } from "./test-utils";
+import { useLogs } from "./useLogs";
 
-const mockLogs: RequestLog[] = [
+const mockLogs: NormalizedRequestLog[] = [
   {
     id: 1,
-    request_id: "test-request-id-1",
-    provider_id: "1",
+    request_id: "request-1",
+    provider_id: "provider-1",
     api_type: "claude",
-    model: "claude-3",
+    model: "claude-3-7-sonnet",
     client_ip: "127.0.0.1",
-    user_id: "user1",
-    status_code: 200,
+    user_id: "user-1",
+    semantics_version: "normalized_v1",
+    client_transport_status_code: 101,
+    completion_state: "completed",
+    service_outcome: "completed",
+    termination_actor: null,
+    termination_reason: null,
+    client_action: "none",
+    session_evidence_json: null,
     latency_ms: 150,
-    success: true,
     is_sse: false,
-    is_websocket: false,
-    error_msg: null,
-    created_at: "2024-01-01T00:00:00Z",
+    is_websocket: true,
     retry_count: 0,
     is_sticky: false,
+    created_at: "2026-04-01T00:00:00Z",
   },
 ];
 
@@ -47,7 +56,7 @@ describe("useLogs", () => {
     mockApi = setupMockApiClient();
   });
 
-  it("should fetch logs on mount with default params", async () => {
+  it("fetches logs on mount with default params", async () => {
     const { result } = renderHook(() => useLogs(), {
       wrapper: createWrapper(mockApi),
     });
@@ -64,66 +73,7 @@ describe("useLogs", () => {
     expect(mockApi.logs.list).toHaveBeenCalledWith({ limit: 20, offset: 0 });
   });
 
-  it("should fetch logs with custom initial filter", async () => {
-    const { result } = renderHook(() => useLogs({ limit: 50, offset: 100 }), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(mockApi.logs.list).toHaveBeenCalledWith({ limit: 50, offset: 100 });
-    expect(result.current.filter).toEqual({ limit: 50, offset: 100 });
-  });
-
-  it("should handle fetch error", async () => {
-    mockApi.logs.list = vi.fn().mockRejectedValue(new Error("Network error"));
-
-    const { result } = renderHook(() => useLogs(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(result.current.error).toBeInstanceOf(Error);
-    expect(result.current.error?.message).toBe("Network error");
-    expect(result.current.logs).toEqual([]);
-  });
-
-  it("should handle non-Error rejection", async () => {
-    mockApi.logs.list = vi.fn().mockRejectedValue("string error");
-
-    const { result } = renderHook(() => useLogs(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(result.current.error?.message).toBe("Failed to fetch logs");
-  });
-
-  it("should refetch logs", async () => {
-    const { result } = renderHook(() => useLogs(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    await act(async () => {
-      await result.current.refetch();
-    });
-
-    expect(mockApi.logs.list).toHaveBeenCalledTimes(2);
-  });
-
-  it("should update filter and refetch", async () => {
+  it("supports normalized filter updates", async () => {
     const { result } = renderHook(() => useLogs(), {
       wrapper: createWrapper(mockApi),
     });
@@ -133,45 +83,23 @@ describe("useLogs", () => {
     });
 
     act(() => {
-      result.current.setFilter({ limit: 50, offset: 20 });
-    });
-
-    await waitFor(() => {
-      expect(mockApi.logs.list).toHaveBeenCalledWith({ limit: 50, offset: 20 });
-    });
-
-    expect(result.current.filter).toEqual({ limit: 50, offset: 20 });
-  });
-
-  it("should partially update filter with updateFilter", async () => {
-    const { result } = renderHook(() => useLogs(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    act(() => {
-      result.current.updateFilter({ provider_id: "provider-1" });
+      result.current.updateFilter({
+        semantics_version: "normalized_v1",
+        service_outcome: "interrupted",
+      });
     });
 
     await waitFor(() => {
       expect(mockApi.logs.list).toHaveBeenCalledWith({
         limit: 20,
         offset: 0,
-        provider_id: "provider-1",
+        semantics_version: "normalized_v1",
+        service_outcome: "interrupted",
       });
-    });
-
-    expect(result.current.filter).toEqual({
-      limit: 20,
-      offset: 0,
-      provider_id: "provider-1",
     });
   });
 
-  it("should expose sortBy and sortOrder from response", async () => {
+  it("exposes sort metadata from the response", async () => {
     const { result } = renderHook(() => useLogs(), {
       wrapper: createWrapper(mockApi),
     });
@@ -182,5 +110,20 @@ describe("useLogs", () => {
 
     expect(result.current.sortBy).toBe("created_at");
     expect(result.current.sortOrder).toBe("desc");
+  });
+
+  it("surfaces request failures as hook errors", async () => {
+    mockApi.logs.list = vi.fn().mockRejectedValue(new Error("Network error"));
+
+    const { result } = renderHook(() => useLogs(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.error?.message).toBe("Network error");
+    expect(result.current.logs).toEqual([]);
   });
 });

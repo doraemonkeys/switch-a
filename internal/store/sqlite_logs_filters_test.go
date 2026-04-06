@@ -22,6 +22,30 @@ func boolPtr(v bool) *bool {
 	return &v
 }
 
+func completionStatePtr(v model.CompletionState) *model.CompletionState {
+	return &v
+}
+
+func serviceOutcomePtr(v model.ServiceOutcome) *model.ServiceOutcome {
+	return &v
+}
+
+func clientActionPtr(v model.ClientAction) *model.ClientAction {
+	return &v
+}
+
+func terminationActorPtr(v model.TerminationActor) *model.TerminationActor {
+	return &v
+}
+
+func terminationReasonPtr(v model.TerminationReason) *model.TerminationReason {
+	return &v
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
 func terminalCausePtr(v model.TerminalCause) *model.TerminalCause {
 	return &v
 }
@@ -39,9 +63,9 @@ func TestListLogs_FilterByProviderID(t *testing.T) {
 	ctx := context.Background()
 
 	insertLogFixtures(t, store, ctx, []model.RequestLog{
-		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: time.Now()},
-		{ProviderID: "p1", APIType: "claude", Success: true, CreatedAt: time.Now()},
-		{ProviderID: "p2", APIType: "codex", Success: false, CreatedAt: time.Now()},
+		{ProviderID: "p1", APIType: "claude", CreatedAt: time.Now()},
+		{ProviderID: "p1", APIType: "claude", CreatedAt: time.Now()},
+		{ProviderID: "p2", APIType: "codex", CreatedAt: time.Now()},
 	})
 
 	result, err := store.ListLogs(ctx, model.LogFilter{ProviderID: "p1", Limit: 10})
@@ -80,30 +104,97 @@ func TestListLogs_FilterByAPIType(t *testing.T) {
 	}
 }
 
-func TestListLogs_FilterBySuccess(t *testing.T) {
+func TestListLogs_FilterByNormalizedSemantics(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
 
 	insertLogFixtures(t, store, ctx, []model.RequestLog{
-		{ProviderID: "p1", Success: true, CreatedAt: time.Now()},
-		{ProviderID: "p2", Success: false, CreatedAt: time.Now()},
-		{ProviderID: "p3", Success: true, CreatedAt: time.Now()},
+		{
+			ProviderID:       "p1",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			CompletionState:  completionStatePtr(model.CompletionStateCompleted),
+			ServiceOutcome:   serviceOutcomePtr(model.ServiceOutcomeCompleted),
+			ClientAction:     clientActionPtr(model.ClientActionNone),
+			CreatedAt:        time.Now(),
+		},
+		{
+			ProviderID:                "p2",
+			SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+			CompletionState:           completionStatePtr(model.CompletionStateIncomplete),
+			ServiceOutcome:            serviceOutcomePtr(model.ServiceOutcomeInterrupted),
+			ClientAction:              clientActionPtr(model.ClientActionReconnectRequired),
+			TerminationActor:          terminationActorPtr(model.TerminationActorUpstream),
+			TerminationReason:         terminationReasonPtr(model.TerminationReasonUsageLimitReached),
+			ClientTransportStatusCode: intPtr(101),
+			CreatedAt:                 time.Now(),
+		},
+		{
+			ProviderID:       "p3",
+			SemanticsVersion: model.RequestSemanticsVersionLegacyPreAssessment,
+			CreatedAt:        time.Now(),
+		},
 	})
 
-	result, err := store.ListLogs(ctx, model.LogFilter{Success: boolPtr(true), Limit: 10})
+	result, err := store.ListLogs(ctx, model.LogFilter{ServiceOutcome: model.ServiceOutcomeCompleted, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListLogs failed: %v", err)
 	}
-	if len(result) != 2 {
-		t.Errorf("expected 2 successful logs, got %d", len(result))
+	if len(result) != 1 || result[0].ProviderID != "p1" {
+		t.Fatalf("expected only normalized completed row, got %+v", result)
 	}
 
-	result, err = store.ListLogs(ctx, model.LogFilter{Success: boolPtr(false), Limit: 10})
+	result, err = store.ListLogs(ctx, model.LogFilter{SemanticsVersion: model.RequestSemanticsVersionLegacyPreAssessment, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListLogs failed: %v", err)
 	}
 	if len(result) != 1 {
-		t.Errorf("expected 1 failed log, got %d", len(result))
+		t.Errorf("expected 1 legacy log, got %d", len(result))
+	}
+}
+
+func TestListLogs_FilterByClientTransportStatusCodeZero(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	insertLogFixtures(t, store, ctx, []model.RequestLog{
+		{
+			ProviderID:                "p1",
+			SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+			ClientTransportStatusCode: intPtr(0),
+			CreatedAt:                 time.Now(),
+		},
+		{
+			ProviderID:                "p2",
+			SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+			ClientTransportStatusCode: intPtr(101),
+			CreatedAt:                 time.Now(),
+		},
+		{
+			ProviderID:       "p3",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			CreatedAt:        time.Now(),
+		},
+	})
+
+	result, err := store.ListLogs(ctx, model.LogFilter{
+		ClientTransportStatusCode: intPtr(0),
+		Limit:                     10,
+	})
+	if err != nil {
+		t.Fatalf("ListLogs failed: %v", err)
+	}
+	if len(result) != 1 || result[0].ProviderID != "p1" {
+		t.Fatalf("expected only normalized zero-status row, got %+v", result)
+	}
+
+	count, err := store.CountLogs(ctx, model.LogFilter{
+		ClientTransportStatusCode: intPtr(0),
+	})
+	if err != nil {
+		t.Fatalf("CountLogs failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("CountLogs = %d, want 1", count)
 	}
 }
 
@@ -279,17 +370,49 @@ func TestListLogs_MultipleFilters(t *testing.T) {
 
 	now := time.Now()
 	insertLogFixtures(t, store, ctx, []model.RequestLog{
-		{ProviderID: "p1", APIType: "claude", Success: true, LatencyMs: 100, UserID: "user1", CreatedAt: now},
-		{ProviderID: "p1", APIType: "claude", Success: false, LatencyMs: 500, UserID: "user1", CreatedAt: now},
-		{ProviderID: "p1", APIType: "codex", Success: true, LatencyMs: 200, UserID: "user1", CreatedAt: now},
-		{ProviderID: "p2", APIType: "claude", Success: true, LatencyMs: 300, UserID: "user2", CreatedAt: now},
+		{
+			ProviderID:       "p1",
+			APIType:          "claude",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			ServiceOutcome:   serviceOutcomePtr(model.ServiceOutcomeCompleted),
+			LatencyMs:        100,
+			UserID:           "user1",
+			CreatedAt:        now,
+		},
+		{
+			ProviderID:       "p1",
+			APIType:          "claude",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			ServiceOutcome:   serviceOutcomePtr(model.ServiceOutcomeInterrupted),
+			LatencyMs:        500,
+			UserID:           "user1",
+			CreatedAt:        now,
+		},
+		{
+			ProviderID:       "p1",
+			APIType:          "codex",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			ServiceOutcome:   serviceOutcomePtr(model.ServiceOutcomeCompleted),
+			LatencyMs:        200,
+			UserID:           "user1",
+			CreatedAt:        now,
+		},
+		{
+			ProviderID:       "p2",
+			APIType:          "claude",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			ServiceOutcome:   serviceOutcomePtr(model.ServiceOutcomeCompleted),
+			LatencyMs:        300,
+			UserID:           "user2",
+			CreatedAt:        now,
+		},
 	})
 
 	result, err := store.ListLogs(ctx, model.LogFilter{
-		ProviderID: "p1",
-		APIType:    "claude",
-		Success:    boolPtr(true),
-		Limit:      10,
+		ProviderID:     "p1",
+		APIType:        "claude",
+		ServiceOutcome: model.ServiceOutcomeCompleted,
+		Limit:          10,
 	})
 	if err != nil {
 		t.Fatalf("ListLogs failed: %v", err)

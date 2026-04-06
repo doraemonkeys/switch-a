@@ -375,8 +375,38 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 	if filter.APIType != "" && log.APIType != filter.APIType {
 		return false
 	}
-	if filter.Success != nil && log.Success != *filter.Success {
+	if filter.SemanticsVersion != "" && log.SemanticsVersion != filter.SemanticsVersion {
 		return false
+	}
+	if filter.CompletionState != "" {
+		if log.CompletionState == nil || *log.CompletionState != filter.CompletionState {
+			return false
+		}
+	}
+	if filter.ServiceOutcome != "" {
+		if log.ServiceOutcome == nil || *log.ServiceOutcome != filter.ServiceOutcome {
+			return false
+		}
+	}
+	if filter.ClientAction != "" {
+		if log.ClientAction == nil || *log.ClientAction != filter.ClientAction {
+			return false
+		}
+	}
+	if filter.TerminationActor != "" {
+		if log.TerminationActor == nil || *log.TerminationActor != filter.TerminationActor {
+			return false
+		}
+	}
+	if filter.TerminationReason != "" {
+		if log.TerminationReason == nil || *log.TerminationReason != filter.TerminationReason {
+			return false
+		}
+	}
+	if filter.ClientTransportStatusCode != nil {
+		if log.ClientTransportStatusCode == nil || *log.ClientTransportStatusCode != *filter.ClientTransportStatusCode {
+			return false
+		}
 	}
 	if filter.IsSSE != nil && log.IsSSE != *filter.IsSSE {
 		return false
@@ -386,11 +416,6 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 	}
 	if filter.HasWebSocketLifecycleFilter() && !log.IsWebSocket {
 		return false
-	}
-	if filter.StickyWritten != nil {
-		if log.StickyWritten == nil || *log.StickyWritten != *filter.StickyWritten {
-			return false
-		}
 	}
 	if filter.SessionCommitted != nil {
 		if log.SessionCommitted == nil || *log.SessionCommitted != *filter.SessionCommitted {
@@ -402,23 +427,8 @@ func matchesFilter(log model.RequestLog, filter model.LogFilter) bool {
 			return false
 		}
 	}
-	if filter.ProbeOutcome != "" {
-		if log.ProbeOutcome == nil || *log.ProbeOutcome != filter.ProbeOutcome {
-			return false
-		}
-	}
-	if filter.TerminalCause != "" {
-		if log.TerminalCause == nil || *log.TerminalCause != filter.TerminalCause {
-			return false
-		}
-	}
 	if filter.CommitSource != "" {
 		if log.CommitSource == nil || *log.CommitSource != filter.CommitSource {
-			return false
-		}
-	}
-	if filter.RecoveryAction != "" {
-		if log.RecoveryAction == nil || *log.RecoveryAction != filter.RecoveryAction {
 			return false
 		}
 	}
@@ -495,14 +505,18 @@ func (m *mockStore) GetLogStats(_ context.Context, startTime, endTime time.Time)
 	}
 
 	stats := &model.LogStats{
-		ByAPIType:  make(map[string]int64),
-		ByProvider: []model.ProviderLogStats{},
+		OutcomeCounts: make(map[model.ServiceOutcome]int64),
+		ByAPIType:     make(map[string]int64),
+		ByProvider:    []model.ProviderLogStats{},
 	}
 
 	// Filter and aggregate logs
 	providerStats := make(map[string]*model.ProviderLogStats)
 	var totalLatency int64
 	for _, log := range m.logs {
+		if log.SemanticsVersion != model.RequestSemanticsVersionNormalizedV1 {
+			continue
+		}
 		if !startTime.IsZero() && log.CreatedAt.Before(startTime) {
 			continue
 		}
@@ -512,36 +526,43 @@ func (m *mockStore) GetLogStats(_ context.Context, startTime, endTime time.Time)
 
 		stats.TotalRequests++
 		totalLatency += log.LatencyMs
-		if log.Success {
-			stats.SuccessCount++
-		} else {
-			stats.FailCount++
+		if startTime.IsZero() && (stats.EarliestLog.IsZero() || log.CreatedAt.Before(stats.EarliestLog)) {
+			stats.EarliestLog = log.CreatedAt
+		}
+		if log.ServiceOutcome != nil {
+			stats.OutcomeCounts[*log.ServiceOutcome]++
 		}
 		stats.ByAPIType[log.APIType]++
 
 		// Aggregate by provider
 		ps, ok := providerStats[log.ProviderID]
 		if !ok {
-			ps = &model.ProviderLogStats{ProviderID: log.ProviderID}
+			ps = &model.ProviderLogStats{
+				ProviderID:    log.ProviderID,
+				OutcomeCounts: make(map[model.ServiceOutcome]int64),
+			}
 			providerStats[log.ProviderID] = ps
 		}
 		ps.Count++
-		if log.Success {
-			ps.SuccessCount++
+		if log.ServiceOutcome != nil {
+			ps.OutcomeCounts[*log.ServiceOutcome]++
 		}
 	}
 
-	// Calculate success rates and average latency
+	// Average latency stays meaningful across outcomes, so the mock mirrors the
+	// real store's normalized aggregation here.
 	if stats.TotalRequests > 0 {
-		stats.SuccessRate = float64(stats.SuccessCount) / float64(stats.TotalRequests)
 		stats.AvgLatencyMs = totalLatency / stats.TotalRequests
 	}
 	for _, ps := range providerStats {
-		if ps.Count > 0 {
-			ps.SuccessRate = float64(ps.SuccessCount) / float64(ps.Count)
-		}
 		stats.ByProvider = append(stats.ByProvider, *ps)
 	}
+	sort.Slice(stats.ByProvider, func(i, j int) bool {
+		if stats.ByProvider[i].Count == stats.ByProvider[j].Count {
+			return stats.ByProvider[i].ProviderID < stats.ByProvider[j].ProviderID
+		}
+		return stats.ByProvider[i].Count > stats.ByProvider[j].Count
+	})
 
 	return stats, nil
 }
@@ -558,6 +579,9 @@ func (m *mockStore) GetLogTimeSeries(_ context.Context, startTime, endTime time.
 
 	// Filter logs and aggregate into buckets
 	for _, log := range m.logs {
+		if log.SemanticsVersion != model.RequestSemanticsVersionNormalizedV1 {
+			continue
+		}
 		if !startTime.IsZero() && log.CreatedAt.Before(startTime) {
 			continue
 		}
@@ -569,24 +593,22 @@ func (m *mockStore) GetLogTimeSeries(_ context.Context, startTime, endTime time.
 		bucket, ok := buckets[bucketTime]
 		if !ok {
 			bucket = &model.TimeSeriesPoint{
-				Time: time.Unix(bucketTime, 0).UTC(),
+				Time:          time.Unix(bucketTime, 0).UTC(),
+				OutcomeCounts: make(map[model.ServiceOutcome]int64),
 			}
 			buckets[bucketTime] = bucket
 		}
 
 		bucket.Requests++
 		bucket.AvgLatencyMs += log.LatencyMs // Will divide later
-		if log.Success {
-			bucket.SuccessCount++
-		} else {
-			bucket.FailCount++
+		if log.ServiceOutcome != nil {
+			bucket.OutcomeCounts[*log.ServiceOutcome]++
 		}
 	}
 
 	// Calculate averages for existing buckets
 	for _, bucket := range buckets {
 		if bucket.Requests > 0 {
-			bucket.SuccessRate = float64(bucket.SuccessCount) / float64(bucket.Requests)
 			bucket.AvgLatencyMs = bucket.AvgLatencyMs / bucket.Requests
 		}
 	}
@@ -601,7 +623,8 @@ func (m *mockStore) GetLogTimeSeries(_ context.Context, startTime, endTime time.
 			result = append(result, *point)
 		} else {
 			result = append(result, model.TimeSeriesPoint{
-				Time: time.Unix(bucket, 0).UTC(),
+				Time:          time.Unix(bucket, 0).UTC(),
+				OutcomeCounts: make(map[model.ServiceOutcome]int64),
 			})
 		}
 	}

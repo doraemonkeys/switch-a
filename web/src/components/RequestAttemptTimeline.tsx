@@ -6,6 +6,7 @@ import type {
 } from "../api/types";
 import { BADGE_STYLES, getStatusCodeBadgeClass } from "../lib/utils";
 import { ErrorBodyParser } from "./ErrorBodyParser";
+import { RequestEvidenceViewer } from "./logs/evidence";
 
 interface RequestAttemptTimelineProps {
   attempts: RequestAttempt[];
@@ -764,6 +765,17 @@ function AttemptNode({
             <p className="text-xs text-red-700 dark:text-red-300 font-mono break-words">
               {attempt.error}
             </p>
+          </div>
+        )}
+
+        {attempt.attempt_evidence_json && (
+          <div className="mt-3">
+            <p className="text-xs text-text-muted mb-1.5">
+              Structured Evidence
+            </p>
+            <RequestEvidenceViewer
+              evidenceJson={attempt.attempt_evidence_json}
+            />
           </div>
         )}
 

@@ -333,6 +333,7 @@ type retryState struct {
 	isSSE             bool
 	headersWritten    bool
 	responseCommitted bool
+	clientCanceled    bool
 	excludedProviders map[string]bool
 	currentProvider   *model.Provider
 	// providerAttempt is 0-based within a single provider. A provider with MaxRetries=N
@@ -421,22 +422,18 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 // recordAttempt records a request attempt in the proxy context.
 func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result forwardResult, attempt int, attemptStart time.Time, switchReason string) {
 	createdAt := time.Now()
-	attemptRecord := model.RequestAttempt{
-		RequestID:                  pctx.requestID,
-		ProviderID:                 state.currentProvider.ID,
-		Attempt:                    attempt,
-		SwitchMode:                 requestAttemptSwitchMode(state.selectionMode),
-		ProviderAttempt:            state.providerAttempt + 1,
-		ProviderSwitchCount:        state.switchTracker.providerSwitchCount(),
-		StatusCode:                 result.statusCode,
-		BodySnippet:                result.bodySnippet,
-		LatencyMs:                  time.Since(attemptStart).Milliseconds(),
-		SwitchReason:               switchReason,
-		ContinuitySeeded:           state.selectionMetadata.ContinuitySeeded,
-		ContinuityOriginProviderID: state.selectionMetadata.ContinuityOriginProviderID,
-		ContinuitySeedAgeMs:        selectionMetadataContinuitySeedAgeMs(state.selectionMetadata),
-		CreatedAt:                  createdAt,
-	}
+	attemptRecord := newNormalizedRequestAttempt(pctx.requestID, state.currentProvider.ID, createdAt)
+	attemptRecord.Attempt = attempt
+	attemptRecord.SwitchMode = requestAttemptSwitchMode(state.selectionMode)
+	attemptRecord.ProviderAttempt = state.providerAttempt + 1
+	attemptRecord.ProviderSwitchCount = state.switchTracker.providerSwitchCount()
+	attemptRecord.StatusCode = result.statusCode
+	attemptRecord.BodySnippet = result.bodySnippet
+	attemptRecord.LatencyMs = time.Since(attemptStart).Milliseconds()
+	attemptRecord.SwitchReason = switchReason
+	attemptRecord.ContinuitySeeded = state.selectionMetadata.ContinuitySeeded
+	attemptRecord.ContinuityOriginProviderID = state.selectionMetadata.ContinuityOriginProviderID
+	attemptRecord.ContinuitySeedAgeMs = selectionMetadataContinuitySeedAgeMs(state.selectionMetadata)
 	if result.err != nil {
 		attemptRecord.Error = result.err.Error()
 		// Include request body snippet for error attempts to help diagnose issues.
@@ -518,6 +515,7 @@ func (h *Handler) applyBackoffDelay(ctx context.Context, provider *model.Provide
 type forwardResult struct {
 	headersWritten    bool
 	responseCommitted bool
+	clientCanceled    bool
 	statusCode        int
 	success           bool
 	err               error
@@ -637,6 +635,7 @@ func (h *Handler) handleWriteError(ctx context.Context, writeErr error, provider
 		h.logger.Debug("client disconnected during response streaming",
 			zap.String("provider_id", providerID),
 		)
+		result.clientCanceled = true
 	} else {
 		h.logger.Warn("failed to write response to client",
 			zap.String("provider_id", providerID),

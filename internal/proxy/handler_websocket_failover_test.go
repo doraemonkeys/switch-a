@@ -51,17 +51,17 @@ func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.Success {
-		t.Error("expected log.Success=false")
+	if requestLogServiceOutcome(log) == model.ServiceOutcomeCompleted {
+		t.Error("expected non-completed outcome")
 	}
 	if !log.IsWebSocket {
 		t.Error("expected IsWebSocket=true in log")
 	}
-	if log.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("StatusCode = %d, want %d", log.StatusCode, http.StatusServiceUnavailable)
+	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
+		t.Errorf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 	}
-	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalProviderUnavailable {
-		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalProviderUnavailable)
+	if requestLogTerminationReason(log) != model.TerminationReasonProviderUnavailable {
+		t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonProviderUnavailable)
 	}
 	if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
 		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
@@ -151,17 +151,17 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			if log == nil {
 				t.Fatal("expected log entry")
 			}
-			if log.StatusCode != http.StatusBadGateway {
-				t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusBadGateway)
+			if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
+				t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 			}
-			if log.TerminalCause == nil || *log.TerminalCause != model.TerminalProviderConfigurationError {
-				t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalProviderConfigurationError)
+			if requestLogTerminationReason(log) != model.TerminationReasonProviderConfigurationError {
+				t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonProviderConfigurationError)
 			}
 			if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
 				t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
 			}
-			if !strings.Contains(log.ErrorMsg, tt.errorSnippet) {
-				t.Fatalf("ErrorMsg = %q, want snippet %q", log.ErrorMsg, tt.errorSnippet)
+			if !strings.Contains(requestLogEvidenceMessage(t, log), tt.errorSnippet) {
+				t.Fatalf("evidence message = %q, want snippet %q", requestLogEvidenceMessage(t, log), tt.errorSnippet)
 			}
 		})
 	}
@@ -385,8 +385,8 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSw
 	if log.RetryCount != 1 {
 		t.Fatalf("log.RetryCount = %d, want 1", log.RetryCount)
 	}
-	if log.StatusCode != http.StatusOK {
-		t.Fatalf("log.StatusCode = %d, want %d", log.StatusCode, http.StatusOK)
+	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 	}
 
 	attempts := store.LastAttempts(2)
@@ -451,11 +451,11 @@ func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.StatusCode != http.StatusUpgradeRequired {
-		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusUpgradeRequired)
+	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 	}
-	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamHandshakeRejected {
-		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamHandshakeRejected)
+	if requestLogTerminationReason(log) != model.TerminationReasonUpstreamHandshakeRejected {
+		t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonUpstreamHandshakeRejected)
 	}
 }
 

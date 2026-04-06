@@ -1,11 +1,11 @@
-import type { RequestAttempt } from "../api/types";
+import type { RequestAttempt, ServiceOutcome } from "../api/types";
 
 interface ProviderChainProps {
   attempts: RequestAttempt[];
   /** Provider name map for display */
   providerNames?: Map<string, string>;
-  /** Final success status of the request */
-  success: boolean;
+  /** Final request outcome determines whether the chain ends in completion. */
+  serviceOutcome?: ServiceOutcome | null;
 }
 
 interface ChainNode {
@@ -19,10 +19,10 @@ interface ChainNode {
 /** Determines the status for an attempt based on position and final result */
 function getAttemptStatus(
   isLast: boolean,
-  finalSuccess?: boolean,
+  serviceOutcome?: ServiceOutcome | null,
 ): ChainNode["status"] {
   if (!isLast) return "failed";
-  return finalSuccess ? "success" : "failed";
+  return serviceOutcome === "completed" ? "success" : "failed";
 }
 
 /**
@@ -32,10 +32,10 @@ function getAttemptStatus(
 function updateLastNode(
   chain: ChainNode[],
   attempt: RequestAttempt,
-  finalSuccess?: boolean,
+  serviceOutcome?: ServiceOutcome | null,
 ): void {
   const lastNode = chain[chain.length - 1];
-  lastNode.status = finalSuccess ? "success" : "failed";
+  lastNode.status = serviceOutcome === "completed" ? "success" : "failed";
   lastNode.statusCode = attempt.status_code;
   lastNode.attemptNumber = attempt.attempt + 1;
 }
@@ -47,7 +47,7 @@ function updateLastNode(
 function extractChain(
   attempts: RequestAttempt[],
   providerNames?: Map<string, string>,
-  finalSuccess?: boolean,
+  serviceOutcome?: ServiceOutcome | null,
 ): ChainNode[] {
   if (!attempts || attempts.length === 0) return [];
 
@@ -72,12 +72,12 @@ function extractChain(
         providerId: attempt.provider_id,
         providerName:
           providerNames?.get(attempt.provider_id) || attempt.provider_id,
-        status: getAttemptStatus(isLast, finalSuccess),
+        status: getAttemptStatus(isLast, serviceOutcome),
         statusCode: attempt.status_code,
         attemptNumber: attempt.attempt + 1,
       });
     } else if (isLast) {
-      updateLastNode(chain, attempt, finalSuccess);
+      updateLastNode(chain, attempt, serviceOutcome);
     }
   }
 
@@ -99,9 +99,9 @@ function extractChain(
 export function ProviderChain({
   attempts,
   providerNames,
-  success,
+  serviceOutcome,
 }: ProviderChainProps) {
-  const chain = extractChain(attempts, providerNames, success);
+  const chain = extractChain(attempts, providerNames, serviceOutcome);
 
   if (chain.length === 0) return null;
 

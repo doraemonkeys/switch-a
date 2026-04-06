@@ -65,10 +65,7 @@ func (r WebSocketAttemptResult) terminalErr() error {
 }
 
 func (r WebSocketAttemptResult) statusCode() int {
-	if r.Result == nil {
-		return StatusCodeNoResponse
-	}
-	return websocketLogStatusCode(nil, r.Result)
+	return webSocketAttemptTransportStatusCode(r.Result)
 }
 
 func (r WebSocketAttemptResult) bodySnippet() string {
@@ -185,26 +182,23 @@ func (r *WebSocketSessionResult) RequestAttempts() []model.RequestAttempt {
 			providerAttempt = 1
 		}
 
-		record := model.RequestAttempt{
-			RequestID:                  r.RequestID,
-			ProviderID:                 attempt.Provider.ID,
-			Attempt:                    attempt.Attempt,
-			SwitchMode:                 requestAttemptSwitchMode(attempt.SelectionMode),
-			ProviderAttempt:            providerAttempt,
-			ProviderSwitchCount:        attempt.ProviderSwitchCount,
-			StatusCode:                 attempt.statusCode(),
-			Error:                      errorString(attempt.terminalErr()),
-			Phase:                      attempt.phase(),
-			Outcome:                    attempt.outcome(),
-			ResultVisibleToClient:      attempt.resultVisibleToClient(),
-			BodySnippet:                attempt.bodySnippet(),
-			LatencyMs:                  attempt.LatencyMs,
-			SwitchReason:               attempt.SwitchReason,
-			ContinuitySeeded:           attempt.SelectionMetadata.ContinuitySeeded,
-			ContinuityOriginProviderID: attempt.SelectionMetadata.ContinuityOriginProviderID,
-			ContinuitySeedAgeMs:        selectionMetadataContinuitySeedAgeMs(attempt.SelectionMetadata),
-			CreatedAt:                  attempt.CreatedAt,
-		}
+		record := newNormalizedRequestAttempt(r.RequestID, attempt.Provider.ID, attempt.CreatedAt)
+		record.Attempt = attempt.Attempt
+		record.SwitchMode = requestAttemptSwitchMode(attempt.SelectionMode)
+		record.ProviderAttempt = providerAttempt
+		record.ProviderSwitchCount = attempt.ProviderSwitchCount
+		record.StatusCode = attempt.statusCode()
+		record.Error = errorString(attempt.terminalErr())
+		record.Phase = attempt.phase()
+		record.Outcome = attempt.outcome()
+		record.ResultVisibleToClient = attempt.resultVisibleToClient()
+		record.AttemptEvidenceJSON = buildWebSocketAttemptEvidence(attempt)
+		record.BodySnippet = attempt.bodySnippet()
+		record.LatencyMs = attempt.LatencyMs
+		record.SwitchReason = attempt.SwitchReason
+		record.ContinuitySeeded = attempt.SelectionMetadata.ContinuitySeeded
+		record.ContinuityOriginProviderID = attempt.SelectionMetadata.ContinuityOriginProviderID
+		record.ContinuitySeedAgeMs = selectionMetadataContinuitySeedAgeMs(attempt.SelectionMetadata)
 		attempts = append(attempts, record)
 	}
 

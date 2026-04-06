@@ -61,8 +61,31 @@ function createMockApiClient(): ApiClient {
       list: vi.fn().mockResolvedValue({
         logs: [],
         total: 0,
+        limit: 20,
+        offset: 0,
         sort_by: "created_at",
         sort_order: "desc",
+      }),
+      get: vi.fn(),
+    },
+    stats: {
+      get: vi.fn().mockResolvedValue({
+        total_requests: 0,
+        avg_latency_ms: 0,
+        outcome_counts: {},
+        providers: {
+          total: 0,
+          healthy: 0,
+          unhealthy: 0,
+          disabled: 0,
+        },
+        requests_by_api_type: {},
+        requests_by_provider_outcome: [],
+        time_range: {
+          start: "2026-04-01T00:00:00Z",
+          end: "2026-04-02T00:00:00Z",
+        },
+        outcome_timeseries: [],
       }),
     },
   } as unknown as ApiClient;

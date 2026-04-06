@@ -10,7 +10,7 @@ import {
   type ProviderStatusType,
 } from "../pages/providers/types";
 import { hasProviderApiKey } from "../lib/providerApiKey";
-import { stringToColor, getSuccessBadgeClass } from "../lib/utils";
+import { stringToColor } from "../lib/utils";
 import { DetailSection, DetailRow } from "./DrawerSection";
 import { AuthSection } from "./ProviderDetailDrawerAuthSection";
 import { RecoveryTimer } from "./RecoveryTimer";
@@ -23,6 +23,11 @@ import {
   PROVIDER_USAGE_LIMIT_POLICY_OPTIONS,
   defaultProviderUsageLimitPolicy,
 } from "../config/constants";
+import {
+  getDiagnosticToneClass,
+  getLogEvidenceSummary,
+  getLogLifecyclePresentation,
+} from "./logs/diagnostics";
 
 interface ProviderDetailDrawerProps {
   provider: Provider | null;
@@ -43,35 +48,32 @@ function RecentLogItem({ log }: { log: RequestLog }) {
     minute: "2-digit",
     second: "2-digit",
   });
-
-  const renderResult = () => {
-    if (log.success) {
-      return <span className="font-mono">{log.latency_ms}ms</span>;
-    }
-    return (
-      <span
-        className="text-danger truncate max-w-[100px]"
-        title={log.error_msg || ""}
-      >
-        {log.error_msg || `${log.status_code}`}
-      </span>
-    );
-  };
+  const lifecycle = getLogLifecyclePresentation(log);
+  const evidenceSummary = getLogEvidenceSummary(log);
 
   return (
     <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-bg-tertiary/50 hover:bg-bg-tertiary transition-colors">
       <div className="flex items-center gap-2">
         <span
-          className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs ${getSuccessBadgeClass(log.success)}`}
+          className={`inline-flex items-center justify-center min-w-5 h-5 rounded-full text-[10px] px-1 ${getDiagnosticToneClass(lifecycle.outcomeTone)}`}
         >
-          {log.success ? "✓" : "✗"}
+          {lifecycle.shortOutcomeLabel}
         </span>
-        <span className="text-sm font-medium text-text-primary">
-          {log.model}
-        </span>
+        <div className="min-w-0">
+          <span className="text-sm font-medium text-text-primary">
+            {log.model}
+          </span>
+          <p className="text-xs text-text-muted truncate max-w-[180px]">
+            {evidenceSummary ||
+              lifecycle.terminationReasonLabel ||
+              lifecycle.outcomeLabel}
+          </p>
+        </div>
       </div>
       <div className="flex items-center gap-3 text-xs text-text-muted">
-        {renderResult()}
+        <span className="font-mono">
+          {log.client_transport_status_code ?? "—"}
+        </span>
         <span>{formattedTime}</span>
       </div>
     </div>

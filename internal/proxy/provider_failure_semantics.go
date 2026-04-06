@@ -44,13 +44,6 @@ func (d providerFailureDisposition) isProviderScoped() bool {
 	return d.scope == providerFailureScopeProvider
 }
 
-func (d providerFailureDisposition) recoveryAction(clientVisible bool) model.RecoveryAction {
-	if clientVisible && d.isProviderScoped() {
-		return model.RecoveryActionReconnectRequired
-	}
-	return model.RecoveryActionNone
-}
-
 type codexUsageLimitPayload struct {
 	Error struct {
 		Type     string `json:"type"`
@@ -166,7 +159,7 @@ func providerFailureEvidenceFromWebSocketUpstreamError(upstreamErr *WebSocketUps
 		observedAt: normalizeObservedAt(upstreamErr.ObservedAt),
 		statusCode: upstreamErr.StatusCode,
 		errorKeys: []string{
-			normalizeWebSocketSemanticErrorKey(upstreamErr.EventType),
+			normalizeWebSocketSemanticErrorKey(upstreamErr.SemanticErrorKey()),
 			normalizeWebSocketSemanticErrorKey(upstreamErr.Code),
 		},
 	}
@@ -180,6 +173,11 @@ func classifyProviderFailureEvidence(
 	usageLimitPolicy model.ProviderUsageLimitPolicy,
 	evidence providerFailureEvidence,
 ) providerFailureDisposition {
+	if hasNormalizedWebSocketErrorKey(evidence.errorKeys, webSocketConnectionLimitErrorType) {
+		// Connection-limit exhaustion is terminal evidence for the current socket, not
+		// a provider health fault that should trigger failover or suspension.
+		return providerFailureDisposition{}
+	}
 	if shouldForceProviderSwitch(evidence.statusCode) {
 		return providerFailureDisposition{
 			switchReason: formatPermanentErrorReason(evidence.statusCode),
@@ -330,6 +328,15 @@ func latestFutureResetCandidate(candidates []time.Time, observedAt time.Time) *t
 func isUsageLimitEvidence(errorKeys []string) bool {
 	for _, key := range errorKeys {
 		if normalizeWebSocketSemanticErrorKey(key) == codexUsageLimitErrorType {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNormalizedWebSocketErrorKey(errorKeys []string, target string) bool {
+	for _, key := range errorKeys {
+		if normalizeWebSocketSemanticErrorKey(key) == target {
 			return true
 		}
 	}

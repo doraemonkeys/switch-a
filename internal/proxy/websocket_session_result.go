@@ -331,29 +331,19 @@ func websocketSwitchReason(attempt WebSocketAttemptResult) string {
 	return ""
 }
 
-func webSocketRecoveryAction(provider *model.Provider, result *WebSocketResult) model.RecoveryAction {
-	if result == nil || !result.ClientVisible {
-		return model.RecoveryActionNone
-	}
-	if result.UpstreamError != nil {
-		return classifyWebSocketUpstreamFailureForProvider(provider, result.UpstreamError).recoveryAction(result.ClientVisible)
-	}
-	return classifyWebSocketHandshakeFailureForProvider(provider, result).recoveryAction(result.ClientVisible)
-}
-
 func deriveWebSocketSessionRecoveryAction(session *WebSocketSessionResult) model.RecoveryAction {
-	if session == nil || session.FinalResult == nil {
+	if session == nil {
 		return model.RecoveryActionNone
 	}
-	if action := webSocketRecoveryAction(session.FinalProvider, session.FinalResult); action != model.RecoveryActionNone {
-		return action
+	assessment := assessWebSocketSession(session)
+	switch assessment.ClientAction {
+	case model.ClientActionReconnectRequired:
+		return model.RecoveryActionReconnectRequired
+	case model.ClientActionTransparentRetry:
+		return model.RecoveryActionTransparentRetry
+	default:
+		return model.RecoveryActionNone
 	}
-	for _, attempt := range session.Attempts {
-		if attempt.SwitchReason != "" {
-			return model.RecoveryActionTransparentRetry
-		}
-	}
-	return model.RecoveryActionNone
 }
 
 func populateCanonicalWebSocketGatewayMetadata(session *WebSocketSessionResult) {

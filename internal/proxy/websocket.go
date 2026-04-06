@@ -166,6 +166,11 @@ type WebSocketResult struct {
 	// succeeded. This preserves the provider's semantic failure when the transport
 	// itself only reports a generic close frame.
 	UpstreamError *WebSocketUpstreamError
+
+	// CompletionObserved records whether the upstream runtime emitted an explicit
+	// terminal completion event. Assessment uses this to distinguish "completed"
+	// from "transport vanished after something visible happened".
+	CompletionObserved bool
 }
 
 // Clone returns an isolated snapshot so session-level gateway fallback handling

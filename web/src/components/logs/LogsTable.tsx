@@ -1,8 +1,9 @@
 import type { RequestLog } from "../../api/types";
-import { formatDuration, getSuccessBadgeClass } from "../../lib/utils";
+import { formatDuration } from "../../lib/utils";
 import {
   getDiagnosticToneClass,
   getLogLifecyclePresentation,
+  getTransportBadgeClass,
 } from "./diagnostics";
 import { getAriaSortValue, shortenModelName } from "./utils";
 import {
@@ -324,28 +325,43 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
         </div>
       </td>
       <td className="px-3 py-3 whitespace-nowrap text-sm">
-        {log.is_websocket ? (
-          <div className="flex flex-col items-start gap-1">
+        <div className="flex flex-col items-start gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <span
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getDiagnosticToneClass(lifecycle.outcomeTone)}`}
               title={lifecycle.outcomeLabel}
             >
               {lifecycle.shortOutcomeLabel}
             </span>
-            {lifecycle.tableDetailLabel && (
-              <span className="text-xs text-text-muted">
-                {lifecycle.tableDetailLabel}
+            {lifecycle.clientActionLabel && (
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getDiagnosticToneClass(lifecycle.clientActionTone ?? "info")}`}
+              >
+                {lifecycle.clientActionLabel}
               </span>
             )}
+            {lifecycle.terminationReasonLabel && (
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getDiagnosticToneClass(lifecycle.terminationReasonTone ?? "info")}`}
+              >
+                {lifecycle.terminationReasonLabel}
+              </span>
+            )}
+            {log.client_transport_status_code != null &&
+              lifecycle.transportStatusLabel && (
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getTransportBadgeClass(log.client_transport_status_code)}`}
+                >
+                  {lifecycle.transportStatusLabel}
+                </span>
+              )}
           </div>
-        ) : (
-          <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getSuccessBadgeClass(log.success)}`}
-          >
-            {log.success ? "✅" : "❌"}
-            {log.status_code}
-          </span>
-        )}
+          {lifecycle.tableDetailLabel && (
+            <span className="text-xs text-text-muted">
+              {lifecycle.tableDetailLabel}
+            </span>
+          )}
+        </div>
       </td>
       {/* Tokens column - hidden on mobile */}
       <td className="hidden md:table-cell px-3 py-3 whitespace-nowrap text-sm">

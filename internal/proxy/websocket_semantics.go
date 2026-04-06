@@ -24,12 +24,13 @@ const (
 // WebSocketObservation captures semantic data learned while relaying a WebSocket session.
 // The transport layer emits bytes, but request logs need domain fields like model and usage.
 type WebSocketObservation struct {
-	Model            string
-	TokenUsage       *TokenUsage
-	UpstreamError    *WebSocketUpstreamError
-	SessionCommitted bool
-	CommitEventType  string
-	ParseDegraded    bool
+	Model              string
+	TokenUsage         *TokenUsage
+	UpstreamError      *WebSocketUpstreamError
+	SessionCommitted   bool
+	CompletionObserved bool
+	CommitEventType    string
+	ParseDegraded      bool
 }
 
 // WebSocketUpstreamError captures a provider error that was delivered inside the
@@ -37,13 +38,15 @@ type WebSocketObservation struct {
 // this semantic error because a bare 101 status is misleading when the first
 // upstream event is actually an authorization/model/billing failure.
 type WebSocketUpstreamError struct {
-	EventType  string
-	Code       string
-	StatusCode int
-	Message    string
-	ObservedAt time.Time
-	ResetAt    *time.Time
-	Raw        string
+	EnvelopeType      string
+	ProviderErrorType string
+	EventType         string
+	Code              string
+	StatusCode        int
+	Message           string
+	ObservedAt        time.Time
+	ResetAt           *time.Time
+	Raw               string
 }
 
 func (e *WebSocketUpstreamError) Clone() *WebSocketUpstreamError {
@@ -70,6 +73,19 @@ func (e *WebSocketUpstreamError) IsSwitchableProviderScoped() bool {
 	default:
 		return false
 	}
+}
+
+func (e *WebSocketUpstreamError) SemanticErrorKey() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.ProviderErrorType) != "" {
+		return e.ProviderErrorType
+	}
+	if strings.TrimSpace(e.EventType) != "" {
+		return e.EventType
+	}
+	return e.EnvelopeType
 }
 
 // WebSocketMessageObserver consumes relayed messages and reconstructs semantic fields that
@@ -150,18 +166,19 @@ type codexObserveState struct {
 }
 
 type codexWebSocketMessageObserver struct {
-	mu               sync.Mutex
-	model            string
-	modelSource      webSocketModelSource
-	tokenUsage       *TokenUsage
-	upstreamError    *WebSocketUpstreamError
-	parseDegraded    bool
-	sessionCommitted bool
-	commitEventType  string
-	seenUsageKeys    map[string]struct{}
-	logger           Logger
-	onUpdate         func(WebSocketObservation)
-	onCommit         func(WebSocketObservation)
+	mu                 sync.Mutex
+	model              string
+	modelSource        webSocketModelSource
+	tokenUsage         *TokenUsage
+	upstreamError      *WebSocketUpstreamError
+	parseDegraded      bool
+	sessionCommitted   bool
+	completionObserved bool
+	commitEventType    string
+	seenUsageKeys      map[string]struct{}
+	logger             Logger
+	onUpdate           func(WebSocketObservation)
+	onCommit           func(WebSocketObservation)
 }
 
 type webSocketModelSource uint8
@@ -203,12 +220,13 @@ func (o *codexWebSocketMessageObserver) Snapshot() WebSocketObservation {
 	defer o.mu.Unlock()
 
 	return WebSocketObservation{
-		Model:            o.model,
-		TokenUsage:       o.tokenUsage.Clone(),
-		UpstreamError:    o.upstreamError.Clone(),
-		SessionCommitted: o.sessionCommitted,
-		CommitEventType:  o.commitEventType,
-		ParseDegraded:    o.parseDegraded,
+		Model:              o.model,
+		TokenUsage:         o.tokenUsage.Clone(),
+		UpstreamError:      o.upstreamError.Clone(),
+		SessionCommitted:   o.sessionCommitted,
+		CompletionObserved: o.completionObserved,
+		CommitEventType:    o.commitEventType,
+		ParseDegraded:      o.parseDegraded,
 	}
 }
 
@@ -371,7 +389,8 @@ func (o *codexWebSocketMessageObserver) captureCodexObserveState(event *codexWeb
 	modelChanged := o.captureModelLocked(event, fromUpstream)
 	errorChanged := o.captureUpstreamErrorLocked(event, data, fromUpstream)
 	commitChanged := o.captureCommitLocked(event, fromUpstream)
-	semanticChanged := modelChanged || errorChanged || commitChanged
+	completionChanged := o.captureCompletionLocked(event, fromUpstream)
+	semanticChanged := modelChanged || errorChanged || commitChanged || completionChanged
 	if !fromUpstream || !isCodexUsageEvent(event.Type) {
 		return o.newCodexObserveStateLocked(semanticChanged, commitChanged, "", false)
 	}
@@ -482,6 +501,17 @@ func (o *codexWebSocketMessageObserver) captureCommitLocked(event *codexWebSocke
 	return true
 }
 
+func (o *codexWebSocketMessageObserver) captureCompletionLocked(event *codexWebSocketEventEnvelope, fromUpstream bool) bool {
+	if !fromUpstream || o.completionObserved || event == nil || !isCodexUsageEvent(event.Type) {
+		return false
+	}
+	if codexEventRepresentsError(event) {
+		return false
+	}
+	o.completionObserved = true
+	return true
+}
+
 func isCodexUsageEvent(eventType string) bool {
 	// Transcription events (input_audio_transcription.completed) are intentionally
 	// excluded: OpenAI bills them under a separate ASR model, so merging their
@@ -525,12 +555,13 @@ func (o *codexWebSocketMessageObserver) snapshotForPublishLocked(changed bool) (
 		return WebSocketObservation{}, false
 	}
 	return WebSocketObservation{
-		Model:            o.model,
-		TokenUsage:       o.tokenUsage.Clone(),
-		UpstreamError:    o.upstreamError.Clone(),
-		SessionCommitted: o.sessionCommitted,
-		CommitEventType:  o.commitEventType,
-		ParseDegraded:    o.parseDegraded,
+		Model:              o.model,
+		TokenUsage:         o.tokenUsage.Clone(),
+		UpstreamError:      o.upstreamError.Clone(),
+		SessionCommitted:   o.sessionCommitted,
+		CompletionObserved: o.completionObserved,
+		CommitEventType:    o.commitEventType,
+		ParseDegraded:      o.parseDegraded,
 	}, true
 }
 
@@ -552,7 +583,9 @@ func upstreamErrorsEqual(left, right *WebSocketUpstreamError) bool {
 	if left == nil || right == nil {
 		return left == right
 	}
-	return left.EventType == right.EventType &&
+	return left.EnvelopeType == right.EnvelopeType &&
+		left.ProviderErrorType == right.ProviderErrorType &&
+		left.EventType == right.EventType &&
 		left.Code == right.Code &&
 		left.StatusCode == right.StatusCode &&
 		left.Message == right.Message &&

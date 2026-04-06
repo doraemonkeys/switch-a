@@ -98,14 +98,14 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 	if log.ProviderID != "ws-p1" {
 		t.Errorf("log.ProviderID = %q, want 'ws-p1'", log.ProviderID)
 	}
-	if !log.Success {
-		t.Errorf("expected log.Success=true, got false (err: %s)", log.ErrorMsg)
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
+		t.Errorf("expected abandoned-by-client outcome, got %q", requestLogServiceOutcome(log))
 	}
-	if log.StatusCode != http.StatusSwitchingProtocols {
-		t.Errorf("log.StatusCode = %d, want %d", log.StatusCode, http.StatusSwitchingProtocols)
+	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
+		t.Errorf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 	}
-	if log.ErrorMsg != "" {
-		t.Errorf("expected empty ErrorMsg for successful WS, got %q", log.ErrorMsg)
+	if requestLogEvidenceMessage(t, log) != "" {
+		t.Errorf("expected empty SessionEvidenceJSON message for successful WS, got %q", requestLogEvidenceMessage(t, log))
 	}
 	if log.RetryCount != 0 {
 		t.Errorf("log.RetryCount = %d, want 0", log.RetryCount)
@@ -436,11 +436,11 @@ func TestHandler_ServeHTTP_WebSocket_WithSelector(t *testing.T) {
 	if log.ProviderID != "ws-sel-p1" {
 		t.Errorf("log.ProviderID = %q, want 'ws-sel-p1'", log.ProviderID)
 	}
-	if !log.Success {
-		t.Errorf("expected log.Success=true, got false (err: %s)", log.ErrorMsg)
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
+		t.Errorf("expected abandoned-by-client outcome, got %q", requestLogServiceOutcome(log))
 	}
-	if log.ErrorMsg != "" {
-		t.Errorf("expected empty ErrorMsg for successful WS, got %q", log.ErrorMsg)
+	if requestLogEvidenceMessage(t, log) != "" {
+		t.Errorf("expected empty SessionEvidenceJSON message for successful WS, got %q", requestLogEvidenceMessage(t, log))
 	}
 }
 
@@ -885,11 +885,11 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 	if log.RetryCount != 1 {
 		t.Fatalf("RetryCount = %d, want 1", log.RetryCount)
 	}
-	if log.StatusCode != http.StatusBadGateway {
-		t.Fatalf("StatusCode = %d, want %d", log.StatusCode, http.StatusBadGateway)
+	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 	}
-	if log.ErrorMsg != "Upstream WebSocket handshake failed" {
-		t.Fatalf("ErrorMsg = %q, want canonical gateway message", log.ErrorMsg)
+	if requestLogEvidenceMessage(t, log) != "Upstream WebSocket handshake failed" {
+		t.Fatalf("evidence message = %q, want canonical gateway message", requestLogEvidenceMessage(t, log))
 	}
 
 	attempts := store.LastAttempts(2)
@@ -966,11 +966,11 @@ func TestHandler_ServeHTTP_WebSocket_SuccessLogHasNoError(t *testing.T) {
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.ErrorMsg != "" {
-		t.Errorf("expected empty ErrorMsg for successful WS, got %q", log.ErrorMsg)
+	if requestLogEvidenceMessage(t, log) != "" {
+		t.Errorf("expected empty SessionEvidenceJSON message for successful WS, got %q", requestLogEvidenceMessage(t, log))
 	}
-	if !log.Success {
-		t.Error("expected log.Success=true")
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
+		t.Error("expected abandoned-by-client service outcome")
 	}
 }
 
@@ -1013,13 +1013,13 @@ func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.ErrorMsg != "" {
-		t.Errorf("expected empty ErrorMsg for CloseNow teardown, got %q", log.ErrorMsg)
+	if requestLogEvidenceMessage(t, log) != "" {
+		t.Errorf("expected empty SessionEvidenceJSON message for CloseNow teardown, got %q", requestLogEvidenceMessage(t, log))
 	}
-	if !log.Success {
-		t.Errorf("expected log.Success=true, got false (status=%d)", log.StatusCode)
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
+		t.Errorf("expected abandoned-by-client service outcome, got %q", requestLogServiceOutcome(log))
 	}
-	if log.StatusCode != http.StatusSwitchingProtocols {
-		t.Errorf("StatusCode = %d, want %d", log.StatusCode, http.StatusSwitchingProtocols)
+	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
+		t.Errorf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 	}
 }

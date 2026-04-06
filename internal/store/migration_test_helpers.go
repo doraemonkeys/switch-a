@@ -149,9 +149,15 @@ func setupRequestLogLifecycleMigrationDB(t *testing.T) *gorm.DB {
 	db := openMigrationSQLiteDB(t, "request_log_lifecycle_migration.db")
 	createLegacyTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		request_id TEXT,
 		is_websocket BOOLEAN DEFAULT 0,
 		provider_id TEXT DEFAULT '',
-		success BOOLEAN DEFAULT 0,
+		semantics_version TEXT DEFAULT 'normalized_v1',
+		session_committed BOOLEAN,
+		client_visible BOOLEAN,
+		sticky_written BOOLEAN,
+		probe_outcome TEXT,
+		commit_source TEXT,
 		created_at DATETIME
 	)`, requestLogsTableName)
 	if err := db.Exec(createLegacyTableSQL).Error; err != nil {

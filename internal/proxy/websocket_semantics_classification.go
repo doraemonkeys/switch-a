@@ -79,7 +79,7 @@ func classifyWebSocketUpstreamErrorIdentifiers(upstreamErr *WebSocketUpstreamErr
 	var errorKeys []string
 	if upstreamErr != nil {
 		errorKeys = []string{
-			normalizeWebSocketSemanticErrorKey(upstreamErr.EventType),
+			normalizeWebSocketSemanticErrorKey(upstreamErr.SemanticErrorKey()),
 			normalizeWebSocketSemanticErrorKey(upstreamErr.Code),
 		}
 	}
@@ -143,12 +143,14 @@ func buildWebSocketUpstreamError(
 	}
 
 	upstreamErr := &WebSocketUpstreamError{
-		EventType:  event.Type,
-		StatusCode: codexEventStatusCode(event),
-		ObservedAt: observedAt,
-		Raw:        string(data),
+		EnvelopeType: event.Type,
+		EventType:    event.Type,
+		StatusCode:   codexEventStatusCode(event),
+		ObservedAt:   observedAt,
+		Raw:          string(data),
 	}
 	if event.Error != nil {
+		upstreamErr.ProviderErrorType = event.Error.Type
 		if event.Error.Type != "" {
 			upstreamErr.EventType = event.Error.Type
 		}
@@ -165,7 +167,7 @@ func buildWebSocketUpstreamError(
 		if upstreamErr.Code != "" {
 			upstreamErr.Message = upstreamErr.Code
 		} else {
-			upstreamErr.Message = upstreamErr.EventType
+			upstreamErr.Message = upstreamErr.SemanticErrorKey()
 		}
 	}
 	return upstreamErr

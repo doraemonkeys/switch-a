@@ -1,33 +1,93 @@
 import type {
+  ClientAction,
   CommitSource,
+  CompletionState,
   LogFilter,
   Provider,
-  RecoveryAction,
-  TerminalCause,
-  WebSocketProbeOutcome,
+  SemanticsVersion,
+  ServiceOutcome,
+  TerminationActor,
+  TerminationReason,
 } from "../api/types";
 import { API_TYPES } from "../config/constants";
 import { isLogFilterActive } from "./logs/filtering";
 
-// API Types list derived from constants
 const API_TYPES_LIST = Object.values(API_TYPES);
 const FILTER_VALUE_ALL = "";
 const FILTER_VALUE_TRUE = "true";
 const FILTER_VALUE_FALSE = "false";
 
-const TERMINAL_CAUSE_OPTIONS: Array<{
-  value: TerminalCause | typeof FILTER_VALUE_ALL;
+const SEMANTICS_VERSION_OPTIONS: Array<{
+  value: SemanticsVersion | typeof FILTER_VALUE_ALL;
   label: string;
 }> = [
-  { value: FILTER_VALUE_ALL, label: "All Causes" },
+  { value: FILTER_VALUE_ALL, label: "All Rows" },
+  { value: "normalized_v1", label: "Normalized" },
+  { value: "legacy_pre_assessment", label: "Legacy" },
+];
+
+const COMPLETION_STATE_OPTIONS: Array<{
+  value: CompletionState | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All States" },
+  { value: "completed", label: "Completed" },
+  { value: "incomplete", label: "Incomplete" },
+  { value: "unknown", label: "Unknown" },
+];
+
+const SERVICE_OUTCOME_OPTIONS: Array<{
+  value: ServiceOutcome | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Outcomes" },
+  { value: "completed", label: "Completed" },
+  { value: "interrupted", label: "Interrupted" },
+  { value: "never_started", label: "Never Started" },
+  { value: "abandoned_by_client", label: "Abandoned by Client" },
+  { value: "unknown", label: "Unknown" },
+];
+
+const CLIENT_ACTION_OPTIONS: Array<{
+  value: ClientAction | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Actions" },
+  { value: "none", label: "None" },
+  { value: "transparent_retry", label: "Transparent Retry" },
+  { value: "reconnect_required", label: "Reconnect Required" },
+];
+
+const TERMINATION_ACTOR_OPTIONS: Array<{
+  value: TerminationActor | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Actors" },
+  { value: "client", label: "Client" },
+  { value: "gateway", label: "Gateway" },
+  { value: "upstream", label: "Upstream" },
+  { value: "internal", label: "Internal" },
+  { value: "unknown", label: "Unknown" },
+];
+
+const TERMINATION_REASON_OPTIONS: Array<{
+  value: TerminationReason | typeof FILTER_VALUE_ALL;
+  label: string;
+}> = [
+  { value: FILTER_VALUE_ALL, label: "All Reasons" },
   { value: "provider_unavailable", label: "Provider Unavailable" },
   {
     value: "provider_configuration_error",
     label: "Provider Configuration Error",
   },
-  { value: "clean_close", label: "Clean Close" },
+  { value: "usage_limit_reached", label: "Usage Limit Reached" },
+  {
+    value: "websocket_connection_limit_reached",
+    label: "WebSocket Connection Limit Reached",
+  },
+  { value: "client_request_error", label: "Client Request Error" },
   { value: "client_disconnect", label: "Client Disconnect" },
-  { value: "upstream_transport_error", label: "Upstream Transport Error" },
+  { value: "transport_error", label: "Transport Error" },
   { value: "upstream_semantic_error", label: "Upstream Semantic Error" },
   {
     value: "upstream_handshake_rejected",
@@ -35,34 +95,8 @@ const TERMINAL_CAUSE_OPTIONS: Array<{
   },
   { value: "client_upgrade_rejected", label: "Client Upgrade Rejected" },
   { value: "internal_error", label: "Internal Error" },
+  { value: "clean_close", label: "Clean Close" },
   { value: "unknown", label: "Unknown" },
-];
-
-const PROBE_OUTCOME_OPTIONS: Array<{
-  value: WebSocketProbeOutcome | typeof FILTER_VALUE_ALL;
-  label: string;
-}> = [
-  { value: FILTER_VALUE_ALL, label: "All Outcomes" },
-  { value: "bypassed", label: "Bypassed" },
-  { value: "demand_resolution_failed", label: "Demand Resolution Failed" },
-  { value: "unsupported", label: "Unsupported" },
-  { value: "observed_usable_model", label: "Observed Usable Model" },
-  {
-    value: "completed_without_usable_model",
-    label: "Completed Without Usable Model",
-  },
-  { value: "transport_failed", label: "Transport Failed" },
-  { value: "unknown", label: "Unknown" },
-];
-
-const RECOVERY_ACTION_OPTIONS: Array<{
-  value: RecoveryAction | typeof FILTER_VALUE_ALL;
-  label: string;
-}> = [
-  { value: FILTER_VALUE_ALL, label: "All Actions" },
-  { value: "none", label: "None" },
-  { value: "transparent_retry", label: "Transparent Retry" },
-  { value: "reconnect_required", label: "Reconnect Required" },
 ];
 
 const COMMIT_SOURCE_OPTIONS: Array<{
@@ -88,35 +122,43 @@ function parseBooleanFilterValue(value: string): boolean | undefined {
   return value === FILTER_VALUE_TRUE;
 }
 
-function getTerminalCauseLabel(terminalCause: TerminalCause): string {
-  const matchingOption = TERMINAL_CAUSE_OPTIONS.find(
-    (option) => option.value === terminalCause,
-  );
-  return matchingOption?.label ?? terminalCause;
+function getOptionLabel(
+  options: Array<{ value: string; label: string }>,
+  value: string,
+): string {
+  return options.find((option) => option.value === value)?.label ?? value;
 }
 
-function getProbeOutcomeLabel(probeOutcome: WebSocketProbeOutcome): string {
-  const matchingOption = PROBE_OUTCOME_OPTIONS.find(
-    (option) => option.value === probeOutcome,
-  );
-  return matchingOption?.label ?? probeOutcome;
+function getSemanticsVersionLabel(semanticsVersion: SemanticsVersion): string {
+  return getOptionLabel(SEMANTICS_VERSION_OPTIONS, semanticsVersion);
 }
 
-function getRecoveryActionLabel(recoveryAction: RecoveryAction): string {
-  const matchingOption = RECOVERY_ACTION_OPTIONS.find(
-    (option) => option.value === recoveryAction,
-  );
-  return matchingOption?.label ?? recoveryAction;
+function getCompletionStateLabel(completionState: CompletionState): string {
+  return getOptionLabel(COMPLETION_STATE_OPTIONS, completionState);
+}
+
+function getServiceOutcomeLabel(serviceOutcome: ServiceOutcome): string {
+  return getOptionLabel(SERVICE_OUTCOME_OPTIONS, serviceOutcome);
+}
+
+function getClientActionLabel(clientAction: ClientAction): string {
+  return getOptionLabel(CLIENT_ACTION_OPTIONS, clientAction);
+}
+
+function getTerminationActorLabel(terminationActor: TerminationActor): string {
+  return getOptionLabel(TERMINATION_ACTOR_OPTIONS, terminationActor);
+}
+
+function getTerminationReasonLabel(
+  terminationReason: TerminationReason,
+): string {
+  return getOptionLabel(TERMINATION_REASON_OPTIONS, terminationReason);
 }
 
 function getCommitSourceLabel(commitSource: CommitSource): string {
-  const matchingOption = COMMIT_SOURCE_OPTIONS.find(
-    (option) => option.value === commitSource,
-  );
-  return matchingOption?.label ?? commitSource;
+  return getOptionLabel(COMMIT_SOURCE_OPTIONS, commitSource);
 }
 
-// Helper function to get current retries filter value for select
 function getRetriesFilterValue(filter: LogFilter): string {
   if (filter.has_retries === true) return "has_retries";
   if (filter.has_retries === false) return "no_retries";
@@ -125,7 +167,6 @@ function getRetriesFilterValue(filter: LogFilter): string {
   return "";
 }
 
-// Helper function to handle retries filter change
 function handleRetriesFilterChange(
   value: string,
   onFilterChange: (filter: Partial<LogFilter>) => void,
@@ -145,7 +186,6 @@ function handleRetriesFilterChange(
   }
 }
 
-// Helper function to get retries filter label for badge
 function getRetriesFilterLabel(filter: LogFilter): string | null {
   if (filter.has_retries === true) return "Has Retries";
   if (filter.has_retries === false) return "No Retries";
@@ -154,7 +194,24 @@ function getRetriesFilterLabel(filter: LogFilter): string | null {
   return null;
 }
 
-// Date range presets
+function getAPITypeSuggestions(
+  providers: Provider[],
+  selectedAPIType: string | undefined,
+): string[] {
+  const providerAPITypeValues = providers.flatMap((provider) =>
+    provider.api_types.map((apiType) => apiType.api_type.trim()),
+  );
+  const knownAPITypeValues = [...API_TYPES_LIST, ...providerAPITypeValues];
+
+  if (selectedAPIType?.trim()) {
+    knownAPITypeValues.push(selectedAPIType.trim());
+  }
+
+  return Array.from(
+    new Set(knownAPITypeValues.filter((apiType) => apiType !== "")),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
 const DATE_PRESETS = [
   { label: "All Time", value: "" },
   { label: "Last 1 Hour", value: "1h" },
@@ -163,16 +220,13 @@ const DATE_PRESETS = [
   { label: "Last 30 Days", value: "30d" },
 ] as const;
 
-// Tolerance thresholds for date preset detection (10% buffer)
-// These account for slight timing differences when comparing preset ranges
 const DATE_PRESET_TOLERANCE = {
-  ONE_HOUR: 1.1, // 1 hour + 10% tolerance
-  ONE_DAY: 24.1, // 24 hours + ~10% tolerance
-  SEVEN_DAYS: 24 * 7.1, // 7 days + ~10% tolerance
-  THIRTY_DAYS: 24 * 30.1, // 30 days + ~10% tolerance
+  ONE_HOUR: 1.1,
+  ONE_DAY: 24.1,
+  SEVEN_DAYS: 24 * 7.1,
+  THIRTY_DAYS: 24 * 30.1,
 } as const;
 
-// Helper to determine current date preset from filter
 function getCurrentDatePreset(filter: LogFilter): string {
   if (!filter.start_time) return "";
   const start = new Date(filter.start_time);
@@ -185,7 +239,6 @@ function getCurrentDatePreset(filter: LogFilter): string {
   return "";
 }
 
-// Helper to handle date preset change
 function applyDatePreset(
   preset: string,
   onFilterChange: (filter: Partial<LogFilter>) => void,
@@ -248,7 +301,55 @@ function FilterSelect({
   );
 }
 
-// Derive the current request type filter value for the select control.
+interface FilterInputProps {
+  id: string;
+  label: string;
+  value: string;
+  type?: "number" | "text";
+  placeholder?: string;
+  minWidth?: string;
+  listId?: string;
+  listOptions?: string[];
+  onChange: (value: string) => void;
+}
+
+function FilterInput({
+  id,
+  label,
+  value,
+  type = "text",
+  placeholder,
+  minWidth = "120px",
+  listId,
+  listOptions,
+  onChange,
+}: FilterInputProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-xs text-text-muted font-medium">
+        {label}
+      </label>
+      <input
+        id={id}
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        list={listId}
+        onChange={(e) => onChange(e.target.value)}
+        className="input input-sm"
+        style={{ minWidth }}
+      />
+      {listId && listOptions && listOptions.length > 0 && (
+        <datalist id={listId}>
+          {listOptions.map((option) => (
+            <option key={option} value={option} />
+          ))}
+        </datalist>
+      )}
+    </div>
+  );
+}
+
 function getRequestTypeFilterValue(filter: LogFilter): string {
   if (filter.is_websocket === true) return "ws";
   if (filter.is_sse === true) return "sse";
@@ -264,6 +365,288 @@ interface LogFiltersProps {
   onClear: () => void;
 }
 
+interface SemanticFilterControlsProps {
+  filter: LogFilter;
+  onFilterChange: (filter: Partial<LogFilter>) => void;
+  providers: Provider[];
+}
+
+function SemanticFilterControls({
+  filter,
+  onFilterChange,
+  providers,
+}: SemanticFilterControlsProps) {
+  const providerOptions = [
+    { value: FILTER_VALUE_ALL, label: "All Providers" },
+    ...providers.map((provider) => ({
+      value: provider.id,
+      label: provider.name,
+    })),
+  ];
+
+  return (
+    <>
+      <FilterSelect
+        id="provider-filter"
+        label="Provider"
+        value={filter.provider_id || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({ provider_id: value || undefined })
+        }
+        options={providerOptions}
+        minWidth="150px"
+      />
+      <FilterSelect
+        id="semantics-version-filter"
+        label="Semantics"
+        value={filter.semantics_version || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({
+            semantics_version:
+              value === FILTER_VALUE_ALL
+                ? undefined
+                : (value as SemanticsVersion),
+          })
+        }
+        options={SEMANTICS_VERSION_OPTIONS}
+        minWidth="150px"
+      />
+      <FilterSelect
+        id="service-outcome-filter"
+        label="Service Outcome"
+        value={filter.service_outcome || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({
+            service_outcome:
+              value === FILTER_VALUE_ALL
+                ? undefined
+                : (value as ServiceOutcome),
+          })
+        }
+        options={SERVICE_OUTCOME_OPTIONS}
+        minWidth="180px"
+      />
+      <FilterSelect
+        id="client-action-filter"
+        label="Client Action"
+        value={filter.client_action || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({
+            client_action:
+              value === FILTER_VALUE_ALL ? undefined : (value as ClientAction),
+          })
+        }
+        options={CLIENT_ACTION_OPTIONS}
+        minWidth="180px"
+      />
+      <FilterSelect
+        id="termination-reason-filter"
+        label="Termination Reason"
+        value={filter.termination_reason || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({
+            termination_reason:
+              value === FILTER_VALUE_ALL
+                ? undefined
+                : (value as TerminationReason),
+          })
+        }
+        options={TERMINATION_REASON_OPTIONS}
+        minWidth="220px"
+      />
+      <FilterSelect
+        id="termination-actor-filter"
+        label="Termination Actor"
+        value={filter.termination_actor || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({
+            termination_actor:
+              value === FILTER_VALUE_ALL
+                ? undefined
+                : (value as TerminationActor),
+          })
+        }
+        options={TERMINATION_ACTOR_OPTIONS}
+        minWidth="170px"
+      />
+      <FilterSelect
+        id="completion-state-filter"
+        label="Completion State"
+        value={filter.completion_state || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({
+            completion_state:
+              value === FILTER_VALUE_ALL
+                ? undefined
+                : (value as CompletionState),
+          })
+        }
+        options={COMPLETION_STATE_OPTIONS}
+        minWidth="170px"
+      />
+      <FilterInput
+        id="transport-code-filter"
+        label="Transport Code"
+        type="number"
+        value={
+          filter.client_transport_status_code !== undefined
+            ? String(filter.client_transport_status_code)
+            : FILTER_VALUE_ALL
+        }
+        placeholder="101"
+        minWidth="130px"
+        onChange={(value) =>
+          onFilterChange({
+            client_transport_status_code:
+              value === FILTER_VALUE_ALL ? undefined : Number(value),
+          })
+        }
+      />
+    </>
+  );
+}
+
+interface OperationalFilterControlsProps {
+  filter: LogFilter;
+  onFilterChange: (filter: Partial<LogFilter>) => void;
+  onClear: () => void;
+  isActive: boolean;
+  requestTypeValue: string;
+  apiTypeSuggestions: string[];
+}
+
+function OperationalFilterControls({
+  filter,
+  onFilterChange,
+  onClear,
+  isActive,
+  requestTypeValue,
+  apiTypeSuggestions,
+}: OperationalFilterControlsProps) {
+  return (
+    <>
+      <FilterSelect
+        id="request-type-filter"
+        label="Request Type"
+        value={requestTypeValue}
+        onChange={(value) => {
+          switch (value) {
+            case "sse":
+              onFilterChange({ is_sse: true, is_websocket: undefined });
+              break;
+            case "ws":
+              onFilterChange({ is_sse: undefined, is_websocket: true });
+              break;
+            case "regular":
+              onFilterChange({ is_sse: false, is_websocket: false });
+              break;
+            default:
+              onFilterChange({ is_sse: undefined, is_websocket: undefined });
+          }
+        }}
+        options={[
+          { value: FILTER_VALUE_ALL, label: "All Types" },
+          { value: "sse", label: "SSE Stream" },
+          { value: "ws", label: "WebSocket" },
+          { value: "regular", label: "Regular" },
+        ]}
+      />
+      <FilterSelect
+        id="session-committed-filter"
+        label="Session Committed"
+        value={getBooleanFilterValue(filter.session_committed)}
+        onChange={(value) =>
+          onFilterChange({
+            session_committed: parseBooleanFilterValue(value),
+          })
+        }
+        options={[
+          { value: FILTER_VALUE_ALL, label: "All Sessions" },
+          { value: FILTER_VALUE_TRUE, label: "Committed" },
+          { value: FILTER_VALUE_FALSE, label: "Not Committed" },
+        ]}
+        minWidth="160px"
+      />
+      <FilterSelect
+        id="client-visible-filter"
+        label="Client Visible"
+        value={getBooleanFilterValue(filter.client_visible)}
+        onChange={(value) =>
+          onFilterChange({
+            client_visible: parseBooleanFilterValue(value),
+          })
+        }
+        options={[
+          { value: FILTER_VALUE_ALL, label: "All Visibility" },
+          { value: FILTER_VALUE_TRUE, label: "Visible" },
+          { value: FILTER_VALUE_FALSE, label: "Not Visible" },
+        ]}
+        minWidth="140px"
+      />
+      <FilterSelect
+        id="commit-source-filter"
+        label="Commit Source"
+        value={filter.commit_source || FILTER_VALUE_ALL}
+        onChange={(value) =>
+          onFilterChange({
+            commit_source:
+              value === FILTER_VALUE_ALL ? undefined : (value as CommitSource),
+          })
+        }
+        options={COMMIT_SOURCE_OPTIONS}
+        minWidth="200px"
+      />
+      <FilterInput
+        id="api-type-filter"
+        label="API Type"
+        value={filter.api_type || FILTER_VALUE_ALL}
+        placeholder="claude or custom:tool"
+        listId="api-type-filter-options"
+        listOptions={apiTypeSuggestions}
+        onChange={(value) =>
+          onFilterChange({ api_type: value.trim() || undefined })
+        }
+      />
+      <FilterSelect
+        id="retries-filter"
+        label="Retries"
+        value={getRetriesFilterValue(filter)}
+        onChange={(value) => handleRetriesFilterChange(value, onFilterChange)}
+        options={[
+          { value: FILTER_VALUE_ALL, label: "All" },
+          { value: "has_retries", label: "Has Retries" },
+          { value: "no_retries", label: "No Retries" },
+          { value: "1+", label: "1+ Retries" },
+        ]}
+        minWidth="130px"
+      />
+      <FilterSelect
+        id="time-range-filter"
+        label="Time Range"
+        value={getCurrentDatePreset(filter)}
+        onChange={(value) => applyDatePreset(value, onFilterChange)}
+        options={DATE_PRESETS.map((preset) => ({
+          value: preset.value,
+          label: preset.label,
+        }))}
+        minWidth="140px"
+      />
+      {isActive && (
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-transparent font-medium">Clear</label>
+          <button
+            onClick={onClear}
+            className="btn btn-secondary btn-sm flex items-center gap-1"
+          >
+            <span>✕</span>
+            Clear Filters
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function LogFilters({
   filter,
   onFilterChange,
@@ -272,216 +655,24 @@ export function LogFilters({
 }: LogFiltersProps) {
   const isActive = isLogFilterActive(filter);
   const requestTypeValue = getRequestTypeFilterValue(filter);
+  const apiTypeSuggestions = getAPITypeSuggestions(providers, filter.api_type);
 
   return (
     <div className="card p-4">
       <div className="flex flex-wrap items-center gap-4">
-        <FilterSelect
-          id="provider-filter"
-          label="Provider"
-          value={filter.provider_id || ""}
-          onChange={(v) => onFilterChange({ provider_id: v || undefined })}
-          options={[
-            { value: "", label: "All Providers" },
-            ...providers.map((p) => ({ value: p.id, label: p.name })),
-          ]}
-          minWidth="150px"
+        <SemanticFilterControls
+          filter={filter}
+          onFilterChange={onFilterChange}
+          providers={providers}
         />
-        <FilterSelect
-          id="status-filter"
-          label="Status"
-          value={getBooleanFilterValue(filter.success)}
-          onChange={(value) =>
-            onFilterChange({ success: parseBooleanFilterValue(value) })
-          }
-          options={[
-            { value: "", label: "All Status" },
-            { value: "true", label: "Success" },
-            { value: "false", label: "Failed" },
-          ]}
+        <OperationalFilterControls
+          filter={filter}
+          onFilterChange={onFilterChange}
+          onClear={onClear}
+          isActive={isActive}
+          requestTypeValue={requestTypeValue}
+          apiTypeSuggestions={apiTypeSuggestions}
         />
-        <FilterSelect
-          id="request-type-filter"
-          label="Request Type"
-          value={requestTypeValue}
-          onChange={(v) => {
-            switch (v) {
-              case "sse":
-                onFilterChange({ is_sse: true, is_websocket: undefined });
-                break;
-              case "ws":
-                onFilterChange({ is_sse: undefined, is_websocket: true });
-                break;
-              case "regular":
-                onFilterChange({ is_sse: false, is_websocket: false });
-                break;
-              default:
-                onFilterChange({ is_sse: undefined, is_websocket: undefined });
-            }
-          }}
-          options={[
-            { value: "", label: "All Types" },
-            { value: "sse", label: "SSE Stream" },
-            { value: "ws", label: "WebSocket" },
-            { value: "regular", label: "Regular" },
-          ]}
-        />
-        <FilterSelect
-          id="session-committed-filter"
-          label="Commit State"
-          value={getBooleanFilterValue(filter.session_committed)}
-          onChange={(value) =>
-            onFilterChange({
-              session_committed: parseBooleanFilterValue(value),
-            })
-          }
-          options={[
-            { value: FILTER_VALUE_ALL, label: "All Sessions" },
-            { value: FILTER_VALUE_TRUE, label: "Committed" },
-            { value: FILTER_VALUE_FALSE, label: "Uncommitted" },
-          ]}
-          minWidth="140px"
-        />
-        <FilterSelect
-          id="client-visible-filter"
-          label="Client Visible"
-          value={getBooleanFilterValue(filter.client_visible)}
-          onChange={(value) =>
-            onFilterChange({
-              client_visible: parseBooleanFilterValue(value),
-            })
-          }
-          options={[
-            { value: FILTER_VALUE_ALL, label: "All Visibility" },
-            { value: FILTER_VALUE_TRUE, label: "Visible" },
-            { value: FILTER_VALUE_FALSE, label: "Not Visible" },
-          ]}
-          minWidth="140px"
-        />
-        <FilterSelect
-          id="sticky-written-filter"
-          label="Sticky Write"
-          value={getBooleanFilterValue(filter.sticky_written)}
-          onChange={(value) =>
-            onFilterChange({
-              sticky_written: parseBooleanFilterValue(value),
-            })
-          }
-          options={[
-            { value: FILTER_VALUE_ALL, label: "All Sticky" },
-            { value: FILTER_VALUE_TRUE, label: "Written" },
-            { value: FILTER_VALUE_FALSE, label: "Not Written" },
-          ]}
-          minWidth="140px"
-        />
-        <FilterSelect
-          id="probe-outcome-filter"
-          label="Probe Outcome"
-          value={filter.probe_outcome || FILTER_VALUE_ALL}
-          onChange={(value) =>
-            onFilterChange({
-              probe_outcome:
-                value === FILTER_VALUE_ALL
-                  ? undefined
-                  : (value as WebSocketProbeOutcome),
-            })
-          }
-          options={PROBE_OUTCOME_OPTIONS}
-          minWidth="220px"
-        />
-        <FilterSelect
-          id="terminal-cause-filter"
-          label="Terminal Cause"
-          value={filter.terminal_cause || FILTER_VALUE_ALL}
-          onChange={(value) =>
-            onFilterChange({
-              terminal_cause:
-                value === FILTER_VALUE_ALL
-                  ? undefined
-                  : (value as TerminalCause),
-            })
-          }
-          options={TERMINAL_CAUSE_OPTIONS}
-          minWidth="180px"
-        />
-        <FilterSelect
-          id="commit-source-filter"
-          label="Commit Source"
-          value={filter.commit_source || FILTER_VALUE_ALL}
-          onChange={(value) =>
-            onFilterChange({
-              commit_source:
-                value === FILTER_VALUE_ALL
-                  ? undefined
-                  : (value as CommitSource),
-            })
-          }
-          options={COMMIT_SOURCE_OPTIONS}
-          minWidth="220px"
-        />
-        <FilterSelect
-          id="recovery-action-filter"
-          label="Recovery Action"
-          value={filter.recovery_action || FILTER_VALUE_ALL}
-          onChange={(value) =>
-            onFilterChange({
-              recovery_action:
-                value === FILTER_VALUE_ALL
-                  ? undefined
-                  : (value as RecoveryAction),
-            })
-          }
-          options={RECOVERY_ACTION_OPTIONS}
-          minWidth="190px"
-        />
-        <FilterSelect
-          id="api-type-filter"
-          label="API Type"
-          value={filter.api_type || ""}
-          onChange={(v) => onFilterChange({ api_type: v || undefined })}
-          options={[
-            { value: "", label: "All Types" },
-            ...API_TYPES_LIST.map((t) => ({ value: t, label: t })),
-          ]}
-        />
-        <FilterSelect
-          id="retries-filter"
-          label="Retries"
-          value={getRetriesFilterValue(filter)}
-          onChange={(v) => handleRetriesFilterChange(v, onFilterChange)}
-          options={[
-            { value: "", label: "All" },
-            { value: "has_retries", label: "Has Retries" },
-            { value: "no_retries", label: "No Retries" },
-            { value: "1+", label: "1+ Retries" },
-          ]}
-          minWidth="130px"
-        />
-        <FilterSelect
-          id="time-range-filter"
-          label="Time Range"
-          value={getCurrentDatePreset(filter)}
-          onChange={(v) => applyDatePreset(v, onFilterChange)}
-          options={DATE_PRESETS.map((p) => ({
-            value: p.value,
-            label: p.label,
-          }))}
-          minWidth="140px"
-        />
-        {isActive && (
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-transparent font-medium">
-              Clear
-            </label>
-            <button
-              onClick={onClear}
-              className="btn btn-secondary btn-sm flex items-center gap-1"
-            >
-              <span>✕</span>
-              Clear Filters
-            </button>
-          </div>
-        )}
       </div>
       {isActive && (
         <ActiveFiltersSummary
@@ -493,7 +684,6 @@ export function LogFilters({
     </div>
   );
 }
-
 interface ActiveFiltersSummaryProps {
   filter: LogFilter;
   providers: Provider[];
@@ -511,19 +701,57 @@ function ActiveFiltersSummary({
         <span className="text-text-muted">Active filters:</span>
         {filter.provider_id && (
           <FilterBadge
-            label={`Provider: ${providers.find((p) => p.id === filter.provider_id)?.name || filter.provider_id}`}
+            label={`Provider: ${providers.find((provider) => provider.id === filter.provider_id)?.name || filter.provider_id}`}
             onRemove={() => onFilterChange({ provider_id: undefined })}
           />
         )}
-        {filter.success !== undefined && (
+        {filter.semantics_version && (
           <FilterBadge
-            label={`Status: ${filter.success ? "Success" : "Failed"}`}
-            onRemove={() => onFilterChange({ success: undefined })}
+            label={`Semantics: ${getSemanticsVersionLabel(filter.semantics_version)}`}
+            onRemove={() => onFilterChange({ semantics_version: undefined })}
+          />
+        )}
+        {filter.service_outcome && (
+          <FilterBadge
+            label={`Service Outcome: ${getServiceOutcomeLabel(filter.service_outcome)}`}
+            onRemove={() => onFilterChange({ service_outcome: undefined })}
+          />
+        )}
+        {filter.client_action && (
+          <FilterBadge
+            label={`Client Action: ${getClientActionLabel(filter.client_action)}`}
+            onRemove={() => onFilterChange({ client_action: undefined })}
+          />
+        )}
+        {filter.termination_reason && (
+          <FilterBadge
+            label={`Termination Reason: ${getTerminationReasonLabel(filter.termination_reason)}`}
+            onRemove={() => onFilterChange({ termination_reason: undefined })}
+          />
+        )}
+        {filter.termination_actor && (
+          <FilterBadge
+            label={`Termination Actor: ${getTerminationActorLabel(filter.termination_actor)}`}
+            onRemove={() => onFilterChange({ termination_actor: undefined })}
+          />
+        )}
+        {filter.completion_state && (
+          <FilterBadge
+            label={`Completion: ${getCompletionStateLabel(filter.completion_state)}`}
+            onRemove={() => onFilterChange({ completion_state: undefined })}
+          />
+        )}
+        {filter.client_transport_status_code !== undefined && (
+          <FilterBadge
+            label={`Transport Code: ${filter.client_transport_status_code}`}
+            onRemove={() =>
+              onFilterChange({ client_transport_status_code: undefined })
+            }
           />
         )}
         {filter.session_committed !== undefined && (
           <FilterBadge
-            label={`Commit: ${filter.session_committed ? "Committed" : "Uncommitted"}`}
+            label={`Committed: ${filter.session_committed ? "Yes" : "No"}`}
             onRemove={() => onFilterChange({ session_committed: undefined })}
           />
         )}
@@ -533,38 +761,12 @@ function ActiveFiltersSummary({
             onRemove={() => onFilterChange({ client_visible: undefined })}
           />
         )}
-        {filter.sticky_written !== undefined && (
-          <FilterBadge
-            label={`Sticky Write: ${filter.sticky_written ? "Written" : "Not Written"}`}
-            onRemove={() => onFilterChange({ sticky_written: undefined })}
-          />
-        )}
-        {filter.probe_outcome && (
-          <FilterBadge
-            label={`Probe Outcome: ${getProbeOutcomeLabel(filter.probe_outcome)}`}
-            onRemove={() => onFilterChange({ probe_outcome: undefined })}
-          />
-        )}
-        {filter.terminal_cause && (
-          <FilterBadge
-            label={`Terminal Cause: ${getTerminalCauseLabel(filter.terminal_cause)}`}
-            onRemove={() => onFilterChange({ terminal_cause: undefined })}
-          />
-        )}
         {filter.commit_source && (
           <FilterBadge
             label={`Commit Source: ${getCommitSourceLabel(filter.commit_source)}`}
             onRemove={() => onFilterChange({ commit_source: undefined })}
           />
         )}
-        {filter.recovery_action && (
-          <FilterBadge
-            label={`Recovery Action: ${getRecoveryActionLabel(filter.recovery_action)}`}
-            onRemove={() => onFilterChange({ recovery_action: undefined })}
-          />
-        )}
-        {/* is_sse and is_websocket badges are coupled: "regular" sets both to false,
-            so removing one badge must clear both to avoid inconsistent filter state. */}
         {filter.is_sse !== undefined && (
           <FilterBadge
             label={`Type: ${filter.is_sse ? "SSE" : "Regular"}`}
@@ -583,7 +785,7 @@ function ActiveFiltersSummary({
         )}
         {filter.api_type && (
           <FilterBadge
-            label={`Type: ${filter.api_type}`}
+            label={`API Type: ${filter.api_type}`}
             onRemove={() => onFilterChange({ api_type: undefined })}
           />
         )}

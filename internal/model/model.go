@@ -188,38 +188,115 @@ type RuntimeConfig struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RequestLog represents a request log entry.
+// RequestSemanticsVersion makes the migration boundary explicit so historical rows
+// never masquerade as normalized assessments.
+type RequestSemanticsVersion string
+
+const (
+	RequestSemanticsVersionLegacyPreAssessment RequestSemanticsVersion = "legacy_pre_assessment"
+	RequestSemanticsVersionNormalizedV1        RequestSemanticsVersion = "normalized_v1"
+)
+
+// CompletionState records whether the request/session reached an explicit end.
+type CompletionState string
+
+const (
+	CompletionStateUnknown    CompletionState = "unknown"
+	CompletionStateIncomplete CompletionState = "incomplete"
+	CompletionStateCompleted  CompletionState = "completed"
+)
+
+// TerminationActor identifies who ended the request/session when diagnostic
+// attribution applies.
+type TerminationActor string
+
+const (
+	TerminationActorClient   TerminationActor = "client"
+	TerminationActorGateway  TerminationActor = "gateway"
+	TerminationActorUpstream TerminationActor = "upstream"
+	TerminationActorInternal TerminationActor = "internal"
+	TerminationActorUnknown  TerminationActor = "unknown"
+)
+
+// TerminationReason records the stable terminal reason vocabulary used by the
+// normalized assessment contract.
+type TerminationReason string
+
+const (
+	TerminationReasonProviderUnavailable             TerminationReason = "provider_unavailable"
+	TerminationReasonProviderConfigurationError      TerminationReason = "provider_configuration_error"
+	TerminationReasonUsageLimitReached               TerminationReason = "usage_limit_reached"
+	TerminationReasonWebSocketConnectionLimitReached TerminationReason = "websocket_connection_limit_reached"
+	TerminationReasonClientRequestError              TerminationReason = "client_request_error"
+	TerminationReasonClientDisconnect                TerminationReason = "client_disconnect"
+	TerminationReasonTransportError                  TerminationReason = "transport_error"
+	TerminationReasonUpstreamSemanticError           TerminationReason = "upstream_semantic_error"
+	TerminationReasonUpstreamHandshakeRejected       TerminationReason = "upstream_handshake_rejected"
+	TerminationReasonClientUpgradeRejected           TerminationReason = "client_upgrade_rejected"
+	TerminationReasonInternalError                   TerminationReason = "internal_error"
+	TerminationReasonCleanClose                      TerminationReason = "clean_close"
+	TerminationReasonUnknown                         TerminationReason = "unknown"
+)
+
+// ClientAction captures the client-facing recovery contract without overloading
+// the reporting dimension used for analytics and badges.
+type ClientAction string
+
+const (
+	ClientActionNone              ClientAction = "none"
+	ClientActionTransparentRetry  ClientAction = "transparent_retry"
+	ClientActionReconnectRequired ClientAction = "reconnect_required"
+)
+
+// ServiceOutcome is the only request/session outcome dimension used for
+// reporting across WebSocket, HTTP, and SSE rows.
+type ServiceOutcome string
+
+const (
+	ServiceOutcomeCompleted         ServiceOutcome = "completed"
+	ServiceOutcomeInterrupted       ServiceOutcome = "interrupted"
+	ServiceOutcomeNeverStarted      ServiceOutcome = "never_started"
+	ServiceOutcomeAbandonedByClient ServiceOutcome = "abandoned_by_client"
+	ServiceOutcomeUnknown           ServiceOutcome = "unknown"
+)
+
+// RequestLog represents the canonical request/session assessment record.
 type RequestLog struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement" json:"id"`
 	RequestID string `gorm:"index" json:"request_id"`
 	// ProviderID belongs to the final request/session outcome visible to the client.
-	ProviderID string `gorm:"index" json:"provider_id"`
-	APIType    string `json:"api_type"`
-	Model      string `json:"model"`
-	ClientIP   string `json:"client_ip"`
-	UserID     string `json:"user_id"`
-	StatusCode int    `json:"status_code"`
-	LatencyMs  int64  `json:"latency_ms"`
-	Success    bool   `json:"success"`
-	IsSSE      bool   `json:"is_sse"`
+	ProviderID       string                  `gorm:"index" json:"provider_id"`
+	APIType          string                  `json:"api_type"`
+	Model            string                  `json:"model"`
+	ClientIP         string                  `json:"client_ip"`
+	UserID           string                  `json:"user_id"`
+	SemanticsVersion RequestSemanticsVersion `gorm:"type:text;not null;default:normalized_v1;index" json:"semantics_version"`
+	// Normalized assessment fields stay nullable at the schema layer so legacy rows
+	// can remain explicit legacy data instead of being heuristically rewritten.
+	ClientTransportStatusCode *int               `gorm:"default:null" json:"client_transport_status_code"`
+	CompletionState           *CompletionState   `gorm:"type:text;default:null" json:"completion_state"`
+	ServiceOutcome            *ServiceOutcome    `gorm:"type:text;default:null;index" json:"service_outcome"`
+	TerminationActor          *TerminationActor  `gorm:"type:text;default:null" json:"termination_actor"`
+	TerminationReason         *TerminationReason `gorm:"type:text;default:null;index" json:"termination_reason"`
+	ClientAction              *ClientAction      `gorm:"type:text;default:null;index" json:"client_action"`
+	SessionEvidenceJSON       *string            `gorm:"type:text;default:null" json:"session_evidence_json"`
+	LatencyMs                 int64              `json:"latency_ms"`
+	IsSSE                     bool               `json:"is_sse"`
 	// Explicit column tag required: GORM's default snake_case produces "is_web_socket" (3 words),
 	// but all API layers (JSON, SQL queries, frontend) expect "is_websocket" (2 words).
-	IsWebSocket bool   `gorm:"column:is_websocket;default:false" json:"is_websocket"`
-	ErrorMsg    string `json:"error_msg"`
-	RetryCount  int    `json:"retry_count"`
-	IsSticky    bool   `json:"is_sticky"`
-	// WebSocket lifecycle fields stay nullable so regular HTTP/SSE rows cannot
-	// masquerade as "not written" or "unknown" WebSocket outcomes.
-	StickyWritten    *bool `gorm:"default:null" json:"sticky_written"`
+	IsWebSocket bool `gorm:"column:is_websocket;default:false" json:"is_websocket"`
+	RetryCount  int  `json:"retry_count"`
+	IsSticky    bool `json:"is_sticky"`
+	// WebSocket lifecycle facts stay nullable so regular HTTP/SSE rows cannot
+	// masquerade as concrete WebSocket end-state evidence.
 	SessionCommitted *bool `gorm:"default:null" json:"session_committed"`
 	// ClientVisible stays explicit because the failover boundary diverges from
 	// commitment; collapsing them would make post-visible reconnect diagnostics lie.
-	ClientVisible  *bool                  `gorm:"default:null" json:"client_visible"`
-	ProbeOutcome   *WebSocketProbeOutcome `gorm:"type:text;default:null" json:"probe_outcome"`
-	TerminalCause  *TerminalCause         `gorm:"type:text;default:null" json:"terminal_cause"`
-	CommitSource   *CommitSource          `gorm:"type:text;default:null" json:"commit_source"`
-	RecoveryAction *RecoveryAction        `gorm:"type:text;default:null" json:"recovery_action"`
-	CreatedAt      time.Time              `gorm:"index" json:"created_at"`
+	ClientVisible *bool `gorm:"default:null" json:"client_visible"`
+	// CommitSource stays explicit because commitment alone does not explain which
+	// orthogonal boundary anchored the persisted session lifecycle.
+	CommitSource *CommitSource `gorm:"type:text;default:null" json:"commit_source"`
+	CreatedAt    time.Time     `gorm:"index" json:"created_at"`
 	// Phase 1 diagnostic fields (P0)
 	RequestPath     string `gorm:"default:''" json:"request_path"`      // Relative path like /v1/messages (without base_url)
 	RequestMethod   string `gorm:"default:''" json:"request_method"`    // HTTP method: GET/POST/PUT/DELETE
@@ -289,7 +366,10 @@ type RequestAttempt struct {
 	RequestID string `gorm:"index" json:"request_id"`
 	// ProviderID identifies the provider used for this individual attempt only.
 	ProviderID string `json:"provider_id"`
-	Attempt    int    `json:"attempt"`
+	// SemanticsVersion stays explicit on attempt rows so replaced-attempt evidence
+	// keeps the same cutover boundary as the final request assessment.
+	SemanticsVersion RequestSemanticsVersion `gorm:"type:text;not null;default:normalized_v1;index" json:"semantics_version"`
+	Attempt          int                     `json:"attempt"`
 	// SwitchMode records how this provider attempt was entered; switch_reason stays
 	// focused on why execution left an attempt.
 	SwitchMode          RequestAttemptSwitchMode `gorm:"type:text;default:''" json:"switch_mode,omitempty"`
@@ -301,6 +381,7 @@ type RequestAttempt struct {
 	Phase                      *RequestAttemptPhase   `gorm:"type:text;default:null" json:"phase,omitempty"`
 	Outcome                    *RequestAttemptOutcome `gorm:"type:text;default:null" json:"outcome,omitempty"`
 	ResultVisibleToClient      *bool                  `gorm:"default:null" json:"result_visible_to_client,omitempty"`
+	AttemptEvidenceJSON        *string                `gorm:"type:text;default:null" json:"attempt_evidence_json"`
 	BodySnippet                string                 `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
 	ReqBodySnippet             string                 `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
 	LatencyMs                  int64                  `json:"latency_ms"`
@@ -313,40 +394,38 @@ type RequestAttempt struct {
 
 // LogFilter represents filter and sort parameters for log queries.
 type LogFilter struct {
-	ProviderID       string                // Filter by provider ID
-	APIType          string                // Filter by API type (claude/codex/gemini/custom:*)
-	Success          *bool                 // Filter by success/failure (nil = no filter)
-	IsSSE            *bool                 // Filter by SSE/regular request (nil = no filter)
-	IsWebSocket      *bool                 // Filter by WebSocket/regular request (nil = no filter)
-	StickyWritten    *bool                 // Filter by sticky cache write-side effect on WebSocket rows (nil = no filter)
-	SessionCommitted *bool                 // Filter by known commitment state on WebSocket rows (nil = no filter; NULL rows stay excluded)
-	ClientVisible    *bool                 // Filter by the explicit visibility boundary on WebSocket rows (nil = no filter; NULL rows stay excluded)
-	ProbeOutcome     WebSocketProbeOutcome // Filter by explicit probe outcome on WebSocket rows (empty = no filter)
-	TerminalCause    TerminalCause         // Filter by explicit terminal cause on WebSocket rows (empty = no filter)
-	CommitSource     CommitSource          // Filter by explicit commit source on WebSocket rows (empty = no filter)
-	RecoveryAction   RecoveryAction        // Filter by explicit session-level recovery action on WebSocket rows (empty = no filter)
-	UserID           string                // Filter by user ID
-	StartTime        *time.Time            // Filter by start time (inclusive)
-	EndTime          *time.Time            // Filter by end time (exclusive)
-	MinLatency       *int64                // Filter by minimum latency in ms
-	MinRetryCount    *int                  // Filter by minimum retry count (e.g., 1 for "has retries")
-	HasRetries       *bool                 // Filter by has retries (true = retry_count > 0, false = retry_count = 0)
-	SortBy           string                // Sort field: "created_at" or "latency_ms"
-	SortOrder        string                // Sort direction: "asc" or "desc"
-	Limit            int                   // Maximum number of results
-	Offset           int                   // Offset for pagination
+	ProviderID                string // Filter by provider ID
+	APIType                   string // Filter by API type (claude/codex/gemini/custom:*)
+	SemanticsVersion          RequestSemanticsVersion
+	CompletionState           CompletionState
+	ServiceOutcome            ServiceOutcome
+	ClientAction              ClientAction
+	TerminationActor          TerminationActor
+	TerminationReason         TerminationReason
+	ClientTransportStatusCode *int
+	IsSSE                     *bool        // Filter by SSE/regular request (nil = no filter)
+	IsWebSocket               *bool        // Filter by WebSocket/regular request (nil = no filter)
+	SessionCommitted          *bool        // Filter by known commitment state on WebSocket rows (nil = no filter; NULL rows stay excluded)
+	ClientVisible             *bool        // Filter by the explicit visibility boundary on WebSocket rows (nil = no filter; NULL rows stay excluded)
+	CommitSource              CommitSource // Filter by explicit commit source on WebSocket rows (empty = no filter)
+	UserID                    string       // Filter by user ID
+	StartTime                 *time.Time   // Filter by start time (inclusive)
+	EndTime                   *time.Time   // Filter by end time (exclusive)
+	MinLatency                *int64       // Filter by minimum latency in ms
+	MinRetryCount             *int         // Filter by minimum retry count (e.g., 1 for "has retries")
+	HasRetries                *bool        // Filter by has retries (true = retry_count > 0, false = retry_count = 0)
+	SortBy                    string       // Sort field: "created_at" or "latency_ms"
+	SortOrder                 string       // Sort direction: "asc" or "desc"
+	Limit                     int          // Maximum number of results
+	Offset                    int          // Offset for pagination
 }
 
 // HasWebSocketLifecycleFilter centralizes the rule that lifecycle predicates only
 // make sense for WebSocket rows, so query builders and test doubles stay aligned.
 func (f LogFilter) HasWebSocketLifecycleFilter() bool {
-	return f.StickyWritten != nil ||
-		f.SessionCommitted != nil ||
+	return f.SessionCommitted != nil ||
 		f.ClientVisible != nil ||
-		f.ProbeOutcome != "" ||
-		f.TerminalCause != "" ||
-		f.CommitSource != "" ||
-		f.RecoveryAction != ""
+		f.CommitSource != ""
 }
 
 // StickyKey represents the cache key for sticky session.
@@ -413,30 +492,25 @@ type ErrorResponse struct {
 
 // LogStats represents aggregated statistics from request logs.
 type LogStats struct {
-	TotalRequests int64              // Total number of requests
-	SuccessCount  int64              // Number of successful requests
-	FailCount     int64              // Number of failed requests
-	SuccessRate   float64            // Success rate (0.0 to 1.0)
-	AvgLatencyMs  int64              // Average latency in milliseconds
-	ByAPIType     map[string]int64   // Request count by API type
-	ByProvider    []ProviderLogStats // Request statistics by provider
-	EarliestLog   time.Time          // Earliest log timestamp (for "all" period)
+	TotalRequests int64                    // Total number of normalized requests
+	AvgLatencyMs  int64                    // Average latency in milliseconds
+	OutcomeCounts map[ServiceOutcome]int64 // Request count by normalized service outcome
+	ByAPIType     map[string]int64         // Request count by API type
+	ByProvider    []ProviderLogStats       // Request statistics by provider
+	EarliestLog   time.Time                // Earliest normalized log timestamp (for "all" period)
 }
 
 // ProviderLogStats represents log statistics for a single provider.
 type ProviderLogStats struct {
-	ProviderID   string  // Provider ID
-	Count        int64   // Total request count
-	SuccessCount int64   // Successful request count
-	SuccessRate  float64 // Success rate (0.0 to 1.0)
+	ProviderID    string                   // Provider ID
+	Count         int64                    // Total request count
+	OutcomeCounts map[ServiceOutcome]int64 // Request count by normalized service outcome
 }
 
 // TimeSeriesPoint represents a single data point in a time series.
 type TimeSeriesPoint struct {
-	Time         time.Time `json:"time"`
-	Requests     int64     `json:"requests"`
-	SuccessCount int64     `json:"success_count"`
-	FailCount    int64     `json:"fail_count"`
-	SuccessRate  float64   `json:"success_rate"`
-	AvgLatencyMs int64     `json:"avg_latency_ms"`
+	Time          time.Time                `json:"time"`
+	Requests      int64                    `json:"total_requests"`
+	AvgLatencyMs  int64                    `json:"avg_latency_ms"`
+	OutcomeCounts map[ServiceOutcome]int64 `json:"outcome_counts"`
 }

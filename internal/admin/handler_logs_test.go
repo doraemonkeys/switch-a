@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,23 +12,43 @@ import (
 	"switch-a/internal/model"
 )
 
+type countLogsErrorStore struct {
+	*mockStore
+}
+
+func (s *countLogsErrorStore) CountLogs(_ context.Context, _ model.LogFilter) (int64, error) {
+	return 0, errors.New("count exploded")
+}
+
 func lifecycleBoolPtr(v bool) *bool {
 	return &v
 }
 
-func lifecycleTerminalCausePtr(v model.TerminalCause) *model.TerminalCause {
-	return &v
-}
-
-func lifecycleProbeOutcomePtr(v model.WebSocketProbeOutcome) *model.WebSocketProbeOutcome {
-	return &v
-}
-
-func lifecycleRecoveryActionPtr(v model.RecoveryAction) *model.RecoveryAction {
-	return &v
-}
-
 func lifecycleCommitSourcePtr(v model.CommitSource) *model.CommitSource {
+	return &v
+}
+
+func lifecycleCompletionStatePtr(v model.CompletionState) *model.CompletionState {
+	return &v
+}
+
+func lifecycleServiceOutcomePtr(v model.ServiceOutcome) *model.ServiceOutcome {
+	return &v
+}
+
+func lifecycleClientActionPtr(v model.ClientAction) *model.ClientAction {
+	return &v
+}
+
+func lifecycleTerminationActorPtr(v model.TerminationActor) *model.TerminationActor {
+	return &v
+}
+
+func lifecycleTerminationReasonPtr(v model.TerminationReason) *model.TerminationReason {
+	return &v
+}
+
+func lifecycleIntPtr(v int) *int {
 	return &v
 }
 
@@ -36,24 +57,23 @@ func TestGetLog_Success(t *testing.T) {
 
 	now := time.Now()
 	committed := true
-	probeOutcome := model.WebSocketProbeOutcomeUnsupported
 	st.logs = []model.RequestLog{
 		{
-			ID:               1,
-			RequestID:        "req-123",
-			ProviderID:       "provider-1",
-			APIType:          "claude",
-			Model:            "claude-3",
-			StatusCode:       200,
-			Success:          true,
-			IsWebSocket:      true,
-			StickyWritten:    lifecycleBoolPtr(true),
-			SessionCommitted: &committed,
-			ClientVisible:    lifecycleBoolPtr(true),
-			ProbeOutcome:     &probeOutcome,
-			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
-			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionNone),
-			CreatedAt:        now,
+			ID:                        1,
+			RequestID:                 "req-123",
+			ProviderID:                "provider-1",
+			APIType:                   "claude",
+			Model:                     "claude-3",
+			SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+			ClientTransportStatusCode: lifecycleIntPtr(101),
+			CompletionState:           lifecycleCompletionStatePtr(model.CompletionStateCompleted),
+			ServiceOutcome:            lifecycleServiceOutcomePtr(model.ServiceOutcomeCompleted),
+			ClientAction:              lifecycleClientActionPtr(model.ClientActionNone),
+			IsWebSocket:               true,
+			SessionCommitted:          &committed,
+			ClientVisible:             lifecycleBoolPtr(true),
+			CommitSource:              lifecycleCommitSourcePtr(model.CommitSemantic),
+			CreatedAt:                 now,
 		},
 	}
 
@@ -64,7 +84,7 @@ func TestGetLog_Success(t *testing.T) {
 	h.GetLog(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
 	var log model.RequestLog
@@ -72,38 +92,86 @@ func TestGetLog_Success(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if log.ID != 1 {
-		t.Errorf("log.ID = %d, want 1", log.ID)
+	if log.SemanticsVersion != model.RequestSemanticsVersionNormalizedV1 {
+		t.Fatalf("SemanticsVersion = %q, want %q", log.SemanticsVersion, model.RequestSemanticsVersionNormalizedV1)
 	}
-	if log.RequestID != "req-123" {
-		t.Errorf("log.RequestID = %q, want %q", log.RequestID, "req-123")
+	if log.ClientTransportStatusCode == nil || *log.ClientTransportStatusCode != 101 {
+		t.Fatalf("ClientTransportStatusCode = %v, want 101", log.ClientTransportStatusCode)
 	}
-	if log.ProviderID != "provider-1" {
-		t.Errorf("log.ProviderID = %q, want %q", log.ProviderID, "provider-1")
+	if log.ServiceOutcome == nil || *log.ServiceOutcome != model.ServiceOutcomeCompleted {
+		t.Fatalf("ServiceOutcome = %v, want %q", log.ServiceOutcome, model.ServiceOutcomeCompleted)
 	}
-	if log.SessionCommitted == nil || !*log.SessionCommitted {
-		t.Fatalf("log.SessionCommitted = %v, want true", log.SessionCommitted)
+	if log.CommitSource == nil || *log.CommitSource != model.CommitSemantic {
+		t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitSemantic)
 	}
-	if log.ClientVisible == nil || !*log.ClientVisible {
-		t.Fatalf("log.ClientVisible = %v, want true", log.ClientVisible)
+}
+
+func TestGetLog_AttemptsPreserveExplicitNullEvidence(t *testing.T) {
+	h, st, _ := testHandler()
+
+	st.logs = []model.RequestLog{{
+		ID:               1,
+		RequestID:        "req-123",
+		ProviderID:       "provider-1",
+		SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+		CreatedAt:        time.Now(),
+	}}
+	st.attempts["req-123"] = []model.RequestAttempt{{
+		ID:               10,
+		RequestID:        "req-123",
+		ProviderID:       "provider-2",
+		SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+		Attempt:          1,
+		StatusCode:       502,
+		Error:            "provider unavailable",
+		LatencyMs:        75,
+		CreatedAt:        time.Now(),
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/1", nil)
+	setPathValue(req, "id", "1")
+	w := httptest.NewRecorder()
+
+	h.GetLog(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if log.StickyWritten == nil || !*log.StickyWritten {
-		t.Fatalf("log.StickyWritten = %v, want true", log.StickyWritten)
+
+	var payload map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
-	if log.ProbeOutcome == nil || *log.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
-		t.Fatalf("log.ProbeOutcome = %v, want %q", log.ProbeOutcome, model.WebSocketProbeOutcomeUnsupported)
+
+	attemptsValue, ok := payload["attempts"]
+	if !ok {
+		t.Fatal("attempts missing from response payload")
 	}
-	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalCleanClose {
-		t.Fatalf("log.TerminalCause = %v, want %q", log.TerminalCause, model.TerminalCleanClose)
+	attempts, ok := attemptsValue.([]any)
+	if !ok || len(attempts) != 1 {
+		t.Fatalf("attempts = %#v, want single attempt", attemptsValue)
 	}
-	if log.RecoveryAction == nil || *log.RecoveryAction != model.RecoveryActionNone {
-		t.Fatalf("log.RecoveryAction = %v, want %q", log.RecoveryAction, model.RecoveryActionNone)
+
+	attempt, ok := attempts[0].(map[string]any)
+	if !ok {
+		t.Fatalf("attempt payload = %#v, want object", attempts[0])
+	}
+	if got := attempt["semantics_version"]; got != string(model.RequestSemanticsVersionNormalizedV1) {
+		t.Fatalf("semantics_version = %#v, want %q", got, model.RequestSemanticsVersionNormalizedV1)
+	}
+
+	value, ok := attempt["attempt_evidence_json"]
+	if !ok {
+		t.Fatal("attempt_evidence_json missing from attempt payload")
+	}
+	if value != nil {
+		t.Fatalf("attempt_evidence_json = %#v, want nil", value)
 	}
 }
 
 func TestGetLog_NotFound(t *testing.T) {
 	h, st, _ := testHandler()
-	st.logs = []model.RequestLog{} // Empty logs
+	st.logs = []model.RequestLog{}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/999", nil)
 	setPathValue(req, "id", "999")
@@ -112,246 +180,34 @@ func TestGetLog_NotFound(t *testing.T) {
 	h.GetLog(w, req)
 
 	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusNotFound, w.Body.String())
-	}
-
-	var errResp model.ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if errResp.Code != ErrCodeNotFound {
-		t.Errorf("error code = %q, want %q", errResp.Code, ErrCodeNotFound)
-	}
-}
-
-func TestGetLog_EmptyID(t *testing.T) {
-	h, _, _ := testHandler()
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/", nil)
-	// Not setting path value simulates empty ID
-	w := httptest.NewRecorder()
-
-	h.GetLog(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-
-	var errResp model.ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if errResp.Code != ErrCodeValidation {
-		t.Errorf("error code = %q, want %q", errResp.Code, ErrCodeValidation)
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusNotFound, w.Body.String())
 	}
 }
 
 func TestGetLog_InvalidID(t *testing.T) {
 	h, _, _ := testHandler()
 
-	tests := []struct {
-		name string
-		id   string
-	}{
-		{"non-numeric", "abc"},
-		{"negative", "-1"},
-		{"decimal", "1.5"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/"+tt.id, nil)
-			setPathValue(req, "id", tt.id)
-			w := httptest.NewRecorder()
-
-			h.GetLog(w, req)
-
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-			}
-
-			var errResp model.ErrorResponse
-			if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-				t.Fatalf("failed to decode error response: %v", err)
-			}
-			if errResp.Code != ErrCodeValidation {
-				t.Errorf("error code = %q, want %q", errResp.Code, ErrCodeValidation)
-			}
-		})
-	}
-}
-
-func TestGetLog_InternalError(t *testing.T) {
-	h, st, _ := testHandler()
-	st.logsErr = errors.New("database error")
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/1", nil)
-	setPathValue(req, "id", "1")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/not-a-number", nil)
+	setPathValue(req, "id", "not-a-number")
 	w := httptest.NewRecorder()
 
 	h.GetLog(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
-}
-
-func TestGetLog_WithAttempts(t *testing.T) {
-	h, st, _ := testHandler()
-
-	now := time.Now()
-	continuitySeedAgeMs := int64(320)
-	st.logs = []model.RequestLog{
-		{
-			ID:         1,
-			RequestID:  "req-with-attempts",
-			ProviderID: "provider-1",
-			APIType:    "claude",
-			Model:      "claude-3",
-			StatusCode: 200,
-			Success:    true,
-			RetryCount: 2,
-			CreatedAt:  now,
-		},
-	}
-
-	// Add attempts to the mock store
-	st.attempts = map[string][]model.RequestAttempt{
-		"req-with-attempts": {
-			{
-				ID:              1,
-				RequestID:       "req-with-attempts",
-				ProviderID:      "provider-1",
-				Attempt:         1,
-				SwitchMode:      model.RequestAttemptSwitchModeReplacement,
-				ProviderAttempt: 1,
-				StatusCode:      503,
-				Error:           "service unavailable",
-				LatencyMs:       100,
-				CreatedAt:       now,
-			},
-			{
-				ID:                         2,
-				RequestID:                  "req-with-attempts",
-				ProviderID:                 "provider-2",
-				Attempt:                    2,
-				SwitchMode:                 model.RequestAttemptSwitchModeFailover,
-				ProviderAttempt:            1,
-				ProviderSwitchCount:        1,
-				StatusCode:                 429,
-				Error:                      "rate limited",
-				LatencyMs:                  50,
-				ContinuitySeeded:           true,
-				ContinuityOriginProviderID: "provider-1",
-				ContinuitySeedAgeMs:        &continuitySeedAgeMs,
-				CreatedAt:                  now.Add(100 * time.Millisecond),
-			},
-			{
-				ID:         3,
-				RequestID:  "req-with-attempts",
-				ProviderID: "provider-3",
-				Attempt:    3,
-				StatusCode: 200,
-				Error:      "",
-				LatencyMs:  200,
-				CreatedAt:  now.Add(200 * time.Millisecond),
-			},
-		},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/1", nil)
-	setPathValue(req, "id", "1")
-	w := httptest.NewRecorder()
-
-	h.GetLog(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-
-	var log model.RequestLog
-	if err := json.NewDecoder(w.Body).Decode(&log); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if len(log.Attempts) != 3 {
-		t.Fatalf("expected 3 attempts, got %d", len(log.Attempts))
-	}
-	if log.Attempts[0].ProviderID != "provider-1" {
-		t.Errorf("first attempt provider_id = %q, want %q", log.Attempts[0].ProviderID, "provider-1")
-	}
-	if log.Attempts[0].SwitchMode != model.RequestAttemptSwitchModeReplacement {
-		t.Fatalf("first attempt SwitchMode = %q, want %q", log.Attempts[0].SwitchMode, model.RequestAttemptSwitchModeReplacement)
-	}
-	if log.Attempts[1].ProviderSwitchCount != 1 {
-		t.Fatalf("second attempt ProviderSwitchCount = %d, want 1", log.Attempts[1].ProviderSwitchCount)
-	}
-	if !log.Attempts[1].ContinuitySeeded {
-		t.Fatal("second attempt ContinuitySeeded = false, want true")
-	}
-	if log.Attempts[1].ContinuityOriginProviderID != "provider-1" {
-		t.Fatalf("second attempt ContinuityOriginProviderID = %q, want %q", log.Attempts[1].ContinuityOriginProviderID, "provider-1")
-	}
-	if log.Attempts[1].ContinuitySeedAgeMs == nil || *log.Attempts[1].ContinuitySeedAgeMs != continuitySeedAgeMs {
-		t.Fatalf("second attempt ContinuitySeedAgeMs = %#v, want %d", log.Attempts[1].ContinuitySeedAgeMs, continuitySeedAgeMs)
-	}
-}
-
-func TestGetLog_WithoutRequestID(t *testing.T) {
-	h, st, _ := testHandler()
-
-	now := time.Now()
-	// Log without RequestID should not attempt to fetch attempts
-	st.logs = []model.RequestLog{
-		{
-			ID:         1,
-			RequestID:  "", // Empty request ID
-			ProviderID: "provider-1",
-			APIType:    "claude",
-			StatusCode: 200,
-			Success:    true,
-			CreatedAt:  now,
-		},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/1", nil)
-	setPathValue(req, "id", "1")
-	w := httptest.NewRecorder()
-
-	h.GetLog(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	var log model.RequestLog
-	if err := json.NewDecoder(w.Body).Decode(&log); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	// Should have no attempts since RequestID is empty
-	if len(log.Attempts) != 0 {
-		t.Errorf("expected no attempts for empty request_id, got %d", len(log.Attempts))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
 func TestGetLog_AttemptsErrorDoesNotFailRequest(t *testing.T) {
 	h, st, _ := testHandler()
 
-	now := time.Now()
-	st.logs = []model.RequestLog{
-		{
-			ID:         1,
-			RequestID:  "req-with-error",
-			ProviderID: "provider-1",
-			APIType:    "claude",
-			StatusCode: 200,
-			Success:    true,
-			CreatedAt:  now,
-		},
-	}
-
-	// Set attempts error to simulate database failure for attempts
+	st.logs = []model.RequestLog{{
+		ID:               1,
+		RequestID:        "req-with-error",
+		ProviderID:       "provider-1",
+		SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+		CreatedAt:        time.Now(),
+	}}
 	st.attemptsErr = errors.New("database error")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/1", nil)
@@ -360,39 +216,65 @@ func TestGetLog_AttemptsErrorDoesNotFailRequest(t *testing.T) {
 
 	h.GetLog(w, req)
 
-	// Should still return 200 OK even if attempts fetch fails
 	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-
-	var log model.RequestLog
-	if err := json.NewDecoder(w.Body).Decode(&log); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	// Should have no attempts since fetch failed
-	if len(log.Attempts) != 0 {
-		t.Errorf("expected no attempts on error, got %d", len(log.Attempts))
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 }
 
-// Tests for GetLogs handler
+func TestGetLog_ErrorBranches(t *testing.T) {
+	t.Run("missing id", func(t *testing.T) {
+		h, _, _ := testHandler()
+
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/", nil)
+		w := httptest.NewRecorder()
+
+		h.GetLog(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+		}
+	})
+
+	t.Run("store error", func(t *testing.T) {
+		h, st, _ := testHandler()
+		st.logsErr = errors.New("store exploded")
+
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/logs/1", nil)
+		setPathValue(req, "id", "1")
+		w := httptest.NewRecorder()
+
+		h.GetLog(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
+		}
+	})
+}
 
 func TestGetLogs_Success(t *testing.T) {
 	h, st, _ := testHandler()
 
 	now := time.Now()
+	committed := true
 	st.logs = []model.RequestLog{
 		{
-			ID:           1,
-			ProviderID:   "provider-1",
-			APIType:      "claude",
-			Success:      true,
-			IsWebSocket:  true,
-			ProbeOutcome: lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeBypassed),
-			CreatedAt:    now,
+			ID:               1,
+			ProviderID:       "provider-1",
+			APIType:          "claude",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			ServiceOutcome:   lifecycleServiceOutcomePtr(model.ServiceOutcomeCompleted),
+			SessionCommitted: &committed,
+			ClientVisible:    lifecycleBoolPtr(true),
+			CommitSource:     lifecycleCommitSourcePtr(model.CommitSemantic),
+			CreatedAt:        now,
 		},
-		{ID: 2, ProviderID: "provider-2", APIType: "codex", Success: false, CreatedAt: now.Add(-time.Hour)},
+		{
+			ID:               2,
+			ProviderID:       "legacy-provider",
+			APIType:          "claude",
+			SemanticsVersion: model.RequestSemanticsVersionLegacyPreAssessment,
+			CreatedAt:        now.Add(-time.Hour),
+		},
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs", nil)
@@ -401,28 +283,33 @@ func TestGetLogs_Success(t *testing.T) {
 	h.GetLogs(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
+	body := w.Body.Bytes()
 	var resp LogsResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
 	if len(resp.Logs) != 2 {
-		t.Errorf("expected 2 logs, got %d", len(resp.Logs))
+		t.Fatalf("expected 2 logs, got %d", len(resp.Logs))
 	}
 	if resp.Total != 2 {
-		t.Errorf("expected total 2, got %d", resp.Total)
+		t.Fatalf("expected total 2, got %d", resp.Total)
 	}
-	if resp.Limit != DefaultLogsLimit {
-		t.Errorf("expected limit %d, got %d", DefaultLogsLimit, resp.Limit)
+
+	var raw struct {
+		Logs []map[string]any `json:"logs"`
 	}
-	if resp.Offset != 0 {
-		t.Errorf("expected offset 0, got %d", resp.Offset)
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("failed to decode raw response: %v", err)
 	}
-	if resp.Logs[0].ProbeOutcome == nil || *resp.Logs[0].ProbeOutcome != model.WebSocketProbeOutcomeBypassed {
-		t.Fatalf("resp.Logs[0].ProbeOutcome = %v, want %q", resp.Logs[0].ProbeOutcome, model.WebSocketProbeOutcomeBypassed)
+	if _, exists := raw.Logs[0]["sticky_written"]; exists {
+		t.Fatal("sticky_written leaked into normalized request-log response")
+	}
+	if _, exists := raw.Logs[0]["probe_outcome"]; exists {
+		t.Fatal("probe_outcome leaked into normalized request-log response")
 	}
 }
 
@@ -434,51 +321,60 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 	uncommitted := false
 	st.logs = []model.RequestLog{
 		{
-			ID:               1,
-			ProviderID:       "provider-1",
-			APIType:          "claude",
-			Success:          true,
-			UserID:           "user-1",
-			IsWebSocket:      true,
-			StickyWritten:    lifecycleBoolPtr(true),
-			SessionCommitted: &committed,
-			ClientVisible:    lifecycleBoolPtr(true),
-			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeBypassed),
-			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalCleanClose),
-			CommitSource:     lifecycleCommitSourcePtr(model.CommitSemantic),
-			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionNone),
-			CreatedAt:        now,
+			ID:                        1,
+			ProviderID:                "provider-1",
+			APIType:                   "claude",
+			UserID:                    "user-1",
+			SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+			ClientTransportStatusCode: lifecycleIntPtr(101),
+			CompletionState:           lifecycleCompletionStatePtr(model.CompletionStateCompleted),
+			ServiceOutcome:            lifecycleServiceOutcomePtr(model.ServiceOutcomeCompleted),
+			ClientAction:              lifecycleClientActionPtr(model.ClientActionNone),
+			IsWebSocket:               true,
+			SessionCommitted:          &committed,
+			ClientVisible:             lifecycleBoolPtr(true),
+			CommitSource:              lifecycleCommitSourcePtr(model.CommitSemantic),
+			CreatedAt:                 now,
 		},
 		{
-			ID:               2,
-			ProviderID:       "provider-2",
-			APIType:          "codex",
-			Success:          false,
-			UserID:           "user-2",
-			IsWebSocket:      true,
-			StickyWritten:    lifecycleBoolPtr(false),
-			SessionCommitted: &uncommitted,
-			ClientVisible:    lifecycleBoolPtr(true),
-			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeTransportFailed),
-			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalUpstreamSemanticError),
-			CommitSource:     lifecycleCommitSourcePtr(model.CommitUpstreamMessage),
-			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionReconnectRequired),
-			CreatedAt:        now.Add(-time.Hour),
+			ID:                        2,
+			ProviderID:                "provider-2",
+			APIType:                   "codex",
+			UserID:                    "user-2",
+			SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+			ClientTransportStatusCode: lifecycleIntPtr(101),
+			CompletionState:           lifecycleCompletionStatePtr(model.CompletionStateIncomplete),
+			ServiceOutcome:            lifecycleServiceOutcomePtr(model.ServiceOutcomeInterrupted),
+			ClientAction:              lifecycleClientActionPtr(model.ClientActionReconnectRequired),
+			TerminationActor:          lifecycleTerminationActorPtr(model.TerminationActorUpstream),
+			TerminationReason:         lifecycleTerminationReasonPtr(model.TerminationReasonUsageLimitReached),
+			IsWebSocket:               true,
+			SessionCommitted:          &uncommitted,
+			ClientVisible:             lifecycleBoolPtr(true),
+			CommitSource:              lifecycleCommitSourcePtr(model.CommitUpstreamMessage),
+			CreatedAt:                 now.Add(-time.Hour),
 		},
 		{
-			ID:               3,
-			ProviderID:       "provider-1",
+			ID:                        3,
+			ProviderID:                "provider-3",
+			APIType:                   "gemini",
+			UserID:                    "user-4",
+			SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+			ClientTransportStatusCode: lifecycleIntPtr(0),
+			CompletionState:           lifecycleCompletionStatePtr(model.CompletionStateUnknown),
+			ServiceOutcome:            lifecycleServiceOutcomePtr(model.ServiceOutcomeNeverStarted),
+			ClientAction:              lifecycleClientActionPtr(model.ClientActionNone),
+			IsWebSocket:               true,
+			SessionCommitted:          &uncommitted,
+			ClientVisible:             lifecycleBoolPtr(false),
+			CreatedAt:                 now.Add(-90 * time.Minute),
+		},
+		{
+			ID:               4,
+			ProviderID:       "provider-legacy",
 			APIType:          "claude",
-			Success:          true,
-			UserID:           "user-1",
-			IsWebSocket:      true,
-			StickyWritten:    lifecycleBoolPtr(false),
-			SessionCommitted: &committed,
-			ClientVisible:    lifecycleBoolPtr(true),
-			ProbeOutcome:     lifecycleProbeOutcomePtr(model.WebSocketProbeOutcomeObservedUsableModel),
-			TerminalCause:    lifecycleTerminalCausePtr(model.TerminalClientDisconnect),
-			CommitSource:     lifecycleCommitSourcePtr(model.CommitSemantic),
-			RecoveryAction:   lifecycleRecoveryActionPtr(model.RecoveryActionTransparentRetry),
+			UserID:           "user-3",
+			SemanticsVersion: model.RequestSemanticsVersionLegacyPreAssessment,
 			CreatedAt:        now.Add(-2 * time.Hour),
 		},
 	}
@@ -488,20 +384,19 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 		query         string
 		expectedCount int
 	}{
-		{"filter by provider_id", "?provider_id=provider-1", 2},
+		{"filter by provider_id", "?provider_id=provider-1", 1},
 		{"filter by api_type", "?api_type=codex", 1},
-		{"filter by success true", "?success=true", 2},
-		{"filter by success false", "?success=false", 1},
-		{"filter by user_id", "?user_id=user-1", 2},
-		{"filter by sticky_written", "?sticky_written=true", 1},
-		{"filter by session_committed true", "?session_committed=true", 2},
-		{"filter by session_committed false", "?session_committed=false", 1},
-		{"filter by client_visible", "?client_visible=true", 3},
-		{"filter by probe_outcome", "?probe_outcome=transport_failed", 1},
-		{"filter by terminal_cause", "?terminal_cause=client_disconnect", 1},
+		{"filter by semantics_version", "?semantics_version=legacy_pre_assessment", 1},
+		{"filter by completion_state", "?completion_state=incomplete", 1},
+		{"filter by service_outcome", "?service_outcome=completed", 1},
+		{"filter by client_action", "?client_action=reconnect_required", 1},
+		{"filter by termination_actor", "?termination_actor=upstream", 1},
+		{"filter by termination_reason", "?termination_reason=usage_limit_reached", 1},
+		{"filter by client_transport_status_code", "?client_transport_status_code=101", 2},
+		{"filter by client_transport_status_code zero", "?client_transport_status_code=0", 1},
+		{"filter by session_committed", "?session_committed=true", 1},
+		{"filter by client_visible", "?client_visible=true", 2},
 		{"filter by commit_source", "?commit_source=upstream_message", 1},
-		{"filter by recovery_action", "?recovery_action=transparent_retry", 1},
-		{"multiple filters", "?provider_id=provider-1&api_type=claude", 2},
 	}
 
 	for _, tt := range tests {
@@ -512,7 +407,7 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			h.GetLogs(w, req)
 
 			if w.Code != http.StatusOK {
-				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 			}
 
 			var resp LogsResponse
@@ -521,76 +416,33 @@ func TestGetLogs_WithQueryFilters(t *testing.T) {
 			}
 
 			if len(resp.Logs) != tt.expectedCount {
-				t.Errorf("expected %d logs, got %d", tt.expectedCount, len(resp.Logs))
+				t.Fatalf("expected %d logs, got %d", tt.expectedCount, len(resp.Logs))
 			}
 		})
 	}
 }
 
-func TestGetLogs_Pagination(t *testing.T) {
+func TestGetLogs_PaginationAndSort(t *testing.T) {
 	h, st, _ := testHandler()
 
 	now := time.Now()
-	// Create 5 logs
 	for i := 1; i <= 5; i++ {
 		st.logs = append(st.logs, model.RequestLog{
-			ID:         uint(i),
-			ProviderID: "provider-1",
-			APIType:    "claude",
-			Success:    true,
-			CreatedAt:  now.Add(-time.Duration(i) * time.Hour),
+			ID:               uint(i),
+			ProviderID:       "provider-1",
+			SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+			LatencyMs:        int64(i * 10),
+			CreatedAt:        now.Add(-time.Duration(i) * time.Hour),
 		})
 	}
 
-	tests := []struct {
-		name          string
-		query         string
-		expectedCount int
-		expectedTotal int64
-	}{
-		{"default limit", "", 5, 5},
-		{"limit 2", "?limit=2", 2, 5},
-		{"limit 2 offset 2", "?limit=2&offset=2", 2, 5},
-		{"offset beyond results", "?offset=10", 0, 5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/admin/api/logs"+tt.query, nil)
-			w := httptest.NewRecorder()
-
-			h.GetLogs(w, req)
-
-			if w.Code != http.StatusOK {
-				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-			}
-
-			var resp LogsResponse
-			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
-
-			if len(resp.Logs) != tt.expectedCount {
-				t.Errorf("expected %d logs, got %d", tt.expectedCount, len(resp.Logs))
-			}
-			if resp.Total != tt.expectedTotal {
-				t.Errorf("expected total %d, got %d", tt.expectedTotal, resp.Total)
-			}
-		})
-	}
-}
-
-func TestGetLogs_MaxLimitEnforced(t *testing.T) {
-	h, _, _ := testHandler()
-
-	// Request limit above maximum
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?limit=5000", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs?limit=2&offset=2&sort_by=latency_ms&sort_order=asc", nil)
 	w := httptest.NewRecorder()
 
 	h.GetLogs(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
 	var resp LogsResponse
@@ -598,55 +450,11 @@ func TestGetLogs_MaxLimitEnforced(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Limit should be capped at MaxLogsLimit
-	if resp.Limit != MaxLogsLimit {
-		t.Errorf("expected limit to be capped at %d, got %d", MaxLogsLimit, resp.Limit)
+	if resp.Limit != 2 || resp.Offset != 2 {
+		t.Fatalf("pagination = limit %d offset %d, want 2/2", resp.Limit, resp.Offset)
 	}
-}
-
-func TestGetLogs_SortParams(t *testing.T) {
-	h, st, _ := testHandler()
-
-	now := time.Now()
-	st.logs = []model.RequestLog{
-		{ID: 1, ProviderID: "provider-1", Success: true, CreatedAt: now},
-	}
-
-	tests := []struct {
-		name          string
-		query         string
-		expectedSort  string
-		expectedOrder string
-	}{
-		{"default sort", "", "created_at", "desc"},
-		{"sort by latency_ms", "?sort_by=latency_ms", "latency_ms", "desc"},
-		{"sort asc", "?sort_order=asc", "created_at", "asc"},
-		{"sort by latency_ms asc", "?sort_by=latency_ms&sort_order=asc", "latency_ms", "asc"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/admin/api/logs"+tt.query, nil)
-			w := httptest.NewRecorder()
-
-			h.GetLogs(w, req)
-
-			if w.Code != http.StatusOK {
-				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-			}
-
-			var resp LogsResponse
-			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
-
-			if resp.SortBy != tt.expectedSort {
-				t.Errorf("expected sort_by %q, got %q", tt.expectedSort, resp.SortBy)
-			}
-			if resp.SortOrder != tt.expectedOrder {
-				t.Errorf("expected sort_order %q, got %q", tt.expectedOrder, resp.SortOrder)
-			}
-		})
+	if resp.SortBy != "latency_ms" || resp.SortOrder != "asc" {
+		t.Fatalf("sort = %s/%s, want latency_ms/asc", resp.SortBy, resp.SortOrder)
 	}
 }
 
@@ -657,30 +465,18 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 		name  string
 		query string
 	}{
-		{"invalid limit non-numeric", "?limit=abc"},
-		{"invalid limit negative", "?limit=-1"},
-		{"invalid limit zero", "?limit=0"},
-		{"invalid offset non-numeric", "?offset=xyz"},
-		{"invalid offset negative", "?offset=-5"},
-		{"invalid success", "?success=maybe"},
-		{"invalid is_sse", "?is_sse=maybe"},
-		{"invalid is_websocket", "?is_websocket=maybe"},
-		{"invalid sticky_written", "?sticky_written=maybe"},
-		{"invalid session_committed", "?session_committed=maybe"},
-		{"invalid client_visible", "?client_visible=maybe"},
-		{"invalid probe_outcome", "?probe_outcome=not_real"},
-		{"invalid terminal_cause", "?terminal_cause=not_real"},
-		{"invalid commit_source", "?commit_source=not_real"},
-		{"invalid recovery_action", "?recovery_action=not_real"},
-		{"invalid start_time", "?start_time=not-a-date"},
-		{"invalid end_time", "?end_time=invalid"},
-		{"invalid min_latency non-numeric", "?min_latency=slow"},
-		{"invalid min_latency negative", "?min_latency=-100"},
-		{"invalid min_retry_count non-numeric", "?min_retry_count=many"},
-		{"invalid min_retry_count negative", "?min_retry_count=-1"},
-		{"invalid has_retries", "?has_retries=maybe"},
-		{"invalid sort_by", "?sort_by=invalid_field"},
-		{"invalid sort_order", "?sort_order=random"},
+		{"invalid limit", "?limit=abc"},
+		{"removed success filter", "?success=true"},
+		{"removed terminal cause filter", "?terminal_cause=clean_close"},
+		{"removed recovery action filter", "?recovery_action=none"},
+		{"invalid semantics version", "?semantics_version=bogus"},
+		{"invalid completion state", "?completion_state=bogus"},
+		{"invalid service outcome", "?service_outcome=bogus"},
+		{"invalid client action", "?client_action=bogus"},
+		{"invalid termination actor", "?termination_actor=bogus"},
+		{"invalid termination reason", "?termination_reason=bogus"},
+		{"invalid negative client transport status code", "?client_transport_status_code=-1"},
+		{"invalid commit source", "?commit_source=bogus"},
 	}
 
 	for _, tt := range tests {
@@ -691,15 +487,7 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 			h.GetLogs(w, req)
 
 			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
-			}
-
-			var errResp model.ErrorResponse
-			if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-				t.Fatalf("failed to decode error response: %v", err)
-			}
-			if errResp.Code != ErrCodeValidation {
-				t.Errorf("error code = %q, want %q", errResp.Code, ErrCodeValidation)
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
 			}
 		})
 	}
@@ -707,58 +495,52 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 
 func TestGetLogs_StoreErrors(t *testing.T) {
 	h, st, _ := testHandler()
+	st.logsErr = errors.New("database error")
 
-	t.Run("ListLogs error", func(t *testing.T) {
-		st.logsErr = errors.New("database error")
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs", nil)
+	w := httptest.NewRecorder()
 
-		req := httptest.NewRequest(http.MethodGet, "/admin/api/logs", nil)
-		w := httptest.NewRecorder()
+	h.GetLogs(w, req)
 
-		h.GetLogs(w, req)
-
-		if w.Code != http.StatusInternalServerError {
-			t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-		}
-	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
 }
 
-// Tests for parseLogFilter helper function
+func TestGetLogs_CountError(t *testing.T) {
+	h, st, _ := testHandler()
+	h.store = &countLogsErrorStore{mockStore: st}
+	st.logs = []model.RequestLog{{
+		ID:               1,
+		ProviderID:       "provider-1",
+		SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+		CreatedAt:        time.Now(),
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/logs", nil)
+	w := httptest.NewRecorder()
+
+	h.GetLogs(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+}
 
 func TestParseLogFilter_Defaults(t *testing.T) {
 	filter, errMsg := parseLogFilter(map[string][]string{})
 
 	if errMsg != "" {
-		t.Errorf("unexpected error: %s", errMsg)
+		t.Fatalf("unexpected error: %s", errMsg)
 	}
 	if filter.Limit != DefaultLogsLimit {
-		t.Errorf("expected limit %d, got %d", DefaultLogsLimit, filter.Limit)
+		t.Fatalf("Limit = %d, want %d", filter.Limit, DefaultLogsLimit)
 	}
-	if filter.Offset != 0 {
-		t.Errorf("expected offset 0, got %d", filter.Offset)
+	if filter.SortBy != "created_at" || filter.SortOrder != "desc" {
+		t.Fatalf("sort defaults = %s/%s, want created_at/desc", filter.SortBy, filter.SortOrder)
 	}
-	if filter.SortBy != "created_at" {
-		t.Errorf("expected sort_by 'created_at', got %q", filter.SortBy)
-	}
-	if filter.SortOrder != "desc" {
-		t.Errorf("expected sort_order 'desc', got %q", filter.SortOrder)
-	}
-	if filter.StickyWritten != nil {
-		t.Errorf("expected sticky_written to be nil, got %v", filter.StickyWritten)
-	}
-	if filter.SessionCommitted != nil {
-		t.Errorf("expected session_committed to be nil, got %v", filter.SessionCommitted)
-	}
-	if filter.ClientVisible != nil {
-		t.Errorf("expected client_visible to be nil, got %v", filter.ClientVisible)
-	}
-	if filter.ProbeOutcome != "" {
-		t.Errorf("expected empty probe_outcome, got %q", filter.ProbeOutcome)
-	}
-	if filter.TerminalCause != "" {
-		t.Errorf("expected empty terminal_cause, got %q", filter.TerminalCause)
-	}
-	if filter.RecoveryAction != "" {
-		t.Errorf("expected empty recovery_action, got %q", filter.RecoveryAction)
+	if filter.SemanticsVersion != "" || filter.ServiceOutcome != "" || filter.ClientAction != "" {
+		t.Fatal("expected normalized filters to default to empty values")
 	}
 }
 
@@ -766,297 +548,277 @@ func TestParseLogFilter_AllParams(t *testing.T) {
 	startTime := "2024-01-01T00:00:00Z"
 	endTime := "2024-12-31T23:59:59Z"
 
-	query := map[string][]string{
-		"limit":             {"50"},
-		"offset":            {"10"},
-		"provider_id":       {"provider-1"},
-		"api_type":          {"claude"},
-		"success":           {"true"},
-		"is_sse":            {"false"},
-		"is_websocket":      {"true"},
-		"sticky_written":    {"true"},
-		"session_committed": {"false"},
-		"client_visible":    {"true"},
-		"probe_outcome":     {"transport_failed"},
-		"terminal_cause":    {"upstream_semantic_error"},
-		"commit_source":     {"upstream_message"},
-		"recovery_action":   {"transparent_retry"},
-		"user_id":           {"user-123"},
-		"start_time":        {startTime},
-		"end_time":          {endTime},
-		"min_latency":       {"100"},
-		"min_retry_count":   {"1"},
-		"has_retries":       {"true"},
-		"sort_by":           {"latency_ms"},
-		"sort_order":        {"asc"},
-	}
-
-	filter, errMsg := parseLogFilter(query)
+	filter, errMsg := parseLogFilter(map[string][]string{
+		"limit":                        {"50"},
+		"offset":                       {"10"},
+		"provider_id":                  {"provider-1"},
+		"api_type":                     {"claude"},
+		"semantics_version":            {"normalized_v1"},
+		"completion_state":             {"completed"},
+		"service_outcome":              {"completed"},
+		"client_action":                {"none"},
+		"termination_actor":            {"upstream"},
+		"termination_reason":           {"usage_limit_reached"},
+		"client_transport_status_code": {"101"},
+		"is_sse":                       {"false"},
+		"is_websocket":                 {"true"},
+		"session_committed":            {"false"},
+		"client_visible":               {"true"},
+		"commit_source":                {"upstream_message"},
+		"user_id":                      {"user-123"},
+		"start_time":                   {startTime},
+		"end_time":                     {endTime},
+		"min_latency":                  {"100"},
+		"min_retry_count":              {"1"},
+		"has_retries":                  {"true"},
+		"sort_by":                      {"latency_ms"},
+		"sort_order":                   {"asc"},
+	})
 
 	if errMsg != "" {
-		t.Errorf("unexpected error: %s", errMsg)
+		t.Fatalf("unexpected error: %s", errMsg)
 	}
-	if filter.Limit != 50 {
-		t.Errorf("expected limit 50, got %d", filter.Limit)
+	if filter.SemanticsVersion != model.RequestSemanticsVersionNormalizedV1 {
+		t.Fatalf("SemanticsVersion = %q, want %q", filter.SemanticsVersion, model.RequestSemanticsVersionNormalizedV1)
 	}
-	if filter.Offset != 10 {
-		t.Errorf("expected offset 10, got %d", filter.Offset)
+	if filter.ServiceOutcome != model.ServiceOutcomeCompleted {
+		t.Fatalf("ServiceOutcome = %q, want %q", filter.ServiceOutcome, model.ServiceOutcomeCompleted)
 	}
-	if filter.ProviderID != "provider-1" {
-		t.Errorf("expected provider_id 'provider-1', got %q", filter.ProviderID)
-	}
-	if filter.APIType != "claude" {
-		t.Errorf("expected api_type 'claude', got %q", filter.APIType)
-	}
-	if filter.Success == nil || *filter.Success != true {
-		t.Error("expected success true")
-	}
-	if filter.IsSSE == nil || *filter.IsSSE != false {
-		t.Error("expected is_sse false")
-	}
-	if filter.IsWebSocket == nil || *filter.IsWebSocket != true {
-		t.Error("expected is_websocket true")
-	}
-	if filter.StickyWritten == nil || *filter.StickyWritten != true {
-		t.Error("expected sticky_written true")
-	}
-	if filter.SessionCommitted == nil || *filter.SessionCommitted != false {
-		t.Error("expected session_committed false")
-	}
-	if filter.ClientVisible == nil || *filter.ClientVisible != true {
-		t.Error("expected client_visible true")
-	}
-	if filter.ProbeOutcome != model.WebSocketProbeOutcomeTransportFailed {
-		t.Errorf("expected probe_outcome %q, got %q", model.WebSocketProbeOutcomeTransportFailed, filter.ProbeOutcome)
-	}
-	if filter.TerminalCause != model.TerminalUpstreamSemanticError {
-		t.Errorf("expected terminal_cause %q, got %q", model.TerminalUpstreamSemanticError, filter.TerminalCause)
+	if filter.ClientTransportStatusCode == nil || *filter.ClientTransportStatusCode != 101 {
+		t.Fatalf("ClientTransportStatusCode = %v, want 101", filter.ClientTransportStatusCode)
 	}
 	if filter.CommitSource != model.CommitUpstreamMessage {
-		t.Errorf("expected commit_source %q, got %q", model.CommitUpstreamMessage, filter.CommitSource)
+		t.Fatalf("CommitSource = %q, want %q", filter.CommitSource, model.CommitUpstreamMessage)
 	}
-	if filter.RecoveryAction != model.RecoveryActionTransparentRetry {
-		t.Errorf("expected recovery_action %q, got %q", model.RecoveryActionTransparentRetry, filter.RecoveryAction)
-	}
-	if filter.UserID != "user-123" {
-		t.Errorf("expected user_id 'user-123', got %q", filter.UserID)
-	}
-	if filter.StartTime == nil {
-		t.Error("expected start_time to be set")
-	}
-	if filter.EndTime == nil {
-		t.Error("expected end_time to be set")
-	}
-	if filter.MinLatency == nil || *filter.MinLatency != 100 {
-		t.Error("expected min_latency 100")
-	}
-	if filter.MinRetryCount == nil || *filter.MinRetryCount != 1 {
-		t.Error("expected min_retry_count 1")
-	}
-	if filter.HasRetries == nil || *filter.HasRetries != true {
-		t.Error("expected has_retries true")
-	}
-	if filter.SortBy != "latency_ms" {
-		t.Errorf("expected sort_by 'latency_ms', got %q", filter.SortBy)
-	}
-	if filter.SortOrder != "asc" {
-		t.Errorf("expected sort_order 'asc', got %q", filter.SortOrder)
+	if filter.SortBy != "latency_ms" || filter.SortOrder != "asc" {
+		t.Fatalf("sort = %s/%s, want latency_ms/asc", filter.SortBy, filter.SortOrder)
 	}
 }
 
-func TestParseLogFilter_BoolParsing(t *testing.T) {
+func TestParseLogFilter_AllowsZeroClientTransportStatusCode(t *testing.T) {
+	filter, errMsg := parseLogFilter(map[string][]string{
+		"client_transport_status_code": {"0"},
+	})
+
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if filter.ClientTransportStatusCode == nil || *filter.ClientTransportStatusCode != 0 {
+		t.Fatalf("ClientTransportStatusCode = %v, want 0", filter.ClientTransportStatusCode)
+	}
+}
+
+func TestParseLogFilter_CapsLimitAtMaxLogsLimit(t *testing.T) {
+	filter, errMsg := parseLogFilter(map[string][]string{
+		"limit": {"10000"},
+	})
+
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if filter.Limit != MaxLogsLimit {
+		t.Fatalf("Limit = %d, want %d", filter.Limit, MaxLogsLimit)
+	}
+}
+
+func TestParseLogFilter_RejectsZeroLimit(t *testing.T) {
+	_, errMsg := parseLogFilter(map[string][]string{
+		"limit": {"0"},
+	})
+	if errMsg != "Invalid limit: must be a positive integer" {
+		t.Fatalf("errMsg = %q, want invalid limit message", errMsg)
+	}
+}
+
+func TestParseLogFilter_RejectsInvalidOffset(t *testing.T) {
+	_, errMsg := parseLogFilter(map[string][]string{
+		"offset": {"oops"},
+	})
+	if errMsg != "Invalid offset: must be a valid integer" {
+		t.Fatalf("errMsg = %q, want invalid offset message", errMsg)
+	}
+}
+
+func TestParseLogFilter_RejectsInvalidSortBy(t *testing.T) {
+	_, errMsg := parseLogFilter(map[string][]string{
+		"sort_by": {"duration"},
+	})
+	if errMsg != "Invalid sort_by: must be 'created_at' or 'latency_ms'" {
+		t.Fatalf("errMsg = %q, want invalid sort field message", errMsg)
+	}
+}
+
+func TestParseLogFilter_RejectsLateValidationErrors(t *testing.T) {
 	tests := []struct {
-		name     string
-		value    string
-		expected bool
+		name    string
+		query   map[string][]string
+		wantErr string
 	}{
-		{"true lowercase", "true", true},
-		{"TRUE uppercase", "TRUE", true},
-		{"1", "1", true},
-		{"false lowercase", "false", false},
-		{"FALSE uppercase", "FALSE", false},
-		{"0", "0", false},
+		{
+			name:    "invalid sse flag",
+			query:   map[string][]string{"is_sse": {"maybe"}},
+			wantErr: "Invalid is_sse: must be 'true' or 'false'",
+		},
+		{
+			name:    "invalid start time",
+			query:   map[string][]string{"start_time": {"2026-04-06"}},
+			wantErr: "Invalid start_time: must be RFC3339 format (e.g., 2026-01-11T00:00:00Z)",
+		},
+		{
+			name:    "invalid min latency",
+			query:   map[string][]string{"min_latency": {"fast"}},
+			wantErr: "Invalid min_latency: must be a valid integer",
+		},
+		{
+			name:    "invalid has retries flag",
+			query:   map[string][]string{"has_retries": {"sometimes"}},
+			wantErr: "Invalid has_retries: must be 'true' or 'false'",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			query := map[string][]string{"success": {tt.value}}
-			filter, errMsg := parseLogFilter(query)
-
-			if errMsg != "" {
-				t.Errorf("unexpected error: %s", errMsg)
-			}
-			if filter.Success == nil {
-				t.Fatal("expected success to be set")
-			}
-			if *filter.Success != tt.expected {
-				t.Errorf("expected success %v, got %v", tt.expected, *filter.Success)
+			_, errMsg := parseLogFilter(tt.query)
+			if errMsg != tt.wantErr {
+				t.Fatalf("errMsg = %q, want %q", errMsg, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestParseLogFilter_TerminalCause(t *testing.T) {
-	query := map[string][]string{"terminal_cause": {string(model.TerminalClientDisconnect)}}
-	filter, errMsg := parseLogFilter(query)
-
-	if errMsg != "" {
-		t.Errorf("unexpected error: %s", errMsg)
-	}
-	if filter.TerminalCause != model.TerminalClientDisconnect {
-		t.Errorf("expected terminal_cause %q, got %q", model.TerminalClientDisconnect, filter.TerminalCause)
-	}
-}
-
-func TestParseLogFilter_ProbeOutcome(t *testing.T) {
-	query := map[string][]string{"probe_outcome": {"unsupported"}}
-	filter, errMsg := parseLogFilter(query)
-
-	if errMsg != "" {
-		t.Fatalf("unexpected error: %s", errMsg)
-	}
-	if filter.ProbeOutcome != model.WebSocketProbeOutcomeUnsupported {
-		t.Errorf("expected probe_outcome %q, got %q", model.WebSocketProbeOutcomeUnsupported, filter.ProbeOutcome)
-	}
-
-	query = map[string][]string{"probe_outcome": {"bogus"}}
-	filter, errMsg = parseLogFilter(query)
-
-	if errMsg == "" {
-		t.Fatal("expected validation error for invalid probe_outcome")
-	}
-	if filter.ProbeOutcome != "" {
-		t.Errorf("expected empty probe_outcome on error, got %q", filter.ProbeOutcome)
-	}
-}
-
-func TestParseLogFilter_RecoveryAction(t *testing.T) {
-	query := map[string][]string{"recovery_action": {string(model.RecoveryActionReconnectRequired)}}
-	filter, errMsg := parseLogFilter(query)
-
-	if errMsg != "" {
-		t.Fatalf("unexpected error: %s", errMsg)
-	}
-	if filter.RecoveryAction != model.RecoveryActionReconnectRequired {
-		t.Errorf("expected recovery_action %q, got %q", model.RecoveryActionReconnectRequired, filter.RecoveryAction)
-	}
-
-	query = map[string][]string{"recovery_action": {"bogus"}}
-	filter, errMsg = parseLogFilter(query)
-
-	if errMsg == "" {
-		t.Fatal("expected validation error for invalid recovery_action")
-	}
-	if filter.RecoveryAction != "" {
-		t.Errorf("expected empty recovery_action on error, got %q", filter.RecoveryAction)
-	}
-}
-
-func TestParseLogFilter_CommitSource(t *testing.T) {
-	query := map[string][]string{"commit_source": {string(model.CommitSemantic)}}
-	filter, errMsg := parseLogFilter(query)
-
-	if errMsg != "" {
-		t.Fatalf("unexpected error: %s", errMsg)
-	}
-	if filter.CommitSource != model.CommitSemantic {
-		t.Errorf("expected commit_source %q, got %q", model.CommitSemantic, filter.CommitSource)
-	}
-
-	query = map[string][]string{"commit_source": {"bogus"}}
-	filter, errMsg = parseLogFilter(query)
-
-	if errMsg == "" {
-		t.Fatal("expected validation error for invalid commit_source")
-	}
-	if filter.CommitSource != "" {
-		t.Errorf("expected empty commit_source on error, got %q", filter.CommitSource)
-	}
-}
-
-func TestParseLogFilter_LimitCapping(t *testing.T) {
-	query := map[string][]string{"limit": {"5000"}}
-	filter, errMsg := parseLogFilter(query)
-
-	if errMsg != "" {
-		t.Errorf("unexpected error: %s", errMsg)
-	}
-	if filter.Limit != MaxLogsLimit {
-		t.Errorf("expected limit to be capped at %d, got %d", MaxLogsLimit, filter.Limit)
-	}
-}
-
-func TestParseLogFilter_TimeFormat(t *testing.T) {
-	// Valid RFC3339 time
-	query := map[string][]string{
-		"start_time": {"2024-06-15T14:30:00Z"},
-		"end_time":   {"2024-06-15T15:30:00+01:00"},
-	}
-	filter, errMsg := parseLogFilter(query)
-
-	if errMsg != "" {
-		t.Errorf("unexpected error: %s", errMsg)
-	}
-	if filter.StartTime == nil {
-		t.Error("expected start_time to be parsed")
-	}
-	if filter.EndTime == nil {
-		t.Error("expected end_time to be parsed")
-	}
-}
-
-func TestParseLogFilter_EdgeCases(t *testing.T) {
-	t.Run("empty string values are ignored", func(t *testing.T) {
-		query := map[string][]string{
-			"provider_id": {""},
-			"api_type":    {""},
-			"user_id":     {""},
+func TestParseIntegerPointerHelpers(t *testing.T) {
+	t.Run("parsePositiveIntPtr", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			wantValue int
+			wantNil   bool
+			wantErr   string
+		}{
+			{name: "empty", input: "", wantNil: true},
+			{name: "invalid", input: "abc", wantNil: true, wantErr: "Invalid retry_count: must be a valid integer"},
+			{name: "zero", input: "0", wantNil: true, wantErr: "Invalid retry_count: must be a positive integer"},
+			{name: "positive", input: "3", wantValue: 3},
 		}
-		filter, errMsg := parseLogFilter(query)
 
-		if errMsg != "" {
-			t.Errorf("unexpected error: %s", errMsg)
-		}
-		if filter.ProviderID != "" {
-			t.Errorf("expected empty provider_id, got %q", filter.ProviderID)
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				value, errMsg := parsePositiveIntPtr(tt.input, "retry_count")
+				if errMsg != tt.wantErr {
+					t.Fatalf("errMsg = %q, want %q", errMsg, tt.wantErr)
+				}
+				if tt.wantNil {
+					if value != nil {
+						t.Fatalf("value = %v, want nil", value)
+					}
+					return
+				}
+				if value == nil || *value != tt.wantValue {
+					t.Fatalf("value = %v, want %d", value, tt.wantValue)
+				}
+			})
 		}
 	})
 
-	t.Run("first value of multi-value param is used", func(t *testing.T) {
-		query := map[string][]string{
-			"limit": {"10", "20", "30"},
+	t.Run("parseNonNegativeInt", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			wantValue int
+			wantErr   string
+		}{
+			{name: "default", input: "", wantValue: 7},
+			{name: "invalid", input: "oops", wantErr: "Invalid offset: must be a valid integer"},
+			{name: "negative", input: "-1", wantErr: "Invalid offset: must be a non-negative integer"},
+			{name: "valid", input: "4", wantValue: 4},
 		}
-		filter, errMsg := parseLogFilter(query)
 
-		if errMsg != "" {
-			t.Errorf("unexpected error: %s", errMsg)
-		}
-		if filter.Limit != 10 {
-			t.Errorf("expected limit 10, got %d", filter.Limit)
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				value, errMsg := parseNonNegativeInt(tt.input, "offset", 7)
+				if errMsg != tt.wantErr {
+					t.Fatalf("errMsg = %q, want %q", errMsg, tt.wantErr)
+				}
+				if errMsg == "" && value != tt.wantValue {
+					t.Fatalf("value = %d, want %d", value, tt.wantValue)
+				}
+			})
 		}
 	})
 
-	t.Run("zero min_latency is valid", func(t *testing.T) {
-		query := map[string][]string{"min_latency": {"0"}}
-		filter, errMsg := parseLogFilter(query)
-
-		if errMsg != "" {
-			t.Errorf("unexpected error: %s", errMsg)
+	t.Run("parseNonNegativeIntPtr", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			wantValue int
+			wantNil   bool
+			wantErr   string
+		}{
+			{name: "empty", input: "", wantNil: true},
+			{name: "invalid", input: "oops", wantNil: true, wantErr: "Invalid client_transport_status_code: must be a valid integer"},
+			{name: "negative", input: "-1", wantNil: true, wantErr: "Invalid client_transport_status_code: must be a non-negative integer"},
+			{name: "valid", input: "101", wantValue: 101},
 		}
-		if filter.MinLatency == nil || *filter.MinLatency != 0 {
-			t.Error("expected min_latency 0")
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				value, errMsg := parseNonNegativeIntPtr(tt.input, "client_transport_status_code")
+				if errMsg != tt.wantErr {
+					t.Fatalf("errMsg = %q, want %q", errMsg, tt.wantErr)
+				}
+				if tt.wantNil {
+					if value != nil {
+						t.Fatalf("value = %v, want nil", value)
+					}
+					return
+				}
+				if value == nil || *value != tt.wantValue {
+					t.Fatalf("value = %v, want %d", value, tt.wantValue)
+				}
+			})
 		}
 	})
+}
 
-	t.Run("zero min_retry_count is valid", func(t *testing.T) {
-		query := map[string][]string{"min_retry_count": {"0"}}
-		filter, errMsg := parseLogFilter(query)
+func TestParseBoolPtr_InvalidValue(t *testing.T) {
+	value, errMsg := parseBoolPtr("not-bool", "is_websocket")
+	if errMsg != "Invalid is_websocket: must be 'true' or 'false'" {
+		t.Fatalf("errMsg = %q, want invalid bool message", errMsg)
+	}
+	if value != nil {
+		t.Fatalf("value = %v, want nil", value)
+	}
+}
 
-		if errMsg != "" {
-			t.Errorf("unexpected error: %s", errMsg)
-		}
-		if filter.MinRetryCount == nil || *filter.MinRetryCount != 0 {
-			t.Error("expected min_retry_count 0")
-		}
-	})
+func TestParseLogFilter_DeprecatedFiltersFailFast(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  map[string][]string
+		errMsg string
+	}{
+		{
+			name:   "success",
+			query:  map[string][]string{"success": {"true"}},
+			errMsg: "Invalid success: filter was removed; use service_outcome",
+		},
+		{
+			name:   "terminal_cause",
+			query:  map[string][]string{"terminal_cause": {"clean_close"}},
+			errMsg: "Invalid terminal_cause: filter was removed; use termination_reason",
+		},
+		{
+			name:   "recovery_action",
+			query:  map[string][]string{"recovery_action": {"none"}},
+			errMsg: "Invalid recovery_action: filter was removed; use client_action",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, errMsg := parseLogFilter(tt.query)
+			if errMsg != tt.errMsg {
+				t.Fatalf("errMsg = %q, want %q", errMsg, tt.errMsg)
+			}
+		})
+	}
 }

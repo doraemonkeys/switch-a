@@ -5,6 +5,11 @@ import {
   browserStorage,
   browserHttpClient,
 } from "./interfaces";
+import {
+  parseLogsResponse,
+  parseRequestLog,
+  parseStatsResponse,
+} from "./contracts";
 import type {
   Provider,
   ProviderInput,
@@ -14,10 +19,8 @@ import type {
   GroupInput,
   HealthState,
   SystemStatus,
-  LogsResponse,
   LogFilter,
   StatsParams,
-  StatsResponse,
   BatchProviderRequest,
   BatchProviderResponse,
   ExportedConfig,
@@ -26,7 +29,6 @@ import type {
   ImportResult,
   ConfigResponse,
   ActiveRequestsResponse,
-  RequestLog,
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatusResponse,
 } from "./types";
@@ -34,6 +36,7 @@ import type {
 // Re-export types for consumers
 export type {
   BackoffPolicy,
+  ClientAction,
   Provider,
   ProviderAuthStatus,
   ProviderAuthView,
@@ -63,17 +66,26 @@ export type {
   ImportPreviewResponse,
   ImportResult,
   ImportScope,
+  OutcomeTimeSeriesPoint,
+  ProviderOutcomeStats,
   SelectionImportScope,
+  ServiceOutcome,
   SettingsOnlyImportScope,
+  SemanticsVersion,
   ConfigResponse,
   ActiveRequest,
   ActiveRequestsResponse,
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatusResponse,
-  RecoveryAction,
+  CompletionState,
+  LegacyRequestLog,
+  NormalizedRequestLog,
   RequestAttemptOutcome,
   RequestAttemptPhase,
   RequestAttempt,
+  RequestEvidence,
+  TerminationActor,
+  TerminationReason,
 } from "./types";
 
 // API Error type
@@ -121,7 +133,17 @@ function buildLogsQuery(filter?: LogFilter): string {
   appendLogQueryParam(query, "offset", filter.offset);
   appendLogQueryParam(query, "provider_id", filter.provider_id);
   appendLogQueryParam(query, "api_type", filter.api_type);
-  appendLogQueryParam(query, "success", filter.success);
+  appendLogQueryParam(query, "semantics_version", filter.semantics_version);
+  appendLogQueryParam(query, "completion_state", filter.completion_state);
+  appendLogQueryParam(query, "service_outcome", filter.service_outcome);
+  appendLogQueryParam(query, "client_action", filter.client_action);
+  appendLogQueryParam(query, "termination_actor", filter.termination_actor);
+  appendLogQueryParam(query, "termination_reason", filter.termination_reason);
+  appendLogQueryParam(
+    query,
+    "client_transport_status_code",
+    filter.client_transport_status_code,
+  );
   appendLogQueryParam(query, "is_sse", filter.is_sse);
   appendLogQueryParam(query, "is_websocket", filter.is_websocket);
   appendLogQueryParam(query, "user_id", filter.user_id);
@@ -132,11 +154,7 @@ function buildLogsQuery(filter?: LogFilter): string {
   appendLogQueryParam(query, "has_retries", filter.has_retries);
   appendLogQueryParam(query, "session_committed", filter.session_committed);
   appendLogQueryParam(query, "client_visible", filter.client_visible);
-  appendLogQueryParam(query, "sticky_written", filter.sticky_written);
-  appendLogQueryParam(query, "probe_outcome", filter.probe_outcome);
-  appendLogQueryParam(query, "terminal_cause", filter.terminal_cause);
   appendLogQueryParam(query, "commit_source", filter.commit_source);
-  appendLogQueryParam(query, "recovery_action", filter.recovery_action);
   appendLogQueryParam(query, "sort_by", filter.sort_by);
   appendLogQueryParam(query, "sort_order", filter.sort_order);
   return query.toString();
@@ -398,17 +416,20 @@ export function createApiClient(deps: ApiClientDeps) {
       health: () => request<HealthState[]>("/health"),
     },
     logs: {
-      list: (filter?: LogFilter) => {
+      list: async (filter?: LogFilter) => {
         const queryStr = buildLogsQuery(filter);
-        return request<LogsResponse>(queryStr ? `/logs?${queryStr}` : "/logs");
+        return parseLogsResponse(
+          await request<unknown>(queryStr ? `/logs?${queryStr}` : "/logs"),
+        );
       },
-      get: (id: number) => request<RequestLog>(`/logs/${id}`),
+      get: async (id: number) =>
+        parseRequestLog(await request<unknown>(`/logs/${id}`), `logs/${id}`),
     },
     stats: {
-      get: (params?: StatsParams) => {
+      get: async (params?: StatsParams) => {
         const queryStr = buildStatsQuery(params);
-        return request<StatsResponse>(
-          queryStr ? `/stats?${queryStr}` : "/stats",
+        return parseStatsResponse(
+          await request<unknown>(queryStr ? `/stats?${queryStr}` : "/stats"),
         );
       },
     },

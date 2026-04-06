@@ -326,53 +326,6 @@ func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
 	return statusCode, ErrCodeWebSocketUpgrade, message
 }
 
-func websocketLogStatusCode(session *WebSocketSessionResult, result *WebSocketResult) int {
-	if session != nil && session.GatewayStatusCode > 0 {
-		return session.GatewayStatusCode
-	}
-	if result == nil {
-		return StatusCodeNoResponse
-	}
-	if !result.HandshakeAccepted {
-		if result.HandshakeStatusCode > 0 {
-			return result.HandshakeStatusCode
-		}
-		return StatusCodeNoResponse
-	}
-	if result.UpstreamError != nil && result.UpstreamError.StatusCode > 0 {
-		return result.UpstreamError.StatusCode
-	}
-	return http.StatusSwitchingProtocols
-}
-
-func websocketLogErrorMessage(session *WebSocketSessionResult, result *WebSocketResult, fallback error) string {
-	if session != nil && session.GatewayMessage != "" {
-		return session.GatewayMessage
-	}
-	if result != nil && result.HandshakeBodySnippet != "" {
-		return result.HandshakeBodySnippet
-	}
-	if result != nil && result.UpstreamError != nil {
-		if result.UpstreamError.Raw != "" {
-			return result.UpstreamError.Raw
-		}
-		if result.UpstreamError.Message != "" {
-			return result.UpstreamError.Message
-		}
-	}
-	if fallback != nil {
-		return fallback.Error()
-	}
-	return ""
-}
-
-func websocketLogSuccess(result *WebSocketResult) bool {
-	if result == nil {
-		return false
-	}
-	return result.SessionCommitted && result.TerminalCause != model.TerminalUpstreamSemanticError
-}
-
 // newWebSocketGatewayFailureResult keeps live pre-upgrade failures out of the
 // historical "unknown" bucket by recording an explicit lifecycle cause.
 func newWebSocketGatewayFailureResult(statusCode int, terminalCause model.TerminalCause, err error) *WebSocketResult {
@@ -392,55 +345,43 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 	}
 
 	result := session.FinalResult
-	err := session.FinalErr
 	attempts := session.RequestAttempts()
-	sessionCommitted := false
-	clientVisible := false
-	probeOutcome := model.WebSocketProbeOutcomeUnknown
-	terminalCause := model.TerminalUnknown
+	assessment := assessWebSocketSession(session)
+	sessionCommitted := assessment.SessionCommitted
+	clientVisible := assessment.ClientVisible
 	commitSource := model.CommitUnknown
-	recoveryAction := model.RecoveryActionNone
 	if result != nil {
-		sessionCommitted = result.SessionCommitted
-		clientVisible = result.ClientVisible
-		if result.TerminalCause != "" {
-			terminalCause = result.TerminalCause
-		}
 		if result.CommitSource != "" {
 			commitSource = result.CommitSource
 		}
-		if result.RecoveryAction != "" {
-			recoveryAction = result.RecoveryAction
-		}
-	}
-	if model.IsValidWebSocketProbeOutcome(session.ProbeOutcome) {
-		probeOutcome = session.ProbeOutcome
 	}
 
 	log := &model.RequestLog{
-		RequestID:        session.RequestID,
-		APIType:          info.APIType,
-		Model:            info.Model,
-		ClientIP:         info.ClientIP,
-		UserID:           info.UserID,
-		StatusCode:       websocketLogStatusCode(session, result),
-		LatencyMs:        latency.Milliseconds(),
-		Success:          websocketLogSuccess(result),
-		IsWebSocket:      true,
-		IsSticky:         session.IsSticky,
-		RetryCount:       session.RetryCount(),
-		StickyWritten:    &session.StickyWritten,
-		SessionCommitted: &sessionCommitted,
-		ClientVisible:    &clientVisible,
-		ProbeOutcome:     &probeOutcome,
-		TerminalCause:    &terminalCause,
-		CommitSource:     &commitSource,
-		RecoveryAction:   &recoveryAction,
-		CreatedAt:        time.Now(),
-		RequestPath:      info.Path,
-		RequestMethod:    info.Method,
-		UserAgent:        info.UserAgent,
-		RequestIDHeader:  info.RequestID,
+		RequestID:                 session.RequestID,
+		APIType:                   info.APIType,
+		Model:                     info.Model,
+		ClientIP:                  info.ClientIP,
+		UserID:                    info.UserID,
+		SemanticsVersion:          assessment.SemanticsVersion,
+		ClientTransportStatusCode: ptr(assessment.ClientTransportStatusCode),
+		CompletionState:           ptr(assessment.CompletionState),
+		ServiceOutcome:            ptr(assessment.ServiceOutcome),
+		TerminationActor:          assessment.TerminationActor,
+		TerminationReason:         assessment.TerminationReason,
+		ClientAction:              ptr(assessment.ClientAction),
+		SessionEvidenceJSON:       assessment.SessionEvidenceJSON,
+		LatencyMs:                 latency.Milliseconds(),
+		IsWebSocket:               true,
+		IsSticky:                  session.IsSticky,
+		RetryCount:                session.RetryCount(),
+		SessionCommitted:          &sessionCommitted,
+		ClientVisible:             &clientVisible,
+		CommitSource:              &commitSource,
+		CreatedAt:                 time.Now(),
+		RequestPath:               info.Path,
+		RequestMethod:             info.Method,
+		UserAgent:                 info.UserAgent,
+		RequestIDHeader:           info.RequestID,
 	}
 
 	if session.FinalProvider != nil {
@@ -452,7 +393,6 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 		log.RequestBytes = result.BytesClientToUpstream
 	}
 
-	log.ErrorMsg = websocketLogErrorMessage(session, result, err)
 	if result != nil && result.TokenUsage != nil {
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
 			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()
@@ -506,68 +446,21 @@ func applyWebSocketHealthOutcome(
 	if provider == nil || result == nil {
 		return
 	}
-	failureDisposition := classifyWebSocketHandshakeFailureForProvider(provider, result)
-	if result.UpstreamError != nil {
-		failureDisposition = classifyWebSocketUpstreamFailureForProvider(provider, result.UpstreamError)
-	}
-	if failureDisposition.autoDisableUntil != nil {
+	healthAssessment := assessWebSocketHealth(provider, result)
+	if healthAssessment.markFailure {
 		h.markFailure(ctx, provider.ID, result.Err)
+	}
+	if healthAssessment.suspendUntil != nil {
 		h.suspendProviderUntil(
 			ctx,
 			provider.ID,
-			*failureDisposition.autoDisableUntil,
-			failureDisposition.autoDisableReason,
+			*healthAssessment.suspendUntil,
+			healthAssessment.suspendReason,
 		)
 		return
 	}
-	if result.UpstreamError != nil {
-		if failureDisposition := classifyWebSocketUpstreamFailureForProvider(provider, result.UpstreamError); failureDisposition.autoDisableUntil != nil {
-			if shouldTrackWebSocketFailureInHealth(result) {
-				h.markFailure(ctx, provider.ID, result.Err)
-			}
-			h.suspendProviderUntil(
-				ctx,
-				provider.ID,
-				*failureDisposition.autoDisableUntil,
-				failureDisposition.autoDisableReason,
-			)
-			return
-		}
-		if shouldTrackWebSocketFailureInHealth(result) {
-			h.markFailure(ctx, provider.ID, result.Err)
-		}
-		return
-	}
-	if result.HandshakeAccepted &&
-		result.ClientVisible &&
-		!result.SessionCommitted &&
-		result.TerminalCause != model.TerminalClientDisconnect &&
-		result.TerminalCause != model.TerminalInternalError {
-		if shouldTrackWebSocketFailureInHealth(result) {
-			h.markFailure(ctx, provider.ID, result.Err)
-		}
-		return
-	}
-	if result.SessionCommitted {
-		if result.TerminalCause == model.TerminalUpstreamSemanticError {
-			if shouldTrackWebSocketFailureInHealth(result) {
-				h.markFailure(ctx, provider.ID, result.Err)
-			}
-			return
-		}
+	if healthAssessment.markSuccess {
 		h.markSuccess(ctx, provider.ID)
-		return
-	}
-
-	switch result.TerminalCause {
-	case model.TerminalProviderConfigurationError:
-		return
-	case model.TerminalUpstreamHandshakeRejected,
-		model.TerminalUpstreamTransportError,
-		model.TerminalUpstreamSemanticError:
-		if shouldTrackWebSocketFailureInHealth(result) {
-			h.markFailure(ctx, provider.ID, result.Err)
-		}
 	}
 }
 

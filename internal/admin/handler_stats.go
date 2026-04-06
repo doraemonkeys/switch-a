@@ -130,8 +130,9 @@ func calculateProviderStats(providers []model.Provider, healthStates map[string]
 	return stats
 }
 
-// buildRequestsByProvider converts log stats to provider request stats with names.
-func buildRequestsByProvider(logStats *model.LogStats, providerNameMap map[string]string) []ProviderRequestStats {
+// buildRequestsByProviderOutcome converts log stats to provider outcome stats
+// with provider names attached for the admin response.
+func buildRequestsByProviderOutcome(logStats *model.LogStats, providerNameMap map[string]string) []ProviderRequestStats {
 	result := make([]ProviderRequestStats, 0, len(logStats.ByProvider))
 	for _, ps := range logStats.ByProvider {
 		name := ps.ProviderID
@@ -139,10 +140,10 @@ func buildRequestsByProvider(logStats *model.LogStats, providerNameMap map[strin
 			name = n
 		}
 		result = append(result, ProviderRequestStats{
-			ID:          ps.ProviderID,
-			Name:        name,
-			Count:       ps.Count,
-			SuccessRate: ps.SuccessRate,
+			ID:            ps.ProviderID,
+			Name:          name,
+			TotalRequests: ps.Count,
+			OutcomeCounts: ps.OutcomeCounts,
 		})
 	}
 	return result
@@ -161,16 +162,14 @@ func getTimeSeriesStartTime(period string, startTime time.Time, earliestLog time
 
 // StatsResponse represents the response for the stats API.
 type StatsResponse struct {
-	TotalRequests      int64                   `json:"total_requests"`
-	SuccessCount       int64                   `json:"success_count"`
-	FailCount          int64                   `json:"fail_count"`
-	SuccessRate        float64                 `json:"success_rate"`
-	AvgLatencyMs       int64                   `json:"avg_latency_ms"`
-	Providers          ProviderStats           `json:"providers"`
-	RequestsByAPIType  map[string]int64        `json:"requests_by_api_type"`
-	RequestsByProvider []ProviderRequestStats  `json:"requests_by_provider"`
-	TimeRange          TimeRange               `json:"time_range"`
-	TimeSeries         []model.TimeSeriesPoint `json:"timeseries,omitempty"`
+	TotalRequests             int64                          `json:"total_requests"`
+	AvgLatencyMs              int64                          `json:"avg_latency_ms"`
+	OutcomeCounts             map[model.ServiceOutcome]int64 `json:"outcome_counts"`
+	Providers                 ProviderStats                  `json:"providers"`
+	RequestsByAPIType         map[string]int64               `json:"requests_by_api_type"`
+	RequestsByProviderOutcome []ProviderRequestStats         `json:"requests_by_provider_outcome"`
+	TimeRange                 TimeRange                      `json:"time_range"`
+	OutcomeTimeSeries         []model.TimeSeriesPoint        `json:"outcome_timeseries"`
 }
 
 // ProviderStats represents provider health statistics.
@@ -183,10 +182,10 @@ type ProviderStats struct {
 
 // ProviderRequestStats represents request statistics for a single provider.
 type ProviderRequestStats struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Count       int64   `json:"count"`
-	SuccessRate float64 `json:"success_rate"`
+	ID            string                         `json:"id"`
+	Name          string                         `json:"name"`
+	TotalRequests int64                          `json:"total_requests"`
+	OutcomeCounts map[model.ServiceOutcome]int64 `json:"outcome_counts"`
 }
 
 // TimeRange represents the time range for statistics.
@@ -233,7 +232,10 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get time series statistics")
 			return
 		}
-		resp.TimeSeries = timeSeries
+		if timeSeries == nil {
+			timeSeries = []model.TimeSeriesPoint{}
+		}
+		resp.OutcomeTimeSeries = timeSeries
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -280,15 +282,14 @@ func (h *Handler) buildStatsResponse(
 	period string,
 ) StatsResponse {
 	resp := StatsResponse{
-		TotalRequests:      logStats.TotalRequests,
-		SuccessCount:       logStats.SuccessCount,
-		FailCount:          logStats.FailCount,
-		SuccessRate:        logStats.SuccessRate,
-		AvgLatencyMs:       logStats.AvgLatencyMs,
-		Providers:          providerStats,
-		RequestsByAPIType:  logStats.ByAPIType,
-		RequestsByProvider: buildRequestsByProvider(logStats, providerNameMap),
-		TimeRange:          TimeRange{Start: startTime, End: endTime},
+		TotalRequests:             logStats.TotalRequests,
+		AvgLatencyMs:              logStats.AvgLatencyMs,
+		OutcomeCounts:             logStats.OutcomeCounts,
+		Providers:                 providerStats,
+		RequestsByAPIType:         logStats.ByAPIType,
+		RequestsByProviderOutcome: buildRequestsByProviderOutcome(logStats, providerNameMap),
+		TimeRange:                 TimeRange{Start: startTime, End: endTime},
+		OutcomeTimeSeries:         []model.TimeSeriesPoint{},
 	}
 
 	if period == "all" && !logStats.EarliestLog.IsZero() {

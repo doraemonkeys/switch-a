@@ -31,16 +31,18 @@ type LogsResponse struct {
 //   - offset: pagination offset (default: 0)
 //   - provider_id: filter by provider ID
 //   - api_type: filter by API type (claude/codex/gemini/custom:*)
-//   - success: filter by success/failure (true/false)
+//   - semantics_version: filter by request semantics version
+//   - completion_state: filter by normalized completion state
+//   - service_outcome: filter by normalized service outcome
+//   - client_action: filter by normalized client action
+//   - termination_actor: filter by normalized termination actor
+//   - termination_reason: filter by normalized termination reason
+//   - client_transport_status_code: filter by normalized client transport status code
 //   - is_sse: filter by SSE/regular request (true/false)
 //   - is_websocket: filter by WebSocket/regular request (true/false)
-//   - sticky_written: filter by whether the request wrote sticky affinity (true/false)
 //   - session_committed: filter by whether committed service is known to have started (true/false)
 //   - client_visible: filter by whether upstream payload became client-visible (true/false)
-//   - probe_outcome: filter by explicit WebSocket probe outcome enum
-//   - terminal_cause: filter by explicit terminal cause enum
 //   - commit_source: filter by explicit commit source enum
-//   - recovery_action: filter by explicit session-level recovery action enum
 //   - user_id: filter by user ID
 //   - start_time: filter by start time (RFC3339)
 //   - end_time: filter by end time (RFC3339)
@@ -91,16 +93,7 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	var filter model.LogFilter
 	var errMsg string
 
-	filter.Limit, errMsg = parsePositiveInt(getQueryParam(query, "limit"), "limit", DefaultLogsLimit)
-	if errMsg != "" {
-		return filter, errMsg
-	}
-	if filter.Limit > MaxLogsLimit {
-		filter.Limit = MaxLogsLimit
-	}
-
-	filter.Offset, errMsg = parseNonNegativeInt(getQueryParam(query, "offset"), "offset", 0)
-	if errMsg != "" {
+	if errMsg = parseLogPagination(query, &filter); errMsg != "" {
 		return filter, errMsg
 	}
 
@@ -108,78 +101,16 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	filter.APIType = getQueryParam(query, "api_type")
 	filter.UserID = getQueryParam(query, "user_id")
 
-	filter.Success, errMsg = parseBoolPtr(getQueryParam(query, "success"), "success")
-	if errMsg != "" {
+	if errMsg = rejectDeprecatedLogFilters(query); errMsg != "" {
 		return filter, errMsg
 	}
-
-	filter.IsSSE, errMsg = parseBoolPtr(getQueryParam(query, "is_sse"), "is_sse")
-	if errMsg != "" {
+	if errMsg = parseNormalizedLogFilters(query, &filter); errMsg != "" {
 		return filter, errMsg
 	}
-
-	filter.IsWebSocket, errMsg = parseBoolPtr(getQueryParam(query, "is_websocket"), "is_websocket")
-	if errMsg != "" {
+	if errMsg = parseLogProtocolFilters(query, &filter); errMsg != "" {
 		return filter, errMsg
 	}
-
-	filter.StickyWritten, errMsg = parseBoolPtr(getQueryParam(query, "sticky_written"), "sticky_written")
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.SessionCommitted, errMsg = parseBoolPtr(getQueryParam(query, "session_committed"), "session_committed")
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.ClientVisible, errMsg = parseBoolPtr(getQueryParam(query, "client_visible"), "client_visible")
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.ProbeOutcome, errMsg = parseWebSocketProbeOutcome(getQueryParam(query, "probe_outcome"))
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.TerminalCause, errMsg = parseTerminalCause(getQueryParam(query, "terminal_cause"))
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.CommitSource, errMsg = parseCommitSource(getQueryParam(query, "commit_source"))
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.RecoveryAction, errMsg = parseRecoveryAction(getQueryParam(query, "recovery_action"))
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.StartTime, errMsg = parseTimePtr(getQueryParam(query, "start_time"), "start_time")
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.EndTime, errMsg = parseTimePtr(getQueryParam(query, "end_time"), "end_time")
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.MinLatency, errMsg = parseNonNegativeInt64Ptr(getQueryParam(query, "min_latency"), "min_latency")
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.MinRetryCount, errMsg = parseNonNegativeIntPtr(getQueryParam(query, "min_retry_count"), "min_retry_count")
-	if errMsg != "" {
-		return filter, errMsg
-	}
-
-	filter.HasRetries, errMsg = parseBoolPtr(getQueryParam(query, "has_retries"), "has_retries")
-	if errMsg != "" {
+	if errMsg = parseLogRangeFilters(query, &filter); errMsg != "" {
 		return filter, errMsg
 	}
 
@@ -192,6 +123,134 @@ func parseLogFilter(query map[string][]string) (model.LogFilter, string) {
 	}
 
 	return filter, ""
+}
+
+func parseLogPagination(query map[string][]string, filter *model.LogFilter) string {
+	var errMsg string
+
+	filter.Limit, errMsg = parsePositiveInt(getQueryParam(query, "limit"), "limit", DefaultLogsLimit)
+	if errMsg != "" {
+		return errMsg
+	}
+	if filter.Limit > MaxLogsLimit {
+		filter.Limit = MaxLogsLimit
+	}
+
+	filter.Offset, errMsg = parseNonNegativeInt(getQueryParam(query, "offset"), "offset", 0)
+	if errMsg != "" {
+		return errMsg
+	}
+
+	return ""
+}
+
+func rejectDeprecatedLogFilters(query map[string][]string) string {
+	for _, deprecated := range []struct {
+		name        string
+		replacement string
+	}{
+		{name: "success", replacement: "service_outcome"},
+		{name: "terminal_cause", replacement: "termination_reason"},
+		{name: "recovery_action", replacement: "client_action"},
+	} {
+		if errMsg := rejectDeprecatedLogFilter(query, deprecated.name, deprecated.replacement); errMsg != "" {
+			return errMsg
+		}
+	}
+
+	return ""
+}
+
+func parseNormalizedLogFilters(query map[string][]string, filter *model.LogFilter) string {
+	var errMsg string
+
+	filter.SemanticsVersion, errMsg = parseRequestSemanticsVersion(getQueryParam(query, "semantics_version"))
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.CompletionState, errMsg = parseCompletionState(getQueryParam(query, "completion_state"))
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.ServiceOutcome, errMsg = parseServiceOutcome(getQueryParam(query, "service_outcome"))
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.ClientAction, errMsg = parseClientAction(getQueryParam(query, "client_action"))
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.TerminationActor, errMsg = parseTerminationActor(getQueryParam(query, "termination_actor"))
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.TerminationReason, errMsg = parseTerminationReason(getQueryParam(query, "termination_reason"))
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.ClientTransportStatusCode, errMsg = parseNonNegativeIntPtr(
+		getQueryParam(query, "client_transport_status_code"),
+		"client_transport_status_code",
+	)
+	if errMsg != "" {
+		return errMsg
+	}
+
+	return ""
+}
+
+func parseLogProtocolFilters(query map[string][]string, filter *model.LogFilter) string {
+	var errMsg string
+
+	filter.IsSSE, errMsg = parseBoolPtr(getQueryParam(query, "is_sse"), "is_sse")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.IsWebSocket, errMsg = parseBoolPtr(getQueryParam(query, "is_websocket"), "is_websocket")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.SessionCommitted, errMsg = parseBoolPtr(getQueryParam(query, "session_committed"), "session_committed")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.ClientVisible, errMsg = parseBoolPtr(getQueryParam(query, "client_visible"), "client_visible")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.CommitSource, errMsg = parseCommitSource(getQueryParam(query, "commit_source"))
+	if errMsg != "" {
+		return errMsg
+	}
+
+	return ""
+}
+
+func parseLogRangeFilters(query map[string][]string, filter *model.LogFilter) string {
+	var errMsg string
+
+	filter.StartTime, errMsg = parseTimePtr(getQueryParam(query, "start_time"), "start_time")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.EndTime, errMsg = parseTimePtr(getQueryParam(query, "end_time"), "end_time")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.MinLatency, errMsg = parseNonNegativeInt64Ptr(getQueryParam(query, "min_latency"), "min_latency")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.MinRetryCount, errMsg = parseNonNegativeIntPtr(getQueryParam(query, "min_retry_count"), "min_retry_count")
+	if errMsg != "" {
+		return errMsg
+	}
+	filter.HasRetries, errMsg = parseBoolPtr(getQueryParam(query, "has_retries"), "has_retries")
+	if errMsg != "" {
+		return errMsg
+	}
+
+	return ""
 }
 
 // getQueryParam returns the first value for a query parameter key.
@@ -248,6 +307,20 @@ func parseNonNegativeIntPtr(s string, name string) (*int, string) {
 	return &v, ""
 }
 
+func parsePositiveIntPtr(s string, name string) (*int, string) {
+	if s == "" {
+		return nil, ""
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return nil, "Invalid " + name + ": must be a valid integer"
+	}
+	if v <= 0 {
+		return nil, "Invalid " + name + ": must be a positive integer"
+	}
+	return &v, ""
+}
+
 // parseBoolPtr parses a boolean pointer from string.
 func parseBoolPtr(s string, name string) (*bool, string) {
 	if s == "" {
@@ -265,40 +338,97 @@ func parseBoolPtr(s string, name string) (*bool, string) {
 	}
 }
 
-func parseTerminalCause(s string) (model.TerminalCause, string) {
-	if s == "" {
-		return "", ""
+func rejectDeprecatedLogFilter(query map[string][]string, name, replacement string) string {
+	if getQueryParam(query, name) == "" {
+		return ""
 	}
-
-	cause := model.TerminalCause(s)
-	if !model.IsValidTerminalCause(cause) {
-		return "", "Invalid terminal_cause: must be a valid terminal cause"
-	}
-	return cause, ""
+	return "Invalid " + name + ": filter was removed; use " + replacement
 }
 
-func parseWebSocketProbeOutcome(s string) (model.WebSocketProbeOutcome, string) {
-	if s == "" {
+func parseRequestSemanticsVersion(s string) (model.RequestSemanticsVersion, string) {
+	switch model.RequestSemanticsVersion(s) {
+	case "":
 		return "", ""
+	case model.RequestSemanticsVersionLegacyPreAssessment, model.RequestSemanticsVersionNormalizedV1:
+		return model.RequestSemanticsVersion(s), ""
+	default:
+		return "", "Invalid semantics_version: must be 'legacy_pre_assessment' or 'normalized_v1'"
 	}
-
-	outcome := model.WebSocketProbeOutcome(s)
-	if !model.IsValidWebSocketProbeOutcome(outcome) {
-		return "", "Invalid probe_outcome: must be a valid websocket probe outcome"
-	}
-	return outcome, ""
 }
 
-func parseRecoveryAction(s string) (model.RecoveryAction, string) {
-	if s == "" {
+func parseCompletionState(s string) (model.CompletionState, string) {
+	switch model.CompletionState(s) {
+	case "":
 		return "", ""
+	case model.CompletionStateUnknown, model.CompletionStateIncomplete, model.CompletionStateCompleted:
+		return model.CompletionState(s), ""
+	default:
+		return "", "Invalid completion_state: must be 'unknown', 'incomplete', or 'completed'"
 	}
+}
 
-	action := model.RecoveryAction(s)
-	if !model.IsValidRecoveryAction(action) {
-		return "", "Invalid recovery_action: must be a valid recovery action"
+func parseServiceOutcome(s string) (model.ServiceOutcome, string) {
+	switch model.ServiceOutcome(s) {
+	case "":
+		return "", ""
+	case model.ServiceOutcomeCompleted,
+		model.ServiceOutcomeInterrupted,
+		model.ServiceOutcomeNeverStarted,
+		model.ServiceOutcomeAbandonedByClient,
+		model.ServiceOutcomeUnknown:
+		return model.ServiceOutcome(s), ""
+	default:
+		return "", "Invalid service_outcome: must be a valid normalized service outcome"
 	}
-	return action, ""
+}
+
+func parseClientAction(s string) (model.ClientAction, string) {
+	switch model.ClientAction(s) {
+	case "":
+		return "", ""
+	case model.ClientActionNone, model.ClientActionTransparentRetry, model.ClientActionReconnectRequired:
+		return model.ClientAction(s), ""
+	default:
+		return "", "Invalid client_action: must be 'none', 'transparent_retry', or 'reconnect_required'"
+	}
+}
+
+func parseTerminationActor(s string) (model.TerminationActor, string) {
+	switch model.TerminationActor(s) {
+	case "":
+		return "", ""
+	case model.TerminationActorClient,
+		model.TerminationActorGateway,
+		model.TerminationActorUpstream,
+		model.TerminationActorInternal,
+		model.TerminationActorUnknown:
+		return model.TerminationActor(s), ""
+	default:
+		return "", "Invalid termination_actor: must be a valid normalized termination actor"
+	}
+}
+
+func parseTerminationReason(s string) (model.TerminationReason, string) {
+	switch model.TerminationReason(s) {
+	case "":
+		return "", ""
+	case model.TerminationReasonProviderUnavailable,
+		model.TerminationReasonProviderConfigurationError,
+		model.TerminationReasonUsageLimitReached,
+		model.TerminationReasonWebSocketConnectionLimitReached,
+		model.TerminationReasonClientRequestError,
+		model.TerminationReasonClientDisconnect,
+		model.TerminationReasonTransportError,
+		model.TerminationReasonUpstreamSemanticError,
+		model.TerminationReasonUpstreamHandshakeRejected,
+		model.TerminationReasonClientUpgradeRejected,
+		model.TerminationReasonInternalError,
+		model.TerminationReasonCleanClose,
+		model.TerminationReasonUnknown:
+		return model.TerminationReason(s), ""
+	default:
+		return "", "Invalid termination_reason: must be a valid normalized termination reason"
+	}
 }
 
 func parseCommitSource(s string) (model.CommitSource, string) {

@@ -138,12 +138,11 @@ func TestRuntimeConfig_JSON(t *testing.T) {
 
 func TestRequestLog_JSON(t *testing.T) {
 	r := RequestLog{
-		ID:         1,
-		ProviderID: "p1",
-		APIType:    "claude",
-		Model:      "claude-3",
-		StatusCode: 200,
-		Success:    true,
+		ID:               1,
+		ProviderID:       "p1",
+		APIType:          "claude",
+		Model:            "claude-3",
+		SemanticsVersion: RequestSemanticsVersionNormalizedV1,
 	}
 
 	data, err := json.Marshal(r)
@@ -158,6 +157,38 @@ func TestRequestLog_JSON(t *testing.T) {
 
 	if r2.ID != r.ID || r2.APIType != r.APIType {
 		t.Errorf("round-trip failed: got %+v", r2)
+	}
+}
+
+func TestRequestAttempt_JSONIncludesNullAttemptEvidence(t *testing.T) {
+	attempt := RequestAttempt{
+		ID:               1,
+		RequestID:        "request-1",
+		ProviderID:       "provider-1",
+		SemanticsVersion: RequestSemanticsVersionNormalizedV1,
+		Attempt:          0,
+		StatusCode:       101,
+		Error:            "",
+		LatencyMs:        42,
+		CreatedAt:        time.Now(),
+	}
+
+	data, err := json.Marshal(attempt)
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	value, ok := payload["attempt_evidence_json"]
+	if !ok {
+		t.Fatal("attempt_evidence_json missing from JSON payload")
+	}
+	if value != nil {
+		t.Fatalf("attempt_evidence_json = %#v, want nil", value)
 	}
 }
 

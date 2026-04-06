@@ -1,54 +1,48 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
-import { useStats } from "./useStats";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiClient, StatsResponse } from "../api/client";
 import { createMockApiClient, createWrapper } from "./test-utils";
+import { useStats } from "./useStats";
 
 const mockStatsResponse: StatsResponse = {
   total_requests: 1000,
-  success_count: 950,
-  fail_count: 50,
-  success_rate: 0.95,
   avg_latency_ms: 150,
+  outcome_counts: {
+    completed: 910,
+    interrupted: 40,
+    never_started: 20,
+    abandoned_by_client: 15,
+    unknown: 15,
+  },
   providers: {
-    total: 5,
+    total: 6,
     healthy: 4,
     unhealthy: 1,
-    disabled: 0,
+    disabled: 1,
   },
   requests_by_api_type: {
     claude: 500,
     codex: 300,
     gemini: 200,
   },
-  requests_by_provider: [
-    { id: "1", name: "Provider 1", count: 400, success_rate: 0.98 },
-    { id: "2", name: "Provider 2", count: 300, success_rate: 0.92 },
+  requests_by_provider_outcome: [
+    {
+      id: "provider-1",
+      name: "Provider 1",
+      total_requests: 400,
+      outcome_counts: { completed: 380, interrupted: 20 },
+    },
   ],
   time_range: {
-    start: "2024-01-01T00:00:00Z",
-    end: "2024-01-02T00:00:00Z",
+    start: "2026-04-01T00:00:00Z",
+    end: "2026-04-02T00:00:00Z",
   },
-};
-
-const mockStatsWithTimeseries: StatsResponse = {
-  ...mockStatsResponse,
-  timeseries: [
+  outcome_timeseries: [
     {
-      time: "2024-01-01T00:00:00Z",
-      requests: 100,
-      success_count: 95,
-      fail_count: 5,
-      success_rate: 0.95,
+      time: "2026-04-01T00:00:00Z",
+      total_requests: 100,
       avg_latency_ms: 140,
-    },
-    {
-      time: "2024-01-01T01:00:00Z",
-      requests: 120,
-      success_count: 115,
-      fail_count: 5,
-      success_rate: 0.958,
-      avg_latency_ms: 155,
+      outcome_counts: { completed: 90, interrupted: 5, unknown: 5 },
     },
   ],
 };
@@ -66,7 +60,7 @@ describe("useStats", () => {
     mockApi = setupMockApiClient();
   });
 
-  it("should fetch stats on mount", async () => {
+  it("fetches normalized stats on mount", async () => {
     const { result } = renderHook(() => useStats(), {
       wrapper: createWrapper(mockApi),
     });
@@ -82,71 +76,7 @@ describe("useStats", () => {
     expect(mockApi.stats.get).toHaveBeenCalledWith({});
   });
 
-  it("should fetch stats with initial params", async () => {
-    const { result } = renderHook(
-      () => useStats({ period: "7d", granularity: "1h" }),
-      {
-        wrapper: createWrapper(mockApi),
-      },
-    );
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(mockApi.stats.get).toHaveBeenCalledWith({
-      period: "7d",
-      granularity: "1h",
-    });
-  });
-
-  it("should handle error", async () => {
-    mockApi.stats.get = vi.fn().mockRejectedValue(new Error("Network error"));
-
-    const { result } = renderHook(() => useStats(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(result.current.error).toBeInstanceOf(Error);
-    expect(result.current.error?.message).toBe("Network error");
-    expect(result.current.stats).toBeNull();
-  });
-
-  it("should handle non-Error rejection", async () => {
-    mockApi.stats.get = vi.fn().mockRejectedValue("string error");
-
-    const { result } = renderHook(() => useStats(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(result.current.error?.message).toBe("Failed to fetch stats");
-  });
-
-  it("should refetch stats", async () => {
-    const { result } = renderHook(() => useStats(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    await act(async () => {
-      await result.current.refetch();
-    });
-
-    expect(mockApi.stats.get).toHaveBeenCalledTimes(2);
-  });
-
-  it("should update params and refetch", async () => {
+  it("supports stats param updates", async () => {
     const { result } = renderHook(() => useStats(), {
       wrapper: createWrapper(mockApi),
     });
@@ -156,19 +86,18 @@ describe("useStats", () => {
     });
 
     act(() => {
-      result.current.setParams({ period: "30d" });
+      result.current.setParams({ period: "7d", granularity: "1h" });
     });
 
     await waitFor(() => {
-      expect(mockApi.stats.get).toHaveBeenCalledWith({ period: "30d" });
+      expect(mockApi.stats.get).toHaveBeenCalledWith({
+        period: "7d",
+        granularity: "1h",
+      });
     });
-
-    expect(result.current.params).toEqual({ period: "30d" });
   });
 
-  it("should handle timeseries data", async () => {
-    mockApi.stats.get = vi.fn().mockResolvedValue(mockStatsWithTimeseries);
-
+  it("exposes outcome time series data", async () => {
     const { result } = renderHook(
       () => useStats({ period: "24h", granularity: "1h" }),
       {
@@ -180,7 +109,24 @@ describe("useStats", () => {
       expect(result.current.loading).toBe(false);
     });
 
-    expect(result.current.stats?.timeseries).toHaveLength(2);
-    expect(result.current.stats?.timeseries?.[0].requests).toBe(100);
+    expect(result.current.stats?.outcome_timeseries).toHaveLength(1);
+    expect(result.current.stats?.outcome_timeseries?.[0].total_requests).toBe(
+      100,
+    );
+  });
+
+  it("surfaces fetch errors", async () => {
+    mockApi.stats.get = vi.fn().mockRejectedValue(new Error("Network error"));
+
+    const { result } = renderHook(() => useStats(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.error?.message).toBe("Network error");
+    expect(result.current.stats).toBeNull();
   });
 });

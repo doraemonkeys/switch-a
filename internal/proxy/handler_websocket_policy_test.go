@@ -101,17 +101,14 @@ func TestHandler_ServeHTTP_WebSocket_PreCommitSemanticErrorSkipsStickyAndMarksFa
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.StickyWritten == nil || *log.StickyWritten {
-		t.Fatalf("StickyWritten must stay false before commitment, got %v", log.StickyWritten)
-	}
 	if log.SessionCommitted == nil || *log.SessionCommitted {
 		t.Fatal("SessionCommitted must be false for pre-commit semantic error")
 	}
-	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamSemanticError {
-		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamSemanticError)
+	if requestLogTerminationReason(log) != model.TerminationReasonUpstreamSemanticError {
+		t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonUpstreamSemanticError)
 	}
-	if log.Success {
-		t.Fatal("Success must be false for pre-commit semantic error")
+	if requestLogServiceOutcome(log) == model.ServiceOutcomeCompleted {
+		t.Fatal("service outcome must stay non-completed for pre-commit semantic error")
 	}
 }
 
@@ -208,17 +205,14 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if log.StickyWritten == nil || !*log.StickyWritten {
-		t.Fatalf("StickyWritten must remain true after committed semantic failure, got %v", log.StickyWritten)
-	}
 	if log.SessionCommitted == nil || !*log.SessionCommitted {
 		t.Fatal("SessionCommitted must be true after response.created")
 	}
-	if log.TerminalCause == nil || *log.TerminalCause != model.TerminalUpstreamSemanticError {
-		t.Fatalf("TerminalCause = %v, want %q", log.TerminalCause, model.TerminalUpstreamSemanticError)
+	if requestLogTerminationReason(log) != model.TerminationReasonUpstreamSemanticError {
+		t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonUpstreamSemanticError)
 	}
-	if log.Success {
-		t.Fatal("Success must be false for post-commit semantic error")
+	if requestLogServiceOutcome(log) == model.ServiceOutcomeCompleted {
+		t.Fatal("service outcome must stay non-completed for post-commit semantic error")
 	}
 }
 

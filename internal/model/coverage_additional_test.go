@@ -64,13 +64,6 @@ func TestLogFilterHasWebSocketLifecycleFilter(t *testing.T) {
 			want:   false,
 		},
 		{
-			name: "sticky written",
-			filter: LogFilter{
-				StickyWritten: &trueValue,
-			},
-			want: true,
-		},
-		{
 			name: "session committed",
 			filter: LogFilter{
 				SessionCommitted: &trueValue,
@@ -85,30 +78,9 @@ func TestLogFilterHasWebSocketLifecycleFilter(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "terminal cause",
-			filter: LogFilter{
-				TerminalCause: TerminalInternalError,
-			},
-			want: true,
-		},
-		{
 			name: "commit source",
 			filter: LogFilter{
 				CommitSource: CommitSemantic,
-			},
-			want: true,
-		},
-		{
-			name: "probe outcome",
-			filter: LogFilter{
-				ProbeOutcome: WebSocketProbeOutcomeUnsupported,
-			},
-			want: true,
-		},
-		{
-			name: "recovery action",
-			filter: LogFilter{
-				RecoveryAction: RecoveryActionReconnectRequired,
 			},
 			want: true,
 		},

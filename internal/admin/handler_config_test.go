@@ -603,9 +603,9 @@ func TestGetLogs_WithFilters(t *testing.T) {
 
 	// Add test logs with different properties
 	st.logs = []model.RequestLog{
-		{ID: 1, ProviderID: "p1", APIType: "claude", Success: true, UserID: "user1", LatencyMs: 100, CreatedAt: now},
-		{ID: 2, ProviderID: "p1", APIType: "claude", Success: false, UserID: "user1", LatencyMs: 500, CreatedAt: now},
-		{ID: 3, ProviderID: "p2", APIType: "codex", Success: true, UserID: "user2", LatencyMs: 200, CreatedAt: now},
+		{ID: 1, ProviderID: "p1", APIType: "claude", SemanticsVersion: model.RequestSemanticsVersionNormalizedV1, UserID: "user1", LatencyMs: 100, CreatedAt: now},
+		{ID: 2, ProviderID: "p1", APIType: "claude", SemanticsVersion: model.RequestSemanticsVersionNormalizedV1, UserID: "user1", LatencyMs: 500, CreatedAt: now},
+		{ID: 3, ProviderID: "p2", APIType: "codex", SemanticsVersion: model.RequestSemanticsVersionNormalizedV1, UserID: "user2", LatencyMs: 200, CreatedAt: now},
 	}
 
 	// Test provider_id filter

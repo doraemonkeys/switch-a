@@ -454,14 +454,15 @@ func TestClientDisconnectDuringSSE_MarksSuccessAndNoError(t *testing.T) {
 		t.Error("MarkSuccess should be called when upstream returned 200 and client disconnected")
 	}
 
-	// Log must record success with no error message
+	// The normalized lifecycle should attribute the truncated stream to the client
+	// even though provider health still records a successful 200 upstream response.
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	log := store.LastLog()
-	if !log.Success {
-		t.Error("log.Success should be true for client disconnect on 200 upstream")
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
+		t.Errorf("ServiceOutcome = %q, want %q", requestLogServiceOutcome(log), model.ServiceOutcomeAbandonedByClient)
 	}
-	if log.ErrorMsg != "" {
-		t.Errorf("log.ErrorMsg should be empty for client disconnect, got %q", log.ErrorMsg)
+	if requestLogEvidenceMessage(t, log) != "" {
+		t.Errorf("SessionEvidenceJSON should stay empty for client disconnect, got %q", requestLogEvidenceMessage(t, log))
 	}
 }
 

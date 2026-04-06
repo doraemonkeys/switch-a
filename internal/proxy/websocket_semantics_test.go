@@ -20,6 +20,12 @@ func TestCodexWebSocketMessageObserver_CapturesUpstreamErrorWithNestedErrorType(
 	if observation.UpstreamError == nil {
 		t.Fatal("expected UpstreamError to be captured")
 	}
+	if observation.UpstreamError.EnvelopeType != "error" {
+		t.Fatalf("EnvelopeType = %q, want %q", observation.UpstreamError.EnvelopeType, "error")
+	}
+	if observation.UpstreamError.ProviderErrorType != "model_not_allowed" {
+		t.Fatalf("ProviderErrorType = %q, want %q", observation.UpstreamError.ProviderErrorType, "model_not_allowed")
+	}
 	if observation.UpstreamError.EventType != "model_not_allowed" {
 		t.Fatalf("EventType = %q, want %q", observation.UpstreamError.EventType, "model_not_allowed")
 	}
@@ -72,6 +78,9 @@ func TestCodexWebSocketMessageObserver_CommitsOnResponseCreated(t *testing.T) {
 	if observation.ParseDegraded {
 		t.Fatal("ParseDegraded must stay false for valid semantic frames")
 	}
+	if observation.CompletionObserved {
+		t.Fatal("CompletionObserved must stay false before response.completed/response.done")
+	}
 	if len(commits) != 1 {
 		t.Fatalf("commit callback count = %d, want 1", len(commits))
 	}
@@ -80,6 +89,20 @@ func TestCodexWebSocketMessageObserver_CommitsOnResponseCreated(t *testing.T) {
 	}
 	if len(updates) == 0 {
 		t.Fatal("expected onUpdate to publish semantic changes")
+	}
+}
+
+func TestCodexWebSocketMessageObserver_TracksCompletionObservedOnResponseCompleted(t *testing.T) {
+	t.Parallel()
+
+	observer := newCodexWebSocketMessageObserver("gpt-5.4", nil, nil, nil)
+
+	observer.ObserveUpstreamMessage(websocket.MessageText, []byte(`{"type":"response.created","response":{"id":"resp_123","model":"gpt-5.4"}}`))
+	observer.ObserveUpstreamMessage(websocket.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_123","model":"gpt-5.4"}}`))
+
+	observation := observer.Snapshot()
+	if !observation.CompletionObserved {
+		t.Fatal("CompletionObserved = false, want true after response.completed")
 	}
 }
 
@@ -368,6 +391,12 @@ func TestBuildWebSocketUpstreamError_PrefersNestedErrorFieldsAndFallbacks(t *tes
 	if upstreamErr == nil {
 		t.Fatal("expected upstream error")
 	}
+	if upstreamErr.EnvelopeType != "error" {
+		t.Fatalf("EnvelopeType = %q, want %q", upstreamErr.EnvelopeType, "error")
+	}
+	if upstreamErr.ProviderErrorType != " auth_error " {
+		t.Fatalf("ProviderErrorType = %q, want nested error type", upstreamErr.ProviderErrorType)
+	}
 	if upstreamErr.EventType != " auth_error " {
 		t.Fatalf("EventType = %q, want nested event type", upstreamErr.EventType)
 	}
@@ -571,11 +600,12 @@ func TestBuildWebSocketUpstreamError_FallsBackToCodeOrEventType(t *testing.T) {
 				},
 			},
 			want: &WebSocketUpstreamError{
-				EventType:  "error",
-				Code:       "invalid_api_key",
-				StatusCode: 401,
-				Message:    "invalid_api_key",
-				Raw:        string(payload),
+				EnvelopeType: "error",
+				EventType:    "error",
+				Code:         "invalid_api_key",
+				StatusCode:   401,
+				Message:      "invalid_api_key",
+				Raw:          string(payload),
 			},
 		},
 		{
@@ -585,10 +615,11 @@ func TestBuildWebSocketUpstreamError_FallsBackToCodeOrEventType(t *testing.T) {
 				Status: 403,
 			},
 			want: &WebSocketUpstreamError{
-				EventType:  "auth_error",
-				StatusCode: 403,
-				Message:    "auth_error",
-				Raw:        string(payload),
+				EnvelopeType: "auth_error",
+				EventType:    "auth_error",
+				StatusCode:   403,
+				Message:      "auth_error",
+				Raw:          string(payload),
 			},
 		},
 	}

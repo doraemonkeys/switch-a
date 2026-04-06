@@ -85,7 +85,17 @@ export function useDashboardData() {
   }, [status]);
 
   const recentErrors = useMemo(
-    () => logs.filter((log) => !log.success).slice(0, 5),
+    () =>
+      logs
+        .filter(
+          (log) =>
+            log.semantics_version === "normalized_v1" &&
+            log.service_outcome !== undefined &&
+            log.service_outcome !== null &&
+            log.service_outcome !== "completed" &&
+            log.service_outcome !== "abandoned_by_client",
+        )
+        .slice(0, 5),
     [logs],
   );
 

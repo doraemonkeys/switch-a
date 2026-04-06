@@ -295,7 +295,7 @@ func TestWebSocketSessionOrchestratorSessionFromAttemptKeepsProviderAttemptInvis
 	}
 }
 
-func TestWebSocketSessionOrchestratorFinalizeSelectionFailureSessionKeepsRecoveryActionSessionScoped(t *testing.T) {
+func TestWebSocketSessionOrchestratorFinalizeSelectionFailureSessionLeavesRecoveryActionUnsetForNeverStartedOutcome(t *testing.T) {
 	t.Parallel()
 
 	attemptResult := &WebSocketResult{
@@ -324,8 +324,8 @@ func TestWebSocketSessionOrchestratorFinalizeSelectionFailureSessionKeepsRecover
 	if finalized.FinalResult == nil {
 		t.Fatal("FinalResult = nil, want session lifecycle result")
 	}
-	if finalized.FinalResult.RecoveryAction != model.RecoveryActionTransparentRetry {
-		t.Fatalf("RecoveryAction = %q, want %q", finalized.FinalResult.RecoveryAction, model.RecoveryActionTransparentRetry)
+	if finalized.FinalResult.RecoveryAction != model.RecoveryActionNone {
+		t.Fatalf("RecoveryAction = %q, want %q", finalized.FinalResult.RecoveryAction, model.RecoveryActionNone)
 	}
 	if finalized.Attempts[0].Result == nil {
 		t.Fatal("attempt Result = nil, want original provider attempt")
@@ -695,8 +695,29 @@ func TestCanonicalWebSocketGatewayMessageAndRecoveryFallbacks(t *testing.T) {
 			{SwitchReason: "provider_switch"},
 		},
 	}
-	if got := deriveWebSocketSessionRecoveryAction(session); got != model.RecoveryActionTransparentRetry {
-		t.Fatalf("deriveWebSocketSessionRecoveryAction() = %q, want %q", got, model.RecoveryActionTransparentRetry)
+	if got := deriveWebSocketSessionRecoveryAction(session); got != model.RecoveryActionNone {
+		t.Fatalf("deriveWebSocketSessionRecoveryAction() = %q, want %q", got, model.RecoveryActionNone)
+	}
+
+	replacedSession := &WebSocketSessionResult{
+		FinalResult: &WebSocketResult{
+			SessionCommitted:   true,
+			CompletionObserved: true,
+		},
+		Attempts: []WebSocketAttemptResult{
+			{
+				Provider: &model.Provider{ID: "ws-origin"},
+				Result: &WebSocketResult{
+					HandshakeStatusCode: http.StatusTooManyRequests,
+					TerminalCause:       model.TerminalUpstreamHandshakeRejected,
+				},
+				SwitchReason: SwitchReasonUsageLimitReached,
+			},
+			{SelectionMode: providerSwitchModeReplacement},
+		},
+	}
+	if got := deriveWebSocketSessionRecoveryAction(replacedSession); got != model.RecoveryActionTransparentRetry {
+		t.Fatalf("deriveWebSocketSessionRecoveryAction() for provider-scoped replacement completion = %q, want %q", got, model.RecoveryActionTransparentRetry)
 	}
 }
 

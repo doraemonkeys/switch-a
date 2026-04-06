@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"switch-a/internal/model"
@@ -66,8 +67,26 @@ func (s *SQLiteStore) applyLogFilters(query *gorm.DB, filter model.LogFilter) *g
 	if filter.APIType != "" {
 		query = query.Where("api_type = ?", filter.APIType)
 	}
-	if filter.Success != nil {
-		query = query.Where("success = ?", *filter.Success)
+	if filter.SemanticsVersion != "" {
+		query = query.Where("semantics_version = ?", filter.SemanticsVersion)
+	}
+	if filter.CompletionState != "" {
+		query = query.Where("completion_state = ?", filter.CompletionState)
+	}
+	if filter.ServiceOutcome != "" {
+		query = query.Where("service_outcome = ?", filter.ServiceOutcome)
+	}
+	if filter.ClientAction != "" {
+		query = query.Where("client_action = ?", filter.ClientAction)
+	}
+	if filter.TerminationActor != "" {
+		query = query.Where("termination_actor = ?", filter.TerminationActor)
+	}
+	if filter.TerminationReason != "" {
+		query = query.Where("termination_reason = ?", filter.TerminationReason)
+	}
+	if filter.ClientTransportStatusCode != nil {
+		query = query.Where("client_transport_status_code = ?", *filter.ClientTransportStatusCode)
 	}
 	if filter.IsSSE != nil {
 		query = query.Where("is_sse = ?", *filter.IsSSE)
@@ -78,26 +97,14 @@ func (s *SQLiteStore) applyLogFilters(query *gorm.DB, filter model.LogFilter) *g
 	if filter.IsWebSocket != nil {
 		query = query.Where("is_websocket = ?", *filter.IsWebSocket)
 	}
-	if filter.StickyWritten != nil {
-		query = query.Where("sticky_written = ?", *filter.StickyWritten)
-	}
 	if filter.SessionCommitted != nil {
 		query = query.Where("session_committed = ?", *filter.SessionCommitted)
 	}
 	if filter.ClientVisible != nil {
 		query = query.Where("client_visible = ?", *filter.ClientVisible)
 	}
-	if filter.ProbeOutcome != "" {
-		query = query.Where("probe_outcome = ?", filter.ProbeOutcome)
-	}
-	if filter.TerminalCause != "" {
-		query = query.Where("terminal_cause = ?", filter.TerminalCause)
-	}
 	if filter.CommitSource != "" {
 		query = query.Where("commit_source = ?", filter.CommitSource)
-	}
-	if filter.RecoveryAction != "" {
-		query = query.Where("recovery_action = ?", filter.RecoveryAction)
 	}
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
@@ -187,30 +194,37 @@ func (s *SQLiteStore) CleanOldLogs(ctx context.Context, beforeDays int) error {
 	})
 }
 
+// normalizedLogStatsBaseQuery keeps normalized reporting orthogonal to legacy
+// rows because the old request-level semantics cannot be losslessly mapped into
+// the new service_outcome taxonomy.
+func (s *SQLiteStore) normalizedLogStatsBaseQuery(ctx context.Context, startTime, endTime time.Time) *gorm.DB {
+	baseQuery := s.db.WithContext(ctx).
+		Model(&model.RequestLog{}).
+		Where("semantics_version = ?", model.RequestSemanticsVersionNormalizedV1)
+	if !startTime.IsZero() {
+		baseQuery = baseQuery.Where("created_at >= ?", startTime)
+	}
+	return baseQuery.Where("created_at < ?", endTime)
+}
+
 // GetLogStats retrieves aggregated statistics from request logs within the given time range.
 // If startTime is zero, all logs are included (for "all" period).
 func (s *SQLiteStore) GetLogStats(ctx context.Context, startTime, endTime time.Time) (*model.LogStats, error) {
 	stats := &model.LogStats{
-		ByAPIType:  make(map[string]int64),
-		ByProvider: []model.ProviderLogStats{},
+		OutcomeCounts: make(map[model.ServiceOutcome]int64),
+		ByAPIType:     make(map[string]int64),
+		ByProvider:    []model.ProviderLogStats{},
 	}
 
-	// Build base query with time filter
-	baseQuery := s.db.WithContext(ctx).Model(&model.RequestLog{})
-	if !startTime.IsZero() {
-		baseQuery = baseQuery.Where("created_at >= ?", startTime)
-	}
-	baseQuery = baseQuery.Where("created_at < ?", endTime)
+	baseQuery := s.normalizedLogStatsBaseQuery(ctx, startTime, endTime)
 
 	// Get overall statistics using a single query
 	var overallStats struct {
 		TotalRequests int64
-		SuccessCount  int64
 		AvgLatencyMs  float64
 	}
 	err := baseQuery.Session(&gorm.Session{}).Select(
 		"COUNT(*) as total_requests",
-		"SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count",
 		"COALESCE(AVG(latency_ms), 0) as avg_latency_ms",
 	).Scan(&overallStats).Error
 	if err != nil {
@@ -218,13 +232,25 @@ func (s *SQLiteStore) GetLogStats(ctx context.Context, startTime, endTime time.T
 	}
 
 	stats.TotalRequests = overallStats.TotalRequests
-	stats.SuccessCount = overallStats.SuccessCount
-	stats.FailCount = overallStats.TotalRequests - overallStats.SuccessCount
 	stats.AvgLatencyMs = int64(overallStats.AvgLatencyMs)
 
-	// Calculate success rate
-	if stats.TotalRequests > 0 {
-		stats.SuccessRate = float64(stats.SuccessCount) / float64(stats.TotalRequests)
+	type outcomeStat struct {
+		ServiceOutcome string
+		Count          int64
+	}
+	var outcomeStats []outcomeStat
+	err = baseQuery.Session(&gorm.Session{}).
+		Select("service_outcome", "COUNT(*) as count").
+		Group("service_outcome").
+		Scan(&outcomeStats).Error
+	if err != nil {
+		return nil, fmt.Errorf("get outcome stats: %w", err)
+	}
+	for _, stat := range outcomeStats {
+		if stat.ServiceOutcome == "" {
+			continue
+		}
+		stats.OutcomeCounts[model.ServiceOutcome(stat.ServiceOutcome)] = stat.Count
 	}
 
 	// Get statistics by API type
@@ -244,42 +270,56 @@ func (s *SQLiteStore) GetLogStats(ctx context.Context, startTime, endTime time.T
 		stats.ByAPIType[stat.APIType] = stat.Count
 	}
 
-	// Get statistics by provider
-	type providerStat struct {
-		ProviderID   string
-		Count        int64
-		SuccessCount int64
+	// Grouping provider and outcome in SQL keeps the database work set small while
+	// still letting Go assemble the nested response shape the admin API needs.
+	type providerOutcomeStat struct {
+		ProviderID     string
+		ServiceOutcome string
+		Count          int64
 	}
-	var providerStats []providerStat
+	var providerOutcomeStats []providerOutcomeStat
 	err = baseQuery.Session(&gorm.Session{}).
 		Select(
 			"provider_id",
+			"service_outcome",
 			"COUNT(*) as count",
-			"SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count",
 		).
-		Group("provider_id").
-		Order("count DESC").
-		Scan(&providerStats).Error
+		Group("provider_id, service_outcome").
+		Scan(&providerOutcomeStats).Error
 	if err != nil {
 		return nil, fmt.Errorf("get provider stats: %w", err)
 	}
-	for _, stat := range providerStats {
-		successRate := float64(0)
-		if stat.Count > 0 {
-			successRate = float64(stat.SuccessCount) / float64(stat.Count)
+	providerStats := make(map[string]*model.ProviderLogStats)
+	for _, stat := range providerOutcomeStats {
+		providerStat, ok := providerStats[stat.ProviderID]
+		if !ok {
+			providerStat = &model.ProviderLogStats{
+				ProviderID:    stat.ProviderID,
+				OutcomeCounts: make(map[model.ServiceOutcome]int64),
+			}
+			providerStats[stat.ProviderID] = providerStat
 		}
-		stats.ByProvider = append(stats.ByProvider, model.ProviderLogStats{
-			ProviderID:   stat.ProviderID,
-			Count:        stat.Count,
-			SuccessCount: stat.SuccessCount,
-			SuccessRate:  successRate,
-		})
+		providerStat.Count += stat.Count
+		if stat.ServiceOutcome != "" {
+			providerStat.OutcomeCounts[model.ServiceOutcome(stat.ServiceOutcome)] = stat.Count
+		}
 	}
+	for _, stat := range providerStats {
+		stats.ByProvider = append(stats.ByProvider, *stat)
+	}
+	sort.Slice(stats.ByProvider, func(i, j int) bool {
+		if stats.ByProvider[i].Count == stats.ByProvider[j].Count {
+			return stats.ByProvider[i].ProviderID < stats.ByProvider[j].ProviderID
+		}
+		return stats.ByProvider[i].Count > stats.ByProvider[j].Count
+	})
 
-	// Get earliest log timestamp (for "all" period display)
+	// "all" period charts should start at the first normalized row, not the first
+	// legacy row, so the time range matches the aggregation contract.
 	if startTime.IsZero() {
 		var earliestLog model.RequestLog
 		err = s.db.WithContext(ctx).Model(&model.RequestLog{}).
+			Where("semantics_version = ?", model.RequestSemanticsVersionNormalizedV1).
 			Order("created_at ASC").
 			Limit(1).
 			Select("created_at").
@@ -303,24 +343,25 @@ func (s *SQLiteStore) GetLogTimeSeries(ctx context.Context, startTime, endTime t
 
 	// Query with time bucketing using integer division
 	// We use (strftime('%s', created_at) / granularity) * granularity to bucket
-	type bucketStat struct {
-		BucketTime   int64
-		Requests     int64
-		SuccessCount int64
-		TotalLatency int64
+	type bucketOutcomeStat struct {
+		BucketTime     int64
+		ServiceOutcome string
+		Requests       int64
+		TotalLatency   int64
 	}
-	var bucketStats []bucketStat
+	var bucketStats []bucketOutcomeStat
 
 	// Build the query
 	query := s.db.WithContext(ctx).Model(&model.RequestLog{}).
 		Select(
 			fmt.Sprintf("(CAST(strftime('%%s', created_at) AS INTEGER) / %d) * %d as bucket_time", granularitySeconds, granularitySeconds),
+			"service_outcome",
 			"COUNT(*) as requests",
-			"SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count",
 			"COALESCE(SUM(latency_ms), 0) as total_latency",
 		).
+		Where("semantics_version = ?", model.RequestSemanticsVersionNormalizedV1).
 		Where("created_at >= ? AND created_at < ?", startTime, endTime).
-		Group("bucket_time").
+		Group("bucket_time, service_outcome").
 		Order("bucket_time ASC")
 
 	if err := query.Scan(&bucketStats).Error; err != nil {
@@ -328,9 +369,26 @@ func (s *SQLiteStore) GetLogTimeSeries(ctx context.Context, startTime, endTime t
 	}
 
 	// Create a map of existing data points for quick lookup
-	dataMap := make(map[int64]bucketStat, len(bucketStats))
+	dataMap := make(map[int64]*model.TimeSeriesPoint, len(bucketStats))
 	for _, stat := range bucketStats {
-		dataMap[stat.BucketTime] = stat
+		point, ok := dataMap[stat.BucketTime]
+		if !ok {
+			point = &model.TimeSeriesPoint{
+				Time:          time.Unix(stat.BucketTime, 0).UTC(),
+				OutcomeCounts: make(map[model.ServiceOutcome]int64),
+			}
+			dataMap[stat.BucketTime] = point
+		}
+		point.Requests += stat.Requests
+		point.AvgLatencyMs += stat.TotalLatency
+		if stat.ServiceOutcome != "" {
+			point.OutcomeCounts[model.ServiceOutcome(stat.ServiceOutcome)] += stat.Requests
+		}
+	}
+	for _, point := range dataMap {
+		if point.Requests > 0 {
+			point.AvgLatencyMs /= point.Requests
+		}
 	}
 
 	// Generate all time buckets and fill with data or zeros
@@ -340,17 +398,12 @@ func (s *SQLiteStore) GetLogTimeSeries(ctx context.Context, startTime, endTime t
 
 	for bucket := startBucket; bucket < endBucket; bucket += granularitySeconds {
 		point := model.TimeSeriesPoint{
-			Time: time.Unix(bucket, 0).UTC(),
+			Time:          time.Unix(bucket, 0).UTC(),
+			OutcomeCounts: make(map[model.ServiceOutcome]int64),
 		}
 
 		if stat, ok := dataMap[bucket]; ok {
-			point.Requests = stat.Requests
-			point.SuccessCount = stat.SuccessCount
-			point.FailCount = stat.Requests - stat.SuccessCount
-			if stat.Requests > 0 {
-				point.SuccessRate = float64(stat.SuccessCount) / float64(stat.Requests)
-				point.AvgLatencyMs = stat.TotalLatency / stat.Requests
-			}
+			point = *stat
 		}
 
 		result = append(result, point)

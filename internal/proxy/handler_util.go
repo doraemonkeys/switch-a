@@ -26,7 +26,20 @@ const logInsertTimeout = 2 * time.Second
 func (h *Handler) handleNoProvider(pctx *proxyContext) {
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(pctx, nil, StatusCodeNoResponse, false, false, nil, 0, nil, internal.ErrNoProvider, time.Since(pctx.startTime))
+	go h.logRequest(
+		pctx,
+		nil,
+		http.StatusServiceUnavailable,
+		false,
+		false,
+		nil,
+		0,
+		nil,
+		internal.ErrNoProvider,
+		false,
+		false,
+		time.Since(pctx.startTime),
+	)
 }
 
 // handleExhaustedRetries handles exhausted retry attempts.
@@ -69,7 +82,7 @@ func shouldTrackWebSocketFailureInHealth(result *WebSocketResult) bool {
 	if result.UpstreamError == nil {
 		return true
 	}
-	errorType := strings.TrimSpace(strings.ToLower(result.UpstreamError.EventType))
+	errorType := strings.TrimSpace(strings.ToLower(result.UpstreamError.SemanticErrorKey()))
 	if result.UpstreamError.StatusCode > 0 &&
 		(result.UpstreamError.StatusCode == defaults.StatusUnauthorized ||
 			(result.UpstreamError.StatusCode == defaults.StatusForbidden && errorType == "auth_error")) {
@@ -130,25 +143,52 @@ func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code,
 // logRequest logs the request asynchronously.
 // Note: Uses context.Background() with timeout because this runs after the HTTP response
 // completes and the request context may already be cancelled.
-func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statusCode int, success bool, isSSE bool, firstTokenMs *int64, responseBytes int64, tokenUsage *TokenUsage, err error, latency time.Duration) {
+func (h *Handler) logRequest(
+	pctx *proxyContext,
+	provider *model.Provider,
+	statusCode int,
+	success bool,
+	isSSE bool,
+	firstTokenMs *int64,
+	responseBytes int64,
+	tokenUsage *TokenUsage,
+	err error,
+	responseCommitted bool,
+	clientCanceled bool,
+	latency time.Duration,
+) {
+	assessment := assessNonWebSocketRequest(nonWebSocketRuntimeFacts{
+		ClientTransportStatusCode: statusCode,
+		Success:                   success,
+		ResponseCommitted:         responseCommitted,
+		ServiceStarted:            nonWebSocketServiceStarted(statusCode, responseCommitted),
+		ClientCanceled:            clientCanceled,
+		TerminalErr:               err,
+	})
+
 	log := &model.RequestLog{
-		RequestID:       pctx.requestID,
-		APIType:         pctx.info.APIType,
-		Model:           pctx.info.Model,
-		ClientIP:        pctx.info.ClientIP,
-		UserID:          pctx.info.UserID,
-		StatusCode:      statusCode,
-		LatencyMs:       latency.Milliseconds(),
-		Success:         success,
-		IsSSE:           isSSE,
-		RetryCount:      max(0, len(pctx.attempts)-1),
-		IsSticky:        pctx.isSticky,
-		CreatedAt:       time.Now(),
-		RequestPath:     pctx.info.Path,
-		RequestMethod:   pctx.info.Method,
-		UserAgent:       pctx.info.UserAgent,
-		RequestIDHeader: pctx.info.RequestID,
-		FirstTokenMs:    firstTokenMs,
+		RequestID:                 pctx.requestID,
+		APIType:                   pctx.info.APIType,
+		Model:                     pctx.info.Model,
+		ClientIP:                  pctx.info.ClientIP,
+		UserID:                    pctx.info.UserID,
+		SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
+		ClientTransportStatusCode: ptr(statusCode),
+		CompletionState:           ptr(assessment.CompletionState),
+		ServiceOutcome:            ptr(assessment.ServiceOutcome),
+		TerminationActor:          assessment.TerminationActor,
+		TerminationReason:         assessment.TerminationReason,
+		ClientAction:              ptr(assessment.ClientAction),
+		LatencyMs:                 latency.Milliseconds(),
+		IsSSE:                     isSSE,
+		RetryCount:                max(0, len(pctx.attempts)-1),
+		IsSticky:                  pctx.isSticky,
+		CreatedAt:                 time.Now(),
+		RequestPath:               pctx.info.Path,
+		RequestMethod:             pctx.info.Method,
+		UserAgent:                 pctx.info.UserAgent,
+		RequestIDHeader:           pctx.info.RequestID,
+		FirstTokenMs:              firstTokenMs,
 		// Phase 3 transfer statistics
 		RequestBytes:  int64(len(pctx.body)),
 		ResponseBytes: responseBytes,
@@ -157,10 +197,6 @@ func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statu
 
 	if provider != nil {
 		log.ProviderID = provider.ID
-	}
-
-	if err != nil { // coverage-ignore -- error logging path
-		log.ErrorMsg = err.Error()
 	}
 
 	// Persist token usage to database (Phase 4a-4).
@@ -191,6 +227,94 @@ func (h *Handler) logRequest(pctx *proxyContext, provider *model.Provider, statu
 			h.logger.Error("failed to insert request attempts", zap.Error(insertErr))
 		}
 	}
+}
+
+type nonWebSocketAssessment struct {
+	CompletionState   model.CompletionState
+	ServiceOutcome    model.ServiceOutcome
+	TerminationActor  *model.TerminationActor
+	TerminationReason *model.TerminationReason
+	ClientAction      model.ClientAction
+}
+
+type nonWebSocketRuntimeFacts struct {
+	ClientTransportStatusCode int
+	Success                   bool
+	ResponseCommitted         bool
+	ServiceStarted            bool
+	ClientCanceled            bool
+	TerminalErr               error
+}
+
+func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAssessment {
+	serviceOutcome := deriveNonWebSocketServiceOutcome(facts)
+	assessment := nonWebSocketAssessment{
+		CompletionState: deriveNonWebSocketCompletionState(serviceOutcome),
+		ServiceOutcome:  serviceOutcome,
+		ClientAction:    model.ClientActionNone,
+	}
+	assessment.TerminationActor, assessment.TerminationReason = deriveNonWebSocketTermination(facts, serviceOutcome)
+	return assessment
+}
+
+func deriveNonWebSocketServiceOutcome(facts nonWebSocketRuntimeFacts) model.ServiceOutcome {
+	switch {
+	case facts.ClientCanceled:
+		return model.ServiceOutcomeAbandonedByClient
+	case !facts.ServiceStarted:
+		return model.ServiceOutcomeNeverStarted
+	case facts.Success:
+		return model.ServiceOutcomeCompleted
+	case facts.TerminalErr != nil:
+		return model.ServiceOutcomeUnknown
+	default:
+		return model.ServiceOutcomeCompleted
+	}
+}
+
+func deriveNonWebSocketCompletionState(serviceOutcome model.ServiceOutcome) model.CompletionState {
+	switch serviceOutcome {
+	case model.ServiceOutcomeCompleted:
+		return model.CompletionStateCompleted
+	case model.ServiceOutcomeUnknown:
+		return model.CompletionStateUnknown
+	default:
+		return model.CompletionStateIncomplete
+	}
+}
+
+func deriveNonWebSocketTermination(
+	facts nonWebSocketRuntimeFacts,
+	serviceOutcome model.ServiceOutcome,
+) (*model.TerminationActor, *model.TerminationReason) {
+	if facts.ClientCanceled {
+		return ptr(model.TerminationActorClient), ptr(model.TerminationReasonClientDisconnect)
+	}
+
+	switch {
+	case serviceOutcome == model.ServiceOutcomeUnknown:
+		return ptr(model.TerminationActorUpstream), ptr(model.TerminationReasonTransportError)
+	case facts.ClientTransportStatusCode == StatusCodeNoResponse:
+		return ptr(model.TerminationActorUnknown), ptr(model.TerminationReasonUnknown)
+	case !facts.ResponseCommitted && errors.Is(facts.TerminalErr, internal.ErrNoProvider):
+		return ptr(model.TerminationActorGateway), ptr(model.TerminationReasonProviderUnavailable)
+	case facts.ClientTransportStatusCode >= http.StatusBadRequest && facts.ClientTransportStatusCode < http.StatusInternalServerError:
+		return ptr(model.TerminationActorClient), ptr(model.TerminationReasonClientRequestError)
+	case facts.ClientTransportStatusCode >= http.StatusInternalServerError:
+		if !facts.ResponseCommitted {
+			return ptr(model.TerminationActorGateway), ptr(model.TerminationReasonProviderUnavailable)
+		}
+		return ptr(model.TerminationActorUpstream), ptr(model.TerminationReasonTransportError)
+	default:
+		return nil, nil
+	}
+}
+
+func nonWebSocketServiceStarted(statusCode int, responseCommitted bool) bool {
+	if !responseCommitted {
+		return false
+	}
+	return statusCode > 0 && statusCode < http.StatusBadRequest
 }
 
 // shouldFailover determines if we should try another provider instead of

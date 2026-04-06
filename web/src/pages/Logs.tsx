@@ -3,7 +3,7 @@ import { useLogs, DEFAULT_LIMIT } from "../hooks/useLogs";
 import { useProviders } from "../hooks/useProviders";
 import { useStats } from "../hooks/useStats";
 import { LogFilters, LogDetailModal } from "../components";
-import type { RequestLog } from "../api/types";
+import type { RequestLog, StatsParams } from "../api/types";
 import { api } from "../api/client";
 import {
   LogsHeader,
@@ -16,6 +16,11 @@ import {
   createClearedLogFilterPatch,
   isLogFilterActive,
 } from "../components/logs/filtering";
+
+const DEFAULT_STATS_PARAMS: StatsParams = {
+  period: "24h",
+  granularity: "1h",
+};
 
 export function Logs() {
   const limit = DEFAULT_LIMIT;
@@ -31,7 +36,12 @@ export function Logs() {
     sortOrder,
   } = useLogs({ limit, offset: 0 });
   const { providers } = useProviders();
-  const { stats, loading: statsLoading } = useStats({ period: "24h" });
+  const {
+    stats,
+    loading: statsLoading,
+    params: statsParams,
+    setParams: setStatsParams,
+  } = useStats(DEFAULT_STATS_PARAMS);
 
   // Selected log for detail modal (fetched with attempts)
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
@@ -118,10 +128,11 @@ export function Logs() {
       )}
 
       <LogStatsGrid
-        total={total}
         stats={stats}
-        loading={loading}
         statsLoading={statsLoading}
+        params={statsParams}
+        onParamsChange={setStatsParams}
+        hasActiveFilters={hasActiveFilters}
       />
 
       <LogDetailModal
