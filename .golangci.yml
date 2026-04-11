@@ -41,7 +41,7 @@ linters:
     #   # 认知复杂度阈值，超过此值才报错(default: 30)
     #   min-complexity: 34
     funlen:
-      # 限制函数行数不超过 200 行
+      # 限制函数行数
       lines: 150
       # 限制语句数量 (可根据需求调整，通常设为行数的一半或忽略)
       statements: 75
