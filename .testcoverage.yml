@@ -22,7 +22,6 @@ threshold:
 # override rules should be listed in order from specific to more general rules.
 override:
   # Increase coverage threshold to 100% for `foo` package 
-  # (default is 80, as configured above in this example).
   - path: ^pkg/lib/foo$
     threshold: 100
   # main.go is CLI entry point, hard to unit test
