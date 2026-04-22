@@ -171,6 +171,35 @@ type WebSocketResult struct {
 	// terminal completion event. Assessment uses this to distinguish "completed"
 	// from "transport vanished after something visible happened".
 	CompletionObserved bool
+
+	// TransportObservation carries the real runtime transport facts observed by
+	// the relay layer (CloseError frames, failing peer). It is evidence-layer
+	// input only: session assessment and evidence derivation read it to build a
+	// transport diagnostic, nothing else on this struct depends on it.
+	//
+	// The nested struct boundary is load-bearing: synthetic-final inheritance
+	// paths (`applyLastAttemptToSuppressedPayload`) MUST zero this whole value
+	// so the final session cannot be attributed to a replaced attempt's
+	// transport observation. A flat field would have allowed silent "partial
+	// inheritance" bugs.
+	TransportObservation WebSocketTransportObservation
+}
+
+// WebSocketTransportObservation isolates transport-layer runtime facts so they
+// can be cleared as one unit when a result is copied across a semantic
+// inheritance boundary (synthetic final session). CloseError is captured by
+// pointer because a zero-valued CloseError{} with Code=0 is a legitimate
+// observation — presence must be unambiguous.
+type WebSocketTransportObservation struct {
+	// CloseError is the real observed close frame, populated only when the
+	// relay layer extracted one. A nil pointer means "no concrete frame" and
+	// forces the derivation layer onto EOF / close_without_status paths.
+	CloseError *websocket.CloseError
+	// FailurePeer records which side first produced the error that drove
+	// reduction. It lets the evidence builder distinguish upstream-originated
+	// from client-originated transport failures without re-deriving that from
+	// error text.
+	FailurePeer webSocketPeer
 }
 
 // Clone returns an isolated snapshot so session-level gateway fallback handling
@@ -185,6 +214,11 @@ func (r *WebSocketResult) Clone() *WebSocketResult {
 	}
 	clone.TokenUsage = r.TokenUsage.Clone()
 	clone.UpstreamError = r.UpstreamError.Clone()
+	// CloseError is immutable once observed (coder/websocket never mutates the
+	// frame fields after the read that produced it), so a pointer copy is safe
+	// and avoids deep-copying a value whose identity does not matter for
+	// evidence derivation.
+	clone.TransportObservation = r.TransportObservation
 	return &clone
 }
 

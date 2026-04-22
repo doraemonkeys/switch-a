@@ -104,17 +104,18 @@ func (o *WebSocketSessionOrchestrator) sessionFromSuppressedPayload(_ context.Co
 	o.clearSuppressedAttempt()
 
 	session := &WebSocketSessionResult{
-		RequestID:         o.requestID,
-		FinalProvider:     finalProvider,
-		FinalResult:       result,
-		FinalErr:          finalErr,
-		Attempts:          append([]WebSocketAttemptResult(nil), o.attempts...),
-		IsSticky:          o.isSticky,
-		ClientAccepted:    result.ClientAccepted,
-		ProbeOutcome:      o.probeOutcome,
-		GatewayStatusCode: gatewayStatusCode,
-		GatewayErrorCode:  gatewayErrorCode,
-		GatewayMessage:    gatewayMessage,
+		RequestID:                           o.requestID,
+		FinalProvider:                       finalProvider,
+		FinalResult:                         result,
+		FinalErr:                            finalErr,
+		Attempts:                            append([]WebSocketAttemptResult(nil), o.attempts...),
+		IsSticky:                            o.isSticky,
+		ClientAccepted:                      result.ClientAccepted,
+		ProbeOutcome:                        o.probeOutcome,
+		GatewayStatusCode:                   gatewayStatusCode,
+		GatewayErrorCode:                    gatewayErrorCode,
+		GatewayMessage:                      gatewayMessage,
+		syntheticFinalFromSuppressedPayload: true,
 	}
 	if hasLastAttempt && lastAttempt.Result != nil {
 		session.ResolvedModel = lastAttempt.Result.Model
@@ -154,6 +155,14 @@ func applyLastAttemptToSuppressedPayload(
 		}
 		result.CommitSource = lastAttempt.Result.CommitSource
 	}
+	// Structural guard: a synthetic final session must never inherit the
+	// replaced attempt's transport observation. TerminalCause inheritance is
+	// semantically desirable (callers expect a cause), but CloseError /
+	// FailurePeer would misattribute a transport fact produced by an attempt
+	// that no longer drives the session. Zeroing the nested struct wholesale
+	// (rather than zeroing individual fields) prevents silent "partial
+	// inheritance" bugs if more fields are added later.
+	result.TransportObservation = WebSocketTransportObservation{}
 	if lastAttempt.GatewayStatusCode > 0 {
 		gatewayStatusCode = lastAttempt.GatewayStatusCode
 		gatewayErrorCode = lastAttempt.GatewayErrorCode

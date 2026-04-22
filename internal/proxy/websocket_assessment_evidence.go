@@ -1,27 +1,20 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"regexp"
-	"strings"
 
-	"switch-a/internal/model"
+	"github.com/coder/websocket"
 )
 
 const (
-	webSocketConnectionLimitErrorType    = "websocket_connection_limit_reached"
-	webSocketEvidenceSnippetLimitBytes   = 512
-	webSocketEvidenceJSONLimitBytes      = 4096
-	webSocketEvidenceRedactedPlaceholder = "[REDACTED]"
-)
+	webSocketConnectionLimitErrorType = "websocket_connection_limit_reached"
+	webSocketEvidenceJSONLimitBytes   = 4096
 
-var (
-	webSocketEvidenceHeaderSecretPattern = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|x-api-key|api[_-]?key|cookie|set-cookie)\b\s*[:=]\s*[^\s,;]+`)
-	webSocketEvidenceBearerTokenPattern  = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+\b`)
-	webSocketEvidenceBasicTokenPattern   = regexp.MustCompile(`(?i)\bbasic\s+[A-Za-z0-9._~+/=-]+\b`)
+	// webSocketEvidenceSchemaVersion pins the schema version consumed by the
+	// frontend v2 renderer. The JSON tag is a constant wire contract; any
+	// rename here is a schema break.
+	webSocketEvidenceSchemaVersion = 2
 )
 
 type webSocketGatewayEvidenceInput struct {
@@ -30,10 +23,16 @@ type webSocketGatewayEvidenceInput struct {
 	Message    string
 }
 
+// webSocketEvidence is the v2 session / attempt evidence envelope. The
+// SchemaVersion field is encoded as `"v"` and is a hard contract: the v2
+// renderer keys off this to route to the new parser. A zero SchemaVersion
+// (i.e., a bug in the builder that forgets to set it) will fall through to
+// the v1 renderer and misrender — the builder always sets it explicitly.
 type webSocketEvidence struct {
+	SchemaVersion     int                                 `json:"v"`
 	Gateway           *webSocketGatewayEvidence           `json:"gateway,omitempty"`
 	UpstreamHandshake *webSocketUpstreamHandshakeEvidence `json:"upstream_handshake,omitempty"`
-	Transport         *webSocketTransportEvidence         `json:"transport,omitempty"`
+	Transport         *transportDiagnostic                `json:"transport,omitempty"`
 	UpstreamEvent     *webSocketUpstreamEventEvidence     `json:"upstream_event,omitempty"`
 }
 
@@ -48,14 +47,6 @@ type webSocketUpstreamHandshakeEvidence struct {
 	BodySnippet string `json:"body_snippet,omitempty"`
 }
 
-type webSocketTransportEvidence struct {
-	Source          string `json:"source,omitempty"`
-	MessageSnippet  string `json:"message_snippet,omitempty"`
-	IsTimeout       bool   `json:"is_timeout,omitempty"`
-	IsClientCancel  bool   `json:"is_client_cancel,omitempty"`
-	RawErrorSnippet string `json:"raw_error_snippet,omitempty"`
-}
-
 type webSocketUpstreamEventEvidence struct {
 	EnvelopeType      string `json:"envelope_type,omitempty"`
 	ProviderErrorType string `json:"provider_error_type,omitempty"`
@@ -67,78 +58,155 @@ type webSocketUpstreamEventEvidence struct {
 
 // Keep evidence capture isolated so the core assessment path stays focused on
 // end-state classification rather than serialization and redaction mechanics.
+//
+// `isSyntheticFinal` is a belt-and-suspenders second barrier: the primary
+// guard is the structural zero-out of WebSocketResult.TransportObservation in
+// `applyLastAttemptToSuppressedPayload`. If that guard were ever bypassed by
+// a future code path writing to the result between creation and zeroing, this
+// flag still shuts down transport-diagnostic emission on the session side.
+// Attempt-level callers pass false: attempts always represent their own
+// observation, never a replaced inheritance chain.
 func buildWebSocketEvidence(
 	gateway webSocketGatewayEvidenceInput,
 	result *WebSocketResult,
 	fallback error,
+	isSyntheticFinal bool,
 ) *string {
-	evidence := webSocketEvidence{}
+	evidence := webSocketEvidence{SchemaVersion: webSocketEvidenceSchemaVersion}
 	if gateway.StatusCode > 0 || gateway.ErrorCode != "" || gateway.Message != "" {
 		evidence.Gateway = &webSocketGatewayEvidence{
 			TerminalStatusCode:     gateway.StatusCode,
-			TerminalErrorCode:      sanitizeWebSocketEvidenceSnippet(gateway.ErrorCode),
-			TerminalMessageSnippet: sanitizeWebSocketEvidenceSnippet(gateway.Message),
+			TerminalErrorCode:      sanitizeEvidenceSnippet(gateway.ErrorCode),
+			TerminalMessageSnippet: sanitizeEvidenceSnippet(gateway.Message),
 		}
 	}
 	if result != nil && (result.HandshakeStatusCode > 0 || result.HandshakeBodySnippet != "") {
 		evidence.UpstreamHandshake = &webSocketUpstreamHandshakeEvidence{
 			StatusCode:  result.HandshakeStatusCode,
-			BodySnippet: sanitizeWebSocketEvidenceSnippet(result.HandshakeBodySnippet),
+			BodySnippet: sanitizeEvidenceSnippet(result.HandshakeBodySnippet),
 		}
 	}
-	if transport := buildWebSocketTransportEvidence(result, fallback); transport != nil {
+	if transport := buildWebSocketTransportDiagnostic(result, fallback, isSyntheticFinal); transport != nil {
+		transport.RawErrorSnippet = sanitizeEvidenceSnippet(transport.RawErrorSnippet)
+		transport.CloseReasonSnippet = sanitizeEvidenceSnippet(transport.CloseReasonSnippet)
 		evidence.Transport = transport
 	}
 	if result != nil && result.UpstreamError != nil {
 		evidence.UpstreamEvent = &webSocketUpstreamEventEvidence{
-			EnvelopeType:      sanitizeWebSocketEvidenceSnippet(result.UpstreamError.EnvelopeType),
-			ProviderErrorType: sanitizeWebSocketEvidenceSnippet(result.UpstreamError.ProviderErrorType),
-			ProviderErrorCode: sanitizeWebSocketEvidenceSnippet(result.UpstreamError.Code),
+			EnvelopeType:      sanitizeEvidenceSnippet(result.UpstreamError.EnvelopeType),
+			ProviderErrorType: sanitizeEvidenceSnippet(result.UpstreamError.ProviderErrorType),
+			ProviderErrorCode: sanitizeEvidenceSnippet(result.UpstreamError.Code),
 			StatusCode:        result.UpstreamError.StatusCode,
-			MessageSnippet:    sanitizeWebSocketEvidenceSnippet(result.UpstreamError.Message),
-			RawPayloadSnippet: sanitizeWebSocketEvidenceSnippet(result.UpstreamError.Raw),
+			MessageSnippet:    sanitizeEvidenceSnippet(result.UpstreamError.Message),
+			RawPayloadSnippet: sanitizeEvidenceSnippet(result.UpstreamError.Raw),
 		}
 	}
-	if evidence == (webSocketEvidence{}) {
+	// When only the schema-version marker is populated, suppress the envelope
+	// entirely: emitting `{"v":2}` alone would pollute logs without carrying
+	// any diagnostic value.
+	if evidence.isEmptyPayload() {
 		return nil
 	}
 	return marshalWebSocketEvidence(evidence)
 }
 
+// buildWebSocketAttemptEvidence produces attempt-level evidence, including a
+// handshake-phase fallback when Result is nil. Without the fallback branch, a
+// dial failure that never produced a WebSocketResult would leave the attempt
+// row with no transport evidence at all, hiding the only signal that exists
+// (the terminal error text).
 func buildWebSocketAttemptEvidence(attempt WebSocketAttemptResult) *string {
+	gateway := webSocketGatewayEvidenceInput{
+		StatusCode: attempt.GatewayStatusCode,
+		ErrorCode:  attempt.GatewayErrorCode,
+		Message:    attempt.GatewayMessage,
+	}
+	if attempt.Result != nil {
+		return buildWebSocketEvidence(gateway, attempt.Result, attempt.terminalErr(), false)
+	}
+	// Synthesize a minimal WebSocketResult so the evidence builder has a
+	// canonical observation carrier. FailurePeer=upstream reflects that a nil
+	// Result on an attempt means the upstream dial leg produced the error
+	// (client accept is handled later, only after an upstream result exists).
 	return buildWebSocketEvidence(
-		webSocketGatewayEvidenceInput{
-			StatusCode: attempt.GatewayStatusCode,
-			ErrorCode:  attempt.GatewayErrorCode,
-			Message:    attempt.GatewayMessage,
+		gateway,
+		&WebSocketResult{
+			Err: attempt.terminalErr(),
+			TransportObservation: WebSocketTransportObservation{
+				FailurePeer: webSocketPeerUpstream,
+			},
 		},
-		attempt.Result,
 		attempt.terminalErr(),
+		false,
 	)
 }
 
-func buildWebSocketTransportEvidence(result *WebSocketResult, fallback error) *webSocketTransportEvidence {
+// buildWebSocketTransportDiagnostic assembles a transportObservation from the
+// WebSocketResult and delegates to the pure derivation function. Keeping the
+// observation construction out of the shared derivation layer is deliberate:
+// protocol-specific mapping of "runtime fact → observation" lives in the
+// protocol package; "observation → diagnostic" lives in the shared layer.
+func buildWebSocketTransportDiagnostic(result *WebSocketResult, fallback error, isSyntheticFinal bool) *transportDiagnostic {
 	err := fallback
 	if result != nil && result.Err != nil {
 		err = result.Err
 	}
-	if err == nil {
-		return nil
+	ws := wsObservation{}
+	if result != nil {
+		ws.closeError = result.TransportObservation.CloseError
+		// `isUnexpectedPeerDisconnect` collapses EOF / ErrUnexpectedEOF / no-
+		// status-received into the synthetic StatusNoStatusRcvd close code, so
+		// the relay layer signals close_without_status precisely when the
+		// outcome used that code AND no concrete CloseError was captured.
+		if result.CloseCode == websocket.StatusNoStatusRcvd && ws.closeError == nil {
+			ws.closedWithoutStatus = true
+		}
+		ws.upgradeCompleted = result.HandshakeAccepted
+		// Any transported bytes imply a frame was delivered to the client; if
+		// byte counters are unavailable, fall back to the ClientVisible flag.
+		ws.anyFrameDelivered = result.BytesUpstreamToClient > 0 || result.ClientVisible
+		// Propagate the peer that reduction attributed the failure to so the
+		// derivation layer can flip `source` for client-originated closes.
+		// Without this wire the `source` axis silently stays upstream even
+		// when the client tore the connection down (bug flagged by the
+		// observability review).
+		ws.failurePeer = result.TransportObservation.FailurePeer
 	}
-
-	transport := &webSocketTransportEvidence{
-		Source:          webSocketTransportSource(result),
-		MessageSnippet:  sanitizeWebSocketEvidenceSnippet(err.Error()),
-		IsTimeout:       errors.Is(err, context.DeadlineExceeded),
-		IsClientCancel:  errors.Is(err, context.Canceled) || (result != nil && result.TerminalCause == model.TerminalClientDisconnect),
-		RawErrorSnippet: sanitizeWebSocketEvidenceSnippet(err.Error()),
+	obs := transportObservation{
+		protocol:                   transportProtocolWS,
+		err:                        err,
+		isSuppressedSyntheticFinal: isSyntheticFinal,
+		ws:                         ws,
 	}
-	if *transport == (webSocketTransportEvidence{}) {
-		return nil
-	}
-	return transport
+	return deriveTransportDiagnostic(obs)
 }
 
+// isEmptyPayload detects whether the evidence envelope carries any content
+// beyond the schema-version field. Without this check, every request would
+// emit `{"v":2}` even when no diagnostic data exists, wasting log bytes and
+// distorting evidence-presence dashboards.
+func (e webSocketEvidence) isEmptyPayload() bool {
+	return e.Gateway == nil && e.UpstreamHandshake == nil && e.Transport == nil && e.UpstreamEvent == nil
+}
+
+// marshalWebSocketEvidence enforces the 4 KiB evidence budget by trimming
+// snippet fields in a deterministic order when the payload overflows. The
+// order reflects "easiest to recover from other sources" first:
+//
+//  1. UpstreamEvent.RawPayloadSnippet — the full original event body, usually
+//     recoverable from upstream logs if needed.
+//  2. Transport.CloseReasonSnippet — a human-readable close reason; the
+//     structured close_code + signal fields still carry the diagnostic value
+//     after this is dropped.
+//  3. Transport.RawErrorSnippet — the raw error text is diagnostic-critical
+//     but redundant with Transport.Signal once the renderer maps it.
+//  4. UpstreamHandshake.BodySnippet, Gateway.TerminalMessageSnippet,
+//     UpstreamEvent.MessageSnippet — long-form human text; structured codes
+//     remain intact so the summary still renders.
+//
+// After this pass the structural classification fields (Signal / Kind /
+// Stage / Source / CloseCode / provider error codes) are preserved so the
+// frontend summary helper can still produce a useful line.
 func marshalWebSocketEvidence(evidence webSocketEvidence) *string {
 	serialized, err := json.Marshal(evidence)
 	if err != nil {
@@ -153,6 +221,9 @@ func marshalWebSocketEvidence(evidence webSocketEvidence) *string {
 		trimmed.UpstreamEvent.RawPayloadSnippet = ""
 	}
 	if trimmed.Transport != nil {
+		trimmed.Transport.CloseReasonSnippet = ""
+	}
+	if trimmed.Transport != nil {
 		trimmed.Transport.RawErrorSnippet = ""
 	}
 	if trimmed.UpstreamHandshake != nil {
@@ -164,41 +235,11 @@ func marshalWebSocketEvidence(evidence webSocketEvidence) *string {
 	if trimmed.UpstreamEvent != nil {
 		trimmed.UpstreamEvent.MessageSnippet = ""
 	}
-	if trimmed.Transport != nil {
-		trimmed.Transport.MessageSnippet = ""
-	}
 	serialized, err = json.Marshal(trimmed)
 	if err != nil || len(serialized) > webSocketEvidenceJSONLimitBytes {
 		return nil
 	}
 	return ptr(string(serialized))
-}
-
-func sanitizeWebSocketEvidenceSnippet(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	sanitized := webSocketEvidenceHeaderSecretPattern.ReplaceAllString(trimmed, `$1: `+webSocketEvidenceRedactedPlaceholder)
-	sanitized = webSocketEvidenceBearerTokenPattern.ReplaceAllString(sanitized, "Bearer "+webSocketEvidenceRedactedPlaceholder)
-	sanitized = webSocketEvidenceBasicTokenPattern.ReplaceAllString(sanitized, "Basic "+webSocketEvidenceRedactedPlaceholder)
-	return truncateUTF8(sanitized, webSocketEvidenceSnippetLimitBytes)
-}
-
-func webSocketTransportSource(result *WebSocketResult) string {
-	if result == nil {
-		return string(model.TerminationActorUnknown)
-	}
-	switch result.TerminalCause {
-	case model.TerminalClientDisconnect:
-		return string(model.TerminationActorClient)
-	case model.TerminalClientUpgradeRejected, model.TerminalProviderUnavailable, model.TerminalProviderConfigurationError:
-		return string(model.TerminationActorGateway)
-	case model.TerminalInternalError:
-		return string(model.TerminationActorInternal)
-	default:
-		return string(model.TerminationActorUpstream)
-	}
 }
 
 func webSocketClientTransportStatusCode(gatewayStatusCode int, result *WebSocketResult) int {

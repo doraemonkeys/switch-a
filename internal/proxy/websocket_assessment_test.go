@@ -680,6 +680,7 @@ func TestMarshalWebSocketEvidence_TrimsOversizedDiagnosticSnippets(t *testing.T)
 
 	large := strings.Repeat("oversized-snippet-", 80)
 	evidenceJSON := marshalWebSocketEvidence(webSocketEvidence{
+		SchemaVersion: webSocketEvidenceSchemaVersion,
 		Gateway: &webSocketGatewayEvidence{
 			TerminalStatusCode:     http.StatusBadGateway,
 			TerminalErrorCode:      strings.Repeat("gateway-code-", 30),
@@ -689,10 +690,13 @@ func TestMarshalWebSocketEvidence_TrimsOversizedDiagnosticSnippets(t *testing.T)
 			StatusCode:  http.StatusBadGateway,
 			BodySnippet: large,
 		},
-		Transport: &webSocketTransportEvidence{
-			Source:          string(model.TerminationActorUpstream),
-			MessageSnippet:  large,
-			RawErrorSnippet: large,
+		Transport: &transportDiagnostic{
+			Source:             transportSourceUpstream,
+			Stage:              transportStagePostPayloadVisible,
+			Kind:               transportKindDisconnect,
+			Signal:             transportSignalCloseError,
+			CloseReasonSnippet: large,
+			RawErrorSnippet:    large,
 		},
 		UpstreamEvent: &webSocketUpstreamEventEvidence{
 			EnvelopeType:      "error",
@@ -715,11 +719,19 @@ func TestMarshalWebSocketEvidence_TrimsOversizedDiagnosticSnippets(t *testing.T)
 	if err := json.Unmarshal([]byte(*evidenceJSON), &evidence); err != nil {
 		t.Fatalf("json.Unmarshal(evidenceJSON) = %v", err)
 	}
+	if evidence.SchemaVersion != webSocketEvidenceSchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", evidence.SchemaVersion, webSocketEvidenceSchemaVersion)
+	}
 	if evidence.Gateway == nil || evidence.Gateway.TerminalErrorCode == "" {
 		t.Fatalf("Gateway = %+v, want retained gateway classification", evidence.Gateway)
 	}
 	if evidence.UpstreamEvent == nil || evidence.UpstreamEvent.ProviderErrorType == "" {
 		t.Fatalf("UpstreamEvent = %+v, want retained upstream classification", evidence.UpstreamEvent)
+	}
+	// Signal / Stage / Kind / Source are structural classification fields; the
+	// trim pass must preserve them so the renderer summary still works.
+	if evidence.Transport == nil || evidence.Transport.Signal == "" {
+		t.Fatalf("Transport = %+v, want retained structural classification", evidence.Transport)
 	}
 	if evidence.Gateway != nil && evidence.Gateway.TerminalMessageSnippet != "" {
 		t.Fatalf("Gateway.TerminalMessageSnippet = %q, want trimmed empty value", evidence.Gateway.TerminalMessageSnippet)
@@ -727,8 +739,8 @@ func TestMarshalWebSocketEvidence_TrimsOversizedDiagnosticSnippets(t *testing.T)
 	if evidence.UpstreamHandshake != nil && evidence.UpstreamHandshake.BodySnippet != "" {
 		t.Fatalf("UpstreamHandshake.BodySnippet = %q, want trimmed empty value", evidence.UpstreamHandshake.BodySnippet)
 	}
-	if evidence.Transport != nil && evidence.Transport.MessageSnippet != "" {
-		t.Fatalf("Transport.MessageSnippet = %q, want trimmed empty value", evidence.Transport.MessageSnippet)
+	if evidence.Transport != nil && evidence.Transport.CloseReasonSnippet != "" {
+		t.Fatalf("Transport.CloseReasonSnippet = %q, want trimmed empty value", evidence.Transport.CloseReasonSnippet)
 	}
 	if evidence.Transport != nil && evidence.Transport.RawErrorSnippet != "" {
 		t.Fatalf("Transport.RawErrorSnippet = %q, want trimmed empty value", evidence.Transport.RawErrorSnippet)

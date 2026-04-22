@@ -52,6 +52,14 @@ func newWebSocketRelayResult(bytes int64, err error, failurePeer webSocketPeer, 
 	if errors.As(err, &suppressedErr) {
 		result.suppressedUpstreamError = suppressedErr.UpstreamError()
 	}
+	// Extract any CloseError as an observation-layer fact. The same err value
+	// still flows through reduction so close propagation / classification stay
+	// unchanged; we only hoist the frame into a typed pointer here.
+	var closeErr websocket.CloseError
+	if err != nil && errors.As(err, &closeErr) {
+		frame := closeErr
+		result.closeError = &frame
+	}
 	if err != nil {
 		// Capture order before canceling the sibling relay leg so reduction can preserve
 		// the actual trigger instead of whichever struct happens to be examined first.
@@ -84,22 +92,31 @@ func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult)
 			continue
 		}
 		terminalCause := classifyRelayTerminalCause(candidate.err, candidate.failurePeer)
+		// The observation-layer fields (observedCloseError, failurePeer) are
+		// populated for every candidate-producing branch so evidence derivation
+		// has a complete picture; close propagation still reads only closeCode.
 		if isNormalClose(candidate.err) {
 			return webSocketRelayOutcome{
-				closeCode:     extractCloseCode(candidate.err),
-				terminalCause: terminalCause,
+				closeCode:          extractCloseCode(candidate.err),
+				terminalCause:      terminalCause,
+				observedCloseError: candidate.closeError,
+				failurePeer:        candidate.failurePeer,
 			}
 		}
 		if isUnexpectedPeerDisconnect(candidate.err) {
 			return webSocketRelayOutcome{
-				closeCode:     websocket.StatusNoStatusRcvd,
-				terminalCause: terminalCause,
+				closeCode:          websocket.StatusNoStatusRcvd,
+				terminalCause:      terminalCause,
+				observedCloseError: candidate.closeError,
+				failurePeer:        candidate.failurePeer,
 			}
 		}
 		return webSocketRelayOutcome{
-			closeCode:     extractCloseCode(candidate.err),
-			err:           candidate.err,
-			terminalCause: terminalCause,
+			closeCode:          extractCloseCode(candidate.err),
+			err:                candidate.err,
+			terminalCause:      terminalCause,
+			observedCloseError: candidate.closeError,
+			failurePeer:        candidate.failurePeer,
 		}
 	}
 	return webSocketRelayOutcome{

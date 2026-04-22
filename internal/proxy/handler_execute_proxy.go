@@ -128,6 +128,12 @@ func (h *Handler) applyForwardResult(state *retryState, result forwardResult) {
 	state.responseBytes = result.responseBytes
 	state.tokenUsage = result.tokenUsage
 	state.failureDisposition = result.failureDisposition
+	// Mirror transport observation facts so finalizeProxy can reconstruct
+	// the SSE observation without re-reading the writer. Only the last
+	// attempt's facts survive here (consistent with err/statusCode).
+	state.firstByteVisible = result.firstByteVisible
+	state.isStatusFailover = result.isStatusFailover
+	state.isClientWriteError = result.isClientWriteError
 }
 
 func (h *Handler) advanceExecuteProxyAttempt(
@@ -142,6 +148,7 @@ func (h *Handler) advanceExecuteProxyAttempt(
 	// monitor state can reflect a long-lived stream even when the write blocks.
 	if result.done {
 		h.recordAttempt(pctx, state, result, attempt, attemptStart, "")
+		attachSSEAttemptEvidence(pctx, attemptFactsFromForwardResult(ctx, result))
 		return executeProxyLoopActionBreak
 	}
 
@@ -151,6 +158,7 @@ func (h *Handler) advanceExecuteProxyAttempt(
 
 	state.providerAttempt = currentProviderAttempt
 	h.recordAttempt(pctx, state, result, attempt, attemptStart, switchReason)
+	attachSSEAttemptEvidence(pctx, attemptFactsFromForwardResult(ctx, result))
 
 	if !exhausted {
 		state.providerAttempt = nextProviderAttempt
@@ -168,6 +176,27 @@ func (h *Handler) advanceExecuteProxyAttempt(
 	state.switchTracker.prepareProviderSwitch()
 	h.excludeCurrentProvider(pctx, state)
 	return executeProxyLoopActionContinue
+}
+
+// attemptFactsFromForwardResult projects a single attempt's forwardResult
+// into the shared runtime-facts shape. Keeping this translation in one
+// place prevents drift between the session-level logRequest aggregate and
+// the per-attempt evidence attach path ? both sides ultimately feed the
+// same derivation function.
+func attemptFactsFromForwardResult(ctx context.Context, result forwardResult) nonWebSocketRuntimeFacts {
+	return nonWebSocketRuntimeFacts{
+		ClientTransportStatusCode: result.statusCode,
+		Success:                   result.success,
+		ResponseCommitted:         result.responseCommitted,
+		ServiceStarted:            nonWebSocketServiceStarted(result.statusCode, result.responseCommitted),
+		ClientCanceled:            result.clientCanceled,
+		TerminalErr:               result.err,
+		IsSSE:                     result.isSSE,
+		FirstByteVisible:          result.firstByteVisible,
+		CtxErr:                    ctx.Err(),
+		IsStatusFailover:          result.isStatusFailover,
+		IsClientWriteError:        result.isClientWriteError,
+	}
 }
 
 // finalizeProxy performs cleanup and logging after the retry loop completes.
@@ -197,18 +226,26 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	// Trade-off: Fire-and-forget logging may lose logs on immediate shutdown,
 	// but avoids blocking the response path. For a high-throughput proxy,
 	// this is an acceptable trade-off as most logs will complete.
-	go h.logRequest(
-		pctx,
-		state.providerUsed,
-		clientTransportStatusCode,
-		state.success,
-		state.isSSE,
-		state.firstTokenMs,
-		state.responseBytes,
-		state.tokenUsage,
-		state.lastErr,
-		state.responseCommitted,
-		state.clientCanceled,
-		time.Since(pctx.startTime),
-	)
+	go h.logRequest(pctx, logRequestInputs{
+		Provider: state.providerUsed,
+		Facts: nonWebSocketRuntimeFacts{
+			ClientTransportStatusCode: clientTransportStatusCode,
+			Success:                   state.success,
+			ResponseCommitted:         state.responseCommitted,
+			ServiceStarted:            nonWebSocketServiceStarted(clientTransportStatusCode, state.responseCommitted),
+			ClientCanceled:            state.clientCanceled,
+			TerminalErr:               state.lastErr,
+			// SSE observation plumbing ? only read by the evidence builder
+			// when IsSSE=true, so non-SSE paths leave them zero-valued.
+			IsSSE:              state.isSSE,
+			FirstByteVisible:   state.firstByteVisible,
+			CtxErr:             pctx.r.Context().Err(),
+			IsStatusFailover:   state.isStatusFailover,
+			IsClientWriteError: state.isClientWriteError,
+		},
+		FirstTokenMs:  state.firstTokenMs,
+		ResponseBytes: state.responseBytes,
+		TokenUsage:    state.tokenUsage,
+		Latency:       time.Since(pctx.startTime),
+	})
 }

@@ -11,7 +11,13 @@ import type {
   TerminationReason,
 } from "../../api/types";
 import { BADGE_STYLES, getStatusCodeBadgeClass } from "../../lib/utils";
-import { getRequestEvidenceSummary } from "./evidence-utils";
+import {
+  formatTransportSummary,
+  getRequestEvidenceSummary,
+  getV2Transport,
+  isV2Evidence,
+  parseRequestEvidence,
+} from "./evidence-utils";
 
 export type DiagnosticTone = "success" | "danger" | "warning" | "info";
 
@@ -242,6 +248,22 @@ export function getPrimaryProviderLabel(log: RequestLog): string {
 
 export function getLogEvidenceSummary(log: RequestLog): string | null {
   return getRequestEvidenceSummary(log.session_evidence_json);
+}
+
+/**
+ * Resolve a list-ready transport summary for a log's session evidence.
+ *
+ * v1 payloads fall through this helper (returns null) because v1 `transport`
+ * lacks the structured `kind`/`signal`/`stage` fields the summary is built
+ * from. v1 callers should keep using `getLogEvidenceSummary`, which still
+ * renders v1 `message_snippet`.
+ */
+export function getLogTransportSummary(log: RequestLog): string | null {
+  const evidence = parseRequestEvidence(log.session_evidence_json);
+  if (!isV2Evidence(evidence)) {
+    return null;
+  }
+  return formatTransportSummary(getV2Transport(evidence));
 }
 
 export function getServiceOutcomeLabel(

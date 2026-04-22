@@ -26,20 +26,13 @@ const logInsertTimeout = 2 * time.Second
 func (h *Handler) handleNoProvider(pctx *proxyContext) {
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
-	go h.logRequest(
-		pctx,
-		nil,
-		http.StatusServiceUnavailable,
-		false,
-		false,
-		nil,
-		0,
-		nil,
-		internal.ErrNoProvider,
-		false,
-		false,
-		time.Since(pctx.startTime),
-	)
+	go h.logRequest(pctx, logRequestInputs{
+		Facts: nonWebSocketRuntimeFacts{
+			ClientTransportStatusCode: http.StatusServiceUnavailable,
+			TerminalErr:               internal.ErrNoProvider,
+		},
+		Latency: time.Since(pctx.startTime),
+	})
 }
 
 // handleExhaustedRetries handles exhausted retry attempts.
@@ -140,31 +133,28 @@ func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code,
 	}
 }
 
+// logRequestInputs bundles the runtime inputs needed to build a request
+// log and its evidence. Centralizing them here stops the logRequest
+// signature from drifting every time a new observation field lands; the
+// caller feeds a single aggregate in, and callers that don't observe a
+// field (e.g., handleNoProvider) can leave the zero value.
+type logRequestInputs struct {
+	Provider *model.Provider
+	Facts    nonWebSocketRuntimeFacts
+	// Reporting facts unrelated to assessment/evidence derivation, kept
+	// outside `Facts` to prevent accidental coupling between transport
+	// observability and transfer statistics.
+	FirstTokenMs  *int64
+	ResponseBytes int64
+	TokenUsage    *TokenUsage
+	Latency       time.Duration
+}
+
 // logRequest logs the request asynchronously.
 // Note: Uses context.Background() with timeout because this runs after the HTTP response
 // completes and the request context may already be cancelled.
-func (h *Handler) logRequest(
-	pctx *proxyContext,
-	provider *model.Provider,
-	statusCode int,
-	success bool,
-	isSSE bool,
-	firstTokenMs *int64,
-	responseBytes int64,
-	tokenUsage *TokenUsage,
-	err error,
-	responseCommitted bool,
-	clientCanceled bool,
-	latency time.Duration,
-) {
-	assessment := assessNonWebSocketRequest(nonWebSocketRuntimeFacts{
-		ClientTransportStatusCode: statusCode,
-		Success:                   success,
-		ResponseCommitted:         responseCommitted,
-		ServiceStarted:            nonWebSocketServiceStarted(statusCode, responseCommitted),
-		ClientCanceled:            clientCanceled,
-		TerminalErr:               err,
-	})
+func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
+	assessment := assessNonWebSocketRequest(inputs.Facts)
 
 	log := &model.RequestLog{
 		RequestID:                 pctx.requestID,
@@ -173,14 +163,15 @@ func (h *Handler) logRequest(
 		ClientIP:                  pctx.info.ClientIP,
 		UserID:                    pctx.info.UserID,
 		SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
-		ClientTransportStatusCode: ptr(statusCode),
+		ClientTransportStatusCode: ptr(inputs.Facts.ClientTransportStatusCode),
 		CompletionState:           ptr(assessment.CompletionState),
 		ServiceOutcome:            ptr(assessment.ServiceOutcome),
 		TerminationActor:          assessment.TerminationActor,
 		TerminationReason:         assessment.TerminationReason,
 		ClientAction:              ptr(assessment.ClientAction),
-		LatencyMs:                 latency.Milliseconds(),
-		IsSSE:                     isSSE,
+		SessionEvidenceJSON:       assessment.SessionEvidenceJSON,
+		LatencyMs:                 inputs.Latency.Milliseconds(),
+		IsSSE:                     inputs.Facts.IsSSE,
 		RetryCount:                max(0, len(pctx.attempts)-1),
 		IsSticky:                  pctx.isSticky,
 		CreatedAt:                 time.Now(),
@@ -188,29 +179,29 @@ func (h *Handler) logRequest(
 		RequestMethod:             pctx.info.Method,
 		UserAgent:                 pctx.info.UserAgent,
 		RequestIDHeader:           pctx.info.RequestID,
-		FirstTokenMs:              firstTokenMs,
+		FirstTokenMs:              inputs.FirstTokenMs,
 		// Phase 3 transfer statistics
 		RequestBytes:  int64(len(pctx.body)),
-		ResponseBytes: responseBytes,
+		ResponseBytes: inputs.ResponseBytes,
 		ContentType:   pctx.info.ContentType,
 	}
 
-	if provider != nil {
-		log.ProviderID = provider.ID
+	if inputs.Provider != nil {
+		log.ProviderID = inputs.Provider.ID
 	}
 
 	// Persist token usage to database (Phase 4a-4).
-	if tokenUsage != nil {
+	if inputs.TokenUsage != nil {
 		h.logger.Debug("token usage captured",
 			zap.String("request_id", pctx.requestID),
-			zap.Int64("prompt_tokens", tokenUsage.PromptTokens),
-			zap.Int64("completion_tokens", tokenUsage.CompletionTokens),
-			zap.Int64("total_tokens", tokenUsage.TotalTokens),
-			zap.Int64("cache_read_tokens", tokenUsage.CacheReadInputTokens),
+			zap.Int64("prompt_tokens", inputs.TokenUsage.PromptTokens),
+			zap.Int64("completion_tokens", inputs.TokenUsage.CompletionTokens),
+			zap.Int64("total_tokens", inputs.TokenUsage.TotalTokens),
+			zap.Int64("cache_read_tokens", inputs.TokenUsage.CacheReadInputTokens),
 		)
 		// Convert TokenUsage to model fields for database storage
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
-			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = tokenUsage.ToModelFields()
+			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = inputs.TokenUsage.ToModelFields()
 	}
 
 	// Use timeout to prevent goroutine accumulation if database is slow or blocked
@@ -235,8 +226,21 @@ type nonWebSocketAssessment struct {
 	TerminationActor  *model.TerminationActor
 	TerminationReason *model.TerminationReason
 	ClientAction      model.ClientAction
+	// SessionEvidenceJSON is populated by the evidence builder from the
+	// runtime facts themselves; keeping it on the assessment keeps the
+	// logRequest surface narrow ? the caller feeds facts in, the assessment
+	// carries both classification and evidence out.
+	SessionEvidenceJSON *string
 }
 
+// nonWebSocketRuntimeFacts aggregates SSE/non-WS observation inputs so the
+// assessment and evidence layers share one shape. The struct deliberately
+// splits transport observation (IsSSE / FirstByteVisible / CtxErr /
+// IsStatusFailover / IsClientWriteError) from the legacy request-level
+// fields (ClientTransportStatusCode / Success / ResponseCommitted /
+// ServiceStarted / ClientCanceled / TerminalErr); this keeps the evidence
+// derivation pure while the termination/outcome logic stays isolated on
+// request-level axes.
 type nonWebSocketRuntimeFacts struct {
 	ClientTransportStatusCode int
 	Success                   bool
@@ -244,6 +248,14 @@ type nonWebSocketRuntimeFacts struct {
 	ServiceStarted            bool
 	ClientCanceled            bool
 	TerminalErr               error
+	// Transport observation inputs ? only meaningful when IsSSE is true.
+	// Keeping them on the same struct avoids a second parameter pack; when
+	// IsSSE=false the evidence builder short-circuits without reading them.
+	IsSSE              bool
+	FirstByteVisible   bool
+	CtxErr             error
+	IsStatusFailover   bool
+	IsClientWriteError bool
 }
 
 func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAssessment {
@@ -254,6 +266,7 @@ func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAsses
 		ClientAction:    model.ClientActionNone,
 	}
 	assessment.TerminationActor, assessment.TerminationReason = deriveNonWebSocketTermination(facts, serviceOutcome)
+	assessment.SessionEvidenceJSON = buildNonWebSocketSessionEvidence(facts)
 	return assessment
 }
 

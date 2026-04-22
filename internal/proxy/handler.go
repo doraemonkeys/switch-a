@@ -334,8 +334,16 @@ type retryState struct {
 	headersWritten    bool
 	responseCommitted bool
 	clientCanceled    bool
-	excludedProviders map[string]bool
-	currentProvider   *model.Provider
+	// Transport observation plumbing — mirrored from forwardResult so the
+	// final logRequest/evidence path can reconstruct the observation without
+	// re-running forwarding logic. Only the last attempt's values survive
+	// here (exhausted retries flow through finalizeProxy), matching how the
+	// existing err/statusCode/... fields behave.
+	firstByteVisible   bool
+	isStatusFailover   bool
+	isClientWriteError bool
+	excludedProviders  map[string]bool
+	currentProvider    *model.Provider
 	// providerAttempt is 0-based within a single provider. A provider with MaxRetries=N
 	// can be attempted (N+1) times: providerAttempt 0..N.
 	providerAttempt  int
@@ -512,19 +520,44 @@ func (h *Handler) applyBackoffDelay(ctx context.Context, provider *model.Provide
 }
 
 // forwardResult holds the result of forwarding to a provider.
+//
+// Transport observation fields (firstByteVisible / isStatusFailover /
+// isClientWriteError) carry **runtime facts only** — they feed the SSE
+// transport diagnostic derivation one layer up. Per the transport
+// observability plan, this struct intentionally does NOT carry a derived
+// `TransportDiagnostic`: evidence is built by the evidence layer from
+// observation facts, not reverse-engineered from a logged conclusion.
 type forwardResult struct {
 	headersWritten    bool
 	responseCommitted bool
 	clientCanceled    bool
-	statusCode        int
-	success           bool
-	err               error
-	done              bool        // whether to stop retrying
-	isSSE             bool        // whether the response was SSE
-	bodySnippet       string      // first ~500 bytes of error response (failover scenarios only)
-	firstTokenMs      *int64      // Time To First Token for SSE requests (ms from request start)
-	responseBytes     int64       // Total bytes written to client (for transfer statistics)
-	tokenUsage        *TokenUsage // Token usage extracted from response (Phase 4a)
+	// firstByteVisible is true once a body byte has actually been committed
+	// to the client. It is the sole discriminator between the SSE stages
+	// `pre_payload_visible` and `post_payload_visible`; the idle watchdog
+	// can fire before any byte is written (newIdleWatchdog starts at body
+	// open, pre-Read()), so this flag is load-bearing for stage accuracy.
+	firstByteVisible bool
+	// isStatusFailover flags the synthetic `upstream returned status %d`
+	// error produced by failoverForwardResponse. That error is a status
+	// classification, not a transport failure, so the derivation function
+	// must bypass it explicitly — we carry a flag instead of matching the
+	// synthetic message text, which is fragile under localization or copy
+	// refactors.
+	isStatusFailover bool
+	// isClientWriteError is set by handleWriteError when the failure arose
+	// from writing to the client rather than reading from upstream or a
+	// pure ctx cancel. The derivation function treats this as authoritative
+	// rather than sniffing error text.
+	isClientWriteError bool
+	statusCode         int
+	success            bool
+	err                error
+	done               bool        // whether to stop retrying
+	isSSE              bool        // whether the response was SSE
+	bodySnippet        string      // first ~500 bytes of error response (failover scenarios only)
+	firstTokenMs       *int64      // Time To First Token for SSE requests (ms from request start)
+	responseBytes      int64       // Total bytes written to client (for transfer statistics)
+	tokenUsage         *TokenUsage // Token usage extracted from response (Phase 4a)
 	// failureDisposition records retry semantics derived from the upstream failure.
 	failureDisposition providerFailureDisposition
 }
@@ -646,8 +679,11 @@ func (h *Handler) handleWriteError(ctx context.Context, writeErr error, provider
 
 	// Upstream errors indicate problems with the provider and should
 	// trigger circuit breaker to avoid routing to problematic providers.
+	isUpstreamErr := errors.Is(writeErr, ErrReadTimeout) ||
+		errors.Is(writeErr, ErrSSEIdleTimeout) ||
+		IsUpstreamReadError(writeErr)
 	switch {
-	case errors.Is(writeErr, ErrReadTimeout) || errors.Is(writeErr, ErrSSEIdleTimeout) || IsUpstreamReadError(writeErr):
+	case isUpstreamErr:
 		result.success = false
 		h.markFailure(ctx, providerID, writeErr)
 	case clientDisconnect && result.statusCode < defaults.StatusClientError:
@@ -658,5 +694,14 @@ func (h *Handler) handleWriteError(ctx context.Context, writeErr error, provider
 		// Other write errors (e.g., client disconnected with non-2xx) — don't markFailure
 		// as the upstream itself succeeded; only the client write failed.
 		result.success = false
+	}
+
+	// Flag a genuine client-side write failure so the transport diagnostic
+	// derivation can classify `signal=client_write_error` without sniffing
+	// error text. A pure ctx cancel has no real transport signal and is
+	// excluded (clientDisconnect with no writeErr classification); an
+	// upstream-origin error wrapped as a write failure stays upstream.
+	if !clientDisconnect && !isUpstreamErr && writeErr != nil {
+		result.isClientWriteError = true
 	}
 }

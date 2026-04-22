@@ -429,40 +429,21 @@ export type WebSocketProbeOutcome =
   | "completed_without_usable_model"
   | "transport_failed";
 
-export interface RequestEvidenceGateway {
-  terminal_status_code?: number;
-  terminal_error_code?: string;
-  terminal_message_snippet?: string;
-}
-
-export interface RequestEvidenceUpstreamHandshake {
-  status_code?: number;
-  body_snippet?: string;
-}
-
-export interface RequestEvidenceTransport {
-  source?: string;
-  message_snippet?: string;
-  is_timeout?: boolean;
-  is_client_cancel?: boolean;
-  raw_error_snippet?: string;
-}
-
-export interface RequestEvidenceUpstreamEvent {
-  envelope_type?: string;
-  provider_error_type?: string;
-  provider_error_code?: string;
-  status_code?: number;
-  message_snippet?: string;
-  raw_payload_snippet?: string;
-}
-
-export interface RequestEvidence {
-  gateway?: RequestEvidenceGateway | null;
-  upstream_handshake?: RequestEvidenceUpstreamHandshake | null;
-  transport?: RequestEvidenceTransport | null;
-  upstream_event?: RequestEvidenceUpstreamEvent | null;
-}
+// Request evidence types live in ./evidence-types so this aggregate file
+// stays under the sloc-guard limit; re-exported here to preserve the public
+// `./api/types` import surface consumers already depend on.
+export type {
+  RequestEvidence,
+  RequestEvidenceGateway,
+  RequestEvidenceTransport,
+  RequestEvidenceTransportV2,
+  RequestEvidenceUpstreamEvent,
+  RequestEvidenceUpstreamHandshake,
+  TransportEvidenceKind,
+  TransportEvidenceSignal,
+  TransportEvidenceSource,
+  TransportEvidenceStage,
+} from "./evidence-types";
 
 interface RequestLogBase {
   id: number;

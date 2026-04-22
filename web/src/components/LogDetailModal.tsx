@@ -8,6 +8,7 @@ import { TransferStats } from "./TransferStats";
 import { TokenUsageStats } from "./TokenUsageStats";
 import {
   getDiagnosticToneClass,
+  getLogEvidenceSummary,
   getLogLifecyclePresentation,
   getPrimaryProviderLabel,
   getTransportBadgeClass,
@@ -122,6 +123,7 @@ export function LogDetailModal({
 
         <div className="p-6 space-y-6 overflow-y-auto flex-1 min-h-0">
           <StatusBadges log={log} />
+          <EvidenceSummaryLine log={log} />
           <RequestInfo
             log={log}
             providerName={resolvedProviderName}
@@ -198,6 +200,26 @@ function CloseButton({ onClick }: { onClick: () => void }) {
         />
       </svg>
     </button>
+  );
+}
+
+/**
+ * Shared transport / evidence summary line shown beneath the status badges.
+ *
+ * Uses `getLogEvidenceSummary`, which prefers gateway terminal text when
+ * present and otherwise formats v2 transport evidence as
+ * `{source} {kind} ({signal}) {stage-phrase}` — keeping detail and list views
+ * in lock-step with no duplicated heuristics.
+ */
+function EvidenceSummaryLine({ log }: { log: RequestLog }) {
+  const summary = getLogEvidenceSummary(log);
+  if (!summary) {
+    return null;
+  }
+  return (
+    <p className="text-sm text-text-secondary" role="note">
+      {summary}
+    </p>
   );
 }
 

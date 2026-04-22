@@ -137,9 +137,15 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("Session Evidence")).toBeInTheDocument();
     expect(screen.getByText("Gateway")).toBeInTheDocument();
     expect(screen.getByText("gateway_timeout")).toBeInTheDocument();
+    // Gateway terminal_message_snippet is now also surfaced by the shared
+    // EvidenceSummaryLine beneath the status badges, so the same text renders
+    // twice — once in the summary, once in the evidence panel.
     expect(
-      screen.getByText("gateway timeout after upgrade"),
-    ).toBeInTheDocument();
+      screen.getAllByText("gateway timeout after upgrade").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "gateway timeout after upgrade",
+    );
     expect(screen.getByText("Transport")).toBeInTheDocument();
     expect(screen.getByText("connection closed")).toBeInTheDocument();
     expect(screen.getByText("Upstream Event")).toBeInTheDocument();
@@ -186,6 +192,128 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("Structured Evidence")).toBeInTheDocument();
     expect(screen.getByText("Upstream Handshake")).toBeInTheDocument();
     expect(screen.getByText("upstream unavailable")).toBeInTheDocument();
+  });
+
+  it("renders v2 transport evidence with formatted summary, kind, signal, and stage", () => {
+    // SSE idle timeout before payload visible — the v2 renderer must surface
+    // the structured `{source} {kind} ({signal}) {stage-phrase}` summary even
+    // when the raw `error` channel is empty.
+    const log = createMockLog({
+      is_websocket: false,
+      is_sse: true,
+      client_transport_status_code: 200,
+      service_outcome: "interrupted",
+      completion_state: "incomplete",
+      termination_reason: "transport_error",
+      session_evidence_json: JSON.stringify({
+        v: 2,
+        transport: {
+          source: "upstream",
+          stage: "pre_payload_visible",
+          kind: "timeout",
+          signal: "sse_idle_timeout",
+          raw_error_snippet: "sse idle watchdog fired",
+        },
+      }),
+    });
+
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Provider One"
+        onClose={mockOnClose}
+      />,
+    );
+
+    // Summary line rendered with role="note" so assistive tech can attach it
+    // to the status header.
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "upstream timeout (sse_idle_timeout) before payload visible",
+    );
+
+    // Detail view carries the structured fields from the v2 renderer.
+    expect(screen.getByText("Signal")).toBeInTheDocument();
+    expect(screen.getByText("sse_idle_timeout")).toBeInTheDocument();
+    expect(screen.getByText("Kind")).toBeInTheDocument();
+    expect(screen.getByText("timeout")).toBeInTheDocument();
+    expect(screen.getByText("Stage")).toBeInTheDocument();
+    expect(screen.getByText("before payload visible")).toBeInTheDocument();
+    expect(screen.getByText("sse idle watchdog fired")).toBeInTheDocument();
+
+    // v2 schema must not surface the v1-only "Timeout" / "Client Cancel"
+    // toggles — routing is by `evidence.v`, not heuristic field probing.
+    expect(screen.queryByText("Timeout")).not.toBeInTheDocument();
+    expect(screen.queryByText("Client Cancel")).not.toBeInTheDocument();
+  });
+
+  it("renders WebSocket v2 close evidence with close code and reason", () => {
+    const log = createMockLog({
+      session_evidence_json: JSON.stringify({
+        v: 2,
+        transport: {
+          source: "upstream",
+          stage: "post_payload_visible",
+          kind: "disconnect",
+          signal: "close_error",
+          close_code: 1011,
+          close_reason_snippet: "server overloaded",
+        },
+      }),
+    });
+
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Provider One"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "upstream disconnect (close_error) after payload visible",
+    );
+    expect(screen.getByText("Close Code")).toBeInTheDocument();
+    expect(screen.getByText("1011")).toBeInTheDocument();
+    expect(screen.getByText("server overloaded")).toBeInTheDocument();
+  });
+
+  it("routes v1 (schema-missing) payloads through the v1 renderer", () => {
+    // This guards the schema-coexistence acceptance criterion: historical
+    // evidence still renders correctly under the v1 path.
+    const log = createMockLog({
+      session_evidence_json: JSON.stringify({
+        transport: {
+          source: "gateway",
+          message_snippet: "peer reset the connection",
+          is_timeout: false,
+          is_client_cancel: false,
+        },
+      }),
+    });
+
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Provider One"
+        onClose={mockOnClose}
+      />,
+    );
+
+    // Summary line + Transport message_snippet panel both render the text;
+    // this also documents that v1 data flows through `getLogEvidenceSummary`'s
+    // v1 branch (message_snippet takes precedence).
+    expect(screen.getAllByText("peer reset the connection").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "peer reset the connection",
+    );
+    // v1 renderer shows the old boolean toggles.
+    expect(screen.getByText("Timeout")).toBeInTheDocument();
+    expect(screen.getByText("Client Cancel")).toBeInTheDocument();
+    // v2-only labels must not appear on a v1 row.
+    expect(screen.queryByText("Signal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Stage")).not.toBeInTheDocument();
   });
 
   it("renders legacy rows explicitly without normalized remapping", () => {

@@ -157,6 +157,13 @@ type WebSocketSessionResult struct {
 	GatewayStatusCode int
 	GatewayErrorCode  string
 	GatewayMessage    string
+	// syntheticFinalFromSuppressedPayload marks sessions produced by the
+	// replaced-attempt suppressed-payload path. Session-level evidence
+	// derivation consults it as a second barrier on top of the structural
+	// TransportObservation zero-out, ensuring a replaced attempt's transport
+	// fact cannot attach to the synthetic final session even if some future
+	// code path reintroduces a non-zero observation into the gateway result.
+	syntheticFinalFromSuppressedPayload bool
 }
 
 func (r *WebSocketSessionResult) RetryCount() int {

@@ -168,6 +168,11 @@ func (h *Handler) commitForwardResponse(
 	upstreamResp.Close()
 	result.headersWritten = true
 	result.responseCommitted = wrappedWriter.committed
+	// firstByteVisible surfaces `firstWriteResponseWriter.written` to the
+	// transport observation layer. It is the only signal that distinguishes
+	// `pre_payload_visible` from `post_payload_visible` for SSE stage
+	// derivation; capture it on success and failure paths alike.
+	result.firstByteVisible = wrappedWriter.written
 	result.done = true
 	result.tokenUsage = h.extractTokenUsage(result.statusCode, interceptor, sseInterceptor)
 	if result.isSSE && wrappedWriter.written && !wrappedWriter.firstWriteTime.IsZero() {
@@ -204,6 +209,10 @@ func (h *Handler) failoverForwardResponse(
 	)
 	result.err = statusErr
 	result.success = false
+	// Flag the status-classification origin explicitly so the transport
+	// diagnostic layer skips this path rather than matching on the synthetic
+	// error text (which is brittle under refactors or i18n).
+	result.isStatusFailover = true
 	result.bodySnippet = upstreamResp.DrainWithSnippet(0)
 	result.failureDisposition = classifyProviderFailureForProvider(
 		provider,

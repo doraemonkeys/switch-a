@@ -67,8 +67,8 @@ func requestLogEvidenceMessage(t *testing.T, log *model.RequestLog) string {
 		return evidence.UpstreamEvent.RawPayloadSnippet
 	case evidence.UpstreamEvent != nil && evidence.UpstreamEvent.MessageSnippet != "":
 		return evidence.UpstreamEvent.MessageSnippet
-	case evidence.Transport != nil && evidence.Transport.MessageSnippet != "":
-		return evidence.Transport.MessageSnippet
+	case evidence.Transport != nil && evidence.Transport.RawErrorSnippet != "":
+		return evidence.Transport.RawErrorSnippet
 	default:
 		return ""
 	}

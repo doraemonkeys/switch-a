@@ -2,6 +2,7 @@ import type { RequestLog } from "../../api/types";
 import { formatDuration } from "../../lib/utils";
 import {
   getDiagnosticToneClass,
+  getLogEvidenceSummary,
   getLogLifecyclePresentation,
   getTransportBadgeClass,
 } from "./diagnostics";
@@ -250,6 +251,10 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
   const formatTime = (dateStr: string) =>
     dateFormatter.format(new Date(dateStr));
   const lifecycle = getLogLifecyclePresentation(log);
+  // Prefer the shared transport / evidence summary so that rows whose own
+  // error text is empty or generic (e.g. WebSocket transport_error) still
+  // carry a precise "{source} {kind} ({signal}) {stage-phrase}" description.
+  const evidenceSummary = getLogEvidenceSummary(log);
 
   // Determine if we should show path hint
   const showPathHint =
@@ -359,6 +364,14 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
           {lifecycle.tableDetailLabel && (
             <span className="text-xs text-text-muted">
               {lifecycle.tableDetailLabel}
+            </span>
+          )}
+          {evidenceSummary && (
+            <span
+              className="text-xs text-text-muted truncate max-w-[280px]"
+              title={evidenceSummary}
+            >
+              {evidenceSummary}
             </span>
           )}
         </div>

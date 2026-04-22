@@ -33,6 +33,8 @@ func newWebSocketRelaySessionResultFromOutcome(
 		Err:                   outcome.err,
 		ClientAccepted:        lifecycleSnapshot.ClientAccepted,
 		ClientVisible:         lifecycleSnapshot.ClientVisible,
+		ObservedCloseError:    outcome.observedCloseError,
+		FailurePeer:           outcome.failurePeer,
 	}
 }
 
@@ -73,6 +75,14 @@ func (r *webSocketRelaySessionResult) toWebSocketResult() *WebSocketResult {
 		BytesUpstreamToClient: r.BytesUpstreamToClient,
 		Err:                   r.Err,
 		UpstreamError:         r.SuppressedUpstreamError,
+		// The transport observation is surfaced here so evidence derivation
+		// (session + attempt) has a single source of truth. Suppressed-payload
+		// relays intentionally pass through nil values — those paths report
+		// semantic errors, not transport facts.
+		TransportObservation: WebSocketTransportObservation{
+			CloseError:  r.ObservedCloseError,
+			FailurePeer: r.FailurePeer,
+		},
 	}
 }
 
