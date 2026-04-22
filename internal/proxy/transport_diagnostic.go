@@ -130,9 +130,9 @@ type transportObservation struct {
 	protocol transportProtocol
 
 	// Shared runtime signals.
-	err                         error
-	ctxErr                      error
-	isSuppressedSyntheticFinal  bool
+	err                        error
+	ctxErr                     error
+	isSuppressedSyntheticFinal bool
 
 	sse sseObservation
 	ws  wsObservation

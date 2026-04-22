@@ -21,7 +21,7 @@ const nonWebSocketEvidenceSchemaVersion = 2
 // added without bumping the schema version as long as renderers tolerate
 // unknown fields — only breaking shape changes warrant a version bump.
 type nonWebSocketEvidence struct {
-	Version   int                          `json:"v"`
+	Version   int                           `json:"v"`
 	Transport *nonWebSocketTransportPayload `json:"transport,omitempty"`
 }
 

@@ -147,7 +147,11 @@ describe("formatTransportSummary (v2)", () => {
   it("omits the stage phrase when stage is missing", () => {
     expect(
       formatTransportSummary(
-        build({ stage: undefined, signal: "upstream_read_error", kind: "protocol_error" }),
+        build({
+          stage: undefined,
+          signal: "upstream_read_error",
+          kind: "protocol_error",
+        }),
       ),
     ).toBe("upstream protocol_error (upstream_read_error)");
   });
@@ -192,9 +196,7 @@ describe("getTransportStagePhrase", () => {
 });
 
 describe("isV2Evidence + getLogEvidenceSummary routing", () => {
-  const withEvidence = (
-    evidenceJson: string,
-  ): NormalizedRequestLog => ({
+  const withEvidence = (evidenceJson: string): NormalizedRequestLog => ({
     ...baseLog,
     session_evidence_json: evidenceJson,
   });

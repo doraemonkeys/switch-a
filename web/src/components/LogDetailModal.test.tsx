@@ -302,9 +302,9 @@ describe("LogDetailModal", () => {
     // Summary line + Transport message_snippet panel both render the text;
     // this also documents that v1 data flows through `getLogEvidenceSummary`'s
     // v1 branch (message_snippet takes precedence).
-    expect(screen.getAllByText("peer reset the connection").length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      screen.getAllByText("peer reset the connection").length,
+    ).toBeGreaterThan(0);
     expect(screen.getByRole("note")).toHaveTextContent(
       "peer reset the connection",
     );

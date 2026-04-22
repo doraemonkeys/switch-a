@@ -317,12 +317,12 @@ func TestAttemptFactsFromForwardResult_PreservesObservation(t *testing.T) {
 // testing-only view so assertions can read `v` and `transport` directly.
 // Keeping the view local avoids exporting internal schema types.
 func parseNonWebSocketEvidenceEnvelope(t *testing.T, encoded string) struct {
-	Version   int                          `json:"v"`
+	Version   int                           `json:"v"`
 	Transport *nonWebSocketTransportPayload `json:"transport"`
 } {
 	t.Helper()
 	var env struct {
-		Version   int                          `json:"v"`
+		Version   int                           `json:"v"`
 		Transport *nonWebSocketTransportPayload `json:"transport"`
 	}
 	if err := json.Unmarshal([]byte(encoded), &env); err != nil {

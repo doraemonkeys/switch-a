@@ -230,9 +230,7 @@ export function RequestEvidenceTransportV2Section({
     <div className={SECTION_CARD_CLASS}>
       <p className="text-sm font-medium text-text-primary">Transport</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        {sourceLabel && (
-          <EvidenceField label="Source" value={sourceLabel} />
-        )}
+        {sourceLabel && <EvidenceField label="Source" value={sourceLabel} />}
         {kindLabel && <EvidenceField label="Kind" value={kindLabel} />}
         {transport.signal && (
           <EvidenceField
