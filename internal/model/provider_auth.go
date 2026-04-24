@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ProviderCredentialType identifies the upstream credential source for a provider.
 type ProviderCredentialType string
@@ -66,7 +69,7 @@ type ChatGPTProviderCredential struct {
 // Ready reports whether the credential contains the minimum fields needed to proxy requests.
 func (c *ChatGPTProviderCredential) Ready() bool {
 	return c != nil &&
-		c.AccessToken != "" &&
-		c.RefreshToken != "" &&
-		c.AccountID != ""
+		strings.TrimSpace(c.AccessToken) != "" &&
+		strings.TrimSpace(c.RefreshToken) != "" &&
+		strings.TrimSpace(c.AccountID) != ""
 }

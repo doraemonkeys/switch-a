@@ -116,6 +116,14 @@ func TestChatGPTProviderCredentialReady_RejectsMissingProxyFields(t *testing.T) 
 				RefreshToken: "refresh-token",
 			},
 		},
+		{
+			name: "blank required fields",
+			credential: &ChatGPTProviderCredential{
+				AccessToken:  "   ",
+				RefreshToken: "refresh-token",
+				AccountID:    "acct_test",
+			},
+		},
 	}
 
 	for _, tc := range testCases {
