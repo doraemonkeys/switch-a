@@ -26,6 +26,13 @@ func TestNewTransport(t *testing.T) {
 	if transport.client == nil {
 		t.Error("client is nil")
 	}
+	httpTransport, ok := transport.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *http.Transport", transport.client.Transport)
+	}
+	if httpTransport.Proxy == nil {
+		t.Error("client.Transport.Proxy is nil, want environment proxy support")
+	}
 	if transport.connectTimeout != cfg.ConnectTimeout {
 		t.Errorf("connectTimeout = %v, want %v", transport.connectTimeout, cfg.ConnectTimeout)
 	}

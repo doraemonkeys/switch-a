@@ -55,6 +55,9 @@ func NewTransport(cfg TransportConfig) *Transport {
 	// - ResponseHeaderTimeout: controls time to receive first response byte after connection
 	// - Connection pool settings: essential for proxy performance
 	transport := &http.Transport{
+		// Deployment-level egress policy belongs to the process environment, so
+		// systemd-provided HTTP(S)_PROXY/NO_PROXY settings apply uniformly.
+		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   cfg.ConnectTimeout,
 			KeepAlive: defaults.TCPKeepAlive,
