@@ -1,4 +1,4 @@
-.PHONY: ci verify lint coverage sloc clean test fmt build build-all web-build release-windows release-clean web-lint web-coverage web-tsc check-go-env
+.PHONY: ci verify lint coverage sloc clean test fmt build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc check-go-env
 
 # AI Note: 如果 bash 无法运行，请使用以下命令：
 # powershell.exe -Command "cd '.'; make ci" 2>&1
@@ -98,6 +98,14 @@ build:
 # Build complete release binary with embedded frontend
 build-all: web-build build
 	@echo "Build complete: switch-a binary with embedded frontend"
+
+# Cross-compile macOS release binaries (arm64 + amd64) with embedded frontend.
+# CGO_ENABLED=0 is safe because the SQLite driver is pure Go (modernc.org/sqlite),
+# so no C toolchain or macOS SDK is needed on the build host.
+release-mac: web-build
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/switch-a-darwin-arm64 ./cmd/switch-a
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/switch-a-darwin-amd64 ./cmd/switch-a
+	@echo "Build complete: dist/switch-a-darwin-{arm64,amd64}"
 
 # Web 前端检查
 web-lint:
