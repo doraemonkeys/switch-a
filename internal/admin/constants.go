@@ -76,7 +76,7 @@ var validProviderCredentialTypes = map[model.ProviderCredentialType]bool{
 // Unexported to prevent external mutation; use IsValidAPIType() for validation.
 // These must match the types recognized by the proxy router (see proxy/router.go):
 //   - claude: routes via /v1/messages, /v1/models
-//   - codex:  routes via /responses
+//   - codex:  routes via /responses and /images/*
 //   - gemini: routes via /gemini/*
 //   - custom:*: routes via /custom/:toolId/* (handled separately in IsValidAPIType)
 //
