@@ -68,18 +68,6 @@ func TestParseAPIType(t *testing.T) {
 			wantType: APITypeCodex,
 			wantOK:   true,
 		},
-		{
-			name:     "codex image generation",
-			path:     "/images/generations",
-			wantType: APITypeCodex,
-			wantOK:   true,
-		},
-		{
-			name:     "codex v1 image generation",
-			path:     "/v1/images/generations",
-			wantType: APITypeCodex,
-			wantOK:   true,
-		},
 
 		// Gemini API paths
 		{
@@ -201,12 +189,6 @@ func TestBuildUpstreamPath(t *testing.T) {
 			originalPath: "/v1/responses",
 			apiType:      APITypeCodex,
 			wantPath:     "/responses",
-		},
-		{
-			name:         "codex v1 image generation normalizes to image generation",
-			originalPath: "/v1/images/generations",
-			apiType:      APITypeCodex,
-			wantPath:     "/images/generations",
 		},
 		{
 			name:         "gemini passthrough",
