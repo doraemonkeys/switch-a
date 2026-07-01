@@ -1,4 +1,4 @@
-.PHONY: ci verify lint coverage sloc clean test fmt build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc check-go-env
+.PHONY: ci verify lint coverage gopls-check sloc clean test fmt build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc check-go-env
 
 # AI Note: 如果 bash 无法运行，请使用以下命令：
 # powershell.exe -Command "cd '.'; make ci" 2>&1
@@ -8,6 +8,7 @@ SHELL := /bin/bash
 
 # 设置 GOBIN 环境变量，默认为 $(go env GOPATH)/bin
 GOBIN ?= $$(go env GOPATH)/bin
+GOPLS_CHECK := git ls-files -z '*.go' | xargs -0 gopls check -severity=hint
 
 # 跨平台临时目录设置
 ifeq ($(OS),Windows_NT)
@@ -46,15 +47,19 @@ ci: check-go-env
 	@cd web && pnpm exec tsc --noEmit -p tsconfig.app.json
 	@cd web && pnpm lint --quiet
 	@sloc-guard -q check
+	@$(GOPLS_CHECK)
 
 # 正常模式
-verify: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc
+verify: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc gopls-check
 
 rm-tmpclaude:
 	@rm -f tmpclaude-*
 
 lint:
 	golangci-lint run
+
+gopls-check:
+	$(GOPLS_CHECK)
 
 coverage:
 	mkdir -p .tmp
