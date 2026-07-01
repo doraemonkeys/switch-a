@@ -272,7 +272,7 @@ func BenchmarkSSETokenInterceptor_GzipPassthrough(b *testing.B) {
 	compressedData := buf.Bytes()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		interceptor := newSSETokenInterceptor(nil, "gzip")
 		original := &testReadCloser{Reader: bytes.NewReader(compressedData)}
 		wrapped := interceptor.Wrap(original)
@@ -503,7 +503,7 @@ func BenchmarkSSETokenInterceptor_BrotliPassthrough(b *testing.B) {
 	compressedData := buf.Bytes()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		interceptor := newSSETokenInterceptor(nil, "br")
 		original := &testReadCloser{Reader: bytes.NewReader(compressedData)}
 		wrapped := interceptor.Wrap(original)

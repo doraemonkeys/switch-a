@@ -79,7 +79,7 @@ type Provider struct {
 	MaxRetries int `gorm:"default:0" json:"max_retries"`
 	// Backoff defines exponential backoff for same-provider retries.
 	// GORM embedded tag flattens the struct fields into Provider's table with "backoff_" prefix.
-	Backoff BackoffPolicy `gorm:"embedded;embeddedPrefix:backoff_" json:"backoff,omitempty"`
+	Backoff BackoffPolicy `gorm:"embedded;embeddedPrefix:backoff_" json:"backoff,omitzero"`
 	// Vendor identifies the vendor for failover isolation.
 	// Empty string means the provider doesn't participate in vendor isolation.
 	// "*" (VendorWildcard) matches any non-empty vendor.

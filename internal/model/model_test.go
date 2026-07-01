@@ -252,6 +252,12 @@ func TestStickyKey(t *testing.T) {
 	if k.IP != "192.168.1.1" {
 		t.Errorf("IP = %q, want %q", k.IP, "192.168.1.1")
 	}
+	if k.User != "user1" {
+		t.Errorf("User = %q, want %q", k.User, "user1")
+	}
+	if k.APIType != "claude" {
+		t.Errorf("APIType = %q, want %q", k.APIType, "claude")
+	}
 	if k.Model != "claude-sonnet-4" {
 		t.Errorf("Model = %q, want %q", k.Model, "claude-sonnet-4")
 	}
@@ -343,6 +349,15 @@ func TestSelectRequest(t *testing.T) {
 
 	if r.APIType != "codex" {
 		t.Errorf("APIType = %q, want %q", r.APIType, "codex")
+	}
+	if r.ClientIP != "10.0.0.1" {
+		t.Errorf("ClientIP = %q, want %q", r.ClientIP, "10.0.0.1")
+	}
+	if r.User != "testuser" {
+		t.Errorf("User = %q, want %q", r.User, "testuser")
+	}
+	if r.Model != "gpt-4" {
+		t.Errorf("Model = %q, want %q", r.Model, "gpt-4")
 	}
 	if r.StickyMode != StickyModeModel {
 		t.Errorf("StickyMode = %q, want %q", r.StickyMode, StickyModeModel)

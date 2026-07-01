@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"switch-a/internal/model"
@@ -25,14 +26,7 @@ func TestValidateExportedProvider_MalformedURL(t *testing.T) {
 	}
 
 	warnings := validateExportedProvider(p)
-	found := false
-	for _, w := range warnings {
-		if w == "Provider 'p1' has malformed base_url for api_type: claude" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.Contains(warnings, "Provider 'p1' has malformed base_url for api_type: claude") {
 		t.Errorf("expected malformed base_url warning, got: %v", warnings)
 	}
 }
@@ -76,14 +70,7 @@ func TestValidateExportedProvider_ChatGPTBlankStatusRequiresReadyCredential(t *t
 	}
 
 	warnings := validateExportedProvider(p)
-	found := false
-	for _, w := range warnings {
-		if w == "Provider 'gpt' has incomplete or invalid GPT login" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.Contains(warnings, "Provider 'gpt' has incomplete or invalid GPT login") {
 		t.Fatalf("warnings = %v, want GPT login warning", warnings)
 	}
 }
@@ -143,14 +130,7 @@ func TestValidateExportedProvider_WhitespaceKeysWarnAsMissing(t *testing.T) {
 	}
 
 	warnings := validateExportedProvider(p)
-	found := false
-	for _, w := range warnings {
-		if w == "Provider 'p1' has no api_key for api_type: claude" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.Contains(warnings, "Provider 'p1' has no api_key for api_type: claude") {
 		t.Errorf("expected missing api_key warning, got: %v", warnings)
 	}
 }

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -247,17 +248,13 @@ func stageImportedSettings(
 
 func cloneGroupMap(groups map[string]*model.Group, extraCapacity int) map[string]*model.Group {
 	cloned := make(map[string]*model.Group, len(groups)+extraCapacity)
-	for id, group := range groups {
-		cloned[id] = group
-	}
+	maps.Copy(cloned, groups)
 	return cloned
 }
 
 func cloneProviderMap(providers map[string]*model.Provider, extraCapacity int) map[string]*model.Provider {
 	cloned := make(map[string]*model.Provider, len(providers)+extraCapacity)
-	for id, provider := range providers {
-		cloned[id] = provider
-	}
+	maps.Copy(cloned, providers)
 	return cloned
 }
 
@@ -265,9 +262,7 @@ func cloneRoutingPolicyMap(
 	policies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy,
 ) map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy {
 	cloned := make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(policies))
-	for key, policy := range policies {
-		cloned[key] = policy
-	}
+	maps.Copy(cloned, policies)
 	return cloned
 }
 

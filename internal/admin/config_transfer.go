@@ -49,7 +49,7 @@ type ExportedProvider struct {
 	Priority         int                            `json:"priority"`
 	Concurrency      int                            `json:"concurrency"`
 	MaxRetries       int                            `json:"max_retries"`
-	Backoff          ExportedBackoff                `json:"backoff,omitempty"`
+	Backoff          ExportedBackoff                `json:"backoff,omitzero"`
 	Vendor           string                         `json:"vendor,omitempty"`
 	FailoverScope    string                         `json:"failover_scope,omitempty"`
 	AcceptFailover   string                         `json:"accept_failover,omitempty"`

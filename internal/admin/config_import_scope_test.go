@@ -163,7 +163,7 @@ func TestStageConfigImport_SetsExplicitRoutingPolicyMode(t *testing.T) {
 		targetProviderID: storedTestProvider(targetProviderID, "Target Provider", "claude", "https://claude.example"),
 	}
 	existingRoutingPolicies := map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy{
-		model.NewRoutingPolicyNaturalKey("claude", model.RoutingPolicyModelMatchTypeNone, ""): &model.RoutingPolicy{
+		model.NewRoutingPolicyNaturalKey("claude", model.RoutingPolicyModelMatchTypeNone, ""): {
 			APIType:          "claude",
 			Enabled:          true,
 			TargetProviderID: &targetProviderID,

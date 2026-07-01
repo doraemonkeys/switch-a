@@ -97,7 +97,7 @@ func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveIndex serves the root index.html for SPA fallback.
-func (h *spaHandler) serveIndex(w http.ResponseWriter, r *http.Request) {
+func (h *spaHandler) serveIndex(w http.ResponseWriter, _ *http.Request) {
 	content, err := fs.ReadFile(h.fs, "index.html")
 	if err != nil {
 		http.Error(w, "index.html not found", http.StatusInternalServerError)

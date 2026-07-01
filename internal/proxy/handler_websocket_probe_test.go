@@ -515,7 +515,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
 
-	var retrySelections int32
+	var retrySelections atomic.Int32
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
 			if req.Model != "client-model" {
@@ -524,7 +524,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 			return &selectResult{Provider: primaryProvider, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&retrySelections, 1)
+			retrySelections.Add(1)
 			if req.Model != "client-model" {
 				t.Fatalf("retry selection model = %q, want %q", req.Model, "client-model")
 			}
@@ -574,7 +574,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 		t.Fatal("timed out waiting for replayed prompt")
 	}
 
-	if got := atomic.LoadInt32(&retrySelections); got != 1 {
+	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 }

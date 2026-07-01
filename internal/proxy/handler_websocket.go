@@ -41,7 +41,7 @@ func isWebSocketUpgrade(r *http.Request) bool {
 // Connection headers can contain multiple comma-separated values (e.g., "keep-alive, Upgrade").
 func headerContains(h http.Header, key, value string) bool {
 	for _, v := range h[http.CanonicalHeaderKey(key)] {
-		for _, s := range strings.Split(v, ",") {
+		for s := range strings.SplitSeq(v, ",") {
 			if strings.EqualFold(strings.TrimSpace(s), value) {
 				return true
 			}
@@ -254,13 +254,13 @@ func marshalWebSocketGatewayError(statusCode int, code, message string) []byte {
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		return []byte(fmt.Sprintf(`{"type":"%s","status":%d,"error":{"type":"%s","code":"%s","message":"%s"}}`,
+		return fmt.Appendf(nil, `{"type":"%s","status":%d,"error":{"type":"%s","code":"%s","message":"%s"}}`,
 			webSocketGatewayErrorEventType,
 			statusCode,
 			webSocketGatewayErrorType,
 			ErrCodeInternalError,
 			"failed to encode websocket gateway error",
-		))
+		)
 	}
 	return payload
 }

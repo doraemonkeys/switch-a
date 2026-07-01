@@ -118,9 +118,7 @@ func (c *MemoryStickyCache) StartCleanupLoop(interval time.Duration) (stop func(
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ticker := c.clock.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -131,7 +129,7 @@ func (c *MemoryStickyCache) StartCleanupLoop(interval time.Duration) (stop func(
 				return
 			}
 		}
-	}()
+	})
 	return func() {
 		close(done)
 		wg.Wait()

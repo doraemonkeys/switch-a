@@ -574,7 +574,7 @@ func TestParseTokenUsage_NestedUsageField(t *testing.T) {
 func BenchmarkParseTokenUsage_OpenAI(b *testing.B) {
 	data := []byte(`{"id":"chatcmpl-123","choices":[{"message":{"content":"Hello world, this is a test response"}}],"usage":{"prompt_tokens":25,"completion_tokens":150,"total_tokens":175}}`)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		Parse(data)
 	}
 }
@@ -582,7 +582,7 @@ func BenchmarkParseTokenUsage_OpenAI(b *testing.B) {
 func BenchmarkParseTokenUsage_Claude_WithCache(b *testing.B) {
 	data := []byte(`{"content":[{"text":"Hello"}],"usage":{"input_tokens":2009,"output_tokens":125,"cache_creation_input_tokens":358,"cache_read_input_tokens":19040,"service_tier":"standard"}}`)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		Parse(data)
 	}
 }
@@ -590,7 +590,7 @@ func BenchmarkParseTokenUsage_Claude_WithCache(b *testing.B) {
 func BenchmarkParseTokenUsage_Truncated(b *testing.B) {
 	data := []byte(`...truncated content that is quite long to simulate real response..."}],"usage":{"prompt_tokens":100,"completion_tokens":200,"total_tokens":300}}`)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		Parse(data)
 	}
 }
@@ -599,7 +599,7 @@ func BenchmarkTailBuffer_Write(b *testing.B) {
 	tb := newTailBuffer(4096)
 	data := bytes.Repeat([]byte("x"), 1024)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = tb.Write(data)
 	}
 }
@@ -752,7 +752,7 @@ func BenchmarkTokenUsage_ToModelFields(b *testing.B) {
 		ServiceTier: "standard",
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		usage.ToModelFields()
 	}
 }

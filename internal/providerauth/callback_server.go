@@ -78,15 +78,12 @@ func (s *CallbackServer) Start() error {
 	errCh := make(chan error, len(listeners))
 	var wg sync.WaitGroup
 	for _, listener := range listeners {
-		listener := listener
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if serveErr := s.server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 				_ = s.server.Close()
 				errCh <- serveErr
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

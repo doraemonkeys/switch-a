@@ -173,9 +173,7 @@ func (s *MemoryVisibleContinuitySeedStore) StartCleanupLoop(interval time.Durati
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ticker := s.clock.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -186,7 +184,7 @@ func (s *MemoryVisibleContinuitySeedStore) StartCleanupLoop(interval time.Durati
 				return
 			}
 		}
-	}()
+	})
 
 	return func() {
 		close(done)

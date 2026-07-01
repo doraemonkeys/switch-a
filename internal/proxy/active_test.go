@@ -622,7 +622,7 @@ func TestActiveRequestRegistry_StartStopCleanup(t *testing.T) {
 		const numGoroutines = 10
 
 		// Concurrently register, unregister, list, update
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
@@ -645,7 +645,7 @@ func TestActiveRequestRegistry_StartStopCleanup(t *testing.T) {
 		r := NewActiveRequestRegistry()
 
 		// Test multiple sequential start/stop cycles
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			r.StartCleanup()
 			r.StopCleanup()
 		}

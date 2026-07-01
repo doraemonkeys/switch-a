@@ -27,8 +27,8 @@ type RoutingPolicyPayload struct {
 	TargetProviderID *string                           `json:"target_provider_id,omitempty"`
 	AllowedGroupIDs  []string                          `json:"allowed_group_ids"`
 	AllowedVendors   []string                          `json:"allowed_vendors"`
-	CreatedAt        time.Time                         `json:"created_at,omitempty"`
-	UpdatedAt        time.Time                         `json:"updated_at,omitempty"`
+	CreatedAt        time.Time                         `json:"created_at,omitzero"`
+	UpdatedAt        time.Time                         `json:"updated_at,omitzero"`
 }
 
 type routingPolicyOptionalString struct {

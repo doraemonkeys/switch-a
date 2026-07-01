@@ -26,7 +26,7 @@ func TestConcurrencyLimiter_Limit(t *testing.T) {
 	limit := 3
 
 	// Acquire up to limit
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		if !limiter.TryAcquire(providerID, limit) {
 			t.Errorf("TryAcquire %d should succeed", i)
 		}
@@ -84,7 +84,7 @@ func TestConcurrencyLimiter_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			if limiter.TryAcquire(providerID, limit) {
@@ -160,7 +160,7 @@ func TestConcurrencyLimiter_NoMapEntryOnEmptyCalls(t *testing.T) {
 	}
 
 	// Verify that calling Release/Current many times doesn't create entries
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		providerID := fmt.Sprintf("random-%d", i)
 		limiter.Release(providerID)
 		_ = limiter.Current(providerID)

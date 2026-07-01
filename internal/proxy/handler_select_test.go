@@ -1167,7 +1167,7 @@ func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 
 	// Make multiple selections and verify round-robin behavior
 	seen := make(map[string]int)
-	for i := 0; i < 9; i++ {
+	for range 9 {
 		provider, err := handler.selectProviderFallback(ctx, selectReq, 0, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

@@ -40,7 +40,6 @@ func TestProviderAuthStateError_Error(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.err.Error(); got != tc.want {
@@ -103,7 +102,6 @@ func TestStaticProviderCredentialReady(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := staticProviderCredentialReady(tc.provider); got != tc.want {
@@ -159,7 +157,6 @@ func TestHasCompleteChatGPTCredential(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := HasCompleteChatGPTCredential(tc.provider); got != tc.want {

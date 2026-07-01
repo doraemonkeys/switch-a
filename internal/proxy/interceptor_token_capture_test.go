@@ -435,7 +435,7 @@ func BenchmarkTokenCaptureInterceptor_SmallResponse(b *testing.B) {
 	dataLen := int64(len(jsonData))
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		interceptor := newTokenCaptureInterceptor(dataLen, nil)
 		original := &testReadCloser{Reader: strings.NewReader(jsonData)}
 		wrapped := interceptor.Wrap(original)
@@ -450,7 +450,7 @@ func BenchmarkTokenCaptureInterceptor_LargeResponse(b *testing.B) {
 	jsonData := `{"content":"` + padding + `","usage":{"prompt_tokens":100,"completion_tokens":200}}`
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		interceptor := newTokenCaptureInterceptor(-1, nil) // chunked
 		original := &testReadCloser{Reader: strings.NewReader(jsonData)}
 		wrapped := interceptor.Wrap(original)

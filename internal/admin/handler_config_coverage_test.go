@@ -16,7 +16,7 @@ func TestUpdateConfig_TooManyUpdates(t *testing.T) {
 
 	h, _, _ := testHandler()
 	updates := make(map[string]string, MaxConfigUpdates+1)
-	for i := 0; i < MaxConfigUpdates+1; i++ {
+	for i := range MaxConfigUpdates + 1 {
 		updates["key-"+strconv.Itoa(i)] = "value"
 	}
 	body, err := json.Marshal(updates)

@@ -119,7 +119,7 @@ func TestHandlerFailedProviderRequestReturnsSelectionError(t *testing.T) {
 	})
 	prepareErr := errors.New("missing provider credential")
 
-	result := handler.failedProviderRequest(context.Background(), "provider-1", prepareErr)
+	result := handler.failedProviderRequest(prepareErr)
 	if result.success {
 		t.Fatal("expected provider preparation failure to leave success false")
 	}
@@ -262,7 +262,6 @@ func TestHandlerHandleExhaustedRetriesWritesExpectedGatewayResponses(t *testing.
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 
@@ -347,7 +346,6 @@ func TestShouldTrackWebSocketFailureInHealthHandlesAuthBoundaries(t *testing.T) 
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			if got := shouldTrackWebSocketFailureInHealth(tc.result); got != tc.want {
 				t.Fatalf("shouldTrackWebSocketFailureInHealth() = %v, want %v", got, tc.want)

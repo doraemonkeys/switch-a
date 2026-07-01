@@ -276,10 +276,7 @@ var webSocketClientScopedErrorKeys = map[string]struct{}{
 }
 
 func quickExtractEventType(data []byte) string {
-	limit := len(data)
-	if limit > typeFieldScanLimit {
-		limit = typeFieldScanLimit
-	}
+	limit := min(len(data), typeFieldScanLimit)
 	idx := bytes.Index(data[:limit], typeFieldKey)
 	if idx < 0 {
 		return ""
@@ -312,10 +309,7 @@ func isObservableEventType(eventType string) bool {
 }
 
 func payloadMayContainError(data []byte) bool {
-	limit := len(data)
-	if limit > errorFieldScanLimit {
-		limit = errorFieldScanLimit
-	}
+	limit := min(len(data), errorFieldScanLimit)
 	snippet := data[:limit]
 	return bytes.Contains(snippet, []byte(`"error"`)) ||
 		bytes.Contains(snippet, []byte(`"type":"error"`)) ||

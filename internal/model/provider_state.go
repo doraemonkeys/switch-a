@@ -43,8 +43,8 @@ type ProviderCredential struct {
 	SecretData       string    `gorm:"type:text;default:''" json:"secret_data,omitempty"`
 	BindingAccountID *string   `gorm:"type:text;uniqueIndex" json:"binding_account_id,omitempty"`
 	Version          int64     `gorm:"not null;default:1" json:"version,omitempty"`
-	CreatedAt        time.Time `json:"created_at,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at,omitempty"`
+	CreatedAt        time.Time `json:"created_at,omitzero"`
+	UpdatedAt        time.Time `json:"updated_at,omitzero"`
 }
 
 // Clone returns a detached copy that callers can mutate without sharing state.
@@ -77,8 +77,8 @@ type ProviderAuthState struct {
 	UsageSnapshot        *ProviderUsageSnapshot `gorm:"serializer:json" json:"usage_snapshot,omitempty"`
 	RefreshFailCount     int                    `gorm:"not null;default:0" json:"refresh_fail_count,omitempty"`
 	LastRefreshFailureAt *time.Time             `json:"last_refresh_failure_at,omitempty"`
-	CreatedAt            time.Time              `json:"created_at,omitempty"`
-	UpdatedAt            time.Time              `json:"updated_at,omitempty"`
+	CreatedAt            time.Time              `json:"created_at,omitzero"`
+	UpdatedAt            time.Time              `json:"updated_at,omitzero"`
 }
 
 // Clone returns a detached copy that callers can safely normalize.

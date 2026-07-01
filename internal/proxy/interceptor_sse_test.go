@@ -384,7 +384,7 @@ func BenchmarkSSETokenInterceptor_SmallStream(b *testing.B) {
 		`data: [DONE]` + "\n\n"
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		interceptor := newSSETokenInterceptor(nil, "")
 		original := &testReadCloser{Reader: strings.NewReader(sseData)}
 		wrapped := interceptor.Wrap(original)
@@ -397,7 +397,7 @@ func BenchmarkSSETokenInterceptor_SmallStream(b *testing.B) {
 func BenchmarkSSETokenInterceptor_LargeStream(b *testing.B) {
 	// Simulate a large SSE stream with many chunks
 	var builder strings.Builder
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		builder.WriteString(`data: {"choices":[{"delta":{"content":"Hello World "}}]}`)
 		builder.WriteString("\n\n")
 	}
@@ -408,7 +408,7 @@ func BenchmarkSSETokenInterceptor_LargeStream(b *testing.B) {
 	sseData := builder.String()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		interceptor := newSSETokenInterceptor(nil, "")
 		original := &testReadCloser{Reader: strings.NewReader(sseData)}
 		wrapped := interceptor.Wrap(original)

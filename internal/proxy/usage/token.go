@@ -91,9 +91,7 @@ func (u *TokenUsage) BillableInputTokens() float64 {
 		return 0
 	}
 	uncached := u.PromptTokens - u.CacheReadInputTokens
-	if uncached < 0 {
-		uncached = 0 // Protect against anomalous data
-	}
+	uncached = max(uncached, 0) // Protect against anomalous provider counters.
 	var cacheCreation int64
 	if u.CacheCreation != nil {
 		cacheCreation = u.CacheCreation.InputTokens
@@ -269,7 +267,7 @@ func Parse(data []byte) *TokenUsage {
 
 // Logger interface for debug logging during parsing.
 type Logger interface {
-	Debug(msg string, keysAndValues ...interface{})
+	Debug(msg string, keysAndValues ...any)
 }
 
 // ZapLoggerAdapter adapts *zap.SugaredLogger to the Logger interface.
@@ -282,7 +280,7 @@ type ZapLoggerAdapter struct {
 // Using an interface allows for easier testing and decoupling.
 type ZapSugaredLogger interface {
 	// Debugw logs a message with key-value pairs at debug level.
-	Debugw(msg string, keysAndValues ...interface{})
+	Debugw(msg string, keysAndValues ...any)
 }
 
 // NewZapLoggerAdapter creates a new adapter for a zap sugared logger.
@@ -294,7 +292,7 @@ func NewZapLoggerAdapter(logger ZapSugaredLogger) *ZapLoggerAdapter {
 }
 
 // Debug implements the Logger interface for ZapLoggerAdapter.
-func (a *ZapLoggerAdapter) Debug(msg string, keysAndValues ...interface{}) {
+func (a *ZapLoggerAdapter) Debug(msg string, keysAndValues ...any) {
 	if a == nil || a.logger == nil {
 		return
 	}
@@ -366,7 +364,7 @@ func extractUsageObject(data []byte, logger Logger) *TokenUsage {
 			continue
 		}
 		// Parse extracted object
-		var usage map[string]interface{}
+		var usage map[string]any
 		if err := json.Unmarshal(data[start:end], &usage); err != nil {
 			if logger != nil {
 				logger.Debug("bracket extracted JSON parse failed",
@@ -452,7 +450,7 @@ func convertUsageMetadataToTokenUsage(m *usageMetadataField) *TokenUsage {
 	}
 }
 
-func usageInt64(value interface{}) (int64, bool) {
+func usageInt64(value any) (int64, bool) {
 	switch n := value.(type) {
 	case float64:
 		return int64(n), true
@@ -465,7 +463,7 @@ func usageInt64(value interface{}) (int64, bool) {
 	}
 }
 
-func lookupUsageInt64(m map[string]interface{}, keys ...string) int64 {
+func lookupUsageInt64(m map[string]any, keys ...string) int64 {
 	for _, key := range keys {
 		value, ok := m[key]
 		if !ok {
@@ -478,7 +476,7 @@ func lookupUsageInt64(m map[string]interface{}, keys ...string) int64 {
 	return 0
 }
 
-func lookupUsageString(m map[string]interface{}, key string) string {
+func lookupUsageString(m map[string]any, key string) string {
 	value, ok := m[key]
 	if !ok {
 		return ""
@@ -490,19 +488,19 @@ func lookupUsageString(m map[string]interface{}, key string) string {
 	return text
 }
 
-func lookupNestedUsageMap(m map[string]interface{}, key string) map[string]interface{} {
+func lookupNestedUsageMap(m map[string]any, key string) map[string]any {
 	value, ok := m[key]
 	if !ok {
 		return nil
 	}
-	childMap, ok := value.(map[string]interface{})
+	childMap, ok := value.(map[string]any)
 	if !ok {
 		return nil
 	}
 	return childMap
 }
 
-func lookupNestedUsageInt64(m map[string]interface{}, parentKey, childKey string) int64 {
+func lookupNestedUsageInt64(m map[string]any, parentKey, childKey string) int64 {
 	childMap := lookupNestedUsageMap(m, parentKey)
 	if childMap == nil {
 		return 0
@@ -510,7 +508,7 @@ func lookupNestedUsageInt64(m map[string]interface{}, parentKey, childKey string
 	return lookupUsageInt64(childMap, childKey)
 }
 
-func lookupFirstNestedUsageInt64(m map[string]interface{}, childKey string, parentKeys ...string) int64 {
+func lookupFirstNestedUsageInt64(m map[string]any, childKey string, parentKeys ...string) int64 {
 	for _, parentKey := range parentKeys {
 		value := lookupNestedUsageInt64(m, parentKey, childKey)
 		if value != 0 {
@@ -539,7 +537,7 @@ func resolveCacheReadFromUsageField(u *usageField) int64 {
 	return 0
 }
 
-func resolveCacheReadTokens(m map[string]interface{}) int64 {
+func resolveCacheReadTokens(m map[string]any) int64 {
 	cacheRead := lookupUsageInt64(m, "cache_read_input_tokens", "cachedContentTokenCount")
 	if cacheRead != 0 {
 		return cacheRead
@@ -553,7 +551,7 @@ func resolveCacheReadTokens(m map[string]interface{}) int64 {
 	)
 }
 
-func buildCacheCreationFromUsageMap(m map[string]interface{}) *CacheCreation {
+func buildCacheCreationFromUsageMap(m map[string]any) *CacheCreation {
 	cacheCreationTokens := lookupUsageInt64(m, "cache_creation_input_tokens")
 	cacheCreationMap := lookupNestedUsageMap(m, "cache_creation")
 
@@ -575,7 +573,7 @@ func buildCacheCreationFromUsageMap(m map[string]interface{}) *CacheCreation {
 }
 
 // normalizeUsageMap converts a map to TokenUsage.
-func normalizeUsageMap(m map[string]interface{}) *TokenUsage {
+func normalizeUsageMap(m map[string]any) *TokenUsage {
 	prompt := lookupUsageInt64(m, "prompt_tokens", "input_tokens", "promptTokenCount")
 	completion := lookupUsageInt64(m, "completion_tokens", "output_tokens", "candidatesTokenCount")
 	total := lookupUsageInt64(m, "total_tokens", "totalTokenCount")

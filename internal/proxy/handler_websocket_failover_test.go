@@ -169,20 +169,20 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 
 func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t *testing.T) {
 	var (
-		primaryAttempts  int32
-		fallbackAccepts  int32
-		selectRetryCalls int32
+		primaryAttempts  atomic.Int32
+		fallbackAccepts  atomic.Int32
+		selectRetryCalls atomic.Int32
 	)
 
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&primaryAttempts, 1)
+		primaryAttempts.Add(1)
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = io.WriteString(w, `{"error":"primary handshake failed"}`)
 	}))
 	defer primary.Close()
 
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fallbackAccepts, 1)
+		fallbackAccepts.Add(1)
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept fallback websocket: %v", err)
@@ -229,7 +229,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 			return &selectResult{Provider: providerPrimary, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&selectRetryCalls, 1)
+			selectRetryCalls.Add(1)
 			if !excludeIDs[providerPrimary.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, providerPrimary.ID)
 			}
@@ -276,13 +276,13 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, testPollTimeout)
 
-	if got := atomic.LoadInt32(&primaryAttempts); got != 1 {
+	if got := primaryAttempts.Load(); got != 1 {
 		t.Fatalf("primary attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&fallbackAccepts); got != 1 {
+	if got := fallbackAccepts.Load(); got != 1 {
 		t.Fatalf("fallback accepts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&selectRetryCalls); got != 1 {
+	if got := selectRetryCalls.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 
@@ -308,12 +308,12 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 
 func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSwitchesProvider(t *testing.T) {
 	var (
-		fallbackHits     int32
-		selectRetryCalls int32
+		fallbackHits     atomic.Int32
+		selectRetryCalls atomic.Int32
 	)
 
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fallbackHits, 1)
+		fallbackHits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer fallback.Close()
@@ -342,7 +342,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSw
 			return &selectResult{Provider: providerPrimary, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, _ *model.SelectRequest, _ map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&selectRetryCalls, 1)
+			selectRetryCalls.Add(1)
 			return providerFallback, nil
 		},
 	}
@@ -368,10 +368,10 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSw
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	waitFor(t, func() bool { return store.AttemptsLen() > 0 }, testPollTimeout)
 
-	if got := atomic.LoadInt32(&selectRetryCalls); got != 2 {
+	if got := selectRetryCalls.Load(); got != 2 {
 		t.Fatalf("retry selections = %d, want 2 (fallback attempt plus exhaustion check)", got)
 	}
-	if got := atomic.LoadInt32(&fallbackHits); got != 1 {
+	if got := fallbackHits.Load(); got != 1 {
 		t.Fatalf("fallback hits = %d, want 1", got)
 	}
 
@@ -461,14 +461,14 @@ func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *
 
 func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthorized(t *testing.T) {
 	var (
-		upstreamAttempts int32
-		refreshCalls     int32
+		upstreamAttempts atomic.Int32
+		refreshCalls     atomic.Int32
 		capturedHeaders  http.Header
 		capturedMu       sync.Mutex
 	)
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempt := atomic.AddInt32(&upstreamAttempts, 1)
+		attempt := upstreamAttempts.Add(1)
 		if attempt == 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(w, `{"error":"expired access token"}`)
@@ -519,7 +519,7 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 	authService := providerauth.NewService(providerauth.Config{
 		HTTPClient: mockOAuthHTTPClient{
 			do: func(req *http.Request) (*http.Response, error) {
-				atomic.AddInt32(&refreshCalls, 1)
+				refreshCalls.Add(1)
 				if req.Method != http.MethodPost {
 					t.Fatalf("refresh method = %s, want POST", req.Method)
 				}
@@ -619,10 +619,10 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 		t.Fatalf("payload = %q, want response.created event", string(payload))
 	}
 
-	if got := atomic.LoadInt32(&upstreamAttempts); got != 2 {
+	if got := upstreamAttempts.Load(); got != 2 {
 		t.Fatalf("upstream attempts = %d, want 2", got)
 	}
-	if got := atomic.LoadInt32(&refreshCalls); got != 1 {
+	if got := refreshCalls.Load(); got != 1 {
 		t.Fatalf("refresh calls = %d, want 1", got)
 	}
 
@@ -682,19 +682,19 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 
 func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvider(t *testing.T) {
 	var (
-		initialAttempts int32
-		finalAttempts   int32
+		initialAttempts atomic.Int32
+		finalAttempts   atomic.Int32
 	)
 
 	initialUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&initialAttempts, 1)
+		initialAttempts.Add(1)
 		w.WriteHeader(http.StatusUpgradeRequired)
 		_, _ = io.WriteString(w, `{"error":"fallback to http"}`)
 	}))
 	defer initialUpstream.Close()
 
 	finalUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&finalAttempts, 1)
+		finalAttempts.Add(1)
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept upstream websocket: %v", err)
@@ -734,7 +734,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvid
 	store := newMockStore()
 	store.providers = []model.Provider{*initialProvider, *finalProvider}
 
-	var selectExcludingCalls int32
+	var selectExcludingCalls atomic.Int32
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
 			if req.FailoverContext != nil {
@@ -743,7 +743,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvid
 			return &selectResult{Provider: initialProvider}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&selectExcludingCalls, 1)
+			selectExcludingCalls.Add(1)
 			if !excludeIDs[initialProvider.ID] {
 				t.Fatalf("excludeIDs = %+v, want %q excluded", excludeIDs, initialProvider.ID)
 			}
@@ -791,13 +791,13 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvid
 		return store.LogsLen() > 0 && store.AttemptsLen() >= 2
 	}, testPollTimeout)
 
-	if got := atomic.LoadInt32(&initialAttempts); got != 1 {
+	if got := initialAttempts.Load(); got != 1 {
 		t.Fatalf("initial upstream attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&finalAttempts); got != 1 {
+	if got := finalAttempts.Load(); got != 1 {
 		t.Fatalf("final upstream attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&selectExcludingCalls); got != 1 {
+	if got := selectExcludingCalls.Load(); got != 1 {
 		t.Fatalf("SelectExcluding calls = %d, want 1", got)
 	}
 
@@ -828,10 +828,10 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvid
 }
 
 func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvider(t *testing.T) {
-	var finalAttempts int32
+	var finalAttempts atomic.Int32
 
 	finalUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&finalAttempts, 1)
+		finalAttempts.Add(1)
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept upstream websocket: %v", err)
@@ -934,7 +934,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvid
 		return store.LogsLen() > 0 && store.AttemptsLen() >= 2
 	}, testPollTimeout)
 
-	if got := atomic.LoadInt32(&finalAttempts); got != 1 {
+	if got := finalAttempts.Load(); got != 1 {
 		t.Fatalf("final upstream attempts = %d, want 1", got)
 	}
 

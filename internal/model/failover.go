@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // FailoverContext is the legacy compatibility shape for callers that still
 // construct failover state as one mutable object. New selector code should prefer
@@ -52,12 +55,7 @@ func (ctx *FailoverContext) Update(p *Provider) {
 
 // IsInChain checks if a provider ID is already in the attempt chain.
 func (ctx *FailoverContext) IsInChain(providerID string) bool {
-	for _, id := range ctx.AttemptChain {
-		if id == providerID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ctx.AttemptChain, providerID)
 }
 
 func (ctx *FailoverContext) SwitchHistory() *ProviderSwitchHistory {

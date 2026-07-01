@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // SwitchMode explains why the next provider selection is happening.
 // Replacement keeps the request in its pre-visible window; failover means the
@@ -105,12 +108,7 @@ func (h *ProviderSwitchHistory) IsInChain(providerID string) bool {
 	if h == nil || providerID == "" {
 		return false
 	}
-	for _, attemptedProviderID := range h.AttemptChain {
-		if attemptedProviderID == providerID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(h.AttemptChain, providerID)
 }
 
 // ProviderContinuityContext is request-local state derived from visible

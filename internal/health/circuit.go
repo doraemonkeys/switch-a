@@ -104,9 +104,7 @@ func (cb *CircuitBreaker) StartCleanupLoop(interval, maxAge time.Duration) (stop
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -117,7 +115,7 @@ func (cb *CircuitBreaker) StartCleanupLoop(interval, maxAge time.Duration) (stop
 				return
 			}
 		}
-	}()
+	})
 	return func() {
 		close(done)
 		wg.Wait()

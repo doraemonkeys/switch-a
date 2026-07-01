@@ -15,10 +15,10 @@ import (
 func (h *Handler) prepareForwardRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, forwardResult, bool) {
 	upstreamReq, err := h.buildProviderRequest(ctx, pctx, provider)
 	if err != nil {
-		return nil, h.failedProviderRequest(ctx, provider.ID, err), false
+		return nil, h.failedProviderRequest(err), false
 	}
 	if err := h.applyForwardCredentials(ctx, upstreamReq.Header, provider, pctx); err != nil {
-		return nil, h.failedProviderRequest(ctx, provider.ID, err), false
+		return nil, h.failedProviderRequest(err), false
 	}
 	return upstreamReq, forwardResult{}, true
 }
@@ -32,7 +32,7 @@ func (h *Handler) applyForwardCredentials(ctx context.Context, headers http.Head
 	return nil
 }
 
-func (h *Handler) failedProviderRequest(ctx context.Context, providerID string, err error) forwardResult {
+func (h *Handler) failedProviderRequest(err error) forwardResult {
 	// Provider configuration/auth preparation failures are not runtime health
 	// signals, so we fail the current selection without degrading health state.
 	return forwardResult{

@@ -25,9 +25,7 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 		return
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		initialClientRead := awaitInitialWebSocketRead(ctx, initialClientReadCh)
 		n, failurePeer, err := relayMessages(
 			ctx,
@@ -53,7 +51,7 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 		if err != nil {
 			cancel()
 		}
-	}()
+	})
 }
 
 func awaitInitialWebSocketRead(

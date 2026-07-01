@@ -503,7 +503,7 @@ func TestGetStatus_Error(t *testing.T) {
 func TestGetLogs(t *testing.T) {
 	h, st, _ := testHandler()
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		st.logs = append(st.logs, model.RequestLog{ID: uint(i + 1)})
 	}
 
@@ -535,7 +535,7 @@ func TestGetLogs(t *testing.T) {
 func TestGetLogs_Defaults(t *testing.T) {
 	h, st, _ := testHandler()
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		st.logs = append(st.logs, model.RequestLog{ID: uint(i + 1)})
 	}
 

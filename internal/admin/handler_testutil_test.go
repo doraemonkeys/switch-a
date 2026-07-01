@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"time"
@@ -248,9 +249,7 @@ func (m *mockStore) GetAllConfig(_ context.Context) (map[string]string, error) {
 		return nil, m.configErr
 	}
 	result := make(map[string]string, len(m.config))
-	for k, v := range m.config {
-		result[k] = v
-	}
+	maps.Copy(result, m.config)
 	return result, nil
 }
 
@@ -266,9 +265,7 @@ func (m *mockStore) SetConfigs(_ context.Context, configs map[string]string) err
 	if m.configErr != nil {
 		return m.configErr
 	}
-	for key, value := range configs {
-		m.config[key] = value
-	}
+	maps.Copy(m.config, configs)
 	return nil
 }
 
@@ -361,9 +358,7 @@ func (m *mockStore) ApplyConfigImport(_ context.Context, bundle *store.ConfigImp
 		providerCopy.APITypes = append([]model.ProviderAPIType(nil), provider.APITypes...)
 		m.providers[provider.ID] = &providerCopy
 	}
-	for key, value := range bundle.Settings {
-		m.config[key] = value
-	}
+	maps.Copy(m.config, bundle.Settings)
 	return nil
 }
 
@@ -477,10 +472,7 @@ func (m *mockStore) ListLogs(_ context.Context, filter model.LogFilter) ([]model
 	if offset >= len(filtered) {
 		return []model.RequestLog{}, nil
 	}
-	end := offset + limit
-	if end > len(filtered) {
-		end = len(filtered)
-	}
+	end := min(offset+limit, len(filtered))
 	return filtered[offset:end], nil
 }
 
@@ -780,9 +772,7 @@ func (s *configErrorStore) SetConfigs(_ context.Context, configs map[string]stri
 	if s.setErr != nil {
 		return s.setErr
 	}
-	for key, value := range configs {
-		s.configData[key] = value
-	}
+	maps.Copy(s.configData, configs)
 	return nil
 }
 
@@ -791,8 +781,6 @@ func (s *configErrorStore) GetAllConfig(_ context.Context) (map[string]string, e
 		return nil, s.getErr
 	}
 	result := make(map[string]string, len(s.configData))
-	for k, v := range s.configData {
-		result[k] = v
-	}
+	maps.Copy(result, s.configData)
 	return result, nil
 }

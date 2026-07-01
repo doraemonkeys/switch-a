@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,14 +109,7 @@ func resolveChatGPTUsageCandidateURLs() []string {
 		if candidate == "" {
 			continue
 		}
-		seen := false
-		for _, existing := range deduped {
-			if existing == candidate {
-				seen = true
-				break
-			}
-		}
-		if !seen {
+		if !slices.Contains(deduped, candidate) {
 			deduped = append(deduped, candidate)
 		}
 	}

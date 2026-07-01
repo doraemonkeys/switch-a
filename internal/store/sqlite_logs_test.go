@@ -27,7 +27,7 @@ func TestRequestLogs(t *testing.T) {
 	ctx := context.Background()
 
 	now := time.Now()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		log := newNormalizedLog("p1", "claude", now.Add(time.Duration(i)*time.Second))
 		if err := store.InsertLog(ctx, &log); err != nil {
 			t.Fatalf("InsertLog failed: %v", err)
@@ -76,7 +76,7 @@ func TestCountLogs(t *testing.T) {
 	}
 
 	now := time.Now()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		log := newNormalizedLog("p1", "claude", now.Add(time.Duration(i)*time.Second))
 		if err := store.InsertLog(ctx, &log); err != nil {
 			t.Fatalf("InsertLog failed: %v", err)

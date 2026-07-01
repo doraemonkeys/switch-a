@@ -160,7 +160,7 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptReplacement(t
 	store := newMockStore()
 	store.providers = []model.Provider{*initialProvider, *fallbackProvider}
 
-	var selectExcludingCalls int32
+	var selectExcludingCalls atomic.Int32
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
 			if req.FailoverContext != nil {
@@ -169,7 +169,7 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptReplacement(t
 			return &selectResult{Provider: initialProvider, FromStickyCache: true}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, _ *model.SelectRequest, _ map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&selectExcludingCalls, 1)
+			selectExcludingCalls.Add(1)
 			return fallbackProvider, nil
 		},
 	}
@@ -206,7 +206,7 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptReplacement(t
 		return store.LogsLen() > 0 && store.AttemptsLen() >= 2
 	}, testPollTimeout)
 
-	if got := atomic.LoadInt32(&selectExcludingCalls); got != 1 {
+	if got := selectExcludingCalls.Load(); got != 1 {
 		t.Fatalf("SelectExcluding calls = %d, want 1", got)
 	}
 
@@ -560,14 +560,14 @@ func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModelDimensions(t *
 
 func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeClientVisible(t *testing.T) {
 	var (
-		primaryAttempts  int32
-		fallbackAccepts  int32
-		selectRetryCalls int32
+		primaryAttempts  atomic.Int32
+		fallbackAccepts  atomic.Int32
+		selectRetryCalls atomic.Int32
 	)
 
 	semanticPayload := []byte(`{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`)
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&primaryAttempts, 1)
+		primaryAttempts.Add(1)
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept primary websocket: %v", err)
@@ -587,7 +587,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeCl
 
 	replayedToFallback := make(chan webSocketReplayMessage, 1)
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fallbackAccepts, 1)
+		fallbackAccepts.Add(1)
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept fallback websocket: %v", err)
@@ -638,7 +638,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeCl
 			return &selectResult{Provider: primaryProvider, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&selectRetryCalls, 1)
+			selectRetryCalls.Add(1)
 			if !excludeIDs[primaryProvider.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryProvider.ID)
 			}
@@ -698,13 +698,13 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeCl
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, testPollTimeout)
 
-	if got := atomic.LoadInt32(&primaryAttempts); got != 1 {
+	if got := primaryAttempts.Load(); got != 1 {
 		t.Fatalf("primary attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&fallbackAccepts); got != 1 {
+	if got := fallbackAccepts.Load(); got != 1 {
 		t.Fatalf("fallback accepts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&selectRetryCalls); got != 1 {
+	if got := selectRetryCalls.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 
@@ -757,13 +757,13 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeCl
 
 func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErrorWhenReplacementFails(t *testing.T) {
 	var (
-		primaryAttempts  int32
-		selectRetryCalls int32
+		primaryAttempts  atomic.Int32
+		selectRetryCalls atomic.Int32
 	)
 
 	semanticPayload := []byte(`{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`)
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&primaryAttempts, 1)
+		primaryAttempts.Add(1)
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept primary websocket: %v", err)
@@ -805,7 +805,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 			return &selectResult{Provider: primaryProvider, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&selectRetryCalls, 1)
+			selectRetryCalls.Add(1)
 			if !excludeIDs[primaryProvider.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryProvider.ID)
 			}
@@ -868,10 +868,10 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, testPollTimeout)
 
-	if got := atomic.LoadInt32(&primaryAttempts); got != 1 {
+	if got := primaryAttempts.Load(); got != 1 {
 		t.Fatalf("primary attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&selectRetryCalls); got != 2 {
+	if got := selectRetryCalls.Load(); got != 2 {
 		t.Fatalf("retry selections = %d, want 2 (replacement attempt plus exhaustion check)", got)
 	}
 

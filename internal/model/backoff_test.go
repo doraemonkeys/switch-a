@@ -242,7 +242,7 @@ func TestBackoffPolicy_DelayForRetry_Jitter(t *testing.T) {
 	// With Equal Jitter, delay should be in [base/2, base]
 	// Run multiple times to verify randomness
 	seen := make(map[time.Duration]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		delay := policy.DelayForRetry(0)
 		if delay < 50*time.Millisecond || delay > 100*time.Millisecond {
 			t.Errorf("DelayForRetry(0) with jitter = %v, want in [50ms, 100ms]", delay)
@@ -268,18 +268,18 @@ func TestBackoffPolicy_EqualJitter_Distribution(t *testing.T) {
 
 	const iterations = 10000
 
-	for retryIndex := 0; retryIndex < 3; retryIndex++ {
+	for retryIndex := range 3 {
 		var sum time.Duration
 		var minDelay, maxDelay time.Duration
 
 		// Calculate the base delay (without jitter)
 		baseDelay := time.Second * time.Duration(1)
-		for i := 0; i < retryIndex; i++ {
+		for range retryIndex {
 			baseDelay *= 3
 		}
 
 		minDelay = baseDelay // Initialize to max possible
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			delay := policy.DelayForRetry(retryIndex)
 			sum += delay
 

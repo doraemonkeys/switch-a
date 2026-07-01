@@ -111,7 +111,7 @@ func TestProviderSwitchTracker_StickyReentryConsumesSeedAndAttachesContinuity(t 
 func TestHandler_ServeHTTP_PreVisibleReplacementSkipsFailoverIsolationAndPopulatesAttemptFields(t *testing.T) {
 	t.Parallel()
 
-	var retrySelections int32
+	var retrySelections atomic.Int32
 
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -158,7 +158,7 @@ func TestHandler_ServeHTTP_PreVisibleReplacementSkipsFailoverIsolationAndPopulat
 			return &selectResult{Provider: primaryProvider, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&retrySelections, 1)
+			retrySelections.Add(1)
 			if !excludeIDs[primaryProvider.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryProvider.ID)
 			}
@@ -196,7 +196,7 @@ func TestHandler_ServeHTTP_PreVisibleReplacementSkipsFailoverIsolationAndPopulat
 	if body := w.Body.String(); !strings.Contains(body, `"provider":"fallback"`) {
 		t.Fatalf("body = %q, want fallback response", body)
 	}
-	if got := atomic.LoadInt32(&retrySelections); got != 1 {
+	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 
@@ -222,7 +222,7 @@ func TestHandler_ServeHTTP_PreVisibleReplacementSkipsFailoverIsolationAndPopulat
 func TestHandler_ServeHTTP_SeededContinuityReentryTurnsSubsequentSwitchIntoFailover(t *testing.T) {
 	t.Parallel()
 
-	var retrySelections int32
+	var retrySelections atomic.Int32
 
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -299,7 +299,7 @@ func TestHandler_ServeHTTP_SeededContinuityReentryTurnsSubsequentSwitchIntoFailo
 			return &selectResult{Provider: primaryProvider, FromStickyCache: true}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&retrySelections, 1)
+			retrySelections.Add(1)
 			if !excludeIDs[primaryProvider.ID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryProvider.ID)
 			}
@@ -337,7 +337,7 @@ func TestHandler_ServeHTTP_SeededContinuityReentryTurnsSubsequentSwitchIntoFailo
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
 	}
-	if got := atomic.LoadInt32(&retrySelections); got != 1 {
+	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 	if seedStore.Len() != 0 {
@@ -684,9 +684,9 @@ func TestHandler_ServeHTTP_HTTPClientDisconnectDoesNotStoreContinuitySeed(t *tes
 func TestHandler_ServeHTTP_SameProviderRetryIncrementsProviderAttemptWithoutSwitchCount(t *testing.T) {
 	t.Parallel()
 
-	var upstreamAttempts int32
+	var upstreamAttempts atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch atomic.AddInt32(&upstreamAttempts, 1) {
+		switch upstreamAttempts.Add(1) {
 		case 1:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)

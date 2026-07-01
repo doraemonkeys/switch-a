@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"slices"
 	"testing"
 
 	"switch-a/internal/model"
@@ -85,14 +86,7 @@ func TestValidateExportedProvider_InvalidUsageLimitPolicyWarns(t *testing.T) {
 		UsageLimitPolicy: model.ProviderUsageLimitPolicy("drop"),
 	})
 
-	found := false
-	for _, warning := range warnings {
-		if warning == "Provider 'relay-provider' has invalid usage_limit_policy: drop" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.Contains(warnings, "Provider 'relay-provider' has invalid usage_limit_policy: drop") {
 		t.Fatalf("warnings = %v, want invalid usage_limit_policy warning", warnings)
 	}
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 	"time"
 
@@ -84,9 +85,7 @@ func (s *configOnlyStoreWithoutImport) SetConfig(ctx context.Context, key, value
 }
 
 func (s *configOnlyStoreWithoutImport) SetConfigs(ctx context.Context, configs map[string]string) error {
-	for k, v := range configs {
-		s.configs[k] = v
-	}
+	maps.Copy(s.configs, configs)
 	return nil
 }
 
@@ -95,9 +94,7 @@ func (s *configOnlyStore) SetConfigs(ctx context.Context, configs map[string]str
 	if s.setErr != nil {
 		return s.setErr
 	}
-	for k, v := range configs {
-		s.configs[k] = v
-	}
+	maps.Copy(s.configs, configs)
 	return nil
 }
 
@@ -109,9 +106,7 @@ func (s *configOnlyStore) ApplyConfigImport(ctx context.Context, bundle *ConfigI
 	if bundle == nil {
 		return nil
 	}
-	for k, v := range bundle.Settings {
-		s.configs[k] = v
-	}
+	maps.Copy(s.configs, bundle.Settings)
 	return nil
 }
 

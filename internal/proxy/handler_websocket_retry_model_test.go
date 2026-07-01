@@ -19,7 +19,7 @@ func TestHandler_ServeHTTP_WebSocket_FallbackSelectionUsesLearnedModelAfterMidSe
 
 	const prompt = `{"type":"response.create","response":{"model":"client-model","instructions":"hello"}}`
 
-	var retrySelections int32
+	var retrySelections atomic.Int32
 
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
@@ -91,7 +91,7 @@ func TestHandler_ServeHTTP_WebSocket_FallbackSelectionUsesLearnedModelAfterMidSe
 			return &selectResult{Provider: primaryProvider, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&retrySelections, 1)
+			retrySelections.Add(1)
 			if req.Model != "client-model" {
 				t.Fatalf("retry selection model = %q, want %q after observer learned the model", req.Model, "client-model")
 			}
@@ -141,7 +141,7 @@ func TestHandler_ServeHTTP_WebSocket_FallbackSelectionUsesLearnedModelAfterMidSe
 		t.Fatal("timed out waiting for replayed prompt")
 	}
 
-	if got := atomic.LoadInt32(&retrySelections); got != 1 {
+	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 }

@@ -17,9 +17,9 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 	t.Parallel()
 
 	var (
-		primaryAttempts  int32
-		fallbackAttempts int32
-		retrySelections  int32
+		primaryAttempts  atomic.Int32
+		fallbackAttempts atomic.Int32
+		retrySelections  atomic.Int32
 	)
 
 	store := newMockStore()
@@ -27,7 +27,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 	fallbackID := "retry-auth-fallback"
 
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&primaryAttempts, 1)
+		primaryAttempts.Add(1)
 		store.mu.Lock()
 		store.authStates[primaryID] = &model.ProviderAuthState{
 			ProviderID: primaryID,
@@ -40,7 +40,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 	defer primaryServer.Close()
 
 	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fallbackAttempts, 1)
+		fallbackAttempts.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"provider":"fallback"}`))
@@ -81,7 +81,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 			return &selectResult{Provider: &selectedPrimary, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&retrySelections, 1)
+			retrySelections.Add(1)
 			if !excludeIDs[primaryID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryID)
 			}
@@ -111,13 +111,13 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 
 	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, testPollTimeout)
 
-	if got := atomic.LoadInt32(&primaryAttempts); got != 1 {
+	if got := primaryAttempts.Load(); got != 1 {
 		t.Fatalf("primary attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&fallbackAttempts); got != 1 {
+	if got := fallbackAttempts.Load(); got != 1 {
 		t.Fatalf("fallback attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&retrySelections); got != 1 {
+	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 
@@ -134,9 +134,9 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 	t.Parallel()
 
 	var (
-		primaryAttempts  int32
-		fallbackAttempts int32
-		retrySelections  int32
+		primaryAttempts  atomic.Int32
+		fallbackAttempts atomic.Int32
+		retrySelections  atomic.Int32
 	)
 
 	store := newMockStore()
@@ -144,7 +144,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 	fallbackID := "retry-policy-fallback"
 
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&primaryAttempts, 1)
+		primaryAttempts.Add(1)
 		store.mu.Lock()
 		store.routingPolicies = []model.RoutingPolicy{{
 			APIType:          "claude",
@@ -158,7 +158,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 	defer primaryServer.Close()
 
 	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fallbackAttempts, 1)
+		fallbackAttempts.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"provider":"fallback"}`))
@@ -190,7 +190,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 			return &selectResult{Provider: primaryProvider, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&retrySelections, 1)
+			retrySelections.Add(1)
 			if !excludeIDs[primaryID] {
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryID)
 			}
@@ -220,13 +220,13 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 
 	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, testPollTimeout)
 
-	if got := atomic.LoadInt32(&primaryAttempts); got != 1 {
+	if got := primaryAttempts.Load(); got != 1 {
 		t.Fatalf("primary attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&fallbackAttempts); got != 1 {
+	if got := fallbackAttempts.Load(); got != 1 {
 		t.Fatalf("fallback attempts = %d, want 1", got)
 	}
-	if got := atomic.LoadInt32(&retrySelections); got != 1 {
+	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 

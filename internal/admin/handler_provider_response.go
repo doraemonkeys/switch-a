@@ -25,7 +25,7 @@ type ProviderPayload struct {
 	Priority                 int                            `json:"priority"`
 	Concurrency              int                            `json:"concurrency"`
 	MaxRetries               int                            `json:"max_retries"`
-	Backoff                  model.BackoffPolicy            `json:"backoff,omitempty"`
+	Backoff                  model.BackoffPolicy            `json:"backoff,omitzero"`
 	Vendor                   string                         `json:"vendor"`
 	FailoverScope            model.Scope                    `json:"failover_scope"`  // Outbound true-failover policy only.
 	AcceptFailover           model.Scope                    `json:"accept_failover"` // Inbound true-failover policy only; pre-visible replacement is unaffected.

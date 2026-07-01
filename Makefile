@@ -1,4 +1,4 @@
-.PHONY: ci verify lint coverage gopls-check sloc clean test fmt build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc check-go-env
+.PHONY: ci verify lint coverage gopls-check sloc clean test fmt build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc check-go-env tools ensure-go-test-coverage ensure-golangci-lint ensure-sloc-guard
 
 # AI Note: 如果 bash 无法运行，请使用以下命令：
 # powershell.exe -Command "cd '.'; make ci" 2>&1
@@ -6,9 +6,39 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
-# 设置 GOBIN 环境变量，默认为 $(go env GOPATH)/bin
-GOBIN ?= $$(go env GOPATH)/bin
+# Go reports Windows-style GOBIN/GOPATH even though recipes run under Git Bash.
+# Keep the native path for `go install`, then convert the execution path for Bash.
+GO_ENV_GOBIN := $(shell go env GOBIN)
+GO_ENV_GOPATH := $(shell go env GOPATH)
+GO_TOOL_BIN_NATIVE := $(if $(GOBIN),$(GOBIN),$(GO_ENV_GOBIN))
+ifeq ($(strip $(GO_TOOL_BIN_NATIVE)),)
+    GO_TOOL_BIN_NATIVE := $(GO_ENV_GOPATH)/bin
+endif
+GO_TOOL_BIN := $(GO_TOOL_BIN_NATIVE)
+ifeq ($(OS),Windows_NT)
+    GO_TOOL_BIN := $(shell cygpath -u "$(GO_TOOL_BIN)")
+endif
+GO_EXE := $(shell go env GOEXE)
+GO_TEST_COVERAGE_VERSION := v2.17.1
+GO_TEST_COVERAGE_MODULE := github.com/vladopajic/go-test-coverage/v2
+GO_TEST_COVERAGE := $(GO_TOOL_BIN)/go-test-coverage$(GO_EXE)
+GOLANGCI_LINT_VERSION := v2.12.2
+GOLANGCI_LINT_MODULE := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+GOLANGCI_LINT := $(GO_TOOL_BIN)/golangci-lint$(GO_EXE)
+SLOC_GUARD_VERSION := 0.4.0
+ifeq ($(OS),Windows_NT)
+    PROJECT_ROOT_NATIVE := $(shell pwd -W)
+else
+    PROJECT_ROOT_NATIVE := $(CURDIR)
+endif
+TOOLS_ROOT_NATIVE := $(PROJECT_ROOT_NATIVE)/.tmp/tools
+TOOLS_ROOT := $(TOOLS_ROOT_NATIVE)
+ifeq ($(OS),Windows_NT)
+    TOOLS_ROOT := $(shell cygpath -u "$(TOOLS_ROOT)")
+endif
+SLOC_GUARD := $(TOOLS_ROOT)/bin/sloc-guard$(GO_EXE)
 GOPLS_CHECK := git ls-files -z '*.go' | xargs -0 gopls check -severity=hint
+REQUIRED_GO_VERSION := $(shell awk '/^go / {print $$2}' go.mod)
 
 # 跨平台临时目录设置
 ifeq ($(OS),Windows_NT)
@@ -23,6 +53,22 @@ TEMP_ENV := TEMP="$(TMP_DIR)" TMP="$(TMP_DIR)"
 
 # Go 环境检查 (仅 Windows Git Bash/MSYS2)
 check-go-env:
+	@if ! command -v go >/dev/null 2>&1; then \
+		echo "Go is required but was not found in PATH"; \
+		exit 1; \
+	fi
+	@go_version="$$(go env GOVERSION | sed 's/^go//')"; \
+		required_version="$(REQUIRED_GO_VERSION)"; \
+		go_major="$${go_version%%.*}"; \
+		go_minor_patch="$${go_version#*.}"; \
+		go_minor="$${go_minor_patch%%.*}"; \
+		required_major="$${required_version%%.*}"; \
+		required_minor_patch="$${required_version#*.}"; \
+		required_minor="$${required_minor_patch%%.*}"; \
+		if [ "$$go_major" -lt "$$required_major" ] || { [ "$$go_major" -eq "$$required_major" ] && [ "$$go_minor" -lt "$$required_minor" ]; }; then \
+			echo "Go $$required_version or newer is required; found $$go_version"; \
+			exit 1; \
+		fi
 	@case "$$(uname -s)" in \
 		MINGW*|MSYS*|CYGWIN*) \
 			if [ -z "$$(go env GOMODCACHE 2>/dev/null)" ] || [ -z "$$(go env GOPATH 2>/dev/null)" ]; then \
@@ -38,15 +84,15 @@ check-go-env:
 	esac
 
 # 静默模式
-ci: check-go-env
+ci: check-go-env tools
 	@mkdir -p .tmp
 	@set -o pipefail && go test -race -coverprofile=./cover.out -covermode=atomic ./... 2>&1 | tail -n 10
-	@${GOBIN}/go-test-coverage --config=./.testcoverage.yml
-	@golangci-lint run
+	@"$(GO_TEST_COVERAGE)" --config=./.testcoverage.yml
+	@"$(GOLANGCI_LINT)" run
 	@cd web && pnpm test:coverage --silent
 	@cd web && pnpm exec tsc --noEmit -p tsconfig.app.json
 	@cd web && pnpm lint --quiet
-	@sloc-guard -q check
+	@"$(SLOC_GUARD)" -q check
 	@$(GOPLS_CHECK)
 
 # 正常模式
@@ -55,20 +101,49 @@ verify: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-
 rm-tmpclaude:
 	@rm -f tmpclaude-*
 
-lint:
-	golangci-lint run
+tools: ensure-go-test-coverage ensure-golangci-lint ensure-sloc-guard
+
+ensure-go-test-coverage:
+	@if [ ! -x "$(GO_TEST_COVERAGE)" ]; then \
+		echo "Missing required tool: go-test-coverage"; \
+		echo "Expected executable: $(GO_TEST_COVERAGE)"; \
+		echo "Install manually with:"; \
+		echo "  GOBIN=\"$(GO_TOOL_BIN_NATIVE)\" go install $(GO_TEST_COVERAGE_MODULE)@$(GO_TEST_COVERAGE_VERSION)"; \
+		exit 1; \
+	fi
+
+ensure-golangci-lint:
+	@if [ ! -x "$(GOLANGCI_LINT)" ]; then \
+		echo "Missing required tool: golangci-lint"; \
+		echo "Expected executable: $(GOLANGCI_LINT)"; \
+		echo "Install manually with:"; \
+		echo "  GOBIN=\"$(GO_TOOL_BIN_NATIVE)\" go install $(GOLANGCI_LINT_MODULE)@$(GOLANGCI_LINT_VERSION)"; \
+		exit 1; \
+	fi
+
+ensure-sloc-guard:
+	@if [ ! -x "$(SLOC_GUARD)" ]; then \
+		echo "Missing required tool: sloc-guard"; \
+		echo "Expected executable: $(SLOC_GUARD)"; \
+		echo "Install manually with:"; \
+		echo "  cargo install sloc-guard --version $(SLOC_GUARD_VERSION) --root \"$(TOOLS_ROOT_NATIVE)\" --locked --force"; \
+		exit 1; \
+	fi
+
+lint: ensure-golangci-lint
+	"$(GOLANGCI_LINT)" run
 
 gopls-check:
 	$(GOPLS_CHECK)
 
-coverage:
+coverage: ensure-go-test-coverage
 	mkdir -p .tmp
 	go test -race ./... -coverprofile=./cover.out -covermode=atomic
-	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
+	"$(GO_TEST_COVERAGE)" --config=./.testcoverage.yml
 
-sloc:
+sloc: ensure-sloc-guard
 	mkdir -p .tmp
-	sloc-guard check
+	"$(SLOC_GUARD)" check
 
 test:
 	go test -v -race ./...

@@ -23,8 +23,8 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 	t.Parallel()
 
 	var (
-		retrySelections int32
-		fallbackAccepts int32
+		retrySelections atomic.Int32
+		fallbackAccepts atomic.Int32
 	)
 
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,7 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 	defer primary.Close()
 
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fallbackAccepts, 1)
+		fallbackAccepts.Add(1)
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept fallback websocket: %v", err)
@@ -99,7 +99,7 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 			return &selectResult{Provider: primaryProvider, FromStickyCache: false}, nil
 		},
 		selectExcludingFunc: func(_ context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			atomic.AddInt32(&retrySelections, 1)
+			retrySelections.Add(1)
 			if !excludeIDs[primaryProvider.ID] {
 				t.Fatalf("excludeIDs = %+v, want %q excluded", excludeIDs, primaryProvider.ID)
 			}
@@ -147,10 +147,10 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 	if msgType != websocket.MessageText || string(payload) != `{"type":"response.created","response":{"id":"origin-visible"}}` {
 		t.Fatalf("origin payload = (%v, %q), want origin visible response", msgType, string(payload))
 	}
-	waitFor(t, func() bool { return atomic.LoadInt32(&retrySelections) == 1 && atomic.LoadInt32(&fallbackAccepts) == 1 }, testPollTimeout)
+	waitFor(t, func() bool { return retrySelections.Load() == 1 && fallbackAccepts.Load() == 1 }, testPollTimeout)
 	_, _, _ = conn.Read(ctx)
 
-	if got := atomic.LoadInt32(&retrySelections); got != 1 {
+	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 

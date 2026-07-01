@@ -189,7 +189,6 @@ func TestClassifyWebSocketUpstreamError_StatusAndIdentifierSignals(t *testing.T)
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -250,7 +249,6 @@ func TestDecideWebSocketUpstreamMessage_UsesClientVisibilityAndParseDegradation(
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -291,7 +289,6 @@ func TestQuickExtractEventType_BoundedScan(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := quickExtractEventType(tt.data); got != tt.want {
@@ -327,7 +324,6 @@ func TestPayloadMayContainError_UsesBoundedScan(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := payloadMayContainError(tt.data); got != tt.want {
@@ -363,7 +359,6 @@ func TestShouldFastSkipCodexPayload_UsesEventTypeHeuristic(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := shouldFastSkipCodexPayload(tt.data); got != tt.want {
@@ -483,7 +478,6 @@ func TestNormalizeAndClassifyWebSocketSemanticErrorKey(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, ok := classifyWebSocketSemanticErrorKey(tt.key)
@@ -550,7 +544,6 @@ func TestDecideWebSocketUpstreamError_UsesVisibilityAndParseDegradation(t *testi
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			decision := decideWebSocketUpstreamError(tt.err, tt.parseDegraded, tt.clientVisible)
@@ -625,7 +618,6 @@ func TestBuildWebSocketUpstreamError_FallsBackToCodeOrEventType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -676,7 +668,6 @@ func TestShouldFastSkipCodexPayload_PreservesPotentialErrorFrames(t *testing.T) 
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -738,7 +729,6 @@ func TestDecideWebSocketUpstreamError_UsesClassificationAndParseDegradation(t *t
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

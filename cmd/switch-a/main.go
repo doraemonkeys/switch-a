@@ -54,9 +54,7 @@ func startLogCleanupLoop(store LogStore, log *zap.Logger) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		// Run initial cleanup on startup with fresh context
 		cleanOldLogs(store, log)
 
@@ -69,7 +67,7 @@ func startLogCleanupLoop(store LogStore, log *zap.Logger) (stop func()) {
 				return
 			}
 		}
-	}()
+	})
 
 	return func() {
 		close(done)

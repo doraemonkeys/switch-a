@@ -48,7 +48,7 @@ func newCloseAfterNWSServer(t *testing.T, n int, code websocket.StatusCode, reas
 			return
 		}
 		conn.SetReadLimit(wsReadLimit)
-		for i := 0; i < n; i++ {
+		for range n {
 			msgType, data, err := conn.Read(r.Context())
 			if err != nil {
 				conn.Close(websocket.StatusInternalError, "read failed")

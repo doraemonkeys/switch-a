@@ -179,10 +179,7 @@ func (i *sseTokenInterceptor) Wrap(body io.ReadCloser) io.ReadCloser {
 	tee := io.TeeReader(body, pw)
 
 	// Start background goroutine to decompress and parse SSE events
-	i.wg.Add(1)
-	go func() {
-		defer i.wg.Done()
-
+	i.wg.Go(func() {
 		var decompressor io.Reader
 		var gzCloser io.Closer
 
@@ -208,7 +205,7 @@ func (i *sseTokenInterceptor) Wrap(body io.ReadCloser) io.ReadCloser {
 		}
 
 		i.parseSSEFromReader(decompressor)
-	}()
+	})
 
 	if i.logger != nil {
 		encodingType := "gzip"
@@ -257,7 +254,7 @@ func (i *sseTokenInterceptor) Result() (*TokenUsage, bool) {
 }
 
 // Wait blocks until background goroutine completes (for gzip/brotli passthrough).
-// For non-compressed cases, wg.Add(1) is never called, so Wait() returns immediately.
+// For non-compressed cases, no worker is registered, so Wait() returns immediately.
 func (i *sseTokenInterceptor) Wait() {
 	i.wg.Wait()
 }

@@ -33,7 +33,6 @@ func TestTransportDiagnostic_NoSignal_ReturnsNil(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if diag := deriveTransportDiagnostic(tc.obs); diag != nil {
@@ -220,7 +219,6 @@ func TestTransportDiagnostic_SSE_StageTransitions(t *testing.T) {
 		{"first byte visible", sseObservation{firstByteVisible: true, headerCommitted: true}, transportStagePostPayloadVisible},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			obs := transportObservation{
@@ -404,7 +402,6 @@ func TestTransportDiagnostic_WS_StageTransitions(t *testing.T) {
 		{"frame delivered", wsObservation{upgradeCompleted: true, anyFrameDelivered: true}, transportStagePostPayloadVisible},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			obs := transportObservation{
@@ -467,7 +464,6 @@ func TestTransportDiagnostic_WS_CloseCodePresenceMatrix(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			diag := deriveTransportDiagnostic(tc.obs)
@@ -602,7 +598,6 @@ func TestTransportDiagnostic_KindMapping(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			diag := deriveTransportDiagnostic(tc.obs)
@@ -734,7 +729,6 @@ func TestTransportDiagnostic_WS_DisconnectSourcePerPeer(t *testing.T) {
 func TestTransportDiagnostic_WS_TimeoutSourceFixed(t *testing.T) {
 	t.Parallel()
 	for _, peer := range []webSocketPeer{webSocketPeerUnknown, webSocketPeerClient, webSocketPeerUpstream} {
-		peer := peer
 		t.Run(fmt.Sprintf("peer=%d", peer), func(t *testing.T) {
 			t.Parallel()
 			obs := transportObservation{
@@ -759,7 +753,6 @@ func TestTransportDiagnostic_WS_TimeoutSourceFixed(t *testing.T) {
 func TestTransportDiagnostic_WS_CanceledSourceFixed(t *testing.T) {
 	t.Parallel()
 	for _, peer := range []webSocketPeer{webSocketPeerUnknown, webSocketPeerClient, webSocketPeerUpstream} {
-		peer := peer
 		t.Run(fmt.Sprintf("peer=%d", peer), func(t *testing.T) {
 			t.Parallel()
 			obs := transportObservation{

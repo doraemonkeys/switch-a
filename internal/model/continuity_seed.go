@@ -31,9 +31,7 @@ func (s *VisibleContinuitySeed) Candidate(observedAt time.Time) *VisibleContinui
 		return nil
 	}
 	age := observedAt.Sub(s.ObservedAt)
-	if age < 0 {
-		age = 0
-	}
+	age = max(age, 0)
 	return &VisibleContinuitySeedCandidate{
 		SeedID:           s.SeedID,
 		ContinuityKey:    s.ContinuityKey,

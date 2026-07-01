@@ -75,7 +75,7 @@ func TestSelectByRandom(t *testing.T) {
 	}
 
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p := SelectByRandom(providers)
 		if p == nil {
 			t.Fatal("SelectByRandom returned nil for non-empty list")
@@ -103,7 +103,7 @@ func TestSelectByWeight(t *testing.T) {
 	}
 
 	heavyCount := 0
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		p := SelectByWeight(providers)
 		if p.ID == "heavy" {
 			heavyCount++
@@ -124,7 +124,7 @@ func TestSelectByWeight_ZeroWeight(t *testing.T) {
 	}
 
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p := SelectByWeight(providers)
 		if p == nil {
 			t.Fatal("SelectByWeight returned nil")
@@ -183,7 +183,7 @@ func TestSelectGroup_Weight(t *testing.T) {
 	}
 
 	heavyCount := 0
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		g := SelectGroup(groups, StrategyWeight)
 		if g.GroupID == "heavy" {
 			heavyCount++
@@ -203,7 +203,7 @@ func TestSelectGroup_Random(t *testing.T) {
 	}
 
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		g := SelectGroup(groups, StrategyRandom)
 		if g == nil {
 			t.Fatal("SelectGroup returned nil")
@@ -224,7 +224,7 @@ func TestSelectProvider_RandomStrategy(t *testing.T) {
 	}
 
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p := SelectProvider(providers, StrategyRandom)
 		if p == nil {
 			t.Fatal("SelectProvider returned nil")
@@ -244,7 +244,7 @@ func TestSelectProvider_WeightStrategy(t *testing.T) {
 	}
 
 	heavyCount := 0
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		p := SelectProvider(providers, StrategyWeight)
 		if p.ID == "heavy" {
 			heavyCount++
@@ -265,7 +265,7 @@ func TestSelectByWeight_NegativeWeight(t *testing.T) {
 	}
 
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p := SelectByWeight(providers)
 		if p == nil {
 			t.Fatal("SelectByWeight returned nil")
@@ -299,7 +299,7 @@ func TestSelectGroup_ZeroWeight(t *testing.T) {
 	}
 
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		g := SelectGroup(groups, StrategyWeight)
 		if g == nil {
 			t.Fatal("SelectGroup returned nil")
@@ -322,7 +322,7 @@ func TestSelectByWeight_LargeWeight(t *testing.T) {
 
 	// This should not panic - weights are capped at MaxWeight
 	hugeCount := 0
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p := SelectByWeight(providers)
 		if p == nil {
 			t.Fatal("SelectByWeight returned nil")

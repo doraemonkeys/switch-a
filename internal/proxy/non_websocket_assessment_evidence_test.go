@@ -157,7 +157,6 @@ func TestNonWebSocketEvidence_StageBoundaries(t *testing.T) {
 		{"post-payload first byte visible", true, true, transportStagePostPayloadVisible},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			encoded := buildNonWebSocketSessionEvidence(nonWebSocketRuntimeFacts{
@@ -295,7 +294,7 @@ func TestAttemptFactsFromForwardResult_PreservesObservation(t *testing.T) {
 		isStatusFailover:   false,
 		isClientWriteError: false,
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	facts := attemptFactsFromForwardResult(ctx, result)
@@ -378,7 +377,6 @@ func TestNonWebSocketEvidence_RedactsSecretsInRawErrorSnippet(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			encoded := buildNonWebSocketAttemptEvidence(nonWebSocketRuntimeFacts{

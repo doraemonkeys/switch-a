@@ -113,9 +113,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		&clientToUpstream,
 	)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		var initialUpstreamRead *webSocketInitialReadResult
 		if initialUpstreamReadCh != nil {
 			select {
@@ -160,7 +158,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		if err != nil {
 			cancel()
 		}
-	}()
+	})
 
 	wg.Wait()
 

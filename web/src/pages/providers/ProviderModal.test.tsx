@@ -411,7 +411,9 @@ describe("ProviderModal token import", () => {
         "Connected as import@example.com. Save the provider to persist it.",
       ),
     ).toBeInTheDocument();
-    expect(mockApi.providers.importChatGPTLogin).toHaveBeenCalledWith(tokenBlob);
+    expect(mockApi.providers.importChatGPTLogin).toHaveBeenCalledWith(
+      tokenBlob,
+    );
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 

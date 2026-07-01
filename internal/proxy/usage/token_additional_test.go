@@ -64,7 +64,7 @@ func TestUsageParsingHelpersHandleTypedAndMissingValues(t *testing.T) {
 		t.Fatalf("usageInt64(string) = (%d, %t), want (0, false)", got, ok)
 	}
 
-	values := map[string]interface{}{
+	values := map[string]any{
 		"text": "cached",
 		"bad":  99,
 	}
@@ -86,9 +86,9 @@ func TestBuildCacheCreationFromUsageMapParsesNestedValues(t *testing.T) {
 		t.Fatalf("buildCacheCreationFromUsageMap(nil) = %#v, want nil", got)
 	}
 
-	usageMap := map[string]interface{}{
+	usageMap := map[string]any{
 		"cache_creation_input_tokens": float64(11),
-		"cache_creation": map[string]interface{}{
+		"cache_creation": map[string]any{
 			"ephemeral_1h_input_tokens": float64(5),
 			"ephemeral_5m_input_tokens": int64(2),
 		},
@@ -104,7 +104,7 @@ func TestBuildCacheCreationFromUsageMapParsesNestedValues(t *testing.T) {
 		t.Fatalf("cache creation = %#v, want nested ephemeral values", cacheCreation)
 	}
 
-	tokenOnly := buildCacheCreationFromUsageMap(map[string]interface{}{
+	tokenOnly := buildCacheCreationFromUsageMap(map[string]any{
 		"cache_creation_input_tokens": int64(4),
 	})
 	if tokenOnly == nil || tokenOnly.InputTokens != 4 {
@@ -114,12 +114,12 @@ func TestBuildCacheCreationFromUsageMapParsesNestedValues(t *testing.T) {
 
 type recordingZapLogger struct {
 	msg           string
-	keysAndValues []interface{}
+	keysAndValues []any
 }
 
-func (l *recordingZapLogger) Debugw(msg string, keysAndValues ...interface{}) {
+func (l *recordingZapLogger) Debugw(msg string, keysAndValues ...any) {
 	l.msg = msg
-	l.keysAndValues = append([]interface{}(nil), keysAndValues...)
+	l.keysAndValues = append([]any(nil), keysAndValues...)
 }
 
 func TestFullCaptureBufferWriteAndBytesMirrorBackingBuffer(t *testing.T) {
