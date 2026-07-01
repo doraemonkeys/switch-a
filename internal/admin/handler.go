@@ -87,6 +87,7 @@ type ActiveRequest = proxy.ActiveRequest
 type ProviderAuthService interface {
 	StartChatGPTLogin() (*providerauth.ChatGPTLoginStartResponse, error)
 	GetChatGPTLoginStatus(loginID string) (*providerauth.ChatGPTLoginStatusResponse, error)
+	ImportChatGPTLogin(ctx context.Context, rawAuthData string) (*providerauth.ChatGPTLoginStatusResponse, error)
 	ApplyChatGPTLogin(provider *model.Provider, loginID string) error
 	FinalizeChatGPTLogin(loginID string) error
 	BuildProviderAuthView(provider *model.Provider) *providerauth.ProviderAuthView

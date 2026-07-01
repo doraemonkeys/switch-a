@@ -2,8 +2,10 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"switch-a/internal/model"
 	"switch-a/internal/providerauth"
@@ -44,6 +46,42 @@ func (h *Handler) GetChatGPTProviderLoginStatus(w http.ResponseWriter, r *http.R
 	status, err := h.auth.GetChatGPTLoginStatus(loginID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, status)
+}
+
+// ImportChatGPTProviderCredentialRequest carries a pasted ChatGPT credential blob
+// (Codex auth.json, a flat token JSON, or a /api/auth/session payload).
+type ImportChatGPTProviderCredentialRequest struct {
+	AuthData string `json:"auth_data"`
+}
+
+// ImportChatGPTProviderCredential handles POST /admin/api/provider-auth/chatgpt/import.
+// It stages the pasted credential as a completed login session and returns the same
+// shape as a completed login-status poll, so the admin UI reuses the OAuth save path.
+func (h *Handler) ImportChatGPTProviderCredential(w http.ResponseWriter, r *http.Request) {
+	if h.auth == nil {
+		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "GPT login is unavailable in this build")
+		return
+	}
+
+	limitRequestBody(w, r)
+	var req ImportChatGPTProviderCredentialRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.AuthData) == "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "auth_data is required")
+		return
+	}
+
+	status, err := h.auth.ImportChatGPTLogin(r.Context(), req.AuthData)
+	if err != nil {
+		// Parsing/validation failures are caller-fixable (bad paste, missing token).
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
 		return
 	}
 

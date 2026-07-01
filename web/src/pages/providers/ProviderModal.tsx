@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useId, useContext } from "react";
+import { useState, useEffect, useRef, useId } from "react";
 import type { FormEvent } from "react";
-import type { Provider, ProviderAuthView, ProviderInput } from "../../api";
-import { ApiContext } from "../../api/context";
+import type { Provider, ProviderInput } from "../../api";
 import { ProviderFormBody } from "./ProviderFormBody";
+import { useChatGPTLogin } from "./useChatGPTLogin";
 import { isValidId } from "../../lib/utils";
 import { normalizeProviderApiKey } from "../../lib/providerApiKey";
 import { CloseIcon } from "../../components/icons/CloseIcon";
@@ -16,26 +16,8 @@ import {
 } from "../../config/constants";
 import {
   hasProviderCredentialSnapshot,
-  resolveLoginAuthView,
   resolveProviderAuthView,
 } from "../../lib/providerAuth";
-
-const CHATGPT_LOGIN_POLL_INTERVAL_MS = 1000;
-const CHATGPT_LOGIN_WINDOW_TARGET = "_blank";
-const CHATGPT_LOGIN_WINDOW_FEATURES = "noopener,noreferrer";
-const CHATGPT_LOGIN_READY_MESSAGE =
-  "Sign-in link ready. Open it in any browser on this machine. Switch-A will detect completion automatically.";
-const CHATGPT_LOGIN_EXPIRED_MESSAGE =
-  "GPT sign-in expired before it was saved. Start a new sign-in link.";
-const CHATGPT_LOGIN_STATUS_ERROR_MESSAGE = "Failed to check GPT login status";
-const CHATGPT_LOGIN_START_ERROR_MESSAGE = "Failed to start GPT login";
-const CHATGPT_LOGIN_COMPLETED_MESSAGE =
-  "GPT login completed. Save the provider to persist it.";
-
-interface ChatGPTLoginSession {
-  loginId: string;
-  authURL: string;
-}
 
 function createChatGPTAPIType(): ProviderInput["api_types"] {
   return [
@@ -45,31 +27,6 @@ function createChatGPTAPIType(): ProviderInput["api_types"] {
       api_key: "",
     },
   ];
-}
-
-function describeConnectedChatGPTAccount(
-  authView?: ProviderAuthView | null,
-): string {
-  if (authView?.email) {
-    return `Connected as ${authView.email}. Save the provider to persist it.`;
-  }
-  return CHATGPT_LOGIN_COMPLETED_MESSAGE;
-}
-
-function describePersistedChatGPTAccount(
-  authView?: ProviderAuthView | null,
-): string | null {
-  if (!authView || authView.status === "not_connected") {
-    return null;
-  }
-  if (authView.status === "reauth_required") {
-    return authView.email
-      ? `Reconnect required for ${authView.email}.`
-      : "Reconnect required for this provider.";
-  }
-  return authView.email
-    ? `Connected as ${authView.email}.`
-    : "A GPT account is already connected for this provider.";
 }
 
 function ModalHeader({
@@ -248,7 +205,6 @@ export function ProviderModal({
   onSubmit,
   groups,
 }: ProviderModalProps) {
-  const api = useContext(ApiContext);
   const isEditMode = !!initialData;
   const titleId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
@@ -261,17 +217,21 @@ export function ProviderModal({
   const [error, setError] = useState<string | null>(null);
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
-  const [chatGPTStatus, setChatGPTStatus] = useState<string | null>(() =>
-    describePersistedChatGPTAccount(initialAuthView),
-  );
-  const [chatGPTLoginError, setChatGPTLoginError] = useState<string | null>(
-    null,
-  );
-  const [startingChatGPTLogin, setStartingChatGPTLogin] = useState(false);
-  const [chatGPTLoginSession, setChatGPTLoginSession] =
-    useState<ChatGPTLoginSession | null>(null);
-  const [pendingChatGPTAuth, setPendingChatGPTAuth] =
-    useState<ProviderAuthView | null>(null);
+
+  const {
+    chatGPTStatus,
+    chatGPTLoginError,
+    startingChatGPTLogin,
+    chatGPTLoginAuthURL,
+    pendingChatGPTAuth,
+    handleStartChatGPTLogin,
+    handleOpenChatGPTLoginPage,
+    handleImportChatGPTLogin,
+  } = useChatGPTLogin({
+    credentialType: formData.credential_type,
+    setFormData,
+    initialAuthView,
+  });
 
   // Auto-focus first focusable element when modal opens
   useEffect(() => {
@@ -308,125 +268,6 @@ export function ProviderModal({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose, submitting]);
-
-  useEffect(() => {
-    if (
-      !api ||
-      !chatGPTLoginSession ||
-      formData.credential_type !== PROVIDER_CREDENTIAL_TYPES.CHATGPT
-    ) {
-      return;
-    }
-
-    const activeLoginID = chatGPTLoginSession.loginId;
-    let cancelled = false;
-    let timeoutID: number | undefined;
-
-    const scheduleNextPoll = () => {
-      timeoutID = window.setTimeout(() => {
-        void pollLoginStatus();
-      }, CHATGPT_LOGIN_POLL_INTERVAL_MS);
-    };
-
-    const pollLoginStatus = async () => {
-      try {
-        const loginStatus =
-          await api.providers.getChatGPTLoginStatus(activeLoginID);
-        if (cancelled) {
-          return;
-        }
-
-        if (loginStatus.status === "completed") {
-          const authView = resolveLoginAuthView(loginStatus);
-          setChatGPTLoginSession(null);
-          setChatGPTLoginError(null);
-          setPendingChatGPTAuth(authView);
-          setChatGPTStatus(describeConnectedChatGPTAccount(authView));
-          setFormData((prev) => ({
-            ...prev,
-            credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-            credential_login_id: activeLoginID,
-          }));
-          return;
-        }
-
-        if (loginStatus.status === "expired") {
-          setChatGPTLoginSession(null);
-          setPendingChatGPTAuth(null);
-          setChatGPTStatus(null);
-          setChatGPTLoginError(CHATGPT_LOGIN_EXPIRED_MESSAGE);
-          return;
-        }
-
-        scheduleNextPoll();
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        setChatGPTLoginError(
-          err instanceof Error
-            ? err.message
-            : CHATGPT_LOGIN_STATUS_ERROR_MESSAGE,
-        );
-        scheduleNextPoll();
-      }
-    };
-
-    void pollLoginStatus();
-
-    return () => {
-      cancelled = true;
-      if (timeoutID !== undefined) {
-        window.clearTimeout(timeoutID);
-      }
-    };
-  }, [api, chatGPTLoginSession, formData.credential_type]);
-
-  const handleStartChatGPTLogin = async () => {
-    setStartingChatGPTLogin(true);
-    setChatGPTLoginError(null);
-    try {
-      if (!api) {
-        throw new Error("API client is unavailable for GPT login");
-      }
-      setPendingChatGPTAuth(null);
-      setFormData((prev) => ({ ...prev, credential_login_id: "" }));
-      const start = await api.providers.startChatGPTLogin();
-      setChatGPTLoginSession({
-        loginId: start.login_id,
-        authURL: start.auth_url,
-      });
-      const loginWindow = window.open(
-        start.auth_url,
-        CHATGPT_LOGIN_WINDOW_TARGET,
-        CHATGPT_LOGIN_WINDOW_FEATURES,
-      );
-      if (loginWindow) {
-        loginWindow.focus();
-      }
-      setChatGPTStatus(CHATGPT_LOGIN_READY_MESSAGE);
-    } catch (err) {
-      setChatGPTLoginSession(null);
-      setChatGPTStatus(null);
-      setChatGPTLoginError(
-        err instanceof Error ? err.message : CHATGPT_LOGIN_START_ERROR_MESSAGE,
-      );
-    } finally {
-      setStartingChatGPTLogin(false);
-    }
-  };
-
-  const handleOpenChatGPTLoginPage = () => {
-    if (!chatGPTLoginSession?.authURL) {
-      return;
-    }
-    const loginWindow = window.open(
-      chatGPTLoginSession.authURL,
-      CHATGPT_LOGIN_WINDOW_TARGET,
-      CHATGPT_LOGIN_WINDOW_FEATURES,
-    );
-    loginWindow?.focus();
-  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -495,11 +336,12 @@ export function ProviderModal({
             authView={pendingChatGPTAuth ?? initialAuthView}
             onStartChatGPTLogin={handleStartChatGPTLogin}
             onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
+            onImportChatGPTLogin={handleImportChatGPTLogin}
             chatGPTLoginState={{
               status: chatGPTStatus,
               error: chatGPTLoginError,
               loading: startingChatGPTLogin,
-              authURL: chatGPTLoginSession?.authURL ?? null,
+              authURL: chatGPTLoginAuthURL,
             }}
           />
         </form>

@@ -138,6 +138,29 @@ func newChatGPTCredentialFromTokensAt(accessToken, refreshToken, idToken string,
 	return newChatGPTCredentialFromSnapshot(accessToken, refreshToken, snapshot, nil, now), nil
 }
 
+// newChatGPTCredentialFromImportedTokens builds a credential from pasted tokens.
+// Identity comes from the id_token when present; otherwise it is read from the
+// access_token (also a JWT carrying the auth block), so chatgpt.com
+// /api/auth/session pastes that omit the id_token still resolve the account. The
+// issuer/client id captured from whichever token was decoded are what later token
+// refreshes rely on when no id_token is stored (see resolveChatGPTRefreshContext).
+func newChatGPTCredentialFromImportedTokens(accessToken, refreshToken, idToken string, now time.Time) (*model.ChatGPTProviderCredential, error) {
+	var (
+		snapshot chatGPTIdentitySnapshot
+		err      error
+	)
+	if strings.TrimSpace(idToken) != "" {
+		snapshot, err = extractChatGPTIdentitySnapshot(idToken)
+	} else {
+		snapshot, err = snapshotFromChatGPTToken(accessToken, "access_token")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return newChatGPTCredentialFromSnapshot(accessToken, refreshToken, snapshot, nil, now), nil
+}
+
 func newChatGPTCredentialFromSnapshot(
 	accessToken string,
 	refreshToken string,
@@ -161,9 +184,24 @@ func newChatGPTCredentialFromSnapshot(
 }
 
 func extractChatGPTIdentitySnapshot(idToken string) (chatGPTIdentitySnapshot, error) {
-	claims, err := decodeJWTPayload(idToken)
+	snapshot, err := snapshotFromChatGPTToken(idToken, "id_token")
 	if err != nil {
-		return chatGPTIdentitySnapshot{}, fmt.Errorf("decode chatgpt id_token: %w", err)
+		return chatGPTIdentitySnapshot{}, err
+	}
+	snapshot.IDToken = idToken
+	return snapshot, nil
+}
+
+// snapshotFromChatGPTToken reads account identity from any ChatGPT-issued JWT.
+// Both id_token and access_token carry the "https://api.openai.com/auth" block
+// plus iss/aud, so token import can resolve identity from the access_token when no
+// id_token is supplied. The kind label only shapes the decode error so callers
+// report the token they actually passed; IDToken is set by the caller because only
+// it knows whether the source token is genuinely an id_token.
+func snapshotFromChatGPTToken(token, kind string) (chatGPTIdentitySnapshot, error) {
+	claims, err := decodeJWTPayload(token)
+	if err != nil {
+		return chatGPTIdentitySnapshot{}, fmt.Errorf("decode chatgpt %s: %w", kind, err)
 	}
 
 	accountID, err := extractChatGPTAccountID(claims)
@@ -177,7 +215,6 @@ func extractChatGPTIdentitySnapshot(idToken string) (chatGPTIdentitySnapshot, er
 	}
 
 	return chatGPTIdentitySnapshot{
-		IDToken:       idToken,
 		OAuthIssuer:   issuer,
 		OAuthClientID: extractClientIDFromClaims(claims),
 		AccountID:     accountID,

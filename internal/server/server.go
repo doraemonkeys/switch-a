@@ -250,6 +250,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("GET /admin/api/providers", auth.WrapFunc(adminHandler.ListProviders))
 	mux.Handle("POST /admin/api/providers", auth.WrapFunc(adminHandler.CreateProvider))
 	mux.Handle("POST /admin/api/provider-auth/chatgpt/start", auth.WrapFunc(adminHandler.StartChatGPTProviderLogin))
+	mux.Handle("POST /admin/api/provider-auth/chatgpt/import", auth.WrapFunc(adminHandler.ImportChatGPTProviderCredential))
 	mux.Handle("GET /admin/api/provider-auth/chatgpt/sessions/{login_id}", auth.WrapFunc(adminHandler.GetChatGPTProviderLoginStatus))
 	mux.Handle("POST /admin/api/providers/batch", auth.WrapFunc(adminHandler.BatchProviderAction))
 	mux.Handle("GET /admin/api/providers/{id}", auth.WrapFunc(adminHandler.GetProvider))

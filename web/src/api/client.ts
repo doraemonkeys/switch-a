@@ -296,6 +296,11 @@ function createProvidersApi(request: AuthenticatedRequestFn) {
       request<ChatGPTLoginStatusResponse>(
         `/provider-auth/chatgpt/sessions/${encodeURIComponent(loginId)}`,
       ),
+    importChatGPTLogin: (authData: string) =>
+      request<ChatGPTLoginStatusResponse>("/provider-auth/chatgpt/import", {
+        method: "POST",
+        body: JSON.stringify({ auth_data: authData }),
+      }),
     refreshCredential: (id: string) =>
       request<void>(`/providers/${id}/refresh-credential`, { method: "POST" }),
     refreshUsage: (id: string) =>

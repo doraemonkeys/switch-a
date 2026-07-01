@@ -54,6 +54,7 @@ interface ProviderFormBodyProps {
   authView?: ProviderAuthView | null;
   onStartChatGPTLogin: () => Promise<void>;
   onOpenChatGPTLoginPage: () => void;
+  onImportChatGPTLogin: (authData: string) => Promise<boolean>;
   chatGPTLoginState: ChatGPTLoginState;
 }
 
@@ -166,16 +167,79 @@ function UsageLimitPolicyField({
   );
 }
 
+function ChatGPTTokenImport({
+  onImport,
+  disabled,
+}: {
+  onImport: (authData: string) => Promise<boolean>;
+  disabled: boolean;
+}) {
+  const [authData, setAuthData] = useState("");
+  const [importing, setImporting] = useState(false);
+  const trimmed = authData.trim();
+  const importDisabled = disabled || importing || !trimmed;
+
+  const handleImport = async () => {
+    if (importDisabled) {
+      return;
+    }
+    setImporting(true);
+    try {
+      // Clear only on success so a failed paste stays editable for correction.
+      if (await onImport(trimmed)) {
+        setAuthData("");
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-bg-primary/40 p-3 space-y-2">
+      <FormField label="Import via token">
+        {(id) => (
+          <textarea
+            id={id}
+            className="input font-mono text-xs"
+            rows={4}
+            value={authData}
+            onChange={(e) => setAuthData(e.target.value)}
+            placeholder="Paste Codex auth.json, a token JSON, or chatgpt.com /api/auth/session output"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        )}
+      </FormField>
+      <p className="text-xs text-text-muted">
+        Connect an existing GPT account without opening the sign-in page. The
+        pasted credential must include a refresh token.
+      </p>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => void handleImport()}
+          disabled={importDisabled}
+          className={`btn btn-secondary ${importDisabled ? "opacity-60 cursor-not-allowed" : ""}`}
+        >
+          {importing ? "Importing..." : "Import Token"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ChatGPTLoginSection({
   authView,
   chatGPTLoginState,
   onStartChatGPTLogin,
   onOpenChatGPTLoginPage,
+  onImportChatGPTLogin,
 }: {
   authView?: ProviderAuthView | null;
   chatGPTLoginState: ChatGPTLoginState;
   onStartChatGPTLogin: () => Promise<void>;
   onOpenChatGPTLoginPage: () => void;
+  onImportChatGPTLogin: (authData: string) => Promise<boolean>;
 }) {
   const authPlanType = resolveProviderPlanType(authView);
   const authUsage = resolveProviderUsage(authView);
@@ -200,6 +264,10 @@ function ChatGPTLoginSection({
           {getChatGPTLoginButtonLabel(chatGPTLoginState, authView)}
         </button>
       </div>
+      <ChatGPTTokenImport
+        onImport={onImportChatGPTLogin}
+        disabled={chatGPTLoginState.loading}
+      />
       {chatGPTLoginState.authURL && (
         <div className="rounded-lg border border-border/70 bg-bg-primary/40 p-3 space-y-3">
           <p className="text-xs text-text-muted">
@@ -280,6 +348,7 @@ export function ProviderFormBody({
   authView,
   onStartChatGPTLogin,
   onOpenChatGPTLoginPage,
+  onImportChatGPTLogin,
   chatGPTLoginState,
 }: ProviderFormBodyProps) {
   const { data: formData, setData: setFormData } = formState;
@@ -409,6 +478,7 @@ export function ProviderFormBody({
           chatGPTLoginState={chatGPTLoginState}
           onStartChatGPTLogin={onStartChatGPTLogin}
           onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
+          onImportChatGPTLogin={onImportChatGPTLogin}
         />
       ) : (
         <>

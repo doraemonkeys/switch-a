@@ -368,3 +368,102 @@ describe("ProviderModal", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("ProviderModal token import", () => {
+  it("imports a GPT account from pasted tokens and saves it", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const tokenBlob = '{"tokens":{"access_token":"acc","refresh_token":"ref"}}';
+    const mockApi = {
+      providers: {
+        importChatGPTLogin: vi.fn().mockResolvedValue({
+          login_id: "login-import",
+          status: "completed",
+          auth: {
+            type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+            status: "active",
+            email: "import@example.com",
+            account_id: "acct_import",
+          },
+        }),
+      },
+    } as unknown as ApiClient;
+
+    render(
+      <ApiContext.Provider value={mockApi}>
+        <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />
+      </ApiContext.Provider>,
+    );
+
+    await user.type(screen.getByLabelText("Name"), "Imported GPT");
+    await user.selectOptions(
+      screen.getByLabelText("Credential Type"),
+      PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    );
+
+    // Paste rather than type so the JSON braces are inserted literally.
+    await user.click(screen.getByLabelText("Import via token"));
+    await user.paste(tokenBlob);
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+
+    expect(
+      await screen.findByText(
+        "Connected as import@example.com. Save the provider to persist it.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockApi.providers.importChatGPTLogin).toHaveBeenCalledWith(tokenBlob);
+
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    expect(submitted).toMatchObject({
+      credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+      credential_login_id: "login-import",
+      auth_mode: "bearer",
+      api_key: "",
+      api_types: [
+        {
+          api_type: "codex",
+          base_url: CHATGPT_CODEX_BASE_URL,
+          api_key: "",
+        },
+      ],
+    });
+  });
+
+  it("keeps the pasted token editable when import fails", async () => {
+    const user = userEvent.setup();
+    const tokenBlob = '{"access_token":"acc"}';
+    const mockApi = {
+      providers: {
+        importChatGPTLogin: vi
+          .fn()
+          .mockRejectedValue(new Error("auth data is missing a refresh token")),
+      },
+    } as unknown as ApiClient;
+
+    render(
+      <ApiContext.Provider value={mockApi}>
+        <ProviderModal onClose={vi.fn()} onSubmit={vi.fn()} groups={[]} />
+      </ApiContext.Provider>,
+    );
+
+    await user.type(screen.getByLabelText("Name"), "Failed Import");
+    await user.selectOptions(
+      screen.getByLabelText("Credential Type"),
+      PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    );
+
+    const textarea = screen.getByLabelText("Import via token");
+    await user.click(textarea);
+    await user.paste(tokenBlob);
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+
+    expect(
+      await screen.findByText("auth data is missing a refresh token"),
+    ).toBeInTheDocument();
+    // A failed import must not discard the user's pasted credential.
+    expect(textarea).toHaveValue(tokenBlob);
+  });
+});

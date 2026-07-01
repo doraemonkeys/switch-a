@@ -23,6 +23,10 @@ type mockProviderAuthService struct {
 	statusResp                   *providerauth.ChatGPTLoginStatusResponse
 	statusErr                    error
 	statusLoginID                string
+	importResp                   *providerauth.ChatGPTLoginStatusResponse
+	importErr                    error
+	importAuthData               string
+	importCalls                  int
 	appliedProvider              *model.Provider
 	appliedLoginID               string
 	appliedPayload               string
@@ -50,6 +54,12 @@ func (m *mockProviderAuthService) StartChatGPTLogin() (*providerauth.ChatGPTLogi
 func (m *mockProviderAuthService) GetChatGPTLoginStatus(loginID string) (*providerauth.ChatGPTLoginStatusResponse, error) {
 	m.statusLoginID = loginID
 	return m.statusResp, m.statusErr
+}
+
+func (m *mockProviderAuthService) ImportChatGPTLogin(_ context.Context, rawAuthData string) (*providerauth.ChatGPTLoginStatusResponse, error) {
+	m.importCalls++
+	m.importAuthData = rawAuthData
+	return m.importResp, m.importErr
 }
 
 func (m *mockProviderAuthService) ApplyChatGPTLogin(provider *model.Provider, loginID string) error {
@@ -295,6 +305,139 @@ func TestGetChatGPTProviderLoginStatus_WithoutAuthService(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	handler.GetChatGPTProviderLoginStatus(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusNotImplemented)
+	}
+}
+
+func TestImportChatGPTProviderCredential(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	auth := &mockProviderAuthService{
+		importResp: &providerauth.ChatGPTLoginStatusResponse{
+			LoginID: "login-import",
+			Status:  providerauth.ChatGPTLoginStatusCompleted,
+			Auth: &providerauth.ProviderAuthView{
+				Type:      model.ProviderCredentialTypeChatGPT,
+				Status:    providerauth.ProviderAuthStatusActive,
+				Email:     "import@example.com",
+				AccountID: "acct_import",
+			},
+		},
+	}
+	handler := NewHandler(Config{Store: newMockStore(), Auth: auth, Logger: logger})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/api/provider-auth/chatgpt/import",
+		strings.NewReader(`{"auth_data":"{\"access_token\":\"acc\"}"}`),
+	)
+	w := httptest.NewRecorder()
+
+	handler.ImportChatGPTProviderCredential(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusOK)
+	}
+	if auth.importCalls != 1 {
+		t.Fatalf("ImportChatGPTLogin calls = %d, want 1", auth.importCalls)
+	}
+	if auth.importAuthData != `{"access_token":"acc"}` {
+		t.Fatalf("import auth data = %q, want raw pasted blob", auth.importAuthData)
+	}
+
+	var response providerauth.ChatGPTLoginStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Status != providerauth.ChatGPTLoginStatusCompleted {
+		t.Fatalf("response status = %q, want %q", response.Status, providerauth.ChatGPTLoginStatusCompleted)
+	}
+	if response.Auth == nil || response.Auth.AccountID != "acct_import" {
+		t.Fatal("response should include the imported auth view")
+	}
+}
+
+func TestImportChatGPTProviderCredential_EmptyAuthData(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	auth := &mockProviderAuthService{}
+	handler := NewHandler(Config{Store: newMockStore(), Auth: auth, Logger: logger})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/api/provider-auth/chatgpt/import",
+		strings.NewReader(`{"auth_data":"   "}`),
+	)
+	w := httptest.NewRecorder()
+
+	handler.ImportChatGPTProviderCredential(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if auth.importCalls != 0 {
+		t.Fatalf("ImportChatGPTLogin calls = %d, want 0 for empty auth_data", auth.importCalls)
+	}
+}
+
+func TestImportChatGPTProviderCredential_InvalidBody(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	handler := NewHandler(Config{
+		Store:  newMockStore(),
+		Auth:   &mockProviderAuthService{},
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/api/provider-auth/chatgpt/import",
+		strings.NewReader("not json"),
+	)
+	w := httptest.NewRecorder()
+
+	handler.ImportChatGPTProviderCredential(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestImportChatGPTProviderCredential_ImportError(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	handler := NewHandler(Config{
+		Store: newMockStore(),
+		Auth: &mockProviderAuthService{
+			importErr: errors.New("auth data is missing a refresh token"),
+		},
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/api/provider-auth/chatgpt/import",
+		strings.NewReader(`{"auth_data":"{\"access_token\":\"acc\"}"}`),
+	)
+	w := httptest.NewRecorder()
+
+	handler.ImportChatGPTProviderCredential(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestImportChatGPTProviderCredential_WithoutAuthService(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	handler := NewHandler(Config{Store: newMockStore(), Logger: logger})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/api/provider-auth/chatgpt/import",
+		strings.NewReader(`{"auth_data":"{}"}`),
+	)
+	w := httptest.NewRecorder()
+
+	handler.ImportChatGPTProviderCredential(w, req)
 
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("status code = %d, want %d", w.Code, http.StatusNotImplemented)
