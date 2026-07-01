@@ -6,7 +6,7 @@ import { FormField } from "./FormField";
 
 /** Common duration presets for quick selection */
 const DURATION_PRESETS = {
-  INITIAL_DELAY: ["50ms", "100ms", "200ms", "500ms"] as const,
+  INITIAL_DELAY: ["100ms", "500ms", "1s", "2s"] as const,
   MAX_DELAY: ["1s", "2s", "5s", "10s"] as const,
 };
 
@@ -259,7 +259,7 @@ export function BackoffSection({
               value={backoff.max_delay}
               onChange={(v) => updateBackoff({ max_delay: v })}
               presets={DURATION_PRESETS.MAX_DELAY}
-              hint="Upper limit for delay"
+              hint="Upper limit for delay (0s = unlimited)"
             />
           </div>
 

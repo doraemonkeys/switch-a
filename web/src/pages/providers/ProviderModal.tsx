@@ -7,7 +7,7 @@ import { isValidId } from "../../lib/utils";
 import { normalizeProviderApiKey } from "../../lib/providerApiKey";
 import { CloseIcon } from "../../components/icons/CloseIcon";
 import {
-  PROVIDER_DEFAULTS,
+  ADD_PROVIDER_DEFAULTS,
   FAILOVER_SCOPES,
   AUTH_MODES,
   API_TYPES,
@@ -57,28 +57,36 @@ function ModalHeader({
   );
 }
 
-const DEFAULT_FORM_DATA: ProviderInput = {
-  id: "",
-  name: "",
-  api_key: "",
-  api_types: [],
-  auth_mode: "auto",
-  credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-  credential_login_id: "",
-  group_id: null,
-  weight: PROVIDER_DEFAULTS.WEIGHT,
-  priority: PROVIDER_DEFAULTS.PRIORITY,
-  concurrency: PROVIDER_DEFAULTS.CONCURRENCY,
-  max_retries: PROVIDER_DEFAULTS.MAX_RETRIES,
-  // Default: opt out of vendor isolation so new providers work without failover setup
-  vendor: "",
-  failover_scope: FAILOVER_SCOPES.ANY,
-  accept_failover: FAILOVER_SCOPES.ANY,
-  enabled: true,
-};
+function createDefaultFormData(): ProviderInput {
+  return {
+    id: "",
+    name: "",
+    api_key: "",
+    api_types: [],
+    auth_mode: "auto",
+    credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    credential_login_id: "",
+    group_id: null,
+    weight: ADD_PROVIDER_DEFAULTS.WEIGHT,
+    priority: ADD_PROVIDER_DEFAULTS.PRIORITY,
+    concurrency: ADD_PROVIDER_DEFAULTS.CONCURRENCY,
+    max_retries: ADD_PROVIDER_DEFAULTS.MAX_RETRIES,
+    backoff: {
+      initial_delay: ADD_PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY,
+      max_delay: ADD_PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY,
+      multiplier: ADD_PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER,
+      jitter: ADD_PROVIDER_DEFAULTS.BACKOFF.JITTER,
+    },
+    // Default: opt out of vendor isolation so new providers work without failover setup
+    vendor: "",
+    failover_scope: FAILOVER_SCOPES.ANY,
+    accept_failover: FAILOVER_SCOPES.ANY,
+    enabled: true,
+  };
+}
 
 function deriveFormData(initialData?: Provider): ProviderInput {
-  if (!initialData) return DEFAULT_FORM_DATA;
+  if (!initialData) return createDefaultFormData();
   return {
     id: initialData.id,
     name: initialData.name,

@@ -402,7 +402,8 @@ export const FORM_CONSTRAINTS = {
 // Recent Logs Display Limit
 export const RECENT_LOGS_LIMIT = 5;
 
-// Provider Form Default Values
+// Provider data defaults/fallbacks. Keep these aligned with backend persisted
+// defaults; add-form defaults that intentionally differ belong below.
 export const PROVIDER_DEFAULTS = {
   PRIORITY: 0,
   WEIGHT: 1,
@@ -414,6 +415,24 @@ export const PROVIDER_DEFAULTS = {
     MAX_DELAY: DEFAULTS.BACKOFF_MAX_DELAY,
     MULTIPLIER: DEFAULTS.BACKOFF_MULTIPLIER,
     JITTER: DEFAULTS.BACKOFF_JITTER,
+  },
+} as const;
+
+export const PROVIDER_UNLIMITED_BACKOFF_MAX_DELAY = "0s";
+
+// Defaults used only when creating a provider through the frontend form.
+export const ADD_PROVIDER_DEFAULTS = {
+  PRIORITY: PROVIDER_DEFAULTS.PRIORITY,
+  WEIGHT: PROVIDER_DEFAULTS.WEIGHT,
+  CONCURRENCY: PROVIDER_DEFAULTS.CONCURRENCY,
+  MAX_RETRIES: 3,
+  BACKOFF: {
+    INITIAL_DELAY: "1s",
+    // The backend models an uncapped max delay as a zero duration, and Go
+    // duration JSON represents that zero value as "0s".
+    MAX_DELAY: PROVIDER_UNLIMITED_BACKOFF_MAX_DELAY,
+    MULTIPLIER: 3.0,
+    JITTER: true,
   },
 } as const;
 

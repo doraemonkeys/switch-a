@@ -17,6 +17,8 @@ import {
   CONFIG_KEYS,
   DEFAULTS,
   DEFAULT_PROVIDER_MAX_RETRIES,
+  ADD_PROVIDER_DEFAULTS,
+  PROVIDER_UNLIMITED_BACKOFF_MAX_DELAY,
   PROVIDER_DEFAULTS,
 } from "./constants";
 
@@ -324,5 +326,21 @@ describe("PROVIDER_DEFAULTS", () => {
       DEFAULTS.BACKOFF_MULTIPLIER,
     );
     expect(PROVIDER_DEFAULTS.BACKOFF.JITTER).toBe(DEFAULTS.BACKOFF_JITTER);
+  });
+});
+
+describe("ADD_PROVIDER_DEFAULTS", () => {
+  it("should have frontend add-provider retry defaults", () => {
+    expect(ADD_PROVIDER_DEFAULTS.MAX_RETRIES).toBe(3);
+    expect(ADD_PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY).toBe("1s");
+    expect(ADD_PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY).toBe(
+      PROVIDER_UNLIMITED_BACKOFF_MAX_DELAY,
+    );
+    expect(ADD_PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER).toBe(3.0);
+    expect(ADD_PROVIDER_DEFAULTS.BACKOFF.JITTER).toBe(true);
+  });
+
+  it("should represent unlimited max delay with the backend zero-duration value", () => {
+    expect(PROVIDER_UNLIMITED_BACKOFF_MAX_DELAY).toBe("0s");
   });
 });

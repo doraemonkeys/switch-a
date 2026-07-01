@@ -6,6 +6,7 @@ import { ApiContext } from "../../api/context";
 import type { ApiClient } from "../../api/client";
 import type { Provider } from "../../api";
 import {
+  ADD_PROVIDER_DEFAULTS,
   AUTH_MODES,
   CHATGPT_CODEX_BASE_URL,
   PROVIDER_CREDENTIAL_TYPES,
@@ -56,6 +57,118 @@ function buildPersistedChatGPTProvider(): Provider {
 }
 
 describe("ProviderModal", () => {
+  it("submits the add-provider retry defaults", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(<ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />);
+
+    expect(screen.getByLabelText("Max Retries")).toHaveValue(
+      ADD_PROVIDER_DEFAULTS.MAX_RETRIES,
+    );
+    expect(screen.getByLabelText("Initial Delay")).toHaveValue(
+      ADD_PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY,
+    );
+    expect(screen.getByLabelText("Max Delay")).toHaveValue(
+      ADD_PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY,
+    );
+    expect(screen.getByLabelText("Multiplier")).toHaveValue(
+      ADD_PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER,
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /enable jitter/i }),
+    ).toBeChecked();
+
+    await user.type(screen.getByLabelText("Name"), "Retry Defaults");
+    await user.type(screen.getByLabelText("Default API Key"), "default-key");
+    await user.click(screen.getByRole("button", { name: "claude" }));
+    await user.type(
+      screen.getByLabelText("Base URL for claude"),
+      "https://api.example.com",
+    );
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          max_retries: ADD_PROVIDER_DEFAULTS.MAX_RETRIES,
+          backoff: {
+            initial_delay: ADD_PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY,
+            max_delay: ADD_PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY,
+            multiplier: ADD_PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER,
+            jitter: ADD_PROVIDER_DEFAULTS.BACKOFF.JITTER,
+          },
+        }),
+      ),
+    );
+  });
+
+  it("preserves persisted retry settings in edit mode", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const persistedBackoff = {
+      initial_delay: "100ms",
+      max_delay: "5s",
+      multiplier: 2.0,
+      jitter: false,
+    };
+    const initialData: Provider = {
+      id: "provider-existing",
+      name: "Existing Provider",
+      api_key: "sk-existing",
+      api_types: [
+        {
+          provider_id: "provider-existing",
+          api_type: "claude",
+          base_url: "https://api.example.com",
+          api_key: "",
+        },
+      ],
+      auth_mode: AUTH_MODES.AUTO,
+      credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+      group_id: null,
+      weight: 1,
+      priority: 0,
+      concurrency: 10,
+      max_retries: 1,
+      backoff: persistedBackoff,
+      vendor: "",
+      failover_scope: "any",
+      accept_failover: "any",
+      enabled: true,
+      created_at: "2026-03-22T12:00:00Z",
+      updated_at: "2026-03-22T12:00:00Z",
+    };
+
+    render(
+      <ProviderModal
+        initialData={initialData}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        groups={[]}
+      />,
+    );
+
+    expect(screen.getByLabelText("Max Retries")).toHaveValue(1);
+    expect(screen.getByLabelText("Initial Delay")).toHaveValue("100ms");
+    expect(screen.getByLabelText("Max Delay")).toHaveValue("5s");
+    expect(screen.getByLabelText("Multiplier")).toHaveValue(2);
+    expect(
+      screen.getByRole("checkbox", { name: /enable jitter/i }),
+    ).not.toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          max_retries: initialData.max_retries,
+          backoff: persistedBackoff,
+        }),
+      ),
+    );
+  });
+
   it("submits when an API type provides its own key override", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -173,7 +286,9 @@ describe("ProviderModal", () => {
 
     expect(overrideInput).toHaveAttribute("type", "text");
   });
+});
 
+describe("ProviderModal GPT login", () => {
   it("tracks GPT login completion by polling the login session", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
