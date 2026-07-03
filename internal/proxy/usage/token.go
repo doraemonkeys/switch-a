@@ -19,6 +19,7 @@ type TokenUsage struct {
 	PromptTokens     int64 // Total input tokens (OpenAI: prompt_tokens, Claude: input_tokens)
 	CompletionTokens int64 // Output tokens (OpenAI: completion_tokens, Claude: output_tokens)
 	TotalTokens      int64 // Total
+	ReasoningTokens  int64 // OpenAI reasoning tokens included in output/completion tokens
 
 	// === Claude cache ===
 	CacheReadInputTokens int64          // Tokens read from cache (billed at 10% of standard input)
@@ -64,6 +65,7 @@ func (u *TokenUsage) Merge(other *TokenUsage) *TokenUsage {
 	u.PromptTokens += other.PromptTokens
 	u.CompletionTokens += other.CompletionTokens
 	u.TotalTokens += other.TotalTokens
+	u.ReasoningTokens += other.ReasoningTokens
 	u.CacheReadInputTokens += other.CacheReadInputTokens
 
 	if other.CacheCreation != nil {
@@ -202,7 +204,8 @@ type cacheCreationField struct {
 // OpenAI has shipped both singular and plural input-token detail keys across APIs,
 // so normalization must accept either alias before Request Logs are persisted.
 type tokenDetailsField struct {
-	CachedTokens int64 `json:"cached_tokens"`
+	CachedTokens    int64 `json:"cached_tokens"`
+	ReasoningTokens int64 `json:"reasoning_tokens"`
 }
 
 // usageField represents OpenAI/Claude usage format.
@@ -214,9 +217,12 @@ type usageField struct {
 	// OpenAI nested token details.
 	// `input_tokens_details` is the current Responses/Codex shape while
 	// `input_token_details` still appears in some Realtime payloads.
-	PromptTokensDetails *tokenDetailsField `json:"prompt_tokens_details"`
-	InputTokensDetails  *tokenDetailsField `json:"input_tokens_details"`
-	InputTokenDetails   *tokenDetailsField `json:"input_token_details"`
+	PromptTokensDetails     *tokenDetailsField `json:"prompt_tokens_details"`
+	InputTokensDetails      *tokenDetailsField `json:"input_tokens_details"`
+	InputTokenDetails       *tokenDetailsField `json:"input_token_details"`
+	CompletionTokensDetails *tokenDetailsField `json:"completion_tokens_details"`
+	OutputTokensDetails     *tokenDetailsField `json:"output_tokens_details"`
+	OutputTokenDetails      *tokenDetailsField `json:"output_token_details"`
 
 	// Claude basic
 	InputTokens  int64 `json:"input_tokens"`
@@ -409,8 +415,9 @@ func convertUsageFieldToTokenUsage(u *usageField) *TokenUsage {
 		total = prompt + completion
 	}
 	cacheRead := resolveCacheReadFromUsageField(u)
+	reasoning := resolveReasoningTokensFromUsageField(u)
 	// Return only if at least one field has a value
-	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 {
+	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 && reasoning == 0 {
 		return nil
 	}
 
@@ -418,6 +425,7 @@ func convertUsageFieldToTokenUsage(u *usageField) *TokenUsage {
 		PromptTokens:         prompt,
 		CompletionTokens:     completion,
 		TotalTokens:          total,
+		ReasoningTokens:      reasoning,
 		CacheReadInputTokens: cacheRead,
 		ServiceTier:          u.ServiceTier,
 	}
@@ -537,6 +545,22 @@ func resolveCacheReadFromUsageField(u *usageField) int64 {
 	return 0
 }
 
+func resolveReasoningTokensFromUsageField(u *usageField) int64 {
+	if u == nil {
+		return 0
+	}
+	for _, details := range []*tokenDetailsField{
+		u.CompletionTokensDetails,
+		u.OutputTokensDetails,
+		u.OutputTokenDetails,
+	} {
+		if details != nil && details.ReasoningTokens != 0 {
+			return details.ReasoningTokens
+		}
+	}
+	return 0
+}
+
 func resolveCacheReadTokens(m map[string]any) int64 {
 	cacheRead := lookupUsageInt64(m, "cache_read_input_tokens", "cachedContentTokenCount")
 	if cacheRead != 0 {
@@ -548,6 +572,20 @@ func resolveCacheReadTokens(m map[string]any) int64 {
 		"prompt_tokens_details",
 		"input_tokens_details",
 		"input_token_details",
+	)
+}
+
+func resolveReasoningTokens(m map[string]any) int64 {
+	reasoning := lookupUsageInt64(m, "reasoning_tokens")
+	if reasoning != 0 {
+		return reasoning
+	}
+	return lookupFirstNestedUsageInt64(
+		m,
+		"reasoning_tokens",
+		"completion_tokens_details",
+		"output_tokens_details",
+		"output_token_details",
 	)
 }
 
@@ -578,12 +616,13 @@ func normalizeUsageMap(m map[string]any) *TokenUsage {
 	completion := lookupUsageInt64(m, "completion_tokens", "output_tokens", "candidatesTokenCount")
 	total := lookupUsageInt64(m, "total_tokens", "totalTokenCount")
 	cacheRead := resolveCacheReadTokens(m)
+	reasoning := resolveReasoningTokens(m)
 
 	if total == 0 {
 		total = prompt + completion
 	}
 
-	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 {
+	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 && reasoning == 0 {
 		return nil
 	}
 
@@ -591,6 +630,7 @@ func normalizeUsageMap(m map[string]any) *TokenUsage {
 		PromptTokens:         prompt,
 		CompletionTokens:     completion,
 		TotalTokens:          total,
+		ReasoningTokens:      reasoning,
 		CacheReadInputTokens: cacheRead,
 		ServiceTier:          lookupUsageString(m, "service_tier"),
 	}
@@ -618,15 +658,18 @@ type UsageDetailsJSON struct {
 // ToModelFields converts TokenUsage to fields suitable for RequestLog.
 // Returns individual token counts and a JSON string for extended details.
 // Returns nil pointers if the usage is nil.
-func (u *TokenUsage) ToModelFields() (promptTokens, completionTokens, totalTokens, cacheReadTokens, cacheCreationTokens *int64, usageDetails *string) {
+func (u *TokenUsage) ToModelFields() (promptTokens, completionTokens, totalTokens, reasoningTokens, cacheReadTokens, cacheCreationTokens *int64, usageDetails *string) {
 	if u == nil {
-		return nil, nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, nil
 	}
 
 	// Core token fields
 	promptTokens = &u.PromptTokens
 	completionTokens = &u.CompletionTokens
 	totalTokens = &u.TotalTokens
+	if u.ReasoningTokens > 0 {
+		reasoningTokens = &u.ReasoningTokens
+	}
 
 	// Cache read tokens (if present)
 	if u.CacheReadInputTokens > 0 {

@@ -34,12 +34,13 @@ function TokenDisplay({
  * Token cell component for the logs table.
  *
  * Display format:
- * - Desktop: `1.2k → 856 ⚡` (input → output with cache indicator)
- * - Tablet: `1.2k/856` (compact with slash)
+ * - Desktop: `1.2k → 856 R: 128 ⚡` (input → output plus reasoning/cache indicators)
+ * - Tablet: `1.2k/856 R:128` (compact with slash)
  * - Mobile: Hidden (shown in detail modal)
  *
  * Features:
  * - Shows ⚡ icon when cache_read > 0 with hover tooltip
+ * - Shows reasoning tokens when the provider reports them
  * - Shows `—` for unavailable data (null)
  * - Shows `0` for explicit zero (distinguishes from null)
  * - Partial data shows available tokens with `—` for missing
@@ -48,6 +49,7 @@ export function TokenCell({ log }: TokenCellProps) {
   const {
     prompt_tokens,
     completion_tokens,
+    reasoning_tokens,
     cache_read_input_tokens,
     cache_creation_input_tokens,
   } = log;
@@ -55,11 +57,17 @@ export function TokenCell({ log }: TokenCellProps) {
   // Check if we have any token data
   const hasPromptTokens = prompt_tokens != null;
   const hasCompletionTokens = completion_tokens != null;
+  const hasReasoningTokens = reasoning_tokens != null;
   const hasCacheRead =
     cache_read_input_tokens != null && cache_read_input_tokens > 0;
 
   // If no token data at all, show unavailable indicator
-  if (!hasPromptTokens && !hasCompletionTokens && !hasCacheRead) {
+  if (
+    !hasPromptTokens &&
+    !hasCompletionTokens &&
+    !hasReasoningTokens &&
+    !hasCacheRead
+  ) {
     return (
       <span className="text-text-muted" title="Token data unavailable">
         —
@@ -77,6 +85,9 @@ export function TokenCell({ log }: TokenCellProps) {
   const inputDisplay = totalInput > 0 ? formatTokenCount(totalInput) : "—";
   const outputDisplay = hasCompletionTokens
     ? formatTokenCount(completion_tokens)
+    : "—";
+  const reasoningDisplay = hasReasoningTokens
+    ? formatTokenCount(reasoning_tokens)
     : "—";
 
   // Calculate cache hit rate for tooltip
@@ -105,6 +116,14 @@ export function TokenCell({ log }: TokenCellProps) {
         separator="/"
         className="hidden md:inline-flex lg:hidden"
       />
+
+      <span
+        className="hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300 ml-1"
+        title="Reasoning tokens included in output tokens"
+      >
+        <span>R:</span>
+        {reasoningDisplay}
+      </span>
 
       {/* Cache indicator - shown when cache_read > 0 */}
       {hasCacheRead && (

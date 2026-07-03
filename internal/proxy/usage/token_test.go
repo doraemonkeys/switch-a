@@ -263,6 +263,17 @@ func TestParseTokenUsage_OpenAI_WithPromptTokenDetails(t *testing.T) {
 	}
 }
 
+func TestParseTokenUsage_OpenAI_WithCompletionReasoningTokens(t *testing.T) {
+	data := []byte(`{"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":18}}}`)
+	usage := Parse(data)
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if usage.ReasoningTokens != 18 {
+		t.Errorf("expected ReasoningTokens=18, got %d", usage.ReasoningTokens)
+	}
+}
+
 func TestParseTokenUsage_OpenAIRealtime_WithInputTokenDetails(t *testing.T) {
 	data := []byte(`{"type":"response.completed","response":{"id":"resp_123","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"input_token_details":{"cached_tokens":9}}}}`)
 	usage := Parse(data)
@@ -300,6 +311,23 @@ func TestParseTokenUsage_OpenAIResponses_WithInputTokensDetails(t *testing.T) {
 	}
 	if usage.CacheReadInputTokens != 9 {
 		t.Errorf("expected CacheReadInputTokens=9, got %d", usage.CacheReadInputTokens)
+	}
+}
+
+func TestParseTokenUsage_OpenAIResponses_WithOutputReasoningTokens(t *testing.T) {
+	data := []byte(`{"id":"resp_123","object":"response","usage":{"input_tokens":64,"output_tokens":16,"total_tokens":80,"output_tokens_details":{"reasoning_tokens":12}}}`)
+	usage := Parse(data)
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if usage.PromptTokens != 64 {
+		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 16 {
+		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens)
+	}
+	if usage.ReasoningTokens != 12 {
+		t.Errorf("expected ReasoningTokens=12, got %d", usage.ReasoningTokens)
 	}
 }
 
@@ -610,8 +638,8 @@ func BenchmarkTailBuffer_Write(b *testing.B) {
 
 func TestTokenUsage_ToModelFields_Nil(t *testing.T) {
 	var usage *TokenUsage
-	prompt, completion, total, cacheRead, cacheCreate, details := usage.ToModelFields()
-	if prompt != nil || completion != nil || total != nil || cacheRead != nil || cacheCreate != nil || details != nil {
+	prompt, completion, total, reasoning, cacheRead, cacheCreate, details := usage.ToModelFields()
+	if prompt != nil || completion != nil || total != nil || reasoning != nil || cacheRead != nil || cacheCreate != nil || details != nil {
 		t.Error("expected all nil for nil usage")
 	}
 }
@@ -622,7 +650,7 @@ func TestTokenUsage_ToModelFields_Basic(t *testing.T) {
 		CompletionTokens: 200,
 		TotalTokens:      300,
 	}
-	prompt, completion, total, cacheRead, cacheCreate, details := usage.ToModelFields()
+	prompt, completion, total, reasoning, cacheRead, cacheCreate, details := usage.ToModelFields()
 
 	if prompt == nil || *prompt != 100 {
 		t.Errorf("expected PromptTokens=100, got %v", prompt)
@@ -632,6 +660,9 @@ func TestTokenUsage_ToModelFields_Basic(t *testing.T) {
 	}
 	if total == nil || *total != 300 {
 		t.Errorf("expected TotalTokens=300, got %v", total)
+	}
+	if reasoning != nil {
+		t.Errorf("expected nil reasoning, got %v", reasoning)
 	}
 	if cacheRead != nil {
 		t.Errorf("expected nil cacheRead, got %v", cacheRead)
@@ -656,7 +687,7 @@ func TestTokenUsage_ToModelFields_WithCache(t *testing.T) {
 			Ephemeral5mInputTokens: 50,
 		},
 	}
-	prompt, completion, total, cacheRead, cacheCreate, details := usage.ToModelFields()
+	prompt, completion, total, _, cacheRead, cacheCreate, details := usage.ToModelFields()
 
 	if prompt == nil || *prompt != 1000 {
 		t.Errorf("expected PromptTokens=1000, got %v", prompt)
@@ -685,6 +716,20 @@ func TestTokenUsage_ToModelFields_WithCache(t *testing.T) {
 	}
 }
 
+func TestTokenUsage_ToModelFields_WithReasoningTokens(t *testing.T) {
+	usage := &TokenUsage{
+		PromptTokens:     100,
+		CompletionTokens: 200,
+		TotalTokens:      300,
+		ReasoningTokens:  75,
+	}
+	_, _, _, reasoning, _, _, _ := usage.ToModelFields()
+
+	if reasoning == nil || *reasoning != 75 {
+		t.Errorf("expected ReasoningTokens=75, got %v", reasoning)
+	}
+}
+
 func TestTokenUsage_ToModelFields_WithServiceTier(t *testing.T) {
 	usage := &TokenUsage{
 		PromptTokens:     100,
@@ -692,7 +737,7 @@ func TestTokenUsage_ToModelFields_WithServiceTier(t *testing.T) {
 		TotalTokens:      300,
 		ServiceTier:      "standard",
 	}
-	_, _, _, _, _, details := usage.ToModelFields()
+	_, _, _, _, _, _, details := usage.ToModelFields()
 
 	if details == nil {
 		t.Fatal("expected non-nil details for service_tier")
@@ -709,7 +754,7 @@ func TestTokenUsage_ToModelFields_ZeroCacheNotStored(t *testing.T) {
 		TotalTokens:          300,
 		CacheReadInputTokens: 0, // Zero should not be stored as pointer
 	}
-	_, _, _, cacheRead, _, _ := usage.ToModelFields()
+	_, _, _, _, cacheRead, _, _ := usage.ToModelFields()
 
 	// Zero cache read should not result in a pointer (to distinguish from NULL)
 	if cacheRead != nil {
@@ -726,7 +771,7 @@ func TestTokenUsage_ToModelFields_CacheCreationWithZeroTokens(t *testing.T) {
 			InputTokens: 0, // Zero creation tokens
 		},
 	}
-	_, _, _, _, cacheCreate, _ := usage.ToModelFields()
+	_, _, _, _, _, cacheCreate, _ := usage.ToModelFields()
 
 	// Zero cache creation should not be stored
 	if cacheCreate != nil {

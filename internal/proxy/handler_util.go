@@ -197,11 +197,12 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 			zap.Int64("prompt_tokens", inputs.TokenUsage.PromptTokens),
 			zap.Int64("completion_tokens", inputs.TokenUsage.CompletionTokens),
 			zap.Int64("total_tokens", inputs.TokenUsage.TotalTokens),
+			zap.Int64("reasoning_tokens", inputs.TokenUsage.ReasoningTokens),
 			zap.Int64("cache_read_tokens", inputs.TokenUsage.CacheReadInputTokens),
 		)
 		// Convert TokenUsage to model fields for database storage
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
-			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = inputs.TokenUsage.ToModelFields()
+			log.ReasoningTokens, log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = inputs.TokenUsage.ToModelFields()
 	}
 
 	// Use timeout to prevent goroutine accumulation if database is slow or blocked

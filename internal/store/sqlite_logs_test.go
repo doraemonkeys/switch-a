@@ -101,7 +101,9 @@ func TestGetLogByID(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 
+	reasoningTokens := int64(37)
 	log := newNormalizedLog("p1", "claude", time.Now())
+	log.ReasoningTokens = &reasoningTokens
 	if err := store.InsertLog(ctx, &log); err != nil {
 		t.Fatalf("InsertLog failed: %v", err)
 	}
@@ -112,6 +114,9 @@ func TestGetLogByID(t *testing.T) {
 	}
 	if found.ID != log.ID {
 		t.Errorf("expected ID %d, got %d", log.ID, found.ID)
+	}
+	if found.ReasoningTokens == nil || *found.ReasoningTokens != reasoningTokens {
+		t.Errorf("expected ReasoningTokens=%d, got %v", reasoningTokens, found.ReasoningTokens)
 	}
 }
 

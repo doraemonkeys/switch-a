@@ -476,6 +476,7 @@ interface RequestLogBase {
   prompt_tokens?: number | null; // Input tokens (OpenAI: prompt_tokens, Claude: input_tokens)
   completion_tokens?: number | null; // Output tokens (OpenAI: completion_tokens, Claude: output_tokens)
   total_tokens?: number | null; // Total tokens
+  reasoning_tokens?: number | null; // OpenAI reasoning tokens included in output tokens
   cache_read_input_tokens?: number | null; // Claude: tokens read from cache (billed at 10%)
   cache_creation_input_tokens?: number | null; // Claude: tokens written to cache (billed at 125%)
   usage_details?: UsageDetails | null; // Parsed usage details (service_tier, etc.)

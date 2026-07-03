@@ -32,6 +32,7 @@ export function TokenUsageStats({
     prompt_tokens,
     completion_tokens,
     total_tokens,
+    reasoning_tokens,
     cache_read_input_tokens,
     cache_creation_input_tokens,
   } = log;
@@ -40,6 +41,7 @@ export function TokenUsageStats({
   const hasPromptTokens = prompt_tokens != null;
   const hasCompletionTokens = completion_tokens != null;
   const hasTotalTokens = total_tokens != null;
+  const hasReasoningTokens = reasoning_tokens != null;
   const hasCacheRead =
     cache_read_input_tokens != null && cache_read_input_tokens > 0;
   const hasCacheCreation =
@@ -47,7 +49,12 @@ export function TokenUsageStats({
   const hasCacheData = hasCacheRead || hasCacheCreation;
 
   // Don't render if no token data at all
-  if (!hasPromptTokens && !hasCompletionTokens && !hasTotalTokens) {
+  if (
+    !hasPromptTokens &&
+    !hasCompletionTokens &&
+    !hasTotalTokens &&
+    !hasReasoningTokens
+  ) {
     return null;
   }
 
@@ -65,6 +72,9 @@ export function TokenUsageStats({
   const summaryTotal = hasTotalTokens
     ? total_tokens
     : (prompt_tokens || 0) + (completion_tokens || 0);
+  const tokenGridClass = hasReasoningTokens
+    ? "grid grid-cols-2 md:grid-cols-4 gap-2 mb-3"
+    : "grid grid-cols-3 gap-2 mb-3";
 
   return (
     <div className="rounded-lg border border-border-light bg-bg-tertiary/50 overflow-hidden">
@@ -124,7 +134,7 @@ export function TokenUsageStats({
       {isExpanded && (
         <div className="px-3 pb-3 pt-1">
           {/* Main Token Stats Grid */}
-          <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className={tokenGridClass}>
             {/* Input Tokens */}
             <TokenStatCard
               icon={
@@ -171,6 +181,29 @@ export function TokenUsageStats({
               iconColor="text-green-500"
             />
 
+            {hasReasoningTokens && (
+              <TokenStatCard
+                icon={
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 18h6m-5 3h4m2-8a6 6 0 10-8 0c.6.5 1 1.3 1 2.1V16h6v-.9c0-.8.4-1.6 1-2.1z"
+                    />
+                  </svg>
+                }
+                label="Reasoning"
+                value={formatTokenLocale(reasoning_tokens)}
+                iconColor="text-violet-500"
+              />
+            )}
+
             {/* Total Tokens */}
             <TokenStatCard
               icon={
@@ -211,7 +244,7 @@ export function TokenUsageStats({
           )}
 
           {/* Data Unavailable Message */}
-          {!hasPromptTokens && !hasCompletionTokens && (
+          {!hasPromptTokens && !hasCompletionTokens && !hasReasoningTokens && (
             <div className="text-center py-4 text-sm text-text-muted">
               Token data unavailable
             </div>

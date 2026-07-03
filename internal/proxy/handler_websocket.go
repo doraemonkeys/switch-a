@@ -395,7 +395,7 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 
 	if result != nil && result.TokenUsage != nil {
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
-			log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()
+			log.ReasoningTokens, log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), logInsertTimeout)

@@ -10,6 +10,7 @@ func TestTokenUsageMergeHandlesNilAndCacheCreation(t *testing.T) {
 		PromptTokens:         10,
 		CompletionTokens:     5,
 		TotalTokens:          15,
+		ReasoningTokens:      6,
 		CacheReadInputTokens: 3,
 		CacheCreation: &CacheCreation{
 			InputTokens:            7,
@@ -26,6 +27,7 @@ func TestTokenUsageMergeHandlesNilAndCacheCreation(t *testing.T) {
 		PromptTokens:         1,
 		CompletionTokens:     2,
 		TotalTokens:          3,
+		ReasoningTokens:      4,
 		CacheReadInputTokens: 4,
 	}
 	merged := current.Merge(other)
@@ -37,6 +39,9 @@ func TestTokenUsageMergeHandlesNilAndCacheCreation(t *testing.T) {
 	}
 	if merged.CacheReadInputTokens != 7 {
 		t.Fatalf("CacheReadInputTokens = %d, want 7", merged.CacheReadInputTokens)
+	}
+	if merged.ReasoningTokens != 10 {
+		t.Fatalf("ReasoningTokens = %d, want 10", merged.ReasoningTokens)
 	}
 	if merged.CacheCreation == nil {
 		t.Fatal("expected cache creation totals to be initialized")
