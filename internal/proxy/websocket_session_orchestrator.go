@@ -199,17 +199,18 @@ func (o *WebSocketSessionOrchestrator) trackCurrentAttempt(providerID string) {
 	}
 
 	o.handler.activeRegistry.RegisterWithDone(&ActiveRequest{
-		RequestID:       o.requestID,
-		ProviderID:      providerID,
-		Model:           o.info.Model,
-		APIType:         o.apiType,
-		UserID:          o.info.UserID,
-		ClientIP:        o.info.ClientIP,
-		StickyMode:      o.selectReq.StickyMode,
-		ContinuityKey:   selector.BuildContinuityKey(o.selectReq),
-		IsWebSocket:     true,
-		StartedAt:       o.startTime,
-		HasReceivedData: false,
+		RequestID:                     o.requestID,
+		ProviderID:                    providerID,
+		Model:                         o.info.Model,
+		APIType:                       o.apiType,
+		UserID:                        o.info.UserID,
+		ClientIP:                      o.info.ClientIP,
+		StickyMode:                    o.selectReq.StickyMode,
+		ContinuityKey:                 selector.BuildContinuityKey(o.selectReq),
+		IsWebSocket:                   true,
+		StartedAt:                     o.startTime,
+		HasReceivedData:               false,
+		RequestedReasoningObservation: o.info.Reasoning,
 	}, o.requestDone)
 	if o.tracker != nil {
 		o.handler.activeRegistry.RegisterLiveBytes(o.requestID, o.tracker)

@@ -48,7 +48,7 @@ func (h *Handler) fetchForwardResponse(
 	provider *model.Provider,
 	upstreamReq *http.Request,
 ) (*UpstreamResponse, forwardResult, bool) {
-	upstreamResp, err := pctx.transport.FetchUpstream(ctx, upstreamReq)
+	upstreamResp, err := h.fetchTrackedUpstream(ctx, pctx, upstreamReq)
 	if err != nil {
 		return nil, h.failedUpstreamFetch(ctx, provider.ID, err, false), false
 	}
@@ -99,11 +99,21 @@ func (h *Handler) retryUnauthorizedForwardResponse(
 		return nil, result, false
 	}
 
-	retryResp, err := pctx.transport.FetchUpstream(ctx, retryReq)
+	retryResp, err := h.fetchTrackedUpstream(ctx, pctx, retryReq)
 	if err != nil {
 		return nil, h.failedUpstreamFetch(ctx, refreshedProvider.ID, err, true), false
 	}
 	return retryResp, forwardResult{}, true
+}
+
+func (h *Handler) fetchTrackedUpstream(ctx context.Context, pctx *proxyContext, request *http.Request) (*UpstreamResponse, error) {
+	if pctx.liveBytes != nil {
+		// Request bodies are replayed for provider retries, so cumulative traffic
+		// reflects actual logical-request attempts instead of only client ingress.
+		pctx.liveBytes.BytesSent.Add(int64(len(pctx.body)))
+		pctx.liveBytes.LastActivityAt.Store(time.Now().UnixMilli())
+	}
+	return pctx.transport.FetchUpstream(ctx, request)
 }
 
 func (h *Handler) failedUpstreamFetch(ctx context.Context, providerID string, err error, afterRefresh bool) forwardResult {
@@ -157,9 +167,10 @@ func (h *Handler) commitForwardResponse(
 				h.activeRegistry.MarkDataReceived(pctx.requestID)
 			}
 		},
-		onWrite: func(writeTime time.Time) {
-			if h.activeRegistry != nil {
-				h.activeRegistry.Touch(pctx.requestID, writeTime)
+		onWrite: func(written int, writeTime time.Time) {
+			if pctx.liveBytes != nil {
+				pctx.liveBytes.BytesReceived.Add(int64(written))
+				pctx.liveBytes.LastActivityAt.Store(writeTime.UnixMilli())
 			}
 		},
 	}

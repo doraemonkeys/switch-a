@@ -16,23 +16,24 @@ var _ model.VisibleContinuitySeedStore = (*MemoryVisibleContinuitySeedStore)(nil
 // ActiveRequest represents a request currently being processed by the proxy.
 // It captures metadata needed for live monitoring without storing the full request/response.
 type ActiveRequest struct {
-	RequestID       string           `json:"request_id"`                 // UUID identifying this request
-	ProviderID      string           `json:"provider_id"`                // Selected provider handling the request
-	Model           string           `json:"model"`                      // Model being called (e.g., "claude-3-opus")
-	APIType         string           `json:"api_type"`                   // API type (claude, codex, gemini, custom:*)
-	UserID          string           `json:"user_id"`                    // User identifier from header
-	ClientIP        string           `json:"client_ip"`                  // Client IP address
-	StickyMode      model.StickyMode `json:"-"`                          // Sticky dimensions captured when selection happened
-	ContinuityKey   model.StickyKey  `json:"-"`                          // Routing dimensions known at selection time
-	IsSSE           bool             `json:"is_sse"`                     // Whether this is an SSE streaming request
-	IsWebSocket     bool             `json:"is_websocket"`               // Whether this is a WebSocket connection
-	StartedAt       time.Time        `json:"started_at"`                 // When the request started
-	HasReceivedData bool             `json:"has_data"`                   // Whether data has been received from upstream
-	BytesSent       int64            `json:"bytes_sent,omitempty"`       // WS: cumulative bytes client → upstream
-	BytesReceived   int64            `json:"bytes_received,omitempty"`   // WS: cumulative bytes upstream → client
-	MsgsSent        int64            `json:"msgs_sent,omitempty"`        // WS: WebSocket frames client → upstream
-	MsgsReceived    int64            `json:"msgs_received,omitempty"`    // WS: WebSocket frames upstream → client
-	LastActivityAt  int64            `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
+	RequestID       string           `json:"request_id"`   // UUID identifying this request
+	ProviderID      string           `json:"provider_id"`  // Selected provider handling the request
+	Model           string           `json:"model"`        // Model being called (e.g., "claude-3-opus")
+	APIType         string           `json:"api_type"`     // API type (claude, codex, gemini, custom:*)
+	UserID          string           `json:"user_id"`      // User identifier from header
+	ClientIP        string           `json:"client_ip"`    // Client IP address
+	StickyMode      model.StickyMode `json:"-"`            // Sticky dimensions captured when selection happened
+	ContinuityKey   model.StickyKey  `json:"-"`            // Routing dimensions known at selection time
+	IsSSE           bool             `json:"is_sse"`       // Whether this is an SSE streaming request
+	IsWebSocket     bool             `json:"is_websocket"` // Whether this is a WebSocket connection
+	StartedAt       time.Time        `json:"started_at"`   // When the request started
+	HasReceivedData bool             `json:"has_data"`     // Whether data has been received from upstream
+	model.RequestedReasoningObservation
+	BytesSent      int64 `json:"bytes_sent,omitempty"`       // Cumulative request payload bytes forwarded upstream
+	BytesReceived  int64 `json:"bytes_received,omitempty"`   // Cumulative response payload bytes forwarded to the client
+	MsgsSent       int64 `json:"msgs_sent,omitempty"`        // WebSocket messages sent upstream; zero for HTTP/SSE
+	MsgsReceived   int64 `json:"msgs_received,omitempty"`    // WebSocket messages received upstream; zero for HTTP/SSE
+	LastActivityAt int64 `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
 }
 
 // ActiveRequestRemovalReason explains why a request left the registry.
@@ -57,15 +58,15 @@ const (
 // ActiveRequestRemovalHook runs after a request leaves the registry.
 type ActiveRequestRemovalHook func(ActiveRequest, ActiveRequestRemovalReason)
 
-// LiveBytesTracker provides lock-free counters for tracking WebSocket data flow
-// during a connection's lifetime. The observer writes atomically; the registry
-// reads atomically during List() to populate ActiveRequest snapshot fields.
+// LiveBytesTracker provides lock-free counters shared by HTTP, SSE, and WebSocket
+// transports. Writers update it on the hot path while List reads a coherent-enough
+// monitoring snapshot without serializing transport activity through the registry.
 type LiveBytesTracker struct {
 	BytesSent      atomic.Int64 // client → upstream
 	BytesReceived  atomic.Int64 // upstream → client
 	MsgsSent       atomic.Int64
 	MsgsReceived   atomic.Int64
-	LastActivityAt atomic.Int64 // UnixMilli of most recent message
+	LastActivityAt atomic.Int64 // UnixMilli of most recent transport activity
 }
 
 // MemoryVisibleContinuitySeedStore keeps short-lived post-visible continuity
@@ -220,7 +221,7 @@ type ActiveRequestRegistry struct {
 	requests    map[string]activeRequestEntry
 	stickyIndex map[model.StickyKey]map[string]struct{} // stickyKey -> requestIDs for O(1) lookup
 	keyIndex    map[string]model.StickyKey              // requestID -> sticky key used during registration
-	wsBytes     map[string]*LiveBytesTracker            // requestID -> live WS counters (populated only for WS)
+	liveTraffic map[string]*LiveBytesTracker            // requestID -> transport-neutral live counters
 	stopCh      chan struct{}                           // Channel to signal cleanup goroutine to stop
 	cleanupWg   sync.WaitGroup                          // WaitGroup to confirm cleanup goroutine has exited
 	clock       internal.Clock                          // Injected clock for testability
@@ -238,7 +239,7 @@ func NewActiveRequestRegistryWithHook(removalHook ActiveRequestRemovalHook) *Act
 		requests:    make(map[string]activeRequestEntry),
 		stickyIndex: make(map[model.StickyKey]map[string]struct{}),
 		keyIndex:    make(map[string]model.StickyKey),
-		wsBytes:     make(map[string]*LiveBytesTracker),
+		liveTraffic: make(map[string]*LiveBytesTracker),
 		clock:       internal.RealClock{},
 		removalHook: removalHook,
 	}
@@ -257,7 +258,7 @@ func NewActiveRequestRegistryWithClockAndHook(clock internal.Clock, removalHook 
 		requests:    make(map[string]activeRequestEntry),
 		stickyIndex: make(map[model.StickyKey]map[string]struct{}),
 		keyIndex:    make(map[string]model.StickyKey),
-		wsBytes:     make(map[string]*LiveBytesTracker),
+		liveTraffic: make(map[string]*LiveBytesTracker),
 		clock:       clock,
 		removalHook: removalHook,
 	}
@@ -314,7 +315,7 @@ func (r *ActiveRequestRegistry) removeLocked(requestID string) (ActiveRequest, b
 
 	r.removeFromStickyIndex(requestID)
 	delete(r.requests, requestID)
-	delete(r.wsBytes, requestID)
+	delete(r.liveTraffic, requestID)
 	return entry.request, true
 }
 
@@ -386,7 +387,7 @@ func (r *ActiveRequestRegistry) Unregister(requestID string) {
 	r.runRemovalHook(req, ActiveRequestRemovalReasonExplicit)
 }
 
-// RegisterLiveBytes associates a LiveBytesTracker with an active request.
+// RegisterLiveBytes associates transport counters with an active request.
 // The tracker is read during List() to populate snapshot fields.
 func (r *ActiveRequestRegistry) RegisterLiveBytes(requestID string, tracker *LiveBytesTracker) {
 	if tracker == nil {
@@ -394,12 +395,11 @@ func (r *ActiveRequestRegistry) RegisterLiveBytes(requestID string, tracker *Liv
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.wsBytes[requestID] = tracker
+	r.liveTraffic[requestID] = tracker
 }
 
-// Touch records transport activity for non-WebSocket requests.
-// WebSocket activity stays lock-free via LiveBytesTracker and is merged when
-// producing snapshots or evaluating staleness.
+// Touch records transport activity for callers without a LiveBytesTracker.
+// Hot transport paths use the lock-free tracker and merge it into snapshots.
 func (r *ActiveRequestRegistry) Touch(requestID string, at time.Time) {
 	if at.IsZero() {
 		return
@@ -452,8 +452,8 @@ func (r *ActiveRequestRegistry) UpdateModel(requestID, model string) {
 }
 
 // List returns a snapshot copy safe to use without synchronization.
-// For WebSocket requests with a registered LiveBytesTracker, the snapshot
-// includes current byte/message counts and last-activity timestamp.
+// Registered transport counters are merged into each snapshot for HTTP, SSE,
+// and WebSocket requests.
 func (r *ActiveRequestRegistry) List() []ActiveRequest {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -461,7 +461,7 @@ func (r *ActiveRequestRegistry) List() []ActiveRequest {
 	result := make([]ActiveRequest, 0, len(r.requests))
 	for _, entry := range r.requests {
 		req := entry.request
-		if tracker, ok := r.wsBytes[req.RequestID]; ok {
+		if tracker, ok := r.liveTraffic[req.RequestID]; ok {
 			req.BytesSent = tracker.BytesSent.Load()
 			req.BytesReceived = tracker.BytesReceived.Load()
 			req.MsgsSent = tracker.MsgsSent.Load()
@@ -598,7 +598,7 @@ func (r *ActiveRequestRegistry) observedAtLocked(requestID string, req ActiveReq
 			observedAt = lastActivity
 		}
 	}
-	if tracker, ok := r.wsBytes[requestID]; ok {
+	if tracker, ok := r.liveTraffic[requestID]; ok {
 		lastActivityAt := tracker.LastActivityAt.Load()
 		if lastActivityAt > 0 {
 			lastActivity := time.UnixMilli(lastActivityAt)

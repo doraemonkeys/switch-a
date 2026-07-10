@@ -166,11 +166,11 @@ export function LiveRequestsPanel({
         <div className="relative flex-1 max-w-xs">
           <input
             type="text"
-            placeholder="Search IP, model, user..."
+            placeholder="Search IP, model, user, effort..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="input pl-9 py-1.5 text-sm"
-            aria-label="Search active requests by IP, model, or user"
+            aria-label="Search active requests by IP, model, user, or effort"
           />
           <svg
             className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted"

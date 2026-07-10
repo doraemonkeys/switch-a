@@ -13,7 +13,7 @@ import {
   dateFormatter,
 } from "./constants";
 import { InfoTooltip } from "./InfoTooltip";
-import { ReasoningBadge } from "./ReasoningBadge";
+import { ReasoningBadge } from "../ReasoningBadge";
 import { TokenCell } from "./TokenCell";
 
 interface LogsTableProps {

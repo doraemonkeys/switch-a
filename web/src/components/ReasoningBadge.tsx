@@ -1,5 +1,5 @@
-import type { ReasoningObservationState } from "../../api/types";
-import { BADGE_STYLES } from "../../lib/utils";
+import type { ReasoningObservationState } from "../api/types";
+import { BADGE_STYLES } from "../lib/utils";
 
 interface ReasoningBadgeProps {
   observationState?: ReasoningObservationState | null;

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ActiveRequest } from "../../api/types";
+import { ReasoningBadge } from "../ReasoningBadge";
 import type { GroupViewMode } from "./types";
 import {
   formatDuration,
@@ -14,7 +15,7 @@ import {
   SSE_BADGE_FONT_SIZE,
   SSE_BADGE_COLORS,
   WS_BADGE_COLORS,
-  WS_IDLE_WARNING_THRESHOLD_MS,
+  LIVE_TRAFFIC_IDLE_WARNING_THRESHOLD_MS,
 } from "./constants";
 
 // =============================================================================
@@ -36,6 +37,29 @@ function TruncatedText({ text, maxWidth, className = "" }: TruncatedTextProps) {
     >
       {text}
     </span>
+  );
+}
+
+function ActiveReasoningBadge({
+  request,
+  includeEmpty = false,
+}: {
+  request: ActiveRequest;
+  includeEmpty?: boolean;
+}) {
+  const hasVisibleState =
+    request.reasoning_observation_state === "captured" ||
+    request.reasoning_observation_state === "invalid" ||
+    request.reasoning_observation_state === "ambiguous";
+  if (!includeEmpty && !hasVisibleState) return null;
+
+  return (
+    <ReasoningBadge
+      observationState={request.reasoning_observation_state}
+      effort={request.reasoning_effort}
+      mode={request.reasoning_mode}
+      budgetTokens={request.reasoning_budget_tokens}
+    />
   );
 }
 
@@ -126,6 +150,15 @@ function RequestDetailPanel({
           </p>
         </div>
 
+        <div>
+          <span className="text-text-muted text-xs uppercase tracking-wide">
+            Requested Reasoning
+          </span>
+          <p className="text-text-primary">
+            <ActiveReasoningBadge request={request} includeEmpty />
+          </p>
+        </div>
+
         {/* Client IP */}
         <div>
           <span className="text-text-muted text-xs uppercase tracking-wide">
@@ -168,25 +201,22 @@ function RequestDetailPanel({
           </p>
         </div>
 
-        {/* WebSocket Data Transfer */}
-        {request.is_websocket &&
-          ((request.bytes_sent ?? 0) > 0 ||
-            (request.bytes_received ?? 0) > 0) && (
-            <div className="col-span-2">
-              <span className="text-text-muted text-xs uppercase tracking-wide">
-                Data Transfer
-              </span>
-              <p className="text-text-primary font-mono text-xs">
-                ↑ {formatBytes(request.bytes_sent ?? 0)} (
-                {request.msgs_sent ?? 0} msgs)
-                {" / "}↓ {formatBytes(request.bytes_received ?? 0)} (
-                {request.msgs_received ?? 0} msgs)
-              </p>
-            </div>
-          )}
+        {((request.bytes_sent ?? 0) > 0 ||
+          (request.bytes_received ?? 0) > 0) && (
+          <div className="col-span-2">
+            <span className="text-text-muted text-xs uppercase tracking-wide">
+              Data Transfer
+            </span>
+            <p className="text-text-primary font-mono text-xs">
+              ↑ {formatBytes(request.bytes_sent ?? 0)}
+              {request.is_websocket && ` (${request.msgs_sent ?? 0} msgs)`}
+              {" / "}↓ {formatBytes(request.bytes_received ?? 0)}
+              {request.is_websocket && ` (${request.msgs_received ?? 0} msgs)`}
+            </p>
+          </div>
+        )}
 
-        {/* WebSocket Last Activity */}
-        {request.is_websocket && !!request.last_activity_at && (
+        {!!request.last_activity_at && (
           <div className="col-span-2">
             <span className="text-text-muted text-xs uppercase tracking-wide">
               Last Activity
@@ -194,7 +224,7 @@ function RequestDetailPanel({
             <p
               className={`text-xs font-mono ${
                 currentTime - request.last_activity_at >
-                WS_IDLE_WARNING_THRESHOLD_MS
+                LIVE_TRAFFIC_IDLE_WARNING_THRESHOLD_MS
                   ? "text-amber-600 dark:text-amber-400 font-semibold"
                   : "text-text-primary"
               }`}
@@ -211,20 +241,21 @@ function RequestDetailPanel({
 }
 
 // =============================================================================
-// WebSocket Live Metrics
+// Live Transport Metrics
 // =============================================================================
 
-interface WsLiveIndicatorProps {
+interface LiveTrafficIndicatorProps {
   request: ActiveRequest;
   currentTime: number;
 }
 
 /**
- * Compact inline indicator for WS data flow: "↑1.2MB ↓8.4MB idle 3s"
+ * Compact inline indicator for HTTP, SSE, and WebSocket traffic.
  */
-function WsLiveIndicator({ request, currentTime }: WsLiveIndicatorProps) {
-  if (!request.is_websocket) return null;
-
+function LiveTrafficIndicator({
+  request,
+  currentTime,
+}: LiveTrafficIndicatorProps) {
   const hasSent = (request.bytes_sent ?? 0) > 0;
   const hasReceived = (request.bytes_received ?? 0) > 0;
   if (!hasSent && !hasReceived) return null;
@@ -235,7 +266,8 @@ function WsLiveIndicator({ request, currentTime }: WsLiveIndicatorProps) {
   );
   const isIdleWarning =
     !!request.last_activity_at &&
-    currentTime - request.last_activity_at > WS_IDLE_WARNING_THRESHOLD_MS;
+    currentTime - request.last_activity_at >
+      LIVE_TRAFFIC_IDLE_WARNING_THRESHOLD_MS;
 
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-mono text-text-secondary flex-shrink-0">
@@ -256,7 +288,7 @@ function WsLiveIndicator({ request, currentTime }: WsLiveIndicatorProps) {
               ? "text-amber-600 dark:text-amber-400 font-semibold"
               : "text-text-muted"
           }
-          title="Time since last WebSocket message"
+          title="Time since last transport activity"
         >
           {idleStr}
         </span>
@@ -420,7 +452,8 @@ function CompactRow({
         </span>
       )}
 
-      <WsLiveIndicator request={request} currentTime={currentTime} />
+      <ActiveReasoningBadge request={request} />
+      <LiveTrafficIndicator request={request} currentTime={currentTime} />
 
       <span
         className={`ml-auto font-mono text-sm font-semibold flex-shrink-0 ${
@@ -508,7 +541,11 @@ function FullRow({
                   WS
                 </span>
               )}
-              <WsLiveIndicator request={request} currentTime={currentTime} />
+              <ActiveReasoningBadge request={request} />
+              <LiveTrafficIndicator
+                request={request}
+                currentTime={currentTime}
+              />
             </div>
 
             <div className="flex items-center gap-3 mt-1 text-sm text-text-secondary">

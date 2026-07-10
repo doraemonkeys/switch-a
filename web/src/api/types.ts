@@ -285,6 +285,10 @@ export interface ActiveRequest {
   is_sse: boolean;
   is_websocket: boolean;
   started_at: string; // ISO timestamp
+  reasoning_observation_state?: ReasoningObservationState | null;
+  reasoning_effort?: string | null;
+  reasoning_mode?: string | null;
+  reasoning_budget_tokens?: number | null;
   bytes_sent?: number;
   bytes_received?: number;
   msgs_sent?: number;

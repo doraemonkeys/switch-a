@@ -146,7 +146,9 @@ export function filterRequests(
       req.client_ip?.toLowerCase().includes(query) ||
       req.api_type?.toLowerCase().includes(query) ||
       req.user_id?.toLowerCase().includes(query) ||
-      req.provider_id?.toLowerCase().includes(query),
+      req.provider_id?.toLowerCase().includes(query) ||
+      req.reasoning_effort?.toLowerCase().includes(query) ||
+      req.reasoning_mode?.toLowerCase().includes(query),
   );
 }
 

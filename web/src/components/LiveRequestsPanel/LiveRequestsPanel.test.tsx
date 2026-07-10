@@ -179,7 +179,7 @@ describe("LiveRequestsPanel - Search", () => {
       <LiveRequestsPanel requests={requests} loading={false} error={null} />,
     );
     expect(
-      screen.getByPlaceholderText("Search IP, model, user..."),
+      screen.getByPlaceholderText("Search IP, model, user, effort..."),
     ).toBeInTheDocument();
   });
 
@@ -192,7 +192,7 @@ describe("LiveRequestsPanel - Search", () => {
       <LiveRequestsPanel requests={requests} loading={false} error={null} />,
     );
     const searchInput = screen.getByPlaceholderText(
-      "Search IP, model, user...",
+      "Search IP, model, user, effort...",
     );
     fireEvent.change(searchInput, { target: { value: "gpt" } });
     expect(screen.queryByText(TEST_CLIENT_IP)).not.toBeInTheDocument();
@@ -208,13 +208,37 @@ describe("LiveRequestsPanel - Search", () => {
       <LiveRequestsPanel requests={requests} loading={false} error={null} />,
     );
     const searchInput = screen.getByPlaceholderText(
-      "Search IP, model, user...",
+      "Search IP, model, user, effort...",
     );
     fireEvent.change(searchInput, { target: { value: TEST_CLIENT_IP_2 } });
     // Scope query to the header section containing the count and "Active Requests" text
     const headerSection = screen.getByText("Active Requests").parentElement!;
     expect(within(headerSection).getByText("1")).toBeInTheDocument();
     expect(screen.getByText("(filtered from 2)")).toBeInTheDocument();
+  });
+
+  it("filters active requests by requested reasoning effort", () => {
+    const requests = [
+      createMockRequest({
+        model: "high-effort-model",
+        reasoning_effort: "high",
+      }),
+      createMockRequest({
+        model: "low-effort-model",
+        reasoning_effort: "low",
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("Search IP, model, user, effort..."),
+      { target: { value: "high" } },
+    );
+    fireEvent.click(screen.getByText(TEST_CLIENT_IP));
+
+    expect(screen.getByText("high-effort-model")).toBeInTheDocument();
+    expect(screen.queryByText("low-effort-model")).not.toBeInTheDocument();
   });
 });
 
@@ -289,6 +313,25 @@ describe("LiveRequestsPanel - Request Rendering", () => {
     expect(
       screen.getByRole("button", { name: /Active request for model/ }),
     ).toBeInTheDocument();
+  });
+
+  it("shows requested reasoning effort on active requests", () => {
+    const requests = [
+      createMockRequest({
+        reasoning_observation_state: "captured",
+        reasoning_effort: "high",
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    switchToAllListView();
+
+    expect(
+      screen.getByTitle(
+        'Captured requested reasoning configuration. Effort: "high".',
+      ),
+    ).toHaveTextContent("high");
   });
 });
 
@@ -479,7 +522,7 @@ describe("LiveRequestsPanel - Sort and Load More", () => {
   });
 });
 
-describe("LiveRequestsPanel - WebSocket Live Metrics", () => {
+describe("LiveRequestsPanel - Live Traffic Metrics", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-15T12:00:00.000Z"));
@@ -525,7 +568,7 @@ describe("LiveRequestsPanel - WebSocket Live Metrics", () => {
     expect(screen.getByText("idle 5s")).toBeInTheDocument();
   });
 
-  it("does not show live metrics for non-WS requests", () => {
+  it("shows byte transfer indicators for active HTTP requests", () => {
     const requests = [
       createMockRequest({
         is_websocket: false,
@@ -537,8 +580,8 @@ describe("LiveRequestsPanel - WebSocket Live Metrics", () => {
       <LiveRequestsPanel requests={requests} loading={false} error={null} />,
     );
     switchToAllListView();
-    expect(screen.queryByTitle(/Bytes sent/)).not.toBeInTheDocument();
-    expect(screen.queryByTitle(/Bytes received/)).not.toBeInTheDocument();
+    expect(screen.getByTitle(/Bytes sent/)).toHaveTextContent("↑1.0 KB");
+    expect(screen.getByTitle(/Bytes received/)).toHaveTextContent("↓2.0 KB");
   });
 
   it("does not show live metrics for WS connections with zero bytes", () => {
@@ -584,5 +627,27 @@ describe("LiveRequestsPanel - WebSocket Live Metrics", () => {
     expect(screen.getByText("Last Activity")).toBeInTheDocument();
     expect(screen.getByText(/42 msgs/)).toBeInTheDocument();
     expect(screen.getByText(/156 msgs/)).toBeInTheDocument();
+  });
+
+  it("shows transfer details without message counts for expanded HTTP requests", () => {
+    const requests = [
+      createMockRequest({
+        bytes_sent: 1024,
+        bytes_received: 8192,
+        last_activity_at: Date.now() - 3000,
+      }),
+    ];
+    render(
+      <LiveRequestsPanel requests={requests} loading={false} error={null} />,
+    );
+    switchToAllListView();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Active request for model/ }),
+    );
+
+    const transfer = screen.getByText("Data Transfer").parentElement!;
+    expect(transfer).toHaveTextContent("↑ 1.0 KB / ↓ 8.0 KB");
+    expect(transfer).not.toHaveTextContent("msgs");
+    expect(screen.getByText("Last Activity")).toBeInTheDocument();
   });
 });

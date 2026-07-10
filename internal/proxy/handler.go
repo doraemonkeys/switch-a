@@ -61,7 +61,7 @@ type firstWriteResponseWriter struct {
 	http.ResponseWriter
 	onFirstWrite   func()
 	onCommit       func()
-	onWrite        func(time.Time)
+	onWrite        func(int, time.Time)
 	written        bool
 	committed      bool
 	firstWriteTime time.Time // Time of first data write (for TTFT calculation)
@@ -80,10 +80,10 @@ func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
 			}
 			w.written = true
 		}
-		if w.onWrite != nil {
-			w.onWrite(writeTime)
-		}
 		w.bytesWritten += int64(n)
+		if w.onWrite != nil {
+			w.onWrite(n, writeTime)
+		}
 	}
 	return n, err
 }
@@ -221,6 +221,7 @@ type proxyContext struct {
 	selectReq *model.SelectRequest
 	startTime time.Time
 	requestID string                 // UUID for this request
+	liveBytes *LiveBytesTracker      // Logical-request traffic shared across provider attempts
 	isSticky  bool                   // Whether provider came from sticky cache
 	attempts  []model.RequestAttempt // Attempts made during this request
 }
@@ -300,6 +301,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 		startTime: startTime,
 		requestID: requestID,
+		liveBytes: &LiveBytesTracker{},
 		attempts:  make([]model.RequestAttempt, 0),
 	}
 	pctx.selectReq = &model.SelectRequest{
@@ -414,17 +416,19 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 	// Note: We update ProviderID on provider switch so sticky fallback reflects the
 	// actual upstream provider that eventually produces data.
 	h.activeRegistry.RegisterWithDone(&ActiveRequest{
-		RequestID:     pctx.requestID,
-		ProviderID:    provider.ID,
-		Model:         pctx.info.Model,
-		APIType:       pctx.apiType,
-		UserID:        pctx.info.UserID,
-		ClientIP:      pctx.info.ClientIP,
-		StickyMode:    pctx.selectReq.StickyMode,
-		ContinuityKey: selector.BuildContinuityKey(pctx.selectReq),
-		IsSSE:         false, // Updated after response type is known
-		StartedAt:     pctx.startTime,
+		RequestID:                     pctx.requestID,
+		ProviderID:                    provider.ID,
+		Model:                         pctx.info.Model,
+		APIType:                       pctx.apiType,
+		UserID:                        pctx.info.UserID,
+		ClientIP:                      pctx.info.ClientIP,
+		StickyMode:                    pctx.selectReq.StickyMode,
+		ContinuityKey:                 selector.BuildContinuityKey(pctx.selectReq),
+		IsSSE:                         false, // Updated after response type is known
+		StartedAt:                     pctx.startTime,
+		RequestedReasoningObservation: pctx.info.Reasoning,
 	}, pctx.r.Context().Done())
+	h.activeRegistry.RegisterLiveBytes(pctx.requestID, pctx.liveBytes)
 	state.activeRegistered = true
 }
 

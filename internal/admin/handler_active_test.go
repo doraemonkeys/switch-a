@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"switch-a/internal/model"
 	"switch-a/internal/proxy"
 
 	"go.uber.org/zap"
@@ -95,6 +96,8 @@ func TestGetActiveRequests_WithRequests(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	st := newMockStore()
 	startTime := time.Now()
+	reasoningState := model.ReasoningObservationCaptured
+	reasoningEffort := "high"
 	mockLister := &mockActiveRequestLister{
 		requests: []proxy.ActiveRequest{
 			{
@@ -106,6 +109,12 @@ func TestGetActiveRequests_WithRequests(t *testing.T) {
 				ClientIP:   "192.168.1.1",
 				IsSSE:      true,
 				StartedAt:  startTime,
+				RequestedReasoningObservation: model.RequestedReasoningObservation{
+					State:  &reasoningState,
+					Effort: &reasoningEffort,
+				},
+				BytesSent:     1024,
+				BytesReceived: 8192,
 			},
 			{
 				RequestID:  "req-2",
@@ -176,6 +185,15 @@ func TestGetActiveRequests_WithRequests(t *testing.T) {
 			if !r.IsSSE {
 				t.Error("IsSSE should be true")
 			}
+			if r.State == nil || *r.State != model.ReasoningObservationCaptured {
+				t.Errorf("Reasoning state = %v, want captured", r.State)
+			}
+			if r.Effort == nil || *r.Effort != reasoningEffort {
+				t.Errorf("Reasoning effort = %v, want %q", r.Effort, reasoningEffort)
+			}
+			if r.BytesSent != 1024 || r.BytesReceived != 8192 {
+				t.Errorf("traffic = sent:%d received:%d, want sent:1024 received:8192", r.BytesSent, r.BytesReceived)
+			}
 		}
 	}
 	if !found {
@@ -224,6 +242,7 @@ func TestGetActiveRequests_JSONSerialization(t *testing.T) {
 		`"user_id"`,
 		`"client_ip"`,
 		`"is_sse"`,
+		`"is_websocket"`,
 		`"started_at"`,
 		`"requests"`,
 		`"count"`,
