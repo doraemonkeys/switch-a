@@ -260,6 +260,31 @@ const (
 	ServiceOutcomeUnknown           ServiceOutcome = "unknown"
 )
 
+// ReasoningObservationState separates a request that omitted reasoning controls
+// from one whose controls could not be observed reliably.
+type ReasoningObservationState string
+
+const (
+	ReasoningObservationCaptured    ReasoningObservationState = "captured"
+	ReasoningObservationAbsent      ReasoningObservationState = "absent"
+	ReasoningObservationInvalid     ReasoningObservationState = "invalid"
+	ReasoningObservationAmbiguous   ReasoningObservationState = "ambiguous"
+	ReasoningObservationUnsupported ReasoningObservationState = "unsupported"
+)
+
+// MaxReasoningValueRunes bounds request-controlled labels without changing
+// their decoded spelling or counting multi-byte characters as multiple values.
+const MaxReasoningValueRunes = 32
+
+// RequestedReasoningObservation records request-time configuration separately
+// from response-derived reasoning token consumption.
+type RequestedReasoningObservation struct {
+	State        *ReasoningObservationState `gorm:"column:reasoning_observation_state;type:text;default:null" json:"reasoning_observation_state,omitempty"`
+	Effort       *string                    `gorm:"column:reasoning_effort;type:text;default:null" json:"reasoning_effort,omitempty"`
+	Mode         *string                    `gorm:"column:reasoning_mode;type:text;default:null" json:"reasoning_mode,omitempty"`
+	BudgetTokens *int64                     `gorm:"column:reasoning_budget_tokens;default:null" json:"reasoning_budget_tokens,omitempty"`
+}
+
 // RequestLog represents the canonical request/session assessment record.
 type RequestLog struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement" json:"id"`
@@ -317,6 +342,7 @@ type RequestLog struct {
 	CacheReadInputTokens     *int64  `gorm:"default:null" json:"cache_read_input_tokens,omitempty"`     // Claude: tokens read from cache (billed at 10%)
 	CacheCreationInputTokens *int64  `gorm:"default:null" json:"cache_creation_input_tokens,omitempty"` // Claude: tokens written to cache (billed at 125%)
 	UsageDetails             *string `gorm:"type:text;default:null" json:"usage_details,omitempty"`     // JSON: full usage details (service_tier, TTL breakdown, etc.)
+	RequestedReasoningObservation
 	// Attempts is populated by API, not stored directly in database.
 	// These rows describe per-provider attempts only; the final lifecycle conclusion
 	// stays on RequestLog so websocket outcome attribution has a single source of truth.

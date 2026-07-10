@@ -420,6 +420,13 @@ export type ServiceOutcome =
   | "abandoned_by_client"
   | "unknown";
 
+export type ReasoningObservationState =
+  | "captured"
+  | "absent"
+  | "invalid"
+  | "ambiguous"
+  | "unsupported";
+
 export type WebSocketProbeOutcome =
   | "unknown"
   | "bypassed"
@@ -480,6 +487,10 @@ interface RequestLogBase {
   cache_read_input_tokens?: number | null; // Claude: tokens read from cache (billed at 10%)
   cache_creation_input_tokens?: number | null; // Claude: tokens written to cache (billed at 125%)
   usage_details?: UsageDetails | null; // Parsed usage details (service_tier, etc.)
+  reasoning_observation_state?: ReasoningObservationState | null;
+  reasoning_effort?: string | null;
+  reasoning_mode?: string | null;
+  reasoning_budget_tokens?: number | null;
   // WebSocket lifecycle semantics (nullable outside the WebSocket lifecycle domain)
   session_committed?: boolean | null;
   client_visible?: boolean | null;

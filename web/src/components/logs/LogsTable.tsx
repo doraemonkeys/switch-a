@@ -13,6 +13,7 @@ import {
   dateFormatter,
 } from "./constants";
 import { InfoTooltip } from "./InfoTooltip";
+import { ReasoningBadge } from "./ReasoningBadge";
 import { TokenCell } from "./TokenCell";
 
 interface LogsTableProps {
@@ -73,6 +74,12 @@ export function LogsTable({
               </th>
               <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Model
+              </th>
+              <th className="w-20 px-2 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
+                <span className="inline-flex items-center gap-1">
+                  Effort
+                  <InfoTooltip text="Requested reasoning configuration sent by the client, not reasoning tokens consumed by the provider." />
+                </span>
               </th>
               <th className="px-3 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Status
@@ -274,7 +281,7 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
       aria-label={`View details for ${log.model} request at ${formatTime(log.created_at)}`}
       className="hover:bg-bg-tertiary/50 transition-colors cursor-pointer"
     >
-      <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
+      <td className="w-20 px-2 py-3 whitespace-nowrap text-sm text-text-secondary">
         {formatTime(log.created_at)}
       </td>
       <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-text-primary">
@@ -328,6 +335,14 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
             </span>
           )}
         </div>
+      </td>
+      <td className="px-3 py-3 whitespace-nowrap text-sm text-text-secondary">
+        <ReasoningBadge
+          observationState={log.reasoning_observation_state}
+          effort={log.reasoning_effort}
+          mode={log.reasoning_mode}
+          budgetTokens={log.reasoning_budget_tokens}
+        />
       </td>
       <td className="px-3 py-3 whitespace-nowrap text-sm">
         <div className="flex flex-col items-start gap-1">

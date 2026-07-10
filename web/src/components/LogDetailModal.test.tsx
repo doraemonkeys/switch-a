@@ -334,6 +334,33 @@ describe("LogDetailModal", () => {
     expect(screen.queryByText("Reconnect Required")).not.toBeInTheDocument();
   });
 
+  it("keeps reasoning observation, effort, mode, and budget distinct", () => {
+    const log = createMockLog({
+      reasoning_observation_state: "captured",
+      reasoning_effort: "high",
+      reasoning_mode: "enabled",
+      reasoning_budget_tokens: 4096,
+    });
+
+    render(
+      <LogDetailModal
+        log={log}
+        providerName="Provider One"
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getByText("Requested Reasoning")).toBeInTheDocument();
+    expect(screen.getByText("Observation")).toBeInTheDocument();
+    expect(screen.getByText("Captured")).toBeInTheDocument();
+    expect(screen.getByText("Effort")).toBeInTheDocument();
+    expect(screen.getByText("high")).toBeInTheDocument();
+    expect(screen.getByText("Thinking Mode")).toBeInTheDocument();
+    expect(screen.getByText("enabled")).toBeInTheDocument();
+    expect(screen.getByText("Thinking Budget")).toBeInTheDocument();
+    expect(screen.getByText("4096 tokens")).toBeInTheDocument();
+  });
+
   it("closes on escape", () => {
     render(
       <LogDetailModal

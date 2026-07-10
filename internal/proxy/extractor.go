@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"switch-a/internal/model"
 )
 
 // maxModelExtractBytes is the maximum bytes to read when extracting the model field.
@@ -42,6 +44,7 @@ type RequestInfo struct {
 	UserAgent   string // Client User-Agent (truncated to MaxUserAgentLength)
 	RequestID   string // Client's X-Request-ID header for tracing
 	ContentType string // Request Content-Type header
+	Reasoning   model.RequestedReasoningObservation
 }
 
 // ExtractClientIP extracts the client IP address from the request.

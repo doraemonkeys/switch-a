@@ -120,6 +120,42 @@ func TestGetLogByID(t *testing.T) {
 	}
 }
 
+func TestRequestLogRequestedReasoningRoundTrip(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+	state := model.ReasoningObservationCaptured
+	effort := " high "
+	mode := "enabled"
+	budget := int64(8192)
+	log := newNormalizedLog("p1", "claude", time.Now())
+	log.RequestedReasoningObservation = model.RequestedReasoningObservation{
+		State:        &state,
+		Effort:       &effort,
+		Mode:         &mode,
+		BudgetTokens: &budget,
+	}
+
+	if err := store.InsertLog(ctx, &log); err != nil {
+		t.Fatalf("InsertLog failed: %v", err)
+	}
+	found, err := store.GetLogByID(ctx, log.ID)
+	if err != nil {
+		t.Fatalf("GetLogByID failed: %v", err)
+	}
+	if found.State == nil || *found.State != state {
+		t.Fatalf("State = %v, want %q", found.State, state)
+	}
+	if found.Effort == nil || *found.Effort != effort {
+		t.Fatalf("Effort = %v, want %q", found.Effort, effort)
+	}
+	if found.Mode == nil || *found.Mode != mode {
+		t.Fatalf("Mode = %v, want %q", found.Mode, mode)
+	}
+	if found.BudgetTokens == nil || *found.BudgetTokens != budget {
+		t.Fatalf("BudgetTokens = %v, want %d", found.BudgetTokens, budget)
+	}
+}
+
 func TestCleanOldLogs_CascadesAttemptsDelete(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()

@@ -1,6 +1,6 @@
 // Log table constants
-// Note: Includes Time, Provider, API Type, Model, Status, Tokens, Retries, Latency, Client
-export const LOG_TABLE_COLUMNS = 9;
+// Note: Includes Time, Provider, API Type, Model, Effort, Status, Tokens, Retries, Latency, Client
+export const LOG_TABLE_COLUMNS = 10;
 export const PROVIDER_ID_PREVIEW_LENGTH = 8;
 
 // Date formatter for consistent time display (compact format: MM/DD HH:mm:ss)

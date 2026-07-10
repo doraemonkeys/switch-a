@@ -57,6 +57,7 @@ type webSocketObserverFactory func(modelName string) WebSocketMessageObserver
 // boundary, so the handler delegates attempt control to a session orchestrator
 // instead of reusing the HTTP execution loop.
 func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *http.Request, cfg *runtimeConfig, apiType, requestID string, startTime time.Time) {
+	reasoningState := model.ReasoningObservationUnsupported
 	info := RequestInfo{
 		ClientIP:  ExtractClientIP(r, cfg.trustProxy),
 		UserID:    ExtractUserID(r, cfg.userHeader),
@@ -66,6 +67,7 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		Method:    r.Method,
 		UserAgent: ExtractUserAgent(r),
 		RequestID: ExtractRequestIDHeader(r),
+		Reasoning: model.RequestedReasoningObservation{State: &reasoningState},
 	}
 
 	selectReq := &model.SelectRequest{
@@ -357,31 +359,32 @@ func (h *Handler) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 	}
 
 	log := &model.RequestLog{
-		RequestID:                 session.RequestID,
-		APIType:                   info.APIType,
-		Model:                     info.Model,
-		ClientIP:                  info.ClientIP,
-		UserID:                    info.UserID,
-		SemanticsVersion:          assessment.SemanticsVersion,
-		ClientTransportStatusCode: ptr(assessment.ClientTransportStatusCode),
-		CompletionState:           ptr(assessment.CompletionState),
-		ServiceOutcome:            ptr(assessment.ServiceOutcome),
-		TerminationActor:          assessment.TerminationActor,
-		TerminationReason:         assessment.TerminationReason,
-		ClientAction:              ptr(assessment.ClientAction),
-		SessionEvidenceJSON:       assessment.SessionEvidenceJSON,
-		LatencyMs:                 latency.Milliseconds(),
-		IsWebSocket:               true,
-		IsSticky:                  session.IsSticky,
-		RetryCount:                session.RetryCount(),
-		SessionCommitted:          &sessionCommitted,
-		ClientVisible:             &clientVisible,
-		CommitSource:              &commitSource,
-		CreatedAt:                 time.Now(),
-		RequestPath:               info.Path,
-		RequestMethod:             info.Method,
-		UserAgent:                 info.UserAgent,
-		RequestIDHeader:           info.RequestID,
+		RequestID:                     session.RequestID,
+		APIType:                       info.APIType,
+		Model:                         info.Model,
+		ClientIP:                      info.ClientIP,
+		UserID:                        info.UserID,
+		SemanticsVersion:              assessment.SemanticsVersion,
+		ClientTransportStatusCode:     ptr(assessment.ClientTransportStatusCode),
+		CompletionState:               ptr(assessment.CompletionState),
+		ServiceOutcome:                ptr(assessment.ServiceOutcome),
+		TerminationActor:              assessment.TerminationActor,
+		TerminationReason:             assessment.TerminationReason,
+		ClientAction:                  ptr(assessment.ClientAction),
+		SessionEvidenceJSON:           assessment.SessionEvidenceJSON,
+		LatencyMs:                     latency.Milliseconds(),
+		IsWebSocket:                   true,
+		IsSticky:                      session.IsSticky,
+		RetryCount:                    session.RetryCount(),
+		SessionCommitted:              &sessionCommitted,
+		ClientVisible:                 &clientVisible,
+		CommitSource:                  &commitSource,
+		CreatedAt:                     time.Now(),
+		RequestPath:                   info.Path,
+		RequestMethod:                 info.Method,
+		UserAgent:                     info.UserAgent,
+		RequestIDHeader:               info.RequestID,
+		RequestedReasoningObservation: info.Reasoning,
 	}
 
 	if session.FinalProvider != nil {

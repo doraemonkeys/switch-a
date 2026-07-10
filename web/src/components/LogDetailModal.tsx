@@ -129,6 +129,7 @@ export function LogDetailModal({
             providerName={resolvedProviderName}
             providerNames={providerNames}
           />
+          <ReasoningInfo log={log} />
           <ResponseInfo log={log} />
           <SemanticsInfo log={log} />
           {log.is_websocket && <WebSocketLifecycleInfo log={log} />}
@@ -407,6 +408,60 @@ function ResponseInfo({ log }: { log: RequestLog }) {
       />
     </DetailSection>
   );
+}
+
+function ReasoningInfo({ log }: { log: RequestLog }) {
+  return (
+    <DetailSection title="Requested Reasoning">
+      <DetailRow
+        label="Observation"
+        value={formatReasoningObservation(log.reasoning_observation_state)}
+      />
+      <DetailRow
+        label="Effort"
+        value={formatReasoningString(log.reasoning_effort)}
+        mono
+      />
+      <DetailRow
+        label="Thinking Mode"
+        value={formatReasoningString(log.reasoning_mode)}
+        mono
+      />
+      <DetailRow
+        label="Thinking Budget"
+        value={
+          log.reasoning_budget_tokens == null
+            ? "—"
+            : `${log.reasoning_budget_tokens} tokens`
+        }
+        mono
+      />
+    </DetailSection>
+  );
+}
+
+function formatReasoningObservation(
+  state: RequestLog["reasoning_observation_state"],
+): string {
+  switch (state) {
+    case "captured":
+      return "Captured";
+    case "absent":
+      return "Not requested";
+    case "invalid":
+      return "Invalid request";
+    case "ambiguous":
+      return "Ambiguous request";
+    case "unsupported":
+      return "Unsupported";
+    default:
+      return "Legacy unknown";
+  }
+}
+
+function formatReasoningString(value?: string | null): string {
+  if (value === "") return `""`;
+  return value ?? "—";
 }
 
 function SemanticsInfo({ log }: { log: RequestLog }) {

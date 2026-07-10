@@ -181,9 +181,10 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 		RequestIDHeader:           pctx.info.RequestID,
 		FirstTokenMs:              inputs.FirstTokenMs,
 		// Phase 3 transfer statistics
-		RequestBytes:  int64(len(pctx.body)),
-		ResponseBytes: inputs.ResponseBytes,
-		ContentType:   pctx.info.ContentType,
+		RequestBytes:                  int64(len(pctx.body)),
+		ResponseBytes:                 inputs.ResponseBytes,
+		ContentType:                   pctx.info.ContentType,
+		RequestedReasoningObservation: pctx.info.Reasoning,
 	}
 
 	if inputs.Provider != nil {

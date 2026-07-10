@@ -28,6 +28,7 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	})
 
 	const handshakeBody = `{"error":{"message":"Account quota exhausted","type":"billing_error"}}`
+	reasoningState := model.ReasoningObservationUnsupported
 	info := RequestInfo{
 		APIType:   "codex",
 		Model:     "gpt-4o-realtime",
@@ -37,6 +38,7 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 		Method:    http.MethodGet,
 		UserAgent: "codex-test",
 		RequestID: "upstream-request-id",
+		Reasoning: model.RequestedReasoningObservation{State: &reasoningState},
 	}
 	result := &WebSocketResult{
 		HandshakeStatusCode:  http.StatusPaymentRequired,
@@ -83,6 +85,9 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	}
 	if requestLogClientAction(log) != model.ClientActionNone {
 		t.Fatalf("ClientAction = %q, want %q", requestLogClientAction(log), model.ClientActionNone)
+	}
+	if log.State == nil || *log.State != model.ReasoningObservationUnsupported {
+		t.Fatalf("Reasoning observation state = %v, want %q", log.State, model.ReasoningObservationUnsupported)
 	}
 }
 

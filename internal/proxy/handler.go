@@ -296,6 +296,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			UserAgent:   ExtractUserAgent(r),
 			RequestID:   ExtractRequestIDHeader(r),
 			ContentType: ExtractContentType(r),
+			Reasoning:   ExtractRequestedReasoning(apiType, r.URL.Path, body),
 		},
 		startTime: startTime,
 		requestID: requestID,
