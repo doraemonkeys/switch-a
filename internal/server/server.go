@@ -188,9 +188,19 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET "+proxy.RouteCodexResponses, s.handleProxy) // WebSocket upgrade (OpenAI Realtime API)
 	mux.HandleFunc("POST "+proxy.RouteCodexResponsesV1, s.handleProxy)
 	mux.HandleFunc("GET "+proxy.RouteCodexResponsesV1, s.handleProxy)
-	// Gemini API
-	mux.HandleFunc("POST "+proxy.RouteGeminiPrefix, s.handleProxy)
+	// Grok API (xAI OpenAI-compatible Chat Completions)
+	mux.HandleFunc("POST "+proxy.RouteGrokChatCompletions, s.handleProxy)
+	mux.HandleFunc("POST "+proxy.RouteGrokChatCompletionsV1, s.handleProxy)
+	// Gemini API (native contract path)
 	mux.HandleFunc("POST "+proxy.RouteGeminiV1Beta, s.handleProxy)
+	// Explicit API namespaces (/claude/*, /codex/*, /grok/*, /gemini/*):
+	// clients pin the API type in their base URL when bare contract paths are
+	// ambiguous across vendors. GET is registered for model discovery
+	// (e.g. /claude/v1/models) and namespaced WebSocket upgrades.
+	for _, pattern := range proxy.APINamespaceRoutePatterns() {
+		mux.HandleFunc("POST "+pattern, s.handleProxy)
+		mux.HandleFunc("GET "+pattern, s.handleProxy)
+	}
 	// Custom API
 	mux.HandleFunc("POST "+proxy.RouteCustomPrefix, s.handleProxy)
 	mux.HandleFunc("GET "+proxy.RouteCustomPrefix, s.handleProxy)

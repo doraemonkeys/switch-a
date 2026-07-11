@@ -207,6 +207,13 @@ func TestExtractModel(t *testing.T) {
 			wantModel: "gpt-4o",
 		},
 		{
+			name:      "grok model from body",
+			apiType:   APITypeGrok,
+			urlPath:   "/v1/chat/completions",
+			body:      []byte(`{"model":"grok-4","messages":[{"role":"user","content":"Hello"}]}`),
+			wantModel: "grok-4",
+		},
+		{
 			name:      "model not in body",
 			apiType:   APITypeClaude,
 			urlPath:   "/v1/messages",

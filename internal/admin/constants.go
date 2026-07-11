@@ -77,6 +77,7 @@ var validProviderCredentialTypes = map[model.ProviderCredentialType]bool{
 // These must match the types recognized by the proxy router (see proxy/router.go):
 //   - claude: routes via /v1/messages, /v1/models
 //   - codex:  routes via /responses
+//   - grok:   routes via /chat/completions, /v1/chat/completions
 //   - gemini: routes via /gemini/*
 //   - custom:*: routes via /custom/:toolId/* (handled separately in IsValidAPIType)
 //
@@ -87,6 +88,7 @@ var validAPITypes = map[string]bool{
 	"claude": true,
 	"codex":  true,
 	"gemini": true,
+	"grok":   true,
 }
 
 // validConfigKeys contains the allowed configuration keys.

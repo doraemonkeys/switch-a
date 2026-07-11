@@ -14,20 +14,30 @@ import (
 func TestHandler_ServeHTTP_PersistsRequestedReasoningObservation(t *testing.T) {
 	tests := []struct {
 		name       string
+		path       string
 		body       string
 		wantState  model.ReasoningObservationState
 		wantEffort *string
 	}{
 		{
 			name:       "captured",
+			path:       RouteClaudeMessages,
 			body:       `{"model":"test","output_config":{"effort":"high"}}`,
 			wantState:  model.ReasoningObservationCaptured,
 			wantEffort: reasoningStringPointer("high"),
 		},
 		{
 			name:      "absent",
+			path:      RouteClaudeMessages,
 			body:      `{"model":"test"}`,
 			wantState: model.ReasoningObservationAbsent,
+		},
+		{
+			name:       "grok scalar effort captured",
+			path:       RouteGrokChatCompletionsV1,
+			body:       `{"model":"grok-4","reasoning_effort":"high"}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("high"),
 		},
 	}
 
@@ -35,7 +45,7 @@ func TestHandler_ServeHTTP_PersistsRequestedReasoningObservation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := newMockStore()
 			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
-			req := httptest.NewRequest(http.MethodPost, RouteClaudeMessages, strings.NewReader(test.body))
+			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
 			w := httptest.NewRecorder()
 
 			handler.ServeHTTP(w, req)

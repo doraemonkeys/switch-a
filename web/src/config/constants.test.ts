@@ -11,6 +11,8 @@ import {
   AUTH_MODE_OPTIONS,
   API_TYPES,
   API_TYPE_OPTIONS,
+  COMMON_API_TYPES,
+  COMMON_VENDORS,
   CUSTOM_API_TYPE_PREFIX,
   isValidAPIType,
   ERROR_CODES,
@@ -183,20 +185,39 @@ describe("API_TYPES", () => {
     expect(API_TYPES.CLAUDE).toBe("claude");
     expect(API_TYPES.CODEX).toBe("codex");
     expect(API_TYPES.GEMINI).toBe("gemini");
+    expect(API_TYPES.GROK).toBe("grok");
   });
 
-  it("should have exactly 3 API types", () => {
-    expect(Object.keys(API_TYPES)).toHaveLength(3);
+  it("should have exactly 4 API types", () => {
+    expect(Object.keys(API_TYPES)).toHaveLength(4);
   });
 });
 
 describe("API_TYPE_OPTIONS", () => {
   it("should have options for all API types", () => {
-    expect(API_TYPE_OPTIONS).toHaveLength(3);
+    expect(API_TYPE_OPTIONS).toHaveLength(4);
     const values = API_TYPE_OPTIONS.map((opt) => opt.value);
     expect(values).toContain(API_TYPES.CLAUDE);
     expect(values).toContain(API_TYPES.CODEX);
     expect(values).toContain(API_TYPES.GEMINI);
+    expect(values).toContain(API_TYPES.GROK);
+  });
+});
+
+describe("COMMON_API_TYPES", () => {
+  it("should offer every built-in API type as a quick pick", () => {
+    expect(COMMON_API_TYPES).toHaveLength(4);
+    Object.values(API_TYPES).forEach((type) => {
+      expect(COMMON_API_TYPES).toContain(type);
+    });
+  });
+});
+
+describe("COMMON_VENDORS", () => {
+  it("should include vendors for all built-in API type upstreams", () => {
+    expect(COMMON_VENDORS).toContain("openai");
+    expect(COMMON_VENDORS).toContain("anthropic");
+    expect(COMMON_VENDORS).toContain("xai");
   });
 });
 
@@ -205,6 +226,7 @@ describe("isValidAPIType", () => {
     expect(isValidAPIType("claude")).toBe(true);
     expect(isValidAPIType("codex")).toBe(true);
     expect(isValidAPIType("gemini")).toBe(true);
+    expect(isValidAPIType("grok")).toBe(true);
   });
 
   it("should accept custom:* pattern", () => {

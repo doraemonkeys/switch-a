@@ -174,6 +174,7 @@ export const API_TYPES = {
   CLAUDE: "claude",
   CODEX: "codex",
   GEMINI: "gemini",
+  GROK: "grok",
 } as const;
 
 /**
@@ -227,6 +228,7 @@ export const COMMON_API_TYPES = [
   API_TYPES.CLAUDE,
   API_TYPES.CODEX,
   API_TYPES.GEMINI,
+  API_TYPES.GROK,
 ] as const;
 
 /**
@@ -238,6 +240,7 @@ export const COMMON_VENDORS = [
   "openrouter",
   "openai",
   "anthropic",
+  "xai",
 ] as const;
 
 /**
@@ -250,17 +253,22 @@ export const API_TYPE_OPTIONS = [
   {
     value: API_TYPES.CLAUDE,
     label: "Claude",
-    description: "Anthropic Claude API (/v1/messages, /v1/models)",
+    description: "Anthropic Claude API (/v1/messages, /claude/*)",
   },
   {
     value: API_TYPES.CODEX,
     label: "Codex",
-    description: "OpenAI Codex/Responses API (/responses)",
+    description: "OpenAI Codex/Responses API (/responses, /codex/*)",
   },
   {
     value: API_TYPES.GEMINI,
     label: "Gemini",
-    description: "Google Gemini API (/gemini/*)",
+    description: "Google Gemini API (/v1beta/*, /gemini/*)",
+  },
+  {
+    value: API_TYPES.GROK,
+    label: "Grok",
+    description: "xAI Grok API (/chat/completions, /grok/*)",
   },
 ] as const;
 

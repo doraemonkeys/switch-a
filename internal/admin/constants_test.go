@@ -124,6 +124,7 @@ func TestIsValidAPIType(t *testing.T) {
 		{"claude", true},
 		{"codex", true},
 		{"gemini", true},
+		{"grok", true},
 		{"custom:mytool", true},
 		// Invalid: empty custom name
 		{"custom:", false},

@@ -422,7 +422,7 @@ type RequestAttempt struct {
 // LogFilter represents filter and sort parameters for log queries.
 type LogFilter struct {
 	ProviderID                string // Filter by provider ID
-	APIType                   string // Filter by API type (claude/codex/gemini/custom:*)
+	APIType                   string // Filter by API type (claude/codex/gemini/grok/custom:*)
 	SemanticsVersion          RequestSemanticsVersion
 	CompletionState           CompletionState
 	ServiceOutcome            ServiceOutcome

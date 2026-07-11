@@ -11,20 +11,25 @@ import (
 )
 
 const (
-	reasoningObjectField    = "reasoning"
-	outputConfigObjectField = "output_config"
-	thinkingObjectField     = "thinking"
-	effortMemberField       = "effort"
-	thinkingTypeMemberField = "type"
-	budgetTokensMemberField = "budget_tokens"
+	reasoningObjectField       = "reasoning"
+	outputConfigObjectField    = "output_config"
+	thinkingObjectField        = "thinking"
+	reasoningEffortMemberField = "reasoning_effort"
+	effortMemberField          = "effort"
+	thinkingTypeMemberField    = "type"
+	budgetTokensMemberField    = "budget_tokens"
 )
 
-type reasoningObjectKind uint8
+// reasoningMemberKind classifies top-level request members that carry
+// reasoning configuration. Claude and Codex nest the controls inside an
+// object, while Chat Completions (grok) uses a top-level scalar member.
+type reasoningMemberKind uint8
 
 const (
-	reasoningObject reasoningObjectKind = iota
+	reasoningObject reasoningMemberKind = iota
 	outputConfigObject
 	thinkingObject
+	reasoningEffortMember
 )
 
 type requestedReasoningBuilder struct {
@@ -38,6 +43,11 @@ type requestedReasoningBuilder struct {
 // stable for the selected API and endpoint. Everything else stays explicit as
 // unsupported instead of being mistaken for an omitted configuration.
 func ExtractRequestedReasoning(apiType, path string, body []byte) model.RequestedReasoningObservation {
+	// Observation support is defined over the native contract path; an
+	// explicit namespace is routing metadata and must not mask the endpoint.
+	if namespaceType, contractPath, ok := SplitAPINamespace(path); ok && namespaceType == apiType {
+		path = contractPath
+	}
 	if !supportsReasoningObservation(apiType, path) {
 		return reasoningObservationWithState(model.ReasoningObservationUnsupported)
 	}
@@ -51,7 +61,8 @@ func ExtractRequestedReasoning(apiType, path string, body []byte) model.Requeste
 
 func supportsReasoningObservation(apiType, path string) bool {
 	return apiType == APITypeClaude && path == RouteClaudeMessages ||
-		apiType == APITypeCodex && (path == RouteCodexResponses || path == RouteCodexResponsesV1)
+		apiType == APITypeCodex && (path == RouteCodexResponses || path == RouteCodexResponsesV1) ||
+		apiType == APITypeGrok && (path == RouteGrokChatCompletions || path == RouteGrokChatCompletionsV1)
 }
 
 func scanRequestedReasoning(apiType string, body []byte, builder *requestedReasoningBuilder) error {
@@ -64,7 +75,7 @@ func scanRequestedReasoning(apiType string, body []byte, builder *requestedReaso
 		return fmt.Errorf("reasoning request must be a JSON object")
 	}
 
-	seenObjects := make(map[string]bool)
+	seenMembers := make(map[string]bool)
 	for decoder.More() {
 		memberToken, tokenErr := decoder.Token()
 		if tokenErr != nil {
@@ -75,7 +86,7 @@ func scanRequestedReasoning(apiType string, body []byte, builder *requestedReaso
 			return fmt.Errorf("reasoning request member name must be a string")
 		}
 
-		kind, relevant := reasoningObjectFor(apiType, member)
+		kind, relevant := reasoningMemberFor(apiType, member)
 		if !relevant {
 			if skipErr := skipJSONValue(decoder); skipErr != nil {
 				return skipErr
@@ -83,16 +94,20 @@ func scanRequestedReasoning(apiType string, body []byte, builder *requestedReaso
 			continue
 		}
 
-		if seenObjects[member] {
+		if seenMembers[member] {
 			builder.ambiguous = true
 		}
-		seenObjects[member] = true
+		seenMembers[member] = true
 
 		var raw json.RawMessage
 		if decodeErr := decoder.Decode(&raw); decodeErr != nil {
 			return decodeErr
 		}
-		builder.clearObject(kind)
+		builder.clearMember(kind)
+		if kind == reasoningEffortMember {
+			builder.captureString(raw, &builder.observation.Effort)
+			continue
+		}
 		if objectErr := scanReasoningObject(raw, kind, builder); objectErr != nil {
 			builder.invalid = true
 		}
@@ -108,9 +123,12 @@ func scanRequestedReasoning(apiType string, body []byte, builder *requestedReaso
 	return requireJSONEOF(decoder)
 }
 
-func reasoningObjectFor(apiType, member string) (reasoningObjectKind, bool) {
+func reasoningMemberFor(apiType, member string) (reasoningMemberKind, bool) {
 	if apiType == APITypeCodex && member == reasoningObjectField {
 		return reasoningObject, true
+	}
+	if apiType == APITypeGrok && member == reasoningEffortMemberField {
+		return reasoningEffortMember, true
 	}
 	if apiType == APITypeClaude {
 		switch member {
@@ -123,7 +141,7 @@ func reasoningObjectFor(apiType, member string) (reasoningObjectKind, bool) {
 	return reasoningObject, false
 }
 
-func scanReasoningObject(raw json.RawMessage, kind reasoningObjectKind, builder *requestedReasoningBuilder) error {
+func scanReasoningObject(raw json.RawMessage, kind reasoningMemberKind, builder *requestedReasoningBuilder) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	opening, err := decoder.Token()
 	if err != nil {
@@ -172,7 +190,7 @@ func scanReasoningObject(raw json.RawMessage, kind reasoningObjectKind, builder 
 	return requireJSONEOF(decoder)
 }
 
-func isRelevantReasoningMember(kind reasoningObjectKind, member string) bool {
+func isRelevantReasoningMember(kind reasoningMemberKind, member string) bool {
 	switch kind {
 	case reasoningObject, outputConfigObject:
 		return member == effortMemberField
@@ -183,7 +201,7 @@ func isRelevantReasoningMember(kind reasoningObjectKind, member string) bool {
 	}
 }
 
-func (builder *requestedReasoningBuilder) captureMember(kind reasoningObjectKind, member string, raw json.RawMessage) {
+func (builder *requestedReasoningBuilder) captureMember(kind reasoningMemberKind, member string, raw json.RawMessage) {
 	switch {
 	case (kind == reasoningObject || kind == outputConfigObject) && member == effortMemberField:
 		builder.observation.Effort = nil
@@ -197,9 +215,9 @@ func (builder *requestedReasoningBuilder) captureMember(kind reasoningObjectKind
 	}
 }
 
-func (builder *requestedReasoningBuilder) clearObject(kind reasoningObjectKind) {
+func (builder *requestedReasoningBuilder) clearMember(kind reasoningMemberKind) {
 	switch kind {
-	case reasoningObject, outputConfigObject:
+	case reasoningObject, outputConfigObject, reasoningEffortMember:
 		builder.observation.Effort = nil
 	case thinkingObject:
 		builder.observation.Mode = nil

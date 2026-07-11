@@ -266,8 +266,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// GET /responses exists solely for WebSocket (OpenAI Realtime API).
-	// A plain GET without Upgrade is meaningless here — reject early.
-	if r.Method == http.MethodGet && apiType == APITypeCodex {
+	// A plain GET without Upgrade is meaningless there — reject early.
+	// Matching the normalized upstream path keeps the rule scoped to that
+	// endpoint, so other codex GET surfaces (e.g. /codex/v1/models discovery)
+	// proxy through like any other API type.
+	if r.Method == http.MethodGet && apiType == APITypeCodex &&
+		BuildUpstreamPath(r.URL.Path, apiType) == RouteCodexResponses {
 		h.writeGatewayError(w, http.StatusUpgradeRequired, ErrCodeWebSocketUpgrade, "This endpoint requires a WebSocket upgrade")
 		return
 	}

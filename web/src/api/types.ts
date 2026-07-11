@@ -20,7 +20,7 @@ export type {
 };
 
 /** Built-in API type values (custom:* pattern handled separately) */
-export type BuiltInAPIType = "claude" | "codex" | "gemini";
+export type BuiltInAPIType = "claude" | "codex" | "gemini" | "grok";
 
 /** Valid configuration keys */
 export type ConfigKey =
@@ -547,7 +547,7 @@ export interface LogFilter {
   offset?: number;
   /** Filter by provider ID */
   provider_id?: string;
-  /** Filter by API type (claude/codex/gemini/custom:*) */
+  /** Filter by API type (claude/codex/gemini/grok/custom:*) */
   api_type?: string;
   /** Filter by request-log semantics version */
   semantics_version?: SemanticsVersion;

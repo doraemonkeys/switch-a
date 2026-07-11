@@ -30,7 +30,7 @@ type LogsResponse struct {
 //   - limit: max results (default: 100, max: 1000)
 //   - offset: pagination offset (default: 0)
 //   - provider_id: filter by provider ID
-//   - api_type: filter by API type (claude/codex/gemini/custom:*)
+//   - api_type: filter by API type (claude/codex/gemini/grok/custom:*)
 //   - semantics_version: filter by request semantics version
 //   - completion_state: filter by normalized completion state
 //   - service_outcome: filter by normalized service outcome

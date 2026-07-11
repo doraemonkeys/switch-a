@@ -19,7 +19,7 @@ type ActiveRequest struct {
 	RequestID       string           `json:"request_id"`   // UUID identifying this request
 	ProviderID      string           `json:"provider_id"`  // Selected provider handling the request
 	Model           string           `json:"model"`        // Model being called (e.g., "claude-3-opus")
-	APIType         string           `json:"api_type"`     // API type (claude, codex, gemini, custom:*)
+	APIType         string           `json:"api_type"`     // API type (claude, codex, gemini, grok, custom:*)
 	UserID          string           `json:"user_id"`      // User identifier from header
 	ClientIP        string           `json:"client_ip"`    // Client IP address
 	StickyMode      model.StickyMode `json:"-"`            // Sticky dimensions captured when selection happened

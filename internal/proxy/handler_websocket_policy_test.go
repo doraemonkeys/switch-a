@@ -256,55 +256,75 @@ func TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure(t *testing.T) {
 // TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected verifies that
 // WebSocket upgrade requests on non-Codex API paths are rejected with 400.
 func TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "http://example.com"}},
-		},
+	tests := []struct {
+		apiType string
+		method  string
+		path    string
+	}{
+		{apiType: "claude", method: http.MethodGet, path: "/v1/messages"},
+		// Grok routes register POST only, so POST is the only upgrade-carrying
+		// shape the real mux can deliver to the handler (GET dies at the mux 404).
+		{apiType: "grok", method: http.MethodPost, path: "/chat/completions"},
 	}
 
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	for _, test := range tests {
+		t.Run(test.apiType, func(t *testing.T) {
+			store := newMockStore()
+			store.providers = []model.Provider{
+				{
+					ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: test.apiType, BaseURL: "http://example.com"}},
+				},
+			}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/messages", nil)
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	w := httptest.NewRecorder()
+			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
 
-	handler.ServeHTTP(w, req)
+			req := httptest.NewRequest(test.method, test.path, nil)
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Sec-WebSocket-Version", "13")
+			req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			w := httptest.NewRecorder()
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-	if !strings.Contains(w.Body.String(), "not supported") {
-		t.Errorf("body = %q, expected 'not supported' message", w.Body.String())
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+			}
+			if !strings.Contains(w.Body.String(), "not supported") {
+				t.Errorf("body = %q, expected 'not supported' message", w.Body.String())
+			}
+		})
 	}
 }
 
-// TestHandler_ServeHTTP_NonUpgradeGET_Returns426 verifies that GET /responses
-// without a WebSocket Upgrade header returns 426 Upgrade Required.
+// TestHandler_ServeHTTP_NonUpgradeGET_Returns426 verifies that a plain GET on
+// the WebSocket-only Responses endpoint returns 426 Upgrade Required in every
+// path form that normalizes to /responses.
 func TestHandler_ServeHTTP_NonUpgradeGET_Returns426(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "http://example.com"}},
-		},
-	}
+	for _, path := range []string{"/responses", "/v1/responses", "/codex/responses", "/codex/v1/responses"} {
+		t.Run(path, func(t *testing.T) {
+			store := newMockStore()
+			store.providers = []model.Provider{
+				{
+					ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "http://example.com"}},
+				},
+			}
 
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
 
-	req := httptest.NewRequest(http.MethodGet, "/responses", nil)
-	w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
 
-	handler.ServeHTTP(w, req)
+			handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusUpgradeRequired {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUpgradeRequired)
-	}
-	if !strings.Contains(w.Body.String(), "WebSocket upgrade") {
-		t.Errorf("body = %q, expected WebSocket upgrade message", w.Body.String())
+			if w.Code != http.StatusUpgradeRequired {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusUpgradeRequired)
+			}
+			if !strings.Contains(w.Body.String(), "WebSocket upgrade") {
+				t.Errorf("body = %q, expected WebSocket upgrade message", w.Body.String())
+			}
+		})
 	}
 }

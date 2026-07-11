@@ -69,6 +69,26 @@ func TestParseAPIType(t *testing.T) {
 			wantOK:   true,
 		},
 
+		// Grok API paths
+		{
+			name:     "grok chat completions",
+			path:     "/chat/completions",
+			wantType: APITypeGrok,
+			wantOK:   true,
+		},
+		{
+			name:     "grok chat completions without leading slash",
+			path:     "chat/completions",
+			wantType: APITypeGrok,
+			wantOK:   true,
+		},
+		{
+			name:     "grok v1 chat completions",
+			path:     "/v1/chat/completions",
+			wantType: APITypeGrok,
+			wantOK:   true,
+		},
+
 		// Gemini API paths
 		{
 			name:     "gemini v1beta",
@@ -99,6 +119,50 @@ func TestParseAPIType(t *testing.T) {
 			path:     "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
 			wantType: APITypeGemini,
 			wantOK:   true,
+		},
+
+		// Explicit API namespaces
+		{
+			name:     "claude namespace",
+			path:     "/claude/v1/messages",
+			wantType: APITypeClaude,
+			wantOK:   true,
+		},
+		{
+			name:     "claude namespace models",
+			path:     "/claude/v1/models",
+			wantType: APITypeClaude,
+			wantOK:   true,
+		},
+		{
+			name:     "codex namespace",
+			path:     "/codex/responses",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
+		{
+			name:     "grok namespace",
+			path:     "/grok/chat/completions",
+			wantType: APITypeGrok,
+			wantOK:   true,
+		},
+		{
+			name:     "grok namespace with v1",
+			path:     "/grok/v1/chat/completions",
+			wantType: APITypeGrok,
+			wantOK:   true,
+		},
+		{
+			name:     "bare namespace without contract path",
+			path:     "/claude",
+			wantType: APITypeClaude,
+			wantOK:   true,
+		},
+		{
+			name:     "namespace-like segment is not a namespace",
+			path:     "/claudex/v1/messages",
+			wantType: "",
+			wantOK:   false,
 		},
 
 		// Custom API paths
@@ -191,10 +255,58 @@ func TestBuildUpstreamPath(t *testing.T) {
 			wantPath:     "/responses",
 		},
 		{
-			name:         "gemini passthrough",
+			name:         "grok passthrough",
+			originalPath: "/chat/completions",
+			apiType:      APITypeGrok,
+			wantPath:     "/chat/completions",
+		},
+		{
+			name:         "grok v1 normalizes to chat completions",
+			originalPath: "/v1/chat/completions",
+			apiType:      APITypeGrok,
+			wantPath:     "/chat/completions",
+		},
+		{
+			name:         "gemini namespace strips to native contract path",
 			originalPath: "/gemini/v1beta/models/gemini-pro:generateContent",
 			apiType:      APITypeGemini,
-			wantPath:     "/gemini/v1beta/models/gemini-pro:generateContent",
+			wantPath:     "/v1beta/models/gemini-pro:generateContent",
+		},
+		{
+			name:         "gemini native v1beta passthrough",
+			originalPath: "/v1beta/models/gemini-pro:generateContent",
+			apiType:      APITypeGemini,
+			wantPath:     "/v1beta/models/gemini-pro:generateContent",
+		},
+		{
+			name:         "claude namespace strips to native contract path",
+			originalPath: "/claude/v1/messages",
+			apiType:      APITypeClaude,
+			wantPath:     "/v1/messages",
+		},
+		{
+			name:         "claude namespace count_tokens",
+			originalPath: "/claude/v1/messages/count_tokens",
+			apiType:      APITypeClaude,
+			wantPath:     "/v1/messages/count_tokens",
+		},
+		{
+			name:         "codex namespace normalizes v1",
+			originalPath: "/codex/v1/responses",
+			apiType:      APITypeCodex,
+			wantPath:     "/responses",
+		},
+		{
+			name:         "grok namespace normalizes v1",
+			originalPath: "/grok/v1/chat/completions",
+			apiType:      APITypeGrok,
+			wantPath:     "/chat/completions",
+		},
+		{
+			name:         "grok namespace enables model discovery",
+			originalPath: "/grok/v1/models",
+			apiType:      APITypeGrok,
+			wantPath:     "/models",
 		},
 		{
 			name:         "custom strips prefix",

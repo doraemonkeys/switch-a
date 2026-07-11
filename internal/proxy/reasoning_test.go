@@ -47,6 +47,52 @@ func TestExtractRequestedReasoningSupportedShapes(t *testing.T) {
 			wantEffort: reasoningStringPointer("low"),
 		},
 		{
+			name:       "Grok chat completions path",
+			apiType:    APITypeGrok,
+			path:       RouteGrokChatCompletions,
+			body:       `{"model":"grok-4","reasoning_effort":"high"}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("high"),
+		},
+		{
+			name:       "Grok v1 chat completions path",
+			apiType:    APITypeGrok,
+			path:       RouteGrokChatCompletionsV1,
+			body:       `{"model":"grok-3-mini","reasoning_effort":"low"}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("low"),
+		},
+		{
+			name:      "Grok ignores Codex-shaped reasoning object",
+			apiType:   APITypeGrok,
+			path:      RouteGrokChatCompletions,
+			body:      `{"model":"grok-4","reasoning":{"effort":"high"}}`,
+			wantState: model.ReasoningObservationAbsent,
+		},
+		{
+			name:       "Grok namespaced path",
+			apiType:    APITypeGrok,
+			path:       "/grok/v1/chat/completions",
+			body:       `{"model":"grok-4","reasoning_effort":"high"}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("high"),
+		},
+		{
+			name:       "Claude namespaced path",
+			apiType:    APITypeClaude,
+			path:       "/claude/v1/messages",
+			body:       `{"output_config":{"effort":"low"}}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("low"),
+		},
+		{
+			name:      "Claude namespaced count tokens stays unsupported",
+			apiType:   APITypeClaude,
+			path:      "/claude" + RouteClaudeCountTokens,
+			body:      `{"thinking":{"type":"enabled"}}`,
+			wantState: model.ReasoningObservationUnsupported,
+		},
+		{
 			name:      "supported request without controls",
 			apiType:   APITypeClaude,
 			path:      RouteClaudeMessages,
@@ -72,6 +118,13 @@ func TestExtractRequestedReasoningSupportedShapes(t *testing.T) {
 			apiType:   CustomAPITypePrefix + "tool",
 			path:      RouteClaudeMessages,
 			body:      `{"thinking":{"type":"enabled"}}`,
+			wantState: model.ReasoningObservationUnsupported,
+		},
+		{
+			name:      "Grok on Claude-shaped path",
+			apiType:   APITypeGrok,
+			path:      RouteClaudeMessages,
+			body:      `{"reasoning_effort":"high"}`,
 			wantState: model.ReasoningObservationUnsupported,
 		},
 	}
@@ -122,6 +175,75 @@ func TestExtractRequestedReasoningInvalidDocuments(t *testing.T) {
 			t.Parallel()
 			got := ExtractRequestedReasoning(APITypeCodex, RouteCodexResponses, []byte(test.body))
 			assertReasoningObservation(t, got, model.ReasoningObservationInvalid, test.wantEffort, test.wantMode, nil)
+		})
+	}
+}
+
+func TestExtractRequestedReasoningGrokScalarMember(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		body       string
+		wantState  model.ReasoningObservationState
+		wantEffort *string
+	}{
+		{
+			name:      "null effort",
+			body:      `{"reasoning_effort":null}`,
+			wantState: model.ReasoningObservationInvalid,
+		},
+		{
+			name:      "wrong effort type",
+			body:      `{"reasoning_effort":7}`,
+			wantState: model.ReasoningObservationInvalid,
+		},
+		{
+			name:      "object where scalar expected",
+			body:      `{"reasoning_effort":{"effort":"high"}}`,
+			wantState: model.ReasoningObservationInvalid,
+		},
+		{
+			name:      "over-limit value",
+			body:      `{"reasoning_effort":"` + strings.Repeat("界", model.MaxReasoningValueRunes+1) + `"}`,
+			wantState: model.ReasoningObservationInvalid,
+		},
+		{
+			name:       "duplicate members use last decoded value",
+			body:       `{"reasoning_effort":"low","reasoning_effort":"high"}`,
+			wantState:  model.ReasoningObservationAmbiguous,
+			wantEffort: reasoningStringPointer("high"),
+		},
+		{
+			name:      "invalid duplicate clears earlier value and takes precedence",
+			body:      `{"reasoning_effort":"low","reasoning_effort":false}`,
+			wantState: model.ReasoningObservationInvalid,
+		},
+		{
+			name:       "invalid flag stays sticky across a later valid duplicate",
+			body:       `{"reasoning_effort":false,"reasoning_effort":"high"}`,
+			wantState:  model.ReasoningObservationInvalid,
+			wantEffort: reasoningStringPointer("high"),
+		},
+		{
+			name:       "exact whitespace retention",
+			body:       `{"reasoning_effort":"  HIGH  "}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("  HIGH  "),
+		},
+		{
+			name:       "target after large leading field",
+			body:       `{"messages":[{"role":"user","content":"` + strings.Repeat("x", 2*1024*1024) + `"}],"reasoning_effort":"high"}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("high"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := ExtractRequestedReasoning(APITypeGrok, RouteGrokChatCompletions, []byte(test.body))
+			assertReasoningObservation(t, got, test.wantState, test.wantEffort, nil, nil)
 		})
 	}
 }
