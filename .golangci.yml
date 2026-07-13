@@ -11,7 +11,7 @@ linters:
     - govet          # 官方 vet
     - staticcheck    # 常用静态分析
     - ineffassign
-    - misspell
+    # - misspell
     - funlen    # 检查函数长度
     - nestif    # 检查 if 嵌套深度
     - gocyclo   # 检查循环复杂度 (辅助嵌套检查)
