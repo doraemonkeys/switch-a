@@ -17,7 +17,7 @@ linters:
     - gocyclo   # 检查循环复杂度 (辅助嵌套检查)
     - gocognit   # 检查认知复杂度
     # - lll      # 检查单行长度
-    - revive  # 可以用来扩充更多检查
+    # - revive  # 可以用来扩充更多检查(要求注释太多，砍掉)
     - errcheck       # 检查未处理的错误返回值
     - errorlint      # 检查 Go 1.13+ 错误处理最佳实践
     - bodyclose      # 检查 HTTP response body 是否关闭

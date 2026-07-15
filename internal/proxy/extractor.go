@@ -2,29 +2,22 @@ package proxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	"switch-a/internal/model"
 )
 
-// maxModelExtractBytes is the maximum bytes to read when extracting the model field.
-const maxModelExtractBytes = 128 * 1024 // 128KB
-
 // ModelUnknown is returned when the model cannot be extracted from the request.
 const ModelUnknown = "unknown"
 
-// modelFieldRe matches the "model" field in JSON.
-// Captures: "model":"value" or "model": "value" (with optional whitespace).
-//
-// Note: This regex doesn't handle escaped quotes within model names (e.g., "model": "claude-\"special\"-3").
-// This is acceptable because model names in practice don't contain quotes.
-// Using regex avoids the overhead of full JSON parsing for every request.
-var modelFieldRe = regexp.MustCompile(`"model"\s*:\s*"([^"]+)"`)
+type modelRequestEnvelope struct {
+	Model string `json:"model"`
+}
 
 // MaxUserAgentLength is the maximum length of User-Agent to store.
 // Longer values are truncated to prevent database bloat.
@@ -178,21 +171,17 @@ func extractGeminiModel(path string) string {
 	return modelPart
 }
 
-// extractModelFromJSON extracts the "model" field from JSON body.
-// Uses regex for efficient extraction without parsing full JSON.
-// Reads at most maxModelExtractBytes to handle large requests.
+// Only the top-level model participates in routing; nested model keys may belong
+// to tool schemas or user-provided input rather than the request contract.
 func extractModelFromJSON(body []byte) string {
-	// Limit search to maxModelExtractBytes
-	searchBytes := body
-	if len(searchBytes) > maxModelExtractBytes {
-		searchBytes = searchBytes[:maxModelExtractBytes]
+	var envelope modelRequestEnvelope
+	// Requests are already bounded and buffered before extraction. Decoding only the
+	// routing envelope lets encoding/json skip large prompts and tool definitions
+	// without duplicating them, while still finding fields anywhere in the body.
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Model == "" {
+		return ModelUnknown
 	}
-
-	matches := modelFieldRe.FindSubmatch(searchBytes)
-	if len(matches) >= 2 {
-		return string(matches[1])
-	}
-	return ModelUnknown
+	return envelope.Model
 }
 
 // ConsumeAndReplaceBody reads the request body and returns a buffer containing it.

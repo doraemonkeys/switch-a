@@ -279,6 +279,8 @@ func TestExtractGeminiModel(t *testing.T) {
 }
 
 func TestExtractModelFromJSON(t *testing.T) {
+	const largeRequestPrefixLength = 256 * 1024
+
 	tests := []struct {
 		name      string
 		body      []byte
@@ -300,6 +302,27 @@ func TestExtractModelFromJSON(t *testing.T) {
 			wantModel: "nested-model",
 		},
 		{
+			name: "model after large request prefix",
+			body: []byte(`{"instructions":"` + strings.Repeat("x", largeRequestPrefixLength) +
+				`","model":"gpt-5.6-sol"}`),
+			wantModel: "gpt-5.6-sol",
+		},
+		{
+			name:      "top-level model wins over nested field",
+			body:      []byte(`{"input":[{"model":"tool-model"}],"model":"request-model"}`),
+			wantModel: "request-model",
+		},
+		{
+			name:      "nested model without top-level field",
+			body:      []byte(`{"input":[{"model":"tool-model"}]}`),
+			wantModel: "unknown",
+		},
+		{
+			name:      "escaped model name",
+			body:      []byte(`{"model":"gpt-\u0035"}`),
+			wantModel: "gpt-5",
+		},
+		{
 			name:      "no model field",
 			body:      []byte(`{"other":"value"}`),
 			wantModel: "unknown",
@@ -310,8 +333,23 @@ func TestExtractModelFromJSON(t *testing.T) {
 			wantModel: "unknown",
 		},
 		{
+			name:      "empty model",
+			body:      []byte(`{"model":""}`),
+			wantModel: "unknown",
+		},
+		{
+			name:      "non-string model",
+			body:      []byte(`{"model":42}`),
+			wantModel: "unknown",
+		},
+		{
 			name:      "invalid json",
 			body:      []byte(`not json`),
+			wantModel: "unknown",
+		},
+		{
+			name:      "truncated json with model",
+			body:      []byte(`{"model":"gpt-5"`),
 			wantModel: "unknown",
 		},
 	}
