@@ -2,6 +2,7 @@
 package proxy
 
 import (
+	"net/http"
 	"sort"
 	"strings"
 )
@@ -27,6 +28,8 @@ const (
 	// Codex API routes
 	RouteCodexResponses   = "/responses"
 	RouteCodexResponsesV1 = "/v1/responses"
+	RouteCodexWebSearch   = "/alpha/search"
+	RouteCodexWebSearchV1 = "/v1/alpha/search"
 	// Grok API routes (xAI OpenAI-compatible Chat Completions)
 	RouteGrokChatCompletions   = "/chat/completions"
 	RouteGrokChatCompletionsV1 = "/v1/chat/completions"
@@ -35,6 +38,53 @@ const (
 	// Custom API routes (prefix)
 	RouteCustomPrefix = "/custom/"
 )
+
+// BareProxyRoute is an HTTP route exposed directly at the gateway root.
+// API-type ownership remains internal so callers can register the transport
+// contract without duplicating routing policy.
+type BareProxyRoute struct {
+	Method  string
+	Pattern string
+}
+
+type bareProxyRouteDefinition struct {
+	method  string
+	pattern string
+	apiType string
+}
+
+// bareProxyRouteDefinitions is the single source of truth for root-level API
+// contracts. Keeping mux registration and request classification on the same
+// catalog prevents a route from being recognized by Handler but unreachable
+// through the real server (or vice versa).
+var bareProxyRouteDefinitions = []bareProxyRouteDefinition{
+	{method: http.MethodPost, pattern: RouteClaudeCountTokens, apiType: APITypeClaude},
+	{method: http.MethodPost, pattern: RouteClaudeMessages, apiType: APITypeClaude},
+	{method: http.MethodGet, pattern: RouteClaudeModels, apiType: APITypeClaude},
+	{method: http.MethodPost, pattern: RouteCodexResponses, apiType: APITypeCodex},
+	{method: http.MethodGet, pattern: RouteCodexResponses, apiType: APITypeCodex},
+	{method: http.MethodPost, pattern: RouteCodexResponsesV1, apiType: APITypeCodex},
+	{method: http.MethodGet, pattern: RouteCodexResponsesV1, apiType: APITypeCodex},
+	{method: http.MethodPost, pattern: RouteCodexWebSearch, apiType: APITypeCodex},
+	{method: http.MethodPost, pattern: RouteCodexWebSearchV1, apiType: APITypeCodex},
+	{method: http.MethodPost, pattern: RouteGrokChatCompletions, apiType: APITypeGrok},
+	{method: http.MethodPost, pattern: RouteGrokChatCompletionsV1, apiType: APITypeGrok},
+	{method: http.MethodPost, pattern: RouteGeminiV1Beta, apiType: APITypeGemini},
+}
+
+// BareProxyRoutes returns a copy of the root-level HTTP contract for server
+// registration. Returning value objects prevents consumers from mutating the
+// catalog used to resolve API types.
+func BareProxyRoutes() []BareProxyRoute {
+	routes := make([]BareProxyRoute, 0, len(bareProxyRouteDefinitions))
+	for _, route := range bareProxyRouteDefinitions {
+		routes = append(routes, BareProxyRoute{
+			Method:  route.method,
+			Pattern: route.pattern,
+		})
+	}
+	return routes
+}
 
 // builtinAPINamespaces maps explicit URL namespaces to built-in API types.
 // Bare contract paths cannot distinguish two upstream vendors that share a
@@ -66,8 +116,14 @@ func APINamespaceRoutePatterns() []string {
 // path: "/grok/v1/chat/completions" → ("grok", "/v1/chat/completions", true).
 // Returns ok=false when the first path segment is not a built-in namespace.
 func SplitAPINamespace(path string) (apiType, contractPath string, ok bool) {
+	if !strings.HasPrefix(path, "/") {
+		return "", "", false
+	}
 	trimmed := strings.TrimPrefix(path, "/")
-	segment, remainder, _ := strings.Cut(trimmed, "/")
+	segment, remainder, hasContractPath := strings.Cut(trimmed, "/")
+	if !hasContractPath {
+		return "", "", false
+	}
 	apiType, ok = builtinAPINamespaces[segment]
 	if !ok {
 		return "", "", false
@@ -75,55 +131,55 @@ func SplitAPINamespace(path string) (apiType, contractPath string, ok bool) {
 	return apiType, "/" + remainder, true
 }
 
-// ParseAPIType determines the API type from the request path.
-// Returns the API type and a boolean indicating if the type was recognized.
+// ResolveAPIType determines the API type from the request method and path.
+// It mirrors the methods and exact/subtree matching semantics registered with
+// http.ServeMux so direct Handler use cannot accept requests that the server
+// itself would reject.
 //
 // Explicit namespaces pin the type without contract-path sniffing:
 //   - /claude/*, /codex/*, /grok/*, /gemini/* → the corresponding built-in type
 //   - /custom/:toolId/* → custom:{toolId}
 //
-// Bare contract paths are matched by the shape native tools emit:
-//   - POST /v1/messages, GET /v1/models → claude
-//   - POST /responses, POST /v1/responses → codex
-//   - POST /chat/completions, POST /v1/chat/completions → grok
-//   - POST /v1beta/* → gemini
-func ParseAPIType(path string) (apiType string, ok bool) {
-	if namespaceType, _, isNamespaced := SplitAPINamespace(path); isNamespaced {
+// Bare contract paths are resolved from bareProxyRouteDefinitions.
+func ResolveAPIType(method, path string) (apiType string, ok bool) {
+	if namespaceType, _, isNamespaced := SplitAPINamespace(path); isNamespaced && supportsSharedProxyMethod(method) {
 		return namespaceType, true
 	}
 
-	// Normalize path
-	path = strings.TrimPrefix(path, "/")
-
-	// Claude API
-	if strings.HasPrefix(path, "v1/messages") || strings.HasPrefix(path, "v1/models") {
-		return APITypeClaude, true
-	}
-
-	// Codex API
-	if strings.HasPrefix(path, "responses") || strings.HasPrefix(path, "v1/responses") {
-		return APITypeCodex, true
-	}
-
-	// Grok API
-	if strings.HasPrefix(path, "chat/completions") || strings.HasPrefix(path, "v1/chat/completions") {
-		return APITypeGrok, true
-	}
-
-	// Gemini native contract path
-	if strings.HasPrefix(path, "v1beta/") {
-		return APITypeGemini, true
+	for _, route := range bareProxyRouteDefinitions {
+		if routeMatchesRequest(route, method, path) {
+			return route.apiType, true
+		}
 	}
 
 	// Custom API: /custom/:toolId/...
-	if strings.HasPrefix(path, "custom/") {
-		parts := strings.SplitN(path, "/", 3)
-		if len(parts) >= 2 && parts[1] != "" {
-			return CustomAPITypePrefix + parts[1], true
+	if supportsSharedProxyMethod(method) && strings.HasPrefix(path, RouteCustomPrefix) {
+		remainder := strings.TrimPrefix(path, RouteCustomPrefix)
+		toolID, _, _ := strings.Cut(remainder, "/")
+		if toolID != "" {
+			return CustomAPITypePrefix + toolID, true
 		}
 	}
 
 	return "", false
+}
+
+func routeMatchesRequest(route bareProxyRouteDefinition, method, path string) bool {
+	if !routeMethodMatches(route.method, method) {
+		return false
+	}
+	if strings.HasSuffix(route.pattern, "/") {
+		return strings.HasPrefix(path, route.pattern)
+	}
+	return path == route.pattern
+}
+
+func routeMethodMatches(routeMethod, requestMethod string) bool {
+	return routeMethod == requestMethod || routeMethod == http.MethodGet && requestMethod == http.MethodHead
+}
+
+func supportsSharedProxyMethod(method string) bool {
+	return method == http.MethodPost || routeMethodMatches(http.MethodGet, method)
 }
 
 // BuildUpstreamPath constructs the upstream request path.

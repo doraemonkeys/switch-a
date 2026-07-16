@@ -240,8 +240,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse API type from path
-	apiType, ok := ParseAPIType(r.URL.Path)
+	// Resolve the API contract from the same method/path catalog used by the
+	// server mux so direct Handler callers observe identical route semantics.
+	apiType, ok := ResolveAPIType(r.Method, r.URL.Path)
 	if !ok {
 		h.logger.Warn("unknown API type", zap.String("path", r.URL.Path))
 		h.writeGatewayError(w, http.StatusBadRequest, ErrCodeUnknownAPIType, fmt.Sprintf("Unknown API path: %s", r.URL.Path))

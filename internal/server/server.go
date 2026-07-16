@@ -178,21 +178,12 @@ func New(cfg Config) *Server {
 	// Register routes
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	// Proxy API routes (no auth required)
-	// Claude API (register specific subpaths before the parent to ensure exact matching)
-	mux.HandleFunc("POST "+proxy.RouteClaudeCountTokens, s.handleProxy)
-	mux.HandleFunc("POST "+proxy.RouteClaudeMessages, s.handleProxy)
-	mux.HandleFunc("GET "+proxy.RouteClaudeModels, s.handleProxy)
-	// Codex API
-	mux.HandleFunc("POST "+proxy.RouteCodexResponses, s.handleProxy)
-	mux.HandleFunc("GET "+proxy.RouteCodexResponses, s.handleProxy) // WebSocket upgrade (OpenAI Realtime API)
-	mux.HandleFunc("POST "+proxy.RouteCodexResponsesV1, s.handleProxy)
-	mux.HandleFunc("GET "+proxy.RouteCodexResponsesV1, s.handleProxy)
-	// Grok API (xAI OpenAI-compatible Chat Completions)
-	mux.HandleFunc("POST "+proxy.RouteGrokChatCompletions, s.handleProxy)
-	mux.HandleFunc("POST "+proxy.RouteGrokChatCompletionsV1, s.handleProxy)
-	// Gemini API (native contract path)
-	mux.HandleFunc("POST "+proxy.RouteGeminiV1Beta, s.handleProxy)
+	// Proxy API routes (no auth required). Root-level contracts share their
+	// catalog with Handler resolution so adding an endpoint cannot update only
+	// one of the two routing layers.
+	for _, route := range proxy.BareProxyRoutes() {
+		mux.HandleFunc(route.Method+" "+route.Pattern, s.handleProxy)
+	}
 	// Explicit API namespaces (/claude/*, /codex/*, /grok/*, /gemini/*):
 	// clients pin the API type in their base URL when bare contract paths are
 	// ambiguous across vendors. GET is registered for model discovery

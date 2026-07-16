@@ -95,7 +95,7 @@ Defined in `internal/interfaces.go`:
 ## Request Flow
 
 1. **Proxy receives request** → `internal/proxy/handler.go`
-2. **Extract API type** from path → `internal/proxy/extractor.go`
+2. **Resolve API contract** from the shared method/path catalog → `internal/proxy/router.go`
 3. **Select provider** (strategy + health + sticky + concurrency) → `internal/selector/selector.go`
 4. **Forward request** with retry/failover → `internal/proxy/transport.go`
 5. **Log result** (tokens, latency, attempts) → `internal/store/sqlite_logs.go`

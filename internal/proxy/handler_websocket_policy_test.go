@@ -261,7 +261,9 @@ func TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected(t *testing.T) {
 		method  string
 		path    string
 	}{
-		{apiType: "claude", method: http.MethodGet, path: "/v1/messages"},
+		// Bare Claude messages register POST only; the explicit namespace is the
+		// GET shape the real mux can deliver for an attempted WebSocket upgrade.
+		{apiType: "claude", method: http.MethodGet, path: "/claude/v1/messages"},
 		// Grok routes register POST only, so POST is the only upgrade-carrying
 		// shape the real mux can deliver to the handler (GET dies at the mux 404).
 		{apiType: "grok", method: http.MethodPost, path: "/chat/completions"},

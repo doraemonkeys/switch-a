@@ -4,208 +4,234 @@ import (
 	"testing"
 )
 
-func TestParseAPIType(t *testing.T) {
+func TestResolveAPIType(t *testing.T) {
 	tests := []struct {
 		name     string
+		method   string
 		path     string
 		wantType string
 		wantOK   bool
 	}{
-		// Claude API paths
 		{
-			name:     "claude messages with leading slash",
+			name:     "claude messages",
+			method:   "POST",
 			path:     "/v1/messages",
 			wantType: APITypeClaude,
 			wantOK:   true,
 		},
 		{
-			name:     "claude messages without leading slash",
-			path:     "v1/messages",
-			wantType: APITypeClaude,
-			wantOK:   true,
-		},
-		{
-			name:     "claude count_tokens",
+			name:     "claude count tokens",
+			method:   "POST",
 			path:     "/v1/messages/count_tokens",
 			wantType: APITypeClaude,
 			wantOK:   true,
 		},
 		{
-			name:     "claude messages with trailing path",
-			path:     "/v1/messages/stream",
-			wantType: APITypeClaude,
-			wantOK:   true,
-		},
-		{
 			name:     "claude models",
+			method:   "GET",
 			path:     "/v1/models",
 			wantType: APITypeClaude,
 			wantOK:   true,
 		},
 		{
-			name:     "claude models with subpath",
-			path:     "/v1/models/claude-3",
+			name:     "head follows get route semantics",
+			method:   "HEAD",
+			path:     "/v1/models",
 			wantType: APITypeClaude,
 			wantOK:   true,
 		},
-
-		// Codex API paths
+		{
+			name:     "wrong method for claude models",
+			method:   "POST",
+			path:     "/v1/models",
+			wantType: "",
+			wantOK:   false,
+		},
+		{
+			name:     "bare routes are exact",
+			method:   "POST",
+			path:     "/v1/messages/stream",
+			wantType: "",
+			wantOK:   false,
+		},
 		{
 			name:     "codex responses",
+			method:   "POST",
 			path:     "/responses",
 			wantType: APITypeCodex,
 			wantOK:   true,
 		},
 		{
-			name:     "codex responses with subpath",
-			path:     "/responses/submit",
+			name:     "codex responses websocket route",
+			method:   "GET",
+			path:     "/responses",
 			wantType: APITypeCodex,
 			wantOK:   true,
 		},
 		{
 			name:     "codex v1 responses",
+			method:   "POST",
 			path:     "/v1/responses",
 			wantType: APITypeCodex,
 			wantOK:   true,
 		},
-
-		// Grok API paths
+		{
+			name:     "codex web search",
+			method:   "POST",
+			path:     "/alpha/search",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
+		{
+			name:     "codex v1 web search",
+			method:   "POST",
+			path:     "/v1/alpha/search",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
+		{
+			name:     "codex web search is post only",
+			method:   "GET",
+			path:     "/alpha/search",
+			wantType: "",
+			wantOK:   false,
+		},
+		{
+			name:     "codex web search sibling is not accepted",
+			method:   "POST",
+			path:     "/alpha/searching",
+			wantType: "",
+			wantOK:   false,
+		},
 		{
 			name:     "grok chat completions",
+			method:   "POST",
 			path:     "/chat/completions",
 			wantType: APITypeGrok,
 			wantOK:   true,
 		},
 		{
-			name:     "grok chat completions without leading slash",
-			path:     "chat/completions",
-			wantType: APITypeGrok,
-			wantOK:   true,
-		},
-		{
 			name:     "grok v1 chat completions",
+			method:   "POST",
 			path:     "/v1/chat/completions",
 			wantType: APITypeGrok,
 			wantOK:   true,
 		},
-
-		// Gemini API paths
-		{
-			name:     "gemini v1beta",
-			path:     "/gemini/v1beta/models/gemini-pro:generateContent",
-			wantType: APITypeGemini,
-			wantOK:   true,
-		},
-		{
-			name:     "gemini v1",
-			path:     "/gemini/v1/models/gemini-pro:generateContent",
-			wantType: APITypeGemini,
-			wantOK:   true,
-		},
-		{
-			name:     "gemini simple",
-			path:     "/gemini/",
-			wantType: APITypeGemini,
-			wantOK:   true,
-		},
 		{
 			name:     "gemini native v1beta path",
+			method:   "POST",
 			path:     "/v1beta/models/gemini-2.5-flash-lite:generateContent",
 			wantType: APITypeGemini,
 			wantOK:   true,
 		},
 		{
-			name:     "gemini native v1beta stream path",
-			path:     "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
-			wantType: APITypeGemini,
-			wantOK:   true,
+			name:     "gemini native route is post only",
+			method:   "GET",
+			path:     "/v1beta/models/gemini-2.5-flash-lite",
+			wantType: "",
+			wantOK:   false,
 		},
-
-		// Explicit API namespaces
 		{
 			name:     "claude namespace",
+			method:   "POST",
 			path:     "/claude/v1/messages",
 			wantType: APITypeClaude,
 			wantOK:   true,
 		},
 		{
-			name:     "claude namespace models",
+			name:     "namespace head follows get route semantics",
+			method:   "HEAD",
 			path:     "/claude/v1/models",
 			wantType: APITypeClaude,
 			wantOK:   true,
 		},
 		{
-			name:     "codex namespace",
-			path:     "/codex/responses",
+			name:     "codex web search namespace",
+			method:   "POST",
+			path:     "/codex/alpha/search",
 			wantType: APITypeCodex,
 			wantOK:   true,
 		},
 		{
 			name:     "grok namespace",
+			method:   "POST",
 			path:     "/grok/chat/completions",
 			wantType: APITypeGrok,
 			wantOK:   true,
 		},
 		{
-			name:     "grok namespace with v1",
-			path:     "/grok/v1/chat/completions",
-			wantType: APITypeGrok,
+			name:     "gemini namespace",
+			method:   "POST",
+			path:     "/gemini/v1/models/gemini-pro:generateContent",
+			wantType: APITypeGemini,
 			wantOK:   true,
 		},
 		{
-			name:     "bare namespace without contract path",
+			name:     "namespace unsupported method",
+			method:   "DELETE",
+			path:     "/claude/v1/messages",
+			wantType: "",
+			wantOK:   false,
+		},
+		{
+			name:     "bare namespace is handled by mux redirect",
+			method:   "POST",
 			path:     "/claude",
-			wantType: APITypeClaude,
-			wantOK:   true,
+			wantType: "",
+			wantOK:   false,
 		},
 		{
 			name:     "namespace-like segment is not a namespace",
+			method:   "POST",
 			path:     "/claudex/v1/messages",
 			wantType: "",
 			wantOK:   false,
 		},
-
-		// Custom API paths
 		{
 			name:     "custom tool messages",
+			method:   "POST",
 			path:     "/custom/mytool/v1/messages",
 			wantType: "custom:mytool",
 			wantOK:   true,
 		},
 		{
-			name:     "custom tool models",
+			name:     "custom get route",
+			method:   "GET",
 			path:     "/custom/search/v1/models",
 			wantType: "custom:search",
 			wantOK:   true,
 		},
 		{
-			name:     "custom tool with hyphens",
-			path:     "/custom/my-custom-tool/v1/messages",
-			wantType: "custom:my-custom-tool",
-			wantOK:   true,
+			name:     "custom unsupported method",
+			method:   "PATCH",
+			path:     "/custom/mytool/v1/messages",
+			wantType: "",
+			wantOK:   false,
 		},
-
-		// Invalid paths
 		{
 			name:     "unknown path",
+			method:   "POST",
 			path:     "/unknown/path",
 			wantType: "",
 			wantOK:   false,
 		},
 		{
-			name:     "empty path",
-			path:     "",
+			name:     "path without leading slash",
+			method:   "POST",
+			path:     "v1/messages",
 			wantType: "",
 			wantOK:   false,
 		},
 		{
 			name:     "root path",
+			method:   "POST",
 			path:     "/",
 			wantType: "",
 			wantOK:   false,
 		},
 		{
 			name:     "custom without toolId",
+			method:   "POST",
 			path:     "/custom/",
 			wantType: "",
 			wantOK:   false,
@@ -214,12 +240,42 @@ func TestParseAPIType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType, gotOK := ParseAPIType(tt.path)
+			gotType, gotOK := ResolveAPIType(tt.method, tt.path)
 			if gotType != tt.wantType || gotOK != tt.wantOK {
-				t.Errorf("ParseAPIType(%q) = (%q, %v), want (%q, %v)",
-					tt.path, gotType, gotOK, tt.wantType, tt.wantOK)
+				t.Errorf("ResolveAPIType(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.method, tt.path, gotType, gotOK, tt.wantType, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestBareProxyRoutes(t *testing.T) {
+	routes := BareProxyRoutes()
+	seen := make(map[string]bool, len(routes))
+	foundSearch := false
+	foundVersionedSearch := false
+
+	for _, route := range routes {
+		key := route.Method + " " + route.Pattern
+		if seen[key] {
+			t.Fatalf("duplicate bare proxy route %q", key)
+		}
+		seen[key] = true
+
+		if _, ok := ResolveAPIType(route.Method, route.Pattern); !ok {
+			t.Fatalf("registered route %q cannot be resolved", key)
+		}
+		foundSearch = foundSearch || key == "POST "+RouteCodexWebSearch
+		foundVersionedSearch = foundVersionedSearch || key == "POST "+RouteCodexWebSearchV1
+	}
+
+	if !foundSearch || !foundVersionedSearch {
+		t.Fatalf("Codex web-search routes missing: bare=%v v1=%v", foundSearch, foundVersionedSearch)
+	}
+
+	routes[0] = BareProxyRoute{Method: "DELETE", Pattern: "/mutated"}
+	if fresh := BareProxyRoutes()[0]; fresh.Method == "DELETE" || fresh.Pattern == "/mutated" {
+		t.Fatal("BareProxyRoutes exposed mutable catalog state")
 	}
 }
 
@@ -253,6 +309,18 @@ func TestBuildUpstreamPath(t *testing.T) {
 			originalPath: "/v1/responses",
 			apiType:      APITypeCodex,
 			wantPath:     "/responses",
+		},
+		{
+			name:         "codex web search passthrough",
+			originalPath: RouteCodexWebSearch,
+			apiType:      APITypeCodex,
+			wantPath:     RouteCodexWebSearch,
+		},
+		{
+			name:         "codex v1 web search normalizes",
+			originalPath: RouteCodexWebSearchV1,
+			apiType:      APITypeCodex,
+			wantPath:     RouteCodexWebSearch,
 		},
 		{
 			name:         "grok passthrough",
@@ -295,6 +363,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 			originalPath: "/codex/v1/responses",
 			apiType:      APITypeCodex,
 			wantPath:     "/responses",
+		},
+		{
+			name:         "codex namespace strips from web search",
+			originalPath: "/codex/alpha/search",
+			apiType:      APITypeCodex,
+			wantPath:     RouteCodexWebSearch,
 		},
 		{
 			name:         "grok namespace normalizes v1",

@@ -61,7 +61,10 @@ func ExtractRequestedReasoning(apiType, path string, body []byte) model.Requeste
 
 func supportsReasoningObservation(apiType, path string) bool {
 	return apiType == APITypeClaude && path == RouteClaudeMessages ||
-		apiType == APITypeCodex && (path == RouteCodexResponses || path == RouteCodexResponsesV1) ||
+		apiType == APITypeCodex && (path == RouteCodexResponses ||
+			path == RouteCodexResponsesV1 ||
+			path == RouteCodexWebSearch ||
+			path == RouteCodexWebSearchV1) ||
 		apiType == APITypeGrok && (path == RouteGrokChatCompletions || path == RouteGrokChatCompletionsV1)
 }
 
