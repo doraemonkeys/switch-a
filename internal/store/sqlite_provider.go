@@ -54,14 +54,15 @@ func (s *SQLiteStore) GetProvider(ctx context.Context, id string) (*model.Provid
 	return &provider, nil
 }
 
-func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) error {
+func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider, options ...ProviderWriteOptions) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		writeOptions := resolveProviderWriteOptions(options)
 		supplemental := resolveProviderSupplementalState(p, &persistedProviderState{})
 		bindingAccountID := (*string)(nil)
 		if supplemental.credential != nil {
 			bindingAccountID = supplemental.credential.BindingAccountID
 		}
-		if err := validateExclusiveCredentialBinding(tx, p.ID, bindingAccountID); err != nil {
+		if err := resolveCredentialBinding(tx, p.ID, bindingAccountID, writeOptions.CredentialBindingResolution); err != nil {
 			return err
 		}
 
@@ -114,8 +115,9 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider) err
 	return nil
 }
 
-func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) error {
+func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider, options ...ProviderWriteOptions) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		writeOptions := resolveProviderWriteOptions(options)
 		current, err := loadPersistedProviderState(tx, p.ID)
 		if err != nil {
 			return err
@@ -125,7 +127,7 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider) err
 		if supplemental.credential != nil {
 			bindingAccountID = supplemental.credential.BindingAccountID
 		}
-		if err := validateExclusiveCredentialBinding(tx, p.ID, bindingAccountID); err != nil {
+		if err := resolveCredentialBinding(tx, p.ID, bindingAccountID, writeOptions.CredentialBindingResolution); err != nil {
 			return err
 		}
 		missingPolicy, err := findExactProviderRoutingPolicyMissingAPIType(tx, p.ID, providerAPITypeSet(p.APITypes))

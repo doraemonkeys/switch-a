@@ -130,18 +130,18 @@ type loginCommitTrackingStore struct {
 	commitSeenDuringUpdate bool
 }
 
-func (s *loginCommitTrackingStore) CreateProvider(ctx context.Context, provider *model.Provider) error {
+func (s *loginCommitTrackingStore) CreateProvider(ctx context.Context, provider *model.Provider, options ...storepkg.ProviderWriteOptions) error {
 	if s.auth.finalizeCalls != 0 {
 		s.commitSeenDuringCreate = true
 	}
-	return s.mockStore.CreateProvider(ctx, provider)
+	return s.mockStore.CreateProvider(ctx, provider, options...)
 }
 
-func (s *loginCommitTrackingStore) UpdateProvider(ctx context.Context, provider *model.Provider) error {
+func (s *loginCommitTrackingStore) UpdateProvider(ctx context.Context, provider *model.Provider, options ...storepkg.ProviderWriteOptions) error {
 	if s.auth.finalizeCalls != 0 {
 		s.commitSeenDuringUpdate = true
 	}
-	return s.mockStore.UpdateProvider(ctx, provider)
+	return s.mockStore.UpdateProvider(ctx, provider, options...)
 }
 
 func mustMarshalChatGPTCredentialData(t *testing.T) string {
@@ -705,6 +705,17 @@ func TestCreateProvider_ChatGPTLoginConflictReturnsConflictAndDoesNotFinalize(t 
 	}
 	if !strings.Contains(w.Body.String(), `existing-provider`) {
 		t.Fatalf("response body = %q, want conflicting provider id", w.Body.String())
+	}
+	var conflictResponse struct {
+		Details map[string]string `json:"details"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &conflictResponse); err != nil {
+		t.Fatalf("decode conflict response: %v", err)
+	}
+	if conflictResponse.Details["kind"] != "credential_binding" ||
+		conflictResponse.Details["account_id"] != "acct_test" ||
+		conflictResponse.Details["provider_id"] != "existing-provider" {
+		t.Fatalf("conflict details = %#v, want credential binding metadata", conflictResponse.Details)
 	}
 	if auth.applyCalls != 1 {
 		t.Fatalf("ApplyChatGPTLogin calls = %d, want 1", auth.applyCalls)

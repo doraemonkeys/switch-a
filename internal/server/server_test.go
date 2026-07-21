@@ -24,9 +24,13 @@ func (m *mockStore) ListProvidersByAPIType(context.Context, string) ([]model.Pro
 	return nil, nil
 }
 func (m *mockStore) GetProvider(context.Context, string) (*model.Provider, error) { return nil, nil }
-func (m *mockStore) CreateProvider(context.Context, *model.Provider) error        { return nil }
-func (m *mockStore) UpdateProvider(context.Context, *model.Provider) error        { return nil }
-func (m *mockStore) DeleteProvider(context.Context, string) error                 { return nil }
+func (m *mockStore) CreateProvider(context.Context, *model.Provider, ...model.ProviderWriteOptions) error {
+	return nil
+}
+func (m *mockStore) UpdateProvider(context.Context, *model.Provider, ...model.ProviderWriteOptions) error {
+	return nil
+}
+func (m *mockStore) DeleteProvider(context.Context, string) error { return nil }
 
 func (m *mockStore) ListRoutingPolicies(context.Context) ([]model.RoutingPolicy, error) {
 	return []model.RoutingPolicy{}, nil

@@ -31,6 +31,7 @@ import type {
   ActiveRequestsResponse,
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatusResponse,
+  ApiErrorDetails,
 } from "./types";
 
 // Re-export types for consumers
@@ -92,12 +93,19 @@ export type {
 export class ApiError extends Error {
   code: string;
   status: number;
+  details?: ApiErrorDetails;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    details?: ApiErrorDetails,
+  ) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -241,6 +249,7 @@ function createRequest(
         data.code || "UNKNOWN_ERROR",
         data.message || response.statusText,
         response.status,
+        data.details,
       );
     }
 

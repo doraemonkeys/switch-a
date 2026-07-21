@@ -15,8 +15,8 @@ type Store interface {
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	ListProvidersByAPIType(ctx context.Context, apiType string) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (*model.Provider, error)
-	CreateProvider(ctx context.Context, p *model.Provider) error
-	UpdateProvider(ctx context.Context, p *model.Provider) error
+	CreateProvider(ctx context.Context, p *model.Provider, options ...model.ProviderWriteOptions) error
+	UpdateProvider(ctx context.Context, p *model.Provider, options ...model.ProviderWriteOptions) error
 	UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error
 	DeleteProvider(ctx context.Context, id string) error
 

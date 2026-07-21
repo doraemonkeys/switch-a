@@ -19,6 +19,7 @@ export type {
   BuiltInAPIType,
   ConfigKey,
   ErrorCode,
+  ApiErrorDetails,
   ErrorResponse,
   // Provider types
   BackoffPolicy,

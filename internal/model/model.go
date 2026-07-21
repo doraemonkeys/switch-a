@@ -513,8 +513,9 @@ func NewGatewayError(code, message string) GatewayError {
 
 // ErrorResponse represents a management API error response.
 type ErrorResponse struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string            `json:"code"`
+	Message string            `json:"message"`
+	Details map[string]string `json:"details,omitempty"`
 }
 
 // LogStats represents aggregated statistics from request logs.

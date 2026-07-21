@@ -15,6 +15,29 @@ const (
 	ProviderCredentialTypeChatGPT ProviderCredentialType = "chatgpt"
 )
 
+// CredentialBindingResolution describes how a provider write handles a ChatGPT
+// account that is already bound to another provider. Reject is the safe default;
+// Replace is only used after an explicit confirmation in the admin UI.
+type CredentialBindingResolution string
+
+const (
+	CredentialBindingResolutionReject  CredentialBindingResolution = "reject"
+	CredentialBindingResolutionReplace CredentialBindingResolution = "replace"
+)
+
+// ProviderWriteOptions carries explicit persistence decisions that are applied
+// atomically with a provider mutation.
+type ProviderWriteOptions struct {
+	CredentialBindingResolution CredentialBindingResolution
+}
+
+// IsValidCredentialBindingResolution reports whether a write resolution is supported.
+func IsValidCredentialBindingResolution(value CredentialBindingResolution) bool {
+	return value == "" ||
+		value == CredentialBindingResolutionReject ||
+		value == CredentialBindingResolutionReplace
+}
+
 // IsValidProviderCredentialType reports whether the credential type is supported.
 // Empty values remain valid so pre-migration records normalize to the static API-key mode.
 func IsValidProviderCredentialType(value ProviderCredentialType) bool {

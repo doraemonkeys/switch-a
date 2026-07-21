@@ -688,6 +688,47 @@ func TestCreateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 	}
 }
 
+func TestCreateProvider_ReplacesDuplicateChatGPTCredentialBindingWhenConfirmed(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p1",
+		Name:           "GPT One",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("p1", mustMarshalChatGPTCredentialData(t, "acct-shared")),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p1 failed: %v", err)
+	}
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p2",
+		Name:           "GPT Two",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("p2", mustMarshalChatGPTCredentialData(t, "acct-shared")),
+		Enabled:        true,
+	}, ProviderWriteOptions{
+		CredentialBindingResolution: model.CredentialBindingResolutionReplace,
+	}); err != nil {
+		t.Fatalf("CreateProvider replacement failed: %v", err)
+	}
+
+	previous, err := store.GetProvider(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetProvider p1 failed: %v", err)
+	}
+	if previous.Credential != nil || previous.AuthState == nil || previous.AuthState.Status != model.ProviderAuthStatusNotConnected {
+		t.Fatalf("previous provider credential state = %#v/%#v, want cleared/not_connected", previous.Credential, previous.AuthState)
+	}
+	current, err := store.GetProvider(ctx, "p2")
+	if err != nil {
+		t.Fatalf("GetProvider p2 failed: %v", err)
+	}
+	if current.Credential == nil || current.Credential.BindingAccountID == nil || *current.Credential.BindingAccountID != "acct-shared" {
+		t.Fatalf("new provider credential = %#v, want acct-shared", current.Credential)
+	}
+}
+
 func TestUpdateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 	store := setupTestStore(t)
 	ctx := context.Background()
@@ -728,6 +769,57 @@ func TestUpdateProvider_RejectsDuplicateChatGPTCredentialBinding(t *testing.T) {
 	}
 	if got.Credential == nil || got.Credential.BindingAccountID == nil || *got.Credential.BindingAccountID != "acct-two" {
 		t.Fatalf("Credential.BindingAccountID = %v, want acct-two", got.Credential)
+	}
+}
+
+func TestUpdateProvider_ReplacesDuplicateChatGPTCredentialBindingWhenConfirmed(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p1",
+		Name:           "GPT One",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("p1", mustMarshalChatGPTCredentialData(t, "acct-one")),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p1 failed: %v", err)
+	}
+	if err := store.CreateProvider(ctx, &model.Provider{
+		ID:             "p2",
+		Name:           "GPT Two",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("p2", mustMarshalChatGPTCredentialData(t, "acct-two")),
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("CreateProvider p2 failed: %v", err)
+	}
+
+	if err := store.UpdateProvider(ctx, &model.Provider{
+		ID:             "p2",
+		Name:           "GPT Two Updated",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential:     testProviderCredential("p2", mustMarshalChatGPTCredentialData(t, "acct-one")),
+		Enabled:        true,
+	}, ProviderWriteOptions{
+		CredentialBindingResolution: model.CredentialBindingResolutionReplace,
+	}); err != nil {
+		t.Fatalf("UpdateProvider replacement failed: %v", err)
+	}
+
+	previous, err := store.GetProvider(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetProvider p1 failed: %v", err)
+	}
+	if previous.Credential != nil || previous.AuthState == nil || previous.AuthState.Status != model.ProviderAuthStatusNotConnected {
+		t.Fatalf("previous provider credential state = %#v/%#v, want cleared/not_connected", previous.Credential, previous.AuthState)
+	}
+	current, err := store.GetProvider(ctx, "p2")
+	if err != nil {
+		t.Fatalf("GetProvider p2 failed: %v", err)
+	}
+	if current.Credential == nil || current.Credential.BindingAccountID == nil || *current.Credential.BindingAccountID != "acct-one" {
+		t.Fatalf("updated provider credential = %#v, want acct-one", current.Credential)
 	}
 }
 

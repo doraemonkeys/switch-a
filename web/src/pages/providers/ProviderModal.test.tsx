@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ProviderModal } from "./ProviderModal";
 import { ApiContext } from "../../api/context";
 import type { ApiClient } from "../../api/client";
-import type { Provider } from "../../api";
+import { ApiError, type Provider } from "../../api";
 import {
   ADD_PROVIDER_DEFAULTS,
   AUTH_MODES,
@@ -547,6 +547,74 @@ describe("ProviderModal token import", () => {
         },
       ],
     });
+  });
+
+  it("asks before replacing an account already bound to another provider", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiError(
+          "CONFLICT",
+          'GPT account "acct-shared" is already bound to provider "old-provider"',
+          409,
+          {
+            kind: "credential_binding",
+            account_id: "acct-shared",
+            provider_id: "old-provider",
+          },
+        ),
+      )
+      .mockResolvedValueOnce(undefined);
+    const mockApi = {
+      providers: {
+        importChatGPTLogin: vi.fn().mockResolvedValue({
+          login_id: "login-replace",
+          status: "completed",
+          auth: {
+            type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+            status: "active",
+            account_id: "acct-shared",
+          },
+        }),
+      },
+    } as unknown as ApiClient;
+
+    render(
+      <ApiContext.Provider value={mockApi}>
+        <ProviderModal onClose={onClose} onSubmit={onSubmit} groups={[]} />
+      </ApiContext.Provider>,
+    );
+
+    await user.type(screen.getByLabelText("Name"), "Replacement GPT");
+    await user.selectOptions(
+      screen.getByLabelText("Credential Type"),
+      PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    );
+    await user.click(screen.getByLabelText("Import via token"));
+    await user.paste('{"tokens":{"access_token":"acc","refresh_token":"ref"}}');
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+    await screen.findByText(
+      "GPT login completed. Save the provider to persist it.",
+    );
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "GPT account already connected",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/old-provider/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Replace account" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(onSubmit.mock.calls[1]?.[0]).toMatchObject({
+      credential_login_id: "login-replace",
+      credential_binding_resolution: "replace",
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the pasted token editable when import fails", async () => {

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useId } from "react";
 import type { FormEvent } from "react";
 import type { Provider, ProviderInput } from "../../api";
+import { ApiError } from "../../api";
+import { ConfirmModal } from "../../components";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { useChatGPTLogin } from "./useChatGPTLogin";
 import { isValidId } from "../../lib/utils";
@@ -121,6 +123,42 @@ type ProviderSubmissionPreparation =
   | { kind: "id-error"; message: string }
   | { kind: "form-error"; message: string };
 
+interface CredentialBindingConflict {
+  payload: ProviderInput;
+  accountId?: string;
+  providerId?: string;
+}
+
+function getCredentialBindingConflict(
+  error: unknown,
+  payload: ProviderInput,
+): CredentialBindingConflict | null {
+  if (
+    !(error instanceof ApiError) ||
+    error.details?.kind !== "credential_binding"
+  ) {
+    return null;
+  }
+  return {
+    payload,
+    accountId: error.details.account_id,
+    providerId: error.details.provider_id,
+  };
+}
+
+function describeCredentialBindingConflict(
+  conflict: CredentialBindingConflict | null,
+): string {
+  if (!conflict) {
+    return "This GPT account is already connected. Replace the previous credential data with this login? The previous provider will become disconnected.";
+  }
+  const account = conflict.accountId ? ` (${conflict.accountId})` : "";
+  const provider = conflict.providerId
+    ? `provider "${conflict.providerId}"`
+    : "another provider";
+  return `This GPT account${account} is already connected to ${provider}. Replace the previous credential data with this login? The previous provider will become disconnected.`;
+}
+
 function prepareProviderSubmission({
   formData,
   isEditMode,
@@ -223,6 +261,8 @@ export function ProviderModal({
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [credentialBindingConflict, setCredentialBindingConflict] =
+    useState<CredentialBindingConflict | null>(null);
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
 
@@ -300,7 +340,37 @@ export function ProviderModal({
       await onSubmit(preparedSubmission.payload);
       onClose();
     } catch (err) {
+      const conflict = getCredentialBindingConflict(
+        err,
+        preparedSubmission.payload,
+      );
+      if (conflict) {
+        setCredentialBindingConflict(conflict);
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to save provider");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCredentialBindingReplacement = async () => {
+    if (!credentialBindingConflict) {
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit({
+        ...credentialBindingConflict.payload,
+        credential_binding_resolution: "replace",
+      });
+      setCredentialBindingConflict(null);
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to replace GPT account",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -354,6 +424,17 @@ export function ProviderModal({
           />
         </form>
       </div>
+      <ConfirmModal
+        isOpen={credentialBindingConflict !== null}
+        onClose={() => setCredentialBindingConflict(null)}
+        onConfirm={() => void handleCredentialBindingReplacement()}
+        title="GPT account already connected"
+        message={describeCredentialBindingConflict(credentialBindingConflict)}
+        confirmText="Replace account"
+        cancelText="Keep previous"
+        variant="warning"
+        loading={submitting}
+      />
     </div>
   );
 }

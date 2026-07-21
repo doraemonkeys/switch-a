@@ -51,9 +51,16 @@ export interface ConfigResponse {
 }
 
 /** Standard API error response */
+export interface ApiErrorDetails {
+  kind?: string;
+  account_id?: string;
+  provider_id?: string;
+}
+
 export interface ErrorResponse {
   code: ErrorCode;
   message: string;
+  details?: ApiErrorDetails;
 }
 
 // =============================================================================
@@ -157,6 +164,8 @@ export interface ProviderInput {
   credential_type?: ProviderCredentialType;
   usage_limit_policy?: ProviderUsageLimitPolicy;
   credential_login_id?: string;
+  /** Explicitly confirmed handling for an account already bound elsewhere. */
+  credential_binding_resolution?: "reject" | "replace";
   group_id?: string | null;
   weight?: number;
   priority?: number;

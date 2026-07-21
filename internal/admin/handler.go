@@ -25,8 +25,8 @@ type Store interface {
 	// Provider operations
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (*model.Provider, error)
-	CreateProvider(ctx context.Context, p *model.Provider) error
-	UpdateProvider(ctx context.Context, p *model.Provider) error
+	CreateProvider(ctx context.Context, p *model.Provider, options ...store.ProviderWriteOptions) error
+	UpdateProvider(ctx context.Context, p *model.Provider, options ...store.ProviderWriteOptions) error
 	DeleteProvider(ctx context.Context, id string) error
 
 	// Routing policy operations
@@ -183,11 +183,18 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 // writeError writes an error response in the standard format.
 func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeErrorWithDetails(w, status, code, message, nil)
+}
+
+// writeErrorWithDetails keeps the standard error envelope while allowing
+// caller-actionable conflicts to expose structured resolution data.
+func writeErrorWithDetails(w http.ResponseWriter, status int, code, message string, details map[string]string) {
 	w.Header().Set("Content-Type", ContentTypeJSON)
 	w.WriteHeader(status)
 	resp := model.ErrorResponse{
 		Code:    code,
 		Message: message,
+		Details: details,
 	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil { // coverage-ignore -- JSON encoding rarely fails
 		return

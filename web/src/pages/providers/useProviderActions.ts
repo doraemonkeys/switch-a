@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { useProviders } from "../../hooks/useProviders";
 import { useToast } from "../../hooks/useToast";
-import type { Provider, ProviderInput } from "../../api/client";
+import { ApiError, type Provider, type ProviderInput } from "../../api/client";
 
 interface ConfirmState<T> {
   isOpen: boolean;
   item: T | null;
+}
+
+function isCredentialBindingConflict(error: unknown): boolean {
+  return (
+    error instanceof ApiError && error.details?.kind === "credential_binding"
+  );
 }
 
 export function useProviderActions() {
@@ -113,6 +119,11 @@ export function useProviderActions() {
       }
       return true;
     } catch (err) {
+      // A duplicate GPT account is an expected decision point; the modal owns
+      // the confirmation so an error toast would race the replacement prompt.
+      if (isCredentialBindingConflict(err)) {
+        throw err;
+      }
       toast.error(
         err instanceof Error ? err.message : "Failed to save provider",
       );

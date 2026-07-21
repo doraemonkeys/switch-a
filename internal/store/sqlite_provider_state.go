@@ -286,6 +286,41 @@ func validateExclusiveCredentialBinding(
 	}
 }
 
+// resolveCredentialBinding preserves the one-account/one-provider invariant
+// while making an explicit replacement atomic with the provider write.
+func resolveCredentialBinding(
+	tx *gorm.DB,
+	providerID string,
+	bindingAccountID *string,
+	resolution model.CredentialBindingResolution,
+) error {
+	err := validateExclusiveCredentialBinding(tx, providerID, bindingAccountID)
+	if err == nil || resolution != model.CredentialBindingResolutionReplace {
+		return err
+	}
+
+	var conflict *CredentialBindingConflictError
+	if !errors.As(err, &conflict) {
+		return err
+	}
+	// The old provider remains available, but its credential is intentionally
+	// cleared so it cannot continue using an account now owned by the new one.
+	if clearErr := clearProviderCredentialBinding(tx, conflict.ProviderID); clearErr != nil {
+		return clearErr
+	}
+	return nil
+}
+
+func clearProviderCredentialBinding(tx *gorm.DB, providerID string) error {
+	if err := tx.Where("provider_id = ?", providerID).Delete(&model.ProviderCredential{}).Error; err != nil {
+		return fmt.Errorf("clear provider credential for %q: %w", providerID, err)
+	}
+	if err := tx.Where("provider_id = ?", providerID).Delete(&model.ProviderAuthState{}).Error; err != nil {
+		return fmt.Errorf("clear provider auth state for %q: %w", providerID, err)
+	}
+	return nil
+}
+
 func providerCredentialsEqual(left, right *model.ProviderCredential) bool {
 	if left == nil || right == nil {
 		return left == right

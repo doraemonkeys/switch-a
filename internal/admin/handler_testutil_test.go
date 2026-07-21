@@ -68,7 +68,7 @@ func (m *mockStore) GetProvider(_ context.Context, id string) (*model.Provider, 
 	return nil, store.ErrNotFound
 }
 
-func (m *mockStore) CreateProvider(_ context.Context, p *model.Provider) error {
+func (m *mockStore) CreateProvider(_ context.Context, p *model.Provider, _ ...store.ProviderWriteOptions) error {
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -76,7 +76,7 @@ func (m *mockStore) CreateProvider(_ context.Context, p *model.Provider) error {
 	return nil
 }
 
-func (m *mockStore) UpdateProvider(_ context.Context, p *model.Provider) error {
+func (m *mockStore) UpdateProvider(_ context.Context, p *model.Provider, _ ...store.ProviderWriteOptions) error {
 	if m.updateErr != nil {
 		return m.updateErr
 	}
