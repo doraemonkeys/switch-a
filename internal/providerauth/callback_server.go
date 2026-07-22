@@ -17,12 +17,26 @@ const (
 	callbackIdleTimeout       = 30 * time.Second
 )
 
-// CallbackServer serves the fixed localhost OAuth callback endpoint required by the
-// ChatGPT native-app OAuth client.
-type CallbackServer struct {
+// callbackEndpoint is consumed by Service because login-session state, rather
+// than process lifetime, determines when the OAuth callback can receive work.
+type callbackEndpoint interface {
+	Start() error
+	Shutdown(ctx context.Context) error
+}
+
+type callbackServerRun struct {
 	server    *http.Server
 	listeners []net.Listener
-	logger    *zap.Logger
+}
+
+// loopbackCallbackServer is restartable so each group of pending login sessions
+// can own the fixed OAuth port only for as long as those sessions need it.
+type loopbackCallbackServer struct {
+	mu      sync.Mutex
+	handler http.Handler
+	listen  func() ([]net.Listener, error)
+	active  *callbackServerRun
+	logger  *zap.Logger
 }
 
 type loopbackListenerSpec struct {
@@ -41,67 +55,106 @@ func loopbackListenerAddr(spec loopbackListenerSpec) string {
 	return net.JoinHostPort(spec.host, fmt.Sprintf("%d", loopbackCallbackPort))
 }
 
-// NewCallbackServer creates a loopback callback server that matches the
-// advertised localhost redirect URI on both IPv4 and IPv6 loopback stacks.
-func NewCallbackServer(service *Service, logger *zap.Logger) *CallbackServer {
+func newLoopbackCallbackServer(handler http.Handler, logger *zap.Logger) *loopbackCallbackServer {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc(loopbackCallbackPath, service.handleChatGPTOAuthCallback)
-
-	return &CallbackServer{
-		server: &http.Server{
-			Handler:           mux,
-			ReadHeaderTimeout: callbackReadHeaderTimeout,
-			IdleTimeout:       callbackIdleTimeout,
-		},
-		logger: logger,
+	mux.Handle(loopbackCallbackPath, handler)
+	return &loopbackCallbackServer{
+		handler: mux,
+		listen:  listenLoopbackListeners,
+		logger:  logger,
 	}
 }
 
-// Start begins serving callback requests.
-func (s *CallbackServer) Start() error {
-	listeners, err := listenLoopbackListeners()
+// Start binds the callback endpoint before returning. Serving happens in the
+// background so a successful return guarantees that the browser may be opened.
+func (s *loopbackCallbackServer) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active != nil {
+		return nil
+	}
+
+	listeners, err := s.listen()
 	if err != nil {
 		return err
 	}
-	s.listeners = listeners
+	run := &callbackServerRun{
+		server: &http.Server{
+			Handler:           s.handler,
+			ReadHeaderTimeout: callbackReadHeaderTimeout,
+			IdleTimeout:       callbackIdleTimeout,
+		},
+		listeners: listeners,
+	}
+	s.active = run
 
 	addresses := make([]string, 0, len(listeners))
 	for _, listener := range listeners {
 		addresses = append(addresses, listener.Addr().String())
 	}
 	s.logger.Info("starting gpt oauth callback server", zap.Strings("addrs", addresses))
-
-	errCh := make(chan error, len(listeners))
-	var wg sync.WaitGroup
-	for _, listener := range listeners {
-		wg.Go(func() {
-			if serveErr := s.server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				_ = s.server.Close()
-				errCh <- serveErr
-			}
-		})
-	}
-
-	wg.Wait()
-	close(errCh)
-	for serveErr := range errCh {
-		if serveErr != nil {
-			return serveErr
-		}
-	}
+	go s.serve(run)
 	return nil
 }
 
-// Shutdown gracefully stops the callback server.
-func (s *CallbackServer) Shutdown(ctx context.Context) error {
-	if len(s.listeners) == 0 {
+func (s *loopbackCallbackServer) serve(run *callbackServerRun) {
+	var wg sync.WaitGroup
+	for _, listener := range run.listeners {
+		wg.Go(func() {
+			if err := run.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.logger.Error("gpt oauth callback server stopped unexpectedly", zap.Error(err))
+				// One advertised localhost stack becoming unavailable makes the
+				// run unhealthy; closing its sibling lets the next login restart
+				// the endpoint as one coherent generation.
+				_ = run.server.Close()
+			}
+		})
+	}
+	wg.Wait()
+
+	s.mu.Lock()
+	if s.active == run {
+		s.active = nil
+	}
+	s.mu.Unlock()
+}
+
+// Shutdown releases the fixed loopback port. A later Start creates a fresh
+// http.Server because Go servers cannot be reused after graceful shutdown.
+func (s *loopbackCallbackServer) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	run := s.active
+	s.mu.Unlock()
+	if run == nil {
 		return nil
 	}
-	return s.server.Shutdown(ctx)
+
+	shutdownErr := run.server.Shutdown(ctx)
+	// Serve normally owns listener closure, but Shutdown may win the race before
+	// a freshly launched Serve goroutine registers its listener. Closing the
+	// bound sockets explicitly guarantees that an immediate next login can bind.
+	closeErr := closeLoopbackListeners(run.listeners)
+	s.mu.Lock()
+	if s.active == run {
+		s.active = nil
+	}
+	s.mu.Unlock()
+	s.logger.Info("stopped gpt oauth callback server")
+	return errors.Join(shutdownErr, closeErr)
+}
+
+func closeLoopbackListeners(listeners []net.Listener) error {
+	var errs []error
+	for _, listener := range listeners {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func listenLoopbackListeners() ([]net.Listener, error) {

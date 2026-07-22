@@ -62,6 +62,20 @@ type Config struct {
 	Logger          *zap.Logger
 }
 
+type scheduledTask interface {
+	Stop() bool
+}
+
+type scheduleAfterFunc func(delay time.Duration, task func()) scheduledTask
+
+// serviceRuntime keeps process-bound infrastructure out of the public service
+// configuration while still allowing lifecycle behavior to be tested without
+// claiming the machine-wide OAuth port or waiting on wall-clock timers.
+type serviceRuntime struct {
+	callback      callbackEndpoint
+	scheduleAfter scheduleAfterFunc
+}
+
 type inFlightChatGPTRefresh struct {
 	done       chan struct{}
 	credential *model.ChatGPTProviderCredential
@@ -79,11 +93,19 @@ type Service struct {
 	httpClient      OAuthHTTPDoer
 	clock           internal.Clock
 	logger          *zap.Logger
+	callback        callbackEndpoint
+	scheduleAfter   scheduleAfterFunc
+
+	callbackLifecycleMu sync.Mutex
 
 	mu               sync.Mutex
 	pendingByState   map[string]pendingLogin
 	pendingByLoginID map[string]pendingLogin
 	completed        map[string]completedLogin
+	callbackActive   bool
+	loginExpiryTask  scheduledTask
+	loginExpiryEpoch uint64
+	shutdown         bool
 
 	refreshMu              sync.Mutex
 	inFlightRefreshes      map[string]*inFlightChatGPTRefresh
@@ -92,6 +114,10 @@ type Service struct {
 
 // NewService creates a provider auth service.
 func NewService(cfg Config) *Service {
+	return newService(cfg, serviceRuntime{})
+}
+
+func newService(cfg Config, runtime serviceRuntime) *Service {
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 20 * time.Second}
@@ -107,17 +133,30 @@ func NewService(cfg Config) *Service {
 		logger = zap.NewNop()
 	}
 
-	return &Service{
+	scheduleAfter := runtime.scheduleAfter
+	if scheduleAfter == nil {
+		scheduleAfter = func(delay time.Duration, task func()) scheduledTask {
+			return time.AfterFunc(delay, task)
+		}
+	}
+
+	service := &Service{
 		credentialStore:        cfg.CredentialStore,
 		httpClient:             httpClient,
 		clock:                  clock,
 		logger:                 logger,
+		callback:               runtime.callback,
+		scheduleAfter:          scheduleAfter,
 		pendingByState:         make(map[string]pendingLogin),
 		pendingByLoginID:       make(map[string]pendingLogin),
 		completed:              make(map[string]completedLogin),
 		inFlightRefreshes:      make(map[string]*inFlightChatGPTRefresh),
 		recentChatGPTRefreshes: make(map[string]recentChatGPTRefresh),
 	}
+	if service.callback == nil {
+		service.callback = newLoopbackCallbackServer(http.HandlerFunc(service.handleChatGPTOAuthCallback), logger)
+	}
+	return service
 }
 
 // LoopbackCallbackAddress returns the fixed OAuth callback address mirrored from codex-tools.

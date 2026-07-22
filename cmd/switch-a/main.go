@@ -211,8 +211,6 @@ func run() error {
 		Logger:          log,
 	})
 
-	callbackSrv := providerauth.NewCallbackServer(authService, log)
-
 	// Create proxy HTTP server (public port)
 	proxySrv := server.New(server.Config{
 		Port:                       cfg.Port,
@@ -238,12 +236,12 @@ func run() error {
 		Auth:          authService,
 	})
 
-	errCh := startServers(proxySrv, adminSrv, callbackSrv)
+	errCh := startServers(proxySrv, adminSrv)
 	printServerURLs(cfg.Port, cfg.AdminPort)
 	if err := waitForShutdown(errCh, log); err != nil {
 		return err
 	}
-	if err := shutdownServers(proxySrv, adminSrv, callbackSrv); err != nil {
+	if err := shutdownServers(proxySrv, adminSrv, authService); err != nil {
 		return err
 	}
 
@@ -254,17 +252,13 @@ func run() error {
 func startServers(
 	proxySrv *server.Server,
 	adminSrv *server.AdminServer,
-	callbackSrv *providerauth.CallbackServer,
 ) chan error {
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 2)
 	go func() {
 		errCh <- proxySrv.Start()
 	}()
 	go func() {
 		errCh <- adminSrv.Start()
-	}()
-	go func() {
-		errCh <- callbackSrv.Start()
 	}()
 	return errCh
 }
@@ -309,7 +303,7 @@ func joinServerErrors(first error, errCh <-chan error) error {
 func shutdownServers(
 	proxySrv *server.Server,
 	adminSrv *server.AdminServer,
-	callbackSrv *providerauth.CallbackServer,
+	authService *providerauth.Service,
 ) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer cancel()
@@ -321,7 +315,7 @@ func shutdownServers(
 	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
 		errs = append(errs, fmt.Errorf("admin server shutdown error: %w", err))
 	}
-	if err := callbackSrv.Shutdown(shutdownCtx); err != nil {
+	if err := authService.Shutdown(shutdownCtx); err != nil {
 		errs = append(errs, fmt.Errorf("oauth callback server shutdown error: %w", err))
 	}
 	return errors.Join(errs...)

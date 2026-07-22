@@ -67,7 +67,6 @@ func (s *Service) StartChatGPTLogin() (*ChatGPTLoginStartResponse, error) {
 	hash := sha256.Sum256([]byte(codeVerifier))
 	codeChallenge := base64.RawURLEncoding.EncodeToString(hash[:])
 	loginID := uuid.NewString()
-	now := s.clock.Now()
 
 	authURL, err := url.Parse(defaultOAuthIssuer + "/oauth/authorize")
 	if err != nil {
@@ -86,16 +85,13 @@ func (s *Service) StartChatGPTLogin() (*ChatGPTLoginStartResponse, error) {
 	query.Set("originator", defaultOAuthOriginator)
 	authURL.RawQuery = query.Encode()
 
-	expiresAt := now.Add(loginSessionTTL)
-	s.mu.Lock()
-	s.pruneExpiredSessionsLocked(now)
-	s.storePendingLoginLocked(pendingLogin{
+	if err := s.beginChatGPTLogin(pendingLogin{
 		loginID:      loginID,
 		state:        state,
 		codeVerifier: codeVerifier,
-		expiresAt:    expiresAt,
-	})
-	s.mu.Unlock()
+	}); err != nil {
+		return nil, err
+	}
 
 	return &ChatGPTLoginStartResponse{
 		LoginID: loginID,
@@ -110,29 +106,31 @@ func (s *Service) GetChatGPTLoginStatus(loginID string) (*ChatGPTLoginStatusResp
 
 	s.mu.Lock()
 	s.pruneExpiredSessionsLocked(now)
-
+	s.syncLoginExpiryTaskLocked(now)
+	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
+	var response *ChatGPTLoginStatusResponse
 	if completed, ok := s.completed[loginID]; ok {
-		s.mu.Unlock()
-		return &ChatGPTLoginStatusResponse{
+		response = &ChatGPTLoginStatusResponse{
 			LoginID: loginID,
 			Status:  ChatGPTLoginStatusCompleted,
 			Auth:    buildChatGPTAuthViewFromCredential(&completed.credential),
-		}, nil
-	}
-
-	if _, ok := s.pendingByLoginID[loginID]; ok {
-		s.mu.Unlock()
-		return &ChatGPTLoginStatusResponse{
+		}
+	} else if _, ok := s.pendingByLoginID[loginID]; ok {
+		response = &ChatGPTLoginStatusResponse{
 			LoginID: loginID,
 			Status:  ChatGPTLoginStatusPending,
-		}, nil
+		}
+	} else {
+		response = &ChatGPTLoginStatusResponse{
+			LoginID: loginID,
+			Status:  ChatGPTLoginStatusExpired,
+		}
 	}
 	s.mu.Unlock()
-
-	return &ChatGPTLoginStatusResponse{
-		LoginID: loginID,
-		Status:  ChatGPTLoginStatusExpired,
-	}, nil
+	if shouldReconcile {
+		s.requestCallbackEndpointReconcile()
+	}
+	return response, nil
 }
 
 // lookupCompletedChatGPTLogin retrieves a finished login session without consuming it.
@@ -140,9 +138,14 @@ func (s *Service) lookupCompletedChatGPTLogin(loginID string) (*model.ChatGPTPro
 	now := s.clock.Now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.pruneExpiredSessionsLocked(now)
+	s.syncLoginExpiryTaskLocked(now)
+	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	completed, ok := s.completed[loginID]
+	s.mu.Unlock()
+	if shouldReconcile {
+		s.requestCallbackEndpointReconcile()
+	}
 	if !ok {
 		return nil, fmt.Errorf("chatgpt login session %q not found or expired", loginID)
 	}
@@ -165,12 +168,21 @@ func (s *Service) FinalizeChatGPTLogin(loginID string) error {
 	now := s.clock.Now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.pruneExpiredSessionsLocked(now)
+	s.syncLoginExpiryTaskLocked(now)
+	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	if _, ok := s.completed[loginID]; !ok {
+		s.mu.Unlock()
+		if shouldReconcile {
+			s.requestCallbackEndpointReconcile()
+		}
 		return fmt.Errorf("chatgpt login session %q not found or expired", loginID)
 	}
 	delete(s.completed, loginID)
+	s.mu.Unlock()
+	if shouldReconcile {
+		s.requestCallbackEndpointReconcile()
+	}
 	return nil
 }
 
@@ -186,6 +198,7 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 	oauthError := r.URL.Query().Get("error")
 	errorDescription := r.URL.Query().Get("error_description")
 	if oauthError != "" {
+		s.cancelPendingLoginFromCallback(state, now)
 		renderCallbackPage(w, callbackPage{
 			Status:  "error",
 			Message: firstNonEmpty(errorDescription, oauthError),
@@ -193,6 +206,7 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if state == "" || code == "" {
+		s.cancelPendingLoginFromCallback(state, now)
 		renderCallbackPage(w, callbackPage{
 			Status:  "error",
 			Message: "OAuth callback missing state or code.",
@@ -203,8 +217,13 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 	s.mu.Lock()
 	s.pruneExpiredSessionsLocked(now)
 	pending, ok := s.claimPendingLoginLocked(state, now)
+	s.syncLoginExpiryTaskLocked(now)
+	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	s.mu.Unlock()
 	if !ok {
+		if shouldReconcile {
+			s.requestCallbackEndpointReconcile()
+		}
 		renderCallbackPage(w, callbackPage{
 			Status:  "error",
 			Message: "Login session expired or was not recognized.",
@@ -216,7 +235,12 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		s.mu.Lock()
 		s.deletePendingLoginLocked(pending)
+		s.syncLoginExpiryTaskLocked(s.clock.Now())
+		shouldReconcile = s.callbackActive && len(s.pendingByLoginID) == 0
 		s.mu.Unlock()
+		if shouldReconcile {
+			s.requestCallbackEndpointReconcile()
+		}
 		s.logger.Warn("chatgpt oauth exchange failed", zap.Error(err))
 		renderCallbackPage(w, callbackPage{
 			Status:  "error",
@@ -232,13 +256,36 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 		credential: *credential,
 		expiresAt:  now.Add(completedLoginSessionTTL),
 	}
+	s.syncLoginExpiryTaskLocked(s.clock.Now())
+	shouldReconcile = s.callbackActive && len(s.pendingByLoginID) == 0
 	s.mu.Unlock()
+	if shouldReconcile {
+		s.requestCallbackEndpointReconcile()
+	}
 
 	renderCallbackPage(w, callbackPage{
 		Status:  "success",
 		Message: "GPT account connected. You can close this window.",
 		LoginID: pending.loginID,
 	})
+}
+
+func (s *Service) cancelPendingLoginFromCallback(state string, now time.Time) {
+	if state == "" {
+		return
+	}
+
+	s.mu.Lock()
+	s.pruneExpiredSessionsLocked(now)
+	if pending, ok := s.pendingByState[state]; ok {
+		s.deletePendingLoginLocked(pending)
+	}
+	s.syncLoginExpiryTaskLocked(now)
+	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
+	s.mu.Unlock()
+	if shouldReconcile {
+		s.requestCallbackEndpointReconcile()
+	}
 }
 
 func (s *Service) exchangeAuthorizationCode(ctx context.Context, code, codeVerifier string) (*model.ChatGPTProviderCredential, error) {
