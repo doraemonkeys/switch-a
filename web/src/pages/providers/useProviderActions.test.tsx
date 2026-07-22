@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vitest";
 import { ApiContext } from "../../api/context";
 import { ApiError, type ApiClient, type ProviderInput } from "../../api";
 import { ToastContext, type ToastContextValue } from "../../hooks/useToast";
