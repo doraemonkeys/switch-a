@@ -112,6 +112,8 @@ func (h *Handler) RefreshProviderUsage(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+const providerAuthStateDetailKind = "provider_auth_state"
+
 type providerAuthAction func(ctx context.Context, provider *model.Provider) (bool, error)
 
 func (h *Handler) runProviderAuthAction(
@@ -186,7 +188,18 @@ func (h *Handler) writeProviderAuthActionError(
 ) {
 	var stateErr *providerauth.ProviderAuthStateError
 	if errors.As(err, &stateErr) {
-		writeError(w, http.StatusConflict, ErrCodeConflict, stateErr.Error())
+		writeErrorWithDetails(
+			w,
+			http.StatusConflict,
+			ErrCodeProviderAuthRequired,
+			stateErr.Error(),
+			map[string]string{
+				"kind":        providerAuthStateDetailKind,
+				"provider_id": stateErr.ProviderID,
+				"auth_status": string(stateErr.Status),
+				"auth_reason": stateErr.Reason,
+			},
+		)
 		return
 	}
 

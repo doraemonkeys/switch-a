@@ -586,6 +586,51 @@ func TestRefreshProviderCredential_AuthStateConflict(t *testing.T) {
 	}
 }
 
+func TestRefreshProviderUsage_AuthStateConflictReturnsLifecycleDetails(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	auth := &mockProviderAuthService{
+		refreshUsageErr: &providerauth.ProviderAuthStateError{
+			ProviderID: "gpt-provider",
+			Status:     providerauth.ProviderAuthStatusReauthRequired,
+			Reason:     providerauth.ProviderAuthReasonTokenInvalidated,
+		},
+	}
+	store := newMockStore()
+	store.providers["gpt-provider"] = &model.Provider{
+		ID:             "gpt-provider",
+		Name:           "GPT Provider",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+	}
+	handler := NewHandler(Config{
+		Store:  store,
+		Auth:   auth,
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/gpt-provider/refresh-usage", nil)
+	setPathValue(req, "id", "gpt-provider")
+	w := httptest.NewRecorder()
+
+	handler.RefreshProviderUsage(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+	var response model.ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Code != ErrCodeProviderAuthRequired {
+		t.Fatalf("code = %q, want %q", response.Code, ErrCodeProviderAuthRequired)
+	}
+	if response.Details["kind"] != providerAuthStateDetailKind ||
+		response.Details["provider_id"] != "gpt-provider" ||
+		response.Details["auth_status"] != string(providerauth.ProviderAuthStatusReauthRequired) ||
+		response.Details["auth_reason"] != providerauth.ProviderAuthReasonTokenInvalidated {
+		t.Fatalf("details = %#v, want provider auth lifecycle details", response.Details)
+	}
+}
+
 func TestCreateProvider_ChatGPTLoginCommitsAfterPersistence(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	auth := &mockProviderAuthService{

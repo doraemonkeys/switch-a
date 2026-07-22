@@ -55,6 +55,8 @@ export interface ApiErrorDetails {
   kind?: string;
   account_id?: string;
   provider_id?: string;
+  auth_status?: ProviderAuthStatus;
+  auth_reason?: string;
 }
 
 export interface ErrorResponse {

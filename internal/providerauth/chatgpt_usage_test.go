@@ -156,6 +156,29 @@ func TestReadChatGPTUsageSnapshotResponse_ErrorsAndSuccess(t *testing.T) {
 		}
 	})
 
+	t.Run("token invalidation remains a typed auth failure", func(t *testing.T) {
+		_, err := readChatGPTUsageSnapshotResponse(&http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Body: io.NopCloser(strings.NewReader(`{
+				"error": {
+					"message": "Your authentication token has been invalidated. Please try signing in again.",
+					"code": "token_invalidated"
+				}
+			}`)),
+		}, fetchedAt)
+
+		var responseErr *chatGPTUsageResponseError
+		if !errors.As(err, &responseErr) {
+			t.Fatalf("error = %T, want chatGPTUsageResponseError", err)
+		}
+		if responseErr.Code != ProviderAuthReasonTokenInvalidated {
+			t.Fatalf("Code = %q, want %q", responseErr.Code, ProviderAuthReasonTokenInvalidated)
+		}
+		if reason, terminal := classifyChatGPTUsageAuthFailure(err); !terminal || reason != ProviderAuthReasonTokenInvalidated {
+			t.Fatalf("classification = (%q, %t), want (%q, true)", reason, terminal, ProviderAuthReasonTokenInvalidated)
+		}
+	})
+
 	t.Run("invalid payload", func(t *testing.T) {
 		_, err := readChatGPTUsageSnapshotResponse(&http.Response{
 			StatusCode: http.StatusOK,
@@ -306,6 +329,40 @@ func TestFetchChatGPTUsageSnapshot_RetriesCandidatesUntilSuccess(t *testing.T) {
 	}
 	if snapshot.PlanType != "pro" {
 		t.Fatalf("PlanType = %q, want %q", snapshot.PlanType, "pro")
+	}
+}
+
+func TestFetchChatGPTUsageSnapshot_StopsAfterTerminalAuthFailure(t *testing.T) {
+	callCount := 0
+	service := NewService(Config{
+		HTTPClient: stubHTTPDoer{
+			do: func(*http.Request) (*http.Response, error) {
+				callCount++
+				return &http.Response{
+					StatusCode: http.StatusUnauthorized,
+					Body: io.NopCloser(strings.NewReader(`{
+						"error": {
+							"message": "Your authentication token has been invalidated. Please try signing in again.",
+							"code": "token_invalidated"
+						}
+					}`)),
+				}, nil
+			},
+		},
+	})
+
+	_, err := service.fetchChatGPTUsageSnapshot(context.Background(), &model.ChatGPTProviderCredential{
+		AccessToken: "access-token",
+		AccountID:   "acct_test",
+	})
+	if err == nil {
+		t.Fatal("fetchChatGPTUsageSnapshot returned nil error")
+	}
+	if callCount != 1 {
+		t.Fatalf("callCount = %d, want 1", callCount)
+	}
+	if reason, terminal := classifyChatGPTUsageAuthFailure(err); !terminal || reason != ProviderAuthReasonTokenInvalidated {
+		t.Fatalf("classification = (%q, %t), want (%q, true)", reason, terminal, ProviderAuthReasonTokenInvalidated)
 	}
 }
 

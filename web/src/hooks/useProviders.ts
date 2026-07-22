@@ -102,8 +102,13 @@ export function useProviders(): UseProvidersResult {
 
   const refreshUsage = useCallback(
     async (id: string): Promise<void> => {
-      await api.providers.refreshUsage(id);
-      await refetch();
+      try {
+        await api.providers.refreshUsage(id);
+      } finally {
+        // A rejected sync may persist an auth lifecycle transition, so the UI
+        // must reconcile provider state even though the action itself failed.
+        await refetch();
+      }
     },
     [api, refetch],
   );

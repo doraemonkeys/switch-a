@@ -3,6 +3,7 @@ package providerauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,10 +16,13 @@ import (
 )
 
 const (
-	chatGPTUsageSnapshotTTL         = 2 * time.Minute
-	chatGPTUsageBackendPath         = "/backend-api/wham/usage"
-	chatGPTUsageLegacyPath          = "/wham/usage"
-	chatGPTUsageCodexPath           = "/api/codex/usage"
+	chatGPTUsageSnapshotTTL = 2 * time.Minute
+	chatGPTUsageBackendPath = "/backend-api/wham/usage"
+	chatGPTUsageLegacyPath  = "/wham/usage"
+	chatGPTUsageCodexPath   = "/api/codex/usage"
+	// Structured auth codes can occur after the short human-readable preview,
+	// so parsing gets a larger bounded budget while logs stay compact.
+	chatGPTUsageErrorBodyLimit      = 32 << 10
 	chatGPTUsageErrorPreviewLimit   = 240
 	chatGPTUsageWindowFiveHoursSecs = 5 * 60 * 60
 	chatGPTUsageWindowOneWeekSecs   = 7 * 24 * 60 * 60
@@ -28,6 +32,53 @@ type chatGPTUsageAPIResponse struct {
 	PlanType             string                           `json:"plan_type"`
 	RateLimit            *chatGPTUsageRateLimitDetails    `json:"rate_limit"`
 	AdditionalRateLimits []chatGPTAdditionalRateLimitItem `json:"additional_rate_limits"`
+}
+
+type chatGPTUsageAPIErrorResponse struct {
+	Error struct {
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	} `json:"error"`
+}
+
+type chatGPTUsageResponseError struct {
+	StatusCode int
+	Code       string
+	Message    string
+	Preview    string
+}
+
+func (e *chatGPTUsageResponseError) Error() string {
+	switch {
+	case e.Code != "" && e.Message != "":
+		return fmt.Sprintf("unexpected status %d (%s): %s", e.StatusCode, e.Code, e.Message)
+	case e.Code != "":
+		return fmt.Sprintf("unexpected status %d (%s)", e.StatusCode, e.Code)
+	case e.Preview != "":
+		return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Preview)
+	default:
+		return fmt.Sprintf("unexpected status %d", e.StatusCode)
+	}
+}
+
+func classifyChatGPTUsageAuthFailure(err error) (string, bool) {
+	var responseErr *chatGPTUsageResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusUnauthorized {
+		return "", false
+	}
+
+	// Only explicit terminal OAuth codes invalidate the provider. A generic 401
+	// can still be recoverable through the separately controlled token refresh flow.
+	switch responseErr.Code {
+	case ProviderAuthReasonTokenInvalidated,
+		ProviderAuthReasonInvalidGrant,
+		ProviderAuthReasonRefreshTokenReused,
+		ProviderAuthReasonInteractionRequired,
+		ProviderAuthReasonLoginRequired:
+		return responseErr.Code, true
+	default:
+		return "", false
+	}
 }
 
 type chatGPTUsageRateLimitDetails struct {
@@ -121,11 +172,11 @@ func (s *Service) fetchChatGPTUsageSnapshot(ctx context.Context, credential *mod
 		return nil, fmt.Errorf("chatgpt usage requires access token and account id")
 	}
 
-	var errors []string
+	var attemptErrors []string
 	for _, usageURL := range resolveChatGPTUsageCandidateURLs() {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("%s -> build request: %v", usageURL, err))
+			attemptErrors = append(attemptErrors, fmt.Sprintf("%s -> build request: %v", usageURL, err))
 			continue
 		}
 
@@ -136,7 +187,7 @@ func (s *Service) fetchChatGPTUsageSnapshot(ctx context.Context, credential *mod
 
 		response, err := s.httpClient.Do(request)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("%s -> %v", usageURL, err))
+			attemptErrors = append(attemptErrors, fmt.Sprintf("%s -> %v", usageURL, err))
 			continue
 		}
 
@@ -145,16 +196,19 @@ func (s *Service) fetchChatGPTUsageSnapshot(ctx context.Context, credential *mod
 			_ = response.Body.Close()
 		}
 		if readErr != nil {
-			errors = append(errors, fmt.Sprintf("%s -> %v", usageURL, readErr))
+			if _, terminal := classifyChatGPTUsageAuthFailure(readErr); terminal {
+				return nil, fmt.Errorf("fetch chatgpt usage snapshot from %s: %w", usageURL, readErr)
+			}
+			attemptErrors = append(attemptErrors, fmt.Sprintf("%s -> %v", usageURL, readErr))
 			continue
 		}
 		return snapshot, nil
 	}
 
-	if len(errors) == 0 {
+	if len(attemptErrors) == 0 {
 		return nil, fmt.Errorf("no chatgpt usage endpoint candidates")
 	}
-	return nil, fmt.Errorf("fetch chatgpt usage snapshot: %s", strings.Join(errors, " | "))
+	return nil, fmt.Errorf("fetch chatgpt usage snapshot: %s", strings.Join(attemptErrors, " | "))
 }
 
 func readChatGPTUsageSnapshotResponse(response *http.Response, fetchedAt time.Time) (*model.ProviderUsageSnapshot, error) {
@@ -162,12 +216,18 @@ func readChatGPTUsageSnapshotResponse(response *http.Response, fetchedAt time.Ti
 		return nil, fmt.Errorf("missing response")
 	}
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, chatGPTUsageErrorPreviewLimit))
-		snippet := strings.TrimSpace(string(body))
-		if snippet == "" {
-			return nil, fmt.Errorf("unexpected status %d", response.StatusCode)
+		var body []byte
+		if response.Body != nil {
+			body, _ = io.ReadAll(io.LimitReader(response.Body, chatGPTUsageErrorBodyLimit))
 		}
-		return nil, fmt.Errorf("unexpected status %d: %s", response.StatusCode, snippet)
+		var payload chatGPTUsageAPIErrorResponse
+		_ = json.Unmarshal(body, &payload)
+		return nil, &chatGPTUsageResponseError{
+			StatusCode: response.StatusCode,
+			Code:       strings.TrimSpace(payload.Error.Code),
+			Message:    strings.TrimSpace(payload.Error.Message),
+			Preview:    chatGPTUsageErrorPreview(string(body)),
+		}
 	}
 
 	var payload chatGPTUsageAPIResponse
@@ -175,6 +235,14 @@ func readChatGPTUsageSnapshotResponse(response *http.Response, fetchedAt time.Ti
 		return nil, fmt.Errorf("decode usage payload: %w", err)
 	}
 	return mapChatGPTUsageSnapshot(payload, fetchedAt), nil
+}
+
+func chatGPTUsageErrorPreview(body string) string {
+	preview := []rune(strings.TrimSpace(body))
+	if len(preview) > chatGPTUsageErrorPreviewLimit {
+		preview = preview[:chatGPTUsageErrorPreviewLimit]
+	}
+	return string(preview)
 }
 
 func mapChatGPTUsageSnapshot(payload chatGPTUsageAPIResponse, fetchedAt time.Time) *model.ProviderUsageSnapshot {

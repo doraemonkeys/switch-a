@@ -285,6 +285,43 @@ describe("useProviders", () => {
     expect(mockApi.providers.refreshUsage).toHaveBeenCalledWith("1");
     expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
   });
+
+  it("should reconcile provider auth state after a rejected usage refresh", async () => {
+    const rejection = new Error("provider requires reauthentication");
+    const reauthProvider: Provider = {
+      ...mockProvider,
+      credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+      auth: {
+        type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+        status: "reauth_required",
+        reason: "token_invalidated",
+      },
+    };
+    vi.mocked(mockApi.providers.refreshUsage).mockRejectedValue(rejection);
+    vi.mocked(mockApi.providers.list)
+      .mockResolvedValueOnce([mockProvider])
+      .mockResolvedValueOnce([reauthProvider]);
+    const { result } = renderHook(() => useProviders(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await result.current.refreshUsage("1");
+      } catch (error) {
+        caught = error;
+      }
+    });
+
+    expect(caught).toBe(rejection);
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+    expect(result.current.providers).toEqual([reauthProvider]);
+  });
 });
 
 describe("useProvider", () => {

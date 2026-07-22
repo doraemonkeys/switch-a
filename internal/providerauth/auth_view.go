@@ -24,6 +24,7 @@ const (
 	ProviderAuthReasonInvalidGrant        = "invalid_grant"
 	ProviderAuthReasonRefreshTokenReused  = "refresh_token_reused"
 	ProviderAuthReasonInteractionRequired = "interaction_required"
+	ProviderAuthReasonTokenInvalidated    = "token_invalidated"
 )
 
 // ProviderAuthView is the explicit admin-facing auth summary returned by admin APIs.

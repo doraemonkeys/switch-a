@@ -3,7 +3,11 @@ package providerauth
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"switch-a/internal/model"
 )
@@ -139,6 +143,66 @@ func TestRefreshChatGPTUsageSnapshot_RejectsInactiveAuthState(t *testing.T) {
 	}
 	if authErr.LastError != "refresh_token_reused" {
 		t.Fatalf("LastError = %q, want refresh_token_reused", authErr.LastError)
+	}
+}
+
+func TestRefreshChatGPTUsageSnapshot_MarksTokenInvalidationAsReauthRequired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 22, 1, 50, 46, 0, time.UTC)
+	credentialStore := &recordingCredentialStore{}
+	service := NewService(Config{
+		Clock:           fixedClock{now: now},
+		CredentialStore: credentialStore,
+		HTTPClient: stubHTTPDoer{
+			do: func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusUnauthorized,
+					Body: io.NopCloser(strings.NewReader(`{
+						"error": {
+							"message": "Your authentication token has been invalidated. Please try signing in again.",
+							"code": "token_invalidated"
+						}
+					}`)),
+				}, nil
+			},
+		},
+	})
+	provider := &model.Provider{
+		ID:             "chatgpt-invalidated",
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		AuthState: &model.ProviderAuthState{
+			Status: model.ProviderAuthStatusActive,
+		},
+	}
+	mustApplyLegacyChatGPTCredential(t, provider, mustEncodeChatGPTCredential(t, model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		AccountID:    "acct-invalidated",
+	}))
+
+	err := service.refreshChatGPTUsageSnapshot(context.Background(), provider)
+	var authErr *ProviderAuthStateError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("error = %T, want ProviderAuthStateError", err)
+	}
+	if authErr.Status != ProviderAuthStatusReauthRequired || authErr.Reason != ProviderAuthReasonTokenInvalidated {
+		t.Fatalf("auth error = (%q, %q), want (%q, %q)", authErr.Status, authErr.Reason, ProviderAuthStatusReauthRequired, ProviderAuthReasonTokenInvalidated)
+	}
+	if provider.AuthState == nil || provider.AuthState.Status != model.ProviderAuthStatusReauthRequired {
+		t.Fatalf("provider auth state = %#v, want reauth_required", provider.AuthState)
+	}
+	if provider.AuthState.StatusReason != ProviderAuthReasonTokenInvalidated {
+		t.Fatalf("StatusReason = %q, want %q", provider.AuthState.StatusReason, ProviderAuthReasonTokenInvalidated)
+	}
+	if !strings.Contains(provider.AuthState.LastError, ProviderAuthReasonTokenInvalidated) {
+		t.Fatalf("LastError = %q, want token invalidation detail", provider.AuthState.LastError)
+	}
+	if credentialStore.authStateCalls != 1 || credentialStore.authStateID != provider.ID {
+		t.Fatalf("persisted auth state = (%d calls, %q), want (1, %q)", credentialStore.authStateCalls, credentialStore.authStateID, provider.ID)
+	}
+	if credentialStore.authState == nil || credentialStore.authState.LastTransitionAt == nil || !credentialStore.authState.LastTransitionAt.Equal(now) {
+		t.Fatalf("persisted transition = %#v, want %s", credentialStore.authState, now)
 	}
 }
 

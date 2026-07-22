@@ -299,6 +299,7 @@ export const ERROR_CODES = {
   NOT_FOUND: "NOT_FOUND",
   CONFLICT: "CONFLICT",
   UNAUTHORIZED: "UNAUTHORIZED",
+  PROVIDER_AUTH_REQUIRED: "PROVIDER_AUTH_REQUIRED",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

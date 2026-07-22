@@ -58,6 +58,16 @@ func (s *Service) refreshChatGPTUsageSnapshot(ctx context.Context, provider *mod
 
 	snapshot, err := s.fetchChatGPTUsageSnapshot(ctx, credential)
 	if err != nil {
+		if reason, terminal := classifyChatGPTUsageAuthFailure(err); terminal {
+			return s.markChatGPTUsageReauthenticationRequired(
+				ctx,
+				provider,
+				credential,
+				authState,
+				reason,
+				err,
+			)
+		}
 		return err
 	}
 
@@ -77,6 +87,37 @@ func (s *Service) refreshChatGPTUsageSnapshot(ctx context.Context, provider *mod
 
 	applyProviderAuthState(provider, updatedState)
 	return nil
+}
+
+func (s *Service) markChatGPTUsageReauthenticationRequired(
+	ctx context.Context,
+	provider *model.Provider,
+	credential *model.ChatGPTProviderCredential,
+	current *model.ProviderAuthState,
+	reason string,
+	cause error,
+) error {
+	updatedState := buildChatGPTAuthState(
+		provider.ID,
+		current,
+		credential,
+		ProviderAuthStatusReauthRequired,
+		reason,
+		cause.Error(),
+		nil,
+		s.clock.Now(),
+	)
+	if err := s.persistProviderAuthState(ctx, provider.ID, updatedState); err != nil {
+		return err
+	}
+
+	applyProviderAuthState(provider, updatedState)
+	return &ProviderAuthStateError{
+		ProviderID: provider.ID,
+		Status:     ProviderAuthStatusReauthRequired,
+		Reason:     reason,
+		LastError:  updatedState.LastError,
+	}
 }
 
 func (s *Service) persistProviderAuthState(

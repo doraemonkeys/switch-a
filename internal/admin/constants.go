@@ -13,11 +13,12 @@ import (
 
 // Error codes for API responses.
 const (
-	ErrCodeValidation   = "VALIDATION_ERROR"
-	ErrCodeInternal     = "INTERNAL_ERROR"
-	ErrCodeNotFound     = "NOT_FOUND"
-	ErrCodeConflict     = "CONFLICT"
-	ErrCodeUnauthorized = "UNAUTHORIZED"
+	ErrCodeValidation           = "VALIDATION_ERROR"
+	ErrCodeInternal             = "INTERNAL_ERROR"
+	ErrCodeNotFound             = "NOT_FOUND"
+	ErrCodeConflict             = "CONFLICT"
+	ErrCodeUnauthorized         = "UNAUTHORIZED"
+	ErrCodeProviderAuthRequired = "PROVIDER_AUTH_REQUIRED"
 )
 
 // Default values for resources.
