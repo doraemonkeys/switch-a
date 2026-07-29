@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func providerAuthStateSnapshot(provider *model.Provider) *model.ProviderAuthState {

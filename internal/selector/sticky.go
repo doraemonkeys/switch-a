@@ -4,8 +4,8 @@ import (
 	"sync"
 	"time"
 
-	"switch-a/internal"
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // Compile-time interface check.

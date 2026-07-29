@@ -1,6 +1,6 @@
 package store
 
-import "switch-a/internal/model"
+import "github.com/doraemonkeys/switch-a/internal/model"
 
 // ProviderWriteOptions is kept in the store package as a consumer-friendly alias;
 // the command itself belongs to the domain model so all store interfaces share it

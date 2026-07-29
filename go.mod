@@ -1,4 +1,4 @@
-module switch-a
+module github.com/doraemonkeys/switch-a
 
 go 1.25
 

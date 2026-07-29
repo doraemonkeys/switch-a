@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/admin"
-	"switch-a/internal/model"
-	storepkg "switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/internal/admin"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	storepkg "github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
 )

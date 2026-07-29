@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/coder/websocket"
 )

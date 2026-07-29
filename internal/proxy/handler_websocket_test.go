@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // chatgptAuthJWT builds an unsigned JWT carrying the OpenAI auth block, matching the

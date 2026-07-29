@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestRoutingPolicyCRUD(t *testing.T) {

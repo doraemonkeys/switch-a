@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal"
 )
 
 // CircuitBreaker implements a sliding window circuit breaker.

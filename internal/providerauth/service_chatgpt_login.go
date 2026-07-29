@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"

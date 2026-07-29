@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
 func TestInitDefaultConfig(t *testing.T) {

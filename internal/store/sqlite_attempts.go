@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // InsertAttempts inserts multiple provider-attempt records in a batch.

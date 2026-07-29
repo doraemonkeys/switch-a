@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // ModelUnknown is returned when the model cannot be extracted from the request.

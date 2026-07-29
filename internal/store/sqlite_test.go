@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"switch-a/internal"
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func setupTestStore(t *testing.T) *SQLiteStore {

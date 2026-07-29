@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // trackingHealthManager tracks calls to MarkFailure and MarkSuccess for testing.

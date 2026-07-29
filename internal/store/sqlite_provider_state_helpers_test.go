@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/model"
 	"gorm.io/gorm"
-	"switch-a/internal/model"
 )
 
 func TestPersistProviderSupplementalState_LoadsAndDeletesRecords(t *testing.T) {

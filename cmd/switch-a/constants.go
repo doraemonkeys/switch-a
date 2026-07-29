@@ -4,7 +4,7 @@ package main
 import (
 	"time"
 
-	"switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
 // Exit codes.

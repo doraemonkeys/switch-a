@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestUpdateConfig_TooManyUpdates(t *testing.T) {

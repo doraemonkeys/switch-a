@@ -1,7 +1,7 @@
 // Package config handles configuration loading and management.
 package config
 
-import "switch-a/internal/defaults"
+import "github.com/doraemonkeys/switch-a/internal/defaults"
 
 // Environment variable names.
 const (

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 const visibleContinuitySeedCleanupTestInterval = 5 * time.Millisecond

@@ -3,7 +3,7 @@ package selector
 import (
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestSelectByPriority(t *testing.T) {

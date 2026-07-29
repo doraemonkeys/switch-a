@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/admin"
-	"switch-a/internal/model"
-	"switch-a/internal/proxy"
-	selectorpkg "switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/admin"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy"
+	selectorpkg "github.com/doraemonkeys/switch-a/internal/selector"
 
 	"go.uber.org/zap"
 )

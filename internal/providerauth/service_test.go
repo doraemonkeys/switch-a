@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 type fixedClock struct {

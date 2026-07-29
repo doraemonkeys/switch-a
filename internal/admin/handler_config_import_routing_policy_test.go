@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestImportConfig_RoutingPolicies(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func requestLogClientTransportStatusCode(log *model.RequestLog) int {

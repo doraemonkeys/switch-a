@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
 // sseBufferSize is the buffer size for reading SSE streams.

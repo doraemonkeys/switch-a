@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/coder/websocket"
 )

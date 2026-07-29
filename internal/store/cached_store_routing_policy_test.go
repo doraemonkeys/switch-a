@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"switch-a/internal"
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 type routingPolicyPassthroughStore struct {

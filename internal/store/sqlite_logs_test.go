@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func newNormalizedLog(providerID, apiType string, createdAt time.Time) model.RequestLog {

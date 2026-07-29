@@ -6,7 +6,7 @@ import (
 	"math/rand/v2"
 	"sort"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // Strategy constants.

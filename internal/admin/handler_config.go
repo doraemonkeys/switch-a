@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
 )

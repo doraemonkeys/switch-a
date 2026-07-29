@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"switch-a/internal/defaults"
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // Error codes for API responses.

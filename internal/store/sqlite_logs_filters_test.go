@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func insertLogFixtures(t *testing.T, store *SQLiteStore, ctx context.Context, logs []model.RequestLog) {

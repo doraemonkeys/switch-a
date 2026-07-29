@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // The tests below lock in the SSE transport evidence wire contract and the

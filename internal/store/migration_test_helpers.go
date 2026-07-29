@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"

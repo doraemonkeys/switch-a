@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"switch-a/internal/defaults"
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"gorm.io/gorm"
 )

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func makeCredentialForServiceTests(now time.Time, expiresAt time.Time, issuer string, audience any) model.ChatGPTProviderCredential {

@@ -3,7 +3,7 @@ package proxy
 import (
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // Keep the attempt cutover boundary explicit in process memory so tests, mocks,

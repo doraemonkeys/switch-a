@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"switch-a/internal"
-	"switch-a/internal/admin"
-	"switch-a/internal/model"
-	"switch-a/internal/providerauth"
-	"switch-a/internal/proxy"
-	storepkg "switch-a/internal/store"
-	"switch-a/web"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/admin"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
+	"github.com/doraemonkeys/switch-a/internal/proxy"
+	storepkg "github.com/doraemonkeys/switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/web"
 
 	"go.uber.org/zap"
 )

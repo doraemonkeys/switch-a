@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
 // boolToString converts a bool to "true" or "false" string.

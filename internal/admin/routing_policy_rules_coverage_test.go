@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"switch-a/internal/model"
-	"switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
 )

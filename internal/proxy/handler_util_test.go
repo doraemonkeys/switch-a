@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestAssessNonWebSocketRequest_UsesRuntimeFacts(t *testing.T) {

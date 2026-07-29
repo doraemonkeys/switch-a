@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // BuildProviderAuthView exposes the pure-read auth projection needed by admin handlers.

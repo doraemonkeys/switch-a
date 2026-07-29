@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestMigrateRoutingPolicyLifecycleStorage_AddsColumnsAndBackfillsEnabled(t *testing.T) {

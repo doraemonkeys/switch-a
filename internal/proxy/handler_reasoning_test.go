@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
 )

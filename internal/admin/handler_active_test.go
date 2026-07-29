@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal/model"
-	"switch-a/internal/proxy"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy"
 
 	"go.uber.org/zap"
 )

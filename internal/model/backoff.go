@@ -9,7 +9,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
 // Duration wraps time.Duration with human-readable JSON marshaling.

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"switch-a/internal"
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // mockClock is a mock clock for testing.

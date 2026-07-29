@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestMigrateBaseURLToAPIType_BackfillsProviderAPITypeRowsAndDropsLegacyColumn(t *testing.T) {

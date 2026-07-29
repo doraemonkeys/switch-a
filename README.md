@@ -42,7 +42,7 @@ The namespace is removed before forwarding. Switch-A preserves the upstream API 
 Requirements:
 
 - Go 1.25 or newer
-- Node.js and pnpm
+- Node.js 24 and pnpm 11
 
 After cloning the repository, create a local configuration file:
 
@@ -122,3 +122,7 @@ Switch-A is pre-1.0. Configuration and internal APIs may change between releases
 ## Contributing
 
 Bug reports and focused pull requests are welcome. Please include tests for behavior changes and make sure backend and frontend checks pass before submitting.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).

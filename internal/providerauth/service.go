@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"switch-a/internal"
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
 )
@@ -18,7 +18,7 @@ const (
 	defaultOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
 	defaultOAuthScope        = "openid profile email offline_access"
 	defaultOAuthOriginator   = "codex_vscode"
-	chatGPTOAuthUserAgent    = "switch-a/0.1"
+	chatGPTOAuthUserAgent    = "github.com/doraemonkeys/switch-a/0.1"
 	chatGPTCodexOriginator   = "codex_cli_rs"
 	chatGPTCodexBaseURL      = "https://chatgpt.com/backend-api/codex"
 	codexAPIType             = "codex"

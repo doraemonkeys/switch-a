@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"net/url"
 
-	"switch-a/internal/model"
-	"switch-a/internal/providerauth"
-	"switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
+	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
 )

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestBuildProviderFromExport_PreservesInheritedUsageLimitPolicyStorage(t *testing.T) {

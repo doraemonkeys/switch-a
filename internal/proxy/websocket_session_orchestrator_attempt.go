@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"switch-a/internal/model"
-	"switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/selector"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"

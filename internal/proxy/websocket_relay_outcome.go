@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // Relay outcome shaping lives beside the relay state model so transport loops

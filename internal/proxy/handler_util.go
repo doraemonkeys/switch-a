@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"switch-a/internal"
-	"switch-a/internal/defaults"
-	"switch-a/internal/model"
-	"switch-a/internal/providerauth"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
 
 	"go.uber.org/zap"
 )

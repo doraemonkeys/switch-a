@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 type chatGPTIdentitySnapshot struct {

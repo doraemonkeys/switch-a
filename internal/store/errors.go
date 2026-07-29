@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // ErrNotFound is returned when a requested resource does not exist.

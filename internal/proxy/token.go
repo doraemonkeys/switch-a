@@ -1,6 +1,6 @@
 package proxy
 
-import proxyusage "switch-a/internal/proxy/usage"
+import proxyusage "github.com/doraemonkeys/switch-a/internal/proxy/usage"
 
 // Token accounting moved into a dedicated subpackage because HTTP interception
 // and WebSocket observation both consume the same usage semantics, while the

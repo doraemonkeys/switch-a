@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"gorm.io/gorm"
 )

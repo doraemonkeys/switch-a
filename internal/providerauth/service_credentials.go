@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // ApplyProviderCredentials injects the upstream auth material for the selected provider.

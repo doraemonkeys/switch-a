@@ -1,4 +1,4 @@
-.PHONY: ci verify lint coverage gopls-check sloc clean test fmt build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc check-go-env tools ensure-go-test-coverage ensure-golangci-lint ensure-sloc-guard
+.PHONY: ci ci-go ci-web ci-structure verify lint coverage gopls-check sloc clean test fmt format-check build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc web-format-check check-go-env tools install-tools install-go-tools install-sloc-guard ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
 
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -16,6 +16,10 @@ ifeq ($(OS),Windows_NT)
     GO_TOOL_BIN := $(shell cygpath -u "$(GO_TOOL_BIN)")
 endif
 GO_EXE := $(shell go env GOEXE)
+# gopls v0.23 requires Go 1.26, while the project intentionally supports the Go 1.25 toolchain.
+GOPLS_VERSION := v0.22.0
+GOPLS_MODULE := golang.org/x/tools/gopls
+GOPLS := $(GO_TOOL_BIN)/gopls$(GO_EXE)
 GO_TEST_COVERAGE_VERSION := v2.17.1
 GO_TEST_COVERAGE_MODULE := github.com/vladopajic/go-test-coverage/v2
 GO_TEST_COVERAGE := $(GO_TOOL_BIN)/go-test-coverage$(GO_EXE)
@@ -34,7 +38,8 @@ ifeq ($(OS),Windows_NT)
     TOOLS_ROOT := $(shell cygpath -u "$(TOOLS_ROOT)")
 endif
 SLOC_GUARD := $(TOOLS_ROOT)/bin/sloc-guard$(GO_EXE)
-GOPLS_CHECK := git ls-files -z '*.go' | xargs -0 gopls check -severity=hint
+GOPLS_CHECK := git ls-files -z '*.go' | xargs -0 "$(GOPLS)" check -severity=hint
+GOFMT_CHECK := git ls-files -z '*.go' | xargs -0 gofmt -l
 REQUIRED_GO_VERSION := $(shell awk '/^go / {print $$2}' go.mod)
 
 # 跨平台临时目录设置
@@ -80,17 +85,14 @@ check-go-env:
 		;; \
 	esac
 
-# 静默模式
-ci: check-go-env tools
-	@mkdir -p .tmp
-	@set -o pipefail && go test -race -coverprofile=./cover.out -covermode=atomic ./... 2>&1 | tail -n 10
-	@"$(GO_TEST_COVERAGE)" --config=./.testcoverage.yml
-	@"$(GOLANGCI_LINT)" run
-	@cd web && pnpm test:coverage --silent
-	@cd web && pnpm exec tsc --noEmit -p tsconfig.app.json
-	@cd web && pnpm lint --quiet
-	@"$(SLOC_GUARD)" -q check
-	@$(GOPLS_CHECK)
+# Keep local and hosted CI on the same quality entry points while allowing GitHub jobs to run in parallel.
+ci: ci-go ci-web ci-structure
+
+ci-go: check-go-env coverage lint format-check gopls-check
+
+ci-web: web-coverage web-tsc web-lint web-format-check
+
+ci-structure: sloc
 
 # 正常模式
 verify: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc gopls-check
@@ -98,7 +100,17 @@ verify: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-
 rm-tmpclaude:
 	@rm -f tmpclaude-*
 
-tools: ensure-go-test-coverage ensure-golangci-lint ensure-sloc-guard
+tools: ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
+
+install-tools: install-go-tools install-sloc-guard
+
+install-go-tools:
+	GOBIN="$(GO_TOOL_BIN_NATIVE)" go install $(GO_TEST_COVERAGE_MODULE)@$(GO_TEST_COVERAGE_VERSION)
+	GOBIN="$(GO_TOOL_BIN_NATIVE)" go install $(GOLANGCI_LINT_MODULE)@$(GOLANGCI_LINT_VERSION)
+	GOBIN="$(GO_TOOL_BIN_NATIVE)" go install $(GOPLS_MODULE)@$(GOPLS_VERSION)
+
+install-sloc-guard:
+	cargo install sloc-guard --version $(SLOC_GUARD_VERSION) --root "$(TOOLS_ROOT_NATIVE)" --locked --force
 
 ensure-go-test-coverage:
 	@if [ ! -x "$(GO_TEST_COVERAGE)" ]; then \
@@ -118,6 +130,15 @@ ensure-golangci-lint:
 		exit 1; \
 	fi
 
+ensure-gopls:
+	@if [ ! -x "$(GOPLS)" ]; then \
+		echo "Missing required tool: gopls"; \
+		echo "Expected executable: $(GOPLS)"; \
+		echo "Install manually with:"; \
+		echo "  GOBIN=\"$(GO_TOOL_BIN_NATIVE)\" go install $(GOPLS_MODULE)@$(GOPLS_VERSION)"; \
+		exit 1; \
+	fi
+
 ensure-sloc-guard:
 	@if [ ! -x "$(SLOC_GUARD)" ]; then \
 		echo "Missing required tool: sloc-guard"; \
@@ -130,7 +151,7 @@ ensure-sloc-guard:
 lint: ensure-golangci-lint
 	"$(GOLANGCI_LINT)" run
 
-gopls-check:
+gopls-check: ensure-gopls
 	$(GOPLS_CHECK)
 
 coverage: ensure-go-test-coverage
@@ -147,6 +168,14 @@ test:
 
 fmt:
 	go fmt ./...
+
+format-check:
+	@unformatted="$$($(GOFMT_CHECK))"; \
+		if [ -n "$$unformatted" ]; then \
+			echo "The following Go files are not formatted:"; \
+			printf '%s\n' "$$unformatted"; \
+			exit 1; \
+		fi
 
 web-fmt:
 	cd web && pnpm fmt
@@ -187,6 +216,9 @@ release-mac: web-build
 # Web 前端检查
 web-lint:
 	cd web && pnpm lint
+
+web-format-check:
+	cd web && pnpm exec prettier --check src/
 
 web-coverage:
 	cd web && pnpm test:coverage

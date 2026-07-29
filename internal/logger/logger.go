@@ -4,7 +4,7 @@ package logger
 import (
 	"strings"
 
-	"switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 
 	mylog "github.com/doraemonkeys/mylog/zap"
 	"go.uber.org/zap"

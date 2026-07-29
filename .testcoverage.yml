@@ -3,7 +3,7 @@
 # https://github.com/vladopajic/go-test-coverage
 
 profile: cover.out
-local-prefix: switch-a
+local-prefix: github.com/doraemonkeys/switch-a
 
 threshold:
   # 每个 package 覆盖率

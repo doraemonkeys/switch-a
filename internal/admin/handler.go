@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"switch-a/internal"
-	"switch-a/internal/model"
-	"switch-a/internal/providerauth"
-	"switch-a/internal/proxy"
-	"switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
+	"github.com/doraemonkeys/switch-a/internal/proxy"
+	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
 )

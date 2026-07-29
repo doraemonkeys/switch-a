@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func mustMarshalChatGPTCredential(t *testing.T, credential model.ChatGPTProviderCredential) string {

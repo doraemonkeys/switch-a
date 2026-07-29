@@ -3,8 +3,8 @@ package admin
 import (
 	"time"
 
-	"switch-a/internal/model"
-	"switch-a/internal/providerauth"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
 )
 
 // ProviderPayload keeps the admin HTTP contract explicit so auth lifecycle changes do
