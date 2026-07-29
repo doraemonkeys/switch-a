@@ -1,8 +1,5 @@
 .PHONY: ci verify lint coverage gopls-check sloc clean test fmt build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc check-go-env tools ensure-go-test-coverage ensure-golangci-lint ensure-sloc-guard
 
-# AI Note: 如果 bash 无法运行，请使用以下命令：
-# powershell.exe -Command "cd '.'; make ci" 2>&1
-
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 

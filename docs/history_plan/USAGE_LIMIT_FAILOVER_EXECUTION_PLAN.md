@@ -6,6 +6,8 @@
 
 ## Problems
 
+> The payload below is synthetic and contains no production identifiers or account usage data.
+
 ```json
 {
     "id": 1001,

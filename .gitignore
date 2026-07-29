@@ -24,6 +24,13 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
+
+# Root anchoring protects default runtime state without hiding fixtures elsewhere.
+/data.db
+/data.db-*
+/logs/
 
 # Editor/IDE
 # .idea/
