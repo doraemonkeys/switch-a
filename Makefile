@@ -16,8 +16,8 @@ ifeq ($(OS),Windows_NT)
     GO_TOOL_BIN := $(shell cygpath -u "$(GO_TOOL_BIN)")
 endif
 GO_EXE := $(shell go env GOEXE)
-# gopls v0.23 requires Go 1.26, while the project intentionally supports the Go 1.25 toolchain.
-GOPLS_VERSION := v0.22.0
+# gopls v0.22 requires Go 1.26; v0.21.1 is the newest release compatible with Go 1.25.
+GOPLS_VERSION := v0.21.1
 GOPLS_MODULE := golang.org/x/tools/gopls
 GOPLS := $(GO_TOOL_BIN)/gopls$(GO_EXE)
 GO_TEST_COVERAGE_VERSION := v2.17.1
