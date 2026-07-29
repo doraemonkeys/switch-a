@@ -44,6 +44,8 @@ Switch-A 为应用提供统一、稳定的访问入口。它会按策略选择�
 - Go 1.25 或更高版本
 - Node.js 24 和 pnpm 11
 
+可从 [GitHub Releases](https://github.com/doraemonkeys/switch-a/releases) 下载 Linux、macOS 和 Windows 预编译包。每个版本都附带 SHA-256 校验文件和 GitHub 构建来源证明；运行 `switch-a --version` 可查看二进制文件的版本身份。
+
 克隆仓库后，创建本地配置文件：
 
 ```sh

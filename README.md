@@ -44,6 +44,8 @@ Requirements:
 - Go 1.25 or newer
 - Node.js 24 and pnpm 11
 
+Prebuilt Linux, macOS, and Windows archives are available from [GitHub Releases](https://github.com/doraemonkeys/switch-a/releases). Each release includes SHA-256 checksums and GitHub build provenance. Run `switch-a --version` to inspect a binary's release identity.
+
 After cloning the repository, create a local configuration file:
 
 ```sh
