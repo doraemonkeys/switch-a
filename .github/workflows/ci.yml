@@ -33,6 +33,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Install quality tools
+        env:
+          # gopls releases may advance their toolchain requirement independently of the project.
+          GOTOOLCHAIN: auto
         run: make install-go-tools
       - name: Run Go quality gates
         run: make ci-go
@@ -72,7 +75,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install structure checker
-        run: make install-sloc-guard
       - name: Enforce module boundaries
-        run: make ci-structure
+        uses: doraemonkeys/sloc-guard/.github/action@master
+        with:
+          config-path: .sloc-guard.toml
+          paths: "."
+          version: latest
