@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/buildinfo"
 	"github.com/doraemonkeys/switch-a/internal/config"
 	"github.com/doraemonkeys/switch-a/internal/health"
 	"github.com/doraemonkeys/switch-a/internal/logger"
@@ -27,6 +28,14 @@ import (
 )
 
 func main() {
+	if isVersionRequest(os.Args[1:]) {
+		if err := writeVersion(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write version: %v\n", err)
+			os.Exit(ExitCodeError)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(ExitCodeError)
@@ -121,7 +130,11 @@ func run() error {
 		log.Info("loaded config file", zap.String("path", cfg.ConfigFileUsed))
 	}
 
+	build := buildinfo.Current()
 	log.Info("starting switch-a",
+		zap.String("version", build.Version),
+		zap.String("commit", build.Commit),
+		zap.String("built_at", build.BuiltAt),
 		zap.String("proxy_port", cfg.Port),
 		zap.String("admin_port", cfg.AdminPort),
 		zap.String("log_path", cfg.LogPath),
