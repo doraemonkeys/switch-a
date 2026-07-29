@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useToast } from "../hooks/useToast";
 import type { Provider, ProviderStatus } from "../api/client";
 

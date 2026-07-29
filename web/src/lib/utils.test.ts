@@ -53,110 +53,43 @@ describe("utils", () => {
       vi.restoreAllMocks();
     });
 
-    it("converts string to lowercase slug with random suffix", () => {
-      const result = slugify("OpenAI Production");
-      expect(result).toMatch(/^openai-production-[a-z0-9]+$/);
-    });
-
-    it("replaces spaces with hyphens", () => {
-      const result = slugify("hello world");
-      expect(result).toMatch(/^hello-world-[a-z0-9]+$/);
-    });
-
-    it("removes special characters", () => {
-      const result = slugify("hello@world#test!");
-      expect(result).toMatch(/^helloworldtest-[a-z0-9]+$/);
-    });
-
-    it("collapses multiple hyphens", () => {
-      const result = slugify("hello   world");
-      expect(result).toMatch(/^hello-world-[a-z0-9]+$/);
-    });
-
-    it("removes leading and trailing hyphens", () => {
-      const result = slugify("-hello world-");
-      expect(result).toMatch(/^hello-world-[a-z0-9]+$/);
-    });
-
-    it("handles empty string", () => {
-      const result = slugify("");
-      // Empty string returns just the random suffix
-      expect(result).toMatch(/^[a-z0-9]+$/);
-    });
-
-    it("handles whitespace-only string", () => {
-      const result = slugify("   ");
-      // Whitespace-only returns just the random suffix
-      expect(result).toMatch(/^[a-z0-9]+$/);
-    });
-
-    it("handles Chinese characters (non-ASCII)", () => {
-      const result = slugify("中文测试");
-      // Non-ASCII characters get removed, so fallback to item-{suffix}
-      expect(result).toMatch(/^item-[a-z0-9]+$/);
-    });
-
-    it("handles mixed Chinese and English", () => {
-      const result = slugify("测试 test 中文");
-      expect(result).toMatch(/^test-[a-z0-9]+$/);
-    });
-
-    it("handles numbers in input", () => {
-      const result = slugify("test123");
-      expect(result).toMatch(/^test123-[a-z0-9]+$/);
-    });
-
-    it("preserves hyphens in input", () => {
-      const result = slugify("my-api-key");
-      expect(result).toMatch(/^my-api-key-[a-z0-9]+$/);
-    });
-
-    it("handles special characters only", () => {
-      const result = slugify("@#$%^&*");
-      // All special chars removed, but input is not whitespace-only, so fallback to item-{suffix}
-      expect(result).toMatch(/^item-[a-z0-9]+$/);
+    it.each([
+      ["OpenAI Production", /^openai-production-[a-z0-9]+$/],
+      ["hello world", /^hello-world-[a-z0-9]+$/],
+      ["hello@world#test!", /^helloworldtest-[a-z0-9]+$/],
+      ["hello   world", /^hello-world-[a-z0-9]+$/],
+      ["-hello world-", /^hello-world-[a-z0-9]+$/],
+      ["", /^[a-z0-9]+$/],
+      ["   ", /^[a-z0-9]+$/],
+      ["中文测试", /^item-[a-z0-9]+$/],
+      ["测试 test 中文", /^test-[a-z0-9]+$/],
+      ["test123", /^test123-[a-z0-9]+$/],
+      ["my-api-key", /^my-api-key-[a-z0-9]+$/],
+      ["@#$%^&*", /^item-[a-z0-9]+$/],
+    ])("normalizes %j to the expected slug shape", (input, expected) => {
+      expect(slugify(input)).toMatch(expected);
     });
   });
 
   describe("isValidId", () => {
-    it("returns true for valid lowercase ID", () => {
-      expect(isValidId("hello")).toBe(true);
-    });
+    it.each(["hello", "hello123", "hello-world", "", "my-api-key-123-abc"])(
+      "accepts %j",
+      (id) => {
+        expect(isValidId(id)).toBe(true);
+      },
+    );
 
-    it("returns true for ID with numbers", () => {
-      expect(isValidId("hello123")).toBe(true);
-    });
-
-    it("returns true for ID with hyphens", () => {
-      expect(isValidId("hello-world")).toBe(true);
-    });
-
-    it("returns true for empty string", () => {
-      expect(isValidId("")).toBe(true);
-    });
-
-    it("returns true for complex valid ID", () => {
-      expect(isValidId("my-api-key-123-abc")).toBe(true);
-    });
-
-    it("returns false for uppercase letters", () => {
-      expect(isValidId("Hello")).toBe(false);
-      expect(isValidId("HELLO")).toBe(false);
-    });
-
-    it("returns false for spaces", () => {
-      expect(isValidId("hello world")).toBe(false);
-    });
-
-    it("returns false for special characters", () => {
-      expect(isValidId("hello@world")).toBe(false);
-      expect(isValidId("hello_world")).toBe(false);
-      expect(isValidId("hello.world")).toBe(false);
-    });
-
-    it("returns false for unicode characters", () => {
-      expect(isValidId("hello中文")).toBe(false);
-      expect(isValidId("héllo")).toBe(false);
+    it.each([
+      "Hello",
+      "HELLO",
+      "hello world",
+      "hello@world",
+      "hello_world",
+      "hello.world",
+      "hello中文",
+      "héllo",
+    ])("rejects %j", (id) => {
+      expect(isValidId(id)).toBe(false);
     });
   });
 

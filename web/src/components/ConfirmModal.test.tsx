@@ -99,22 +99,13 @@ describe("ConfirmModal", () => {
   });
 
   describe("Variant styles", () => {
-    it("applies danger variant style", () => {
-      render(<ConfirmModal {...defaultProps} variant="danger" />);
-      const confirmButton = screen.getByText("Confirm");
-      expect(confirmButton).toHaveClass("bg-red-500");
-    });
-
-    it("applies warning variant style", () => {
-      render(<ConfirmModal {...defaultProps} variant="warning" />);
-      const confirmButton = screen.getByText("Confirm");
-      expect(confirmButton).toHaveClass("bg-yellow-500");
-    });
-
-    it("applies default variant style", () => {
-      render(<ConfirmModal {...defaultProps} variant="default" />);
-      const confirmButton = screen.getByText("Confirm");
-      expect(confirmButton).toHaveClass("btn-primary");
+    it.each([
+      ["danger", "bg-red-500"],
+      ["warning", "bg-yellow-500"],
+      ["default", "btn-primary"],
+    ] as const)("applies the %s variant style", (variant, className) => {
+      render(<ConfirmModal {...defaultProps} variant={variant} />);
+      expect(screen.getByText("Confirm")).toHaveClass(className);
     });
 
     it("uses default variant when not specified", () => {

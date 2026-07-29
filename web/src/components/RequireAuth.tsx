@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router";
 import { useApi } from "@/api/useApi";
 
 export function RequireAuth({ children }: { children: ReactNode }) {

@@ -43,7 +43,7 @@ describe("useQuery", () => {
     const fetcher = vi.fn().mockRejectedValue("string error");
 
     const { result } = renderHook(() =>
-      useQuery(fetcher, [], { errorMessage: "Custom error message" }),
+      useQuery(fetcher, { errorMessage: "Custom error message" }),
     );
 
     await waitFor(() => {
@@ -56,7 +56,7 @@ describe("useQuery", () => {
   it("should skip initial fetch when skip option is true", async () => {
     const fetcher = vi.fn().mockResolvedValue({ data: "test" });
 
-    const { result } = renderHook(() => useQuery(fetcher, [], { skip: true }));
+    const { result } = renderHook(() => useQuery(fetcher, { skip: true }));
 
     // Should not be loading since skip is true
     expect(result.current.loading).toBe(false);
@@ -85,7 +85,7 @@ describe("useQuery", () => {
   it("should not refetch when skip is true and refetch is called", async () => {
     const fetcher = vi.fn().mockResolvedValue({ data: "test" });
 
-    const { result } = renderHook(() => useQuery(fetcher, [], { skip: true }));
+    const { result } = renderHook(() => useQuery(fetcher, { skip: true }));
 
     await act(async () => {
       await result.current.refetch();
@@ -98,7 +98,7 @@ describe("useQuery", () => {
     const fetcher = vi.fn().mockResolvedValue({ data: "test" });
 
     const { result, rerender } = renderHook(
-      ({ id }) => useQuery(() => fetcher(id), [id]),
+      ({ id }) => useQuery(() => fetcher(id), { queryKey: id }),
       { initialProps: { id: 1 } },
     );
 
@@ -113,6 +113,49 @@ describe("useQuery", () => {
     await waitFor(() => {
       expect(fetcher).toHaveBeenCalledWith(2);
     });
+  });
+
+  it("should ignore a stale response after the query key changes", async () => {
+    let resolveFirst!: (value: { id: number }) => void;
+    let resolveSecond!: (value: { id: number }) => void;
+    const first = new Promise<{ id: number }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<{ id: number }>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetcher = vi.fn((id: number) => (id === 1 ? first : second));
+
+    const { result, rerender } = renderHook(
+      ({ id }) => useQuery(() => fetcher(id), { queryKey: id }),
+      { initialProps: { id: 1 } },
+    );
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(1));
+
+    rerender({ id: 2 });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(2));
+
+    await act(async () => resolveSecond({ id: 2 }));
+    expect(result.current.data).toEqual({ id: 2 });
+
+    await act(async () => resolveFirst({ id: 1 }));
+    expect(result.current.data).toEqual({ id: 2 });
+  });
+
+  it("should synchronize when a skipped query becomes enabled", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ data: "enabled" });
+    const { result, rerender } = renderHook(
+      ({ skip }) => useQuery(fetcher, { skip }),
+      { initialProps: { skip: true } },
+    );
+
+    expect(result.current.loading).toBe(false);
+    rerender({ skip: false });
+    expect(result.current.loading).toBe(true);
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.current.data).toEqual({ data: "enabled" });
   });
 
   it("should use default error message", async () => {

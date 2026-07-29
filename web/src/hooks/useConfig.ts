@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState } from "react";
 import { useApi } from "../api";
+import { useQuery } from "./useQuery";
 
 interface UseConfigResult {
   /** Default configuration values from server */
   defaults: Record<string, string>;
   /** User-modified configuration values */
   values: Record<string, string>;
-  /** Merged config: values override defaults (for backward compatibility) */
+  /** Effective configuration; explicit values take precedence over defaults. */
   config: Record<string, string>;
   loading: boolean;
   error: Error | null;
@@ -20,72 +21,41 @@ interface UseConfigResult {
 
 export function useConfig(): UseConfigResult {
   const api = useApi();
-  const [defaults, setDefaults] = useState<Record<string, string>>({});
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+  const query = useQuery(() => api.config.get(), {
+    errorMessage: "Failed to fetch config",
+  });
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [mutationError, setMutationError] = useState<Error | null>(null);
 
-  // Compute merged config: values override defaults
-  const config = useMemo(() => {
-    return { ...defaults, ...values };
-  }, [defaults, values]);
+  const defaults = query.data?.defaults ?? {};
+  const values = query.data?.values ?? {};
+  const config = { ...defaults, ...values };
 
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const updateConfig = async (data: Record<string, string>): Promise<void> => {
+    setSaving(true);
+    setMutationError(null);
     try {
-      const data = await api.config.get();
-      setDefaults(data.defaults);
-      setValues(data.values);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err : new Error("Failed to fetch config"),
-      );
+      await api.config.update(data);
+      await query.refetch();
+    } catch (reason) {
+      const error =
+        reason instanceof Error ? reason : new Error("Failed to update config");
+      setMutationError(error);
+      throw reason;
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
-  }, [api]);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  const updateConfig = useCallback(
-    async (data: Record<string, string>): Promise<void> => {
-      setSaving(true);
-      setError(null);
-      try {
-        await api.config.update(data);
-        await refetch();
-      } catch (err) {
-        setError(
-          err instanceof Error ? err : new Error("Failed to update config"),
-        );
-        throw err;
-      } finally {
-        setSaving(false);
-      }
-    },
-    [api, refetch],
-  );
-
-  const isModified = useCallback(
-    (key: string): boolean => {
-      return key in values;
-    },
-    [values],
-  );
+  };
 
   return {
     defaults,
     values,
     config,
-    loading,
-    error,
+    loading: query.loading,
+    error: mutationError ?? query.error,
     saving,
-    refetch,
+    refetch: query.refetch,
     updateConfig,
-    isModified,
+    isModified: (key: string) => key in values,
   };
 }

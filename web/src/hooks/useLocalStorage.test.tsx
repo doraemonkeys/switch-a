@@ -236,7 +236,7 @@ describe("useLocalStorage", () => {
       useLocalStorage<string | null>("nullKey", null),
     );
 
-    expect(result.current[0]).toBe(null);
+    expect(result.current[0]).toBeNull();
 
     act(() => {
       result.current[1]("not null");

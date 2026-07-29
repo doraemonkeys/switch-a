@@ -36,7 +36,7 @@ async function parseImportFile(file: File): Promise<ExportedConfig> {
     return json;
   } catch (err) {
     if (err instanceof SyntaxError) {
-      throw new Error("JSON 格式无效，请检查文件内容");
+      throw new Error("JSON 格式无效，请检查文件内容", { cause: err });
     }
     throw err;
   }

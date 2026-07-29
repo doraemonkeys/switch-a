@@ -1,2 +1,8 @@
 allowBuilds:
   esbuild: false
+
+# Parent toolchains still accept vulnerable transitive ranges, so constrain only
+# those ranges until their own dependency floors move past the patched versions.
+overrides:
+  "minimatch@>=10.0.0 <10.2.3": 10.2.3
+  "brace-expansion@>=5.0.0 <5.0.8": 5.0.8

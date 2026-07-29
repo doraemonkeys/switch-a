@@ -318,9 +318,7 @@ export type RequestAttemptSwitchReason =
   | (string & {});
 
 export type RequestAttemptPhase =
-  | "pre_accept"
-  | "post_upgrade_pre_visible"
-  | "visible";
+  "pre_accept" | "post_upgrade_pre_visible" | "visible";
 
 export type RequestAttemptSwitchMode = "initial" | "replacement" | "failover";
 
@@ -403,11 +401,7 @@ export type SemanticsVersion = "legacy_pre_assessment" | "normalized_v1";
 export type CompletionState = "unknown" | "incomplete" | "completed";
 
 export type TerminationActor =
-  | "client"
-  | "gateway"
-  | "upstream"
-  | "internal"
-  | "unknown";
+  "client" | "gateway" | "upstream" | "internal" | "unknown";
 
 export type TerminationReason =
   | "provider_unavailable"
@@ -436,11 +430,7 @@ export type ServiceOutcome =
   | "unknown";
 
 export type ReasoningObservationState =
-  | "captured"
-  | "absent"
-  | "invalid"
-  | "ambiguous"
-  | "unsupported";
+  "captured" | "absent" | "invalid" | "ambiguous" | "unsupported";
 
 export type WebSocketProbeOutcome =
   | "unknown"
@@ -764,9 +754,7 @@ export interface SelectionImportScope {
 }
 
 export type ImportScope =
-  | FullImportScope
-  | SettingsOnlyImportScope
-  | SelectionImportScope;
+  FullImportScope | SettingsOnlyImportScope | SelectionImportScope;
 
 /** ImportConfigRequest represents the request body for config import */
 export interface ImportConfigRequest {

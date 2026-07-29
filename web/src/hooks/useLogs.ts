@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useApi } from "../api";
-import type { RequestLog, LogFilter, LogsResponse } from "../api/client";
+import type { LogFilter, RequestLog } from "../api/client";
+import { useQuery } from "./useQuery";
 
 interface UseLogsResult {
   logs: RequestLog[];
@@ -17,70 +18,47 @@ interface UseLogsResult {
 }
 
 export const DEFAULT_LIMIT = 20;
+const DEFAULT_SORT_FIELD = "created_at";
+const DEFAULT_SORT_ORDER = "desc";
 
 export function useLogs(initialFilter?: LogFilter): UseLogsResult {
   const api = useApi();
-  const [logs, setLogs] = useState<RequestLog[]>([]);
-  const [total, setTotal] = useState(0);
-  const [sortBy, setSortBy] = useState("created_at");
-  const [sortOrder, setSortOrder] = useState("desc");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
   const [filter, setFilter] = useState<LogFilter>({
     limit: initialFilter?.limit ?? DEFAULT_LIMIT,
     offset: initialFilter?.offset ?? 0,
     ...initialFilter,
   });
+  const query = useQuery(() => api.logs.list(filter), {
+    queryKey: filter,
+    errorMessage: "Failed to fetch logs",
+  });
 
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response: LogsResponse = await api.logs.list(filter);
-      setLogs(response.logs);
-      setTotal(response.total);
-      setSortBy(response.sort_by);
-      setSortOrder(response.sort_order);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error("Failed to fetch logs"));
-    } finally {
-      setLoading(false);
-    }
-  }, [api, filter]);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  // Partial update helper for convenience
-  // Automatically resets offset to 0 when filter criteria (not pagination) changes
   const updateFilter = (partial: Partial<LogFilter>) => {
-    setFilter((prev) => {
-      // Check if this is a pagination-only update
+    setFilter((current) => {
       const isPaginationOnly =
         Object.keys(partial).length === 1 &&
         (partial.offset !== undefined || partial.limit !== undefined);
+      const next = { ...current, ...partial };
 
-      // Reset offset to 0 when filter criteria changes (not pagination)
-      const newFilter = { ...prev, ...partial };
+      // A changed search criterion starts a new result set; retaining an old
+      // offset would make the first page of that result set appear empty.
       if (!isPaginationOnly && partial.offset === undefined) {
-        newFilter.offset = 0;
+        next.offset = 0;
       }
-
-      return newFilter;
+      return next;
     });
   };
 
   return {
-    logs,
-    total,
-    loading,
-    error,
-    refetch,
+    logs: query.data?.logs ?? [],
+    total: query.data?.total ?? 0,
+    loading: query.loading,
+    error: query.error,
+    refetch: query.refetch,
     setFilter,
     updateFilter,
     filter,
-    sortBy,
-    sortOrder,
+    sortBy: query.data?.sort_by ?? DEFAULT_SORT_FIELD,
+    sortOrder: query.data?.sort_order ?? DEFAULT_SORT_ORDER,
   };
 }

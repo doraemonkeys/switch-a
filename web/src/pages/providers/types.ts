@@ -13,17 +13,10 @@ export function generateClientKey(): string {
 }
 
 export type ProviderStatusType =
-  | "healthy"
-  | "unhealthy"
-  | "pending-recovery"
-  | "disabled";
+  "healthy" | "unhealthy" | "pending-recovery" | "disabled";
 
 export type StatusFilter =
-  | ""
-  | "healthy"
-  | "unhealthy"
-  | "pending-recovery"
-  | "disabled";
+  "" | "healthy" | "unhealthy" | "pending-recovery" | "disabled";
 
 /**
  * Determines provider status based on enabled state and health info.

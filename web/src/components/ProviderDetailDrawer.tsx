@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { Provider, RequestLog } from "../api/types";
 import { useApi } from "../api";
 import {

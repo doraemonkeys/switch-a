@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
 import { useApi } from "../api";
 import type { Provider, ProviderInput } from "../api/client";
+import { useQuery } from "./useQuery";
 
 interface UseProvidersResult {
   providers: Provider[];
@@ -19,105 +19,65 @@ interface UseProvidersResult {
 
 export function useProviders(): UseProvidersResult {
   const api = useApi();
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const query = useQuery(() => api.providers.list(), {
+    errorMessage: "Failed to fetch providers",
+  });
 
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const createProvider = async (data: ProviderInput): Promise<Provider> => {
+    const provider = await api.providers.create(data);
+    await query.refetch();
+    return provider;
+  };
+
+  const updateProvider = async (
+    id: string,
+    data: ProviderInput,
+  ): Promise<Provider> => {
+    const provider = await api.providers.update(id, data);
+    await query.refetch();
+    return provider;
+  };
+
+  const deleteProvider = async (id: string): Promise<void> => {
+    await api.providers.delete(id);
+    await query.refetch();
+  };
+
+  const enableProvider = async (id: string): Promise<void> => {
+    await api.providers.enable(id);
+    await query.refetch();
+  };
+
+  const disableProvider = async (id: string): Promise<void> => {
+    await api.providers.disable(id);
+    await query.refetch();
+  };
+
+  const resetProvider = async (id: string): Promise<void> => {
+    await api.providers.reset(id);
+    await query.refetch();
+  };
+
+  const refreshCredential = async (id: string): Promise<void> => {
+    await api.providers.refreshCredential(id);
+    await query.refetch();
+  };
+
+  const refreshUsage = async (id: string): Promise<void> => {
     try {
-      const data = await api.providers.list();
-      setProviders(data);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err : new Error("Failed to fetch providers"),
-      );
+      await api.providers.refreshUsage(id);
     } finally {
-      setLoading(false);
+      // A rejected sync may persist an auth lifecycle transition, so the UI
+      // must reconcile provider state even though the action itself failed.
+      await query.refetch();
     }
-  }, [api]);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  const createProvider = useCallback(
-    async (data: ProviderInput): Promise<Provider> => {
-      const provider = await api.providers.create(data);
-      await refetch();
-      return provider;
-    },
-    [api, refetch],
-  );
-
-  const updateProvider = useCallback(
-    async (id: string, data: ProviderInput): Promise<Provider> => {
-      const provider = await api.providers.update(id, data);
-      await refetch();
-      return provider;
-    },
-    [api, refetch],
-  );
-
-  const deleteProvider = useCallback(
-    async (id: string): Promise<void> => {
-      await api.providers.delete(id);
-      await refetch();
-    },
-    [api, refetch],
-  );
-
-  const enableProvider = useCallback(
-    async (id: string): Promise<void> => {
-      await api.providers.enable(id);
-      await refetch();
-    },
-    [api, refetch],
-  );
-
-  const disableProvider = useCallback(
-    async (id: string): Promise<void> => {
-      await api.providers.disable(id);
-      await refetch();
-    },
-    [api, refetch],
-  );
-
-  const resetProvider = useCallback(
-    async (id: string): Promise<void> => {
-      await api.providers.reset(id);
-      await refetch();
-    },
-    [api, refetch],
-  );
-
-  const refreshCredential = useCallback(
-    async (id: string): Promise<void> => {
-      await api.providers.refreshCredential(id);
-      await refetch();
-    },
-    [api, refetch],
-  );
-
-  const refreshUsage = useCallback(
-    async (id: string): Promise<void> => {
-      try {
-        await api.providers.refreshUsage(id);
-      } finally {
-        // A rejected sync may persist an auth lifecycle transition, so the UI
-        // must reconcile provider state even though the action itself failed.
-        await refetch();
-      }
-    },
-    [api, refetch],
-  );
+  };
 
   return {
-    providers,
-    loading,
-    error,
-    refetch,
+    providers: query.data ?? [],
+    loading: query.loading,
+    error: query.error,
+    refetch: query.refetch,
     createProvider,
     updateProvider,
     deleteProvider,
@@ -138,29 +98,16 @@ interface UseProviderResult {
 
 export function useProvider(id: string): UseProviderResult {
   const api = useApi();
-  const [provider, setProvider] = useState<Provider | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const query = useQuery(() => api.providers.get(id), {
+    queryKey: id,
+    skip: !id,
+    errorMessage: "Failed to fetch provider",
+  });
 
-  const refetch = useCallback(async () => {
-    if (!id) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.providers.get(id);
-      setProvider(data);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err : new Error("Failed to fetch provider"),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [api, id]);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  return { provider, loading, error, refetch };
+  return {
+    provider: query.data,
+    loading: query.loading,
+    error: query.error,
+    refetch: query.refetch,
+  };
 }

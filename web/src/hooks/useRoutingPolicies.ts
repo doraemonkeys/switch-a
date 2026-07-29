@@ -1,9 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
 import { ApiError, useApi } from "../api";
 import type { RoutingPolicy, RoutingPolicyInput } from "../api";
+import { useQuery } from "./useQuery";
 
 const FEATURE_UNAVAILABLE_MESSAGE =
   "Routing policy management is not available on this server build yet.";
+
+interface RoutingPolicySnapshot {
+  policies: RoutingPolicy[];
+  available: boolean;
+}
 
 interface UseRoutingPoliciesResult {
   policies: RoutingPolicy[];
@@ -28,79 +33,63 @@ function isFeatureUnavailableError(error: unknown): boolean {
 
 export function useRoutingPolicies(): UseRoutingPoliciesResult {
   const api = useApi();
-  const [policies, setPolicies] = useState<RoutingPolicy[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [available, setAvailable] = useState(true);
-
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.routingPolicies.list();
-      setPolicies(data);
-      setAvailable(true);
-    } catch (err) {
-      if (isFeatureUnavailableError(err)) {
-        setPolicies([]);
-        setAvailable(false);
-      } else {
-        setError(
-          err instanceof Error
-            ? err
-            : new Error("Failed to fetch routing policies"),
-        );
+  const query = useQuery<RoutingPolicySnapshot>(
+    async () => {
+      try {
+        return {
+          policies: await api.routingPolicies.list(),
+          available: true,
+        };
+      } catch (error) {
+        if (isFeatureUnavailableError(error)) {
+          return { policies: [], available: false };
+        }
+        throw error;
       }
-    } finally {
-      setLoading(false);
+    },
+    {
+      errorMessage: "Failed to fetch routing policies",
+    },
+  );
+  const available = query.data?.available ?? true;
+
+  const assertAvailable = () => {
+    if (!available) {
+      throw new Error(FEATURE_UNAVAILABLE_MESSAGE);
     }
-  }, [api]);
+  };
 
-  useEffect(() => {
-    void refetch();
-  }, [refetch]);
+  const createPolicy = async (
+    data: RoutingPolicyInput,
+  ): Promise<RoutingPolicy> => {
+    assertAvailable();
+    const policy = await api.routingPolicies.create(data);
+    await query.refetch();
+    return policy;
+  };
 
-  const createPolicy = useCallback(
-    async (data: RoutingPolicyInput): Promise<RoutingPolicy> => {
-      if (!available) {
-        throw new Error(FEATURE_UNAVAILABLE_MESSAGE);
-      }
-      const policy = await api.routingPolicies.create(data);
-      await refetch();
-      return policy;
-    },
-    [api, available, refetch],
-  );
+  const updatePolicy = async (
+    id: string,
+    data: RoutingPolicyInput,
+  ): Promise<RoutingPolicy> => {
+    assertAvailable();
+    const policy = await api.routingPolicies.update(id, data);
+    await query.refetch();
+    return policy;
+  };
 
-  const updatePolicy = useCallback(
-    async (id: string, data: RoutingPolicyInput): Promise<RoutingPolicy> => {
-      if (!available) {
-        throw new Error(FEATURE_UNAVAILABLE_MESSAGE);
-      }
-      const policy = await api.routingPolicies.update(id, data);
-      await refetch();
-      return policy;
-    },
-    [api, available, refetch],
-  );
-
-  const deletePolicy = useCallback(
-    async (id: string): Promise<void> => {
-      if (!available) {
-        throw new Error(FEATURE_UNAVAILABLE_MESSAGE);
-      }
-      await api.routingPolicies.delete(id);
-      await refetch();
-    },
-    [api, available, refetch],
-  );
+  const deletePolicy = async (id: string): Promise<void> => {
+    assertAvailable();
+    await api.routingPolicies.delete(id);
+    await query.refetch();
+  };
 
   return {
-    policies,
-    loading,
-    error,
+    policies: query.data?.policies ?? [],
+    loading: query.loading,
+    error: query.error,
     available,
-    refetch,
+    refetch: query.refetch,
     createPolicy,
     updatePolicy,
     deletePolicy,
