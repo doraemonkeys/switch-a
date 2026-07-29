@@ -46,16 +46,11 @@ export type TransportEvidenceSource = "upstream" | "client";
  * summaries (e.g. "before payload visible").
  */
 export type TransportEvidenceStage =
-  | "pre_connection_visible"
-  | "pre_payload_visible"
-  | "post_payload_visible";
+  "pre_connection_visible" | "pre_payload_visible" | "post_payload_visible";
 
 /** Root-cause classification used by summary text; distinct from signal. */
 export type TransportEvidenceKind =
-  | "timeout"
-  | "disconnect"
-  | "protocol_error"
-  | "local_error";
+  "timeout" | "disconnect" | "protocol_error" | "local_error";
 
 /** Protocol-layer observation feeding the detail view. */
 export type TransportEvidenceSignal =

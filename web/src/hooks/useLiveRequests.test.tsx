@@ -1,8 +1,6 @@
-/* eslint-disable sonarjs/no-hardcoded-ip, sonarjs/no-nested-functions */
+/* eslint-disable sonarjs/no-hardcoded-ip */
 /**
  * no-hardcoded-ip: Test fixtures require mock IP addresses for realistic API response simulation.
- * no-nested-functions: Testing library patterns (describe/it callbacks) and DOM event mocking
- *   inherently require nested function definitions.
  */
 import { renderHook, act } from "@testing-library/react";
 import type { Mock } from "vitest";

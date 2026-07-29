@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import type { ApiClient, Provider } from "../api/client";
 import { ApiContext } from "../api/context";
 import { ProviderDetailDrawer } from "./ProviderDetailDrawer";

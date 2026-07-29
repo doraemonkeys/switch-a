@@ -1,4 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+
+const DEFAULT_QUERY_ERROR_MESSAGE = "Failed to fetch data";
+const DEFAULT_MUTATION_ERROR_MESSAGE = "Operation failed";
+const UNRESOLVED_QUERY_KEY = Symbol("unresolved-query-key");
 
 export interface UseQueryResult<T> {
   data: T | null;
@@ -8,61 +12,133 @@ export interface UseQueryResult<T> {
 }
 
 export interface UseQueryOptions {
-  /** Skip initial fetch */
+  /** Skip both the initial request and manual refreshes. */
   skip?: boolean;
-  /** Error message prefix */
+  /** A semantic key whose changes require a new server snapshot. */
+  queryKey?: unknown;
+  /** Error message used when a dependency rejects with a non-Error value. */
   errorMessage?: string;
 }
 
+interface QueryState<T> {
+  data: T | null;
+  error: Error | null;
+  resolvedKey: unknown;
+  refreshing: boolean;
+}
+
+function normalizeError(reason: unknown, fallback: string): Error {
+  return reason instanceof Error ? reason : new Error(fallback);
+}
+
 /**
- * Generic hook for handling async data fetching with loading/error states.
- * Reduces boilerplate across useProviders, useStatus, useLogs, etc.
+ * Synchronizes one semantic query key with an external data source.
+ *
+ * The resolved key is stored with the result so loading can be derived during
+ * render. This avoids an extra render whose only purpose is to mirror a key
+ * change into loading state, while request IDs prevent stale responses from
+ * replacing newer snapshots.
  */
 export function useQuery<T>(
   fetcher: () => Promise<T>,
-  deps: React.DependencyList = [],
   options: UseQueryOptions = {},
 ): UseQueryResult<T> {
-  const { skip = false, errorMessage = "Failed to fetch data" } = options;
+  const {
+    skip = false,
+    queryKey,
+    errorMessage = DEFAULT_QUERY_ERROR_MESSAGE,
+  } = options;
+  const [state, setState] = useState<QueryState<T>>({
+    data: null,
+    error: null,
+    resolvedKey: UNRESOLVED_QUERY_KEY,
+    refreshing: false,
+  });
+  const requestSequence = useRef(0);
 
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(!skip);
-  const [error, setError] = useState<Error | null>(null);
-
-  // Use ref to track if component is mounted
-  const mountedRef = useRef(true);
-
-  const refetch = useCallback(async () => {
-    if (skip) return;
-
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await fetcher();
-      if (mountedRef.current) {
-        setData(result);
+  const synchronize = useEffectEvent(
+    async (requestId: number, requestedKey: unknown) => {
+      // Yield before touching React state so the Effect only initiates external
+      // synchronization; completions, rather than the Effect body, publish it.
+      await Promise.resolve();
+      if (requestSequence.current === requestId) {
+        setState((current) => ({
+          ...current,
+          error: null,
+          refreshing: true,
+        }));
       }
-    } catch (err) {
-      if (mountedRef.current) {
-        setError(err instanceof Error ? err : new Error(errorMessage));
+      try {
+        const data = await fetcher();
+        if (requestSequence.current === requestId) {
+          setState({
+            data,
+            error: null,
+            resolvedKey: requestedKey,
+            refreshing: false,
+          });
+        }
+      } catch (reason) {
+        if (requestSequence.current === requestId) {
+          setState((current) => ({
+            ...current,
+            error: normalizeError(reason, errorMessage),
+            resolvedKey: requestedKey,
+            refreshing: false,
+          }));
+        }
       }
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skip, errorMessage, ...deps]);
+    },
+  );
 
   useEffect(() => {
-    mountedRef.current = true;
-    refetch();
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [refetch]);
+    if (skip) return;
 
-  return { data, loading, error, refetch };
+    const requestId = ++requestSequence.current;
+    void synchronize(requestId, queryKey);
+
+    return () => {
+      // Invalidating the sequence is enough to cancel publication even when an
+      // underlying client cannot cancel its network request.
+      requestSequence.current += 1;
+    };
+  }, [queryKey, skip]);
+
+  const refetch = async (): Promise<void> => {
+    if (skip) return;
+
+    const requestId = ++requestSequence.current;
+    setState((current) => ({ ...current, error: null, refreshing: true }));
+    try {
+      const data = await fetcher();
+      if (requestSequence.current === requestId) {
+        setState({
+          data,
+          error: null,
+          resolvedKey: queryKey,
+          refreshing: false,
+        });
+      }
+    } catch (reason) {
+      if (requestSequence.current === requestId) {
+        setState((current) => ({
+          ...current,
+          error: normalizeError(reason, errorMessage),
+          resolvedKey: queryKey,
+          refreshing: false,
+        }));
+      }
+    }
+  };
+
+  const hasCurrentSnapshot = Object.is(state.resolvedKey, queryKey);
+
+  return {
+    data: state.data,
+    loading: !skip && (state.refreshing || !hasCurrentSnapshot),
+    error: !skip && hasCurrentSnapshot ? state.error : null,
+    refetch,
+  };
 }
 
 export interface UseMutationResult<TData, TInput> {
@@ -71,35 +147,31 @@ export interface UseMutationResult<TData, TInput> {
   error: Error | null;
 }
 
-/**
- * Generic hook for handling async mutations with loading/error states.
- */
+/** Generic state handling for mutations initiated by user events. */
 export function useMutation<TData, TInput>(
   mutator: (input: TInput) => Promise<TData>,
   options?: { onSuccess?: () => void; errorMessage?: string },
 ): UseMutationResult<TData, TInput> {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const { onSuccess, errorMessage = "Operation failed" } = options ?? {};
+  const { onSuccess, errorMessage = DEFAULT_MUTATION_ERROR_MESSAGE } =
+    options ?? {};
 
-  const mutate = useCallback(
-    async (input: TInput): Promise<TData> => {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await mutator(input);
-        onSuccess?.();
-        return result;
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(errorMessage);
-        setError(error);
-        throw error;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [mutator, onSuccess, errorMessage],
-  );
+  const mutate = async (input: TInput): Promise<TData> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await mutator(input);
+      onSuccess?.();
+      return result;
+    } catch (reason) {
+      const mutationError = normalizeError(reason, errorMessage);
+      setError(mutationError);
+      throw mutationError;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return { mutate, loading, error };
 }

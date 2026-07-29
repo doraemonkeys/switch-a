@@ -277,10 +277,7 @@ export function AuthModeField({ value, onChange }: AuthModeFieldProps) {
 
 // Keys of ProviderInput that are number types
 type ProviderInputNumberKey =
-  | "weight"
-  | "priority"
-  | "concurrency"
-  | "max_retries";
+  "weight" | "priority" | "concurrency" | "max_retries";
 
 interface NumberFieldConfig {
   key: ProviderInputNumberKey;

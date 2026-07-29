@@ -11,8 +11,7 @@ export const TARGET_MODE_EXACT_PROVIDER = "exact-provider";
 export const TARGET_MODE_FILTERS = "group-vendor-filters";
 
 export type RoutingPolicyTargetMode =
-  | typeof TARGET_MODE_EXACT_PROVIDER
-  | typeof TARGET_MODE_FILTERS;
+  typeof TARGET_MODE_EXACT_PROVIDER | typeof TARGET_MODE_FILTERS;
 
 export const MODEL_MATCH_OPTIONS: Array<{
   value: RoutingPolicyModelMatchType | typeof EMPTY_MODEL_MATCH;

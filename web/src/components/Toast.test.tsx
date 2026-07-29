@@ -37,48 +37,20 @@ describe("Toast", () => {
     vi.useRealTimers();
   });
 
-  it("renders success toast when success is called", () => {
+  it.each([
+    ["Success", "Success message"],
+    ["Error", "Error message"],
+    ["Warning", "Warning message"],
+    ["Info", "Info message"],
+  ])("renders the %s toast", (action, message) => {
     render(
       <ToastProvider>
         <TestComponent />
       </ToastProvider>,
     );
 
-    fireEvent.click(screen.getByText("Show Success"));
-    expect(screen.getByText("Success message")).toBeInTheDocument();
-  });
-
-  it("renders error toast when error is called", () => {
-    render(
-      <ToastProvider>
-        <TestComponent />
-      </ToastProvider>,
-    );
-
-    fireEvent.click(screen.getByText("Show Error"));
-    expect(screen.getByText("Error message")).toBeInTheDocument();
-  });
-
-  it("renders warning toast when warning is called", () => {
-    render(
-      <ToastProvider>
-        <TestComponent />
-      </ToastProvider>,
-    );
-
-    fireEvent.click(screen.getByText("Show Warning"));
-    expect(screen.getByText("Warning message")).toBeInTheDocument();
-  });
-
-  it("renders info toast when info is called", () => {
-    render(
-      <ToastProvider>
-        <TestComponent />
-      </ToastProvider>,
-    );
-
-    fireEvent.click(screen.getByText("Show Info"));
-    expect(screen.getByText("Info message")).toBeInTheDocument();
+    fireEvent.click(screen.getByText(`Show ${action}`));
+    expect(screen.getByText(message)).toBeInTheDocument();
   });
 
   it("auto-dismisses toast after default duration", () => {

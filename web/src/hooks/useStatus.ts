@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
 import { useApi } from "../api";
 import type {
+  HealthState,
   SystemStatus,
   SystemStatusSummary,
-  HealthState,
 } from "../api/client";
+import { useQuery } from "./useQuery";
 
 interface UseStatusResult {
   status: SystemStatus | null;
@@ -14,51 +14,39 @@ interface UseStatusResult {
   refetch: () => Promise<void>;
 }
 
+function summarizeStatus(
+  status: SystemStatus | null,
+): SystemStatusSummary | null {
+  if (!status) return null;
+
+  const total = status.providers.length;
+  const healthy = status.providers.filter(
+    (provider) => provider.enabled && provider.health?.available !== false,
+  ).length;
+
+  return {
+    providers_total: total,
+    providers_healthy: healthy,
+    providers_unhealthy: total - healthy,
+    // Request volume has a separate lifecycle and cannot be inferred from the
+    // provider health snapshot exposed by this endpoint.
+    requests_today: 0,
+  };
+}
+
 export function useStatus(): UseStatusResult {
   const api = useApi();
-  const [status, setStatus] = useState<SystemStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const query = useQuery(() => api.status.get(), {
+    errorMessage: "Failed to fetch status",
+  });
 
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.status.get();
-      setStatus(data);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err : new Error("Failed to fetch status"),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [api]);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  // Compute summary statistics from the raw status data
-  const summary = useMemo((): SystemStatusSummary | null => {
-    if (!status) return null;
-
-    const providers = status.providers;
-    const total = providers.length;
-    const healthy = providers.filter(
-      (p) => p.enabled && p.health?.available !== false,
-    ).length;
-    const unhealthy = total - healthy;
-
-    return {
-      providers_total: total,
-      providers_healthy: healthy,
-      providers_unhealthy: unhealthy,
-      requests_today: 0, // This would need a separate API endpoint to track
-    };
-  }, [status]);
-
-  return { status, summary, loading, error, refetch };
+  return {
+    status: query.data,
+    summary: summarizeStatus(query.data),
+    loading: query.loading,
+    error: query.error,
+    refetch: query.refetch,
+  };
 }
 
 interface UseHealthStatesResult {
@@ -70,28 +58,14 @@ interface UseHealthStatesResult {
 
 export function useHealthStates(): UseHealthStatesResult {
   const api = useApi();
-  const [healthStates, setHealthStates] = useState<HealthState[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const query = useQuery(() => api.status.health(), {
+    errorMessage: "Failed to fetch health states",
+  });
 
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.status.health();
-      setHealthStates(data);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err : new Error("Failed to fetch health states"),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [api]);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  return { healthStates, loading, error, refetch };
+  return {
+    healthStates: query.data ?? [],
+    loading: query.loading,
+    error: query.error,
+    refetch: query.refetch,
+  };
 }

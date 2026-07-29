@@ -1,10 +1,18 @@
-import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { Layout } from "./Layout";
+import { describe, expect, it } from "vitest";
+import { MemoryRouter } from "react-router";
 import { ApiProvider } from "@/api/ApiContext";
+import { Layout } from "./Layout";
 
-// Wrapper to provide routing and API context
+const NAVIGATION_CASES = [
+  { name: "Dashboard", href: "/", icon: "📊" },
+  { name: "Providers", href: "/providers", icon: "🔌" },
+  { name: "Groups", href: "/groups", icon: "📁" },
+  { name: "Routing", href: "/routing", icon: "🧭" },
+  { name: "Config", href: "/config", icon: "⚙️" },
+  { name: "Logs", href: "/logs", icon: "📋" },
+] as const;
+
 function renderWithRouter(initialPath = "/") {
   return render(
     <ApiProvider>
@@ -16,77 +24,27 @@ function renderWithRouter(initialPath = "/") {
 }
 
 describe("Layout", () => {
-  it("should render the header with app title", () => {
-    renderWithRouter();
+  it.each(["Switch-A", "AI Provider Proxy", "Online", "Version 0.1.0", "⚡"])(
+    "renders static shell content: %s",
+    (text) => {
+      renderWithRouter();
+      expect(screen.getByText(text)).toBeInTheDocument();
+    },
+  );
 
-    expect(screen.getByText("Switch-A")).toBeInTheDocument();
-    expect(screen.getByText("AI Provider Proxy")).toBeInTheDocument();
-  });
+  it.each(NAVIGATION_CASES)(
+    "renders $name navigation with its route and icon",
+    ({ name, href, icon }) => {
+      renderWithRouter();
 
-  it("should render online status indicator", () => {
-    renderWithRouter();
+      expect(
+        screen.getByRole("link", { name: new RegExp(name, "i") }),
+      ).toHaveAttribute("href", href);
+      expect(screen.getByText(icon)).toBeInTheDocument();
+    },
+  );
 
-    expect(screen.getByText("Online")).toBeInTheDocument();
-  });
-
-  it("should render all navigation items", () => {
-    renderWithRouter();
-
-    expect(
-      screen.getByRole("link", { name: /Dashboard/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /Providers/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Groups/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Routing/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Config/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Logs/i })).toBeInTheDocument();
-  });
-
-  it("should render version info", () => {
-    renderWithRouter();
-
-    expect(screen.getByText("Version 0.1.0")).toBeInTheDocument();
-  });
-
-  it("should have correct navigation links", () => {
-    renderWithRouter();
-
-    const dashboardLink = screen.getByRole("link", { name: /Dashboard/i });
-    const providersLink = screen.getByRole("link", { name: /Providers/i });
-    const groupsLink = screen.getByRole("link", { name: /Groups/i });
-    const routingLink = screen.getByRole("link", { name: /Routing/i });
-    const configLink = screen.getByRole("link", { name: /Config/i });
-    const logsLink = screen.getByRole("link", { name: /Logs/i });
-
-    expect(dashboardLink).toHaveAttribute("href", "/");
-    expect(providersLink).toHaveAttribute("href", "/providers");
-    expect(groupsLink).toHaveAttribute("href", "/groups");
-    expect(routingLink).toHaveAttribute("href", "/routing");
-    expect(configLink).toHaveAttribute("href", "/config");
-    expect(logsLink).toHaveAttribute("href", "/logs");
-  });
-
-  it("should display navigation icons", () => {
-    renderWithRouter();
-
-    // Check for emoji icons in navigation
-    expect(screen.getByText("📊")).toBeInTheDocument();
-    expect(screen.getByText("🔌")).toBeInTheDocument();
-    expect(screen.getByText("📁")).toBeInTheDocument();
-    expect(screen.getByText("🧭")).toBeInTheDocument();
-    expect(screen.getByText("⚙️")).toBeInTheDocument();
-    expect(screen.getByText("📋")).toBeInTheDocument();
-  });
-
-  it("should display header icon", () => {
-    renderWithRouter();
-
-    expect(screen.getByText("⚡")).toBeInTheDocument();
-  });
-
-  it("should render logout button", () => {
+  it("renders the logout action", () => {
     renderWithRouter();
     expect(screen.getByRole("button", { name: /Logout/i })).toBeInTheDocument();
   });

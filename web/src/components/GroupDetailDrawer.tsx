@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { Group, Provider } from "../api/types";
 import {
   getProviderStatus,

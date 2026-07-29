@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
+import { MemoryRouter, Routes, Route, Navigate } from "react-router";
 import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Providers } from "@/pages/providers";

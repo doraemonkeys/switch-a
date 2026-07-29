@@ -233,44 +233,17 @@ describe("RequestAttemptTimeline", () => {
   });
 
   describe("status code colors", () => {
-    it("shows green status badge for 2xx success codes", () => {
-      const attempts = [createMockAttempt({ status_code: 200 })];
+    it.each([
+      [200, "bg-green-100"],
+      [201, "bg-green-100"],
+      [302, "bg-yellow-100"],
+      [400, "bg-red-100"],
+      [500, "bg-red-100"],
+    ])("maps status %i to %s", (statusCode, className) => {
+      const attempts = [createMockAttempt({ status_code: statusCode })];
       render(<RequestAttemptTimeline attempts={attempts} />);
 
-      const badge = screen.getByText("200");
-      expect(badge).toHaveClass("bg-green-100");
-    });
-
-    it("shows green status badge for 201 created", () => {
-      const attempts = [createMockAttempt({ status_code: 201 })];
-      render(<RequestAttemptTimeline attempts={attempts} />);
-
-      const badge = screen.getByText("201");
-      expect(badge).toHaveClass("bg-green-100");
-    });
-
-    it("shows red status badge for 4xx client errors", () => {
-      const attempts = [createMockAttempt({ status_code: 400 })];
-      render(<RequestAttemptTimeline attempts={attempts} />);
-
-      const badge = screen.getByText("400");
-      expect(badge).toHaveClass("bg-red-100");
-    });
-
-    it("shows red status badge for 5xx server errors", () => {
-      const attempts = [createMockAttempt({ status_code: 500 })];
-      render(<RequestAttemptTimeline attempts={attempts} />);
-
-      const badge = screen.getByText("500");
-      expect(badge).toHaveClass("bg-red-100");
-    });
-
-    it("shows yellow status badge for 3xx redirect codes", () => {
-      const attempts = [createMockAttempt({ status_code: 302 })];
-      render(<RequestAttemptTimeline attempts={attempts} />);
-
-      const badge = screen.getByText("302");
-      expect(badge).toHaveClass("bg-yellow-100");
+      expect(screen.getByText(String(statusCode))).toHaveClass(className);
     });
   });
 
@@ -380,44 +353,19 @@ describe("RequestAttemptTimeline", () => {
   });
 
   describe("timeline dot colors", () => {
-    it("shows green dot for successful attempts (2xx)", () => {
-      const attempts = [createMockAttempt({ status_code: 200 })];
+    it.each([
+      [200, "bg-green-500"],
+      [503, "bg-red-500"],
+      [429, "bg-amber-500"],
+      [0, "bg-gray-400"],
+    ])("maps status %i to %s", (statusCode, className) => {
+      const attempts = [createMockAttempt({ status_code: statusCode })];
       const { container } = render(
         <RequestAttemptTimeline attempts={attempts} />,
       );
 
       const dot = container.querySelector(".rounded-full.w-3.h-3");
-      expect(dot).toHaveClass("bg-green-500");
-    });
-
-    it("shows red dot for 5xx errors", () => {
-      const attempts = [createMockAttempt({ status_code: 503 })];
-      const { container } = render(
-        <RequestAttemptTimeline attempts={attempts} />,
-      );
-
-      const dot = container.querySelector(".rounded-full.w-3.h-3");
-      expect(dot).toHaveClass("bg-red-500");
-    });
-
-    it("shows amber dot for 4xx errors", () => {
-      const attempts = [createMockAttempt({ status_code: 429 })];
-      const { container } = render(
-        <RequestAttemptTimeline attempts={attempts} />,
-      );
-
-      const dot = container.querySelector(".rounded-full.w-3.h-3");
-      expect(dot).toHaveClass("bg-amber-500");
-    });
-
-    it("shows gray dot for status_code 0 (no response)", () => {
-      const attempts = [createMockAttempt({ status_code: 0 })];
-      const { container } = render(
-        <RequestAttemptTimeline attempts={attempts} />,
-      );
-
-      const dot = container.querySelector(".rounded-full.w-3.h-3");
-      expect(dot).toHaveClass("bg-gray-400");
+      expect(dot).toHaveClass(className);
     });
   });
 

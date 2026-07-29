@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { useGroups } from "../../hooks/useGroups";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { ConfirmModal, ProviderDetailDrawer } from "../../components";

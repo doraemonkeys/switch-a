@@ -80,9 +80,7 @@ export function getV2Transport(
     return null;
   }
   const transport = evidence?.transport as
-    | RequestEvidenceTransportV2
-    | undefined
-    | null;
+    RequestEvidenceTransportV2 | undefined | null;
   return transport ?? null;
 }
 
@@ -98,9 +96,7 @@ export function getV1Transport(
     return null;
   }
   const transport = evidence.transport as
-    | RequestEvidenceTransport
-    | undefined
-    | null;
+    RequestEvidenceTransport | undefined | null;
   return transport ?? null;
 }
 

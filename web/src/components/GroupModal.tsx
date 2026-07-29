@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import type { FormEvent } from "react";
 import type { Group, GroupInput, Strategy } from "../api/types";
 import { STRATEGIES, STRATEGY_OPTIONS } from "../config/constants";
@@ -86,67 +86,55 @@ interface GroupModalProps {
   title: string;
 }
 
-export function GroupModal({
-  isOpen,
-  onClose,
-  onSubmit,
-  initialData,
-  title,
-}: GroupModalProps) {
-  const [formData, setFormData] = useState<GroupInput>({
+type GroupModalFormProps = Omit<GroupModalProps, "isOpen">;
+
+const NEW_GROUP_FORM_KEY = "new-group";
+
+function createInitialFormData(initialData?: Group | null): GroupInput {
+  if (initialData) {
+    return {
+      id: initialData.id,
+      name: initialData.name,
+      strategy: initialData.strategy,
+      priority: initialData.priority,
+      weight: initialData.weight,
+      enabled: initialData.enabled,
+    };
+  }
+
+  return {
     id: "",
     name: "",
     strategy: STRATEGIES.PRIORITY,
     priority: 0,
     weight: 0,
     enabled: true,
-  });
+  };
+}
+
+function GroupModalForm({
+  onClose,
+  onSubmit,
+  initialData,
+  title,
+}: GroupModalFormProps) {
+  const [formData, setFormData] = useState<GroupInput>(() =>
+    createInitialFormData(initialData),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
   const isEditMode = !!initialData;
 
-  const handleEscape = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !loading) onClose();
-    },
-    [onClose, loading],
-  );
+  const handleEscape = useEffectEvent((event: KeyboardEvent) => {
+    if (event.key === "Escape" && !loading) onClose();
+  });
 
   useEffect(() => {
-    if (isOpen) {
-      document.addEventListener("keydown", handleEscape);
-      return () => document.removeEventListener("keydown", handleEscape);
-    }
-  }, [isOpen, handleEscape]);
-
-  useEffect(() => {
-    if (initialData) {
-      setFormData({
-        id: initialData.id,
-        name: initialData.name,
-        strategy: initialData.strategy,
-        priority: initialData.priority,
-        weight: initialData.weight,
-        enabled: initialData.enabled,
-      });
-    } else {
-      setFormData({
-        id: "",
-        name: "",
-        strategy: STRATEGIES.PRIORITY,
-        priority: 0,
-        weight: 0,
-        enabled: true,
-      });
-      setIdManuallyEdited(false);
-    }
-    setError(null);
-    setIdError(null);
-  }, [initialData, isOpen]);
-
-  if (!isOpen) return null;
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -326,5 +314,19 @@ export function GroupModal({
         </form>
       </div>
     </div>
+  );
+}
+
+export function GroupModal({ isOpen, initialData, ...props }: GroupModalProps) {
+  if (!isOpen) return null;
+
+  // Opening a modal creates a fresh editing session. The entity key also
+  // resets the form when callers switch directly between two groups.
+  return (
+    <GroupModalForm
+      key={initialData?.id ?? NEW_GROUP_FORM_KEY}
+      initialData={initialData}
+      {...props}
+    />
   );
 }

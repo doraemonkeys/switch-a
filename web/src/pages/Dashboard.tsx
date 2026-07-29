@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { ConfirmModal, ProviderDetailDrawer } from "../components";
 import { RefreshIntervalSelect } from "../components/RefreshIntervalSelect";
 import {

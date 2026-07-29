@@ -78,12 +78,12 @@ describe("browserHttpClient", () => {
     });
     vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse);
 
-    const result = await browserHttpClient.fetch("http://test.com/api", {
+    const result = await browserHttpClient.fetch("https://test.com/api", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledWith("http://test.com/api", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("https://test.com/api", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
@@ -94,7 +94,7 @@ describe("browserHttpClient", () => {
     const mockResponse = new Response("", { status: 200 });
     vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse);
 
-    const url = new URL("http://test.com/api");
+    const url = new URL("https://test.com/api");
     await browserHttpClient.fetch(url);
 
     expect(globalThis.fetch).toHaveBeenCalledWith(url, undefined);
