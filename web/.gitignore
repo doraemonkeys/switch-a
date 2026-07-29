@@ -9,7 +9,9 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+dist/*
+!dist/PLACEHOLDER.txt
+!dist/.gitkeep
 dist-ssr
 *.local
 

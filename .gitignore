@@ -54,7 +54,7 @@ web/dist/*
 !web/dist/.gitkeep
 
 # Release build output (cross-compiled binaries)
-dist/
+/dist/
 
 config.yaml
 tmp/

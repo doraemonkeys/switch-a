@@ -9,59 +9,34 @@ import (
 	"testing/fstest"
 )
 
-func TestDistFS(t *testing.T) {
-	fsys := DistFS()
-	if fsys == nil {
-		t.Fatal("DistFS() returned nil")
-	}
+const testIndexHTML = "<!doctype html><html><body>Test Index</body></html>"
 
-	// Verify we can read index.html
-	content, err := fs.ReadFile(fsys, "index.html")
-	if err != nil {
-		t.Fatalf("failed to read index.html: %v", err)
-	}
-
-	if len(content) == 0 {
-		t.Error("index.html is empty")
-	}
-
-	if !strings.Contains(string(content), "<!doctype html>") {
-		t.Error("index.html does not contain expected doctype")
+func testFrontendFS() fstest.MapFS {
+	return fstest.MapFS{
+		"index.html":     {Data: []byte(testIndexHTML)},
+		"vite.svg":       {Data: []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)},
+		"assets/app.css": {Data: []byte("body { margin: 0; }")},
+		"assets/app.js":  {Data: []byte("console.log('app');")},
 	}
 }
 
-func TestDistFS_AssetsExist(t *testing.T) {
-	fsys := DistFS()
-	if fsys == nil {
-		t.Fatal("DistFS() returned nil")
-	}
+func newTestSPAHandler(t *testing.T) *spaHandler {
+	t.Helper()
 
-	// Verify assets directory exists
-	entries, err := fs.ReadDir(fsys, "assets")
+	handler := newSPAHandler(testFrontendFS())
+	if handler.assets == nil {
+		t.Fatal("test frontend fixture is missing its entry point")
+	}
+	return handler
+}
+
+func TestDistFSIncludesBuildSentinel(t *testing.T) {
+	content, err := fs.ReadFile(DistFS(), "PLACEHOLDER.txt")
 	if err != nil {
-		t.Fatalf("failed to read assets directory: %v", err)
+		t.Fatalf("read build sentinel: %v", err)
 	}
-
-	if len(entries) == 0 {
-		t.Error("assets directory is empty")
-	}
-
-	// Check for CSS and JS files
-	var hasCSS, hasJS bool
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".css") {
-			hasCSS = true
-		}
-		if strings.HasSuffix(entry.Name(), ".js") {
-			hasJS = true
-		}
-	}
-
-	if !hasCSS {
-		t.Error("no CSS files found in assets")
-	}
-	if !hasJS {
-		t.Error("no JS files found in assets")
+	if len(content) == 0 {
+		t.Fatal("build sentinel is empty")
 	}
 }
 
@@ -71,24 +46,38 @@ func TestHandler(t *testing.T) {
 		t.Fatal("Handler() returned nil")
 	}
 
-	// Handler should be a *spaHandler (wrapped from DistFS)
-	_, ok := h.(*spaHandler)
-	if !ok {
-		// Could be the error handler if frontend not built
-		// Let's test it responds
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
+	if _, ok := h.(*spaHandler); !ok {
+		t.Fatalf("Handler() type = %T, want *spaHandler", h)
+	}
+}
 
-		// Should get some response
-		if w.Code == 0 {
-			t.Error("handler did not set status code")
-		}
+func TestSPAHandler_FrontendUnavailable(t *testing.T) {
+	tests := map[string]fs.FS{
+		"nil filesystem":  nil,
+		"missing index":   fstest.MapFS{"PLACEHOLDER.txt": {Data: []byte("sentinel")}},
+		"index directory": fstest.MapFS{"index.html": {Mode: fs.ModeDir}},
+	}
+
+	for name, assets := range tests {
+		t.Run(name, func(t *testing.T) {
+			handler := newSPAHandler(assets)
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+			}
+			if !strings.Contains(response.Body.String(), frontendUnavailableMessage) {
+				t.Fatalf("body = %q, want unavailable message", response.Body.String())
+			}
+		})
 	}
 }
 
 func TestHandler_ServeIndex(t *testing.T) {
-	h := Handler()
+	h := newTestSPAHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -111,7 +100,7 @@ func TestHandler_ServeIndex(t *testing.T) {
 }
 
 func TestHandler_ServeStaticFile(t *testing.T) {
-	h := Handler()
+	h := newTestSPAHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/vite.svg", nil)
 	w := httptest.NewRecorder()
@@ -129,35 +118,28 @@ func TestHandler_ServeStaticFile(t *testing.T) {
 }
 
 func TestHandler_ServeAssets(t *testing.T) {
-	h := Handler()
+	h := newTestSPAHandler(t)
 
-	// Get the actual asset filenames from DistFS
-	fsys := DistFS()
-	entries, err := fs.ReadDir(fsys, "assets")
-	if err != nil {
-		t.Fatalf("failed to read assets: %v", err)
-	}
-
-	for _, entry := range entries {
-		t.Run(entry.Name(), func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/assets/"+entry.Name(), nil)
+	for _, assetPath := range []string{"/assets/app.css", "/assets/app.js"} {
+		t.Run(assetPath, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, assetPath, nil)
 			w := httptest.NewRecorder()
 
 			h.ServeHTTP(w, req)
 
 			if w.Code != http.StatusOK {
-				t.Errorf("status = %d, want %d for %s", w.Code, http.StatusOK, entry.Name())
+				t.Errorf("status = %d, want %d for %s", w.Code, http.StatusOK, assetPath)
 			}
 
 			if w.Body.Len() == 0 {
-				t.Errorf("empty response body for %s", entry.Name())
+				t.Errorf("empty response body for %s", assetPath)
 			}
 		})
 	}
 }
 
 func TestHandler_SPAFallback(t *testing.T) {
-	h := Handler()
+	h := newTestSPAHandler(t)
 
 	// These paths don't exist as static files, should fallback to index.html
 	testPaths := []string{
@@ -194,7 +176,7 @@ func TestHandler_SPAFallback(t *testing.T) {
 }
 
 func TestHandler_CleanPath(t *testing.T) {
-	h := Handler()
+	h := newTestSPAHandler(t)
 
 	// Test path cleaning (e.g., double slashes, dot segments)
 	testCases := []struct {
@@ -230,7 +212,7 @@ func TestSPAHandler_WithMockFS(t *testing.T) {
 		"subdir/page.html": {Data: []byte("<html>subpage</html>")},
 	}
 
-	h := &spaHandler{fs: mockFS}
+	h := newSPAHandler(mockFS)
 
 	t.Run("serve root returns index.html", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -293,7 +275,7 @@ func TestSPAHandler_DirectoryHandling(t *testing.T) {
 		"emptydir/placeholder": {Data: []byte("")},
 	}
 
-	h := &spaHandler{fs: mockFS}
+	h := newSPAHandler(mockFS)
 
 	t.Run("directory with index.html", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/subdir", nil)
@@ -327,12 +309,15 @@ func TestSPAHandler_DirectoryHandling(t *testing.T) {
 
 // TestSPAHandler_ServeIndexError tests error handling when index.html is missing
 func TestSPAHandler_ServeIndexError(t *testing.T) {
-	// Create a filesystem without index.html
 	mockFS := fstest.MapFS{
+		"index.html": {Data: []byte(testIndexHTML)},
 		"other.html": {Data: []byte("<html>other</html>")},
 	}
 
-	h := &spaHandler{fs: mockFS}
+	h := newSPAHandler(mockFS)
+	// Removing the entry point after initialization simulates a corrupted or
+	// partially replaced asset tree without weakening constructor validation.
+	delete(mockFS, frontendIndexPath)
 
 	req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -349,14 +334,12 @@ func TestSPAHandler_ServeIndexError(t *testing.T) {
 	}
 }
 
-// TestHandler_NilFS tests Handler behavior when DistFS returns nil
-// This simulates the case when frontend is not built
 func TestSPAHandler_ContentTypeForIndex(t *testing.T) {
 	mockFS := fstest.MapFS{
 		"index.html": {Data: []byte("<!doctype html><html></html>")},
 	}
 
-	h := &spaHandler{fs: mockFS}
+	h := newSPAHandler(mockFS)
 
 	req := httptest.NewRequest(http.MethodGet, "/some-spa-route", nil)
 	w := httptest.NewRecorder()
