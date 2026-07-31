@@ -36,8 +36,8 @@ func mustEncodeStoredChatGPTCredentialForLifecycleTest(
 func TestRefreshProviderCredentials_MarksReauthRequiredOnTerminalRefreshFailure(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	idToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -72,8 +72,8 @@ func TestRefreshProviderCredentials_MarksReauthRequiredOnTerminalRefreshFailure(
 				AccessToken:   "access-token",
 				RefreshToken:  "refresh-token",
 				IDToken:       idToken,
-				OAuthIssuer:   "https://issuer.example.com/",
-				OAuthClientID: "client-refresh",
+				OAuthIssuer:   defaultOAuthIssuer,
+				OAuthClientID: defaultOAuthClientID,
 				AccountID:     "acct_test",
 				Email:         "user@example.com",
 				PlanType:      "plus",
@@ -127,8 +127,8 @@ func TestRefreshProviderCredentials_MarksReauthRequiredOnTerminalRefreshFailure(
 func TestRefreshProviderCredentials_DoesNotReviveReauthRequiredProvider(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	idToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -161,8 +161,8 @@ func TestRefreshProviderCredentials_DoesNotReviveReauthRequiredProvider(t *testi
 				AccessToken:   "access-token",
 				RefreshToken:  "refresh-token",
 				IDToken:       idToken,
-				OAuthIssuer:   "https://issuer.example.com/",
-				OAuthClientID: "client-refresh",
+				OAuthIssuer:   defaultOAuthIssuer,
+				OAuthClientID: defaultOAuthClientID,
 				AccountID:     "acct_test",
 				Email:         "user@example.com",
 				PlanType:      "plus",
@@ -246,8 +246,8 @@ func TestApplyChatGPTLogin_ClearsReauthRequiredState(t *testing.T) {
 				PlanType:      "plus",
 				LastRefresh:   now.Add(-time.Hour),
 				ExpiresAt:     now.Add(30 * time.Second),
-				OAuthIssuer:   "https://issuer.example.com/",
-				OAuthClientID: "client-refresh",
+				OAuthIssuer:   defaultOAuthIssuer,
+				OAuthClientID: defaultOAuthClientID,
 			},
 			ProviderAuthStatusReauthRequired,
 			ProviderAuthReasonInvalidGrant,

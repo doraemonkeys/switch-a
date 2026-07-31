@@ -1,0 +1,2 @@
+This file keeps web/dist present so Go's all:dist embed pattern compiles in clean checkouts.
+Production builds add the generated frontend assets to this directory.

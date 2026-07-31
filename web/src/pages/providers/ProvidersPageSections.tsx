@@ -3,6 +3,7 @@ import type { StatusFilter } from "./types";
 import { RefreshIntervalSelect } from "../../components/RefreshIntervalSelect";
 import {
   Plus,
+  Upload,
   RefreshCw,
   Search,
   AlertTriangle,
@@ -15,6 +16,7 @@ interface PageHeaderProps {
   loading: boolean;
   onRefresh: () => void;
   onAddClick: () => void;
+  onImportClick: () => void;
   refreshInterval: number;
   onRefreshIntervalChange: (interval: number) => void;
 }
@@ -23,6 +25,7 @@ export function PageHeader({
   loading,
   onRefresh,
   onAddClick,
+  onImportClick,
   refreshInterval,
   onRefreshIntervalChange,
 }: PageHeaderProps) {
@@ -55,6 +58,15 @@ export function PageHeader({
           <span>Refresh</span>
         </button>
         <button
+          type="button"
+          onClick={onImportClick}
+          className="btn btn-secondary h-10 px-4"
+        >
+          <Upload className="w-4 h-4" />
+          <span>Import Accounts</span>
+        </button>
+        <button
+          type="button"
           onClick={onAddClick}
           className="btn btn-primary h-10 px-5 shadow-md shadow-primary/20"
         >

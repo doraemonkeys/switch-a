@@ -36,18 +36,18 @@ func (s *Service) beginChatGPTLogin(login pendingLogin) error {
 	s.mu.Lock()
 	s.callbackActive = true
 	s.storePendingLoginLocked(login)
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *Service) syncLoginExpiryTaskLocked(now time.Time) {
-	s.loginExpiryEpoch++
-	if s.loginExpiryTask != nil {
-		s.loginExpiryTask.Stop()
-		s.loginExpiryTask = nil
+func (s *Service) syncSessionExpiryTaskLocked(now time.Time) {
+	s.sessionExpiryEpoch++
+	if s.sessionExpiryTask != nil {
+		s.sessionExpiryTask.Stop()
+		s.sessionExpiryTask = nil
 	}
-	if s.shutdown || !s.callbackActive || len(s.pendingByLoginID) == 0 {
+	if s.shutdown {
 		return
 	}
 
@@ -57,30 +57,46 @@ func (s *Service) syncLoginExpiryTaskLocked(now time.Time) {
 			earliest = pending.expiresAt
 		}
 	}
+	for _, completed := range s.completed {
+		if earliest.IsZero() || completed.expiresAt.Before(earliest) {
+			earliest = completed.expiresAt
+		}
+	}
+	for _, providerImport := range s.providerImports {
+		if providerImport.claimed {
+			continue
+		}
+		if earliest.IsZero() || providerImport.expiresAt.Before(earliest) {
+			earliest = providerImport.expiresAt
+		}
+	}
+	if earliest.IsZero() {
+		return
+	}
 	delay := earliest.Sub(now)
 	if delay < 0 {
 		delay = 0
 	}
-	epoch := s.loginExpiryEpoch
-	s.loginExpiryTask = s.scheduleAfter(delay, func() {
-		s.expireLoginSessions(epoch)
+	epoch := s.sessionExpiryEpoch
+	s.sessionExpiryTask = s.scheduleAfter(delay, func() {
+		s.expireSessions(epoch)
 	})
 }
 
-func (s *Service) expireLoginSessions(epoch uint64) {
+func (s *Service) expireSessions(epoch uint64) {
 	s.callbackLifecycleMu.Lock()
 	defer s.callbackLifecycleMu.Unlock()
 
 	s.mu.Lock()
-	if s.shutdown || epoch != s.loginExpiryEpoch {
+	if s.shutdown || epoch != s.sessionExpiryEpoch {
 		s.mu.Unlock()
 		return
 	}
-	s.loginExpiryTask = nil
+	s.sessionExpiryTask = nil
 	now := s.clock.Now()
 	s.pruneExpiredSessionsLocked(now)
 	shouldStop := s.callbackActive && len(s.pendingByLoginID) == 0
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	s.mu.Unlock()
 
 	if shouldStop {
@@ -110,7 +126,7 @@ func (s *Service) reconcileCallbackEndpoint() error {
 	now := s.clock.Now()
 	s.pruneExpiredSessionsLocked(now)
 	shouldStop := s.callbackActive && len(s.pendingByLoginID) == 0
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	s.mu.Unlock()
 
 	if !shouldStop {
@@ -131,7 +147,7 @@ func (s *Service) stopCallbackEndpoint(ctx context.Context) error {
 	err := s.callback.Shutdown(ctx)
 	s.mu.Lock()
 	s.callbackActive = false
-	s.syncLoginExpiryTaskLocked(s.clock.Now())
+	s.syncSessionExpiryTaskLocked(s.clock.Now())
 	s.mu.Unlock()
 	return err
 }
@@ -148,10 +164,16 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.shutdown = true
-	s.loginExpiryEpoch++
-	if s.loginExpiryTask != nil {
-		s.loginExpiryTask.Stop()
-		s.loginExpiryTask = nil
+	s.sessionExpiryEpoch++
+	if s.sessionExpiryTask != nil {
+		s.sessionExpiryTask.Stop()
+		s.sessionExpiryTask = nil
+	}
+	clear(s.pendingByState)
+	clear(s.pendingByLoginID)
+	clear(s.completed)
+	for importID := range s.providerImports {
+		s.deleteChatGPTProviderImportLocked(importID)
 	}
 	callbackActive := s.callbackActive
 	s.mu.Unlock()

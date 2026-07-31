@@ -293,6 +293,7 @@ func resolveCredentialBinding(
 	providerID string,
 	bindingAccountID *string,
 	resolution model.CredentialBindingResolution,
+	canReplaceProvider func(string) bool,
 ) error {
 	err := validateExclusiveCredentialBinding(tx, providerID, bindingAccountID)
 	if err == nil || resolution != model.CredentialBindingResolutionReplace {
@@ -302,6 +303,9 @@ func resolveCredentialBinding(
 	var conflict *CredentialBindingConflictError
 	if !errors.As(err, &conflict) {
 		return err
+	}
+	if canReplaceProvider == nil || !canReplaceProvider(conflict.ProviderID) {
+		return &providerCredentialMutationLeaseExpansionError{providerID: conflict.ProviderID}
 	}
 	// The old provider remains available, but its credential is intentionally
 	// cleared so it cannot continue using an account now owned by the new one.

@@ -89,6 +89,25 @@ type ChatGPTProviderCredential struct {
 	ExpiresAt     time.Time              `json:"expires_at"`
 }
 
+// ChatGPTProviderSecret is the persisted secret-only half of a ChatGPT
+// credential. Keeping this wire contract in the model package prevents auth
+// services and transactional stores from silently validating different shapes.
+type ChatGPTProviderSecret struct {
+	AccessToken   string `json:"access_token"`
+	RefreshToken  string `json:"refresh_token"`
+	IDToken       string `json:"id_token"`
+	OAuthIssuer   string `json:"oauth_issuer,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
+}
+
+// Ready reports whether the secret can participate in the normal refresh path;
+// account identity intentionally lives in ProviderCredential.BindingAccountID.
+func (s *ChatGPTProviderSecret) Ready() bool {
+	return s != nil &&
+		strings.TrimSpace(s.AccessToken) != "" &&
+		strings.TrimSpace(s.RefreshToken) != ""
+}
+
 // Ready reports whether the credential contains the minimum fields needed to proxy requests.
 func (c *ChatGPTProviderCredential) Ready() bool {
 	return c != nil &&

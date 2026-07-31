@@ -10,6 +10,19 @@ import (
 	"gorm.io/gorm"
 )
 
+// ProviderWriteOptions is kept in the store package as a consumer-friendly alias;
+// the command belongs to the domain model so store interfaces avoid import cycles.
+type ProviderWriteOptions = model.ProviderWriteOptions
+
+func resolveProviderWriteOptions(options []ProviderWriteOptions) ProviderWriteOptions {
+	if len(options) == 0 {
+		return ProviderWriteOptions{
+			CredentialBindingResolution: model.CredentialBindingResolutionReject,
+		}
+	}
+	return options[0]
+}
+
 func providerAPITypeSet(apiTypes []model.ProviderAPIType) map[string]struct{} {
 	supported := make(map[string]struct{}, len(apiTypes))
 	for _, apiType := range apiTypes {
@@ -55,59 +68,18 @@ func (s *SQLiteStore) GetProvider(ctx context.Context, id string) (*model.Provid
 }
 
 func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider, options ...ProviderWriteOptions) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		writeOptions := resolveProviderWriteOptions(options)
-		supplemental := resolveProviderSupplementalState(p, &persistedProviderState{})
-		bindingAccountID := (*string)(nil)
-		if supplemental.credential != nil {
-			bindingAccountID = supplemental.credential.BindingAccountID
-		}
-		if err := resolveCredentialBinding(tx, p.ID, bindingAccountID, writeOptions.CredentialBindingResolution); err != nil {
-			return err
-		}
-
-		// Use raw SQL to properly handle boolean false values
-		now := s.clock.Now()
-		if p.CreatedAt.IsZero() {
-			p.CreatedAt = now
-		}
-		if p.UpdatedAt.IsZero() {
-			p.UpdatedAt = now
-		}
-
-		// Set default scope values if empty
-		failoverScope := p.FailoverScope
-		if failoverScope == "" {
-			failoverScope = model.ScopeAny
-		}
-		acceptFailover := p.AcceptFailover
-		if acceptFailover == "" {
-			acceptFailover = model.ScopeAny
-		}
-		if err := tx.Exec(`
-			INSERT INTO providers (
-				id, name, api_key, auth_mode, credential_type, usage_limit_policy, group_id,
-				weight, priority, concurrency, max_retries,
-				backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter,
-				vendor, failover_scope, accept_failover,
-				enabled, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.ID, p.Name, p.APIKey, p.AuthMode, model.NormalizeProviderCredentialType(p.CredentialType), p.UsageLimitPolicy, p.GroupID,
-			p.Weight, p.Priority, p.Concurrency, p.MaxRetries,
-			p.Backoff.InitialDelay, p.Backoff.MaxDelay, p.Backoff.Multiplier, p.Backoff.Jitter,
-			p.Vendor, failoverScope, acceptFailover,
-			p.Enabled, p.CreatedAt, p.UpdatedAt,
-		).Error; err != nil { // coverage-ignore -- INSERT rarely fails with valid data
-			return err
-		}
-		// Create API types separately
-		for i := range p.APITypes {
-			p.APITypes[i].ProviderID = p.ID
-			if err := tx.Create(&p.APITypes[i]).Error; err != nil { // coverage-ignore -- transaction error after successful provider insert is rare
-				return err
-			}
-		}
-		return persistProviderSupplementalState(tx, p.ID, supplemental)
+	writeOptions := resolveProviderWriteOptions(options)
+	err := s.runWithProviderCredentialMutations(ctx, []string{p.ID}, func(ownedCtx context.Context) error {
+		return s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
+			return s.createProviderInTransaction(
+				tx,
+				p,
+				writeOptions,
+				func(providerID string) bool {
+					return s.credentialMutations.contextOwns(ownedCtx, providerID)
+				},
+			)
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("create provider %q: %w", p.ID, err)
@@ -115,82 +87,74 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, p *model.Provider, opt
 	return nil
 }
 
+func (s *SQLiteStore) createProviderInTransaction(
+	tx *gorm.DB,
+	p *model.Provider,
+	writeOptions ProviderWriteOptions,
+	canReplaceCredentialBinding func(string) bool,
+) error {
+	supplemental := resolveProviderSupplementalState(p, &persistedProviderState{})
+	if err := resolveCredentialBinding(
+		tx,
+		p.ID,
+		providerCredentialBindingAccountID(supplemental.credential),
+		writeOptions.CredentialBindingResolution,
+		canReplaceCredentialBinding,
+	); err != nil {
+		return err
+	}
+
+	// Raw SQL is intentional: GORM's zero-value filtering would turn an explicit
+	// disabled import into the schema default and make preview differ from commit.
+	now := s.clock.Now()
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = now
+	}
+	if p.UpdatedAt.IsZero() {
+		p.UpdatedAt = now
+	}
+
+	failoverScope := p.FailoverScope
+	if failoverScope == "" {
+		failoverScope = model.ScopeAny
+	}
+	acceptFailover := p.AcceptFailover
+	if acceptFailover == "" {
+		acceptFailover = model.ScopeAny
+	}
+	if err := tx.Exec(`
+		INSERT INTO providers (
+			id, name, api_key, auth_mode, credential_type, usage_limit_policy, group_id,
+			weight, priority, concurrency, max_retries,
+			backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter,
+			vendor, failover_scope, accept_failover,
+			enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.APIKey, p.AuthMode, model.NormalizeProviderCredentialType(p.CredentialType), p.UsageLimitPolicy, p.GroupID,
+		p.Weight, p.Priority, p.Concurrency, p.MaxRetries,
+		p.Backoff.InitialDelay, p.Backoff.MaxDelay, p.Backoff.Multiplier, p.Backoff.Jitter,
+		p.Vendor, failoverScope, acceptFailover,
+		p.Enabled, p.CreatedAt, p.UpdatedAt,
+	).Error; err != nil { // coverage-ignore -- caller validation and import preflight normally make this unreachable
+		return err
+	}
+	for i := range p.APITypes {
+		p.APITypes[i].ProviderID = p.ID
+		if err := tx.Create(&p.APITypes[i]).Error; err != nil { // coverage-ignore -- transaction error after successful provider insert is rare
+			return err
+		}
+	}
+	return persistProviderSupplementalState(tx, p.ID, supplemental)
+}
+
 func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider, options ...ProviderWriteOptions) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		writeOptions := resolveProviderWriteOptions(options)
-		current, err := loadPersistedProviderState(tx, p.ID)
-		if err != nil {
-			return err
-		}
-		supplemental := resolveProviderSupplementalState(p, current)
-		bindingAccountID := (*string)(nil)
-		if supplemental.credential != nil {
-			bindingAccountID = supplemental.credential.BindingAccountID
-		}
-		if err := resolveCredentialBinding(tx, p.ID, bindingAccountID, writeOptions.CredentialBindingResolution); err != nil {
-			return err
-		}
-		missingPolicy, err := findExactProviderRoutingPolicyMissingAPIType(tx, p.ID, providerAPITypeSet(p.APITypes))
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if missingPolicy != nil {
-			return &RoutingPolicyProviderAPITypeConflictError{
-				ProviderID: p.ID,
-				APIType:    missingPolicy.APIType,
-				PolicyID:   missingPolicy.ID,
-				Key:        missingPolicy.NaturalKey(),
-			}
-		}
-
-		// Delete existing API types
-		if err := tx.Where("provider_id = ?", p.ID).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
-			return err
-		}
-
-		// Set default scope values if empty (same as CreateProvider).
-		// Use local variables to avoid mutating the caller's pointer.
-		failoverScope := p.FailoverScope
-		if failoverScope == "" {
-			failoverScope = model.ScopeAny
-		}
-		acceptFailover := p.AcceptFailover
-		if acceptFailover == "" {
-			acceptFailover = model.ScopeAny
-		}
-		credentialType := model.NormalizeProviderCredentialType(p.CredentialType)
-
-		// Temporarily clear APITypes to avoid GORM trying to update them via Save
-		apiTypes := p.APITypes
-		p.APITypes = nil
-
-		// Apply scopes for the Save call, then restore originals
-		origFailover := p.FailoverScope
-		origAccept := p.AcceptFailover
-		origCredentialType := p.CredentialType
-		p.FailoverScope = failoverScope
-		p.AcceptFailover = acceptFailover
-		p.CredentialType = credentialType
-
-		// Save provider (without APITypes)
-		if err := tx.Save(p).Error; err != nil {
-			return err
-		}
-
-		// Restore original values so the caller's struct is not mutated
-		p.FailoverScope = origFailover
-		p.AcceptFailover = origAccept
-		p.CredentialType = origCredentialType
-
-		// Restore and create new API types explicitly
-		p.APITypes = apiTypes
-		for i := range p.APITypes {
-			p.APITypes[i].ProviderID = p.ID
-			if err := tx.Create(&p.APITypes[i]).Error; err != nil { // coverage-ignore -- transaction error after successful provider save is rare
-				return err
-			}
-		}
-		return persistProviderSupplementalState(tx, p.ID, supplemental)
+	writeOptions := resolveProviderWriteOptions(options)
+	err := s.runWithProviderCredentialMutations(ctx, []string{p.ID}, func(ownedCtx context.Context) error {
+		return s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
+			return s.updateProviderInTransaction(tx, p, writeOptions, func(providerID string) bool {
+				return s.credentialMutations.contextOwns(ownedCtx, providerID)
+			})
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("update provider %q: %w", p.ID, err)
@@ -198,9 +162,110 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, p *model.Provider, opt
 	return nil
 }
 
+func (s *SQLiteStore) updateProviderInTransaction(
+	tx *gorm.DB,
+	p *model.Provider,
+	writeOptions ProviderWriteOptions,
+	canReplaceCredentialBinding func(string) bool,
+) error {
+	current, err := loadPersistedProviderState(tx, p.ID)
+	if err != nil {
+		return err
+	}
+	supplemental := resolveProviderSupplementalState(p, current)
+	if err := resolveCredentialBinding(
+		tx,
+		p.ID,
+		providerCredentialBindingAccountID(supplemental.credential),
+		writeOptions.CredentialBindingResolution,
+		canReplaceCredentialBinding,
+	); err != nil {
+		return err
+	}
+	if err := validateProviderAPITypeUpdate(tx, p); err != nil {
+		return err
+	}
+	if err := replaceProviderAPITypeRecords(tx, p); err != nil {
+		return err
+	}
+	return persistProviderSupplementalState(tx, p.ID, supplemental)
+}
+
+func validateProviderAPITypeUpdate(tx *gorm.DB, p *model.Provider) error {
+	missingPolicy, err := findExactProviderRoutingPolicyMissingAPIType(tx, p.ID, providerAPITypeSet(p.APITypes))
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if missingPolicy == nil {
+		return nil
+	}
+	return &RoutingPolicyProviderAPITypeConflictError{
+		ProviderID: p.ID,
+		APIType:    missingPolicy.APIType,
+		PolicyID:   missingPolicy.ID,
+		Key:        missingPolicy.NaturalKey(),
+	}
+}
+
+func replaceProviderAPITypeRecords(tx *gorm.DB, p *model.Provider) error {
+	if err := tx.Where("provider_id = ?", p.ID).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
+		return err
+	}
+	if err := saveProviderWithoutAPITypeAssociations(tx, p); err != nil {
+		return err
+	}
+	for i := range p.APITypes {
+		p.APITypes[i].ProviderID = p.ID
+		if err := tx.Create(&p.APITypes[i]).Error; err != nil { // coverage-ignore -- transaction error after successful provider save is rare
+			return err
+		}
+	}
+	return nil
+}
+
+func saveProviderWithoutAPITypeAssociations(tx *gorm.DB, p *model.Provider) error {
+	apiTypes := p.APITypes
+	originalFailoverScope := p.FailoverScope
+	originalAcceptFailover := p.AcceptFailover
+	originalCredentialType := p.CredentialType
+	// GORM must see the normalized scalar record without managing API-type
+	// associations; defer keeps the caller stable even when the database rejects Save.
+	defer func() {
+		p.APITypes = apiTypes
+		p.FailoverScope = originalFailoverScope
+		p.AcceptFailover = originalAcceptFailover
+		p.CredentialType = originalCredentialType
+	}()
+	p.APITypes = nil
+	p.FailoverScope = providerScopeOrAny(p.FailoverScope)
+	p.AcceptFailover = providerScopeOrAny(p.AcceptFailover)
+	p.CredentialType = model.NormalizeProviderCredentialType(p.CredentialType)
+	return tx.Save(p).Error
+}
+
+func providerScopeOrAny(scope model.Scope) model.Scope {
+	if scope == "" {
+		return model.ScopeAny
+	}
+	return scope
+}
+
+func providerCredentialBindingAccountID(credential *model.ProviderCredential) *string {
+	if credential == nil {
+		return nil
+	}
+	return credential.BindingAccountID
+}
+
 func (s *SQLiteStore) UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error {
+	ownedCtx, release, err := s.WithProviderCredentialMutations(ctx, []string{id})
+	if err != nil {
+		return fmt.Errorf("update provider credential %q: %w", id, err)
+	}
+	defer release()
+
 	now := s.clock.Now()
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
 		current, err := loadPersistedProviderState(tx, id)
 		if err != nil {
 			return err
@@ -222,11 +287,11 @@ func (s *SQLiteStore) UpdateProviderCredential(ctx context.Context, id string, c
 			provider.Credential.Version = 0
 		}
 		supplemental := resolveProviderSupplementalState(provider, current)
-		bindingAccountID := (*string)(nil)
-		if supplemental.credential != nil {
-			bindingAccountID = supplemental.credential.BindingAccountID
-		}
-		if err := validateExclusiveCredentialBinding(tx, id, bindingAccountID); err != nil {
+		if err := validateExclusiveCredentialBinding(
+			tx,
+			id,
+			providerCredentialBindingAccountID(supplemental.credential),
+		); err != nil {
 			return err
 		}
 		if err := tx.Exec(
@@ -247,7 +312,13 @@ func (s *SQLiteStore) UpdateProviderCredential(ctx context.Context, id string, c
 }
 
 func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	ownedCtx, release, err := s.WithProviderCredentialMutations(ctx, []string{id})
+	if err != nil {
+		return fmt.Errorf("delete provider %q: %w", id, err)
+	}
+	defer release()
+
+	err = s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
 		referencedBy, err := findRoutingPolicyTargetingProvider(tx, id)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err

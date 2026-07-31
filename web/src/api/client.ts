@@ -33,6 +33,11 @@ import type {
   ChatGPTLoginStatusResponse,
   ApiErrorDetails,
 } from "./types";
+import type {
+  ProviderImportCommitRequest,
+  ProviderImportCommitResult,
+  ProviderImportPreview,
+} from "./provider-import-types";
 
 // Re-export types for consumers
 export type {
@@ -88,6 +93,25 @@ export type {
   TerminationActor,
   TerminationReason,
 } from "./types";
+export type {
+  ProviderImportCandidate,
+  ProviderImportCandidateStatus,
+  ProviderImportConflictDetail,
+  ProviderImportConflictKind,
+  ProviderImportCommitAction,
+  ProviderImportCommitItem,
+  ProviderImportCreateCommitItem,
+  ProviderImportCommitOutcome,
+  ProviderImportCommitRequest,
+  ProviderImportCommitResult,
+  ProviderImportCommitResultItem,
+  ProviderImportCommitSummary,
+  ProviderImportIssue,
+  ProviderImportMappingNote,
+  ProviderImportPreview,
+  ProviderImportSummary,
+  ProviderImportUpdateCommitItem,
+} from "./provider-import-types";
 
 // API Error type
 export class ApiError extends Error {
@@ -396,6 +420,25 @@ export function createApiClient(deps: ApiClientDeps) {
       }
     },
     providers: createProvidersApi(request),
+    providerImports: {
+      preview: (sourceJson: string) =>
+        request<ProviderImportPreview>("/provider-imports", {
+          method: "POST",
+          body: sourceJson,
+        }),
+      commit: (importId: string, data: ProviderImportCommitRequest) =>
+        request<ProviderImportCommitResult>(
+          `/provider-imports/${encodeURIComponent(importId)}/commit`,
+          {
+            method: "POST",
+            body: JSON.stringify(data),
+          },
+        ),
+      discard: (importId: string) =>
+        request<void>(`/provider-imports/${encodeURIComponent(importId)}`, {
+          method: "DELETE",
+        }),
+    },
     routingPolicies: createRoutingPoliciesApi(request),
     groups: createGroupsApi(request),
     config: {

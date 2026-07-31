@@ -42,14 +42,27 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 	if err != nil {
 		return err
 	}
+	providerIDs := make([]string, 0, len(bundle.Providers))
+	for i := range bundle.Providers {
+		providerIDs = append(providerIDs, bundle.Providers[i].ID)
+	}
+	ownedCtx, release, err := s.WithProviderCredentialMutations(ctx, providerIDs)
+	if err != nil {
+		return fmt.Errorf("apply config import: %w", err)
+	}
+	defer release()
 
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		txStore := &SQLiteStore{db: tx, clock: s.clock}
-		if err := applyImportedGroups(ctx, txStore, bundle.Groups); err != nil {
+	return s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
+		txStore := &SQLiteStore{
+			db:                  tx,
+			clock:               s.clock,
+			credentialMutations: s.credentialMutations,
+		}
+		if err := applyImportedGroups(ownedCtx, txStore, bundle.Groups); err != nil {
 			return err
 		}
 		if err := applyImportedRoutingPolicies(
-			ctx,
+			ownedCtx,
 			txStore,
 			tx,
 			routingPolicyMode,
@@ -57,10 +70,10 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 		); err != nil {
 			return err
 		}
-		if err := applyImportedProviders(ctx, txStore, bundle.Providers); err != nil {
+		if err := applyImportedProviders(ownedCtx, txStore, bundle.Providers); err != nil {
 			return err
 		}
-		return applyImportedSettings(ctx, txStore, bundle.Settings)
+		return applyImportedSettings(ownedCtx, txStore, bundle.Settings)
 	})
 }
 

@@ -10,6 +10,8 @@ import type {
   ErrorCode,
   FailoverScope,
 } from "../config/constants";
+import type { ProviderImportConflictDetail } from "./provider-import-types";
+
 export type {
   Strategy,
   AuthMode,
@@ -53,6 +55,9 @@ export interface ConfigResponse {
 /** Standard API error response */
 export interface ApiErrorDetails {
   kind?: string;
+  import_id?: string;
+  candidate_id?: string;
+  conflicts?: ProviderImportConflictDetail[];
   account_id?: string;
   provider_id?: string;
   auth_status?: ProviderAuthStatus;

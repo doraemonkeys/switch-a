@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	adminproviderimport "github.com/doraemonkeys/switch-a/internal/admin/providerimport"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
@@ -95,31 +96,37 @@ type ProviderAuthService interface {
 	RefreshProviderUsage(ctx context.Context, provider *model.Provider) (bool, error)
 }
 
+type ProviderImportService = adminproviderimport.DraftService
+type ProviderImportStore = adminproviderimport.Store
+
 // Handler handles admin API requests.
 type Handler struct {
-	store         Store
-	health        internal.HealthManager
-	concurrency   ConcurrencyTracker
-	cleaner       ConcurrencyCleaner
-	activeReqList ActiveRequestLister
-	auth          ProviderAuthService
-	logger        *zap.Logger
+	store                 Store
+	health                internal.HealthManager
+	concurrency           ConcurrencyTracker
+	cleaner               ConcurrencyCleaner
+	activeReqList         ActiveRequestLister
+	auth                  ProviderAuthService
+	providerImportHandler *adminproviderimport.Handler
+	logger                *zap.Logger
 }
 
 // Config holds admin handler configuration.
 type Config struct {
-	Store         Store
-	Health        internal.HealthManager
-	Concurrency   ConcurrencyTracker
-	Cleaner       ConcurrencyCleaner
-	ActiveReqList ActiveRequestLister
-	Auth          ProviderAuthService
-	Logger        *zap.Logger
+	Store               Store
+	Health              internal.HealthManager
+	Concurrency         ConcurrencyTracker
+	Cleaner             ConcurrencyCleaner
+	ActiveReqList       ActiveRequestLister
+	Auth                ProviderAuthService
+	ProviderImports     ProviderImportService
+	ProviderImportStore ProviderImportStore
+	Logger              *zap.Logger
 }
 
 // NewHandler creates a new admin handler.
 func NewHandler(cfg Config) *Handler {
-	return &Handler{
+	handler := &Handler{
 		store:         cfg.Store,
 		health:        cfg.Health,
 		concurrency:   cfg.Concurrency,
@@ -128,6 +135,25 @@ func NewHandler(cfg Config) *Handler {
 		auth:          cfg.Auth,
 		logger:        cfg.Logger,
 	}
+	handler.providerImportHandler = adminproviderimport.NewHandler(adminproviderimport.Config{
+		ProviderCatalog: cfg.Store,
+		Drafts:          cfg.ProviderImports,
+		Store:           cfg.ProviderImportStore,
+		Logger:          cfg.Logger,
+	})
+	return handler
+}
+
+func (h *Handler) PreviewProviderImport(w http.ResponseWriter, r *http.Request) {
+	h.providerImportHandler.PreviewProviderImport(w, r)
+}
+
+func (h *Handler) CommitProviderImport(w http.ResponseWriter, r *http.Request) {
+	h.providerImportHandler.CommitProviderImport(w, r)
+}
+
+func (h *Handler) CancelProviderImport(w http.ResponseWriter, r *http.Request) {
+	h.providerImportHandler.CancelProviderImport(w, r)
 }
 
 // deleteConfig holds configuration for the generic delete handler.

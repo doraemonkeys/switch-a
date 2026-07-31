@@ -538,7 +538,7 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 					t.Fatalf("refresh body = %q, missing refresh token", body)
 				}
 
-				idToken := testUnsignedJWT(t, map[string]any{
+				idToken := testSyntheticJWT(t, map[string]any{
 					"iss":   "https://auth.openai.com",
 					"aud":   "app_EMoamEEZ73f0CkXaXp7hrann",
 					"email": "codex@example.com",

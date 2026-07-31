@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"go.uber.org/zap"
 )
 
 // BuildProviderAuthView exposes the pure-read auth projection needed by admin handlers.
@@ -16,6 +17,9 @@ func (s *Service) BuildProviderAuthView(provider *model.Provider) *ProviderAuthV
 // RefreshProviderUsage fetches a fresh usage snapshot without coupling admin read paths
 // to token refresh or other implicit write-back behavior.
 func (s *Service) RefreshProviderUsage(ctx context.Context, provider *model.Provider) (bool, error) {
+	if provider == nil {
+		return false, fmt.Errorf("provider is required")
+	}
 	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
 	case providerCredentialTypeChatGPT:
 		return true, s.refreshChatGPTUsageSnapshot(ctx, provider)
@@ -28,6 +32,20 @@ func (s *Service) refreshChatGPTUsageSnapshot(ctx context.Context, provider *mod
 	if provider == nil {
 		return fmt.Errorf("provider is required")
 	}
+	ownedCtx, release, err := s.withProviderCredentialMutations(ctx, []string{provider.ID})
+	if err != nil {
+		return fmt.Errorf("acquire credential mutation for provider %q: %w", provider.ID, err)
+	}
+	defer release()
+
+	reloaded, err := s.reloadProviderForCredentialMutation(ownedCtx, provider)
+	if err != nil {
+		return err
+	}
+	if reloaded {
+		s.logger.Debug("reloaded provider credential before usage refresh", zap.String("provider_id", provider.ID))
+	}
+	ctx = ownedCtx
 
 	credential, err := DecodeProviderChatGPTCredential(provider)
 	if err != nil {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,9 +193,7 @@ func TestMigrateProviderStateTables_BackfillsChatGPTCredentialAndAuthState(t *te
 	if err := db.First(&credential, "provider_id = ?", provider.ID).Error; err != nil {
 		t.Fatalf("read provider credential: %v", err)
 	}
-	if credential.SecretData != credentialData {
-		t.Fatalf("SecretData = %q, want original payload", credential.SecretData)
-	}
+	assertCanonicalChatGPTSecretData(t, credential.SecretData, "access-token", "refresh-token")
 	if credential.BindingAccountID == nil || *credential.BindingAccountID != "acct_test" {
 		t.Fatalf("BindingAccountID = %v, want acct_test", credential.BindingAccountID)
 	}
@@ -375,9 +374,7 @@ func TestMigrateProviderStateTables_BackfillsLegacyProviders(t *testing.T) {
 	if err := db.First(&credential, "provider_id = ?", "gpt-active").Error; err != nil {
 		t.Fatalf("read gpt-active credential: %v", err)
 	}
-	if credential.SecretData != credentialData {
-		t.Fatalf("SecretData = %q, want original payload", credential.SecretData)
-	}
+	assertCanonicalChatGPTSecretData(t, credential.SecretData, "access-token", "refresh-token")
 	if credential.BindingAccountID == nil || *credential.BindingAccountID != "acct_test" {
 		t.Fatalf("BindingAccountID = %v, want acct_test", credential.BindingAccountID)
 	}
@@ -481,5 +478,198 @@ func TestMigrateProviderStateTables_PreservesExistingRows(t *testing.T) {
 	}
 	if authState.StatusReason != "refresh_token_reused" {
 		t.Fatalf("StatusReason = %q, want refresh_token_reused", authState.StatusReason)
+	}
+}
+
+func TestMigrateProviderStateTables_ResolvesDuplicateLegacyBindingsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+	accountID := "acct_shared"
+	zCredentialData := encodeLegacyChatGPTCredential(t, "access-z", "refresh-z", accountID, "z@example.com")
+	aCredentialData := encodeLegacyChatGPTCredential(t, "access-a", "refresh-a", accountID, "a@example.com")
+
+	// Insert in reverse order to prove the migration's id ordering, rather than
+	// SQLite insertion order, determines the durable account owner.
+	providerZ := &model.Provider{ID: "provider-z", Name: "Provider Z", CredentialType: model.ProviderCredentialTypeChatGPT, Enabled: true}
+	providerA := &model.Provider{ID: "provider-a", Name: "Provider A", CredentialType: model.ProviderCredentialTypeChatGPT, Enabled: true}
+	insertLegacyProvider(t, db, providerZ, zCredentialData)
+	insertLegacyProvider(t, db, providerA, aCredentialData)
+	if err := db.Create(&model.ProviderAuthState{
+		ProviderID: providerZ.ID,
+		Status:     model.ProviderAuthStatusActive,
+		AccountID:  accountID,
+		Email:      "stored-z@example.com",
+	}).Error; err != nil {
+		t.Fatalf("seed provider-z auth state: %v", err)
+	}
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("migrateProviderStateTables() error: %v", err)
+	}
+
+	assertMigratedCredential(t, db, providerA.ID, "access-a", "refresh-a", &accountID)
+	assertMigratedCredential(t, db, providerZ.ID, "access-z", "refresh-z", nil)
+	assertMigratedAuthState(t, db, providerA.ID, model.ProviderAuthStatusActive, "", "", accountID, "a@example.com")
+	assertMigratedAuthState(t, db, providerZ.ID, model.ProviderAuthStatusReauthRequired, providerAuthReasonLegacyDuplicateBinding, providerAuthErrorLegacyDuplicateBinding, accountID, "stored-z@example.com")
+	assertBindingCounts(t, db, accountID, 2, 1)
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("second migrateProviderStateTables() error: %v", err)
+	}
+	assertMigratedCredential(t, db, providerA.ID, "access-a", "refresh-a", &accountID)
+	assertMigratedCredential(t, db, providerZ.ID, "access-z", "refresh-z", nil)
+	assertMigratedAuthState(t, db, providerZ.ID, model.ProviderAuthStatusReauthRequired, providerAuthReasonLegacyDuplicateBinding, providerAuthErrorLegacyDuplicateBinding, accountID, "stored-z@example.com")
+	assertBindingCounts(t, db, accountID, 2, 1)
+}
+
+func TestMigrateProviderStateTables_PreservesPreexistingBindingOwner(t *testing.T) {
+	t.Parallel()
+
+	db := setupProviderStateMigrationDB(t)
+	accountID := "acct_shared"
+	legacyData := encodeLegacyChatGPTCredential(t, "access-legacy", "refresh-legacy", accountID, "legacy@example.com")
+	ownerSecret, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
+		AccessToken:  "access-owner",
+		RefreshToken: "refresh-owner",
+	})
+	if err != nil {
+		t.Fatalf("encode existing provider secret: %v", err)
+	}
+
+	// The legacy row sorts first; the already-split row must still retain the
+	// account because it is the newer, authoritative representation.
+	legacyProvider := &model.Provider{ID: "provider-a", Name: "Legacy Provider", CredentialType: model.ProviderCredentialTypeChatGPT, Enabled: true}
+	ownerProvider := &model.Provider{ID: "provider-z", Name: "Existing Owner", CredentialType: model.ProviderCredentialTypeChatGPT, Enabled: true}
+	insertLegacyProvider(t, db, legacyProvider, legacyData)
+	insertLegacyProvider(t, db, ownerProvider, "")
+	if err := db.Create(&model.ProviderCredential{
+		ProviderID:       ownerProvider.ID,
+		SecretData:       ownerSecret,
+		BindingAccountID: &accountID,
+		Version:          7,
+	}).Error; err != nil {
+		t.Fatalf("seed existing owner credential: %v", err)
+	}
+	if err := db.Create(&model.ProviderAuthState{
+		ProviderID: ownerProvider.ID,
+		Status:     model.ProviderAuthStatusActive,
+		AccountID:  accountID,
+		Email:      "owner@example.com",
+	}).Error; err != nil {
+		t.Fatalf("seed existing owner auth state: %v", err)
+	}
+	if err := db.Create(&model.ProviderAuthState{
+		ProviderID: legacyProvider.ID,
+		Status:     model.ProviderAuthStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("seed legacy duplicate auth state: %v", err)
+	}
+
+	if err := migrateProviderStateTables(db); err != nil {
+		t.Fatalf("migrateProviderStateTables() error: %v", err)
+	}
+
+	assertMigratedCredential(t, db, ownerProvider.ID, "access-owner", "refresh-owner", &accountID)
+	var ownerCredential model.ProviderCredential
+	if err := db.First(&ownerCredential, "provider_id = ?", ownerProvider.ID).Error; err != nil {
+		t.Fatalf("read owner credential version: %v", err)
+	}
+	if ownerCredential.Version != 7 {
+		t.Fatalf("owner credential Version = %d, want 7", ownerCredential.Version)
+	}
+	assertMigratedAuthState(t, db, ownerProvider.ID, model.ProviderAuthStatusActive, "", "", accountID, "owner@example.com")
+	assertMigratedCredential(t, db, legacyProvider.ID, "access-legacy", "refresh-legacy", nil)
+	assertMigratedAuthState(t, db, legacyProvider.ID, model.ProviderAuthStatusReauthRequired, providerAuthReasonLegacyDuplicateBinding, providerAuthErrorLegacyDuplicateBinding, accountID, "legacy@example.com")
+	assertBindingCounts(t, db, accountID, 2, 1)
+}
+
+func TestCanonicalizeLegacyChatGPTSecret_PreservesUnknownPayloads(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"{", `{"future_secret":"recover-me"}`} {
+		got, err := canonicalizeLegacyChatGPTSecret(raw)
+		if err != nil {
+			t.Fatalf("canonicalizeLegacyChatGPTSecret(%q) error: %v", raw, err)
+		}
+		if got != raw {
+			t.Fatalf("canonicalizeLegacyChatGPTSecret(%q) = %q, want original payload", raw, got)
+		}
+	}
+}
+
+func encodeLegacyChatGPTCredential(t *testing.T, accessToken, refreshToken, accountID, email string) string {
+	t.Helper()
+	raw, err := model.EncodeChatGPTProviderCredential(&model.ChatGPTProviderCredential{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		AccountID:    accountID,
+		Email:        email,
+	})
+	if err != nil {
+		t.Fatalf("encode legacy ChatGPT credential: %v", err)
+	}
+	return raw
+}
+
+func assertMigratedCredential(t *testing.T, db *gorm.DB, providerID, wantAccess, wantRefresh string, wantBinding *string) {
+	t.Helper()
+	var credential model.ProviderCredential
+	if err := db.First(&credential, "provider_id = ?", providerID).Error; err != nil {
+		t.Fatalf("read credential %q: %v", providerID, err)
+	}
+	assertCanonicalChatGPTSecretData(t, credential.SecretData, wantAccess, wantRefresh)
+	if wantBinding == nil {
+		if credential.BindingAccountID != nil {
+			t.Fatalf("credential %q BindingAccountID = %v, want nil", providerID, credential.BindingAccountID)
+		}
+		return
+	}
+	if credential.BindingAccountID == nil || *credential.BindingAccountID != *wantBinding {
+		t.Fatalf("credential %q BindingAccountID = %v, want %q", providerID, credential.BindingAccountID, *wantBinding)
+	}
+}
+
+func assertCanonicalChatGPTSecretData(t *testing.T, raw, wantAccess, wantRefresh string) {
+	t.Helper()
+	secret, err := model.DecodeChatGPTProviderSecret(raw)
+	if err != nil || secret == nil {
+		t.Fatalf("decode canonical credential: secret=%#v err=%v", secret, err)
+	}
+	if secret.AccessToken != wantAccess || secret.RefreshToken != wantRefresh {
+		t.Fatalf("canonical secret tokens = (%q, %q), want (%q, %q)", secret.AccessToken, secret.RefreshToken, wantAccess, wantRefresh)
+	}
+	for _, summaryField := range []string{"account_id", "email", "plan_type", "usage", "last_refresh", "expires_at"} {
+		if strings.Contains(raw, `"`+summaryField+`"`) {
+			t.Fatalf("canonical secret contains summary field %q", summaryField)
+		}
+	}
+}
+
+func assertMigratedAuthState(t *testing.T, db *gorm.DB, providerID string, wantStatus model.ProviderAuthStatus, wantReason, wantError, wantAccountID, wantEmail string) {
+	t.Helper()
+	var authState model.ProviderAuthState
+	if err := db.First(&authState, "provider_id = ?", providerID).Error; err != nil {
+		t.Fatalf("read auth state %q: %v", providerID, err)
+	}
+	if authState.Status != wantStatus || authState.StatusReason != wantReason || authState.LastError != wantError {
+		t.Fatalf("auth state %q lifecycle = (%q, %q, %q), want (%q, %q, %q)", providerID, authState.Status, authState.StatusReason, authState.LastError, wantStatus, wantReason, wantError)
+	}
+	if authState.AccountID != wantAccountID || authState.Email != wantEmail {
+		t.Fatalf("auth state %q identity = (%q, %q), want (%q, %q)", providerID, authState.AccountID, authState.Email, wantAccountID, wantEmail)
+	}
+}
+
+func assertBindingCounts(t *testing.T, db *gorm.DB, accountID string, wantTotal, wantBound int64) {
+	t.Helper()
+	var total, bound int64
+	if err := db.Model(&model.ProviderCredential{}).Count(&total).Error; err != nil {
+		t.Fatalf("count credentials: %v", err)
+	}
+	if err := db.Model(&model.ProviderCredential{}).Where("binding_account_id = ?", accountID).Count(&bound).Error; err != nil {
+		t.Fatalf("count bound credentials: %v", err)
+	}
+	if total != wantTotal || bound != wantBound {
+		t.Fatalf("credential counts = (total=%d, bound=%d), want (total=%d, bound=%d)", total, bound, wantTotal, wantBound)
 	}
 }

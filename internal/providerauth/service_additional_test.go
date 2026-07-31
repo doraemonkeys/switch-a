@@ -356,8 +356,8 @@ func TestBuildProviderAuthView_NotConnectedWithoutChatGPTLogin(t *testing.T) {
 func TestRefreshProviderCredentials_MarksReauthRequiredOnTerminalRefreshFailure_WithAuthStateRow(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	idToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -369,8 +369,8 @@ func TestRefreshProviderCredentials_MarksReauthRequiredOnTerminalRefreshFailure_
 			AccessToken:   "access-token",
 			RefreshToken:  "refresh-token",
 			IDToken:       idToken,
-			OAuthIssuer:   "https://issuer.example.com/",
-			OAuthClientID: "client-refresh",
+			OAuthIssuer:   defaultOAuthIssuer,
+			OAuthClientID: defaultOAuthClientID,
 			AccountID:     "acct_test",
 			Email:         "user@example.com",
 			LastRefresh:   now.Add(-time.Hour),
@@ -442,8 +442,8 @@ func TestRefreshProviderCredentials_MarksReauthRequiredOnTerminalRefreshFailure_
 func TestRefreshProviderCredentials_DoesNotReviveReauthRequiredProvider_WithExplicitAuthState(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	idToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -454,8 +454,8 @@ func TestRefreshProviderCredentials_DoesNotReviveReauthRequiredProvider_WithExpl
 			AccessToken:   "access-token",
 			RefreshToken:  "refresh-token",
 			IDToken:       idToken,
-			OAuthIssuer:   "https://issuer.example.com/",
-			OAuthClientID: "client-refresh",
+			OAuthIssuer:   defaultOAuthIssuer,
+			OAuthClientID: defaultOAuthClientID,
 			AccountID:     "acct_test",
 			LastRefresh:   now.Add(-time.Hour),
 			ExpiresAt:     now.Add(30 * time.Second),
@@ -539,8 +539,8 @@ func TestEnsureFreshChatGPTCredential_SkipsRefreshWhenStillValid(t *testing.T) {
 func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	oldIDToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": []any{"", "client-refresh"},
+		"iss": defaultOAuthIssuer,
+		"aud": []any{"", defaultOAuthClientID},
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -549,8 +549,8 @@ func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 	})
 	newExpiry := now.Add(2 * time.Hour)
 	newIDToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": newExpiry.Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -563,8 +563,8 @@ func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 		CredentialStore: store,
 		HTTPClient: stubHTTPDoer{
 			do: func(req *http.Request) (*http.Response, error) {
-				if req.URL.String() != "https://issuer.example.com/oauth/token" {
-					t.Fatalf("request URL = %q, want %q", req.URL.String(), "https://issuer.example.com/oauth/token")
+				if req.URL.String() != defaultOAuthIssuer+"/oauth/token" {
+					t.Fatalf("request URL = %q, want %q", req.URL.String(), defaultOAuthIssuer+"/oauth/token")
 				}
 				if got := req.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
 					t.Fatalf("Content-Type = %q, want form encoding", got)
@@ -587,8 +587,8 @@ func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 				if values.Get("refresh_token") != "refresh-token" {
 					t.Fatalf("refresh_token = %q, want %q", values.Get("refresh_token"), "refresh-token")
 				}
-				if values.Get("client_id") != "client-refresh" {
-					t.Fatalf("client_id = %q, want %q", values.Get("client_id"), "client-refresh")
+				if values.Get("client_id") != defaultOAuthClientID {
+					t.Fatalf("client_id = %q, want %q", values.Get("client_id"), defaultOAuthClientID)
 				}
 
 				return &http.Response{
@@ -628,11 +628,11 @@ func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 	if refreshed.RefreshToken != "refresh-token" {
 		t.Fatalf("RefreshToken = %q, want original fallback refresh token", refreshed.RefreshToken)
 	}
-	if refreshed.OAuthIssuer != "https://issuer.example.com/" {
-		t.Fatalf("OAuthIssuer = %q, want %q", refreshed.OAuthIssuer, "https://issuer.example.com/")
+	if refreshed.OAuthIssuer != defaultOAuthIssuer {
+		t.Fatalf("OAuthIssuer = %q, want %q", refreshed.OAuthIssuer, defaultOAuthIssuer)
 	}
-	if refreshed.OAuthClientID != "client-refresh" {
-		t.Fatalf("OAuthClientID = %q, want %q", refreshed.OAuthClientID, "client-refresh")
+	if refreshed.OAuthClientID != defaultOAuthClientID {
+		t.Fatalf("OAuthClientID = %q, want %q", refreshed.OAuthClientID, defaultOAuthClientID)
 	}
 	if refreshed.PlanType != "team" {
 		t.Fatalf("PlanType = %q, want %q", refreshed.PlanType, "team")
@@ -652,8 +652,8 @@ func TestEnsureFreshChatGPTCredential_RefreshesAndPersists(t *testing.T) {
 func TestEnsureFreshChatGPTCredential_PreservesIdentitySnapshotWhenRefreshOmitsIDToken(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	oldIDToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -666,8 +666,8 @@ func TestEnsureFreshChatGPTCredential_PreservesIdentitySnapshotWhenRefreshOmitsI
 		CredentialStore: store,
 		HTTPClient: stubHTTPDoer{
 			do: func(req *http.Request) (*http.Response, error) {
-				if req.URL.String() != "https://issuer.example.com/oauth/token" {
-					t.Fatalf("request URL = %q, want %q", req.URL.String(), "https://issuer.example.com/oauth/token")
+				if req.URL.String() != defaultOAuthIssuer+"/oauth/token" {
+					t.Fatalf("request URL = %q, want %q", req.URL.String(), defaultOAuthIssuer+"/oauth/token")
 				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
@@ -688,8 +688,8 @@ func TestEnsureFreshChatGPTCredential_PreservesIdentitySnapshotWhenRefreshOmitsI
 		AccessToken:   "access-token",
 		RefreshToken:  "refresh-token",
 		IDToken:       oldIDToken,
-		OAuthIssuer:   "https://issuer.example.com/",
-		OAuthClientID: "client-refresh",
+		OAuthIssuer:   defaultOAuthIssuer,
+		OAuthClientID: defaultOAuthClientID,
 		AccountID:     "acct_test",
 		Email:         "user@example.com",
 		PlanType:      "plus",
@@ -713,7 +713,7 @@ func TestEnsureFreshChatGPTCredential_PreservesIdentitySnapshotWhenRefreshOmitsI
 	if refreshed.AccountID != "acct_test" || refreshed.Email != "user@example.com" || refreshed.PlanType != "plus" {
 		t.Fatalf("refreshed identity = %#v, want preserved account snapshot", refreshed)
 	}
-	if refreshed.OAuthIssuer != "https://issuer.example.com/" || refreshed.OAuthClientID != "client-refresh" {
+	if refreshed.OAuthIssuer != defaultOAuthIssuer || refreshed.OAuthClientID != defaultOAuthClientID {
 		t.Fatalf("refreshed oauth context = %#v, want preserved issuer/client", refreshed)
 	}
 	if store.calls != 1 {
@@ -758,7 +758,11 @@ func TestRefreshChatGPTCredential_ErrorPaths(t *testing.T) {
 			},
 		})
 		_, err := service.refreshChatGPTCredential(context.Background(), &model.ChatGPTProviderCredential{
-			IDToken:      makeTestJWT(t, map[string]any{"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct_test"}}),
+			IDToken: makeTestJWT(t, map[string]any{
+				"iss":                         defaultOAuthIssuer,
+				"aud":                         defaultOAuthClientID,
+				"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct_test"},
+			}),
 			RefreshToken: "refresh-token",
 		})
 		if err == nil || !strings.Contains(err.Error(), "refresh chatgpt token failed with status 401 Unauthorized: expired") {
@@ -778,7 +782,11 @@ func TestRefreshChatGPTCredential_ErrorPaths(t *testing.T) {
 			},
 		})
 		_, err := service.refreshChatGPTCredential(context.Background(), &model.ChatGPTProviderCredential{
-			IDToken:      makeTestJWT(t, map[string]any{"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct_test"}}),
+			IDToken: makeTestJWT(t, map[string]any{
+				"iss":                         defaultOAuthIssuer,
+				"aud":                         defaultOAuthClientID,
+				"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct_test"},
+			}),
 			RefreshToken: "refresh-token",
 		})
 		if err == nil || !strings.Contains(err.Error(), "decode refreshed chatgpt token response") {

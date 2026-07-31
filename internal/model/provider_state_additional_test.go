@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,6 +35,45 @@ func TestProviderStateHelpers_HandleNilAndEmptyInputs(t *testing.T) {
 	}
 	if encoded != "" {
 		t.Fatalf("EncodeChatGPTProviderCredential(nil) = %q, want empty string", encoded)
+	}
+}
+
+func TestChatGPTProviderSecret_RoundTripsSplitCredentialContract(t *testing.T) {
+	secret := &ChatGPTProviderSecret{
+		AccessToken:   " access-token ",
+		RefreshToken:  " refresh-token ",
+		IDToken:       "id-token",
+		OAuthIssuer:   "https://auth.example",
+		OAuthClientID: "client-id",
+	}
+	payload, err := EncodeChatGPTProviderSecret(secret)
+	if err != nil {
+		t.Fatalf("EncodeChatGPTProviderSecret() error = %v", err)
+	}
+	if strings.Contains(payload, "account_id") || strings.Contains(payload, "email") {
+		t.Fatalf("split secret payload retained auth summary fields: %s", payload)
+	}
+
+	decoded, err := DecodeChatGPTProviderSecret(payload)
+	if err != nil {
+		t.Fatalf("DecodeChatGPTProviderSecret() error = %v", err)
+	}
+	if decoded == nil || !decoded.Ready() || decoded.IDToken != secret.IDToken ||
+		decoded.OAuthIssuer != secret.OAuthIssuer || decoded.OAuthClientID != secret.OAuthClientID {
+		t.Fatalf("decoded split secret = %#v, want ready round trip", decoded)
+	}
+
+	if (&ChatGPTProviderSecret{AccessToken: "access-only"}).Ready() {
+		t.Fatal("ChatGPTProviderSecret.Ready() accepted a secret without a refresh token")
+	}
+	if empty, err := DecodeChatGPTProviderSecret(""); err != nil || empty != nil {
+		t.Fatalf("DecodeChatGPTProviderSecret(empty) = %#v, %v; want nil, nil", empty, err)
+	}
+	if _, err := DecodeChatGPTProviderSecret("{"); err == nil {
+		t.Fatal("DecodeChatGPTProviderSecret(invalid JSON) succeeded")
+	}
+	if encoded, err := EncodeChatGPTProviderSecret(nil); err != nil || encoded != "" {
+		t.Fatalf("EncodeChatGPTProviderSecret(nil) = %q, %v; want empty, nil", encoded, err)
 	}
 }
 

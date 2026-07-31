@@ -17,7 +17,21 @@ func chatgptAuthJWT(t *testing.T, accountID, email, plan string, exp time.Time) 
 	t.Helper()
 	return makeTestJWT(t, map[string]any{
 		"iss":   defaultOAuthIssuer,
-		"aud":   "client-import",
+		"aud":   defaultOAuthClientID,
+		"email": email,
+		"exp":   float64(exp.Unix()),
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": accountID,
+			"chatgpt_plan_type":  plan,
+		},
+	})
+}
+
+func chatgptAccessJWT(t *testing.T, accountID, email, plan string, exp time.Time) string {
+	t.Helper()
+	return makeTestJWT(t, map[string]any{
+		"iss":   defaultOAuthIssuer,
+		"aud":   chatGPTAPIAudience,
 		"email": email,
 		"exp":   float64(exp.Unix()),
 		"https://api.openai.com/auth": map[string]any{
@@ -111,7 +125,8 @@ func TestNewChatGPTCredentialFromImportedTokens(t *testing.T) {
 
 	t.Run("uses id_token when present", func(t *testing.T) {
 		idToken := chatgptAuthJWT(t, "acct_id", "id@example.com", "pro", exp)
-		credential, err := newChatGPTCredentialFromImportedTokens("acc", "ref", idToken, now)
+		accessToken := chatgptAccessJWT(t, "acct_id", "access@example.com", "pro", exp)
+		credential, err := newChatGPTCredentialFromImportedTokens(accessToken, "ref", idToken, now)
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -130,7 +145,7 @@ func TestNewChatGPTCredentialFromImportedTokens(t *testing.T) {
 	})
 
 	t.Run("falls back to access_token when id_token missing", func(t *testing.T) {
-		accessToken := chatgptAuthJWT(t, "acct_acc", "acc@example.com", "team", exp)
+		accessToken := chatgptAccessJWT(t, "acct_acc", "acc@example.com", "team", exp)
 		credential, err := newChatGPTCredentialFromImportedTokens(accessToken, "ref", "", now)
 		if err != nil {
 			t.Fatalf("error = %v", err)
@@ -145,8 +160,8 @@ func TestNewChatGPTCredentialFromImportedTokens(t *testing.T) {
 		if credential.OAuthIssuer != defaultOAuthIssuer {
 			t.Errorf("OAuthIssuer = %q, want %q", credential.OAuthIssuer, defaultOAuthIssuer)
 		}
-		if credential.OAuthClientID != "client-import" {
-			t.Errorf("OAuthClientID = %q, want client-import", credential.OAuthClientID)
+		if credential.OAuthClientID != defaultOAuthClientID {
+			t.Errorf("OAuthClientID = %q, want %q", credential.OAuthClientID, defaultOAuthClientID)
 		}
 		if !credential.Ready() {
 			t.Error("credential is not Ready")
@@ -159,11 +174,21 @@ func TestNewChatGPTCredentialFromImportedTokens(t *testing.T) {
 			t.Fatalf("error = %v, want access_token decode failure", err)
 		}
 	})
+
+	t.Run("rejects access and id token account mismatch", func(t *testing.T) {
+		accessToken := chatgptAccessJWT(t, "acct_access", "access@example.com", "team", exp)
+		idToken := chatgptAuthJWT(t, "acct_id", "id@example.com", "team", exp)
+		_, err := newChatGPTCredentialFromImportedTokens(accessToken, "ref", idToken, now)
+		if err == nil || !strings.Contains(err.Error(), "identify different accounts") {
+			t.Fatalf("error = %v, want cross-token account mismatch", err)
+		}
+	})
 }
 
 func TestImportChatGPTLogin(t *testing.T) {
 	now := time.Date(2026, time.June, 24, 12, 0, 0, 0, time.UTC)
 	idToken := chatgptAuthJWT(t, "acct_import", "import@example.com", "pro", now.Add(time.Hour))
+	accessToken := chatgptAccessJWT(t, "acct_import", "import@example.com", "pro", now.Add(time.Hour))
 
 	// Usage fetch is best-effort; a failing stub keeps these tests independent of the
 	// upstream usage endpoint while still exercising the best-effort branch.
@@ -178,7 +203,7 @@ func TestImportChatGPTLogin(t *testing.T) {
 
 	t.Run("stages a completed session for the save pipeline", func(t *testing.T) {
 		service := newImportService()
-		raw := `{"tokens":{"id_token":"` + idToken + `","access_token":"acc","refresh_token":"ref"}}`
+		raw := `{"tokens":{"id_token":"` + idToken + `","access_token":"` + accessToken + `","refresh_token":"ref"}}`
 
 		status, err := service.ImportChatGPTLogin(context.Background(), raw)
 		if err != nil {

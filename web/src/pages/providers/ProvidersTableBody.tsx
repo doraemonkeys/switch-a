@@ -23,6 +23,7 @@ import {
   Activity,
   AlertCircle,
   PlusCircle,
+  Upload,
   FolderOpen,
   RefreshCw,
   ServerCrash,
@@ -44,6 +45,7 @@ export interface ProvidersTableBodyProps {
   onDelete: (provider: Provider) => void;
   onReset: (provider: Provider) => void;
   onAddClick: () => void;
+  onImportClick: () => void;
   onGroupClick?: (groupId: string) => void;
   onViewDetail?: (provider: Provider) => void;
   getGroupName: (groupId: string | null) => string;
@@ -484,6 +486,7 @@ export function ProvidersTableBody({
   onDelete,
   onReset,
   onAddClick,
+  onImportClick,
   onGroupClick,
   onViewDetail,
   getGroupName,
@@ -522,13 +525,24 @@ export function ProvidersTableBody({
                 : "We couldn't find any providers matching your current filter criteria."}
             </p>
             {noProvidersConfigured && (
-              <button
-                onClick={onAddClick}
-                className="btn btn-primary shadow-md"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Add First Provider</span>
-              </button>
+              <div className="flex flex-wrap justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={onImportClick}
+                  className="btn btn-secondary shadow-sm"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Import Accounts</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onAddClick}
+                  className="btn btn-primary shadow-md"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Add First Provider</span>
+                </button>
+              </div>
             )}
           </div>
         </td>

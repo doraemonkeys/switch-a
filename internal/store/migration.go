@@ -544,38 +544,6 @@ func migrateRoutingPolicyLifecycleStorage(db *gorm.DB) error {
 	})
 }
 
-// migrateProviderStateTables backfills the new credential/auth tables without
-// overwriting rows that were already created by a newer binary, then drops the
-// legacy providers.credential_data shadow once split storage is populated.
-func migrateProviderStateTables(db *gorm.DB) error {
-	hasLegacyCredentialData, err := tableColumnExists(db, providersTableName, providerCredentialDataColumn)
-	if err != nil {
-		return fmt.Errorf("check providers credential shadow column: %w", err)
-	}
-
-	return db.Transaction(func(tx *gorm.DB) error {
-		if hasLegacyCredentialData {
-			var providers []legacyProviderCredentialShadow
-			if err := tx.Table(providersTableName).
-				Select("id, credential_type, credential_data").
-				Scan(&providers).Error; err != nil {
-				return fmt.Errorf("list providers for provider state migration: %w", err)
-			}
-			for i := range providers {
-				if err := backfillProviderState(tx, &providers[i]); err != nil {
-					return err
-				}
-			}
-			if err := tx.Exec(
-				fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, providersTableName, providerCredentialDataColumn),
-			).Error; err != nil {
-				return fmt.Errorf("drop providers credential shadow column: %w", err)
-			}
-		}
-		return nil
-	})
-}
-
 // migrateProviderUsageLimitPolicyStorage rewrites rows that accidentally
 // persisted a credential-derived default back to the empty "inherit default"
 // representation so later credential_type changes can recompute the effective
@@ -607,61 +575,4 @@ func migrateProviderUsageLimitPolicyStorage(db *gorm.DB) error {
 			string(model.ProviderUsageLimitPolicySwitchProvider),
 		).Error
 	})
-}
-
-type legacyProviderCredentialShadow struct {
-	ID             string
-	CredentialType model.ProviderCredentialType
-	CredentialData string
-}
-
-func backfillProviderState(tx *gorm.DB, provider *legacyProviderCredentialShadow) error {
-	if provider == nil {
-		return nil
-	}
-
-	var credentialCount int64
-	if err := tx.Model(&model.ProviderCredential{}).
-		Where("provider_id = ?", provider.ID).
-		Count(&credentialCount).Error; err != nil {
-		return fmt.Errorf("count provider credentials for %q: %w", provider.ID, err)
-	}
-	if credentialCount == 0 {
-		credential := model.ProviderCredentialFromLegacy(
-			provider.ID,
-			provider.CredentialType,
-			provider.CredentialData,
-		)
-		if credential != nil {
-			if err := tx.Create(credential).Error; err != nil {
-				return fmt.Errorf("backfill provider credential for %q: %w", provider.ID, err)
-			}
-		}
-	}
-
-	var authStateCount int64
-	if err := tx.Model(&model.ProviderAuthState{}).
-		Where("provider_id = ?", provider.ID).
-		Count(&authStateCount).Error; err != nil {
-		return fmt.Errorf("count provider auth states for %q: %w", provider.ID, err)
-	}
-	if authStateCount == 0 {
-		authState := model.ProviderAuthStateFromCredential(
-			provider.ID,
-			provider.CredentialType,
-			model.ProviderCredentialFromLegacy(provider.ID, provider.CredentialType, provider.CredentialData),
-		)
-		if authState == nil {
-			authState = model.NormalizeProviderAuthStateRecord(
-				provider.ID,
-				provider.CredentialType,
-				nil,
-			)
-		}
-		if err := tx.Create(authState).Error; err != nil {
-			return fmt.Errorf("backfill provider auth state for %q: %w", provider.ID, err)
-		}
-	}
-
-	return nil
 }

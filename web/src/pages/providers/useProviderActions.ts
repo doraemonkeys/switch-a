@@ -1,12 +1,7 @@
-import { useState } from "react";
 import { useProviders } from "../../hooks/useProviders";
 import { useToast } from "../../hooks/useToast";
 import { ApiError, type Provider, type ProviderInput } from "../../api/client";
-
-interface ConfirmState<T> {
-  isOpen: boolean;
-  item: T | null;
-}
+import { useProviderConfirmations } from "./useProviderConfirmations";
 
 function isCredentialBindingConflict(error: unknown): boolean {
   return (
@@ -17,6 +12,7 @@ function isCredentialBindingConflict(error: unknown): boolean {
 export function useProviderActions() {
   const {
     providers,
+    hasSnapshot,
     loading,
     error,
     refetch,
@@ -30,20 +26,11 @@ export function useProviderActions() {
     refreshUsage,
   } = useProviders();
   const toast = useToast();
-
-  // Delete confirmation state
-  const [deleteConfirm, setDeleteConfirm] = useState<ConfirmState<Provider>>({
-    isOpen: false,
-    item: null,
+  const confirmations = useProviderConfirmations({
+    deleteProvider,
+    resetProvider,
+    toast,
   });
-  const [deleting, setDeleting] = useState(false);
-
-  // Reset confirmation state
-  const [resetConfirm, setResetConfirm] = useState<ConfirmState<Provider>>({
-    isOpen: false,
-    item: null,
-  });
-  const [resetting, setResetting] = useState(false);
 
   const handleToggleProvider = async (provider: Provider) => {
     try {
@@ -60,50 +47,6 @@ export function useProviderActions() {
       );
     }
   };
-
-  const handleDeleteClick = (provider: Provider) =>
-    setDeleteConfirm({ isOpen: true, item: provider });
-
-  const handleDeleteConfirm = async () => {
-    if (!deleteConfirm.item) return;
-    setDeleting(true);
-    try {
-      await deleteProvider(deleteConfirm.item.id);
-      toast.success(`Provider "${deleteConfirm.item.name}" deleted`);
-      setDeleteConfirm({ isOpen: false, item: null });
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to delete provider",
-      );
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleDeleteCancel = () =>
-    setDeleteConfirm({ isOpen: false, item: null });
-
-  const handleResetClick = (provider: Provider) =>
-    setResetConfirm({ isOpen: true, item: provider });
-
-  const handleResetConfirm = async () => {
-    if (!resetConfirm.item) return;
-    setResetting(true);
-    try {
-      await resetProvider(resetConfirm.item.id);
-      toast.success(`Provider "${resetConfirm.item.name}" reset`);
-      setResetConfirm({ isOpen: false, item: null });
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to reset provider",
-      );
-    } finally {
-      setResetting(false);
-    }
-  };
-
-  const handleResetCancel = () =>
-    setResetConfirm({ isOpen: false, item: null });
 
   const handleSaveProvider = async (
     data: ProviderInput,
@@ -159,25 +102,11 @@ export function useProviderActions() {
 
   return {
     providers,
+    hasSnapshot,
     loading,
     error,
     refetch,
-    // Delete
-    deleteConfirm: {
-      isOpen: deleteConfirm.isOpen,
-      provider: deleteConfirm.item,
-    },
-    deleting,
-    handleDeleteClick,
-    handleDeleteConfirm,
-    handleDeleteCancel,
-    // Reset
-    resetConfirm: { isOpen: resetConfirm.isOpen, provider: resetConfirm.item },
-    resetting,
-    handleResetClick,
-    handleResetConfirm,
-    handleResetCancel,
-    // Actions
+    ...confirmations,
     handleToggleProvider,
     handleSaveProvider,
     handleRefreshCredential,

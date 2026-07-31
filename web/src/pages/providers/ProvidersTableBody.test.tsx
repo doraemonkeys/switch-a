@@ -72,6 +72,7 @@ describe("ProvidersTableBody", () => {
             onDelete={vi.fn()}
             onReset={vi.fn()}
             onAddClick={vi.fn()}
+            onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
             getGroupEnabled={() => undefined}
           />
@@ -110,6 +111,7 @@ describe("ProvidersTableBody", () => {
             onDelete={vi.fn()}
             onReset={vi.fn()}
             onAddClick={vi.fn()}
+            onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
             getGroupEnabled={() => undefined}
           />
@@ -141,6 +143,7 @@ describe("ProvidersTableBody", () => {
             onDelete={vi.fn()}
             onReset={vi.fn()}
             onAddClick={vi.fn()}
+            onImportClick={vi.fn()}
             getGroupName={() => "GPT Account"}
             getGroupEnabled={() => false}
           />
