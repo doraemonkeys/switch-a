@@ -28,6 +28,18 @@ func TestShouldPreferChatGPTCredentialAndPruneRecentRefreshes(t *testing.T) {
 	if !shouldPreferChatGPTCredential(current, nil) {
 		t.Fatal("ready candidate should replace a missing current credential")
 	}
+	if shouldPreferChatGPTCredential(current, &model.ChatGPTProviderCredential{AccountID: "acct-2"}) {
+		t.Fatal("ready candidate should not replace an incomplete credential for another account")
+	}
+	if shouldPreferChatGPTCredential(&model.ChatGPTProviderCredential{
+		AccessToken:  "other-account-access",
+		RefreshToken: "other-account-refresh",
+		AccountID:    "acct-2",
+		LastRefresh:  now.Add(time.Minute),
+		ExpiresAt:    now.Add(time.Hour),
+	}, current) {
+		t.Fatal("newer credential for another account should not be preferred")
+	}
 	if !shouldPreferChatGPTCredential(&model.ChatGPTProviderCredential{
 		AccessToken:  "newer-access",
 		RefreshToken: "newer-refresh",
@@ -81,6 +93,32 @@ func TestShouldPreferChatGPTCredentialAndPruneRecentRefreshes(t *testing.T) {
 	}
 	if _, ok := service.recentChatGPTRefreshes["fresh"]; !ok {
 		t.Fatal("fresh refresh entry was pruned unexpectedly")
+	}
+}
+
+func TestReuseRecentChatGPTRefresh_DoesNotCrossAccountsWhenProviderIDIsReused(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	service := NewService(Config{Clock: fixedClock{now: now}})
+	service.storeRecentChatGPTRefresh("reused-provider", &model.ChatGPTProviderCredential{
+		AccessToken:  "deleted-account-access",
+		RefreshToken: "deleted-account-refresh",
+		AccountID:    "deleted-account",
+		LastRefresh:  now,
+		ExpiresAt:    now.Add(2 * time.Hour),
+	})
+	recreated := &model.ChatGPTProviderCredential{
+		AccessToken:  "recreated-account-access",
+		RefreshToken: "recreated-account-refresh",
+		AccountID:    "recreated-account",
+		LastRefresh:  now.Add(-time.Hour),
+		ExpiresAt:    now.Add(time.Hour),
+	}
+
+	got := service.reuseRecentChatGPTRefresh("reused-provider", recreated)
+	if got.AccountID != recreated.AccountID || got.RefreshToken != recreated.RefreshToken {
+		t.Fatalf("reused credential = %#v, want recreated provider account", got)
 	}
 }
 

@@ -39,7 +39,10 @@ const (
 // Request body size limits.
 const (
 	MaxRequestBodySize = 1 << 20 // 1MB limit for JSON requests
-	MaxConfigUpdates   = 50      // Maximum number of config keys per update request
+	// Provider exports can contain several refresh-capable JWTs per account; the
+	// dedicated limit matches the UI while still bounding parser memory use.
+	MaxProviderImportBodySize = 5 << 20 // 5MB limit for sub2api import files
+	MaxConfigUpdates          = 50      // Maximum number of config keys per update request
 )
 
 // HTTP constants.

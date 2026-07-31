@@ -14,7 +14,6 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/model"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -66,7 +65,7 @@ func (s *Service) StartChatGPTLogin() (*ChatGPTLoginStartResponse, error) {
 	}
 	hash := sha256.Sum256([]byte(codeVerifier))
 	codeChallenge := base64.RawURLEncoding.EncodeToString(hash[:])
-	loginID := uuid.NewString()
+	loginID := s.idGenerator.NewID()
 
 	authURL, err := url.Parse(defaultOAuthIssuer + "/oauth/authorize")
 	if err != nil {
@@ -106,7 +105,7 @@ func (s *Service) GetChatGPTLoginStatus(loginID string) (*ChatGPTLoginStatusResp
 
 	s.mu.Lock()
 	s.pruneExpiredSessionsLocked(now)
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	var response *ChatGPTLoginStatusResponse
 	if completed, ok := s.completed[loginID]; ok {
@@ -139,7 +138,7 @@ func (s *Service) lookupCompletedChatGPTLogin(loginID string) (*model.ChatGPTPro
 
 	s.mu.Lock()
 	s.pruneExpiredSessionsLocked(now)
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	completed, ok := s.completed[loginID]
 	s.mu.Unlock()
@@ -169,7 +168,7 @@ func (s *Service) FinalizeChatGPTLogin(loginID string) error {
 
 	s.mu.Lock()
 	s.pruneExpiredSessionsLocked(now)
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	if _, ok := s.completed[loginID]; !ok {
 		s.mu.Unlock()
@@ -217,7 +216,7 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 	s.mu.Lock()
 	s.pruneExpiredSessionsLocked(now)
 	pending, ok := s.claimPendingLoginLocked(state, now)
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	s.mu.Unlock()
 	if !ok {
@@ -235,7 +234,7 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		s.mu.Lock()
 		s.deletePendingLoginLocked(pending)
-		s.syncLoginExpiryTaskLocked(s.clock.Now())
+		s.syncSessionExpiryTaskLocked(s.clock.Now())
 		shouldReconcile = s.callbackActive && len(s.pendingByLoginID) == 0
 		s.mu.Unlock()
 		if shouldReconcile {
@@ -249,18 +248,21 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	completionNow := s.clock.Now()
 	s.mu.Lock()
 	s.deletePendingLoginLocked(pending)
-	s.completed[pending.loginID] = completedLogin{
-		loginID:    pending.loginID,
-		credential: *credential,
-		expiresAt:  now.Add(completedLoginSessionTTL),
-	}
-	s.syncLoginExpiryTaskLocked(s.clock.Now())
+	storeErr := s.storeCompletedLoginLocked(pending.loginID, credential, completionNow)
 	shouldReconcile = s.callbackActive && len(s.pendingByLoginID) == 0
 	s.mu.Unlock()
 	if shouldReconcile {
 		s.requestCallbackEndpointReconcile()
+	}
+	if storeErr != nil {
+		renderCallbackPage(w, callbackPage{
+			Status:  "error",
+			Message: "Login service stopped before credentials could be staged.",
+		})
+		return
 	}
 
 	renderCallbackPage(w, callbackPage{
@@ -268,6 +270,30 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 		Message: "GPT account connected. You can close this window.",
 		LoginID: pending.loginID,
 	})
+}
+
+// storeCompletedLoginLocked is the single transition that admits credential
+// material into the staged-login map. Network work happens outside s.mu, so the
+// shutdown check must be repeated at this exact ownership boundary.
+func (s *Service) storeCompletedLoginLocked(
+	loginID string,
+	credential *model.ChatGPTProviderCredential,
+	now time.Time,
+) error {
+	if s.shutdown {
+		return errProviderAuthServiceShutdown
+	}
+	if strings.TrimSpace(loginID) == "" || credential == nil {
+		return fmt.Errorf("completed login is incomplete")
+	}
+	s.pruneExpiredSessionsLocked(now)
+	s.completed[loginID] = completedLogin{
+		loginID:    loginID,
+		credential: *credential,
+		expiresAt:  now.Add(completedLoginSessionTTL),
+	}
+	s.syncSessionExpiryTaskLocked(now)
+	return nil
 }
 
 func (s *Service) cancelPendingLoginFromCallback(state string, now time.Time) {
@@ -280,7 +306,7 @@ func (s *Service) cancelPendingLoginFromCallback(state string, now time.Time) {
 	if pending, ok := s.pendingByState[state]; ok {
 		s.deletePendingLoginLocked(pending)
 	}
-	s.syncLoginExpiryTaskLocked(now)
+	s.syncSessionExpiryTaskLocked(now)
 	shouldReconcile := s.callbackActive && len(s.pendingByLoginID) == 0
 	s.mu.Unlock()
 	if shouldReconcile {
@@ -346,6 +372,7 @@ func (s *Service) pruneExpiredSessionsLocked(now time.Time) {
 			delete(s.completed, loginID)
 		}
 	}
+	s.pruneExpiredProviderImportsLocked(now)
 }
 
 func (s *Service) storePendingLoginLocked(login pendingLogin) {

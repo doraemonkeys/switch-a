@@ -63,8 +63,8 @@ func (s *concurrentCredentialStore) snapshot() (int, string, model.ProviderCrede
 func TestApplyProviderCredentials_DeduplicatesConcurrentChatGPTRefresh(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	oldIDToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -72,8 +72,8 @@ func TestApplyProviderCredentials_DeduplicatesConcurrentChatGPTRefresh(t *testin
 		},
 	})
 	newIDToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(2 * time.Hour).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -84,8 +84,8 @@ func TestApplyProviderCredentials_DeduplicatesConcurrentChatGPTRefresh(t *testin
 		AccessToken:   "old-access-token",
 		RefreshToken:  "old-refresh-token",
 		IDToken:       oldIDToken,
-		OAuthIssuer:   "https://issuer.example.com/",
-		OAuthClientID: "client-refresh",
+		OAuthIssuer:   defaultOAuthIssuer,
+		OAuthClientID: defaultOAuthClientID,
 		AccountID:     "acct_test",
 		PlanType:      "plus",
 		LastRefresh:   now.Add(-time.Hour),
@@ -217,8 +217,8 @@ func TestApplyProviderCredentials_DeduplicatesConcurrentChatGPTRefresh(t *testin
 func TestApplyProviderCredentials_ReusesRecentChatGPTRefreshForStaleProviderCopy(t *testing.T) {
 	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
 	oldIDToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(30 * time.Second).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -226,8 +226,8 @@ func TestApplyProviderCredentials_ReusesRecentChatGPTRefreshForStaleProviderCopy
 		},
 	})
 	newIDToken := makeTestJWT(t, map[string]any{
-		"iss": "https://issuer.example.com/",
-		"aud": "client-refresh",
+		"iss": defaultOAuthIssuer,
+		"aud": defaultOAuthClientID,
 		"exp": now.Add(2 * time.Hour).Unix(),
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "acct_test",
@@ -238,8 +238,8 @@ func TestApplyProviderCredentials_ReusesRecentChatGPTRefreshForStaleProviderCopy
 		AccessToken:   "old-access-token",
 		RefreshToken:  "old-refresh-token",
 		IDToken:       oldIDToken,
-		OAuthIssuer:   "https://issuer.example.com/",
-		OAuthClientID: "client-refresh",
+		OAuthIssuer:   defaultOAuthIssuer,
+		OAuthClientID: defaultOAuthClientID,
 		AccountID:     "acct_test",
 		PlanType:      "plus",
 		LastRefresh:   now.Add(-time.Hour),

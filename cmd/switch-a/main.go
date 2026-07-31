@@ -238,15 +238,16 @@ func run() error {
 
 	// Create admin HTTP server (separate port for security)
 	adminSrv := server.NewAdmin(server.AdminConfig{
-		Port:          cfg.AdminPort,
-		AdminToken:    cfg.AdminToken,
-		Logger:        log,
-		Store:         st,
-		Health:        healthMgr,
-		Selector:      sel,
-		Concurrency:   limiter,
-		ActiveReqList: activeRegistry,
-		Auth:          authService,
+		Port:                cfg.AdminPort,
+		AdminToken:          cfg.AdminToken,
+		Logger:              log,
+		Store:               st,
+		Health:              healthMgr,
+		Selector:            sel,
+		Concurrency:         limiter,
+		ActiveReqList:       activeRegistry,
+		Auth:                authService,
+		ProviderImportStore: st,
 	})
 
 	errCh := startServers(proxySrv, adminSrv)

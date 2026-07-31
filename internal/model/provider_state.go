@@ -107,8 +107,9 @@ func CloneProviderUsageSnapshot(snapshot *ProviderUsageSnapshot) *ProviderUsageS
 	return &clone
 }
 
-// DecodeChatGPTProviderCredential parses the legacy secret blob. Empty payloads
-// return nil so callers can model "not connected" without treating it as corruption.
+// DecodeChatGPTProviderCredential parses the legacy monolithic credential blob.
+// Empty payloads return nil so migration callers can model "not connected"
+// without treating it as corruption.
 func DecodeChatGPTProviderCredential(raw string) (*ChatGPTProviderCredential, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -120,12 +121,38 @@ func DecodeChatGPTProviderCredential(raw string) (*ChatGPTProviderCredential, er
 	return &credential, nil
 }
 
+// DecodeChatGPTProviderSecret parses the split secret wire format shared by
+// credential lifecycle services and atomic import validation.
+func DecodeChatGPTProviderSecret(raw string) (*ChatGPTProviderSecret, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var secret ChatGPTProviderSecret
+	if err := json.Unmarshal([]byte(raw), &secret); err != nil {
+		return nil, err
+	}
+	return &secret, nil
+}
+
 // EncodeChatGPTProviderCredential re-serializes a credential for storage/export.
 func EncodeChatGPTProviderCredential(credential *ChatGPTProviderCredential) (string, error) {
 	if credential == nil {
 		return "", nil
 	}
 	payload, err := json.Marshal(credential)
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
+
+// EncodeChatGPTProviderSecret centralizes the persisted secret shape so summary
+// fields cannot accidentally drift back into refresh-capable storage.
+func EncodeChatGPTProviderSecret(secret *ChatGPTProviderSecret) (string, error) {
+	if secret == nil {
+		return "", nil
+	}
+	payload, err := json.Marshal(secret)
 	if err != nil {
 		return "", err
 	}

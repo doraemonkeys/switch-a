@@ -4,6 +4,7 @@ import { useQuery } from "./useQuery";
 
 interface UseProvidersResult {
   providers: Provider[];
+  hasSnapshot: boolean;
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
@@ -75,6 +76,7 @@ export function useProviders(): UseProvidersResult {
 
   return {
     providers: query.data ?? [],
+    hasSnapshot: query.data !== null,
     loading: query.loading,
     error: query.error,
     refetch: query.refetch,

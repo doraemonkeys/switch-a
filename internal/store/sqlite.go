@@ -19,8 +19,9 @@ var _ internal.Store = (*SQLiteStore)(nil)
 
 // SQLiteStore implements the Store interface using GORM and SQLite.
 type SQLiteStore struct {
-	db    *gorm.DB
-	clock internal.Clock
+	db                  *gorm.DB
+	clock               internal.Clock
+	credentialMutations *providerCredentialMutationCoordinator
 }
 
 // NewSQLiteStore creates a new SQLite store with the given database path and clock.
@@ -70,6 +71,7 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 		&model.RuntimeConfig{},
 		&model.RequestLog{},
 		&model.RequestAttempt{},
+		&ProviderImportReceipt{},
 	); err != nil { // coverage-ignore -- AutoMigrate rarely fails on valid schema
 		return nil, err
 	}
@@ -100,7 +102,11 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("migrate request log lifecycle fields: %w", err)
 	}
 
-	return &SQLiteStore{db: db, clock: clock}, nil
+	return &SQLiteStore{
+		db:                  db,
+		clock:               clock,
+		credentialMutations: newProviderCredentialMutationCoordinator(),
+	}, nil
 }
 
 // Close closes the database connection.

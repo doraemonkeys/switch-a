@@ -24,6 +24,11 @@ export function createMockApiClient(): ApiClient {
       reset: vi.fn(),
       batch: vi.fn(),
     },
+    providerImports: {
+      preview: vi.fn(),
+      commit: vi.fn(),
+      discard: vi.fn(),
+    },
     groups: {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),

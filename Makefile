@@ -38,8 +38,11 @@ ifeq ($(OS),Windows_NT)
     TOOLS_ROOT := $(shell cygpath -u "$(TOOLS_ROOT)")
 endif
 SLOC_GUARD := $(TOOLS_ROOT)/bin/sloc-guard$(GO_EXE)
-GOPLS_CHECK := git ls-files -z '*.go' | xargs -0 "$(GOPLS)" check -severity=hint
-GOFMT_CHECK := git ls-files -z '*.go' | xargs -0 gofmt -l
+# Include new source files in local gates while excluding tracked paths deleted by
+# an in-progress refactor; both omissions otherwise make the checks misleading.
+EXISTING_GO_FILES := git ls-files -z --cached --others --exclude-standard '*.go' | while IFS= read -r -d '' file; do if [ -f "$$file" ]; then printf '%s\0' "$$file"; fi; done
+GOPLS_CHECK := $(EXISTING_GO_FILES) | xargs -0 "$(GOPLS)" check -severity=hint
+GOFMT_CHECK := $(EXISTING_GO_FILES) | xargs -0 gofmt -l
 REQUIRED_GO_VERSION := $(shell awk '/^go / {print $$2}' go.mod)
 
 # 跨平台临时目录设置

@@ -271,6 +271,50 @@ func (s *CachedStore) DeleteRoutingPolicy(ctx context.Context, id uint) error {
 	return source.DeleteRoutingPolicy(ctx, id)
 }
 
+func (s *CachedStore) ApplyProviderImport(ctx context.Context, bundle *ProviderImportBundle) error {
+	source, ok := s.Store.(interface {
+		ApplyProviderImport(ctx context.Context, bundle *ProviderImportBundle) error
+	})
+	if !ok {
+		return fmt.Errorf("cached store wrapped %T, which does not support ApplyProviderImport", s.Store)
+	}
+	return source.ApplyProviderImport(ctx, bundle)
+}
+
+// WithProviderCredentialMutations deliberately delegates instead of owning a
+// second coordinator, so cached and uncached consumers share one exclusion domain.
+func (s *CachedStore) WithProviderCredentialMutations(
+	ctx context.Context,
+	providerIDs []string,
+) (context.Context, func(), error) {
+	source, ok := s.Store.(interface {
+		WithProviderCredentialMutations(context.Context, []string) (context.Context, func(), error)
+	})
+	if !ok {
+		return nil, nil, fmt.Errorf(
+			"cached store wrapped %T, which does not support provider credential mutation coordination",
+			s.Store,
+		)
+	}
+	return source.WithProviderCredentialMutations(ctx, providerIDs)
+}
+
+func (s *CachedStore) GetProviderImportReceipt(
+	ctx context.Context,
+	importID string,
+) (*ProviderImportReceipt, error) {
+	source, ok := s.Store.(interface {
+		GetProviderImportReceipt(context.Context, string) (*ProviderImportReceipt, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf(
+			"cached store wrapped %T, which does not support provider import receipts",
+			s.Store,
+		)
+	}
+	return source.GetProviderImportReceipt(ctx, importID)
+}
+
 func (s *CachedStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error {
 	source, ok := s.Store.(interface {
 		ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error

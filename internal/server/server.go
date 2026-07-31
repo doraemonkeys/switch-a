@@ -126,15 +126,16 @@ type Config struct {
 
 // AdminConfig holds admin server configuration.
 type AdminConfig struct {
-	Port          string
-	AdminToken    string
-	Logger        *zap.Logger
-	Store         store
-	Health        internal.HealthManager
-	Selector      Selector
-	Concurrency   ConcurrencyTracker
-	ActiveReqList admin.ActiveRequestLister
-	Auth          *providerauth.Service
+	Port                string
+	AdminToken          string
+	Logger              *zap.Logger
+	Store               store
+	Health              internal.HealthManager
+	Selector            Selector
+	Concurrency         ConcurrencyTracker
+	ActiveReqList       admin.ActiveRequestLister
+	Auth                *providerauth.Service
+	ProviderImportStore admin.ProviderImportStore
 }
 
 // HealthResponse represents the health check response.
@@ -235,13 +236,15 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// The Selector implements ConcurrencyCleaner for clearing concurrency
 	// counters when providers are deleted.
 	adminHandler := admin.NewHandler(admin.Config{
-		Store:         cfg.Store,
-		Health:        cfg.Health,
-		Concurrency:   cfg.Concurrency,
-		Cleaner:       cfg.Selector,
-		ActiveReqList: cfg.ActiveReqList,
-		Auth:          cfg.Auth,
-		Logger:        cfg.Logger,
+		Store:               cfg.Store,
+		Health:              cfg.Health,
+		Concurrency:         cfg.Concurrency,
+		Cleaner:             cfg.Selector,
+		ActiveReqList:       cfg.ActiveReqList,
+		Auth:                cfg.Auth,
+		ProviderImports:     cfg.Auth,
+		ProviderImportStore: cfg.ProviderImportStore,
+		Logger:              cfg.Logger,
 	})
 
 	// Create auth middleware
@@ -252,6 +255,9 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("POST /admin/api/providers", auth.WrapFunc(adminHandler.CreateProvider))
 	mux.Handle("POST /admin/api/provider-auth/chatgpt/start", auth.WrapFunc(adminHandler.StartChatGPTProviderLogin))
 	mux.Handle("POST /admin/api/provider-auth/chatgpt/import", auth.WrapFunc(adminHandler.ImportChatGPTProviderCredential))
+	mux.Handle("POST /admin/api/provider-imports", auth.WrapFunc(adminHandler.PreviewProviderImport))
+	mux.Handle("POST /admin/api/provider-imports/{import_id}/commit", auth.WrapFunc(adminHandler.CommitProviderImport))
+	mux.Handle("DELETE /admin/api/provider-imports/{import_id}", auth.WrapFunc(adminHandler.CancelProviderImport))
 	mux.Handle("GET /admin/api/provider-auth/chatgpt/sessions/{login_id}", auth.WrapFunc(adminHandler.GetChatGPTProviderLoginStatus))
 	mux.Handle("POST /admin/api/providers/batch", auth.WrapFunc(adminHandler.BatchProviderAction))
 	mux.Handle("GET /admin/api/providers/{id}", auth.WrapFunc(adminHandler.GetProvider))

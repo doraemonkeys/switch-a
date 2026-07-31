@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -107,16 +106,14 @@ func (s *Service) ImportChatGPTLogin(ctx context.Context, rawAuthData string) (*
 		credential = applyChatGPTUsageSnapshot(credential, snapshot)
 	}
 
-	loginID := uuid.NewString()
+	loginID := s.idGenerator.NewID()
 	now := s.clock.Now()
 	s.mu.Lock()
-	s.pruneExpiredSessionsLocked(now)
-	s.completed[loginID] = completedLogin{
-		loginID:    loginID,
-		credential: *credential,
-		expiresAt:  now.Add(completedLoginSessionTTL),
-	}
+	err = s.storeCompletedLoginLocked(loginID, credential, now)
 	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
 	return &ChatGPTLoginStatusResponse{
 		LoginID: loginID,

@@ -24,6 +24,36 @@ type SystemStatus struct {
 	Providers []ProviderStatus `json:"providers"`
 }
 
+// ActiveRequestsResponse represents the response for active requests API.
+type ActiveRequestsResponse struct {
+	Requests []ActiveRequest `json:"requests"`
+	Count    int             `json:"count"`
+}
+
+// GetHealth handles GET /admin/api/health.
+func (h *Handler) GetHealth(w http.ResponseWriter, r *http.Request) {
+	states, err := h.store.ListHealthStates(r.Context())
+	if err != nil {
+		h.logger.Error("failed to list health states", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get health states")
+		return
+	}
+	writeJSON(w, http.StatusOK, states)
+}
+
+// GetActiveRequests handles GET /admin/api/requests/active.
+func (h *Handler) GetActiveRequests(w http.ResponseWriter, _ *http.Request) {
+	if h.activeReqList == nil {
+		writeJSON(w, http.StatusOK, ActiveRequestsResponse{Requests: []ActiveRequest{}})
+		return
+	}
+	requests := h.activeReqList.List()
+	// The admin contract uses an empty collection, not null, even when an
+	// implementation returns a nil slice for an idle system.
+	result := append([]ActiveRequest{}, requests...)
+	writeJSON(w, http.StatusOK, ActiveRequestsResponse{Requests: result, Count: len(result)})
+}
+
 // GetStatus handles GET /admin/api/status.
 func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	providers, err := h.store.ListProviders(r.Context())

@@ -10,6 +10,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -21,6 +22,7 @@ const (
 	chatGPTOAuthUserAgent    = "github.com/doraemonkeys/switch-a/0.1"
 	chatGPTCodexOriginator   = "codex_cli_rs"
 	chatGPTCodexBaseURL      = "https://chatgpt.com/backend-api/codex"
+	chatGPTAPIAudience       = "https://api.openai.com/v1"
 	codexAPIType             = "codex"
 	authModeAuto             = "auto"
 	authModeBearer           = "bearer"
@@ -49,9 +51,32 @@ type CredentialStore interface {
 	UpdateProviderAuthState(ctx context.Context, providerID string, authState *model.ProviderAuthState) error
 }
 
+type providerCredentialMutationCoordinator interface {
+	WithProviderCredentialMutations(
+		ctx context.Context,
+		providerIDs []string,
+	) (ownedCtx context.Context, release func(), err error)
+}
+
+type providerCredentialReader interface {
+	GetProvider(ctx context.Context, id string) (*model.Provider, error)
+}
+
 // OAuthHTTPDoer performs outbound OAuth token requests.
 type OAuthHTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
+}
+
+// IDGenerator keeps process-local auth and import session identifiers opaque
+// while allowing lifecycle behavior to be deterministic in tests.
+type IDGenerator interface {
+	NewID() string
+}
+
+type uuidIDGenerator struct{}
+
+func (uuidIDGenerator) NewID() string {
+	return uuid.NewString()
 }
 
 // Config configures the provider auth service.
@@ -60,6 +85,7 @@ type Config struct {
 	HTTPClient      OAuthHTTPDoer
 	Clock           internal.Clock
 	Logger          *zap.Logger
+	IDGenerator     IDGenerator
 }
 
 type scheduledTask interface {
@@ -93,19 +119,23 @@ type Service struct {
 	httpClient      OAuthHTTPDoer
 	clock           internal.Clock
 	logger          *zap.Logger
+	idGenerator     IDGenerator
 	callback        callbackEndpoint
 	scheduleAfter   scheduleAfterFunc
 
 	callbackLifecycleMu sync.Mutex
 
-	mu               sync.Mutex
-	pendingByState   map[string]pendingLogin
-	pendingByLoginID map[string]pendingLogin
-	completed        map[string]completedLogin
-	callbackActive   bool
-	loginExpiryTask  scheduledTask
-	loginExpiryEpoch uint64
-	shutdown         bool
+	mu                  sync.Mutex
+	pendingByState      map[string]pendingLogin
+	pendingByLoginID    map[string]pendingLogin
+	completed           map[string]completedLogin
+	providerImports     map[string]stagedChatGPTProviderImport
+	providerImportSlots int
+	providerImportBytes int64
+	callbackActive      bool
+	sessionExpiryTask   scheduledTask
+	sessionExpiryEpoch  uint64
+	shutdown            bool
 
 	refreshMu              sync.Mutex
 	inFlightRefreshes      map[string]*inFlightChatGPTRefresh
@@ -133,6 +163,11 @@ func newService(cfg Config, runtime serviceRuntime) *Service {
 		logger = zap.NewNop()
 	}
 
+	idGenerator := cfg.IDGenerator
+	if idGenerator == nil {
+		idGenerator = uuidIDGenerator{}
+	}
+
 	scheduleAfter := runtime.scheduleAfter
 	if scheduleAfter == nil {
 		scheduleAfter = func(delay time.Duration, task func()) scheduledTask {
@@ -145,11 +180,13 @@ func newService(cfg Config, runtime serviceRuntime) *Service {
 		httpClient:             httpClient,
 		clock:                  clock,
 		logger:                 logger,
+		idGenerator:            idGenerator,
 		callback:               runtime.callback,
 		scheduleAfter:          scheduleAfter,
 		pendingByState:         make(map[string]pendingLogin),
 		pendingByLoginID:       make(map[string]pendingLogin),
 		completed:              make(map[string]completedLogin),
+		providerImports:        make(map[string]stagedChatGPTProviderImport),
 		inFlightRefreshes:      make(map[string]*inFlightChatGPTRefresh),
 		recentChatGPTRefreshes: make(map[string]recentChatGPTRefresh),
 	}

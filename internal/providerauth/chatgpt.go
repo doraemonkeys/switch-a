@@ -24,6 +24,11 @@ type chatGPTIdentitySnapshot struct {
 	ExpiresAt     time.Time
 }
 
+const (
+	chatGPTImportedAccessTokenKind = "access_token"
+	chatGPTImportedIDTokenKind     = "id_token"
+)
+
 type storedChatGPTCredential struct {
 	model.ChatGPTProviderCredential
 	AuthStatus ProviderAuthStatus `json:"auth_status,omitempty"`
@@ -31,16 +36,9 @@ type storedChatGPTCredential struct {
 	LastError  string             `json:"last_error,omitempty"`
 }
 
-// chatGPTCredentialSecret keeps only refresh-capable material in the secret blob.
-// Account identity, plan, and usage belong in provider_auth_states so usage syncs
-// never need to rewrite secrets.
-type chatGPTCredentialSecret struct {
-	AccessToken   string `json:"access_token"`
-	RefreshToken  string `json:"refresh_token"`
-	IDToken       string `json:"id_token"`
-	OAuthIssuer   string `json:"oauth_issuer,omitempty"`
-	OAuthClientID string `json:"oauth_client_id,omitempty"`
-}
+// The model package owns the persisted wire contract; this alias keeps verifier
+// terminology local without maintaining a second, drift-prone schema.
+type chatGPTCredentialSecret = model.ChatGPTProviderSecret
 
 func encodeChatGPTCredential(credential model.ChatGPTProviderCredential) (string, error) {
 	payload, err := json.Marshal(credential)
@@ -101,7 +99,7 @@ func encodeChatGPTCredentialSecret(credential *model.ChatGPTProviderCredential) 
 	if credential == nil {
 		return "", nil
 	}
-	payload, err := json.Marshal(chatGPTCredentialSecret{
+	payload, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
 		AccessToken:   credential.AccessToken,
 		RefreshToken:  credential.RefreshToken,
 		IDToken:       credential.IDToken,
@@ -111,18 +109,18 @@ func encodeChatGPTCredentialSecret(credential *model.ChatGPTProviderCredential) 
 	if err != nil {
 		return "", fmt.Errorf("marshal chatgpt credential secret: %w", err)
 	}
-	return string(payload), nil
+	return payload, nil
 }
 
 func decodeChatGPTCredentialSecret(raw string) (*chatGPTCredentialSecret, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, fmt.Errorf("missing chatgpt credential payload")
-	}
-	var secret chatGPTCredentialSecret
-	if err := json.Unmarshal([]byte(raw), &secret); err != nil {
+	secret, err := model.DecodeChatGPTProviderSecret(raw)
+	if err != nil {
 		return nil, fmt.Errorf("decode chatgpt credential secret: %w", err)
 	}
-	return &secret, nil
+	if secret == nil {
+		return nil, fmt.Errorf("missing chatgpt credential payload")
+	}
+	return secret, nil
 }
 
 func newChatGPTCredentialFromTokens(accessToken, refreshToken, idToken string) (*model.ChatGPTProviderCredential, error) {
@@ -138,24 +136,33 @@ func newChatGPTCredentialFromTokensAt(accessToken, refreshToken, idToken string,
 	return newChatGPTCredentialFromSnapshot(accessToken, refreshToken, snapshot, nil, now), nil
 }
 
-// newChatGPTCredentialFromImportedTokens builds a credential from pasted tokens.
-// Identity comes from the id_token when present; otherwise it is read from the
-// access_token (also a JWT carrying the auth block), so chatgpt.com
-// /api/auth/session pastes that omit the id_token still resolve the account. The
-// issuer/client id captured from whichever token was decoded are what later token
-// refreshes rely on when no id_token is stored (see resolveChatGPTRefreshContext).
+// newChatGPTCredentialFromImportedTokens checks every supplied JWT's decoded
+// claims before staging it. Access and ID tokens intentionally have different
+// audiences, but both must claim the expected OpenAI issuer and ChatGPT account.
 func newChatGPTCredentialFromImportedTokens(accessToken, refreshToken, idToken string, now time.Time) (*model.ChatGPTProviderCredential, error) {
-	var (
-		snapshot chatGPTIdentitySnapshot
-		err      error
-	)
-	if strings.TrimSpace(idToken) != "" {
-		snapshot, err = extractChatGPTIdentitySnapshot(idToken)
-	} else {
-		snapshot, err = snapshotFromChatGPTToken(accessToken, "access_token")
-	}
+	accessSnapshot, err := snapshotFromImportedChatGPTToken(accessToken, chatGPTImportedAccessTokenKind)
 	if err != nil {
 		return nil, err
+	}
+
+	snapshot := accessSnapshot
+	if strings.TrimSpace(idToken) != "" {
+		idSnapshot, idErr := snapshotFromImportedChatGPTToken(idToken, chatGPTImportedIDTokenKind)
+		if idErr != nil {
+			return nil, idErr
+		}
+		if idSnapshot.AccountID != accessSnapshot.AccountID {
+			return nil, fmt.Errorf("chatgpt access_token and id_token identify different accounts")
+		}
+
+		snapshot = idSnapshot
+		snapshot.IDToken = idToken
+		snapshot.Email = firstNonEmpty(idSnapshot.Email, accessSnapshot.Email)
+		snapshot.PlanType = firstNonEmpty(idSnapshot.PlanType, accessSnapshot.PlanType)
+		snapshot.ExpiresAt = accessSnapshot.ExpiresAt
+		if snapshot.ExpiresAt.IsZero() {
+			snapshot.ExpiresAt = idSnapshot.ExpiresAt
+		}
 	}
 
 	return newChatGPTCredentialFromSnapshot(accessToken, refreshToken, snapshot, nil, now), nil
@@ -203,10 +210,57 @@ func snapshotFromChatGPTToken(token, kind string) (chatGPTIdentitySnapshot, erro
 	if err != nil {
 		return chatGPTIdentitySnapshot{}, fmt.Errorf("decode chatgpt %s: %w", kind, err)
 	}
+	return snapshotFromChatGPTClaims(claims)
+}
 
+// snapshotFromImportedChatGPTToken validates the claims that control refresh
+// routing before any imported secret is staged. Imported JWTs are untrusted
+// configuration, so neither their issuer nor audience may expand the set of
+// OAuth endpoints and clients switch-a is willing to use.
+func snapshotFromImportedChatGPTToken(token, kind string) (chatGPTIdentitySnapshot, error) {
+	_, payload, _, err := splitCompactJWS(token)
+	if err != nil {
+		return chatGPTIdentitySnapshot{}, fmt.Errorf("decode chatgpt %s: %w", kind, err)
+	}
+	payloadJSON, err := decodeChatGPTProviderImportJWTSegment(payload, maxChatGPTProviderImportJWTPayloadBytes)
+	if err != nil {
+		return chatGPTIdentitySnapshot{}, fmt.Errorf("decode chatgpt %s: %w", kind, err)
+	}
+	claims, err := decodeVerifiedChatGPTProviderImportClaims(payloadJSON)
+	if err != nil || claims.Issuer != defaultOAuthIssuer {
+		return chatGPTIdentitySnapshot{}, fmt.Errorf("chatgpt %s has an unsupported issuer", kind)
+	}
+
+	expectedAudience := ""
+	switch kind {
+	case chatGPTImportedAccessTokenKind:
+		expectedAudience = chatGPTAPIAudience
+	case chatGPTImportedIDTokenKind:
+		expectedAudience = defaultOAuthClientID
+	default:
+		return chatGPTIdentitySnapshot{}, fmt.Errorf("unsupported chatgpt imported token kind")
+	}
+	if !hasExactChatGPTProviderImportAudience(claims.Audience, expectedAudience) {
+		return chatGPTIdentitySnapshot{}, fmt.Errorf("chatgpt %s has an unsupported audience", kind)
+	}
+	return chatGPTIdentitySnapshot{
+		OAuthIssuer:   defaultOAuthIssuer,
+		OAuthClientID: defaultOAuthClientID,
+		AccountID:     claims.AccountID,
+		Email:         strings.TrimSpace(claims.Email),
+		PlanType:      claims.PlanType,
+		ExpiresAt:     claims.ExpiresAt,
+	}, nil
+}
+
+func snapshotFromChatGPTClaims(claims map[string]any) (chatGPTIdentitySnapshot, error) {
 	accountID, err := extractChatGPTAccountID(claims)
 	if err != nil {
 		return chatGPTIdentitySnapshot{}, err
+	}
+	expiresAt, err := extractJWTExpiryChecked(claims)
+	if err != nil {
+		return chatGPTIdentitySnapshot{}, fmt.Errorf("chatgpt token has an invalid expiration")
 	}
 
 	issuer := strings.TrimSpace(readStringClaim(claims, "iss"))
@@ -220,8 +274,47 @@ func snapshotFromChatGPTToken(token, kind string) (chatGPTIdentitySnapshot, erro
 		AccountID:     accountID,
 		Email:         readStringClaim(claims, "email"),
 		PlanType:      extractChatGPTPlanType(claims),
-		ExpiresAt:     extractJWTExpiry(claims),
+		ExpiresAt:     expiresAt,
 	}, nil
+}
+
+// allowedImportedChatGPTOAuthClientID is deliberately an allowlist rather than
+// accepting any aud claim. The default Codex client is the only imported client
+// whose refresh contract switch-a currently implements.
+func allowedImportedChatGPTOAuthClientID(claims map[string]any) (string, bool) {
+	if hasOnlyImportedChatGPTAudience(claims, defaultOAuthClientID) {
+		return defaultOAuthClientID, true
+	}
+	return "", false
+}
+
+func hasOnlyImportedChatGPTAudience(claims map[string]any, allowed string) bool {
+	switch audience := claims["aud"].(type) {
+	case string:
+		return strings.TrimSpace(audience) == allowed
+	case []any:
+		if len(audience) == 0 {
+			return false
+		}
+		matched := false
+		for _, raw := range audience {
+			value, ok := raw.(string)
+			if !ok {
+				return false
+			}
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if value != allowed {
+				return false
+			}
+			matched = true
+		}
+		return matched
+	default:
+		return false
+	}
 }
 
 func snapshotChatGPTCredentialIdentity(
@@ -269,12 +362,11 @@ func extractChatGPTPlanType(claims map[string]any) string {
 }
 
 func decodeJWTPayload(token string) (map[string]any, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid jwt format")
+	_, payload, _, err := splitCompactJWS(token)
+	if err != nil {
+		return nil, err
 	}
-
-	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+	decoded, err := base64.RawURLEncoding.DecodeString(payload)
 	if err != nil {
 		return nil, fmt.Errorf("decode jwt payload: %w", err)
 	}
@@ -286,26 +378,54 @@ func decodeJWTPayload(token string) (map[string]any, error) {
 	return claims, nil
 }
 
+// splitCompactJWS uses bounded cuts so a dot-heavy attacker-controlled token
+// cannot amplify a 5 MiB import into millions of slice headers.
+func splitCompactJWS(token string) (header, payload, signature string, err error) {
+	token = strings.TrimSpace(token)
+	header, remainder, ok := strings.Cut(token, ".")
+	if !ok {
+		return "", "", "", fmt.Errorf("invalid jwt format")
+	}
+	payload, signature, ok = strings.Cut(remainder, ".")
+	if !ok || strings.Contains(signature, ".") || header == "" || payload == "" || signature == "" {
+		return "", "", "", fmt.Errorf("invalid jwt format")
+	}
+	return header, payload, signature, nil
+}
+
 func readStringClaim(claims map[string]any, key string) string {
 	value, _ := claims[key].(string)
 	return value
 }
 
 func extractJWTExpiry(claims map[string]any) time.Time {
-	raw := claims["exp"]
+	expiresAt, _ := extractJWTExpiryChecked(claims)
+	return expiresAt
+}
+
+func extractJWTExpiryChecked(claims map[string]any) (time.Time, error) {
+	raw, present := claims["exp"]
+	if !present || raw == nil {
+		return time.Time{}, nil
+	}
 	switch value := raw.(type) {
 	case float64:
-		return time.Unix(int64(value), 0).UTC()
+		return jsonRepresentableUnixFloat(value)
 	case json.Number:
-		if unixSeconds, err := value.Int64(); err == nil {
-			return time.Unix(unixSeconds, 0).UTC()
+		unixSeconds, err := value.Int64()
+		if err != nil {
+			return time.Time{}, fmt.Errorf("jwt expiration must be an integer")
 		}
+		return jsonRepresentableUnixTime(unixSeconds)
 	case string:
-		if unixSeconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-			return time.Unix(unixSeconds, 0).UTC()
+		unixSeconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("jwt expiration must be an integer")
 		}
+		return jsonRepresentableUnixTime(unixSeconds)
+	default:
+		return time.Time{}, fmt.Errorf("jwt expiration has an unsupported type")
 	}
-	return time.Time{}
 }
 
 func extractClientIDFromClaims(claims map[string]any) string {

@@ -104,7 +104,7 @@ func (s *Service) ensureFreshChatGPTCredential(ctx context.Context, provider *mo
 		return credential, nil
 	}
 
-	refreshed, err := s.refreshAndPersistChatGPTCredential(ctx, provider, credential)
+	refreshed, err := s.refreshAndPersistChatGPTCredential(ctx, provider, credential, force)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +119,7 @@ func (s *Service) refreshAndPersistChatGPTCredential(
 	ctx context.Context,
 	provider *model.Provider,
 	credential *model.ChatGPTProviderCredential,
+	force bool,
 ) (*model.ChatGPTProviderCredential, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("provider is required")
@@ -131,7 +132,7 @@ func (s *Service) refreshAndPersistChatGPTCredential(
 
 	call, leader := s.beginChatGPTRefresh(refreshKey)
 	if leader {
-		refreshed, err := s.refreshAndPersistChatGPTCredentialDirect(ctx, provider, credential)
+		refreshed, err := s.refreshAndPersistChatGPTCredentialCoordinated(ctx, provider, credential, force)
 		s.finishChatGPTRefresh(refreshKey, call, refreshed, err)
 		return refreshed, err
 	}
@@ -165,9 +166,6 @@ func (s *Service) refreshAndPersistChatGPTCredentialDirect(
 		return nil, err
 	}
 	if err := s.persistChatGPTCredential(ctx, persistedProvider); err != nil {
-		return nil, err
-	}
-	if err := s.persistProviderAuthState(ctx, provider.ID, persistedProvider.AuthState); err != nil {
 		return nil, err
 	}
 	if persistedProvider.Credential != nil {
@@ -206,7 +204,12 @@ func (s *Service) finishChatGPTRefresh(
 	close(call.done)
 
 	s.refreshMu.Lock()
-	delete(s.inFlightRefreshes, providerID)
+	// Import invalidation may have detached this generation so post-commit callers
+	// can start against the newly persisted credential. An old leader must not
+	// erase a replacement call that acquired the same provider key.
+	if current, exists := s.inFlightRefreshes[providerID]; exists && current == call {
+		delete(s.inFlightRefreshes, providerID)
+	}
 	s.refreshMu.Unlock()
 }
 
@@ -264,7 +267,16 @@ func shouldPreferChatGPTCredential(
 	if candidate == nil || !candidate.Ready() {
 		return false
 	}
-	if current == nil || !current.Ready() {
+	if current == nil {
+		return true
+	}
+	// A provider ID can be deleted and recreated for another ChatGPT account while
+	// an old refresh result is still cached. Account identity is therefore part of
+	// the cache key even though the map itself is indexed by provider ID.
+	if candidate.AccountID != current.AccountID {
+		return false
+	}
+	if !current.Ready() {
 		return true
 	}
 	if candidate.LastRefresh.After(current.LastRefresh) {
@@ -513,7 +525,16 @@ func resolveChatGPTRefreshContext(credential *model.ChatGPTProviderCredential) (
 	issuer := strings.TrimSpace(credential.OAuthIssuer)
 	clientID := strings.TrimSpace(credential.OAuthClientID)
 	if issuer != "" {
-		return issuer, clientID, nil
+		if issuer != defaultOAuthIssuer {
+			return "", "", fmt.Errorf("chatgpt credential has unsupported oauth issuer")
+		}
+		if clientID == "" {
+			clientID = defaultOAuthClientID
+		}
+		if clientID != defaultOAuthClientID {
+			return "", "", fmt.Errorf("chatgpt credential has unsupported oauth client id")
+		}
+		return defaultOAuthIssuer, defaultOAuthClientID, nil
 	}
 	if credential.IDToken == "" {
 		return "", "", fmt.Errorf("chatgpt credential missing oauth refresh context")
@@ -525,10 +546,14 @@ func resolveChatGPTRefreshContext(credential *model.ChatGPTProviderCredential) (
 	}
 
 	issuer = strings.TrimSpace(readStringClaim(claims, "iss"))
-	if issuer == "" {
-		issuer = defaultOAuthIssuer
+	if issuer != defaultOAuthIssuer {
+		return "", "", fmt.Errorf("chatgpt credential has unsupported oauth issuer")
 	}
-	return issuer, extractClientIDFromClaims(claims), nil
+	clientID, ok := allowedImportedChatGPTOAuthClientID(claims)
+	if !ok {
+		return "", "", fmt.Errorf("chatgpt credential has unsupported oauth audience")
+	}
+	return defaultOAuthIssuer, clientID, nil
 }
 
 func buildRefreshedChatGPTCredential(
@@ -541,12 +566,41 @@ func buildRefreshedChatGPTCredential(
 	now time.Time,
 ) (*model.ChatGPTProviderCredential, error) {
 	snapshot := snapshotChatGPTCredentialIdentity(current, issuer, clientID)
-	if idToken != "" {
-		var err error
-		snapshot, err = extractChatGPTIdentitySnapshot(idToken)
+	var accessSnapshot *chatGPTIdentitySnapshot
+	if chatGPTTokenLooksLikeJWT(accessToken) {
+		parsed, err := snapshotFromImportedChatGPTToken(accessToken, chatGPTImportedAccessTokenKind)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("validate refreshed chatgpt access_token: %w", err)
 		}
+		if current != nil && current.AccountID != "" && parsed.AccountID != current.AccountID {
+			return nil, fmt.Errorf("refreshed chatgpt access_token identifies a different account")
+		}
+		accessSnapshot = &parsed
+		if snapshot.AccountID == "" {
+			snapshot = parsed
+		} else if !parsed.ExpiresAt.IsZero() {
+			snapshot.ExpiresAt = parsed.ExpiresAt
+		}
+	}
+	if idToken != "" {
+		parsed, err := snapshotFromImportedChatGPTToken(idToken, chatGPTImportedIDTokenKind)
+		if err != nil {
+			return nil, fmt.Errorf("validate refreshed chatgpt id_token: %w", err)
+		}
+		if current != nil && current.AccountID != "" && parsed.AccountID != current.AccountID {
+			return nil, fmt.Errorf("refreshed chatgpt id_token identifies a different account")
+		}
+		if accessSnapshot != nil && parsed.AccountID != accessSnapshot.AccountID {
+			return nil, fmt.Errorf("refreshed chatgpt access_token and id_token identify different accounts")
+		}
+
+		parsed.IDToken = idToken
+		parsed.Email = firstNonEmpty(parsed.Email, snapshot.Email)
+		parsed.PlanType = firstNonEmpty(parsed.PlanType, snapshot.PlanType)
+		if accessSnapshot != nil && !accessSnapshot.ExpiresAt.IsZero() {
+			parsed.ExpiresAt = accessSnapshot.ExpiresAt
+		}
+		snapshot = parsed
 	}
 
 	var usage *model.ProviderUsageSnapshot
@@ -554,6 +608,11 @@ func buildRefreshedChatGPTCredential(
 		usage = current.Usage
 	}
 	return newChatGPTCredentialFromSnapshot(accessToken, refreshToken, snapshot, usage, now), nil
+}
+
+func chatGPTTokenLooksLikeJWT(token string) bool {
+	_, _, _, err := splitCompactJWS(token)
+	return err == nil
 }
 
 func firstNonEmpty(values ...string) string {

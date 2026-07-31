@@ -22,7 +22,7 @@ func (m mockOAuthHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
-func testUnsignedJWT(t *testing.T, claims map[string]any) string {
+func testSyntheticJWT(t *testing.T, claims map[string]any) string {
 	t.Helper()
 
 	payload, err := json.Marshal(claims)
@@ -30,14 +30,18 @@ func testUnsignedJWT(t *testing.T, claims map[string]any) string {
 		t.Fatalf("marshal jwt payload: %v", err)
 	}
 
-	return "eyJhbGciOiJub25lIn0." + base64.RawURLEncoding.EncodeToString(payload) + "."
+	// A non-empty signature keeps fixtures structurally honest now that production
+	// parsing rejects the unsecured, empty-signature form of compact JWS.
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"test"}`))
+	signature := base64.RawURLEncoding.EncodeToString([]byte("synthetic-signature"))
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + "." + signature
 }
 
 func testChatGPTCredentialData(t *testing.T, accessToken, refreshToken, accountID string) string {
 	t.Helper()
 
 	expiresAt := time.Now().UTC().Add(1 * time.Hour)
-	idToken := testUnsignedJWT(t, map[string]any{
+	idToken := testSyntheticJWT(t, map[string]any{
 		"iss":   "https://auth.openai.com",
 		"aud":   "app_EMoamEEZ73f0CkXaXp7hrann",
 		"email": "codex@example.com",

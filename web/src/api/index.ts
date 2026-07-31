@@ -90,6 +90,25 @@ export type {
   SelectionImportScope,
   SettingsOnlyImportScope,
 } from "./types";
+export type {
+  ProviderImportCandidate,
+  ProviderImportCandidateStatus,
+  ProviderImportConflictDetail,
+  ProviderImportConflictKind,
+  ProviderImportCommitAction,
+  ProviderImportCommitItem,
+  ProviderImportCreateCommitItem,
+  ProviderImportCommitOutcome,
+  ProviderImportCommitRequest,
+  ProviderImportCommitResult,
+  ProviderImportCommitResultItem,
+  ProviderImportCommitSummary,
+  ProviderImportIssue,
+  ProviderImportMappingNote,
+  ProviderImportPreview,
+  ProviderImportSummary,
+  ProviderImportUpdateCommitItem,
+} from "./provider-import-types";
 
 // Interface exports (for testing/mocking)
 export type { Storage, HttpClient, ApiClientDeps } from "./interfaces";

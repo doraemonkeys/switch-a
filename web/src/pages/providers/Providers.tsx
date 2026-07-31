@@ -3,8 +3,9 @@ import { useSearchParams } from "react-router";
 import { useGroups } from "../../hooks/useGroups";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { ConfirmModal, ProviderDetailDrawer } from "../../components";
+import { ProviderImportModal } from "../../components/provider-import";
 import { DEFAULT_REFRESH_INTERVAL } from "../../components/refreshIntervalConstants";
-import type { Provider, ProviderInput } from "../../api/client";
+import { useApi, type Provider, type ProviderInput } from "../../api";
 import { getProviderStatus } from "./types";
 import type { StatusFilter } from "./types";
 import { ProvidersTableBody } from "./ProvidersTableBody";
@@ -18,9 +19,17 @@ import {
   ProvidersTableHeader,
 } from "./ProvidersPageSections";
 
+type ProviderDialogState =
+  | { kind: "add" }
+  | { kind: "edit"; provider: Provider }
+  | { kind: "import" }
+  | null;
+
 export function Providers() {
+  const api = useApi();
   const {
     providers,
+    hasSnapshot,
     loading,
     error,
     refetch,
@@ -51,8 +60,8 @@ export function Providers() {
     (searchParams.get("status") as StatusFilter) || "",
   );
 
-  const [showModal, setShowModal] = useState(false);
-  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
+  const [dialog, setDialog] = useState<ProviderDialogState>(null);
+  const editingProvider = dialog?.kind === "edit" ? dialog.provider : null;
 
   // Auto-refresh state
   const [refreshInterval, setRefreshInterval] = useLocalStorage(
@@ -63,13 +72,13 @@ export function Providers() {
   // Auto-refresh effect
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval>;
-    if (refreshInterval > 0) {
-      intervalId = setInterval(() => refetch(), refreshInterval);
+    if (refreshInterval > 0 && dialog?.kind !== "import") {
+      intervalId = setInterval(() => void refetch(), refreshInterval);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [refreshInterval, refetch]);
+  }, [dialog?.kind, refreshInterval, refetch]);
 
   // Detail drawer state
   const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
@@ -103,18 +112,24 @@ export function Providers() {
 
   const onSaveProvider = async (data: ProviderInput) => {
     await handleSaveProvider(data, editingProvider);
-    setShowModal(false);
-    setEditingProvider(null);
+    setDialog(null);
   };
 
   const handleAddClick = () => {
-    setEditingProvider(null);
-    setShowModal(true);
+    setDialog({ kind: "add" });
+  };
+
+  const handleImportClick = () => setDialog({ kind: "import" });
+  const handleImportClose = () => {
+    setDialog(null);
+  };
+  const handleImportCheckProviders = () => {
+    setDialog(null);
+    void refetch();
   };
 
   const handleEditClick = (provider: Provider) => {
-    setEditingProvider(provider);
-    setShowModal(true);
+    setDialog({ kind: "edit", provider });
     setDetailProviderId(null);
   };
 
@@ -149,7 +164,7 @@ export function Providers() {
     return groups.find((group) => group.id === groupId)?.enabled;
   };
 
-  if (error)
+  if (error && !hasSnapshot)
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   return (
@@ -158,9 +173,29 @@ export function Providers() {
         loading={loading}
         onRefresh={() => refetch()}
         onAddClick={handleAddClick}
+        onImportClick={handleImportClick}
         refreshInterval={refreshInterval}
         onRefreshIntervalChange={setRefreshInterval}
       />
+
+      {error && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-light/30 p-3 text-sm text-text-secondary"
+        >
+          <span>
+            Provider list could not refresh. The last successful snapshot is
+            still shown.
+          </span>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void refetch()}
+          >
+            Retry refresh
+          </button>
+        </div>
+      )}
 
       {providers.length === 0 &&
         !loading &&
@@ -192,6 +227,7 @@ export function Providers() {
                 onDelete={handleDeleteClick}
                 onReset={handleResetClick}
                 onAddClick={handleAddClick}
+                onImportClick={handleImportClick}
                 onGroupClick={setGroupFilter}
                 onViewDetail={handleViewDetail}
                 getGroupName={getGroupName}
@@ -202,15 +238,23 @@ export function Providers() {
         </div>
       </div>
 
-      {showModal && (
+      {(dialog?.kind === "add" || dialog?.kind === "edit") && (
         <ProviderModal
           initialData={editingProvider || undefined}
-          onClose={() => {
-            setShowModal(false);
-            setEditingProvider(null);
-          }}
+          onClose={() => setDialog(null)}
           onSubmit={onSaveProvider}
           groups={groups}
+        />
+      )}
+
+      {dialog?.kind === "import" && (
+        <ProviderImportModal
+          gateway={api.providerImports}
+          existingProviderIds={providers.map((provider) => provider.id)}
+          groups={groups}
+          onClose={handleImportClose}
+          onCheckProviders={handleImportCheckProviders}
+          onCommitted={() => refetch()}
         />
       )}
 
