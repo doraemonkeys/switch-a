@@ -14,7 +14,7 @@
 - **Hard Requirement**: Project CI enforces minimum test coverage — **90% for Go**, **40% for React**.
 
 ## Go Specific
-- **Accept Interfaces, Return Structs**: Define interfaces where they are used (consumer side), not where they are implemented.
+- **Accept Interfaces, Return Structs**: Define interfaces where they are used (consumer side), not where they are implemented. The bigger the interface, the weaker the abstraction.
 - Never store context inside a struct.
 
 ## React Specific
