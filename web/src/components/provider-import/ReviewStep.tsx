@@ -2,12 +2,16 @@ import { useId, useState } from "react";
 import type { Group, ProviderImportCandidate } from "../../api";
 import {
   SUB2API_FIELD_MAPPING_NOTES,
-  type ProviderImportCreateDraft,
   type ProviderImportDecision,
   type ProviderImportReviewDraft,
-  type ProviderImportValidationError,
 } from "../../lib/providerImport";
+import type {
+  ProviderImportCreateDraft,
+  ProviderImportNewProviderDefaults,
+  ProviderImportValidationError,
+} from "../../lib/providerImportSettings";
 import { ReviewStepAccountRow } from "./ReviewStepAccountRow";
+import { NewProviderDefaultsPanel } from "./NewProviderDefaultsPanel";
 
 const ACCOUNTS_PER_PAGE = 25;
 
@@ -33,7 +37,10 @@ interface ReviewStepProps {
   onEditProvider: (
     candidateId: string,
     field: keyof ProviderImportCreateDraft,
-    value: string | number,
+    value: ProviderImportCreateDraft[keyof ProviderImportCreateDraft],
+  ) => void;
+  onApplyNewProviderDefaults: (
+    defaults: ProviderImportNewProviderDefaults,
   ) => void;
   onSetGroup: (groupId: string | null) => void;
   onSetAcknowledgement: (acknowledged: boolean) => void;
@@ -191,6 +198,7 @@ export function ReviewStep({
   disabled = false,
   onSetAction,
   onEditProvider,
+  onApplyNewProviderDefaults,
   onSetGroup,
   onSetAcknowledgement,
   onSelectAllReady,
@@ -267,23 +275,28 @@ export function ReviewStep({
         </ul>
       </details>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-end sm:justify-between">
-        <label className="text-sm font-medium text-text-secondary">
-          Group for new providers
-          <select
-            value={draft.groupId ?? ""}
-            disabled={disabled}
-            onChange={(event) => onSetGroup(event.target.value || null)}
-            className="input mt-1 min-w-56"
-          >
-            <option value="">No group</option>
-            {groups.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.enabled ? group.name : `${group.name} (disabled)`}
-              </option>
-            ))}
-          </select>
-        </label>
+      {filterCounts.ready > 0 && (
+        <NewProviderDefaultsPanel
+          defaults={draft.newProviderDefaults}
+          groupId={draft.groupId}
+          groups={groups}
+          newProviderCount={filterCounts.ready}
+          disabled={disabled}
+          onSetGroup={onSetGroup}
+          onApply={onApplyNewProviderDefaults}
+        />
+      )}
+
+      <div className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-medium text-text-primary">
+            Account selection
+          </p>
+          <p className="mt-1 text-xs text-text-muted">
+            Existing accounts only rotate credentials; their provider settings
+            stay unchanged.
+          </p>
+        </div>
         <div
           className="flex flex-wrap gap-2"
           role="group"

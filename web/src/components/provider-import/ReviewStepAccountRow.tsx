@@ -3,13 +3,12 @@ import type { ProviderImportCandidate } from "../../api";
 import {
   PROVIDER_IMPORT_MAX_PROVIDER_ID_LENGTH,
   PROVIDER_IMPORT_MAX_PROVIDER_NAME_LENGTH,
+  PROVIDER_IMPORT_MAX_RETRIES,
   PROVIDER_IMPORT_MAX_SCHEDULING_VALUE,
-} from "../../lib/providerImport";
-import type {
-  ProviderImportCreateDraft,
-  ProviderImportDecision,
-  ProviderImportValidationError,
-} from "../../lib/providerImport";
+  type ProviderImportCreateDraft,
+  type ProviderImportValidationError,
+} from "../../lib/providerImportSettings";
+import type { ProviderImportDecision } from "../../lib/providerImport";
 
 const ACCOUNT_ID_VISIBLE_CHARACTERS = 8;
 const UNLIMITED_CONCURRENCY = 0;
@@ -48,7 +47,7 @@ interface ReviewStepAccountRowProps {
   onSetAction: (action: ProviderImportDecision["action"]) => void;
   onEditProvider: (
     field: keyof ProviderImportCreateDraft,
-    value: string | number,
+    value: ProviderImportCreateDraft[keyof ProviderImportCreateDraft],
   ) => void;
 }
 
@@ -190,6 +189,22 @@ function CreateProviderFields({
         />
       </label>
       <label className="text-xs font-medium text-text-secondary">
+        Weight for {label}
+        <input
+          type="number"
+          min={1}
+          max={PROVIDER_IMPORT_MAX_SCHEDULING_VALUE}
+          value={provider.weight}
+          disabled={fieldsDisabled}
+          onChange={(event) =>
+            onEditProvider("weight", Number(event.target.value))
+          }
+          className={`input mt-1 ${isInvalid("weight") ? "border-danger" : ""}`}
+          aria-invalid={isInvalid("weight") || undefined}
+          aria-describedby={isInvalid("weight") ? validationId : undefined}
+        />
+      </label>
+      <label className="text-xs font-medium text-text-secondary">
         Concurrency for {label}
         <input
           type="number"
@@ -205,12 +220,32 @@ function CreateProviderFields({
           aria-describedby={isInvalid("concurrency") ? validationId : undefined}
         />
       </label>
-      <p className="self-end text-xs text-text-muted sm:col-span-2">
-        Source values are prefilled. Lower priority numbers route first;
-        concurrency 0 is unlimited.
+      <label className="text-xs font-medium text-text-secondary">
+        Max retries for {label}
+        <input
+          type="number"
+          min={0}
+          max={PROVIDER_IMPORT_MAX_RETRIES}
+          value={provider.maxRetries}
+          disabled={fieldsDisabled}
+          onChange={(event) =>
+            onEditProvider("maxRetries", Number(event.target.value))
+          }
+          className={`input mt-1 ${isInvalid("maxRetries") ? "border-danger" : ""}`}
+          aria-invalid={isInvalid("maxRetries") || undefined}
+          aria-describedby={isInvalid("maxRetries") ? validationId : undefined}
+        />
+      </label>
+      <p className="self-end text-xs text-text-muted sm:col-span-2 lg:col-span-4">
+        Priority and concurrency come from the source. Weight and retry timing
+        use the new-provider defaults; 0 concurrency is unlimited and 0 retries
+        switches provider immediately.
       </p>
       {validationError && (
-        <p id={validationId} className="text-xs text-danger sm:col-span-4">
+        <p
+          id={validationId}
+          className="text-xs text-danger sm:col-span-2 lg:col-span-4"
+        >
           {validationError.message}
         </p>
       )}
@@ -277,7 +312,7 @@ export function ReviewStepAccountRow({
       {candidate.status === "existing" && (
         <p className="mt-1 text-xs text-text-muted">
           Updating credentials preserves the existing provider’s routing, group,
-          priority, and concurrency.
+          retry, and concurrency settings.
         </p>
       )}
       {provider && (
@@ -291,10 +326,13 @@ export function ReviewStepAccountRow({
           <summary className="cursor-pointer text-xs font-medium text-text-primary">
             <span>Provider settings for {label}</span>
             <span className="ml-2 font-normal text-text-muted">
-              Priority {provider.priority} · Concurrency{" "}
+              Priority {provider.priority} · Weight {provider.weight}
+              {" · Concurrency "}
               {provider.concurrency === UNLIMITED_CONCURRENCY
                 ? "unlimited"
                 : provider.concurrency}
+              {" · Retries "}
+              {provider.maxRetries === 0 ? "none" : provider.maxRetries}
             </span>
             {validationError && (
               <span className="ml-2 text-danger">Needs attention</span>

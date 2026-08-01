@@ -153,12 +153,15 @@ func (r *providerImportCommitReceiptRegistry) abort(importID, fingerprint string
 }
 
 type providerImportCommitFingerprintItem struct {
-	CandidateID string `json:"candidate_id"`
-	Action      string `json:"action"`
-	ProviderID  string `json:"provider_id"`
-	Name        string `json:"name,omitempty"`
-	Priority    int    `json:"priority,omitempty"`
-	Concurrency int    `json:"concurrency,omitempty"`
+	CandidateID string              `json:"candidate_id"`
+	Action      string              `json:"action"`
+	ProviderID  string              `json:"provider_id"`
+	Name        string              `json:"name,omitempty"`
+	Priority    int                 `json:"priority,omitempty"`
+	Weight      int                 `json:"weight,omitempty"`
+	Concurrency int                 `json:"concurrency,omitempty"`
+	MaxRetries  int                 `json:"max_retries,omitempty"`
+	Backoff     model.BackoffPolicy `json:"backoff,omitzero"`
 }
 
 type providerImportCommitFingerprintInput struct {
@@ -183,7 +186,10 @@ func providerImportCommitRequestFingerprint(req ProviderImportCommitRequest) str
 		if canonical.Action == providerImportActionCreate {
 			canonical.Name = strings.TrimSpace(item.Name)
 			canonical.Priority = item.Priority
+			canonical.Weight = *item.Weight
 			canonical.Concurrency = item.Concurrency
+			canonical.MaxRetries = *item.MaxRetries
+			canonical.Backoff = *item.Backoff
 		}
 		input.Items = append(input.Items, canonical)
 	}

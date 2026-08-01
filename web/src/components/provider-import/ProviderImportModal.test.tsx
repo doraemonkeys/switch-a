@@ -12,6 +12,16 @@ import { ProviderImportModal } from "./ProviderImportModal";
 const preview: ProviderImportPreview = {
   import_id: "import-1",
   expires_at: "2026-07-30T22:00:00Z",
+  create_defaults: {
+    weight: 1,
+    max_retries: 0,
+    backoff: {
+      initial_delay: "100ms",
+      max_delay: "5s",
+      multiplier: 2,
+      jitter: false,
+    },
+  },
   summary: {
     total: 3,
     ready: 1,
@@ -218,6 +228,18 @@ describe("ProviderImportModal", () => {
       screen.getByText("Confirm the OAuth token ownership risk above."),
     ).toBeInTheDocument();
 
+    const defaultWeight = screen.getByRole("spinbutton", { name: "Weight" });
+    const defaultRetries = screen.getByRole("spinbutton", {
+      name: "Max retries",
+    });
+    await user.clear(defaultWeight);
+    await user.type(defaultWeight, "5");
+    await user.clear(defaultRetries);
+    await user.type(defaultRetries, "2");
+    await user.click(
+      screen.getByRole("button", { name: "Apply to 1 new provider" }),
+    );
+
     await user.click(
       screen.getByText("Provider settings for ready@example.com"),
     );
@@ -238,10 +260,7 @@ describe("ProviderImportModal", () => {
       screen.getByLabelText("Provider ID for ready@example.com"),
       "renamed-provider",
     );
-    await user.selectOptions(
-      screen.getByLabelText("Group for new providers"),
-      "gpt-accounts",
-    );
+    await user.selectOptions(screen.getByLabelText("Group"), "gpt-accounts");
     await user.click(
       screen.getByRole("checkbox", {
         name: "Update credentials on Existing Provider",
@@ -264,7 +283,15 @@ describe("ProviderImportModal", () => {
             provider_id: "renamed-provider",
             name: "Renamed Provider",
             priority: 1,
+            weight: 5,
             concurrency: 10,
+            max_retries: 2,
+            backoff: {
+              initial_delay: "100ms",
+              max_delay: "5s",
+              multiplier: 2,
+              jitter: false,
+            },
           },
           {
             candidate_id: "existing-1",

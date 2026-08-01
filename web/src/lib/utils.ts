@@ -51,6 +51,17 @@ const MINUTES_PER_HOUR = 60;
 const MILLISECONDS_PER_MINUTE = MILLISECONDS_PER_SECOND * SECONDS_PER_MINUTE;
 const MILLISECONDS_PER_HOUR = MILLISECONDS_PER_MINUTE * MINUTES_PER_HOUR;
 const SECOND_FRACTION_DIGITS = 1;
+const GO_DURATION_PART = /(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/y;
+const DURATION_UNIT_MILLISECONDS: Record<string, number> = {
+  ns: 1 / 1_000_000,
+  us: 1 / 1_000,
+  µs: 1 / 1_000,
+  μs: 1 / 1_000,
+  ms: 1,
+  s: MILLISECONDS_PER_SECOND,
+  m: MILLISECONDS_PER_MINUTE,
+  h: MILLISECONDS_PER_HOUR,
+};
 
 interface FormatDurationOptions {
   smallestUnit?: "ms" | "s";
@@ -97,6 +108,28 @@ export function formatDuration(
 
   const hours = Math.floor(totalMinutes / MINUTES_PER_HOUR);
   return `${hours}h ${totalMinutes % MINUTES_PER_HOUR}m`;
+}
+
+/**
+ * Parse the non-negative subset of Go duration syntax accepted by provider
+ * settings. Returning null keeps validation distinct from a legitimate zero.
+ */
+export function parseGoDurationMilliseconds(value: string): number | null {
+  const duration = value.trim();
+  if (duration === "0") return 0;
+  if (!duration) return null;
+
+  let cursor = 0;
+  let milliseconds = 0;
+  while (cursor < duration.length) {
+    GO_DURATION_PART.lastIndex = cursor;
+    const match = GO_DURATION_PART.exec(duration);
+    if (!match || match.index !== cursor) return null;
+    milliseconds += Number(match[1]) * DURATION_UNIT_MILLISECONDS[match[2]];
+    if (!Number.isFinite(milliseconds)) return null;
+    cursor = GO_DURATION_PART.lastIndex;
+  }
+  return milliseconds;
 }
 
 // =============================================================================

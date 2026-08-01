@@ -14,12 +14,15 @@ import {
   initialProviderImportState,
   isSupportedProviderImportFile,
   providerImportFlowReducer,
-  type ProviderImportCreateDraft,
   type ProviderImportDecisionAction,
   type ProviderImportFlowState,
   type ProviderImportRecoveryReason,
-  type ProviderImportValidationError,
 } from "../lib/providerImport";
+import type {
+  ProviderImportCreateDraft,
+  ProviderImportNewProviderDefaults,
+  ProviderImportValidationError,
+} from "../lib/providerImportSettings";
 
 const BYTES_PER_MEBIBYTE = 1024 * 1024;
 
@@ -206,9 +209,15 @@ export function useProviderImportFlow({
   function editProvider(
     candidateId: string,
     field: keyof ProviderImportCreateDraft,
-    value: string | number,
+    value: ProviderImportCreateDraft[keyof ProviderImportCreateDraft],
   ) {
     dispatch({ type: "edit_provider", candidateId, field, value });
+  }
+
+  function applyNewProviderDefaults(
+    defaults: ProviderImportNewProviderDefaults,
+  ) {
+    dispatch({ type: "apply_new_provider_defaults", defaults });
   }
 
   function setGroup(groupId: string | null) {
@@ -283,6 +292,7 @@ export function useProviderImportFlow({
     retryPreview,
     setAction,
     editProvider,
+    applyNewProviderDefaults,
     setGroup,
     setAcknowledgement,
     selectAllReady,

@@ -56,6 +56,16 @@ function createApiClient(
 const successfulPreview: ProviderImportPreview = {
   import_id: "import-1",
   expires_at: "2026-07-30T22:00:00Z",
+  create_defaults: {
+    weight: 1,
+    max_retries: 0,
+    backoff: {
+      initial_delay: "100ms",
+      max_delay: "5s",
+      multiplier: 2,
+      jitter: false,
+    },
+  },
   summary: {
     total: 1,
     ready: 1,

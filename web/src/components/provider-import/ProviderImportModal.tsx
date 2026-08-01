@@ -234,6 +234,7 @@ export function ProviderImportModal({
               disabled={state.phase === "committing"}
               onSetAction={flow.setAction}
               onEditProvider={flow.editProvider}
+              onApplyNewProviderDefaults={flow.applyNewProviderDefaults}
               onSetGroup={flow.setGroup}
               onSetAcknowledgement={flow.setAcknowledgement}
               onSelectAllReady={flow.selectAllReady}

@@ -27,6 +27,16 @@ describe("createApiClient provider imports API", () => {
     const preview: ProviderImportPreview = {
       import_id: "import-1",
       expires_at: "2026-07-30T20:00:00Z",
+      create_defaults: {
+        weight: 1,
+        max_retries: 0,
+        backoff: {
+          initial_delay: "100ms",
+          max_delay: "5s",
+          multiplier: 2,
+          jitter: false,
+        },
+      },
       items: [
         {
           candidate_id: "candidate-1",
@@ -85,7 +95,15 @@ describe("createApiClient provider imports API", () => {
           provider_id: "account-a",
           name: "Account A",
           priority: 2,
+          weight: 1,
           concurrency: 3,
+          max_retries: 2,
+          backoff: {
+            initial_delay: "500ms",
+            max_delay: "5s",
+            multiplier: 2,
+            jitter: true,
+          },
         },
         {
           candidate_id: "candidate-2",
