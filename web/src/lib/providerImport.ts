@@ -4,12 +4,19 @@ import type {
   ProviderImportCommitRequest,
   ProviderImportPreview,
 } from "../api";
+import {
+  cloneProviderImportBackoff,
+  getProviderImportNewProviderDefaultsError,
+  PROVIDER_IMPORT_MAX_PROVIDER_ID_LENGTH,
+  PROVIDER_IMPORT_MAX_PROVIDER_NAME_LENGTH,
+  PROVIDER_IMPORT_MAX_SCHEDULING_VALUE,
+  type ProviderImportCreateDraft,
+  type ProviderImportNewProviderDefaults,
+  type ProviderImportValidationError,
+} from "./providerImportSettings";
 import { isValidId } from "./utils";
 
 export const PROVIDER_IMPORT_MAX_FILE_BYTES = 5 * 1024 * 1024;
-export const PROVIDER_IMPORT_MAX_PROVIDER_ID_LENGTH = 200;
-export const PROVIDER_IMPORT_MAX_PROVIDER_NAME_LENGTH = 200;
-export const PROVIDER_IMPORT_MAX_SCHEDULING_VALUE = 1_000_000;
 
 export const SUB2API_FIELD_MAPPING_NOTES = [
   {
@@ -35,26 +42,15 @@ export const SUB2API_FIELD_MAPPING_NOTES = [
 
 export type ProviderImportDecisionAction = "create" | "update" | "skip";
 
-export interface ProviderImportCreateDraft {
-  providerId: string;
-  name: string;
-  priority: number;
-  concurrency: number;
-}
-
 export interface ProviderImportDecision {
   candidateId: string;
   action: ProviderImportDecisionAction;
   provider: ProviderImportCreateDraft | null;
 }
 
-export interface ProviderImportValidationError {
-  field: keyof ProviderImportCreateDraft;
-  message: string;
-}
-
 export interface ProviderImportReviewDraft {
   groupId: string | null;
+  newProviderDefaults: ProviderImportNewProviderDefaults;
   acknowledgedRefreshTokenOwnership: boolean;
   decisions: ProviderImportDecision[];
 }
@@ -107,7 +103,11 @@ export type ProviderImportFlowEvent =
       type: "edit_provider";
       candidateId: string;
       field: keyof ProviderImportCreateDraft;
-      value: string | number;
+      value: ProviderImportCreateDraft[keyof ProviderImportCreateDraft];
+    }
+  | {
+      type: "apply_new_provider_defaults";
+      defaults: ProviderImportNewProviderDefaults;
     }
   | { type: "set_group"; groupId: string | null }
   | { type: "set_acknowledgement"; acknowledged: boolean }
@@ -134,6 +134,7 @@ export const initialProviderImportState: ProviderImportFlowState = {
 
 function createDecision(
   candidate: ProviderImportCandidate,
+  defaults: ProviderImportNewProviderDefaults,
 ): ProviderImportDecision {
   return {
     candidateId: candidate.candidate_id,
@@ -145,7 +146,10 @@ function createDecision(
       providerId: candidate.provider_id,
       name: candidate.name,
       priority: candidate.priority,
+      weight: defaults.weight,
       concurrency: candidate.concurrency,
+      maxRetries: defaults.maxRetries,
+      backoff: cloneProviderImportBackoff(defaults.backoff),
     },
   };
 }
@@ -153,10 +157,18 @@ function createDecision(
 export function createProviderImportReviewDraft(
   preview: ProviderImportPreview,
 ): ProviderImportReviewDraft {
+  const newProviderDefaults: ProviderImportNewProviderDefaults = {
+    weight: preview.create_defaults.weight,
+    maxRetries: preview.create_defaults.max_retries,
+    backoff: cloneProviderImportBackoff(preview.create_defaults.backoff),
+  };
   return {
     groupId: null,
+    newProviderDefaults,
     acknowledgedRefreshTokenOwnership: false,
-    decisions: preview.items.map(createDecision),
+    decisions: preview.items.map((candidate) =>
+      createDecision(candidate, newProviderDefaults),
+    ),
   };
 }
 
@@ -236,6 +248,33 @@ function reduceReviewEvent(
             : decision,
         ),
       );
+    case "apply_new_provider_defaults": {
+      const readyCandidateIds = new Set(
+        state.preview.items
+          .filter((candidate) => candidate.status === "ready")
+          .map((candidate) => candidate.candidate_id),
+      );
+      return updateReviewState(state, (draft) => ({
+        ...draft,
+        newProviderDefaults: {
+          ...event.defaults,
+          backoff: cloneProviderImportBackoff(event.defaults.backoff),
+        },
+        decisions: draft.decisions.map((decision) =>
+          readyCandidateIds.has(decision.candidateId) && decision.provider
+            ? {
+                ...decision,
+                provider: {
+                  ...decision.provider,
+                  weight: event.defaults.weight,
+                  maxRetries: event.defaults.maxRetries,
+                  backoff: cloneProviderImportBackoff(event.defaults.backoff),
+                },
+              }
+            : decision,
+        ),
+      }));
+    }
     case "set_group":
       return updateReviewState(state, (draft) => ({
         ...draft,
@@ -307,6 +346,7 @@ export function providerImportFlowReducer(
       };
     case "set_action":
     case "edit_provider":
+    case "apply_new_provider_defaults":
     case "set_group":
     case "set_acknowledgement":
     case "select_all_ready":
@@ -395,6 +435,12 @@ export function getProviderImportDecisionError(
       message: `Provider name must be ${PROVIDER_IMPORT_MAX_PROVIDER_NAME_LENGTH} characters or fewer`,
     };
   }
+  const defaultsError = getProviderImportNewProviderDefaultsError({
+    weight: decision.provider.weight,
+    maxRetries: decision.provider.maxRetries,
+    backoff: decision.provider.backoff,
+  });
+  if (defaultsError) return defaultsError;
   if (
     !Number.isSafeInteger(decision.provider.priority) ||
     decision.provider.priority < 0 ||
@@ -485,7 +531,10 @@ export function buildProviderImportCommitRequest(
       provider_id: decision.provider.providerId.trim(),
       name: decision.provider.name.trim(),
       priority: decision.provider.priority,
+      weight: decision.provider.weight,
       concurrency: decision.provider.concurrency,
+      max_retries: decision.provider.maxRetries,
+      backoff: cloneProviderImportBackoff(decision.provider.backoff),
     };
   });
 

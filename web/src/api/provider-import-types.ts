@@ -1,3 +1,5 @@
+import type { BackoffPolicy } from "./types";
+
 export type ProviderImportCandidateStatus =
   "ready" | "existing" | "duplicate" | "invalid" | "unsupported";
 
@@ -58,9 +60,16 @@ export interface ProviderImportSummary {
   unsupported: number;
 }
 
+export interface ProviderImportCreateDefaults {
+  weight: number;
+  max_retries: number;
+  backoff: BackoffPolicy;
+}
+
 export interface ProviderImportPreview {
   import_id: string;
   expires_at: string;
+  create_defaults: ProviderImportCreateDefaults;
   items: ProviderImportCandidate[];
   summary: ProviderImportSummary;
   warnings: ProviderImportMappingNote[];
@@ -74,7 +83,10 @@ export interface ProviderImportCreateCommitItem {
   provider_id: string;
   name: string;
   priority: number;
+  weight: number;
   concurrency: number;
+  max_retries: number;
+  backoff: BackoffPolicy;
 }
 
 export interface ProviderImportUpdateCommitItem {

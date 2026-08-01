@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderImportPreview } from "../api";
 import {
-  PROVIDER_IMPORT_MAX_PROVIDER_ID_LENGTH,
-  PROVIDER_IMPORT_MAX_PROVIDER_NAME_LENGTH,
-  PROVIDER_IMPORT_MAX_SCHEDULING_VALUE,
   buildProviderImportCommitRequest,
   canCommitProviderImport,
   createProviderImportReviewDraft,
@@ -12,11 +9,28 @@ import {
   isSupportedProviderImportFile,
   providerImportFlowReducer,
 } from "./providerImport";
+import {
+  PROVIDER_IMPORT_MAX_PROVIDER_ID_LENGTH,
+  PROVIDER_IMPORT_MAX_PROVIDER_NAME_LENGTH,
+  PROVIDER_IMPORT_MAX_RETRIES,
+  PROVIDER_IMPORT_MAX_SCHEDULING_VALUE,
+  getProviderImportNewProviderDefaultsError,
+} from "./providerImportSettings";
 
 function buildPreview(): ProviderImportPreview {
   return {
     import_id: "import-1",
     expires_at: "2026-07-30T22:00:00Z",
+    create_defaults: {
+      weight: 1,
+      max_retries: 0,
+      backoff: {
+        initial_delay: "100ms",
+        max_delay: "5s",
+        multiplier: 2,
+        jitter: false,
+      },
+    },
     summary: {
       total: 3,
       ready: 1,
@@ -83,6 +97,16 @@ describe("provider import review model", () => {
       { candidateId: "invalid-1", action: "skip" },
     ]);
     expect(draft.acknowledgedRefreshTokenOwnership).toBe(false);
+    expect(draft.newProviderDefaults).toEqual({
+      weight: 1,
+      maxRetries: 0,
+      backoff: {
+        initial_delay: "100ms",
+        max_delay: "5s",
+        multiplier: 2,
+        jitter: false,
+      },
+    });
   });
 
   it("requires acknowledgement and validates provider IDs before commit", () => {
@@ -122,6 +146,78 @@ describe("provider import review model", () => {
       canCommitProviderImport(state.draft, new Set(["existing-provider"])),
     ).toBe(false);
   });
+
+  it("applies bulk defaults to new providers without mutating existing-account settings", () => {
+    let state = providerImportFlowReducer(initialProviderImportState, {
+      type: "preview_succeeded",
+      preview: buildPreview(),
+    });
+    state = providerImportFlowReducer(state, {
+      type: "apply_new_provider_defaults",
+      defaults: {
+        weight: 5,
+        maxRetries: 3,
+        backoff: {
+          initial_delay: "500ms",
+          max_delay: "10s",
+          multiplier: 2.5,
+          jitter: true,
+        },
+      },
+    });
+    if (state.phase !== "review") throw new Error("expected review state");
+
+    expect(state.draft.newProviderDefaults).toEqual({
+      weight: 5,
+      maxRetries: 3,
+      backoff: {
+        initial_delay: "500ms",
+        max_delay: "10s",
+        multiplier: 2.5,
+        jitter: true,
+      },
+    });
+    expect(
+      state.draft.decisions.find(({ candidateId }) => candidateId === "ready-1")
+        ?.provider,
+    ).toMatchObject({ weight: 5, maxRetries: 3 });
+    expect(
+      state.draft.decisions.find(
+        ({ candidateId }) => candidateId === "existing-1",
+      )?.provider,
+    ).toMatchObject({ weight: 1, maxRetries: 0 });
+  });
+
+  it.each([
+    ["weight", { weight: 0 }, "Weight must be an integer from 1 to 1,000,000"],
+    [
+      "maxRetries",
+      { maxRetries: PROVIDER_IMPORT_MAX_RETRIES + 1 },
+      "Max retries must be an integer from 0 to 10",
+    ],
+    [
+      "backoff",
+      { backoff: { initial_delay: "soon", max_delay: "5s" } },
+      "Initial retry delay must use a duration such as 500ms or 1s",
+    ],
+  ] as const)(
+    "validates the %s bulk default before it can reach provider drafts",
+    (field, patch, message) => {
+      const defaults =
+        createProviderImportReviewDraft(buildPreview()).newProviderDefaults;
+      const backoff =
+        "backoff" in patch
+          ? { ...defaults.backoff, ...patch.backoff }
+          : defaults.backoff;
+      const error = getProviderImportNewProviderDefaultsError({
+        ...defaults,
+        ...patch,
+        backoff,
+      });
+
+      expect(error).toEqual({ field, message });
+    },
+  );
 
   it.each([
     ["priority", PROVIDER_IMPORT_MAX_SCHEDULING_VALUE + 1],
@@ -198,7 +294,15 @@ describe("provider import review model", () => {
           provider_id: "ready-account",
           name: "Ready Account",
           priority: 1,
+          weight: 1,
           concurrency: 10,
+          max_retries: 0,
+          backoff: {
+            initial_delay: "100ms",
+            max_delay: "5s",
+            multiplier: 2,
+            jitter: false,
+          },
         },
         {
           candidate_id: "existing-1",

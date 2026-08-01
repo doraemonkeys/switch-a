@@ -37,6 +37,8 @@ const (
 	maxProviderImportIdentifierCharacters  = 200
 	maxProviderImportCandidateIDCharacters = 128
 	maxProviderImportRoutingValue          = 1_000_000
+	maxProviderImportRetryCount            = 10
+	maxProviderImportBackoffMultiplier     = 10.0
 	maxProviderImportGeneratedIDBaseLength = 180
 	maxProviderImportEmailCharacters       = 320
 	maxProviderImportAccountIDCharacters   = 256
@@ -130,11 +132,33 @@ type ProviderImportPreviewItem struct {
 }
 
 type ProviderImportPreviewResponse struct {
-	ImportID  string                                      `json:"import_id"`
-	ExpiresAt time.Time                                   `json:"expires_at"`
-	Items     []ProviderImportPreviewItem                 `json:"items"`
-	Summary   providerauth.ChatGPTProviderImportSummary   `json:"summary"`
-	Warnings  []providerauth.ChatGPTProviderImportWarning `json:"warnings"`
+	ImportID       string                                      `json:"import_id"`
+	ExpiresAt      time.Time                                   `json:"expires_at"`
+	CreateDefaults ProviderImportCreateDefaults                `json:"create_defaults"`
+	Items          []ProviderImportPreviewItem                 `json:"items"`
+	Summary        providerauth.ChatGPTProviderImportSummary   `json:"summary"`
+	Warnings       []providerauth.ChatGPTProviderImportWarning `json:"warnings"`
+}
+
+// ProviderImportCreateDefaults carries server-owned defaults once per preview.
+// Keeping non-source settings out of candidate rows avoids duplicating policy for
+// large imports and gives the UI one authoritative bulk-edit starting point.
+type ProviderImportCreateDefaults struct {
+	Weight     int                 `json:"weight"`
+	MaxRetries int                 `json:"max_retries"`
+	Backoff    model.BackoffPolicy `json:"backoff"`
+}
+
+func defaultProviderImportCreateSettings() ProviderImportCreateDefaults {
+	return ProviderImportCreateDefaults{
+		Weight:     DefaultWeight,
+		MaxRetries: DefaultProviderMaxRetries,
+		Backoff: model.BackoffPolicy{
+			InitialDelay: model.Duration(defaults.BackoffInitialDelay),
+			MaxDelay:     model.Duration(defaults.BackoffMaxDelay),
+			Multiplier:   defaults.BackoffMultiplier,
+		},
+	}
 }
 
 type ProviderImportCommitRequest struct {
@@ -143,12 +167,15 @@ type ProviderImportCommitRequest struct {
 }
 
 type ProviderImportCommitItem struct {
-	CandidateID string `json:"candidate_id"`
-	Action      string `json:"action"`
-	ProviderID  string `json:"provider_id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Priority    int    `json:"priority,omitempty"`
-	Concurrency int    `json:"concurrency,omitempty"`
+	CandidateID string               `json:"candidate_id"`
+	Action      string               `json:"action"`
+	ProviderID  string               `json:"provider_id,omitempty"`
+	Name        string               `json:"name,omitempty"`
+	Priority    int                  `json:"priority,omitempty"`
+	Weight      *int                 `json:"weight,omitempty"`
+	Concurrency int                  `json:"concurrency,omitempty"`
+	MaxRetries  *int                 `json:"max_retries,omitempty"`
+	Backoff     *model.BackoffPolicy `json:"backoff,omitempty"`
 }
 
 type ProviderImportCommitSummary struct {

@@ -7,15 +7,13 @@ import type {
   ProviderImportCandidateStatus,
   ProviderImportPreview,
 } from "../../api";
-import type {
-  ProviderImportDecision,
-  ProviderImportValidationError,
-} from "../../lib/providerImport";
+import type { ProviderImportDecision } from "../../lib/providerImport";
 import {
   PROVIDER_IMPORT_MAX_PROVIDER_ID_LENGTH,
   PROVIDER_IMPORT_MAX_PROVIDER_NAME_LENGTH,
   PROVIDER_IMPORT_MAX_SCHEDULING_VALUE,
-} from "../../lib/providerImport";
+  type ProviderImportValidationError,
+} from "../../lib/providerImportSettings";
 import { ReviewStep } from "./ReviewStep";
 
 function createCandidate(
@@ -54,7 +52,15 @@ function createDecision(
       providerId: candidate.provider_id,
       name: candidate.name,
       priority: candidate.priority,
+      weight: 1,
       concurrency: candidate.concurrency,
+      maxRetries: 0,
+      backoff: {
+        initial_delay: "100ms",
+        max_delay: "5s",
+        multiplier: 2,
+        jitter: false,
+      },
     },
   };
 }
@@ -68,6 +74,16 @@ function createPreview(
   return {
     import_id: "import-1",
     expires_at: expiresAt,
+    create_defaults: {
+      weight: 1,
+      max_retries: 0,
+      backoff: {
+        initial_delay: "100ms",
+        max_delay: "5s",
+        multiplier: 2,
+        jitter: false,
+      },
+    },
     items,
     summary: {
       total: items.length,
@@ -100,6 +116,7 @@ function renderReview({
   const handlers = {
     onSetAction: vi.fn(),
     onEditProvider: vi.fn(),
+    onApplyNewProviderDefaults: vi.fn(),
     onSetGroup: vi.fn(),
     onSetAcknowledgement: vi.fn(),
     onSelectAllReady: vi.fn(),
@@ -109,6 +126,16 @@ function renderReview({
   const preview = createPreview(candidates, expiresAt);
   const draft = {
     groupId: null,
+    newProviderDefaults: {
+      weight: 1,
+      maxRetries: 0,
+      backoff: {
+        initial_delay: "100ms",
+        max_delay: "5s",
+        multiplier: 2,
+        jitter: false,
+      },
+    },
     acknowledgedRefreshTokenOwnership: false,
     decisions,
   };
@@ -188,7 +215,9 @@ describe("ReviewStep", () => {
     );
     const settings = settingsSummary.closest("details");
     expect(settings).not.toHaveAttribute("open");
-    expect(screen.getByText("Priority 1 · Concurrency 4")).toBeInTheDocument();
+    expect(
+      screen.getByText("Priority 1 · Weight 1 · Concurrency 4 · Retries none"),
+    ).toBeInTheDocument();
     await user.click(settingsSummary);
     expect(settings).toHaveAttribute("open");
 
@@ -209,6 +238,7 @@ describe("ReviewStep", () => {
     );
     for (const label of [
       "Priority for account-1@example.com",
+      "Weight for account-1@example.com",
       "Concurrency for account-1@example.com",
     ]) {
       expect(screen.getByRole("spinbutton", { name: label })).toHaveAttribute(
@@ -216,6 +246,11 @@ describe("ReviewStep", () => {
         String(PROVIDER_IMPORT_MAX_SCHEDULING_VALUE),
       );
     }
+    expect(
+      screen.getByRole("spinbutton", {
+        name: "Max retries for account-1@example.com",
+      }),
+    ).toHaveAttribute("max", "10");
     fireEvent.change(providerName, { target: { value: "Renamed Provider" } });
     expect(handlers.onEditProvider).toHaveBeenCalledWith(
       ready.candidate_id,
@@ -346,7 +381,9 @@ describe("ReviewStep", () => {
     expect(expiry.tagName).toBe("TIME");
     expect(expiry).toHaveAttribute("datetime", "expiry unavailable");
     expect(
-      screen.getByText("Priority 1 · Concurrency unlimited"),
+      screen.getByText(
+        "Priority 1 · Weight 1 · Concurrency unlimited · Retries none",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Provider settings/).closest("details"),

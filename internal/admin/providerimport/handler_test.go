@@ -278,6 +278,9 @@ func TestPreviewProviderImportEnrichesFlatReviewSafeResponse(t *testing.T) {
 	if response.Summary != wantSummary {
 		t.Fatalf("summary = %+v, want %+v", response.Summary, wantSummary)
 	}
+	if response.CreateDefaults != defaultProviderImportCreateSettings() {
+		t.Fatalf("create defaults = %+v, want server-owned provider defaults", response.CreateDefaults)
+	}
 	if !reflect.DeepEqual(response.Warnings, service.preview.Warnings) {
 		t.Fatalf("warnings = %+v, want %+v", response.Warnings, service.preview.Warnings)
 	}
@@ -500,7 +503,14 @@ func TestCommitProviderImportBuildsOneAtomicCreateAndCredentialUpdateBundle(t *t
 		Priority:       91,
 		Concurrency:    23,
 		Weight:         19,
-		Enabled:        false,
+		MaxRetries:     6,
+		Backoff: model.BackoffPolicy{
+			InitialDelay: model.Duration(3 * time.Second),
+			MaxDelay:     model.Duration(12 * time.Second),
+			Multiplier:   2.5,
+			Jitter:       true,
+		},
+		Enabled: false,
 		Credential: &model.ProviderCredential{
 			ProviderID:       "bound-provider",
 			SecretData:       providerImportExistingCredentialMarker,
@@ -513,8 +523,8 @@ func TestCommitProviderImportBuildsOneAtomicCreateAndCredentialUpdateBundle(t *t
 	requestBody := `{
 		"group_id":" team-a ",
 		"items":[
-			{"candidate_id":"candidate-create","action":"create","provider_id":"new-provider","name":" New Provider ","priority":4,"concurrency":12},
-			{"candidate_id":"candidate-update","action":"update","provider_id":"bound-provider","name":"Must Be Ignored","priority":1,"concurrency":1}
+			{"candidate_id":"candidate-create","action":"create","provider_id":"new-provider","name":" New Provider ","priority":4,"weight":7,"concurrency":12,"max_retries":3,"backoff":{"initial_delay":"500ms","max_delay":"8s","multiplier":2.5,"jitter":true}},
+			{"candidate_id":"candidate-update","action":"update","provider_id":"bound-provider","name":"Must Be Ignored","priority":1,"weight":1,"concurrency":1,"max_retries":0}
 		]
 	}`
 	responseRecorder := commitProviderImportRequest(t, handler, "opaque-import-id", requestBody)
@@ -554,7 +564,10 @@ func TestCommitProviderImportBuildsOneAtomicCreateAndCredentialUpdateBundle(t *t
 	create := bundle.Creates[0]
 	if create.CandidateID != "candidate-create" || create.Provider.ID != "new-provider" || create.Provider.Name != "New Provider" ||
 		create.Provider.GroupID == nil || *create.Provider.GroupID != "team-a" ||
-		create.Provider.Priority != 4 || create.Provider.Concurrency != 12 || create.Provider.Weight != DefaultWeight ||
+		create.Provider.Priority != 4 || create.Provider.Concurrency != 12 || create.Provider.Weight != 7 ||
+		create.Provider.MaxRetries != 3 || create.Provider.Backoff.InitialDelay != model.Duration(500*time.Millisecond) ||
+		create.Provider.Backoff.MaxDelay != model.Duration(8*time.Second) || create.Provider.Backoff.Multiplier != 2.5 ||
+		!create.Provider.Backoff.Jitter ||
 		!create.Provider.Enabled || create.Provider.CredentialType != model.ProviderCredentialTypeChatGPT ||
 		create.Provider.AuthMode != "bearer" || len(create.Provider.APITypes) != 1 || create.Provider.APITypes[0].APIType != "codex" {
 		t.Fatalf("create bundle item = %+v, want normalized ChatGPT provider with reviewed routing settings", create)
@@ -576,7 +589,10 @@ func TestCommitProviderImportBuildsOneAtomicCreateAndCredentialUpdateBundle(t *t
 	}
 	existing := adminStore.providers["bound-provider"]
 	if existing.Name != "Existing Provider" || existing.GroupID == nil || *existing.GroupID != "original-group" ||
-		existing.Priority != 91 || existing.Concurrency != 23 || existing.Weight != 19 || existing.Enabled {
+		existing.Priority != 91 || existing.Concurrency != 23 || existing.Weight != 19 ||
+		existing.MaxRetries != 6 || existing.Backoff.InitialDelay != model.Duration(3*time.Second) ||
+		existing.Backoff.MaxDelay != model.Duration(12*time.Second) || existing.Backoff.Multiplier != 2.5 ||
+		!existing.Backoff.Jitter || existing.Enabled {
 		t.Fatalf("existing provider routing config changed during bundle construction: %+v", existing)
 	}
 
@@ -728,11 +744,11 @@ func TestCommitProviderImportRejectsDifferentRequestAfterSuccess(t *testing.T) {
 	handler := newProviderImportTestHandler(newMockStore(), service, importStore)
 	firstRequest := `{
 		"group_id":"group-a",
-		"items":[{"candidate_id":"candidate-create","action":"create","provider_id":"new-provider","name":"Original Name","priority":4,"concurrency":9}]
+		"items":[{"candidate_id":"candidate-create","action":"create","provider_id":"new-provider","name":"Original Name","priority":4,"weight":2,"concurrency":9,"max_retries":1,"backoff":{"initial_delay":"100ms","max_delay":"5s","multiplier":2}}]
 	}`
 	changedRequest := `{
 		"group_id":"group-a",
-		"items":[{"candidate_id":"candidate-create","action":"create","provider_id":"new-provider","name":"Changed Name","priority":4,"concurrency":9}]
+		"items":[{"candidate_id":"candidate-create","action":"create","provider_id":"new-provider","name":"Original Name","priority":4,"weight":3,"concurrency":9,"max_retries":1,"backoff":{"initial_delay":"100ms","max_delay":"5s","multiplier":2}}]
 	}`
 
 	firstResponse := commitProviderImportRequest(t, handler, "replay-conflict", firstRequest)
@@ -906,8 +922,15 @@ func TestCommitProviderImportValidatesRequestBeforePersistence(t *testing.T) {
 		{name: "provider name too long", importID: "draft", body: fmt.Sprintf(`{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"%s"}]}`, strings.Repeat("n", maxProviderImportNameCharacters+1)), wantCode: ErrCodeValidation},
 		{name: "negative priority", importID: "draft", body: `{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","priority":-1}]}`, wantCode: ErrCodeValidation},
 		{name: "priority too large", importID: "draft", body: fmt.Sprintf(`{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","priority":%d}]}`, maxProviderImportRoutingValue+1), wantCode: ErrCodeValidation},
+		{name: "zero weight", importID: "draft", body: `{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","weight":0}]}`, wantCode: ErrCodeValidation},
+		{name: "weight too large", importID: "draft", body: fmt.Sprintf(`{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","weight":%d}]}`, maxProviderImportRoutingValue+1), wantCode: ErrCodeValidation},
 		{name: "negative concurrency", importID: "draft", body: `{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","concurrency":-1}]}`, wantCode: ErrCodeValidation},
 		{name: "concurrency too large", importID: "draft", body: fmt.Sprintf(`{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","concurrency":%d}]}`, maxProviderImportRoutingValue+1), wantCode: ErrCodeValidation},
+		{name: "negative max retries", importID: "draft", body: `{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","max_retries":-1}]}`, wantCode: ErrCodeValidation},
+		{name: "max retries too large", importID: "draft", body: fmt.Sprintf(`{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","max_retries":%d}]}`, maxProviderImportRetryCount+1), wantCode: ErrCodeValidation},
+		{name: "negative backoff max delay", importID: "draft", body: `{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","backoff":{"initial_delay":"100ms","max_delay":"-1s","multiplier":2}}]}`, wantCode: ErrCodeValidation},
+		{name: "backoff initial exceeds max", importID: "draft", body: `{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","backoff":{"initial_delay":"2s","max_delay":"1s","multiplier":2}}]}`, wantCode: ErrCodeValidation},
+		{name: "backoff multiplier too large", importID: "draft", body: fmt.Sprintf(`{"items":[{"candidate_id":"candidate-ready","action":"create","provider_id":"new-provider","name":"New","backoff":{"initial_delay":"100ms","max_delay":"5s","multiplier":%.1f}}]}`, maxProviderImportBackoffMultiplier+1), wantCode: ErrCodeValidation},
 		{name: "update requires provider ID", importID: "draft", body: `{"items":[{"candidate_id":"candidate-ready","action":"update","provider_id":""}]}`, wantCode: ErrCodeValidation},
 		{
 			name:       "unknown candidate",

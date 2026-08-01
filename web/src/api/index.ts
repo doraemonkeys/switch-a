@@ -97,6 +97,7 @@ export type {
   ProviderImportConflictKind,
   ProviderImportCommitAction,
   ProviderImportCommitItem,
+  ProviderImportCreateDefaults,
   ProviderImportCreateCommitItem,
   ProviderImportCommitOutcome,
   ProviderImportCommitRequest,

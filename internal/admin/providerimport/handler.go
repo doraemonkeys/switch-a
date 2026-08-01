@@ -218,11 +218,12 @@ func buildProviderImportPreviewResponse(
 		warnings = []providerauth.ChatGPTProviderImportWarning{}
 	}
 	return ProviderImportPreviewResponse{
-		ImportID:  preview.ImportID,
-		ExpiresAt: preview.ExpiresAt,
-		Items:     items,
-		Summary:   summary,
-		Warnings:  warnings,
+		ImportID:       preview.ImportID,
+		ExpiresAt:      preview.ExpiresAt,
+		CreateDefaults: defaultProviderImportCreateSettings(),
+		Items:          items,
+		Summary:        summary,
+		Warnings:       warnings,
 	}, dispositions
 }
 
@@ -260,10 +261,11 @@ func (h *Handler) buildProviderImportBundle(
 				Name:           strings.TrimSpace(selection.Name),
 				CredentialType: model.ProviderCredentialTypeChatGPT,
 				GroupID:        groupID,
-				Weight:         DefaultWeight,
+				Weight:         *selection.Weight,
 				Priority:       selection.Priority,
 				Concurrency:    selection.Concurrency,
-				MaxRetries:     DefaultProviderMaxRetries,
+				MaxRetries:     *selection.MaxRetries,
+				Backoff:        *selection.Backoff,
 				FailoverScope:  model.ScopeAny,
 				AcceptFailover: model.ScopeAny,
 				Enabled:        true,
@@ -432,6 +434,19 @@ func normalizeProviderImportCommitAction(item *ProviderImportCommitItem, index i
 func normalizeProviderImportCreateItem(item *ProviderImportCommitItem, index int) error {
 	item.ProviderID = strings.TrimSpace(item.ProviderID)
 	item.Name = strings.TrimSpace(item.Name)
+	createDefaults := defaultProviderImportCreateSettings()
+	if item.Weight == nil {
+		weight := createDefaults.Weight
+		item.Weight = &weight
+	}
+	if item.MaxRetries == nil {
+		maxRetries := createDefaults.MaxRetries
+		item.MaxRetries = &maxRetries
+	}
+	if item.Backoff == nil {
+		backoff := createDefaults.Backoff
+		item.Backoff = &backoff
+	}
 	if !isValidProviderImportID(item.ProviderID) {
 		return fmt.Errorf("items[%d].provider_id must contain only lowercase letters, numbers, and hyphens", index)
 	}
@@ -447,8 +462,23 @@ func normalizeProviderImportCreateItem(item *ProviderImportCommitItem, index int
 	if item.Priority < 0 || item.Priority > maxProviderImportRoutingValue {
 		return fmt.Errorf("items[%d].priority must be between 0 and %d", index, maxProviderImportRoutingValue)
 	}
+	if *item.Weight < 1 || *item.Weight > maxProviderImportRoutingValue {
+		return fmt.Errorf("items[%d].weight must be between 1 and %d", index, maxProviderImportRoutingValue)
+	}
 	if item.Concurrency < 0 || item.Concurrency > maxProviderImportRoutingValue {
 		return fmt.Errorf("items[%d].concurrency must be between 0 and %d", index, maxProviderImportRoutingValue)
+	}
+	if *item.MaxRetries < 0 || *item.MaxRetries > maxProviderImportRetryCount {
+		return fmt.Errorf("items[%d].max_retries must be between 0 and %d", index, maxProviderImportRetryCount)
+	}
+	if item.Backoff.MaxDelay < 0 {
+		return fmt.Errorf("items[%d].backoff: max_delay must be non-negative", index)
+	}
+	if item.Backoff.Multiplier > maxProviderImportBackoffMultiplier {
+		return fmt.Errorf("items[%d].backoff: multiplier must not exceed %.0f", index, maxProviderImportBackoffMultiplier)
+	}
+	if err := item.Backoff.Validate(); err != nil {
+		return fmt.Errorf("items[%d].backoff: %w", index, err)
 	}
 	return nil
 }

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { formatDuration, generateRandomId, slugify, isValidId } from "./utils";
+import {
+  formatDuration,
+  generateRandomId,
+  slugify,
+  isValidId,
+  parseGoDurationMilliseconds,
+} from "./utils";
 
 describe("utils", () => {
   describe("generateRandomId", () => {
@@ -119,5 +125,25 @@ describe("utils", () => {
       expect(formatDuration(-1)).toBe("0s");
       expect(formatDuration(-1, { smallestUnit: "ms" })).toBe("0ms");
     });
+  });
+
+  describe("parseGoDurationMilliseconds", () => {
+    it.each([
+      ["0", 0],
+      ["100ms", 100],
+      ["1.5s", 1_500],
+      ["1m30s", 90_000],
+      ["2h5m", 7_500_000],
+      ["250us", 0.25],
+    ])("parses Go duration %s", (duration, milliseconds) => {
+      expect(parseGoDurationMilliseconds(duration)).toBe(milliseconds);
+    });
+
+    it.each(["", "1", "-1s", "1 second", "1s 500ms", "NaNs"])(
+      "rejects invalid or negative duration %j",
+      (duration) => {
+        expect(parseGoDurationMilliseconds(duration)).toBeNull();
+      },
+    );
   });
 });
