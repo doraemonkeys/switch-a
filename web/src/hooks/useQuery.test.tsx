@@ -189,6 +189,26 @@ describe("useQuery", () => {
     expect(result.current.error).toBeNull();
     expect(result.current.data).toEqual({ data: "success" });
   });
+
+  it("publishes a confirmed mutation snapshot over an in-flight query", async () => {
+    let resolveQuery!: (value: { state: string }) => void;
+    const fetcher = vi.fn(
+      () =>
+        new Promise<{ state: string }>((resolve) => {
+          resolveQuery = resolve;
+        }),
+    );
+    const { result } = renderHook(() => useQuery(fetcher));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      result.current.replaceData({ state: "confirmed-mutation" });
+    });
+    expect(result.current.data).toEqual({ state: "confirmed-mutation" });
+
+    await act(async () => resolveQuery({ state: "stale-query" }));
+    expect(result.current.data).toEqual({ state: "confirmed-mutation" });
+  });
 });
 
 describe("useMutation", () => {

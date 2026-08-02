@@ -57,6 +57,14 @@ type webSocketObserverFactory func(modelName string) WebSocketMessageObserver
 // boundary, so the handler delegates attempt control to a session orchestrator
 // instead of reusing the HTTP execution loop.
 func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r *http.Request, cfg *runtimeConfig, apiType, requestID string, startTime time.Time) {
+	capture := h.beginGatewayCapture(requestID, startTime)
+	captureParticipates := capture.Valid()
+	if captureParticipates {
+		defer func() {
+			capture.Finish(gatewayCaptureOutcome(ctx))
+		}()
+	}
+
 	reasoningState := model.ReasoningObservationUnsupported
 	info := RequestInfo{
 		ClientIP:  ExtractClientIP(r, cfg.trustProxy),
@@ -78,21 +86,29 @@ func (h *Handler) handleWebSocket(ctx context.Context, w http.ResponseWriter, r 
 		StickyMode: cfg.stickyMode,
 	}
 	newObserver, tracker, applyObservation, onClientVisible := h.newWebSocketObserverPipeline(apiType, requestID)
-	session := newWebSocketSessionOrchestrator(h, webSocketSessionOrchestratorConfig{
-		info:             info,
-		selectReq:        selectReq,
-		apiType:          apiType,
-		requestID:        requestID,
-		requestDone:      ctx.Done(),
-		startTime:        startTime,
-		maxAttempts:      cfg.globalMaxAttempts,
-		globalAuthMode:   cfg.globalAuthMode,
-		probeClientModel: cfg.websocketProbeClientModel,
-		newObserver:      newObserver,
-		applyObservation: applyObservation,
-		onClientVisible:  onClientVisible,
-		tracker:          tracker,
-	}).Run(ctx, w, r)
+	orchestrator := newWebSocketSessionOrchestrator(h, webSocketSessionOrchestratorConfig{
+		info:                info,
+		selectReq:           selectReq,
+		apiType:             apiType,
+		requestID:           requestID,
+		requestDone:         ctx.Done(),
+		startTime:           startTime,
+		maxAttempts:         cfg.globalMaxAttempts,
+		globalAuthMode:      cfg.globalAuthMode,
+		probeClientModel:    cfg.websocketProbeClientModel,
+		newObserver:         newObserver,
+		applyObservation:    applyObservation,
+		onClientVisible:     onClientVisible,
+		tracker:             tracker,
+		capture:             capture,
+		captureParticipates: captureParticipates,
+	})
+	if captureParticipates {
+		// Exchange records must close before their gateway, but only after sticky,
+		// health, and duration state has been frozen by the behavior path below.
+		defer orchestrator.finishCaptureCompletions()
+	}
+	session := orchestrator.Run(ctx, w, r)
 	if session == nil {
 		return
 	}
@@ -296,10 +312,26 @@ func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiTyp
 }
 
 func (h *Handler) prepareWebSocketDialHeaders(ctx context.Context, r *http.Request, provider *model.Provider, apiType, globalAuthMode string) (http.Header, error) {
+	headers, err := h.prepareWebSocketAttemptHeaders(ctx, r, provider, apiType, globalAuthMode)
+	if err != nil {
+		return nil, err
+	}
+	return headers, nil
+}
+
+func (h *Handler) prepareWebSocketAttemptHeaders(
+	ctx context.Context,
+	r *http.Request,
+	provider *model.Provider,
+	apiType,
+	globalAuthMode string,
+) (http.Header, error) {
 	headers := buildWebSocketPassthroughHeaders(r)
 	if h.auth != nil {
 		if err := h.auth.ApplyProviderCredentials(ctx, headers, provider, apiType, globalAuthMode, r); err != nil {
-			return nil, err
+			// The orchestrator retains this partial request only as sanitizer input;
+			// the compatibility wrapper above still returns nil and no dial can occur.
+			return headers, err
 		}
 		return headers, nil
 	}

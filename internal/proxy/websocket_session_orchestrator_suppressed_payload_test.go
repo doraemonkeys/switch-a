@@ -115,11 +115,12 @@ func TestWebSocketSessionOrchestrator_FallsBackToSuppressedPayloadAfterRelaySupp
 	resultCh := make(chan *WebSocketSessionResult, 1)
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fwd := NewWebSocketForwarder(WebSocketForwarderConfig{})
-		upstreamConn, dialResult := fwd.dialUpstream(r.Context(), wsURL(upstream), nil)
-		if dialResult != nil {
-			t.Errorf("unexpected dial result: %+v", dialResult)
+		dialExchange := fwd.dialUpstream(r.Context(), WebSocketDialRequest{URL: wsURL(upstream)})
+		if !dialExchange.Accepted() {
+			t.Errorf("unexpected dial exchange: %+v", dialExchange)
 			return
 		}
+		upstreamConn := dialExchange.Conn
 
 		clientConn, err := fwd.acceptClient(w, r)
 		if err != nil {

@@ -51,3 +51,20 @@ log_max_keep_days: 7
 # 可选值: debug, info, warn, error
 # 默认值: info
 log_level: "info"
+
+# Debug 捕获的进程级安全上限（功能默认关闭）
+# 环境变量名称为 SWITCHA_ 加对应键名的大写形式
+# 内存上限不能低于默认 session quota 256 MiB
+debug_capture_memory_ceiling_mib: 512
+debug_capture_max_active_records: 1024
+debug_capture_max_active_traces: 1024
+debug_capture_max_transitions_per_trace: 64
+debug_capture_max_pending_exports: 8
+debug_capture_max_concurrent_downloads: 2
+debug_capture_detail_preview_bytes: 65536
+debug_capture_detail_event_limit: 200
+debug_capture_download_token_ttl_seconds: 300
+debug_capture_max_records_per_provider: 100
+# 分块必须在 4096 至 1048576 bytes 之间，避免元数据放大或过量预留
+debug_capture_chunk_bytes: 32768
+debug_capture_export_line_bytes: 65536

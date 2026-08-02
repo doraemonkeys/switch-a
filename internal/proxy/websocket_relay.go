@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
 	"github.com/coder/websocket"
 )
@@ -16,6 +17,7 @@ import (
 //
 //nolint:gocognit,gocyclo,funlen // The relay keeps both transport directions and failover hooks in one place until the refactor settles.
 func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn *websocket.Conn, options webSocketRelayOptions) *webSocketRelaySessionResult {
+	options = options.withCaptureHooks()
 	ctx, cancel := context.WithCancel(ctx)
 	preserveClient := false
 	defer func() {
@@ -123,13 +125,15 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 				initialUpstreamRead = &webSocketInitialReadResult{err: ctx.Err()}
 			}
 		}
-		n, failurePeer, err := relayMessages(
+		n, failurePeer, failureOperation, err := relayMessages(
 			ctx,
 			clientConn,
 			webSocketPeerClient,
 			upstreamConn,
 			webSocketPeerUpstream,
 			initialUpstreamRead,
+			options,
+			requestcapture.MessageDirectionUpstreamToClient,
 			observeUpstream,
 			onUpstreamVisible,
 			nil,
@@ -154,7 +158,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 				})
 			},
 		)
-		upstreamToClient = newWebSocketRelayResult(n, err, failurePeer, &errorOrder)
+		upstreamToClient = newWebSocketRelayResultForOperation(n, err, failurePeer, failureOperation, &errorOrder)
 		if err != nil {
 			cancel()
 		}
@@ -201,6 +205,9 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 			Err:                   outcome.err,
 			ClientAccepted:        lifecycleSnapshot.ClientAccepted,
 			ClientVisible:         lifecycleSnapshot.ClientVisible,
+			ObservedCloseError:    outcome.observedCloseError,
+			FailurePeer:           outcome.failurePeer,
+			FailureOperation:      outcome.failureOperation,
 		}
 	}
 
@@ -225,6 +232,9 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		Err:                   outcome.err,
 		ClientAccepted:        lifecycleSnapshot.ClientAccepted,
 		ClientVisible:         lifecycleSnapshot.ClientVisible,
+		ObservedCloseError:    outcome.observedCloseError,
+		FailurePeer:           outcome.failurePeer,
+		FailureOperation:      outcome.failureOperation,
 	}
 }
 
@@ -308,9 +318,10 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 	progress := webSocketPreVisibleRelayProgress{}
 	messageType, data, err := initialClientRead.messageType, initialClientRead.data, initialClientRead.err
 	if err != nil {
-		progress.Result = newSinglePeerRelaySessionResult(
+		progress.Result = newSinglePeerRelaySessionResultForOperation(
 			err,
 			webSocketPeerClient,
+			webSocketRelayFailureOperationRead,
 			fallbackCommit,
 			lifecycle,
 			0,
@@ -318,17 +329,34 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 		)
 		return progress
 	}
+	captured := captureWebSocketMessageRead(
+		options,
+		requestcapture.MessageDirectionClientToUpstream,
+		messageType,
+		data,
+		requestcapture.MessageSourceLive,
+		requestcapture.MessageLineage{},
+		requestcapture.MessageLineage{},
+	)
 	disablePreVisibleReplayBufferIfNeeded(options)
+	bufferedMessageIndex := invalidWebSocketReplayMessageIndex
 	if options.PreVisibleReplayBuffer != nil {
-		options.PreVisibleReplayBuffer.Record(messageType, data, false)
+		bufferedMessageIndex = options.PreVisibleReplayBuffer.RecordWithLineage(
+			messageType,
+			data,
+			false,
+			captured.Lineage,
+		)
 	}
 	if observeClient != nil {
 		observeClient(messageType, data)
 	}
 	if err := upstreamConn.Write(ctx, messageType, data); err != nil {
-		progress.Result = newSinglePeerRelaySessionResult(
+		captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionWriteFailed, false, err)
+		progress.Result = newSinglePeerRelaySessionResultForOperation(
 			err,
 			webSocketPeerUpstream,
+			webSocketRelayFailureOperationWrite,
 			fallbackCommit,
 			lifecycle,
 			0,
@@ -337,6 +365,10 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 		return progress
 	}
 	progress.BytesClientToUpstream = int64(len(data))
+	if options.PreVisibleReplayBuffer != nil {
+		options.PreVisibleReplayBuffer.MarkDelivered(bufferedMessageIndex, captured.Lineage)
+	}
+	captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionForwarded, true, nil)
 	return progress
 }
 
@@ -354,9 +386,10 @@ func (f *WebSocketForwarder) relayPreVisibleUpstreamMessage(
 	progress := webSocketPreVisibleRelayProgress{}
 	upstreamMessageType, upstreamData, err := initialUpstreamRead.messageType, initialUpstreamRead.data, initialUpstreamRead.err
 	if err != nil {
-		progress.Result = newSinglePeerRelaySessionResult(
+		progress.Result = newSinglePeerRelaySessionResultForOperation(
 			err,
 			webSocketPeerUpstream,
+			webSocketRelayFailureOperationRead,
 			fallbackCommit,
 			lifecycle,
 			bytesClientToUpstream,
@@ -364,6 +397,15 @@ func (f *WebSocketForwarder) relayPreVisibleUpstreamMessage(
 		)
 		return progress
 	}
+	captured := captureWebSocketMessageRead(
+		options,
+		requestcapture.MessageDirectionUpstreamToClient,
+		upstreamMessageType,
+		upstreamData,
+		requestcapture.MessageSourceLive,
+		requestcapture.MessageLineage{},
+		requestcapture.MessageLineage{},
+	)
 	if observeUpstream != nil {
 		observeUpstream(upstreamMessageType, upstreamData)
 	}
@@ -379,6 +421,7 @@ func (f *WebSocketForwarder) relayPreVisibleUpstreamMessage(
 			ClientVisible:  lifecycleSnapshot.ClientVisible,
 		})
 		if decision.Action == webSocketPreWriteActionSuppress {
+			captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionSuppressed, false, nil)
 			closeWebSocketForSemanticReplacement(upstreamConn)
 			progress.Result = newSuppressedPreVisibleRelayResult(
 				fallbackCommit,
@@ -390,9 +433,11 @@ func (f *WebSocketForwarder) relayPreVisibleUpstreamMessage(
 		}
 	}
 	if err := clientConn.Write(ctx, upstreamMessageType, upstreamData); err != nil {
-		progress.Result = newSinglePeerRelaySessionResult(
+		captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionWriteFailed, false, err)
+		progress.Result = newSinglePeerRelaySessionResultForOperation(
 			err,
 			webSocketPeerClient,
+			webSocketRelayFailureOperationWrite,
 			fallbackCommit,
 			lifecycle,
 			bytesClientToUpstream,
@@ -402,6 +447,7 @@ func (f *WebSocketForwarder) relayPreVisibleUpstreamMessage(
 	}
 	progress.BytesUpstreamToClient = int64(len(upstreamData))
 	onUpstreamVisible(upstreamMessageType, upstreamData)
+	captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionForwarded, true, nil)
 	return progress
 }
 
@@ -525,73 +571,4 @@ func (f *WebSocketForwarder) relayPreVisibleWindow(
 		)
 		return progress
 	}
-}
-
-func relayMessages(
-	ctx context.Context,
-	dst *websocket.Conn,
-	dstPeer webSocketPeer,
-	src *websocket.Conn,
-	srcPeer webSocketPeer,
-	initialRead *webSocketInitialReadResult,
-	observe func(messageType websocket.MessageType, data []byte),
-	onForwarded func(messageType websocket.MessageType, data []byte),
-	onRead func(messageType websocket.MessageType, data []byte),
-	preWrite func(messageType websocket.MessageType, data []byte) webSocketPreWriteDecision,
-) (int64, webSocketPeer, error) {
-	var totalBytes int64
-	processMessage := func(msgType websocket.MessageType, data []byte) (webSocketPeer, error) {
-		if onRead != nil {
-			onRead(msgType, data)
-		}
-		if observe != nil {
-			observe(msgType, data)
-		}
-		if preWrite != nil {
-			decision := preWrite(msgType, data)
-			if decision.Action == webSocketPreWriteActionSuppress {
-				return srcPeer, &webSocketSuppressedUpstreamError{
-					upstreamError: decision.SuppressedUpstreamError,
-				}
-			}
-		}
-		if err := dst.Write(ctx, msgType, data); err != nil {
-			return dstPeer, err
-		}
-		totalBytes += int64(len(data))
-		if onForwarded != nil {
-			onForwarded(msgType, data)
-		}
-		return webSocketPeerUnknown, nil
-	}
-	if initialRead != nil {
-		if initialRead.err != nil {
-			return totalBytes, srcPeer, initialRead.err
-		}
-		if failurePeer, err := processMessage(initialRead.messageType, initialRead.data); err != nil {
-			return totalBytes, failurePeer, err
-		}
-	}
-	for {
-		msgType, data, err := src.Read(ctx)
-		if err != nil {
-			return totalBytes, srcPeer, err
-		}
-		if failurePeer, err := processMessage(msgType, data); err != nil {
-			return totalBytes, failurePeer, err
-		}
-	}
-}
-
-func startWebSocketInitialRead(ctx context.Context, conn *websocket.Conn) <-chan webSocketInitialReadResult {
-	results := make(chan webSocketInitialReadResult, 1)
-	go func() {
-		messageType, data, err := conn.Read(ctx)
-		results <- webSocketInitialReadResult{
-			messageType: messageType,
-			data:        data,
-			err:         err,
-		}
-	}()
-	return results
 }

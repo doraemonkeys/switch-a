@@ -1,0 +1,9 @@
+package debugcapture
+
+const (
+	testSessionID      = "cs_1_000000000000000000000000"
+	testOtherSessionID = "cs_2_000000000000000000000000"
+	testRecordID       = "rc1_AQAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAA"
+	testOtherRecordID  = "rc1_AQAAAAAAAAABAAAAAAAAAAIAAAAAAAAAAAAAAAA"
+	testExportID       = "ce_AAAAAAAAAAAAAAAAAAAAAAAA"
+)

@@ -894,6 +894,7 @@ func TestWebSocketSessionOrchestrator_ReplaysBufferedMessages(t *testing.T) {
 		ctx,
 		conn,
 		newBytesTrackingObserver(newCodexWebSocketMessageObserver(ModelUnknown, nil, nil, nil), &LiveBytesTracker{}),
+		webSocketRelayOptions{},
 	)
 	if err != nil {
 		t.Fatalf("replayBufferedMessages() error = %v", err)
@@ -925,7 +926,7 @@ func TestWebSocketSessionOrchestrator_ReplayBufferedMessages_EmptyBufferIsNoOp(t
 		replayBuffer: newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
 	}
 
-	replayedBytes, replayed, err := orchestrator.replayBufferedMessages(context.Background(), nil, nil)
+	replayedBytes, replayed, err := orchestrator.replayBufferedMessages(context.Background(), nil, nil, webSocketRelayOptions{})
 	if err != nil {
 		t.Fatalf("replayBufferedMessages() error = %v, want nil when no client messages were buffered", err)
 	}

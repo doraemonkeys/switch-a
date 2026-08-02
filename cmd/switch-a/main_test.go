@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/config"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+
 	"go.uber.org/zap"
 )
 
@@ -19,6 +22,92 @@ const (
 	testProxyPort             = "8080"
 	testAdminPort             = "9090"
 )
+
+type captureTestClock struct {
+	now       time.Time
+	monotonic time.Duration
+}
+
+func (c *captureTestClock) WallNow() time.Time {
+	return c.now
+}
+
+func (c *captureTestClock) MonotonicNow() time.Duration {
+	return c.monotonic
+}
+
+func TestRequestCaptureManagerConfigMapsRuntimeLimits(t *testing.T) {
+	clock := &captureTestClock{now: time.Unix(123, 0)}
+	log := zap.NewNop()
+	startup := &config.Config{
+		DebugCaptureMemoryCeilingBytes:     600 << 20,
+		DebugCaptureMaxActiveRecords:       11,
+		DebugCaptureMaxActiveTraces:        12,
+		DebugCaptureMaxTransitionsPerTrace: 13,
+		DebugCaptureMaxPendingExports:      14,
+		DebugCaptureMaxConcurrentDownloads: 15,
+		DebugCaptureDetailPreviewBytes:     16,
+		DebugCaptureDetailEventLimit:       17,
+		DebugCaptureDownloadTokenTTL:       18 * time.Second,
+		DebugCaptureMaxRecordsPerProvider:  19,
+		DebugCaptureChunkBytes:             20,
+		DebugCaptureExportLineBytes:        21,
+	}
+
+	got := requestCaptureManagerConfig(startup, clock, log)
+	want := requestcapture.Config{
+		ProcessCeilingBytes:       startup.DebugCaptureMemoryCeilingBytes,
+		DefaultSessionQuotaBytes:  requestcapture.DefaultSessionQuotaBytes,
+		ChunkBytes:                startup.DebugCaptureChunkBytes,
+		DefaultRecordsPerProvider: requestcapture.DefaultRecordsPerProvider,
+		MaxRecordsPerProvider:     startup.DebugCaptureMaxRecordsPerProvider,
+		MaxActiveTraces:           startup.DebugCaptureMaxActiveTraces,
+		MaxActiveRecords:          startup.DebugCaptureMaxActiveRecords,
+		MaxTransitionsPerTrace:    startup.DebugCaptureMaxTransitionsPerTrace,
+		MaxPendingExports:         startup.DebugCaptureMaxPendingExports,
+		MaxActiveDownloads:        startup.DebugCaptureMaxConcurrentDownloads,
+		PreviewBytes:              startup.DebugCaptureDetailPreviewBytes,
+		DetailEventLimit:          startup.DebugCaptureDetailEventLimit,
+		ExportLineBytes:           startup.DebugCaptureExportLineBytes,
+		DownloadTokenTTL:          startup.DebugCaptureDownloadTokenTTL,
+		Clock:                     clock,
+		Logger:                    log,
+	}
+	if got != want {
+		t.Fatalf("requestCaptureManagerConfig() = %+v, want %+v", got, want)
+	}
+}
+
+func TestNewCaptureManagerUsesConfiguredCeiling(t *testing.T) {
+	startup := &config.Config{
+		DebugCaptureMemoryCeilingBytes:     600 << 20,
+		DebugCaptureMaxActiveRecords:       requestcapture.DefaultMaxActiveRecords,
+		DebugCaptureMaxActiveTraces:        requestcapture.DefaultMaxActiveTraces,
+		DebugCaptureMaxTransitionsPerTrace: requestcapture.DefaultMaxTransitionsPerTrace,
+		DebugCaptureMaxPendingExports:      requestcapture.DefaultMaxPendingExports,
+		DebugCaptureMaxConcurrentDownloads: requestcapture.DefaultMaxActiveDownloads,
+		DebugCaptureDetailPreviewBytes:     requestcapture.DefaultPreviewBytes,
+		DebugCaptureDetailEventLimit:       requestcapture.DefaultDetailEventLimit,
+		DebugCaptureDownloadTokenTTL:       requestcapture.DefaultDownloadTokenTTL,
+		DebugCaptureMaxRecordsPerProvider:  requestcapture.DefaultMaxRecordsPerProvider,
+		DebugCaptureChunkBytes:             requestcapture.DefaultChunkBytes,
+		DebugCaptureExportLineBytes:        requestcapture.DefaultExportLineBytes,
+	}
+
+	manager, err := newCaptureManager(startup, &captureTestClock{}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("newCaptureManager() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := manager.Close(); closeErr != nil {
+			t.Errorf("manager.Close() error = %v", closeErr)
+		}
+	})
+
+	if got := manager.Status().ProcessMemory.CeilingBytes; got != startup.DebugCaptureMemoryCeilingBytes {
+		t.Fatalf("capture ceiling = %d, want %d", got, startup.DebugCaptureMemoryCeilingBytes)
+	}
+}
 
 type stubLogStore struct {
 	mu              sync.Mutex

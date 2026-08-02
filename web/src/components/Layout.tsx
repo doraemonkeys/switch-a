@@ -1,8 +1,14 @@
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { APP_VERSION } from "../config";
 import { useApi } from "@/api/useApi";
+import { DebugCaptureStatusBadge } from "@/features/debug-capture";
 
-const navItems = [
+const navItems: Array<{
+  to: string;
+  label: string;
+  icon: string;
+  showCaptureStatus?: boolean;
+}> = [
   { to: "/", label: "Dashboard", icon: "📊" },
   { to: "/monitor", label: "Monitor", icon: "📡" },
   { to: "/providers", label: "Providers", icon: "🔌" },
@@ -10,6 +16,12 @@ const navItems = [
   { to: "/routing", label: "Routing", icon: "🧭" },
   { to: "/config", label: "Config", icon: "⚙️" },
   { to: "/logs", label: "Logs", icon: "📋" },
+  {
+    to: "/debug-capture",
+    label: "Debug Capture",
+    icon: "🐞",
+    showCaptureStatus: true,
+  },
 ];
 
 export function Layout() {
@@ -80,6 +92,7 @@ export function Layout() {
                     >
                       <span className="text-base">{item.icon}</span>
                       <span className="font-medium text-sm">{item.label}</span>
+                      {item.showCaptureStatus && <DebugCaptureStatusBadge />}
                     </NavLink>
                   </li>
                 ))}

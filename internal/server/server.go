@@ -11,6 +11,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/admin"
+	admindebugcapture "github.com/doraemonkeys/switch-a/internal/admin/debugcapture"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
@@ -122,6 +123,7 @@ type Config struct {
 	ActiveRegistry             *proxy.ActiveRequestRegistry
 	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
 	Auth                       *providerauth.Service
+	Capture                    proxy.RequestCapture
 }
 
 // AdminConfig holds admin server configuration.
@@ -136,6 +138,9 @@ type AdminConfig struct {
 	ActiveReqList       admin.ActiveRequestLister
 	Auth                *providerauth.Service
 	ProviderImportStore admin.ProviderImportStore
+	CaptureSessions     admindebugcapture.CaptureSessions
+	CaptureQueries      admindebugcapture.CaptureQueries
+	CaptureExports      admindebugcapture.CaptureExports
 }
 
 // HealthResponse represents the health check response.
@@ -161,6 +166,7 @@ func New(cfg Config) *Server {
 		ActiveRegistry:             cfg.ActiveRegistry,
 		VisibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
 		Auth:                       cfg.Auth,
+		Capture:                    cfg.Capture,
 		Logger:                     cfg.Logger,
 	})
 
@@ -211,7 +217,7 @@ func NewAdmin(cfg AdminConfig) *AdminServer {
 	s := &AdminServer{
 		server: &http.Server{
 			Addr:              net.JoinHostPort("", cfg.Port),
-			Handler:           mux,
+			Handler:           secureDebugCaptureBoundary(mux),
 			ReadHeaderTimeout: ReadHeaderTimeout,
 			IdleTimeout:       IdleTimeout,
 		},
@@ -249,6 +255,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 
 	// Create auth middleware
 	auth := admin.NewAuthMiddleware(cfg.AdminToken)
+	s.registerDebugCaptureRoutes(mux, cfg, auth)
 
 	// Provider routes
 	mux.Handle("GET /admin/api/providers", auth.WrapFunc(adminHandler.ListProviders))
@@ -429,6 +436,10 @@ func (s *AdminServer) handleAdminAPINotFound(w http.ResponseWriter, r *http.Requ
 		zap.String("remote_addr", r.RemoteAddr),
 	)
 
+	writeAdminAPINotFound(w)
+}
+
+func writeAdminAPINotFound(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", admin.ContentTypeJSON)
 	w.WriteHeader(http.StatusNotFound)
 	_ = json.NewEncoder(w).Encode(model.ErrorResponse{

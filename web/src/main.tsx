@@ -3,13 +3,15 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import { ApiProvider } from "./api";
-import { ErrorBoundary } from "./components";
+import { ErrorBoundary, ToastProvider } from "./components";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary>
       <ApiProvider>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </ApiProvider>
     </ErrorBoundary>
   </StrictMode>,

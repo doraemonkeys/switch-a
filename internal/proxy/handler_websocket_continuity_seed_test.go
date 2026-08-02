@@ -19,6 +19,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const postVisibleFailoverObservationTimeout = 10 * testPollTimeout
+
 func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProviderAsFailover(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +137,7 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer conn.CloseNow()
 
 	if err := conn.Write(ctx, websocket.MessageText, []byte("first")); err != nil {
 		t.Fatalf("write initial client message: %v", err)
@@ -147,14 +149,21 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 	if msgType != websocket.MessageText || string(payload) != `{"type":"response.created","response":{"id":"origin-visible"}}` {
 		t.Fatalf("origin payload = (%v, %q), want origin visible response", msgType, string(payload))
 	}
-	waitFor(t, func() bool { return retrySelections.Load() == 1 && fallbackAccepts.Load() == 1 }, testPollTimeout)
+	// The fallback crosses two real WebSocket servers and persistence starts only
+	// after their close handshake. Coverage and race scheduling therefore need a
+	// wider bound than the unit-test polling default without changing production timing.
+	waitFor(t, func() bool { return retrySelections.Load() == 1 && fallbackAccepts.Load() == 1 }, postVisibleFailoverObservationTimeout)
 	_, _, _ = conn.Read(ctx)
+	// Persistence is intentionally asynchronous after the WebSocket session ends.
+	// Explicit teardown makes that lifecycle edge deterministic instead of waiting
+	// for a close handshake while this test is no longer reading control frames.
+	_ = conn.CloseNow()
 
 	if got := retrySelections.Load(); got != 1 {
 		t.Fatalf("retry selections = %d, want 1", got)
 	}
 
-	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, testPollTimeout)
+	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, postVisibleFailoverObservationTimeout)
 	attempts := store.LastAttempts(2)
 	if attempts[0].SwitchMode != model.RequestAttemptSwitchModeInitial {
 		t.Fatalf("first attempt SwitchMode = %q, want %q", attempts[0].SwitchMode, model.RequestAttemptSwitchModeInitial)

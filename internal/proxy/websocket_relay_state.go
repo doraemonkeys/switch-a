@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturebridge"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
 	"github.com/coder/websocket"
 )
@@ -15,6 +17,7 @@ type webSocketRelayResult struct {
 	bytes                   int64
 	err                     error
 	failurePeer             webSocketPeer
+	failureOperation        webSocketRelayFailureOperation
 	errorOrder              uint32
 	suppressedUpstreamError *WebSocketUpstreamError
 	// closeError preserves the original *websocket.CloseError pulled from the
@@ -39,8 +42,17 @@ type webSocketRelayOutcome struct {
 	// failurePeer records which side originated the error that survived
 	// reduction. Evidence builders need this to attribute transport facts to
 	// upstream vs client; close propagation does not.
-	failurePeer webSocketPeer
+	failurePeer      webSocketPeer
+	failureOperation webSocketRelayFailureOperation
 }
+
+type webSocketRelayFailureOperation uint8
+
+const (
+	webSocketRelayFailureOperationUnknown webSocketRelayFailureOperation = iota
+	webSocketRelayFailureOperationRead
+	webSocketRelayFailureOperationWrite
+)
 
 type webSocketPeer uint8
 
@@ -77,6 +89,8 @@ type webSocketLifecycleSnapshot struct {
 type webSocketReplayMessage struct {
 	MessageType websocket.MessageType
 	Data        []byte
+	Lineage     requestcapture.MessageLineage
+	Delivered   bool
 }
 
 type preVisibleClientMessageBuffer struct {
@@ -121,7 +135,169 @@ type webSocketVisibleWriteContext struct {
 	Observation WebSocketObservation
 }
 
+type webSocketCapturedRead struct {
+	Ref       requestcapture.MessageRef
+	Lineage   requestcapture.MessageLineage
+	Direction requestcapture.MessageDirection
+}
+
+type webSocketMessageReadCapture func(
+	webSocketRelayOptions,
+	requestcapture.MessageDirection,
+	websocket.MessageType,
+	[]byte,
+	requestcapture.MessageSource,
+	requestcapture.MessageLineage,
+	requestcapture.MessageLineage,
+) webSocketCapturedRead
+
+type webSocketMessageResultCapture func(
+	webSocketRelayOptions,
+	webSocketCapturedRead,
+	requestcapture.MessageDisposition,
+	bool,
+	error,
+)
+
+func captureWebSocketMessageRead(
+	options webSocketRelayOptions,
+	direction requestcapture.MessageDirection,
+	messageType websocket.MessageType,
+	data []byte,
+	source requestcapture.MessageSource,
+	lineage requestcapture.MessageLineage,
+	sourceLineage requestcapture.MessageLineage,
+) webSocketCapturedRead {
+	return options.captureRead(
+		options,
+		direction,
+		messageType,
+		data,
+		source,
+		lineage,
+		sourceLineage,
+	)
+}
+
+func captureNoWebSocketMessageRead(
+	webSocketRelayOptions,
+	requestcapture.MessageDirection,
+	websocket.MessageType,
+	[]byte,
+	requestcapture.MessageSource,
+	requestcapture.MessageLineage,
+	requestcapture.MessageLineage,
+) webSocketCapturedRead {
+	return webSocketCapturedRead{}
+}
+
+func captureWebSocketMessageLineage(
+	options webSocketRelayOptions,
+	direction requestcapture.MessageDirection,
+	messageType websocket.MessageType,
+	_ []byte,
+	source requestcapture.MessageSource,
+	lineage requestcapture.MessageLineage,
+	_ requestcapture.MessageLineage,
+) webSocketCapturedRead {
+	if direction != requestcapture.MessageDirectionClientToUpstream || source != requestcapture.MessageSourceLive {
+		return webSocketCapturedRead{}
+	}
+	if _, ok := captureWebSocketMessageType(messageType); !ok {
+		return webSocketCapturedRead{}
+	}
+	if !lineage.Valid() {
+		lineage = options.GatewayCapture.NewMessageID()
+	}
+	return webSocketCapturedRead{Lineage: lineage, Direction: direction}
+}
+
+func captureWebSocketMessagePayload(
+	options webSocketRelayOptions,
+	direction requestcapture.MessageDirection,
+	messageType websocket.MessageType,
+	data []byte,
+	source requestcapture.MessageSource,
+	lineage requestcapture.MessageLineage,
+	sourceLineage requestcapture.MessageLineage,
+) webSocketCapturedRead {
+	captureType, ok := captureWebSocketMessageType(messageType)
+	if !ok {
+		return webSocketCapturedRead{}
+	}
+	if !lineage.Valid() && direction == requestcapture.MessageDirectionClientToUpstream && source == requestcapture.MessageSourceLive {
+		lineage = options.GatewayCapture.NewMessageID()
+	}
+	ref := options.Capture.MessageRead(requestcapture.MessageRead{
+		Lineage:       lineage,
+		Direction:     direction,
+		Type:          captureType,
+		Payload:       data,
+		Source:        source,
+		SourceLineage: sourceLineage,
+	})
+	return webSocketCapturedRead{Ref: ref, Lineage: ref.Lineage(), Direction: direction}
+}
+
+func captureWebSocketMessageResult(
+	options webSocketRelayOptions,
+	read webSocketCapturedRead,
+	disposition requestcapture.MessageDisposition,
+	writeConfirmed bool,
+	err error,
+) {
+	options.captureResult(options, read, disposition, writeConfirmed, err)
+}
+
+func captureNoWebSocketMessageResult(
+	webSocketRelayOptions,
+	webSocketCapturedRead,
+	requestcapture.MessageDisposition,
+	bool,
+	error,
+) {
+}
+
+func captureWebSocketMessagePayloadResult(
+	options webSocketRelayOptions,
+	read webSocketCapturedRead,
+	disposition requestcapture.MessageDisposition,
+	writeConfirmed bool,
+	err error,
+) {
+	peer := requestcapture.FailurePeerUnknown
+	switch read.Direction {
+	case requestcapture.MessageDirectionClientToUpstream:
+		peer = requestcapture.FailurePeerUpstream
+	case requestcapture.MessageDirectionUpstreamToClient:
+		peer = requestcapture.FailurePeerClient
+	}
+	options.Capture.MessageResult(read.Ref, requestcapture.MessageResult{
+		Disposition:        disposition,
+		WriteConfirmed:     writeConfirmed,
+		Failure:            capturefailure.WebSocketMessageWrite(peer, err),
+		CredentialEvidence: options.CredentialEvidence,
+	})
+}
+
+func captureWebSocketMessageType(messageType websocket.MessageType) (requestcapture.MessageType, bool) {
+	switch messageType {
+	case websocket.MessageText:
+		return requestcapture.MessageTypeText, true
+	case websocket.MessageBinary:
+		return requestcapture.MessageTypeBinary, true
+	default:
+		return "", false
+	}
+}
+
 type webSocketRelayOptions struct {
+	GatewayCapture           requestcapture.GatewayRecorder
+	Capture                  requestcapture.Recorder
+	CaptureMode              capturebridge.Mode
+	captureRead              webSocketMessageReadCapture
+	captureResult            webSocketMessageResultCapture
+	CredentialEvidence       requestcapture.CredentialEvidence
 	Observer                 WebSocketMessageObserver
 	OnFirstUpstreamMessage   func(WebSocketObservation)
 	PreWriteToClient         func(webSocketPreWriteContext) webSocketPreWriteDecision
@@ -140,6 +316,21 @@ type webSocketRelayOptions struct {
 	// the orchestrator can keep switching providers or surface the suppressed
 	// original payload instead of collapsing the session into a transport close.
 	PreserveClientOnPreVisibleFailure bool
+}
+
+func (o webSocketRelayOptions) withCaptureHooks() webSocketRelayOptions {
+	switch o.CaptureMode {
+	case capturebridge.ModeTransition:
+		o.captureRead = captureWebSocketMessageLineage
+		o.captureResult = captureNoWebSocketMessageResult
+	case capturebridge.ModePayload:
+		o.captureRead = captureWebSocketMessagePayload
+		o.captureResult = captureWebSocketMessagePayloadResult
+	default:
+		o.captureRead = captureNoWebSocketMessageRead
+		o.captureResult = captureNoWebSocketMessageResult
+	}
+	return o
 }
 
 type webSocketRelaySessionResult struct {
@@ -162,6 +353,7 @@ type webSocketRelaySessionResult struct {
 	// this pointer.
 	ObservedCloseError *websocket.CloseError
 	FailurePeer        webSocketPeer
+	FailureOperation   webSocketRelayFailureOperation
 }
 
 type webSocketPreVisibleRelayProgress struct {
@@ -194,26 +386,6 @@ type webSocketInitialReadResult struct {
 
 func shouldRunPreVisibleSuppressionWindow(options webSocketRelayOptions) bool {
 	return options.PreserveClientOnSuppress && !options.SkipPreVisibleWindow
-}
-
-func newSinglePeerRelaySessionResult(
-	err error,
-	failurePeer webSocketPeer,
-	fallbackCommit *webSocketCommitState,
-	lifecycle *webSocketLifecycleState,
-	bytesClientToUpstream, bytesUpstreamToClient int64,
-) *webSocketRelaySessionResult {
-	var errorOrder atomic.Uint32
-	return newWebSocketRelaySessionResultFromOutcome(
-		reduceOrderedWebSocketRelayResults(
-			newWebSocketRelayResult(0, err, failurePeer, &errorOrder),
-			webSocketRelayResult{},
-		),
-		fallbackCommit,
-		lifecycle,
-		bytesClientToUpstream,
-		bytesUpstreamToClient,
-	)
 }
 
 func disablePreVisibleReplayBufferIfNeeded(options webSocketRelayOptions) {
@@ -338,42 +510,70 @@ func (b *preVisibleClientMessageBuffer) Disable() {
 	b.disableLocked()
 }
 
-func (b *preVisibleClientMessageBuffer) Record(messageType websocket.MessageType, data []byte, clientVisible bool) {
+const invalidWebSocketReplayMessageIndex = -1
+
+func (b *preVisibleClientMessageBuffer) Record(messageType websocket.MessageType, data []byte, clientVisible bool) int {
+	return b.RecordWithLineage(messageType, data, clientVisible, requestcapture.MessageLineage{})
+}
+
+func (b *preVisibleClientMessageBuffer) RecordWithLineage(
+	messageType websocket.MessageType,
+	data []byte,
+	clientVisible bool,
+	lineage requestcapture.MessageLineage,
+) int {
 	if b == nil {
-		return
+		return invalidWebSocketReplayMessageIndex
 	}
 
 	if clientVisible {
 		b.Disable()
-		return
+		return invalidWebSocketReplayMessageIndex
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if !b.enabled {
-		return
+		return invalidWebSocketReplayMessageIndex
 	}
 	if !isReplayableWebSocketMessageType(messageType) {
 		b.disableLocked()
-		return
+		return invalidWebSocketReplayMessageIndex
 	}
 	if len(b.messages) >= preVisibleClientReplayBufferLimitMessages {
 		b.disableLocked()
-		return
+		return invalidWebSocketReplayMessageIndex
 	}
 	nextTotalBytes := b.totalBytes + len(data)
 	if nextTotalBytes > b.limitBytes {
 		b.disableLocked()
-		return
+		return invalidWebSocketReplayMessageIndex
 	}
 
 	payload := append([]byte(nil), data...)
 	b.messages = append(b.messages, webSocketReplayMessage{
 		MessageType: messageType,
 		Data:        payload,
+		Lineage:     lineage,
 	})
 	b.totalBytes = nextTotalBytes
+	return len(b.messages) - 1
+}
+
+func (b *preVisibleClientMessageBuffer) MarkDelivered(index int, lineage requestcapture.MessageLineage) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if index < 0 || index >= len(b.messages) {
+		return
+	}
+	b.messages[index].Delivered = true
+	if lineage.Valid() {
+		b.messages[index].Lineage = lineage
+	}
 }
 
 func (b *preVisibleClientMessageBuffer) Replay(ctx context.Context, upstreamConn *websocket.Conn) error {
@@ -410,6 +610,8 @@ func (b *preVisibleClientMessageBuffer) Snapshot() preVisibleClientMessageBuffer
 		snapshot.Messages = append(snapshot.Messages, webSocketReplayMessage{
 			MessageType: message.MessageType,
 			Data:        append([]byte(nil), message.Data...),
+			Lineage:     message.Lineage,
+			Delivered:   message.Delivered,
 		})
 	}
 	return snapshot

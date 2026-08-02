@@ -59,6 +59,27 @@ export function createMockApiClient(): ApiClient {
     requests: {
       active: vi.fn().mockResolvedValue({ requests: [], count: 0 }),
     },
+    debugCapture: {
+      status: vi.fn().mockResolvedValue({
+        state: "stopped",
+        process_memory: {
+          ceiling_bytes: 536_870_912,
+          charged_bytes: 0,
+          retained_bytes: 0,
+          pinned_bytes: 0,
+          releasing_bytes: 0,
+          temporary_bytes: 0,
+        },
+        pending_export_count: 0,
+        active_download_count: 0,
+        session: null,
+      }),
+      start: vi.fn(),
+      stop: vi.fn(),
+      listRecords: vi.fn(),
+      getRecord: vi.fn(),
+      createExport: vi.fn(),
+    },
   } as unknown as ApiClient;
 }
 

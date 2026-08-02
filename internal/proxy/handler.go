@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -12,7 +13,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/providerauth"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
 	"github.com/google/uuid"
@@ -32,7 +34,8 @@ type Handler struct {
 	lastCfg                    *transportCacheKey
 	fallbackCounter            atomic.Int64 // Counter for true round-robin in fallback mode
 	wsForwarder                *WebSocketForwarder
-	auth                       *providerauth.Service
+	auth                       ProviderAuthenticator
+	capture                    RequestCapture
 }
 
 // transportCacheKey is used to detect if Transport config changed.
@@ -66,11 +69,18 @@ type firstWriteResponseWriter struct {
 	committed      bool
 	firstWriteTime time.Time // Time of first data write (for TTFT calculation)
 	bytesWritten   int64     // Total bytes written to client
+	writeErr       error
 }
 
 func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
 	writeTime := time.Now()
 	n, err := w.ResponseWriter.Write(p)
+	switch {
+	case err != nil:
+		w.writeErr = err
+	case n != len(p):
+		w.writeErr = io.ErrShortWrite
+	}
 	if n > 0 {
 		w.commit()
 		if !w.written {
@@ -131,6 +141,25 @@ type Selector interface {
 	ClearConcurrency(providerID string)
 }
 
+// HTTPTransport is the forwarding surface consumed by one gateway request.
+type HTTPTransport interface {
+	FetchUpstream(context.Context, *http.Request) (*UpstreamResponse, error)
+	WriteToClient(context.Context, http.ResponseWriter, *UpstreamResponse) error
+}
+
+// ProviderAuthenticator is defined at the proxy boundary so credential refresh
+// can be fault-injected without coupling request orchestration to its producer.
+type ProviderAuthenticator interface {
+	ApplyProviderCredentials(context.Context, http.Header, *model.Provider, string, string, *http.Request) error
+	RefreshProviderCredentials(context.Context, *model.Provider) (bool, error)
+}
+
+// RequestCapture is the proxy-owned view of the process capture manager.
+type RequestCapture interface {
+	Enabled() bool
+	BeginGateway(requestcapture.GatewayStart) requestcapture.GatewayRecorder
+}
+
 // Config holds proxy handler configuration.
 type Config struct {
 	Store                      Store
@@ -138,7 +167,8 @@ type Config struct {
 	Health                     internal.HealthManager
 	ActiveRegistry             *ActiveRequestRegistry
 	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
-	Auth                       *providerauth.Service
+	Auth                       ProviderAuthenticator
+	Capture                    RequestCapture
 	Logger                     *zap.Logger
 }
 
@@ -164,6 +194,7 @@ func NewHandler(cfg Config) *Handler {
 		logger:                     cfg.Logger,
 		wsForwarder:                NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger}),
 		auth:                       cfg.Auth,
+		capture:                    cfg.Capture,
 	}
 }
 
@@ -211,19 +242,22 @@ func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
 // Immutable fields (r, cfg, apiType, body, info, startTime, requestID) are set once during construction.
 // Mutable fields (selectReq, isSticky, attempts) are modified during retry orchestration.
 type proxyContext struct {
-	r         *http.Request
-	w         http.ResponseWriter
-	cfg       *runtimeConfig
-	transport *Transport
-	apiType   string
-	body      []byte
-	info      RequestInfo
-	selectReq *model.SelectRequest
-	startTime time.Time
-	requestID string                 // UUID for this request
-	liveBytes *LiveBytesTracker      // Logical-request traffic shared across provider attempts
-	isSticky  bool                   // Whether provider came from sticky cache
-	attempts  []model.RequestAttempt // Attempts made during this request
+	r                      *http.Request
+	w                      http.ResponseWriter
+	cfg                    *runtimeConfig
+	transport              HTTPTransport
+	apiType                string
+	body                   []byte
+	info                   RequestInfo
+	selectReq              *model.SelectRequest
+	startTime              time.Time
+	requestID              string // UUID for this request
+	capture                requestcapture.GatewayRecorder
+	captureParticipates    bool
+	httpCaptureCompletions []httpCaptureCompletion
+	liveBytes              *LiveBytesTracker      // Logical-request traffic shared across provider attempts
+	isSticky               bool                   // Whether provider came from sticky cache
+	attempts               []model.RequestAttempt // Attempts made during this request
 }
 
 // ServeHTTP handles proxy requests.
@@ -309,6 +343,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		liveBytes: &LiveBytesTracker{},
 		attempts:  make([]model.RequestAttempt, 0),
 	}
+	pctx.capture = h.beginGatewayCapture(requestID, startTime)
+	pctx.captureParticipates = pctx.capture.Valid()
+	if pctx.captureParticipates {
+		defer func() {
+			pctx.capture.Finish(gatewayCaptureOutcome(ctx))
+		}()
+		defer pctx.finishHTTPCaptureCompletions()
+	}
 	pctx.selectReq = &model.SelectRequest{
 		ClientIP:   pctx.info.ClientIP,
 		User:       pctx.info.UserID,
@@ -319,6 +361,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Execute proxy with retry logic
 	h.executeProxy(ctx, pctx)
+}
+
+func (h *Handler) beginGatewayCapture(requestID string, startedAt time.Time) requestcapture.GatewayRecorder {
+	if h.capture == nil || !h.capture.Enabled() {
+		return requestcapture.GatewayRecorder{}
+	}
+	return h.capture.BeginGateway(requestcapture.GatewayStart{
+		GatewayRequestID: requestID,
+		StartedAt:        startedAt,
+	})
+}
+
+func gatewayCaptureOutcome(ctx context.Context) requestcapture.GatewayOutcome {
+	err := ctx.Err()
+	if err == nil {
+		return requestcapture.GatewayOutcome{}
+	}
+
+	peer := requestcapture.FailurePeerGateway
+	class := requestcapture.FailureClassCanceled
+	reason := requestcapture.TerminationReasonCanceled
+	if contextClass, known := capturefailure.ContextClass(err); known {
+		class = contextClass
+		switch contextClass {
+		case requestcapture.FailureClassTimeout:
+			reason = requestcapture.TerminationReasonTimeout
+		case requestcapture.FailureClassCanceled:
+			peer = requestcapture.FailurePeerClient
+			reason = requestcapture.TerminationReasonClientDisconnect
+		}
+	}
+	return requestcapture.GatewayOutcome{
+		TerminationReason: reason,
+		Failure: capturefailure.Observation(
+			capturefailure.FromError(
+				requestcapture.FailureSiteGateway,
+				peer,
+				class,
+				requestcapture.FailureCodeGatewayContext,
+				err,
+			),
+			requestcapture.FailureFact{},
+		),
+	}
 }
 
 // handleBodyError handles body read errors.
@@ -594,7 +680,11 @@ func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp
 
 // buildProviderRequest validates the provider's endpoint/auth config and
 // constructs the upstream HTTP request.
-func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, error) {
+func (h *Handler) buildProviderRequest(
+	ctx context.Context,
+	pctx *proxyContext,
+	provider *model.Provider,
+) (*http.Request, requestcapture.FailureCode, error) {
 	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
 	baseURL := provider.BaseURLForAPIType(pctx.apiType)
 
@@ -606,7 +696,8 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 			zap.String("provider_id", provider.ID),
 			zap.String("api_type", pctx.apiType),
 		)
-		return nil, fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
+		return nil, requestcapture.FailureCodeMissingBaseURL,
+			fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
 	}
 
 	if model.NormalizeProviderCredentialType(provider.CredentialType) == model.ProviderCredentialTypeAPIKey && provider.APIKeyForAPIType(pctx.apiType) == "" {
@@ -614,7 +705,8 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 			zap.String("provider_id", provider.ID),
 			zap.String("api_type", pctx.apiType),
 		)
-		return nil, fmt.Errorf("provider %q has no api_key configured for api_type %q", provider.ID, pctx.apiType)
+		return nil, requestcapture.FailureCodeMissingAPIKey,
+			fmt.Errorf("provider %q has no api_key configured for api_type %q", provider.ID, pctx.apiType)
 	}
 
 	upstreamURL := h.buildFullURL(baseURL, upstreamPath, pctx.r.URL.RawQuery)
@@ -622,10 +714,10 @@ func (h *Handler) buildProviderRequest(ctx context.Context, pctx *proxyContext, 
 	req, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
 	if err != nil {
 		h.logger.Error("failed to build upstream request", zap.Error(err))
-		return nil, err
+		return nil, requestcapture.FailureCodeRequestBuild, err
 	}
 
-	return req, nil
+	return req, "", nil
 }
 
 // extractTokenUsage waits for interceptors to finish and returns parsed token usage, if available.
@@ -653,18 +745,23 @@ func (h *Handler) extractTokenUsage(statusCode int, interceptor ResponseIntercep
 
 // forwardToProvider forwards the request to a single provider.
 // Note: Retry orchestration (per-provider retries and provider switching) is handled in executeProxy.
-func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, provider *model.Provider) forwardResult {
-	upstreamReq, result, ok := h.prepareForwardRequest(ctx, pctx, provider)
+func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, attempt httpAttemptContext) forwardResult {
+	upstreamReq, result, ok := h.prepareForwardRequest(
+		ctx,
+		pctx,
+		attempt,
+		requestcapture.CredentialPhaseInitial,
+	)
 	if !ok {
 		return result
 	}
 
-	upstreamResp, result, ok := h.fetchForwardResponse(ctx, pctx, provider, upstreamReq)
+	upstreamResp, exchange, result, ok := h.fetchForwardResponse(ctx, pctx, attempt, upstreamReq)
 	if !ok {
 		return result
 	}
 
-	return h.commitForwardResponse(ctx, pctx, provider, upstreamResp)
+	return h.commitForwardResponse(ctx, pctx, attempt.provider, upstreamResp, exchange)
 }
 
 // handleWriteError classifies a write error and updates the result accordingly.

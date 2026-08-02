@@ -353,11 +353,11 @@ func TestWebSocketRuntime_NewWebSocketRelayResult_CapturesSuppressedErrorClone(t
 func TestWebSocketRuntime_ClassifyAndSanitizeTerminalOutcomes(t *testing.T) {
 	t.Parallel()
 
-	if got := classifyDialFailure(&http.Response{StatusCode: http.StatusBadGateway}); got != model.TerminalUpstreamHandshakeRejected {
+	if got := classifyDialFailure(http.StatusBadGateway); got != model.TerminalUpstreamHandshakeRejected {
 		t.Fatalf("classifyDialFailure(response) = %q, want %q", got, model.TerminalUpstreamHandshakeRejected)
 	}
-	if got := classifyDialFailure(nil); got != model.TerminalUpstreamTransportError {
-		t.Fatalf("classifyDialFailure(nil) = %q, want %q", got, model.TerminalUpstreamTransportError)
+	if got := classifyDialFailure(0); got != model.TerminalUpstreamTransportError {
+		t.Fatalf("classifyDialFailure(no response) = %q, want %q", got, model.TerminalUpstreamTransportError)
 	}
 
 	tests := []struct {
