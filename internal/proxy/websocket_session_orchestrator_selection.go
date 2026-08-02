@@ -9,6 +9,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
 	"go.uber.org/zap"
@@ -159,7 +160,16 @@ func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(ctx context.C
 		}
 
 		if o.replayBuffer != nil {
-			o.replayBuffer.Record(messageType, data, false)
+			var lineage requestcapture.MessageLineage
+			if o.captureParticipates {
+				lineage = o.capture.NewMessageID()
+			}
+			o.replayBuffer.RecordWithLineage(
+				messageType,
+				data,
+				false,
+				lineage,
+			)
 		}
 
 		observer := o.selectionProbeObserver(o.info.Model)

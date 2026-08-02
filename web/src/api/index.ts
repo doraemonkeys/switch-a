@@ -8,6 +8,47 @@ export {
   createTokenManager,
 } from "./client";
 export type { ApiClient } from "./client";
+export { createDebugCaptureApi } from "./debug-capture";
+export type { DebugCaptureApi } from "./debug-capture";
+export type {
+  CaptureCompletion,
+  CaptureCredentialPhase,
+  CaptureLifecycleState,
+  CaptureProtocol,
+  CaptureSelectionMode,
+  CaptureSelectionSource,
+  CaptureSnapshotState,
+  CaptureSourceCompletion,
+  CaptureTerminationReason,
+  CreateDebugCaptureExportRequest,
+  DebugCaptureBlobPreview,
+  DebugCaptureDownloadGrant,
+  DebugCaptureFailureClass,
+  DebugCaptureFailureCode,
+  DebugCaptureFailureFact,
+  DebugCaptureFailureObservation,
+  DebugCaptureFailurePeer,
+  DebugCaptureFailureSite,
+  DebugCaptureHeaders,
+  DebugCaptureHTTPExchangeDetail,
+  DebugCaptureMessageSnapshot,
+  DebugCaptureProcessMemoryStatus,
+  DebugCaptureProviderIdentity,
+  DebugCaptureProviderSnapshot,
+  DebugCaptureRecordDetail,
+  DebugCaptureRecordSummary,
+  DebugCaptureRecordsPage,
+  DebugCaptureRecordsQuery,
+  DebugCaptureSessionInfo,
+  DebugCaptureSessionStatus,
+  DebugCaptureState,
+  DebugCaptureStatus,
+  DebugCaptureTraceEntry,
+  DebugCaptureTraceSummary,
+  DebugCaptureWebSocketCloseSnapshot,
+  DebugCaptureWebSocketExchangeDetail,
+  StartDebugCaptureRequest,
+} from "./debug-capture-types";
 
 // Type exports
 export type {

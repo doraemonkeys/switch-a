@@ -2,10 +2,13 @@ package proxy
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturebridge"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -59,6 +62,115 @@ type realDialer struct{}
 
 func (realDialer) Dial(ctx context.Context, url string, opts *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
 	return websocket.Dial(ctx, url, opts)
+}
+
+// WebSocketDialRequest keeps physical wire inputs and capture identity together.
+// Capture begins only after headers reach their final wire shape, so the record
+// describes the real dial without gaining authority over transport behavior.
+type WebSocketDialRequest struct {
+	URL                 string
+	Headers             http.Header
+	Capture             requestcapture.GatewayRecorder
+	CaptureParticipates bool
+	Attempt             requestcapture.AttemptMetadata
+}
+
+// DialExchange is the complete result of one physical upstream dial. A provider
+// attempt may contain more than one exchange when managed credentials are refreshed,
+// so this result deliberately does not share the provider-attempt lifecycle.
+type DialExchange struct {
+	Conn                     *websocket.Conn
+	StartedAt                time.Time
+	CompletedAt              time.Time
+	HandshakeObservedAt      time.Time
+	HandshakeStatusCode      int
+	HandshakeProtocol        string
+	HandshakeContentLength   int64
+	HandshakeHeaders         http.Header
+	HandshakeBodySnippet     string
+	ObservedFailureBodyBytes int64
+	FailureBodyPresent       bool
+	FailureBodyReachedEOF    bool
+	FailureBodyLimitReached  bool
+	FailureBodyReadErr       error
+	Err                      error
+	capture                  requestcapture.Recorder
+	captureMode              capturebridge.Mode
+	credentialEvidence       requestcapture.CredentialEvidence
+}
+
+func (e DialExchange) Accepted() bool {
+	return e.Conn != nil && e.Err == nil
+}
+
+func (e DialExchange) toWebSocketResult() *WebSocketResult {
+	return &WebSocketResult{
+		HandshakeAccepted:    e.Accepted(),
+		HandshakeStatusCode:  e.HandshakeStatusCode,
+		HandshakeProtocol:    e.HandshakeProtocol,
+		HandshakeBodySnippet: e.HandshakeBodySnippet,
+		HandshakeHeaders:     e.HandshakeHeaders,
+		HandshakeObservedAt:  e.HandshakeObservedAt,
+		HandshakeStartedAt:   e.StartedAt,
+		HandshakeCompletedAt: e.CompletedAt,
+		Err:                  e.Err,
+		TerminalCause:        classifyDialFailure(e.HandshakeStatusCode),
+		CommitSource:         model.CommitUnknown,
+	}
+}
+
+func (e DialExchange) applyHandshake(result *WebSocketResult) {
+	if result == nil {
+		return
+	}
+	result.HandshakeAccepted = e.Accepted()
+	result.HandshakeStatusCode = e.HandshakeStatusCode
+	result.HandshakeProtocol = e.HandshakeProtocol
+	result.HandshakeHeaders = e.HandshakeHeaders
+	result.HandshakeObservedAt = e.HandshakeObservedAt
+	result.HandshakeStartedAt = e.StartedAt
+	result.HandshakeCompletedAt = e.CompletedAt
+}
+
+type webSocketFailureBodyReader struct {
+	io.ReadCloser
+	capture requestcapture.Recorder
+}
+
+func (r *webSocketFailureBodyReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if n > 0 {
+		r.capture.ObserveUpstream(p[:n])
+	}
+	return n, err
+}
+
+func beginWebSocketDialCapture(
+	request WebSocketDialRequest,
+	dialHeaders http.Header,
+) (
+	requestcapture.Recorder,
+	requestcapture.SensitiveHeaderEvidence,
+	requestcapture.CredentialEvidence,
+	capturebridge.Mode,
+) {
+	if !request.CaptureParticipates {
+		return requestcapture.Recorder{}, requestcapture.SensitiveHeaderEvidence{}, requestcapture.CredentialEvidence{}, capturebridge.ModeNone
+	}
+
+	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(dialHeaders)
+	recorder := request.Capture.BeginWebSocket(requestcapture.RawWebSocketStart{
+		Attempt:   request.Attempt,
+		TargetURL: request.URL,
+		Request: requestcapture.RawRequest{
+			Method:             http.MethodGet,
+			Headers:            dialHeaders,
+			ContentLength:      0,
+			SensitiveHeaders:   sensitiveHeaders,
+			CredentialEvidence: credentialEvidence,
+		},
+	})
+	return recorder, sensitiveHeaders, credentialEvidence, capturebridge.ModeForRecorder(recorder)
 }
 
 // WebSocketForwarder handles bidirectional WebSocket forwarding to upstream providers.
@@ -126,6 +238,14 @@ type WebSocketResult struct {
 	// HandshakeStatusCode records the HTTP status observed before the bidirectional
 	// session started, whether the rejection came from the gateway or upstream.
 	HandshakeStatusCode int
+
+	// HandshakeProtocol preserves the HTTP protocol reported by the dial response.
+	HandshakeProtocol string
+
+	// HandshakeStartedAt and HandshakeCompletedAt bound the physical dial rather
+	// than the longer logical provider attempt, which may include credential refresh.
+	HandshakeStartedAt   time.Time
+	HandshakeCompletedAt time.Time
 
 	// HandshakeBodySnippet captures the upstream HTTP error body from a rejected
 	// WebSocket upgrade so logs can show the provider's actual reason.
@@ -255,34 +375,39 @@ func (f *WebSocketForwarder) ForwardObserved(
 ) (*WebSocketResult, error) {
 	start := time.Now()
 
-	upstreamConn, dialResult := f.dialUpstream(ctx, upstreamURL, extraHeaders)
-	if dialResult != nil {
-		dialResult.Duration = time.Since(start)
-		return dialResult, nil
+	dialExchange := f.dialUpstream(ctx, WebSocketDialRequest{
+		URL:     upstreamURL,
+		Headers: extraHeaders,
+	})
+	if !dialExchange.Accepted() {
+		result := dialExchange.toWebSocketResult()
+		result.Duration = time.Since(start)
+		return result, nil
 	}
 	clientConn, err := f.acceptClient(w, r)
 	if err != nil {
-		_ = upstreamConn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
-		return &WebSocketResult{
-			Duration:          time.Since(start),
-			HandshakeAccepted: true,
-			Err:               err,
-			TerminalCause:     model.TerminalClientUpgradeRejected,
-			CommitSource:      model.CommitUnknown,
-		}, err
+		_ = dialExchange.Conn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
+		result := &WebSocketResult{
+			Duration:      time.Since(start),
+			Err:           err,
+			TerminalCause: model.TerminalClientUpgradeRejected,
+			CommitSource:  model.CommitUnknown,
+		}
+		dialExchange.applyHandshake(result)
+		return result, err
 	}
 
 	lifecycle := newWebSocketLifecycleState()
 	lifecycle.MarkClientAccepted()
 
-	relayResult := f.relay(ctx, clientConn, upstreamConn, webSocketRelayOptions{
+	relayResult := f.relay(ctx, clientConn, dialExchange.Conn, webSocketRelayOptions{
 		Observer:               observer,
 		OnFirstUpstreamMessage: onFirstUpstreamMessage,
 		OnClientVisible:        onClientVisible,
 		Lifecycle:              lifecycle,
 	})
 	result := relayResult.toWebSocketResult()
-	result.HandshakeAccepted = true
+	dialExchange.applyHandshake(result)
 	result.Duration = time.Since(start)
 	if observer != nil {
 		observation := observer.Snapshot()
@@ -294,45 +419,75 @@ func (f *WebSocketForwarder) ForwardObserved(
 	return result, nil
 }
 
-func (f *WebSocketForwarder) dialUpstream(ctx context.Context, upstreamURL string, extraHeaders http.Header) (*websocket.Conn, *WebSocketResult) {
+func (f *WebSocketForwarder) dialUpstream(ctx context.Context, request WebSocketDialRequest) DialExchange {
 	// Dial the upstream WebSocket endpoint before accepting the client upgrade.
 	// This preserves upstream handshake semantics for the caller, which is required for:
 	//   - surfacing 426 so Codex CLI can fall back to HTTP
 	//   - retrying 401 after refreshing provider-managed credentials
-	dialHeaders := extraHeaders.Clone()
+	dialHeaders := request.Headers.Clone()
 	if dialHeaders == nil {
 		dialHeaders = make(http.Header)
 	}
 	EnsureExplicitUserAgentHeader(dialHeaders)
-	upstreamConn, resp, err := f.dialer.Dial(ctx, upstreamURL, &websocket.DialOptions{
+
+	exchange := DialExchange{StartedAt: time.Now()}
+	capture, sensitiveHeaders, credentialEvidence, captureMode := beginWebSocketDialCapture(request, dialHeaders)
+	exchange.capture = capture
+	exchange.captureMode = captureMode
+	exchange.credentialEvidence = credentialEvidence
+	upstreamConn, resp, err := f.dialer.Dial(ctx, request.URL, &websocket.DialOptions{
 		HTTPHeader: dialHeaders,
 	})
+	exchange.CompletedAt = time.Now()
+	exchange.Err = err
+	if resp != nil {
+		exchange.HandshakeObservedAt = exchange.CompletedAt
+		exchange.HandshakeStatusCode = resp.StatusCode
+		exchange.HandshakeProtocol = resp.Proto
+		exchange.HandshakeContentLength = resp.ContentLength
+		exchange.HandshakeHeaders = resp.Header.Clone()
+		if exchange.captureMode.CapturesPayload() {
+			responseSensitiveHeaders, responseCredentialEvidence := captureCredentialMaterial(resp.Header)
+			sensitiveHeaders.Merge(responseSensitiveHeaders)
+			sensitiveHeaders.Seal()
+			credentialEvidence.Merge(responseCredentialEvidence)
+			credentialEvidence.Seal()
+			exchange.credentialEvidence = credentialEvidence
+			exchange.capture.ObserveWebSocketHandshake(requestcapture.WebSocketHandshake{
+				StatusCode:         resp.StatusCode,
+				Protocol:           resp.Proto,
+				Headers:            resp.Header,
+				SensitiveHeaders:   sensitiveHeaders,
+				CredentialEvidence: credentialEvidence,
+			})
+		}
+	}
+
 	if err != nil {
-		var handshakeStatusCode int
-		var handshakeBodySnippet string
-		var handshakeHeaders http.Header
-		var handshakeObservedAt time.Time
-		if resp != nil {
-			handshakeObservedAt = time.Now()
-			handshakeStatusCode = resp.StatusCode
-			handshakeHeaders = resp.Header.Clone()
-			handshakeBodySnippet = drainReadCloserWithSnippet(resp.Body, 0)
+		if resp != nil && resp.Body != nil {
+			exchange.FailureBodyPresent = true
+			body := resp.Body
+			if exchange.captureMode.CapturesPayload() {
+				body = &webSocketFailureBodyReader{
+					ReadCloser: resp.Body,
+					capture:    exchange.capture,
+				}
+			}
+			snippet, observation := drainReadCloserWithSnippetObserved(body, 0)
+			exchange.HandshakeBodySnippet = snippet
+			exchange.ObservedFailureBodyBytes = observation.bytesRead
+			exchange.FailureBodyReachedEOF = observation.reachedEOF
+			exchange.FailureBodyLimitReached = observation.limitReached
+			exchange.FailureBodyReadErr = observation.readErr
 		}
-		return nil, &WebSocketResult{
-			HandshakeStatusCode:  handshakeStatusCode,
-			HandshakeBodySnippet: handshakeBodySnippet,
-			HandshakeHeaders:     handshakeHeaders,
-			HandshakeObservedAt:  handshakeObservedAt,
-			Err:                  err,
-			TerminalCause:        classifyDialFailure(resp),
-			CommitSource:         model.CommitUnknown,
-		}
+		return exchange
 	}
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
 	upstreamConn.SetReadLimit(wsReadLimit)
-	return upstreamConn, nil
+	exchange.Conn = upstreamConn
+	return exchange
 }
 
 func (f *WebSocketForwarder) acceptClient(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {

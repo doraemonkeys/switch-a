@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
 )
 
 // sseBufferSize is the buffer size for reading SSE streams.
@@ -106,7 +107,9 @@ func (t *Transport) CloseIdleConnections() {
 // The caller must call Close() when done, regardless of whether WriteToClient was called.
 type UpstreamResponse struct {
 	StatusCode    int
+	Protocol      string
 	Header        http.Header
+	Trailer       http.Header
 	Body          io.ReadCloser
 	ContentLength int64 // -1 if unknown (chunked transfer encoding)
 	isSSE         bool
@@ -125,17 +128,37 @@ func (r *UpstreamResponse) Close() {
 	}
 }
 
+// drainObservation describes only what the existing bounded drain observed. A
+// full drain budget is intentionally not followed by a probe read because capture
+// must never change connection reuse or upstream read boundaries.
+type drainObservation struct {
+	bytesRead    int64
+	reachedEOF   bool
+	limitReached bool
+	readErr      error
+}
+
 // Drain reads and discards the response body before closing.
 // This enables HTTP connection reuse, which is important for retry scenarios.
 // Without draining, Go's http.Client cannot reuse the connection.
 func (r *UpstreamResponse) Drain() {
+	_ = r.drainObserved()
+}
+
+func (r *UpstreamResponse) drainObserved() drainObservation {
 	if r.Body == nil {
-		return
+		return drainObservation{}
 	}
-	// Drain up to maxDrainBytes to enable connection reuse without risking OOM.
-	// LimitReader ensures we don't read more than the limit even for large responses.
-	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, maxDrainBytes))
+
+	n, err := io.Copy(io.Discard, io.LimitReader(r.Body, maxDrainBytes))
 	_ = r.Body.Close()
+
+	return drainObservation{
+		bytesRead:    n,
+		reachedEOF:   err == nil && n < maxDrainBytes,
+		limitReached: err == nil && n == maxDrainBytes,
+		readErr:      err,
+	}
 }
 
 // maxSnippetBytes is the default size for response body snippets captured during failover.
@@ -148,26 +171,44 @@ func normalizeSnippetLimit(maxSnippet int) int {
 	return maxSnippet
 }
 
-// drainReadCloserWithSnippet captures the leading bytes from an HTTP response body,
-// then drains a bounded amount of the remainder before closing. Sharing this helper
-// keeps diagnostics consistent between plain HTTP failures and WebSocket handshake
-// rejections, both of which surface provider errors as HTTP responses.
-func drainReadCloserWithSnippet(body io.ReadCloser, maxSnippet int) string {
+// drainReadCloserWithSnippetObserved keeps the diagnostic snippet and the
+// physical drain outcome coupled so callers cannot accidentally discard capture
+// completion facts while handling a rejected upstream response.
+func drainReadCloserWithSnippetObserved(body io.ReadCloser, maxSnippet int) (string, drainObservation) {
 	if body == nil {
-		return ""
+		return "", drainObservation{}
 	}
 	maxSnippet = normalizeSnippetLimit(maxSnippet)
 
 	snippet := make([]byte, maxSnippet)
-	n, _ := io.ReadFull(body, snippet)
+	n, snippetErr := io.ReadFull(body, snippet)
 
 	remaining := maxDrainBytes - int64(n)
+	var drained int64
+	var drainErr error
 	if remaining > 0 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(body, remaining))
+		drained, drainErr = io.Copy(io.Discard, io.LimitReader(body, remaining))
 	}
 	_ = body.Close()
 
-	return string(snippet[:n])
+	total := int64(n) + drained
+	observation := drainObservation{
+		bytesRead:    total,
+		reachedEOF:   drainErr == nil && drained < remaining,
+		limitReached: drainErr == nil && remaining >= 0 && drained == remaining,
+		readErr:      drainErr,
+	}
+	readCompleted := capturefailure.IsEOF(snippetErr) || capturefailure.IsUnexpectedEOF(snippetErr)
+	if snippetErr != nil && !readCompleted {
+		observation.readErr = snippetErr
+		observation.reachedEOF = false
+	}
+	if readCompleted {
+		observation.reachedEOF = observation.readErr == nil
+		observation.limitReached = false
+	}
+
+	return string(snippet[:n]), observation
 }
 
 // limitedBuffer captures up to `limit` bytes, discarding excess.
@@ -224,7 +265,12 @@ func (t *teeReadCloser) Close() error {
 //
 // Returns the captured snippet as a string. If maxSnippet is 0, uses default size.
 func (r *UpstreamResponse) DrainWithSnippet(maxSnippet int) string {
-	return drainReadCloserWithSnippet(r.Body, maxSnippet)
+	snippet, _ := r.drainWithSnippetObserved(maxSnippet)
+	return snippet
+}
+
+func (r *UpstreamResponse) drainWithSnippetObserved(maxSnippet int) (string, drainObservation) {
+	return drainReadCloserWithSnippetObserved(r.Body, maxSnippet)
 }
 
 // TeeBody wraps the response body with a TeeReader that captures the first maxBytes
@@ -266,7 +312,9 @@ func (t *Transport) FetchUpstream(ctx context.Context, upstreamReq *http.Request
 
 	return &UpstreamResponse{
 		StatusCode:    resp.StatusCode,
+		Protocol:      resp.Proto,
 		Header:        resp.Header,
+		Trailer:       resp.Trailer,
 		Body:          resp.Body,
 		ContentLength: resp.ContentLength, // -1 for chunked/unknown
 		isSSE:         isSSEResponse(resp),

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
 	"github.com/coder/websocket"
@@ -26,6 +28,8 @@ type webSocketSessionOrchestratorConfig struct {
 	applyObservation          func(WebSocketObservation)
 	onClientVisible           func(webSocketVisibleWriteContext)
 	tracker                   *LiveBytesTracker
+	capture                   requestcapture.GatewayRecorder
+	captureParticipates       bool
 }
 
 type webSocketSelectionProbeObserverFactory func(apiType, initialModel string) WebSocketMessageObserver
@@ -50,6 +54,8 @@ type WebSocketSessionOrchestrator struct {
 	applyObservation          func(WebSocketObservation)
 	onClientVisible           func(webSocketVisibleWriteContext)
 	tracker                   *LiveBytesTracker
+	capture                   requestcapture.GatewayRecorder
+	captureParticipates       bool
 	excludedProviders         map[string]bool
 	// switchTracker keeps lifecycle-driven replacement vs failover semantics in
 	// one place so retries do not depend on handshake-only milestones.
@@ -64,6 +70,12 @@ type WebSocketSessionOrchestrator struct {
 	replayBuffer        *preVisibleClientMessageBuffer
 	suppressedAttempt   *webSocketSuppressedAttempt
 	probeOutcome        webSocketSelectionProbeOutcome
+	captureCompletions  []webSocketDialCaptureCompletion
+}
+
+type webSocketDialCaptureCompletion struct {
+	exchange DialExchange
+	outcome  requestcapture.Outcome
 }
 
 func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrchestratorConfig) *WebSocketSessionOrchestrator {
@@ -89,6 +101,8 @@ func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrche
 		applyObservation:          cfg.applyObservation,
 		onClientVisible:           cfg.onClientVisible,
 		tracker:                   cfg.tracker,
+		capture:                   cfg.capture,
+		captureParticipates:       cfg.captureParticipates,
 		excludedProviders:         make(map[string]bool),
 		switchTracker:             newProviderSwitchTracker(cfg.selectReq, cfg.maxAttempts, handler.visibleContinuitySeedStore),
 		attempts:                  make([]WebSocketAttemptResult, 0),
@@ -97,11 +111,178 @@ func newWebSocketSessionOrchestrator(handler *Handler, cfg webSocketSessionOrche
 	}
 }
 
+func (o *WebSocketSessionOrchestrator) queueCaptureCompletion(exchange DialExchange, outcome requestcapture.Outcome) {
+	if o == nil || !exchange.captureMode.Participates() {
+		return
+	}
+	if outcome.CompletedAt.IsZero() {
+		outcome.CompletedAt = time.Now()
+	}
+	o.captureCompletions = append(o.captureCompletions, webSocketDialCaptureCompletion{
+		exchange: exchange,
+		outcome:  outcome,
+	})
+}
+
+func (o *WebSocketSessionOrchestrator) finishCaptureCompletions() {
+	if o == nil {
+		return
+	}
+	for _, completion := range o.captureCompletions {
+		finishWebSocketDialCapture(completion.exchange, completion.outcome)
+	}
+	o.captureCompletions = nil
+}
+
 func (o *WebSocketSessionOrchestrator) newAttemptObserver() WebSocketMessageObserver {
 	if o.newObserver == nil {
 		return nil
 	}
 	return o.newObserver(o.info.Model)
+}
+
+func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
+	ctx context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	provider *model.Provider,
+	dialExchange DialExchange,
+	attempt int,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
+	attemptStart time.Time,
+	recoveryAttempted bool,
+) WebSocketAttemptResult {
+	dialCaptureOutcome := requestcapture.Outcome{
+		SourceCompletion:  requestcapture.SourceCompletionPartial,
+		TerminationReason: requestcapture.TerminationReasonWebSocketRelayError,
+	}
+	if dialExchange.captureMode.Participates() {
+		defer func() {
+			o.queueCaptureCompletion(dialExchange, dialCaptureOutcome)
+		}()
+	}
+
+	upstreamConn := dialExchange.Conn
+	defer func() {
+		if upstreamConn != nil {
+			_ = upstreamConn.CloseNow()
+		}
+	}()
+
+	if err := o.ensureClientAccepted(w, r); err != nil {
+		_ = upstreamConn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
+		upstreamConn = nil
+		result := &WebSocketResult{
+			Err:           err,
+			TerminalCause: model.TerminalClientUpgradeRejected,
+			CommitSource:  model.CommitUnknown,
+		}
+		dialExchange.applyHandshake(result)
+		o.applySessionLifecycleToResult(result)
+		if dialExchange.captureMode.Participates() {
+			reason, failure := capturefailure.WebSocketClientAccept(contextError(ctx), err)
+			dialCaptureOutcome = requestcapture.Outcome{
+				SourceCompletion:  requestcapture.SourceCompletionPartial,
+				TerminationReason: reason,
+				Failure:           failure,
+			}
+		}
+		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, err, time.Since(attemptStart))
+		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
+		return attemptResult
+	}
+
+	observer, captureOptions := o.newAttemptRelayContext(dialExchange)
+	replayedBytes, replayed, replayErr := o.replayBufferedMessages(ctx, upstreamConn, observer, captureOptions)
+	if replayErr != nil {
+		result := &WebSocketResult{
+			BytesClientToUpstream: replayedBytes,
+			Err:                   replayErr,
+			TerminalCause:         model.TerminalUpstreamTransportError,
+			CommitSource:          model.CommitUnknown,
+		}
+		dialExchange.applyHandshake(result)
+		o.applySessionLifecycleToResult(result)
+		if dialExchange.captureMode.Participates() {
+			reason, failure := capturefailure.WebSocketReplayWrite(contextError(ctx), replayErr)
+			dialCaptureOutcome = requestcapture.Outcome{
+				SourceCompletion:  requestcapture.SourceCompletionPartial,
+				TerminationReason: reason,
+				Failure:           failure,
+			}
+		}
+		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, replayErr, time.Since(attemptStart))
+		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
+		attemptResult.ReplayFailed = true
+		attemptResult.RecoveryAttempted = recoveryAttempted
+		return attemptResult
+	}
+
+	initialClientReadCh := o.takeInitialClientReadChannel()
+	postVisibleFailover := selectionMode == model.SwitchModeFailover && o.lifecycle != nil && o.lifecycle.Snapshot().ClientVisible
+	relayResult := o.handler.wsForwarder.relay(ctx, o.clientConn, upstreamConn, webSocketRelayOptions{
+		GatewayCapture: captureOptions.GatewayCapture,
+		Capture:        captureOptions.Capture,
+		CaptureMode:    captureOptions.CaptureMode,
+
+		CredentialEvidence:                captureOptions.CredentialEvidence,
+		InitialClientReadCh:               initialClientReadCh,
+		Observer:                          observer,
+		OnFirstUpstreamMessage:            o.applyObservation,
+		OnClientVisible:                   o.onClientVisible,
+		PreWriteToClient:                  newAllowlistedProviderScopedSuppressDecision(o.replayBuffer),
+		PreVisibleReplayBuffer:            o.replayBuffer,
+		Lifecycle:                         o.lifecycle,
+		PreserveClientOnSuppress:          true,
+		SkipClientToUpstream:              postVisibleFailover,
+		SkipPreVisibleWindow:              replayed && o.suppressedAttempt != nil,
+		PreserveClientOnPreVisibleFailure: o.suppressedAttempt != nil,
+	})
+	upstreamConn = nil
+
+	result := relayResult.toWebSocketResult()
+	dialExchange.applyHandshake(result)
+	result.BytesClientToUpstream += replayedBytes
+	if observer != nil {
+		mergeWebSocketObservation(result, observer.Snapshot())
+	}
+	if result.UpstreamError != nil {
+		result.TerminalCause = model.TerminalUpstreamSemanticError
+	}
+	o.captureSuppressedAttempt(provider, relayResult)
+	if result.ClientVisible && relayResult.SuppressedUpstreamError == nil {
+		o.clearSuppressedAttempt()
+	}
+
+	attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, result.Err, time.Since(attemptStart))
+	o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
+	attemptResult.RecoveryAttempted = recoveryAttempted
+	attemptResult.RecoverySucceeded = recoveryAttempted && attemptResult.clientAccepted()
+	if result.ClientVisible {
+		o.switchTracker.markClientVisible(provider, time.Now())
+	}
+	if dialExchange.captureMode.Participates() {
+		dialCaptureOutcome = webSocketRelayCaptureOutcome(ctx, relayResult, result)
+	}
+	return attemptResult
+}
+
+func (o *WebSocketSessionOrchestrator) newAttemptRelayContext(
+	dialExchange DialExchange,
+) (WebSocketMessageObserver, webSocketRelayOptions) {
+	return o.newAttemptObserver(), webSocketRelayOptions{
+		GatewayCapture:     o.capture,
+		Capture:            dialExchange.capture,
+		CaptureMode:        dialExchange.captureMode,
+		CredentialEvidence: dialExchange.credentialEvidence,
+	}
+}
+
+func (o *WebSocketSessionOrchestrator) takeInitialClientReadChannel() <-chan webSocketInitialReadResult {
+	initialClientReadCh := o.initialClientReadCh
+	o.initialClientReadCh = nil
+	return initialClientReadCh
 }
 
 func (o *WebSocketSessionOrchestrator) learnResolvedModel(modelName string) {

@@ -73,8 +73,10 @@ func TestTransport_FetchAndWrite(t *testing.T) {
 	t.Run("normal response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Trailer", "X-Upstream-Checksum")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			w.Header().Set("X-Upstream-Checksum", "complete")
 		}))
 		defer server.Close()
 
@@ -94,10 +96,19 @@ func TestTransport_FetchAndWrite(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 		}
+		if resp.Protocol != "HTTP/1.1" {
+			t.Errorf("protocol = %q, want HTTP/1.1", resp.Protocol)
+		}
+		if _, declared := resp.Trailer["X-Upstream-Checksum"]; !declared {
+			t.Fatal("declared response trailer was not preserved")
+		}
 
 		err = transport.WriteToClient(context.Background(), w, resp)
 		if err != nil {
 			t.Fatalf("unexpected error writing to client: %v", err)
+		}
+		if resp.Trailer.Get("X-Upstream-Checksum") != "complete" {
+			t.Errorf("final trailer = %q, want complete", resp.Trailer.Get("X-Upstream-Checksum"))
 		}
 		if w.Header().Get("Content-Type") != "application/json" {
 			t.Errorf("Content-Type = %q, want %q", w.Header().Get("Content-Type"), "application/json")
@@ -379,6 +390,72 @@ func TestUpstreamResponse_DrainWithSnippet(t *testing.T) {
 			t.Errorf("expected read count <= 65KB, got %d bytes", readCount)
 		}
 	})
+}
+
+func TestUpstreamResponse_DrainObservationDoesNotProbePastLimit(t *testing.T) {
+	t.Run("plain drain", func(t *testing.T) {
+		body := &noProbeBoundaryReadCloser{remaining: maxDrainBytes}
+		resp := &UpstreamResponse{Body: body}
+
+		observation := resp.drainObserved()
+
+		if observation.bytesRead != maxDrainBytes {
+			t.Fatalf("bytesRead = %d, want %d", observation.bytesRead, maxDrainBytes)
+		}
+		if !observation.limitReached || observation.reachedEOF || observation.readErr != nil {
+			t.Fatalf("observation = %#v, want bounded partial drain", observation)
+		}
+		if body.readsPastBoundary != 0 {
+			t.Fatalf("reads past boundary = %d, want 0", body.readsPastBoundary)
+		}
+		if !body.closed {
+			t.Fatal("body was not closed")
+		}
+	})
+
+	t.Run("snippet drain", func(t *testing.T) {
+		body := &noProbeBoundaryReadCloser{remaining: maxDrainBytes}
+		resp := &UpstreamResponse{Body: body}
+
+		snippet, observation := resp.drainWithSnippetObserved(100)
+
+		if len(snippet) != 100 {
+			t.Fatalf("snippet length = %d, want 100", len(snippet))
+		}
+		if observation.bytesRead != maxDrainBytes {
+			t.Fatalf("bytesRead = %d, want %d", observation.bytesRead, maxDrainBytes)
+		}
+		if !observation.limitReached || observation.reachedEOF || observation.readErr != nil {
+			t.Fatalf("observation = %#v, want bounded partial drain", observation)
+		}
+		if body.readsPastBoundary != 0 {
+			t.Fatalf("reads past boundary = %d, want 0", body.readsPastBoundary)
+		}
+	})
+}
+
+type noProbeBoundaryReadCloser struct {
+	remaining         int64
+	readsPastBoundary int
+	closed            bool
+}
+
+func (r *noProbeBoundaryReadCloser) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		r.readsPastBoundary++
+		return 0, errors.New("unexpected read past boundary")
+	}
+	n := min(int64(len(p)), r.remaining)
+	for index := range p[:n] {
+		p[index] = 'x'
+	}
+	r.remaining -= n
+	return int(n), nil
+}
+
+func (r *noProbeBoundaryReadCloser) Close() error {
+	r.closed = true
+	return nil
 }
 
 type trackingReader struct {

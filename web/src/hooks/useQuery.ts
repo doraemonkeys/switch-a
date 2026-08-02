@@ -9,6 +9,8 @@ export interface UseQueryResult<T> {
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
+  replaceData: (data: T) => void;
+  updateData: (updater: (current: T | null) => T | null) => void;
 }
 
 export interface UseQueryOptions {
@@ -131,6 +133,27 @@ export function useQuery<T>(
     }
   };
 
+  const replaceData = (data: T): void => {
+    // A confirmed mutation result is newer than every request already in flight.
+    requestSequence.current += 1;
+    setState({
+      data,
+      error: null,
+      resolvedKey: queryKey,
+      refreshing: false,
+    });
+  };
+  const updateData = (updater: (current: T | null) => T | null): void => {
+    // Functional publication makes async mutation reconciliation atomic against
+    // status snapshots that arrived while the mutation was awaiting the server.
+    requestSequence.current += 1;
+    setState((current) => ({
+      data: updater(current.data),
+      error: null,
+      resolvedKey: queryKey,
+      refreshing: false,
+    }));
+  };
   const hasCurrentSnapshot = Object.is(state.resolvedKey, queryKey);
 
   return {
@@ -138,6 +161,8 @@ export function useQuery<T>(
     loading: !skip && (state.refreshing || !hasCurrentSnapshot),
     error: !skip && hasCurrentSnapshot ? state.error : null,
     refetch,
+    replaceData,
+    updateData,
   };
 }
 

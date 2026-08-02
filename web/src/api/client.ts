@@ -1,4 +1,5 @@
 import { API_BASE, STORAGE_KEYS } from "../config";
+import { createDebugCaptureApi } from "./debug-capture";
 import {
   type ApiClientDeps,
   type Storage,
@@ -493,6 +494,7 @@ export function createApiClient(deps: ApiClientDeps) {
     requests: {
       active: () => request<ActiveRequestsResponse>("/requests/active"),
     },
+    debugCapture: createDebugCaptureApi(request),
   };
 }
 

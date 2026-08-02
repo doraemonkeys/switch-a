@@ -8,19 +8,73 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturebridge"
+	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
 	"go.uber.org/zap"
 )
 
-func (h *Handler) prepareForwardRequest(ctx context.Context, pctx *proxyContext, provider *model.Provider) (*http.Request, forwardResult, bool) {
-	upstreamReq, err := h.buildProviderRequest(ctx, pctx, provider)
+func captureCredentialMaterial(headers http.Header) (
+	requestcapture.SensitiveHeaderEvidence,
+	requestcapture.CredentialEvidence,
+) {
+	return capturebridge.CredentialMaterial(headers)
+}
+
+func (h *Handler) prepareForwardRequest(
+	ctx context.Context,
+	pctx *proxyContext,
+	attempt httpAttemptContext,
+	phase requestcapture.CredentialPhase,
+) (*http.Request, forwardResult, bool) {
+	upstreamReq, failureCode, err := h.buildProviderRequest(ctx, pctx, attempt.provider)
 	if err != nil {
+		h.captureHTTPPreparationFailure(ctx, pctx, attempt, phase, nil, failureCode, err)
 		return nil, h.failedProviderRequest(err), false
 	}
-	if err := h.applyForwardCredentials(ctx, upstreamReq.Header, provider, pctx); err != nil {
-		return nil, h.failedProviderRequest(err), false
+	if err := h.applyForwardCredentials(ctx, upstreamReq.Header, attempt.provider, pctx); err != nil {
+		h.captureHTTPPreparationFailure(
+			ctx,
+			pctx,
+			attempt,
+			phase,
+			upstreamReq,
+			requestcapture.FailureCodeCredentialApply,
+			err,
+		)
+		return upstreamReq, h.failedProviderRequest(err), false
 	}
 	return upstreamReq, forwardResult{}, true
+}
+
+func (h *Handler) captureHTTPPreparationFailure(
+	ctx context.Context,
+	pctx *proxyContext,
+	attempt httpAttemptContext,
+	phase requestcapture.CredentialPhase,
+	request *http.Request,
+	failureCode requestcapture.FailureCode,
+	err error,
+) {
+	if !pctx.captureParticipates {
+		return
+	}
+
+	var target requestcapture.TransitionTargetInput
+	var credentialEvidence requestcapture.CredentialEvidence
+	if request != nil {
+		target = requestcapture.HTTPTransitionTarget(request.URL)
+		_, credentialEvidence = captureCredentialMaterial(request.Header)
+	}
+	reason, failure := capturefailure.HTTPPreparation(contextError(ctx), err, failureCode)
+	pctx.capture.Transition(requestcapture.TransitionStart{
+		Attempt:            attempt.metadata(pctx.apiType, phase),
+		Target:             target,
+		TerminationReason:  reason,
+		Failure:            failure,
+		CredentialEvidence: credentialEvidence,
+	})
 }
 
 func (h *Handler) applyForwardCredentials(ctx context.Context, headers http.Header, provider *model.Provider, pctx *proxyContext) error {
@@ -45,65 +99,157 @@ func (h *Handler) failedProviderRequest(err error) forwardResult {
 func (h *Handler) fetchForwardResponse(
 	ctx context.Context,
 	pctx *proxyContext,
-	provider *model.Provider,
+	attempt httpAttemptContext,
 	upstreamReq *http.Request,
-) (*UpstreamResponse, forwardResult, bool) {
-	upstreamResp, err := h.fetchTrackedUpstream(ctx, pctx, upstreamReq)
+) (*UpstreamResponse, httpCaptureExchange, forwardResult, bool) {
+	upstreamResp, exchange, err := h.fetchHTTPExchange(
+		ctx,
+		pctx,
+		attempt,
+		requestcapture.CredentialPhaseInitial,
+		upstreamReq,
+	)
 	if err != nil {
-		return nil, h.failedUpstreamFetch(ctx, provider.ID, err, false), false
+		result := h.failedUpstreamFetch(ctx, attempt.provider.ID, err, false)
+		return nil, httpCaptureExchange{}, result, false
 	}
 
-	return h.retryUnauthorizedForwardResponse(ctx, pctx, provider, upstreamResp)
+	return h.retryUnauthorizedForwardResponse(ctx, pctx, attempt, upstreamResp, exchange)
+}
+
+func (h *Handler) fetchHTTPExchange(
+	ctx context.Context,
+	pctx *proxyContext,
+	attempt httpAttemptContext,
+	phase requestcapture.CredentialPhase,
+	request *http.Request,
+) (*UpstreamResponse, httpCaptureExchange, error) {
+	exchange := h.beginHTTPExchange(pctx, attempt, phase, request)
+	response, err := h.fetchTrackedUpstream(ctx, pctx, request)
+	if err != nil {
+		finishHTTPFetchFailure(ctx, pctx, exchange, err)
+		return nil, exchange, err
+	}
+	exchange.observeResponse(response)
+	return response, exchange, nil
 }
 
 func (h *Handler) retryUnauthorizedForwardResponse(
 	ctx context.Context,
 	pctx *proxyContext,
-	provider *model.Provider,
+	attempt httpAttemptContext,
 	upstreamResp *UpstreamResponse,
-) (*UpstreamResponse, forwardResult, bool) {
+	exchange httpCaptureExchange,
+) (*UpstreamResponse, httpCaptureExchange, forwardResult, bool) {
+	provider := attempt.provider
 	if upstreamResp.StatusCode != defaults.StatusUnauthorized || h.auth == nil {
-		return upstreamResp, forwardResult{}, true
+		return upstreamResp, exchange, forwardResult{}, true
 	}
 
 	refreshed, refreshErr := h.auth.RefreshProviderCredentials(ctx, provider)
 	if !refreshed {
-		return upstreamResp, forwardResult{}, true
+		return upstreamResp, exchange, forwardResult{}, true
 	}
 	if refreshErr != nil {
 		h.logger.Warn("provider credential refresh failed",
+			zap.String("request_id", pctx.requestID),
 			zap.String("provider_id", provider.ID),
+			zap.Int("provider_attempt_index", attempt.providerAttemptIndex),
 			zap.Error(refreshErr),
 		)
-		return upstreamResp, forwardResult{}, true
+		return upstreamResp, exchange, forwardResult{}, true
 	}
 
 	refreshedProvider, err := h.eligibleProviderByID(ctx, pctx.selectReq, provider.ID)
 	if err != nil {
 		h.logger.Warn("failed to revalidate provider after credential refresh",
+			zap.String("request_id", pctx.requestID),
 			zap.String("provider_id", provider.ID),
+			zap.Int("provider_attempt_index", attempt.providerAttemptIndex),
 			zap.Error(err),
 		)
-		return upstreamResp, forwardResult{}, true
+		return upstreamResp, exchange, forwardResult{}, true
 	}
 	if refreshedProvider == nil {
-		return upstreamResp, forwardResult{}, true
+		return upstreamResp, exchange, forwardResult{}, true
 	}
 
-	// Drain the rejected response before retrying so keep-alive reuse is still possible
-	// when the provider issued 401 only because the credential snapshot was stale.
-	upstreamResp.Drain()
+	if exchange.valid() {
+		// The rejected response keeps the original drain boundary so capture cannot
+		// turn credential refresh into an unbounded read or alter connection reuse.
+		drain := upstreamResp.drainObserved()
+		exchange.completedAt = time.Now()
+		sourceCompletion := requestcapture.SourceCompletionPartial
+		if capturebridge.SourceEndpointComplete(
+			drain.bytesRead,
+			upstreamResp.ContentLength,
+			drain.reachedEOF,
+			drain.readErr != nil,
+		) {
+			sourceCompletion = requestcapture.SourceCompletionComplete
+		}
+		statusFailure := capturefailure.HTTPStatus(
+			requestcapture.FailureSiteResponseStatus,
+			requestcapture.FailurePeerUpstream,
+			upstreamResp.StatusCode,
+		)
+		drainFailure := capturefailure.FromError(
+			requestcapture.FailureSiteResponseDrain,
+			requestcapture.FailurePeerUpstream,
+			requestcapture.FailureClassRead,
+			requestcapture.FailureCodeDrainRead,
+			drain.readErr,
+		)
+		pctx.queueHTTPCaptureCompletion(
+			exchange,
+			upstreamResp,
+			sourceCompletion,
+			requestcapture.TerminationReasonCredentialRefreshDrain,
+			capturefailure.Observation(statusFailure, drainFailure),
+		)
+	} else {
+		upstreamResp.Drain()
+	}
 
-	retryReq, result, ok := h.prepareForwardRequest(ctx, pctx, refreshedProvider)
+	refreshedAttempt := attempt
+	refreshedAttempt.provider = refreshedProvider
+	retryReq, result, ok := h.prepareForwardRequest(
+		ctx,
+		pctx,
+		refreshedAttempt,
+		requestcapture.CredentialPhaseRefreshed,
+	)
 	if !ok {
-		return nil, result, false
+		return nil, httpCaptureExchange{}, result, false
 	}
 
-	retryResp, err := h.fetchTrackedUpstream(ctx, pctx, retryReq)
+	retryResp, retryExchange, err := h.fetchHTTPExchange(
+		ctx,
+		pctx,
+		refreshedAttempt,
+		requestcapture.CredentialPhaseRefreshed,
+		retryReq,
+	)
 	if err != nil {
-		return nil, h.failedUpstreamFetch(ctx, refreshedProvider.ID, err, true), false
+		result := h.failedUpstreamFetch(ctx, refreshedProvider.ID, err, true)
+		return nil, httpCaptureExchange{}, result, false
 	}
-	return retryResp, forwardResult{}, true
+	return retryResp, retryExchange, forwardResult{}, true
+}
+
+func finishHTTPFetchFailure(ctx context.Context, pctx *proxyContext, exchange httpCaptureExchange, err error) {
+	if !exchange.valid() {
+		return
+	}
+	exchange.completedAt = time.Now()
+	reason, failure := capturefailure.HTTPFetch(contextError(ctx), err)
+	pctx.queueHTTPCaptureCompletion(
+		exchange,
+		nil,
+		requestcapture.SourceCompletionPartial,
+		reason,
+		failure,
+	)
 }
 
 func (h *Handler) fetchTrackedUpstream(ctx context.Context, pctx *proxyContext, request *http.Request) (*UpstreamResponse, error) {
@@ -141,12 +287,13 @@ func (h *Handler) commitForwardResponse(
 	pctx *proxyContext,
 	provider *model.Provider,
 	upstreamResp *UpstreamResponse,
+	exchange httpCaptureExchange,
 ) forwardResult {
 	result := forwardResult{
 		statusCode: upstreamResp.StatusCode,
 		isSSE:      upstreamResp.IsSSE(),
 	}
-	if failoverResult, handled := h.failoverForwardResponse(ctx, provider, upstreamResp, result); handled {
+	if failoverResult, handled := h.failoverForwardResponse(ctx, pctx, provider, upstreamResp, exchange, result); handled {
 		return failoverResult
 	}
 
@@ -159,6 +306,27 @@ func (h *Handler) commitForwardResponse(
 	if h.activeRegistry != nil && result.isSSE {
 		h.activeRegistry.UpdateSSE(pctx.requestID, true)
 	}
+	capturePayload := exchange.mode.CapturesPayload()
+	var onWrite func(int, time.Time)
+	switch {
+	case capturePayload && pctx.liveBytes != nil:
+		liveBytes := pctx.liveBytes
+		onWrite = func(written int, writeTime time.Time) {
+			liveBytes.BytesReceived.Add(int64(written))
+			liveBytes.LastActivityAt.Store(writeTime.UnixMilli())
+			exchange.observeClientWrite(written)
+		}
+	case capturePayload:
+		onWrite = func(written int, _ time.Time) {
+			exchange.observeClientWrite(written)
+		}
+	case pctx.liveBytes != nil:
+		liveBytes := pctx.liveBytes
+		onWrite = func(written int, writeTime time.Time) {
+			liveBytes.BytesReceived.Add(int64(written))
+			liveBytes.LastActivityAt.Store(writeTime.UnixMilli())
+		}
+	}
 
 	wrappedWriter := &firstWriteResponseWriter{
 		ResponseWriter: pctx.w,
@@ -167,16 +335,12 @@ func (h *Handler) commitForwardResponse(
 				h.activeRegistry.MarkDataReceived(pctx.requestID)
 			}
 		},
-		onWrite: func(written int, writeTime time.Time) {
-			if pctx.liveBytes != nil {
-				pctx.liveBytes.BytesReceived.Add(int64(written))
-				pctx.liveBytes.LastActivityAt.Store(writeTime.UnixMilli())
-			}
-		},
+		onWrite: onWrite,
 	}
 
 	writeErr := pctx.transport.WriteToClient(ctx, wrappedWriter, upstreamResp)
 	upstreamResp.Close()
+	exchange.completedAt = time.Now()
 	result.headersWritten = true
 	result.responseCommitted = wrappedWriter.committed
 	// firstByteVisible surfaces `firstWriteResponseWriter.written` to the
@@ -197,16 +361,35 @@ func (h *Handler) commitForwardResponse(
 	}
 	if writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
 		h.handleWriteError(ctx, writeErr, provider.ID, &result)
-		return result
+	} else {
+		result = h.completeWrittenResponse(ctx, provider.ID, snippetBuf, result)
 	}
 
-	return h.completeWrittenResponse(ctx, provider.ID, snippetBuf, result)
+	// Capture completion follows behavior-owned sticky/health mutations so a
+	// contended capture store cannot skew their clocks or recorded durations.
+	if exchange.valid() {
+		sourceCompletion := requestcapture.SourceCompletionComplete
+		if writeErr != nil {
+			sourceCompletion = exchange.sourceCompletionAfterError()
+		}
+		reason, failure := captureForwardFailure(ctx, writeErr, wrappedWriter.writeErr)
+		pctx.queueHTTPCaptureCompletion(
+			exchange,
+			upstreamResp,
+			sourceCompletion,
+			reason,
+			failure,
+		)
+	}
+	return result
 }
 
 func (h *Handler) failoverForwardResponse(
 	ctx context.Context,
+	pctx *proxyContext,
 	provider *model.Provider,
 	upstreamResp *UpstreamResponse,
+	exchange httpCaptureExchange,
 	result forwardResult,
 ) (forwardResult, bool) {
 	if !shouldFailover(result.statusCode) {
@@ -224,13 +407,20 @@ func (h *Handler) failoverForwardResponse(
 	// diagnostic layer skips this path rather than matching on the synthetic
 	// error text (which is brittle under refactors or i18n).
 	result.isStatusFailover = true
-	result.bodySnippet = upstreamResp.DrainWithSnippet(0)
+	var drain drainObservation
+	if exchange.valid() {
+		result.bodySnippet, drain = upstreamResp.drainWithSnippetObserved(0)
+		exchange.completedAt = time.Now()
+	} else {
+		result.bodySnippet = upstreamResp.DrainWithSnippet(0)
+	}
+	failureObservedAt := time.Now()
 	result.failureDisposition = classifyProviderFailureForProvider(
 		provider,
 		result.statusCode,
 		upstreamResp.Header,
 		result.bodySnippet,
-		time.Now(),
+		failureObservedAt,
 	)
 	if shouldTrackStatusFailureInHealth(result.statusCode) {
 		h.markFailure(ctx, provider.ID, statusErr)
@@ -241,6 +431,38 @@ func (h *Handler) failoverForwardResponse(
 			provider.ID,
 			*result.failureDisposition.autoDisableUntil,
 			result.failureDisposition.autoDisableReason,
+		)
+	}
+	// Capture completion is deliberately last: provider health and suspension
+	// deadlines must be derived from the wire observation, not capture latency.
+	if exchange.valid() {
+		sourceCompletion := requestcapture.SourceCompletionPartial
+		if capturebridge.SourceEndpointComplete(
+			drain.bytesRead,
+			upstreamResp.ContentLength,
+			drain.reachedEOF,
+			drain.readErr != nil,
+		) {
+			sourceCompletion = requestcapture.SourceCompletionComplete
+		}
+		statusFailure := capturefailure.HTTPStatus(
+			requestcapture.FailureSiteResponseStatus,
+			requestcapture.FailurePeerUpstream,
+			result.statusCode,
+		)
+		drainFailure := capturefailure.FromError(
+			requestcapture.FailureSiteResponseDrain,
+			requestcapture.FailurePeerUpstream,
+			requestcapture.FailureClassRead,
+			requestcapture.FailureCodeDrainRead,
+			drain.readErr,
+		)
+		pctx.queueHTTPCaptureCompletion(
+			exchange,
+			upstreamResp,
+			sourceCompletion,
+			requestcapture.TerminationReasonStatusFailoverDrain,
+			capturefailure.Observation(statusFailure, drainFailure),
 		)
 	}
 	return result, true

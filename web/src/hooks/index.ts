@@ -9,6 +9,11 @@ export { useLogs } from "./useLogs";
 export { useLiveRequests } from "./useLiveRequests";
 export { useStats } from "./useStats";
 export { useQuery, useMutation } from "./useQuery";
+export { usePollingQuery } from "./usePollingQuery";
+export type {
+  UsePollingQueryOptions,
+  UsePollingQueryResult,
+} from "./usePollingQuery";
 export { useLocalStorage } from "./useLocalStorage";
 export { useToast } from "./useToast";
 export type {

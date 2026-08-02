@@ -24,7 +24,13 @@ func TestWebSocketRelayResult_CloseErrorPropagatedThroughReduction(t *testing.T)
 
 	closeErr := websocket.CloseError{Code: websocket.StatusAbnormalClosure, Reason: "broken pipe"}
 	var order atomic.Uint32
-	primary := newWebSocketRelayResult(0, closeErr, webSocketPeerUpstream, &order)
+	primary := newWebSocketRelayResultForOperation(
+		0,
+		closeErr,
+		webSocketPeerUpstream,
+		webSocketRelayFailureOperationRead,
+		&order,
+	)
 	if primary.closeError == nil {
 		t.Fatal("closeError = nil on primary, want populated")
 	}
@@ -54,14 +60,41 @@ func TestWebSocketRelayResult_CloseErrorPropagatedThroughReduction(t *testing.T)
 	}
 }
 
+func TestWebSocketRelayResult_WriteCloseIsNotPeerObservation(t *testing.T) {
+	t.Parallel()
+
+	var order atomic.Uint32
+	result := newWebSocketRelayResultForOperation(
+		0,
+		websocket.CloseError{Code: websocket.StatusNormalClosure, Reason: "propagated locally"},
+		webSocketPeerUpstream,
+		webSocketRelayFailureOperationWrite,
+		&order,
+	)
+	if result.closeError != nil {
+		t.Fatalf("write failure close observation = %#v, want nil", result.closeError)
+	}
+	outcome := reduceOrderedWebSocketRelayResults(result, webSocketRelayResult{})
+	if outcome.observedCloseError != nil {
+		t.Fatalf("reduced write failure close observation = %#v, want nil", outcome.observedCloseError)
+	}
+}
+
 func TestWebSocketRelayResult_SinglePeerResultInheritsObservation(t *testing.T) {
 	t.Parallel()
 
-	// newSinglePeerRelaySessionResult runs its single error through the same
-	// reduction path, so the observation fields must flow through without any
-	// special-case plumbing.
+	// A single peer read runs through the same reduction path, so the observed
+	// frame must flow through without any special-case plumbing.
 	closeErr := websocket.CloseError{Code: websocket.StatusPolicyViolation}
-	session := newSinglePeerRelaySessionResult(closeErr, webSocketPeerUpstream, nil, nil, 0, 0)
+	session := newSinglePeerRelaySessionResultForOperation(
+		closeErr,
+		webSocketPeerUpstream,
+		webSocketRelayFailureOperationRead,
+		nil,
+		nil,
+		0,
+		0,
+	)
 	ws := session.toWebSocketResult()
 	if ws.TransportObservation.CloseError == nil || ws.TransportObservation.CloseError.Code != websocket.StatusPolicyViolation {
 		t.Fatalf("TransportObservation.CloseError = %+v, want policy-violation forwarded",

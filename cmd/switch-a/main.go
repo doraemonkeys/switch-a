@@ -20,6 +20,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/server"
 	"github.com/doraemonkeys/switch-a/internal/store"
@@ -165,6 +166,18 @@ func run() error {
 	// Initialize clock for time-based operations
 	clock := internal.RealClock{}
 
+	captureManager, err := newCaptureManager(cfg, clock, log)
+	if err != nil {
+		return err
+	}
+	// The capture manager must outlive both HTTP servers because in-flight proxy
+	// recorders and export downloads can retain leases during graceful shutdown.
+	defer func() {
+		if closeErr := captureManager.Close(); closeErr != nil {
+			log.Error("failed to close request capture manager", zap.Error(closeErr))
+		}
+	}()
+
 	// Initialize health manager for circuit breaker and availability tracking
 	healthMgr := health.NewManager(health.Config{
 		Store:  st,
@@ -234,6 +247,7 @@ func run() error {
 		ActiveRegistry:             activeRegistry,
 		VisibleContinuitySeedStore: visibleContinuitySeedStore,
 		Auth:                       authService,
+		Capture:                    captureManager,
 	})
 
 	// Create admin HTTP server (separate port for security)
@@ -248,6 +262,9 @@ func run() error {
 		ActiveReqList:       activeRegistry,
 		Auth:                authService,
 		ProviderImportStore: st,
+		CaptureSessions:     captureManager,
+		CaptureQueries:      captureManager,
+		CaptureExports:      captureManager,
 	})
 
 	errCh := startServers(proxySrv, adminSrv)
@@ -261,6 +278,43 @@ func run() error {
 
 	log.Info("switch-a stopped")
 	return nil
+}
+
+func newCaptureManager(
+	cfg *config.Config,
+	clock requestcapture.Clock,
+	log *zap.Logger,
+) (*requestcapture.Manager, error) {
+	manager, err := requestcapture.NewManager(requestCaptureManagerConfig(cfg, clock, log))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize request capture manager: %w", err)
+	}
+	return manager, nil
+}
+
+func requestCaptureManagerConfig(
+	cfg *config.Config,
+	clock requestcapture.Clock,
+	log *zap.Logger,
+) requestcapture.Config {
+	return requestcapture.Config{
+		ProcessCeilingBytes:       cfg.DebugCaptureMemoryCeilingBytes,
+		DefaultSessionQuotaBytes:  requestcapture.DefaultSessionQuotaBytes,
+		ChunkBytes:                cfg.DebugCaptureChunkBytes,
+		DefaultRecordsPerProvider: requestcapture.DefaultRecordsPerProvider,
+		MaxRecordsPerProvider:     cfg.DebugCaptureMaxRecordsPerProvider,
+		MaxActiveTraces:           cfg.DebugCaptureMaxActiveTraces,
+		MaxActiveRecords:          cfg.DebugCaptureMaxActiveRecords,
+		MaxTransitionsPerTrace:    cfg.DebugCaptureMaxTransitionsPerTrace,
+		MaxPendingExports:         cfg.DebugCaptureMaxPendingExports,
+		MaxActiveDownloads:        cfg.DebugCaptureMaxConcurrentDownloads,
+		PreviewBytes:              cfg.DebugCaptureDetailPreviewBytes,
+		DetailEventLimit:          cfg.DebugCaptureDetailEventLimit,
+		ExportLineBytes:           cfg.DebugCaptureExportLineBytes,
+		DownloadTokenTTL:          cfg.DebugCaptureDownloadTokenTTL,
+		Clock:                     clock,
+		Logger:                    log,
+	}
 }
 
 func startServers(

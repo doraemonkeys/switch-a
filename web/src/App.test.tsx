@@ -1,13 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Routes, Route, Navigate } from "react-router";
-import { Layout } from "@/components/Layout";
-import { Dashboard } from "@/pages/Dashboard";
-import { Providers } from "@/pages/providers";
-import { Groups } from "@/pages/Groups";
-import { RoutingPolicies } from "@/pages/RoutingPolicies";
-import { Config } from "@/pages/Config";
-import { Logs } from "@/pages/Logs";
+import { MemoryRouter } from "react-router";
+import { AppRoutes } from "./App";
 import { ApiContext } from "@/api/context";
 import { ToastProvider } from "@/components/Toast";
 import type { ApiClient } from "@/api/client";
@@ -16,6 +10,8 @@ function createMockApiClient(): ApiClient {
   return {
     setToken: vi.fn(),
     clearToken: vi.fn(),
+    getToken: vi.fn().mockReturnValue("admin-token"),
+    validateToken: vi.fn().mockResolvedValue(true),
     providers: {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
@@ -88,6 +84,30 @@ function createMockApiClient(): ApiClient {
         outcome_timeseries: [],
       }),
     },
+    requests: {
+      active: vi.fn().mockResolvedValue({ requests: [], count: 0 }),
+    },
+    debugCapture: {
+      status: vi.fn().mockResolvedValue({
+        state: "stopped",
+        process_memory: {
+          ceiling_bytes: 536_870_912,
+          charged_bytes: 0,
+          retained_bytes: 0,
+          pinned_bytes: 0,
+          releasing_bytes: 0,
+          temporary_bytes: 0,
+        },
+        pending_export_count: 0,
+        active_download_count: 0,
+        session: null,
+      }),
+      start: vi.fn(),
+      stop: vi.fn(),
+      listRecords: vi.fn(),
+      getRecord: vi.fn(),
+      createExport: vi.fn(),
+    },
   } as unknown as ApiClient;
 }
 
@@ -98,17 +118,7 @@ function TestApp({ initialPath = "/" }: { initialPath?: string }) {
     <ApiContext.Provider value={mockApi}>
       <ToastProvider>
         <MemoryRouter initialEntries={[initialPath]}>
-          <Routes>
-            <Route path="/" element={<Layout />}>
-              <Route index element={<Dashboard />} />
-              <Route path="providers" element={<Providers />} />
-              <Route path="groups" element={<Groups />} />
-              <Route path="routing" element={<RoutingPolicies />} />
-              <Route path="config" element={<Config />} />
-              <Route path="logs" element={<Logs />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          </Routes>
+          <AppRoutes />
         </MemoryRouter>
       </ToastProvider>
     </ApiContext.Provider>
@@ -139,6 +149,7 @@ describe("App", () => {
     expect(
       await screen.findByRole("link", { name: /Dashboard/i }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Monitor/i })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /Providers/i }),
     ).toBeInTheDocument();
@@ -146,6 +157,17 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: /Routing/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Config/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Logs/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Debug Capture/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("should navigate to Debug Capture", async () => {
+    render(<TestApp initialPath="/debug-capture" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Debug Capture" }),
+    ).toBeInTheDocument();
   });
 
   it("should navigate to providers page", async () => {

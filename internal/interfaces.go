@@ -135,12 +135,26 @@ type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+var realClockMonotonicOrigin = time.Now()
+
 // RealClock implements Clock using the real system time.
 type RealClock struct{}
 
 // Now returns the current time.
 func (RealClock) Now() time.Time {
 	return time.Now()
+}
+
+// WallNow exposes wall time explicitly to consumers that also need a monotonic
+// deadline domain.
+func (RealClock) WallNow() time.Time {
+	return time.Now()
+}
+
+// MonotonicNow is relative to a process-stable origin so host clock corrections
+// cannot change elapsed security deadlines.
+func (RealClock) MonotonicNow() time.Duration {
+	return time.Since(realClockMonotonicOrigin)
 }
 
 // NewTicker returns a new time.Ticker.

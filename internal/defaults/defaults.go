@@ -83,6 +83,26 @@ const (
 	LogLevel       = "info"
 )
 
+// Debug capture startup defaults keep the process-wide observer bounded even
+// though individual capture sessions can choose smaller retention policies.
+const (
+	DebugCaptureMemoryCeilingMiB        = 512
+	DebugCaptureSessionQuotaMiB         = 256
+	DebugCaptureMaxActiveRecords        = 1024
+	DebugCaptureMaxActiveTraces         = 1024
+	DebugCaptureMaxTransitionsPerTrace  = 64
+	DebugCaptureMaxPendingExports       = 8
+	DebugCaptureMaxConcurrentDownloads  = 2
+	DebugCaptureDetailPreviewBytes      = 65536
+	DebugCaptureDetailEventLimit        = 200
+	DebugCaptureDownloadTokenTTLSeconds = 300
+	DebugCaptureMaxRecordsPerProvider   = 100
+	DebugCaptureMinimumChunkBytes       = 4 << 10
+	DebugCaptureMaximumChunkBytes       = 1 << 20
+	DebugCaptureChunkBytes              = 32768
+	DebugCaptureExportLineBytes         = 65536
+)
+
 // Strategy defaults.
 const (
 	InterGroupStrategy = "priority"

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/http"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -30,8 +29,11 @@ func isNormalClose(err error) bool {
 	if !errors.As(err, &closeErr) {
 		return false
 	}
-	return closeErr.Code == websocket.StatusNormalClosure ||
-		closeErr.Code == websocket.StatusGoingAway
+	return isCleanWebSocketCloseCode(closeErr.Code)
+}
+
+func isCleanWebSocketCloseCode(code websocket.StatusCode) bool {
+	return code == websocket.StatusNormalClosure || code == websocket.StatusGoingAway
 }
 
 func isCloseWithoutStatus(err error) bool {
@@ -43,20 +45,37 @@ func isUnexpectedPeerDisconnect(err error) bool {
 }
 
 func newWebSocketRelayResult(bytes int64, err error, failurePeer webSocketPeer, errorOrder *atomic.Uint32) webSocketRelayResult {
+	return newWebSocketRelayResultForOperation(
+		bytes,
+		err,
+		failurePeer,
+		webSocketRelayFailureOperationUnknown,
+		errorOrder,
+	)
+}
+
+func newWebSocketRelayResultForOperation(
+	bytes int64,
+	err error,
+	failurePeer webSocketPeer,
+	failureOperation webSocketRelayFailureOperation,
+	errorOrder *atomic.Uint32,
+) webSocketRelayResult {
 	result := webSocketRelayResult{
-		bytes:       bytes,
-		err:         err,
-		failurePeer: failurePeer,
+		bytes:            bytes,
+		err:              err,
+		failurePeer:      failurePeer,
+		failureOperation: failureOperation,
 	}
 	var suppressedErr *webSocketSuppressedUpstreamError
 	if errors.As(err, &suppressedErr) {
 		result.suppressedUpstreamError = suppressedErr.UpstreamError()
 	}
-	// Extract any CloseError as an observation-layer fact. The same err value
-	// still flows through reduction so close propagation / classification stay
-	// unchanged; we only hoist the frame into a typed pointer here.
+	// A close frame is peer evidence only when the relay's Read surfaced it.
+	// Write failures can carry close-shaped errors from local propagation, which
+	// must not be persisted as though another endpoint sent a frame.
 	var closeErr websocket.CloseError
-	if err != nil && errors.As(err, &closeErr) {
+	if failureOperation == webSocketRelayFailureOperationRead && err != nil && errors.As(err, &closeErr) {
 		frame := closeErr
 		result.closeError = &frame
 	}
@@ -66,6 +85,45 @@ func newWebSocketRelayResult(bytes int64, err error, failurePeer webSocketPeer, 
 		result.errorOrder = errorOrder.Add(1)
 	}
 	return result
+}
+
+func newSinglePeerRelaySessionResult(
+	err error,
+	failurePeer webSocketPeer,
+	fallbackCommit *webSocketCommitState,
+	lifecycle *webSocketLifecycleState,
+	bytesClientToUpstream, bytesUpstreamToClient int64,
+) *webSocketRelaySessionResult {
+	return newSinglePeerRelaySessionResultForOperation(
+		err,
+		failurePeer,
+		webSocketRelayFailureOperationUnknown,
+		fallbackCommit,
+		lifecycle,
+		bytesClientToUpstream,
+		bytesUpstreamToClient,
+	)
+}
+
+func newSinglePeerRelaySessionResultForOperation(
+	err error,
+	failurePeer webSocketPeer,
+	failureOperation webSocketRelayFailureOperation,
+	fallbackCommit *webSocketCommitState,
+	lifecycle *webSocketLifecycleState,
+	bytesClientToUpstream, bytesUpstreamToClient int64,
+) *webSocketRelaySessionResult {
+	var errorOrder atomic.Uint32
+	return newWebSocketRelaySessionResultFromOutcome(
+		reduceOrderedWebSocketRelayResults(
+			newWebSocketRelayResultForOperation(0, err, failurePeer, failureOperation, &errorOrder),
+			webSocketRelayResult{},
+		),
+		fallbackCommit,
+		lifecycle,
+		bytesClientToUpstream,
+		bytesUpstreamToClient,
+	)
 }
 
 func reduceWebSocketRelayErrors(clientToUpstream, upstreamToClient webSocketRelayResult) webSocketRelayOutcome {
@@ -101,6 +159,7 @@ func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult)
 				terminalCause:      terminalCause,
 				observedCloseError: candidate.closeError,
 				failurePeer:        candidate.failurePeer,
+				failureOperation:   candidate.failureOperation,
 			}
 		}
 		if isUnexpectedPeerDisconnect(candidate.err) {
@@ -109,6 +168,7 @@ func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult)
 				terminalCause:      terminalCause,
 				observedCloseError: candidate.closeError,
 				failurePeer:        candidate.failurePeer,
+				failureOperation:   candidate.failureOperation,
 			}
 		}
 		return webSocketRelayOutcome{
@@ -117,6 +177,7 @@ func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult)
 			terminalCause:      terminalCause,
 			observedCloseError: candidate.closeError,
 			failurePeer:        candidate.failurePeer,
+			failureOperation:   candidate.failureOperation,
 		}
 	}
 	return webSocketRelayOutcome{
@@ -136,8 +197,8 @@ func mergeWebSocketObservation(result *WebSocketResult, observation WebSocketObs
 	}
 }
 
-func classifyDialFailure(resp *http.Response) model.TerminalCause {
-	if resp != nil && resp.StatusCode > 0 {
+func classifyDialFailure(statusCode int) model.TerminalCause {
+	if statusCode > 0 {
 		return model.TerminalUpstreamHandshakeRejected
 	}
 	return model.TerminalUpstreamTransportError

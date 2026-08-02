@@ -4,7 +4,66 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/selector"
 )
+
+type httpAttemptContext struct {
+	provider             *model.Provider
+	providerAttemptIndex int
+	selectionMode        requestcapture.SelectionMode
+	selectionSource      requestcapture.SelectionSource
+}
+
+func (a httpAttemptContext) metadata(apiType string, phase requestcapture.CredentialPhase) requestcapture.AttemptMetadata {
+	return requestcapture.AttemptMetadata{
+		Provider: requestcapture.ProviderIdentity{
+			ID:   a.provider.ID,
+			Name: a.provider.Name,
+		},
+		APIType:              apiType,
+		SelectionMode:        a.selectionMode,
+		SelectionSource:      a.selectionSource,
+		ProviderAttemptIndex: a.providerAttemptIndex,
+		CredentialPhase:      phase,
+	}
+}
+
+func requestAttemptSelectionMode(mode model.SwitchMode) requestcapture.SelectionMode {
+	switch mode {
+	case model.SwitchModeReplacement:
+		return requestcapture.SelectionModeReplacement
+	case model.SwitchModeFailover:
+		return requestcapture.SelectionModeFailover
+	default:
+		return requestcapture.SelectionModeInitial
+	}
+}
+
+func requestAttemptSelectionSource(source selector.SelectionSource) requestcapture.SelectionSource {
+	switch source {
+	case selector.SelectionSourceStickyContinuity:
+		return requestcapture.SelectionSourceStickyContinuity
+	case selector.SelectionSourceActiveContinuity:
+		return requestcapture.SelectionSourceActiveContinuity
+	default:
+		return requestcapture.SelectionSourceStrategy
+	}
+}
+
+// Keep the attempt cutover boundary explicit in process memory so tests, mocks,
+// and alternate stores never depend on database defaults to distinguish
+// normalized evidence from legacy rows.
+func newNormalizedRequestAttempt(requestID, providerID string, createdAt time.Time) model.RequestAttempt {
+	return model.RequestAttempt{
+		RequestID:        requestID,
+		ProviderID:       providerID,
+		SemanticsVersion: model.RequestSemanticsVersionNormalizedV1,
+		CreatedAt:        createdAt,
+	}
+}
 
 type executeProxyLoopAction int
 
@@ -37,7 +96,12 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 			continue
 		}
 
-		result := h.forwardToProvider(ctx, pctx, state.currentProvider)
+		result := h.forwardToProvider(ctx, pctx, httpAttemptContext{
+			provider:             state.currentProvider,
+			providerAttemptIndex: state.providerAttempt,
+			selectionMode:        requestAttemptSelectionMode(state.selectionMode),
+			selectionSource:      requestAttemptSelectionSource(state.selectionMetadata.Source),
+		})
 		h.applyForwardResult(state, result)
 		action = h.advanceExecuteProxyAttempt(ctx, pctx, state, result, attempt, attemptStart)
 		if action == executeProxyLoopActionBreak {

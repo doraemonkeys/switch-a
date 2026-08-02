@@ -196,17 +196,21 @@ func TestHandlerRetryUnauthorizedForwardResponseSkipsWhenAuthUnavailable(t *test
 	})
 	upstreamResp := &UpstreamResponse{StatusCode: http.StatusUnauthorized}
 
-	gotResp, result, ok := handler.retryUnauthorizedForwardResponse(
+	gotResp, exchange, result, ok := handler.retryUnauthorizedForwardResponse(
 		context.Background(),
 		nil,
-		nil,
+		httpAttemptContext{},
 		upstreamResp,
+		httpCaptureExchange{},
 	)
 	if !ok {
 		t.Fatal("expected 401 response without auth service to keep original response")
 	}
 	if gotResp != upstreamResp {
 		t.Fatalf("response pointer changed: got %#v want %#v", gotResp, upstreamResp)
+	}
+	if exchange.recorder.Valid() {
+		t.Fatal("unexpected capture recorder")
 	}
 	if result.err != nil || result.success {
 		t.Fatalf("result = %#v, want zero-value forward result", result)

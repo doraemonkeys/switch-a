@@ -176,11 +176,12 @@ func TestWebSocketForwarder_Relay_OnClientVisibleRunsOnce(t *testing.T) {
 	visibleCh := make(chan webSocketVisibleWriteContext, len(upstreamMessages))
 	resultCh := make(chan *webSocketRelaySessionResult, 1)
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamConn, dialResult := fwd.dialUpstream(r.Context(), wsURL(upstream), nil)
-		if dialResult != nil {
-			t.Errorf("unexpected dial result: %+v", dialResult)
+		dialExchange := fwd.dialUpstream(r.Context(), WebSocketDialRequest{URL: wsURL(upstream)})
+		if !dialExchange.Accepted() {
+			t.Errorf("unexpected dial exchange: %+v", dialExchange)
 			return
 		}
+		upstreamConn := dialExchange.Conn
 
 		clientConn, err := fwd.acceptClient(w, r)
 		if err != nil {
@@ -276,11 +277,12 @@ func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorBefore
 	attemptCh := make(chan relayAttempt, 1)
 	releaseClient := make(chan struct{})
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamConn, dialResult := fwd.dialUpstream(r.Context(), wsURL(upstream), nil)
-		if dialResult != nil {
-			t.Errorf("unexpected dial result: %+v", dialResult)
+		dialExchange := fwd.dialUpstream(r.Context(), WebSocketDialRequest{URL: wsURL(upstream)})
+		if !dialExchange.Accepted() {
+			t.Errorf("unexpected dial exchange: %+v", dialExchange)
 			return
 		}
+		upstreamConn := dialExchange.Conn
 
 		clientConn, err := fwd.acceptClient(w, r)
 		if err != nil {
@@ -408,11 +410,12 @@ func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorWithou
 	attemptCh := make(chan relayAttempt, 1)
 	releaseClient := make(chan struct{})
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamConn, dialResult := fwd.dialUpstream(r.Context(), wsURL(upstream), nil)
-		if dialResult != nil {
-			t.Errorf("unexpected dial result: %+v", dialResult)
+		dialExchange := fwd.dialUpstream(r.Context(), WebSocketDialRequest{URL: wsURL(upstream)})
+		if !dialExchange.Accepted() {
+			t.Errorf("unexpected dial exchange: %+v", dialExchange)
 			return
 		}
+		upstreamConn := dialExchange.Conn
 
 		clientConn, err := fwd.acceptClient(w, r)
 		if err != nil {
