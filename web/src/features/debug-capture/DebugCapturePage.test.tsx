@@ -504,10 +504,17 @@ describe("DebugCapturePage", () => {
     const tokenInput = container.querySelector('input[name="download_token"]');
     expect(tokenInput).toHaveAttribute("value", DOWNLOAD_TOKEN);
     expect(container.querySelector(`a[href*="${DOWNLOAD_TOKEN}"]`)).toBeNull();
-    expect(fireEvent.submit(form!)).toBe(true);
-    expect(
-      screen.queryByRole("button", { name: "Download NDJSON" }),
-    ).not.toBeInTheDocument();
+    const submitSpy = vi
+      .spyOn(HTMLFormElement.prototype, "submit")
+      .mockImplementation(() => undefined);
+    expect(fireEvent.submit(form!)).toBe(false);
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+    submitSpy.mockRestore();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Download NDJSON" }),
+      ).not.toBeInTheDocument();
+    });
 
     await user.click(
       screen.getByRole("button", { name: "View record record-a" }),

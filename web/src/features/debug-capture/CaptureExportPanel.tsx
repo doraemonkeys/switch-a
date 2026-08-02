@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Download, FileDown } from "lucide-react";
 import { useApi, type CreateDebugCaptureExportRequest } from "@/api";
 import {
@@ -24,6 +24,42 @@ export function CaptureExportPanel({
   );
   const [preparedLabel, setPreparedLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const clearPreparedExport = () => {
+    setGrant(null);
+    setPreparedLabel("");
+  };
+
+  const handleDownloadSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const sourceForm = event.currentTarget;
+    const tokenInput = sourceForm.elements.namedItem("download_token");
+    if (!(tokenInput instanceof HTMLInputElement) || tokenInput.value === "") {
+      return;
+    }
+
+    // The rendered form is part of React state, so mutating it during submit can
+    // race the browser's native form serialization. Cloning the validated
+    // capability into a transient native form keeps the actual POST on the
+    // browser side while letting us clear the visible grant immediately.
+    const downloadForm = document.createElement("form");
+    downloadForm.method = sourceForm.method;
+    downloadForm.action = sourceForm.action;
+    downloadForm.style.display = "none";
+
+    const downloadTokenField = document.createElement("input");
+    downloadTokenField.type = "hidden";
+    downloadTokenField.name = "download_token";
+    downloadTokenField.value = tokenInput.value;
+    downloadForm.appendChild(downloadTokenField);
+
+    document.body.appendChild(downloadForm);
+    downloadForm.submit();
+    window.setTimeout(() => downloadForm.remove(), 0);
+
+    clearPreparedExport();
+  };
 
   const prepareExport = async (
     request: CreateDebugCaptureExportRequest,
@@ -117,10 +153,7 @@ export function CaptureExportPanel({
             className="mt-3"
             action={grant.download_path}
             method="post"
-            onSubmit={() => {
-              setGrant(null);
-              setPreparedLabel("");
-            }}
+            onSubmit={handleDownloadSubmit}
           >
             <input
               type="hidden"
