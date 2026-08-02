@@ -172,9 +172,11 @@ export const PROVIDER_USAGE_LIMIT_POLICY_OPTIONS = [
  */
 export const API_TYPES = {
   CLAUDE: "claude",
+  DEEPSEEK_CLAUDE: "deepseek-claude",
   CODEX: "codex",
   GEMINI: "gemini",
   GROK: "grok",
+  DEEPSEEK_OPENAI: "deepseek-openai",
 } as const;
 
 /**
@@ -226,9 +228,11 @@ export type APIType = (typeof API_TYPES)[keyof typeof API_TYPES];
  */
 export const COMMON_API_TYPES = [
   API_TYPES.CLAUDE,
+  API_TYPES.DEEPSEEK_CLAUDE,
   API_TYPES.CODEX,
   API_TYPES.GEMINI,
   API_TYPES.GROK,
+  API_TYPES.DEEPSEEK_OPENAI,
 ] as const;
 
 /**
@@ -241,6 +245,7 @@ export const COMMON_VENDORS = [
   "openai",
   "anthropic",
   "xai",
+  "deepseek",
 ] as const;
 
 /**
@@ -256,6 +261,12 @@ export const API_TYPE_OPTIONS = [
     description: "Anthropic Claude API (/v1/messages, /claude/*)",
   },
   {
+    value: API_TYPES.DEEPSEEK_CLAUDE,
+    label: "DeepSeek Claude",
+    description:
+      "DeepSeek Claude-compatible API (/v1/messages, /deepseek-claude/*)",
+  },
+  {
     value: API_TYPES.CODEX,
     label: "Codex",
     description: "OpenAI Codex/Responses API (/responses, /codex/*)",
@@ -269,6 +280,12 @@ export const API_TYPE_OPTIONS = [
     value: API_TYPES.GROK,
     label: "Grok",
     description: "xAI Grok API (/chat/completions, /grok/*)",
+  },
+  {
+    value: API_TYPES.DEEPSEEK_OPENAI,
+    label: "DeepSeek OpenAI",
+    description:
+      "DeepSeek OpenAI-compatible chat completions API (/chat/completions, /v1/chat/completions, /deepseek-openai/*)",
   },
 ] as const;
 

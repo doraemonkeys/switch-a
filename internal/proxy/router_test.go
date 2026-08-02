@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -139,6 +140,13 @@ func TestResolveAPIType(t *testing.T) {
 			wantOK:   true,
 		},
 		{
+			name:     "deepseek claude namespace",
+			method:   "POST",
+			path:     "/deepseek-claude/v1/messages",
+			wantType: APITypeDeepSeekClaude,
+			wantOK:   true,
+		},
+		{
 			name:     "namespace head follows get route semantics",
 			method:   "HEAD",
 			path:     "/claude/v1/models",
@@ -157,6 +165,13 @@ func TestResolveAPIType(t *testing.T) {
 			method:   "POST",
 			path:     "/grok/chat/completions",
 			wantType: APITypeGrok,
+			wantOK:   true,
+		},
+		{
+			name:     "deepseek openai namespace",
+			method:   "POST",
+			path:     "/deepseek-openai/v1/chat/completions",
+			wantType: APITypeDeepSeekOpenAI,
 			wantOK:   true,
 		},
 		{
@@ -279,6 +294,22 @@ func TestBareProxyRoutes(t *testing.T) {
 	}
 }
 
+func TestAPINamespaceRoutePatterns(t *testing.T) {
+	want := []string{
+		"/claude/",
+		"/codex/",
+		"/deepseek-claude/",
+		"/deepseek-openai/",
+		"/gemini/",
+		"/grok/",
+	}
+
+	got := APINamespaceRoutePatterns()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("APINamespaceRoutePatterns() = %v, want %v", got, want)
+	}
+}
+
 func TestBuildUpstreamPath(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -335,6 +366,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 			wantPath:     "/chat/completions",
 		},
 		{
+			name:         "deepseek openai v1 normalizes to chat completions",
+			originalPath: "/v1/chat/completions",
+			apiType:      APITypeDeepSeekOpenAI,
+			wantPath:     "/chat/completions",
+		},
+		{
 			name:         "gemini namespace strips to native contract path",
 			originalPath: "/gemini/v1beta/models/gemini-pro:generateContent",
 			apiType:      APITypeGemini,
@@ -350,6 +387,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 			name:         "claude namespace strips to native contract path",
 			originalPath: "/claude/v1/messages",
 			apiType:      APITypeClaude,
+			wantPath:     "/v1/messages",
+		},
+		{
+			name:         "deepseek claude namespace strips to native contract path",
+			originalPath: "/deepseek-claude/v1/messages",
+			apiType:      APITypeDeepSeekClaude,
 			wantPath:     "/v1/messages",
 		},
 		{
@@ -374,6 +417,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 			name:         "grok namespace normalizes v1",
 			originalPath: "/grok/v1/chat/completions",
 			apiType:      APITypeGrok,
+			wantPath:     "/chat/completions",
+		},
+		{
+			name:         "deepseek openai namespace normalizes v1",
+			originalPath: "/deepseek-openai/v1/chat/completions",
+			apiType:      APITypeDeepSeekOpenAI,
 			wantPath:     "/chat/completions",
 		},
 		{

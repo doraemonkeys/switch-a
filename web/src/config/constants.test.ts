@@ -183,30 +183,34 @@ describe("AUTH_MODE_OPTIONS", () => {
 describe("API_TYPES", () => {
   it("should have all valid API types", () => {
     expect(API_TYPES.CLAUDE).toBe("claude");
+    expect(API_TYPES.DEEPSEEK_CLAUDE).toBe("deepseek-claude");
     expect(API_TYPES.CODEX).toBe("codex");
     expect(API_TYPES.GEMINI).toBe("gemini");
     expect(API_TYPES.GROK).toBe("grok");
+    expect(API_TYPES.DEEPSEEK_OPENAI).toBe("deepseek-openai");
   });
 
-  it("should have exactly 4 API types", () => {
-    expect(Object.keys(API_TYPES)).toHaveLength(4);
+  it("should have exactly 6 API types", () => {
+    expect(Object.keys(API_TYPES)).toHaveLength(6);
   });
 });
 
 describe("API_TYPE_OPTIONS", () => {
   it("should have options for all API types", () => {
-    expect(API_TYPE_OPTIONS).toHaveLength(4);
+    expect(API_TYPE_OPTIONS).toHaveLength(6);
     const values = API_TYPE_OPTIONS.map((opt) => opt.value);
     expect(values).toContain(API_TYPES.CLAUDE);
+    expect(values).toContain(API_TYPES.DEEPSEEK_CLAUDE);
     expect(values).toContain(API_TYPES.CODEX);
     expect(values).toContain(API_TYPES.GEMINI);
     expect(values).toContain(API_TYPES.GROK);
+    expect(values).toContain(API_TYPES.DEEPSEEK_OPENAI);
   });
 });
 
 describe("COMMON_API_TYPES", () => {
   it("should offer every built-in API type as a quick pick", () => {
-    expect(COMMON_API_TYPES).toHaveLength(4);
+    expect(COMMON_API_TYPES).toHaveLength(6);
     Object.values(API_TYPES).forEach((type) => {
       expect(COMMON_API_TYPES).toContain(type);
     });
@@ -218,15 +222,18 @@ describe("COMMON_VENDORS", () => {
     expect(COMMON_VENDORS).toContain("openai");
     expect(COMMON_VENDORS).toContain("anthropic");
     expect(COMMON_VENDORS).toContain("xai");
+    expect(COMMON_VENDORS).toContain("deepseek");
   });
 });
 
 describe("isValidAPIType", () => {
   it("should accept predefined API types", () => {
     expect(isValidAPIType("claude")).toBe(true);
+    expect(isValidAPIType("deepseek-claude")).toBe(true);
     expect(isValidAPIType("codex")).toBe(true);
     expect(isValidAPIType("gemini")).toBe(true);
     expect(isValidAPIType("grok")).toBe(true);
+    expect(isValidAPIType("deepseek-openai")).toBe(true);
   });
 
   it("should accept custom:* pattern", () => {

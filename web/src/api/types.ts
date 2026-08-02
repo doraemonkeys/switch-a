@@ -22,7 +22,13 @@ export type {
 };
 
 /** Built-in API type values (custom:* pattern handled separately) */
-export type BuiltInAPIType = "claude" | "codex" | "gemini" | "grok";
+export type BuiltInAPIType =
+  | "claude"
+  | "deepseek-claude"
+  | "codex"
+  | "gemini"
+  | "grok"
+  | "deepseek-openai";
 
 /** Valid configuration keys */
 export type ConfigKey =
@@ -553,7 +559,7 @@ export interface LogFilter {
   offset?: number;
   /** Filter by provider ID */
   provider_id?: string;
-  /** Filter by API type (claude/codex/gemini/grok/custom:*) */
+  /** Filter by API type (claude/deepseek-claude/codex/gemini/grok/deepseek-openai/custom:*) */
   api_type?: string;
   /** Filter by request-log semantics version */
   semantics_version?: SemanticsVersion;
