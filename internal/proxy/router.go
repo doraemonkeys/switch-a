@@ -9,10 +9,12 @@ import (
 
 // API type constants.
 const (
-	APITypeClaude = "claude"
-	APITypeCodex  = "codex"
-	APITypeGemini = "gemini"
-	APITypeGrok   = "grok"
+	APITypeClaude         = "claude"
+	APITypeDeepSeekClaude = "deepseek-claude"
+	APITypeCodex          = "codex"
+	APITypeGemini         = "gemini"
+	APITypeGrok           = "grok"
+	APITypeDeepSeekOpenAI = "deepseek-openai"
 )
 
 // CustomAPITypePrefix is the prefix for custom API types.
@@ -30,7 +32,7 @@ const (
 	RouteCodexResponsesV1 = "/v1/responses"
 	RouteCodexWebSearch   = "/alpha/search"
 	RouteCodexWebSearchV1 = "/v1/alpha/search"
-	// Grok API routes (xAI OpenAI-compatible Chat Completions)
+	// OpenAI-compatible Chat Completions API routes (Grok, DeepSeek OpenAI)
 	RouteGrokChatCompletions   = "/chat/completions"
 	RouteGrokChatCompletionsV1 = "/v1/chat/completions"
 	// Gemini API routes (native contract prefix)
@@ -94,10 +96,12 @@ func BareProxyRoutes() []BareProxyRoute {
 // routing metadata and is stripped before forwarding; upstreams only ever see
 // the native contract path.
 var builtinAPINamespaces = map[string]string{
-	"claude": APITypeClaude,
-	"codex":  APITypeCodex,
-	"gemini": APITypeGemini,
-	"grok":   APITypeGrok,
+	"claude":          APITypeClaude,
+	"codex":           APITypeCodex,
+	"deepseek-claude": APITypeDeepSeekClaude,
+	"deepseek-openai": APITypeDeepSeekOpenAI,
+	"gemini":          APITypeGemini,
+	"grok":            APITypeGrok,
 }
 
 // APINamespaceRoutePatterns returns the mux route prefixes for the explicit
@@ -137,7 +141,7 @@ func SplitAPINamespace(path string) (apiType, contractPath string, ok bool) {
 // itself would reject.
 //
 // Explicit namespaces pin the type without contract-path sniffing:
-//   - /claude/*, /codex/*, /grok/*, /gemini/* → the corresponding built-in type
+//   - /claude/*, /deepseek-claude/*, /codex/*, /deepseek-openai/*, /grok/*, /gemini/* → the corresponding built-in type
 //   - /custom/:toolId/* → custom:{toolId}
 //
 // Bare contract paths are resolved from bareProxyRouteDefinitions.
@@ -183,16 +187,17 @@ func supportsSharedProxyMethod(method string) bool {
 }
 
 // BuildUpstreamPath constructs the upstream request path.
-// Explicit namespaces (/claude, /codex, /grok, /gemini, /custom/:toolId) are
-// stripped: they exist to route inside the gateway, not upstream.
-// Codex and Grok additionally strip an optional client-side /v1 segment so the
-// provider base_url owns the API version (e.g. https://api.x.ai/v1).
+// Explicit namespaces (/claude, /deepseek-claude, /codex, /deepseek-openai,
+// /grok, /gemini, /custom/:toolId) are stripped: they exist to route inside
+// the gateway, not upstream.
+// Codex and OpenAI-chat-compatible types additionally strip an optional client-
+// side /v1 segment so the provider base_url owns the API version.
 // Everything else passes through unchanged.
 func BuildUpstreamPath(originalPath, apiType string) string {
 	if namespaceType, contractPath, ok := SplitAPINamespace(originalPath); ok && namespaceType == apiType {
 		originalPath = contractPath
 	}
-	if apiType == APITypeCodex || apiType == APITypeGrok {
+	if shouldTrimVersionPrefix(apiType) {
 		return trimVersionSegment(originalPath)
 	}
 	if !strings.HasPrefix(apiType, CustomAPITypePrefix) {
@@ -219,4 +224,16 @@ func trimVersionSegment(path string) string {
 		return strings.TrimPrefix(path, "/v1")
 	}
 	return path
+}
+
+func isClaudeCompatibleAPIType(apiType string) bool {
+	return apiType == APITypeClaude || apiType == APITypeDeepSeekClaude
+}
+
+func isOpenAIChatCompletionsAPIType(apiType string) bool {
+	return apiType == APITypeGrok || apiType == APITypeDeepSeekOpenAI
+}
+
+func shouldTrimVersionPrefix(apiType string) bool {
+	return apiType == APITypeCodex || isOpenAIChatCompletionsAPIType(apiType)
 }

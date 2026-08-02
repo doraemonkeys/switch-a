@@ -122,7 +122,9 @@ func TestIsValidAPIType(t *testing.T) {
 	}{
 		// Valid routable types (match proxy router)
 		{"claude", true},
+		{"deepseek-claude", true},
 		{"codex", true},
+		{"deepseek-openai", true},
 		{"gemini", true},
 		{"grok", true},
 		{"custom:mytool", true},

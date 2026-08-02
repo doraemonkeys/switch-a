@@ -31,6 +31,16 @@ func TestExtractRequestedReasoningSupportedShapes(t *testing.T) {
 			wantBudget: reasoningInt64Pointer(4096),
 		},
 		{
+			name:       "DeepSeek Claude effort and thinking",
+			apiType:    APITypeDeepSeekClaude,
+			path:       "/deepseek-claude/v1/messages",
+			body:       `{"model":"deepseek-sonnet","output_config":{"effort":"high"},"thinking":{"type":"enabled","budget_tokens":4096}}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("high"),
+			wantMode:   reasoningStringPointer("enabled"),
+			wantBudget: reasoningInt64Pointer(4096),
+		},
+		{
 			name:       "OpenAI responses path",
 			apiType:    APITypeCodex,
 			path:       RouteCodexResponses,
@@ -77,6 +87,14 @@ func TestExtractRequestedReasoningSupportedShapes(t *testing.T) {
 			body:       `{"model":"grok-4","reasoning_effort":"high"}`,
 			wantState:  model.ReasoningObservationCaptured,
 			wantEffort: reasoningStringPointer("high"),
+		},
+		{
+			name:       "DeepSeek OpenAI chat completions path",
+			apiType:    APITypeDeepSeekOpenAI,
+			path:       "/deepseek-openai/v1/chat/completions",
+			body:       `{"model":"deepseek-chat","reasoning_effort":"medium"}`,
+			wantState:  model.ReasoningObservationCaptured,
+			wantEffort: reasoningStringPointer("medium"),
 		},
 		{
 			name:       "Grok v1 chat completions path",

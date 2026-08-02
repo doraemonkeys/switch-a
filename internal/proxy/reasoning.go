@@ -21,8 +21,8 @@ const (
 )
 
 // reasoningMemberKind classifies top-level request members that carry
-// reasoning configuration. Claude and Codex nest the controls inside an
-// object, while Chat Completions (grok) uses a top-level scalar member.
+// reasoning configuration. Claude-compatible APIs nest the controls inside an
+// object, while OpenAI-chat-compatible APIs use a top-level scalar member.
 type reasoningMemberKind uint8
 
 const (
@@ -60,12 +60,19 @@ func ExtractRequestedReasoning(apiType, path string, body []byte) model.Requeste
 }
 
 func supportsReasoningObservation(apiType, path string) bool {
-	return apiType == APITypeClaude && path == RouteClaudeMessages ||
-		apiType == APITypeCodex && (path == RouteCodexResponses ||
-			path == RouteCodexResponsesV1 ||
-			path == RouteCodexWebSearch ||
-			path == RouteCodexWebSearchV1) ||
-		apiType == APITypeGrok && (path == RouteGrokChatCompletions || path == RouteGrokChatCompletionsV1)
+	if isClaudeCompatibleAPIType(apiType) && path == RouteClaudeMessages {
+		return true
+	}
+	if apiType == APITypeCodex && (path == RouteCodexResponses ||
+		path == RouteCodexResponsesV1 ||
+		path == RouteCodexWebSearch ||
+		path == RouteCodexWebSearchV1) {
+		return true
+	}
+	if isOpenAIChatCompletionsAPIType(apiType) && (path == RouteGrokChatCompletions || path == RouteGrokChatCompletionsV1) {
+		return true
+	}
+	return false
 }
 
 func scanRequestedReasoning(apiType string, body []byte, builder *requestedReasoningBuilder) error {
@@ -130,10 +137,10 @@ func reasoningMemberFor(apiType, member string) (reasoningMemberKind, bool) {
 	if apiType == APITypeCodex && member == reasoningObjectField {
 		return reasoningObject, true
 	}
-	if apiType == APITypeGrok && member == reasoningEffortMemberField {
+	if isOpenAIChatCompletionsAPIType(apiType) && member == reasoningEffortMemberField {
 		return reasoningEffortMember, true
 	}
-	if apiType == APITypeClaude {
+	if isClaudeCompatibleAPIType(apiType) {
 		switch member {
 		case outputConfigObjectField:
 			return outputConfigObject, true
