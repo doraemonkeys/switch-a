@@ -21,8 +21,6 @@
 - **Declarative UI & One-way Flow:** Treat UI as $UI = f(state)$; props flow down, events bubble up. Use **derived state** during render instead of redundant syncing effects.
 - **Strictly Modern Hooks:** Use `useEffect` *only* for external synchronization (APIs/subs). Handle all user interactions in event handlers. **Trust React Compiler** (no manual `useMemo`/`useCallback`).
 - **Composition Strategy:** Prefer colocation and Composition (`children`) over deep prop drilling. Use Context only for truly global state. Extract logic into Custom Hooks.
-- **Standards & Quality:** Use semantic HTML and never use array indexes as keys. Prioritize accessibility-first testing (e.g., `getByRole`) for robust code.
-
 
 ## Project Overview
 
