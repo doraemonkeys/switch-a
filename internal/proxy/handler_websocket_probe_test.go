@@ -84,7 +84,7 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer conn.CloseNow()
 
 	if err := conn.Write(ctx, websocket.MessageText, []byte(prompt)); err != nil {
 		t.Fatalf("write client message: %v", err)
@@ -97,6 +97,10 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	if msgType != websocket.MessageText || !strings.Contains(string(data), `"response.created"`) {
 		t.Fatalf("unexpected websocket payload: type=%v body=%q", msgType, string(data))
 	}
+	// Sticky continuity is written when the relay session terminates. This fixture
+	// does not read the proxy's close frame, so use an immediate client teardown
+	// rather than waiting for a reciprocal close handshake.
+	_ = conn.CloseNow()
 
 	waitFor(t, func() bool { return mockSel.StickyUpdatesLen() == 1 }, testPollTimeout)
 
