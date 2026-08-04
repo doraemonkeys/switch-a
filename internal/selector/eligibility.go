@@ -240,7 +240,6 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 	bestIndex := -1
 	bestRank := -1
 	bestPrefixLen := -1
-	hasActivePolicy := false
 
 	for i := range policies {
 		policy := &policies[i]
@@ -250,7 +249,6 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 		if !routingPolicyIsActive(policy) {
 			continue
 		}
-		hasActivePolicy = true
 		if !requestModelKnown && routingPolicyConsumesModel(policy) {
 			// Missing request models must not trigger speculative probing for routing.
 			// Model-specific rules simply do not participate until the request already
@@ -270,19 +268,11 @@ func resolveRoutingPolicy(policies []model.RoutingPolicy, req *model.SelectReque
 	}
 
 	if bestIndex < 0 {
-		if !hasActivePolicy {
-			return routingPolicyResolution{}
-		}
-		if !requestModelKnown {
-			// When the request carries no usable model, model-specific active rules are
-			// treated as unmatched rather than turning the API type into a fail-closed
-			// routing domain.
-			return routingPolicyResolution{}
-		}
-		// Once this API type is governed by routing policy, "no match" is still a
-		// policy outcome: selection fails closed instead of widening back to every
-		// provider for the API type.
-		return routingPolicyResolution{constrained: true}
+		// Rules are selective overrides, not declarations that the whole API type is
+		// closed. A model-scoped rule therefore cannot constrain a different model;
+		// callers retain normal provider selection unless an API-wide fallback rule
+		// or another model-specific rule actually matches.
+		return routingPolicyResolution{}
 	}
 
 	selected := policies[bestIndex]
