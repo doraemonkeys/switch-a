@@ -224,23 +224,24 @@ func TestResolveRoutingPolicyUnknownModelFallsBackWhenOnlyModelSpecificRulesAreA
 	}
 }
 
-func TestResolveRoutingPolicyFailsClosedWhenActiveRulesExistButModelMatchesNone(t *testing.T) {
+func TestResolveRoutingPolicyLeavesNonMatchingModelRuleUnconstrained(t *testing.T) {
 	t.Parallel()
 
 	resolution := resolveRoutingPolicy([]model.RoutingPolicy{
 		{
-			Enabled:         true,
-			APIType:         "codex",
-			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
-			ModelMatchValue: "gpt-",
+			Enabled:          true,
+			APIType:          "codex",
+			ModelMatchType:   model.RoutingPolicyModelMatchTypePrefix,
+			ModelMatchValue:  "gpt-5.5",
+			TargetProviderID: stringPtr("p-gpt-5-5"),
 		},
-	}, &model.SelectRequest{APIType: "codex", Model: "claude-3"})
+	}, &model.SelectRequest{APIType: "codex", Model: "gpt-5.6-sol"})
 
-	if !resolution.constrained {
-		t.Fatalf("resolution = %#v, want fail-closed constraint when active rules exist but none match", resolution)
+	if resolution.constrained {
+		t.Fatalf("resolution = %#v, want non-matching model rule to leave default selection unconstrained", resolution)
 	}
 	if resolution.matched {
-		t.Fatalf("resolution = %#v, want unmatched result when no active rule matches the request", resolution)
+		t.Fatalf("resolution = %#v, want unmatched result for a different model prefix", resolution)
 	}
 }
 

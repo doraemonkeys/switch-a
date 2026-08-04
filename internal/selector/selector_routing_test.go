@@ -554,33 +554,50 @@ func TestBuildContinuityKey_ModelModeFallsBackWhenModelUnknown(t *testing.T) {
 	}
 }
 
-func TestSelectorSelect_UnmatchedActiveRuleFailsClosed(t *testing.T) {
+func TestSelectorSelect_ModelPrefixRuleOnlyConstrainsMatchingModels(t *testing.T) {
 	t.Parallel()
 
+	const (
+		apiType                 = "codex"
+		defaultProviderID       = "p-default"
+		targetProviderID        = "p-gpt-5-5"
+		targetedModelPrefix     = "gpt-5.5"
+		matchingModel           = "gpt-5.5-codex"
+		nonMatchingRequestModel = "gpt-5.6-sol"
+	)
 	groupID := "g-default"
 
 	store := newMockStore()
 	store.providers = []model.Provider{
 		{
-			ID:       "p-default",
+			ID:       defaultProviderID,
 			Name:     "Default Provider",
 			Enabled:  true,
 			GroupID:  &groupID,
 			Priority: 0,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p-default", APIType: "codex"}},
+			APITypes: []model.ProviderAPIType{{ProviderID: defaultProviderID, APIType: apiType}},
+		},
+		{
+			ID:       targetProviderID,
+			Name:     "GPT 5.5 Provider",
+			Enabled:  true,
+			GroupID:  &groupID,
+			Priority: 10,
+			APITypes: []model.ProviderAPIType{{ProviderID: targetProviderID, APIType: apiType}},
 		},
 	}
 	store.groups = map[string]*model.Group{
 		"g-default": {ID: "g-default", Name: "Default Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-default"] = &model.ProviderAuthState{ProviderID: "p-default", Status: model.ProviderAuthStatusActive}
+	store.authStates[defaultProviderID] = &model.ProviderAuthState{ProviderID: defaultProviderID, Status: model.ProviderAuthStatusActive}
+	store.authStates[targetProviderID] = &model.ProviderAuthState{ProviderID: targetProviderID, Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
-			Enabled:         true,
-			APIType:         "codex",
-			ModelMatchType:  model.RoutingPolicyModelMatchTypePrefix,
-			ModelMatchValue: "gpt-",
-			Groups:          []model.RoutingPolicyGroup{{GroupID: "g-default"}},
+			Enabled:          true,
+			APIType:          apiType,
+			ModelMatchType:   model.RoutingPolicyModelMatchTypePrefix,
+			ModelMatchValue:  targetedModelPrefix,
+			TargetProviderID: stringPtr(targetProviderID),
 		},
 	}
 
@@ -591,16 +608,37 @@ func TestSelectorSelect_UnmatchedActiveRuleFailsClosed(t *testing.T) {
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.selectForTest(t, context.Background(), &model.SelectRequest{
-		APIType:    "codex",
-		Model:      "claude-3",
-		StickyMode: model.StickyModeOff,
-	})
-	if !errors.Is(err, internal.ErrNoProvider) {
-		t.Fatalf("error = %v, want %v", err, internal.ErrNoProvider)
+	tests := []struct {
+		name           string
+		requestModel   string
+		wantProviderID string
+	}{
+		{
+			name:           "matching model uses the targeted provider",
+			requestModel:   matchingModel,
+			wantProviderID: targetProviderID,
+		},
+		{
+			name:           "non-matching model keeps normal selection",
+			requestModel:   nonMatchingRequestModel,
+			wantProviderID: defaultProviderID,
+		},
 	}
-	if provider != nil {
-		t.Fatalf("provider = %#v, want nil", provider)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider, err := sel.selectForTest(t, context.Background(), &model.SelectRequest{
+				APIType:    apiType,
+				Model:      tt.requestModel,
+				StickyMode: model.StickyModeOff,
+			})
+			if err != nil {
+				t.Fatalf("Select() error = %v, want provider %q", err, tt.wantProviderID)
+			}
+			if provider == nil || provider.ID != tt.wantProviderID {
+				t.Fatalf("Select() provider = %#v, want %q", provider, tt.wantProviderID)
+			}
+		})
 	}
 }
 
