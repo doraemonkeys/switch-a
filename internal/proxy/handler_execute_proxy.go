@@ -490,6 +490,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	if !state.success && !state.headersWritten {
 		clientStatus = http.StatusServiceUnavailable
 	}
+	h.scheduleProviderUsagePersistence(pctx)
 	go h.logRequest(pctx, logRequestInputs{
 		Provider: state.providerUsed,
 		Facts: nonWebSocketRuntimeFacts{

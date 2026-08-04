@@ -109,8 +109,8 @@ export function AuthSection({
     }
     return (
       <div className="rounded-lg border border-border/60 bg-bg-secondary/40 p-3 text-xs text-text-muted">
-        Usage data is not available yet. Trigger Refresh Usage or wait for the
-        next background sync snapshot.
+        Usage appears automatically after the next Codex response. Use Refresh
+        Usage only when the account is idle and you need an immediate snapshot.
       </div>
     );
   };

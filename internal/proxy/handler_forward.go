@@ -296,6 +296,7 @@ func (h *Handler) fetchPendingHTTPResponse(
 		attempt.providerAttemptIndex,
 		phase,
 	)
+	h.captureProviderUsageObservation(pctx, attempt.provider, head.SourceHeader, time.Now(), operationID)
 	if media.Source() == responseanalysis.ResponseMediaFromRequestAccept {
 		h.logger.Debug("inferred missing upstream response Content-Type from request Accept",
 			zap.String("request_id", pctx.requestID),

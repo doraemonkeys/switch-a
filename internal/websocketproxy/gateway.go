@@ -111,6 +111,10 @@ type ProviderAuthenticator interface {
 	RefreshProviderCredentials(context.Context, *model.Provider) (bool, error)
 }
 
+type ProviderUsageObserver interface {
+	ObserveProviderUsage(context.Context, string, *model.ProviderUsageSnapshot) error
+}
+
 type RequestCapture interface {
 	Enabled() bool
 	BeginGateway(requestcapture.GatewayStart) requestcapture.GatewayRecorder
@@ -153,6 +157,7 @@ type Config struct {
 	ActiveSessions             ActiveSessions
 	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
 	Auth                       ProviderAuthenticator
+	UsageObserver              ProviderUsageObserver
 	Capture                    RequestCapture
 	Forwarder                  *WebSocketForwarder
 	Logger                     *zap.Logger
@@ -167,6 +172,7 @@ type Gateway struct {
 	activeSessions             ActiveSessions
 	visibleContinuitySeedStore model.VisibleContinuitySeedStore
 	auth                       ProviderAuthenticator
+	usageObserver              ProviderUsageObserver
 	capture                    RequestCapture
 	wsForwarder                *WebSocketForwarder
 	logger                     *zap.Logger
@@ -185,10 +191,15 @@ func NewGateway(cfg Config) *Gateway {
 	if forwarder == nil {
 		forwarder = NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger})
 	}
+	usageObserver := cfg.UsageObserver
+	if usageObserver == nil {
+		usageObserver, _ = cfg.Auth.(ProviderUsageObserver)
+	}
 	return &Gateway{
 		store: cfg.Store, selector: cfg.Selector, health: cfg.Health,
 		activeSessions: cfg.ActiveSessions, visibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
-		auth: cfg.Auth, capture: cfg.Capture, wsForwarder: forwarder, logger: cfg.Logger,
+		auth: cfg.Auth, usageObserver: usageObserver,
+		capture: cfg.Capture, wsForwarder: forwarder, logger: cfg.Logger,
 	}
 }
 

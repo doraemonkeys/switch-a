@@ -64,6 +64,9 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 			requestcapture.CredentialPhaseInitial,
 		),
 	})
+	o.handler.scheduleProviderUsageObservation(
+		o.requestID, provider, dialExchange.HandshakeHeaders, dialExchange.HandshakeObservedAt,
+	)
 	if !dialExchange.Accepted() {
 		resolution := o.resolveRejectedProviderDial(
 			ctx,
@@ -349,6 +352,9 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 			requestcapture.CredentialPhaseRefreshed,
 		),
 	})
+	o.handler.scheduleProviderUsageObservation(
+		o.requestID, provider, dialExchange.HandshakeHeaders, dialExchange.HandshakeObservedAt,
+	)
 	if dialExchange.Accepted() {
 		return dialExchange, WebSocketAttemptResult{RecoveryAttempted: true}, true
 	}

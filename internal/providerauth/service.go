@@ -113,6 +113,10 @@ type recentChatGPTRefresh struct {
 	expiresAt  time.Time
 }
 
+type inFlightProviderUsageObservation struct {
+	latest *model.ProviderUsageSnapshot
+}
+
 // Service manages provider-backed authentication flows and credential injection.
 type Service struct {
 	credentialStore CredentialStore
@@ -140,6 +144,9 @@ type Service struct {
 	refreshMu              sync.Mutex
 	inFlightRefreshes      map[string]*inFlightChatGPTRefresh
 	recentChatGPTRefreshes map[string]recentChatGPTRefresh
+
+	usageObservationMu        sync.Mutex
+	inFlightUsageObservations map[string]*inFlightProviderUsageObservation
 }
 
 // NewService creates a provider auth service.
@@ -176,19 +183,20 @@ func newService(cfg Config, runtime serviceRuntime) *Service {
 	}
 
 	service := &Service{
-		credentialStore:        cfg.CredentialStore,
-		httpClient:             httpClient,
-		clock:                  clock,
-		logger:                 logger,
-		idGenerator:            idGenerator,
-		callback:               runtime.callback,
-		scheduleAfter:          scheduleAfter,
-		pendingByState:         make(map[string]pendingLogin),
-		pendingByLoginID:       make(map[string]pendingLogin),
-		completed:              make(map[string]completedLogin),
-		providerImports:        make(map[string]stagedChatGPTProviderImport),
-		inFlightRefreshes:      make(map[string]*inFlightChatGPTRefresh),
-		recentChatGPTRefreshes: make(map[string]recentChatGPTRefresh),
+		credentialStore:           cfg.CredentialStore,
+		httpClient:                httpClient,
+		clock:                     clock,
+		logger:                    logger,
+		idGenerator:               idGenerator,
+		callback:                  runtime.callback,
+		scheduleAfter:             scheduleAfter,
+		pendingByState:            make(map[string]pendingLogin),
+		pendingByLoginID:          make(map[string]pendingLogin),
+		completed:                 make(map[string]completedLogin),
+		providerImports:           make(map[string]stagedChatGPTProviderImport),
+		inFlightRefreshes:         make(map[string]*inFlightChatGPTRefresh),
+		recentChatGPTRefreshes:    make(map[string]recentChatGPTRefresh),
+		inFlightUsageObservations: make(map[string]*inFlightProviderUsageObservation),
 	}
 	if service.callback == nil {
 		service.callback = newLoopbackCallbackServer(http.HandlerFunc(service.handleChatGPTOAuthCallback), logger)

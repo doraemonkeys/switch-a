@@ -8,17 +8,18 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/codexquota"
 )
 
 const (
 	codexUsageLimitErrorType            = "usage_limit_reached"
 	usageLimitAutoDisableReason         = "usage limit reached"
-	headerCodexPrimaryUsedPercent       = "X-Codex-Primary-Used-Percent"
-	headerCodexSecondaryUsedPercent     = "X-Codex-Secondary-Used-Percent"
-	headerCodexPrimaryResetAt           = "X-Codex-Primary-Reset-At"
-	headerCodexSecondaryResetAt         = "X-Codex-Secondary-Reset-At"
-	headerCodexPrimaryResetAfterSeconds = "X-Codex-Primary-Reset-After-Seconds"
-	headerCodexSecondaryResetAfterSecs  = "X-Codex-Secondary-Reset-After-Seconds"
+	headerCodexPrimaryUsedPercent       = codexquota.HeaderPrimaryUsedPercent
+	headerCodexSecondaryUsedPercent     = codexquota.HeaderSecondaryUsedPercent
+	headerCodexPrimaryResetAt           = codexquota.HeaderPrimaryResetAt
+	headerCodexSecondaryResetAt         = codexquota.HeaderSecondaryResetAt
+	headerCodexPrimaryResetAfterSeconds = codexquota.HeaderPrimaryResetAfterSeconds
+	headerCodexSecondaryResetAfterSecs  = codexquota.HeaderSecondaryResetAfterSeconds
 )
 
 type providerFailureScope uint8

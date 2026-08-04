@@ -43,6 +43,7 @@ type Handler struct {
 	fallbackCounter            atomic.Int64 // Counter for true round-robin in fallback mode
 	webSocketGateway           *websocketproxy.Gateway
 	auth                       ProviderAuthenticator
+	usageObserver              ProviderUsageObserver
 	capture                    RequestCapture
 	ruleSets                   errorrule.RuleSetProvider
 	analyzer                   ResponseAnalyzer
@@ -184,6 +185,12 @@ func (p staticRuleSetProvider) CurrentRuleSet() *errorrule.CompiledRuleSet {
 type ProviderAuthenticator interface {
 	ApplyProviderCredentials(context.Context, http.Header, *model.Provider, string, string, *http.Request) error
 	RefreshProviderCredentials(context.Context, *model.Provider) (bool, error)
+}
+
+// ProviderUsageObserver is separate from credential injection because quota
+// observation is an optional post-response write, not an authentication step.
+type ProviderUsageObserver interface {
+	ObserveProviderUsage(context.Context, string, *model.ProviderUsageSnapshot) error
 }
 
 // RequestCapture is the proxy-owned view of the process capture manager.
@@ -385,6 +392,7 @@ type proxyContext struct {
 	liveBytes           *LiveBytesTracker      // Logical-request traffic shared across provider attempts
 	isSticky            bool                   // Whether provider came from sticky cache
 	attempts            []model.RequestAttempt // Attempts made during this request
+	usageObservations   map[string]*model.ProviderUsageSnapshot
 }
 
 // ServeHTTP handles proxy requests.

@@ -94,6 +94,7 @@ type Config struct {
 	ActiveRegistry             *ActiveRequestRegistry
 	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
 	Auth                       ProviderAuthenticator
+	UsageObserver              ProviderUsageObserver
 	Capture                    RequestCapture
 	RuleSetProvider            errorrule.RuleSetProvider
 	ResponseAnalyzer           ResponseAnalyzer
@@ -138,6 +139,10 @@ func NewHandler(cfg Config) *Handler {
 	if visibleContinuitySeedStore == nil {
 		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
 	}
+	usageObserver := cfg.UsageObserver
+	if usageObserver == nil {
+		usageObserver, _ = cfg.Auth.(ProviderUsageObserver)
+	}
 	handler := &Handler{
 		store:                      cfg.Store,
 		selector:                   cfg.Selector,
@@ -147,6 +152,7 @@ func NewHandler(cfg Config) *Handler {
 		visibleContinuitySeedStore: visibleContinuitySeedStore,
 		logger:                     cfg.Logger,
 		auth:                       cfg.Auth,
+		usageObserver:              usageObserver,
 		capture:                    cfg.Capture,
 		ruleSets:                   ruleSets,
 		analyzer:                   analyzer,
@@ -157,7 +163,8 @@ func NewHandler(cfg Config) *Handler {
 		Store: cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,
 		ActiveSessions:             newWebSocketActiveSessions(cfg.ActiveRegistry),
 		VisibleContinuitySeedStore: visibleContinuitySeedStore,
-		Auth:                       cfg.Auth, Capture: cfg.Capture, Logger: cfg.Logger,
+		Auth:                       cfg.Auth, UsageObserver: usageObserver,
+		Capture: cfg.Capture, Logger: cfg.Logger,
 	})
 	return handler
 }

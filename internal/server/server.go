@@ -172,6 +172,7 @@ func New(cfg Config) *Server {
 		ActiveRegistry:             cfg.ActiveRegistry,
 		VisibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
 		Auth:                       cfg.Auth,
+		UsageObserver:              cfg.Auth,
 		Capture:                    cfg.Capture,
 		RuleSetProvider:            cfg.RuleSetProvider,
 		ResponseAnalyzer:           cfg.ResponseAnalyzer,
