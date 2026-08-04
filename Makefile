@@ -1,4 +1,4 @@
-.PHONY: ci ci-go ci-web ci-structure verify lint coverage gopls-check sloc clean test fmt format-check build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc web-format-check check-go-env tools install-tools install-go-tools install-sloc-guard ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
+.PHONY: ci ci-go ci-web lint coverage gopls-check sloc clean test fmt format-check build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc web-fmt web-format-check rm-tmpclaude check-go-env tools install-tools install-go-tools install-sloc-guard ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
 
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -88,17 +88,14 @@ check-go-env:
 		;; \
 	esac
 
-# Keep local and hosted CI on the same quality entry points while allowing GitHub jobs to run in parallel.
-ci: ci-go ci-web ci-structure
-
+# Hosted CI keeps Go and web gates separate so their jobs can run in parallel.
 ci-go: check-go-env coverage lint format-check gopls-check
 
 ci-web: web-coverage web-tsc web-lint web-format-check
 
-ci-structure: sloc
-
-# 正常模式
-verify: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc gopls-check
+# Local CI also normalizes formatting and removes transient debug captures so a
+# successful run leaves the working tree ready for review.
+ci: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc gopls-check
 
 rm-tmpclaude:
 	@rm -f tmpclaude-*
