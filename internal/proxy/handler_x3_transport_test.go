@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,14 +15,12 @@ import (
 )
 
 type x3TransportStep struct {
-	statusCode      int
-	contentType     string
-	contentEncoding string
-	header          http.Header
-	body            io.ReadCloser
-	wireBytes       int
-	err             error
-	onFetch         func()
+	statusCode int
+	header     http.Header
+	body       io.ReadCloser
+	wireBytes  int
+	err        error
+	onFetch    func()
 }
 
 func x3HTTPResponseStep(
@@ -41,8 +38,7 @@ func x3HTTPResponseStep(
 		header.Set("Content-Encoding", contentEncoding)
 	}
 	return x3TransportStep{
-		statusCode: statusCode, contentType: contentType, contentEncoding: contentEncoding,
-		header: header, body: body, wireBytes: wireBytes,
+		statusCode: statusCode, header: header, body: body, wireBytes: wireBytes,
 	}
 }
 
@@ -75,7 +71,7 @@ func (t *x3ScriptedTransport) FetchUpstream(ctx context.Context, request *http.R
 	header := step.header.Clone()
 	return upstreamtransport.NewResponse(upstreamtransport.ResponseHead{
 		StatusCode: step.statusCode, Protocol: "HTTP/1.1", SourceHeader: header.Clone(), Header: header,
-		ContentLength: int64(step.wireBytes), EventStream: strings.EqualFold(step.contentType, "text/event-stream"),
+		ContentLength: int64(step.wireBytes),
 	}, step.body)
 }
 

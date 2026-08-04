@@ -317,7 +317,7 @@ func (h *Handler) resolveStatusFailure(
 ) (forwardResult, bool) {
 	statusCode := pending.head.StatusCode
 	result := forwardResult{
-		statusCode: statusCode, isSSE: pending.head.EventStream, isStatusFailover: true,
+		statusCode: statusCode, isSSE: pending.media.IsEventStream(), isStatusFailover: true,
 		failureKind:    attemptFailureStatus,
 		failureMessage: fmt.Sprintf("upstream returned status %d", statusCode),
 		failureDisposition: classifyProviderFailureForProvider(

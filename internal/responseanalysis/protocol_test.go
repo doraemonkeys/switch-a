@@ -299,6 +299,80 @@ func TestMediaAndCodingParsers(t *testing.T) {
 	}
 }
 
+func TestResolveResponseMediaUsesOnlyAuthoritativeOrUnambiguousEvidence(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		contentType string
+		accept      []string
+		wantType    string
+		wantSource  ResponseMediaSource
+		wantSSE     bool
+		wantSupport bool
+	}{
+		{
+			name: "declared response type is authoritative", contentType: "application/problem+json",
+			accept: []string{mediaTypeEventStream}, wantType: "application/problem+json",
+			wantSource: ResponseMediaFromContentType, wantSupport: true,
+		},
+		{
+			name: "missing type recovers one accepted SSE representation", accept: []string{mediaTypeEventStream},
+			wantType: mediaTypeEventStream, wantSource: ResponseMediaFromRequestAccept, wantSSE: true, wantSupport: true,
+		},
+		{
+			name:     "equivalent JSON ranges remain unambiguous",
+			accept:   []string{`application/json; q=0.8, application/problem+json; profile="a,b"`},
+			wantType: mediaTypeJSON, wantSource: ResponseMediaFromRequestAccept, wantSupport: true,
+		},
+		{
+			name:     "zero quality alternatives are not acceptable",
+			accept:   []string{"text/plain; q=0", mediaTypeEventStream},
+			wantType: mediaTypeEventStream, wantSource: ResponseMediaFromRequestAccept, wantSSE: true, wantSupport: true,
+		},
+		{name: "JSON and SSE are ambiguous", accept: []string{mediaTypeJSON + ", " + mediaTypeEventStream}, wantSource: ResponseMediaUnknown},
+		{name: "wildcard is ambiguous", accept: []string{"*/*"}, wantSource: ResponseMediaUnknown},
+		{name: "invalid quality is rejected", accept: []string{mediaTypeEventStream + "; q=2"}, wantSource: ResponseMediaUnknown},
+		{
+			name: "unsupported declared type does not defer to Accept", contentType: "text/plain",
+			accept: []string{mediaTypeEventStream}, wantType: "text/plain", wantSource: ResponseMediaFromContentType,
+		},
+		{name: "missing evidence remains unknown", wantSource: ResponseMediaUnknown},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			media := ResolveResponseMedia(test.contentType, test.accept)
+			if media.ContentType() != test.wantType || media.Source() != test.wantSource ||
+				media.IsEventStream() != test.wantSSE || media.Supported() != test.wantSupport {
+				t.Fatalf("media = %#v", media)
+			}
+		})
+	}
+}
+
+func TestCapturedCodexUsageUsesNegotiatedMediaWhenResponseTypeIsMissing(t *testing.T) {
+	t.Parallel()
+	media := ResolveResponseMedia("", []string{mediaTypeEventStream})
+	protocol, failure := NewRegistry().Resolve("codex", media.ContentType(), "identity")
+	if failure != "" {
+		t.Fatal(failure)
+	}
+	stream := mustNewStream(t, protocol)
+	var observations []Observation
+	payload := []byte("event: response.completed\n" +
+		`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":51114,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":49920},"output_tokens":103,"output_tokens_details":{"reasoning_tokens":8},"total_tokens":51217}}}` + "\n\n")
+	feedCollect(stream, payload, true, &observations)
+	if len(observations) != 1 || observations[0].Class != EventUsage || observations[0].Usage == nil {
+		t.Fatalf("observations = %#v", observations)
+	}
+	usage := observations[0].Usage
+	if usage.PromptTokens != 51114 || usage.CompletionTokens != 103 || usage.TotalTokens != 51217 ||
+		usage.CacheReadInputTokens != 49920 || usage.ReasoningTokens != 8 {
+		t.Fatalf("usage = %#v", usage)
+	}
+}
+
 func loadProtocolFixtures(t *testing.T, name string) protocolFixtureFile {
 	t.Helper()
 	path := filepath.Join("..", "..", "contracts", "internal-error", "v1", name)

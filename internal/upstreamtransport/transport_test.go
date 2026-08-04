@@ -83,15 +83,10 @@ func TestResponseHeadIsIsolatedAndBodyMovesExactlyOnce(t *testing.T) {
 		Header:        http.Header{"X-Client": {"two"}},
 		Trailer:       trailer,
 		ContentLength: 7,
-		EventStream:   true,
 	}, body)
 	if err != nil {
 		t.Fatalf("NewResponse: %v", err)
 	}
-	if !response.IsSSE() {
-		t.Fatal("IsSSE = false, want true")
-	}
-
 	snapshot := response.Head()
 	snapshot.SourceHeader.Set("X-Source", "mutated")
 	snapshot.Header.Set("X-Client", "mutated")
@@ -229,9 +224,6 @@ func TestResponseNilAndInvalidConstruction(t *testing.T) {
 	var response *Response
 	if got := response.Head(); !reflect.DeepEqual(got, ResponseHead{}) {
 		t.Fatalf("nil Head = %+v", got)
-	}
-	if response.IsSSE() {
-		t.Fatal("nil response reported SSE")
 	}
 	if _, err := response.TakeBody(); !errors.Is(err, ErrBodyTransferred) {
 		t.Fatalf("nil TakeBody error = %v", err)
@@ -443,7 +435,7 @@ func TestFetchReturnsNormalizedHeadAndLiveTrailer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Take: %v", err)
 	}
-	if head.StatusCode != http.StatusCreated || head.Protocol != "HTTP/2.0" || !head.EventStream {
+	if head.StatusCode != http.StatusCreated || head.Protocol != "HTTP/2.0" {
 		t.Fatalf("response head = %+v", head)
 	}
 	if got := head.SourceHeader.Get("X-End"); got != "value" {
@@ -553,12 +545,6 @@ func TestHeaderHelpersCoverCaseAndEmptyInputs(t *testing.T) {
 	}
 	if containsHeader([]string{"X-One"}, "X-Two") {
 		t.Fatal("containsHeader returned false positive")
-	}
-	if !isSSE(http.Header{"Content-Type": {"TEXT/EVENT-STREAM; charset=utf-8"}}) {
-		t.Fatal("isSSE missed parameterized media type")
-	}
-	if isSSE(http.Header{"Content-Type": {"application/json"}}) || isSSE(nil) {
-		t.Fatal("isSSE returned false positive")
 	}
 	if cloneHeader(nil) != nil {
 		t.Fatal("cloneHeader(nil) was non-nil")

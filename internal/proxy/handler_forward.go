@@ -169,6 +169,7 @@ func (m *semanticMatchTracker) Facts() (errorrule.MatchResult, bool) {
 
 type pendingHTTPResponse struct {
 	head              upstreamtransport.ResponseHead
+	media             responseanalysis.ResponseMedia
 	pending           *responseanalysis.PendingResponse
 	writer            *firstWriteResponseWriter
 	exchange          httpCaptureExchange
@@ -278,8 +279,10 @@ func (h *Handler) fetchPendingHTTPResponse(
 
 	snippet := &boundedSnippet{}
 	writer := h.newAttemptResponseWriter(pctx, &exchange, snippet)
+	requestAccept := request.Header.Values("Accept")
+	media := resolveHTTPResponseMedia(&head, requestAccept)
 	idleDuration := pctx.cfg.readTimeout
-	if head.EventStream {
+	if media.IsEventStream() {
 		idleDuration = pctx.cfg.sseIdleTimeout
 		if h.activeRegistry != nil {
 			h.activeRegistry.UpdateSSE(pctx.requestID, true)
@@ -293,12 +296,31 @@ func (h *Handler) fetchPendingHTTPResponse(
 		attempt.providerAttemptIndex,
 		phase,
 	)
+	if media.Source() == responseanalysis.ResponseMediaFromRequestAccept {
+		h.logger.Debug("inferred missing upstream response Content-Type from request Accept",
+			zap.String("request_id", pctx.requestID),
+			zap.String("operation_id", operationID),
+			zap.String("provider_id", attempt.provider.ID),
+			zap.String("api_type", pctx.apiType),
+			zap.String("response_media_type", media.ContentType()),
+			zap.Strings("request_accept", requestAccept),
+		)
+	} else if !media.Supported() {
+		h.logger.Debug("upstream response media type could not be resolved",
+			zap.String("request_id", pctx.requestID),
+			zap.String("operation_id", operationID),
+			zap.String("provider_id", attempt.provider.ID),
+			zap.String("api_type", pctx.apiType),
+			zap.String("response_content_type", head.SourceHeader.Get("Content-Type")),
+			zap.Strings("request_accept", requestAccept),
+		)
+	}
 	analysisStartedAt := time.Now()
 	pending := h.analyzer.Start(ctx, responseanalysis.StartInput{
 		OperationID:     operationID,
 		Mode:            mode,
 		APIType:         pctx.apiType,
-		ContentType:     head.SourceHeader.Get("Content-Type"),
+		ContentType:     media.ContentType(),
 		ContentEncoding: head.SourceHeader.Get("Content-Encoding"),
 		StatusCode:      head.StatusCode,
 		Header:          head.Header,
@@ -309,13 +331,27 @@ func (h *Handler) fetchPendingHTTPResponse(
 		Match:           matcher.Match,
 	})
 	return &pendingHTTPResponse{
-		head: head, pending: pending, writer: writer, exchange: exchange,
+		head: head, media: media, pending: pending, writer: writer, exchange: exchange,
 		matcher: matcher, rules: rules, snippet: snippet, pctx: pctx,
 		operationID: operationID, providerID: attempt.provider.ID,
 		logicalAttempt:  uint64(attempt.logicalAttemptIndex + 1),
 		providerAttempt: uint64(attempt.providerAttemptIndex + 1),
 		credentialPhase: evidenceCredentialPhase(phase), analysisStartedAt: analysisStartedAt,
 	}, nil
+}
+
+func resolveHTTPResponseMedia(head *upstreamtransport.ResponseHead, requestAccept []string) responseanalysis.ResponseMedia {
+	if head == nil {
+		return responseanalysis.ResponseMedia{}
+	}
+	media := responseanalysis.ResolveResponseMedia(head.SourceHeader.Get("Content-Type"), requestAccept)
+	if media.Source() == responseanalysis.ResponseMediaFromRequestAccept {
+		if head.Header == nil {
+			head.Header = make(http.Header)
+		}
+		head.Header.Set("Content-Type", media.ContentType())
+	}
+	return media
 }
 
 func evidenceCredentialPhase(phase requestcapture.CredentialPhase) attemptevidence.CredentialPhase {
@@ -407,7 +443,7 @@ func (p *pendingHTTPResponse) discard(
 ) (forwardResult, error) {
 	receipt, err := p.pending.Discard(cause)
 	result := forwardResult{
-		statusCode: p.head.StatusCode, isSSE: p.head.EventStream,
+		statusCode: p.head.StatusCode, isSSE: p.media.IsEventStream(),
 		upstreamBytes: receipt.UpstreamBytesRead, decodedBytes: receipt.DecodedBytesAnalyzed,
 		responseBytes:    receipt.ClientBodyBytesWritten,
 		peakRequestBytes: receipt.PeakRequestBytes, peakProcessBytes: receipt.PeakProcessBytes,
@@ -437,7 +473,7 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 	result := forwardResult{
 		headersWritten: completion.HeadersCommitted, responseCommitted: completion.HeadersCommitted,
 		firstByteVisible: completion.ClientBodyBytesWritten > 0,
-		statusCode:       p.head.StatusCode, isSSE: p.head.EventStream,
+		statusCode:       p.head.StatusCode, isSSE: p.media.IsEventStream(),
 		responseBytes: completion.ClientBodyBytesWritten, upstreamBytes: completion.UpstreamBytesRead,
 		decodedBytes:     completion.DecodedBytesAnalyzed,
 		peakRequestBytes: completion.PeakRequestBytes, peakProcessBytes: completion.PeakProcessBytes,
@@ -445,7 +481,7 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 		readTermination: completion.ReadTermination, analysisFailure: completion.AnalysisFailure,
 		bodySnippet: p.snippet.String(), done: true,
 	}
-	if p.head.EventStream && p.writer.written && !p.writer.firstWriteTime.IsZero() {
+	if p.media.IsEventStream() && p.writer.written && !p.writer.firstWriteTime.IsZero() {
 		value := p.writer.firstWriteTime.Sub(p.pctx.startTime).Milliseconds()
 		result.firstTokenMs = &value
 	}
@@ -518,7 +554,7 @@ func (p *pendingHTTPResponse) internalFailure(err error) forwardResult {
 		message = err.Error()
 	}
 	return forwardResult{
-		statusCode: p.head.StatusCode, isSSE: p.head.EventStream,
+		statusCode: p.head.StatusCode, isSSE: p.media.IsEventStream(),
 		failureKind: attemptFailureInternal, failureMessage: message,
 	}
 }

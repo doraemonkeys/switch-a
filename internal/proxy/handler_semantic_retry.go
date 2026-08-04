@@ -27,7 +27,7 @@ func (h *Handler) resolveSemanticMatch(
 	}
 	action := semantic.winner.Rule.Action
 	freezeSemanticRetryFacts(semantic, state.ledger, globalAttemptLimit(pctx.cfg.globalMaxAttempts))
-	result := forwardResult{statusCode: pending.head.StatusCode, isSSE: pending.head.EventStream, semantic: semantic}
+	result := forwardResult{statusCode: pending.head.StatusCode, isSSE: pending.media.IsEventStream(), semantic: semantic}
 	h.assessAndApplyHealth(ctx, pctx, state.currentProvider.ID, &result, errorrule.AttemptFacts{
 		SemanticMatched: true, Committable2xx: true,
 	}, action)

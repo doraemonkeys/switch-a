@@ -64,7 +64,6 @@ type ResponseHead struct {
 	Header        http.Header
 	Trailer       http.Header
 	ContentLength int64
-	EventStream   bool
 }
 
 // Response couples immutable head facts with a move-only body capability.
@@ -86,10 +85,6 @@ func (r *Response) Head() ResponseHead {
 	head.Header = cloneHeader(head.Header)
 	head.Trailer = cloneHeader(head.Trailer)
 	return head
-}
-
-func (r *Response) IsSSE() bool {
-	return r != nil && r.head.EventStream
 }
 
 // TakeBody transfers the only body capability. A second caller cannot create a
@@ -156,7 +151,6 @@ func (t *Transport) Fetch(ctx context.Context, request *http.Request) (*Response
 		Header:        clientHeader,
 		Trailer:       response.Trailer,
 		ContentLength: response.ContentLength,
-		EventStream:   isSSE(sourceHeader),
 	}, response.Body)
 }
 
@@ -267,11 +261,6 @@ func containsHeader(headers []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func isSSE(header http.Header) bool {
-	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(header.Get("Content-Type"), ";")[0]))
-	return mediaType == "text/event-stream"
 }
 
 func cloneHeader(source http.Header) http.Header {
