@@ -12,7 +12,7 @@ func TestBatchAccountsBackingGrowthPeakAndRelease(t *testing.T) {
 	t.Parallel()
 	reserver := &trackingReserver{}
 	batch := newBatch(reserver)
-	for index := 0; index < 3; index++ {
+	for range 3 {
 		frame := Frame{Event: "event"}
 		if err := batch.append(&frame); err != nil {
 			t.Fatal(err)
@@ -92,7 +92,7 @@ func TestBatchGrowthDenialPreservesExistingAndIncomingOwnership(t *testing.T) {
 	t.Parallel()
 	reserver := &trackingReserver{denyAt: 3}
 	batch := newBatch(reserver)
-	for index := 0; index < 2; index++ {
+	for range 2 {
 		frame := Frame{Event: "retained"}
 		if err := batch.append(&frame); err != nil {
 			t.Fatal(err)

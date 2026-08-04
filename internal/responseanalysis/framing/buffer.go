@@ -130,13 +130,7 @@ func nextOwnedCapacity(current, required, maximum int) int {
 	if required > largeOwnedBufferCapacityThreshold {
 		return blockRoundedOwnedCapacity(required, maximum)
 	}
-	capacity := current
-	if capacity < initialOwnedBufferCapacity {
-		capacity = initialOwnedBufferCapacity
-	}
-	if capacity > maximum {
-		capacity = maximum
-	}
+	capacity := min(max(current, initialOwnedBufferCapacity), maximum)
 	for capacity < required {
 		if capacity > maximum/2 {
 			capacity = maximum

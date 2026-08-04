@@ -1,6 +1,7 @@
 package framing
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/allocation"
@@ -116,9 +117,7 @@ func (r *boundedReserver) snapshot() boundedSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	byClass := make(map[allocation.Class]int, len(r.byClass))
-	for class, capacity := range r.byClass {
-		byClass[class] = capacity
-	}
+	maps.Copy(byClass, r.byClass)
 	return boundedSnapshot{
 		active:   r.active,
 		peak:     r.peak,
