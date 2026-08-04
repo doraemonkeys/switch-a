@@ -367,9 +367,19 @@ func run() error {
 	stopHealthCleanup := healthMgr.StartCleanupLoop(HealthCleanupInterval, HealthCleanupMaxAge)
 	defer stopHealthCleanup()
 
-	// Initialize sticky cache for session affinity
-	stickyCache := selector.NewMemoryStickyCache(clock)
-	// Start cleanup loop to prevent memory growth from expired entries
+	// Initialize sticky cache for session affinity. The memory layer serves the
+	// hot path while SQLite restores bindings after restart and mirrors mutations
+	// on a best-effort basis.
+	stickyCache := selector.NewPersistentStickyCache(sqlStore, clock, log)
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), StickyPersistenceShutdownTimeout)
+		defer cancel()
+		if err := stickyCache.Close(flushCtx); err != nil {
+			log.Warn("failed to flush sticky cache during shutdown", zap.Error(err))
+		}
+	}()
+	// Start cleanup loop to prevent memory and durable state from growing with
+	// expired entries.
 	stopCleanup := stickyCache.StartCleanupLoop(StickyCacheCleanupInterval)
 	defer stopCleanup()
 

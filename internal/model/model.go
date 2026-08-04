@@ -497,6 +497,15 @@ type StickyKey struct {
 	Model   string
 }
 
+// StickyEntry is the durable representation of one sticky binding.
+// ExpiresAt is an absolute timestamp so a restart cannot accidentally extend
+// a binding's lifetime by applying its TTL from the new process start time.
+type StickyEntry struct {
+	Key        StickyKey
+	ProviderID string
+	ExpiresAt  time.Time
+}
+
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
 	ClientIP   string

@@ -48,7 +48,7 @@ func (c *MemoryStickyCache) Get(key model.StickyKey) (providerID string, found b
 	}
 
 	// Check if entry has expired
-	if c.clock.Now().After(entry.expiresAt) {
+	if !c.clock.Now().Before(entry.expiresAt) {
 		return "", false
 	}
 
@@ -60,12 +60,28 @@ func (c *MemoryStickyCache) Set(key model.StickyKey, providerID string, ttl time
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.setLocked(key, providerID, c.clock.Now().Add(ttl))
+}
+
+// restoreEntry repopulates memory with an already-expiring durable entry.
+// Keeping the absolute expiry avoids extending a binding every time the
+// process restarts or the cache is reloaded.
+func (c *MemoryStickyCache) restoreEntry(entry model.StickyEntry) {
+	if entry.ProviderID == "" || !entry.ExpiresAt.After(c.clock.Now()) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setLocked(entry.Key, entry.ProviderID, entry.ExpiresAt)
+}
+
+func (c *MemoryStickyCache) setLocked(key model.StickyKey, providerID string, expiresAt time.Time) {
 	if previous, ok := c.entries[key]; ok {
 		c.removeProviderKeyLocked(previous.providerID, key)
 	}
 	c.entries[key] = &stickyEntry{
 		providerID: providerID,
-		expiresAt:  c.clock.Now().Add(ttl),
+		expiresAt:  expiresAt,
 	}
 	c.addProviderKeyLocked(providerID, key)
 }
@@ -87,7 +103,7 @@ func (c *MemoryStickyCache) Cleanup() {
 
 	now := c.clock.Now()
 	for key, entry := range c.entries {
-		if now.After(entry.expiresAt) {
+		if !now.Before(entry.expiresAt) {
 			c.removeProviderKeyLocked(entry.providerID, key)
 			delete(c.entries, key)
 		}

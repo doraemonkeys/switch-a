@@ -82,6 +82,7 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 		&model.RequestLog{},
 		&model.RequestAttempt{},
 		&ProviderImportReceipt{},
+		&stickyEntryRecord{},
 	); err != nil { // coverage-ignore -- AutoMigrate rarely fails on valid schema
 		return nil, err
 	}

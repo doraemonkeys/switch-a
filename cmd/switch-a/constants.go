@@ -30,3 +30,8 @@ const HealthCleanupMaxAge = 10 * time.Minute
 // StickyCacheCleanupInterval removes expired sticky sessions periodically.
 // 5 minutes balances memory efficiency against cleanup overhead.
 const StickyCacheCleanupInterval = 5 * time.Minute
+
+// StickyPersistenceShutdownTimeout bounds the best-effort write-behind flush
+// during graceful shutdown. Sticky state is recoverable, so shutdown must not
+// be held indefinitely by a locked or unavailable database.
+const StickyPersistenceShutdownTimeout = 5 * time.Second
