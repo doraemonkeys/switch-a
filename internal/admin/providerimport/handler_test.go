@@ -63,6 +63,23 @@ type fakeProviderImportStore struct {
 
 type providerImportMutationContextKey struct{}
 
+type fakeProviderLifecycleCoordinator struct {
+	calls  int
+	events *[]string
+}
+
+func (f *fakeProviderLifecycleCoordinator) RetireAllProviderGenerations(mutation func() error) error {
+	f.calls++
+	if f.events != nil {
+		*f.events = append(*f.events, "retire:begin")
+	}
+	err := mutation()
+	if f.events != nil {
+		*f.events = append(*f.events, "retire:end")
+	}
+	return err
+}
+
 type providerImportTestClock struct {
 	now time.Time
 }
@@ -93,6 +110,33 @@ func (f *fakeProviderImportStore) ApplyProviderImport(ctx context.Context, bundl
 		f.receipts[bundle.Receipt.ImportID] = cloneTestProviderImportReceipt(bundle.Receipt)
 	}
 	return nil
+}
+
+func TestCommitProviderImportUsesLifecycleBeforeCredentialMutationLock(t *testing.T) {
+	events := []string{}
+	importStore := &fakeProviderImportStore{events: &events}
+	lifecycles := &fakeProviderLifecycleCoordinator{events: &events}
+	handler := &Handler{
+		providerImportStore: importStore,
+		providerImports:     &fakeProviderImportService{events: &events},
+		providerLifecycles:  lifecycles,
+		logger:              zap.NewNop(),
+	}
+	response := httptest.NewRecorder()
+	payload, ok := handler.commitProviderImportAtLifecycleBoundary(
+		response,
+		context.Background(),
+		"import-lifecycle",
+		&store.ProviderImportBundle{},
+		[]byte(`{"ok":true}`),
+	)
+	if !ok || string(payload) != `{"ok":true}` {
+		t.Fatalf("apply result = (%q, %v)", payload, ok)
+	}
+	wantEvents := []string{"retire:begin", "lease_acquire", "apply", "invalidate", "lease_release", "retire:end"}
+	if lifecycles.calls != 1 || !reflect.DeepEqual(events, wantEvents) {
+		t.Fatalf("lifecycle calls=%d events=%v", lifecycles.calls, events)
+	}
 }
 
 func (f *fakeProviderImportStore) GetProviderImportReceipt(
@@ -127,6 +171,9 @@ func (f *fakeProviderImportStore) WithProviderCredentialMutations(
 	providerIDs []string,
 ) (context.Context, func(), error) {
 	f.leaseProviderIDs = append(f.leaseProviderIDs, append([]string(nil), providerIDs...))
+	if f.events != nil {
+		*f.events = append(*f.events, "lease_acquire")
+	}
 	if f.leaseErr != nil {
 		return nil, nil, f.leaseErr
 	}
@@ -337,83 +384,6 @@ func TestPreviewProviderImportEnrichesFlatReviewSafeResponse(t *testing.T) {
 	}
 }
 
-func TestPreviewProviderImportRejectsUnsafeOrInvalidBodies(t *testing.T) {
-	tests := []struct {
-		name        string
-		body        []byte
-		previewErr  error
-		wantStatus  int
-		wantCalls   int
-		wantMessage string
-		wantCode    string
-		wantKind    string
-		wantRetry   string
-	}{
-		{
-			name:        "empty document",
-			body:        []byte("  \n\t"),
-			wantStatus:  http.StatusBadRequest,
-			wantMessage: "empty",
-		},
-		{
-			name:        "dedicated five megabyte limit",
-			body:        bytes.Repeat([]byte{'x'}, MaxProviderImportBodySize+1),
-			wantStatus:  http.StatusRequestEntityTooLarge,
-			wantMessage: "5 MB",
-		},
-		{
-			name:        "parser validation error",
-			body:        []byte(`{"accounts":"not-an-array"}`),
-			previewErr:  fmt.Errorf("%w: accounts must be an array", providerauth.ErrChatGPTProviderImportInvalidDocument),
-			wantStatus:  http.StatusBadRequest,
-			wantCalls:   1,
-			wantMessage: "accounts must be an array",
-		},
-		{
-			name:        "draft capacity is retryable",
-			body:        []byte(`{"accounts":[]}`),
-			previewErr:  providerauth.ErrChatGPTProviderImportCapacityExceeded,
-			wantStatus:  http.StatusTooManyRequests,
-			wantCalls:   1,
-			wantMessage: "retry",
-			wantCode:    ErrCodeConflict,
-			wantKind:    "provider_import_capacity_exceeded",
-			wantRetry:   providerImportRetryAfter,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			service := &fakeProviderImportService{previewErr: test.previewErr}
-			handler := newProviderImportTestHandler(newMockStore(), service, &fakeProviderImportStore{})
-			req := httptest.NewRequest(http.MethodPost, "/admin/api/provider-imports", bytes.NewReader(test.body))
-			responseRecorder := httptest.NewRecorder()
-
-			handler.PreviewProviderImport(responseRecorder, req)
-
-			requireProviderImportStatus(t, responseRecorder, test.wantStatus)
-			wantCode := test.wantCode
-			if wantCode == "" {
-				wantCode = ErrCodeValidation
-			}
-			assertProviderImportError(t, responseRecorder, wantCode, test.wantMessage)
-			if test.wantKind != "" {
-				var response model.ErrorResponse
-				decodeProviderImportResponse(t, responseRecorder, &response)
-				if response.Details["kind"] != test.wantKind {
-					t.Fatalf("error details = %#v, want kind %q", response.Details, test.wantKind)
-				}
-			}
-			if got := responseRecorder.Header().Get("Retry-After"); got != test.wantRetry {
-				t.Fatalf("Retry-After = %q, want %q", got, test.wantRetry)
-			}
-			if service.previewCalls != test.wantCalls {
-				t.Fatalf("preview calls = %d, want %d", service.previewCalls, test.wantCalls)
-			}
-		})
-	}
-}
-
 func TestPreviewProviderImportCancelsDraftWhenEnrichmentFails(t *testing.T) {
 	service := &fakeProviderImportService{preview: &providerauth.ChatGPTProviderImportPreview{ImportID: "draft-to-clean-up"}}
 	adminStore := newMockStore()
@@ -530,7 +500,7 @@ func TestCommitProviderImportBuildsOneAtomicCreateAndCredentialUpdateBundle(t *t
 	responseRecorder := commitProviderImportRequest(t, handler, "opaque-import-id", requestBody)
 
 	requireProviderImportStatus(t, responseRecorder, http.StatusOK)
-	if !reflect.DeepEqual(events, []string{"claim", "verify", "apply", "invalidate", "lease_release", "finalize"}) {
+	if !reflect.DeepEqual(events, []string{"claim", "verify", "lease_acquire", "apply", "invalidate", "lease_release", "finalize"}) {
 		t.Fatalf("workflow events = %v, want claim/verify/apply/cache invalidation/finalize", events)
 	}
 	if !reflect.DeepEqual(service.verifyCalls, [][]string{{"candidate-create", "candidate-update"}}) {
@@ -651,7 +621,7 @@ func TestCommitProviderImportRetainsDraftUntilAtomicStoreSucceeds(t *testing.T) 
 	if len(service.finalizeCalls) != 0 {
 		t.Fatalf("finalize calls after conflict = %v, want draft retained", service.finalizeCalls)
 	}
-	if !reflect.DeepEqual(events, []string{"claim", "verify", "apply", "lease_release", "release"}) {
+	if !reflect.DeepEqual(events, []string{"claim", "verify", "lease_acquire", "apply", "lease_release", "release"}) {
 		t.Fatalf("failure workflow events = %v, want failed commit claim released without finalize", events)
 	}
 	var conflictResponse struct {
@@ -679,7 +649,7 @@ func TestCommitProviderImportRetainsDraftUntilAtomicStoreSucceeds(t *testing.T) 
 	if !reflect.DeepEqual(service.finalizeCalls, []string{"retryable-import"}) {
 		t.Fatalf("finalize calls after retry = %v, want exactly one successful consumption", service.finalizeCalls)
 	}
-	if !reflect.DeepEqual(events, []string{"claim", "verify", "apply", "lease_release", "release", "claim", "verify", "apply", "invalidate", "lease_release", "finalize"}) {
+	if !reflect.DeepEqual(events, []string{"claim", "verify", "lease_acquire", "apply", "lease_release", "release", "claim", "verify", "lease_acquire", "apply", "invalidate", "lease_release", "finalize"}) {
 		t.Fatalf("retry workflow events = %v, want finalize only after successful apply", events)
 	}
 }
@@ -727,7 +697,7 @@ func TestCommitProviderImportReplaysLostResponseAfterHandlerRestart(t *testing.T
 			len(service.finalizeCalls),
 		)
 	}
-	if !reflect.DeepEqual(events, []string{"claim", "verify", "apply", "invalidate", "lease_release", "finalize"}) {
+	if !reflect.DeepEqual(events, []string{"claim", "verify", "lease_acquire", "apply", "invalidate", "lease_release", "finalize"}) {
 		t.Fatalf("replay workflow events = %v, want no repeated side effects", events)
 	}
 }

@@ -1,0 +1,77 @@
+{
+  "cases": [
+    {
+      "name": "validation",
+      "status": 400,
+      "body": {
+        "code": "VALIDATION_ERROR",
+        "message": "rule.action contains fields outside its discriminator",
+        "details": {
+          "field": "rule.action.max_retries"
+        }
+      }
+    },
+    {
+      "name": "not found",
+      "status": 404,
+      "body": {
+        "code": "NOT_FOUND",
+        "message": "internal error rule not found",
+        "details": {
+          "rule_id": "99999999-9999-4999-8999-999999999999"
+        }
+      }
+    },
+    {
+      "name": "conflict",
+      "status": 409,
+      "body": {
+        "code": "CONFLICT",
+        "message": "internal error rule capacity reached",
+        "details": {
+          "limit": 256
+        }
+      }
+    },
+    {
+      "name": "revision mismatch",
+      "status": 412,
+      "body": {
+        "code": "REVISION_MISMATCH",
+        "message": "internal error rule revision changed",
+        "details": {
+          "current_revision": "10"
+        }
+      }
+    },
+    {
+      "name": "request too large",
+      "status": 413,
+      "body": {
+        "code": "REQUEST_TOO_LARGE",
+        "message": "request body exceeds the endpoint limit",
+        "details": {
+          "limit_bytes": 65536
+        }
+      }
+    },
+    {
+      "name": "precondition required",
+      "status": 428,
+      "body": {
+        "code": "PRECONDITION_REQUIRED",
+        "message": "If-Match is required",
+        "details": {}
+      }
+    },
+    {
+      "name": "internal",
+      "status": 500,
+      "body": {
+        "code": "INTERNAL_ERROR",
+        "message": "failed to compile internal error rules",
+        "details": {}
+      }
+    }
+  ]
+}

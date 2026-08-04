@@ -17,7 +17,7 @@ import {
   getV2Transport,
   isV2Evidence,
   parseRequestEvidence,
-} from "./evidence-utils";
+} from "@/features/request-attempt/evidence/presentation";
 
 export type DiagnosticTone = "success" | "danger" | "warning" | "info";
 

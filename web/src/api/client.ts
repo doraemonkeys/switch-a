@@ -11,6 +11,12 @@ import {
   parseRequestLog,
   parseStatsResponse,
 } from "./contracts";
+import { parseAPICatalog } from "./api-catalog";
+import {
+  createErrorDetectionApi,
+  type APIErrorDecoder,
+  type AuthenticatedResponseRequest,
+} from "./error-detection";
 import type {
   Provider,
   ProviderInput,
@@ -235,17 +241,40 @@ function normalizeRoutingPolicy(policy: RoutingPolicyResponse): RoutingPolicy {
   };
 }
 
-// Request factory with dependency injection
-function createRequest(
+function readLooseAPIError(value: unknown): {
+  code?: string;
+  message?: string;
+  details?: ApiErrorDetails;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    code: typeof record.code === "string" ? record.code : undefined,
+    message: typeof record.message === "string" ? record.message : undefined,
+    details:
+      typeof record.details === "object" &&
+      record.details !== null &&
+      !Array.isArray(record.details)
+        ? (record.details as ApiErrorDetails)
+        : undefined,
+  };
+}
+
+// Keeping response metadata available is required for revision ETags; ordinary
+// JSON callers still use the narrower wrapper below.
+function createResponseRequest(
   deps: ApiClientDeps,
   tokenManager: ReturnType<typeof createTokenManager>,
-) {
+): AuthenticatedResponseRequest {
   const { httpClient, baseUrl, onUnauthorized } = deps;
 
-  return async function request<T>(
+  return async function requestResponse(
     endpoint: string,
     options: RequestInit = {},
-  ): Promise<T> {
+    errorDecoder?: APIErrorDecoder,
+  ): Promise<Response> {
     const token = tokenManager.get();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -262,7 +291,17 @@ function createRequest(
     });
 
     if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
+      const payload: unknown = await response.json().catch(() => undefined);
+      let data = readLooseAPIError(payload);
+      if (errorDecoder) {
+        try {
+          data = errorDecoder(payload);
+        } catch {
+          // A malformed error body is untrusted; retain status context without
+          // surfacing unchecked server fields as a typed conflict.
+          data = {};
+        }
+      }
 
       // Handle 401 Unauthorized - clear token and redirect to login
       if (response.status === 401) {
@@ -278,6 +317,16 @@ function createRequest(
       );
     }
 
+    return response;
+  };
+}
+
+function createRequest(requestResponse: AuthenticatedResponseRequest) {
+  return async function request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    const response = await requestResponse(endpoint, options);
     // 204 No Content
     if (response.status === 204) {
       return undefined as T;
@@ -400,7 +449,8 @@ function createRoutingPoliciesApi(request: AuthenticatedRequestFn) {
 // API Client factory with dependency injection
 export function createApiClient(deps: ApiClientDeps) {
   const tokenManager = createTokenManager(deps.storage);
-  const request = createRequest(deps, tokenManager);
+  const requestResponse = createResponseRequest(deps, tokenManager);
+  const request = createRequest(requestResponse);
 
   return {
     setToken: tokenManager.set,
@@ -420,6 +470,10 @@ export function createApiClient(deps: ApiClientDeps) {
         return false;
       }
     },
+    apiCatalog: {
+      get: async () => parseAPICatalog(await request<unknown>("/api-catalog")),
+    },
+    errorDetection: createErrorDetectionApi(requestResponse),
     providers: createProvidersApi(request),
     providerImports: {
       preview: (sourceJson: string) =>
@@ -463,11 +517,20 @@ export function createApiClient(deps: ApiClientDeps) {
           warnings: preview.warnings ?? [],
         };
       },
-      import: (data: ImportConfigRequest) =>
-        request<ImportResult>("/config/import", {
+      import: (
+        data: ImportConfigRequest,
+        ruleSetETag: ImportPreviewResponse["rule_set_etag"],
+      ) => {
+        const headers =
+          data.import_scope.mode === "settings_only"
+            ? undefined
+            : { "If-Match": ruleSetETag };
+        return request<ImportResult>("/config/import", {
           method: "POST",
+          ...(headers ? { headers } : {}),
           body: JSON.stringify(data),
-        }),
+        });
+      },
     },
     status: {
       get: () => request<SystemStatus>("/status"),

@@ -1,11 +1,7 @@
 package proxy
 
 import (
-	"context"
 	"errors"
-	"io"
-
-	"github.com/coder/websocket"
 )
 
 // Transport diagnostic schema constants.
@@ -20,9 +16,8 @@ const (
 	transportSourceUpstream = "upstream"
 	transportSourceClient   = "client"
 
-	// SSE stage semantics are driven by HTTP response commitment state; WS
-	// stage semantics are driven by upgrade + first-frame state. The three
-	// buckets are shared so the frontend can render one helper.
+	// SSE stage semantics are driven by HTTP response commitment state. The
+	// buckets match the cross-transport evidence contract consumed by the UI.
 	transportStagePreConnectionVisible = "pre_connection_visible"
 	transportStagePrePayloadVisible    = "pre_payload_visible"
 	transportStagePostPayloadVisible   = "post_payload_visible"
@@ -37,14 +32,6 @@ const (
 	transportSignalUpstreamReadError = "upstream_read_error"
 	transportSignalClientWriteError  = "client_write_error"
 
-	// WS signal values.
-	transportSignalEOF                = "eof"
-	transportSignalUnexpectedEOF      = "unexpected_eof"
-	transportSignalCloseWithoutStatus = "close_without_status"
-	transportSignalCloseError         = "close_error"
-	transportSignalTimeout            = "timeout"
-	transportSignalCanceled           = "canceled"
-
 	// Shared fallback.
 	transportSignalUnknownTransport = "unknown_transport"
 )
@@ -56,16 +43,13 @@ type transportProtocol uint8
 
 const (
 	transportProtocolSSE transportProtocol = iota + 1
-	transportProtocolWS
 )
 
 // transportRawErrorSnippetLimitRunes bounds raw_error_snippet.
 //
-// The existing evidence layer (websocket_assessment_evidence.go) truncates
-// redacted snippets at 512 bytes; the diagnostic raw snippet is intentionally
-// tighter at 256 runes because it is the *source* fact, not a post-redaction
-// artifact — we want it to round-trip into JSON cheaply and never dominate
-// the 4 KiB evidence JSON budget.
+// The diagnostic raw snippet is intentionally capped at 256 runes because it
+// is the source fact, not a post-redaction artifact; it must round-trip into
+// JSON cheaply and never dominate the evidence JSON budget.
 const transportRawErrorSnippetLimitRunes = 256
 
 // sseObservation carries SSE-specific runtime facts.
@@ -90,42 +74,10 @@ type sseObservation struct {
 	isClientWriteError bool
 }
 
-// wsObservation carries WebSocket-specific runtime facts.
-//
-// Field-level rationale:
-//   - `closeError`: the real observed close frame. Use `*websocket.CloseError`
-//     rather than a value type so presence is unambiguous (a zero-valued
-//     CloseError{} with Code 0 is a legitimate observation).
-//   - `closedWithoutStatus`: set by the relay layer when it observed
-//     EOF/unexpected-EOF/no-status-received but could not extract a concrete
-//     CloseError. The plan requires `close_without_status` to fire even when
-//     `closeError == nil`, so this flag is the only way for the derivation
-//     function to learn that fact without reading the error text.
-//   - `upgradeCompleted` / `anyFrameDelivered`: stage discriminators for WS.
-//     Dial-phase failures must produce `pre_connection_visible`; upgrade
-//     completion alone lifts the stage to `pre_payload_visible`; the first
-//     delivered frame lifts it to `post_payload_visible`.
-//   - `failurePeer`: which side the reduction layer attributed the failure
-//     to. Drives the `source` axis for disconnect-family signals so a
-//     client-originated close is not misreported as upstream. The zero
-//     value (`webSocketPeerUnknown`) is treated as upstream — this matches
-//     the pre-attribution default and keeps any observation the reduce
-//     layer never tagged from flipping to `client` by accident.
-type wsObservation struct {
-	closeError          *websocket.CloseError
-	closedWithoutStatus bool
-	upgradeCompleted    bool
-	anyFrameDelivered   bool
-	failurePeer         webSocketPeer
-}
-
 // transportObservation is the input to deriveTransportDiagnostic.
 //
-// The protocol discriminator drives stage derivation and signal
-// classification. SSE/WS sub-structs keep the shape tight: a WS observation
-// cannot accidentally set `firstByteVisible` (there is no such concept for
-// framed protocols) and an SSE observation cannot accidentally set
-// `closeError`.
+// The protocol discriminator makes unsupported transports fail closed while
+// the nested SSE value keeps protocol-specific commitment facts explicit.
 type transportObservation struct {
 	protocol transportProtocol
 
@@ -135,18 +87,11 @@ type transportObservation struct {
 	isSuppressedSyntheticFinal bool
 
 	sse sseObservation
-	ws  wsObservation
 }
 
 // transportDiagnostic is the evidence-layer projection of a
 // transportObservation. JSON tags are part of the wire contract — do not
 // reorder casually.
-//
-// `CloseCode` is `*int` (not `int` with omitempty) because 0 is a legitimate
-// observed close code and the presence semantics must never collapse into
-// "not observed". `CloseReasonSnippet` carries the human-readable close
-// frame reason after sanitization by the evidence builder — the derivation
-// function captures the raw reason; redaction lives one layer up.
 type transportDiagnostic struct {
 	Source             string `json:"source"`
 	Stage              string `json:"stage"`
@@ -164,9 +109,8 @@ type transportDiagnostic struct {
 //
 // Short-circuit order is load-bearing and mirrors the plan:
 //  1. No transport signal at all — nothing to report. This also absorbs the
-//     "pure client cancel" case (plan rule #4): if `ctxErr` is set but there
-//     is no `err` / `closeError` / `closedWithoutStatus`, the observation has
-//     no transport signal by definition.
+//     pure-client-cancel case: a context error without an observed transport
+//     error is not transport evidence.
 //  2. Status failover — status-class fact, explicitly not a transport failure.
 //  3. Suppressed synthetic final — the synthetic session must not inherit an
 //     attempt's observation; the builder enforces zeroing, and this flag is
@@ -186,8 +130,6 @@ func deriveTransportDiagnostic(obs transportObservation) *transportDiagnostic {
 	switch obs.protocol {
 	case transportProtocolSSE:
 		return deriveSSETransportDiagnostic(obs)
-	case transportProtocolWS:
-		return deriveWSTransportDiagnostic(obs)
 	default:
 		// Unknown protocol is a programming error; fail closed (no evidence)
 		// rather than emit a diagnostic with uninitialized stage/source.
@@ -195,23 +137,10 @@ func deriveTransportDiagnostic(obs transportObservation) *transportDiagnostic {
 	}
 }
 
-// observationHasTransportSignal captures the "is there any real transport
-// fact to report?" gate. Keeping it as a helper makes the short-circuit
-// reasoning in deriveTransportDiagnostic self-documenting and keeps the WS
-// triple-signal (`err`, `closeError`, `closedWithoutStatus`) in one place.
+// observationHasTransportSignal keeps context cancellation from becoming
+// transport evidence unless the response path observed an actual error.
 func observationHasTransportSignal(obs transportObservation) bool {
-	if obs.err != nil {
-		return true
-	}
-	if obs.protocol == transportProtocolWS {
-		if obs.ws.closeError != nil {
-			return true
-		}
-		if obs.ws.closedWithoutStatus {
-			return true
-		}
-	}
-	return false
+	return obs.err != nil
 }
 
 func deriveSSETransportDiagnostic(obs transportObservation) *transportDiagnostic {
@@ -243,84 +172,6 @@ func sseStage(sse sseObservation) string {
 	case sse.firstByteVisible:
 		return transportStagePostPayloadVisible
 	case sse.headerCommitted:
-		return transportStagePrePayloadVisible
-	default:
-		return transportStagePreConnectionVisible
-	}
-}
-
-func deriveWSTransportDiagnostic(obs transportObservation) *transportDiagnostic {
-	signal, kind, source := classifyWSSignal(obs)
-	diag := &transportDiagnostic{
-		Source:          source,
-		Stage:           wsStage(obs.ws),
-		Kind:            kind,
-		Signal:          signal,
-		RawErrorSnippet: truncateRawErrorSnippet(errorText(obs.err)),
-	}
-	// Close code presence is strictly tied to a real observed CloseError.
-	// The synthetic `StatusNoStatusRcvd` value that reduction writes into
-	// WebSocketResult.CloseCode is intentionally not read here — only the
-	// real frame counts. 0 is a legitimate code, so presence is carried by
-	// the pointer.
-	if obs.ws.closeError != nil {
-		code := int(obs.ws.closeError.Code)
-		diag.CloseCode = &code
-		diag.CloseReasonSnippet = truncateRawErrorSnippet(obs.ws.closeError.Reason)
-	}
-	return diag
-}
-
-func classifyWSSignal(obs transportObservation) (signal, kind, source string) {
-	// Ordering matters: a CloseError that is also an EOF wrapper should be
-	// classified by its frame code first, since `close_error` with a real
-	// code is strictly more informative than `eof`.
-	//
-	// Disconnect-family source attribution is driven by `failurePeer`, not
-	// hardcoded to upstream: a client-originated close_error still carries
-	// `kind = disconnect` but the `source` axis must reflect who tore the
-	// connection down. Non-disconnect branches (`timeout`, `canceled`,
-	// `unknown_transport`) retain their fixed attribution — timeout is
-	// server-side by convention, cancel is already driven by ctx semantics,
-	// and unknown_transport has no peer signal to rely on.
-	if obs.ws.closeError != nil {
-		return transportSignalCloseError, transportKindDisconnect, wsDisconnectSource(obs)
-	}
-	switch {
-	case errors.Is(obs.err, context.DeadlineExceeded):
-		return transportSignalTimeout, transportKindTimeout, transportSourceUpstream
-	case errors.Is(obs.err, context.Canceled):
-		return transportSignalCanceled, transportKindLocalError, transportSourceClient
-	case errors.Is(obs.err, io.ErrUnexpectedEOF):
-		return transportSignalUnexpectedEOF, transportKindDisconnect, wsDisconnectSource(obs)
-	case errors.Is(obs.err, io.EOF):
-		return transportSignalEOF, transportKindDisconnect, wsDisconnectSource(obs)
-	case obs.ws.closedWithoutStatus:
-		// Fall through to close_without_status only after EOF-style checks,
-		// since close_without_status is the "we know the peer dropped but
-		// have no frame" bucket — EOF wrappers carry strictly more info.
-		return transportSignalCloseWithoutStatus, transportKindDisconnect, wsDisconnectSource(obs)
-	default:
-		return transportSignalUnknownTransport, transportKindLocalError, transportSourceUpstream
-	}
-}
-
-// wsDisconnectSource centralizes the peer-to-source projection for
-// disconnect-family signals. Extracted as a helper so the four call sites
-// above stay aligned and the upstream-default convention (zero-value
-// `failurePeer` → upstream) is declared in one spot rather than replicated.
-func wsDisconnectSource(obs transportObservation) string {
-	if obs.ws.failurePeer == webSocketPeerClient {
-		return transportSourceClient
-	}
-	return transportSourceUpstream
-}
-
-func wsStage(ws wsObservation) string {
-	switch {
-	case ws.anyFrameDelivered:
-		return transportStagePostPayloadVisible
-	case ws.upgradeCompleted:
 		return transportStagePrePayloadVisible
 	default:
 		return transportStagePreConnectionVisible

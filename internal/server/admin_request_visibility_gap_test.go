@@ -101,12 +101,7 @@ func TestAdminStatusAndActiveRequestsRemainConsistentAfterActiveRegistryCleanup(
 	}
 
 	limiter := selectorpkg.NewConcurrencyLimiter()
-	activeRegistry := proxy.NewActiveRequestRegistryWithHook(func(req proxy.ActiveRequest, reason proxy.ActiveRequestRemovalReason) {
-		if reason == proxy.ActiveRequestRemovalReasonStale {
-			return
-		}
-		limiter.Release(req.ProviderID)
-	})
+	activeRegistry := proxy.NewActiveRequestRegistry()
 
 	adminHandler := admin.NewHandler(admin.Config{
 		Store:         store,
@@ -115,9 +110,11 @@ func TestAdminStatusAndActiveRequestsRemainConsistentAfterActiveRegistryCleanup(
 		Logger:        zap.NewNop(),
 	})
 
-	if !limiter.TryAcquire(provider.ID, provider.Concurrency) {
+	lease, acquired := limiter.Acquire(provider.ID, provider.Concurrency)
+	if !acquired {
 		t.Fatalf("failed to acquire concurrency slot for provider %q", provider.ID)
 	}
+	t.Cleanup(func() { lease.Release() })
 
 	requestDone := make(chan struct{})
 

@@ -6,168 +6,133 @@ import (
 	"testing"
 )
 
-func TestConcurrencyLimiter_TryAcquire(t *testing.T) {
+func TestConcurrencyLimiterUnlimitedLeasesAreExplicitCapabilities(t *testing.T) {
 	limiter := NewConcurrencyLimiter()
 
-	// Test with no limit (0)
-	if !limiter.TryAcquire("p1", 0) {
-		t.Error("TryAcquire with limit 0 should always succeed")
-	}
-
-	// Test with negative limit
-	if !limiter.TryAcquire("p1", -1) {
-		t.Error("TryAcquire with negative limit should always succeed")
-	}
-}
-
-func TestConcurrencyLimiter_Limit(t *testing.T) {
-	limiter := NewConcurrencyLimiter()
-	providerID := "p1"
-	limit := 3
-
-	// Acquire up to limit
-	for i := range limit {
-		if !limiter.TryAcquire(providerID, limit) {
-			t.Errorf("TryAcquire %d should succeed", i)
+	for _, limit := range []int{0, -1} {
+		lease, acquired := limiter.Acquire("p1", limit)
+		if !acquired || lease == nil || !lease.Held() {
+			t.Fatalf("Acquire(limit=%d) = (%#v, %v), want held lease", limit, lease, acquired)
+		}
+		if limiter.Current("p1") != 0 {
+			t.Fatalf("Current() = %d for unlimited lease, want 0", limiter.Current("p1"))
+		}
+		if !lease.Release() {
+			t.Fatalf("Release(limit=%d) = false, want true", limit)
 		}
 	}
+}
 
-	// Current should be at limit
-	if limiter.Current(providerID) != int64(limit) {
-		t.Errorf("Current = %d, want %d", limiter.Current(providerID), limit)
+func TestConcurrencyLimiterEnforcesLimitAndReleasesExactLease(t *testing.T) {
+	limiter := NewConcurrencyLimiter()
+	const providerID = "p1"
+	const limit = 3
+
+	leases := make([]*SlotLease, 0, limit)
+	for range limit {
+		lease, acquired := limiter.Acquire(providerID, limit)
+		if !acquired {
+			t.Fatal("Acquire() before limit = false")
+		}
+		leases = append(leases, lease)
+	}
+	if got := limiter.Current(providerID); got != limit {
+		t.Fatalf("Current() = %d, want %d", got, limit)
+	}
+	if lease, acquired := limiter.Acquire(providerID, limit); acquired || lease != nil {
+		t.Fatalf("Acquire() at limit = (%#v, %v), want nil, false", lease, acquired)
 	}
 
-	// Next acquire should fail
-	if limiter.TryAcquire(providerID, limit) {
-		t.Error("TryAcquire at limit should fail")
+	if !leases[1].Release() {
+		t.Fatal("Release() = false")
 	}
-
-	// Release one
-	limiter.Release(providerID)
-
-	// Now acquire should succeed
-	if !limiter.TryAcquire(providerID, limit) {
-		t.Error("TryAcquire after release should succeed")
+	replacement, acquired := limiter.Acquire(providerID, limit)
+	if !acquired || replacement == nil {
+		t.Fatal("Acquire() after release did not recover capacity")
+	}
+	if leases[1].Release() {
+		t.Fatal("duplicate Release() = true")
 	}
 }
 
-func TestConcurrencyLimiter_MultipleProviders(t *testing.T) {
+func TestConcurrencyLimiterProvidersAreIndependent(t *testing.T) {
 	limiter := NewConcurrencyLimiter()
-
-	// Each provider has independent limit
-	if !limiter.TryAcquire("p1", 1) {
-		t.Error("p1 should acquire")
+	first, firstOK := limiter.Acquire("p1", 1)
+	second, secondOK := limiter.Acquire("p2", 1)
+	if !firstOK || !secondOK {
+		t.Fatal("independent first acquisitions must succeed")
 	}
-	if !limiter.TryAcquire("p2", 1) {
-		t.Error("p2 should acquire independently")
-	}
+	t.Cleanup(func() {
+		first.Release()
+		second.Release()
+	})
 
-	// p1 is at limit
-	if limiter.TryAcquire("p1", 1) {
-		t.Error("p1 should be at limit")
+	if lease, ok := limiter.Acquire("p1", 1); ok || lease != nil {
+		t.Fatal("p1 acquired beyond its limit")
 	}
-
-	// p2 is also at limit
-	if limiter.TryAcquire("p2", 1) {
-		t.Error("p2 should be at limit")
+	if lease, ok := limiter.Acquire("p2", 1); ok || lease != nil {
+		t.Fatal("p2 acquired beyond its limit")
 	}
 }
 
-func TestConcurrencyLimiter_Concurrent(t *testing.T) {
+func TestConcurrencyLimiterConcurrentAcquireReturnsOnlyOwnedLeases(t *testing.T) {
 	limiter := NewConcurrencyLimiter()
-	providerID := "p1"
-	limit := 10
-	goroutines := 100
+	const providerID = "p1"
+	const limit = 10
+	const goroutines = 100
 
-	var successCount int
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
+	var (
+		mu     sync.Mutex
+		leases []*SlotLease
+		wg     sync.WaitGroup
+	)
 	wg.Add(goroutines)
 	for range goroutines {
 		go func() {
 			defer wg.Done()
-			if limiter.TryAcquire(providerID, limit) {
-				mu.Lock()
-				successCount++
-				mu.Unlock()
+			lease, acquired := limiter.Acquire(providerID, limit)
+			if !acquired {
+				return
 			}
+			mu.Lock()
+			leases = append(leases, lease)
+			mu.Unlock()
 		}()
 	}
 	wg.Wait()
 
-	// Exactly limit goroutines should succeed
-	if successCount != limit {
-		t.Errorf("successCount = %d, want %d", successCount, limit)
+	if len(leases) != limit {
+		t.Fatalf("successful leases = %d, want %d", len(leases), limit)
 	}
-
-	// Current should be at limit
-	if limiter.Current(providerID) != int64(limit) {
-		t.Errorf("Current = %d, want %d", limiter.Current(providerID), limit)
+	if got := limiter.Current(providerID); got != limit {
+		t.Fatalf("Current() = %d, want %d", got, limit)
 	}
-}
-
-func TestConcurrencyLimiter_Release(t *testing.T) {
-	limiter := NewConcurrencyLimiter()
-	providerID := "p1"
-
-	// Release without acquire should be a no-op (prevents negative count)
-	limiter.Release(providerID)
-	if limiter.Current(providerID) != 0 {
-		t.Errorf("Current after release without acquire = %d, want 0", limiter.Current(providerID))
+	for _, lease := range leases {
+		lease.Release()
 	}
-
-	// Acquire should still work
-	if !limiter.TryAcquire(providerID, 1) {
-		t.Error("TryAcquire should succeed")
-	}
-
-	// Now release should work
-	limiter.Release(providerID)
-	if limiter.Current(providerID) != 0 {
-		t.Errorf("Current after proper release = %d, want 0", limiter.Current(providerID))
-	}
-
-	// Double release should be a no-op
-	limiter.Release(providerID)
-	if limiter.Current(providerID) != 0 {
-		t.Errorf("Current after double release = %d, want 0", limiter.Current(providerID))
+	if got := limiter.Current(providerID); got != 0 {
+		t.Fatalf("Current() after exact releases = %d, want 0", got)
 	}
 }
 
-func TestConcurrencyLimiter_NoMapEntryOnEmptyCalls(t *testing.T) {
+func TestConcurrencyLimiterUnknownReadsDoNotCreateGenerations(t *testing.T) {
 	limiter := NewConcurrencyLimiter()
-
-	// Calling Release() and Current() on unknown providers should NOT create map entries
-	// This prevents unbounded memory growth from empty calls
-
-	// Call Release and Current on a never-acquired provider
-	unknownProvider := "never-acquired"
-	limiter.Release(unknownProvider)
-	_ = limiter.Current(unknownProvider)
-
-	// Now try to check if an entry was created by looking at map size
-	// We can check this indirectly by acquiring on a known provider and checking Clear behavior
-	knownProvider := "known"
-	limiter.TryAcquire(knownProvider, 10)
-
-	// Clear the known provider
-	limiter.Clear(knownProvider)
-
-	// The unknown provider should still return 0 (no entry was created)
-	if limiter.Current(unknownProvider) != 0 {
-		t.Errorf("Current for unknown provider = %d, want 0", limiter.Current(unknownProvider))
-	}
-
-	// Verify that calling Release/Current many times doesn't create entries
 	for i := range 1000 {
-		providerID := fmt.Sprintf("random-%d", i)
-		limiter.Release(providerID)
-		_ = limiter.Current(providerID)
+		_ = limiter.Current(fmt.Sprintf("unknown-%d", i))
+	}
+	if len(limiter.generations) != 0 {
+		t.Fatalf("unknown Current calls created %d generations", len(limiter.generations))
 	}
 
-	// After all those calls, acquiring a new provider should still work
-	if !limiter.TryAcquire("final", 1) {
-		t.Error("TryAcquire should succeed after Release/Current calls")
+	lease, acquired := limiter.Acquire("known", 1)
+	if !acquired {
+		t.Fatal("Acquire() after unknown reads = false")
+	}
+	limiter.retireGeneration("known")
+	if limiter.Current("known") != 0 {
+		t.Fatal("Clear() left current generation visible")
+	}
+	if !lease.Release() {
+		t.Fatal("detached generation lease did not retain exact release ownership")
 	}
 }

@@ -13,10 +13,11 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/providerauth"
 
 	"go.uber.org/zap"
 )
+
+func ptr[T any](value T) *T { return &value }
 
 // logInsertTimeout is the maximum time allowed for inserting a request log.
 // This prevents goroutine accumulation if the database is slow or blocked.
@@ -47,51 +48,6 @@ func (h *Handler) handleExhaustedRetries(pctx *proxyContext, lastErr error) {
 	}
 }
 
-// markSuccess marks a successful request for the provider.
-func (h *Handler) markSuccess(ctx context.Context, providerID string) {
-	if h.health != nil {
-		h.health.MarkSuccess(ctx, providerID)
-	}
-}
-
-// markFailure marks a failed request for the provider.
-func (h *Handler) markFailure(ctx context.Context, providerID string, err error) {
-	if h.health != nil && shouldTrackHealthError(err) {
-		h.health.MarkFailure(ctx, providerID, err)
-	}
-}
-
-func shouldTrackStatusFailureInHealth(statusCode int) bool {
-	return statusCode != defaults.StatusUnauthorized && statusCode != defaults.StatusForbidden
-}
-
-func shouldTrackWebSocketFailureInHealth(result *WebSocketResult) bool {
-	if result == nil {
-		return false
-	}
-	if result.HandshakeStatusCode == defaults.StatusUnauthorized {
-		return false
-	}
-	if result.UpstreamError == nil {
-		return true
-	}
-	errorType := strings.TrimSpace(strings.ToLower(result.UpstreamError.SemanticErrorKey()))
-	if result.UpstreamError.StatusCode > 0 &&
-		(result.UpstreamError.StatusCode == defaults.StatusUnauthorized ||
-			(result.UpstreamError.StatusCode == defaults.StatusForbidden && errorType == "auth_error")) {
-		return false
-	}
-	return errorType != "auth_error"
-}
-
-func shouldTrackHealthError(err error) bool {
-	if err == nil {
-		return true
-	}
-	var authStateErr *providerauth.ProviderAuthStateError
-	return !errors.As(err, &authStateErr)
-}
-
 // suspendProviderUntil marks a provider unavailable until the given time.
 func (h *Handler) suspendProviderUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason string) {
 	if h.health == nil {
@@ -112,13 +68,6 @@ func (h *Handler) suspendProviderUntil(ctx context.Context, providerID string, d
 			zap.String("provider_id", providerID),
 			zap.Time("disabled_until", disabledUntil),
 		)
-	}
-}
-
-// releaseConcurrency releases the concurrency slot for a provider.
-func (h *Handler) releaseConcurrency(providerID string) {
-	if h.selector != nil {
-		h.selector.ReleaseConcurrency(providerID)
 	}
 }
 
@@ -258,6 +207,7 @@ type nonWebSocketRuntimeFacts struct {
 	CtxErr             error
 	IsStatusFailover   bool
 	IsClientWriteError bool
+	SemanticError      bool
 }
 
 func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAssessment {
@@ -278,10 +228,12 @@ func deriveNonWebSocketServiceOutcome(facts nonWebSocketRuntimeFacts) model.Serv
 		return model.ServiceOutcomeAbandonedByClient
 	case !facts.ServiceStarted:
 		return model.ServiceOutcomeNeverStarted
-	case facts.Success:
-		return model.ServiceOutcomeCompleted
 	case facts.TerminalErr != nil:
 		return model.ServiceOutcomeUnknown
+	case facts.SemanticError && facts.ResponseCommitted:
+		return model.ServiceOutcomeInterrupted
+	case facts.Success:
+		return model.ServiceOutcomeCompleted
 	default:
 		return model.ServiceOutcomeCompleted
 	}
@@ -309,6 +261,8 @@ func deriveNonWebSocketTermination(
 	switch {
 	case serviceOutcome == model.ServiceOutcomeUnknown:
 		return ptr(model.TerminationActorUpstream), ptr(model.TerminationReasonTransportError)
+	case facts.SemanticError && facts.ResponseCommitted:
+		return ptr(model.TerminationActorUpstream), ptr(model.TerminationReasonUpstreamSemanticError)
 	case facts.ClientTransportStatusCode == StatusCodeNoResponse:
 		return ptr(model.TerminationActorUnknown), ptr(model.TerminationReasonUnknown)
 	case !facts.ResponseCommitted && errors.Is(facts.TerminalErr, internal.ErrNoProvider):

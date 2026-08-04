@@ -242,7 +242,9 @@ func (h *Handler) CreateRoutingPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.CreateRoutingPolicy(r.Context(), policy); err != nil {
+	if err := h.mutateAllProviderGenerations(func() error {
+		return h.store.CreateRoutingPolicy(r.Context(), policy)
+	}); err != nil {
 		if errors.Is(err, store.ErrRoutingPolicyConflict) {
 			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return
@@ -292,7 +294,9 @@ func (h *Handler) UpdateRoutingPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	policy.ID = id
 
-	if err := h.store.UpdateRoutingPolicy(r.Context(), policy); err != nil {
+	if err := h.mutateAllProviderGenerations(func() error {
+		return h.store.UpdateRoutingPolicy(r.Context(), policy)
+	}); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, ErrCodeNotFound, "Routing policy not found: "+formatRoutingPolicyID(id))
@@ -318,7 +322,9 @@ func (h *Handler) DeleteRoutingPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.DeleteRoutingPolicy(r.Context(), id); err != nil {
+	if err := h.mutateAllProviderGenerations(func() error {
+		return h.store.DeleteRoutingPolicy(r.Context(), id)
+	}); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, ErrCodeNotFound, "Routing policy not found: "+formatRoutingPolicyID(id))
 			return

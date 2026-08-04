@@ -264,7 +264,7 @@ HTTP attempt 的 `outcome` 使用 `upstream_semantic_error`。`switch_reason` �
 - 同一错误在窗口内外产生相同 HealthVerdict；
 - passthrough-only 规则不缓冲、不增加 TTFT；
 - 正常输出包含关键词不命中；SSE 多行、跨 Read、CRLF、尾帧正确；
-- gzip/brotli、解压膨胀、超大事件及并发内存预算不会突破硬上限；
+- gzip 解压膨胀、超大事件及并发内存预算不会突破硬上限；Brotli 在可预留工作内存的解码器落地前以 `unsupported_content_encoding` 原样透传；
 - 规则重排、导入导出及请求中途修改规则保持确定性；
 - 并发 CRUD、重排、provider 删除和重启后 revision 单调，运行快照不会回退；
 - probe timer 与阻塞 Read 同时发生时无双读、乱序、重复提交或遗留预算；

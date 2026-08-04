@@ -1,8 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  render as testingLibraryRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Provider, RoutingPolicy } from "../api";
+import { parseAPICatalog } from "../api/api-catalog";
+import { APICatalogContext } from "../api/context";
 import { RoutingPolicies } from "./RoutingPolicies";
+
+const testAPICatalog = parseAPICatalog(
+  JSON.parse(
+    readFileSync(
+      resolve(process.cwd(), "../contracts/internal-error/v1/api-catalog.json"),
+      "utf8",
+    ),
+  ) as unknown,
+);
+
+function render(element: ReactElement) {
+  return testingLibraryRender(
+    <APICatalogContext.Provider
+      value={{
+        catalog: testAPICatalog,
+        loading: false,
+        error: null,
+        refetch: () => Promise.resolve(),
+      }}
+    >
+      {element}
+    </APICatalogContext.Provider>,
+  );
+}
 
 const useGroupsMock = vi.fn();
 const useProvidersMock = vi.fn();

@@ -144,8 +144,8 @@ export function Config() {
         isOpen={importModalOpen}
         onClose={() => setImportModalOpen(false)}
         onPreview={previewImport}
-        onImport={async (data) => {
-          const result = await importConfig(data);
+        onImport={async (data, ruleSetETag) => {
+          const result = await importConfig(data, ruleSetETag);
           if (result.success) {
             toast.success("配置导入成功");
             await refetch();

@@ -696,13 +696,24 @@ func (m *mockConcurrencyTracker) Current(providerID string) int64 {
 	return m.counts[providerID]
 }
 
-// mockConcurrencyCleaner implements ConcurrencyCleaner interface for testing.
-type mockConcurrencyCleaner struct {
-	cleared []string
+// mockProviderLifecycleCoordinator records the mutation scope while preserving
+// the production contract that persistence runs inside the boundary callback.
+type mockProviderLifecycleCoordinator struct {
+	retiredProviderIDs []string
+	allRetirements     int
 }
 
-func (m *mockConcurrencyCleaner) ClearConcurrency(providerID string) {
-	m.cleared = append(m.cleared, providerID)
+func (m *mockProviderLifecycleCoordinator) RetireProviderGeneration(
+	providerID string,
+	mutation func() error,
+) error {
+	m.retiredProviderIDs = append(m.retiredProviderIDs, providerID)
+	return mutation()
+}
+
+func (m *mockProviderLifecycleCoordinator) RetireAllProviderGenerations(mutation func() error) error {
+	m.allRetirements++
+	return mutation()
 }
 
 func testHandler() (*Handler, *mockStore, *mockHealthManager) {
@@ -710,11 +721,11 @@ func testHandler() (*Handler, *mockStore, *mockHealthManager) {
 	st := newMockStore()
 	health := &mockHealthManager{}
 	h := NewHandler(Config{
-		Store:       st,
-		Health:      health,
-		Concurrency: &mockConcurrencyTracker{},
-		Cleaner:     &mockConcurrencyCleaner{},
-		Logger:      logger,
+		Store:              st,
+		Health:             health,
+		Concurrency:        &mockConcurrencyTracker{},
+		ProviderLifecycles: &mockProviderLifecycleCoordinator{},
+		Logger:             logger,
 	})
 	return h, st, health
 }

@@ -2,34 +2,62 @@ package proxy
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturebridge"
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
 type httpCaptureExchange struct {
 	recorder           requestcapture.Recorder
 	mode               capturebridge.Mode
-	responseObserver   *capturebridge.HTTPBodyObserver
+	responseObserver   capturebridge.HTTPBodyObservation
 	sensitiveHeaders   requestcapture.SensitiveHeaderEvidence
 	credentialEvidence requestcapture.CredentialEvidence
 	completedAt        time.Time
 }
 
-type httpCaptureCompletion struct {
-	exchange         httpCaptureExchange
-	response         *UpstreamResponse
-	sourceCompletion requestcapture.SourceCompletion
-	reason           requestcapture.TerminationReason
-	failure          requestcapture.FailureObservation
+func captureCredentialMaterial(headers http.Header) (
+	requestcapture.SensitiveHeaderEvidence,
+	requestcapture.CredentialEvidence,
+) {
+	return capturebridge.CredentialMaterial(headers)
 }
 
-func (pctx *proxyContext) queueHTTPCaptureCompletion(
+func (h *Handler) captureHTTPPreparationFailure(
+	ctx context.Context,
+	pctx *proxyContext,
+	attempt httpAttemptContext,
+	phase requestcapture.CredentialPhase,
+	request *http.Request,
+	failureCode requestcapture.FailureCode,
+	err error,
+) {
+	if !pctx.captureParticipates {
+		return
+	}
+	var target requestcapture.TransitionTargetInput
+	var credentialEvidence requestcapture.CredentialEvidence
+	if request != nil {
+		target = requestcapture.HTTPTransitionTarget(request.URL)
+		_, credentialEvidence = captureCredentialMaterial(request.Header)
+	}
+	reason, failure := capturefailure.HTTPPreparation(contextError(ctx), err, failureCode)
+	pctx.capture.Transition(requestcapture.TransitionStart{
+		Attempt: attempt.metadata(pctx.apiType, phase), Target: target,
+		TerminationReason: reason, Failure: failure, CredentialEvidence: credentialEvidence,
+	})
+}
+
+func (pctx *proxyContext) finishHTTPCaptureExchange(
 	exchange httpCaptureExchange,
-	response *UpstreamResponse,
+	trailers http.Header,
 	sourceCompletion requestcapture.SourceCompletion,
 	reason requestcapture.TerminationReason,
 	failure requestcapture.FailureObservation,
@@ -40,60 +68,128 @@ func (pctx *proxyContext) queueHTTPCaptureCompletion(
 	if exchange.completedAt.IsZero() {
 		exchange.completedAt = time.Now()
 	}
-	pctx.httpCaptureCompletions = append(pctx.httpCaptureCompletions, httpCaptureCompletion{
-		exchange:         exchange,
-		response:         response,
-		sourceCompletion: sourceCompletion,
-		reason:           reason,
-		failure:          failure,
-	})
+	exchange.finish(trailers, sourceCompletion, reason, failure)
 }
 
-func (pctx *proxyContext) finishHTTPCaptureCompletions() {
-	if pctx == nil {
+func finishHTTPFetchFailure(ctx context.Context, pctx *proxyContext, exchange httpCaptureExchange, err error) {
+	if !exchange.valid() {
 		return
 	}
-	for _, completion := range pctx.httpCaptureCompletions {
-		completion.exchange.finish(
-			completion.response,
-			completion.sourceCompletion,
-			completion.reason,
-			completion.failure,
-		)
+	exchange.completedAt = time.Now()
+	reason, failure := capturefailure.HTTPFetch(contextError(ctx), err)
+	pctx.finishHTTPCaptureExchange(
+		exchange, nil, requestcapture.SourceCompletionPartial, reason, failure,
+	)
+}
+
+func (p *pendingHTTPResponse) finishCapture(completion responseanalysis.Completion) {
+	p.exchange.completedAt = time.Now()
+	sourceCompletion := requestcapture.SourceCompletionPartial
+	if p.exchange.sourceCompletionAfterError() == requestcapture.SourceCompletionComplete {
+		sourceCompletion = requestcapture.SourceCompletionComplete
 	}
-	pctx.httpCaptureCompletions = nil
+	reason := requestcapture.TerminationReasonEOF
+	failure := requestcapture.FailureObservation{}
+	if completion.HasSemanticObservation {
+		reason = requestcapture.TerminationReasonInternalErrorCommitted
+		failure = semanticCaptureFailure()
+	} else {
+		switch completion.Termination {
+		case responseanalysis.TerminationClientCancelled:
+			reason = requestcapture.TerminationReasonClientDisconnect
+			cancelErr := contextError(p.pctx.r.Context())
+			if cancelErr == nil {
+				cancelErr = context.Canceled
+			}
+			_, failure = capturefailure.HTTPForward(
+				contextError(p.pctx.r.Context()), cancelErr, capturefailure.HTTPForwardOriginUpstreamRead,
+			)
+		case responseanalysis.TerminationClientWriteFailure:
+			reason = requestcapture.TerminationReasonWriteError
+			_, failure = capturefailure.HTTPForward(
+				contextError(p.pctx.r.Context()), errors.New("client response write failed"),
+				capturefailure.HTTPForwardOriginClientWrite,
+			)
+		case responseanalysis.TerminationUpstreamReadFailure:
+			if completion.ReadTermination == responseanalysis.ReadTerminationIdleTimeout {
+				reason = requestcapture.TerminationReasonTimeout
+				_, failure = capturefailure.HTTPForward(
+					contextError(p.pctx.r.Context()), ErrReadTimeout,
+					capturefailure.HTTPForwardOriginReadTimeout,
+				)
+			} else {
+				reason = requestcapture.TerminationReasonReadError
+				_, failure = capturefailure.HTTPForward(
+					contextError(p.pctx.r.Context()), errors.New("upstream response read failed"),
+					capturefailure.HTTPForwardOriginUpstreamRead,
+				)
+			}
+		case responseanalysis.TerminationInternalFailure:
+			reason = requestcapture.TerminationReasonTransportError
+			failure = capturefailure.Observation(capturefailure.Fact(
+				requestcapture.FailureSiteResponseRead,
+				requestcapture.FailurePeerGateway,
+				requestcapture.FailureClassProtocol,
+				requestcapture.FailureCodeGatewayContext,
+			), requestcapture.FailureFact{})
+		}
+	}
+	p.pctx.finishHTTPCaptureExchange(
+		p.exchange, p.head.Trailer, sourceCompletion, reason, failure,
+	)
+}
+
+func statusCaptureFailure(statusCode int) requestcapture.FailureObservation {
+	return capturefailure.Observation(capturefailure.HTTPStatus(
+		requestcapture.FailureSiteResponseStatus,
+		requestcapture.FailurePeerUpstream,
+		statusCode,
+	), requestcapture.FailureFact{})
+}
+
+func semanticCaptureFailure() requestcapture.FailureObservation {
+	return capturefailure.Observation(capturefailure.Fact(
+		requestcapture.FailureSiteResponseRead,
+		requestcapture.FailurePeerProvider,
+		requestcapture.FailureClassUpstreamSemantic,
+		requestcapture.FailureCodeProviderSemantic,
+	), requestcapture.FailureFact{})
 }
 
 func (e httpCaptureExchange) valid() bool {
 	return e.mode.Participates()
 }
 
-func (e *httpCaptureExchange) observeResponse(resp *UpstreamResponse) {
+func (e *httpCaptureExchange) observeResponse(
+	head upstreamtransport.ResponseHead,
+	body io.ReadCloser,
+) io.ReadCloser {
 	if !e.mode.CapturesPayload() {
-		return
+		return body
 	}
-	responseSensitiveHeaders, responseCredentialEvidence := captureCredentialMaterial(resp.Header)
+	responseSensitiveHeaders, responseCredentialEvidence := captureCredentialMaterial(head.SourceHeader)
 	e.sensitiveHeaders.Merge(responseSensitiveHeaders)
 	e.sensitiveHeaders.Seal()
 	e.credentialEvidence.Merge(responseCredentialEvidence)
 	e.credentialEvidence.Seal()
 
 	e.recorder.ObserveResponse(requestcapture.HTTPResponseHead{
-		StatusCode:         resp.StatusCode,
-		Protocol:           resp.Protocol,
-		Headers:            resp.Header,
-		ContentLength:      resp.ContentLength,
-		DeclaredTrailers:   resp.Trailer,
+		StatusCode:         head.StatusCode,
+		Protocol:           head.Protocol,
+		Headers:            head.SourceHeader,
+		ContentLength:      head.ContentLength,
+		DeclaredTrailers:   head.Trailer,
 		SensitiveHeaders:   e.sensitiveHeaders,
 		CredentialEvidence: e.credentialEvidence,
 	})
-	if resp.Body != nil {
-		resp.Body, e.responseObserver = capturebridge.WrapHTTPResponseBody(resp.Body, e.recorder, resp.ContentLength)
+	if body != nil {
+		body, e.responseObserver = capturebridge.WrapHTTPResponseBody(body, e.recorder, head.ContentLength)
 	}
+	return body
 }
 
 func (e httpCaptureExchange) sourceCompletionAfterError() requestcapture.SourceCompletion {
-	if e.responseObserver != nil && e.responseObserver.SourceComplete() {
+	if e.responseObserver.SourceComplete() {
 		return requestcapture.SourceCompletionComplete
 	}
 	return requestcapture.SourceCompletionPartial
@@ -104,7 +200,7 @@ func (e httpCaptureExchange) observeClientWrite(bytes int) {
 }
 
 func (e httpCaptureExchange) finish(
-	resp *UpstreamResponse,
+	trailers http.Header,
 	sourceCompletion requestcapture.SourceCompletion,
 	reason requestcapture.TerminationReason,
 	failure requestcapture.FailureObservation,
@@ -120,10 +216,6 @@ func (e httpCaptureExchange) finish(
 		CompletedAt:       e.completedAt,
 	}
 	if e.mode.CapturesPayload() {
-		var trailers http.Header
-		if resp != nil {
-			trailers = resp.Trailer
-		}
 		_, trailerCredentialEvidence := captureCredentialMaterial(trailers)
 		e.credentialEvidence.Merge(trailerCredentialEvidence)
 		e.credentialEvidence.Seal()
@@ -131,34 +223,6 @@ func (e httpCaptureExchange) finish(
 		outcome.CredentialEvidence = e.credentialEvidence
 	}
 	e.recorder.Finish(outcome)
-}
-
-func captureForwardFailure(
-	ctx context.Context,
-	err error,
-	clientWriteErr error,
-) (requestcapture.TerminationReason, requestcapture.FailureObservation) {
-	origin := capturefailure.HTTPForwardOriginUpstreamRead
-	failureError := err
-	// Capture only inspects gateway-owned wrapper types directly. Widening the
-	// operand prevents untrusted upstream errors from running As/Unwrap hooks.
-	switch concrete := any(err).(type) {
-	case *readTimeoutError, *sseIdleTimeoutError:
-		origin = capturefailure.HTTPForwardOriginReadTimeout
-	case *UpstreamReadError:
-		if concrete != nil && concrete.Err != nil {
-			failureError = concrete.Err
-		}
-	default:
-		if clientWriteErr != nil {
-			origin = capturefailure.HTTPForwardOriginClientWrite
-			failureError = clientWriteErr
-		}
-	}
-	// io.Copy does not preserve source-vs-destination error origin. The
-	// downstream writer observation is therefore the bounded control-flow fact
-	// that distinguishes an opaque upstream read from a client write failure.
-	return capturefailure.HTTPForward(contextError(ctx), failureError, origin)
 }
 
 func contextError(ctx context.Context) error {

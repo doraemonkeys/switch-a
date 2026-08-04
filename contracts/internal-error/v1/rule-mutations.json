@@ -1,0 +1,123 @@
+{
+  "create": {
+    "if_match": "\"internal-error-rules/7\"",
+    "request": {
+      "schema_version": 1,
+      "rule": {
+        "name": "Anthropic overload",
+        "enabled": false,
+        "target": {
+          "kind": "global"
+        },
+        "api_type": "claude",
+        "keywords": ["overloaded_error"],
+        "match_mode": "any",
+        "action": {
+          "type": "retry_only",
+          "max_retries": 1,
+          "backoff": {
+            "initial_delay": "0s",
+            "max_delay": "0s",
+            "multiplier": 0,
+            "jitter": false
+          }
+        }
+      }
+    },
+    "status": 201,
+    "location": "/admin/api/internal-error-rules/33333333-3333-4333-8333-333333333333",
+    "etag": "\"internal-error-rules/8\"",
+    "response": {
+      "schema_version": 1,
+      "rule_set_revision": "8",
+      "rule": {
+        "id": "33333333-3333-4333-8333-333333333333",
+        "name": "Anthropic overload",
+        "enabled": false,
+        "target": {
+          "kind": "global"
+        },
+        "api_type": "claude",
+        "keywords": ["overloaded_error"],
+        "match_mode": "any",
+        "action": {
+          "type": "retry_only",
+          "max_retries": 1,
+          "backoff": {
+            "initial_delay": "0s",
+            "max_delay": "0s",
+            "multiplier": 0,
+            "jitter": false
+          }
+        },
+        "position": 2,
+        "created_at": "2026-08-03T01:04:00Z",
+        "updated_at": "2026-08-03T01:04:00Z"
+      }
+    }
+  },
+  "update": {
+    "rule_id": "33333333-3333-4333-8333-333333333333",
+    "if_match": "\"internal-error-rules/8\"",
+    "request": {
+      "schema_version": 1,
+      "rule": {
+        "name": "Anthropic overload",
+        "enabled": true,
+        "target": {
+          "kind": "global"
+        },
+        "api_type": "claude",
+        "keywords": ["overloaded_error"],
+        "match_mode": "any",
+        "action": {
+          "type": "retry_then_switch",
+          "max_retries": 2,
+          "backoff": {
+            "initial_delay": "250ms",
+            "max_delay": "2s",
+            "multiplier": 2,
+            "jitter": true
+          }
+        }
+      }
+    },
+    "status": 200,
+    "etag": "\"internal-error-rules/9\"",
+    "response": {
+      "schema_version": 1,
+      "rule_set_revision": "9",
+      "rule": {
+        "id": "33333333-3333-4333-8333-333333333333",
+        "name": "Anthropic overload",
+        "enabled": true,
+        "target": {
+          "kind": "global"
+        },
+        "api_type": "claude",
+        "keywords": ["overloaded_error"],
+        "match_mode": "any",
+        "action": {
+          "type": "retry_then_switch",
+          "max_retries": 2,
+          "backoff": {
+            "initial_delay": "250ms",
+            "max_delay": "2s",
+            "multiplier": 2,
+            "jitter": true
+          }
+        },
+        "position": 2,
+        "created_at": "2026-08-03T01:04:00Z",
+        "updated_at": "2026-08-03T02:00:00Z"
+      }
+    }
+  },
+  "delete": {
+    "rule_id": "33333333-3333-4333-8333-333333333333",
+    "if_match": "\"internal-error-rules/9\"",
+    "status": 204,
+    "etag": "\"internal-error-rules/10\"",
+    "response_body": null
+  }
+}

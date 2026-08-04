@@ -1,0 +1,74 @@
+{
+  "version": "4.0",
+  "exported_at": "2026-08-03T04:05:06Z",
+  "providers": [
+    {
+      "id": "provider-codex",
+      "name": "Codex primary",
+      "api_key": "fixture-api-key",
+      "api_types": [
+        {
+          "api_type": "codex",
+          "base_url": "https://api.openai.com/v1"
+        }
+      ],
+      "auth_mode": "bearer",
+      "credential_type": "api_key",
+      "usage_limit_policy": "switch_provider",
+      "weight": 1,
+      "priority": 0,
+      "concurrency": 10,
+      "max_retries": 0,
+      "vendor": "openai",
+      "failover_scope": "any",
+      "accept_failover": "any",
+      "enabled": true
+    }
+  ],
+  "groups": [],
+  "routing_policies": [],
+  "settings": {
+    "global_max_attempts": "4"
+  },
+  "internal_error_rules": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Codex capacity",
+      "enabled": true,
+      "target": {
+        "kind": "provider",
+        "provider_id": "provider-codex"
+      },
+      "api_type": "codex",
+      "keywords": [
+        "server_is_overloaded",
+        "our servers are currently overloaded at capacity"
+      ],
+      "match_mode": "any",
+      "action": {
+        "type": "retry_then_switch",
+        "max_retries": 2,
+        "backoff": {
+          "initial_delay": "250ms",
+          "max_delay": "2s",
+          "multiplier": 2,
+          "jitter": true
+        }
+      }
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Observe upstream maintenance",
+      "enabled": true,
+      "target": {
+        "kind": "global"
+      },
+      "api_type": null,
+      "keywords": ["maintenance window"],
+      "match_mode": "all",
+      "action": {
+        "type": "passthrough"
+      }
+    }
+  ]
+}

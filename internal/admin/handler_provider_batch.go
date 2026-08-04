@@ -142,8 +142,15 @@ func (h *Handler) batchEnable(ctx context.Context, id string) error {
 		return err
 	}
 
+	wasEnabled := provider.Enabled
 	provider.Enabled = true
-	if err := h.store.UpdateProvider(ctx, provider); err != nil {
+	update := func() error { return h.store.UpdateProvider(ctx, provider) }
+	if wasEnabled {
+		err = update()
+	} else {
+		err = h.mutateProviderGeneration(id, update)
+	}
+	if err != nil {
 		return errors.New("failed to enable provider: " + id)
 	}
 
@@ -163,8 +170,15 @@ func (h *Handler) batchDisable(ctx context.Context, id string) error {
 		return err
 	}
 
+	wasEnabled := provider.Enabled
 	provider.Enabled = false
-	if err := h.store.UpdateProvider(ctx, provider); err != nil {
+	update := func() error { return h.store.UpdateProvider(ctx, provider) }
+	if wasEnabled {
+		err = h.mutateProviderGeneration(id, update)
+	} else {
+		err = update()
+	}
+	if err != nil {
 		return errors.New("failed to disable provider: " + id)
 	}
 
@@ -183,16 +197,13 @@ func (h *Handler) batchDelete(ctx context.Context, id string) error {
 		return err
 	}
 
-	if err := h.store.DeleteProvider(ctx, id); err != nil {
+	if err := h.mutateProviderGeneration(id, func() error {
+		return h.store.DeleteProvider(ctx, id)
+	}); err != nil {
 		if errors.Is(err, store.ErrRoutingPolicyReferenceConflict) {
 			return err
 		}
 		return errors.New("failed to delete provider: " + id)
-	}
-
-	// Clear concurrency counter
-	if h.cleaner != nil {
-		h.cleaner.ClearConcurrency(id)
 	}
 
 	// Clear circuit breaker failure history

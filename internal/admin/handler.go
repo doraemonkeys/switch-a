@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
 	adminproviderimport "github.com/doraemonkeys/switch-a/internal/admin/providerimport"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
@@ -69,10 +70,12 @@ type ConcurrencyTracker interface {
 	Current(providerID string) int64
 }
 
-// ConcurrencyCleaner provides cleanup for provider concurrency counters.
-// This should be called when a provider is deleted to prevent memory leaks.
-type ConcurrencyCleaner interface {
-	ClearConcurrency(providerID string)
+// ProviderLifecycleCoordinator makes durable eligibility mutations atomic with
+// selector generation retirement. Group and routing mutations use the global
+// boundary because their effects are not confined to one provider ID.
+type ProviderLifecycleCoordinator interface {
+	RetireProviderGeneration(providerID string, mutation func() error) error
+	RetireAllProviderGenerations(mutation func() error) error
 }
 
 // ActiveRequestLister provides access to active requests.
@@ -104,10 +107,11 @@ type Handler struct {
 	store                 Store
 	health                internal.HealthManager
 	concurrency           ConcurrencyTracker
-	cleaner               ConcurrencyCleaner
+	providerLifecycles    ProviderLifecycleCoordinator
 	activeReqList         ActiveRequestLister
 	auth                  ProviderAuthService
 	providerImportHandler *adminproviderimport.Handler
+	internalErrorRules    *adminerrorruleapi.Handler
 	logger                *zap.Logger
 }
 
@@ -116,32 +120,88 @@ type Config struct {
 	Store               Store
 	Health              internal.HealthManager
 	Concurrency         ConcurrencyTracker
-	Cleaner             ConcurrencyCleaner
+	ProviderLifecycles  ProviderLifecycleCoordinator
 	ActiveReqList       ActiveRequestLister
 	Auth                ProviderAuthService
 	ProviderImports     ProviderImportService
 	ProviderImportStore ProviderImportStore
+	InternalErrorRules  *adminerrorruleapi.Handler
 	Logger              *zap.Logger
 }
 
 // NewHandler creates a new admin handler.
 func NewHandler(cfg Config) *Handler {
 	handler := &Handler{
-		store:         cfg.Store,
-		health:        cfg.Health,
-		concurrency:   cfg.Concurrency,
-		cleaner:       cfg.Cleaner,
-		activeReqList: cfg.ActiveReqList,
-		auth:          cfg.Auth,
-		logger:        cfg.Logger,
+		store:              cfg.Store,
+		health:             cfg.Health,
+		concurrency:        cfg.Concurrency,
+		providerLifecycles: cfg.ProviderLifecycles,
+		activeReqList:      cfg.ActiveReqList,
+		auth:               cfg.Auth,
+		internalErrorRules: cfg.InternalErrorRules,
+		logger:             cfg.Logger,
 	}
 	handler.providerImportHandler = adminproviderimport.NewHandler(adminproviderimport.Config{
 		ProviderCatalog: cfg.Store,
 		Drafts:          cfg.ProviderImports,
 		Store:           cfg.ProviderImportStore,
+		Lifecycles:      cfg.ProviderLifecycles,
 		Logger:          cfg.Logger,
 	})
 	return handler
+}
+
+func (h *Handler) mutateProviderGeneration(providerID string, mutation func() error) error {
+	if h.providerLifecycles == nil {
+		return mutation()
+	}
+	return h.providerLifecycles.RetireProviderGeneration(providerID, mutation)
+}
+
+func (h *Handler) mutateAllProviderGenerations(mutation func() error) error {
+	if h.providerLifecycles == nil {
+		return mutation()
+	}
+	return h.providerLifecycles.RetireAllProviderGenerations(mutation)
+}
+
+// GetAPICatalog serves the canonical projection without consulting storage so
+// every authenticated client observes the same routing/analysis contract for
+// the running binary.
+func (h *Handler) GetAPICatalog(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, APICatalogResponse())
+}
+
+func (h *Handler) ListInternalErrorRules(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.ListRules(w, r)
+}
+
+func (h *Handler) GetInternalErrorRule(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.GetRule(w, r)
+}
+
+func (h *Handler) CreateInternalErrorRule(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.CreateRule(w, r)
+}
+
+func (h *Handler) UpdateInternalErrorRule(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.UpdateRule(w, r)
+}
+
+func (h *Handler) DeleteInternalErrorRule(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.DeleteRule(w, r)
+}
+
+func (h *Handler) ReorderInternalErrorRules(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.ReorderRules(w, r)
+}
+
+func (h *Handler) GetInternalErrorRuleStats(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.GetStats(w, r)
+}
+
+func (h *Handler) TestInternalErrorMessage(w http.ResponseWriter, r *http.Request) {
+	h.internalErrorRules.TestMessage(w, r)
 }
 
 func (h *Handler) PreviewProviderImport(w http.ResponseWriter, r *http.Request) {

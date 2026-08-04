@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
 )
@@ -15,6 +17,7 @@ type stagedConfigImport struct {
 	changes               ImportChanges
 	warnings              []string
 	previewRejectsWarning bool
+	ruleError             error
 }
 
 func stageConfigImport(
@@ -23,6 +26,7 @@ func stageConfigImport(
 	existingGroups map[string]*model.Group,
 	existingRoutingPolicies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy,
 	existingSettings map[string]string,
+	existingRules []errorrule.Rule,
 ) stagedConfigImport {
 	resolved, scopeWarnings := resolveImportConfigRequest(req)
 	staged := stagedConfigImport{
@@ -58,7 +62,60 @@ func stageConfigImport(
 		finalProviders,
 	)
 	stageImportedSettings(&staged, resolved.Settings, existingSettings)
+	stageImportedInternalErrorRules(&staged, resolved, existingRules, finalProviders)
 	return staged
+}
+
+func stageImportedInternalErrorRules(
+	staged *stagedConfigImport,
+	resolved resolvedConfigImport,
+	existing []errorrule.Rule,
+	providers map[string]*model.Provider,
+) {
+	request := errorrulesqlite.ImportRequest{Rules: make([]errorrulesqlite.ImportedRule, len(resolved.InternalErrorRules))}
+	for index, exported := range resolved.InternalErrorRules {
+		request.Rules[index] = errorrulesqlite.ImportedRule{ID: exported.ID, RuleSpec: exported.RuleSpec}
+	}
+	switch resolved.Scope.Mode {
+	case ConfigImportModeFull:
+		request.Mode = errorrulesqlite.ImportModeFull
+	case ConfigImportModeSelection:
+		request.Mode = errorrulesqlite.ImportModeSelection
+		request.SelectedProviderIDs = append([]string(nil), resolved.RuleProviderIDs...)
+	case ConfigImportModeSettingsOnly:
+		request.Mode = errorrulesqlite.ImportModePreserve
+	default:
+		return
+	}
+	staged.bundle.RuleImport = request
+	candidate, counts, err := errorrulesqlite.BuildImportCandidate(existing, request)
+	if err == nil {
+		err = validateImportedRuleProviders(candidate, providers)
+	}
+	if err != nil {
+		staged.ruleError = err
+		staged.warnings = append(staged.warnings, err.Error())
+		return
+	}
+	staged.changes.InternalErrorRules = ChangeCount{
+		Add:       counts.Add,
+		Update:    counts.Update,
+		Delete:    counts.Delete,
+		Unchanged: counts.Unchanged,
+	}
+}
+
+func validateImportedRuleProviders(rules []errorrule.Rule, providers map[string]*model.Provider) error {
+	for _, rule := range rules {
+		providerID, scoped := rule.Target.ProviderID()
+		if !scoped {
+			continue
+		}
+		if _, exists := providers[string(providerID)]; !exists {
+			return fmt.Errorf("internal-error rule %q references missing provider %q", rule.ID, providerID)
+		}
+	}
+	return nil
 }
 
 // Scoped preview must distinguish "selected but unchanged" from "not staged at all",

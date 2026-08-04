@@ -2,12 +2,12 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
@@ -16,14 +16,13 @@ import (
 
 // mockSelector implements the Selector interface for testing.
 type mockSelector struct {
-	selectWithMetadataFunc func(ctx context.Context, req *model.SelectRequest) (*selectResult, error)
-	selectExcludingFunc    func(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
-	selectFunc             func(ctx context.Context, req *model.SelectRequest) (*model.Provider, error)
+	selectWithMetadataFunc      func(ctx context.Context, req *model.SelectRequest) (*selectResult, error)
+	selectExcludingFunc         func(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
+	reserveSameProviderDispatch func(context.Context, providerLease, *model.SelectRequest) (sameProviderDispatchPermit, error)
 
 	mu                  sync.Mutex
 	stickyUpdates       []stickyUpdate // Records all UpdateStickyWithTTL calls
 	continuityEvictions []string       // Records provider IDs evicted from sticky continuity
-	concurrencyReleased []string       // Records provider IDs passed to ReleaseConcurrency
 }
 
 // stickyUpdate records a single call to UpdateStickyWithTTL.
@@ -40,21 +39,7 @@ type selectResult struct {
 	FromStickyCache bool
 }
 
-func (m *mockSelector) Select(ctx context.Context, req *model.SelectRequest) (*model.Provider, error) {
-	if m.selectFunc != nil {
-		return m.selectFunc(ctx, req)
-	}
-	return nil, nil
-}
-
-func (m *mockSelector) SelectExcluding(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-	if m.selectExcludingFunc != nil {
-		return m.selectExcludingFunc(ctx, req, excludeIDs)
-	}
-	return nil, nil
-}
-
-func (m *mockSelector) SelectWithMetadata(ctx context.Context, req *model.SelectRequest) (*selectorSelectResult, error) {
+func (m *mockSelector) selectionResult(ctx context.Context, req *model.SelectRequest) (*selectResult, error) {
 	if m.selectWithMetadataFunc != nil {
 		result, err := m.selectWithMetadataFunc(ctx, req)
 		if result == nil {
@@ -85,12 +70,126 @@ func (m *mockSelector) SelectWithMetadata(ctx context.Context, req *model.Select
 				metadata.ContinuitySeedAgeAtSelectionMs = enriched.ContinuitySeedAgeAtSelectionMs
 			}
 		}
-		return &selectorSelectResult{
+		return &selectResult{
 			Provider: result.Provider,
 			Metadata: metadata,
 		}, err
 	}
 	return nil, nil
+}
+
+func (m *mockSelector) SelectInitial(ctx context.Context, req *model.SelectRequest) (*providerSelection, error) {
+	result, err := m.selectionResult(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Provider == nil {
+		return nil, internal.ErrNoProvider
+	}
+	return &providerSelection{
+		provider: result.Provider,
+		lease:    newLocalProviderLease(result.Provider),
+		metadata: result.Metadata,
+	}, nil
+}
+
+func (m *mockSelector) SelectActive(
+	ctx context.Context,
+	req *model.SelectRequest,
+	active providerLease,
+) (*providerSelection, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if active == nil || !active.Held() || active.Provider() == nil {
+		return nil, internal.ErrNoProvider
+	}
+	return &providerSelection{
+		provider: active.Provider(),
+		lease:    active,
+		metadata: selector.BuildSelectionMetadata(req, selector.SelectionSourceActiveContinuity),
+	}, nil
+}
+
+type mockRetryPermit struct {
+	provider          *model.Provider
+	ledger            errorrule.RetryLedger
+	ruleKey           errorrule.ProviderRuleKey
+	globalMaxAttempts uint
+	released          bool
+}
+
+func (p *mockRetryPermit) Provider() *model.Provider { return p.provider }
+func (p *mockRetryPermit) Activate() (errorrule.RetryLedger, error) {
+	if p.released {
+		return errorrule.RetryLedger{}, internal.ErrNoProvider
+	}
+	p.released = true
+	return p.ledger.StartRuleRetry(p.ruleKey, p.globalMaxAttempts)
+}
+func (p *mockRetryPermit) Release() bool {
+	if p.released {
+		return false
+	}
+	p.released = true
+	return true
+}
+
+func (m *mockSelector) ReserveSameProviderRetry(
+	ctx context.Context,
+	input sameProviderRetryReservation,
+) (retryPermit, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if input.current == nil || !input.current.Held() || input.current.Provider() == nil {
+		return nil, internal.ErrNoProvider
+	}
+	return &mockRetryPermit{
+		provider:          input.current.Provider(),
+		ledger:            input.ledger,
+		ruleKey:           input.ruleKey,
+		globalMaxAttempts: input.globalMaxAttempts,
+	}, nil
+}
+
+func (m *mockSelector) ReserveSameProviderDispatch(
+	ctx context.Context,
+	current providerLease,
+	request *model.SelectRequest,
+) (sameProviderDispatchPermit, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if m.reserveSameProviderDispatch != nil {
+		return m.reserveSameProviderDispatch(ctx, current, request)
+	}
+	if current == nil || !current.Held() || current.Provider() == nil {
+		return nil, internal.ErrNoProvider
+	}
+	return newLocalSameProviderDispatchPermit(current.Provider(), current), nil
+}
+
+func (m *mockSelector) ReserveAlternate(
+	ctx context.Context,
+	req *model.SelectRequest,
+	excluded map[string]bool,
+) (alternateProviderReservation, error) {
+	if m.selectExcludingFunc == nil {
+		return nil, internal.ErrNoProvider
+	}
+	provider, err := m.selectExcludingFunc(ctx, req, excluded)
+	if err != nil {
+		return nil, err
+	}
+	if provider == nil || excluded[provider.ID] {
+		return nil, internal.ErrNoProvider
+	}
+	return &localAlternateReservation{
+		provider: provider,
+		lease:    newLocalProviderLease(provider),
+		metadata: selector.BuildSelectionMetadata(req, selector.SelectionSourceAlternate),
+	}, nil
 }
 
 func (m *mockSelector) UpdateStickyWithTTL(req *model.SelectRequest, providerID string, ttl time.Duration) {
@@ -108,14 +207,6 @@ func (m *mockSelector) EvictProviderContinuity(providerID string) {
 	defer m.mu.Unlock()
 	m.continuityEvictions = append(m.continuityEvictions, providerID)
 }
-
-func (m *mockSelector) ReleaseConcurrency(providerID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.concurrencyReleased = append(m.concurrencyReleased, providerID)
-}
-
-func (m *mockSelector) ClearConcurrency(_ string) {}
 
 // StickyUpdatesLen returns the number of sticky updates in a thread-safe manner.
 func (m *mockSelector) StickyUpdatesLen() int {
@@ -195,496 +286,7 @@ func (m *mockHealthManager) ManualEnable(_ context.Context, _ string) error {
 
 func (m *mockHealthManager) ResetCircuitBreaker(_ string) {}
 
-// selectorSelectResult mirrors selector.SelectResult for the proxy.Selector interface.
-type selectorSelectResult = selector.SelectResult
-
 // TestSelectProviderWithTracking_NoSelector tests fallback mode when no selector is configured.
-func TestSelectProviderWithTracking_NoSelector(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
-	}
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-		// No Selector configured - uses fallback mode
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		APIType: "claude",
-	}
-
-	// First attempt should select a provider
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider == nil {
-		t.Fatal("expected provider to be selected")
-	}
-	if selectionMetadata.UsesContinuity() {
-		t.Error("expected continuity metadata=false for fallback mode")
-	}
-}
-
-// TestSelectProviderWithTracking_SelectorStickyCacheHit tests when sticky cache returns a provider.
-func TestSelectProviderWithTracking_SelectorStickyCacheHit(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	stickyProvider := &model.Provider{ID: "sticky-p1", Name: "Sticky Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "sticky-p1", APIType: "claude"}}}
-
-	mockSel := &mockSelector{
-		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
-			return &selectResult{
-				Provider:        stickyProvider,
-				FromStickyCache: true,
-			}, nil
-		},
-	}
-
-	handler := NewHandler(Config{
-		Store:    store,
-		Logger:   logger,
-		Selector: mockSel,
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		APIType:    "claude",
-		StickyMode: model.StickyModeAPIType,
-	}
-
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider == nil {
-		t.Fatal("expected provider to be selected")
-	}
-	if provider.ID != "sticky-p1" {
-		t.Errorf("expected sticky-p1, got %s", provider.ID)
-	}
-	if !selectionMetadata.UsesContinuity() {
-		t.Error("expected continuity metadata=true for sticky cache hit")
-	}
-}
-
-// TestSelectProviderWithTracking_ActiveProviderFallback tests when sticky cache misses but active provider is found.
-func TestSelectProviderWithTracking_ActiveProviderFallback(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "active-p1", Name: "Active Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "claude"}}},
-	}
-	logger := zap.NewNop()
-
-	freshProvider := &model.Provider{ID: "fresh-p1", Name: "Fresh Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fresh-p1", APIType: "claude"}}}
-
-	mockSel := &mockSelector{
-		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
-			return &selectResult{
-				Provider:        freshProvider,
-				FromStickyCache: false, // Not from sticky cache
-			}, nil
-		},
-	}
-
-	// Set up active registry with an active provider
-	activeRegistry := NewActiveRequestRegistry()
-	activeRegistry.Register(&ActiveRequest{
-		RequestID:       "req-123",
-		ProviderID:      "active-p1",
-		ClientIP:        "192.168.1.1",
-		UserID:          "user1",
-		APIType:         "claude",
-		HasReceivedData: true, // Must have received data
-	})
-
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         logger,
-		Selector:       mockSel,
-		ActiveRegistry: activeRegistry,
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		ClientIP:   "192.168.1.1",
-		User:       "user1",
-		APIType:    "claude",
-		StickyMode: model.StickyModeAPIType,
-	}
-
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider == nil {
-		t.Fatal("expected provider to be selected")
-	}
-	if provider.ID != "active-p1" {
-		t.Errorf("expected active-p1, got %s", provider.ID)
-	}
-	if !selectionMetadata.UsesContinuity() {
-		t.Error("expected continuity metadata=true for active provider fallback")
-	}
-
-	// Verify that the originally selected provider's concurrency slot was released
-	// to prevent counter leaks (SelectWithMetadata acquired a slot for fresh-p1,
-	// but we're returning active-p1 instead).
-	mockSel.mu.Lock()
-	defer mockSel.mu.Unlock()
-	if len(mockSel.concurrencyReleased) != 1 || mockSel.concurrencyReleased[0] != "fresh-p1" {
-		t.Errorf("expected concurrency release for fresh-p1, got %v", mockSel.concurrencyReleased)
-	}
-}
-
-// TestSelectProviderWithTracking_NormalSelection tests normal selection without sticky.
-func TestSelectProviderWithTracking_NormalSelection(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	normalProvider := &model.Provider{ID: "normal-p1", Name: "Normal Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "normal-p1", APIType: "claude"}}}
-
-	mockSel := &mockSelector{
-		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
-			return &selectResult{
-				Provider:        normalProvider,
-				FromStickyCache: false,
-			}, nil
-		},
-	}
-
-	handler := NewHandler(Config{
-		Store:    store,
-		Logger:   logger,
-		Selector: mockSel,
-		// No active registry
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		APIType:    "claude",
-		StickyMode: model.StickyModeOff,
-	}
-
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider == nil {
-		t.Fatal("expected provider to be selected")
-	}
-	if provider.ID != "normal-p1" {
-		t.Errorf("expected normal-p1, got %s", provider.ID)
-	}
-	if selectionMetadata.UsesContinuity() {
-		t.Error("expected continuity metadata=false for normal selection")
-	}
-}
-
-// TestSelectProviderWithTracking_RetryWithExclusion tests retry selection with excluded providers.
-func TestSelectProviderWithTracking_RetryWithExclusion(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	retryProvider := &model.Provider{ID: "retry-p1", Name: "Retry Provider", Enabled: true}
-
-	mockSel := &mockSelector{
-		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
-			t.Error("SelectWithMetadata should not be called on retry")
-			return nil, nil
-		},
-		selectExcludingFunc: func(_ context.Context, _ *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
-			if !excludeIDs["failed-p1"] {
-				t.Error("expected failed-p1 to be excluded")
-			}
-			return retryProvider, nil
-		},
-	}
-
-	handler := NewHandler(Config{
-		Store:    store,
-		Logger:   logger,
-		Selector: mockSel,
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		APIType:    "claude",
-		StickyMode: model.StickyModeAPIType,
-	}
-
-	excluded := map[string]bool{"failed-p1": true}
-	// attempt > 0 triggers SelectExcluding path
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 1, excluded)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider == nil {
-		t.Fatal("expected provider to be selected")
-	}
-	if provider.ID != "retry-p1" {
-		t.Errorf("expected retry-p1, got %s", provider.ID)
-	}
-	if selectionMetadata.UsesContinuity() {
-		t.Error("expected continuity metadata=false for retry selection")
-	}
-}
-
-func TestSelectProviderWithTracking_FirstAttemptNilSelectionBecomesNoProvider(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:    store,
-		Logger:   logger,
-		Selector: &mockSelector{},
-	})
-
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(
-		context.Background(),
-		&model.SelectRequest{APIType: "claude"},
-		0,
-		nil,
-	)
-
-	if !errors.Is(err, internal.ErrNoProvider) {
-		t.Fatalf("expected ErrNoProvider, got %v", err)
-	}
-	if provider != nil {
-		t.Fatalf("expected nil provider, got %#v", provider)
-	}
-	if selectionMetadata.UsesContinuity() {
-		t.Fatal("expected continuity metadata=false when selection fails")
-	}
-}
-
-func TestSelectProviderWithTracking_RetryNilSelectionBecomesNoProvider(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-		Selector: &mockSelector{
-			selectExcludingFunc: func(_ context.Context, _ *model.SelectRequest, _ map[string]bool) (*model.Provider, error) {
-				return nil, nil
-			},
-		},
-	})
-
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(
-		context.Background(),
-		&model.SelectRequest{APIType: "claude"},
-		1,
-		map[string]bool{"failed-p1": true},
-	)
-
-	if !errors.Is(err, internal.ErrNoProvider) {
-		t.Fatalf("expected ErrNoProvider, got %v", err)
-	}
-	if provider != nil {
-		t.Fatalf("expected nil provider, got %#v", provider)
-	}
-	if selectionMetadata.UsesContinuity() {
-		t.Fatal("expected continuity metadata=false when retry selection fails")
-	}
-}
-
-func TestSelectProviderWithTracking_RetryExcludedSelectionBecomesNoProvider(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-		Selector: &mockSelector{
-			selectExcludingFunc: func(_ context.Context, _ *model.SelectRequest, _ map[string]bool) (*model.Provider, error) {
-				return &model.Provider{ID: "failed-p1", Name: "failed"}, nil
-			},
-		},
-	})
-
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(
-		context.Background(),
-		&model.SelectRequest{APIType: "claude"},
-		1,
-		map[string]bool{"failed-p1": true},
-	)
-
-	if !errors.Is(err, internal.ErrNoProvider) {
-		t.Fatalf("expected ErrNoProvider, got %v", err)
-	}
-	if provider != nil {
-		t.Fatalf("expected nil provider, got %#v", provider)
-	}
-	if selectionMetadata.UsesContinuity() {
-		t.Fatal("expected continuity metadata=false when retry selector returns an excluded provider")
-	}
-}
-
-// TestSelectProviderWithTracking_SelectorError tests error handling from selector.
-func TestSelectProviderWithTracking_SelectorError(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	mockSel := &mockSelector{
-		selectWithMetadataFunc: func(_ context.Context, _ *model.SelectRequest) (*selectResult, error) {
-			return nil, errors.New("selector error")
-		},
-	}
-
-	handler := NewHandler(Config{
-		Store:    store,
-		Logger:   logger,
-		Selector: mockSel,
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		APIType:    "claude",
-		StickyMode: model.StickyModeAPIType,
-	}
-
-	provider, selectionMetadata, err := handler.selectProviderWithTracking(ctx, selectReq, 0, nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if provider != nil {
-		t.Error("expected nil provider on error")
-	}
-	if selectionMetadata.UsesContinuity() {
-		t.Error("expected continuity metadata=false on error")
-	}
-}
-
-// TestTryActiveProviderFallback_StickyDisabled tests that fallback is skipped when sticky is disabled.
-func TestTryActiveProviderFallback_StickyDisabled(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	activeRegistry := NewActiveRequestRegistry()
-	activeRegistry.Register(&ActiveRequest{
-		RequestID:       "req-123",
-		ProviderID:      "active-p1",
-		HasReceivedData: true,
-	})
-
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         logger,
-		ActiveRegistry: activeRegistry,
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		StickyMode: model.StickyModeOff,
-	}
-
-	provider := handler.tryActiveProviderFallback(ctx, selectReq)
-	if provider != nil {
-		t.Error("expected nil when sticky is disabled")
-	}
-}
-
-// TestTryActiveProviderFallback_NoActiveRegistry tests that fallback is skipped when no registry.
-func TestTryActiveProviderFallback_NoActiveRegistry(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-		// No ActiveRegistry
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		StickyMode: model.StickyModeAPIType,
-	}
-
-	provider := handler.tryActiveProviderFallback(ctx, selectReq)
-	if provider != nil {
-		t.Error("expected nil when no active registry")
-	}
-}
-
-// TestTryActiveProviderFallback_NoActiveProvider tests when no matching active provider.
-func TestTryActiveProviderFallback_NoActiveProvider(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	activeRegistry := NewActiveRequestRegistry()
-	// No active requests registered
-
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         logger,
-		ActiveRegistry: activeRegistry,
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		ClientIP:   "192.168.1.1",
-		User:       "user1",
-		APIType:    "claude",
-		StickyMode: model.StickyModeAPIType,
-	}
-
-	provider := handler.tryActiveProviderFallback(ctx, selectReq)
-	if provider != nil {
-		t.Error("expected nil when no active provider")
-	}
-}
-
-func TestTryActiveProviderFallback_ModelDimension(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "active-p1", Name: "Active Provider", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "claude"}}},
-	}
-
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         zap.NewNop(),
-		ActiveRegistry: NewActiveRequestRegistry(),
-	})
-
-	handler.activeRegistry.Register(&ActiveRequest{
-		RequestID:       "req-123",
-		ProviderID:      "active-p1",
-		ClientIP:        "192.168.1.1",
-		UserID:          "user1",
-		APIType:         "claude",
-		Model:           "model-a",
-		StickyMode:      model.StickyModeModel,
-		HasReceivedData: true,
-	})
-
-	ctx := context.Background()
-	selectReq := &model.SelectRequest{
-		ClientIP:   "192.168.1.1",
-		User:       "user1",
-		APIType:    "claude",
-		Model:      "model-b",
-		StickyMode: model.StickyModeModel,
-	}
-
-	if provider := handler.tryActiveProviderFallback(ctx, selectReq); provider != nil {
-		t.Fatal("expected nil for non-matching model in model sticky mode")
-	}
-
-	selectReq.Model = "model-a"
-	provider := handler.tryActiveProviderFallback(ctx, selectReq)
-	if provider == nil || provider.ID != "active-p1" {
-		t.Fatalf("expected active-p1 for matching model, got %#v", provider)
-	}
-}
-
 func TestHandler_SuspendProviderUntilEvictsContinuity(t *testing.T) {
 	t.Parallel()
 
@@ -712,295 +314,6 @@ func TestHandler_SuspendProviderUntilEvictsContinuity(t *testing.T) {
 	}
 }
 
-func TestTryActiveProviderFallback_SkipsProviderWithReauthRequired(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "active-p1", Name: "Active Provider", Enabled: true},
-	}
-	store.authStates["active-p1"] = &model.ProviderAuthState{
-		ProviderID: "active-p1",
-		Status:     model.ProviderAuthStatusReauthRequired,
-	}
-
-	activeRegistry := NewActiveRequestRegistry()
-	activeRegistry.Register(&ActiveRequest{
-		RequestID:       "req-123",
-		ProviderID:      "active-p1",
-		ClientIP:        "192.168.1.1",
-		UserID:          "user1",
-		APIType:         "claude",
-		StickyMode:      model.StickyModeAPIType,
-		HasReceivedData: true,
-	})
-
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         zap.NewNop(),
-		ActiveRegistry: activeRegistry,
-	})
-
-	provider := handler.tryActiveProviderFallback(context.Background(), &model.SelectRequest{
-		ClientIP:   "192.168.1.1",
-		User:       "user1",
-		APIType:    "claude",
-		StickyMode: model.StickyModeAPIType,
-	})
-	if provider != nil {
-		t.Fatalf("expected nil when active fallback provider requires reauthentication, got %#v", provider)
-	}
-}
-
-func TestTryActiveProviderFallback_SkipsProviderRejectedByRoutingPolicy(t *testing.T) {
-	blockedGroup := "g-blocked"
-
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID:       "active-p1",
-			Name:     "Active Provider",
-			Enabled:  true,
-			GroupID:  &blockedGroup,
-			APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "codex"}},
-		},
-	}
-	store.authStates["active-p1"] = &model.ProviderAuthState{
-		ProviderID: "active-p1",
-		Status:     model.ProviderAuthStatusActive,
-	}
-	store.routingPolicies = []model.RoutingPolicy{
-		{
-			Enabled: true,
-			APIType: "codex",
-			Groups:  []model.RoutingPolicyGroup{{GroupID: "g-allowed"}},
-		},
-	}
-
-	activeRegistry := NewActiveRequestRegistry()
-	activeRegistry.Register(&ActiveRequest{
-		RequestID:       "req-123",
-		ProviderID:      "active-p1",
-		ClientIP:        "192.168.1.1",
-		UserID:          "user1",
-		APIType:         "codex",
-		StickyMode:      model.StickyModeAPIType,
-		HasReceivedData: true,
-	})
-
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         zap.NewNop(),
-		ActiveRegistry: activeRegistry,
-	})
-
-	provider := handler.tryActiveProviderFallback(context.Background(), &model.SelectRequest{
-		ClientIP:   "192.168.1.1",
-		User:       "user1",
-		APIType:    "codex",
-		StickyMode: model.StickyModeAPIType,
-	})
-	if provider != nil {
-		t.Fatalf("expected nil when routing policy rejects the active fallback provider, got %#v", provider)
-	}
-}
-
-func TestTryActiveProviderFallback_SkipsProviderRejectedByExactRoutingPolicy(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{
-			ID:       "active-p1",
-			Name:     "Active Provider",
-			Enabled:  true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "active-p1", APIType: "codex"}},
-		},
-		{
-			ID:       "exact-p2",
-			Name:     "Exact Provider",
-			Enabled:  true,
-			APITypes: []model.ProviderAPIType{{ProviderID: "exact-p2", APIType: "codex"}},
-		},
-	}
-	store.authStates["active-p1"] = &model.ProviderAuthState{
-		ProviderID: "active-p1",
-		Status:     model.ProviderAuthStatusActive,
-	}
-	store.authStates["exact-p2"] = &model.ProviderAuthState{
-		ProviderID: "exact-p2",
-		Status:     model.ProviderAuthStatusActive,
-	}
-	store.routingPolicies = []model.RoutingPolicy{
-		{
-			Enabled:          true,
-			APIType:          "codex",
-			TargetProviderID: stringPtr("exact-p2"),
-		},
-	}
-
-	activeRegistry := NewActiveRequestRegistry()
-	activeRegistry.Register(&ActiveRequest{
-		RequestID:       "req-123",
-		ProviderID:      "active-p1",
-		ClientIP:        "192.168.1.1",
-		UserID:          "user1",
-		APIType:         "codex",
-		StickyMode:      model.StickyModeAPIType,
-		HasReceivedData: true,
-	})
-
-	handler := NewHandler(Config{
-		Store:          store,
-		Logger:         zap.NewNop(),
-		ActiveRegistry: activeRegistry,
-	})
-
-	provider := handler.tryActiveProviderFallback(context.Background(), &model.SelectRequest{
-		ClientIP:   "192.168.1.1",
-		User:       "user1",
-		APIType:    "codex",
-		StickyMode: model.StickyModeAPIType,
-	})
-	if provider != nil {
-		t.Fatalf("expected nil when exact-provider routing rejects the active fallback provider, got %#v", provider)
-	}
-}
-
-// TestGetProviderIfValid_ProviderFound tests finding a valid provider.
-func TestGetProviderIfValid_ProviderFound(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
-	}
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-	})
-
-	ctx := context.Background()
-	scope, err := selector.NewProviderSelectionEligibility(ctx, nil, nil, &model.SelectRequest{APIType: "claude"})
-	if err != nil {
-		t.Fatalf("unexpected scope error: %v", err)
-	}
-
-	provider := handler.getProviderIfValid(ctx, scope, "p1")
-	if provider == nil {
-		t.Fatal("expected provider to be found")
-	}
-	if provider.ID != "p1" {
-		t.Errorf("expected p1, got %s", provider.ID)
-	}
-}
-
-// TestGetProviderIfValid_ProviderNotFound tests when provider is not in list.
-func TestGetProviderIfValid_ProviderNotFound(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-	}
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-	})
-
-	ctx := context.Background()
-	scope, err := selector.NewProviderSelectionEligibility(ctx, nil, nil, &model.SelectRequest{APIType: "claude"})
-	if err != nil {
-		t.Fatalf("unexpected scope error: %v", err)
-	}
-
-	provider := handler.getProviderIfValid(ctx, scope, "nonexistent")
-	if provider != nil {
-		t.Error("expected nil for nonexistent provider")
-	}
-}
-
-// TestGetProviderIfValid_ProviderDisabled tests when provider is disabled.
-func TestGetProviderIfValid_ProviderDisabled(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: false, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}}, // Disabled
-	}
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-	})
-
-	ctx := context.Background()
-	scope, err := selector.NewProviderSelectionEligibility(ctx, nil, nil, &model.SelectRequest{APIType: "claude"})
-	if err != nil {
-		t.Fatalf("unexpected scope error: %v", err)
-	}
-
-	provider := handler.getProviderIfValid(ctx, scope, "p1")
-	if provider != nil {
-		t.Error("expected nil for disabled provider")
-	}
-}
-
-// TestGetProviderIfValid_ProviderUnhealthy tests when provider is unhealthy.
-func TestGetProviderIfValid_ProviderUnhealthy(t *testing.T) {
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-	}
-	logger := zap.NewNop()
-
-	healthMgr := newMockHealthManager()
-	healthMgr.availableProviders["p1"] = false // Unhealthy
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-		Health: healthMgr,
-	})
-
-	ctx := context.Background()
-	scope, err := handler.selectionScope(ctx, &model.SelectRequest{APIType: "claude"})
-	if err != nil {
-		t.Fatalf("unexpected scope error: %v", err)
-	}
-
-	provider := handler.getProviderIfValid(ctx, scope, "p1")
-	if provider != nil {
-		t.Error("expected nil for unhealthy provider")
-	}
-
-	// Verify RecoverIfExpired was called
-	if !healthMgr.recoverCalled["p1"] {
-		t.Error("expected RecoverIfExpired to be called")
-	}
-}
-
-// TestGetProviderIfValid_StoreError tests when store returns an error.
-func TestGetProviderIfValid_StoreError(t *testing.T) {
-	store := newMockStore()
-	logger := zap.NewNop()
-
-	handler := NewHandler(Config{
-		Store:  store,
-		Logger: logger,
-	})
-
-	ctx := context.Background()
-	scope, err := handler.selectionScope(ctx, &model.SelectRequest{APIType: "claude"})
-	if err != nil {
-		t.Fatalf("unexpected scope error: %v", err)
-	}
-
-	store.err = errors.New("database error")
-
-	provider := handler.getProviderIfValid(ctx, scope, "p1")
-	if provider != nil {
-		t.Error("expected nil on store error")
-	}
-}
-
-// TestSelectProviderFallback_NoProviders tests fallback when no providers available.
 func TestSelectProviderFallback_NoProviders(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{} // Empty

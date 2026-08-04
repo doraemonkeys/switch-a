@@ -1,0 +1,79 @@
+{
+  "complete": {
+    "if_match": "\"internal-error-rules/10\"",
+    "request": {
+      "schema_version": 1,
+      "api_type": "codex",
+      "provider_id": "provider-codex",
+      "content_type": "text/event-stream; charset=utf-8",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.in_progress\ndata: {\"type\":\"response.in_progress\"}\n\nevent: error\ndata: {\"type\":\"error\",\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded at capacity\",\"param\":\"capacity\"}\n\n"
+      }
+    },
+    "status": 200,
+    "response": {
+      "schema_version": 1,
+      "rule_set_revision": "10",
+      "response_protocol_id": "openai.responses.sse.v1",
+      "analysis_status": "complete",
+      "analysis_reason": null,
+      "errors": [
+        {
+          "frame_index": 2,
+          "type": "error",
+          "code": "server_is_overloaded",
+          "message": "Our servers are currently overloaded at capacity",
+          "reason": "capacity",
+          "matches": [
+            {
+              "rule_id": "11111111-1111-4111-8111-111111111111",
+              "matched_keywords": [
+                "server_is_overloaded",
+                "our servers are currently overloaded at capacity"
+              ],
+              "matched_keyword_indexes": [0, 1],
+              "matched_fields": ["code", "message"]
+            }
+          ]
+        }
+      ],
+      "decisive_error_index": 0,
+      "winner": {
+        "error_index": 0,
+        "rule_id": "11111111-1111-4111-8111-111111111111",
+        "matched_keywords": [
+          "server_is_overloaded",
+          "our servers are currently overloaded at capacity"
+        ],
+        "matched_keyword_indexes": [0, 1],
+        "matched_fields": ["code", "message"]
+      }
+    }
+  },
+  "fail_open": {
+    "request": {
+      "schema_version": 1,
+      "api_type": "codex",
+      "provider_id": null,
+      "content_type": "application/json",
+      "content_encoding": "compress",
+      "body": {
+        "encoding": "base64",
+        "value": "e30="
+      }
+    },
+    "status": 200,
+    "response": {
+      "schema_version": 1,
+      "rule_set_revision": "10",
+      "response_protocol_id": null,
+      "analysis_status": "fail_open",
+      "analysis_reason": "unsupported_content_encoding",
+      "errors": [],
+      "decisive_error_index": null,
+      "winner": null
+    }
+  }
+}

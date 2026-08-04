@@ -418,8 +418,10 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 			zap.String("warning", warning))
 	}
 
-	if err := h.store.CreateProvider(r.Context(), provider, store.ProviderWriteOptions{
-		CredentialBindingResolution: req.CredentialBindingResolution,
+	if err := h.mutateProviderGeneration(req.ID, func() error {
+		return h.store.CreateProvider(r.Context(), provider, store.ProviderWriteOptions{
+			CredentialBindingResolution: req.CredentialBindingResolution,
+		})
 	}); err != nil {
 		h.handleProviderPersistenceError(w, req.ID, "create", err)
 		return
@@ -623,8 +625,10 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 			zap.String("warning", warning))
 	}
 
-	if err := h.store.UpdateProvider(r.Context(), provider, store.ProviderWriteOptions{
-		CredentialBindingResolution: req.CredentialBindingResolution,
+	if err := h.mutateProviderGeneration(id, func() error {
+		return h.store.UpdateProvider(r.Context(), provider, store.ProviderWriteOptions{
+			CredentialBindingResolution: req.CredentialBindingResolution,
+		})
 	}); err != nil {
 		h.handleProviderPersistenceError(w, id, "update", err)
 		return
@@ -642,11 +646,8 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteProvider handles DELETE /admin/api/providers/{id}.
-// After successful deletion, clears in-memory state to prevent memory leaks:
-// - Concurrency counter (in ConcurrencyLimiter)
-// - Circuit breaker failure history (in HealthManager)
-// Note: StickyCache entries are not explicitly cleared as they self-heal
-// (entries are deleted on next access when the provider is not found).
+// Generation retirement and deletion share one selector lifecycle boundary so
+// no dispatch can cross from the deleted provider snapshot into a recreated ID.
 func (h *Handler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	h.handleDelete(w, r, deleteConfig{
 		resourceType: "Provider",
@@ -655,15 +656,10 @@ func (h *Handler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 			return err
 		},
 		deleteFunc: func(ctx context.Context, id string) error {
-			if err := h.store.DeleteProvider(ctx, id); err != nil {
+			if err := h.mutateProviderGeneration(id, func() error {
+				return h.store.DeleteProvider(ctx, id)
+			}); err != nil {
 				return err
-			}
-			// Clear concurrency counter to prevent memory leak.
-			// The ConcurrencyLimiter holds counters in a sync.Map that persist
-			// until explicitly cleared. Without this, deleted providers would
-			// leave orphaned counter entries.
-			if h.cleaner != nil {
-				h.cleaner.ClearConcurrency(id)
 			}
 			// Clear circuit breaker failure history to prevent memory leak.
 			// The CircuitBreaker holds failure timestamps in a map that persist

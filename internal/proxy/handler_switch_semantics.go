@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -10,14 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-)
-
-type providerSwitchMode = model.SwitchMode
-
-const (
-	providerSwitchModeInitial     = model.SwitchModeInitial
-	providerSwitchModeReplacement = model.SwitchModeReplacement
-	providerSwitchModeFailover    = model.SwitchModeFailover
 )
 
 // providerSwitchTracker owns the request-local switch model so HTTP and
@@ -31,6 +24,12 @@ type providerSwitchTracker struct {
 	switchHistory       *model.ProviderSwitchHistory
 	continuityContext   *model.ProviderContinuityContext
 	continuityCandidate *model.VisibleContinuitySeedCandidate
+	generation          uint64
+}
+
+type providerSwitchPreview struct {
+	baseGeneration uint64
+	tracker        providerSwitchTracker
 }
 
 func newProviderSwitchTracker(
@@ -69,6 +68,7 @@ func (t *providerSwitchTracker) lookupVisibleContinuityCandidate() bool {
 	}
 
 	t.continuityCandidate = candidate
+	t.generation++
 	t.syncRequest()
 	return true
 }
@@ -93,6 +93,7 @@ func (t *providerSwitchTracker) recordSelection(
 	t.observeFailoverProvider(provider, mode)
 
 	t.nextMode = model.SwitchModeInitial
+	t.generation++
 	t.syncRequest()
 	return mode
 }
@@ -166,21 +167,84 @@ func (t *providerSwitchTracker) markClientVisible(provider *model.Provider, obse
 	}
 
 	t.continuityContext = model.NewProviderContinuityContext(provider, observedAt)
+	t.generation++
 	t.syncRequest()
 }
 
-func (t *providerSwitchTracker) prepareProviderSwitch() model.SwitchMode {
+func (t *providerSwitchTracker) previewProviderSwitch() providerSwitchPreview {
 	if t == nil {
+		return providerSwitchPreview{}
+	}
+	preview := cloneProviderSwitchTracker(*t)
+	if preview.continuityContext != nil {
+		preview.nextMode = model.SwitchModeFailover
+	} else {
+		preview.nextMode = model.SwitchModeReplacement
+	}
+	preview.syncRequest()
+	return providerSwitchPreview{baseGeneration: t.generation, tracker: preview}
+}
+
+func (p *providerSwitchPreview) request() *model.SelectRequest {
+	if p == nil {
+		return nil
+	}
+	return p.tracker.selectReq
+}
+
+func (p *providerSwitchPreview) recordSelection(provider *model.Provider, metadata selector.SelectionMetadata) model.SwitchMode {
+	if p == nil {
 		return model.SwitchModeInitial
 	}
+	return p.tracker.recordSelection(provider, metadata)
+}
 
-	if t.continuityContext != nil {
-		t.nextMode = model.SwitchModeFailover
-	} else {
-		t.nextMode = model.SwitchModeReplacement
+func (t *providerSwitchTracker) commitProviderSwitch(preview providerSwitchPreview) error {
+	if t == nil || preview.tracker.selectReq == nil {
+		return fmt.Errorf("provider switch preview is required")
 	}
+	if t.generation != preview.baseGeneration {
+		return fmt.Errorf("provider switch preview is stale")
+	}
+	request := t.selectReq
+	committed := cloneProviderSwitchTracker(preview.tracker)
+	committed.selectReq = request
+	committed.generation = t.generation + 1
+	*t = committed
 	t.syncRequest()
-	return t.nextMode
+	return nil
+}
+
+func cloneProviderSwitchTracker(source providerSwitchTracker) providerSwitchTracker {
+	clone := source
+	clone.selectReq = cloneHTTPSelectRequest(source.selectReq)
+	clone.switchHistory = source.switchHistory.Clone()
+	clone.continuityContext = source.continuityContext.Clone()
+	if source.continuityCandidate != nil {
+		candidate := *source.continuityCandidate
+		clone.continuityCandidate = &candidate
+	}
+	return clone
+}
+
+func cloneHTTPSelectRequest(source *model.SelectRequest) *model.SelectRequest {
+	if source == nil {
+		return nil
+	}
+	clone := *source
+	clone.ProviderSwitchHistory = source.ProviderSwitchHistory.Clone()
+	clone.ProviderContinuityContext = source.ProviderContinuityContext.Clone()
+	if source.VisibleContinuitySeedCandidate != nil {
+		candidate := *source.VisibleContinuitySeedCandidate
+		clone.VisibleContinuitySeedCandidate = &candidate
+	}
+	if source.FailoverContext != nil {
+		failover := *source.FailoverContext
+		failover.ContaminatedVendors = append([]string(nil), source.FailoverContext.ContaminatedVendors...)
+		failover.AttemptChain = append([]string(nil), source.FailoverContext.AttemptChain...)
+		clone.FailoverContext = &failover
+	}
+	return &clone
 }
 
 func (t *providerSwitchTracker) currentMode() model.SwitchMode {
@@ -348,23 +412,11 @@ func (h *Handler) storeVisibleContinuitySeedFromContext(
 }
 
 func shouldStoreHTTPVisibleContinuitySeed(state *retryState) bool {
-	if state == nil || !state.responseCommitted || state.success {
+	if state == nil || !state.responseCommitted || !state.firstByteVisible || state.success || state.clientCanceled {
 		return false
 	}
 	if state.lastErr == nil {
 		return false
 	}
 	return !isClientCancellation(state.lastErr)
-}
-
-func shouldStoreWebSocketVisibleContinuitySeed(session *WebSocketSessionResult) bool {
-	if session == nil || session.FinalResult == nil || !session.FinalResult.ClientVisible {
-		return false
-	}
-	switch session.FinalResult.TerminalCause {
-	case model.TerminalCleanClose, model.TerminalClientDisconnect:
-		return false
-	default:
-		return true
-	}
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,6 +124,110 @@ func TestInsertAttempts_MultipleAttempts(t *testing.T) {
 	}
 	if len(result) != 3 {
 		t.Fatalf("expected 3 attempts, got %d", len(result))
+	}
+}
+
+func TestInsertAttempts_HeterogeneousDefaultFields(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	semanticOutcome := model.RequestAttemptOutcomeUpstreamSemanticError
+	completedOutcome := model.RequestAttemptOutcomeUpstreamCompleted
+	failureVerdict := model.RequestAttemptHealthFailure
+	successVerdict := model.RequestAttemptHealthSuccess
+	semanticCause := model.RequestAttemptHealthCauseSemanticRetryThenSwitch
+	successCause := model.RequestAttemptHealthCauseNormalCompletion
+	hidden, visible := false, true
+	clientStatus := 200
+	evidence := `{"v":2,"semantic_error":{"schema_version":1}}`
+	attempts := []model.RequestAttempt{
+		{
+			RequestID:             "req-heterogeneous",
+			ProviderID:            "provider-1",
+			Attempt:               0,
+			SwitchMode:            model.RequestAttemptSwitchModeInitial,
+			Outcome:               &semanticOutcome,
+			ResultVisibleToClient: &hidden,
+			HealthVerdict:         &failureVerdict,
+			HealthCause:           &semanticCause,
+			AttemptEvidenceJSON:   &evidence,
+			CreatedAt:             time.Now(),
+		},
+		{
+			RequestID:                 "req-heterogeneous",
+			ProviderID:                "provider-2",
+			Attempt:                   1,
+			SwitchMode:                model.RequestAttemptSwitchModeReplacement,
+			Outcome:                   &completedOutcome,
+			ResultVisibleToClient:     &visible,
+			ClientTransportStatusCode: &clientStatus,
+			HealthVerdict:             &successVerdict,
+			HealthCause:               &successCause,
+			CreatedAt:                 time.Now(),
+		},
+	}
+
+	if err := store.InsertAttempts(ctx, attempts); err != nil {
+		t.Fatalf("InsertAttempts failed: %v", err)
+	}
+
+	result, err := store.GetAttemptsByRequestID(ctx, "req-heterogeneous")
+	if err != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", err)
+	}
+	if len(result) != len(attempts) {
+		t.Fatalf("expected %d attempts, got %d", len(attempts), len(result))
+	}
+	if result[0].AttemptEvidenceJSON == nil || *result[0].AttemptEvidenceJSON != evidence {
+		t.Fatalf("first attempt evidence = %#v, want %q", result[0].AttemptEvidenceJSON, evidence)
+	}
+	if result[0].ClientTransportStatusCode != nil {
+		t.Fatalf("first attempt client status = %#v, want nil", result[0].ClientTransportStatusCode)
+	}
+	if result[1].AttemptEvidenceJSON != nil {
+		t.Fatalf("second attempt evidence = %#v, want nil", result[1].AttemptEvidenceJSON)
+	}
+	if result[1].ClientTransportStatusCode == nil || *result[1].ClientTransportStatusCode != clientStatus {
+		t.Fatalf("second attempt client status = %#v, want %d", result[1].ClientTransportStatusCode, clientStatus)
+	}
+}
+
+func TestInsertAttempts_RollsBackBatchWhenLaterRowFails(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	const duplicateAttemptID uint = 4242
+	attempts := []model.RequestAttempt{
+		{
+			ID:         duplicateAttemptID,
+			RequestID:  "req-batch-rollback",
+			ProviderID: "provider-1",
+			Attempt:    0,
+			CreatedAt:  time.Now(),
+		},
+		{
+			ID:         duplicateAttemptID,
+			RequestID:  "req-batch-rollback",
+			ProviderID: "provider-2",
+			Attempt:    1,
+			CreatedAt:  time.Now(),
+		},
+	}
+
+	err := store.InsertAttempts(ctx, attempts)
+	if err == nil {
+		t.Fatal("InsertAttempts succeeded, want duplicate primary-key failure")
+	}
+	if !strings.Contains(err.Error(), `attempt row 2/2 for request "req-batch-rollback"`) {
+		t.Fatalf("InsertAttempts error = %q, want failing row and request context", err)
+	}
+
+	result, getErr := store.GetAttemptsByRequestID(ctx, "req-batch-rollback")
+	if getErr != nil {
+		t.Fatalf("GetAttemptsByRequestID failed: %v", getErr)
+	}
+	if len(result) != 0 {
+		t.Fatalf("persisted %d attempts after rollback, want 0", len(result))
 	}
 }
 

@@ -11,10 +11,10 @@
 - **Concise User-Facing Docs**: Keep externally maintained docs (README, docs/) concise and easy to follow; nobody reads verbose documentation.
 - **Semantic Precision**: Avoid ambiguous or overloaded fields.
 - Don't name your package util, common, or misc. Packages should differ by what they provide, not what they contain.
-- **Hard Requirement**: Project CI enforces minimum test coverage — **90% for Go**, **40% for React**.
 
 ## Go Specific
 - **Accept Interfaces, Return Structs**: Define interfaces where they are used (consumer side), not where they are implemented. The bigger the interface, the weaker the abstraction.
+- **Hard Requirement**: Project CI enforces minimum test coverage — **90% for Go**.
 - Never store context inside a struct.
 
 ## React Specific

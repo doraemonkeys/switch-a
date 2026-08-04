@@ -34,6 +34,7 @@ type ActiveRequest struct {
 	MsgsSent       int64 `json:"msgs_sent,omitempty"`        // WebSocket messages sent upstream; zero for HTTP/SSE
 	MsgsReceived   int64 `json:"msgs_received,omitempty"`    // WebSocket messages received upstream; zero for HTTP/SSE
 	LastActivityAt int64 `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
+	lease          providerLease
 }
 
 // ActiveRequestRemovalReason explains why a request left the registry.
@@ -264,11 +265,6 @@ func NewActiveRequestRegistryWithClockAndHook(clock internal.Clock, removalHook 
 	}
 }
 
-// SetStickyPerModel is retained as a compatibility no-op while continuity keys
-// are derived per request instead of from a mutable registry-wide switch.
-func (r *ActiveRequestRegistry) SetStickyPerModel(_ bool) {
-}
-
 func (r *ActiveRequestRegistry) buildKeyFromRequest(req *model.SelectRequest) model.StickyKey {
 	return selector.BuildContinuityKey(req)
 }
@@ -320,24 +316,28 @@ func (r *ActiveRequestRegistry) removeLocked(requestID string) (ActiveRequest, b
 }
 
 func (r *ActiveRequestRegistry) runRemovalHook(req ActiveRequest, reason ActiveRequestRemovalReason) {
-	if r.removalHook == nil || req.ProviderID == "" {
-		return
+	// A stale entry has no lifecycle proof that the transport ended. Every other
+	// removal edge owns the exact lease captured at registration.
+	if reason != ActiveRequestRemovalReasonStale && req.lease != nil {
+		req.lease.Release()
 	}
-	r.removalHook(req, reason)
+	if r.removalHook != nil && req.ProviderID != "" {
+		r.removalHook(req, reason)
+	}
 }
 
 // Register overwrites any existing entry with the same ID to handle retry scenarios
 // where the same request ID may be re-registered with updated provider information.
-func (r *ActiveRequestRegistry) Register(req *ActiveRequest) {
-	r.RegisterWithDone(req, nil)
+func (r *ActiveRequestRegistry) Register(req *ActiveRequest) bool {
+	return r.RegisterWithDone(req, nil)
 }
 
 // RegisterWithDone records a request plus the lifecycle signal that closes when
 // the surrounding transport context ends. Cleanup only treats ended contexts as
 // orphaned work, so quiet-but-live requests cannot be reclaimed heuristically.
-func (r *ActiveRequestRegistry) RegisterWithDone(req *ActiveRequest, done <-chan struct{}) {
-	if req == nil {
-		return
+func (r *ActiveRequestRegistry) RegisterWithDone(req *ActiveRequest, done <-chan struct{}) bool {
+	if req == nil || req.RequestID == "" {
+		return false
 	}
 
 	var displaced ActiveRequest
@@ -348,7 +348,7 @@ func (r *ActiveRequestRegistry) RegisterWithDone(req *ActiveRequest, done <-chan
 		// Re-registering the same logical request with a different provider is a
 		// provider handoff. Releasing the old slot through the registry keeps
 		// monitoring state and concurrency accounting on the same lifecycle edge.
-		if previous.ProviderID != req.ProviderID {
+		if previous.ProviderID != req.ProviderID || !sameProviderLease(previous.lease, req.lease) {
 			displaced = previous
 			shouldRunRemovalHook = true
 		}
@@ -373,18 +373,28 @@ func (r *ActiveRequestRegistry) RegisterWithDone(req *ActiveRequest, done <-chan
 	if shouldRunRemovalHook {
 		r.runRemovalHook(displaced, ActiveRequestRemovalReasonProviderHandoff)
 	}
+	return true
+}
+
+func sameProviderLease(left, right providerLease) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	leftIdentity := left.CapabilityIdentity()
+	return leftIdentity != 0 && leftIdentity == right.CapabilityIdentity()
 }
 
 // Unregister is idempotent; safe to call multiple times or with non-existent IDs.
-func (r *ActiveRequestRegistry) Unregister(requestID string) {
+func (r *ActiveRequestRegistry) Unregister(requestID string) bool {
 	r.mu.Lock()
 	req, ok := r.removeLocked(requestID)
 	r.mu.Unlock()
 
 	if !ok {
-		return
+		return false
 	}
 	r.runRemovalHook(req, ActiveRequestRemovalReasonExplicit)
+	return true
 }
 
 // RegisterLiveBytes associates transport counters with an active request.
@@ -568,6 +578,21 @@ func (r *ActiveRequestRegistry) FindActiveProviderForRequest(req *model.SelectRe
 		}
 	}
 	return "", false
+}
+
+func (r *ActiveRequestRegistry) FindActiveLeaseForRequest(req *model.SelectRequest) (providerLease, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	requestIDs := r.stickyIndex[r.buildKeyFromRequest(req)]
+	for requestID := range requestIDs {
+		entry, ok := r.requests[requestID]
+		if !ok || !entry.request.HasReceivedData || entry.request.lease == nil || !entry.request.lease.Held() {
+			continue
+		}
+		return entry.request.lease, true
+	}
+	return nil, false
 }
 
 func continuityModelKnown(modelName string) bool {

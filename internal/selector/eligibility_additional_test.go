@@ -447,7 +447,7 @@ func TestSelectorSelectWithMetadataReportsStickyOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SelectWithMetadata() error = %v", err)
 	}
-	if result == nil || result.Provider == nil {
+	if result == nil || result.Provider() == nil {
 		t.Fatal("expected non-nil select result")
 	}
 	if !result.Metadata.UsesContinuity() {
@@ -456,8 +456,8 @@ func TestSelectorSelectWithMetadataReportsStickyOrigin(t *testing.T) {
 	if result.Metadata.Source != SelectionSourceStickyContinuity {
 		t.Fatalf("metadata source = %q, want %q", result.Metadata.Source, SelectionSourceStickyContinuity)
 	}
-	if result.Provider.ID != "p-sticky" {
-		t.Fatalf("provider = %q, want sticky provider", result.Provider.ID)
+	if result.Provider().ID != "p-sticky" {
+		t.Fatalf("provider = %q, want sticky provider", result.Provider().ID)
 	}
 }
 
@@ -496,7 +496,7 @@ func TestSelectorSelectWithMetadataReportsFreshSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SelectWithMetadata() error = %v", err)
 	}
-	if result == nil || result.Provider == nil {
+	if result == nil || result.Provider() == nil {
 		t.Fatal("expected non-nil select result")
 	}
 	if result.Metadata.UsesContinuity() {
@@ -505,7 +505,7 @@ func TestSelectorSelectWithMetadataReportsFreshSelection(t *testing.T) {
 	if result.Metadata.Source != SelectionSourceStrategy {
 		t.Fatalf("metadata source = %q, want %q", result.Metadata.Source, SelectionSourceStrategy)
 	}
-	if result.Provider.ID != "p-primary" {
-		t.Fatalf("provider = %q, want highest priority provider", result.Provider.ID)
+	if result.Provider().ID != "p-primary" {
+		t.Fatalf("provider = %q, want highest priority provider", result.Provider().ID)
 	}
 }

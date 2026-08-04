@@ -2,7 +2,8 @@ import { useId } from "react";
 import { ChevronDown, Clock3 } from "lucide-react";
 import type { BackoffPolicy } from "../../api";
 import { FORM_CONSTRAINTS, PROVIDER_DEFAULTS } from "../../config/constants";
-import { formatDuration, parseGoDurationMilliseconds } from "../../lib/utils";
+import { calculateBackoffBaseDelays } from "../../features/error-detection/domain";
+import { formatDuration } from "../../lib/utils";
 
 const DURATION_PRESETS = {
   initialDelay: ["100ms", "500ms", "1s", "2s"] as const,
@@ -21,10 +22,14 @@ function effectiveBackoff(backoff: BackoffPolicy): Required<BackoffPolicy> {
 
 function hasCustomBackoff(backoff: BackoffPolicy): boolean {
   const policy = effectiveBackoff(backoff);
+  const effectiveMultiplier =
+    policy.multiplier === 0
+      ? PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER
+      : policy.multiplier;
   return (
     policy.initial_delay !== PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY ||
     policy.max_delay !== PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY ||
-    policy.multiplier !== PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER ||
+    effectiveMultiplier !== PROVIDER_DEFAULTS.BACKOFF.MULTIPLIER ||
     policy.jitter !== PROVIDER_DEFAULTS.BACKOFF.JITTER
   );
 }
@@ -91,14 +96,11 @@ function BackoffPreview({
   backoff: Required<BackoffPolicy>;
   maxRetries: number;
 }) {
-  const initialMs = parseGoDurationMilliseconds(backoff.initial_delay);
-  const configuredMaxMs = parseGoDurationMilliseconds(backoff.max_delay);
-  if (
-    initialMs === null ||
-    configuredMaxMs === null ||
-    !Number.isFinite(backoff.multiplier) ||
-    backoff.multiplier < 1
-  ) {
+  const previewRetryCount = Number.isSafeInteger(maxRetries)
+    ? Math.min(Math.max(maxRetries, 0), MAX_BACKOFF_PREVIEW_RETRIES)
+    : 0;
+  const calculation = calculateBackoffBaseDelays(backoff, previewRetryCount);
+  if (!calculation.valid) {
     return (
       <p
         role="status"
@@ -109,25 +111,10 @@ function BackoffPreview({
     );
   }
 
-  const previewRetryCount = Number.isSafeInteger(maxRetries)
-    ? Math.min(Math.max(maxRetries, 0), MAX_BACKOFF_PREVIEW_RETRIES)
-    : 0;
-  const attempts = Array.from(
-    { length: previewRetryCount },
-    (_, retryIndex) => {
-      const uncappedDelay = initialMs * backoff.multiplier ** retryIndex;
-      const cappedDelay =
-        configuredMaxMs > 0
-          ? Math.min(uncappedDelay, configuredMaxMs)
-          : uncappedDelay;
-      return {
-        attempt: retryIndex + 1,
-        delay: Number.isFinite(cappedDelay)
-          ? cappedDelay
-          : Number.MAX_SAFE_INTEGER,
-      };
-    },
-  );
+  const attempts = calculation.base_delays_ms.map((delay, retryIndex) => ({
+    attempt: retryIndex + 1,
+    delay,
+  }));
   const longestDelay = Math.max(...attempts.map(({ delay }) => delay), 1);
 
   return (
@@ -285,8 +272,7 @@ export function BackoffPolicyEditor({
                 type="number"
                 className="input"
                 value={policy.multiplier}
-                min={1}
-                max={FORM_CONSTRAINTS.BACKOFF_MAX_MULTIPLIER}
+                min={0}
                 step={0.1}
                 disabled={disabled}
                 onChange={(event) =>
@@ -294,7 +280,7 @@ export function BackoffPolicyEditor({
                 }
               />
               <p className="text-xs text-text-muted">
-                Growth applied after each retry
+                Growth after each retry; 0 uses the default multiplier
               </p>
             </div>
             <div className="space-y-2">

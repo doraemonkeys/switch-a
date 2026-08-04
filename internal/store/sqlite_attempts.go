@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"gorm.io/gorm"
 )
 
 // InsertAttempts inserts multiple provider-attempt records in a batch.
@@ -13,7 +14,25 @@ func (s *SQLiteStore) InsertAttempts(ctx context.Context, attempts []model.Reque
 	if len(attempts) == 0 {
 		return nil
 	}
-	if err := s.db.WithContext(ctx).Create(&attempts).Error; err != nil {
+
+	// GORM represents default-tagged fields that vary between batch rows with
+	// DEFAULT inside VALUES tuples, which SQLite does not support. Separate
+	// statements avoid that dialect mismatch; the transaction keeps the caller's
+	// batch atomic if any later row fails.
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for i := range attempts {
+			if err := tx.Create(&attempts[i]).Error; err != nil {
+				return fmt.Errorf(
+					"insert attempt row %d/%d for request %q: %w",
+					i+1,
+					len(attempts),
+					attempts[i].RequestID,
+					err,
+				)
+			}
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("insert attempts: %w", err)
 	}
 	return nil

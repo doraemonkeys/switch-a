@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useId } from "react";
 import type { FormEvent } from "react";
-import type { Provider, ProviderInput } from "../../api";
-import { ApiError } from "../../api";
+import type { APICatalog, Provider, ProviderInput } from "../../api";
+import {
+  ApiError,
+  findBuiltInAPIType,
+  isValidAPIType,
+  useAPICatalog,
+} from "../../api";
 import { ConfirmModal } from "../../components";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { useChatGPTLogin } from "./useChatGPTLogin";
@@ -12,7 +17,6 @@ import {
   ADD_PROVIDER_DEFAULTS,
   FAILOVER_SCOPES,
   AUTH_MODES,
-  API_TYPES,
   CHATGPT_CODEX_BASE_URL,
   PROVIDER_CREDENTIAL_TYPES,
 } from "../../config/constants";
@@ -21,10 +25,14 @@ import {
   resolveProviderAuthView,
 } from "../../lib/providerAuth";
 
-function createChatGPTAPIType(): ProviderInput["api_types"] {
+// GPT login is intrinsically a Codex credential flow; catalog membership is
+// still checked at submission time so this requirement cannot become a list.
+const CHATGPT_API_TYPE = "codex";
+
+function createChatGPTAPIType(apiType: string): ProviderInput["api_types"] {
   return [
     {
-      api_type: API_TYPES.CODEX,
+      api_type: apiType,
       base_url: CHATGPT_CODEX_BASE_URL,
       api_key: "",
     },
@@ -129,6 +137,63 @@ interface CredentialBindingConflict {
   providerId?: string;
 }
 
+type APITypeSubmissionPreparation =
+  | {
+      kind: "ok";
+      apiTypes: ProviderInput["api_types"];
+      isChatGPTProvider: boolean;
+    }
+  | { kind: "error"; message: string };
+
+function prepareAPITypeSubmission(
+  formData: ProviderInput,
+  apiCatalog: APICatalog | null,
+): APITypeSubmissionPreparation {
+  if (!apiCatalog) {
+    return {
+      kind: "error",
+      message: "The API type catalog is unavailable. Retry it before saving.",
+    };
+  }
+
+  const isChatGPTProvider =
+    formData.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
+  if (isChatGPTProvider) {
+    const chatGPTAPIType = findBuiltInAPIType(apiCatalog, CHATGPT_API_TYPE);
+    if (!chatGPTAPIType) {
+      return {
+        kind: "error",
+        message: "The server does not advertise the Codex API type.",
+      };
+    }
+    return {
+      kind: "ok",
+      apiTypes: createChatGPTAPIType(chatGPTAPIType.api_type),
+      isChatGPTProvider: true,
+    };
+  }
+
+  const apiTypes = formData.api_types.filter((entry) => entry.api_type.trim());
+  if (apiTypes.length === 0) {
+    return {
+      kind: "error",
+      message: "At least one API type is required",
+    };
+  }
+
+  const invalidAPIType = apiTypes.find(
+    (entry) => !isValidAPIType(apiCatalog, entry.api_type),
+  );
+  if (invalidAPIType) {
+    return {
+      kind: "error",
+      message: `Unsupported API type "${invalidAPIType.api_type}"`,
+    };
+  }
+
+  return { kind: "ok", apiTypes, isChatGPTProvider: false };
+}
+
 function getCredentialBindingConflict(
   error: unknown,
   payload: ProviderInput,
@@ -163,10 +228,12 @@ function prepareProviderSubmission({
   formData,
   isEditMode,
   hasPersistedChatGPTProvider,
+  apiCatalog,
 }: {
   formData: ProviderInput;
   isEditMode: boolean;
   hasPersistedChatGPTProvider: boolean;
+  apiCatalog: APICatalog | null;
 }): ProviderSubmissionPreparation {
   if (!isEditMode && formData.id && !isValidId(formData.id)) {
     return {
@@ -175,17 +242,14 @@ function prepareProviderSubmission({
     };
   }
 
-  const isChatGPTProvider =
-    formData.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
-  const validApiTypes = isChatGPTProvider
-    ? createChatGPTAPIType()
-    : formData.api_types.filter((apiType) => apiType.api_type.trim());
-  if (!isChatGPTProvider && validApiTypes.length === 0) {
+  const apiTypePreparation = prepareAPITypeSubmission(formData, apiCatalog);
+  if (apiTypePreparation.kind === "error") {
     return {
       kind: "form-error",
-      message: "At least one API type is required",
+      message: apiTypePreparation.message,
     };
   }
+  const { apiTypes: validApiTypes, isChatGPTProvider } = apiTypePreparation;
 
   if (!isChatGPTProvider) {
     const missingURL = validApiTypes.find(
@@ -251,6 +315,7 @@ export function ProviderModal({
   onSubmit,
   groups,
 }: ProviderModalProps) {
+  const { catalog: apiCatalog } = useAPICatalog();
   const isEditMode = !!initialData;
   const titleId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
@@ -323,6 +388,7 @@ export function ProviderModal({
       formData,
       isEditMode,
       hasPersistedChatGPTProvider: hasProviderCredentialSnapshot(initialData),
+      apiCatalog,
     });
     if (preparedSubmission.kind === "id-error") {
       setIdError(preparedSubmission.message);

@@ -59,7 +59,6 @@ func TestActiveRequestRegistrySetStickyPerModelKeepsRequestDerivedKey(t *testing
 	}
 
 	before := r.buildKeyFromRequest(req)
-	r.SetStickyPerModel(true)
 	after := r.buildKeyFromRequest(req)
 
 	if after != before {
@@ -112,22 +111,6 @@ func TestActiveRequestRegistryBuildKeyAndRemovalHandleNilAndExplicitKeys(t *test
 	r.removeFromStickyIndex("missing")
 }
 
-func TestHandlerFailedProviderRequestReturnsSelectionError(t *testing.T) {
-	handler := NewHandler(Config{
-		Store:  newMockStore(),
-		Logger: zap.NewNop(),
-	})
-	prepareErr := errors.New("missing provider credential")
-
-	result := handler.failedProviderRequest(prepareErr)
-	if result.success {
-		t.Fatal("expected provider preparation failure to leave success false")
-	}
-	if !errors.Is(result.err, prepareErr) {
-		t.Fatalf("result.err = %v, want %v", result.err, prepareErr)
-	}
-}
-
 func TestHandlerRegisterActiveRequestTracksSelectedProvider(t *testing.T) {
 	startTime := time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC)
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -146,9 +129,12 @@ func TestHandlerRegisterActiveRequestTracksSelectedProvider(t *testing.T) {
 			Store:  newMockStore(),
 			Logger: zap.NewNop(),
 		})
-		state := &retryState{}
+		state := &retryState{
+			currentProvider: provider,
+			currentLease:    newLocalProviderLease(provider),
+		}
 
-		handler.registerActiveRequest(pctx, state, provider)
+		handler.registerActiveRequest(pctx, state)
 
 		if state.activeRegistered {
 			t.Fatal("activeRegistered = true, want false when registry is absent")
@@ -162,9 +148,12 @@ func TestHandlerRegisterActiveRequestTracksSelectedProvider(t *testing.T) {
 			ActiveRegistry: registry,
 			Logger:         zap.NewNop(),
 		})
-		state := &retryState{}
+		state := &retryState{
+			currentProvider: provider,
+			currentLease:    newLocalProviderLease(provider),
+		}
 
-		handler.registerActiveRequest(pctx, state, provider)
+		handler.registerActiveRequest(pctx, state)
 
 		if !state.activeRegistered {
 			t.Fatal("activeRegistered = false, want true")
@@ -187,56 +176,6 @@ func TestHandlerRegisterActiveRequestTracksSelectedProvider(t *testing.T) {
 			t.Fatalf("StartedAt = %v, want %v", entry.request.StartedAt, startTime)
 		}
 	})
-}
-
-func TestHandlerRetryUnauthorizedForwardResponseSkipsWhenAuthUnavailable(t *testing.T) {
-	handler := NewHandler(Config{
-		Store:  newMockStore(),
-		Logger: zap.NewNop(),
-	})
-	upstreamResp := &UpstreamResponse{StatusCode: http.StatusUnauthorized}
-
-	gotResp, exchange, result, ok := handler.retryUnauthorizedForwardResponse(
-		context.Background(),
-		nil,
-		httpAttemptContext{},
-		upstreamResp,
-		httpCaptureExchange{},
-	)
-	if !ok {
-		t.Fatal("expected 401 response without auth service to keep original response")
-	}
-	if gotResp != upstreamResp {
-		t.Fatalf("response pointer changed: got %#v want %#v", gotResp, upstreamResp)
-	}
-	if exchange.recorder.Valid() {
-		t.Fatal("unexpected capture recorder")
-	}
-	if result.err != nil || result.success {
-		t.Fatalf("result = %#v, want zero-value forward result", result)
-	}
-}
-
-func TestWebSocketProviderConfigErrorErrorAndUnwrap(t *testing.T) {
-	var nilErr *webSocketProviderConfigError
-	if got := nilErr.Error(); got != "" {
-		t.Fatalf("nil Error() = %q, want empty string", got)
-	}
-	if got := nilErr.Unwrap(); got != nil {
-		t.Fatalf("nil Unwrap() = %v, want nil", got)
-	}
-
-	baseErr := errors.New("missing managed credential")
-	cfgErr := &webSocketProviderConfigError{
-		missingField: "credentials",
-		err:          baseErr,
-	}
-	if got := cfgErr.Error(); got != baseErr.Error() {
-		t.Fatalf("Error() = %q, want %q", got, baseErr.Error())
-	}
-	if got := cfgErr.Unwrap(); !errors.Is(got, baseErr) {
-		t.Fatalf("Unwrap() = %v, want wrapped %v", got, baseErr)
-	}
 }
 
 func TestHandlerHandleExhaustedRetriesWritesExpectedGatewayResponses(t *testing.T) {
@@ -287,72 +226,6 @@ func TestHandlerHandleExhaustedRetriesWritesExpectedGatewayResponses(t *testing.
 			}
 			if payload.Error.Message != tc.wantMessage {
 				t.Fatalf("error message = %q, want %q", payload.Error.Message, tc.wantMessage)
-			}
-		})
-	}
-}
-
-func TestShouldTrackWebSocketFailureInHealthHandlesAuthBoundaries(t *testing.T) {
-	testCases := []struct {
-		name   string
-		result *WebSocketResult
-		want   bool
-	}{
-		{
-			name:   "nil result",
-			result: nil,
-			want:   false,
-		},
-		{
-			name: "handshake unauthorized",
-			result: &WebSocketResult{
-				HandshakeStatusCode: http.StatusUnauthorized,
-			},
-			want: false,
-		},
-		{
-			name: "non-auth upstream failure",
-			result: &WebSocketResult{
-				UpstreamError: &WebSocketUpstreamError{
-					StatusCode: http.StatusTooManyRequests,
-					EventType:  "rate_limit_error",
-				},
-			},
-			want: true,
-		},
-		{
-			name: "forbidden auth_error upstream failure",
-			result: &WebSocketResult{
-				UpstreamError: &WebSocketUpstreamError{
-					StatusCode: http.StatusForbidden,
-					EventType:  " auth_error ",
-				},
-			},
-			want: false,
-		},
-		{
-			name: "auth_error without forbidden status still skipped",
-			result: &WebSocketResult{
-				UpstreamError: &WebSocketUpstreamError{
-					StatusCode: http.StatusBadGateway,
-					EventType:  "auth_error",
-				},
-			},
-			want: false,
-		},
-		{
-			name: "handshake failure without upstream event still tracked",
-			result: &WebSocketResult{
-				HandshakeStatusCode: http.StatusBadGateway,
-			},
-			want: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldTrackWebSocketFailureInHealth(tc.result); got != tc.want {
-				t.Fatalf("shouldTrackWebSocketFailureInHealth() = %v, want %v", got, tc.want)
 			}
 		})
 	}

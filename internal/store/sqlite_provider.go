@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"gorm.io/gorm"
@@ -318,13 +320,13 @@ func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 	}
 	defer release()
 
-	err = s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
+	_, err = s.ruleRepository.Coordinate(ownedCtx, nil, func(tx *gorm.DB, currentRules []errorrule.Rule) ([]errorrule.Rule, error) {
 		referencedBy, err := findRoutingPolicyTargetingProvider(tx, id)
 		if err != nil && !errors.Is(err, ErrNotFound) {
-			return err
+			return nil, err
 		}
 		if referencedBy != nil {
-			return &RoutingPolicyProviderReferenceConflictError{
+			return nil, &RoutingPolicyProviderReferenceConflictError{
 				ProviderID: id,
 				PolicyID:   referencedBy.ID,
 				Key:        referencedBy.NaturalKey(),
@@ -332,22 +334,25 @@ func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 		}
 		// Delete API types first
 		if err := tx.Where("provider_id = ?", id).Delete(&model.ProviderAPIType{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
-			return err
+			return nil, err
 		}
 		// Delete provider credential state first so the migration shadow never leaves
 		// orphaned secret/auth rows behind even if SQLite foreign-key pragmas differ.
 		if err := tx.Where("provider_id = ?", id).Delete(&model.ProviderCredential{}).Error; err != nil {
-			return err
+			return nil, err
 		}
 		if err := tx.Where("provider_id = ?", id).Delete(&model.ProviderAuthState{}).Error; err != nil {
-			return err
+			return nil, err
 		}
 		// Delete health state
 		if err := tx.Where("provider_id = ?", id).Delete(&model.HealthState{}).Error; err != nil { // coverage-ignore -- DELETE rarely fails within transaction
-			return err
+			return nil, err
 		}
 		// Delete provider
-		return tx.Delete(&model.Provider{}, "id = ?", id).Error
+		if err := tx.Delete(&model.Provider{}, "id = ?", id).Error; err != nil {
+			return nil, err
+		}
+		return errorrulesqlite.RemoveProviderRules(currentRules, id), nil
 	})
 	if err != nil {
 		return fmt.Errorf("delete provider %q: %w", id, err)

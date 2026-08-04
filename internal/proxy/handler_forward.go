@@ -2,24 +2,209 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/apicontract"
+	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturebridge"
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 
 	"go.uber.org/zap"
 )
 
-func captureCredentialMaterial(headers http.Header) (
-	requestcapture.SensitiveHeaderEvidence,
-	requestcapture.CredentialEvidence,
-) {
-	return capturebridge.CredentialMaterial(headers)
+const responseAnalysisOperationIDFormat = "%s/attempt/%d/provider/%s/retry/%d/credential/%s"
+
+const maxAttemptSnippetBytes = 512
+
+type attemptFailureKind string
+
+const (
+	attemptFailureNone        attemptFailureKind = ""
+	attemptFailurePreparation attemptFailureKind = "preparation"
+	attemptFailureTransport   attemptFailureKind = "transport"
+	attemptFailureStatus      attemptFailureKind = "status"
+	attemptFailureRead        attemptFailureKind = "upstream_read"
+	attemptFailureWrite       attemptFailureKind = "client_write"
+	attemptFailureCanceled    attemptFailureKind = "client_canceled"
+	attemptFailureInternal    attemptFailureKind = "internal"
+)
+
+// semanticAttemptFacts is deliberately value-only; evidence consumers can
+// retain it without extending analyzer resource or response-body lifetimes.
+type semanticAttemptFacts struct {
+	requestID               string
+	operationID             string
+	providerID              string
+	logicalAttempt          uint64
+	providerAttempt         uint64
+	credentialPhase         attemptevidence.CredentialPhase
+	matches                 []errorrule.RuleMatch
+	winner                  errorrule.RuleMatch
+	protocolID              apicontract.ResponseProtocolID
+	revision                errorrule.Revision
+	decision                errorrule.Decision
+	windowState             responseanalysis.ResolutionState
+	releaseCause            responseanalysis.BoundaryReason
+	globalAttemptsStarted   uint64
+	globalAttemptsRemaining uint64
+	globalAttemptsUnlimited bool
+	ruleRetriesScheduled    uint64
+	ruleRetryLimit          int
+	retryFactsFrozen        bool
+	alternateOutcome        attemptevidence.AlternateOutcome
+	alternateProviderID     *string
+	alternateSwitchMode     *attemptevidence.SwitchMode
+	alternateSwitchReason   *errorrule.SwitchReason
+}
+
+// forwardResult is the frozen fact handoff from one attempt. Live response,
+// body, writer, pending-response, reservation, and raw error capabilities are
+// intentionally absent.
+type forwardResult struct {
+	headersWritten      bool
+	responseCommitted   bool
+	clientCanceled      bool
+	firstByteVisible    bool
+	isStatusFailover    bool
+	isClientWriteError  bool
+	statusCode          int
+	success             bool
+	done                bool
+	isSSE               bool
+	bodySnippet         string
+	firstTokenMs        *int64
+	responseBytes       int64
+	tokenUsage          *tokenusage.TokenUsage
+	failureDisposition  providerFailureDisposition
+	failureKind         attemptFailureKind
+	failureMessage      string
+	upstreamBytes       int64
+	decodedBytes        int64
+	peakRequestBytes    int
+	peakProcessBytes    int
+	elapsedMs           int64
+	boundaryReason      responseanalysis.BoundaryReason
+	readTermination     responseanalysis.ReadTermination
+	analysisFailure     responseanalysis.BoundaryReason
+	semantic            *semanticAttemptFacts
+	health              errorrule.HealthAssessment
+	healthAvailable     bool
+	healthCircuitOpened bool
+	switchReason        string
+	discarded           bool
+}
+
+func (r *forwardResult) inheritHealth(source forwardResult) {
+	r.health = source.health
+	r.healthAvailable = source.healthAvailable
+	r.healthCircuitOpened = source.healthCircuitOpened
+}
+
+func (r forwardResult) terminalError() error {
+	if r.failureMessage == "" {
+		return nil
+	}
+	if r.failureKind == attemptFailureRead {
+		if r.readTermination == responseanalysis.ReadTerminationIdleTimeout {
+			if r.isSSE {
+				return fmt.Errorf("%w: %s", ErrSSEIdleTimeout, r.failureMessage)
+			}
+			return fmt.Errorf("%w: %s", ErrReadTimeout, r.failureMessage)
+		}
+		return &UpstreamReadError{Err: errors.New(r.failureMessage)}
+	}
+	return errors.New(r.failureMessage)
+}
+
+type semanticMatchTracker struct {
+	mu      sync.Mutex
+	rules   *errorrule.CompiledRuleSet
+	scope   errorrule.RequestScope
+	result  errorrule.MatchResult
+	matched bool
+}
+
+func newSemanticMatchTracker(rules *errorrule.CompiledRuleSet, scope errorrule.RequestScope) *semanticMatchTracker {
+	return &semanticMatchTracker{rules: rules, scope: scope}
+}
+
+func (m *semanticMatchTracker) Match(fields responseanalysis.SemanticFields) bool {
+	if m == nil || m.rules == nil {
+		return false
+	}
+	normalized := errorrule.SemanticFields{
+		Type: fields.Type, Code: fields.Code, Message: fields.Message, Reason: fields.Reason,
+	}
+	result := m.rules.Match(m.scope, normalized)
+	if result.Winner == nil {
+		return false
+	}
+	m.mu.Lock()
+	if !m.matched {
+		m.result = result
+		m.matched = true
+	}
+	m.mu.Unlock()
+	return true
+}
+
+func (m *semanticMatchTracker) Facts() (errorrule.MatchResult, bool) {
+	if m == nil {
+		return errorrule.MatchResult{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.result, m.matched
+}
+
+type pendingHTTPResponse struct {
+	head              upstreamtransport.ResponseHead
+	pending           *responseanalysis.PendingResponse
+	writer            *firstWriteResponseWriter
+	exchange          httpCaptureExchange
+	matcher           *semanticMatchTracker
+	rules             *errorrule.CompiledRuleSet
+	statsOnce         sync.Once
+	snippet           *boundedSnippet
+	pctx              *proxyContext
+	operationID       string
+	providerID        string
+	logicalAttempt    uint64
+	providerAttempt   uint64
+	credentialPhase   attemptevidence.CredentialPhase
+	analysisStartedAt time.Time
+}
+
+type boundedSnippet struct {
+	bytes []byte
+}
+
+func (b *boundedSnippet) Observe(payload []byte) {
+	if b == nil || len(b.bytes) >= maxAttemptSnippetBytes || len(payload) == 0 {
+		return
+	}
+	remaining := maxAttemptSnippetBytes - len(b.bytes)
+	if len(payload) > remaining {
+		payload = payload[:remaining]
+	}
+	b.bytes = append(b.bytes, payload...)
+}
+
+func (b *boundedSnippet) String() string {
+	if b == nil {
+		return ""
+	}
+	return string(b.bytes)
 }
 
 func (h *Handler) prepareForwardRequest(
@@ -27,473 +212,321 @@ func (h *Handler) prepareForwardRequest(
 	pctx *proxyContext,
 	attempt httpAttemptContext,
 	phase requestcapture.CredentialPhase,
-) (*http.Request, forwardResult, bool) {
-	upstreamReq, failureCode, err := h.buildProviderRequest(ctx, pctx, attempt.provider)
+) (*http.Request, error) {
+	request, failureCode, err := h.buildProviderRequest(ctx, pctx, attempt.provider)
 	if err != nil {
 		h.captureHTTPPreparationFailure(ctx, pctx, attempt, phase, nil, failureCode, err)
-		return nil, h.failedProviderRequest(err), false
+		return nil, err
 	}
-	if err := h.applyForwardCredentials(ctx, upstreamReq.Header, attempt.provider, pctx); err != nil {
+	if err := h.applyForwardCredentials(ctx, request.Header, attempt.provider, pctx); err != nil {
 		h.captureHTTPPreparationFailure(
-			ctx,
-			pctx,
-			attempt,
-			phase,
-			upstreamReq,
-			requestcapture.FailureCodeCredentialApply,
-			err,
+			ctx, pctx, attempt, phase, request, requestcapture.FailureCodeCredentialApply, err,
 		)
-		return upstreamReq, h.failedProviderRequest(err), false
+		return nil, err
 	}
-	return upstreamReq, forwardResult{}, true
+	return request, nil
 }
 
-func (h *Handler) captureHTTPPreparationFailure(
+func (h *Handler) applyForwardCredentials(
 	ctx context.Context,
+	headers http.Header,
+	provider *model.Provider,
 	pctx *proxyContext,
-	attempt httpAttemptContext,
-	phase requestcapture.CredentialPhase,
-	request *http.Request,
-	failureCode requestcapture.FailureCode,
-	err error,
-) {
-	if !pctx.captureParticipates {
-		return
-	}
-
-	var target requestcapture.TransitionTargetInput
-	var credentialEvidence requestcapture.CredentialEvidence
-	if request != nil {
-		target = requestcapture.HTTPTransitionTarget(request.URL)
-		_, credentialEvidence = captureCredentialMaterial(request.Header)
-	}
-	reason, failure := capturefailure.HTTPPreparation(contextError(ctx), err, failureCode)
-	pctx.capture.Transition(requestcapture.TransitionStart{
-		Attempt:            attempt.metadata(pctx.apiType, phase),
-		Target:             target,
-		TerminationReason:  reason,
-		Failure:            failure,
-		CredentialEvidence: credentialEvidence,
-	})
-}
-
-func (h *Handler) applyForwardCredentials(ctx context.Context, headers http.Header, provider *model.Provider, pctx *proxyContext) error {
+) error {
 	if h.auth != nil {
 		return h.auth.ApplyProviderCredentials(ctx, headers, provider, pctx.apiType, pctx.cfg.globalAuthMode, pctx.r)
 	}
-
 	SetAuthHeader(headers, provider.APIKeyForAPIType(pctx.apiType), provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
 	return nil
 }
 
-func (h *Handler) failedProviderRequest(err error) forwardResult {
-	// Provider configuration/auth preparation failures are not runtime health
-	// signals, so we fail the current selection without degrading health state.
-	return forwardResult{
-		err:            err,
-		success:        false,
-		clientCanceled: isClientCancellation(err),
-	}
-}
-
-func (h *Handler) fetchForwardResponse(
-	ctx context.Context,
-	pctx *proxyContext,
-	attempt httpAttemptContext,
-	upstreamReq *http.Request,
-) (*UpstreamResponse, httpCaptureExchange, forwardResult, bool) {
-	upstreamResp, exchange, err := h.fetchHTTPExchange(
-		ctx,
-		pctx,
-		attempt,
-		requestcapture.CredentialPhaseInitial,
-		upstreamReq,
-	)
-	if err != nil {
-		result := h.failedUpstreamFetch(ctx, attempt.provider.ID, err, false)
-		return nil, httpCaptureExchange{}, result, false
-	}
-
-	return h.retryUnauthorizedForwardResponse(ctx, pctx, attempt, upstreamResp, exchange)
-}
-
-func (h *Handler) fetchHTTPExchange(
+func (h *Handler) fetchPendingHTTPResponse(
 	ctx context.Context,
 	pctx *proxyContext,
 	attempt httpAttemptContext,
 	phase requestcapture.CredentialPhase,
 	request *http.Request,
-) (*UpstreamResponse, httpCaptureExchange, error) {
+	rules *errorrule.CompiledRuleSet,
+) (*pendingHTTPResponse, error) {
 	exchange := h.beginHTTPExchange(pctx, attempt, phase, request)
-	response, err := h.fetchTrackedUpstream(ctx, pctx, request)
-	if err != nil {
-		finishHTTPFetchFailure(ctx, pctx, exchange, err)
-		return nil, exchange, err
-	}
-	exchange.observeResponse(response)
-	return response, exchange, nil
-}
-
-func (h *Handler) retryUnauthorizedForwardResponse(
-	ctx context.Context,
-	pctx *proxyContext,
-	attempt httpAttemptContext,
-	upstreamResp *UpstreamResponse,
-	exchange httpCaptureExchange,
-) (*UpstreamResponse, httpCaptureExchange, forwardResult, bool) {
-	provider := attempt.provider
-	if upstreamResp.StatusCode != defaults.StatusUnauthorized || h.auth == nil {
-		return upstreamResp, exchange, forwardResult{}, true
-	}
-
-	refreshed, refreshErr := h.auth.RefreshProviderCredentials(ctx, provider)
-	if !refreshed {
-		return upstreamResp, exchange, forwardResult{}, true
-	}
-	if refreshErr != nil {
-		h.logger.Warn("provider credential refresh failed",
-			zap.String("request_id", pctx.requestID),
-			zap.String("provider_id", provider.ID),
-			zap.Int("provider_attempt_index", attempt.providerAttemptIndex),
-			zap.Error(refreshErr),
-		)
-		return upstreamResp, exchange, forwardResult{}, true
-	}
-
-	refreshedProvider, err := h.eligibleProviderByID(ctx, pctx.selectReq, provider.ID)
-	if err != nil {
-		h.logger.Warn("failed to revalidate provider after credential refresh",
-			zap.String("request_id", pctx.requestID),
-			zap.String("provider_id", provider.ID),
-			zap.Int("provider_attempt_index", attempt.providerAttemptIndex),
-			zap.Error(err),
-		)
-		return upstreamResp, exchange, forwardResult{}, true
-	}
-	if refreshedProvider == nil {
-		return upstreamResp, exchange, forwardResult{}, true
-	}
-
-	if exchange.valid() {
-		// The rejected response keeps the original drain boundary so capture cannot
-		// turn credential refresh into an unbounded read or alter connection reuse.
-		drain := upstreamResp.drainObserved()
-		exchange.completedAt = time.Now()
-		sourceCompletion := requestcapture.SourceCompletionPartial
-		if capturebridge.SourceEndpointComplete(
-			drain.bytesRead,
-			upstreamResp.ContentLength,
-			drain.reachedEOF,
-			drain.readErr != nil,
-		) {
-			sourceCompletion = requestcapture.SourceCompletionComplete
-		}
-		statusFailure := capturefailure.HTTPStatus(
-			requestcapture.FailureSiteResponseStatus,
-			requestcapture.FailurePeerUpstream,
-			upstreamResp.StatusCode,
-		)
-		drainFailure := capturefailure.FromError(
-			requestcapture.FailureSiteResponseDrain,
-			requestcapture.FailurePeerUpstream,
-			requestcapture.FailureClassRead,
-			requestcapture.FailureCodeDrainRead,
-			drain.readErr,
-		)
-		pctx.queueHTTPCaptureCompletion(
-			exchange,
-			upstreamResp,
-			sourceCompletion,
-			requestcapture.TerminationReasonCredentialRefreshDrain,
-			capturefailure.Observation(statusFailure, drainFailure),
-		)
-	} else {
-		upstreamResp.Drain()
-	}
-
-	refreshedAttempt := attempt
-	refreshedAttempt.provider = refreshedProvider
-	retryReq, result, ok := h.prepareForwardRequest(
-		ctx,
-		pctx,
-		refreshedAttempt,
-		requestcapture.CredentialPhaseRefreshed,
-	)
-	if !ok {
-		return nil, httpCaptureExchange{}, result, false
-	}
-
-	retryResp, retryExchange, err := h.fetchHTTPExchange(
-		ctx,
-		pctx,
-		refreshedAttempt,
-		requestcapture.CredentialPhaseRefreshed,
-		retryReq,
-	)
-	if err != nil {
-		result := h.failedUpstreamFetch(ctx, refreshedProvider.ID, err, true)
-		return nil, httpCaptureExchange{}, result, false
-	}
-	return retryResp, retryExchange, forwardResult{}, true
-}
-
-func finishHTTPFetchFailure(ctx context.Context, pctx *proxyContext, exchange httpCaptureExchange, err error) {
-	if !exchange.valid() {
-		return
-	}
-	exchange.completedAt = time.Now()
-	reason, failure := capturefailure.HTTPFetch(contextError(ctx), err)
-	pctx.queueHTTPCaptureCompletion(
-		exchange,
-		nil,
-		requestcapture.SourceCompletionPartial,
-		reason,
-		failure,
-	)
-}
-
-func (h *Handler) fetchTrackedUpstream(ctx context.Context, pctx *proxyContext, request *http.Request) (*UpstreamResponse, error) {
 	if pctx.liveBytes != nil {
-		// Request bodies are replayed for provider retries, so cumulative traffic
-		// reflects actual logical-request attempts instead of only client ingress.
 		pctx.liveBytes.BytesSent.Add(int64(len(pctx.body)))
 		pctx.liveBytes.LastActivityAt.Store(time.Now().UnixMilli())
 	}
-	return pctx.transport.FetchUpstream(ctx, request)
-}
+	response, err := pctx.transport.FetchUpstream(ctx, request)
+	if err != nil {
+		finishHTTPFetchFailure(ctx, pctx, exchange, err)
+		return nil, err
+	}
+	head, body, err := response.Take()
+	if err != nil {
+		finishHTTPFetchFailure(ctx, pctx, exchange, err)
+		return nil, err
+	}
+	body = exchange.observeResponse(head, body)
 
-func (h *Handler) failedUpstreamFetch(ctx context.Context, providerID string, err error, afterRefresh bool) forwardResult {
-	message := "upstream request failed"
-	if afterRefresh {
-		message = "upstream request failed after credential refresh"
+	scope := errorrule.RequestScope{
+		ProviderID: errorrule.ProviderID(attempt.provider.ID),
+		APIType:    apicontract.APIType(pctx.apiType),
+	}
+	matcher := newSemanticMatchTracker(rules, scope)
+	mode, modeErr := responseAnalysisMode(head.StatusCode, rules.DetectionPlan(scope))
+	if modeErr != nil {
+		_ = body.Close()
+		return nil, modeErr
 	}
 
-	h.logger.Warn(message,
-		zap.String("provider_id", providerID),
-		zap.Error(err),
+	snippet := &boundedSnippet{}
+	writer := h.newAttemptResponseWriter(pctx, &exchange, snippet)
+	idleDuration := pctx.cfg.readTimeout
+	if head.EventStream {
+		idleDuration = pctx.cfg.sseIdleTimeout
+		if h.activeRegistry != nil {
+			h.activeRegistry.UpdateSSE(pctx.requestID, true)
+		}
+	}
+	operationID := fmt.Sprintf(
+		responseAnalysisOperationIDFormat,
+		pctx.requestID,
+		attempt.logicalAttemptIndex,
+		attempt.provider.ID,
+		attempt.providerAttemptIndex,
+		phase,
 	)
-	if !isClientCancellation(err) {
-		h.markFailure(ctx, providerID, err)
-	}
+	analysisStartedAt := time.Now()
+	pending := h.analyzer.Start(ctx, responseanalysis.StartInput{
+		OperationID:     operationID,
+		Mode:            mode,
+		APIType:         pctx.apiType,
+		ContentType:     head.SourceHeader.Get("Content-Type"),
+		ContentEncoding: head.SourceHeader.Get("Content-Encoding"),
+		StatusCode:      head.StatusCode,
+		Header:          head.Header,
+		Trailer:         head.Trailer,
+		Body:            body,
+		Writer:          writer,
+		IdleDuration:    idleDuration,
+		Match:           matcher.Match,
+	})
+	return &pendingHTTPResponse{
+		head: head, pending: pending, writer: writer, exchange: exchange,
+		matcher: matcher, rules: rules, snippet: snippet, pctx: pctx,
+		operationID: operationID, providerID: attempt.provider.ID,
+		logicalAttempt:  uint64(attempt.logicalAttemptIndex + 1),
+		providerAttempt: uint64(attempt.providerAttemptIndex + 1),
+		credentialPhase: evidenceCredentialPhase(phase), analysisStartedAt: analysisStartedAt,
+	}, nil
+}
 
-	return forwardResult{
-		err:     err,
-		success: false,
+func evidenceCredentialPhase(phase requestcapture.CredentialPhase) attemptevidence.CredentialPhase {
+	if phase == requestcapture.CredentialPhaseRefreshed {
+		return attemptevidence.CredentialPhaseRefreshed
+	}
+	return attemptevidence.CredentialPhasePrimary
+}
+
+func responseAnalysisMode(statusCode int, plan errorrule.DetectionPlan) (responseanalysis.AnalysisMode, error) {
+	if statusCode < defaults.StatusSuccessMin || statusCode >= defaults.StatusSuccessMax {
+		return responseanalysis.HoldMode(), nil
+	}
+	switch plan {
+	case errorrule.DetectionProbe:
+		return responseanalysis.ProbeMode(), nil
+	case errorrule.DetectionObserveOnly:
+		return responseanalysis.ObserveMode(responseanalysis.BoundaryPassthroughOnly)
+	default:
+		return responseanalysis.ObserveMode(responseanalysis.BoundaryNoRetryCandidate)
 	}
 }
 
-func (h *Handler) commitForwardResponse(
-	ctx context.Context,
+func (h *Handler) newAttemptResponseWriter(
 	pctx *proxyContext,
-	provider *model.Provider,
-	upstreamResp *UpstreamResponse,
-	exchange httpCaptureExchange,
-) forwardResult {
-	result := forwardResult{
-		statusCode: upstreamResp.StatusCode,
-		isSSE:      upstreamResp.IsSSE(),
-	}
-	if failoverResult, handled := h.failoverForwardResponse(ctx, pctx, provider, upstreamResp, exchange, result); handled {
-		return failoverResult
-	}
-
-	snippetBuf := teeClientErrorSnippet(result.statusCode, upstreamResp)
-	interceptor, sseInterceptor := h.setupTokenInterceptor(result.statusCode, result.isSSE, upstreamResp)
-	if interceptor != nil {
-		upstreamResp.Body = interceptor.Wrap(upstreamResp.Body)
-	}
-
-	if h.activeRegistry != nil && result.isSSE {
-		h.activeRegistry.UpdateSSE(pctx.requestID, true)
-	}
-	capturePayload := exchange.mode.CapturesPayload()
-	var onWrite func(int, time.Time)
-	switch {
-	case capturePayload && pctx.liveBytes != nil:
-		liveBytes := pctx.liveBytes
-		onWrite = func(written int, writeTime time.Time) {
-			liveBytes.BytesReceived.Add(int64(written))
-			liveBytes.LastActivityAt.Store(writeTime.UnixMilli())
-			exchange.observeClientWrite(written)
-		}
-	case capturePayload:
-		onWrite = func(written int, _ time.Time) {
-			exchange.observeClientWrite(written)
-		}
-	case pctx.liveBytes != nil:
-		liveBytes := pctx.liveBytes
-		onWrite = func(written int, writeTime time.Time) {
-			liveBytes.BytesReceived.Add(int64(written))
-			liveBytes.LastActivityAt.Store(writeTime.UnixMilli())
-		}
-	}
-
-	wrappedWriter := &firstWriteResponseWriter{
+	exchange *httpCaptureExchange,
+	snippet *boundedSnippet,
+) *firstWriteResponseWriter {
+	return &firstWriteResponseWriter{
 		ResponseWriter: pctx.w,
 		onFirstWrite: func() {
 			if h.activeRegistry != nil {
 				h.activeRegistry.MarkDataReceived(pctx.requestID)
 			}
 		},
-		onWrite: onWrite,
+		onWrite: func(written int, at time.Time) {
+			if pctx.liveBytes != nil {
+				pctx.liveBytes.BytesReceived.Add(int64(written))
+				pctx.liveBytes.LastActivityAt.Store(at.UnixMilli())
+			}
+			if exchange != nil && exchange.mode.CapturesPayload() {
+				exchange.observeClientWrite(written)
+			}
+		},
+		onPayload: snippet.Observe,
 	}
+}
 
-	writeErr := pctx.transport.WriteToClient(ctx, wrappedWriter, upstreamResp)
-	upstreamResp.Close()
-	exchange.completedAt = time.Now()
-	result.headersWritten = true
-	result.responseCommitted = wrappedWriter.committed
-	// firstByteVisible surfaces `firstWriteResponseWriter.written` to the
-	// transport observation layer. It is the only signal that distinguishes
-	// `pre_payload_visible` from `post_payload_visible` for SSE stage
-	// derivation; capture it on success and failure paths alike.
-	result.firstByteVisible = wrappedWriter.written
-	result.done = true
-	result.tokenUsage = h.extractTokenUsage(result.statusCode, interceptor, sseInterceptor)
-	if result.isSSE && wrappedWriter.written && !wrappedWriter.firstWriteTime.IsZero() {
-		ttft := wrappedWriter.firstWriteTime.Sub(pctx.startTime).Milliseconds()
-		result.firstTokenMs = &ttft
-	}
-	result.responseBytes = wrappedWriter.bytesWritten
+func (p *pendingHTTPResponse) awaitBoundary() responseanalysis.Boundary {
+	return p.pending.AwaitBoundary()
+}
 
-	if pctx.cfg.stickyMode != model.StickyModeOff && h.selector != nil {
-		h.selector.UpdateStickyWithTTL(pctx.selectReq, provider.ID, pctx.cfg.stickyTTL)
+func (p *pendingHTTPResponse) commit(cause responseanalysis.TransitionCause) (forwardResult, error) {
+	forwarding, err := p.pending.Commit(cause)
+	if err != nil {
+		return p.internalFailure(err), err
 	}
-	if writeErr != nil { // coverage-ignore -- write errors occur when client disconnects
-		h.handleWriteError(ctx, writeErr, provider.ID, &result)
-	} else {
-		result = h.completeWrittenResponse(ctx, provider.ID, snippetBuf, result)
-	}
+	return p.finishForwarding(forwarding), nil
+}
 
-	// Capture completion follows behavior-owned sticky/health mutations so a
-	// contended capture store cannot skew their clocks or recorded durations.
-	if exchange.valid() {
-		sourceCompletion := requestcapture.SourceCompletionComplete
-		if writeErr != nil {
-			sourceCompletion = exchange.sourceCompletionAfterError()
+func (p *pendingHTTPResponse) finishForwarding(forwarding *responseanalysis.ForwardingResponse) forwardResult {
+	if forwarding == nil {
+		return p.internalFailure(errors.New("forwarding response is required"))
+	}
+	milestone := forwarding.AwaitSemanticOrCompletion()
+	if milestone.Matched {
+		milestone.Observation.Release()
+	}
+	completion := forwarding.Wait()
+	result := p.resultFromCompletion(completion)
+	if completion.HasSemanticObservation {
+		result.semantic = p.semanticFacts(completion.SemanticObservation, completion.State, completion.BoundaryReason)
+		completion.SemanticObservation.Release()
+	}
+	if completion.HasUsageObservation && completion.UsageObservation.Usage != nil {
+		usage := *completion.UsageObservation.Usage
+		result.tokenUsage = &usage
+		completion.UsageObservation.Release()
+	}
+	p.recordWinningRule(result.semantic)
+	p.finishCapture(completion)
+	return result
+}
+
+func (p *pendingHTTPResponse) discard(
+	cause responseanalysis.TransitionCause,
+	reason requestcapture.TerminationReason,
+	failure requestcapture.FailureObservation,
+) (forwardResult, error) {
+	receipt, err := p.pending.Discard(cause)
+	result := forwardResult{
+		statusCode: p.head.StatusCode, isSSE: p.head.EventStream,
+		upstreamBytes: receipt.UpstreamBytesRead, decodedBytes: receipt.DecodedBytesAnalyzed,
+		responseBytes:    receipt.ClientBodyBytesWritten,
+		peakRequestBytes: receipt.PeakRequestBytes, peakProcessBytes: receipt.PeakProcessBytes,
+		headersWritten: receipt.HeadersCommitted, responseCommitted: receipt.HeadersCommitted,
+		firstByteVisible: receipt.ClientBodyBytesWritten > 0,
+		boundaryReason:   receipt.BoundaryReason, analysisFailure: receipt.AnalysisFailure,
+		elapsedMs: time.Since(p.analysisStartedAt).Milliseconds(), discarded: receipt.Cause != "",
+	}
+	if err != nil {
+		result.failureKind = attemptFailureInternal
+		result.failureMessage = err.Error()
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			result.clientCanceled = true
+			result.failureKind = attemptFailureCanceled
 		}
-		reason, failure := captureForwardFailure(ctx, writeErr, wrappedWriter.writeErr)
-		pctx.queueHTTPCaptureCompletion(
-			exchange,
-			upstreamResp,
-			sourceCompletion,
-			reason,
-			failure,
-		)
+	}
+	p.exchange.completedAt = time.Now()
+	sourceCompletion := requestcapture.SourceCompletionPartial
+	if p.exchange.sourceCompletionAfterError() == requestcapture.SourceCompletionComplete {
+		sourceCompletion = requestcapture.SourceCompletionComplete
+	}
+	p.pctx.finishHTTPCaptureExchange(p.exchange, p.head.Trailer, sourceCompletion, reason, failure)
+	return result, err
+}
+
+func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.Completion) forwardResult {
+	result := forwardResult{
+		headersWritten: completion.HeadersCommitted, responseCommitted: completion.HeadersCommitted,
+		firstByteVisible: completion.ClientBodyBytesWritten > 0,
+		statusCode:       p.head.StatusCode, isSSE: p.head.EventStream,
+		responseBytes: completion.ClientBodyBytesWritten, upstreamBytes: completion.UpstreamBytesRead,
+		decodedBytes:     completion.DecodedBytesAnalyzed,
+		peakRequestBytes: completion.PeakRequestBytes, peakProcessBytes: completion.PeakProcessBytes,
+		elapsedMs: time.Since(p.analysisStartedAt).Milliseconds(), boundaryReason: completion.BoundaryReason,
+		readTermination: completion.ReadTermination, analysisFailure: completion.AnalysisFailure,
+		bodySnippet: p.snippet.String(), done: true,
+	}
+	if p.head.EventStream && p.writer.written && !p.writer.firstWriteTime.IsZero() {
+		value := p.writer.firstWriteTime.Sub(p.pctx.startTime).Milliseconds()
+		result.firstTokenMs = &value
+	}
+	switch completion.Termination {
+	case responseanalysis.TerminationCompleted:
+		result.success = p.head.StatusCode < defaults.StatusClientError
+	case responseanalysis.TerminationClientCancelled:
+		result.clientCanceled = true
+		result.failureKind = attemptFailureCanceled
+		result.failureMessage = "client canceled response forwarding"
+	case responseanalysis.TerminationClientWriteFailure:
+		result.failureKind = attemptFailureWrite
+		result.failureMessage = "client response write failed"
+		result.isClientWriteError = true
+	case responseanalysis.TerminationUpstreamReadFailure:
+		result.failureKind = attemptFailureRead
+		if completion.ReadTermination == responseanalysis.ReadTerminationIdleTimeout {
+			result.failureMessage = "upstream response idle timeout"
+		} else {
+			result.failureMessage = "upstream response read failed"
+		}
+	default:
+		result.failureKind = attemptFailureInternal
+		result.failureMessage = "response forwarding failed internally"
 	}
 	return result
 }
 
-func (h *Handler) failoverForwardResponse(
-	ctx context.Context,
-	pctx *proxyContext,
-	provider *model.Provider,
-	upstreamResp *UpstreamResponse,
-	exchange httpCaptureExchange,
-	result forwardResult,
-) (forwardResult, bool) {
-	if !shouldFailover(result.statusCode) {
-		return result, false
-	}
-
-	statusErr := fmt.Errorf("upstream returned status %d", result.statusCode)
-	h.logger.Warn("upstream returned error status",
-		zap.String("provider_id", provider.ID),
-		zap.Int("status_code", result.statusCode),
-	)
-	result.err = statusErr
-	result.success = false
-	// Flag the status-classification origin explicitly so the transport
-	// diagnostic layer skips this path rather than matching on the synthetic
-	// error text (which is brittle under refactors or i18n).
-	result.isStatusFailover = true
-	var drain drainObservation
-	if exchange.valid() {
-		result.bodySnippet, drain = upstreamResp.drainWithSnippetObserved(0)
-		exchange.completedAt = time.Now()
-	} else {
-		result.bodySnippet = upstreamResp.DrainWithSnippet(0)
-	}
-	failureObservedAt := time.Now()
-	result.failureDisposition = classifyProviderFailureForProvider(
-		provider,
-		result.statusCode,
-		upstreamResp.Header,
-		result.bodySnippet,
-		failureObservedAt,
-	)
-	if shouldTrackStatusFailureInHealth(result.statusCode) {
-		h.markFailure(ctx, provider.ID, statusErr)
-	}
-	if result.failureDisposition.autoDisableUntil != nil {
-		h.suspendProviderUntil(
-			ctx,
-			provider.ID,
-			*result.failureDisposition.autoDisableUntil,
-			result.failureDisposition.autoDisableReason,
-		)
-	}
-	// Capture completion is deliberately last: provider health and suspension
-	// deadlines must be derived from the wire observation, not capture latency.
-	if exchange.valid() {
-		sourceCompletion := requestcapture.SourceCompletionPartial
-		if capturebridge.SourceEndpointComplete(
-			drain.bytesRead,
-			upstreamResp.ContentLength,
-			drain.reachedEOF,
-			drain.readErr != nil,
-		) {
-			sourceCompletion = requestcapture.SourceCompletionComplete
-		}
-		statusFailure := capturefailure.HTTPStatus(
-			requestcapture.FailureSiteResponseStatus,
-			requestcapture.FailurePeerUpstream,
-			result.statusCode,
-		)
-		drainFailure := capturefailure.FromError(
-			requestcapture.FailureSiteResponseDrain,
-			requestcapture.FailurePeerUpstream,
-			requestcapture.FailureClassRead,
-			requestcapture.FailureCodeDrainRead,
-			drain.readErr,
-		)
-		pctx.queueHTTPCaptureCompletion(
-			exchange,
-			upstreamResp,
-			sourceCompletion,
-			requestcapture.TerminationReasonStatusFailoverDrain,
-			capturefailure.Observation(statusFailure, drainFailure),
-		)
-	}
-	return result, true
-}
-
-func teeClientErrorSnippet(statusCode int, upstreamResp *UpstreamResponse) *limitedBuffer {
-	if statusCode < defaults.StatusClientError || statusCode >= defaults.StatusServerError {
+func (p *pendingHTTPResponse) semanticFacts(
+	observation responseanalysis.Observation,
+	state responseanalysis.ResolutionState,
+	reason responseanalysis.BoundaryReason,
+) *semanticAttemptFacts {
+	matches, matched := p.matcher.Facts()
+	if !matched || matches.Winner == nil {
 		return nil
 	}
-	return upstreamResp.TeeBody(0)
+	return &semanticAttemptFacts{
+		requestID: p.pctx.requestID, operationID: p.operationID, providerID: p.providerID,
+		logicalAttempt: p.logicalAttempt, providerAttempt: p.providerAttempt,
+		credentialPhase: p.credentialPhase,
+		matches:         append([]errorrule.RuleMatch(nil), matches.All...), winner: *matches.Winner,
+		protocolID: observation.ProtocolID, revision: p.rules.Revision(), windowState: state, releaseCause: reason,
+		alternateOutcome: attemptevidence.AlternateNotRequested,
+	}
 }
 
-func (h *Handler) completeWrittenResponse(
-	ctx context.Context,
-	providerID string,
-	snippetBuf *limitedBuffer,
-	result forwardResult,
-) forwardResult {
-	if result.statusCode < defaults.StatusClientError {
-		result.success = true
-		h.markSuccess(ctx, providerID)
-		return result
+func (p *pendingHTTPResponse) recordWinningRule(facts *semanticAttemptFacts) {
+	if facts == nil || p == nil || p.pctx == nil {
+		return
 	}
+	p.statsOnce.Do(func() {
+		handler := p.pctx.handler
+		if handler == nil || handler.ruleStats == nil {
+			return
+		}
+		if err := handler.ruleStats.Hit(statistics.HandleFor(facts.winner.Rule), time.Now()); err != nil {
+			handler.logger.Warn("failed to record internal-error rule hit",
+				zap.String("request_id", p.pctx.requestID),
+				zap.String("rule_id", string(facts.winner.Rule.ID)),
+				zap.Error(err),
+			)
+		}
+	})
+}
 
-	result.success = false
-	if snippetBuf != nil {
-		result.bodySnippet = snippetBuf.String()
+func (p *pendingHTTPResponse) internalFailure(err error) forwardResult {
+	message := "pending response failed"
+	if err != nil {
+		message = err.Error()
 	}
-	h.logger.Info("upstream returned client error",
-		zap.String("provider_id", providerID),
-		zap.Int("status_code", result.statusCode),
-	)
-	return result
+	return forwardResult{
+		statusCode: p.head.StatusCode, isSSE: p.head.EventStream,
+		failureKind: attemptFailureInternal, failureMessage: message,
+	}
+}
+
+func cloneTokenUsage(source *tokenusage.TokenUsage) *tokenusage.TokenUsage {
+	if source == nil {
+		return nil
+	}
+	clone := *source
+	return &clone
 }

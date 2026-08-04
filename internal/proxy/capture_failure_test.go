@@ -2,15 +2,13 @@ package proxy
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturebridge"
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 )
 
 const (
@@ -63,76 +61,6 @@ func readProxyCaptureBody(body io.ReadCloser) proxyCaptureReadResult {
 	var result proxyCaptureReadResult
 	result.n, result.err = body.Read(result.payload[:])
 	return result
-}
-
-func TestProxyCaptureClassifiesPrivateWrappersWithoutErrorMethods(t *testing.T) {
-	blocked := make(chan struct{})
-	hostile := &proxyHostileCaptureError{block: blocked}
-	type observations struct {
-		forwardReason requestcapture.TerminationReason
-		forward       requestcapture.FailureObservation
-		preparation   requestcapture.FailureObservation
-		relay         requestcapture.FailureObservation
-		wsReason      requestcapture.TerminationReason
-	}
-	finished := make(chan observations, 1)
-	go func() {
-		forwardReason, forward := captureForwardFailure(
-			context.Background(),
-			&UpstreamReadError{Err: hostile},
-			nil,
-		)
-		configError := &webSocketProviderConfigError{
-			missingField: "credentials",
-			err:          hostile,
-		}
-		_, preparation := capturefailure.WebSocketPreparation(
-			nil,
-			configError,
-			webSocketConfigurationFailureCode(configError),
-		)
-		finished <- observations{
-			forwardReason: forwardReason,
-			forward:       forward,
-			preparation:   preparation,
-			relay: webSocketRelayFailureObservation(
-				&webSocketRelaySessionResult{
-					FailurePeer:      webSocketPeerUpstream,
-					FailureOperation: webSocketRelayFailureOperationRead,
-				},
-				&WebSocketResult{Err: hostile},
-			),
-			wsReason: webSocketContextCaptureReason(
-				context.Background(),
-				hostile,
-				requestcapture.TerminationReasonWebSocketRelayError,
-			),
-		}
-	}()
-
-	select {
-	case got := <-finished:
-		if got.forwardReason != requestcapture.TerminationReasonReadError ||
-			got.forward.Primary.Code != requestcapture.FailureCodeUpstreamRead {
-			t.Fatalf("forward observation = reason:%q fact:%#v", got.forwardReason, got.forward.Primary)
-		}
-		if got.preparation.Primary.Code != requestcapture.FailureCodeMissingCredentials {
-			t.Fatalf("preparation fact = %#v", got.preparation.Primary)
-		}
-		if got.relay.Primary.Code != requestcapture.FailureCodeRelayRead ||
-			got.relay.Primary.Peer != requestcapture.FailurePeerUpstream {
-			t.Fatalf("relay fact = %#v", got.relay.Primary)
-		}
-		if got.wsReason != requestcapture.TerminationReasonWebSocketRelayError {
-			t.Fatalf("websocket reason = %q", got.wsReason)
-		}
-	case <-time.After(hostileCaptureDeadline):
-		close(blocked)
-		t.Fatal("proxy capture invoked a hostile error method")
-	}
-	if calls := hostile.calls.Load(); calls != 0 {
-		t.Fatalf("hostile error method calls = %d, want 0", calls)
-	}
 }
 
 func TestCaptureResponseBodyDoesNotInvokeHostileErrorHooks(t *testing.T) {

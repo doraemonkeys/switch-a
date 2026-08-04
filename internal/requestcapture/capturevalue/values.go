@@ -78,6 +78,8 @@ const (
 	TerminationReasonEOF                    TerminationReason = "eof"
 	TerminationReasonStatusFailoverDrain    TerminationReason = "status_failover_drain"
 	TerminationReasonCredentialRefreshDrain TerminationReason = "credential_refresh_drain"
+	TerminationReasonInternalErrorAbsorbed  TerminationReason = "internal_error_absorbed"
+	TerminationReasonInternalErrorCommitted TerminationReason = "internal_error_committed"
 	TerminationReasonClientDisconnect       TerminationReason = "client_disconnect"
 	TerminationReasonTimeout                TerminationReason = "timeout"
 	TerminationReasonCanceled               TerminationReason = "canceled"
@@ -485,6 +487,10 @@ func CanonicalTerminationReason(value TerminationReason) (TerminationReason, boo
 		return TerminationReasonStatusFailoverDrain, true
 	case TerminationReasonCredentialRefreshDrain:
 		return TerminationReasonCredentialRefreshDrain, true
+	case TerminationReasonInternalErrorAbsorbed:
+		return TerminationReasonInternalErrorAbsorbed, true
+	case TerminationReasonInternalErrorCommitted:
+		return TerminationReasonInternalErrorCommitted, true
 	case TerminationReasonClientDisconnect:
 		return TerminationReasonClientDisconnect, true
 	case TerminationReasonTimeout:

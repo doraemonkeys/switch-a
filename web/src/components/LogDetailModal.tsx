@@ -3,7 +3,6 @@ import type { RequestLog } from "../api/types";
 import { BADGE_STYLES } from "../lib/utils";
 import { CopyButton } from "./CopyButton";
 import { ProviderChain } from "./ProviderChain";
-import { RequestAttemptTimeline } from "./RequestAttemptTimeline";
 import { TransferStats } from "./TransferStats";
 import { TokenUsageStats } from "./TokenUsageStats";
 import {
@@ -13,7 +12,10 @@ import {
   getPrimaryProviderLabel,
   getTransportBadgeClass,
 } from "./logs/diagnostics";
-import { RequestEvidenceViewer } from "./logs/evidence";
+import {
+  RequestAttemptTimeline,
+  RequestEvidenceViewer,
+} from "@/features/request-attempt";
 
 interface LogDetailModalProps {
   log: RequestLog | null;

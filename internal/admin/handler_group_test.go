@@ -140,6 +140,7 @@ func TestGetGroup_InternalError(t *testing.T) {
 
 func TestCreateGroup(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 
 	body := `{
 		"id": "new-group",
@@ -163,6 +164,9 @@ func TestCreateGroup(t *testing.T) {
 
 	if st.groups["new-group"].Strategy != "weight" {
 		t.Errorf("Strategy = %q, want %q", st.groups["new-group"].Strategy, "weight")
+	}
+	if lifecycles.allRetirements != 1 {
+		t.Fatalf("global lifecycle retirements = %d, want 1", lifecycles.allRetirements)
 	}
 }
 
@@ -307,6 +311,7 @@ func TestCreateGroup_WithEnabledFalse(t *testing.T) {
 
 func TestUpdateGroup(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 
 	st.groups["test-group"] = &model.Group{ID: "test-group", Name: "Old Name", Strategy: "priority"}
 
@@ -329,6 +334,9 @@ func TestUpdateGroup(t *testing.T) {
 	}
 	if updated.Strategy != "weight" {
 		t.Errorf("Strategy = %q, want %q", updated.Strategy, "weight")
+	}
+	if lifecycles.allRetirements != 1 {
+		t.Fatalf("global lifecycle retirements = %d, want 1", lifecycles.allRetirements)
 	}
 }
 
@@ -517,6 +525,7 @@ func TestUpdateGroup_ValidationErrors(t *testing.T) {
 
 func TestDeleteGroup(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 
 	st.groups["test-group"] = &model.Group{ID: "test-group", Name: "Test"}
 
@@ -532,6 +541,9 @@ func TestDeleteGroup(t *testing.T) {
 
 	if _, ok := st.groups["test-group"]; ok {
 		t.Error("group was not deleted")
+	}
+	if lifecycles.allRetirements != 1 {
+		t.Fatalf("global lifecycle retirements = %d, want 1", lifecycles.allRetirements)
 	}
 }
 

@@ -676,8 +676,8 @@ func TestHandler_LogsGatewayTransportStatus_ForFailoverStatusCodes(t *testing.T)
 			if requestLogServiceOutcome(log) != model.ServiceOutcomeNeverStarted {
 				t.Errorf("ServiceOutcome = %q, want %q for upstream status %d", requestLogServiceOutcome(log), model.ServiceOutcomeNeverStarted, tt.statusCode)
 			}
-			if requestLogClientTransportStatusCode(log) != http.StatusServiceUnavailable {
-				t.Errorf("expected ClientTransportStatusCode=%d, got %d", http.StatusServiceUnavailable, requestLogClientTransportStatusCode(log))
+			if requestLogClientTransportStatusCode(log) != tt.statusCode {
+				t.Errorf("expected ClientTransportStatusCode=%d, got %d", tt.statusCode, requestLogClientTransportStatusCode(log))
 			}
 		})
 	}

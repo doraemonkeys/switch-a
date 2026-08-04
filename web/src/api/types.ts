@@ -9,8 +9,11 @@ import type {
   ProviderUsageLimitPolicy,
   ErrorCode,
   FailoverScope,
+  ConfigKey,
 } from "../config/constants";
 import type { ProviderImportConflictDetail } from "./provider-import-types";
+import type { BackoffPolicy } from "./retry-policy-types";
+import type { RoutingPolicyModelMatchType } from "./routing-policy-types";
 
 export type {
   Strategy,
@@ -19,36 +22,10 @@ export type {
   ProviderUsageLimitPolicy,
   ErrorCode,
   FailoverScope,
+  ConfigKey,
 };
-
-/** Built-in API type values (custom:* pattern handled separately) */
-export type BuiltInAPIType =
-  | "claude"
-  | "deepseek-claude"
-  | "codex"
-  | "gemini"
-  | "grok"
-  | "deepseek-openai";
-
-/** Valid configuration keys */
-export type ConfigKey =
-  | "auth_mode"
-  | "user_header"
-  | "trust_proxy_headers"
-  | "upstream_connect_timeout"
-  | "first_byte_timeout"
-  | "upstream_read_timeout"
-  | "sse_idle_timeout"
-  | "sticky_mode"
-  | "sticky_ttl"
-  | "websocket_probe_client_model"
-  | "circuit_failure"
-  | "circuit_window"
-  | "circuit_disable"
-  | "max_body_size"
-  | "global_max_attempts"
-  | "log_retention_days"
-  | "inter_group_strategy";
+export type { BackoffPolicy } from "./retry-policy-types";
+export type { RoutingPolicyModelMatchType } from "./routing-policy-types";
 
 /** Response from GET /config API */
 export interface ConfigResponse {
@@ -61,6 +38,11 @@ export interface ConfigResponse {
 /** Standard API error response */
 export interface ApiErrorDetails {
   kind?: string;
+  field?: string;
+  rule_id?: string;
+  current_revision?: string;
+  limit?: number;
+  limit_bytes?: number;
   import_id?: string;
   candidate_id?: string;
   conflicts?: ProviderImportConflictDetail[];
@@ -79,21 +61,6 @@ export interface ErrorResponse {
 // =============================================================================
 // Provider Types
 // =============================================================================
-
-/**
- * BackoffPolicy defines exponential backoff behavior for same-provider retries.
- * Duration values are strings in Go duration format (e.g., "100ms", "5s").
- */
-export interface BackoffPolicy {
-  /** Initial delay before first retry (e.g., "100ms") */
-  initial_delay: string;
-  /** Maximum delay cap (e.g., "5s") */
-  max_delay: string;
-  /** Exponential multiplier (default: 2.0) */
-  multiplier?: number;
-  /** Enable Equal Jitter mode: delay = calculated_delay/2 + random[0, calculated_delay/2] */
-  jitter?: boolean;
-}
 
 // ProviderAPIType represents the association between Provider and API types.
 // Each entry can override both endpoint and credentials for that API contract.
@@ -207,8 +174,6 @@ export interface ChatGPTLoginStatusResponse {
   status: ChatGPTLoginStatus;
   auth?: ProviderAuthView | null;
 }
-
-export type RoutingPolicyModelMatchType = "exact" | "prefix";
 
 export interface RoutingPolicy {
   id: string;
@@ -686,137 +651,25 @@ export interface StatsResponse {
   outcome_timeseries: OutcomeTimeSeriesPoint[];
 }
 
-// Config Export/Import types
-
-/** ExportedAPIType represents an API type with its base URL in the export format */
-export interface ExportedAPIType {
-  api_type: string;
-  base_url: string;
-  api_key?: string;
-}
-
-/** ExportedProvider represents a provider in the export format */
-export interface ExportedProvider {
-  id: string;
-  name: string;
-  api_key: string;
-  api_types: ExportedAPIType[];
-  auth_mode: AuthMode;
-  credential_type?: ProviderCredentialType;
-  usage_limit_policy?: ProviderUsageLimitPolicy;
-  group_id?: string | null;
-  weight: number;
-  priority: number;
-  concurrency: number;
-  max_retries: number;
-  /** Exponential backoff policy for same-provider retries */
-  backoff?: BackoffPolicy;
-  vendor?: string;
-  failover_scope?: FailoverScope;
-  accept_failover?: FailoverScope;
-  enabled: boolean;
-}
-
-/** ExportedGroup represents a group in the export format */
-export interface ExportedGroup {
-  id: string;
-  name: string;
-  strategy: Strategy;
-  priority: number;
-  weight: number;
-  enabled: boolean;
-}
-
-/** ExportedRoutingPolicy represents routing policy behavior in the export format */
-export interface ExportedRoutingPolicy {
-  api_type: string;
-  enabled: boolean;
-  model_match_type?: RoutingPolicyModelMatchType | null;
-  model_match_value?: string | null;
-  target_provider_id?: string | null;
-  allowed_group_ids: string[];
-  allowed_vendors: string[];
-}
-
-/** ExportedConfig represents the full exported configuration */
-export interface ExportedConfig {
-  version: string;
-  exported_at: string;
-  providers: ExportedProvider[];
-  groups: ExportedGroup[];
-  routing_policies: ExportedRoutingPolicy[];
-  settings: Partial<Record<ConfigKey, string>>;
-}
-
-export type ImportMode = "full" | "settings_only" | "selection";
-
-export interface FullImportScope {
-  mode: "full";
-}
-
-export interface SettingsOnlyImportScope {
-  mode: "settings_only";
-}
-
-export interface SelectionImportScope {
-  mode: "selection";
-  group_ids: string[];
-  provider_ids: string[];
-}
-
-export type ImportScope =
-  FullImportScope | SettingsOnlyImportScope | SelectionImportScope;
-
-/** ImportConfigRequest represents the request body for config import */
-export interface ImportConfigRequest {
-  version?: string;
-  import_scope: ImportScope;
-  providers: ExportedProvider[];
-  groups: ExportedGroup[];
-  routing_policies: ExportedRoutingPolicy[];
-  settings: Partial<Record<ConfigKey, string>>;
-}
-
-/** ChangeCount represents preview counts for imported records */
-export interface ChangeCount {
-  add: number;
-  update: number;
-  delete: number;
-  unchanged: number;
-}
-
-/** ImportChanges represents the changes that will be applied during import */
-export interface ImportChanges {
-  providers: ChangeCount;
-  groups: ChangeCount;
-  routing_policies: ChangeCount;
-  settings: ChangeCount;
-}
-
-/** ImportPreviewResponse is the response for dry_run=true */
-export interface ImportPreviewResponse {
-  dry_run: boolean;
-  changes: ImportChanges;
-  warnings: string[];
-}
-
-/** AppliedCount represents added/updated/deleted counts for applied changes */
-export interface AppliedCount {
-  added: number;
-  updated: number;
-  deleted: number;
-}
-
-/** ImportedCounts represents the counts of successfully imported items */
-export interface ImportedCounts {
-  providers: AppliedCount;
-  groups: AppliedCount;
-  routing_policies: AppliedCount;
-  settings: AppliedCount;
-}
-
-/** ImportResult represents the result of an actual import */
-export interface ImportResult {
-  success: boolean;
-  applied: ImportedCounts;
-}
+// Config-transfer contracts live together because preview and commit must share
+// one exact DTO surface, including the rule-set revision precondition.
+export type {
+  AppliedCount,
+  ChangeCount,
+  ExportedAPIType,
+  ExportedConfig,
+  ExportedGroup,
+  ExportedInternalErrorRule,
+  ExportedProvider,
+  ExportedRoutingPolicy,
+  FullImportScope,
+  ImportChanges,
+  ImportConfigRequest,
+  ImportedCounts,
+  ImportMode,
+  ImportPreviewResponse,
+  ImportResult,
+  ImportScope,
+  SelectionImportScope,
+  SettingsOnlyImportScope,
+} from "./config-transfer-types";

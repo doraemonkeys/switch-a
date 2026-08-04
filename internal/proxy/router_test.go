@@ -3,6 +3,8 @@ package proxy
 import (
 	"reflect"
 	"testing"
+
+	"github.com/doraemonkeys/switch-a/internal/apicontract"
 )
 
 func TestResolveAPIType(t *testing.T) {
@@ -294,6 +296,26 @@ func TestBareProxyRoutes(t *testing.T) {
 	}
 }
 
+func TestRouterConsumesCanonicalAPIContract(t *testing.T) {
+	t.Parallel()
+
+	for _, definition := range apicontract.All() {
+		apiType := string(definition.APIType)
+		if got, _, ok := SplitAPINamespace(definition.NamespacePattern + "probe"); !ok || got != apiType {
+			t.Errorf("namespace for %q resolved as (%q, %v)", apiType, got, ok)
+		}
+		for _, route := range definition.UnnamespacedRoutes {
+			if got, ok := ResolveAPIType(route.Method, route.Pattern); !ok || got != apiType {
+				t.Errorf("canonical route %s %s resolved as (%q, %v), want %q", route.Method, route.Pattern, got, ok, apiType)
+			}
+		}
+	}
+
+	if CustomAPITypePrefix != apicontract.CustomAPITypePrefix || RouteCustomPrefix != apicontract.RouteCustomPrefix {
+		t.Fatal("proxy compatibility aliases drifted from the canonical contract")
+	}
+}
+
 func TestAPINamespaceRoutePatterns(t *testing.T) {
 	want := []string{
 		"/claude/",
@@ -448,6 +470,18 @@ func TestBuildUpstreamPath(t *testing.T) {
 			originalPath: "/custom/tool",
 			apiType:      "custom:tool",
 			wantPath:     "/",
+		},
+		{
+			name:         "custom preserves a different tool namespace",
+			originalPath: "/custom/other/v1/messages",
+			apiType:      "custom:tool",
+			wantPath:     "/custom/other/v1/messages",
+		},
+		{
+			name:         "unroutable custom API type preserves path",
+			originalPath: "/custom/tool/v1/messages",
+			apiType:      "custom:tool/nested",
+			wantPath:     "/custom/tool/v1/messages",
 		},
 	}
 

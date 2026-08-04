@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { BackoffPolicyEditor } from "./BackoffPolicyEditor";
 
@@ -42,5 +42,51 @@ describe("BackoffPolicyEditor", () => {
     expect(
       screen.queryByRole("list", { name: "Retry delay preview" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("treats multiplier zero as the backend default", () => {
+    render(
+      <BackoffPolicyEditor
+        backoff={{ ...DEFAULT_BACKOFF, multiplier: 0 }}
+        maxRetries={3}
+        expanded
+        onToggle={vi.fn()}
+        onChange={vi.fn()}
+      />,
+    );
+
+    const multiplier = screen.getByRole("spinbutton", { name: "Multiplier" });
+    expect(multiplier).toHaveAttribute("min", "0");
+    expect(multiplier).not.toHaveAttribute("max");
+    expect(screen.queryByText("Custom")).not.toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("list", { name: "Retry delay preview" }),
+      ).getAllByRole("listitem"),
+    ).toHaveLength(3);
+    expect(screen.getByText("400ms")).toBeInTheDocument();
+  });
+
+  it("emits an explicit zero multiplier without substituting it in the draft", () => {
+    const onChange = vi.fn();
+    render(
+      <BackoffPolicyEditor
+        backoff={DEFAULT_BACKOFF}
+        maxRetries={2}
+        expanded
+        onToggle={vi.fn()}
+        onChange={onChange}
+      />,
+    );
+
+    const multiplier = screen.getByRole("spinbutton", { name: "Multiplier" });
+    fireEvent.change(multiplier, {
+      target: { value: "0", valueAsNumber: 0 },
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...DEFAULT_BACKOFF,
+      multiplier: 0,
+    });
   });
 });

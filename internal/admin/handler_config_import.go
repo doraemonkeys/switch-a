@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
@@ -22,8 +25,14 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	dryRun := r.URL.Query().Get("dry_run") == "true"
 
 	var req ImportConfigRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Request body must contain exactly one JSON value")
 		return
 	}
 	if req.Version != ConfigExportVersion {
@@ -41,58 +50,32 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-
-	// Get existing data for comparison
-	existingProviders, err := h.store.ListProviders(ctx)
+	snapshot, err := h.loadConfigImportSnapshot(ctx)
 	if err != nil {
-		h.logger.Error("failed to list providers for import", zap.Error(err))
+		h.logger.Error("failed to load config import snapshot", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config")
 		return
-	}
-
-	existingGroups, err := h.store.ListGroups(ctx)
-	if err != nil {
-		h.logger.Error("failed to list groups for import", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config")
-		return
-	}
-	existingRoutingPolicies, err := h.store.ListRoutingPolicies(ctx)
-	if err != nil {
-		h.logger.Error("failed to list routing policies for import", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config")
-		return
-	}
-
-	existingSettings, err := h.store.GetAllConfig(ctx)
-	if err != nil {
-		h.logger.Error("failed to get config for import", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config")
-		return
-	}
-
-	// Build lookup maps
-	existingProviderMap := make(map[string]*model.Provider)
-	for i := range existingProviders {
-		existingProviderMap[existingProviders[i].ID] = &existingProviders[i]
-	}
-
-	existingGroupMap := make(map[string]*model.Group)
-	for i := range existingGroups {
-		existingGroupMap[existingGroups[i].ID] = &existingGroups[i]
-	}
-	existingRoutingPolicyMap := make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(existingRoutingPolicies))
-	for i := range existingRoutingPolicies {
-		key := existingRoutingPolicies[i].NaturalKey()
-		existingRoutingPolicyMap[key] = &existingRoutingPolicies[i]
 	}
 
 	staged := stageConfigImport(
 		&req,
-		existingProviderMap,
-		existingGroupMap,
-		existingRoutingPolicyMap,
-		existingSettings,
+		snapshot.providers,
+		snapshot.groups,
+		snapshot.routingPolicies,
+		snapshot.settings,
+		snapshot.rules,
 	)
+	ruleRepository := snapshot.ruleRepository
+	ruleRevision := snapshot.ruleRevision
+	if staged.ruleError != nil {
+		if errors.Is(staged.ruleError, errorrulesqlite.ErrImportIDCollision) ||
+			errors.Is(staged.ruleError, errorrulesqlite.ErrRuleCapacity) {
+			writeError(w, http.StatusConflict, ErrCodeConflict, staged.ruleError.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, staged.ruleError.Error())
+		return
+	}
 
 	// If dry_run, return preview
 	if dryRun {
@@ -101,10 +84,13 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp := ImportPreviewResponse{
-			DryRun:   true,
-			Changes:  staged.changes,
-			Warnings: append([]string{}, staged.warnings...),
+			DryRun:          true,
+			Changes:         staged.changes,
+			Warnings:        append([]string{}, staged.warnings...),
+			RuleSetRevision: ruleRevision.String(),
+			RuleSetETag:     formatInternalErrorRuleETag(ruleRevision),
 		}
+		w.Header().Set("ETag", resp.RuleSetETag)
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -113,13 +99,38 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(staged.warnings, "; "))
 		return
 	}
+	if staged.bundle.RuleImport.Mode != errorrulesqlite.ImportModePreserve && ruleRepository != nil {
+		rawIfMatch := r.Header.Get("If-Match")
+		if rawIfMatch == "" {
+			writeError(w, http.StatusPreconditionRequired, ErrCodePreconditionRequired, "If-Match is required for rule-changing config import")
+			return
+		}
+		expected, err := parseInternalErrorRuleETag(rawIfMatch)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
+			return
+		}
+		staged.bundle.ExpectedRuleRevision = &expected
+	}
 
-	err = h.store.ApplyConfigImport(ctx, &staged.bundle)
+	err = h.applyConfigImportAtLifecycleBoundary(ctx, staged.changes, &staged.bundle)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrRoutingPolicyConflict),
 			errors.Is(err, store.ErrRoutingPolicyReferenceConflict),
 			errors.Is(err, store.ErrCredentialBindingConflict):
+			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+			return
+		case errors.Is(err, errorrulesqlite.ErrRevisionMismatch):
+			current := ruleRevision
+			var mismatch *errorrulesqlite.RevisionMismatchError
+			if errors.As(err, &mismatch) {
+				current = mismatch.Current
+			}
+			writeErrorWithDetails(w, http.StatusPreconditionFailed, ErrCodeRevisionMismatch, err.Error(), map[string]string{"current_revision": current.String()})
+			return
+		case errors.Is(err, errorrulesqlite.ErrImportIDCollision),
+			errors.Is(err, errorrulesqlite.ErrRuleCapacity):
 			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return
 		}
@@ -128,32 +139,117 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := ImportResult{
-		Success: true,
+	if ruleRepository != nil {
+		ruleRevision, _ = ruleRepository.ListRules()
+	}
+	resp := newConfigImportResult(staged.changes, ruleRevision)
+	w.Header().Set("ETag", resp.RuleSetETag)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func newConfigImportResult(changes ImportChanges, revision errorrule.Revision) ImportResult {
+	return ImportResult{
+		Success:         true,
+		RuleSetRevision: revision.String(),
+		RuleSetETag:     formatInternalErrorRuleETag(revision),
 		Applied: ImportedCounts{
 			Providers: AppliedCount{
-				Added:   staged.changes.Providers.Add,
-				Updated: staged.changes.Providers.Update,
-				Deleted: staged.changes.Providers.Delete,
+				Added:   changes.Providers.Add,
+				Updated: changes.Providers.Update,
+				Deleted: changes.Providers.Delete,
 			},
 			Groups: AppliedCount{
-				Added:   staged.changes.Groups.Add,
-				Updated: staged.changes.Groups.Update,
-				Deleted: staged.changes.Groups.Delete,
+				Added:   changes.Groups.Add,
+				Updated: changes.Groups.Update,
+				Deleted: changes.Groups.Delete,
 			},
 			RoutingPolicies: AppliedCount{
-				Added:   staged.changes.RoutingPolicies.Add,
-				Updated: staged.changes.RoutingPolicies.Update,
-				Deleted: staged.changes.RoutingPolicies.Delete,
+				Added:   changes.RoutingPolicies.Add,
+				Updated: changes.RoutingPolicies.Update,
+				Deleted: changes.RoutingPolicies.Delete,
 			},
 			Settings: AppliedCount{
-				Added:   staged.changes.Settings.Add,
-				Updated: staged.changes.Settings.Update,
-				Deleted: staged.changes.Settings.Delete,
+				Added:   changes.Settings.Add,
+				Updated: changes.Settings.Update,
+				Deleted: changes.Settings.Delete,
+			},
+			InternalErrorRules: AppliedCount{
+				Added:   changes.InternalErrorRules.Add,
+				Updated: changes.InternalErrorRules.Update,
+				Deleted: changes.InternalErrorRules.Delete,
 			},
 		},
 	}
-	writeJSON(w, http.StatusOK, resp)
+}
+
+type configImportSnapshot struct {
+	providers       map[string]*model.Provider
+	groups          map[string]*model.Group
+	routingPolicies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy
+	settings        map[string]string
+	ruleRepository  *errorrulesqlite.Repository
+	ruleRevision    errorrule.Revision
+	rules           []errorrule.Rule
+}
+
+func (h *Handler) loadConfigImportSnapshot(ctx context.Context) (configImportSnapshot, error) {
+	providers, err := h.store.ListProviders(ctx)
+	if err != nil {
+		return configImportSnapshot{}, fmt.Errorf("list providers: %w", err)
+	}
+	groups, err := h.store.ListGroups(ctx)
+	if err != nil {
+		return configImportSnapshot{}, fmt.Errorf("list groups: %w", err)
+	}
+	routingPolicies, err := h.store.ListRoutingPolicies(ctx)
+	if err != nil {
+		return configImportSnapshot{}, fmt.Errorf("list routing policies: %w", err)
+	}
+	settings, err := h.store.GetAllConfig(ctx)
+	if err != nil {
+		return configImportSnapshot{}, fmt.Errorf("get settings: %w", err)
+	}
+
+	snapshot := configImportSnapshot{
+		providers:       make(map[string]*model.Provider, len(providers)),
+		groups:          make(map[string]*model.Group, len(groups)),
+		routingPolicies: make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(routingPolicies)),
+		settings:        settings,
+		ruleRepository:  configRuleRepository(h.store),
+	}
+	for i := range providers {
+		snapshot.providers[providers[i].ID] = &providers[i]
+	}
+	for i := range groups {
+		snapshot.groups[groups[i].ID] = &groups[i]
+	}
+	for i := range routingPolicies {
+		snapshot.routingPolicies[routingPolicies[i].NaturalKey()] = &routingPolicies[i]
+	}
+	if snapshot.ruleRepository != nil {
+		snapshot.ruleRevision, snapshot.rules = snapshot.ruleRepository.ListRules()
+	}
+	return snapshot, nil
+}
+
+func (h *Handler) applyConfigImportAtLifecycleBoundary(
+	ctx context.Context,
+	changes ImportChanges,
+	bundle *store.ConfigImportBundle,
+) error {
+	apply := func() error { return h.store.ApplyConfigImport(ctx, bundle) }
+	if !hasChanges(changes.Providers) && !hasChanges(changes.Groups) &&
+		!hasChanges(changes.RoutingPolicies) {
+		return apply()
+	}
+	// Retiring every current generation under the mutation lock also covers a
+	// provider created concurrently with import staging; an ID union computed
+	// before this boundary would leave that generation authorized by stale policy.
+	return h.mutateAllProviderGenerations(apply)
+}
+
+func hasChanges(count ChangeCount) bool {
+	return count.Add > 0 || count.Update > 0 || count.Delete > 0
 }
 
 // validateImportRequest validates the import request and returns warnings.
@@ -321,6 +417,7 @@ func (h *Handler) calculateImportChanges(
 		existingGroups,
 		nil,
 		existingSettings,
+		nil,
 	)
 	return staged.changes
 }
@@ -349,6 +446,7 @@ func (h *Handler) applyImportChanges(
 		existingGroups,
 		existingRoutingPolicyMap,
 		existingSettings,
+		nil,
 	)
 	if len(staged.warnings) > 0 {
 		return ImportedCounts{}, fmt.Errorf(
@@ -356,7 +454,7 @@ func (h *Handler) applyImportChanges(
 			strings.Join(staged.warnings, "; "),
 		)
 	}
-	if err := h.store.ApplyConfigImport(ctx, &staged.bundle); err != nil {
+	if err := h.applyConfigImportAtLifecycleBoundary(ctx, staged.changes, &staged.bundle); err != nil {
 		return ImportedCounts{}, err
 	}
 

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ProviderInput, AuthMode } from "../../api";
-import { AUTH_MODE_OPTIONS, COMMON_API_TYPES } from "../../config/constants";
+import { useAPICatalog } from "../../api/useApi";
+import { AUTH_MODE_OPTIONS } from "../../config/constants";
 import { hasProviderApiKey } from "../../lib/providerApiKey";
 import { FormField } from "./FormField";
 import { generateClientKey, type TrackedAPITypeEntry } from "./types";
@@ -12,6 +13,7 @@ interface ApiTypesFieldProps {
 }
 
 export function ApiTypesField({ entries, onChange }: ApiTypesFieldProps) {
+  const { catalog, loading, error, refetch } = useAPICatalog();
   const [visibleOverrideKeys, setVisibleOverrideKeys] = useState<
     Record<string, boolean>
   >({});
@@ -190,21 +192,25 @@ export function ApiTypesField({ entries, onChange }: ApiTypesFieldProps) {
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-2 mt-2">
-        {COMMON_API_TYPES.map((type) => (
-          <button
-            key={type}
-            type="button"
-            aria-pressed={selectedTypes.has(type)}
-            onClick={() => toggleQuickType(type)}
-            className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${
-              selectedTypes.has(type)
-                ? "bg-primary text-white border-primary"
-                : "bg-bg-secondary text-text-secondary border-border hover:border-primary"
-            }`}
-          >
-            {type}
-          </button>
-        ))}
+        {catalog?.api_types.map((entry) => {
+          const selected = selectedTypes.has(entry.api_type);
+          return (
+            <button
+              key={entry.api_type}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => toggleQuickType(entry.api_type)}
+              title={entry.description}
+              className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${
+                selected
+                  ? "bg-primary text-white border-primary"
+                  : "bg-bg-secondary text-text-secondary border-border hover:border-primary"
+              }`}
+            >
+              {entry.api_type}
+            </button>
+          );
+        })}
         <button
           type="button"
           onClick={() => addEntry()}
@@ -212,6 +218,21 @@ export function ApiTypesField({ entries, onChange }: ApiTypesFieldProps) {
         >
           + Custom
         </button>
+        {loading && (
+          <span className="text-xs text-text-muted" role="status">
+            Loading built-in API types...
+          </span>
+        )}
+        {error && (
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="text-xs text-danger hover:underline cursor-pointer"
+            title={error.message}
+          >
+            Retry API type catalog
+          </button>
+        )}
       </div>
     </fieldset>
   );

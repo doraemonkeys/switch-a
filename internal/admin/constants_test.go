@@ -1,7 +1,15 @@
 package admin
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/doraemonkeys/switch-a/internal/apicontract"
 )
 
 func TestValidateConfigValue(t *testing.T) {
@@ -130,6 +138,10 @@ func TestIsValidAPIType(t *testing.T) {
 		{"custom:mytool", true},
 		// Invalid: empty custom name
 		{"custom:", false},
+		// Invalid: routing addresses one custom tool path segment.
+		{"custom:foo/bar", false},
+		{"custom:.", false},
+		{"custom:..", false},
 		// Invalid: case sensitive prefix
 		{"Custom:mytool", false},
 		// Invalid: these API types have no matching proxy routes
@@ -153,6 +165,105 @@ func TestIsValidAPIType(t *testing.T) {
 				t.Errorf("IsValidAPIType(%q) = %v, want %v", tt.apiType, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAPITypeValidationConsumesCanonicalCatalog(t *testing.T) {
+	t.Parallel()
+
+	for _, definition := range apicontract.All() {
+		if !IsValidAPIType(string(definition.APIType)) {
+			t.Errorf("canonical API type %q was rejected by admin validation", definition.APIType)
+		}
+	}
+	if !IsValidAPIType(apicontract.CustomAPITypePrefix + "tool") {
+		t.Fatal("custom provider API type was rejected")
+	}
+	if IsValidAPIType(apicontract.CustomAPITypePrefix) {
+		t.Fatal("empty custom provider API type was accepted")
+	}
+}
+
+func TestAPICatalogResponseMatchesSharedGolden(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "contracts", "internal-error", "v1", "api-catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want any
+	if err := json.Unmarshal(data, &want); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(APICatalogResponse())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got any
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("admin catalog projection drifted\ngot:  %s\nwant: %s", encoded, data)
+	}
+}
+
+func TestGetAPICatalogReturnsCanonicalProjection(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/api/api-catalog", nil)
+	response := httptest.NewRecorder()
+	(&Handler{}).GetAPICatalog(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("Content-Type"); got != ContentTypeJSON {
+		t.Fatalf("Content-Type = %q, want %q", got, ContentTypeJSON)
+	}
+	var got apicontract.CatalogResponse
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("decode catalog response: %v", err)
+	}
+	if want := APICatalogResponse(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("handler projection drifted\ngot:  %+v\nwant: %+v", got, want)
+	}
+}
+
+func TestConfigV4FixtureUsesCanonicalProviderExportShape(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "contracts", "internal-error", "v1", "config-v4.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Providers []json.RawMessage `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Providers) != 1 {
+		t.Fatalf("config fixture has %d providers, want 1", len(fixture.Providers))
+	}
+	var provider ExportedProvider
+	if err := json.Unmarshal(fixture.Providers[0], &provider); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := json.Marshal(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotValue any
+	if err := json.Unmarshal(canonical, &gotValue); err != nil {
+		t.Fatal(err)
+	}
+	var wantValue any
+	if err := json.Unmarshal(fixture.Providers[0], &wantValue); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Fatalf("provider fixture differs from ExportedProvider encoding\ngot:  %s\nwant: %s", canonical, fixture.Providers[0])
 	}
 }
 

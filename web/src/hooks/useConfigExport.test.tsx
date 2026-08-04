@@ -10,7 +10,7 @@ import type {
 import { createMockApiClient, createWrapper } from "./test-utils";
 
 const mockExportedConfig: ExportedConfig = {
-  version: "3.0",
+  version: "4.0",
   exported_at: "2024-01-01T00:00:00Z",
   providers: [
     {
@@ -51,6 +51,7 @@ const mockExportedConfig: ExportedConfig = {
   settings: {
     auth_mode: "auto",
   },
+  internal_error_rules: [],
 };
 
 const mockPreviewResponse: ImportPreviewResponse = {
@@ -60,8 +61,11 @@ const mockPreviewResponse: ImportPreviewResponse = {
     groups: { add: 0, update: 1, delete: 0, unchanged: 0 },
     routing_policies: { add: 0, update: 1, delete: 0, unchanged: 0 },
     settings: { add: 0, update: 2, delete: 0, unchanged: 0 },
+    internal_error_rules: { add: 0, update: 0, delete: 0, unchanged: 0 },
   },
   warnings: ["Provider API key will be overwritten"],
+  rule_set_revision: "0",
+  rule_set_etag: '"internal-error-rules/0"',
 };
 
 const mockImportResult: ImportResult = {
@@ -71,7 +75,10 @@ const mockImportResult: ImportResult = {
     groups: { added: 0, updated: 1, deleted: 0 },
     routing_policies: { added: 0, updated: 1, deleted: 0 },
     settings: { added: 0, updated: 2, deleted: 0 },
+    internal_error_rules: { added: 0, updated: 0, deleted: 0 },
   },
+  rule_set_revision: "0",
+  rule_set_etag: '"internal-error-rules/0"',
 };
 
 function setupMockApiClient(): ApiClient {
@@ -177,6 +184,7 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
+      version: "4.0",
       import_scope: {
         mode: "full" as const,
       },
@@ -184,6 +192,7 @@ describe("useConfigExport", () => {
       groups: mockExportedConfig.groups,
       routing_policies: mockExportedConfig.routing_policies,
       settings: mockExportedConfig.settings,
+      internal_error_rules: mockExportedConfig.internal_error_rules,
     };
 
     let preview: ImportPreviewResponse | undefined;
@@ -202,6 +211,7 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
+      version: "4.0",
       import_scope: {
         mode: "full" as const,
       },
@@ -209,14 +219,21 @@ describe("useConfigExport", () => {
       groups: mockExportedConfig.groups,
       routing_policies: mockExportedConfig.routing_policies,
       settings: mockExportedConfig.settings,
+      internal_error_rules: mockExportedConfig.internal_error_rules,
     };
 
     let importResult: ImportResult | undefined;
     await act(async () => {
-      importResult = await result.current.importConfig(importData);
+      importResult = await result.current.importConfig(
+        importData,
+        mockPreviewResponse.rule_set_etag,
+      );
     });
 
-    expect(mockApi.config.import).toHaveBeenCalledWith(importData);
+    expect(mockApi.config.import).toHaveBeenCalledWith(
+      importData,
+      mockPreviewResponse.rule_set_etag,
+    );
     expect(importResult).toEqual(mockImportResult);
     expect(result.current.importResult).toEqual(mockImportResult);
   });
@@ -235,6 +252,7 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
+      version: "4.0",
       import_scope: {
         mode: "settings_only" as const,
       },
@@ -242,10 +260,14 @@ describe("useConfigExport", () => {
       groups: [],
       routing_policies: [],
       settings: {},
+      internal_error_rules: [],
     };
 
     act(() => {
-      result.current.importConfig(importData);
+      result.current.importConfig(
+        importData,
+        mockPreviewResponse.rule_set_etag,
+      );
     });
 
     await waitFor(() => {
@@ -272,15 +294,20 @@ describe("useConfigExport", () => {
 
     await act(async () => {
       try {
-        await result.current.importConfig({
-          import_scope: {
-            mode: "settings_only" as const,
+        await result.current.importConfig(
+          {
+            version: "4.0",
+            import_scope: {
+              mode: "settings_only" as const,
+            },
+            providers: [],
+            groups: [],
+            routing_policies: [],
+            settings: {},
+            internal_error_rules: [],
           },
-          providers: [],
-          groups: [],
-          routing_policies: [],
-          settings: {},
-        });
+          mockPreviewResponse.rule_set_etag,
+        );
       } catch {
         // Expected to throw
       }
@@ -303,6 +330,7 @@ describe("useConfigExport", () => {
     await act(async () => {
       try {
         await result.current.previewImport({
+          version: "4.0",
           import_scope: {
             mode: "settings_only" as const,
           },
@@ -310,6 +338,7 @@ describe("useConfigExport", () => {
           groups: [],
           routing_policies: [],
           settings: {},
+          internal_error_rules: [],
         });
       } catch {
         // Expected to throw

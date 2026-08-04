@@ -1,8 +1,45 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  fireEvent,
+  render as testingLibraryRender,
+  screen,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactElement, ReactNode } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { LogFilter, Provider } from "../api/types";
+import { parseAPICatalog } from "../api/api-catalog";
+import { APICatalogContext } from "../api/context";
 import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 import { LogFilters } from "./LogFilters";
+
+const testAPICatalog = parseAPICatalog(
+  JSON.parse(
+    readFileSync(
+      resolve(process.cwd(), "../contracts/internal-error/v1/api-catalog.json"),
+      "utf8",
+    ),
+  ) as unknown,
+);
+
+function APICatalogTestProvider({ children }: { children: ReactNode }) {
+  return (
+    <APICatalogContext.Provider
+      value={{
+        catalog: testAPICatalog,
+        loading: false,
+        error: null,
+        refetch: () => Promise.resolve(),
+      }}
+    >
+      {children}
+    </APICatalogContext.Provider>
+  );
+}
+
+function render(element: ReactElement) {
+  return testingLibraryRender(element, { wrapper: APICatalogTestProvider });
+}
 
 function createMockProviders(): Provider[] {
   return [

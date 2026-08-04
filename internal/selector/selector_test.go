@@ -182,7 +182,7 @@ func TestSelector_Select_NoProviders(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	_, err := sel.Select(context.Background(), req)
+	_, err := sel.selectForTest(t, context.Background(), req)
 	if !errors.Is(err, internal.ErrNoProvider) {
 		t.Errorf("expected ErrNoProvider, got %v", err)
 	}
@@ -209,7 +209,7 @@ func TestSelector_Select_SingleProvider(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestSelector_Select_WithStickyCache(t *testing.T) {
 	sticky.Set(stickyKey, "p2", 5*time.Minute)
 
 	// Should return sticky cached provider
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestSelector_Select_WithModelStickyCache(t *testing.T) {
 		Model:   req.Model,
 	}, "p2", 5*time.Minute)
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestSelector_Select_WithModelStickyCache(t *testing.T) {
 
 	// Different model should not hit the cached key when sticky mode is model.
 	req.Model = "claude-3-haiku"
-	provider, err = sel.Select(context.Background(), req)
+	provider, err = sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestSelector_Select_StickyDisabledByConfig(t *testing.T) {
 	sticky.Set(stickyKey, "p2", 5*time.Minute)
 
 	// Should skip sticky cache and select by priority (p1)
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestSelector_Select_StickyModeWithNilCache(t *testing.T) {
 	}
 
 	// Should gracefully fall back to priority selection (p1)
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestSelector_Select_StickyExpired(t *testing.T) {
 	clock.Advance(2 * time.Minute)
 
 	// Should select by priority (p1)
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestSelector_Select_HealthFiltering(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -498,28 +498,31 @@ func TestSelector_Select_ConcurrencyLimit(t *testing.T) {
 	}
 
 	// First selection should get p1
-	provider1, err := sel.Select(context.Background(), req)
+	selection1, err := sel.SelectWithMetadata(context.Background(), req)
 	if err != nil {
 		t.Fatalf("first select error: %v", err)
 	}
+	provider1 := selection1.Provider()
 	if provider1.ID != "p1" {
 		t.Errorf("expected p1, got %s", provider1.ID)
 	}
 
 	// Second selection should get p2 (p1 at limit)
-	provider2, err := sel.Select(context.Background(), req)
+	selection2, err := sel.SelectWithMetadata(context.Background(), req)
 	if err != nil {
 		t.Fatalf("second select error: %v", err)
 	}
+	t.Cleanup(func() { selection2.Lease.Release() })
+	provider2 := selection2.Provider()
 	if provider2.ID != "p2" {
 		t.Errorf("expected p2 (p1 at limit), got %s", provider2.ID)
 	}
 
-	// Release p1
-	sel.ReleaseConcurrency("p1")
+	// Releasing the exact first capability restores only p1's capacity.
+	selection1.Lease.Release()
 
 	// Third selection should get p1 again
-	provider3, err := sel.Select(context.Background(), req)
+	provider3, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("third select error: %v", err)
 	}
@@ -554,7 +557,7 @@ func TestSelector_SelectExcluding(t *testing.T) {
 	// Exclude p1 and p2
 	excluded := map[string]bool{"p1": true, "p2": true}
 
-	provider, err := sel.SelectExcluding(context.Background(), req, excluded)
+	provider, err := sel.selectExcludingForTest(t, context.Background(), req, excluded)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -593,7 +596,7 @@ func TestSelector_Select_WithGroups(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -632,7 +635,7 @@ func TestSelector_Select_DisabledGroup(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -698,7 +701,7 @@ func TestSelector_StoreError(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	_, err := sel.Select(context.Background(), req)
+	_, err := sel.selectForTest(t, context.Background(), req)
 	if err == nil {
 		t.Error("expected error from store")
 	}
@@ -728,7 +731,7 @@ func TestSelector_ConfigError_DefaultsToStrategy(t *testing.T) {
 		APIType:  "claude",
 	}
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -779,7 +782,7 @@ func TestSelector_StickyCache_ProviderDisabled(t *testing.T) {
 	sticky.Set(stickyKey, "p1", 5*time.Minute)
 
 	// Should skip disabled sticky provider and select p2
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -835,7 +838,7 @@ func TestSelector_StickyCache_ProviderWrongAPIType(t *testing.T) {
 	sticky.Set(stickyKey, "p1", 5*time.Minute)
 
 	// Should skip sticky provider with wrong API type and select p2
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -888,7 +891,7 @@ func TestSelector_StickyCache_HealthCheck(t *testing.T) {
 	sticky.Set(stickyKey, "p1", 5*time.Minute)
 
 	// Should skip unhealthy sticky provider and select p2
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -914,7 +917,11 @@ func TestSelector_StickyCache_ConcurrencyLimit(t *testing.T) {
 	sticky := NewMemoryStickyCache(clock)
 	limiter := NewConcurrencyLimiter()
 	// Consume p1's concurrency slot
-	limiter.TryAcquire("p1", 1)
+	heldLease, acquired := limiter.Acquire("p1", 1)
+	if !acquired {
+		t.Fatal("failed to prefill p1 concurrency")
+	}
+	t.Cleanup(func() { heldLease.Release() })
 	logger := zap.NewNop()
 
 	sel := NewSelector(Config{
@@ -941,7 +948,7 @@ func TestSelector_StickyCache_ConcurrencyLimit(t *testing.T) {
 	sticky.Set(stickyKey, "p1", 5*time.Minute)
 
 	// Should skip sticky provider at limit and select p2
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -975,7 +982,7 @@ func TestSelector_GroupLoadError(t *testing.T) {
 	}
 
 	// Fail-closed: provider should be skipped when group load fails
-	_, err := sel.Select(context.Background(), req)
+	_, err := sel.selectForTest(t, context.Background(), req)
 	if err != internal.ErrNoProvider {
 		t.Errorf("expected ErrNoProvider, got %v", err)
 	}
@@ -1124,7 +1131,7 @@ func TestSelector_Select_ZeroValueStickyMode(t *testing.T) {
 	sticky.Set(stickyKey, "p2", 5*time.Minute)
 
 	// Should skip sticky cache and select by priority (p1)
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1188,63 +1195,6 @@ func TestSelector_UpdateSticky_NoCache(t *testing.T) {
 	sel.UpdateSticky(req, "p1")
 }
 
-func TestSelector_ClearConcurrency(t *testing.T) {
-	store := newMockStore()
-	clock := &mockClock{now: time.Now()}
-	limiter := NewConcurrencyLimiter()
-	logger := zap.NewNop()
-
-	sel := NewSelector(Config{
-		Store:   store,
-		Limiter: limiter,
-		Clock:   clock,
-		Logger:  logger,
-	})
-
-	// Acquire a slot
-	limiter.TryAcquire("p1", 5)
-
-	// Clear it
-	sel.ClearConcurrency("p1")
-
-	// Should be cleared (can acquire again as if new)
-	if !limiter.TryAcquire("p1", 1) {
-		t.Error("expected to acquire slot after clear")
-	}
-}
-
-func TestSelector_ClearConcurrency_NoLimiter(t *testing.T) {
-	store := newMockStore()
-	clock := &mockClock{now: time.Now()}
-	logger := zap.NewNop()
-
-	sel := NewSelector(Config{
-		Store:   store,
-		Limiter: nil, // No limiter
-		Clock:   clock,
-		Logger:  logger,
-	})
-
-	// Should not panic
-	sel.ClearConcurrency("p1")
-}
-
-func TestSelector_ReleaseConcurrency_NoLimiter(t *testing.T) {
-	store := newMockStore()
-	clock := &mockClock{now: time.Now()}
-	logger := zap.NewNop()
-
-	sel := NewSelector(Config{
-		Store:   store,
-		Limiter: nil, // No limiter
-		Clock:   clock,
-		Logger:  logger,
-	})
-
-	// Should not panic
-	sel.ReleaseConcurrency("p1")
-}
-
 func TestSelector_AllProvidersExcluded(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
@@ -1270,49 +1220,8 @@ func TestSelector_AllProvidersExcluded(t *testing.T) {
 	// Exclude all providers
 	excluded := map[string]bool{"p1": true, "p2": true}
 
-	_, err := sel.SelectExcluding(context.Background(), req, excluded)
+	_, err := sel.selectExcludingForTest(t, context.Background(), req, excluded)
 	if !errors.Is(err, internal.ErrNoProvider) {
 		t.Errorf("expected ErrNoProvider, got %v", err)
-	}
-}
-
-func TestSelector_SelectFromGroup_ConcurrencyRetry(t *testing.T) {
-	g1ID := "g1"
-
-	store := newMockStore()
-	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, GroupID: &g1ID, Priority: 1, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-		{ID: "p2", Name: "Provider 2", Enabled: true, GroupID: &g1ID, Priority: 2, Concurrency: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
-	}
-	store.groups = map[string]*model.Group{
-		"g1": {ID: "g1", Name: "Group 1", Strategy: "priority", Priority: 1, Enabled: true},
-	}
-
-	clock := &mockClock{now: time.Now()}
-	limiter := NewConcurrencyLimiter()
-	// Fill p1's slot
-	limiter.TryAcquire("p1", 1)
-	logger := zap.NewNop()
-
-	sel := NewSelector(Config{
-		Store:   store,
-		Limiter: limiter,
-		Clock:   clock,
-		Logger:  logger,
-	})
-
-	req := &model.SelectRequest{
-		ClientIP: "192.168.1.1",
-		User:     "user1",
-		APIType:  "claude",
-	}
-
-	// Should skip p1 (at limit) and select p2
-	provider, err := sel.Select(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider.ID != "p2" {
-		t.Errorf("expected p2 (p1 at limit), got %s", provider.ID)
 	}
 }

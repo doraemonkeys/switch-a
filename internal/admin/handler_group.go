@@ -128,7 +128,9 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.CreateGroup(r.Context(), group); err != nil {
+	if err := h.mutateAllProviderGenerations(func() error {
+		return h.store.CreateGroup(r.Context(), group)
+	}); err != nil {
 		h.logger.Error("failed to create group", zap.String("id", req.ID), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to create group")
 		return
@@ -199,7 +201,9 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		group.Enabled = *req.Enabled
 	}
 
-	if err := h.store.UpdateGroup(r.Context(), group); err != nil {
+	if err := h.mutateAllProviderGenerations(func() error {
+		return h.store.UpdateGroup(r.Context(), group)
+	}); err != nil {
 		h.logger.Error("failed to update group", zap.String("id", id), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update group")
 		return
@@ -216,7 +220,11 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 			_, err := h.store.GetGroup(ctx, id)
 			return err
 		},
-		deleteFunc: h.store.DeleteGroup,
+		deleteFunc: func(ctx context.Context, id string) error {
+			return h.mutateAllProviderGenerations(func() error {
+				return h.store.DeleteGroup(ctx, id)
+			})
+		},
 	})
 }
 
@@ -254,8 +262,15 @@ func (h *Handler) setGroupEnabled(w http.ResponseWriter, r *http.Request, enable
 		return
 	}
 
+	wasEnabled := group.Enabled
 	group.Enabled = enabled
-	if err := h.store.UpdateGroup(r.Context(), group); err != nil {
+	update := func() error { return h.store.UpdateGroup(r.Context(), group) }
+	if wasEnabled != enabled {
+		err = h.mutateAllProviderGenerations(update)
+	} else {
+		err = update()
+	}
+	if err != nil {
 		h.logger.Error("failed to update group", zap.String("id", id), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to "+action+" group")
 		return

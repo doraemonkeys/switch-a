@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -86,6 +87,14 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryID)
 			}
 			return fallbackProvider, nil
+		},
+		reserveSameProviderDispatch: func(_ context.Context, current providerLease, _ *model.SelectRequest) (sameProviderDispatchPermit, error) {
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if state := store.authStates[primaryID]; state == nil || state.Status != model.ProviderAuthStatusActive {
+				return nil, internal.ErrNoProvider
+			}
+			return newLocalSameProviderDispatchPermit(current.Provider(), current), nil
 		},
 	}
 
@@ -195,6 +204,16 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 				t.Fatalf("excludeIDs = %v, want %q excluded", excludeIDs, primaryID)
 			}
 			return fallbackProvider, nil
+		},
+		reserveSameProviderDispatch: func(_ context.Context, current providerLease, _ *model.SelectRequest) (sameProviderDispatchPermit, error) {
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			for _, policy := range store.routingPolicies {
+				if policy.Enabled && policy.TargetProviderID != nil && *policy.TargetProviderID != primaryID {
+					return nil, internal.ErrNoProvider
+				}
+			}
+			return newLocalSameProviderDispatchPermit(current.Provider(), current), nil
 		},
 	}
 

@@ -126,6 +126,8 @@ const (
 	TerminationReasonEOF                    = capturevalue.TerminationReasonEOF
 	TerminationReasonStatusFailoverDrain    = capturevalue.TerminationReasonStatusFailoverDrain
 	TerminationReasonCredentialRefreshDrain = capturevalue.TerminationReasonCredentialRefreshDrain
+	TerminationReasonInternalErrorAbsorbed  = capturevalue.TerminationReasonInternalErrorAbsorbed
+	TerminationReasonInternalErrorCommitted = capturevalue.TerminationReasonInternalErrorCommitted
 	TerminationReasonClientDisconnect       = capturevalue.TerminationReasonClientDisconnect
 	TerminationReasonTimeout                = capturevalue.TerminationReasonTimeout
 	TerminationReasonCanceled               = capturevalue.TerminationReasonCanceled

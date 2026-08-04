@@ -53,11 +53,8 @@ func TestImportConfig_SelectionScopeImportsExactProvidersAndPreservesRoutingPoli
 	st.config[configStickyModeKey] = "off"
 
 	importReq := ImportConfigRequest{
-		Version: ConfigExportVersion,
-		ImportScope: &ConfigImportScope{
-			Mode:        ConfigImportModeSelection,
-			ProviderIDs: []string{"provider-selected", "provider-selected"},
-		},
+		Version:     ConfigExportVersion,
+		ImportScope: selectionConfigImportScope(nil, []string{"provider-selected", "provider-selected"}),
 		Groups: []ExportedGroup{
 			{
 				ID:       selectedGroupID,
@@ -184,11 +181,8 @@ func TestImportConfig_SelectionScopeGroupImportsProvidersInThatGroup(t *testing.
 	st.config[configStickyModeKey] = "off"
 
 	importReq := ImportConfigRequest{
-		Version: ConfigExportVersion,
-		ImportScope: &ConfigImportScope{
-			Mode:     ConfigImportModeSelection,
-			GroupIDs: []string{selectedGroupID, selectedGroupID},
-		},
+		Version:     ConfigExportVersion,
+		ImportScope: selectionConfigImportScope([]string{selectedGroupID, selectedGroupID}, nil),
 		Groups: []ExportedGroup{
 			{
 				ID:       selectedGroupID,
@@ -259,11 +253,8 @@ func TestImportConfig_SelectionScopeProviderMissingParentGroupReportsSingleDepen
 
 	missingGroupID := "group-missing"
 	importReq := ImportConfigRequest{
-		Version: ConfigExportVersion,
-		ImportScope: &ConfigImportScope{
-			Mode:        ConfigImportModeSelection,
-			ProviderIDs: []string{"provider-selected"},
-		},
+		Version:     ConfigExportVersion,
+		ImportScope: selectionConfigImportScope(nil, []string{"provider-selected"}),
 		Providers: []ExportedProvider{
 			scopeTestProvider(
 				"provider-selected",
@@ -433,12 +424,8 @@ func TestImportConfig_SelectionScopeRejectsMissingSelections(t *testing.T) {
 	st.config[configStickyModeKey] = "off"
 
 	importReq := ImportConfigRequest{
-		Version: ConfigExportVersion,
-		ImportScope: &ConfigImportScope{
-			Mode:        ConfigImportModeSelection,
-			GroupIDs:    []string{"group-missing"},
-			ProviderIDs: []string{"provider-missing"},
-		},
+		Version:     ConfigExportVersion,
+		ImportScope: selectionConfigImportScope([]string{"group-missing"}, []string{"provider-missing"}),
 	}
 
 	body, err := json.Marshal(importReq)
@@ -477,7 +464,7 @@ func TestImportConfig_SelectionScopeRejectsMissingSelections(t *testing.T) {
 func TestImportConfig_RejectsMissingScopeModeDuringPreviewAndApply(t *testing.T) {
 	h, _, _ := testHandler()
 
-	body := []byte(`{"version":"3.0","providers":[],"groups":[],"routing_policies":[],"settings":{}}`)
+	body := []byte(`{"version":"4.0","providers":[],"groups":[],"routing_policies":[],"settings":{},"internal_error_rules":[]}`)
 
 	previewReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
 	previewReq.Header.Set("Content-Type", "application/json")

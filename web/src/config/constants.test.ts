@@ -9,12 +9,7 @@ import {
   STICKY_MODE_OPTIONS,
   AUTH_MODES,
   AUTH_MODE_OPTIONS,
-  API_TYPES,
-  API_TYPE_OPTIONS,
-  COMMON_API_TYPES,
   COMMON_VENDORS,
-  CUSTOM_API_TYPE_PREFIX,
-  isValidAPIType,
   ERROR_CODES,
   CONFIG_KEYS,
   DEFAULTS,
@@ -180,72 +175,12 @@ describe("AUTH_MODE_OPTIONS", () => {
   });
 });
 
-describe("API_TYPES", () => {
-  it("should have all valid API types", () => {
-    expect(API_TYPES.CLAUDE).toBe("claude");
-    expect(API_TYPES.DEEPSEEK_CLAUDE).toBe("deepseek-claude");
-    expect(API_TYPES.CODEX).toBe("codex");
-    expect(API_TYPES.GEMINI).toBe("gemini");
-    expect(API_TYPES.GROK).toBe("grok");
-    expect(API_TYPES.DEEPSEEK_OPENAI).toBe("deepseek-openai");
-  });
-
-  it("should have exactly 6 API types", () => {
-    expect(Object.keys(API_TYPES)).toHaveLength(6);
-  });
-});
-
-describe("API_TYPE_OPTIONS", () => {
-  it("should have options for all API types", () => {
-    expect(API_TYPE_OPTIONS).toHaveLength(6);
-    const values = API_TYPE_OPTIONS.map((opt) => opt.value);
-    expect(values).toContain(API_TYPES.CLAUDE);
-    expect(values).toContain(API_TYPES.DEEPSEEK_CLAUDE);
-    expect(values).toContain(API_TYPES.CODEX);
-    expect(values).toContain(API_TYPES.GEMINI);
-    expect(values).toContain(API_TYPES.GROK);
-    expect(values).toContain(API_TYPES.DEEPSEEK_OPENAI);
-  });
-});
-
-describe("COMMON_API_TYPES", () => {
-  it("should offer every built-in API type as a quick pick", () => {
-    expect(COMMON_API_TYPES).toHaveLength(6);
-    Object.values(API_TYPES).forEach((type) => {
-      expect(COMMON_API_TYPES).toContain(type);
-    });
-  });
-});
-
 describe("COMMON_VENDORS", () => {
   it("should include vendors for all built-in API type upstreams", () => {
     expect(COMMON_VENDORS).toContain("openai");
     expect(COMMON_VENDORS).toContain("anthropic");
     expect(COMMON_VENDORS).toContain("xai");
     expect(COMMON_VENDORS).toContain("deepseek");
-  });
-});
-
-describe("isValidAPIType", () => {
-  it("should accept predefined API types", () => {
-    expect(isValidAPIType("claude")).toBe(true);
-    expect(isValidAPIType("deepseek-claude")).toBe(true);
-    expect(isValidAPIType("codex")).toBe(true);
-    expect(isValidAPIType("gemini")).toBe(true);
-    expect(isValidAPIType("grok")).toBe(true);
-    expect(isValidAPIType("deepseek-openai")).toBe(true);
-  });
-
-  it("should accept custom:* pattern", () => {
-    expect(isValidAPIType("custom:mytool")).toBe(true);
-    expect(isValidAPIType("custom:openai")).toBe(true);
-  });
-
-  it("should reject invalid API types", () => {
-    expect(isValidAPIType("invalid")).toBe(false);
-    expect(isValidAPIType("gpt")).toBe(false);
-    expect(isValidAPIType("custom:")).toBe(false); // empty custom name
-    expect(isValidAPIType("custom")).toBe(false); // missing prefix
   });
 });
 
@@ -256,6 +191,9 @@ describe("ERROR_CODES", () => {
     expect(ERROR_CODES.NOT_FOUND).toBe("NOT_FOUND");
     expect(ERROR_CODES.CONFLICT).toBe("CONFLICT");
     expect(ERROR_CODES.UNAUTHORIZED).toBe("UNAUTHORIZED");
+    expect(ERROR_CODES.PRECONDITION_REQUIRED).toBe("PRECONDITION_REQUIRED");
+    expect(ERROR_CODES.REVISION_MISMATCH).toBe("REVISION_MISMATCH");
+    expect(ERROR_CODES.REQUEST_TOO_LARGE).toBe("REQUEST_TOO_LARGE");
   });
 });
 
@@ -327,12 +265,6 @@ describe("DEFAULTS", () => {
 describe("DEFAULT_PROVIDER_MAX_RETRIES", () => {
   it("should be 0 (try once, no retry)", () => {
     expect(DEFAULT_PROVIDER_MAX_RETRIES).toBe(0);
-  });
-});
-
-describe("CUSTOM_API_TYPE_PREFIX", () => {
-  it("should be 'custom:'", () => {
-    expect(CUSTOM_API_TYPE_PREFIX).toBe("custom:");
   });
 });
 

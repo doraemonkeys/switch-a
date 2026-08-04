@@ -1,0 +1,130 @@
+[
+  {
+    "api_type": "claude",
+    "label": "Claude",
+    "description": "Anthropic Messages API",
+    "display_order": 0,
+    "semantic_error_supported": true,
+    "request_dialect": "anthropic_messages",
+    "upstream_path_policy": "preserve",
+    "error_family": "anthropic_messages",
+    "response_protocol_ids": [
+      "anthropic.messages.json.v1",
+      "anthropic.messages.sse.v1"
+    ],
+    "namespace_pattern": "/claude/",
+    "unnamespaced_routes": [
+      { "method": "POST", "pattern": "/v1/messages", "match": "exact" },
+      {
+        "method": "POST",
+        "pattern": "/v1/messages/count_tokens",
+        "match": "exact"
+      },
+      { "method": "GET", "pattern": "/v1/models", "match": "exact" }
+    ]
+  },
+  {
+    "api_type": "deepseek-claude",
+    "label": "DeepSeek Claude",
+    "description": "DeepSeek Anthropic Messages-compatible API",
+    "display_order": 1,
+    "semantic_error_supported": true,
+    "request_dialect": "anthropic_messages",
+    "upstream_path_policy": "preserve",
+    "error_family": "anthropic_messages",
+    "response_protocol_ids": [
+      "anthropic.messages.json.v1",
+      "anthropic.messages.sse.v1"
+    ],
+    "namespace_pattern": "/deepseek-claude/",
+    "unnamespaced_routes": []
+  },
+  {
+    "api_type": "codex",
+    "label": "Codex",
+    "description": "OpenAI Responses API",
+    "display_order": 2,
+    "semantic_error_supported": true,
+    "request_dialect": "openai_responses",
+    "upstream_path_policy": "strip_optional_v1",
+    "error_family": "openai_responses",
+    "response_protocol_ids": [
+      "openai.responses.json.v1",
+      "openai.responses.sse.v1"
+    ],
+    "namespace_pattern": "/codex/",
+    "unnamespaced_routes": [
+      { "method": "GET", "pattern": "/responses", "match": "exact" },
+      { "method": "POST", "pattern": "/responses", "match": "exact" },
+      { "method": "GET", "pattern": "/v1/responses", "match": "exact" },
+      { "method": "POST", "pattern": "/v1/responses", "match": "exact" },
+      { "method": "POST", "pattern": "/alpha/search", "match": "exact" },
+      {
+        "method": "POST",
+        "pattern": "/v1/alpha/search",
+        "match": "exact"
+      }
+    ]
+  },
+  {
+    "api_type": "gemini",
+    "label": "Gemini",
+    "description": "Google GenerateContent API",
+    "display_order": 3,
+    "semantic_error_supported": true,
+    "request_dialect": "google_generate_content",
+    "upstream_path_policy": "preserve",
+    "error_family": "google_generate_content",
+    "response_protocol_ids": [
+      "google.generate_content.json.v1beta",
+      "google.generate_content.sse.v1beta"
+    ],
+    "namespace_pattern": "/gemini/",
+    "unnamespaced_routes": [
+      { "method": "POST", "pattern": "/v1beta/", "match": "prefix" }
+    ]
+  },
+  {
+    "api_type": "grok",
+    "label": "Grok",
+    "description": "xAI OpenAI Chat Completions-compatible API",
+    "display_order": 4,
+    "semantic_error_supported": true,
+    "request_dialect": "openai_chat_completions",
+    "upstream_path_policy": "strip_optional_v1",
+    "error_family": "openai_chat_completions",
+    "response_protocol_ids": [
+      "openai.chat_completions.json.v1",
+      "openai.chat_completions.sse.v1"
+    ],
+    "namespace_pattern": "/grok/",
+    "unnamespaced_routes": [
+      {
+        "method": "POST",
+        "pattern": "/chat/completions",
+        "match": "exact"
+      },
+      {
+        "method": "POST",
+        "pattern": "/v1/chat/completions",
+        "match": "exact"
+      }
+    ]
+  },
+  {
+    "api_type": "deepseek-openai",
+    "label": "DeepSeek OpenAI",
+    "description": "DeepSeek OpenAI Chat Completions-compatible API",
+    "display_order": 5,
+    "semantic_error_supported": true,
+    "request_dialect": "openai_chat_completions",
+    "upstream_path_policy": "strip_optional_v1",
+    "error_family": "openai_chat_completions",
+    "response_protocol_ids": [
+      "openai.chat_completions.json.v1",
+      "openai.chat_completions.sse.v1"
+    ],
+    "namespace_pattern": "/deepseek-openai/",
+    "unnamespaced_routes": []
+  }
+]

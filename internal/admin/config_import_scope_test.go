@@ -13,11 +13,10 @@ func TestResolveImportConfigRequest_SelectionKeepsProviderImportsExactAndNormali
 	groupA := "group-a"
 	groupB := "group-b"
 	req := &ImportConfigRequest{
-		ImportScope: &ConfigImportScope{
-			Mode:        ConfigImportModeSelection,
-			GroupIDs:    []string{" " + groupB + " ", groupB},
-			ProviderIDs: []string{" provider-a ", "provider-a"},
-		},
+		ImportScope: selectionConfigImportScope(
+			[]string{" " + groupB + " ", groupB},
+			[]string{" provider-a ", "provider-a"},
+		),
 		Groups: []ExportedGroup{
 			{ID: "group-z", Name: "Ignored Group", Strategy: DefaultStrategy, Weight: DefaultWeight, Enabled: true},
 			{ID: groupB, Name: "Selected Group", Strategy: DefaultStrategy, Weight: DefaultWeight, Enabled: true},
@@ -57,6 +56,9 @@ func TestResolveImportConfigRequest_SelectionKeepsProviderImportsExactAndNormali
 	if got := exportedProviderIDs(resolved.Providers); !reflect.DeepEqual(got, []string{"provider-a", "provider-b"}) {
 		t.Fatalf("resolved provider IDs = %v, want [provider-a provider-b]", got)
 	}
+	if !reflect.DeepEqual(resolved.RuleProviderIDs, []string{"provider-a", "provider-b"}) {
+		t.Fatalf("rule provider partition = %v, want [provider-a provider-b]", resolved.RuleProviderIDs)
+	}
 	if len(resolved.RoutingPolicies) != 0 {
 		t.Fatalf("resolved routing policies = %v, want none", resolved.RoutingPolicies)
 	}
@@ -68,10 +70,7 @@ func TestResolveImportConfigRequest_SelectionKeepsProviderImportsExactAndNormali
 func TestResolveImportConfigRequest_SelectionWarnsWhenSelectedProviderGroupIsMissingFromFile(t *testing.T) {
 	missingGroupID := "group-missing"
 	req := &ImportConfigRequest{
-		ImportScope: &ConfigImportScope{
-			Mode:        ConfigImportModeSelection,
-			ProviderIDs: []string{"provider-a"},
-		},
+		ImportScope: selectionConfigImportScope(nil, []string{"provider-a"}),
 		Providers: []ExportedProvider{
 			scopeTestProvider("provider-a", "Selected Provider", "codex", "https://selected.example", &missingGroupID),
 		},
@@ -119,9 +118,11 @@ func TestResolveImportConfigRequest_RejectsUnsupportedMode(t *testing.T) {
 func TestResolveImportConfigRequest_SettingsOnlyWarnsOnScopedIDs(t *testing.T) {
 	req := &ImportConfigRequest{
 		ImportScope: &ConfigImportScope{
-			Mode:        ConfigImportModeSettingsOnly,
-			GroupIDs:    []string{"group-a"},
-			ProviderIDs: []string{"provider-a"},
+			Mode: ConfigImportModeSettingsOnly,
+			Selection: &ConfigImportSelection{
+				GroupIDs:    []string{"group-a"},
+				ProviderIDs: []string{"provider-a"},
+			},
 		},
 		Providers: []ExportedProvider{
 			scopeTestProvider("provider-a", "Ignored Provider", "codex", "https://ignored.example", nil),
@@ -142,7 +143,7 @@ func TestResolveImportConfigRequest_SettingsOnlyWarnsOnScopedIDs(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want 1 warning", warnings)
 	}
-	if warnings[0] != `Import scope mode "settings_only" does not allow group_ids or provider_ids` {
+	if warnings[0] != `Import scope mode "settings_only" does not allow selection` {
 		t.Fatalf("warning = %q, want scoped-id rejection", warnings[0])
 	}
 	if len(resolved.Providers) != 0 {
@@ -181,6 +182,7 @@ func TestStageConfigImport_SetsExplicitRoutingPolicyMode(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	if fullStaged.bundle.RoutingPolicyMode != store.ConfigImportRoutingPolicyModeReplace {
 		t.Fatalf("full routing policy mode = %q, want %q", fullStaged.bundle.RoutingPolicyMode, store.ConfigImportRoutingPolicyModeReplace)
@@ -191,10 +193,7 @@ func TestStageConfigImport_SetsExplicitRoutingPolicyMode(t *testing.T) {
 
 	selectionStaged := stageConfigImport(
 		&ImportConfigRequest{
-			ImportScope: &ConfigImportScope{
-				Mode:     ConfigImportModeSelection,
-				GroupIDs: []string{groupID},
-			},
+			ImportScope: selectionConfigImportScope([]string{groupID}, nil),
 			Groups: []ExportedGroup{
 				{ID: groupID, Name: "Group A", Strategy: DefaultStrategy, Weight: DefaultWeight, Enabled: true},
 			},
@@ -205,6 +204,7 @@ func TestStageConfigImport_SetsExplicitRoutingPolicyMode(t *testing.T) {
 		existingProviders,
 		nil,
 		existingRoutingPolicies,
+		nil,
 		nil,
 	)
 	if selectionStaged.bundle.RoutingPolicyMode != store.ConfigImportRoutingPolicyModePreserve {

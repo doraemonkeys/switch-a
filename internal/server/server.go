@@ -12,6 +12,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/admin"
 	admindebugcapture "github.com/doraemonkeys/switch-a/internal/admin/debugcapture"
+	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
@@ -108,9 +110,8 @@ type AdminServer struct {
 // ConcurrencyTracker is an alias to avoid duplicating the interface definition.
 type ConcurrencyTracker = admin.ConcurrencyTracker
 
-// Selector defines the provider selection interface needed by the server.
-// This extends the basic internal.Selector with additional methods for
-// concurrency management and sticky sessions.
+// Selector is the proxy's lease-aware routing boundary. The server does not
+// expose a provider-only selector because dispatch must retain slot ownership.
 type Selector = proxy.Selector
 
 // Config holds proxy server configuration.
@@ -124,6 +125,9 @@ type Config struct {
 	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
 	Auth                       *providerauth.Service
 	Capture                    proxy.RequestCapture
+	RuleSetProvider            errorrule.RuleSetProvider
+	ResponseAnalyzer           proxy.ResponseAnalyzer
+	RuleStatistics             proxy.RuleStatistics
 }
 
 // AdminConfig holds admin server configuration.
@@ -134,10 +138,12 @@ type AdminConfig struct {
 	Store               store
 	Health              internal.HealthManager
 	Selector            Selector
+	ProviderLifecycles  admin.ProviderLifecycleCoordinator
 	Concurrency         ConcurrencyTracker
 	ActiveReqList       admin.ActiveRequestLister
 	Auth                *providerauth.Service
 	ProviderImportStore admin.ProviderImportStore
+	InternalErrorRules  *adminerrorruleapi.Handler
 	CaptureSessions     admindebugcapture.CaptureSessions
 	CaptureQueries      admindebugcapture.CaptureQueries
 	CaptureExports      admindebugcapture.CaptureExports
@@ -167,6 +173,9 @@ func New(cfg Config) *Server {
 		VisibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
 		Auth:                       cfg.Auth,
 		Capture:                    cfg.Capture,
+		RuleSetProvider:            cfg.RuleSetProvider,
+		ResponseAnalyzer:           cfg.ResponseAnalyzer,
+		RuleStatistics:             cfg.RuleStatistics,
 		Logger:                     cfg.Logger,
 	})
 
@@ -238,24 +247,40 @@ func NewAdmin(cfg AdminConfig) *AdminServer {
 
 // registerAdminRoutes registers admin API routes with authentication.
 func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
-	// Create admin handler with cleaner for proper resource cleanup.
-	// The Selector implements ConcurrencyCleaner for clearing concurrency
-	// counters when providers are deleted.
+	// Durable eligibility writes share the selector's generation boundary so an
+	// in-flight permit cannot activate from the pre-mutation snapshot.
 	adminHandler := admin.NewHandler(admin.Config{
 		Store:               cfg.Store,
 		Health:              cfg.Health,
 		Concurrency:         cfg.Concurrency,
-		Cleaner:             cfg.Selector,
+		ProviderLifecycles:  cfg.ProviderLifecycles,
 		ActiveReqList:       cfg.ActiveReqList,
 		Auth:                cfg.Auth,
 		ProviderImports:     cfg.Auth,
 		ProviderImportStore: cfg.ProviderImportStore,
+		InternalErrorRules:  cfg.InternalErrorRules,
 		Logger:              cfg.Logger,
 	})
 
 	// Create auth middleware
 	auth := admin.NewAuthMiddleware(cfg.AdminToken)
 	s.registerDebugCaptureRoutes(mux, cfg, auth)
+
+	// The frontend derives all built-in API presentation and capability state
+	// from this authenticated projection; no static UI fallback is registered.
+	mux.Handle("GET /admin/api/api-catalog", auth.WrapFunc(adminHandler.GetAPICatalog))
+
+	// Collection actions are intentionally registered before the ID template.
+	// This keeps reserved action names out of the rule-ID namespace as that
+	// namespace evolves, most importantly for the Test Message contract.
+	mux.Handle("GET /admin/api/internal-error-rules", auth.WrapFunc(adminHandler.ListInternalErrorRules))
+	mux.Handle("POST /admin/api/internal-error-rules", auth.WrapFunc(adminHandler.CreateInternalErrorRule))
+	mux.Handle("POST /admin/api/internal-error-rules/reorder", auth.WrapFunc(adminHandler.ReorderInternalErrorRules))
+	mux.Handle("POST /admin/api/internal-error-rules/test-message", auth.WrapFunc(adminHandler.TestInternalErrorMessage))
+	mux.Handle("GET /admin/api/internal-error-rules/{id}", auth.WrapFunc(adminHandler.GetInternalErrorRule))
+	mux.Handle("PUT /admin/api/internal-error-rules/{id}", auth.WrapFunc(adminHandler.UpdateInternalErrorRule))
+	mux.Handle("DELETE /admin/api/internal-error-rules/{id}", auth.WrapFunc(adminHandler.DeleteInternalErrorRule))
+	mux.Handle("GET /admin/api/internal-error-rule-stats", auth.WrapFunc(adminHandler.GetInternalErrorRuleStats))
 
 	// Provider routes
 	mux.Handle("GET /admin/api/providers", auth.WrapFunc(adminHandler.ListProviders))

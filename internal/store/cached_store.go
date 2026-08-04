@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -329,4 +330,16 @@ func (s *CachedStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 	// invalidation is harder to reason about than simply dropping the full cache.
 	s.InvalidateAllConfig()
 	return nil
+}
+
+// InternalErrorRuleRepository delegates the focused service rather than
+// widening internal.Store or creating a second snapshot/coordinator domain.
+func (s *CachedStore) InternalErrorRuleRepository() *errorrulesqlite.Repository {
+	source, ok := s.Store.(interface {
+		InternalErrorRuleRepository() *errorrulesqlite.Repository
+	})
+	if !ok {
+		return nil
+	}
+	return source.InternalErrorRuleRepository()
 }

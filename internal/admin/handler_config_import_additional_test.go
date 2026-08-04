@@ -5,7 +5,33 @@ import (
 	"testing"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/store"
 )
+
+func TestConfigImportRetiresEveryPotentiallyAffectedProviderGeneration(t *testing.T) {
+	lifecycles := &mockProviderLifecycleCoordinator{}
+	handler := &Handler{store: newMockStore(), providerLifecycles: lifecycles}
+
+	if err := handler.applyConfigImportAtLifecycleBoundary(
+		context.Background(), ImportChanges{}, &store.ConfigImportBundle{},
+	); err != nil {
+		t.Fatalf("unchanged import error = %v", err)
+	}
+	if lifecycles.allRetirements != 0 {
+		t.Fatalf("unchanged import retired all generations %d times", lifecycles.allRetirements)
+	}
+
+	if err := handler.applyConfigImportAtLifecycleBoundary(
+		context.Background(),
+		ImportChanges{RoutingPolicies: ChangeCount{Update: 1}},
+		&store.ConfigImportBundle{},
+	); err != nil {
+		t.Fatalf("routing import error = %v", err)
+	}
+	if lifecycles.allRetirements != 1 {
+		t.Fatalf("routing import global retirements = %d, want 1", lifecycles.allRetirements)
+	}
+}
 
 func importedTestProvider(id, name, apiType, baseURL string) ExportedProvider {
 	return ExportedProvider{

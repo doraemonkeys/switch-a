@@ -6,6 +6,19 @@ import (
 	"fmt"
 )
 
+// SwitchReason constants define provider-transition outcomes persisted on
+// RequestAttempt. They share this boundary with proxy error codes because both
+// are the stable failure vocabulary emitted by request orchestration.
+const (
+	SwitchReasonMaxRetriesExhausted     = "max_retries_exhausted"
+	SwitchReasonCircuitBreakerTriggered = "circuit_breaker_triggered"
+	SwitchReasonUsageLimitReached       = "usage_limit_reached"
+)
+
+func formatPermanentErrorReason(statusCode int) string {
+	return fmt.Sprintf("permanent_error_%d", statusCode)
+}
+
 // Proxy error codes.
 const (
 	ErrCodeUnknownAPIType      = "UNKNOWN_API_TYPE"

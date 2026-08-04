@@ -111,6 +111,7 @@ func TestGetRoutingPolicy_InvalidID(t *testing.T) {
 
 func TestCreateRoutingPolicy(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 	st.groups["group-1"] = &model.Group{ID: "group-1", Name: "Primary"}
 	st.providers["provider-openai"] = &model.Provider{
 		ID:       "provider-openai",
@@ -148,6 +149,9 @@ func TestCreateRoutingPolicy(t *testing.T) {
 		if len(policy.Vendors) != 1 || policy.Vendors[0].Vendor != "openai" {
 			t.Fatalf("Vendors = %#v, want openai", policy.Vendors)
 		}
+	}
+	if lifecycles.allRetirements != 1 {
+		t.Fatalf("global lifecycle retirements = %d, want 1", lifecycles.allRetirements)
 	}
 }
 
@@ -216,6 +220,7 @@ func TestCreateRoutingPolicy_Conflict(t *testing.T) {
 
 func TestUpdateRoutingPolicy(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 	st.groups["group-1"] = &model.Group{ID: "group-1", Name: "Primary"}
 	st.groups["group-2"] = &model.Group{ID: "group-2", Name: "Secondary"}
 	st.providers["provider-openai"] = &model.Provider{
@@ -254,6 +259,9 @@ func TestUpdateRoutingPolicy(t *testing.T) {
 	}
 	if len(policy.Groups) != 1 || policy.Groups[0].GroupID != "group-2" {
 		t.Fatalf("Groups = %#v, want group-2", policy.Groups)
+	}
+	if lifecycles.allRetirements != 1 {
+		t.Fatalf("global lifecycle retirements = %d, want 1", lifecycles.allRetirements)
 	}
 }
 
@@ -382,6 +390,7 @@ func TestUpdateRoutingPolicy_NotFound(t *testing.T) {
 
 func TestDeleteRoutingPolicy(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 	st.routingPolicies[11] = &model.RoutingPolicy{ID: 11, APIType: "codex"}
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/routing-policies/11", nil)
@@ -395,6 +404,9 @@ func TestDeleteRoutingPolicy(t *testing.T) {
 	}
 	if _, ok := st.routingPolicies[11]; ok {
 		t.Fatal("routing policy was not deleted")
+	}
+	if lifecycles.allRetirements != 1 {
+		t.Fatalf("global lifecycle retirements = %d, want 1", lifecycles.allRetirements)
 	}
 }
 

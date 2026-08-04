@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"gorm.io/gorm"
@@ -26,11 +28,13 @@ const (
 // ConfigImportBundle captures the normalized, fully validated import payload
 // that the store can apply atomically without re-running admin-level staging.
 type ConfigImportBundle struct {
-	Groups            []model.Group
-	Providers         []model.Provider
-	RoutingPolicyMode ConfigImportRoutingPolicyMode
-	RoutingPolicies   []model.RoutingPolicy
-	Settings          map[string]string
+	Groups               []model.Group
+	Providers            []model.Provider
+	RoutingPolicyMode    ConfigImportRoutingPolicyMode
+	RoutingPolicies      []model.RoutingPolicy
+	Settings             map[string]string
+	RuleImport           errorrulesqlite.ImportRequest
+	ExpectedRuleRevision *errorrule.Revision
 }
 
 func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error {
@@ -52,11 +56,16 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 	}
 	defer release()
 
-	return s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
+	ruleImport := bundle.RuleImport
+	if ruleImport.Mode == "" {
+		ruleImport.Mode = errorrulesqlite.ImportModePreserve
+	}
+	applyRecords := func(tx *gorm.DB) error {
 		txStore := &SQLiteStore{
 			db:                  tx,
 			clock:               s.clock,
 			credentialMutations: s.credentialMutations,
+			ruleRepository:      s.ruleRepository,
 		}
 		if err := applyImportedGroups(ownedCtx, txStore, bundle.Groups); err != nil {
 			return err
@@ -74,7 +83,29 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 			return err
 		}
 		return applyImportedSettings(ownedCtx, txStore, bundle.Settings)
-	})
+	}
+
+	if ruleImport.Mode == errorrulesqlite.ImportModePreserve {
+		if bundle.ExpectedRuleRevision != nil {
+			return fmt.Errorf("settings-only config import cannot precondition the rule set")
+		}
+		// Settings-only import has no rule partition. Avoiding the coordinator here
+		// preserves that semantic boundary and prevents unrelated settings writes
+		// from contending with rule CRUD.
+		return s.db.WithContext(ownedCtx).Transaction(applyRecords)
+	}
+
+	_, err = s.ruleRepository.Coordinate(
+		ownedCtx,
+		bundle.ExpectedRuleRevision,
+		func(tx *gorm.DB, currentRules []errorrule.Rule) ([]errorrule.Rule, error) {
+			if err := applyRecords(tx); err != nil {
+				return nil, err
+			}
+			candidate, _, err := errorrulesqlite.BuildImportCandidate(currentRules, ruleImport)
+			return candidate, err
+		})
+	return err
 }
 
 func applyImportedGroups(

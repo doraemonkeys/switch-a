@@ -1,4 +1,4 @@
-import type { BackoffPolicy } from "./types";
+import type { BackoffPolicy } from "./retry-policy-types";
 
 export type ProviderImportCandidateStatus =
   "ready" | "existing" | "duplicate" | "invalid" | "unsupported";

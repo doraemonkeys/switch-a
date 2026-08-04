@@ -1,6 +1,6 @@
 import type { FormEvent } from "react";
 import type { Provider, RoutingPolicy } from "../../api";
-import { API_TYPE_OPTIONS } from "../../config/constants";
+import { useAPICatalog } from "../../api/useApi";
 import { ProviderBadge } from "./badges";
 import { getProviderOptionLabel } from "./providerLabels";
 import {
@@ -48,6 +48,31 @@ function RoutingPolicyCoreFields({
   selectedModelHint?: string;
   onChange: (draft: RoutingPolicyDraft) => void;
 }) {
+  const { catalog, loading, error, refetch } = useAPICatalog();
+  let apiCatalogGuidance = (
+    <p className="text-xs text-text-muted">
+      Requests must match this exact upstream API contract.
+    </p>
+  );
+  if (loading) {
+    apiCatalogGuidance = (
+      <p className="text-xs text-text-muted" role="status">
+        Loading built-in API types...
+      </p>
+    );
+  } else if (error) {
+    apiCatalogGuidance = (
+      <button
+        type="button"
+        onClick={() => void refetch()}
+        className="text-xs text-danger hover:underline cursor-pointer"
+        title={error.message}
+      >
+        Retry API type catalog
+      </button>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
       <label className="space-y-2">
@@ -65,15 +90,13 @@ function RoutingPolicyCoreFields({
           placeholder="codex"
         />
         <datalist id="routing-policy-api-types">
-          {API_TYPE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
+          {catalog?.api_types.map((entry) => (
+            <option key={entry.api_type} value={entry.api_type}>
+              {entry.label}
             </option>
           ))}
         </datalist>
-        <p className="text-xs text-text-muted">
-          Requests must match this exact upstream API contract.
-        </p>
+        {apiCatalogGuidance}
       </label>
 
       <label className="space-y-2">

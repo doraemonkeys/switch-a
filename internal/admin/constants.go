@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
@@ -19,6 +20,9 @@ const (
 	ErrCodeConflict             = "CONFLICT"
 	ErrCodeUnauthorized         = "UNAUTHORIZED"
 	ErrCodeProviderAuthRequired = "PROVIDER_AUTH_REQUIRED"
+	ErrCodePreconditionRequired = "PRECONDITION_REQUIRED"
+	ErrCodeRevisionMismatch     = "REVISION_MISMATCH"
+	ErrCodeRequestTooLarge      = "REQUEST_TOO_LARGE"
 )
 
 // Default values for resources.
@@ -76,29 +80,6 @@ var validProviderCredentialTypes = map[model.ProviderCredentialType]bool{
 	model.ProviderCredentialTypeChatGPT: true,
 }
 
-// validAPITypes contains the allowed API type values.
-// Unexported to prevent external mutation; use IsValidAPIType() for validation.
-// These must match the types recognized by the proxy router (see proxy/router.go):
-//   - claude: routes via /v1/messages, /v1/models
-//   - deepseek-claude: routes via /v1/messages, /v1/models
-//   - codex: routes via /responses
-//   - deepseek-openai: routes via /chat/completions, /v1/chat/completions
-//   - grok: routes via /chat/completions, /v1/chat/completions
-//   - gemini: routes via /gemini/*
-//   - custom:*: routes via /custom/:toolId/* (handled separately in IsValidAPIType)
-//
-// Note: Previous versions allowed functional types (chat, completion, embedding, etc.)
-// and provider names (gpt, llama, mistral) that had no matching proxy routes,
-// causing providers to be created but never matched by incoming requests.
-var validAPITypes = map[string]bool{
-	"claude":          true,
-	"deepseek-claude": true,
-	"codex":           true,
-	"deepseek-openai": true,
-	"gemini":          true,
-	"grok":            true,
-}
-
 // validConfigKeys contains the allowed configuration keys.
 // Unexported to prevent external mutation; use IsValidConfigKey() for validation.
 var validConfigKeys = map[string]bool{
@@ -137,19 +118,19 @@ func IsValidProviderCredentialType(value model.ProviderCredentialType) bool {
 }
 
 // CustomAPITypePrefix is the prefix for custom API types (e.g., "custom:mytool").
-const CustomAPITypePrefix = "custom:"
+const CustomAPITypePrefix = apicontract.CustomAPITypePrefix
 
 // IsValidAPIType checks if the given API type is valid.
 // Accepts both predefined API types and custom:* pattern for custom tools.
 func IsValidAPIType(t string) bool {
-	if validAPITypes[t] {
-		return true
-	}
-	// Support custom:* format for custom API tools
-	if len(t) > len(CustomAPITypePrefix) && t[:len(CustomAPITypePrefix)] == CustomAPITypePrefix {
-		return true
-	}
-	return false
+	return apicontract.IsValidProviderAPIType(t)
+}
+
+// APICatalogResponse returns the dynamic public projection consumed by admin
+// handlers. Keeping the DTO construction in apicontract prevents validation
+// and presentation metadata from becoming independent authorities again.
+func APICatalogResponse() apicontract.CatalogResponse {
+	return apicontract.Projection()
 }
 
 // IsValidConfigKey checks if the given config key is valid.

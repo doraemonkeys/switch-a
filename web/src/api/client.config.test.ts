@@ -94,7 +94,7 @@ describe("createApiClient config API read and update operations", () => {
 
   it("should export config", async () => {
     const exportedConfig = {
-      version: "3.0",
+      version: "4.0",
       exported_at: "2025-01-13T10:00:00Z",
       providers: [
         {
@@ -137,6 +137,7 @@ describe("createApiClient config API read and update operations", () => {
         sticky_ttl: "300",
         websocket_probe_client_model: "true",
       },
+      internal_error_rules: [],
     };
     mockHttpClient.mockResponse({
       ok: true,
@@ -164,6 +165,7 @@ describe("createApiClient config API import operations", () => {
 
   it("should preview config import (dry run)", async () => {
     const importRequest = {
+      version: "4.0",
       import_scope: {
         mode: "full" as const,
       },
@@ -199,6 +201,7 @@ describe("createApiClient config API import operations", () => {
         sticky_ttl: "600",
         websocket_probe_client_model: "false",
       },
+      internal_error_rules: [],
     };
     const previewResponse = {
       dry_run: true,
@@ -207,8 +210,11 @@ describe("createApiClient config API import operations", () => {
         groups: { add: 0, update: 0, delete: 0, unchanged: 0 },
         routing_policies: { add: 1, update: 0, delete: 0, unchanged: 0 },
         settings: { add: 0, update: 1, delete: 0, unchanged: 0 },
+        internal_error_rules: { add: 0, update: 0, delete: 0, unchanged: 0 },
       },
       warnings: [],
+      rule_set_revision: "0",
+      rule_set_etag: '"internal-error-rules/0"',
     };
     mockHttpClient.mockResponse({
       ok: true,
@@ -228,12 +234,15 @@ describe("createApiClient config API import operations", () => {
     );
   });
 
-  it("should import config", async () => {
+  it("forwards the preview rule ETag exactly for selection import", async () => {
     const importRequest = {
+      version: "4.0",
       import_scope: {
         mode: "selection" as const,
-        group_ids: ["group-1"],
-        provider_ids: ["provider-1"],
+        selection: {
+          group_ids: ["group-1"],
+          provider_ids: ["provider-1"],
+        },
       },
       providers: [
         {
@@ -267,6 +276,7 @@ describe("createApiClient config API import operations", () => {
         sticky_ttl: "600",
         websocket_probe_client_model: "false",
       },
+      internal_error_rules: [],
     };
     const importResult = {
       success: true,
@@ -275,7 +285,10 @@ describe("createApiClient config API import operations", () => {
         groups: { added: 0, updated: 0, deleted: 0 },
         routing_policies: { added: 1, updated: 0, deleted: 0 },
         settings: { added: 0, updated: 1, deleted: 0 },
+        internal_error_rules: { added: 0, updated: 0, deleted: 0 },
       },
+      rule_set_revision: "0",
+      rule_set_etag: '"internal-error-rules/0"',
     };
     mockHttpClient.mockResponse({
       ok: true,
@@ -283,20 +296,105 @@ describe("createApiClient config API import operations", () => {
       json: () => Promise.resolve(importResult),
     });
 
-    const result = await api.config.import(importRequest);
+    const previewRuleSetETag = '"internal-error-rules/41"';
+    const result = await api.config.import(importRequest, previewRuleSetETag);
 
     expect(result).toEqual(importResult);
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config/import",
       expect.objectContaining({
         method: "POST",
+        headers: expect.objectContaining({
+          "If-Match": previewRuleSetETag,
+        }),
         body: JSON.stringify(importRequest),
+      }),
+    );
+  });
+
+  it("omits the rule precondition for settings-only import", async () => {
+    const importRequest = {
+      version: "4.0",
+      import_scope: { mode: "settings_only" as const },
+      providers: [],
+      groups: [],
+      routing_policies: [],
+      settings: { auth_mode: "auto" },
+      internal_error_rules: [],
+    };
+    const importResult = {
+      success: true,
+      applied: {
+        providers: { added: 0, updated: 0, deleted: 0 },
+        groups: { added: 0, updated: 0, deleted: 0 },
+        routing_policies: { added: 0, updated: 0, deleted: 0 },
+        settings: { added: 0, updated: 1, deleted: 0 },
+        internal_error_rules: { added: 0, updated: 0, deleted: 0 },
+      },
+      rule_set_revision: "9",
+      rule_set_etag: '"internal-error-rules/9"',
+    };
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(importResult),
+    });
+
+    await api.config.import(importRequest, '"internal-error-rules/9"');
+
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/config/import",
+      expect.objectContaining({
+        headers: expect.not.objectContaining({
+          "If-Match": expect.anything(),
+        }),
+      }),
+    );
+  });
+
+  it("surfaces a stale preview without re-fetching or replacing its ETag", async () => {
+    const importRequest = {
+      version: "4.0",
+      import_scope: { mode: "full" as const },
+      providers: [],
+      groups: [],
+      routing_policies: [],
+      settings: {},
+      internal_error_rules: [],
+    };
+    const stalePreviewETag = '"internal-error-rules/8"';
+    mockHttpClient.mockResponse({
+      ok: false,
+      status: 412,
+      statusText: "Precondition Failed",
+      json: async () => ({
+        code: "REVISION_MISMATCH",
+        message: "Rule set changed after preview",
+        details: { current_revision: "9" },
+      }),
+    });
+
+    await expect(
+      api.config.import(importRequest, stalePreviewETag),
+    ).rejects.toMatchObject({
+      code: "REVISION_MISMATCH",
+      status: 412,
+      details: { current_revision: "9" },
+    });
+    expect(mockHttpClient.fetch).toHaveBeenCalledTimes(1);
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/config/import",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "If-Match": stalePreviewETag,
+        }),
       }),
     );
   });
 
   it("should handle import with warnings", async () => {
     const importRequest = {
+      version: "4.0",
       import_scope: {
         mode: "settings_only" as const,
       },
@@ -304,6 +402,7 @@ describe("createApiClient config API import operations", () => {
       groups: [],
       routing_policies: [],
       settings: {},
+      internal_error_rules: [],
     };
     const previewResponse = {
       dry_run: true,
@@ -312,8 +411,11 @@ describe("createApiClient config API import operations", () => {
         groups: { add: 0, update: 0, delete: 0, unchanged: 0 },
         routing_policies: { add: 0, update: 0, delete: 0, unchanged: 0 },
         settings: { add: 0, update: 0, delete: 0, unchanged: 0 },
+        internal_error_rules: { add: 0, update: 0, delete: 0, unchanged: 0 },
       },
       warnings: ["No changes detected", "Empty configuration"],
+      rule_set_revision: "0",
+      rule_set_etag: '"internal-error-rules/0"',
     };
     mockHttpClient.mockResponse({
       ok: true,
@@ -332,11 +434,12 @@ describe("createApiClient config API import operations", () => {
       import_scope: {
         mode: "full" as const,
       },
-      version: "3.0",
+      version: "4.0",
       providers: [],
       groups: [],
       routing_policies: [],
       settings: {},
+      internal_error_rules: [],
     };
     mockHttpClient.mockResponse({
       ok: true,
@@ -347,8 +450,11 @@ describe("createApiClient config API import operations", () => {
           groups: { add: 0, update: 0, delete: 0, unchanged: 0 },
           routing_policies: { add: 0, update: 0, delete: 0, unchanged: 0 },
           settings: { add: 0, update: 0, delete: 0, unchanged: 0 },
+          internal_error_rules: { add: 0, update: 0, delete: 0, unchanged: 0 },
         },
         warnings: null,
+        rule_set_revision: "0",
+        rule_set_etag: '"internal-error-rules/0"',
       }),
     });
 

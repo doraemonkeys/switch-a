@@ -103,8 +103,10 @@ export function buildImportScope(
 
   return {
     mode,
-    group_ids: [...selectedGroupIds],
-    provider_ids: [...selectedProviderIds],
+    selection: {
+      group_ids: [...selectedGroupIds],
+      provider_ids: [...selectedProviderIds],
+    },
   };
 }
 
@@ -119,6 +121,7 @@ export function buildImportRequest(
     groups: parsedConfig.groups,
     routing_policies: parsedConfig.routing_policies,
     settings: parsedConfig.settings,
+    internal_error_rules: parsedConfig.internal_error_rules,
   };
 }
 

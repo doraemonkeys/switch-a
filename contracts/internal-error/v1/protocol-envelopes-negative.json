@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "ordinary anthropic output containing keyword",
+      "api_type": "claude",
+      "content_type": "application/json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"overloaded_error\"}]}"
+      },
+      "expected": {
+        "response_protocol_id": "anthropic.messages.json.v1",
+        "event_class": "client_visible",
+        "fields": null
+      }
+    },
+    {
+      "name": "nested openai message is not searched",
+      "api_type": "codex",
+      "content_type": "application/json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"type\":\"response.completed\",\"output\":[{\"message\":\"server_is_overloaded\",\"error\":{\"message\":\"at capacity\"}}]}"
+      },
+      "expected": {
+        "response_protocol_id": "openai.responses.json.v1",
+        "event_class": "client_visible",
+        "fields": null
+      }
+    },
+    {
+      "name": "chat object needs type or code",
+      "api_type": "grok",
+      "content_type": "application/json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"message\":\"server_is_overloaded\"}}"
+      },
+      "expected": {
+        "response_protocol_id": "openai.chat_completions.json.v1",
+        "event_class": "client_visible",
+        "fields": null
+      }
+    },
+    {
+      "name": "explicit non-error sse event cannot claim chat error",
+      "api_type": "deepseek-openai",
+      "content_type": "text/event-stream",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "event: message\ndata: {\"error\":{\"type\":\"server_error\",\"message\":\"server_is_overloaded\"}}\n\n"
+      },
+      "expected": {
+        "response_protocol_id": "openai.chat_completions.sse.v1",
+        "event_class": "client_visible",
+        "fields": null
+      }
+    },
+    {
+      "name": "google normal candidate text is not an error",
+      "api_type": "gemini",
+      "content_type": "application/json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"RESOURCE_EXHAUSTED\"}]}}]}"
+      },
+      "expected": {
+        "response_protocol_id": "google.generate_content.json.v1beta",
+        "event_class": "client_visible",
+        "fields": null
+      }
+    },
+    {
+      "name": "custom api is never analyzed",
+      "api_type": "custom:tool",
+      "content_type": "application/json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"type\":\"server_error\",\"code\":503,\"message\":\"server_is_overloaded\"}}"
+      },
+      "expected": {
+        "response_protocol_id": null,
+        "event_class": "fail_open",
+        "analysis_reason": "unsupported_response_protocol",
+        "fields": null
+      }
+    },
+    {
+      "name": "brotli fails open before decoder allocation",
+      "api_type": "deepseek-openai",
+      "content_type": "text/event-stream",
+      "content_encoding": "br",
+      "body": {
+        "encoding": "base64",
+        "value": "G1gAKCwK7OYYJ/wqFHKrOcuJM6hFFHS+pkjNXsJUubVOnwLLBGGZcRsb+wo+cdVtGb+V2xiO5VWjmp0Tyz25Mjtj2DGDcV/W9T85a4f+FQCpBQ=="
+      },
+      "expected": {
+        "response_protocol_id": "openai.chat_completions.sse.v1",
+        "event_class": "fail_open",
+        "analysis_reason": "unsupported_content_encoding",
+        "fields": null,
+        "raw_body_preserved": true
+      }
+    },
+    {
+      "name": "normal websocket-shaped content remains out of scope",
+      "api_type": "codex",
+      "content_type": "application/websocket",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"type\":\"error\",\"code\":\"server_is_overloaded\",\"message\":\"At capacity\"}"
+      },
+      "expected": {
+        "response_protocol_id": null,
+        "event_class": "fail_open",
+        "analysis_reason": "unsupported_response_protocol",
+        "fields": null
+      }
+    }
+  ]
+}

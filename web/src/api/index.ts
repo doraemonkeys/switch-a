@@ -8,6 +8,15 @@ export {
   createTokenManager,
 } from "./client";
 export type { ApiClient } from "./client";
+export {
+  API_CATALOG_SCHEMA_VERSION,
+  APICatalogContractError,
+  findBuiltInAPIType,
+  isValidAPIType,
+  isValidCustomAPIType,
+  parseAPICatalog,
+} from "./api-catalog";
+export type { APICatalog, APICatalogEntry } from "./api-catalog";
 export { createDebugCaptureApi } from "./debug-capture";
 export type { DebugCaptureApi } from "./debug-capture";
 export type {
@@ -57,7 +66,6 @@ export type {
   AuthMode,
   FailoverScope,
   ProviderUsageLimitPolicy,
-  BuiltInAPIType,
   ConfigKey,
   ErrorCode,
   ApiErrorDetails,
@@ -116,6 +124,7 @@ export type {
   ExportedAPIType,
   ExportedProvider,
   ExportedGroup,
+  ExportedInternalErrorRule,
   ExportedRoutingPolicy,
   ExportedConfig,
   FullImportScope,
@@ -157,5 +166,5 @@ export type { Storage, HttpClient, ApiClientDeps } from "./interfaces";
 export { browserStorage, browserHttpClient } from "./interfaces";
 
 // Context exports
-export { ApiProvider } from "./ApiContext";
-export { useApi } from "./useApi";
+export { APICatalogProvider, ApiProvider } from "./ApiContext";
+export { useAPICatalog, useApi } from "./useApi";

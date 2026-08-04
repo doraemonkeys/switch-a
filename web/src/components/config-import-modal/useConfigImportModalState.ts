@@ -7,7 +7,10 @@ import type {
   ImportPreviewResponse,
   ImportResult,
 } from "../../api/types";
-import { REQUIRED_IMPORT_ARRAY_FIELDS } from "./constants";
+import {
+  CONFIG_TRANSFER_VERSION,
+  REQUIRED_IMPORT_ARRAY_FIELDS,
+} from "./constants";
 import {
   buildImportRequest,
   buildImportScope,
@@ -22,6 +25,12 @@ async function parseImportFile(file: File): Promise<ExportedConfig> {
   try {
     const text = await file.text();
     const json = JSON.parse(text) as ExportedConfig;
+
+    if (json.version !== CONFIG_TRANSFER_VERSION) {
+      throw new Error(
+        `配置文件版本必须为 ${CONFIG_TRANSFER_VERSION}，不支持旧版兼容导入`,
+      );
+    }
 
     for (const field of REQUIRED_IMPORT_ARRAY_FIELDS) {
       if (!Array.isArray(json[field])) {
@@ -242,6 +251,7 @@ function useImportFlowHandlers(
   const {
     clearImportProgress,
     parsedConfig,
+    preview,
     previewRequest,
     previewRequestVersionRef,
     previewing,
@@ -298,14 +308,17 @@ function useImportFlowHandlers(
   }
 
   async function handleConfirmImport() {
-    if (!previewRequest) {
+    if (!previewRequest || !preview) {
       return;
     }
 
     setError(null);
 
     try {
-      const importResult = await onImport(previewRequest);
+      const importResult = await onImport(
+        previewRequest,
+        preview.rule_set_etag,
+      );
       setResult(importResult);
       setStep("result");
     } catch (err) {

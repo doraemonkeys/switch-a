@@ -166,20 +166,6 @@ export const PROVIDER_USAGE_LIMIT_POLICY_OPTIONS = [
 ] as const;
 
 /**
- * Valid API types for providers.
- * These must match the types recognized by the proxy router.
- * @see internal/admin/constants.go ValidAPITypes
- */
-export const API_TYPES = {
-  CLAUDE: "claude",
-  DEEPSEEK_CLAUDE: "deepseek-claude",
-  CODEX: "codex",
-  GEMINI: "gemini",
-  GROK: "grok",
-  DEEPSEEK_OPENAI: "deepseek-openai",
-} as const;
-
-/**
  * Failover scope values for vendor isolation.
  * Controls which providers can be used as failover targets.
  * @see internal/model/model.go Scope
@@ -220,21 +206,6 @@ export const FAILOVER_SCOPE_OPTIONS = [
   },
 ] as const;
 
-export type APIType = (typeof API_TYPES)[keyof typeof API_TYPES];
-
-/**
- * Common API types for quick selection in forms.
- * These are the standard API types supported by the proxy.
- */
-export const COMMON_API_TYPES = [
-  API_TYPES.CLAUDE,
-  API_TYPES.DEEPSEEK_CLAUDE,
-  API_TYPES.CODEX,
-  API_TYPES.GEMINI,
-  API_TYPES.GROK,
-  API_TYPES.DEEPSEEK_OPENAI,
-] as const;
-
 /**
  * Common vendor names for quick selection in forms.
  * These represent well-known AI API providers.
@@ -248,63 +219,8 @@ export const COMMON_VENDORS = [
   "deepseek",
 ] as const;
 
-/**
- * Prefix for custom API types (e.g., "custom:mytool").
- * @see internal/admin/constants.go CustomAPITypePrefix
- */
-export const CUSTOM_API_TYPE_PREFIX = "custom:";
-
-export const API_TYPE_OPTIONS = [
-  {
-    value: API_TYPES.CLAUDE,
-    label: "Claude",
-    description: "Anthropic Claude API (/v1/messages, /claude/*)",
-  },
-  {
-    value: API_TYPES.DEEPSEEK_CLAUDE,
-    label: "DeepSeek Claude",
-    description:
-      "DeepSeek Claude-compatible API (/v1/messages, /deepseek-claude/*)",
-  },
-  {
-    value: API_TYPES.CODEX,
-    label: "Codex",
-    description: "OpenAI Codex/Responses API (/responses, /codex/*)",
-  },
-  {
-    value: API_TYPES.GEMINI,
-    label: "Gemini",
-    description: "Google Gemini API (/v1beta/*, /gemini/*)",
-  },
-  {
-    value: API_TYPES.GROK,
-    label: "Grok",
-    description: "xAI Grok API (/chat/completions, /grok/*)",
-  },
-  {
-    value: API_TYPES.DEEPSEEK_OPENAI,
-    label: "DeepSeek OpenAI",
-    description:
-      "DeepSeek OpenAI-compatible chat completions API (/chat/completions, /v1/chat/completions, /deepseek-openai/*)",
-  },
-] as const;
-
 /** Fixed upstream base URL used by GPT-login-backed Codex providers. */
 export const CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
-
-/**
- * Check if an API type is valid.
- * Accepts both predefined API types and custom:* pattern.
- */
-export function isValidAPIType(type: string): boolean {
-  if (Object.values(API_TYPES).includes(type as APIType)) {
-    return true;
-  }
-  return (
-    type.startsWith(CUSTOM_API_TYPE_PREFIX) &&
-    type.length > CUSTOM_API_TYPE_PREFIX.length
-  );
-}
 
 /**
  * Error codes returned by the backend API.
@@ -317,6 +233,9 @@ export const ERROR_CODES = {
   CONFLICT: "CONFLICT",
   UNAUTHORIZED: "UNAUTHORIZED",
   PROVIDER_AUTH_REQUIRED: "PROVIDER_AUTH_REQUIRED",
+  PRECONDITION_REQUIRED: "PRECONDITION_REQUIRED",
+  REVISION_MISMATCH: "REVISION_MISMATCH",
+  REQUEST_TOO_LARGE: "REQUEST_TOO_LARGE",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

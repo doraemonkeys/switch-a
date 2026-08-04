@@ -15,6 +15,16 @@ import (
 	"go.uber.org/zap"
 )
 
+func commitSwitchPreview(t *testing.T, tracker *providerSwitchTracker) model.SwitchMode {
+	t.Helper()
+	preview := tracker.previewProviderSwitch()
+	mode := preview.tracker.currentMode()
+	if err := tracker.commitProviderSwitch(preview); err != nil {
+		t.Fatalf("commitProviderSwitch() error = %v", err)
+	}
+	return mode
+}
+
 func TestProviderSwitchTracker_PreVisibleReplacementUsesExplicitReplacementState(t *testing.T) {
 	t.Parallel()
 
@@ -25,8 +35,8 @@ func TestProviderSwitchTracker_PreVisibleReplacementUsesExplicitReplacementState
 	if mode := tracker.recordSelection(initialProvider, selector.BuildSelectionMetadata(selectReq, selector.SelectionSourceStrategy)); mode != model.SwitchModeInitial {
 		t.Fatalf("recordSelection() mode = %q, want %q", mode, model.SwitchModeInitial)
 	}
-	if mode := tracker.prepareProviderSwitch(); mode != model.SwitchModeReplacement {
-		t.Fatalf("prepareProviderSwitch() mode = %q, want %q", mode, model.SwitchModeReplacement)
+	if mode := commitSwitchPreview(t, &tracker); mode != model.SwitchModeReplacement {
+		t.Fatalf("committed switch preview mode = %q, want %q", mode, model.SwitchModeReplacement)
 	}
 	if mode := tracker.prepareSelection(); mode != model.SwitchModeReplacement {
 		t.Fatalf("prepareSelection() mode = %q, want %q", mode, model.SwitchModeReplacement)
@@ -96,8 +106,8 @@ func TestProviderSwitchTracker_StickyReentryConsumesSeedAndAttachesContinuity(t 
 		t.Fatalf("seed store len = %d, want 0 after compare-and-consume", seedStore.Len())
 	}
 
-	if mode := tracker.prepareProviderSwitch(); mode != model.SwitchModeFailover {
-		t.Fatalf("prepareProviderSwitch() mode = %q, want %q after attached continuity leaves origin", mode, model.SwitchModeFailover)
+	if mode := commitSwitchPreview(t, &tracker); mode != model.SwitchModeFailover {
+		t.Fatalf("committed switch preview mode = %q, want %q after attached continuity leaves origin", mode, model.SwitchModeFailover)
 	}
 	tracker.prepareSelection()
 	if selectReq.SwitchMode != model.SwitchModeFailover {
@@ -424,8 +434,8 @@ func TestProviderSwitchTracker_SeedCandidateDowngradesWithoutOriginReentry(t *te
 			if seedStore.Len() != 1 {
 				t.Fatalf("seed store len = %d, want 1 when seed was not consumed", seedStore.Len())
 			}
-			if mode := tracker.prepareProviderSwitch(); mode != model.SwitchModeReplacement {
-				t.Fatalf("prepareProviderSwitch() mode = %q, want %q", mode, model.SwitchModeReplacement)
+			if mode := commitSwitchPreview(t, &tracker); mode != model.SwitchModeReplacement {
+				t.Fatalf("committed switch preview mode = %q, want %q", mode, model.SwitchModeReplacement)
 			}
 			if selectReq.SwitchMode != model.SwitchModeReplacement {
 				t.Fatalf("SwitchMode = %q, want %q", selectReq.SwitchMode, model.SwitchModeReplacement)
@@ -508,11 +518,11 @@ func TestProviderSwitchTracker_CompetingRequestsConsumeSeedAtMostOnce(t *testing
 	if seedStore.Len() != 0 {
 		t.Fatalf("seed store len = %d, want 0 after exactly one request consumes the seed", seedStore.Len())
 	}
-	if mode := winnerTracker.prepareProviderSwitch(); mode != model.SwitchModeFailover {
-		t.Fatalf("winner prepareProviderSwitch() mode = %q, want %q", mode, model.SwitchModeFailover)
+	if mode := commitSwitchPreview(t, winnerTracker); mode != model.SwitchModeFailover {
+		t.Fatalf("winner committed switch preview mode = %q, want %q", mode, model.SwitchModeFailover)
 	}
-	if mode := loserTracker.prepareProviderSwitch(); mode != model.SwitchModeReplacement {
-		t.Fatalf("loser prepareProviderSwitch() mode = %q, want %q", mode, model.SwitchModeReplacement)
+	if mode := commitSwitchPreview(t, loserTracker); mode != model.SwitchModeReplacement {
+		t.Fatalf("loser committed switch preview mode = %q, want %q", mode, model.SwitchModeReplacement)
 	}
 	if loserReq.FailoverContext != nil {
 		t.Fatalf("loser FailoverContext = %+v, want nil when continuity was not attached", loserReq.FailoverContext)
@@ -563,7 +573,7 @@ func TestHandler_ServeHTTP_HTTPNormalCompletionDoesNotStoreContinuitySeed(t *tes
 	}
 }
 
-func TestHandler_ServeHTTP_HTTPPreVisibleFailureDoesNotStoreContinuitySeed(t *testing.T) {
+func TestHandler_ServeHTTP_ExhaustedStatusResponseStoresVisibleContinuitySeed(t *testing.T) {
 	t.Parallel()
 
 	seedStore := NewVisibleContinuitySeedStore()
@@ -602,8 +612,8 @@ func TestHandler_ServeHTTP_HTTPPreVisibleFailureDoesNotStoreContinuitySeed(t *te
 	if w.Code == http.StatusOK {
 		t.Fatalf("status = %d, want non-success gateway failure", w.Code)
 	}
-	if seedStore.Len() != 0 {
-		t.Fatalf("seed store len = %d, want 0 after pre-visible HTTP failure", seedStore.Len())
+	if seedStore.Len() != 1 {
+		t.Fatalf("seed store len = %d, want 1 after the exhausted status body became client-visible", seedStore.Len())
 	}
 }
 

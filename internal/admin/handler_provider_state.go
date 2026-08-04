@@ -45,13 +45,19 @@ func (h *Handler) setProviderEnabled(w http.ResponseWriter, r *http.Request, ena
 		return
 	}
 
+	wasEnabled := provider.Enabled
 	provider.Enabled = enabled
-	if err := h.store.UpdateProvider(r.Context(), provider); err != nil {
+	update := func() error { return h.store.UpdateProvider(r.Context(), provider) }
+	if wasEnabled != enabled {
+		err = h.mutateProviderGeneration(id, update)
+	} else {
+		err = update()
+	}
+	if err != nil {
 		h.logger.Error("failed to update provider", zap.String("id", id), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to "+action+" provider")
 		return
 	}
-
 	// Keep health state in sync with the persisted enabled flag so manual API toggles
 	// do not leave the circuit breaker believing a provider is still unavailable.
 	h.syncHealthManagerState(r.Context(), id, enabled)

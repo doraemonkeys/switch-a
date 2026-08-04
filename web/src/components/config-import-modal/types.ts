@@ -11,7 +11,10 @@ export interface ConfigImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onPreview: (data: ImportConfigRequest) => Promise<ImportPreviewResponse>;
-  onImport: (data: ImportConfigRequest) => Promise<ImportResult>;
+  onImport: (
+    data: ImportConfigRequest,
+    ruleSetETag: ImportPreviewResponse["rule_set_etag"],
+  ) => Promise<ImportResult>;
   importing: boolean;
 }
 

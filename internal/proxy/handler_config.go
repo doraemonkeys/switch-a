@@ -2,13 +2,18 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
 
 	"go.uber.org/zap"
 )
@@ -68,6 +73,126 @@ type runtimeConfig struct {
 	stickyMode                model.StickyMode
 	stickyTTL                 time.Duration
 	websocketProbeClientModel bool
+}
+
+// transportCacheKey isolates the immutable values that determine transport reuse.
+type transportCacheKey struct {
+	connectTimeout   time.Duration
+	firstByteTimeout time.Duration
+}
+
+func (k *transportCacheKey) Equals(other *transportCacheKey) bool {
+	return k.connectTimeout == other.connectTimeout &&
+		k.firstByteTimeout == other.firstByteTimeout
+}
+
+// Config holds proxy handler configuration.
+type Config struct {
+	Store                      Store
+	Selector                   Selector
+	Health                     internal.HealthManager
+	ActiveRegistry             *ActiveRequestRegistry
+	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
+	Auth                       ProviderAuthenticator
+	Capture                    RequestCapture
+	RuleSetProvider            errorrule.RuleSetProvider
+	ResponseAnalyzer           ResponseAnalyzer
+	RuleStatistics             RuleStatistics
+	BackoffWaiter              BackoffWaiter
+	Logger                     *zap.Logger
+}
+
+// NewHandler creates a new proxy handler.
+// Panics if Store or Logger is nil, as the handler cannot function without them.
+func NewHandler(cfg Config) *Handler {
+	if cfg.Store == nil {
+		panic("proxy: Store is required but was nil")
+	}
+	if cfg.Logger == nil {
+		panic("proxy: Logger is required but was nil")
+	}
+	ruleSets := cfg.RuleSetProvider
+	if ruleSets == nil {
+		empty, err := errorrule.CompileRuleSet(0, nil)
+		if err != nil {
+			panic(fmt.Sprintf("proxy: compile empty rule set: %v", err))
+		}
+		ruleSets = staticRuleSetProvider{snapshot: empty}
+	}
+	analyzer := cfg.ResponseAnalyzer
+	if analyzer == nil {
+		budget, err := responseanalysis.NewDefaultProcessMemoryBudget()
+		if err != nil {
+			panic(fmt.Sprintf("proxy: create response-analysis budget: %v", err))
+		}
+		analyzer, err = responseanalysis.NewAnalyzer(responseanalysis.NewRegistry(), budget, responseanalysis.AnalyzerOptions{})
+		if err != nil {
+			panic(fmt.Sprintf("proxy: create response analyzer: %v", err))
+		}
+	}
+	backoff := cfg.BackoffWaiter
+	if backoff == nil {
+		backoff = timerBackoffWaiter{}
+	}
+	visibleContinuitySeedStore := cfg.VisibleContinuitySeedStore
+	if visibleContinuitySeedStore == nil {
+		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
+	}
+	handler := &Handler{
+		store:                      cfg.Store,
+		selector:                   cfg.Selector,
+		httpSelector:               newHTTPProviderSelector(cfg.Selector),
+		health:                     cfg.Health,
+		activeRegistry:             cfg.ActiveRegistry,
+		visibleContinuitySeedStore: visibleContinuitySeedStore,
+		logger:                     cfg.Logger,
+		auth:                       cfg.Auth,
+		capture:                    cfg.Capture,
+		ruleSets:                   ruleSets,
+		analyzer:                   analyzer,
+		ruleStats:                  cfg.RuleStatistics,
+		backoff:                    backoff,
+	}
+	handler.webSocketGateway = websocketproxy.NewGateway(websocketproxy.Config{
+		Store: cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,
+		ActiveSessions:             newWebSocketActiveSessions(cfg.ActiveRegistry),
+		VisibleContinuitySeedStore: visibleContinuitySeedStore,
+		Auth:                       cfg.Auth, Capture: cfg.Capture, Logger: cfg.Logger,
+	})
+	return handler
+}
+
+// getTransport returns a cached Transport or creates a new one if config changed.
+func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
+	key := &transportCacheKey{
+		connectTimeout:   cfg.connectTimeout,
+		firstByteTimeout: cfg.firstByteTimeout,
+	}
+
+	h.mu.RLock()
+	if h.transport != nil && h.lastCfg != nil && h.lastCfg.Equals(key) {
+		transport := h.transport
+		h.mu.RUnlock()
+		return transport
+	}
+	h.mu.RUnlock()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Another request may update the cache while this request upgrades the lock.
+	if h.transport != nil && h.lastCfg != nil && h.lastCfg.Equals(key) {
+		return h.transport
+	}
+	if h.transport != nil {
+		h.transport.CloseIdleConnections()
+	}
+	h.transport = NewTransport(TransportConfig{
+		ConnectTimeout:   cfg.connectTimeout,
+		FirstByteTimeout: cfg.firstByteTimeout,
+	})
+	h.lastCfg = key
+	return h.transport
 }
 
 // loadConfig loads runtime configuration from the store.

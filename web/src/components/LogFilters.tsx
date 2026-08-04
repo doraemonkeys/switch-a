@@ -9,10 +9,10 @@ import type {
   TerminationActor,
   TerminationReason,
 } from "../api/types";
-import { API_TYPES } from "../config/constants";
+import type { APICatalog } from "../api/api-catalog";
+import { useAPICatalog } from "../api/useApi";
 import { isLogFilterActive } from "./logs/filtering";
 
-const API_TYPES_LIST = Object.values(API_TYPES);
 const FILTER_VALUE_ALL = "";
 const FILTER_VALUE_TRUE = "true";
 const FILTER_VALUE_FALSE = "false";
@@ -197,11 +197,15 @@ function getRetriesFilterLabel(filter: LogFilter): string | null {
 function getAPITypeSuggestions(
   providers: Provider[],
   selectedAPIType: string | undefined,
+  catalog: APICatalog | null,
 ): string[] {
   const providerAPITypeValues = providers.flatMap((provider) =>
     provider.api_types.map((apiType) => apiType.api_type.trim()),
   );
-  const knownAPITypeValues = [...API_TYPES_LIST, ...providerAPITypeValues];
+  const knownAPITypeValues = [
+    ...(catalog?.api_types.map((entry) => entry.api_type) ?? []),
+    ...providerAPITypeValues,
+  ];
 
   if (selectedAPIType?.trim()) {
     knownAPITypeValues.push(selectedAPIType.trim());
@@ -653,9 +657,14 @@ export function LogFilters({
   providers,
   onClear,
 }: LogFiltersProps) {
+  const { catalog } = useAPICatalog();
   const isActive = isLogFilterActive(filter);
   const requestTypeValue = getRequestTypeFilterValue(filter);
-  const apiTypeSuggestions = getAPITypeSuggestions(providers, filter.api_type);
+  const apiTypeSuggestions = getAPITypeSuggestions(
+    providers,
+    filter.api_type,
+    catalog,
+  );
 
   return (
     <div className="card p-4">

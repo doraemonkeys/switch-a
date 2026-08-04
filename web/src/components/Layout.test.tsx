@@ -12,6 +12,11 @@ const NAVIGATION_CASES = [
   { name: "Providers", href: "/providers", icon: "🔌" },
   { name: "Groups", href: "/groups", icon: "📁" },
   { name: "Routing", href: "/routing", icon: "🧭" },
+  {
+    name: "Error Detection",
+    href: "/error-detection",
+    icon: "🛡️",
+  },
   { name: "Config", href: "/config", icon: "⚙️" },
   { name: "Logs", href: "/logs", icon: "📋" },
   { name: "Debug Capture", href: "/debug-capture", icon: "🐞" },

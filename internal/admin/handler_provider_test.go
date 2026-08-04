@@ -659,6 +659,59 @@ func TestUpdateProvider(t *testing.T) {
 	}
 }
 
+func TestProviderEnabledTransitionsRetireConcurrencyGeneration(t *testing.T) {
+	newHandler := func(enabled bool) (*Handler, *mockStore, *mockProviderLifecycleCoordinator) {
+		st := newMockStore()
+		st.providers["provider-lifecycle"] = &model.Provider{
+			ID:       "provider-lifecycle",
+			Name:     "Lifecycle Provider",
+			APIKey:   "test-key",
+			AuthMode: "bearer",
+			Enabled:  enabled,
+			APITypes: defaultProviderAPITypes("provider-lifecycle"),
+		}
+		lifecycles := &mockProviderLifecycleCoordinator{}
+		handler := NewHandler(Config{
+			Store: st, Health: &mockHealthManager{}, Concurrency: &mockConcurrencyTracker{},
+			ProviderLifecycles: lifecycles, Logger: zap.NewNop(),
+		})
+		return handler, st, lifecycles
+	}
+
+	t.Run("single update disable", func(t *testing.T) {
+		handler, _, lifecycles := newHandler(true)
+		request := httptest.NewRequest(
+			http.MethodPut,
+			"/admin/api/providers/provider-lifecycle",
+			bytes.NewBufferString(`{"enabled":false}`),
+		)
+		setPathValue(request, "id", "provider-lifecycle")
+		response := httptest.NewRecorder()
+
+		handler.UpdateProvider(response, request)
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+		}
+		if len(lifecycles.retiredProviderIDs) != 1 || lifecycles.retiredProviderIDs[0] != "provider-lifecycle" {
+			t.Fatalf("retired generations = %#v, want provider lifecycle once", lifecycles.retiredProviderIDs)
+		}
+	})
+
+	t.Run("batch enable and disable", func(t *testing.T) {
+		handler, _, lifecycles := newHandler(false)
+		if err := handler.batchEnable(t.Context(), "provider-lifecycle"); err != nil {
+			t.Fatalf("batchEnable() error = %v", err)
+		}
+		if err := handler.batchDisable(t.Context(), "provider-lifecycle"); err != nil {
+			t.Fatalf("batchDisable() error = %v", err)
+		}
+		if len(lifecycles.retiredProviderIDs) != 2 || lifecycles.retiredProviderIDs[0] != "provider-lifecycle" || lifecycles.retiredProviderIDs[1] != "provider-lifecycle" {
+			t.Fatalf("retired generations = %#v, want one per durable transition", lifecycles.retiredProviderIDs)
+		}
+	})
+}
+
 func TestUpdateProvider_AllowsAPITypeKeyOverrideToReplaceDefault(t *testing.T) {
 	h, st, _ := testHandler()
 
@@ -823,6 +876,7 @@ func TestUpdateProvider_ClearGroupID(t *testing.T) {
 
 func TestUpdateProvider_UpdateError(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 
 	st.providers["test"] = &model.Provider{
 		ID:       "test",
@@ -843,6 +897,9 @@ func TestUpdateProvider_UpdateError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if len(lifecycles.retiredProviderIDs) != 1 || lifecycles.retiredProviderIDs[0] != "test" {
+		t.Fatalf("retired = %v, want conservative retirement before failed write", lifecycles.retiredProviderIDs)
 	}
 }
 
@@ -1232,6 +1289,7 @@ func TestDeleteProvider_EmptyID(t *testing.T) {
 
 func TestDeleteProvider_DeleteError(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 
 	st.providers["test"] = &model.Provider{ID: "test", Name: "Test"}
 	st.deleteErr = errors.New("database error")
@@ -1244,6 +1302,9 @@ func TestDeleteProvider_DeleteError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if len(lifecycles.retiredProviderIDs) != 1 || lifecycles.retiredProviderIDs[0] != "test" {
+		t.Fatalf("retired = %v, want conservative retirement before failed delete", lifecycles.retiredProviderIDs)
 	}
 }
 

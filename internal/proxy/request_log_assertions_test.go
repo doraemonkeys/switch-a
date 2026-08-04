@@ -7,6 +7,34 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
+type webSocketEvidence struct {
+	SchemaVersion     int                                 `json:"v"`
+	Gateway           *webSocketGatewayEvidence           `json:"gateway,omitempty"`
+	UpstreamHandshake *webSocketUpstreamHandshakeEvidence `json:"upstream_handshake,omitempty"`
+	Transport         *transportDiagnostic                `json:"transport,omitempty"`
+	UpstreamEvent     *webSocketUpstreamEventEvidence     `json:"upstream_event,omitempty"`
+}
+
+type webSocketGatewayEvidence struct {
+	TerminalStatusCode     int    `json:"terminal_status_code,omitempty"`
+	TerminalErrorCode      string `json:"terminal_error_code,omitempty"`
+	TerminalMessageSnippet string `json:"terminal_message_snippet,omitempty"`
+}
+
+type webSocketUpstreamHandshakeEvidence struct {
+	StatusCode  int    `json:"status_code,omitempty"`
+	BodySnippet string `json:"body_snippet,omitempty"`
+}
+
+type webSocketUpstreamEventEvidence struct {
+	EnvelopeType      string `json:"envelope_type,omitempty"`
+	ProviderErrorType string `json:"provider_error_type,omitempty"`
+	ProviderErrorCode string `json:"provider_error_code,omitempty"`
+	StatusCode        int    `json:"status_code,omitempty"`
+	MessageSnippet    string `json:"message_snippet,omitempty"`
+	RawPayloadSnippet string `json:"raw_payload_snippet,omitempty"`
+}
+
 func requestLogClientTransportStatusCode(log *model.RequestLog) int {
 	if log == nil || log.ClientTransportStatusCode == nil {
 		return StatusCodeNoResponse

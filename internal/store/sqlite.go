@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/glebarez/sqlite"
@@ -22,6 +23,7 @@ type SQLiteStore struct {
 	db                  *gorm.DB
 	clock               internal.Clock
 	credentialMutations *providerCredentialMutationCoordinator
+	ruleRepository      *errorrulesqlite.Repository
 }
 
 // NewSQLiteStore creates a new SQLite store with the given database path and clock.
@@ -32,6 +34,18 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	sqlDB, err := db.DB()
+	if err != nil { // coverage-ignore -- DB() rarely fails on valid gorm.DB
+		return nil, err
+	}
+	initialized := false
+	defer func() {
+		// A failed migration or rule-set compile returns no store for the caller to
+		// close, so constructor failure must release the opened database itself.
+		if !initialized {
+			_ = sqlDB.Close()
+		}
+	}()
 
 	// Enable WAL mode for better concurrency
 	if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil { // coverage-ignore -- PRAGMA rarely fails on valid connection
@@ -46,10 +60,6 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 
 	// Configure connection pool for SQLite
 	// SQLite handles concurrency best with a single writer, so we limit connections
-	sqlDB, err := db.DB()
-	if err != nil { // coverage-ignore -- DB() rarely fails on valid gorm.DB
-		return nil, err
-	}
 	// MaxOpenConns=1 ensures serialized writes (SQLite recommendation for WAL mode)
 	// This prevents "database is locked" errors from concurrent writers
 	sqlDB.SetMaxOpenConns(1)
@@ -102,11 +112,26 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("migrate request log lifecycle fields: %w", err)
 	}
 
-	return &SQLiteStore{
+	ruleRepository, err := errorrulesqlite.Open(context.Background(), errorrulesqlite.Config{
+		DB:    db,
+		Clock: clock,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize internal-error rules: %w", err)
+	}
+
+	result := &SQLiteStore{
 		db:                  db,
 		clock:               clock,
 		credentialMutations: newProviderCredentialMutationCoordinator(),
-	}, nil
+		ruleRepository:      ruleRepository,
+	}
+	initialized = true
+	return result, nil
+}
+
+func (s *SQLiteStore) InternalErrorRuleRepository() *errorrulesqlite.Repository {
+	return s.ruleRepository
 }
 
 // Close closes the database connection.

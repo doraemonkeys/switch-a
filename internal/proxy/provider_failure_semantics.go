@@ -73,50 +73,6 @@ func classifyProviderFailureForProvider(
 	)
 }
 
-func classifyWebSocketHandshakeFailureForProvider(
-	provider *model.Provider,
-	result *WebSocketResult,
-) providerFailureDisposition {
-	if result == nil || result.HandshakeAccepted || result.HandshakeStatusCode == 0 {
-		return providerFailureDisposition{}
-	}
-
-	observedAt := result.HandshakeObservedAt
-	if observedAt.IsZero() {
-		observedAt = time.Now()
-	}
-
-	return classifyProviderFailureForProvider(
-		provider,
-		result.HandshakeStatusCode,
-		result.HandshakeHeaders,
-		result.HandshakeBodySnippet,
-		observedAt,
-	)
-}
-
-func classifyWebSocketUpstreamFailure(upstreamErr *WebSocketUpstreamError) providerFailureDisposition {
-	return classifyWebSocketUpstreamFailureForProvider(nil, upstreamErr)
-}
-
-func classifyWebSocketUpstreamFailureForProvider(
-	provider *model.Provider,
-	upstreamErr *WebSocketUpstreamError,
-) providerFailureDisposition {
-	disposition := classifyProviderFailureEvidence(
-		provider.UsageLimitPolicyOrDefault(),
-		providerFailureEvidenceFromWebSocketUpstreamError(upstreamErr),
-	)
-	if !disposition.isProviderScoped() {
-		return disposition
-	}
-	if disposition.switchReason == SwitchReasonUsageLimitReached {
-		return disposition
-	}
-	disposition.switchReason = model.RequestAttemptSwitchReasonProviderScopedSemanticError
-	return disposition
-}
-
 type providerFailureEvidence struct {
 	observedAt      time.Time
 	statusCode      int
@@ -151,33 +107,10 @@ func providerFailureEvidenceFromHTTP(
 	return evidence
 }
 
-func providerFailureEvidenceFromWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError) providerFailureEvidence {
-	if upstreamErr == nil {
-		return providerFailureEvidence{}
-	}
-	evidence := providerFailureEvidence{
-		observedAt: normalizeObservedAt(upstreamErr.ObservedAt),
-		statusCode: upstreamErr.StatusCode,
-		errorKeys: []string{
-			normalizeWebSocketSemanticErrorKey(upstreamErr.SemanticErrorKey()),
-			normalizeWebSocketSemanticErrorKey(upstreamErr.Code),
-		},
-	}
-	if upstreamErr.ResetAt != nil {
-		evidence.resetCandidates = append(evidence.resetCandidates, upstreamErr.ResetAt.UTC())
-	}
-	return evidence
-}
-
 func classifyProviderFailureEvidence(
 	usageLimitPolicy model.ProviderUsageLimitPolicy,
 	evidence providerFailureEvidence,
 ) providerFailureDisposition {
-	if hasNormalizedWebSocketErrorKey(evidence.errorKeys, webSocketConnectionLimitErrorType) {
-		// Connection-limit exhaustion is terminal evidence for the current socket, not
-		// a provider health fault that should trigger failover or suspension.
-		return providerFailureDisposition{}
-	}
 	if shouldForceProviderSwitch(evidence.statusCode) {
 		return providerFailureDisposition{
 			switchReason: formatPermanentErrorReason(evidence.statusCode),
@@ -327,20 +260,16 @@ func latestFutureResetCandidate(candidates []time.Time, observedAt time.Time) *t
 
 func isUsageLimitEvidence(errorKeys []string) bool {
 	for _, key := range errorKeys {
-		if normalizeWebSocketSemanticErrorKey(key) == codexUsageLimitErrorType {
+		if normalizeProviderFailureKey(key) == codexUsageLimitErrorType {
 			return true
 		}
 	}
 	return false
 }
 
-func hasNormalizedWebSocketErrorKey(errorKeys []string, target string) bool {
-	for _, key := range errorKeys {
-		if normalizeWebSocketSemanticErrorKey(key) == target {
-			return true
-		}
-	}
-	return false
+func normalizeProviderFailureKey(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	return strings.ReplaceAll(normalized, " ", "_")
 }
 
 func classifyProviderFailureScopeFromStatus(statusCode int) (providerFailureScope, bool) {
@@ -364,7 +293,7 @@ func classifyProviderFailureScopeFromIdentifiers(errorKeys []string) (providerFa
 	classification := providerFailureScopeUnknown
 	matched := false
 	for _, key := range errorKeys {
-		normalized := normalizeWebSocketSemanticErrorKey(key)
+		normalized := normalizeProviderFailureKey(key)
 		if normalized == "" {
 			continue
 		}
@@ -382,14 +311,8 @@ func classifyProviderFailureScopeFromIdentifiers(errorKeys []string) (providerFa
 }
 
 func classifyProviderFailureScopeFromIdentifier(key string) (providerFailureScope, bool) {
-	if _, ok := webSocketProviderScopedAllowlistedErrorKeys[key]; ok {
-		return providerFailureScopeProvider, true
-	}
 	if key == codexUsageLimitErrorType {
 		return providerFailureScopeProvider, true
-	}
-	if _, ok := webSocketClientScopedErrorKeys[key]; ok {
-		return providerFailureScopeClient, true
 	}
 	return providerFailureScopeUnknown, false
 }

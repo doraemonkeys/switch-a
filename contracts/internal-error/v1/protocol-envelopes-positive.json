@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "anthropic json error",
+      "api_type": "claude",
+      "content_type": "application/json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"code\":529,\"message\":\"Overloaded\",\"reason\":\"capacity\"}}"
+      },
+      "expected": {
+        "response_protocol_id": "anthropic.messages.json.v1",
+        "event_class": "error",
+        "fields": {
+          "type": "overloaded_error",
+          "code": "529",
+          "message": "Overloaded",
+          "reason": "capacity"
+        }
+      }
+    },
+    {
+      "name": "anthropic sse error with crlf",
+      "api_type": "deepseek-claude",
+      "content_type": "text/event-stream; charset=utf-8",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "event: error\r\ndata:{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\r\n\r\n"
+      },
+      "expected": {
+        "response_protocol_id": "anthropic.messages.sse.v1",
+        "event_class": "error",
+        "fields": {
+          "type": "overloaded_error",
+          "message": "Overloaded"
+        }
+      }
+    },
+    {
+      "name": "openai responses json failed",
+      "api_type": "codex",
+      "content_type": "application/problem+json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"code\":\"server_is_overloaded\",\"message\":\"At capacity\",\"reason\":\"capacity\"}}"
+      },
+      "expected": {
+        "response_protocol_id": "openai.responses.json.v1",
+        "event_class": "error",
+        "fields": {
+          "type": "server_error",
+          "code": "server_is_overloaded",
+          "message": "At capacity",
+          "reason": "capacity"
+        }
+      }
+    },
+    {
+      "name": "openai responses direct sse multiline eof tail",
+      "api_type": "codex",
+      "content_type": "text/event-stream",
+      "content_encoding": "gzip",
+      "body": {
+        "encoding": "base64",
+        "value": "H4sIAAAAAAAACi2LQQqAMAwE776i5NwX9OZLJDSLFNSUNBSK+HepeJxhBh2XpwAztUXYOYWbfFRQok9SpKwyscE6bCtt0w47lAVC8Z/oRGu8z271kLlyLj7oeQFgQfrLYAAAAA=="
+      },
+      "expected": {
+        "response_protocol_id": "openai.responses.sse.v1",
+        "event_class": "error",
+        "fields": {
+          "type": "error",
+          "code": "server_is_overloaded",
+          "message": "At capacity"
+        }
+      }
+    },
+    {
+      "name": "openai chat json error",
+      "api_type": "grok",
+      "content_type": "APPLICATION/JSON; Charset=UTF-8",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"type\":\"server_error\",\"code\":503,\"message\":\"Unavailable\"}}"
+      },
+      "expected": {
+        "response_protocol_id": "openai.chat_completions.json.v1",
+        "event_class": "error",
+        "fields": {
+          "type": "server_error",
+          "code": "503",
+          "message": "Unavailable"
+        }
+      }
+    },
+    {
+      "name": "openai chat sse error with identity coding",
+      "api_type": "deepseek-openai",
+      "content_type": "text/event-stream",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "event: error\ndata: {\"error\":{\"type\":\"server_error\",\"code\":503,\"message\":\"Unavailable\"}}\n\n"
+      },
+      "expected": {
+        "response_protocol_id": "openai.chat_completions.sse.v1",
+        "event_class": "error",
+        "fields": {
+          "type": "server_error",
+          "code": "503",
+          "message": "Unavailable"
+        }
+      }
+    },
+    {
+      "name": "google json error",
+      "api_type": "gemini",
+      "content_type": "application/json",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"code\":503,\"message\":\"Service unavailable\",\"status\":\"UNAVAILABLE\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\",\"reason\":\"CAPACITY\"}]}}"
+      },
+      "expected": {
+        "response_protocol_id": "google.generate_content.json.v1beta",
+        "event_class": "error",
+        "fields": {
+          "type": "UNAVAILABLE",
+          "code": "503",
+          "message": "Service unavailable",
+          "reason": "CAPACITY"
+        }
+      }
+    },
+    {
+      "name": "google sse error",
+      "api_type": "gemini",
+      "content_type": "text/event-stream",
+      "content_encoding": "identity",
+      "body": {
+        "encoding": "utf8",
+        "value": "data: {\"error\":{\"code\":429,\"message\":\"Quota\",\"status\":\"RESOURCE_EXHAUSTED\"}}\n\n"
+      },
+      "expected": {
+        "response_protocol_id": "google.generate_content.sse.v1beta",
+        "event_class": "error",
+        "fields": {
+          "type": "RESOURCE_EXHAUSTED",
+          "code": "429",
+          "message": "Quota"
+        }
+      }
+    }
+  ]
+}

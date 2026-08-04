@@ -66,7 +66,7 @@ func TestSelector_Select_FiltersByRoutingPolicyAndAuthState(t *testing.T) {
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+	provider, err := sel.selectForTest(t, context.Background(), &model.SelectRequest{
 		APIType:    "codex",
 		StickyMode: model.StickyModeOff,
 	})
@@ -125,7 +125,7 @@ func TestSelector_Select_NoRoutingPolicyForAPITypeKeepsDefaultSelection(t *testi
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+	provider, err := sel.selectForTest(t, context.Background(), &model.SelectRequest{
 		APIType:    "claude",
 		StickyMode: model.StickyModeOff,
 	})
@@ -183,7 +183,7 @@ func TestSelector_Select_DisabledRoutingPolicyFallsBackToDefaultSelection(t *tes
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+	provider, err := sel.selectForTest(t, context.Background(), &model.SelectRequest{
 		APIType:    "codex",
 		StickyMode: model.StickyModeOff,
 	})
@@ -252,7 +252,7 @@ func TestSelector_Select_StickyCacheEvictsProviderRejectedByRoutingPolicy(t *tes
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestSelector_Select_StickyCachePreservesAffinityOnAuthStateReadError(t *tes
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err == nil {
 		t.Fatal("expected sticky auth-state read failure to be returned")
 	}
@@ -371,7 +371,7 @@ func TestSelector_Select_StickyCacheEvictsProviderRejectedByExactProviderRule(t 
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), req)
+	provider, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestSelector_SelectExcluding_FailoverStaysWithinRoutingPolicyClosure(t *tes
 		APIType:    "codex",
 		StickyMode: model.StickyModeOff,
 	}
-	first, err := sel.Select(context.Background(), req)
+	first, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected first selection error: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestSelector_SelectExcluding_FailoverStaysWithinRoutingPolicyClosure(t *tes
 	}
 
 	req.FailoverContext = model.NewFailoverContext(first)
-	second, err := sel.SelectExcluding(context.Background(), req, map[string]bool{first.ID: true})
+	second, err := sel.selectExcludingForTest(t, context.Background(), req, map[string]bool{first.ID: true})
 	if err != nil {
 		t.Fatalf("unexpected failover selection error: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestSelector_SelectExcluding_ExactProviderRuleDoesNotEscapeOnRetry(t *testi
 	})
 
 	req := &model.SelectRequest{APIType: "codex", StickyMode: model.StickyModeOff}
-	first, err := sel.Select(context.Background(), req)
+	first, err := sel.selectForTest(t, context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected first selection error: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestSelector_SelectExcluding_ExactProviderRuleDoesNotEscapeOnRetry(t *testi
 		t.Fatalf("first provider = %#v, want p-exact", first)
 	}
 
-	second, err := sel.SelectExcluding(context.Background(), req, map[string]bool{"p-exact": true})
+	second, err := sel.selectExcludingForTest(t, context.Background(), req, map[string]bool{"p-exact": true})
 	if !errors.Is(err, internal.ErrNoProvider) {
 		t.Fatalf("retry error = %v, want %v", err, internal.ErrNoProvider)
 	}
@@ -591,7 +591,7 @@ func TestSelectorSelect_UnmatchedActiveRuleFailsClosed(t *testing.T) {
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+	provider, err := sel.selectForTest(t, context.Background(), &model.SelectRequest{
 		APIType:    "codex",
 		Model:      "claude-3",
 		StickyMode: model.StickyModeOff,
@@ -652,7 +652,7 @@ func TestSelectorSelectUnknownModelIgnoresModelOnlyRoutingRules(t *testing.T) {
 		Logger:        zap.NewNop(),
 	})
 
-	provider, err := sel.Select(context.Background(), &model.SelectRequest{
+	provider, err := sel.selectForTest(t, context.Background(), &model.SelectRequest{
 		APIType:    "codex",
 		Model:      unknownModelSentinel,
 		StickyMode: model.StickyModeOff,

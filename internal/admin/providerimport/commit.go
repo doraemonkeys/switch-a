@@ -79,22 +79,6 @@ func (h *Handler) CommitProviderImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mutationContext, releaseCredentialMutations, err := h.providerImportStore.WithProviderCredentialMutations(
-		r.Context(),
-		providerImportCredentialMutationIDs(bundle),
-	)
-	if err != nil {
-		h.logProviderImportError("provider import credential mutation lease failed", importID, err)
-		writeError(w, http.StatusRequestTimeout, ErrCodeConflict, "Timed out waiting to update provider credentials")
-		return
-	}
-	credentialMutationsOwned := true
-	defer func() {
-		if credentialMutationsOwned {
-			releaseCredentialMutations()
-		}
-	}()
-
 	response := buildProviderImportCommitResponse(importID, allCandidates, selectedResults)
 	responsePayload, err := json.Marshal(response)
 	if err != nil { // coverage-ignore -- response contains only JSON-native scalar fields
@@ -109,13 +93,12 @@ func (h *Handler) CommitProviderImport(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:       h.providerImportReceipts.clock.Now().Add(h.providerImportReceipts.ttl),
 	}
 
-	committedPayload, committed := h.applyProviderImportBundle(w, mutationContext, importID, bundle, responsePayload)
+	committedPayload, committed := h.commitProviderImportAtLifecycleBoundary(
+		w, r.Context(), importID, bundle, responsePayload,
+	)
 	if !committed {
 		return
 	}
-	h.providerImports.InvalidateProviderCredentialSessions(providerImportCredentialMutationIDs(bundle))
-	releaseCredentialMutations()
-	credentialMutationsOwned = false
 
 	// The durable receipt is visible before local waiters resume, so every waiter
 	// rechecks authoritative state instead of retaining another response copy.
@@ -283,4 +266,47 @@ func (h *Handler) applyProviderImportBundle(
 	h.logProviderImportError("provider import commit failed", importID, err)
 	writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to commit provider import")
 	return nil, false
+}
+
+func (h *Handler) commitProviderImportAtLifecycleBoundary(
+	w http.ResponseWriter,
+	ctx context.Context,
+	importID string,
+	bundle *store.ProviderImportBundle,
+	responsePayload []byte,
+) ([]byte, bool) {
+	var committedPayload []byte
+	committed := false
+	mutation := func() error {
+		providerIDs := providerImportCredentialMutationIDs(bundle)
+		mutationContext, releaseCredentialMutations, err := h.providerImportStore.WithProviderCredentialMutations(
+			ctx,
+			providerIDs,
+		)
+		if err != nil {
+			return err
+		}
+		defer releaseCredentialMutations()
+
+		committedPayload, committed = h.applyProviderImportBundle(
+			w, mutationContext, importID, bundle, responsePayload,
+		)
+		if committed {
+			h.providerImports.InvalidateProviderCredentialSessions(providerIDs)
+		}
+		return nil
+	}
+
+	var err error
+	if h.providerLifecycles != nil {
+		err = h.providerLifecycles.RetireAllProviderGenerations(mutation)
+	} else {
+		err = mutation()
+	}
+	if err != nil {
+		h.logProviderImportError("provider import credential mutation lease failed", importID, err)
+		writeError(w, http.StatusRequestTimeout, ErrCodeConflict, "Timed out waiting to update provider credentials")
+		return nil, false
+	}
+	return committedPayload, committed
 }

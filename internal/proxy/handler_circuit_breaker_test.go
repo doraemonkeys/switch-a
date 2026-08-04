@@ -448,21 +448,22 @@ func TestClientDisconnectDuringSSE_MarksSuccessAndNoError(t *testing.T) {
 		t.Errorf("MarkFailure should NOT be called on client disconnect, got %d calls", len(failCalls))
 	}
 
-	// markSuccess MUST be called — upstream returned 200
+	// A client-aborted stream is health-neutral: it proves neither provider
+	// success nor provider failure because the upstream exchange was incomplete.
 	successIDs := healthManager.getMarkSuccessIDs()
-	if len(successIDs) == 0 {
-		t.Error("MarkSuccess should be called when upstream returned 200 and client disconnected")
+	if len(successIDs) != 0 {
+		t.Errorf("MarkSuccess should not be called on client disconnect, got %d calls", len(successIDs))
 	}
 
 	// The normalized lifecycle should attribute the truncated stream to the client
-	// even though provider health still records a successful 200 upstream response.
+	// while the health assessment remains neutral.
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	log := store.LastLog()
 	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
 		t.Errorf("ServiceOutcome = %q, want %q", requestLogServiceOutcome(log), model.ServiceOutcomeAbandonedByClient)
 	}
-	if requestLogEvidenceMessage(t, log) != "" {
-		t.Errorf("SessionEvidenceJSON should stay empty for client disconnect, got %q", requestLogEvidenceMessage(t, log))
+	if got := requestLogEvidenceMessage(t, log); got != "client canceled response forwarding" {
+		t.Errorf("SessionEvidenceJSON = %q, want client cancellation evidence", got)
 	}
 }
 

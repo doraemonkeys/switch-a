@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,126 +12,6 @@ import (
 
 	"go.uber.org/zap"
 )
-
-func TestTryIncrementAndExhaustsProvider_ReturnsCorrectSwitchReason(t *testing.T) {
-	tests := []struct {
-		name             string
-		statusCode       int
-		providerAttempt  int
-		maxRetries       int
-		isAvailable      bool
-		disposition      providerFailureDisposition
-		wantExhausted    bool
-		wantSwitchReason string
-	}{
-		{
-			name:             "permanent_error_401",
-			statusCode:       401,
-			providerAttempt:  0,
-			maxRetries:       2,
-			isAvailable:      true,
-			wantExhausted:    true,
-			wantSwitchReason: "permanent_error_401",
-		},
-		{
-			name:             "permanent_error_402",
-			statusCode:       402,
-			providerAttempt:  0,
-			maxRetries:       2,
-			isAvailable:      true,
-			wantExhausted:    true,
-			wantSwitchReason: "permanent_error_402",
-		},
-		{
-			name:             "permanent_error_403",
-			statusCode:       403,
-			providerAttempt:  0,
-			maxRetries:       2,
-			isAvailable:      true,
-			wantExhausted:    true,
-			wantSwitchReason: "permanent_error_403",
-		},
-		{
-			name:             "circuit_breaker_triggered",
-			statusCode:       500,
-			providerAttempt:  0,
-			maxRetries:       2,
-			isAvailable:      false, // Circuit breaker tripped
-			wantExhausted:    true,
-			wantSwitchReason: SwitchReasonCircuitBreakerTriggered,
-		},
-		{
-			name:             "max_retries_exhausted",
-			statusCode:       500,
-			providerAttempt:  2, // Already used all retries (0, 1, 2)
-			maxRetries:       2,
-			isAvailable:      true,
-			wantExhausted:    true,
-			wantSwitchReason: SwitchReasonMaxRetriesExhausted,
-		},
-		{
-			name:             "retries_remaining_no_switch",
-			statusCode:       500,
-			providerAttempt:  0,
-			maxRetries:       2,
-			isAvailable:      true,
-			wantExhausted:    false,
-			wantSwitchReason: "",
-		},
-		{
-			name:             "429_with_retries_remaining",
-			statusCode:       429,
-			providerAttempt:  0,
-			maxRetries:       2,
-			isAvailable:      true,
-			wantExhausted:    false,
-			wantSwitchReason: "",
-		},
-		{
-			name:            "429_usage_limit_switches_immediately",
-			statusCode:      429,
-			providerAttempt: 0,
-			maxRetries:      2,
-			isAvailable:     true,
-			disposition: providerFailureDisposition{
-				switchReason: SwitchReasonUsageLimitReached,
-			},
-			wantExhausted:    true,
-			wantSwitchReason: SwitchReasonUsageLimitReached,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			healthMgr := newMockHealthManager()
-			healthMgr.availableProviders["test-provider"] = tt.isAvailable
-
-			handler := &Handler{
-				logger: zap.NewNop(),
-				health: healthMgr,
-			}
-
-			state := &retryState{
-				statusCode:         tt.statusCode,
-				providerAttempt:    tt.providerAttempt,
-				failureDisposition: tt.disposition,
-				currentProvider: &model.Provider{
-					ID:         "test-provider",
-					MaxRetries: tt.maxRetries,
-				},
-			}
-
-			exhausted, switchReason := handler.tryIncrementAndExhaustProvider(context.Background(), state)
-
-			if exhausted != tt.wantExhausted {
-				t.Errorf("exhausted = %v, want %v", exhausted, tt.wantExhausted)
-			}
-			if switchReason != tt.wantSwitchReason {
-				t.Errorf("switchReason = %q, want %q", switchReason, tt.wantSwitchReason)
-			}
-		})
-	}
-}
 
 func TestFormatPermanentErrorReason(t *testing.T) {
 	tests := []struct {

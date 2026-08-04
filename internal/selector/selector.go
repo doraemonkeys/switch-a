@@ -13,9 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Compile-time interface check.
-var _ internal.Selector = (*Selector)(nil)
-
 // DefaultStickyTTLSeconds is the canonical default TTL for sticky sessions in seconds.
 // Derived from the centralized defaults package.
 const DefaultStickyTTLSeconds = defaults.StickyTTLSeconds
@@ -69,10 +66,20 @@ type Config struct {
 	Logger        *zap.Logger
 }
 
-// SelectResult contains the selected provider along with metadata about the selection.
+// SelectResult keeps the selected provider behind its exact lease so dispatch
+// facts and cleanup ownership cannot diverge.
 type SelectResult struct {
-	Provider *model.Provider
+	Lease    *ProviderLease
 	Metadata SelectionMetadata
+}
+
+// Provider derives the dispatch snapshot from the capability that owns cleanup,
+// preventing callers from pairing one provider value with another slot lease.
+func (r *SelectResult) Provider() *model.Provider {
+	if r == nil || r.Lease == nil {
+		return nil
+	}
+	return r.Lease.Provider()
 }
 
 // SelectionSource explains how the selector reached the chosen provider.
@@ -82,6 +89,7 @@ const (
 	SelectionSourceStrategy         SelectionSource = "strategy"
 	SelectionSourceStickyContinuity SelectionSource = "sticky_continuity"
 	SelectionSourceActiveContinuity SelectionSource = "active_continuity"
+	SelectionSourceAlternate        SelectionSource = "alternate"
 )
 
 // SelectionMetadata keeps continuity provenance explicit so retry policy can be
@@ -168,6 +176,12 @@ type Selector struct {
 
 // NewSelector creates a new provider selector.
 func NewSelector(cfg Config) *Selector {
+	if cfg.Limiter == nil {
+		cfg.Limiter = NewConcurrencyLimiter()
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = zap.NewNop()
+	}
 	return &Selector{
 		store:   cfg.Store,
 		health:  cfg.HealthChecker,
@@ -178,40 +192,36 @@ func NewSelector(cfg Config) *Selector {
 	}
 }
 
-// Select chooses an available provider based on the request.
-// It uses sticky sessions, health checks, concurrency limits, and selection strategies.
-func (s *Selector) Select(ctx context.Context, req *model.SelectRequest) (*model.Provider, error) {
-	return s.SelectExcluding(ctx, req, nil)
-}
-
-// SelectWithMetadata chooses an available provider and returns metadata about the selection.
-// It works like Select but also indicates whether the provider came from the sticky cache.
+// SelectWithMetadata chooses an available provider and returns its exact lease
+// plus explicit selection provenance.
 func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequest) (*SelectResult, error) {
+	lifecycle := s.limiter.beginLifecycleRead()
+	defer lifecycle.Release()
 	scope, err := s.selectionScope(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
 	// Check sticky cache first.
-	provider, err := s.checkStickyCache(ctx, scope)
+	lease, err := s.checkStickyCache(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
-	if provider != nil {
+	if lease != nil {
 		return &SelectResult{
-			Provider: provider,
+			Lease:    lease,
 			Metadata: BuildSelectionMetadataAt(req, SelectionSourceStickyContinuity, s.selectionTimestamp()),
 		}, nil
 	}
 
 	// Fall through to normal provider selection (without sticky cache check)
-	provider, err = s.selectExcludingInternal(ctx, scope, nil)
+	lease, err = s.selectExcludingInternal(ctx, scope, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	return &SelectResult{
-		Provider: provider,
+		Lease:    lease,
 		Metadata: BuildSelectionMetadataAt(req, SelectionSourceStrategy, s.selectionTimestamp()),
 	}, nil
 }
@@ -223,8 +233,11 @@ func (s *Selector) selectionTimestamp() time.Time {
 	return s.clock.Now()
 }
 
-// SelectExcluding selects a provider excluding the given provider IDs (for retry).
-func (s *Selector) SelectExcluding(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error) {
+// SelectExcludingWithMetadata keeps provider ownership explicit for retry and
+// active-request call sites while preserving the same sticky semantics.
+func (s *Selector) SelectExcludingWithMetadata(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*SelectResult, error) {
+	lifecycle := s.limiter.beginLifecycleRead()
+	defer lifecycle.Release()
 	scope, err := s.selectionScope(ctx, req)
 	if err != nil {
 		return nil, err
@@ -232,25 +245,35 @@ func (s *Selector) SelectExcluding(ctx context.Context, req *model.SelectRequest
 
 	// Check sticky cache first (if no exclusions)
 	if len(excludeIDs) == 0 {
-		provider, err := s.checkStickyCache(ctx, scope)
+		lease, err := s.checkStickyCache(ctx, scope)
 		if err != nil {
 			return nil, err
 		}
-		if provider != nil {
-			return provider, nil
+		if lease != nil {
+			return &SelectResult{
+				Lease:    lease,
+				Metadata: BuildSelectionMetadataAt(req, SelectionSourceStickyContinuity, s.selectionTimestamp()),
+			}, nil
 		}
 	}
 
-	return s.selectExcludingInternal(ctx, scope, excludeIDs)
+	lease, err := s.selectExcludingInternal(ctx, scope, excludeIDs)
+	if err != nil {
+		return nil, err
+	}
+	return &SelectResult{
+		Lease:    lease,
+		Metadata: BuildSelectionMetadataAt(req, SelectionSourceStrategy, s.selectionTimestamp()),
+	}, nil
 }
 
 // selectExcludingInternal performs the actual provider selection without sticky cache check.
 // This is extracted to allow SelectWithMetadata to track whether the result came from sticky cache.
-func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderSelectionEligibility, excludeIDs map[string]bool) (*model.Provider, error) {
+func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderSelectionEligibility, excludeIDs map[string]bool) (*ProviderLease, error) {
 	req := scope.req
 
 	// Get all enabled providers for this API type
-	providers, err := s.store.ListProvidersByAPIType(ctx, req.APIType)
+	providers, err := s.store.ListProvidersByAPIType(ctx, reqAPIType(req))
 	if err != nil {
 		return nil, err
 	}
@@ -305,12 +328,12 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderS
 		groupCandidates = removeGroupCandidate(groupCandidates, group.GroupID)
 
 		// Try to select a provider from this group
-		provider, err := s.selectFromGroup(ctx, scope, group, excludeIDs)
+		lease, err := s.selectFromGroup(ctx, scope, group, excludeIDs)
 		if err != nil {
 			return nil, err
 		}
-		if provider != nil {
-			return provider, nil
+		if lease != nil {
+			return lease, nil
 		}
 	}
 
@@ -331,7 +354,7 @@ func buildStickyKey(req *model.SelectRequest) model.StickyKey {
 // checkStickyCache checks for a cached sticky provider and returns it if available.
 // It returns an error when eligibility cannot be evaluated safely, preserving the
 // non-sticky path's contract for transient auth-state read failures.
-func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectionEligibility) (*model.Provider, error) {
+func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectionEligibility) (*ProviderLease, error) {
 	if scope == nil || scope.req == nil || s.sticky == nil || !isStickyEnabled(scope.req.StickyMode) {
 		return nil, nil
 	}
@@ -359,8 +382,8 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 		return nil, nil
 	}
 
-	// Check concurrency limit
-	if s.limiter != nil && !s.limiter.TryAcquire(provider.ID, provider.Concurrency) {
+	lease, acquired := s.acquireProvider(provider)
+	if !acquired {
 		// Log sticky cache deletion for observability.
 		// This helps identify when high load causes session affinity loss.
 		s.logger.Debug("sticky cache deleted due to concurrency limit",
@@ -373,7 +396,7 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 		return nil, nil
 	}
 
-	return provider, nil
+	return lease, nil
 }
 
 // buildGroupCandidates organizes providers into groups.
@@ -443,7 +466,7 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, scope *ProviderSele
 // selectFromGroup selects a provider from a group using the group's strategy.
 // It first filters and selects a provider using the strategy, then acquires
 // the concurrency slot only for the selected provider.
-func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelectionEligibility, group *groupCandidate, excludeIDs map[string]bool) (*model.Provider, error) {
+func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelectionEligibility, group *groupCandidate, excludeIDs map[string]bool) (*ProviderLease, error) {
 	// Filter providers by exclusion list only (no slot acquisition yet)
 	candidates := make([]*model.Provider, 0, len(group.Providers))
 	for _, p := range group.Providers {
@@ -476,9 +499,10 @@ func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelection
 			continue
 		}
 
-		// Try to acquire concurrency slot for the selected provider only
-		if s.limiter == nil || s.limiter.TryAcquire(selected.ID, selected.Concurrency) {
-			return selected, nil
+		// The lease is the ownership result of selection, not an incidental
+		// counter mutation that downstream code must reconstruct from an ID.
+		if lease, acquired := s.acquireProvider(selected); acquired {
+			return lease, nil
 		}
 
 		// Acquisition failed - remove from candidates and retry with remaining
@@ -486,6 +510,17 @@ func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelection
 	}
 
 	return nil, nil
+}
+
+func (s *Selector) acquireProvider(provider *model.Provider) (*ProviderLease, bool) {
+	if s == nil || s.limiter == nil || provider == nil {
+		return nil, false
+	}
+	slot, acquired := s.limiter.acquireUnderLifecycle(provider.ID, provider.Concurrency)
+	if !acquired {
+		return nil, false
+	}
+	return newProviderLease(provider, slot), true
 }
 
 func (s *Selector) selectionScope(ctx context.Context, req *model.SelectRequest) (*ProviderSelectionEligibility, error) {
@@ -534,20 +569,33 @@ func (s *Selector) EvictProviderContinuity(providerID string) {
 	s.sticky.EvictProvider(providerID)
 }
 
-// ReleaseConcurrency releases the concurrency slot for a provider.
-func (s *Selector) ReleaseConcurrency(providerID string) {
-	if s.limiter != nil {
-		s.limiter.Release(providerID)
+// RetireProviderGeneration runs one provider mutation at the same lifecycle
+// boundary used by lease acquisition and dispatch activation. A failed mutation
+// still retires the old generation because its validated snapshot may no longer
+// be trusted after a write was attempted.
+func (s *Selector) RetireProviderGeneration(providerID string, mutation func() error) error {
+	if mutation == nil {
+		return fmt.Errorf("provider lifecycle mutation is required")
 	}
+	if providerID == "" {
+		return fmt.Errorf("provider ID is required for lifecycle retirement")
+	}
+	if s == nil || s.limiter == nil {
+		return mutation()
+	}
+	return s.limiter.mutateWithRetiredGenerations([]string{providerID}, false, mutation)
 }
 
-// ClearConcurrency removes the concurrency counter for a provider.
-// Call this when a provider is deleted to prevent unbounded memory growth.
-// This delegates to ConcurrencyLimiter.Clear.
-func (s *Selector) ClearConcurrency(providerID string) {
-	if s.limiter != nil {
-		s.limiter.Clear(providerID)
+// RetireAllProviderGenerations is the mutation boundary for group, routing, and
+// bulk configuration changes whose eligibility effects span provider IDs.
+func (s *Selector) RetireAllProviderGenerations(mutation func() error) error {
+	if mutation == nil {
+		return fmt.Errorf("provider lifecycle mutation is required")
 	}
+	if s == nil || s.limiter == nil {
+		return mutation()
+	}
+	return s.limiter.mutateWithRetiredGenerations(nil, true, mutation)
 }
 
 // removeGroupCandidate removes a group from the candidates list.

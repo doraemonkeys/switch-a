@@ -6,6 +6,16 @@ func fullConfigImportScope() *ConfigImportScope {
 	return &ConfigImportScope{Mode: ConfigImportModeFull}
 }
 
+func selectionConfigImportScope(groupIDs, providerIDs []string) *ConfigImportScope {
+	return &ConfigImportScope{
+		Mode: ConfigImportModeSelection,
+		Selection: &ConfigImportSelection{
+			GroupIDs:    groupIDs,
+			ProviderIDs: providerIDs,
+		},
+	}
+}
+
 func importRequestFromExport(exported ExportedConfig) ImportConfigRequest {
 	return ImportConfigRequest{
 		Version:         exported.Version,

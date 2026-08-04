@@ -11,20 +11,28 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
-	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
+type TokenUsage = tokenusage.TokenUsage
+
 // Handler handles proxy requests.
 type Handler struct {
 	store                      Store
 	selector                   Selector
+	httpSelector               httpProviderSelector
 	health                     internal.HealthManager
 	activeRegistry             *ActiveRequestRegistry
 	visibleContinuitySeedStore model.VisibleContinuitySeedStore
@@ -33,25 +41,13 @@ type Handler struct {
 	transport                  *Transport
 	lastCfg                    *transportCacheKey
 	fallbackCounter            atomic.Int64 // Counter for true round-robin in fallback mode
-	wsForwarder                *WebSocketForwarder
+	webSocketGateway           *websocketproxy.Gateway
 	auth                       ProviderAuthenticator
 	capture                    RequestCapture
-}
-
-// transportCacheKey is used to detect if Transport config changed.
-type transportCacheKey struct {
-	connectTimeout   time.Duration
-	firstByteTimeout time.Duration
-	readTimeout      time.Duration
-	sseIdleTimeout   time.Duration
-}
-
-// Equals returns true if the two cache keys have identical configuration.
-func (k *transportCacheKey) Equals(other *transportCacheKey) bool {
-	return k.connectTimeout == other.connectTimeout &&
-		k.firstByteTimeout == other.firstByteTimeout &&
-		k.readTimeout == other.readTimeout &&
-		k.sseIdleTimeout == other.sseIdleTimeout
+	ruleSets                   errorrule.RuleSetProvider
+	analyzer                   ResponseAnalyzer
+	ruleStats                  RuleStatistics
+	backoff                    BackoffWaiter
 }
 
 // firstWriteResponseWriter tracks first data write to enable sticky session fallback.
@@ -65,6 +61,7 @@ type firstWriteResponseWriter struct {
 	onFirstWrite   func()
 	onCommit       func()
 	onWrite        func(int, time.Time)
+	onPayload      func([]byte)
 	written        bool
 	committed      bool
 	firstWriteTime time.Time // Time of first data write (for TTFT calculation)
@@ -82,20 +79,27 @@ func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
 		w.writeErr = io.ErrShortWrite
 	}
 	if n > 0 {
-		w.commit()
-		if !w.written {
-			w.firstWriteTime = writeTime
-			if w.onFirstWrite != nil {
-				w.onFirstWrite()
-			}
-			w.written = true
-		}
-		w.bytesWritten += int64(n)
-		if w.onWrite != nil {
-			w.onWrite(n, writeTime)
-		}
+		w.observeWrite(p[:n], writeTime)
 	}
 	return n, err
+}
+
+func (w *firstWriteResponseWriter) observeWrite(payload []byte, writeTime time.Time) {
+	w.commit()
+	if !w.written {
+		w.firstWriteTime = writeTime
+		if w.onFirstWrite != nil {
+			w.onFirstWrite()
+		}
+		w.written = true
+	}
+	w.bytesWritten += int64(len(payload))
+	if w.onWrite != nil {
+		w.onWrite(len(payload), writeTime)
+	}
+	if w.onPayload != nil {
+		w.onPayload(payload)
+	}
 }
 
 func (w *firstWriteResponseWriter) WriteHeader(statusCode int) {
@@ -130,21 +134,49 @@ type Store interface {
 
 // Selector defines the provider selection interface.
 type Selector interface {
-	Select(ctx context.Context, req *model.SelectRequest) (*model.Provider, error)
-	SelectExcluding(ctx context.Context, req *model.SelectRequest, excludeIDs map[string]bool) (*model.Provider, error)
-	SelectWithMetadata(ctx context.Context, req *model.SelectRequest) (*selector.SelectResult, error)
 	UpdateStickyWithTTL(req *model.SelectRequest, providerID string, ttl time.Duration)
 	EvictProviderContinuity(providerID string)
-	ReleaseConcurrency(providerID string)
-	// ClearConcurrency removes the concurrency counter for a deleted provider.
-	// This should be called when a provider is deleted to prevent unbounded memory growth.
-	ClearConcurrency(providerID string)
 }
 
 // HTTPTransport is the forwarding surface consumed by one gateway request.
 type HTTPTransport interface {
-	FetchUpstream(context.Context, *http.Request) (*UpstreamResponse, error)
-	WriteToClient(context.Context, http.ResponseWriter, *UpstreamResponse) error
+	FetchUpstream(context.Context, *http.Request) (*upstreamtransport.Response, error)
+}
+
+type ResponseAnalyzer interface {
+	Start(context.Context, responseanalysis.StartInput) *responseanalysis.PendingResponse
+}
+
+type RuleStatistics interface {
+	Hit(statistics.Handle, time.Time) error
+}
+
+type BackoffWaiter interface {
+	Wait(context.Context, time.Duration) error
+}
+
+type timerBackoffWaiter struct{}
+
+func (timerBackoffWaiter) Wait(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type staticRuleSetProvider struct {
+	snapshot *errorrule.CompiledRuleSet
+}
+
+func (p staticRuleSetProvider) CurrentRuleSet() *errorrule.CompiledRuleSet {
+	return p.snapshot
 }
 
 // ProviderAuthenticator is defined at the proxy boundary so credential refresh
@@ -160,104 +192,199 @@ type RequestCapture interface {
 	BeginGateway(requestcapture.GatewayStart) requestcapture.GatewayRecorder
 }
 
-// Config holds proxy handler configuration.
-type Config struct {
-	Store                      Store
-	Selector                   Selector
-	Health                     internal.HealthManager
-	ActiveRegistry             *ActiveRequestRegistry
-	VisibleContinuitySeedStore model.VisibleContinuitySeedStore
-	Auth                       ProviderAuthenticator
-	Capture                    RequestCapture
-	Logger                     *zap.Logger
+type webSocketActiveSessions struct {
+	registry *ActiveRequestRegistry
 }
 
-// NewHandler creates a new proxy handler.
-// Panics if Store or Logger is nil, as the handler cannot function without them.
-func NewHandler(cfg Config) *Handler {
-	if cfg.Store == nil {
-		panic("proxy: Store is required but was nil")
+func newWebSocketActiveSessions(registry *ActiveRequestRegistry) websocketproxy.ActiveSessions {
+	if registry == nil {
+		return nil
 	}
-	if cfg.Logger == nil {
-		panic("proxy: Logger is required but was nil")
-	}
-	visibleContinuitySeedStore := cfg.VisibleContinuitySeedStore
-	if visibleContinuitySeedStore == nil {
-		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
-	}
-	return &Handler{
-		store:                      cfg.Store,
-		selector:                   cfg.Selector,
-		health:                     cfg.Health,
-		activeRegistry:             cfg.ActiveRegistry,
-		visibleContinuitySeedStore: visibleContinuitySeedStore,
-		logger:                     cfg.Logger,
-		wsForwarder:                NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger}),
-		auth:                       cfg.Auth,
-		capture:                    cfg.Capture,
-	}
+	return webSocketActiveSessions{registry: registry}
 }
 
-// getTransport returns a cached Transport or creates a new one if config changed.
-func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
-	key := &transportCacheKey{
-		connectTimeout:   cfg.connectTimeout,
-		firstByteTimeout: cfg.firstByteTimeout,
-		readTimeout:      cfg.readTimeout,
-		sseIdleTimeout:   cfg.sseIdleTimeout,
+type webSocketLiveTraffic struct {
+	tracker *LiveBytesTracker
+}
+
+func (webSocketActiveSessions) NewLiveTraffic() websocketproxy.LiveTraffic {
+	return webSocketLiveTraffic{tracker: &LiveBytesTracker{}}
+}
+
+func (sessions webSocketActiveSessions) Register(
+	session websocketproxy.ActiveSession,
+	done <-chan struct{},
+	traffic websocketproxy.LiveTraffic,
+) bool {
+	if session.Lease == nil || session.Lease.Provider() == nil {
+		return false
 	}
-
-	h.mu.RLock()
-	if h.transport != nil && h.lastCfg != nil && h.lastCfg.Equals(key) {
-		transport := h.transport
-		h.mu.RUnlock()
-		return transport
+	registered := sessions.registry.RegisterWithDone(&ActiveRequest{
+		RequestID: session.RequestID, ProviderID: session.Lease.ProviderID(),
+		Model: session.Model, APIType: session.APIType, UserID: session.UserID,
+		ClientIP: session.ClientIP, StickyMode: session.StickyMode,
+		ContinuityKey: session.ContinuityKey, IsWebSocket: true,
+		StartedAt:                     session.StartedAt,
+		RequestedReasoningObservation: session.Reasoning,
+		lease:                         session.Lease,
+	}, done)
+	if !registered {
+		return false
 	}
-	h.mu.RUnlock()
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Double-check pattern: another goroutine may have updated transport between our read unlock and write lock
-	if h.transport != nil && h.lastCfg != nil && h.lastCfg.Equals(key) {
-		return h.transport
+	if live, ok := traffic.(webSocketLiveTraffic); ok {
+		sessions.registry.RegisterLiveBytes(session.RequestID, live.tracker)
 	}
+	return true
+}
 
-	// Close old transport to prevent connection pool leak
-	if h.transport != nil {
-		h.transport.CloseIdleConnections()
+func (sessions webSocketActiveSessions) Unregister(requestID string) bool {
+	return sessions.registry.Unregister(requestID)
+}
+
+func (sessions webSocketActiveSessions) UpdateModel(requestID, modelName string) {
+	sessions.registry.UpdateModel(requestID, modelName)
+}
+
+func (sessions webSocketActiveSessions) MarkDataReceived(requestID string) {
+	sessions.registry.MarkDataReceived(requestID)
+}
+
+func (sessions webSocketActiveSessions) FindActiveLeaseForRequest(
+	req *model.SelectRequest,
+) (websocketproxy.ProviderLease, bool) {
+	return sessions.registry.FindActiveLeaseForRequest(req)
+}
+
+type webSocketSelectorAdapter struct {
+	routing    Selector
+	capability httpProviderSelector
+}
+
+func newWebSocketSelectorAdapter(routing Selector, capability httpProviderSelector) websocketproxy.Selector {
+	if routing == nil || capability == nil {
+		return nil
 	}
+	return webSocketSelectorAdapter{routing: routing, capability: capability}
+}
 
-	h.transport = NewTransport(TransportConfig{
-		ConnectTimeout:   cfg.connectTimeout,
-		FirstByteTimeout: cfg.firstByteTimeout,
-		ReadTimeout:      cfg.readTimeout,
-		SSEIdleTimeout:   cfg.sseIdleTimeout,
-	})
-	h.lastCfg = key
-	return h.transport
+func (a webSocketSelectorAdapter) SelectInitial(
+	ctx context.Context,
+	request *model.SelectRequest,
+) (websocketproxy.ProviderSelection, error) {
+	selection, err := a.capability.SelectInitial(ctx, request)
+	return websocketSelection(selection, err)
+}
+
+func (a webSocketSelectorAdapter) SelectActive(
+	ctx context.Context,
+	request *model.SelectRequest,
+	active websocketproxy.ProviderLease,
+) (websocketproxy.ProviderSelection, error) {
+	lease, ok := active.(providerLease)
+	if !ok {
+		return websocketproxy.ProviderSelection{}, internal.ErrNoProvider
+	}
+	selection, err := a.capability.SelectActive(ctx, request, lease)
+	return websocketSelection(selection, err)
+}
+
+func (a webSocketSelectorAdapter) SelectAlternate(
+	ctx context.Context,
+	request *model.SelectRequest,
+	excluded map[string]bool,
+) (websocketproxy.ProviderSelection, error) {
+	reservation, err := a.capability.ReserveAlternate(ctx, request, excluded)
+	if err != nil {
+		return websocketproxy.ProviderSelection{}, err
+	}
+	activated := false
+	defer func() {
+		if !activated {
+			reservation.Release()
+		}
+	}()
+	if err := reservation.PrepareActivation(ctx); err != nil {
+		return websocketproxy.ProviderSelection{}, err
+	}
+	lease := reservation.Activate()
+	if lease == nil || !lease.Held() {
+		return websocketproxy.ProviderSelection{}, internal.ErrNoProvider
+	}
+	activated = true
+	return websocketproxy.ProviderSelection{
+		Lease:    lease,
+		Metadata: reservation.Metadata(),
+	}, nil
+}
+
+func (a webSocketSelectorAdapter) UpdateStickyWithTTL(
+	request *model.SelectRequest,
+	providerID string,
+	ttl time.Duration,
+) {
+	a.routing.UpdateStickyWithTTL(request, providerID, ttl)
+}
+
+func (a webSocketSelectorAdapter) EvictProviderContinuity(providerID string) {
+	a.routing.EvictProviderContinuity(providerID)
+}
+
+func websocketSelection(
+	selection *providerSelection,
+	err error,
+) (websocketproxy.ProviderSelection, error) {
+	if selection != nil && selection.lease != nil {
+		adapted := websocketproxy.ProviderSelection{
+			Lease:    selection.lease,
+			Metadata: selection.metadata,
+		}
+		if err != nil {
+			// The WebSocket gateway owns cleanup once a lease crosses this
+			// boundary, including the uncommon result-plus-error selector case.
+			return adapted, err
+		}
+		if selection.provider != nil && selection.lease.Held() {
+			return adapted, nil
+		}
+	}
+	if err != nil {
+		return websocketproxy.ProviderSelection{}, err
+	}
+	return websocketproxy.ProviderSelection{}, internal.ErrNoProvider
+}
+
+func (traffic webSocketLiveTraffic) ObserveClientToUpstream(bytes int64) {
+	traffic.tracker.BytesSent.Add(bytes)
+	traffic.tracker.MsgsSent.Add(1)
+	traffic.tracker.LastActivityAt.Store(time.Now().UnixMilli())
+}
+
+func (traffic webSocketLiveTraffic) ObserveUpstreamToClient(bytes int64) {
+	traffic.tracker.BytesReceived.Add(bytes)
+	traffic.tracker.MsgsReceived.Add(1)
+	traffic.tracker.LastActivityAt.Store(time.Now().UnixMilli())
 }
 
 // proxyContext aggregates per-request state to reduce method signature complexity.
 // Immutable fields (r, cfg, apiType, body, info, startTime, requestID) are set once during construction.
 // Mutable fields (selectReq, isSticky, attempts) are modified during retry orchestration.
 type proxyContext struct {
-	r                      *http.Request
-	w                      http.ResponseWriter
-	cfg                    *runtimeConfig
-	transport              HTTPTransport
-	apiType                string
-	body                   []byte
-	info                   RequestInfo
-	selectReq              *model.SelectRequest
-	startTime              time.Time
-	requestID              string // UUID for this request
-	capture                requestcapture.GatewayRecorder
-	captureParticipates    bool
-	httpCaptureCompletions []httpCaptureCompletion
-	liveBytes              *LiveBytesTracker      // Logical-request traffic shared across provider attempts
-	isSticky               bool                   // Whether provider came from sticky cache
-	attempts               []model.RequestAttempt // Attempts made during this request
+	handler             *Handler
+	r                   *http.Request
+	w                   http.ResponseWriter
+	cfg                 *runtimeConfig
+	transport           HTTPTransport
+	apiType             string
+	body                []byte
+	info                RequestInfo
+	selectReq           *model.SelectRequest
+	startTime           time.Time
+	requestID           string // UUID for this request
+	capture             requestcapture.GatewayRecorder
+	captureParticipates bool
+	liveBytes           *LiveBytesTracker      // Logical-request traffic shared across provider attempts
+	isSticky            bool                   // Whether provider came from sticky cache
+	attempts            []model.RequestAttempt // Attempts made during this request
 }
 
 // ServeHTTP handles proxy requests.
@@ -286,7 +413,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// WebSocket upgrade is only valid for Codex (OpenAI Realtime API).
 	// Reject upgrades on other API types to prevent health metric pollution
 	// from failed WS dials to non-WebSocket backends.
-	if isWebSocketUpgrade(r) {
+	if websocketproxy.IsUpgrade(r) {
 		if apiType != APITypeCodex {
 			h.logger.Warn("websocket upgrade rejected for unsupported API type",
 				zap.String("api_type", apiType),
@@ -296,7 +423,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("WebSocket upgrade is not supported for API type %q", apiType))
 			return
 		}
-		h.handleWebSocket(ctx, w, r, cfg, apiType, requestID, startTime)
+		h.webSocketGateway.Handle(ctx, w, r, websocketproxy.RequestConfig{
+			GlobalAuthMode:    cfg.globalAuthMode,
+			GlobalMaxAttempts: cfg.globalMaxAttempts,
+			StickyMode:        cfg.stickyMode,
+			StickyTTL:         cfg.stickyTTL,
+			TrustProxy:        cfg.trustProxy,
+			UserHeader:        cfg.userHeader,
+			ProbeClientModel:  cfg.websocketProbeClientModel,
+		}, apiType, requestID, startTime)
 		return
 	}
 
@@ -320,6 +455,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Build proxy context
 	pctx := &proxyContext{
+		handler:   h,
 		r:         r,
 		w:         w,
 		cfg:       cfg,
@@ -349,7 +485,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			pctx.capture.Finish(gatewayCaptureOutcome(ctx))
 		}()
-		defer pctx.finishHTTPCaptureCompletions()
 	}
 	pctx.selectReq = &model.SelectRequest{
 		ClientIP:   pctx.info.ClientIP,
@@ -420,6 +555,7 @@ func (h *Handler) handleBodyError(w http.ResponseWriter, err error, maxSize int6
 
 // retryState tracks mutable state across retry attempts in executeProxy.
 type retryState struct {
+	ledger            errorrule.RetryLedger
 	lastErr           error
 	providerUsed      *model.Provider
 	statusCode        int
@@ -428,6 +564,7 @@ type retryState struct {
 	headersWritten    bool
 	responseCommitted bool
 	clientCanceled    bool
+	semanticError     bool
 	// Transport observation plumbing — mirrored from forwardResult so the
 	// final logRequest/evidence path can reconstruct the observation without
 	// re-running forwarding logic. Only the last attempt's values survive
@@ -438,6 +575,7 @@ type retryState struct {
 	isClientWriteError bool
 	excludedProviders  map[string]bool
 	currentProvider    *model.Provider
+	currentLease       providerLease
 	// providerAttempt is 0-based within a single provider. A provider with MaxRetries=N
 	// can be attempted (N+1) times: providerAttempt 0..N.
 	providerAttempt  int
@@ -460,55 +598,14 @@ type retryState struct {
 	failureDisposition providerFailureDisposition
 }
 
-// selectAndRegisterProvider selects a provider and registers the active request.
-// Returns true if selection succeeded, false if the loop should break or return early.
-// The earlyReturn flag indicates whether to return immediately from executeProxy.
-func (h *Handler) selectAndRegisterProvider(ctx context.Context, pctx *proxyContext, state *retryState, attempt int) (continueLoop, earlyReturn bool) {
-	state.selectionMode = state.switchTracker.prepareSelection()
-
-	provider, selectionMetadata, err := h.selectProviderWithTracking(ctx, pctx.selectReq, attempt, state.excludedProviders)
-	if err != nil {
-		if errors.Is(err, internal.ErrNoProvider) {
-			// No provider available before any upstream attempt -> immediate error.
-			if attempt == 0 && len(pctx.attempts) == 0 {
-				h.handleNoProvider(pctx)
-				return false, true
-			}
-			// No providers left after previous failures -> treat as exhausted.
-			return false, false
-		}
-		state.lastErr = err
-		return false, false
-	}
-	if provider == nil {
-		return false, false
-	}
-
-	state.currentProvider = provider
-	state.providerAttempt = 0
-	state.selectionMode = state.switchTracker.recordSelection(provider, selectionMetadata)
-	state.selectionMetadata = selectionMetadata
-
-	// Track sticky cache hit on first attempt
-	if attempt == 0 {
-		pctx.isSticky = selectionMetadata.UsesContinuity()
-	}
-
-	h.registerActiveRequest(pctx, state, provider)
-	return true, false
-}
-
 // registerActiveRequest registers or updates the active request in the registry.
-func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, provider *model.Provider) {
+func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState) {
 	if h.activeRegistry == nil {
 		return
 	}
-	// Register (or update) active request.
-	// Note: We update ProviderID on provider switch so sticky fallback reflects the
-	// actual upstream provider that eventually produces data.
-	h.activeRegistry.RegisterWithDone(&ActiveRequest{
+	registered := h.activeRegistry.RegisterWithDone(&ActiveRequest{
 		RequestID:                     pctx.requestID,
-		ProviderID:                    provider.ID,
+		ProviderID:                    state.currentProvider.ID,
 		Model:                         pctx.info.Model,
 		APIType:                       pctx.apiType,
 		UserID:                        pctx.info.UserID,
@@ -518,28 +615,39 @@ func (h *Handler) registerActiveRequest(pctx *proxyContext, state *retryState, p
 		IsSSE:                         false, // Updated after response type is known
 		StartedAt:                     pctx.startTime,
 		RequestedReasoningObservation: pctx.info.Reasoning,
+		lease:                         state.currentLease,
 	}, pctx.r.Context().Done())
+	if !registered {
+		state.activeRegistered = false
+		return
+	}
 	h.activeRegistry.RegisterLiveBytes(pctx.requestID, pctx.liveBytes)
 	state.activeRegistered = true
 }
 
 // recordAttempt records a request attempt in the proxy context.
-func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result forwardResult, attempt int, attemptStart time.Time, switchReason string) {
+func (h *Handler) recordAttempt(
+	pctx *proxyContext,
+	attemptContext httpAttemptContext,
+	result forwardResult,
+	attempt int,
+	attemptStart time.Time,
+) {
 	createdAt := time.Now()
-	attemptRecord := newNormalizedRequestAttempt(pctx.requestID, state.currentProvider.ID, createdAt)
+	attemptRecord := newNormalizedRequestAttempt(pctx.requestID, attemptContext.provider.ID, createdAt)
 	attemptRecord.Attempt = attempt
-	attemptRecord.SwitchMode = requestAttemptSwitchMode(state.selectionMode)
-	attemptRecord.ProviderAttempt = state.providerAttempt + 1
-	attemptRecord.ProviderSwitchCount = state.switchTracker.providerSwitchCount()
+	attemptRecord.SwitchMode = requestAttemptSwitchMode(attemptContext.switchMode)
+	attemptRecord.ProviderAttempt = attemptContext.providerAttemptIndex + 1
+	attemptRecord.ProviderSwitchCount = attemptContext.providerSwitchCount
 	attemptRecord.StatusCode = result.statusCode
 	attemptRecord.BodySnippet = result.bodySnippet
 	attemptRecord.LatencyMs = time.Since(attemptStart).Milliseconds()
-	attemptRecord.SwitchReason = switchReason
-	attemptRecord.ContinuitySeeded = state.selectionMetadata.ContinuitySeeded
-	attemptRecord.ContinuityOriginProviderID = state.selectionMetadata.ContinuityOriginProviderID
-	attemptRecord.ContinuitySeedAgeMs = selectionMetadataContinuitySeedAgeMs(state.selectionMetadata)
-	if result.err != nil {
-		attemptRecord.Error = result.err.Error()
+	attemptRecord.SwitchReason = result.switchReason
+	attemptRecord.ContinuitySeeded = attemptContext.selectionMetadata.ContinuitySeeded
+	attemptRecord.ContinuityOriginProviderID = attemptContext.selectionMetadata.ContinuityOriginProviderID
+	attemptRecord.ContinuitySeedAgeMs = selectionMetadataContinuitySeedAgeMs(attemptContext.selectionMetadata)
+	if result.failureMessage != "" {
+		attemptRecord.Error = result.failureMessage
 		// Include request body snippet for error attempts to help diagnose issues.
 		// SECURITY NOTE: This may expose sensitive data (API keys, tokens, PII) in the
 		// request_attempts table. Administrators should be aware that error diagnostics
@@ -548,134 +656,6 @@ func (h *Handler) recordAttempt(pctx *proxyContext, state *retryState, result fo
 		attemptRecord.ReqBodySnippet = GetReqBodySnippet(pctx.body)
 	}
 	pctx.attempts = append(pctx.attempts, attemptRecord)
-}
-
-// tryIncrementAndExhaustProvider attempts to increment the provider retry counter.
-// Returns (exhausted bool, switchReason string):
-//   - exhausted=true means we should switch to a different provider
-//   - switchReason is non-empty only when exhausted=true, explaining why the switch occurred
-//
-// Note: Since markFailure is called in forwardToProvider, and IsAvailable check happens
-// here (after markFailure), if this failure triggers the circuit breaker, switchReason
-// will correctly record "circuit_breaker_triggered".
-func (h *Handler) tryIncrementAndExhaustProvider(ctx context.Context, state *retryState) (bool, string) {
-	maxRetries := max(0, state.currentProvider.MaxRetries)
-
-	// Check for permanent errors that should force immediate provider switch
-	if state.failureDisposition.forcesProviderSwitch() {
-		return true, state.failureDisposition.switchReason
-	}
-	if shouldForceProviderSwitch(state.statusCode) {
-		return true, formatPermanentErrorReason(state.statusCode)
-	}
-
-	// Check if circuit breaker has been triggered for this provider
-	if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
-		return true, SwitchReasonCircuitBreakerTriggered
-	}
-
-	// Normal retry logic: check if there are retries remaining
-	if state.providerAttempt < maxRetries {
-		state.providerAttempt++
-		return false, ""
-	}
-
-	return true, SwitchReasonMaxRetriesExhausted
-}
-
-// excludeCurrentProvider marks the current provider as excluded and tears down
-// the active attempt before the next selection so concurrency is released on the
-// same lifecycle edge that removes the request from monitoring.
-func (h *Handler) excludeCurrentProvider(pctx *proxyContext, state *retryState) {
-	state.excludedProviders[state.currentProvider.ID] = true
-	if state.activeRegistered && h.activeRegistry != nil {
-		h.activeRegistry.Unregister(pctx.requestID)
-		state.activeRegistered = false
-	} else {
-		h.releaseConcurrency(state.currentProvider.ID)
-	}
-	state.currentProvider = nil
-}
-
-// applyBackoffDelay waits for the configured backoff delay before retrying the same provider.
-// Returns true if the context was cancelled during the delay, false otherwise.
-func (h *Handler) applyBackoffDelay(ctx context.Context, provider *model.Provider, retryIndex int) bool {
-	if provider.Backoff.IsZero() {
-		return false
-	}
-	delay := provider.Backoff.DelayForRetry(retryIndex)
-	if delay <= 0 {
-		return false
-	}
-	select {
-	case <-time.After(delay):
-		return false
-	case <-ctx.Done():
-		return true
-	}
-}
-
-// forwardResult holds the result of forwarding to a provider.
-//
-// Transport observation fields (firstByteVisible / isStatusFailover /
-// isClientWriteError) carry **runtime facts only** — they feed the SSE
-// transport diagnostic derivation one layer up. Per the transport
-// observability plan, this struct intentionally does NOT carry a derived
-// `TransportDiagnostic`: evidence is built by the evidence layer from
-// observation facts, not reverse-engineered from a logged conclusion.
-type forwardResult struct {
-	headersWritten    bool
-	responseCommitted bool
-	clientCanceled    bool
-	// firstByteVisible is true once a body byte has actually been committed
-	// to the client. It is the sole discriminator between the SSE stages
-	// `pre_payload_visible` and `post_payload_visible`; the idle watchdog
-	// can fire before any byte is written (newIdleWatchdog starts at body
-	// open, pre-Read()), so this flag is load-bearing for stage accuracy.
-	firstByteVisible bool
-	// isStatusFailover flags the synthetic `upstream returned status %d`
-	// error produced by failoverForwardResponse. That error is a status
-	// classification, not a transport failure, so the derivation function
-	// must bypass it explicitly — we carry a flag instead of matching the
-	// synthetic message text, which is fragile under localization or copy
-	// refactors.
-	isStatusFailover bool
-	// isClientWriteError is set by handleWriteError when the failure arose
-	// from writing to the client rather than reading from upstream or a
-	// pure ctx cancel. The derivation function treats this as authoritative
-	// rather than sniffing error text.
-	isClientWriteError bool
-	statusCode         int
-	success            bool
-	err                error
-	done               bool        // whether to stop retrying
-	isSSE              bool        // whether the response was SSE
-	bodySnippet        string      // first ~500 bytes of error response (failover scenarios only)
-	firstTokenMs       *int64      // Time To First Token for SSE requests (ms from request start)
-	responseBytes      int64       // Total bytes written to client (for transfer statistics)
-	tokenUsage         *TokenUsage // Token usage extracted from response (Phase 4a)
-	// failureDisposition records retry semantics derived from the upstream failure.
-	failureDisposition providerFailureDisposition
-}
-
-// setupTokenInterceptor creates and configures a token capture interceptor for successful responses.
-// Returns the interceptor (for Result() call) and sseInterceptor (for Wait() call if SSE).
-func (h *Handler) setupTokenInterceptor(statusCode int, isSSE bool, upstreamResp *UpstreamResponse) (ResponseInterceptor, *sseTokenInterceptor) {
-	if statusCode < defaults.StatusSuccessMin || statusCode >= defaults.StatusSuccessMax {
-		return nil, nil
-	}
-
-	if isSSE {
-		// Pass Content-Encoding for stream decompression support
-		contentEncoding := upstreamResp.Header.Get("Content-Encoding")
-		sseInterceptor := newSSETokenInterceptor(
-			NewZapLoggerAdapter(h.logger.Sugar()),
-			contentEncoding,
-		)
-		return sseInterceptor, sseInterceptor
-	}
-
-	return newTokenCaptureInterceptor(upstreamResp.ContentLength, NewZapLoggerAdapter(h.logger.Sugar())), nil
 }
 
 // buildProviderRequest validates the provider's endpoint/auth config and
@@ -718,97 +698,4 @@ func (h *Handler) buildProviderRequest(
 	}
 
 	return req, "", nil
-}
-
-// extractTokenUsage waits for interceptors to finish and returns parsed token usage, if available.
-func (h *Handler) extractTokenUsage(statusCode int, interceptor ResponseInterceptor, sseInterceptor *sseTokenInterceptor) *TokenUsage {
-	if interceptor == nil {
-		return nil
-	}
-
-	// For SSE with gzip passthrough, wait for background goroutine to complete parsing
-	if sseInterceptor != nil {
-		sseInterceptor.Wait()
-	}
-
-	usage, complete := interceptor.Result()
-	if usage != nil {
-		return usage
-	}
-	if !complete {
-		h.logger.Debug("response not fully read, token usage may be incomplete",
-			zap.Int("status", statusCode),
-		)
-	}
-	return nil
-}
-
-// forwardToProvider forwards the request to a single provider.
-// Note: Retry orchestration (per-provider retries and provider switching) is handled in executeProxy.
-func (h *Handler) forwardToProvider(ctx context.Context, pctx *proxyContext, attempt httpAttemptContext) forwardResult {
-	upstreamReq, result, ok := h.prepareForwardRequest(
-		ctx,
-		pctx,
-		attempt,
-		requestcapture.CredentialPhaseInitial,
-	)
-	if !ok {
-		return result
-	}
-
-	upstreamResp, exchange, result, ok := h.fetchForwardResponse(ctx, pctx, attempt, upstreamReq)
-	if !ok {
-		return result
-	}
-
-	return h.commitForwardResponse(ctx, pctx, attempt.provider, upstreamResp, exchange)
-}
-
-// handleWriteError classifies a write error and updates the result accordingly.
-func (h *Handler) handleWriteError(ctx context.Context, writeErr error, providerID string, result *forwardResult) {
-	// Distinguish client disconnect from real errors.
-	// Client disconnect (context.Canceled) is normal — the upstream succeeded,
-	// so we should not log it as a warning or record it as an error.
-	clientDisconnect := ctx.Err() != nil
-
-	if clientDisconnect {
-		h.logger.Debug("client disconnected during response streaming",
-			zap.String("provider_id", providerID),
-		)
-		result.clientCanceled = true
-	} else {
-		h.logger.Warn("failed to write response to client",
-			zap.String("provider_id", providerID),
-			zap.Error(writeErr),
-		)
-		result.err = writeErr
-	}
-
-	// Upstream errors indicate problems with the provider and should
-	// trigger circuit breaker to avoid routing to problematic providers.
-	isUpstreamErr := errors.Is(writeErr, ErrReadTimeout) ||
-		errors.Is(writeErr, ErrSSEIdleTimeout) ||
-		IsUpstreamReadError(writeErr)
-	switch {
-	case isUpstreamErr:
-		result.success = false
-		h.markFailure(ctx, providerID, writeErr)
-	case clientDisconnect && result.statusCode < defaults.StatusClientError:
-		// Client disconnected but upstream returned 2xx — count as success.
-		result.success = true
-		h.markSuccess(ctx, providerID)
-	default:
-		// Other write errors (e.g., client disconnected with non-2xx) — don't markFailure
-		// as the upstream itself succeeded; only the client write failed.
-		result.success = false
-	}
-
-	// Flag a genuine client-side write failure so the transport diagnostic
-	// derivation can classify `signal=client_write_error` without sniffing
-	// error text. A pure ctx cancel has no real transport signal and is
-	// excluded (clientDisconnect with no writeErr classification); an
-	// upstream-origin error wrapped as a write failure stays upstream.
-	if !clientDisconnect && !isUpstreamErr && writeErr != nil {
-		result.isClientWriteError = true
-	}
 }

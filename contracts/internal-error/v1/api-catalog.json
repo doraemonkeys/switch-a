@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "custom_api_type_prefix": "custom:",
+  "api_types": [
+    {
+      "api_type": "claude",
+      "label": "Claude",
+      "description": "Anthropic Messages API",
+      "display_order": 0,
+      "semantic_error_supported": true,
+      "response_protocol_ids": [
+        "anthropic.messages.json.v1",
+        "anthropic.messages.sse.v1"
+      ]
+    },
+    {
+      "api_type": "deepseek-claude",
+      "label": "DeepSeek Claude",
+      "description": "DeepSeek Anthropic Messages-compatible API",
+      "display_order": 1,
+      "semantic_error_supported": true,
+      "response_protocol_ids": [
+        "anthropic.messages.json.v1",
+        "anthropic.messages.sse.v1"
+      ]
+    },
+    {
+      "api_type": "codex",
+      "label": "Codex",
+      "description": "OpenAI Responses API",
+      "display_order": 2,
+      "semantic_error_supported": true,
+      "response_protocol_ids": [
+        "openai.responses.json.v1",
+        "openai.responses.sse.v1"
+      ]
+    },
+    {
+      "api_type": "gemini",
+      "label": "Gemini",
+      "description": "Google GenerateContent API",
+      "display_order": 3,
+      "semantic_error_supported": true,
+      "response_protocol_ids": [
+        "google.generate_content.json.v1beta",
+        "google.generate_content.sse.v1beta"
+      ]
+    },
+    {
+      "api_type": "grok",
+      "label": "Grok",
+      "description": "xAI OpenAI Chat Completions-compatible API",
+      "display_order": 4,
+      "semantic_error_supported": true,
+      "response_protocol_ids": [
+        "openai.chat_completions.json.v1",
+        "openai.chat_completions.sse.v1"
+      ]
+    },
+    {
+      "api_type": "deepseek-openai",
+      "label": "DeepSeek OpenAI",
+      "description": "DeepSeek OpenAI Chat Completions-compatible API",
+      "display_order": 5,
+      "semantic_error_supported": true,
+      "response_protocol_ids": [
+        "openai.chat_completions.json.v1",
+        "openai.chat_completions.sse.v1"
+      ]
+    }
+  ]
+}

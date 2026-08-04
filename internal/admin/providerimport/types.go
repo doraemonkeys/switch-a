@@ -74,10 +74,18 @@ type Store interface {
 	ApplyProviderImport(ctx context.Context, bundle *store.ProviderImportBundle) error
 }
 
+// ProviderLifecycleCoordinator serializes bulk provider persistence with the
+// selector's generation boundary. Import is deliberately global because one
+// transaction can create and update several provider identities at once.
+type ProviderLifecycleCoordinator interface {
+	RetireAllProviderGenerations(mutation func() error) error
+}
+
 type Config struct {
 	ProviderCatalog ProviderCatalog
 	Drafts          DraftService
 	Store           Store
+	Lifecycles      ProviderLifecycleCoordinator
 	Logger          *zap.Logger
 }
 
@@ -86,6 +94,7 @@ type Handler struct {
 	store                         ProviderCatalog
 	providerImports               DraftService
 	providerImportStore           Store
+	providerLifecycles            ProviderLifecycleCoordinator
 	providerImportReceipts        *providerImportCommitReceiptRegistry
 	providerImportReadSlots       chan struct{}
 	providerImportReadTimeout     time.Duration
@@ -102,6 +111,7 @@ func NewHandler(cfg Config) *Handler {
 		store:                         cfg.ProviderCatalog,
 		providerImports:               cfg.Drafts,
 		providerImportStore:           cfg.Store,
+		providerLifecycles:            cfg.Lifecycles,
 		providerImportReceipts:        newProviderImportCommitReceiptRegistry(nil, providerImportCommitReceiptTTL),
 		providerImportReadSlots:       make(chan struct{}, maxConcurrentProviderImportBodyReads),
 		providerImportReadTimeout:     providerImportBodyReadTimeout,

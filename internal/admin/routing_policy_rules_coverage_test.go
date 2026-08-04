@@ -38,11 +38,11 @@ func (s *routingPolicyCatalogErrorStore) ListProviders(ctx context.Context) ([]m
 func newRoutingPolicyCoverageHandler(st Store) *Handler {
 	logger, _ := zap.NewDevelopment()
 	return NewHandler(Config{
-		Store:       st,
-		Health:      &mockHealthManager{},
-		Concurrency: &mockConcurrencyTracker{},
-		Cleaner:     &mockConcurrencyCleaner{},
-		Logger:      logger,
+		Store:              st,
+		Health:             &mockHealthManager{},
+		Concurrency:        &mockConcurrencyTracker{},
+		ProviderLifecycles: &mockProviderLifecycleCoordinator{},
+		Logger:             logger,
 	})
 }
 

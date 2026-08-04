@@ -130,3 +130,37 @@ func TestAssessNonWebSocketRequest_NoResponseUsesUnknownTermination(t *testing.T
 		t.Fatalf("TerminationReason = %v, want %q", assessment.TerminationReason, model.TerminationReasonUnknown)
 	}
 }
+
+func TestAssessNonWebSocketRequest_CommittedSemanticHTTP200IsInterrupted(t *testing.T) {
+	t.Parallel()
+	assessment := assessNonWebSocketRequest(nonWebSocketRuntimeFacts{
+		ClientTransportStatusCode: http.StatusOK,
+		ResponseCommitted:         true, ServiceStarted: true, SemanticError: true,
+	})
+	if assessment.ServiceOutcome != model.ServiceOutcomeInterrupted ||
+		assessment.CompletionState != model.CompletionStateIncomplete {
+		t.Fatalf("assessment = %#v", assessment)
+	}
+	if assessment.TerminationActor == nil || *assessment.TerminationActor != model.TerminationActorUpstream ||
+		assessment.TerminationReason == nil || *assessment.TerminationReason != model.TerminationReasonUpstreamSemanticError {
+		t.Fatalf("semantic attribution = %#v", assessment)
+	}
+	if assessment.ClientAction != model.ClientActionNone {
+		t.Fatalf("ClientAction = %q", assessment.ClientAction)
+	}
+}
+
+func TestAssessNonWebSocketRequest_TransportFailurePrecedesLateSemanticMatch(t *testing.T) {
+	t.Parallel()
+	assessment := assessNonWebSocketRequest(nonWebSocketRuntimeFacts{
+		ClientTransportStatusCode: http.StatusOK,
+		ResponseCommitted:         true, ServiceStarted: true, SemanticError: true,
+		TerminalErr: ErrReadTimeout,
+	})
+	if assessment.ServiceOutcome != model.ServiceOutcomeUnknown ||
+		assessment.CompletionState != model.CompletionStateUnknown ||
+		assessment.TerminationActor == nil || *assessment.TerminationActor != model.TerminationActorUpstream ||
+		assessment.TerminationReason == nil || *assessment.TerminationReason != model.TerminationReasonTransportError {
+		t.Fatalf("assessment = %#v", assessment)
+	}
+}

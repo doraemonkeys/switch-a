@@ -192,6 +192,34 @@ func TestRequestAttempt_JSONIncludesNullAttemptEvidence(t *testing.T) {
 	}
 }
 
+func TestRequestAttempt_JSONKeepsTransportOutcomeAndHealthOrthogonal(t *testing.T) {
+	clientStatus := 200
+	visible := true
+	outcome := RequestAttemptOutcomeUpstreamSemanticError
+	verdict := RequestAttemptHealthNeutral
+	cause := RequestAttemptHealthCauseSemanticNeutral
+	attempt := RequestAttempt{
+		StatusCode: 200, ClientTransportStatusCode: &clientStatus,
+		Outcome: &outcome, ResultVisibleToClient: &visible,
+		HealthVerdict: &verdict, HealthCause: &cause,
+	}
+	encoded, err := json.Marshal(attempt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded RequestAttempt
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.StatusCode != 200 || decoded.ClientTransportStatusCode == nil || *decoded.ClientTransportStatusCode != 200 ||
+		decoded.Outcome == nil || *decoded.Outcome != RequestAttemptOutcomeUpstreamSemanticError ||
+		decoded.ResultVisibleToClient == nil || !*decoded.ResultVisibleToClient ||
+		decoded.HealthVerdict == nil || *decoded.HealthVerdict != RequestAttemptHealthNeutral ||
+		decoded.HealthCause == nil || *decoded.HealthCause != RequestAttemptHealthCauseSemanticNeutral {
+		t.Fatalf("round trip = %#v", decoded)
+	}
+}
+
 func TestGatewayError_JSON(t *testing.T) {
 	e := NewGatewayError("PROVIDER_UNAVAILABLE", "No available provider")
 

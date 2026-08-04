@@ -13,14 +13,19 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
 	"github.com/doraemonkeys/switch-a/internal/buildinfo"
 	"github.com/doraemonkeys/switch-a/internal/config"
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
+	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
 	"github.com/doraemonkeys/switch-a/internal/health"
 	"github.com/doraemonkeys/switch-a/internal/logger"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/server"
 	"github.com/doraemonkeys/switch-a/internal/store"
@@ -110,6 +115,176 @@ func cleanOldLogs(store LogStore, log *zap.Logger) {
 	}
 }
 
+// internalErrorRuntime holds the single process-wide instances shared by the
+// request path and the administrative control plane. Keeping this graph here
+// prevents either HTTP server from silently constructing a private budget,
+// analyzer, repository view, or statistics accumulator.
+type internalErrorRuntime struct {
+	ruleRepository   *errorrulesqlite.Repository
+	processBudget    *responseanalysis.ProcessMemoryBudget
+	scheduler        responseanalysis.Scheduler
+	responseAnalyzer *responseanalysis.Analyzer
+	ruleStatistics   *statistics.Accumulator
+	adminHandler     *adminerrorruleapi.Handler
+}
+
+func newInternalErrorRuntime(
+	repository *errorrulesqlite.Repository,
+	providers adminerrorruleapi.ProviderCatalog,
+	log *zap.Logger,
+) (*internalErrorRuntime, error) {
+	if repository == nil {
+		return nil, fmt.Errorf("internal-error rule repository is required")
+	}
+	if providers == nil {
+		return nil, fmt.Errorf("internal-error provider catalog is required")
+	}
+	if log == nil {
+		return nil, fmt.Errorf("internal-error runtime logger is required")
+	}
+	snapshot := repository.CurrentRuleSet()
+	if snapshot == nil {
+		return nil, fmt.Errorf("internal-error rule repository has no compiled snapshot")
+	}
+
+	accumulator, err := statistics.New(repository)
+	if err != nil {
+		return nil, fmt.Errorf("initialize internal-error rule statistics: %w", err)
+	}
+	budget, err := responseanalysis.NewDefaultProcessMemoryBudget()
+	if err != nil {
+		return nil, fmt.Errorf("initialize response-analysis process budget: %w", err)
+	}
+	// One scheduler instance owns every probe timer so test and production
+	// construction cannot diverge into per-handler timing domains.
+	scheduler := &responseanalysis.RealScheduler{}
+	analyzer, err := responseanalysis.NewAnalyzer(
+		responseanalysis.NewRegistry(),
+		budget,
+		responseanalysis.AnalyzerOptions{Scheduler: scheduler},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("initialize response analyzer: %w", err)
+	}
+	adminHandler, err := adminerrorruleapi.NewHandler(adminerrorruleapi.Config{
+		Rules:        repository,
+		Stats:        repository,
+		StatsOverlay: accumulator,
+		Providers:    providers,
+		Analyzer:     adminerrorruleapi.NewRegistryAnalyzer(),
+		Logger:       log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize internal-error admin API: %w", err)
+	}
+	// Bind only after every fallible dependent is ready. A failed construction
+	// must not leave a reusable repository half-bound to discarded state.
+	if err := repository.BindStatsGenerationRetirer(accumulator.Retire); err != nil {
+		return nil, fmt.Errorf("bind internal-error statistics retirement: %w", err)
+	}
+
+	log.Info("initialized internal-error runtime",
+		zap.String("rule_set_revision", snapshot.Revision().String()),
+		zap.Int("rule_count", len(snapshot.Rules())),
+		zap.Int("response_probe_memory_budget_bytes", budget.Limit()),
+	)
+	return &internalErrorRuntime{
+		ruleRepository:   repository,
+		processBudget:    budget,
+		scheduler:        scheduler,
+		responseAnalyzer: analyzer,
+		ruleStatistics:   accumulator,
+		adminHandler:     adminHandler,
+	}, nil
+}
+
+type ruleStatsRunner interface {
+	Run(context.Context) error
+}
+
+// ruleStatsWorker gives cancellation and the final flush one idempotent owner.
+// The worker stores only a cancel function; the execution context remains local
+// to the goroutine that consumes it.
+type ruleStatsWorker struct {
+	cancel   context.CancelFunc
+	done     <-chan error
+	logger   *zap.Logger
+	workerID string
+	stopOnce sync.Once
+	stopErr  error
+}
+
+func startRuleStatsWorker(runner ruleStatsRunner, log *zap.Logger) (*ruleStatsWorker, error) {
+	if runner == nil {
+		return nil, fmt.Errorf("internal-error statistics runner is required")
+	}
+	if log == nil {
+		return nil, fmt.Errorf("internal-error statistics logger is required")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	worker := &ruleStatsWorker{
+		cancel: cancel, done: done, logger: log,
+		workerID: errorrule.UUIDGenerator{}.NewID(),
+	}
+	log.Info("starting internal-error statistics worker",
+		zap.String("stats_worker_id", worker.workerID),
+		zap.Duration("flush_interval", statistics.StatsFlushInterval),
+		zap.Duration("shutdown_timeout", statistics.StatsShutdownTimeout),
+	)
+	go func() {
+		done <- runner.Run(ctx)
+		close(done)
+	}()
+	return worker, nil
+}
+
+func (w *ruleStatsWorker) Shutdown() error {
+	if w == nil {
+		return nil
+	}
+	w.stopOnce.Do(func() {
+		w.logger.Info("stopping internal-error statistics worker",
+			zap.String("stats_worker_id", w.workerID),
+		)
+		w.cancel()
+		if err := <-w.done; err != nil {
+			w.stopErr = fmt.Errorf("final internal-error statistics flush: %w", err)
+			w.logger.Error("internal-error statistics worker stopped with an error",
+				zap.String("stats_worker_id", w.workerID),
+				zap.Error(err),
+			)
+			return
+		}
+		w.logger.Info("internal-error statistics worker stopped",
+			zap.String("stats_worker_id", w.workerID),
+			zap.String("shutdown_result", "final_flush_completed"),
+		)
+	})
+	return w.stopErr
+}
+
+type lifecycleStep func() error
+
+// completeServerLifecycle always drains request producers before stopping the
+// statistics worker. This ordering is preserved even when a listener fails,
+// because that failure is a reason to begin cleanup rather than skip it.
+func completeServerLifecycle(wait, drainServers, stopStatistics lifecycleStep) error {
+	waitErr := wait()
+	drainErr := drainServers()
+	statisticsErr := stopStatistics()
+	return errors.Join(waitErr, drainErr, statisticsErr)
+}
+
+func openApplicationStore(dbPath string, clock internal.Clock) (*store.SQLiteStore, error) {
+	sqlStore, err := store.NewSQLiteStore(dbPath, clock)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize store: %w", err)
+	}
+	return sqlStore, nil
+}
+
 func run() error {
 	// Load configuration
 	cfg, err := config.Load()
@@ -142,10 +317,12 @@ func run() error {
 		zap.String("log_level", cfg.LogLevel),
 	)
 
-	// Initialize store
-	sqlStore, err := store.NewSQLiteStore(cfg.DBPath, internal.RealClock{})
+	// The store migration loads and compiles persisted rules before any HTTP or
+	// background work starts, so an invalid durable rule makes startup atomic.
+	clock := internal.RealClock{}
+	sqlStore, err := openApplicationStore(cfg.DBPath, clock)
 	if err != nil {
-		return fmt.Errorf("failed to initialize store: %w", err)
+		return err
 	}
 
 	// Wrap with caching layer to reduce database pressure for config reads.
@@ -163,8 +340,10 @@ func run() error {
 		return fmt.Errorf("failed to initialize default config: %w", err)
 	}
 
-	// Initialize clock for time-based operations
-	clock := internal.RealClock{}
+	errorRuntime, err := newInternalErrorRuntime(st.InternalErrorRuleRepository(), st, log)
+	if err != nil {
+		return err
+	}
 
 	captureManager, err := newCaptureManager(cfg, clock, log)
 	if err != nil {
@@ -201,13 +380,10 @@ func run() error {
 	// Initialize concurrency limiter for per-provider request limits
 	limiter := selector.NewConcurrencyLimiter()
 
-	// Initialize active request registry for live request monitoring
-	activeRegistry := proxy.NewActiveRequestRegistryWithHook(func(req proxy.ActiveRequest, reason proxy.ActiveRequestRemovalReason) {
-		if reason == proxy.ActiveRequestRemovalReasonStale {
-			return
-		}
-		limiter.Release(req.ProviderID)
-	})
+	// The registry owns exact generation-bound leases. A provider-ID removal hook
+	// could release capacity from a recreated provider rather than this request's
+	// original lifecycle generation.
+	activeRegistry := proxy.NewActiveRequestRegistry()
 	activeRegistry.StartCleanup()
 	defer activeRegistry.StopCleanup()
 
@@ -248,6 +424,9 @@ func run() error {
 		VisibleContinuitySeedStore: visibleContinuitySeedStore,
 		Auth:                       authService,
 		Capture:                    captureManager,
+		RuleSetProvider:            errorRuntime.ruleRepository,
+		ResponseAnalyzer:           errorRuntime.responseAnalyzer,
+		RuleStatistics:             errorRuntime.ruleStatistics,
 	})
 
 	// Create admin HTTP server (separate port for security)
@@ -258,21 +437,29 @@ func run() error {
 		Store:               st,
 		Health:              healthMgr,
 		Selector:            sel,
+		ProviderLifecycles:  sel,
 		Concurrency:         limiter,
 		ActiveReqList:       activeRegistry,
 		Auth:                authService,
 		ProviderImportStore: st,
+		InternalErrorRules:  errorRuntime.adminHandler,
 		CaptureSessions:     captureManager,
 		CaptureQueries:      captureManager,
 		CaptureExports:      captureManager,
 	})
 
-	errCh := startServers(proxySrv, adminSrv)
-	printServerURLs(cfg.Port, cfg.AdminPort)
-	if err := waitForShutdown(errCh, log); err != nil {
+	statsWorker, err := startRuleStatsWorker(errorRuntime.ruleStatistics, log)
+	if err != nil {
 		return err
 	}
-	if err := shutdownServers(proxySrv, adminSrv, authService); err != nil {
+
+	errCh := startServers(proxySrv, adminSrv)
+	printServerURLs(cfg.Port, cfg.AdminPort)
+	if err := completeServerLifecycle(
+		func() error { return waitForShutdown(errCh, log) },
+		func() error { return shutdownServers(proxySrv, adminSrv, authService) },
+		statsWorker.Shutdown,
+	); err != nil {
 		return err
 	}
 

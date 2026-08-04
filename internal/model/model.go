@@ -368,6 +368,34 @@ const (
 	RequestAttemptOutcomeUpstreamTransportError    RequestAttemptOutcome = "upstream_transport_error"
 	RequestAttemptOutcomeUpstreamSemanticError     RequestAttemptOutcome = "upstream_semantic_error"
 	RequestAttemptOutcomeVisibleSession            RequestAttemptOutcome = "visible_session"
+	RequestAttemptOutcomeUpstreamCompleted         RequestAttemptOutcome = "upstream_completed"
+	RequestAttemptOutcomeUpstreamHTTPStatusError   RequestAttemptOutcome = "upstream_http_status_error"
+	RequestAttemptOutcomeUpstreamIncomplete        RequestAttemptOutcome = "upstream_incomplete"
+	RequestAttemptOutcomeGatewayError              RequestAttemptOutcome = "gateway_error"
+)
+
+// RequestAttemptHealthVerdict and RequestAttemptHealthCause persist the health
+// policy conclusion separately from transport outcome. A semantic HTTP 200 can
+// therefore remain an upstream semantic error while contributing either a
+// neutral or failure verdict according to its rule action.
+type RequestAttemptHealthVerdict string
+
+const (
+	RequestAttemptHealthSuccess RequestAttemptHealthVerdict = "success"
+	RequestAttemptHealthFailure RequestAttemptHealthVerdict = "failure"
+	RequestAttemptHealthNeutral RequestAttemptHealthVerdict = "neutral"
+)
+
+type RequestAttemptHealthCause string
+
+const (
+	RequestAttemptHealthCauseNormalCompletion        RequestAttemptHealthCause = "normal_completion"
+	RequestAttemptHealthCauseTransportFailure        RequestAttemptHealthCause = "transport_failure"
+	RequestAttemptHealthCauseHTTPStatusFailure       RequestAttemptHealthCause = "http_status_failure"
+	RequestAttemptHealthCauseSemanticRetryThenSwitch RequestAttemptHealthCause = "semantic_retry_then_switch"
+	RequestAttemptHealthCauseSemanticNeutral         RequestAttemptHealthCause = "semantic_neutral"
+	RequestAttemptHealthCauseClientCancelled         RequestAttemptHealthCause = "client_cancelled"
+	RequestAttemptHealthCauseIncomplete              RequestAttemptHealthCause = "incomplete"
 )
 
 // RequestAttemptSwitchMode keeps replacement and failover explicit on each
@@ -402,21 +430,27 @@ type RequestAttempt struct {
 	SwitchMode          RequestAttemptSwitchMode `gorm:"type:text;default:''" json:"switch_mode,omitempty"`
 	ProviderAttempt     int                      `json:"provider_attempt,omitempty"`
 	ProviderSwitchCount int                      `json:"provider_switch_count,omitempty"`
-	StatusCode          int                      `json:"status_code"`
-	Error               string                   `json:"error"`
-	// WebSocket attempt fields stay nullable so generic retry rows can stay protocol-agnostic.
-	Phase                      *RequestAttemptPhase   `gorm:"type:text;default:null" json:"phase,omitempty"`
-	Outcome                    *RequestAttemptOutcome `gorm:"type:text;default:null" json:"outcome,omitempty"`
-	ResultVisibleToClient      *bool                  `gorm:"default:null" json:"result_visible_to_client,omitempty"`
-	AttemptEvidenceJSON        *string                `gorm:"type:text;default:null" json:"attempt_evidence_json"`
-	BodySnippet                string                 `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
-	ReqBodySnippet             string                 `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
-	LatencyMs                  int64                  `json:"latency_ms"`
-	SwitchReason               string                 `json:"switch_reason,omitempty"` // Reason for switching to the next provider (if any)
-	ContinuitySeeded           bool                   `gorm:"default:false" json:"continuity_seeded,omitempty"`
-	ContinuityOriginProviderID string                 `gorm:"default:''" json:"continuity_origin_provider_id,omitempty"`
-	ContinuitySeedAgeMs        *int64                 `gorm:"default:null" json:"continuity_seed_age_ms,omitempty"`
-	CreatedAt                  time.Time              `json:"created_at"`
+	// StatusCode is the upstream transport status. ClientTransportStatusCode is
+	// populated only when this attempt committed a response to the client.
+	StatusCode                int    `json:"status_code"`
+	ClientTransportStatusCode *int   `gorm:"default:null" json:"client_transport_status_code,omitempty"`
+	Error                     string `json:"error"`
+	// Observed attempt axes stay nullable so legacy and pre-dispatch rows do not
+	// fabricate transport or health conclusions.
+	Phase                      *RequestAttemptPhase         `gorm:"type:text;default:null" json:"phase,omitempty"`
+	Outcome                    *RequestAttemptOutcome       `gorm:"type:text;default:null" json:"outcome,omitempty"`
+	ResultVisibleToClient      *bool                        `gorm:"default:null" json:"result_visible_to_client,omitempty"`
+	HealthVerdict              *RequestAttemptHealthVerdict `gorm:"type:text;default:null" json:"health_verdict,omitempty"`
+	HealthCause                *RequestAttemptHealthCause   `gorm:"type:text;default:null" json:"health_cause,omitempty"`
+	AttemptEvidenceJSON        *string                      `gorm:"type:text;default:null" json:"attempt_evidence_json"`
+	BodySnippet                string                       `json:"body_snippet,omitempty"`     // First ~512 bytes of error response (failover scenarios only)
+	ReqBodySnippet             string                       `json:"req_body_snippet,omitempty"` // First ~512 bytes of request body (error attempts only)
+	LatencyMs                  int64                        `json:"latency_ms"`
+	SwitchReason               string                       `json:"switch_reason,omitempty"` // Reason for switching to the next provider (if any)
+	ContinuitySeeded           bool                         `gorm:"default:false" json:"continuity_seeded,omitempty"`
+	ContinuityOriginProviderID string                       `gorm:"default:''" json:"continuity_origin_provider_id,omitempty"`
+	ContinuitySeedAgeMs        *int64                       `gorm:"default:null" json:"continuity_seed_age_ms,omitempty"`
+	CreatedAt                  time.Time                    `json:"created_at"`
 }
 
 // LogFilter represents filter and sort parameters for log queries.

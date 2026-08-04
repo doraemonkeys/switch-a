@@ -11,7 +11,7 @@ import {
   resolveProviderAuthView,
 } from "../../lib/providerAuth";
 import { stringToColor } from "../../lib/utils";
-import { RecoveryTimer } from "../../components/RecoveryTimer";
+import { RecoveryTimer } from "../../components/detail-drawers/RecoveryTimer";
 import {
   Info,
   Play,

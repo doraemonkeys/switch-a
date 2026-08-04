@@ -2,6 +2,7 @@ package admin
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -12,12 +13,14 @@ var supportedConfigImportModes = []ConfigImportMode{
 }
 
 type resolvedConfigImport struct {
-	Scope           resolvedConfigImportScope
-	Providers       []ExportedProvider
-	Groups          []ExportedGroup
-	RoutingPolicies []ExportedRoutingPolicy
-	Settings        map[string]string
-	CanStage        bool
+	Scope              resolvedConfigImportScope
+	Providers          []ExportedProvider
+	Groups             []ExportedGroup
+	RoutingPolicies    []ExportedRoutingPolicy
+	Settings           map[string]string
+	InternalErrorRules []ExportedInternalErrorRule
+	RuleProviderIDs    []string
+	CanStage           bool
 }
 
 type resolvedConfigImportScope struct {
@@ -44,6 +47,7 @@ func resolveImportConfigRequest(req *ImportConfigRequest) (resolvedConfigImport,
 		resolved.Groups = req.Groups
 		resolved.RoutingPolicies = req.RoutingPolicies
 		resolved.Settings = req.Settings
+		resolved.InternalErrorRules = req.InternalErrorRules
 		return resolved, warnings
 	case scope.Mode == ConfigImportModeSettingsOnly:
 		resolved.Settings = req.Settings
@@ -61,9 +65,6 @@ func normalizeConfigImportScope(
 		return scope, []string{missingConfigImportModeWarning()}, false
 	}
 
-	scope.GroupIDs = normalizeConfigImportScopeIDs(req.ImportScope.GroupIDs)
-	scope.ProviderIDs = normalizeConfigImportScopeIDs(req.ImportScope.ProviderIDs)
-
 	mode := ConfigImportMode(strings.TrimSpace(string(req.ImportScope.Mode)))
 	if mode == "" {
 		return scope, []string{missingConfigImportModeWarning()}, false
@@ -72,16 +73,21 @@ func normalizeConfigImportScope(
 
 	switch mode {
 	case ConfigImportModeFull, ConfigImportModeSettingsOnly:
-		if len(scope.GroupIDs) == 0 && len(scope.ProviderIDs) == 0 {
+		if req.ImportScope.Selection == nil {
 			return scope, nil, true
 		}
 		return scope, []string{
 			fmt.Sprintf(
-				"Import scope mode %q does not allow group_ids or provider_ids",
+				"Import scope mode %q does not allow selection",
 				mode,
 			),
 		}, false
 	case ConfigImportModeSelection:
+		if req.ImportScope.Selection == nil {
+			return scope, []string{`Import scope mode "selection" requires selection`}, false
+		}
+		scope.GroupIDs = normalizeConfigImportScopeIDs(req.ImportScope.Selection.GroupIDs)
+		scope.ProviderIDs = normalizeConfigImportScopeIDs(req.ImportScope.Selection.ProviderIDs)
 		if len(scope.GroupIDs) == 0 && len(scope.ProviderIDs) == 0 {
 			return scope, []string{
 				`Import scope mode "selection" requires at least one group_id or provider_id`,
@@ -204,7 +210,30 @@ func resolveSelectedImportConfigRequest(
 		selectedProviderIDs,
 		selectedGroupIDs,
 	)
+	resolved.InternalErrorRules = req.InternalErrorRules
+	resolved.RuleProviderIDs = expandedRuleProviderIDs(req.Providers, selectedProviderIDs, selectedGroupIDs)
 	return resolved, warnings
+}
+
+func expandedRuleProviderIDs(
+	providers []ExportedProvider,
+	selectedProviderIDs map[string]struct{},
+	selectedGroupIDs map[string]struct{},
+) []string {
+	expanded := copyConfigImportScopeIDSet(selectedProviderIDs, len(providers))
+	for _, provider := range providers {
+		if _, selected := selectedGroupIDs[trimmedConfigImportGroupID(provider.GroupID)]; selected {
+			expanded[strings.TrimSpace(provider.ID)] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(expanded))
+	for id := range expanded {
+		if id != "" {
+			result = append(result, id)
+		}
+	}
+	sort.Strings(result)
+	return result
 }
 
 func buildConfigImportScopeIDSet(ids []string) map[string]struct{} {

@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "validation_cases": [
+    {
+      "name": "zero delay and default multiplier",
+      "max_retries": 0,
+      "backoff": {
+        "initial_delay": "0s",
+        "max_delay": "0s",
+        "multiplier": 0,
+        "jitter": false
+      },
+      "valid": true,
+      "base_delays_ms": []
+    },
+    {
+      "name": "default multiplier grows progressively",
+      "max_retries": 3,
+      "backoff": {
+        "initial_delay": "100ms",
+        "max_delay": "0s",
+        "multiplier": 0,
+        "jitter": false
+      },
+      "valid": true,
+      "base_delays_ms": [100, 200, 400]
+    },
+    {
+      "name": "multiplier one is fixed",
+      "max_retries": 3,
+      "backoff": {
+        "initial_delay": "250ms",
+        "max_delay": "2s",
+        "multiplier": 1,
+        "jitter": false
+      },
+      "valid": true,
+      "base_delays_ms": [250, 250, 250]
+    },
+    {
+      "name": "progressive delay respects max",
+      "max_retries": 4,
+      "backoff": {
+        "initial_delay": "250ms",
+        "max_delay": "1s",
+        "multiplier": 2,
+        "jitter": true
+      },
+      "valid": true,
+      "base_delays_ms": [250, 500, 1000, 1000]
+    },
+    {
+      "name": "negative initial delay is invalid",
+      "max_retries": 1,
+      "backoff": {
+        "initial_delay": "-1ms",
+        "max_delay": "0s",
+        "multiplier": 2,
+        "jitter": false
+      },
+      "valid": false,
+      "error": "initial_delay must be non-negative"
+    },
+    {
+      "name": "max below initial is invalid",
+      "max_retries": 1,
+      "backoff": {
+        "initial_delay": "2s",
+        "max_delay": "1s",
+        "multiplier": 2,
+        "jitter": false
+      },
+      "valid": false,
+      "error": "initial_delay cannot exceed max_delay"
+    },
+    {
+      "name": "shrinking multiplier is invalid",
+      "max_retries": 1,
+      "backoff": {
+        "initial_delay": "100ms",
+        "max_delay": "1s",
+        "multiplier": 0.5,
+        "jitter": false
+      },
+      "valid": false,
+      "error": "multiplier must be >= 1.0 (or 0 for default)"
+    },
+    {
+      "name": "retry count below range is invalid",
+      "max_retries": -1,
+      "backoff": {
+        "initial_delay": "100ms",
+        "max_delay": "1s",
+        "multiplier": 2,
+        "jitter": false
+      },
+      "valid": false,
+      "error": "max_retries must be between 0 and 10"
+    },
+    {
+      "name": "maximum retry count is valid",
+      "max_retries": 10,
+      "backoff": {
+        "initial_delay": "0s",
+        "max_delay": "0s",
+        "multiplier": 0,
+        "jitter": false
+      },
+      "valid": true,
+      "base_delays_ms": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    {
+      "name": "retry count above range is invalid",
+      "max_retries": 11,
+      "backoff": {
+        "initial_delay": "100ms",
+        "max_delay": "1s",
+        "multiplier": 2,
+        "jitter": false
+      },
+      "valid": false,
+      "error": "max_retries must be between 0 and 10"
+    }
+  ]
+}

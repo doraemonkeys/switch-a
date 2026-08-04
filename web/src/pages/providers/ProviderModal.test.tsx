@@ -1,10 +1,17 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  render as testingLibraryRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { ProviderModal } from "./ProviderModal";
-import { ApiContext } from "../../api/context";
+import { APICatalogContext, ApiContext } from "../../api/context";
 import type { ApiClient } from "../../api/client";
-import { ApiError, type Provider } from "../../api";
+import { ApiError, parseAPICatalog, type Provider } from "../../api";
 import {
   ADD_PROVIDER_DEFAULTS,
   AUTH_MODES,
@@ -12,6 +19,30 @@ import {
   PROVIDER_CREDENTIAL_TYPES,
   PROVIDER_USAGE_LIMIT_POLICIES,
 } from "../../config/constants";
+
+const testAPICatalog = parseAPICatalog(
+  JSON.parse(
+    readFileSync(
+      resolve(process.cwd(), "../contracts/internal-error/v1/api-catalog.json"),
+      "utf8",
+    ),
+  ) as unknown,
+);
+
+function render(element: ReactElement) {
+  return testingLibraryRender(
+    <APICatalogContext.Provider
+      value={{
+        catalog: testAPICatalog,
+        loading: false,
+        error: null,
+        refetch: () => Promise.resolve(),
+      }}
+    >
+      {element}
+    </APICatalogContext.Provider>,
+  );
+}
 
 afterEach(() => {
   vi.useRealTimers();

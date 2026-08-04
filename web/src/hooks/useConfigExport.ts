@@ -12,8 +12,11 @@ interface UseConfigExportResult {
   exportConfig: () => Promise<ExportedConfig>;
   /** Preview import changes (dry run) */
   previewImport: (data: ImportConfigRequest) => Promise<ImportPreviewResponse>;
-  /** Execute actual import */
-  importConfig: (data: ImportConfigRequest) => Promise<ImportResult>;
+  /** Execute the exact configuration snapshot approved by preview. */
+  importConfig: (
+    data: ImportConfigRequest,
+    ruleSetETag: ImportPreviewResponse["rule_set_etag"],
+  ) => Promise<ImportResult>;
   /** Loading state for export operation */
   exporting: boolean;
   /** Loading state for import/preview operation */
@@ -83,12 +86,15 @@ export function useConfigExport(): UseConfigExportResult {
   );
 
   const importConfig = useCallback(
-    async (data: ImportConfigRequest): Promise<ImportResult> => {
+    async (
+      data: ImportConfigRequest,
+      ruleSetETag: ImportPreviewResponse["rule_set_etag"],
+    ): Promise<ImportResult> => {
       setImporting(true);
       setError(null);
       setImportResult(null);
       try {
-        const result = await api.config.import(data);
+        const result = await api.config.import(data, ruleSetETag);
         setImportResult(result);
         return result;
       } catch (err) {

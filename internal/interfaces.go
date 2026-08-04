@@ -73,18 +73,6 @@ type Store interface {
 	Close() error
 }
 
-// Selector defines the minimal provider selection interface.
-// This is the core interface that all selector implementations must satisfy.
-//
-// Note: The proxy handler (internal/proxy) defines an extended Selector interface
-// with additional methods (SelectExcluding, UpdateStickyWithTTL, ReleaseConcurrency,
-// ClearConcurrency) for advanced features like retries, sticky sessions, and
-// concurrency management. The concrete selector.Selector implements both interfaces.
-type Selector interface {
-	// Select chooses an available provider based on the request.
-	Select(ctx context.Context, req *model.SelectRequest) (*model.Provider, error)
-}
-
 // HealthManager defines the health management interface.
 type HealthManager interface {
 	// MarkSuccess marks a successful request for the provider.

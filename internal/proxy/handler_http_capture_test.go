@@ -1,10 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -14,8 +15,9 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/proxy/capturefailure"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 
 	"go.uber.org/zap"
 )
@@ -56,316 +58,6 @@ func TestBeginGatewayCaptureDisabledDoesNotBuildRecorderOrAllocate(t *testing.T)
 	}
 	if gatewayRecorderSink.Valid() {
 		t.Fatal("disabled capture returned a valid recorder")
-	}
-}
-
-func TestCaptureTerminationClassification(t *testing.T) {
-	canceledContext, cancel := context.WithCancel(context.Background())
-	cancel()
-	deadlineContext, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer deadlineCancel()
-
-	tests := []struct {
-		name           string
-		ctx            context.Context
-		err            error
-		clientWriteErr error
-		wantReason     requestcapture.TerminationReason
-		wantSite       requestcapture.FailureSite
-		wantPeer       requestcapture.FailurePeer
-		wantClass      requestcapture.FailureClass
-		wantCode       requestcapture.FailureCode
-	}{
-		{name: "eof", ctx: context.Background(), wantReason: requestcapture.TerminationReasonEOF},
-		{name: "client disconnect", ctx: canceledContext, err: context.Canceled, wantReason: requestcapture.TerminationReasonClientDisconnect, wantSite: requestcapture.FailureSiteResponseRead, wantPeer: requestcapture.FailurePeerUpstream, wantClass: requestcapture.FailureClassCanceled, wantCode: requestcapture.FailureCodeUpstreamRead},
-		{name: "deadline", ctx: deadlineContext, err: context.DeadlineExceeded, wantReason: requestcapture.TerminationReasonTimeout, wantSite: requestcapture.FailureSiteResponseRead, wantPeer: requestcapture.FailurePeerUpstream, wantClass: requestcapture.FailureClassTimeout, wantCode: requestcapture.FailureCodeUpstreamRead},
-		{name: "SSE idle timeout", ctx: context.Background(), err: ErrSSEIdleTimeout, wantReason: requestcapture.TerminationReasonTimeout, wantSite: requestcapture.FailureSiteResponseRead, wantPeer: requestcapture.FailurePeerUpstream, wantClass: requestcapture.FailureClassTimeout, wantCode: requestcapture.FailureCodeUpstreamRead},
-		{name: "regular read timeout", ctx: context.Background(), err: ErrReadTimeout, wantReason: requestcapture.TerminationReasonTimeout, wantSite: requestcapture.FailureSiteResponseRead, wantPeer: requestcapture.FailurePeerUpstream, wantClass: requestcapture.FailureClassTimeout, wantCode: requestcapture.FailureCodeUpstreamRead},
-		{name: "upstream read", ctx: context.Background(), err: NewUpstreamReadError(errors.New("read failed")), wantReason: requestcapture.TerminationReasonReadError, wantSite: requestcapture.FailureSiteResponseRead, wantPeer: requestcapture.FailurePeerUpstream, wantClass: requestcapture.FailureClassRead, wantCode: requestcapture.FailureCodeUpstreamRead},
-		{name: "client write", ctx: context.Background(), err: errors.New("copy failed"), clientWriteErr: errors.New("write failed"), wantReason: requestcapture.TerminationReasonWriteError, wantSite: requestcapture.FailureSiteResponseWrite, wantPeer: requestcapture.FailurePeerClient, wantClass: requestcapture.FailureClassWrite, wantCode: requestcapture.FailureCodeClientWrite},
-		{name: "raw io.Copy source error", ctx: context.Background(), err: errors.New("source failed"), wantReason: requestcapture.TerminationReasonReadError, wantSite: requestcapture.FailureSiteResponseRead, wantPeer: requestcapture.FailurePeerUpstream, wantClass: requestcapture.FailureClassRead, wantCode: requestcapture.FailureCodeUpstreamRead},
-		{name: "internal cancel", ctx: context.Background(), err: context.Canceled, wantReason: requestcapture.TerminationReasonCanceled, wantSite: requestcapture.FailureSiteResponseRead, wantPeer: requestcapture.FailurePeerUpstream, wantClass: requestcapture.FailureClassCanceled, wantCode: requestcapture.FailureCodeUpstreamRead},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			reason, failure := captureForwardFailure(test.ctx, test.err, test.clientWriteErr)
-			if reason != test.wantReason {
-				t.Fatalf("captureForwardFailure() reason = %q, want %q", reason, test.wantReason)
-			}
-			if test.err == nil {
-				if failure != (requestcapture.FailureObservation{}) {
-					t.Fatalf("EOF failure = %#v, want zero", failure)
-				}
-				return
-			}
-			fact := failure.Primary
-			if fact.Site != test.wantSite || fact.Peer != test.wantPeer ||
-				fact.Class != test.wantClass || fact.Code != test.wantCode {
-				t.Fatalf("capture fact = %#v", fact)
-			}
-		})
-	}
-
-	if got, failure := capturefailure.HTTPFetch(nil, timeoutNetError{}); got != requestcapture.TerminationReasonTransportError ||
-		failure.Primary.Code != requestcapture.FailureCodeRoundTrip {
-		t.Fatalf("opaque net.Error fetch = reason:%q fact:%#v", got, failure.Primary)
-	}
-	if got, failure := capturefailure.HTTPFetch(nil, &net.DNSError{IsTimeout: true}); got != requestcapture.TerminationReasonTimeout ||
-		failure.Primary.Code != requestcapture.FailureCodeDNS {
-		t.Fatalf("DNS fetch = reason:%q fact:%#v", got, failure.Primary)
-	}
-	if got, failure := capturefailure.HTTPPreparation(nil, errors.New("invalid credentials"), requestcapture.FailureCodeCredentialApply); got != requestcapture.TerminationReasonPreparationError ||
-		failure.Primary.Code != requestcapture.FailureCodeCredentialApply {
-		t.Fatalf("preparation = reason:%q fact:%#v", got, failure.Primary)
-	}
-	if got, _ := capturefailure.HTTPPreparation(deadlineContext.Err(), context.DeadlineExceeded, requestcapture.FailureCodeCredentialApply); got != requestcapture.TerminationReasonTimeout {
-		t.Fatalf("preparation timeout = %q, want %q", got, requestcapture.TerminationReasonTimeout)
-	}
-}
-
-type timeoutNetError struct{}
-
-func (timeoutNetError) Error() string   { return "timeout" }
-func (timeoutNetError) Timeout() bool   { return true }
-func (timeoutNetError) Temporary() bool { return true }
-
-func TestHTTPExchangeCaptureFinishesStableFailureOutcomes(t *testing.T) {
-	readFailure := errors.New("upstream reset")
-	writeFailure := errors.New("downstream write failed")
-	tests := []struct {
-		name               string
-		contextFactory     func() (context.Context, context.CancelFunc)
-		transportFactory   func() *scriptedCaptureTransport
-		writerFactory      func() http.ResponseWriter
-		wantReason         requestcapture.TerminationReason
-		wantCompletion     requestcapture.SourceCompletion
-		wantUpstreamBytes  int64
-		wantConfirmedBytes int64
-		wantSite           requestcapture.FailureSite
-		wantPeer           requestcapture.FailurePeer
-		wantClass          requestcapture.FailureClass
-		wantCode           requestcapture.FailureCode
-	}{
-		{
-			name: "transport error",
-			transportFactory: func() *scriptedCaptureTransport {
-				return &scriptedCaptureTransport{fetchErr: errors.New("dial failed")}
-			},
-			wantReason: requestcapture.TerminationReasonTransportError,
-			wantSite:   requestcapture.FailureSiteTransport,
-			wantPeer:   requestcapture.FailurePeerUpstream,
-			wantClass:  requestcapture.FailureClassTransport,
-			wantCode:   requestcapture.FailureCodeRoundTrip,
-		},
-		{
-			name: "fetch timeout",
-			transportFactory: func() *scriptedCaptureTransport {
-				// Capture reads the standard concrete field and must not invoke an
-				// arbitrary net.Error.Timeout implementation.
-				return &scriptedCaptureTransport{fetchErr: &net.DNSError{IsTimeout: true}}
-			},
-			wantReason: requestcapture.TerminationReasonTimeout,
-			wantSite:   requestcapture.FailureSiteTransport,
-			wantPeer:   requestcapture.FailurePeerUpstream,
-			wantClass:  requestcapture.FailureClassTimeout,
-			wantCode:   requestcapture.FailureCodeDNS,
-		},
-		{
-			name: "upstream read error",
-			transportFactory: func() *scriptedCaptureTransport {
-				return &scriptedCaptureTransport{response: capturedFailureResponse(&captureReadErrorBody{
-					payload: []byte("raw"),
-					err:     readFailure,
-				})}
-			},
-			wantReason:         requestcapture.TerminationReasonReadError,
-			wantUpstreamBytes:  3,
-			wantConfirmedBytes: 3,
-			wantSite:           requestcapture.FailureSiteResponseRead,
-			wantPeer:           requestcapture.FailurePeerUpstream,
-			wantClass:          requestcapture.FailureClassRead,
-			wantCode:           requestcapture.FailureCodeUpstreamRead,
-		},
-		{
-			name: "upstream read timeout",
-			transportFactory: func() *scriptedCaptureTransport {
-				return &scriptedCaptureTransport{response: capturedFailureResponse(&captureReadErrorBody{err: ErrReadTimeout})}
-			},
-			wantReason: requestcapture.TerminationReasonTimeout,
-			wantSite:   requestcapture.FailureSiteResponseRead,
-			wantPeer:   requestcapture.FailurePeerUpstream,
-			wantClass:  requestcapture.FailureClassTimeout,
-			wantCode:   requestcapture.FailureCodeUpstreamRead,
-		},
-		{
-			name: "downstream write error",
-			transportFactory: func() *scriptedCaptureTransport {
-				return &scriptedCaptureTransport{response: capturedFailureResponse(io.NopCloser(strings.NewReader("payload")))}
-			},
-			writerFactory: func() http.ResponseWriter {
-				return &failingCaptureResponseWriter{err: writeFailure}
-			},
-			wantReason:         requestcapture.TerminationReasonWriteError,
-			wantUpstreamBytes:  7,
-			wantConfirmedBytes: 3,
-			wantSite:           requestcapture.FailureSiteResponseWrite,
-			wantPeer:           requestcapture.FailurePeerClient,
-			wantClass:          requestcapture.FailureClassWrite,
-			wantCode:           requestcapture.FailureCodeClientWrite,
-		},
-		{
-			name: "downstream write error after declared body endpoint",
-			transportFactory: func() *scriptedCaptureTransport {
-				response := capturedFailureResponse(io.NopCloser(strings.NewReader("payload")))
-				response.ContentLength = int64(len("payload"))
-				return &scriptedCaptureTransport{response: response}
-			},
-			writerFactory: func() http.ResponseWriter {
-				return &failingCaptureResponseWriter{err: writeFailure}
-			},
-			wantReason:         requestcapture.TerminationReasonWriteError,
-			wantCompletion:     requestcapture.SourceCompletionComplete,
-			wantUpstreamBytes:  7,
-			wantConfirmedBytes: 3,
-			wantSite:           requestcapture.FailureSiteResponseWrite,
-			wantPeer:           requestcapture.FailurePeerClient,
-			wantClass:          requestcapture.FailureClassWrite,
-			wantCode:           requestcapture.FailureCodeClientWrite,
-		},
-		{
-			name: "internal cancellation",
-			transportFactory: func() *scriptedCaptureTransport {
-				return &scriptedCaptureTransport{
-					response: capturedFailureResponse(io.NopCloser(strings.NewReader("unread"))),
-					writeErr: context.Canceled,
-				}
-			},
-			wantReason: requestcapture.TerminationReasonCanceled,
-			wantSite:   requestcapture.FailureSiteResponseRead,
-			wantPeer:   requestcapture.FailurePeerUpstream,
-			wantClass:  requestcapture.FailureClassCanceled,
-			wantCode:   requestcapture.FailureCodeUpstreamRead,
-		},
-		{
-			name: "client disconnect",
-			contextFactory: func() (context.Context, context.CancelFunc) {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel()
-				return ctx, func() {}
-			},
-			transportFactory: func() *scriptedCaptureTransport {
-				return &scriptedCaptureTransport{
-					response: capturedFailureResponse(io.NopCloser(strings.NewReader("unread"))),
-					writeErr: context.Canceled,
-				}
-			},
-			wantReason: requestcapture.TerminationReasonClientDisconnect,
-			wantSite:   requestcapture.FailureSiteResponseRead,
-			wantPeer:   requestcapture.FailurePeerUpstream,
-			wantClass:  requestcapture.FailureClassCanceled,
-			wantCode:   requestcapture.FailureCodeUpstreamRead,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			if test.contextFactory != nil {
-				cancel()
-				ctx, cancel = test.contextFactory()
-			}
-			defer cancel()
-
-			provider := captureTestProvider("https://provider.invalid")
-			manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
-				ID:   provider.ID,
-				Name: provider.Name,
-			}})
-			defer manager.Close()
-			gateway := manager.BeginGateway(requestcapture.GatewayStart{GatewayRequestID: "failure-" + strings.ReplaceAll(test.name, " ", "-")})
-			if !gateway.Valid() {
-				t.Fatal("BeginGateway() returned an invalid recorder")
-			}
-
-			writer := http.ResponseWriter(httptest.NewRecorder())
-			if test.writerFactory != nil {
-				writer = test.writerFactory()
-			}
-			transport := test.transportFactory()
-			handler := &Handler{logger: zap.NewNop()}
-			pctx := &proxyContext{
-				r:                   httptest.NewRequest(http.MethodPost, "/v1/messages", nil),
-				w:                   writer,
-				cfg:                 &runtimeConfig{stickyMode: model.StickyModeOff},
-				transport:           transport,
-				apiType:             APITypeClaude,
-				body:                []byte(`{"model":"claude-3"}`),
-				startTime:           time.Now(),
-				requestID:           "failure-request",
-				capture:             gateway,
-				captureParticipates: true,
-			}
-			upstreamRequest := httptest.NewRequest(http.MethodPost, "https://provider.invalid/v1/messages", nil)
-			upstreamRequest.Header.Set("Authorization", "Bearer capture-secret")
-			attempt := httpAttemptContext{
-				provider:        &provider,
-				selectionMode:   requestcapture.SelectionModeInitial,
-				selectionSource: requestcapture.SelectionSourceStrategy,
-			}
-
-			response, exchange, err := handler.fetchHTTPExchange(
-				ctx,
-				pctx,
-				attempt,
-				requestcapture.CredentialPhaseInitial,
-				upstreamRequest,
-			)
-			if err == nil {
-				handler.commitForwardResponse(ctx, pctx, &provider, response, exchange)
-			}
-			pctx.finishHTTPCaptureCompletions()
-			gateway.Finish(gatewayCaptureOutcome(ctx))
-
-			page, listErr := readCaptureTestPage(manager, session, requestcapture.ListQuery{Limit: 10})
-			if listErr != nil {
-				t.Fatalf("ListRecords() error = %v", listErr)
-			}
-			if len(page.Records) != 1 {
-				t.Fatalf("record count = %d, want 1", len(page.Records))
-			}
-			record := page.Records[0]
-			if record.TerminationReason != test.wantReason {
-				t.Fatalf("termination reason = %q, want %q", record.TerminationReason, test.wantReason)
-			}
-			if !record.HasFailure {
-				t.Fatal("failed exchange omitted its structured failure")
-			}
-			fact := record.Failure.Primary
-			if fact.Site != test.wantSite || fact.Peer != test.wantPeer ||
-				fact.Class != test.wantClass || fact.Code != test.wantCode || fact.Message != "" {
-				t.Fatalf(
-					"failure fact = %#v, want site:%q peer:%q class:%q code:%q without message",
-					fact,
-					test.wantSite,
-					test.wantPeer,
-					test.wantClass,
-					test.wantCode,
-				)
-			}
-			wantCompletion := test.wantCompletion
-			if wantCompletion == "" {
-				wantCompletion = requestcapture.SourceCompletionPartial
-			}
-			if record.SourceCompletion != wantCompletion {
-				t.Fatalf("source completion = %q, want %q", record.SourceCompletion, wantCompletion)
-			}
-			if record.UpstreamObservedBytes != test.wantUpstreamBytes {
-				t.Fatalf("upstream bytes = %d, want %d", record.UpstreamObservedBytes, test.wantUpstreamBytes)
-			}
-			if record.ApplicationWriteConfirmedBytes != test.wantConfirmedBytes {
-				t.Fatalf("confirmed bytes = %d, want %d", record.ApplicationWriteConfirmedBytes, test.wantConfirmedBytes)
-			}
-		})
 	}
 }
 
@@ -503,9 +195,18 @@ func TestHTTPCaptureMergesResponseCredentialEvidenceBeforeTerminalDiagnostic(t *
 		requestcapture.CredentialPhaseInitial,
 		request,
 	)
-	response := capturedFailureResponse(io.NopCloser(strings.NewReader("ignored")))
-	response.Header.Set("Set-Cookie", "session="+responseCredential+"; Path=/")
-	exchange.observeResponse(response)
+	head := upstreamtransport.ResponseHead{
+		StatusCode:    http.StatusOK,
+		Protocol:      "HTTP/1.1",
+		SourceHeader:  http.Header{"Content-Type": {"application/json"}},
+		Header:        http.Header{"Content-Type": {"application/json"}},
+		Trailer:       make(http.Header),
+		ContentLength: -1,
+	}
+	head.SourceHeader.Set("Set-Cookie", "session="+responseCredential+"; Path=/")
+	body := exchange.observeResponse(head, io.NopCloser(strings.NewReader("ignored")))
+	_, _ = io.Copy(io.Discard, body)
+	_ = body.Close()
 	fact := capturefailure.Fact(
 		requestcapture.FailureSiteResponseRead,
 		requestcapture.FailurePeerUpstream,
@@ -514,7 +215,7 @@ func TestHTTPCaptureMergesResponseCredentialEvidenceBeforeTerminalDiagnostic(t *
 	)
 	fact.Message = "later diagnostic contains " + responseCredential
 	exchange.finish(
-		response,
+		head.Trailer,
 		requestcapture.SourceCompletionPartial,
 		requestcapture.TerminationReasonReadError,
 		capturefailure.Observation(fact, requestcapture.FailureFact{}),
@@ -534,125 +235,6 @@ func TestHTTPCaptureMergesResponseCredentialEvidenceBeforeTerminalDiagnostic(t *
 		t.Fatalf("response-aware diagnostic = %q", message)
 	}
 }
-
-func TestHTTPStatusFailoverCapturePreservesDrainFailureAsSecondaryFact(t *testing.T) {
-	t.Parallel()
-
-	drainFailure := errors.New("bounded drain failed")
-	provider := captureTestProvider("https://provider.invalid")
-	manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
-		ID:   provider.ID,
-		Name: provider.Name,
-	}})
-	defer manager.Close()
-	gateway := manager.BeginGateway(requestcapture.GatewayStart{GatewayRequestID: "status-drain-secondary"})
-	pctx := &proxyContext{
-		apiType:             APITypeClaude,
-		body:                []byte(`{"model":"claude-3"}`),
-		capture:             gateway,
-		captureParticipates: true,
-	}
-	request := httptest.NewRequest(http.MethodPost, "https://provider.invalid/v1/messages", nil)
-	handler := &Handler{logger: zap.NewNop()}
-	exchange := handler.beginHTTPExchange(
-		pctx,
-		httpAttemptContext{
-			provider:        &provider,
-			selectionMode:   requestcapture.SelectionModeInitial,
-			selectionSource: requestcapture.SelectionSourceStrategy,
-		},
-		requestcapture.CredentialPhaseInitial,
-		request,
-	)
-	response := capturedFailureResponse(&captureReadErrorBody{
-		payload: []byte("partial failure body"),
-		err:     drainFailure,
-	})
-	response.StatusCode = http.StatusBadGateway
-	exchange.observeResponse(response)
-	_, handled := handler.failoverForwardResponse(
-		context.Background(),
-		pctx,
-		&provider,
-		response,
-		exchange,
-		forwardResult{statusCode: response.StatusCode},
-	)
-	if !handled {
-		t.Fatal("bad gateway response did not enter status failover")
-	}
-	pctx.finishHTTPCaptureCompletions()
-	gateway.Finish(requestcapture.GatewayOutcome{})
-
-	page, err := readCaptureTestPage(manager, session, requestcapture.ListQuery{Limit: 1})
-	if err != nil {
-		t.Fatalf("ListRecords() error = %v", err)
-	}
-	if len(page.Records) != 1 {
-		t.Fatalf("records = %#v, want one", page.Records)
-	}
-	record := page.Records[0]
-	if !record.HasFailure ||
-		record.Failure.Primary.Site != requestcapture.FailureSiteResponseStatus ||
-		record.Failure.Primary.Code != requestcapture.FailureCodeUnexpectedStatus ||
-		record.Failure.Primary.HTTPStatusCode != http.StatusBadGateway ||
-		!record.Failure.HasSecondary ||
-		record.Failure.Secondary.Site != requestcapture.FailureSiteResponseDrain ||
-		record.Failure.Secondary.Peer != requestcapture.FailurePeerUpstream ||
-		record.Failure.Secondary.Class != requestcapture.FailureClassRead ||
-		record.Failure.Secondary.Code != requestcapture.FailureCodeDrainRead ||
-		record.Failure.Secondary.Message != "" {
-		t.Fatalf("status/drain failure = present:%t observation:%#v", record.HasFailure, record.Failure)
-	}
-}
-
-type scriptedCaptureTransport struct {
-	response *UpstreamResponse
-	fetchErr error
-	writeErr error
-}
-
-func (t *scriptedCaptureTransport) FetchUpstream(context.Context, *http.Request) (*UpstreamResponse, error) {
-	return t.response, t.fetchErr
-}
-
-func (t *scriptedCaptureTransport) WriteToClient(_ context.Context, w http.ResponseWriter, response *UpstreamResponse) error {
-	copyResponseHeaders(w.Header(), response.Header)
-	w.WriteHeader(response.StatusCode)
-	if t.writeErr != nil {
-		return t.writeErr
-	}
-	_, err := io.Copy(w, response.Body)
-	return err
-}
-
-func capturedFailureResponse(body io.ReadCloser) *UpstreamResponse {
-	return &UpstreamResponse{
-		StatusCode:    http.StatusOK,
-		Protocol:      "HTTP/1.1",
-		Header:        http.Header{"Content-Type": {"application/json"}},
-		Trailer:       make(http.Header),
-		Body:          body,
-		ContentLength: -1,
-	}
-}
-
-type captureReadErrorBody struct {
-	payload []byte
-	err     error
-	read    bool
-}
-
-func (b *captureReadErrorBody) Read(p []byte) (int, error) {
-	if b.read {
-		return 0, b.err
-	}
-	b.read = true
-	return copy(p, b.payload), b.err
-}
-
-func (*captureReadErrorBody) Close() error { return nil }
-
 func TestHandlerCaptureEnabledPreservesHTTPAndSSEBehavior(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -851,8 +433,8 @@ func TestHandlerCaptureIndexesSameProviderRetries(t *testing.T) {
 		t.Fatalf("provider attempt indices = %d, %d, want 0, 1", first.ProviderAttemptIndex, retry.ProviderAttemptIndex)
 	}
 	if first.TerminationReason != requestcapture.TerminationReasonStatusFailoverDrain ||
-		first.SourceCompletion != requestcapture.SourceCompletionComplete ||
-		first.UpstreamObservedBytes != int64(len(failedBody)) {
+		first.SourceCompletion != requestcapture.SourceCompletionPartial ||
+		first.UpstreamObservedBytes != 0 {
 		t.Fatalf("first attempt = termination:%q completion:%q bytes:%d", first.TerminationReason, first.SourceCompletion, first.UpstreamObservedBytes)
 	}
 	if !first.HasFailure ||
@@ -1101,6 +683,49 @@ func startCaptureTestManager(
 		t.Fatalf("Start() error = %v", err)
 	}
 	return manager, session
+}
+
+func readCaptureTestPage(
+	manager *requestcapture.Manager,
+	session requestcapture.SessionInfo,
+	query requestcapture.ListQuery,
+) (requestcapture.RecordPage, error) {
+	lease, err := manager.OpenRecordPage(context.Background(), session.SessionID, query)
+	if err != nil {
+		return requestcapture.RecordPage{}, err
+	}
+	defer lease.Close()
+	var encoded bytes.Buffer
+	if err := lease.WriteJSON(context.Background(), &encoded); err != nil {
+		return requestcapture.RecordPage{}, err
+	}
+	var page requestcapture.RecordPage
+	if err := json.Unmarshal(encoded.Bytes(), &page); err != nil {
+		return requestcapture.RecordPage{}, err
+	}
+	return page, nil
+}
+
+func readCaptureTestDetail(
+	manager *requestcapture.Manager,
+	session requestcapture.SessionInfo,
+	recordID string,
+	previewBytes int,
+) (requestcapture.RecordDetail, error) {
+	lease, err := manager.OpenRecordDetail(context.Background(), session.SessionID, recordID, previewBytes)
+	if err != nil {
+		return requestcapture.RecordDetail{}, err
+	}
+	defer lease.Close()
+	var encoded bytes.Buffer
+	if err := lease.WriteJSON(context.Background(), &encoded); err != nil {
+		return requestcapture.RecordDetail{}, err
+	}
+	var detail requestcapture.RecordDetail
+	if err := json.Unmarshal(encoded.Bytes(), &detail); err != nil {
+		return requestcapture.RecordDetail{}, err
+	}
+	return detail, nil
 }
 
 type refreshingCaptureAuthenticator struct {

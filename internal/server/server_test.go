@@ -6,10 +6,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/admin"
+	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storepkg "github.com/doraemonkeys/switch-a/internal/store"
 
@@ -429,6 +431,58 @@ func TestAdminUnknownAPIRouteReturnsJSONNotFound(t *testing.T) {
 
 	if resp.Code != admin.ErrCodeNotFound {
 		t.Fatalf("error code = %q, want %q", resp.Code, admin.ErrCodeNotFound)
+	}
+}
+
+func TestAdminAPICatalogRoute(t *testing.T) {
+	t.Parallel()
+
+	server := testAdminServer(t)
+
+	unauthorized := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(
+		unauthorized,
+		httptest.NewRequest(http.MethodGet, "/admin/api/api-catalog", nil),
+	)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want %d", unauthorized.Code, http.StatusUnauthorized)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/api/api-catalog", nil)
+	request.Header.Set("Authorization", "Bearer test-token")
+	response := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("Content-Type"); got != admin.ContentTypeJSON {
+		t.Fatalf("Content-Type = %q, want %q", got, admin.ContentTypeJSON)
+	}
+	var got apicontract.CatalogResponse
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("decode catalog response: %v", err)
+	}
+	if want := admin.APICatalogResponse(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("routed catalog projection drifted\ngot:  %+v\nwant: %+v", got, want)
+	}
+
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "wrong method", method: http.MethodPost, path: "/admin/api/api-catalog"},
+		{name: "subpath", method: http.MethodGet, path: "/admin/api/api-catalog/extra"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request.Header.Set("Authorization", "Bearer test-token")
+			response := httptest.NewRecorder()
+			server.server.Handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
+			}
+		})
 	}
 }
 

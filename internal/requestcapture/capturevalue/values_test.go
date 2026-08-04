@@ -53,6 +53,8 @@ func TestCanonicalCaptureValues(t *testing.T) {
 			TerminationReasonEOF,
 			TerminationReasonStatusFailoverDrain,
 			TerminationReasonCredentialRefreshDrain,
+			TerminationReasonInternalErrorAbsorbed,
+			TerminationReasonInternalErrorCommitted,
 			TerminationReasonClientDisconnect,
 			TerminationReasonTimeout,
 			TerminationReasonCanceled,

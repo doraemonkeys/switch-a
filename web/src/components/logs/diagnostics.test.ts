@@ -9,7 +9,7 @@ import {
   getTransportStagePhrase,
   isV2Evidence,
   parseRequestEvidence,
-} from "./evidence-utils";
+} from "@/features/request-attempt/evidence/presentation";
 import type {
   LegacyRequestLog,
   NormalizedRequestLog,

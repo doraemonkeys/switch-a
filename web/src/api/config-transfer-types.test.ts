@@ -1,0 +1,74 @@
+import { describe, expectTypeOf, it } from "vitest";
+import type * as Direct from "./config-transfer-types";
+import type * as Legacy from "./types";
+import type * as Public from ".";
+
+type DirectSurface = [
+  Direct.ExportedAPIType,
+  Direct.ExportedProvider,
+  Direct.ExportedGroup,
+  Direct.ExportedRoutingPolicy,
+  Direct.ExportedInternalErrorRule,
+  Direct.ExportedConfig,
+  Direct.ImportMode,
+  Direct.FullImportScope,
+  Direct.SettingsOnlyImportScope,
+  Direct.SelectionImportScope,
+  Direct.ImportScope,
+  Direct.ImportConfigRequest,
+  Direct.ChangeCount,
+  Direct.ImportChanges,
+  Direct.ImportPreviewResponse,
+  Direct.AppliedCount,
+  Direct.ImportedCounts,
+  Direct.ImportResult,
+];
+
+type LegacySurface = [
+  Legacy.ExportedAPIType,
+  Legacy.ExportedProvider,
+  Legacy.ExportedGroup,
+  Legacy.ExportedRoutingPolicy,
+  Legacy.ExportedInternalErrorRule,
+  Legacy.ExportedConfig,
+  Legacy.ImportMode,
+  Legacy.FullImportScope,
+  Legacy.SettingsOnlyImportScope,
+  Legacy.SelectionImportScope,
+  Legacy.ImportScope,
+  Legacy.ImportConfigRequest,
+  Legacy.ChangeCount,
+  Legacy.ImportChanges,
+  Legacy.ImportPreviewResponse,
+  Legacy.AppliedCount,
+  Legacy.ImportedCounts,
+  Legacy.ImportResult,
+];
+
+type PublicSurface = [
+  Public.ExportedAPIType,
+  Public.ExportedProvider,
+  Public.ExportedGroup,
+  Public.ExportedRoutingPolicy,
+  Public.ExportedInternalErrorRule,
+  Public.ExportedConfig,
+  Public.ImportMode,
+  Public.FullImportScope,
+  Public.SettingsOnlyImportScope,
+  Public.SelectionImportScope,
+  Public.ImportScope,
+  Public.ImportConfigRequest,
+  Public.ChangeCount,
+  Public.ImportChanges,
+  Public.ImportPreviewResponse,
+  Public.AppliedCount,
+  Public.ImportedCounts,
+  Public.ImportResult,
+];
+
+describe("config-transfer type surface", () => {
+  it("preserves the legacy and public API re-exports", () => {
+    expectTypeOf<LegacySurface>().toEqualTypeOf<DirectSurface>();
+    expectTypeOf<PublicSurface>().toEqualTypeOf<DirectSurface>();
+  });
+});

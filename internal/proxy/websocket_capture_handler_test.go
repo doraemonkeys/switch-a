@@ -1,7 +1,11 @@
 package proxy
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +19,74 @@ import (
 	"github.com/coder/websocket"
 	"go.uber.org/zap/zaptest"
 )
+
+const (
+	webSocketCaptureExportManifestEvent  = "manifest"
+	webSocketCaptureExportRecordEvent    = "record"
+	webSocketCaptureExportMetadataPart   = "metadata_chunk"
+	webSocketCaptureHandshakeBodyBlobID  = "handshake_body"
+	webSocketCaptureProviderAttemptIndex = 0
+)
+
+type webSocketCaptureExportEnvelope struct {
+	Event       string `json:"event"`
+	Part        string `json:"part"`
+	RecordIndex int    `json:"record_index"`
+	DataBase64  []byte `json:"data_base64"`
+}
+
+type webSocketCaptureExportMetadata struct {
+	RecordID          string                             `json:"record_id"`
+	Summary           requestcapture.RecordSummary       `json:"summary"`
+	GatewayTraceIndex int                                `json:"gateway_trace_index"`
+	GatewayTrace      requestcapture.GatewayTraceSummary `json:"-"`
+	Request           requestcapture.RequestSnapshot     `json:"request"`
+	WebSocket         *struct {
+		Handshake *requestcapture.WebSocketHandshakeSnapshot `json:"handshake"`
+		Messages  []requestcapture.MessageSnapshot           `json:"messages"`
+		Close     *requestcapture.WebSocketCloseSnapshot     `json:"close"`
+	} `json:"websocket"`
+	Blobs []webSocketCaptureExportBlob `json:"blobs"`
+}
+
+type webSocketCaptureExportManifest struct {
+	GatewayTraces []struct {
+		TraceIndex int                                `json:"trace_index"`
+		Trace      requestcapture.GatewayTraceSummary `json:"trace"`
+	} `json:"gateway_traces"`
+}
+
+type webSocketCaptureExportBlob struct {
+	BlobID  string `json:"blob_id"`
+	RawSize int64  `json:"raw_size"`
+}
+
+type webSocketCaptureFailingAuthenticator struct {
+	providerID string
+	secret     string
+}
+
+func (auth webSocketCaptureFailingAuthenticator) ApplyProviderCredentials(
+	_ context.Context,
+	headers http.Header,
+	provider *model.Provider,
+	_, _ string,
+	_ *http.Request,
+) error {
+	if provider.ID == auth.providerID {
+		headers.Set("Authorization", "Bearer "+auth.secret)
+		return errors.New("credential preparation failed for " + auth.secret)
+	}
+	headers.Set("Authorization", "Bearer fallback-token")
+	return nil
+}
+
+func (webSocketCaptureFailingAuthenticator) RefreshProviderCredentials(
+	context.Context,
+	*model.Provider,
+) (bool, error) {
+	return false, nil
+}
 
 func TestHandlerWebSocketCaptureEndToEndLiveCloseAndExport(t *testing.T) {
 	const (
@@ -339,6 +411,133 @@ func firstWebSocketCaptureMessageID(gatewayTraceID string) string {
 	// This E2E sends exactly one live client frame before replacement, so the
 	// gateway's first admitted lineage is the physical primary delivery.
 	return messagePrefix + strings.TrimPrefix(gatewayTraceID, gatewayTracePrefix) + "_1"
+}
+
+func waitForCompletedWebSocketCaptureRecord(
+	t *testing.T,
+	manager *requestcapture.Manager,
+	session requestcapture.SessionInfo,
+	providerID string,
+) requestcapture.RecordSummary {
+	t.Helper()
+	var record requestcapture.RecordSummary
+	waitFor(t, func() bool {
+		page, err := readCaptureTestPage(manager, session, requestcapture.ListQuery{Limit: 10})
+		if err != nil {
+			return false
+		}
+		found := findWebSocketCaptureRecord(page.Records, providerID)
+		if found == nil || found.LifecycleState != requestcapture.LifecycleStateCompleted {
+			return false
+		}
+		record = *found
+		return true
+	}, testPollTimeout)
+	return record
+}
+
+func findWebSocketCaptureRecord(records []requestcapture.RecordSummary, providerID string) *requestcapture.RecordSummary {
+	for index := range records {
+		if records[index].Protocol == requestcapture.ProtocolWebSocket && records[index].Provider.ID == providerID {
+			return &records[index]
+		}
+	}
+	return nil
+}
+
+func findCapturedWebSocketMessage(
+	messages []requestcapture.MessageSnapshot,
+	direction requestcapture.MessageDirection,
+) *requestcapture.MessageSnapshot {
+	for index := range messages {
+		if messages[index].Direction == direction {
+			return &messages[index]
+		}
+	}
+	return nil
+}
+
+func exportWebSocketCaptureMetadata(
+	t *testing.T,
+	manager *requestcapture.Manager,
+	session requestcapture.SessionInfo,
+	recordIDs []string,
+) webSocketCaptureExportMetadata {
+	t.Helper()
+	ticket, err := manager.CreateExport(context.Background(), session.SessionID, requestcapture.ExportRequest{
+		Scope: requestcapture.ExportScopeRecords, RecordIDs: recordIDs,
+	})
+	if err != nil {
+		t.Fatalf("CreateExport() error = %v", err)
+	}
+	download, err := manager.AcceptDownload(ticket.ExportID, ticket.DownloadToken)
+	if err != nil {
+		t.Fatalf("AcceptDownload() error = %v", err)
+	}
+	var destination bytes.Buffer
+	if err := download.WriteTo(context.Background(), &destination); err != nil {
+		t.Fatalf("export WriteTo() error = %v", err)
+	}
+
+	var manifestBytes, metadataBytes []byte
+	scanner := bufio.NewScanner(bytes.NewReader(destination.Bytes()))
+	scanner.Buffer(nil, requestcapture.DefaultExportLineBytes)
+	for scanner.Scan() {
+		var envelope webSocketCaptureExportEnvelope
+		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
+			t.Fatalf("decode export line: %v", err)
+		}
+		if envelope.Part != webSocketCaptureExportMetadataPart {
+			continue
+		}
+		switch {
+		case envelope.Event == webSocketCaptureExportManifestEvent:
+			manifestBytes = append(manifestBytes, envelope.DataBase64...)
+		case envelope.Event == webSocketCaptureExportRecordEvent && envelope.RecordIndex == 0:
+			metadataBytes = append(metadataBytes, envelope.DataBase64...)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan export: %v", err)
+	}
+	if len(metadataBytes) == 0 || len(manifestBytes) == 0 {
+		t.Fatal("export did not contain websocket record and manifest metadata")
+	}
+
+	var metadata webSocketCaptureExportMetadata
+	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+		t.Fatalf("decode websocket export metadata: %v", err)
+	}
+	var manifest webSocketCaptureExportManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatalf("decode websocket export manifest: %v", err)
+	}
+	if metadata.GatewayTraceIndex < 0 || metadata.GatewayTraceIndex >= len(manifest.GatewayTraces) {
+		t.Fatalf("gateway_trace_index = %d, trace count %d", metadata.GatewayTraceIndex, len(manifest.GatewayTraces))
+	}
+	trace := manifest.GatewayTraces[metadata.GatewayTraceIndex]
+	if trace.TraceIndex != metadata.GatewayTraceIndex || trace.Trace.GatewayTraceID != metadata.Summary.GatewayTraceID {
+		t.Fatalf("gateway trace reference = %#v, summary trace ID %q", trace, metadata.Summary.GatewayTraceID)
+	}
+	metadata.GatewayTrace = trace.Trace
+	return metadata
+}
+
+func getWebSocketCaptureTestDetail(
+	t *testing.T,
+	manager *requestcapture.Manager,
+	session requestcapture.SessionInfo,
+	recordID string,
+) requestcapture.RecordDetail {
+	t.Helper()
+	detail, err := readCaptureTestDetail(manager, session, recordID, 1024)
+	if err != nil {
+		t.Fatalf("read record detail: %v", err)
+	}
+	if detail.WebSocket == nil {
+		t.Fatal("WebSocket detail is missing")
+	}
+	return detail
 }
 
 func TestHandlerWebSocketCaptureCredentialRefreshCreatesTwoPhysicalExchanges(t *testing.T) {

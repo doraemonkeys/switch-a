@@ -891,7 +891,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvid
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
 	})
-	handler.wsForwarder = NewWebSocketForwarder(WebSocketForwarderConfig{
+	setWebSocketForwarderForTest(handler, NewWebSocketForwarder(WebSocketForwarderConfig{
 		Logger: zap.NewNop(),
 		Dialer: &mockDialer{
 			dialFunc: func(ctx context.Context, url string, opts *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
@@ -901,7 +901,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvid
 				return websocket.Dial(ctx, url, opts)
 			},
 		},
-	})
+	}))
 
 	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()

@@ -60,6 +60,7 @@ func TestEnableProvider_EmptyID(t *testing.T) {
 
 func TestEnableProvider_UpdateError(t *testing.T) {
 	h, st, _ := testHandler()
+	lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
 
 	st.providers["test"] = &model.Provider{ID: "test", Name: "Test", Enabled: false}
 	st.updateErr = errors.New("database error")
@@ -72,6 +73,9 @@ func TestEnableProvider_UpdateError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if len(lifecycles.retiredProviderIDs) != 1 || lifecycles.retiredProviderIDs[0] != "test" {
+		t.Fatalf("retired = %v, want conservative retirement before failed write", lifecycles.retiredProviderIDs)
 	}
 }
 
@@ -108,6 +112,39 @@ func TestDisableProvider(t *testing.T) {
 
 	if st.providers["test-provider"].Enabled {
 		t.Error("provider should be disabled")
+	}
+}
+
+func TestProviderStateTransitionRetiresConcurrencyGeneration(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		initial bool
+		enabled bool
+	}{
+		{name: "enable", initial: false, enabled: true},
+		{name: "disable", initial: true, enabled: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h, st, _ := testHandler()
+			lifecycles := h.providerLifecycles.(*mockProviderLifecycleCoordinator)
+			st.providers["test-provider"] = &model.Provider{ID: "test-provider", Name: "Test", Enabled: test.initial}
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/api/providers/test-provider/state", nil)
+			setPathValue(req, "id", "test-provider")
+			response := httptest.NewRecorder()
+			if test.enabled {
+				h.EnableProvider(response, req)
+			} else {
+				h.DisableProvider(response, req)
+			}
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+			}
+			if len(lifecycles.retiredProviderIDs) != 1 || lifecycles.retiredProviderIDs[0] != "test-provider" {
+				t.Fatalf("retired = %v, want [test-provider]", lifecycles.retiredProviderIDs)
+			}
+		})
 	}
 }
 
