@@ -43,6 +43,7 @@ TODO
 *gitignore_*
 .cursor/
 .claude/
+.codex/*.md
 
 # Coverage output directories
 web/coverage/
