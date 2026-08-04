@@ -285,6 +285,25 @@ func openApplicationStore(dbPath string, clock internal.Clock) (*store.SQLiteSto
 	return sqlStore, nil
 }
 
+// startApplicationStickyCache owns both sticky background loops so callers
+// cannot accidentally close SQLite before the final write-behind flush.
+func startApplicationStickyCache(
+	persistence selector.StickyPersistence,
+	clock internal.Clock,
+	log *zap.Logger,
+) (*selector.PersistentStickyCache, func()) {
+	stickyCache := selector.NewPersistentStickyCache(persistence, clock, log)
+	stopCleanup := stickyCache.StartCleanupLoop(StickyCacheCleanupInterval)
+	return stickyCache, func() {
+		stopCleanup()
+		flushCtx, cancel := context.WithTimeout(context.Background(), StickyPersistenceShutdownTimeout)
+		defer cancel()
+		if err := stickyCache.Close(flushCtx); err != nil {
+			log.Warn("failed to flush sticky cache during shutdown", zap.Error(err))
+		}
+	}
+}
+
 func run() error {
 	// Load configuration
 	cfg, err := config.Load()
@@ -370,18 +389,8 @@ func run() error {
 	// Initialize sticky cache for session affinity. The memory layer serves the
 	// hot path while SQLite restores bindings after restart and mirrors mutations
 	// on a best-effort basis.
-	stickyCache := selector.NewPersistentStickyCache(sqlStore, clock, log)
-	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), StickyPersistenceShutdownTimeout)
-		defer cancel()
-		if err := stickyCache.Close(flushCtx); err != nil {
-			log.Warn("failed to flush sticky cache during shutdown", zap.Error(err))
-		}
-	}()
-	// Start cleanup loop to prevent memory and durable state from growing with
-	// expired entries.
-	stopCleanup := stickyCache.StartCleanupLoop(StickyCacheCleanupInterval)
-	defer stopCleanup()
+	stickyCache, stopStickyCache := startApplicationStickyCache(sqlStore, clock, log)
+	defer stopStickyCache()
 
 	// Start log cleanup loop to prevent request_logs table from growing indefinitely
 	stopLogCleanup := startLogCleanupLoop(st, log)
