@@ -22,6 +22,10 @@
 - **Strictly Modern Hooks:** Use `useEffect` *only* for external synchronization (APIs/subs). Handle all user interactions in event handlers. **Trust React Compiler** (no manual `useMemo`/`useCallback`).
 - **Composition Strategy:** Prefer colocation and Composition (`children`) over deep prop drilling. Use Context only for truly global state. Extract logic into Custom Hooks.
 
+## Validation
+
+- Local CI: `make ci`.
+
 ## Project Overview
 
 - [OVERVIEW](docs/PROJECT_OVERVIEW.md)
