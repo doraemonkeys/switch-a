@@ -12,11 +12,24 @@ export function generateClientKey(): string {
   return `apitype-${++nextClientKey}`;
 }
 
-export type ProviderStatusType =
-  "healthy" | "unhealthy" | "pending-recovery" | "disabled";
+export const PROVIDER_STATUS_TYPES = [
+  "healthy",
+  "unhealthy",
+  "pending-recovery",
+  "disabled",
+] as const;
 
-export type StatusFilter =
-  "" | "healthy" | "unhealthy" | "pending-recovery" | "disabled";
+export type ProviderStatusType = (typeof PROVIDER_STATUS_TYPES)[number];
+
+// Visibility is broader than runtime status: "enabled" intentionally includes
+// healthy, circuit-open, and probing providers.
+export const PROVIDER_VISIBILITY_FILTERS = [
+  "enabled",
+  ...PROVIDER_STATUS_TYPES,
+] as const;
+
+export type ProviderVisibilityFilter =
+  "" | (typeof PROVIDER_VISIBILITY_FILTERS)[number];
 
 /**
  * Determines provider status based on enabled state and health info.

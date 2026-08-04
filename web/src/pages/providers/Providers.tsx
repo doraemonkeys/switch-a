@@ -1,13 +1,12 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router";
 import { useGroups } from "../../hooks/useGroups";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { ConfirmModal, ProviderDetailDrawer } from "../../components";
 import { ProviderImportModal } from "../../components/provider-import";
 import { DEFAULT_REFRESH_INTERVAL } from "../../components/refreshIntervalConstants";
 import { useApi, type Provider, type ProviderInput } from "../../api";
-import { getProviderStatus } from "./types";
-import type { StatusFilter } from "./types";
+import { filterProviders, hasProviderListFilters } from "./providerFilters";
+import { useProviderListFilters } from "./useProviderListFilters";
 import { ProvidersTableBody } from "./ProvidersTableBody";
 import { ProviderModal } from "./ProviderModal";
 import { useProviderActions } from "./useProviderActions";
@@ -49,16 +48,7 @@ export function Providers() {
     handleRefreshUsage,
   } = useProviderActions();
   const { groups } = useGroups();
-  const [searchParams] = useSearchParams();
-
-  // Initialize filters from URL parameters
-  const [searchQuery, setSearchQuery] = useState(
-    searchParams.get("search") || "",
-  );
-  const [groupFilter, setGroupFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
-    (searchParams.get("status") as StatusFilter) || "",
-  );
+  const { filters, setFilter } = useProviderListFilters();
 
   const [dialog, setDialog] = useState<ProviderDialogState>(null);
   const editingProvider = dialog?.kind === "edit" ? dialog.provider : null;
@@ -85,30 +75,7 @@ export function Providers() {
   const detailProvider =
     providers.find((provider) => provider.id === detailProviderId) ?? null;
 
-  const filteredProviders = providers.filter((provider) => {
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchesName = provider.name.toLowerCase().includes(query);
-      const matchesId = provider.id.toLowerCase().includes(query);
-      const matchesUrl = provider.api_types?.some((t) =>
-        t.base_url.toLowerCase().includes(query),
-      );
-      if (!matchesName && !matchesId && !matchesUrl) return false;
-    }
-    if (groupFilter && provider.group_id !== groupFilter) return false;
-    if (statusFilter) {
-      const status = getProviderStatus(
-        provider.enabled,
-        provider.health?.available,
-        provider.health?.disabled_until,
-      );
-      if (statusFilter === "pending-recovery" && status === "pending-recovery")
-        return true;
-      if (statusFilter === status) return true;
-      return false;
-    }
-    return true;
-  });
+  const filteredProviders = filterProviders(providers, filters);
 
   const onSaveProvider = async (data: ProviderInput) => {
     await handleSaveProvider(data, editingProvider);
@@ -199,17 +166,15 @@ export function Providers() {
 
       {providers.length === 0 &&
         !loading &&
-        !searchQuery &&
-        !groupFilter &&
-        !statusFilter && <HelpCard />}
+        !hasProviderListFilters(filters) && <HelpCard />}
 
       <FilterBar
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        groupFilter={groupFilter}
-        onGroupFilterChange={setGroupFilter}
-        statusFilter={statusFilter}
-        onStatusFilterChange={setStatusFilter}
+        searchQuery={filters.searchQuery}
+        onSearchChange={(value) => setFilter("searchQuery", value)}
+        groupFilter={filters.groupId}
+        onGroupFilterChange={(value) => setFilter("groupId", value)}
+        visibilityFilter={filters.visibility}
+        onVisibilityFilterChange={(value) => setFilter("visibility", value)}
         groups={groups}
       />
 
@@ -228,7 +193,7 @@ export function Providers() {
                 onReset={handleResetClick}
                 onAddClick={handleAddClick}
                 onImportClick={handleImportClick}
-                onGroupClick={setGroupFilter}
+                onGroupClick={(groupId) => setFilter("groupId", groupId)}
                 onViewDetail={handleViewDetail}
                 getGroupName={getGroupName}
                 getGroupEnabled={getGroupEnabled}

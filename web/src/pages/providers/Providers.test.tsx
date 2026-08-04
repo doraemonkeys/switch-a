@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ApiClient,
@@ -53,6 +53,10 @@ function createApiClient(
   } as unknown as ApiClient;
 }
 
+function LocationSearch() {
+  return <output data-testid="location-search">{useLocation().search}</output>;
+}
+
 const successfulPreview: ProviderImportPreview = {
   import_id: "import-1",
   expires_at: "2026-07-30T22:00:00Z",
@@ -103,7 +107,7 @@ const successfulResult: ProviderImportCommitResult = {
   ],
 };
 
-describe("Providers import entry points", () => {
+describe("Providers page", () => {
   beforeEach(() => {
     vi.mocked(useProviderActions).mockReturnValue(createProviderActions());
     vi.mocked(useGroups).mockReturnValue({
@@ -259,5 +263,37 @@ describe("Providers import entry points", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stores the selected provider status in the URL and restores it on load", async () => {
+    const user = userEvent.setup();
+    const firstRender = render(
+      <MemoryRouter initialEntries={["/providers"]}>
+        <ApiContext.Provider value={createApiClient()}>
+          <Providers />
+          <LocationSearch />
+        </ApiContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Provider status" }),
+      "enabled",
+    );
+    const persistedSearch = screen.getByTestId("location-search").textContent;
+    expect(persistedSearch).toBe("?status=enabled");
+
+    firstRender.unmount();
+    render(
+      <MemoryRouter initialEntries={[`/providers${persistedSearch}`]}>
+        <ApiContext.Provider value={createApiClient()}>
+          <Providers />
+        </ApiContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Provider status" }),
+    ).toHaveValue("enabled");
   });
 });

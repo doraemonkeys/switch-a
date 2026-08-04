@@ -1,5 +1,5 @@
 import type { Group } from "../../api/client";
-import type { StatusFilter } from "./types";
+import type { ProviderVisibilityFilter } from "./types";
 import { RefreshIntervalSelect } from "../../components/RefreshIntervalSelect";
 import {
   Plus,
@@ -109,8 +109,8 @@ interface FilterBarProps {
   onSearchChange: (value: string) => void;
   groupFilter: string;
   onGroupFilterChange: (value: string) => void;
-  statusFilter: StatusFilter;
-  onStatusFilterChange: (value: StatusFilter) => void;
+  visibilityFilter: ProviderVisibilityFilter;
+  onVisibilityFilterChange: (value: ProviderVisibilityFilter) => void;
   groups: Group[];
 }
 
@@ -119,8 +119,8 @@ export function FilterBar({
   onSearchChange,
   groupFilter,
   onGroupFilterChange,
-  statusFilter,
-  onStatusFilterChange,
+  visibilityFilter,
+  onVisibilityFilterChange,
   groups,
 }: FilterBarProps) {
   return (
@@ -137,6 +137,7 @@ export function FilterBar({
       </div>
       <div className="flex items-center gap-3">
         <select
+          aria-label="Provider group"
           className="input h-10 min-w-[140px] bg-bg-secondary border-transparent focus:bg-white focus:border-primary"
           value={groupFilter}
           onChange={(e) => onGroupFilterChange(e.target.value)}
@@ -149,11 +150,15 @@ export function FilterBar({
           ))}
         </select>
         <select
+          aria-label="Provider status"
           className="input h-10 min-w-[160px] bg-bg-secondary border-transparent focus:bg-white focus:border-primary"
-          value={statusFilter}
-          onChange={(e) => onStatusFilterChange(e.target.value as StatusFilter)}
+          value={visibilityFilter}
+          onChange={(e) =>
+            onVisibilityFilterChange(e.target.value as ProviderVisibilityFilter)
+          }
         >
-          <option value="">All Statuses</option>
+          <option value="">All Providers</option>
+          <option value="enabled">Enabled</option>
           <option value="healthy">Healthy</option>
           <option value="unhealthy">Circuit Open</option>
           <option value="pending-recovery">Pending Recovery</option>
