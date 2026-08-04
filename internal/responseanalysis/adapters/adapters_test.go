@@ -48,6 +48,11 @@ func TestFrozenEnvelopePredicates(t *testing.T) {
 			class: EventError, fields: &SemanticFields{Type: "error", Code: "busy", Message: "At capacity", Reason: "capacity"},
 		},
 		{
+			name: "responses direct nested provider error", family: apicontract.ErrorFamilyOpenAIResponses, kind: framing.KindSSE, event: "error",
+			data:  `{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":2}`,
+			class: EventError, fields: &SemanticFields{Type: "service_unavailable_error", Code: "server_is_overloaded", Message: "Our servers are currently overloaded. Please try again later."},
+		},
+		{
 			name: "responses failed event", family: apicontract.ErrorFamilyOpenAIResponses, kind: framing.KindSSE,
 			data:  `{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","code":503,"message":"Unavailable","reason":"capacity"}}}`,
 			class: EventError, fields: &SemanticFields{Type: "server_error", Code: "503", Message: "Unavailable", Reason: "capacity"},
@@ -102,6 +107,7 @@ func TestNormalOutputNeverBecomesSemanticError(t *testing.T) {
 		{"responses nested", apicontract.ErrorFamilyOpenAIResponses, framing.KindJSON, "", `{"type":"response.completed","output":[{"error":{"message":"busy"}}]}`},
 		{"responses missing object", apicontract.ErrorFamilyOpenAIResponses, framing.KindJSON, "", `{"type":"error","error":"busy"}`},
 		{"responses direct missing code", apicontract.ErrorFamilyOpenAIResponses, framing.KindSSE, "", `{"type":"error","message":"busy"}`},
+		{"responses direct nested missing message", apicontract.ErrorFamilyOpenAIResponses, framing.KindSSE, "error", `{"type":"error","error":{"code":"busy"}}`},
 		{"responses failed missing message", apicontract.ErrorFamilyOpenAIResponses, framing.KindSSE, "", `{"type":"response.failed","response":{"status":"failed","error":{"code":503}}}`},
 		{"chat missing discriminator", apicontract.ErrorFamilyOpenAIChatCompletions, framing.KindJSON, "", `{"error":{"message":"busy"}}`},
 		{"chat explicit nonerror", apicontract.ErrorFamilyOpenAIChatCompletions, framing.KindSSE, "message", `{"error":{"type":"server_error","message":"busy"}}`},

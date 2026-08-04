@@ -77,8 +77,7 @@ func (a responsesAdapter) observeDirectError(
 	typeError, _ := exactStringFieldEquals(document, document.root, "type", openAIResponsesErrorType, a.limits.TypeBytes)
 	_, codePresent := document.objectField(document.root, "code")
 	errorRaw, errorPresent := document.objectField(document.root, "error")
-	if !typeError || (!codePresent && !errorPresent) ||
-		!fieldHasKind(document, document.root, "message", jsonString) {
+	if !typeError || (!codePresent && !errorPresent) {
 		return Result{}, false
 	}
 
@@ -100,6 +99,9 @@ func (a responsesAdapter) observeDirectError(
 		a.limits.CodeBytes,
 		resources,
 	)
+	// Responses-compatible providers disagree on whether direct SSE errors are
+	// flat or nested. Validate the authoritative nested value before falling
+	// back to the root so a valid provider error is not made visible prematurely.
 	message, messageStatus := preferredStringField(
 		document,
 		providerError,

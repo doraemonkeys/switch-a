@@ -204,6 +204,44 @@ func TestV5BHTTPAndSSEActionTable(t *testing.T) {
 	}
 }
 
+func TestV5BCodexNestedDirectErrorRetriesBeforeTerminalEventBecomesVisible(t *testing.T) {
+	errorWire := []byte(
+		"event: response.created\r\n" +
+			"data: {\"type\":\"response.created\"}\r\n\r\n" +
+			"event: response.in_progress\r\n" +
+			"data: {\"type\":\"response.in_progress\"}\r\n\r\n" +
+			"event: error\r\n" +
+			"data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\",\"param\":null},\"sequence_number\":2}\r\n\r\n" +
+			"event: response.failed\r\n" +
+			"data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}}\r\n\r\n",
+	)
+	successWire := []byte("event: response.completed\r\ndata: {\"type\":\"response.completed\"}\r\n\r\n")
+	primary := newUpstreamSequence(t,
+		wireResponse{contentType: "text/event-stream", body: errorWire},
+		wireResponse{contentType: "text/event-stream", body: successWire},
+	)
+	harness := newProxyHarness(t, proxyHarnessOptions{
+		action: retryOnlyAction(t, 1), globalMaxAttempts: 2, primary: primary,
+	})
+
+	recorder := harness.serve(t)
+	if recorder.Code != http.StatusOK || !bytes.Equal(recorder.Body.Bytes(), successWire) || primary.CallCount() != 2 {
+		t.Fatalf("response status=%d body=%q calls=%d", recorder.Code, recorder.Body.Bytes(), primary.CallCount())
+	}
+	attempts := harness.attempts(t)
+	if len(attempts) != 2 {
+		t.Fatalf("attempt chain=%#v", attempts)
+	}
+	assertAttemptAxes(t, attempts[0], model.RequestAttemptOutcomeUpstreamSemanticError, false,
+		model.RequestAttemptHealthNeutral, model.RequestAttemptHealthCauseSemanticNeutral)
+	semantic := decodeSemanticEvidence(t, attempts[0].AttemptEvidenceJSON)
+	if semantic.Response.BoundaryReason != responseanalysis.BoundarySemanticMatch ||
+		semantic.Response.VisibleToClient || semantic.Response.ClientBodyBytesWritten != "0" ||
+		semantic.Decision.Value != errorrule.DecisionRetrySame {
+		t.Fatalf("nested direct error evidence=%#v", semantic)
+	}
+}
+
 func TestV5BFinalAttemptSlotIsReservedForAlternate(t *testing.T) {
 	errorWire := []byte("event: error\r\ndata: {\"type\":\"error\",\"code\":\"busy\",\"message\":\"overloaded\"}\r\n\r\n")
 	successWire := []byte(`{"id":"alternate-success"}`)
