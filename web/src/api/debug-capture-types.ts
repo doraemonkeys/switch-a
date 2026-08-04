@@ -342,6 +342,5 @@ export interface DebugCaptureDownloadGrant {
   session_id: string;
   record_count: number;
   expires_at: string;
-  download_path: string;
-  download_token: string;
+  download_url: string;
 }

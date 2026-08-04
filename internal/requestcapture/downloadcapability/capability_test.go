@@ -44,7 +44,7 @@ func TestTokenGenerationHashingAndMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewToken() error = %v", err)
 	}
-	if stored != HashToken(raw) || !Matches(stored, raw) {
+	if stored != HashToken(raw) || !Matches(stored, raw) || !IsCanonicalToken(raw) {
 		t.Fatal("generated token does not match stored hash")
 	}
 	if Matches(stored, strings.Repeat("x", len(raw))) {
@@ -52,6 +52,16 @@ func TestTokenGenerationHashingAndMatching(t *testing.T) {
 	}
 	if Matches(stored, raw[:len(raw)-1]) {
 		t.Fatal("wrong-length token matched")
+	}
+	for _, malformed := range []string{
+		raw[:len(raw)-1],
+		raw + "=",
+		strings.Repeat("!", CanonicalTokenBytes),
+		raw[:len(raw)-1] + "B",
+	} {
+		if IsCanonicalToken(malformed) {
+			t.Fatalf("IsCanonicalToken(%q) unexpectedly succeeded", malformed)
+		}
 	}
 }
 

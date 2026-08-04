@@ -6,9 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
@@ -16,21 +14,23 @@ import (
 
 type panicHeaderResponseWriter struct{}
 
-func (panicHeaderResponseWriter) Header() http.Header { panic("forced response header panic") }
-
-func (panicHeaderResponseWriter) WriteHeader(int) { panic("unexpected WriteHeader") }
-
-func (panicHeaderResponseWriter) Write([]byte) (int, error) { panic("unexpected Write") }
-
-type failingDownloadFormBody struct{}
-
-func (failingDownloadFormBody) Read([]byte) (int, error) {
-	return 0, errors.New("forced form read failure")
+func (panicHeaderResponseWriter) Header() http.Header { panic("forced header panic") }
+func (panicHeaderResponseWriter) WriteHeader(int)     { panic("unexpected WriteHeader") }
+func (panicHeaderResponseWriter) Write([]byte) (int, error) {
+	panic("unexpected Write")
 }
 
-func (failingDownloadFormBody) Close() error { return nil }
+func downloadRequest(method, exportID, token string) *http.Request {
+	target := "/"
+	if token != "" {
+		target += "?download_token=" + token
+	}
+	request := httptest.NewRequest(method, target, nil)
+	request.SetPathValue("export_id", exportID)
+	return request
+}
 
-func TestDownloadExportStreamsAcceptedCapability(t *testing.T) {
+func TestDownloadExportStreamsAcceptedGETCapability(t *testing.T) {
 	manager, session := newAdminQueryManager(t)
 	addAdminQueryRecord(t, manager)
 	ticket, err := manager.CreateExport(context.Background(), session.SessionID, requestcapture.ExportRequest{Scope: requestcapture.ExportScopeAll})
@@ -49,13 +49,12 @@ func TestDownloadExportStreamsAcceptedCapability(t *testing.T) {
 			return err
 		}),
 	})
-	form := url.Values{downloadTokenField: {ticket.DownloadToken}}
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetPathValue("export_id", ticket.ExportID)
 	recorder := httptest.NewRecorder()
 
-	SensitiveResponses(http.HandlerFunc(handler.DownloadExport)).ServeHTTP(recorder, req)
+	SensitiveResponses(http.HandlerFunc(handler.DownloadExport)).ServeHTTP(
+		recorder,
+		downloadRequest(http.MethodGet, ticket.ExportID, ticket.DownloadToken),
+	)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
@@ -69,172 +68,116 @@ func TestDownloadExportStreamsAcceptedCapability(t *testing.T) {
 	if got := recorder.Header().Get("Content-Disposition"); !strings.Contains(got, "switch-a-debug-capture-"+ticket.ExportID+".ndjson") {
 		t.Fatalf("Content-Disposition = %q", got)
 	}
+	if got := recorder.Header().Get("Accept-Ranges"); got != "none" {
+		t.Fatalf("Accept-Ranges = %q", got)
+	}
 	if !strings.Contains(recorder.Body.String(), "export_end") {
 		t.Fatalf("body = %q", recorder.Body.String())
 	}
 	assertSensitiveHeaders(t, recorder)
 }
 
-func TestDownloadExportRejectsTokenOutsideExactForm(t *testing.T) {
-	tests := []struct {
-		name        string
-		method      string
-		target      string
-		contentType string
-		body        string
-		wantStatus  int
-	}{
-		{name: "wrong method", method: http.MethodGet, target: "/", wantStatus: http.StatusMethodNotAllowed},
-		{name: "query token", method: http.MethodPost, target: "/?download_token=secret", contentType: "application/x-www-form-urlencoded", wantStatus: http.StatusBadRequest},
-		{name: "wrong content type", method: http.MethodPost, target: "/", contentType: "application/json", body: `{"download_token":"secret"}`, wantStatus: http.StatusUnsupportedMediaType},
-		{name: "missing token", method: http.MethodPost, target: "/", contentType: "application/x-www-form-urlencoded", body: "", wantStatus: http.StatusBadRequest},
-		{name: "repeated token", method: http.MethodPost, target: "/", contentType: "application/x-www-form-urlencoded", body: "download_token=a&download_token=b", wantStatus: http.StatusBadRequest},
-		{name: "extra field", method: http.MethodPost, target: "/", contentType: "application/x-www-form-urlencoded", body: "download_token=a&other=b", wantStatus: http.StatusBadRequest},
+func TestDownloadExportHEADAdvertisesStreamWithoutConsumingCapability(t *testing.T) {
+	claims := 0
+	handler := NewHandler(Config{Exports: &stubCaptureService{acceptDownloadFn: func(string, string) (requestcapture.Download, error) {
+		claims++
+		return requestcapture.Download{}, nil
+	}}})
+	recorder := httptest.NewRecorder()
+
+	handler.DownloadExport(recorder, downloadRequest(http.MethodHead, testExportID, testDownloadToken))
+
+	if recorder.Code != http.StatusOK || recorder.Body.Len() != 0 {
+		t.Fatalf("status/body = %d %q", recorder.Code, recorder.Body.String())
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			accepted := false
-			service := &stubCaptureService{acceptDownloadFn: func(string, string) (requestcapture.Download, error) {
-				accepted = true
-				return requestcapture.Download{}, nil
-			}}
-			handler := NewHandler(Config{Exports: service})
-			req := httptest.NewRequest(test.method, test.target, strings.NewReader(test.body))
-			if test.contentType != "" {
-				req.Header.Set("Content-Type", test.contentType)
-			}
-			req.SetPathValue("export_id", testExportID)
-			recorder := httptest.NewRecorder()
-			handler.DownloadExport(recorder, req)
-			if recorder.Code != test.wantStatus {
-				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, test.wantStatus, recorder.Body.String())
-			}
-			if accepted {
-				t.Fatal("capability accepted for invalid request")
-			}
-		})
+	if claims != 0 {
+		t.Fatalf("HEAD consumed capability: claims=%d", claims)
+	}
+	if recorder.Header().Get("Accept-Ranges") != "none" {
+		t.Fatal("HEAD did not advertise the non-range stream boundary")
 	}
 }
 
-func TestDownloadExportRejectsAmbiguousTransportFormsBeforeCapabilityClaim(t *testing.T) {
+func TestDownloadExportRejectsNonCanonicalMethodsAndQueries(t *testing.T) {
 	tests := []struct {
-		name      string
-		configure func(*http.Request)
+		name       string
+		method     string
+		target     string
+		wantStatus int
 	}{
-		{
-			name: "empty query delimiter",
-			configure: func(request *http.Request) {
-				request.URL.ForceQuery = true
-			},
-		},
-		{
-			name: "content encoding",
-			configure: func(request *http.Request) {
-				request.Header.Set("Content-Encoding", "gzip")
-			},
-		},
-		{
-			name: "repeated content type",
-			configure: func(request *http.Request) {
-				request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-			},
-		},
-		{
-			name: "conflicting content type",
-			configure: func(request *http.Request) {
-				request.Header.Add("Content-Type", "application/json")
-			},
-		},
-		{
-			name: "parameterized content type alias",
-			configure: func(request *http.Request) {
-				request.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
-			},
-		},
-		{
-			name: "malformed escape",
-			configure: func(request *http.Request) {
-				request.Body = io.NopCloser(strings.NewReader("download_token=%zz"))
-			},
-		},
-		{
-			name: "body read failure",
-			configure: func(request *http.Request) {
-				request.Body = failingDownloadFormBody{}
-			},
-		},
+		{name: "wrong method", method: http.MethodPost, target: "/?download_token=" + testDownloadToken, wantStatus: http.StatusMethodNotAllowed},
+		{name: "missing token", method: http.MethodGet, target: "/", wantStatus: http.StatusBadRequest},
+		{name: "empty token", method: http.MethodGet, target: "/?download_token=", wantStatus: http.StatusBadRequest},
+		{name: "short token", method: http.MethodGet, target: "/?download_token=short", wantStatus: http.StatusBadRequest},
+		{name: "malformed escape", method: http.MethodGet, target: "/?download_token=%zz", wantStatus: http.StatusBadRequest},
+		{name: "repeated token", method: http.MethodGet, target: "/?download_token=" + testDownloadToken + "&download_token=" + testDownloadToken, wantStatus: http.StatusBadRequest},
+		{name: "extra field", method: http.MethodGet, target: "/?download_token=" + testDownloadToken + "&other=value", wantStatus: http.StatusBadRequest},
 	}
-
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			claims := 0
-			handler := NewHandler(Config{Exports: &stubCaptureService{
-				acceptDownloadFn: func(string, string) (requestcapture.Download, error) {
-					claims++
-					return requestcapture.Download{}, nil
-				},
-			}})
-			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("download_token=secret"))
-			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			handler := NewHandler(Config{Exports: &stubCaptureService{acceptDownloadFn: func(string, string) (requestcapture.Download, error) {
+				claims++
+				return requestcapture.Download{}, nil
+			}}})
+			request := httptest.NewRequest(test.method, test.target, nil)
 			request.SetPathValue("export_id", testExportID)
-			test.configure(request)
 			recorder := httptest.NewRecorder()
 
 			handler.DownloadExport(recorder, request)
 
-			if recorder.Code < http.StatusBadRequest || recorder.Code >= http.StatusInternalServerError {
-				t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, test.wantStatus, recorder.Body.String())
 			}
 			if claims != 0 {
-				t.Fatalf("AcceptDownload calls = %d, want 0", claims)
+				t.Fatal("invalid request reached capability admission")
+			}
+			if strings.Contains(recorder.Body.String(), testDownloadToken) {
+				t.Fatalf("response reflected capability: %s", recorder.Body.String())
 			}
 		})
 	}
 }
 
-func TestDownloadExportConcurrentConsumptionHasOneWinner(t *testing.T) {
+func TestDownloadExportRejectsOversizedQueryBeforeCapabilityClaim(t *testing.T) {
+	claims := 0
+	handler := NewHandler(Config{Exports: &stubCaptureService{acceptDownloadFn: func(string, string) (requestcapture.Download, error) {
+		claims++
+		return requestcapture.Download{}, nil
+	}}})
+	target := "/?download_token=" + strings.Repeat("A", maxDownloadQueryBytes)
+	request := httptest.NewRequest(http.MethodGet, target, nil)
+	request.SetPathValue("export_id", testExportID)
+	recorder := httptest.NewRecorder()
+
+	handler.DownloadExport(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest || claims != 0 {
+		t.Fatalf("status/claims = %d/%d", recorder.Code, claims)
+	}
+}
+
+func TestDownloadExportCapabilityCanBeRetriedUntilExpiry(t *testing.T) {
 	manager, session := newAdminQueryManager(t)
 	addAdminQueryRecord(t, manager)
+	baselineCharge := manager.Status().ProcessMemory.ChargedBytes
 	ticket, err := manager.CreateExport(context.Background(), session.SessionID, requestcapture.ExportRequest{Scope: requestcapture.ExportScopeAll})
 	if err != nil {
 		t.Fatalf("CreateExport() error = %v", err)
 	}
-	handler := NewHandler(Config{
-		Exports: manager,
-		Streamer: downloadStreamerFunc(func(context.Context, requestcapture.Download, io.Writer) error {
-			return nil
-		}),
-	})
-
-	const contenders = 16
-	statuses := make(chan int, contenders)
-	var waitGroup sync.WaitGroup
-	for range contenders {
-		waitGroup.Go(func() {
-			form := url.Values{downloadTokenField: {ticket.DownloadToken}}
-			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.SetPathValue("export_id", ticket.ExportID)
-			recorder := httptest.NewRecorder()
-			handler.DownloadExport(recorder, req)
-			statuses <- recorder.Code
-		})
-	}
-	waitGroup.Wait()
-	close(statuses)
-
-	successes := 0
-	for status := range statuses {
-		switch status {
-		case http.StatusOK:
-			successes++
-		case http.StatusGone:
-		default:
-			t.Fatalf("unexpected status %d", status)
+	handler := NewHandler(Config{Exports: manager})
+	for attempt := 0; attempt < 2; attempt++ {
+		recorder := httptest.NewRecorder()
+		handler.DownloadExport(recorder, downloadRequest(http.MethodGet, ticket.ExportID, ticket.DownloadToken))
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "\"event\":\"export_end\"") {
+			t.Fatalf("attempt %d status/body = %d/%q", attempt+1, recorder.Code, recorder.Body.String())
 		}
 	}
-	if successes != 1 {
-		t.Fatalf("successful downloads = %d, want 1", successes)
+	status := manager.Status()
+	if status.PendingExportCount != 1 || status.ActiveDownloadCount != 0 ||
+		status.ProcessMemory.PinnedBytes == 0 || status.ProcessMemory.TemporaryBytes != 0 ||
+		status.ProcessMemory.ChargedBytes <= baselineCharge {
+		t.Fatalf("retryable export accounting = %#v", status)
 	}
 }
 
@@ -243,21 +186,18 @@ func TestDownloadExportKeepsEveryPreStreamFailureUniform(t *testing.T) {
 		name string
 		err  error
 	}{
-		{name: "invalid expired or replayed capability", err: requestcapture.ErrDownloadUnavailable},
+		{name: "expired capability", err: requestcapture.ErrDownloadUnavailable},
 		{name: "canceled export", err: requestcapture.ErrExportCanceled},
-		{name: "valid capability under download pressure", err: requestcapture.ErrDownloadLimitReached},
-		{name: "valid capability under memory pressure", err: requestcapture.ErrCapacityExceeded},
-		{name: "valid capability with an internal claim fault", err: errors.New("claim invariant rejected")},
+		{name: "download pressure", err: requestcapture.ErrDownloadLimitReached},
+		{name: "memory pressure", err: requestcapture.ErrCapacityExceeded},
+		{name: "internal fault", err: errors.New("claim invariant rejected")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			handler := NewHandler(Config{Exports: &stubCaptureService{acceptDownloadFn: func(string, string) (requestcapture.Download, error) {
 				return requestcapture.Download{}, test.err
 			}}})
-			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("download_token=secret"))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.SetPathValue("export_id", testExportID)
 			recorder := httptest.NewRecorder()
-			handler.DownloadExport(recorder, req)
+			handler.DownloadExport(recorder, downloadRequest(http.MethodGet, testExportID, testDownloadToken))
 			assertErrorResponse(t, recorder, http.StatusGone, errorCodeDownloadUnavailable)
 		})
 	}
@@ -274,12 +214,8 @@ func TestDownloadExportRejectsZeroClaimBeforeCommittingSuccess(t *testing.T) {
 			return nil
 		}),
 	})
-	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("download_token=secret"))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.SetPathValue("export_id", testExportID)
 	recorder := httptest.NewRecorder()
-
-	handler.DownloadExport(recorder, request)
+	handler.DownloadExport(recorder, downloadRequest(http.MethodGet, testExportID, testDownloadToken))
 
 	assertErrorResponse(t, recorder, http.StatusGone, errorCodeDownloadUnavailable)
 	if streamed {
@@ -296,14 +232,14 @@ func TestStableDownloadFailureReasonDoesNotExposeRawErrors(t *testing.T) {
 	}
 }
 
-func TestDownloadExportAlwaysReleasesClaimedCoreLease(t *testing.T) {
+func TestDownloadExportAlwaysReleasesAttemptWorkspace(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		streamErr   error
 		streamPanic bool
 		headerPanic bool
 	}{
-		{name: "streamer abandons lease"},
+		{name: "streamer abandons attempt"},
 		{name: "streamer returns early", streamErr: errors.New("forced stream failure")},
 		{name: "streamer panics", streamPanic: true},
 		{name: "response header panics", headerPanic: true},
@@ -311,15 +247,10 @@ func TestDownloadExportAlwaysReleasesClaimedCoreLease(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			manager, session := newAdminQueryManager(t)
 			addAdminQueryRecord(t, manager)
-			baselineCharge := manager.Status().ProcessMemory.ChargedBytes
 			ticket, err := manager.CreateExport(context.Background(), session.SessionID, requestcapture.ExportRequest{Scope: requestcapture.ExportScopeAll})
 			if err != nil {
 				t.Fatalf("CreateExport() error = %v", err)
 			}
-			if manager.Status().ProcessMemory.PinnedBytes == 0 {
-				t.Fatal("test export did not pin its snapshot")
-			}
-
 			handler := NewHandler(Config{
 				Exports: manager,
 				Streamer: downloadStreamerFunc(func(context.Context, requestcapture.Download, io.Writer) error {
@@ -329,10 +260,6 @@ func TestDownloadExportAlwaysReleasesClaimedCoreLease(t *testing.T) {
 					return test.streamErr
 				}),
 			})
-			form := url.Values{downloadTokenField: {ticket.DownloadToken}}
-			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.SetPathValue("export_id", ticket.ExportID)
 			recorder := httptest.NewRecorder()
 			var destination http.ResponseWriter = recorder
 			serve := http.Handler(http.HandlerFunc(handler.DownloadExport))
@@ -348,17 +275,12 @@ func TestDownloadExportAlwaysReleasesClaimedCoreLease(t *testing.T) {
 						t.Fatalf("panic = %v, want panic %t", recovered, wantPanic)
 					}
 				}()
-				serve.ServeHTTP(destination, req)
+				serve.ServeHTTP(destination, downloadRequest(http.MethodGet, ticket.ExportID, ticket.DownloadToken))
 			}()
-			if !test.headerPanic {
-				assertSensitiveHeaders(t, recorder)
-			}
-
 			status := manager.Status()
-			if status.PendingExportCount != 0 || status.ActiveDownloadCount != 0 ||
-				status.ProcessMemory.PinnedBytes != 0 || status.ProcessMemory.TemporaryBytes != 0 ||
-				status.ProcessMemory.ChargedBytes != baselineCharge {
-				t.Fatalf("claimed download lease was not released: %#v", status)
+			if status.PendingExportCount != 1 || status.ActiveDownloadCount != 0 ||
+				status.ProcessMemory.PinnedBytes == 0 || status.ProcessMemory.TemporaryBytes != 0 {
+				t.Fatalf("attempt workspace was not released: %#v", status)
 			}
 		})
 	}

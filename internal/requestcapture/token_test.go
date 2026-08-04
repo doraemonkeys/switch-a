@@ -94,7 +94,7 @@ func TestDownloadTokenInvalidExpiredAndReplay(t *testing.T) {
 		if err := download.WriteTo(context.Background(), io.Discard); err != nil {
 			t.Fatalf("WriteTo() error = %v", err)
 		}
-		if status := manager.Status(); status.PendingExportCount != 0 || status.ActiveDownloadCount != 0 {
+		if status := manager.Status(); status.PendingExportCount != 1 || status.ActiveDownloadCount != 0 {
 			t.Fatalf("status after download = %#v", status)
 		}
 		_ = session
@@ -116,7 +116,7 @@ func TestDownloadTokenInvalidExpiredAndReplay(t *testing.T) {
 		}
 	})
 
-	t.Run("accepted token cannot be replayed", func(t *testing.T) {
+	t.Run("accepted token cannot overlap but can be retried", func(t *testing.T) {
 		manager, _, ticket := newTokenTestExport(t, nil)
 		download, err := manager.AcceptDownload(ticket.ExportID, ticket.DownloadToken)
 		if err != nil {
@@ -130,6 +130,13 @@ func TestDownloadTokenInvalidExpiredAndReplay(t *testing.T) {
 		}
 		if err := download.WriteTo(context.Background(), io.Discard); !errors.Is(err, ErrDownloadUnavailable) {
 			t.Fatalf("second WriteTo() error = %v", err)
+		}
+		retry, err := manager.AcceptDownload(ticket.ExportID, ticket.DownloadToken)
+		if err != nil {
+			t.Fatalf("retry AcceptDownload() error = %v", err)
+		}
+		if err := retry.WriteTo(context.Background(), io.Discard); err != nil {
+			t.Fatalf("retry WriteTo() error = %v", err)
 		}
 	})
 }

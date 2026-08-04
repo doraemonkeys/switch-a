@@ -491,9 +491,10 @@ type ExportTicket struct {
 	DownloadToken string    `json:"download_token"`
 }
 
-// Download is a claimed, single-use export. Its zero value is invalid. WriteTo
-// owns the active-download slot until it returns. Close abandons an unstarted
-// download or cancels an in-flight stream; both operations are idempotent.
+// Download is one claimed streaming attempt against a short-lived export. Its
+// zero value is invalid. WriteTo owns the active-download slot until it returns;
+// the underlying capability can be accepted again until expiry. Close abandons
+// an unstarted attempt or cancels an in-flight stream; both are idempotent.
 type Download struct {
 	manager *Manager
 	slot    int

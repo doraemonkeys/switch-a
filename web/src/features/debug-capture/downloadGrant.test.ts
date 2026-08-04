@@ -5,6 +5,7 @@ const EXPORT_ID = "ce_AAAAAAAAAAAAAAAAAAAAAAAA";
 const SESSION_ID = "cs_1_000000000000000000000000";
 const DOWNLOAD_PATH = `/admin/api/debug-capture/exports/${EXPORT_ID}/download`;
 const DOWNLOAD_TOKEN = "A".repeat(43);
+const DOWNLOAD_URL = `${DOWNLOAD_PATH}?download_token=${DOWNLOAD_TOKEN}`;
 const NOW = Date.parse("2026-08-01T00:00:00Z");
 
 function grant(overrides: Record<string, unknown> = {}): unknown {
@@ -13,8 +14,7 @@ function grant(overrides: Record<string, unknown> = {}): unknown {
     session_id: SESSION_ID,
     record_count: 1,
     expires_at: "2026-08-01T00:05:00Z",
-    download_path: DOWNLOAD_PATH,
-    download_token: DOWNLOAD_TOKEN,
+    download_url: DOWNLOAD_URL,
     ...overrides,
   };
 }
@@ -38,32 +38,43 @@ describe("validatedDebugCaptureDownloadGrant", () => {
     ["unbounded record count", grant({ record_count: Number.MAX_VALUE })],
     ["invalid expiry", grant({ expires_at: "tomorrow" })],
     ["expired grant", grant({ expires_at: "2026-08-01T00:00:00Z" })],
-    ["empty download token", grant({ download_token: "" })],
-    ["wrong token length", grant({ download_token: "A".repeat(42) })],
+    [
+      "empty download token",
+      grant({ download_url: `${DOWNLOAD_PATH}?download_token=` }),
+    ],
+    [
+      "wrong token length",
+      grant({
+        download_url: `${DOWNLOAD_PATH}?download_token=${"A".repeat(42)}`,
+      }),
+    ],
     [
       "non-canonical token padding bits",
-      grant({ download_token: `${"A".repeat(42)}B` }),
+      grant({
+        download_url: `${DOWNLOAD_PATH}?download_token=${"A".repeat(42)}B`,
+      }),
     ],
     [
       "same-origin absolute alias",
-      grant({ download_path: `https://switch-a.test${DOWNLOAD_PATH}` }),
+      grant({ download_url: `https://switch-a.test${DOWNLOAD_URL}` }),
     ],
     [
       "cross-origin URL",
-      grant({ download_path: `https://attacker.test${DOWNLOAD_PATH}` }),
+      grant({ download_url: `https://attacker.test${DOWNLOAD_URL}` }),
     ],
     [
       "different export route",
       grant({
-        download_path:
-          "/admin/api/debug-capture/exports/ce_BBBBBBBBBBBBBBBBBBBBBBBB/download",
+        download_url:
+          "/admin/api/debug-capture/exports/ce_BBBBBBBBBBBBBBBBBBBBBBBB/download?download_token=" +
+          DOWNLOAD_TOKEN,
       }),
     ],
-    ["query string", grant({ download_path: `${DOWNLOAD_PATH}?token=leak` })],
     [
-      "fragment",
-      grant({ download_path: `${DOWNLOAD_PATH}#single-use-secret` }),
+      "extra query field",
+      grant({ download_url: `${DOWNLOAD_URL}&extra=value` }),
     ],
+    ["fragment", grant({ download_url: `${DOWNLOAD_URL}#secret` })],
   ])("rejects a %s", (_case, value) => {
     expect(
       validatedDebugCaptureDownloadGrant(value, SESSION_ID, NOW),

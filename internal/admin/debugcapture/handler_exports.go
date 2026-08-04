@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
@@ -59,7 +60,6 @@ func (h *Handler) CreateExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operation.exportID = grant.ExportID
-	w.Header().Set("Location", grant.DownloadPath)
 	h.logger.Info("debug capture export created through admin API",
 		zap.String("session_id", grant.SessionID),
 		zap.String("export_id", grant.ExportID),
@@ -74,19 +74,17 @@ func exportDownloadGrant(expectedSessionID string, ticket requestcapture.ExportT
 		ticket.SessionID != expectedSessionID ||
 		ticket.RecordCount <= 0 ||
 		ticket.ExpiresAt.IsZero() ||
-		ticket.DownloadToken == "" ||
-		len(ticket.DownloadToken) > int(maxDownloadFormBytes) ||
-		ticket.DownloadToken != strings.TrimSpace(ticket.DownloadToken) {
+		!requestcapture.IsCanonicalDownloadToken(ticket.DownloadToken) {
 		return ExportDownloadGrant{}, false
 	}
 	downloadPath := exportDownloadPathPrefix + ticket.ExportID + "/download"
+	downloadQuery := url.Values{downloadTokenField: {ticket.DownloadToken}}.Encode()
 	return ExportDownloadGrant{
-		ExportID:      ticket.ExportID,
-		SessionID:     ticket.SessionID,
-		RecordCount:   ticket.RecordCount,
-		ExpiresAt:     ticket.ExpiresAt,
-		DownloadPath:  downloadPath,
-		DownloadToken: ticket.DownloadToken,
+		ExportID:    ticket.ExportID,
+		SessionID:   ticket.SessionID,
+		RecordCount: ticket.RecordCount,
+		ExpiresAt:   ticket.ExpiresAt,
+		DownloadURL: downloadPath + "?" + downloadQuery,
 	}, true
 }
 
@@ -119,9 +117,9 @@ func normalizeAndValidateExportRequest(input *requestcapture.ExportRequest) *inp
 func (h *Handler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	exportID := r.PathValue("export_id")
 	operation := operationContext{name: "download_export"}
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		h.writeError(w, http.StatusMethodNotAllowed, errorCodeValidation, "Debug capture downloads require POST", nil, operation)
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		h.writeError(w, http.StatusMethodNotAllowed, errorCodeValidation, "Debug capture downloads require GET or HEAD", nil, operation)
 		return
 	}
 	if h.exports == nil {
@@ -133,42 +131,22 @@ func (h *Handler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operation.exportID = exportID
-	if r.URL.ForceQuery || r.URL.RawQuery != "" {
-		h.writeError(w, http.StatusBadRequest, errorCodeValidation, "Download tokens must be submitted in the form body", map[string]string{"field": downloadTokenField}, operation)
-		return
-	}
-	if len(r.Header.Values("Content-Encoding")) != 0 {
-		h.writeError(w, http.StatusUnsupportedMediaType, errorCodeValidation, "Download form must not use content encoding", nil, operation)
-		return
-	}
-	contentTypes := r.Header.Values("Content-Type")
-	if len(contentTypes) != 1 {
-		h.writeError(w, http.StatusUnsupportedMediaType, errorCodeValidation, "Download requires exactly one application/x-www-form-urlencoded Content-Type", nil, operation)
-		return
-	}
-	mediaType, parameters, err := mime.ParseMediaType(contentTypes[0])
-	if err != nil || mediaType != "application/x-www-form-urlencoded" || len(parameters) != 0 {
-		h.writeError(w, http.StatusUnsupportedMediaType, errorCodeValidation, "Download requires an application/x-www-form-urlencoded body", nil, operation)
+	token, validQuery := downloadCapabilityFromQuery(r.URL)
+	if !validQuery {
+		h.writeError(w, http.StatusBadRequest, errorCodeValidation, "Download URL must contain exactly one canonical download_token", map[string]string{"field": downloadTokenField}, operation)
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxDownloadFormBytes)
-	if err := r.ParseForm(); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, http.StatusRequestEntityTooLarge, errorCodeValidation, "Download form exceeds the configured limit", nil, operation)
-			return
-		}
-		h.writeError(w, http.StatusBadRequest, errorCodeValidation, "Invalid download form", nil, operation)
-		return
-	}
-	if len(r.PostForm) != 1 || len(r.PostForm[downloadTokenField]) != 1 {
-		h.writeError(w, http.StatusBadRequest, errorCodeValidation, "Download form must contain exactly one download_token", map[string]string{"field": downloadTokenField}, operation)
-		return
-	}
-	token := r.PostForm.Get(downloadTokenField)
-	if token == "" || token != strings.TrimSpace(token) {
-		h.writeError(w, http.StatusBadRequest, errorCodeValidation, "download_token is required", map[string]string{"field": downloadTokenField}, operation)
+	filename := "switch-a-debug-capture-" + safeFilenameComponent(exportID) + ".ndjson"
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+	w.Header().Set("Content-Type", contentTypeNDJSON)
+	w.Header().Set("Content-Disposition", disposition)
+	// The export is generated as a bounded stream rather than a seekable file.
+	// Advertising that boundary prevents download managers from issuing parallel
+	// range requests which cannot be satisfied independently.
+	w.Header().Set("Accept-Ranges", "none")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -191,13 +169,9 @@ func (h *Handler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusGone, errorCodeDownloadUnavailable, "Debug capture download is unavailable", nil, operation)
 		return
 	}
-	// Claiming consumes the capability and reserves a download slot. Transport
-	// failures, alternate streamers, and panics must not strand that lease.
+	// Claiming reserves one streaming attempt. Transport failures, alternate
+	// streamers, and panics must return its workspace before the URL is retried.
 	defer download.Close()
-	filename := "switch-a-debug-capture-" + safeFilenameComponent(exportID) + ".ndjson"
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
-	w.Header().Set("Content-Type", contentTypeNDJSON)
-	w.Header().Set("Content-Disposition", disposition)
 	w.WriteHeader(http.StatusOK)
 	if err := h.streamer.Stream(r.Context(), download, w); err != nil {
 		// Streaming errors cannot be converted into a second HTTP response. The
@@ -207,6 +181,18 @@ func (h *Handler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 			zap.String("reason", stableDownloadFailureReason(err)),
 		)
 	}
+}
+
+func downloadCapabilityFromQuery(requestURL *url.URL) (string, bool) {
+	if requestURL == nil || len(requestURL.RawQuery) == 0 || len(requestURL.RawQuery) > maxDownloadQueryBytes {
+		return "", false
+	}
+	query, err := url.ParseQuery(requestURL.RawQuery)
+	if err != nil || len(query) != 1 || len(query[downloadTokenField]) != 1 {
+		return "", false
+	}
+	token := query.Get(downloadTokenField)
+	return token, requestcapture.IsCanonicalDownloadToken(token)
 }
 
 func safeFilenameComponent(value string) string {

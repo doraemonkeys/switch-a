@@ -15,9 +15,9 @@ const (
 	// JSON control requests carry only IDs and scalar limits. A 64 KiB cap keeps
 	// malformed selections bounded without constraining legitimate provider sets.
 	maxJSONBodyBytes int64 = 64 << 10
-	// A capability token is a few dozen bytes; 4 KiB leaves ample form-encoding
-	// overhead while preventing the unauthenticated endpoint from buffering more.
-	maxDownloadFormBytes int64 = 4 << 10
+	// Download URLs contain one bounded capability parameter. Keeping the query
+	// below 4 KiB rejects abusive unauthenticated input before query decoding.
+	maxDownloadQueryBytes = 4 << 10
 	// Record pagination has only three bounded scalar parameters. Rejecting a
 	// larger query before url.ParseQuery prevents malformed authenticated traffic
 	// from expanding into an unbounded map of decoded strings.
@@ -50,9 +50,8 @@ type CaptureQueries interface {
 }
 
 // CaptureExports binds snapshot acquisition to the creating request so a client
-// disconnect can cancel the copy before a pending capability is published. The
-// returned Download is already claimed, which lets HTTP headers be committed
-// only after the single-use token has been consumed successfully.
+// disconnect can cancel the copy before a pending capability is published. Each
+// accepted Download is one streaming attempt against a short-lived capability.
 type CaptureExports interface {
 	CreateExport(context.Context, string, requestcapture.ExportRequest) (requestcapture.ExportTicket, error)
 	AcceptDownload(exportID, rawToken string) (requestcapture.Download, error)
@@ -119,10 +118,9 @@ type StartSessionRequest struct {
 // returns domain facts only; keeping the HTTP route here prevents a lower layer
 // from choosing or injecting a browser navigation target.
 type ExportDownloadGrant struct {
-	ExportID      string    `json:"export_id"`
-	SessionID     string    `json:"session_id"`
-	RecordCount   int       `json:"record_count"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	DownloadPath  string    `json:"download_path"`
-	DownloadToken string    `json:"download_token"`
+	ExportID    string    `json:"export_id"`
+	SessionID   string    `json:"session_id"`
+	RecordCount int       `json:"record_count"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	DownloadURL string    `json:"download_url"`
 }

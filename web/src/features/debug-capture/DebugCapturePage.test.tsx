@@ -1,11 +1,4 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ApiContext } from "@/api/context";
@@ -29,6 +22,7 @@ const EXPORT_ID = "ce_AAAAAAAAAAAAAAAAAAAAAAAA";
 const EXPORT_DOWNLOAD_PATH =
   "/admin/api/debug-capture/exports/ce_AAAAAAAAAAAAAAAAAAAAAAAA/download";
 const DOWNLOAD_TOKEN = "A".repeat(43);
+const EXPORT_DOWNLOAD_URL = `${EXPORT_DOWNLOAD_PATH}?download_token=${DOWNLOAD_TOKEN}`;
 
 const emptyFailureObservation: DebugCaptureFailureObservation = {
   primary: {
@@ -383,8 +377,7 @@ async function expectInvalidGrantTokenNotRendered() {
     session_id: "session-a",
     record_count: 1,
     expires_at: "2099-08-01T00:05:00Z",
-    download_path: EXPORT_DOWNLOAD_PATH,
-    download_token: unsafeToken,
+    download_url: `${EXPORT_DOWNLOAD_PATH}?download_token=${unsafeToken}`,
   });
 
   const { container } = renderDebugPage(api);
@@ -460,11 +453,10 @@ describe("DebugCapturePage", () => {
       session_id: "session-a",
       record_count: 1,
       expires_at: "2099-08-01T00:05:00Z",
-      download_path: EXPORT_DOWNLOAD_PATH,
-      download_token: DOWNLOAD_TOKEN,
+      download_url: EXPORT_DOWNLOAD_URL,
     });
 
-    const { container } = renderDebugPage(api);
+    renderDebugPage(api);
 
     expect(await screen.findByText("Capture active")).toBeInTheDocument();
     expect(await screen.findByText("Source: Pending")).toBeInTheDocument();
@@ -494,27 +486,15 @@ describe("DebugCapturePage", () => {
       screen.getByRole("button", { name: "Prepare selected (1)" }),
     );
 
-    const downloadButton = await screen.findByRole("button", {
+    const downloadLink = await screen.findByRole("link", {
       name: "Download NDJSON",
     });
-    const form = downloadButton.closest("form");
-    expect(form).not.toBeNull();
-    expect(form).toHaveAttribute("method", "post");
-    expect(form).toHaveAttribute("action", EXPORT_DOWNLOAD_PATH);
-    const tokenInput = container.querySelector('input[name="download_token"]');
-    expect(tokenInput).toHaveAttribute("value", DOWNLOAD_TOKEN);
-    expect(container.querySelector(`a[href*="${DOWNLOAD_TOKEN}"]`)).toBeNull();
-    const submitSpy = vi
-      .spyOn(HTMLFormElement.prototype, "submit")
-      .mockImplementation(() => undefined);
-    expect(fireEvent.submit(form!)).toBe(false);
-    expect(submitSpy).toHaveBeenCalledTimes(1);
-    submitSpy.mockRestore();
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("button", { name: "Download NDJSON" }),
-      ).not.toBeInTheDocument();
-    });
+    expect(downloadLink).toHaveAttribute("href", EXPORT_DOWNLOAD_URL);
+    expect(downloadLink).toHaveAttribute(
+      "download",
+      `switch-a-debug-capture-${EXPORT_ID}.ndjson`,
+    );
+    expect(downloadLink).toHaveAttribute("referrerpolicy", "no-referrer");
 
     await user.click(
       screen.getByRole("button", { name: "View record record-a" }),
@@ -730,8 +710,7 @@ describe("DebugCapturePage", () => {
       session_id: "session-a",
       record_count: 1,
       expires_at: "2099-08-01T00:05:00Z",
-      download_path: EXPORT_DOWNLOAD_PATH,
-      download_token: DOWNLOAD_TOKEN,
+      download_url: EXPORT_DOWNLOAD_URL,
     });
     const contextValue = (status: DebugCaptureStatus) => ({
       status,
@@ -760,7 +739,7 @@ describe("DebugCapturePage", () => {
       screen.getByRole("button", { name: "Prepare selected (1)" }),
     );
     expect(
-      await screen.findByRole("button", { name: "Download NDJSON" }),
+      await screen.findByRole("link", { name: "Download NDJSON" }),
     ).toBeInTheDocument();
 
     rerender(view(sessionBStatus));
@@ -774,10 +753,80 @@ describe("DebugCapturePage", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Download NDJSON" }),
+      screen.queryByRole("link", { name: "Download NDJSON" }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Prepare selected (0)" }),
     ).toBeDisabled();
+  });
+});
+
+describe("DebugCapturePage exports", () => {
+  it("bundles two selected records into one retryable download", async () => {
+    const user = userEvent.setup();
+    const api = createMockApiClient();
+    const firstTrace = recordsPage.gateway_traces[0];
+    const firstRecordEntry = firstTrace.entries.find(
+      (entry) => entry.kind === "record",
+    )!;
+    vi.mocked(api.debugCapture.status).mockResolvedValue(activeStatus);
+    vi.mocked(api.debugCapture.listRecords).mockResolvedValue({
+      ...recordsPage,
+      records: [
+        recordsPage.records[0],
+        {
+          ...recordsPage.records[0],
+          record_id: "record-b",
+          record_sequence: 2,
+        },
+      ],
+      gateway_traces: [
+        {
+          ...firstTrace,
+          entries: [
+            ...firstTrace.entries,
+            {
+              ...firstRecordEntry,
+              entry_id: "record-entry-b",
+              sequence: 3,
+              record_id: "record-b",
+            },
+          ],
+        },
+      ],
+    });
+    vi.mocked(api.debugCapture.createExport).mockResolvedValue({
+      export_id: EXPORT_ID,
+      session_id: "session-a",
+      record_count: 2,
+      expires_at: "2099-08-01T00:05:00Z",
+      download_url: EXPORT_DOWNLOAD_URL,
+    });
+
+    renderDebugPage(api);
+    await user.click(
+      await screen.findByRole("checkbox", {
+        name: "Select record record-a",
+      }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select record record-b" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Prepare selected (2)" }),
+    );
+
+    await waitFor(() =>
+      expect(api.debugCapture.createExport).toHaveBeenCalledWith("session-a", {
+        scope: "records",
+        record_ids: ["record-a", "record-b"],
+      }),
+    );
+    expect(
+      screen.getAllByRole("link", { name: "Download NDJSON" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByText(/Ready to download 2 selected records/),
+    ).toBeVisible();
   });
 });

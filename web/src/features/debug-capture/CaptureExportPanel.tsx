@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { Download, FileDown } from "lucide-react";
 import { useApi, type CreateDebugCaptureExportRequest } from "@/api";
 import {
@@ -24,42 +24,6 @@ export function CaptureExportPanel({
   );
   const [preparedLabel, setPreparedLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  const clearPreparedExport = () => {
-    setGrant(null);
-    setPreparedLabel("");
-  };
-
-  const handleDownloadSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const sourceForm = event.currentTarget;
-    const tokenInput = sourceForm.elements.namedItem("download_token");
-    if (!(tokenInput instanceof HTMLInputElement) || tokenInput.value === "") {
-      return;
-    }
-
-    // The rendered form is part of React state, so mutating it during submit can
-    // race the browser's native form serialization. Cloning the validated
-    // capability into a transient native form keeps the actual POST on the
-    // browser side while letting us clear the visible grant immediately.
-    const downloadForm = document.createElement("form");
-    downloadForm.method = sourceForm.method;
-    downloadForm.action = sourceForm.action;
-    downloadForm.style.display = "none";
-
-    const downloadTokenField = document.createElement("input");
-    downloadTokenField.type = "hidden";
-    downloadTokenField.name = "download_token";
-    downloadTokenField.value = tokenInput.value;
-    downloadForm.appendChild(downloadTokenField);
-
-    document.body.appendChild(downloadForm);
-    downloadForm.submit();
-    window.setTimeout(() => downloadForm.remove(), 0);
-
-    clearPreparedExport();
-  };
 
   const prepareExport = async (
     request: CreateDebugCaptureExportRequest,
@@ -100,8 +64,9 @@ export function CaptureExportPanel({
           Export capture
         </h3>
         <p className="mt-1 text-sm text-text-secondary">
-          Exports are NDJSON snapshots containing raw payloads. Download tokens
-          are short-lived and single-use.
+          Exports are NDJSON snapshots containing raw payloads. Selected records
+          are bundled into one file, and the short-lived link can be retried or
+          handed to an external download manager until it expires.
         </p>
       </div>
 
@@ -149,22 +114,15 @@ export function CaptureExportPanel({
             Ready to download {preparedLabel}. Token expires{" "}
             {new Date(grant.expires_at).toLocaleString()}.
           </p>
-          <form
-            className="mt-3"
-            action={grant.download_path}
-            method="post"
-            onSubmit={handleDownloadSubmit}
+          <a
+            className="btn btn-primary mt-3"
+            href={grant.download_url}
+            download={`switch-a-debug-capture-${grant.export_id}.ndjson`}
+            referrerPolicy="no-referrer"
           >
-            <input
-              type="hidden"
-              name="download_token"
-              value={grant.download_token}
-            />
-            <button type="submit" className="btn btn-primary">
-              <Download className="h-4 w-4" aria-hidden="true" />
-              Download NDJSON
-            </button>
-          </form>
+            <Download className="h-4 w-4" aria-hidden="true" />
+            Download NDJSON
+          </a>
         </div>
       )}
     </section>

@@ -174,7 +174,7 @@ func TestCreateExportUsesExplicitSelectionScope(t *testing.T) {
 		captured = input
 		return requestcapture.ExportTicket{
 			ExportID: testExportID, SessionID: sessionID, RecordCount: 2, ExpiresAt: expiresAt,
-			DownloadToken: "secret-token",
+			DownloadToken: testDownloadToken,
 		}, nil
 	}}
 	handler := NewHandler(Config{Exports: service})
@@ -192,14 +192,15 @@ func TestCreateExportUsesExplicitSelectionScope(t *testing.T) {
 		t.Fatalf("record IDs changed: %#v", captured.RecordIDs)
 	}
 	expectedDownloadPath := exportDownloadPathPrefix + testExportID + "/download"
-	if got := recorder.Header().Get("Location"); got != expectedDownloadPath {
-		t.Fatalf("Location = %q", got)
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("capability leaked through Location = %q", got)
 	}
 	var grant ExportDownloadGrant
 	if err := json.NewDecoder(recorder.Body).Decode(&grant); err != nil {
 		t.Fatalf("decode grant: %v", err)
 	}
-	if grant.DownloadPath != expectedDownloadPath || grant.ExportID != testExportID || grant.SessionID != testSessionID {
+	expectedDownloadURL := expectedDownloadPath + "?download_token=" + testDownloadToken
+	if grant.DownloadURL != expectedDownloadURL || grant.ExportID != testExportID || grant.SessionID != testSessionID {
 		t.Fatalf("grant = %#v", grant)
 	}
 }
@@ -211,7 +212,7 @@ func TestCreateExportRejectsInvalidSuccessfulTicket(t *testing.T) {
 		SessionID:     testSessionID,
 		RecordCount:   1,
 		ExpiresAt:     expiresAt,
-		DownloadToken: "secret-token",
+		DownloadToken: testDownloadToken,
 	}
 	tests := []struct {
 		name   string

@@ -597,6 +597,12 @@ func (m *Manager) detachExportAt(
 		state.cancelLocked(acquisitionErr)
 		state.tokenHash = downloadTokenHash{}
 		return state, nil, false, true
+	case exportPhaseRequeueing:
+		// The attempt worker has detached its workspace and will either publish a
+		// fresh expiry arm or perform terminal release after accounting settles.
+		state.cancelLocked(acquisitionErr)
+		state.tokenHash = downloadTokenHash{}
+		return state, nil, false, true
 	case exportPhaseReleased:
 		// Expiry-owner tombstones consume physical admission capacity until their
 		// queued callback returns the scheduler token.

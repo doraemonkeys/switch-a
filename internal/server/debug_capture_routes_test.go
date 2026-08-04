@@ -15,7 +15,10 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-const serverTestExportID = "ce_AAAAAAAAAAAAAAAAAAAAAAAA"
+const (
+	serverTestExportID      = "ce_AAAAAAAAAAAAAAAAAAAAAAAA"
+	serverTestDownloadToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+)
 
 type routeCaptureService struct {
 	mu            sync.Mutex
@@ -147,11 +150,10 @@ func TestDebugCaptureDownloadUsesCapabilityWithoutBearer(t *testing.T) {
 	capture := &routeCaptureService{}
 	server := newCaptureRouteServer(t, capture)
 	req := httptest.NewRequest(
-		http.MethodPost,
-		"/admin/api/debug-capture/exports/"+serverTestExportID+"/download",
-		strings.NewReader("download_token=capability-secret"),
+		http.MethodGet,
+		"/admin/api/debug-capture/exports/"+serverTestExportID+"/download?download_token="+serverTestDownloadToken,
+		nil,
 	)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(recorder, req)
 
@@ -161,24 +163,24 @@ func TestDebugCaptureDownloadUsesCapabilityWithoutBearer(t *testing.T) {
 	assertCaptureSecurityHeaders(t, recorder)
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
-	if capture.acceptedID != serverTestExportID || capture.acceptedToken != "capability-secret" {
+	if capture.acceptedID != serverTestExportID || capture.acceptedToken != serverTestDownloadToken {
 		t.Fatalf("accepted capability = %q %q", capture.acceptedID, capture.acceptedToken)
 	}
 }
 
 func TestDebugCaptureDownloadWrongMethodIsPublicMethodError(t *testing.T) {
 	server := newCaptureRouteServer(t, &routeCaptureService{})
-	const capability = "must-not-be-reflected"
+	const capability = serverTestDownloadToken
 	recorder := httptest.NewRecorder()
 	server.server.Handler.ServeHTTP(recorder, httptest.NewRequest(
-		http.MethodGet,
+		http.MethodPost,
 		"/admin/api/debug-capture/exports/"+serverTestExportID+"/download?download_token="+capability,
 		nil,
 	))
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusMethodNotAllowed, recorder.Body.String())
 	}
-	if got := recorder.Header().Get("Allow"); got != http.MethodPost {
+	if got := recorder.Header().Get("Allow"); got != http.MethodGet+", "+http.MethodHead {
 		t.Fatalf("Allow = %q", got)
 	}
 	if location := recorder.Header().Get("Location"); location != "" {
@@ -192,29 +194,25 @@ func TestDebugCaptureDownloadWrongMethodIsPublicMethodError(t *testing.T) {
 
 func TestDebugCaptureDownloadErrorsKeepSecurityBoundary(t *testing.T) {
 	for _, test := range []struct {
-		name        string
-		capture     *routeCaptureService
-		contentType string
-		body        string
-		wantStatus  int
+		name       string
+		capture    *routeCaptureService
+		target     string
+		wantStatus int
 	}{
-		{name: "unsupported content type", capture: &routeCaptureService{}, body: "download_token=secret", wantStatus: http.StatusUnsupportedMediaType},
-		{name: "ambiguous form", capture: &routeCaptureService{}, contentType: "application/x-www-form-urlencoded", body: "download_token=secret&extra=value", wantStatus: http.StatusBadRequest},
-		{name: "invalid capability", capture: &routeCaptureService{acceptErr: requestcapture.ErrDownloadUnavailable}, contentType: "application/x-www-form-urlencoded", body: "download_token=secret", wantStatus: http.StatusGone},
+		{name: "missing capability", capture: &routeCaptureService{}, target: "", wantStatus: http.StatusBadRequest},
+		{name: "ambiguous query", capture: &routeCaptureService{}, target: "?download_token=" + serverTestDownloadToken + "&extra=value", wantStatus: http.StatusBadRequest},
+		{name: "invalid capability", capture: &routeCaptureService{acceptErr: requestcapture.ErrDownloadUnavailable}, target: "?download_token=" + serverTestDownloadToken, wantStatus: http.StatusGone},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := newCaptureRouteServer(t, test.capture)
-			req := httptest.NewRequest(http.MethodPost, "/admin/api/debug-capture/exports/"+serverTestExportID+"/download", strings.NewReader(test.body))
-			if test.contentType != "" {
-				req.Header.Set("Content-Type", test.contentType)
-			}
+			req := httptest.NewRequest(http.MethodGet, "/admin/api/debug-capture/exports/"+serverTestExportID+"/download"+test.target, nil)
 			recorder := httptest.NewRecorder()
 			server.server.Handler.ServeHTTP(recorder, req)
 			if recorder.Code != test.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, test.wantStatus, recorder.Body.String())
 			}
 			assertCaptureSecurityHeaders(t, recorder)
-			if strings.Contains(recorder.Body.String(), "secret") {
+			if strings.Contains(recorder.Body.String(), serverTestDownloadToken) {
 				t.Fatalf("download error reflected capability: %s", recorder.Body.String())
 			}
 		})

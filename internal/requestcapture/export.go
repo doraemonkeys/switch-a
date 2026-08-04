@@ -54,6 +54,10 @@ func IsCanonicalExportID(value string) bool {
 	return downloadcapability.IsCanonicalExportID(value)
 }
 
+func IsCanonicalDownloadToken(value string) bool {
+	return downloadcapability.IsCanonicalToken(value)
+}
+
 func isCanonicalExportID(value string) bool {
 	return downloadcapability.IsCanonicalExportID(value)
 }
@@ -158,6 +162,7 @@ const (
 	exportPhaseClaiming
 	exportPhaseClaimed
 	exportPhaseStreaming
+	exportPhaseRequeueing
 	exportPhaseReleased
 )
 

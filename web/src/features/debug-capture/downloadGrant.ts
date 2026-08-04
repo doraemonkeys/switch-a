@@ -11,8 +11,7 @@ export interface ValidatedDebugCaptureDownloadGrant {
   session_id: string;
   record_count: number;
   expires_at: string;
-  download_path: string;
-  download_token: string;
+  download_url: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,32 +33,34 @@ export function validatedDebugCaptureDownloadGrant(
       session_id: sessionId,
       record_count: recordCount,
       expires_at: expiresAt,
-      download_path: downloadPath,
-      download_token: downloadToken,
+      download_url: downloadURL,
     } = value;
     if (
       typeof exportId !== "string" ||
       typeof sessionId !== "string" ||
       typeof expiresAt !== "string" ||
-      typeof downloadPath !== "string" ||
-      typeof downloadToken !== "string" ||
+      typeof downloadURL !== "string" ||
       !EXPORT_ID_PATTERN.test(exportId) ||
       sessionId !== expectedSessionId ||
       !Number.isSafeInteger(recordCount) ||
       (recordCount as number) <= 0 ||
-      !RFC3339_TIMESTAMP_PATTERN.test(expiresAt) ||
-      !DOWNLOAD_TOKEN_PATTERN.test(downloadToken)
+      !RFC3339_TIMESTAMP_PATTERN.test(expiresAt)
     ) {
       return null;
     }
 
     const expiresAtMilliseconds = Date.parse(expiresAt);
     const expectedPath = `${EXPORT_DOWNLOAD_ROUTE_PREFIX}${exportId}/download`;
+    const expectedURLPrefix = `${expectedPath}?download_token=`;
+    const downloadToken = downloadURL.startsWith(expectedURLPrefix)
+      ? downloadURL.slice(expectedURLPrefix.length)
+      : "";
     if (
       !Number.isFinite(nowMilliseconds) ||
       !Number.isFinite(expiresAtMilliseconds) ||
       expiresAtMilliseconds <= nowMilliseconds ||
-      downloadPath !== expectedPath
+      !DOWNLOAD_TOKEN_PATTERN.test(downloadToken) ||
+      downloadURL !== expectedURLPrefix + downloadToken
     ) {
       return null;
     }
@@ -71,8 +72,7 @@ export function validatedDebugCaptureDownloadGrant(
       session_id: sessionId,
       record_count: recordCount as number,
       expires_at: expiresAt,
-      download_path: expectedPath,
-      download_token: downloadToken,
+      download_url: downloadURL,
     };
   } catch {
     // Accessor-bearing values are not expected from JSON, but treating them as

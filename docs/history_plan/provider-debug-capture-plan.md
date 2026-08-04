@@ -121,13 +121,13 @@ Blob 始终保存原始 bytes；导出使用分块 base64，并提供原始 size
 - `GET /admin/api/debug-capture/sessions/{session_id}/records`：使用稳定 cursor 与 snapshot watermark 分页 metadata，并报告 eviction gap；
 - `GET /admin/api/debug-capture/sessions/{session_id}/records/{record_id}`：有界 metadata/body preview；
 - `POST /admin/api/debug-capture/sessions/{session_id}/exports`：为单条、选中或全部记录创建 snapshot lease；
-- `POST /admin/api/debug-capture/exports/{export_id}/download`：流式下载。
+- `GET|HEAD /admin/api/debug-capture/exports/{export_id}/download?download_token=...`：流式下载与下载器探测。
 
 详情只返回可配置上限内的 preview；完整内容只通过 export 获取。
 
 导出采用版本化 NDJSON 事件流：`manifest`、`record`、`blob_chunk`、`record_end`、`export_end`。每行有固定大小上限；中断时已完成行仍可解析，缺少 `record_end/export_end` 可明确判断截断。Exporter 直接写固定缓冲，禁止对完整 record 使用 `json.Marshal` 或在内存中生成完整 base64。
 
-为避免浏览器 `response.json()/blob()` 持有整个文件，创建 export 时返回短期、单次、仅绑定该 snapshot 的高熵 download token。download 端点不经过 Admin Bearer middleware，以该 token 作为唯一 capability；服务端在接受请求时原子消费，并校验 method、export 与过期时间。UI 使用原生 form POST 提交 token，让浏览器直接流式落盘；token 仅保存 hash，不写 URL 和日志。Stop 会取消未完成 export，未使用 token 到期后自动释放 pin。
+为避免浏览器 `response.json()/blob()` 持有整个文件，创建 export 时返回短期、仅绑定该 snapshot 的高熵 download URL。download 端点不经过 Admin Bearer middleware，以 token 作为唯一 capability；HEAD 只声明流属性且不 claim，GET 串行 claim 一个流式 attempt。attempt 完成、中断或浏览器交给外置下载器后，URL 在原到期时间前仍可重试；服务端不支持 Range 分段。token 仅保存 hash，query 不写日志；Stop 或到期会取消 export 并释放 pin。
 
 ## 页面与交互
 
@@ -158,7 +158,7 @@ Blob 始终保存原始 bytes；导出使用分块 base64，并提供原始 size
 6. HTTP/SSE 覆盖 EOF、两类 drain、transport/read/write error、timeout、cancel、credential refresh 和 Provider switch。
 7. WebSocket 可还原成功/失败 handshake、双向 message、replay、suppression、write result、切换和 close。
 8. Stop 后旧数据不可查询，旧 recorder/旧页面不能影响新 session，代理中的请求继续完成。
-9. 导出期间淘汰不会改变 snapshot；Stop/断连/过期能释放 pin，截断文件可被明确识别；download token 对无效、过期、重放和并发消费均安全失败。
+9. 导出期间淘汰不会改变 snapshot；Stop/过期能释放 pin，断连文件可判断截断且 capability 可重试；download token 对无效、过期和并发消费均安全失败。
 10. `go test -race` 覆盖 requestcapture/proxy/admin/server；Go 与 React 分别满足 90%/40% 覆盖率门槛。
 
 ## 当前收敛补充（优先于上文）

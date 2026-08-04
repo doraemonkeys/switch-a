@@ -10,6 +10,7 @@ import (
 
 const (
 	EntropyBytes           = 32
+	CanonicalTokenBytes    = (EntropyBytes*8 + 5) / 6
 	exportIDPrefix         = "ce_"
 	exportIDDigestBytes    = 18
 	exportIDEncodedBytes   = (exportIDDigestBytes*8 + 5) / 6
@@ -83,8 +84,16 @@ func HashToken(rawToken string) Hash {
 	return sha256.Sum256([]byte(rawToken))
 }
 
+func IsCanonicalToken(rawToken string) bool {
+	if len(rawToken) != CanonicalTokenBytes {
+		return false
+	}
+	decoded, err := strictExportIDEncoding.DecodeString(rawToken)
+	return err == nil && len(decoded) == EntropyBytes
+}
+
 func Matches(expected Hash, rawToken string) bool {
-	if len(rawToken) != base64.RawURLEncoding.EncodedLen(EntropyBytes) {
+	if !IsCanonicalToken(rawToken) {
 		return false
 	}
 	actual := HashToken(rawToken)

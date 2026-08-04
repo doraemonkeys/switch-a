@@ -92,7 +92,7 @@ func (m *Manager) writeDownload(
 		return err
 	}
 	defer func() {
-		if finishErr := state.finishDownload(result); finishErr != nil {
+		if finishErr := state.finishDownload(epoch, exportPhaseStreaming, result); finishErr != nil {
 			result = finishErr
 		}
 	}()
@@ -157,13 +157,8 @@ func (m *Manager) closeDownload(slot int, epoch uint64) {
 	}
 	switch state.phase {
 	case exportPhaseClaimed:
-		if !state.expiryOwner {
-			m.removeExportLocked(state.registryKey, state)
-		}
-		state.cancelLocked(nil)
-		state.phase = exportPhaseReleased
 		m.exportMu.Unlock()
-		state.release("download_abandoned")
+		_ = state.finishDownload(epoch, exportPhaseClaimed, errDownloadAttemptAbandoned)
 	case exportPhaseStreaming:
 		// The stack executing writeDownload is the physical release owner.
 		state.cancelLocked(nil)

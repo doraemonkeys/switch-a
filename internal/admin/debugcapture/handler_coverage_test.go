@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -27,11 +26,15 @@ func TestUnavailableDependenciesReturnServiceUnavailable(t *testing.T) {
 		{name: "list", method: http.MethodGet, handler: handler.ListRecords, pathKey: "session_id"},
 		{name: "detail", method: http.MethodGet, handler: handler.GetRecord, pathKey: "session_id"},
 		{name: "create export", method: http.MethodPost, handler: handler.CreateExport, pathKey: "session_id"},
-		{name: "download", method: http.MethodPost, handler: handler.DownloadExport, pathKey: "export_id"},
+		{name: "download", method: http.MethodGet, handler: handler.DownloadExport, pathKey: "export_id"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest(test.method, "/", nil)
+			target := "/"
+			if test.name == "download" {
+				target += "?download_token=" + testDownloadToken
+			}
+			req := httptest.NewRequest(test.method, target, nil)
 			if test.pathKey != "" {
 				req.SetPathValue(test.pathKey, "resource-1")
 			}
@@ -55,13 +58,14 @@ func TestHandlersValidateRequiredPathValues(t *testing.T) {
 		{name: "list", method: http.MethodGet, handler: handler.ListRecords},
 		{name: "detail", method: http.MethodGet, handler: handler.GetRecord},
 		{name: "create export", method: http.MethodPost, handler: handler.CreateExport, body: `{"scope":"all"}`},
-		{name: "download", method: http.MethodPost, handler: handler.DownloadExport, body: "download_token=secret"},
+		{name: "download", method: http.MethodGet, handler: handler.DownloadExport},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest(test.method, "/", strings.NewReader(test.body))
+			target := "/"
 			if test.name == "download" {
-				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				target += "?download_token=" + testDownloadToken
 			}
+			req := httptest.NewRequest(test.method, target, strings.NewReader(test.body))
 			recorder := httptest.NewRecorder()
 			test.handler(recorder, req)
 			if recorder.Code != http.StatusBadRequest {
@@ -86,13 +90,17 @@ func TestHandlersRejectNonCanonicalIdentifierAliases(t *testing.T) {
 		{name: "padded record encoding", handler: handler.GetRecord, pathKey: "record_id", pathValue: testRecordID + "=", prepare: func(request *http.Request) {
 			request.SetPathValue("session_id", testSessionID)
 		}},
-		{name: "padded export encoding", handler: handler.DownloadExport, pathKey: "export_id", pathValue: testExportID + "=", prepare: func(request *http.Request) {
-			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		}},
+		{name: "padded export encoding", handler: handler.DownloadExport, pathKey: "export_id", pathValue: testExportID + "="},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("download_token=secret"))
+			method := http.MethodPost
+			target := "/"
+			if test.name == "padded export encoding" {
+				method = http.MethodGet
+				target += "?download_token=" + testDownloadToken
+			}
+			request := httptest.NewRequest(method, target, nil)
 			request.SetPathValue(test.pathKey, test.pathValue)
 			if test.prepare != nil {
 				test.prepare(request)
@@ -163,7 +171,7 @@ func TestStopSessionSuccess(t *testing.T) {
 	}
 }
 
-func TestDownloadFormParsingBoundsAndStreamingFailure(t *testing.T) {
+func TestDownloadQueryParsingBoundsAndStreamingFailure(t *testing.T) {
 	manager, session := newAdminQueryManager(t)
 	addAdminQueryRecord(t, manager)
 	ticket, err := manager.CreateExport(context.Background(), session.SessionID, requestcapture.ExportRequest{Scope: requestcapture.ExportScopeAll})
@@ -180,9 +188,8 @@ func TestDownloadFormParsingBoundsAndStreamingFailure(t *testing.T) {
 		}),
 	})
 
-	t.Run("malformed form", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("download_token=%zz"))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	t.Run("malformed query", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/?download_token=%zz", nil)
 		req.SetPathValue("export_id", ticket.ExportID)
 		recorder := httptest.NewRecorder()
 		handler.DownloadExport(recorder, req)
@@ -191,22 +198,18 @@ func TestDownloadFormParsingBoundsAndStreamingFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("oversized form", func(t *testing.T) {
-		body := "download_token=" + strings.Repeat("x", int(maxDownloadFormBytes))
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	t.Run("oversized query", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/?download_token="+strings.Repeat("x", maxDownloadQueryBytes), nil)
 		req.SetPathValue("export_id", ticket.ExportID)
 		recorder := httptest.NewRecorder()
 		handler.DownloadExport(recorder, req)
-		if recorder.Code != http.StatusRequestEntityTooLarge {
+		if recorder.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d", recorder.Code)
 		}
 	})
 
 	t.Run("stream failure remains a truncated 200", func(t *testing.T) {
-		form := url.Values{downloadTokenField: {ticket.DownloadToken}}
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req := httptest.NewRequest(http.MethodGet, "/?download_token="+ticket.DownloadToken, nil)
 		req.SetPathValue("export_id", ticket.ExportID)
 		recorder := httptest.NewRecorder()
 		handler.DownloadExport(recorder, req)

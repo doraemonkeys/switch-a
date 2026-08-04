@@ -106,9 +106,9 @@ func TestExportNDJSONRoundTripsBinaryChunkBoundariesInOrder(t *testing.T) {
 
 	assertExportBlob(t, lines, 0, record, requestBodyBlobID, requestPayload)
 	assertExportBlob(t, lines, 0, record, responseBodyBlobID, responsePayload)
-	if status := manager.Status(); status.PendingExportCount != 0 ||
+	if status := manager.Status(); status.PendingExportCount != 1 ||
 		status.ActiveDownloadCount != 0 ||
-		status.ProcessMemory.PinnedBytes != 0 ||
+		status.ProcessMemory.PinnedBytes == 0 ||
 		status.ProcessMemory.TemporaryBytes != 0 {
 		t.Fatalf("status after completed stream = %#v", status)
 	}
@@ -167,8 +167,22 @@ func TestActiveExportSnapshotIsImmutableThroughCompletionAndEviction(t *testing.
 	if record.RecordID == second.ID() {
 		t.Fatal("record created after snapshot entered export membership")
 	}
-	if manager.Status().ProcessMemory.PinnedBytes != 0 {
-		t.Fatal("snapshot pins were not released after download")
+	retry, err := manager.AcceptDownload(ticket.ExportID, ticket.DownloadToken)
+	if err != nil {
+		t.Fatalf("retry AcceptDownload() error = %v", err)
+	}
+	var retryDestination bytes.Buffer
+	if err := retry.WriteTo(context.Background(), &retryDestination); err != nil {
+		t.Fatalf("retry WriteTo() error = %v", err)
+	}
+	retryLines := decodeExportLines(t, retryDestination.Bytes(), manager.cfg.exportLineBytes)
+	retryRecord := decodeRecordMetadata(t, retryLines, 0)
+	if retryRecord.RecordID != record.RecordID || retryRecord.SnapshotState != record.SnapshotState {
+		t.Fatalf("retry record changed snapshot identity: %#v", retryRecord)
+	}
+	assertExportBlob(t, retryLines, 0, retryRecord, responseBodyBlobID, []byte("before"))
+	if manager.Status().ProcessMemory.PinnedBytes == 0 {
+		t.Fatal("retryable snapshot lost its pin before capability expiry")
 	}
 }
 
@@ -193,7 +207,7 @@ func TestExportTruncatingWriterLeavesMissingEndEventsAndReleasesLease(t *testing
 		}
 	}
 	status := manager.Status()
-	if status.ActiveDownloadCount != 0 || status.ProcessMemory.PinnedBytes != 0 ||
+	if status.PendingExportCount != 1 || status.ActiveDownloadCount != 0 || status.ProcessMemory.PinnedBytes == 0 ||
 		status.ProcessMemory.TemporaryBytes != 0 {
 		t.Fatalf("status after writer failure = %#v", status)
 	}
@@ -211,7 +225,11 @@ func TestExportCancellationAndSessionLifecycleReleaseEveryLease(t *testing.T) {
 		if err := download.WriteTo(ctx, io.Discard); !errors.Is(err, context.Canceled) {
 			t.Fatalf("WriteTo() error = %v", err)
 		}
-		assertNoExportLease(t, manager)
+		status := manager.Status()
+		if status.PendingExportCount != 1 || status.ActiveDownloadCount != 0 ||
+			status.ProcessMemory.PinnedBytes == 0 || status.ProcessMemory.TemporaryBytes != 0 {
+			t.Fatalf("canceled attempt did not return capability to pending state: %#v", status)
+		}
 	})
 
 	for _, test := range []struct {
@@ -440,7 +458,7 @@ func TestExportInvariantFaultsFailClosedWithoutPanicking(t *testing.T) {
 			done:        make(chan struct{}),
 		}
 		insertExportStateForTest(t, manager, state.registryKey, state)
-		if err := state.finishDownload(nil); !errors.Is(err, ErrInternalFailure) {
+		if err := state.finishDownload(1, exportPhaseStreaming, nil); !errors.Is(err, ErrInternalFailure) {
 			t.Fatalf("finishDownload() error = %v", err)
 		}
 		manager.exportMu.Lock()

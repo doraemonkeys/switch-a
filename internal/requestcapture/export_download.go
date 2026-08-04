@@ -8,6 +8,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var errDownloadAttemptAbandoned = errors.New("request capture download attempt abandoned")
+
 func classifyDownloadAdmissionError(err error) string {
 	switch {
 	case errors.Is(err, ErrDownloadUnavailable):
@@ -274,7 +276,6 @@ func (m *Manager) publishDownloadClaimLocked(claim downloadClaim) downloadClaimR
 		state.temporaryCharge = claim.temporaryCharge
 		result.timer = state.timer
 		state.timer = nil
-		state.tokenHash = downloadTokenHash{}
 	}
 	result.recordCount = state.recordCount
 	result.sessionID = state.sessionID
@@ -492,50 +493,6 @@ func (state *exportState) releaseNow(reason string) {
 			zap.String("reason", reason),
 		)
 	})
-}
-
-func (state *exportState) finishDownload(streamErr error) error {
-	manager := state.manager
-	if manager == nil {
-		return ErrInternalFailure
-	}
-	var mutation statusEpochMutation
-	mutating := manager.beginStatusEpochMutation(&mutation)
-	manager.exportMu.Lock()
-	registered := manager.lookupExportLocked(state.registryKey) == state
-	normalCompletion := registered && state.phase == exportPhaseStreaming
-	stoppedAndDetached := state.phase == exportPhaseReleased &&
-		state.canceled.Load() &&
-		(!registered || state.expiryOwner)
-	if !normalCompletion && !stoppedAndDetached {
-		if registered && !state.expiryOwner {
-			manager.removeExportLocked(state.registryKey, state)
-		}
-		state.cancelLocked(ErrInternalFailure)
-		state.phase = exportPhaseReleased
-		facts := state.invariantFactsLocked(exportInvariantUnexpectedStreamPhase)
-		manager.exportMu.Unlock()
-		if mutating {
-			mutation.finish()
-		}
-		manager.logExportInvariant(facts)
-		state.release("stream_invariant_failed")
-		return ErrInternalFailure
-	}
-	if normalCompletion {
-		if !state.expiryOwner {
-			manager.removeExportLocked(state.registryKey, state)
-		}
-		state.phase = exportPhaseReleased
-	}
-	manager.exportMu.Unlock()
-	if mutating {
-		mutation.finish()
-	}
-
-	reason := classifyExportStreamRelease(state.canceled.Load(), streamErr)
-	state.release(reason)
-	return nil
 }
 
 func (state *exportState) writeSnapshot(writer *exportStreamWriter) error {
