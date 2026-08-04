@@ -558,7 +558,7 @@
               "match_mode": "all",
               "action": {
                 "type": "retry_then_switch",
-                "max_retries": 10,
+                "max_retries": 1000,
                 "backoff": {
                   "initial_delay": "250ms",
                   "max_delay": "2s",
@@ -855,7 +855,7 @@
             "global_attempts_remaining": "1",
             "global_attempts_unlimited": false,
             "rule_retries_scheduled": "0",
-            "rule_retry_limit": 10
+            "rule_retry_limit": 1000
           },
           "alternate": {
             "outcome": "activated",

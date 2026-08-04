@@ -8,6 +8,7 @@ import {
 import type { Provider } from "@/api/types";
 import { BackoffPolicyEditor } from "@/components/provider-settings/BackoffPolicyEditor";
 import type { InternalErrorRuleAction, RuleBackoffPolicy } from "../contracts";
+import { MAX_RULE_RETRIES } from "../domain";
 import {
   ENGLISH_INTERNAL_ERROR_PRESET_COPY,
   INTERNAL_ERROR_RULE_PRESETS,
@@ -435,7 +436,7 @@ function RuleActionFields({
             <input
               type="number"
               min={0}
-              max={10}
+              max={MAX_RULE_RETRIES}
               step={1}
               className="input"
               value={retryAction.max_retries}

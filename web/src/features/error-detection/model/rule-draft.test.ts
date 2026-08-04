@@ -97,7 +97,7 @@ describe("rule draft model", () => {
         keywords_text: "bad\u0000keyword",
         action: {
           type: "retry_only",
-          max_retries: "11",
+          max_retries: "1001",
           backoff: {
             initial_delay: "-1s",
             max_delay: "0s",
@@ -116,7 +116,7 @@ describe("rule draft model", () => {
         keywords: "Keywords cannot contain Unicode control characters.",
         target:
           "The selected provider no longer exists. Choose another provider.",
-        max_retries: "Retry count must be between 0 and 10.",
+        max_retries: "Retry count must be between 0 and 1000.",
       },
     });
   });

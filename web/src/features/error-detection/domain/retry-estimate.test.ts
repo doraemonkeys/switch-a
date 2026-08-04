@@ -48,8 +48,8 @@ describe("effectiveSameProviderRetries", () => {
 
   it("rejects a retry action outside the frozen rule limit", () => {
     expect(() =>
-      effectiveSameProviderRetries(retryAction("retry_only", 11), 0),
-    ).toThrow("max_retries must be between 0 and 10");
+      effectiveSameProviderRetries(retryAction("retry_only", 1001), 0),
+    ).toThrow("max_retries must be between 0 and 1000");
   });
 });
 

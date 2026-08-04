@@ -1,7 +1,7 @@
 import { parseGoDurationMilliseconds } from "@/lib/utils";
 import type { RuleBackoffPolicy } from "../contracts";
 
-export const MAX_RULE_RETRIES = 10;
+export const MAX_RULE_RETRIES = 1_000;
 export const DEFAULT_RULE_BACKOFF_MULTIPLIER = 2;
 
 // Go caps an uncapped time.Duration before converting the floating-point delay

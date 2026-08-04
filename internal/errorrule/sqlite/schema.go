@@ -5,15 +5,27 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"gorm.io/gorm"
 )
 
-const metaRowID = 1
+const (
+	metaRowID = 1
 
-var schemaStatements = []string{
-	`CREATE TABLE IF NOT EXISTS internal_error_rules (
+	// The schema metadata is separate from the rule-set revision: revision is
+	// user-visible configuration state, while this version tracks DDL upgrades.
+	schemaVersionRowID                 = 1
+	initialSchemaVersion               = 1
+	currentSchemaVersion               = 2
+	internalErrorRulesTableName        = "internal_error_rules"
+	internalErrorRulesUpgradeTableName = "internal_error_rules_upgrade"
+	internalErrorSchemaMetaTableName   = "internal_error_schema_meta"
+)
+
+const internalErrorRulesTableDefinition = `(
 		id TEXT PRIMARY KEY,
 		generation TEXT NOT NULL UNIQUE,
 		name TEXT NOT NULL,
@@ -39,13 +51,24 @@ var schemaStatements = []string{
 		CHECK (
 			(action_type = 'passthrough' AND max_retries IS NULL AND backoff_initial_delay IS NULL
 				AND backoff_max_delay IS NULL AND backoff_multiplier IS NULL AND backoff_jitter IS NULL) OR
-			(action_type IN ('retry_only', 'retry_then_switch') AND max_retries BETWEEN 0 AND 10
+			(action_type IN ('retry_only', 'retry_then_switch') AND max_retries BETWEEN 0 AND %d
 				AND backoff_initial_delay IS NOT NULL AND backoff_initial_delay >= 0
 				AND backoff_max_delay IS NOT NULL AND backoff_max_delay >= 0
 				AND backoff_multiplier IS NOT NULL AND backoff_multiplier >= 0
 				AND backoff_jitter IN (0, 1))
 		)
-	)`,
+	)`
+
+func createRulesTableStatement(tableName string, ifNotExists bool) string {
+	ifNotExistsClause := ""
+	if ifNotExists {
+		ifNotExistsClause = " IF NOT EXISTS"
+	}
+	return fmt.Sprintf("CREATE TABLE%s %s "+internalErrorRulesTableDefinition, ifNotExistsClause, tableName, errorrule.MaxRuleRetries)
+}
+
+var schemaStatements = []string{
+	createRulesTableStatement(internalErrorRulesTableName, true),
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_error_rules_position ON internal_error_rules(position)`,
 	`CREATE INDEX IF NOT EXISTS idx_internal_error_rules_provider ON internal_error_rules(provider_id)`,
 	`CREATE TABLE IF NOT EXISTS internal_error_rule_stats (
@@ -62,6 +85,10 @@ var schemaStatements = []string{
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		revision INTEGER NOT NULL CHECK (revision >= 0)
 	)`,
+	fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		version INTEGER NOT NULL CHECK (version >= 1)
+	)`, internalErrorSchemaMetaTableName),
 }
 
 func Migrate(ctx context.Context, db *gorm.DB) error {
@@ -74,6 +101,9 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 				return fmt.Errorf("migrate internal-error schema: %w", err)
 			}
 		}
+		if err := migrateSchemaVersion(tx); err != nil {
+			return fmt.Errorf("migrate internal-error schema version: %w", err)
+		}
 		if err := tx.Exec(
 			"INSERT OR IGNORE INTO internal_error_rule_set_meta (id, revision) VALUES (?, 0)",
 			metaRowID,
@@ -82,6 +112,107 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+func migrateSchemaVersion(tx *gorm.DB) error {
+	version, err := readSchemaVersion(tx)
+	if err != nil {
+		return err
+	}
+	usesCurrentConstraint, err := rulesTableUsesCurrentRetryLimit(tx)
+	if err != nil {
+		return err
+	}
+	if version == 0 {
+		version = initialSchemaVersion
+		if usesCurrentConstraint {
+			version = currentSchemaVersion
+		}
+		if err := tx.Exec(
+			fmt.Sprintf("INSERT INTO %s (id, version) VALUES (?, ?)", internalErrorSchemaMetaTableName),
+			schemaVersionRowID, version,
+		).Error; err != nil {
+			return fmt.Errorf("initialize schema version: %w", err)
+		}
+	}
+	if version > currentSchemaVersion {
+		return fmt.Errorf("schema version %d is newer than supported version %d", version, currentSchemaVersion)
+	}
+	if version < currentSchemaVersion || !usesCurrentConstraint {
+		if err := rebuildRulesTable(tx); err != nil {
+			return err
+		}
+		version = currentSchemaVersion
+	}
+	if version != currentSchemaVersion {
+		return fmt.Errorf("schema migration stopped at unsupported version %d", version)
+	}
+	if err := tx.Exec(
+		fmt.Sprintf("UPDATE %s SET version = ? WHERE id = ?", internalErrorSchemaMetaTableName),
+		version, schemaVersionRowID,
+	).Error; err != nil {
+		return fmt.Errorf("publish schema version: %w", err)
+	}
+	return nil
+}
+
+func readSchemaVersion(tx *gorm.DB) (int, error) {
+	var version int
+	if err := tx.Raw(
+		fmt.Sprintf("SELECT COALESCE((SELECT version FROM %s WHERE id = ?), 0)", internalErrorSchemaMetaTableName),
+		schemaVersionRowID,
+	).Scan(&version).Error; err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	return version, nil
+}
+
+func rulesTableUsesCurrentRetryLimit(tx *gorm.DB) (bool, error) {
+	var createSQL string
+	if err := tx.Raw(
+		"SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'table' AND name = ?",
+		internalErrorRulesTableName,
+	).Scan(&createSQL).Error; err != nil {
+		return false, fmt.Errorf("inspect rule table schema: %w", err)
+	}
+	normalized := strings.ToLower(strings.Join(strings.Fields(createSQL), " "))
+	want := fmt.Sprintf("max_retries between 0 and %d", errorrule.MaxRuleRetries)
+	return strings.Contains(normalized, want), nil
+}
+
+func rebuildRulesTable(tx *gorm.DB) error {
+	if err := tx.Exec("DROP TABLE IF EXISTS " + internalErrorRulesUpgradeTableName).Error; err != nil {
+		return fmt.Errorf("clear rule-table upgrade scratch table: %w", err)
+	}
+	if err := tx.Exec(createRulesTableStatement(internalErrorRulesUpgradeTableName, false)).Error; err != nil {
+		return fmt.Errorf("create upgraded rule table: %w", err)
+	}
+	const columns = "id, generation, name, enabled, target_kind, provider_id, api_type, keywords_json, match_mode, action_type, max_retries, backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter, position, created_at, updated_at"
+	if err := tx.Exec(
+		fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s", internalErrorRulesUpgradeTableName, columns, columns, internalErrorRulesTableName),
+	).Error; err != nil {
+		return fmt.Errorf("copy rules into upgraded table: %w", err)
+	}
+	for _, index := range []string{"idx_internal_error_rules_position", "idx_internal_error_rules_provider"} {
+		if err := tx.Exec("DROP INDEX IF EXISTS " + index).Error; err != nil {
+			return fmt.Errorf("drop old rule index %s: %w", index, err)
+		}
+	}
+	if err := tx.Exec("DROP TABLE " + internalErrorRulesTableName).Error; err != nil {
+		return fmt.Errorf("drop old rule table: %w", err)
+	}
+	if err := tx.Exec("ALTER TABLE " + internalErrorRulesUpgradeTableName + " RENAME TO " + internalErrorRulesTableName).Error; err != nil {
+		return fmt.Errorf("rename upgraded rule table: %w", err)
+	}
+	for _, statement := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_error_rules_position ON internal_error_rules(position)",
+		"CREATE INDEX IF NOT EXISTS idx_internal_error_rules_provider ON internal_error_rules(provider_id)",
+	} {
+		if err := tx.Exec(statement).Error; err != nil {
+			return fmt.Errorf("recreate rule index: %w", err)
+		}
+	}
+	return nil
 }
 
 type ruleRow struct {

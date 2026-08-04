@@ -29,7 +29,7 @@ const (
 	fixtureKeywordCountLimit  = 16
 	fixtureKeywordByteLimit   = 128
 	fixtureKeywordTotalLimit  = 2_048
-	fixtureRuleRetryLimit     = 10
+	fixtureRuleRetryLimit     = 1_000
 	fixtureGlobalAttemptLimit = 4
 	fixtureActionPassthrough  = "passthrough"
 )
@@ -837,4 +837,4 @@ type fixtureError string
 
 func (e fixtureError) Error() string { return string(e) }
 
-const errRetryRange fixtureError = "max_retries must be between 0 and 10"
+const errRetryRange fixtureError = "max_retries must be between 0 and 1000"

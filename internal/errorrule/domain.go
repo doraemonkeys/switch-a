@@ -19,7 +19,7 @@ const (
 	MaxKeywordsPerRule      = 16
 	MaxKeywordBytes         = 128
 	MaxKeywordBytesPerRule  = 2_048
-	MaxRuleRetries          = 10
+	MaxRuleRetries          = 1_000
 	MaxCompiledMatcherBytes = 8 << 20
 )
 

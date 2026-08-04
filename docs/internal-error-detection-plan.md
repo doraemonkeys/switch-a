@@ -61,7 +61,7 @@ InternalErrorRuleStats
 
 - global target 不得有 `provider_id`；provider target 必须引用现存 provider；
 - provider 删除时级联删除其规则；
-- `max_retries` 为 0–10，表示由该规则触发的额外尝试次数；
+- `max_retries` 为 0–1000，表示由该规则触发的额外尝试次数；
 - `backoff` 完整复用 `BackoffPolicy` 及其校验：`initial_delay=0` 表示不等待，负数非法；`multiplier=0` 使用默认值，`=1` 为固定间隔，`>1` 为渐进间隔；`max_delay` 和 `jitter` 语义不变；
 - 关键词保存前 trim、大小写归一化、去重，并限制规则数、每条关键词数及关键词长度；
 - enabled 规则只能选择已注册的内置 API type。`custom:*` v1 不允许启用内部错误规则。

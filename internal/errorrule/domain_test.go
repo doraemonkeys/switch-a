@@ -125,7 +125,11 @@ func TestActionUnionJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRetryThenSwitchAction() error = %v", err)
 	}
-	cases := []Action{NewPassthroughAction(), retryOnly, retrySwitch}
+	maxRetry, err := NewRetryOnlyAction(MaxRuleRetries, model.BackoffPolicy{})
+	if err != nil {
+		t.Fatalf("NewRetryOnlyAction(max) error = %v", err)
+	}
+	cases := []Action{NewPassthroughAction(), retryOnly, retrySwitch, maxRetry}
 	for _, action := range cases {
 		encoded, err := json.Marshal(action)
 		if err != nil {
@@ -145,7 +149,7 @@ func TestActionUnionJSON(t *testing.T) {
 		`{"type":"passthrough","backoff":{"initial_delay":"0s","max_delay":"0s"}}`,
 		`{"type":"retry_only","backoff":{"initial_delay":"0s","max_delay":"0s"}}`,
 		`{"type":"retry_then_switch","max_retries":1}`,
-		`{"type":"retry_only","max_retries":11,"backoff":{"initial_delay":"0s","max_delay":"0s"}}`,
+		`{"type":"retry_only","max_retries":1001,"backoff":{"initial_delay":"0s","max_delay":"0s"}}`,
 		`{"type":"unknown"}`,
 		`{"type":"passthrough","exhaustion_behavior":"commit"}`,
 		`{"type":"retry_only","max_retries":1,"backoff":{"initial_delay":"0s","max_delay":"0s","unexpected":true}}`,
