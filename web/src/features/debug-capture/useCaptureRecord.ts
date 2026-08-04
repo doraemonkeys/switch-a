@@ -7,7 +7,7 @@ export function useCaptureRecord(sessionId: string, recordId: string | null) {
     () => api.debugCapture.getRecord(sessionId, recordId ?? ""),
     {
       skip: !recordId,
-      queryKey: recordId,
+      queryKey: `${sessionId}|${recordId ?? ""}`,
       errorMessage: "Failed to fetch record preview",
     },
   );

@@ -12,13 +12,19 @@ export function useCaptureRecords(sessionId: string) {
   ]);
   const pageRequest = pageStack.at(-1)!;
   const isLatestPage = pageStack.length === 1;
+  const pageQueryKey = [
+    sessionId,
+    pageRequest.limit ?? "",
+    pageRequest.cursor ?? "",
+    pageRequest.snapshot_watermark ?? "",
+  ].join("|");
 
   const query = usePollingQuery(
     () => api.debugCapture.listRecords(sessionId, pageRequest),
     {
       intervalMs: isLatestPage ? RECORDS_POLL_INTERVAL_MS : 0,
       enabled: Boolean(sessionId),
-      queryKey: pageRequest,
+      queryKey: pageQueryKey,
       errorMessage: "Failed to fetch captured records",
     },
   );

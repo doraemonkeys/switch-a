@@ -1,7 +1,8 @@
-import { useId, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { FlaskConical, RefreshCw } from "lucide-react";
 import type { APICatalog } from "@/api/api-catalog";
 import type { Provider } from "@/api/types";
+import type { DebugCaptureMessageSourceState } from "@/features/debug-capture";
 import type {
   TestMessageExtractedError,
   TestMessageInput,
@@ -9,6 +10,21 @@ import type {
   TestMessageResponse,
 } from "../contracts";
 import type { ErrorDetectionPrefill } from "../model";
+import { TestMessageCaptureSource } from "./TestMessageCaptureSource";
+import { TestMessagePayloadFields } from "./TestMessagePayloadFields";
+
+const EMPTY_CAPTURE_SOURCE: DebugCaptureMessageSourceState = {
+  session_id: null,
+  records: [],
+  loading: false,
+  error: null,
+  selected_record_id: null,
+  selected_source: null,
+  selected_loading: false,
+  selected_error: null,
+  select_record: () => undefined,
+  refresh: async () => undefined,
+};
 
 function MatchDetails({ match }: { match: TestMessageMatch }) {
   return (
@@ -165,6 +181,7 @@ export interface TestMessagePanelProps {
   readonly catalog: APICatalog;
   readonly providers: readonly Provider[];
   readonly prefill?: ErrorDetectionPrefill;
+  readonly captureSource?: DebugCaptureMessageSourceState;
   readonly disabled: boolean;
   readonly onTest: (input: TestMessageInput) => Promise<TestMessageResponse>;
 }
@@ -173,6 +190,7 @@ export function TestMessagePanel({
   catalog,
   providers,
   prefill,
+  captureSource = EMPTY_CAPTURE_SOURCE,
   disabled,
   onTest,
 }: TestMessagePanelProps) {
@@ -187,13 +205,15 @@ export function TestMessagePanel({
     : (supportedAPIEntries[0]?.api_type ?? "");
   const initialProviderID =
     prefill?.target?.kind === "provider" ? prefill.target.provider_id : "";
-  const contentEncodingListID = useId();
   const [apiType, setAPIType] = useState(initialAPIType);
   const [providerID, setProviderID] = useState(initialProviderID);
   const [contentType, setContentType] = useState("application/json");
   const [contentEncoding, setContentEncoding] = useState("identity");
   const [bodyEncoding, setBodyEncoding] = useState<"utf8" | "base64">("utf8");
   const [body, setBody] = useState("");
+  const [appliedCaptureRecordId, setAppliedCaptureRecordId] = useState<
+    string | null
+  >(null);
   const [result, setResult] = useState<TestMessageResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -201,6 +221,20 @@ export function TestMessagePanel({
   const selectedProviderExists = providers.some(
     (provider) => provider.id === providerID,
   );
+
+  function applyCapturedResponse() {
+    const source = captureSource.selected_source;
+    if (!source) return;
+    setAPIType(source.api_type);
+    setProviderID(source.provider_id);
+    setContentType(source.content_type);
+    setContentEncoding(source.content_encoding);
+    setBodyEncoding(source.body.encoding);
+    setBody(source.body.value);
+    setAppliedCaptureRecordId(source.record_id);
+    setResult(null);
+    setError(null);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -240,6 +274,13 @@ export function TestMessagePanel({
           </p>
         </div>
       </div>
+
+      <TestMessageCaptureSource
+        captureSource={captureSource}
+        busy={busy}
+        appliedRecordId={appliedCaptureRecordId}
+        onApply={applyCapturedResponse}
+      />
 
       <form onSubmit={submit} aria-busy={busy} className="mt-5 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -289,71 +330,17 @@ export function TestMessagePanel({
           </p>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="space-y-1 text-sm text-text-secondary">
-            <span>Content-Type</span>
-            <input
-              className="input font-mono"
-              required
-              value={contentType}
-              disabled={busy}
-              onChange={(event) => setContentType(event.target.value)}
-            />
-          </label>
-          <label className="space-y-1 text-sm text-text-secondary">
-            <span>Content-Encoding</span>
-            <input
-              className="input font-mono"
-              list={contentEncodingListID}
-              required
-              value={contentEncoding}
-              disabled={busy}
-              onChange={(event) => setContentEncoding(event.target.value)}
-            />
-            <datalist id={contentEncodingListID}>
-              <option value="identity" />
-              <option value="gzip" />
-              <option value="br" />
-            </datalist>
-          </label>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
-          <label className="space-y-1 text-sm text-text-secondary">
-            <span>Body encoding</span>
-            <select
-              className="input"
-              value={bodyEncoding}
-              disabled={busy}
-              onChange={(event) =>
-                setBodyEncoding(event.target.value as "utf8" | "base64")
-              }
-            >
-              <option value="utf8">UTF-8 text</option>
-              <option value="base64">Base64 wire bytes</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-sm text-text-secondary">
-            <span>Response body</span>
-            <textarea
-              className="input min-h-40 font-mono text-xs"
-              value={body}
-              disabled={busy}
-              onChange={(event) => setBody(event.target.value)}
-              placeholder={
-                bodyEncoding === "utf8"
-                  ? "Paste JSON or SSE frames"
-                  : "Paste base64-encoded wire bytes"
-              }
-            />
-          </label>
-        </div>
-
-        {contentEncoding !== "identity" && bodyEncoding !== "base64" && (
-          <p role="status" className="text-xs text-warning-dark">
-            Base64 body encoding is recommended for exact compressed wire bytes.
-          </p>
-        )}
+        <TestMessagePayloadFields
+          contentType={contentType}
+          contentEncoding={contentEncoding}
+          bodyEncoding={bodyEncoding}
+          body={body}
+          busy={busy}
+          onContentTypeChange={setContentType}
+          onContentEncodingChange={setContentEncoding}
+          onBodyEncodingChange={setBodyEncoding}
+          onBodyChange={setBody}
+        />
         {error && (
           <p
             role="alert"

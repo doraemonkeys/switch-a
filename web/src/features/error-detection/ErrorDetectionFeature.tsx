@@ -13,6 +13,7 @@ import { ActionDialog } from "./components/ActionDialog";
 import { RuleEditor } from "./components/RuleEditor";
 import { RuleList } from "./components/RuleList";
 import { TestMessagePanel } from "./components/TestMessagePanel";
+import { useDebugCaptureMessageSource } from "@/features/debug-capture";
 import {
   createEmptyRuleDraft,
   parseGlobalMaxAttempts,
@@ -165,6 +166,7 @@ export function ErrorDetectionFeature({ prefill }: ErrorDetectionFeatureProps) {
   const providersState = useProviders();
   const configState = useConfig();
   const resources = useErrorDetectionResources();
+  const debugCaptureSource = useDebugCaptureMessageSource();
   const [editor, setEditor] = useState<EditorSession | null>(() =>
     prefill ? createSession(prefill) : null,
   );
@@ -379,6 +381,7 @@ export function ErrorDetectionFeature({ prefill }: ErrorDetectionFeatureProps) {
           catalog={catalog}
           providers={providersState.providers}
           prefill={prefill}
+          captureSource={debugCaptureSource}
           disabled={busy}
           onTest={resources.testMessage}
         />
