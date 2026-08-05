@@ -453,6 +453,37 @@ function RuleActionFields({
             <FieldError id={retryErrorID} message={errors.max_retries} />
           </label>
         )}
+        {retryAction && (
+          <label className="space-y-1 text-sm text-text-secondary">
+            <span>When an error is already streaming</span>
+            <select
+              className="input"
+              value={retryAction.visible_response ?? "disconnect_client"}
+              disabled={busy}
+              onChange={(event) =>
+                onChange({
+                  ...draft,
+                  action: {
+                    ...retryAction,
+                    visible_response: event.target.value as
+                      "disconnect_client" | "commit_current",
+                  },
+                })
+              }
+            >
+              <option value="disconnect_client">
+                Disconnect and let the client retry (Recommended)
+              </option>
+              <option value="commit_current">
+                Keep current pass-through behavior
+              </option>
+            </select>
+            <span className="block text-xs text-text-muted">
+              Disconnecting leaves the SSE stream incomplete so retry-capable
+              clients can replay it.
+            </span>
+          </label>
+        )}
       </div>
       {retryAction && (
         <div className="space-y-3">

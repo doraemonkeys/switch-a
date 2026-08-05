@@ -19,7 +19,8 @@ const (
 	// user-visible configuration state, while this version tracks DDL upgrades.
 	schemaVersionRowID                 = 1
 	initialSchemaVersion               = 1
-	currentSchemaVersion               = 2
+	retryLimitSchemaVersion            = 2
+	currentSchemaVersion               = 3
 	internalErrorRulesTableName        = "internal_error_rules"
 	internalErrorRulesUpgradeTableName = "internal_error_rules_upgrade"
 	internalErrorSchemaMetaTableName   = "internal_error_schema_meta"
@@ -36,6 +37,7 @@ const internalErrorRulesTableDefinition = `(
 		keywords_json TEXT NOT NULL,
 		match_mode TEXT NOT NULL CHECK (match_mode IN ('any', 'all')),
 		action_type TEXT NOT NULL CHECK (action_type IN ('passthrough', 'retry_only', 'retry_then_switch')),
+		visible_response_policy TEXT NULL CHECK (visible_response_policy IS NULL OR visible_response_policy IN ('disconnect_client', 'commit_current')),
 		max_retries INTEGER NULL,
 		backoff_initial_delay INTEGER NULL,
 		backoff_max_delay INTEGER NULL,
@@ -49,9 +51,10 @@ const internalErrorRulesTableDefinition = `(
 			(target_kind = 'provider' AND provider_id IS NOT NULL AND length(provider_id) > 0)
 		),
 		CHECK (
-			(action_type = 'passthrough' AND max_retries IS NULL AND backoff_initial_delay IS NULL
+			(action_type = 'passthrough' AND visible_response_policy IS NULL AND max_retries IS NULL AND backoff_initial_delay IS NULL
 				AND backoff_max_delay IS NULL AND backoff_multiplier IS NULL AND backoff_jitter IS NULL) OR
 			(action_type IN ('retry_only', 'retry_then_switch') AND max_retries BETWEEN 0 AND %d
+				AND (visible_response_policy IS NULL OR visible_response_policy IN ('disconnect_client', 'commit_current'))
 				AND backoff_initial_delay IS NOT NULL AND backoff_initial_delay >= 0
 				AND backoff_max_delay IS NOT NULL AND backoff_max_delay >= 0
 				AND backoff_multiplier IS NOT NULL AND backoff_multiplier >= 0
@@ -123,9 +126,16 @@ func migrateSchemaVersion(tx *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	hasVisiblePolicy, err := rulesTableHasVisibleResponsePolicyColumn(tx)
+	if err != nil {
+		return err
+	}
 	if version == 0 {
 		version = initialSchemaVersion
 		if usesCurrentConstraint {
+			version = retryLimitSchemaVersion
+		}
+		if usesCurrentConstraint && hasVisiblePolicy {
 			version = currentSchemaVersion
 		}
 		if err := tx.Exec(
@@ -138,8 +148,8 @@ func migrateSchemaVersion(tx *gorm.DB) error {
 	if version > currentSchemaVersion {
 		return fmt.Errorf("schema version %d is newer than supported version %d", version, currentSchemaVersion)
 	}
-	if version < currentSchemaVersion || !usesCurrentConstraint {
-		if err := rebuildRulesTable(tx); err != nil {
+	if version < currentSchemaVersion || !usesCurrentConstraint || !hasVisiblePolicy {
+		if err := rebuildRulesTable(tx, hasVisiblePolicy); err != nil {
 			return err
 		}
 		version = currentSchemaVersion
@@ -180,14 +190,28 @@ func rulesTableUsesCurrentRetryLimit(tx *gorm.DB) (bool, error) {
 	return strings.Contains(normalized, want), nil
 }
 
-func rebuildRulesTable(tx *gorm.DB) error {
+func rulesTableHasVisibleResponsePolicyColumn(tx *gorm.DB) (bool, error) {
+	var count int
+	if err := tx.Raw(
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?",
+		internalErrorRulesTableName, "visible_response_policy",
+	).Scan(&count).Error; err != nil {
+		return false, fmt.Errorf("inspect visible response policy column: %w", err)
+	}
+	return count == 1, nil
+}
+
+func rebuildRulesTable(tx *gorm.DB, preserveVisiblePolicy bool) error {
 	if err := tx.Exec("DROP TABLE IF EXISTS " + internalErrorRulesUpgradeTableName).Error; err != nil {
 		return fmt.Errorf("clear rule-table upgrade scratch table: %w", err)
 	}
 	if err := tx.Exec(createRulesTableStatement(internalErrorRulesUpgradeTableName, false)).Error; err != nil {
 		return fmt.Errorf("create upgraded rule table: %w", err)
 	}
-	const columns = "id, generation, name, enabled, target_kind, provider_id, api_type, keywords_json, match_mode, action_type, max_retries, backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter, position, created_at, updated_at"
+	columns := "id, generation, name, enabled, target_kind, provider_id, api_type, keywords_json, match_mode, action_type, max_retries, backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter, position, created_at, updated_at"
+	if preserveVisiblePolicy {
+		columns = "id, generation, name, enabled, target_kind, provider_id, api_type, keywords_json, match_mode, action_type, visible_response_policy, max_retries, backoff_initial_delay, backoff_max_delay, backoff_multiplier, backoff_jitter, position, created_at, updated_at"
+	}
 	if err := tx.Exec(
 		fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s", internalErrorRulesUpgradeTableName, columns, columns, internalErrorRulesTableName),
 	).Error; err != nil {
@@ -226,6 +250,7 @@ type ruleRow struct {
 	KeywordsJSON        string    `gorm:"column:keywords_json"`
 	MatchMode           string    `gorm:"column:match_mode"`
 	ActionType          string    `gorm:"column:action_type"`
+	VisiblePolicy       *string   `gorm:"column:visible_response_policy"`
 	MaxRetries          *int      `gorm:"column:max_retries"`
 	BackoffInitialDelay *int64    `gorm:"column:backoff_initial_delay"`
 	BackoffMaxDelay     *int64    `gorm:"column:backoff_max_delay"`

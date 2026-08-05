@@ -569,7 +569,7 @@ func TestV5BLateSemanticObservationPreservesHealthFacts(t *testing.T) {
 	t.Cleanup(delayedPrimary.server.Close)
 	outsideSecondary := newUpstreamSequence(t, wireResponse{contentType: "application/json", body: successWire})
 	outside := newProxyHarness(t, proxyHarnessOptions{
-		action: retryThenSwitchAction(t, 0), globalMaxAttempts: 2,
+		action: retryThenSwitchCommitAction(t, 0), globalMaxAttempts: 2,
 		primary: delayedPrimary, secondary: outsideSecondary,
 		analysisScheduler: scheduler, analysisProbeLimit: time.Hour,
 	})
@@ -620,6 +620,69 @@ func TestV5BLateSemanticObservationPreservesHealthFacts(t *testing.T) {
 	}
 }
 
+func TestV5BLateSemanticDefaultAbortsBeforeForwardingErrorFrame(t *testing.T) {
+	scheduler := newControlledScheduler()
+	firstWritten := make(chan struct{})
+	releaseError := make(chan struct{})
+	controlFrame := []byte("event: response.created\ndata: {\"type\":\"response.created\"}\n\n")
+	errorFrame := []byte("event: error\ndata: {\"type\":\"error\",\"code\":\"overloaded\",\"message\":\"overloaded\"}\n\n")
+	primary := &upstreamSequence{}
+	primary.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		primary.calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(controlFrame)
+		w.(http.Flusher).Flush()
+		close(firstWritten)
+		<-releaseError
+		_, _ = w.Write(errorFrame)
+	}))
+	t.Cleanup(primary.server.Close)
+
+	harness := newProxyHarness(t, proxyHarnessOptions{
+		action: retryOnlyAction(t, 0), primary: primary,
+		analysisScheduler: scheduler, analysisProbeLimit: time.Hour,
+	})
+	responseResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { responseResult <- harness.serve(t) }()
+	select {
+	case <-firstWritten:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream did not write the control frame")
+	}
+
+	var scheduled scheduledCall
+	select {
+	case scheduled = <-scheduler.calls:
+	case <-time.After(5 * time.Second):
+		t.Fatal("response analysis did not schedule its probe boundary")
+	}
+	if !scheduled.Fire() {
+		t.Fatal("probe boundary was already resolved")
+	}
+	close(releaseError)
+
+	var recorder *httptest.ResponseRecorder
+	select {
+	case recorder = <-responseResult:
+	case <-time.After(5 * time.Second):
+		t.Fatal("late semantic abort did not complete")
+	}
+	if !bytes.Equal(recorder.Body.Bytes(), controlFrame) {
+		t.Fatalf("client body=%q, want only pre-error control frame %q", recorder.Body.Bytes(), controlFrame)
+	}
+	attempts := harness.attempts(t)
+	if len(attempts) != 1 {
+		t.Fatalf("attempts=%#v", attempts)
+	}
+	semantic := decodeSemanticEvidence(t, attempts[0].AttemptEvidenceJSON)
+	if semantic.Decision.Value != errorrule.DecisionAbortClient ||
+		semantic.Decision.Reason != errorrule.ReasonClientRetryRequested ||
+		!semantic.Response.VisibleToClient {
+		t.Fatalf("late semantic abort evidence=%#v", semantic)
+	}
+}
+
 func retryOnlyAction(t *testing.T, maxRetries int) errorrule.Action {
 	t.Helper()
 	action, err := errorrule.NewRetryOnlyAction(maxRetries, model.BackoffPolicy{})
@@ -634,6 +697,19 @@ func retryThenSwitchAction(t *testing.T, maxRetries int) errorrule.Action {
 	action, err := errorrule.NewRetryThenSwitchAction(maxRetries, model.BackoffPolicy{})
 	if err != nil {
 		t.Fatalf("create retry-then-switch action: %v", err)
+	}
+	return action
+}
+
+func retryThenSwitchCommitAction(t *testing.T, maxRetries int) errorrule.Action {
+	t.Helper()
+	action, err := errorrule.NewRetryThenSwitchActionWithVisibleResponse(
+		maxRetries,
+		model.BackoffPolicy{},
+		errorrule.VisibleResponseCommit,
+	)
+	if err != nil {
+		t.Fatalf("create retry-then-switch commit action: %v", err)
 	}
 	return action
 }

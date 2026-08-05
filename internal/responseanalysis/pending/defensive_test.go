@@ -101,7 +101,7 @@ func TestInvalidStartTransfersAndClosesBodyOwnership(t *testing.T) {
 }
 
 func TestClosedUnionsNilHandlesAndCachedValueHelpers(t *testing.T) {
-	if HoldMode().Analyzes() || !ProbeMode().Analyzes() {
+	if HoldMode().Analyzes() || !ProbeMode().Analyzes() || !ProbeAndGateMode().GatesLateSemantic() || ProbeMode().GatesLateSemantic() {
 		t.Fatal("analysis-mode predicates are inconsistent")
 	}
 	for _, reason := range []BoundaryReason{ReasonNoRetryCandidate, ReasonPassthroughOnly} {
@@ -115,6 +115,8 @@ func TestClosedUnionsNilHandlesAndCachedValueHelpers(t *testing.T) {
 	}
 	for _, mode := range []AnalysisMode{
 		{kind: modeProbe, releaseReason: ReasonPassthroughOnly},
+		{kind: modeHold, gateLateSemantic: true},
+		{kind: modeObserve, gateLateSemantic: true, releaseReason: ReasonNoRetryCandidate},
 		{kind: modeObserve, releaseReason: ReasonSemanticMatch},
 		{},
 	} {

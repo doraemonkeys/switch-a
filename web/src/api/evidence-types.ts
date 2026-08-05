@@ -80,7 +80,8 @@ export type SemanticDecisionValue =
   | "observe_only"
   | "commit_current"
   | "retry_same"
-  | "switch_provider";
+  | "switch_provider"
+  | "abort_client";
 
 export type SemanticDecisionReason =
   | "action_passthrough"
@@ -99,6 +100,7 @@ export type SemanticDecisionReason =
   | "auth_unavailable"
   | "provider_lookup_error"
   | "response_already_visible"
+  | "client_retry_requested"
   | "client_cancelled";
 
 export type SemanticFieldName = "type" | "code" | "message" | "reason";

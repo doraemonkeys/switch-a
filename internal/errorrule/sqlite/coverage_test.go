@@ -23,7 +23,11 @@ func TestRuleRowCodecCoversEveryActionAndRejectsCorruption(t *testing.T) {
 	retryOnly, _ := errorrule.NewRetryOnlyAction(2, model.BackoffPolicy{
 		InitialDelay: model.Duration(time.Millisecond), MaxDelay: model.Duration(time.Second), Multiplier: 2, Jitter: true,
 	})
-	retrySwitch, _ := errorrule.NewRetryThenSwitchAction(1, model.BackoffPolicy{})
+	retrySwitch, _ := errorrule.NewRetryThenSwitchActionWithVisibleResponse(
+		1,
+		model.BackoffPolicy{},
+		errorrule.VisibleResponseCommit,
+	)
 	cases := []struct {
 		id         errorrule.RuleID
 		generation string

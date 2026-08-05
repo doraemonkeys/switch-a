@@ -48,6 +48,14 @@ func createConfigTransferProvider(t *testing.T, target *store.SQLiteStore, id st
 func createConfigTransferRule(t *testing.T, target *store.SQLiteStore, id, providerID string) errorrule.Rule {
 	t.Helper()
 	ruleTarget, _ := errorrule.NewProviderTarget(errorrule.ProviderID(providerID))
+	action, err := errorrule.NewRetryOnlyActionWithVisibleResponse(
+		1,
+		model.BackoffPolicy{},
+		errorrule.VisibleResponseCommit,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := errorrulesqlite.ImportRequest{
 		Mode: errorrulesqlite.ImportModeFull,
 		Rules: []errorrulesqlite.ImportedRule{{
@@ -55,7 +63,7 @@ func createConfigTransferRule(t *testing.T, target *store.SQLiteStore, id, provi
 			RuleSpec: errorrule.RuleSpec{
 				Name: "Capacity", Enabled: true, Target: ruleTarget,
 				Keywords: []string{"overloaded"}, MatchMode: errorrule.MatchAny,
-				Action: errorrule.NewPassthroughAction(),
+				Action: action,
 			},
 		}},
 	}
@@ -127,6 +135,9 @@ func TestConfigTransferV4RoundTripIncludesRulesButNotStats(t *testing.T) {
 	revision, imported := destination.InternalErrorRuleRepository().ListRules()
 	if revision != 1 || len(imported) != 1 || imported[0].ID != rule.ID {
 		t.Fatalf("revision=%d imported=%#v", revision, imported)
+	}
+	if imported[0].Action.VisibleResponsePolicy() != errorrule.VisibleResponseCommit {
+		t.Fatalf("imported visible response policy = %q", imported[0].Action.VisibleResponsePolicy())
 	}
 	stats, err := destination.InternalErrorRuleRepository().ListStats(context.Background())
 	if err != nil || len(stats) != 1 || stats[0].HitCount != 0 {

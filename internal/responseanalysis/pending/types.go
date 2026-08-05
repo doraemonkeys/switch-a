@@ -55,8 +55,9 @@ const (
 // AnalysisMode is closed because buffering is a resource-ownership decision,
 // not an optional flag that callers may combine inconsistently.
 type AnalysisMode struct {
-	kind          modeKind
-	releaseReason BoundaryReason
+	kind             modeKind
+	releaseReason    BoundaryReason
+	gateLateSemantic bool
 }
 
 func HoldMode() AnalysisMode {
@@ -67,8 +68,16 @@ func ProbeMode() AnalysisMode {
 	return AnalysisMode{kind: modeProbe}
 }
 
+func ProbeAndGateMode() AnalysisMode {
+	return AnalysisMode{kind: modeProbe, gateLateSemantic: true}
+}
+
 func (m AnalysisMode) Analyzes() bool {
 	return m.kind == modeProbe || m.kind == modeObserve
+}
+
+func (m AnalysisMode) GatesLateSemantic() bool {
+	return m.kind == modeProbe && m.gateLateSemantic
 }
 
 func ObserveMode(reason BoundaryReason) (AnalysisMode, error) {
@@ -84,9 +93,15 @@ func (m AnalysisMode) validate() error {
 		if m.releaseReason != "" {
 			return fmt.Errorf("analysis mode cannot carry release reason %q", m.releaseReason)
 		}
+		if m.kind == modeHold && m.gateLateSemantic {
+			return fmt.Errorf("hold mode cannot gate late semantic observations")
+		}
 	case modeObserve:
 		if m.releaseReason != ReasonNoRetryCandidate && m.releaseReason != ReasonPassthroughOnly {
 			return fmt.Errorf("observe mode has invalid release reason %q", m.releaseReason)
+		}
+		if m.gateLateSemantic {
+			return fmt.Errorf("observe mode cannot gate late semantic observations")
 		}
 	default:
 		return errors.New("analysis mode is required")

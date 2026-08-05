@@ -89,7 +89,12 @@ function parseAction(value: unknown, path: string): InternalErrorRuleAction {
     return Object.freeze({ type });
   }
 
-  assertExactKeys(action, path, ["type", "max_retries", "backoff"]);
+  assertExactKeys(
+    action,
+    path,
+    ["type", "max_retries", "backoff"],
+    ["visible_response"],
+  );
   const maxRetries = readInteger(
     action.max_retries,
     `${path}.max_retries`,
@@ -101,7 +106,22 @@ function parseAction(value: unknown, path: string): InternalErrorRuleAction {
   if (!validation.valid) {
     contractError(path, validation.error);
   }
-  return Object.freeze({ type, max_retries: maxRetries, backoff });
+  const parsed = {
+    type,
+    max_retries: maxRetries,
+    backoff,
+  } as const;
+  if (action.visible_response === undefined) {
+    return Object.freeze(parsed);
+  }
+  return Object.freeze({
+    ...parsed,
+    visible_response: readEnum(
+      action.visible_response,
+      ["disconnect_client", "commit_current"] as const,
+      `${path}.visible_response`,
+    ),
+  });
 }
 
 function parseKeywords(value: unknown, path: string): readonly string[] {

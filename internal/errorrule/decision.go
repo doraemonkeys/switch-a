@@ -10,6 +10,7 @@ const (
 	DecisionCommitCurrent  DecisionValue = "commit_current"
 	DecisionRetrySame      DecisionValue = "retry_same"
 	DecisionSwitchProvider DecisionValue = "switch_provider"
+	DecisionAbortClient    DecisionValue = "abort_client"
 )
 
 type DecisionReason string
@@ -31,6 +32,7 @@ const (
 	ReasonAuthUnavailable              DecisionReason = "auth_unavailable"
 	ReasonProviderLookupError          DecisionReason = "provider_lookup_error"
 	ReasonResponseAlreadyVisible       DecisionReason = "response_already_visible"
+	ReasonClientRetryRequested         DecisionReason = "client_retry_requested"
 	ReasonClientCancelled              DecisionReason = "client_cancelled"
 )
 
@@ -148,6 +150,20 @@ func DecideRetry(input DecisionInput) (Decision, error) {
 	default:
 		return Decision{}, fmt.Errorf("unsupported action type %q", input.Action.Type())
 	}
+}
+
+// DecideVisibleResponse is kept separate from retry-budget decisions because a
+// response that crossed the client boundary can no longer consume a gateway
+// retry slot. It only selects whether to preserve the current stream or close
+// it so the client owns recovery.
+func DecideVisibleResponse(action Action) (Decision, error) {
+	if err := action.Validate(); err != nil {
+		return Decision{}, err
+	}
+	if action.Type() == ActionPassthrough || action.VisibleResponsePolicy() == VisibleResponseCommit {
+		return Decision{Value: DecisionObserveOnly, Reason: ReasonResponseAlreadyVisible}, nil
+	}
+	return Decision{Value: DecisionAbortClient, Reason: ReasonClientRetryRequested}, nil
 }
 
 func providerUnavailableDecision(actionType ActionType, reason DecisionReason) Decision {

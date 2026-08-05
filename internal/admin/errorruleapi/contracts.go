@@ -165,9 +165,10 @@ func (r targetRequest) domainTarget(prefix string) (errorrule.Target, *apiError)
 }
 
 type actionRequest struct {
-	Type       *string         `json:"type"`
-	MaxRetries json.RawMessage `json:"max_retries"`
-	Backoff    json.RawMessage `json:"backoff"`
+	Type          *string                          `json:"type"`
+	MaxRetries    json.RawMessage                  `json:"max_retries"`
+	Backoff       json.RawMessage                  `json:"backoff"`
+	VisiblePolicy *errorrule.VisibleResponsePolicy `json:"visible_response"`
 }
 
 func (r actionRequest) domainAction(prefix string) (errorrule.Action, *apiError) {
@@ -184,6 +185,11 @@ func (r actionRequest) domainAction(prefix string) (errorrule.Action, *apiError)
 		if len(r.Backoff) != 0 {
 			return errorrule.Action{}, validationError(
 				prefix+".backoff", prefix+" contains fields outside its discriminator", nil,
+			)
+		}
+		if r.VisiblePolicy != nil {
+			return errorrule.Action{}, validationError(
+				prefix+".visible_response", prefix+" contains fields outside its discriminator", nil,
 			)
 		}
 		return errorrule.NewPassthroughAction(), nil
@@ -210,10 +216,14 @@ func (r actionRequest) domainAction(prefix string) (errorrule.Action, *apiError)
 			action errorrule.Action
 			err    error
 		)
+		visiblePolicy := errorrule.VisibleResponseDisconnect
+		if r.VisiblePolicy != nil {
+			visiblePolicy = *r.VisiblePolicy
+		}
 		if errorrule.ActionType(*r.Type) == errorrule.ActionRetryOnly {
-			action, err = errorrule.NewRetryOnlyAction(maxRetries, backoff)
+			action, err = errorrule.NewRetryOnlyActionWithVisibleResponse(maxRetries, backoff, visiblePolicy)
 		} else {
-			action, err = errorrule.NewRetryThenSwitchAction(maxRetries, backoff)
+			action, err = errorrule.NewRetryThenSwitchActionWithVisibleResponse(maxRetries, backoff, visiblePolicy)
 		}
 		if err != nil {
 			return errorrule.Action{}, validationError(domainActionErrorField(prefix, err), err.Error(), err)
@@ -450,9 +460,10 @@ type RuleWire struct {
 }
 
 type ActionWire struct {
-	Type       errorrule.ActionType `json:"type"`
-	MaxRetries *int                 `json:"max_retries,omitempty"`
-	Backoff    *BackoffWire         `json:"backoff,omitempty"`
+	Type          errorrule.ActionType             `json:"type"`
+	MaxRetries    *int                             `json:"max_retries,omitempty"`
+	Backoff       *BackoffWire                     `json:"backoff,omitempty"`
+	VisiblePolicy *errorrule.VisibleResponsePolicy `json:"visible_response,omitempty"`
 }
 
 type BackoffWire struct {
@@ -503,6 +514,10 @@ func newActionWire(action errorrule.Action) ActionWire {
 			MaxDelay:     retry.Backoff.MaxDelay,
 			Multiplier:   retry.Backoff.Multiplier,
 			Jitter:       retry.Backoff.Jitter,
+		}
+		if action.VisibleResponsePolicy() == errorrule.VisibleResponseCommit {
+			policy := errorrule.VisibleResponseCommit
+			wire.VisiblePolicy = &policy
 		}
 	}
 	return wire

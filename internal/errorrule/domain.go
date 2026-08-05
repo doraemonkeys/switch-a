@@ -166,6 +166,18 @@ const (
 	ActionRetryThenSwitch ActionType = "retry_then_switch"
 )
 
+// VisibleResponsePolicy describes the only safe recovery point after a
+// semantic error has already crossed the client boundary. Disconnecting leaves
+// the SSE stream incomplete so retry-capable clients can replay the request;
+// committing preserves the historical raw-response behavior for callers that
+// explicitly need it.
+type VisibleResponsePolicy string
+
+const (
+	VisibleResponseDisconnect VisibleResponsePolicy = "disconnect_client"
+	VisibleResponseCommit     VisibleResponsePolicy = "commit_current"
+)
+
 type RetryPolicy struct {
 	MaxRetries int
 	Backoff    model.BackoffPolicy
@@ -174,24 +186,33 @@ type RetryPolicy struct {
 // Action is a closed value union. Retry data cannot exist on passthrough and is
 // available only through RetryPolicy after checking the discriminator.
 type Action struct {
-	actionType ActionType
-	retry      RetryPolicy
+	actionType    ActionType
+	retry         RetryPolicy
+	visiblePolicy VisibleResponsePolicy
 }
 
 func NewPassthroughAction() Action {
-	return Action{actionType: ActionPassthrough}
+	return Action{actionType: ActionPassthrough, visiblePolicy: VisibleResponseCommit}
 }
 
 func NewRetryOnlyAction(maxRetries int, backoff model.BackoffPolicy) (Action, error) {
-	return newRetryAction(ActionRetryOnly, maxRetries, backoff)
+	return NewRetryOnlyActionWithVisibleResponse(maxRetries, backoff, VisibleResponseDisconnect)
 }
 
 func NewRetryThenSwitchAction(maxRetries int, backoff model.BackoffPolicy) (Action, error) {
-	return newRetryAction(ActionRetryThenSwitch, maxRetries, backoff)
+	return NewRetryThenSwitchActionWithVisibleResponse(maxRetries, backoff, VisibleResponseDisconnect)
 }
 
-func newRetryAction(actionType ActionType, maxRetries int, backoff model.BackoffPolicy) (Action, error) {
-	action := Action{actionType: actionType, retry: RetryPolicy{MaxRetries: maxRetries, Backoff: backoff}}
+func NewRetryOnlyActionWithVisibleResponse(maxRetries int, backoff model.BackoffPolicy, policy VisibleResponsePolicy) (Action, error) {
+	return newRetryAction(ActionRetryOnly, maxRetries, backoff, policy)
+}
+
+func NewRetryThenSwitchActionWithVisibleResponse(maxRetries int, backoff model.BackoffPolicy, policy VisibleResponsePolicy) (Action, error) {
+	return newRetryAction(ActionRetryThenSwitch, maxRetries, backoff, policy)
+}
+
+func newRetryAction(actionType ActionType, maxRetries int, backoff model.BackoffPolicy, policy VisibleResponsePolicy) (Action, error) {
+	action := Action{actionType: actionType, retry: RetryPolicy{MaxRetries: maxRetries, Backoff: backoff}, visiblePolicy: policy}
 	if err := action.Validate(); err != nil {
 		return Action{}, err
 	}
@@ -202,6 +223,13 @@ func (a Action) Type() ActionType {
 	return a.actionType
 }
 
+func (a Action) VisibleResponsePolicy() VisibleResponsePolicy {
+	if a.actionType == ActionPassthrough {
+		return VisibleResponseCommit
+	}
+	return a.visiblePolicy
+}
+
 func (a Action) RetryPolicy() (RetryPolicy, bool) {
 	return a.retry, a.actionType == ActionRetryOnly || a.actionType == ActionRetryThenSwitch
 }
@@ -209,11 +237,14 @@ func (a Action) RetryPolicy() (RetryPolicy, bool) {
 func (a Action) Validate() error {
 	switch a.actionType {
 	case ActionPassthrough:
-		if a.retry != (RetryPolicy{}) {
+		if a.retry != (RetryPolicy{}) || a.visiblePolicy != VisibleResponseCommit {
 			return fmt.Errorf("passthrough action cannot contain retry fields")
 		}
 		return nil
 	case ActionRetryOnly, ActionRetryThenSwitch:
+		if a.visiblePolicy != VisibleResponseDisconnect && a.visiblePolicy != VisibleResponseCommit {
+			return fmt.Errorf("unknown visible response policy %q", a.visiblePolicy)
+		}
 		return ValidateRetryPolicy(a.retry.MaxRetries, a.retry.Backoff)
 	default:
 		return fmt.Errorf("unknown action type %q", a.actionType)

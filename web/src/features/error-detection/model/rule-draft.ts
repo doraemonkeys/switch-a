@@ -32,6 +32,7 @@ export type RuleDraftAction =
       readonly type: "retry_only" | "retry_then_switch";
       readonly max_retries: string;
       readonly backoff: RuleBackoffPolicy;
+      readonly visible_response?: "disconnect_client" | "commit_current";
     };
 
 export interface RuleDraft {
@@ -176,12 +177,19 @@ function validateAction(
   }
   const backoff = calculateBackoffBaseDelays(action.backoff, maxRetries);
   if (!backoff.valid) return { error: backoff.error };
+  const normalizedAction = {
+    type: action.type,
+    max_retries: maxRetries,
+    backoff: Object.freeze({ ...action.backoff }),
+  } as const;
   return {
-    value: {
-      type: action.type,
-      max_retries: maxRetries,
-      backoff: Object.freeze({ ...action.backoff }),
-    },
+    // Disconnect is the wire default. Emitting only the opt-out keeps the
+    // serialized rule focused on the exceptional behavior while the editor
+    // still presents client-owned retry as the selected default.
+    value:
+      action.visible_response === "commit_current"
+        ? { ...normalizedAction, visible_response: "commit_current" }
+        : normalizedAction,
   };
 }
 
@@ -214,6 +222,8 @@ export function ruleToDraft(rule: InternalErrorRule): RuleDraft {
             type: rule.action.type,
             max_retries: String(rule.action.max_retries),
             backoff: rule.action.backoff,
+            visible_response:
+              rule.action.visible_response ?? "disconnect_client",
           },
   };
 }
@@ -237,6 +247,7 @@ export function createRetryDraftAction(
     type,
     max_retries: String(DEFAULT_RULE_RETRY_COUNT),
     backoff: DEFAULT_RULE_BACKOFF,
+    visible_response: "disconnect_client",
   };
 }
 

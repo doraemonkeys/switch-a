@@ -219,6 +219,38 @@ func TestDecisionProviderRejectionReasons(t *testing.T) {
 	}
 }
 
+func TestDecideVisibleResponse(t *testing.T) {
+	disconnect := testRetryAction(t, ActionRetryOnly, 0)
+	retryPolicy, _ := disconnect.RetryPolicy()
+	commit, err := NewRetryOnlyActionWithVisibleResponse(0, retryPolicy.Backoff, VisibleResponseCommit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		action Action
+		want   Decision
+	}{
+		{name: "default retry disconnects", action: disconnect, want: Decision{Value: DecisionAbortClient, Reason: ReasonClientRetryRequested}},
+		{name: "explicit commit preserves stream", action: commit, want: Decision{Value: DecisionObserveOnly, Reason: ReasonResponseAlreadyVisible}},
+		{name: "passthrough preserves stream", action: NewPassthroughAction(), want: Decision{Value: DecisionObserveOnly, Reason: ReasonResponseAlreadyVisible}},
+	}
+	for _, current := range cases {
+		t.Run(current.name, func(t *testing.T) {
+			got, err := DecideVisibleResponse(current.action)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != current.want {
+				t.Fatalf("DecideVisibleResponse() = %#v, want %#v", got, current.want)
+			}
+		})
+	}
+	if _, err := DecideVisibleResponse(Action{}); err == nil {
+		t.Fatal("invalid action was accepted")
+	}
+}
+
 func TestDecisionAlternateResolution(t *testing.T) {
 	decision, err := DecideRetry(decisionInput(t, testRetryAction(t, ActionRetryThenSwitch, 0), 0, EligibleProvider()))
 	if err != nil {

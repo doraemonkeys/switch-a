@@ -62,6 +62,21 @@ describe("request evidence decoder", () => {
     );
   });
 
+  it("decodes the client-owned late-stream retry decision", () => {
+    const evidence = cloneCase();
+    const semantic = semanticRecord(evidence);
+    semantic.decision = {
+      value: "abort_client",
+      reason: "client_retry_requested",
+    };
+
+    const result = decodeRequestEvidence(evidence);
+    expect(result).toMatchObject({
+      state: "available",
+      evidence: { semantic_error: { decision: { value: "abort_client" } } },
+    });
+  });
+
   it("tolerates unknown envelope siblings without weakening semantic validation", () => {
     const evidence = cloneCase();
     evidence.future_observer = { value: "retained by its owner" };

@@ -45,8 +45,8 @@ InternalErrorRule
 
 RuleAction
 ├─ passthrough
-├─ retry_only(max_retries, backoff)
-└─ retry_then_switch(max_retries, backoff)
+├─ retry_only(max_retries, backoff, visible_response?)
+└─ retry_then_switch(max_retries, backoff, visible_response?)
 
 InternalErrorRuleStats
 ├─ rule_id      string
@@ -55,13 +55,16 @@ InternalErrorRuleStats
 ```
 
 `RuleAction` 是判别联合，不保存与当前动作无关的重试字段。v1 不提供
-`exhaustion_behavior`：`retry_only` 耗尽后直接提交当前仍保持打开的上游错误响应。
+`exhaustion_behavior`。`visible_response` 仅适用于 retry 动作：默认
+`disconnect_client`，表示语义错误已经进入转发窗口时结束不完整 SSE 流，让客户端自行重试；显式选择
+`commit_current` 才恢复将当前错误帧继续转发的旧语义。线上 JSON 可省略默认值。
 
 持久层必须保证：
 
 - global target 不得有 `provider_id`；provider target 必须引用现存 provider；
 - provider 删除时级联删除其规则；
 - `max_retries` 为 0–1000，表示由该规则触发的额外尝试次数；
+- retry 动作的 `visible_response` 只能是 `disconnect_client` 或 `commit_current`，缺省按前者处理；
 - `backoff` 完整复用 `BackoffPolicy` 及其校验：`initial_delay=0` 表示不等待，负数非法；`multiplier=0` 使用默认值，`=1` 为固定间隔，`>1` 为渐进间隔；`max_delay` 和 `jitter` 语义不变；
 - 关键词保存前 trim、大小写归一化、去重，并限制规则数、每条关键词数及关键词长度；
 - enabled 规则只能选择已注册的内置 API type。`custom:*` v1 不允许启用内部错误规则。
@@ -92,7 +95,7 @@ ResponseAnalyzer → PendingResponse + AttemptObservation
                               ↓
                     RetryDecisionEngine
                               ↓
-             commit | retry_same | switch_provider
+       commit | retry_same | switch_provider | abort_client
                               ↓
                     HealthAssessor + Evidence
 ```
@@ -101,12 +104,16 @@ ResponseAnalyzer → PendingResponse + AttemptObservation
 
 `ResponseAnalyzer` 返回的 `PendingResponse` 持有响应元数据、原始字节前缀及内部 pump/coordinator，但不暴露 response body。pump 是上游 body 的唯一 reader，coordinator 是客户端 response writer 的唯一 writer，并按有界通道收到的顺序处理原始字节和控制事件。
 
-`PendingResponse` 只有 `probing → forwarding` 和 `probing → discarded` 两个合法终结转换，转换由 coordinator 线性化且只能成功一次：
+`PendingResponse` 首先由 coordinator 线性化 `probing → forwarding` 或 `probing → discarded`。启用
+`disconnect_client` 的 retry 规则时，forwarding 仍会在每个分析检查点暂存当前有界片段，因此允许一次
+`forwarding → discarded` 的 late-semantic 中止；转换只能成功一次：
 
 - `Commit`：coordinator 写一次响应头和已缓冲原始前缀，确认转换后继续按序转发 pump 产生的后续字节；executor 不读取 body；
 - `Discard`：coordinator 关闭 body 以中断 pump，等待 pump 退出，不向客户端写任何内容。
+- `Continue`：late-semantic 检查点选择 `commit_current` 时释放暂存片段并继续转发；
+- late-semantic `Abort`：关闭上游 body，不追加错误帧，客户端看到不完整 SSE 流并拥有重试决策。
 
-执行顺序固定为“分析 → 决策 → Commit/Discard”。不得在重试决策前关闭响应，也不得把 `PendingResponse` 或 live body 塞进仅承载事实的 `forwardResult`。
+执行顺序固定为“分析 → 决策 → Commit/Discard/Continue/Abort”。不得在重试决策前关闭响应，也不得把 `PendingResponse` 或 live body 塞进仅承载事实的 `forwardResult`。
 
 因此：
 
@@ -116,6 +123,7 @@ ResponseAnalyzer → PendingResponse + AttemptObservation
 - `retry_then_switch` 预算耗尽：先选择并保留替代 provider，再 Discard 并切换；无法取得替代 provider 时 Commit 当前响应；
 - `passthrough`：立即 Commit；
 - provider 在同 provider 重试前被删除或手动禁用：`retry_only` Commit 当前响应；`retry_then_switch` 跳过剩余同 provider 重试并尝试保留替代 provider，无法取得时才 Commit。
+- 语义错误已进入 forwarding：retry 动作默认 Abort（客户端重试），只有 `visible_response=commit_current` 才 Continue；
 
 ### 4.2 协议分析管线
 

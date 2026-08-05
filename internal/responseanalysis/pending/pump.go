@@ -29,6 +29,7 @@ const (
 	pumpReadStarted pumpEventKind = iota + 1
 	pumpRawBytes
 	pumpDecisiveObservation
+	pumpAnalysisCheckpoint
 	pumpAnalysisFailure
 	pumpTerminated
 )
@@ -187,6 +188,7 @@ type pumpConfig[T any] struct {
 	startAck           chan readStartAck
 	rawAck             chan pumpDirective
 	observationAck     chan pumpDirective
+	gateLateSemantic   bool
 }
 
 func runPump[T any](config pumpConfig[T]) {
@@ -273,7 +275,15 @@ func runAnalysisDriver[T any](
 	for {
 		n, readErr := driver.Read(decoded, emit)
 		decodedBytes += int64(n)
+		if config.gateLateSemantic && lastDirective == directiveAnalyze {
+			config.events <- pumpEvent[T]{kind: pumpAnalysisCheckpoint}
+			lastDirective = <-config.observationAck
+		}
 		if readErr == nil {
+			if lastDirective != directiveAnalyze {
+				finishAnalysisRead(config, source, decodedBytes, lastDirective, ErrAnalysisStopped)
+				return
+			}
 			continue
 		}
 		finishAnalysisRead(config, source, decodedBytes, lastDirective, readErr)

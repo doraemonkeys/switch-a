@@ -68,6 +68,7 @@ export interface ExportedInternalErrorRule {
         type: "retry_only" | "retry_then_switch";
         max_retries: number;
         backoff: Required<BackoffPolicy>;
+        visible_response?: "disconnect_client" | "commit_current";
       };
 }
 

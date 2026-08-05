@@ -188,7 +188,12 @@ func (s *CompiledRuleSet) DetectionPlan(scope RequestScope) DetectionPlan {
 	}
 	for _, rule := range candidates {
 		retry, hasRetry := rule.Action.RetryPolicy()
-		if rule.Action.Type() == ActionRetryThenSwitch || hasRetry && retry.MaxRetries > 0 {
+		// Client-owned recovery still needs a probe when gateway retries are
+		// disabled: the semantic frame must be detected before it is forwarded,
+		// otherwise the client cannot turn the incomplete SSE stream into its own
+		// retry signal.
+		if rule.Action.Type() == ActionRetryThenSwitch ||
+			hasRetry && (retry.MaxRetries > 0 || rule.Action.VisibleResponsePolicy() == VisibleResponseDisconnect) {
 			return DetectionProbe
 		}
 	}

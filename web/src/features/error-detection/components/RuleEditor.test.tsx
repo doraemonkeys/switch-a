@@ -77,6 +77,12 @@ describe("RuleEditor", () => {
     expect(
       screen.getByText(/One finite global attempt is reserved/),
     ).toBeVisible();
+    const visibleResponse = screen.getByLabelText(
+      /When an error is already streaming/,
+    );
+    expect(visibleResponse).toHaveValue("disconnect_client");
+    await user.selectOptions(visibleResponse, "commit_current");
+    expect(visibleResponse).toHaveValue("commit_current");
   });
 
   it("labels custom API types unsupported without disabling local editing", async () => {

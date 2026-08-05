@@ -203,7 +203,7 @@ func validateRuleFacts(facts RuleFacts) error {
 func validateDecision(decision errorrule.Decision) error {
 	switch decision.Value {
 	case errorrule.DecisionPassthrough, errorrule.DecisionObserveOnly, errorrule.DecisionCommitCurrent,
-		errorrule.DecisionRetrySame, errorrule.DecisionSwitchProvider:
+		errorrule.DecisionRetrySame, errorrule.DecisionSwitchProvider, errorrule.DecisionAbortClient:
 	default:
 		return fmt.Errorf("unknown decision value %q", decision.Value)
 	}
@@ -258,6 +258,8 @@ func validDecisionPair(value errorrule.DecisionValue, reason errorrule.DecisionR
 	case errorrule.DecisionCommitCurrent:
 		return reason == errorrule.ReasonRuleRetryBudgetExhausted || reason == errorrule.ReasonGlobalAttemptBudgetExhausted ||
 			reason == errorrule.ReasonAlternateProviderUnavailable || reason == errorrule.ReasonAlternateReservationFailed || providerRejectionReason(reason)
+	case errorrule.DecisionAbortClient:
+		return reason == errorrule.ReasonClientRetryRequested
 	default:
 		return false
 	}

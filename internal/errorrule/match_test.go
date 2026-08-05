@@ -91,12 +91,21 @@ func TestCandidateScopeAndDetectionPlan(t *testing.T) {
 	passthrough.Action = NewPassthroughAction()
 	passthrough.APIType = nil
 	retryZero := testRule(t, 1, 1)
-	retryZero.Action = testRetryAction(t, ActionRetryOnly, 0)
+	zeroRetryPolicy, _ := testRetryAction(t, ActionRetryOnly, 0).RetryPolicy()
+	var retryZeroErr error
+	retryZero.Action, retryZeroErr = NewRetryOnlyActionWithVisibleResponse(0, zeroRetryPolicy.Backoff, VisibleResponseCommit)
+	if retryZeroErr != nil {
+		t.Fatalf("create explicit-commit retry action: %v", retryZeroErr)
+	}
 	retryZero.Target = providerTarget
 	retryPositive := testRule(t, 2, 2)
 	retryPositive.Action = testRetryAction(t, ActionRetryOnly, 1)
 	retryPositive.Target = providerTarget
 	retryPositive.APIType = testAPIType(apicontract.APITypeClaude)
+	retryZeroClient := testRule(t, 5, 5)
+	retryZeroClient.Action = testRetryAction(t, ActionRetryOnly, 0)
+	retryZeroClient.Target = providerTarget
+	retryZeroClient.APIType = testAPIType(apicontract.APITypeGrok)
 	switchZero := testRule(t, 3, 3)
 	switchZero.Action = testRetryAction(t, ActionRetryThenSwitch, 0)
 	switchZero.Target = providerTarget
@@ -104,7 +113,7 @@ func TestCandidateScopeAndDetectionPlan(t *testing.T) {
 	disabled := testRule(t, 4, 4)
 	disabled.Enabled = false
 
-	snapshot, err := CompileRuleSet(1, []Rule{passthrough, retryZero, retryPositive, switchZero, disabled})
+	snapshot, err := CompileRuleSet(1, []Rule{passthrough, retryZero, retryPositive, switchZero, disabled, retryZeroClient})
 	if err != nil {
 		t.Fatalf("CompileRuleSet() error = %v", err)
 	}
@@ -117,6 +126,7 @@ func TestCandidateScopeAndDetectionPlan(t *testing.T) {
 		{name: "global observer", scope: RequestScope{APIType: apicontract.APITypeCodex}, plan: DetectionObserveOnly, count: 1},
 		{name: "provider zero retry observer", scope: RequestScope{ProviderID: "provider-a", APIType: apicontract.APITypeCodex}, plan: DetectionObserveOnly, count: 2},
 		{name: "positive retry probes", scope: RequestScope{ProviderID: "provider-a", APIType: apicontract.APITypeClaude}, plan: DetectionProbe, count: 2},
+		{name: "zero retry client recovery probes", scope: RequestScope{ProviderID: "provider-a", APIType: apicontract.APITypeGrok}, plan: DetectionProbe, count: 2},
 		{name: "zero retry switch probes", scope: RequestScope{ProviderID: "provider-a", APIType: apicontract.APITypeGemini}, plan: DetectionProbe, count: 2},
 		{name: "other provider gets global", scope: RequestScope{ProviderID: "provider-b", APIType: apicontract.APITypeCodex}, plan: DetectionObserveOnly, count: 1},
 		{name: "custom unsupported", scope: RequestScope{ProviderID: "provider-a", APIType: "custom:tool"}, plan: DetectionNoCandidate, count: 0},

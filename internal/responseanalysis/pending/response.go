@@ -32,14 +32,17 @@ type commandKind uint8
 const (
 	commandCommit commandKind = iota + 1
 	commandDiscard
+	commandAbort
+	commandContinue
 )
 
 type command[T any] struct {
-	kind         commandKind
-	cause        TransitionCause
-	accepted     chan struct{}
-	commitReply  chan commitResult[T]
-	discardReply chan discardResult
+	kind          commandKind
+	cause         TransitionCause
+	accepted      chan struct{}
+	commitReply   chan commitResult[T]
+	discardReply  chan discardResult
+	continueReply chan error
 }
 
 type commitResult[T any] struct {
@@ -165,6 +168,72 @@ func (f *ForwardingResponse[T]) AwaitSemanticOrCompletion() SemanticMilestone[T]
 		return SemanticMilestone[T]{}
 	}
 	return f.shared.cloneSemantic(f.shared.semantic.wait())
+}
+
+// Discard terminates an already-forwarding response without writing another
+// protocol frame. This is intentionally a separate capability from Response's
+// pre-commit discard: callers use it only when a late semantic error should
+// leave the client stream incomplete and let the client decide whether to retry.
+func (f *ForwardingResponse[T]) Discard(cause TransitionCause) (DiscardReceipt, error) {
+	if err := cause.validate(); err != nil {
+		return DiscardReceipt{}, err
+	}
+	if f == nil || f.shared == nil {
+		return DiscardReceipt{}, &AlreadyResolved{}
+	}
+	reply := make(chan discardResult, 1)
+	accepted := make(chan struct{})
+	request := command[T]{kind: commandAbort, cause: cause, accepted: accepted, discardReply: reply}
+	select {
+	case <-f.shared.completion.ready:
+		completion := f.shared.completion.value
+		return DiscardReceipt{}, &AlreadyResolved{State: completion.State}
+	case f.shared.commands <- request:
+	}
+	select {
+	case <-accepted:
+	case <-f.shared.completion.ready:
+		select {
+		case <-accepted:
+		default:
+			completion := f.shared.completion.value
+			return DiscardReceipt{}, &AlreadyResolved{State: completion.State}
+		}
+	}
+	result := <-reply
+	return result.receipt, result.err
+}
+
+// Continue releases a semantic checkpoint whose rule chose to preserve the
+// current response. The pump remains paused until this decision arrives so the
+// decisive protocol frame cannot race ahead of the executor.
+func (f *ForwardingResponse[T]) Continue(cause TransitionCause) error {
+	if err := cause.validate(); err != nil {
+		return err
+	}
+	if f == nil || f.shared == nil {
+		return &AlreadyResolved{}
+	}
+	reply := make(chan error, 1)
+	accepted := make(chan struct{})
+	request := command[T]{kind: commandContinue, cause: cause, accepted: accepted, continueReply: reply}
+	select {
+	case <-f.shared.completion.ready:
+		completion := f.shared.completion.value
+		return &AlreadyResolved{State: completion.State}
+	case f.shared.commands <- request:
+	}
+	select {
+	case <-accepted:
+	case <-f.shared.completion.ready:
+		select {
+		case <-accepted:
+		default:
+			completion := f.shared.completion.value
+			return &AlreadyResolved{State: completion.State}
+		}
+	}
+	return <-reply
 }
 
 func (f *ForwardingResponse[T]) Wait() Completion[T] {

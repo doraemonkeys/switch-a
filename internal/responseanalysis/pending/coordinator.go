@@ -33,6 +33,7 @@ type coordinator[T any] struct {
 	pumpStarted bool
 	pumpJoined  chan struct{}
 	pumpPaused  bool
+	analyzing   bool
 
 	probeTimer      Timer
 	probeGeneration uint64
@@ -219,6 +220,7 @@ func (c *coordinator[T]) startPump(analyze bool) {
 		return
 	}
 	c.pumpStarted = true
+	c.analyzing = analyze
 	joined := make(chan struct{})
 	c.pumpJoined = joined
 	config := pumpConfig[T]{
@@ -235,6 +237,7 @@ func (c *coordinator[T]) startPump(analyze bool) {
 		startAck:           c.startAck,
 		rawAck:             c.rawAck,
 		observationAck:     c.observationAck,
+		gateLateSemantic:   c.input.Mode.GatesLateSemantic(),
 	}
 	go func() {
 		defer close(joined)
@@ -244,12 +247,15 @@ func (c *coordinator[T]) startPump(analyze bool) {
 
 func (c *coordinator[T]) handleCommand(command command[T]) {
 	close(command.accepted)
-	if c.state != StateProbing {
+	if !commandAllowed(c.state, command.kind) {
 		err := &AlreadyResolved{State: c.state}
-		if command.kind == commandCommit {
+		switch command.kind {
+		case commandCommit:
 			command.commitReply <- commitResult[T]{err: err}
-		} else {
+		case commandDiscard, commandAbort:
 			command.discardReply <- discardResult{err: err}
+		case commandContinue:
+			command.continueReply <- err
 		}
 		return
 	}
@@ -267,15 +273,33 @@ func (c *coordinator[T]) handleCommand(command command[T]) {
 			c.finalize()
 		}
 		command.commitReply <- commitResult[T]{forwarding: &c.shared.forwarding, err: writeErr}
-	case commandDiscard:
+	case commandDiscard, commandAbort:
+		// Abort is also legal after forwarding has begun. The response writer
+		// already owns an incomplete stream; closing the upstream body and
+		// returning from the handler is what exposes the retryable EOF to the
+		// client without appending a provider error frame.
 		c.discardCause = command.cause
 		c.discardReply = command.discardReply
 		c.discard()
+	case commandContinue:
+		if !c.pumpPaused {
+			command.continueReply <- &AlreadyResolved{State: c.state}
+			return
+		}
+		c.resumePumpAfterResolution()
+		command.continueReply <- nil
 	default:
 		if command.commitReply != nil {
 			command.commitReply <- commitResult[T]{err: errors.New("unknown response command")}
 		}
 	}
+}
+
+func commandAllowed(state ResolutionState, kind commandKind) bool {
+	if state == StateProbing {
+		return true
+	}
+	return state == StateForwarding && (kind == commandAbort || kind == commandContinue)
 }
 
 func (c *coordinator[T]) discard() {
@@ -306,6 +330,8 @@ func (c *coordinator[T]) handlePumpEvent(event pumpEvent[T]) {
 		c.handleRaw(event.bytes, event.generation)
 	case pumpDecisiveObservation:
 		c.handleDecisiveObservation(event)
+	case pumpAnalysisCheckpoint:
+		c.handleAnalysisCheckpoint()
 	case pumpAnalysisFailure:
 		c.handleAnalysisFailure(event.reason)
 	case pumpTerminated:
@@ -332,35 +358,91 @@ func (c *coordinator[T]) handleRaw(raw []byte, generation uint64) {
 
 	switch c.state {
 	case StateProbing:
-		retained, err := c.retainRaw(raw)
-		if err != nil {
-			reason := c.config.FailureReason(err)
-			if reason == "" {
-				reason = ReasonAnalysisInternal
-			}
-			c.analysisFailure = reason
-			_ = c.commitForwarding(reason, nil, raw[retained:])
-			if c.termination == TerminationClientWriteFailure {
-				c.rawAck <- directiveStop
-			} else {
-				c.rawAck <- directiveForwardOnly
-			}
-			return
-		}
-		c.rawAck <- directiveAnalyze
+		c.handleProbingRaw(raw)
 	case StateForwarding:
-		if err := c.writeRaw(raw); err != nil {
+		c.handleForwardingRaw(raw)
+	}
+}
+
+func (c *coordinator[T]) handleProbingRaw(raw []byte) {
+	retained, err := c.retainRaw(raw)
+	if err == nil {
+		c.rawAck <- directiveAnalyze
+		return
+	}
+	reason := c.recordAnalysisFailure(err)
+	_ = c.commitForwarding(reason, nil, raw[retained:])
+	if c.termination == TerminationClientWriteFailure {
+		c.rawAck <- directiveStop
+		return
+	}
+	c.rawAck <- directiveForwardOnly
+}
+
+func (c *coordinator[T]) handleForwardingRaw(raw []byte) {
+	if !c.analyzing || !c.input.Mode.GatesLateSemantic() || c.analysisFailure != "" {
+		c.writeForwardingRaw(raw)
+		return
+	}
+	retained, err := c.retainRaw(raw)
+	if err == nil {
+		c.rawAck <- directiveAnalyze
+		return
+	}
+	c.recordAnalysisFailure(err)
+	writeErr := c.flushPrefix()
+	if writeErr == nil && retained < len(raw) {
+		writeErr = c.writeRaw(raw[retained:])
+	}
+	if writeErr != nil {
+		c.stopAfterClientWriteFailure()
+		c.rawAck <- directiveStop
+		return
+	}
+	c.rawAck <- directiveForwardOnly
+}
+
+func (c *coordinator[T]) writeForwardingRaw(raw []byte) {
+	if err := c.writeRaw(raw); err != nil {
+		c.stopAfterClientWriteFailure()
+		c.rawAck <- directiveStop
+		return
+	}
+	if c.analyzing && c.analysisFailure == "" {
+		c.rawAck <- directiveAnalyze
+		return
+	}
+	c.rawAck <- directiveForwardOnly
+}
+
+func (c *coordinator[T]) recordAnalysisFailure(err error) BoundaryReason {
+	reason := c.config.FailureReason(err)
+	if reason == "" {
+		reason = ReasonAnalysisInternal
+	}
+	c.analysisFailure = reason
+	return reason
+}
+
+func (c *coordinator[T]) stopAfterClientWriteFailure() {
+	c.termination = TerminationClientWriteFailure
+	c.closeBody()
+}
+
+func (c *coordinator[T]) handleAnalysisCheckpoint() {
+	if c.state == StateDiscarded || c.termination == TerminationClientWriteFailure || c.termination == TerminationClientCancelled {
+		c.observationAck <- directiveStop
+		return
+	}
+	if c.state == StateForwarding {
+		if err := c.flushPrefix(); err != nil {
 			c.termination = TerminationClientWriteFailure
 			c.closeBody()
-			c.rawAck <- directiveStop
+			c.observationAck <- directiveStop
 			return
 		}
-		if c.analysisFailure != "" {
-			c.rawAck <- directiveForwardOnly
-		} else {
-			c.rawAck <- directiveAnalyze
-		}
 	}
+	c.observationAck <- c.analysisDirective()
 }
 
 func (c *coordinator[T]) handleDecisiveObservation(event pumpEvent[T]) {
@@ -391,6 +473,12 @@ func (c *coordinator[T]) handleDecisiveObservation(event pumpEvent[T]) {
 			c.pumpPaused = true
 			return
 		}
+		if c.state == StateForwarding && c.input.Mode.GatesLateSemantic() {
+			// The raw bytes that completed this semantic observation remain in the
+			// bounded prefix until the executor chooses Continue or Abort.
+			c.pumpPaused = true
+			return
+		}
 		c.observationAck <- c.analysisDirective()
 	case ObservationClientVisible:
 		if c.state == StateProbing {
@@ -404,8 +492,14 @@ func (c *coordinator[T]) handleDecisiveObservation(event pumpEvent[T]) {
 			reason = ReasonAnalysisInternal
 		}
 		c.analysisFailure = reason
-		if c.state == StateProbing {
+		switch c.state {
+		case StateProbing:
 			_ = c.commitForwarding(reason, &event.observation, nil)
+		case StateForwarding:
+			if err := c.flushPrefix(); err != nil {
+				c.termination = TerminationClientWriteFailure
+				c.closeBody()
+			}
 		}
 		c.config.Observations.Release(&event.observation)
 		c.observationAck <- c.analysisDirective()
@@ -420,8 +514,14 @@ func (c *coordinator[T]) handleAnalysisFailure(reason BoundaryReason) {
 		reason = ReasonAnalysisInternal
 	}
 	c.analysisFailure = reason
-	if c.state == StateProbing {
+	switch c.state {
+	case StateProbing:
 		_ = c.commitForwarding(reason, nil, nil)
+	case StateForwarding:
+		if err := c.flushPrefix(); err != nil {
+			c.termination = TerminationClientWriteFailure
+			c.closeBody()
+		}
 	}
 	if c.termination == TerminationClientWriteFailure || c.state == StateDiscarded {
 		c.observationAck <- directiveStop
@@ -521,4 +621,11 @@ func (c *coordinator[T]) handleCancellation() {
 	}
 	c.stopIdleTimer()
 	c.closeBody()
+	if c.pumpPaused {
+		// A late semantic checkpoint may be waiting for the executor while the
+		// client cancels. Release that driver wait so cancellation can finalize
+		// instead of leaving the pump goroutine parked on an observation ack.
+		c.pumpPaused = false
+		c.observationAck <- directiveStop
+	}
 }

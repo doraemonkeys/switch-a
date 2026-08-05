@@ -109,10 +109,14 @@ func (a Action) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 		return json.Marshal(struct {
-			Type       ActionType          `json:"type"`
-			MaxRetries int                 `json:"max_retries"`
-			Backoff    model.BackoffPolicy `json:"backoff"`
-		}{Type: a.actionType, MaxRetries: a.retry.MaxRetries, Backoff: a.retry.Backoff})
+			Type          ActionType             `json:"type"`
+			MaxRetries    int                    `json:"max_retries"`
+			Backoff       model.BackoffPolicy    `json:"backoff"`
+			VisiblePolicy *VisibleResponsePolicy `json:"visible_response,omitempty"`
+		}{
+			Type: a.actionType, MaxRetries: a.retry.MaxRetries, Backoff: a.retry.Backoff,
+			VisiblePolicy: optionalVisibleResponsePolicy(a.visiblePolicy),
+		})
 	default:
 		return nil, fmt.Errorf("cannot marshal unknown action type %q", a.actionType)
 	}
@@ -120,9 +124,10 @@ func (a Action) MarshalJSON() ([]byte, error) {
 
 func (a *Action) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Type       ActionType      `json:"type"`
-		MaxRetries *int            `json:"max_retries"`
-		Backoff    json.RawMessage `json:"backoff"`
+		Type          ActionType             `json:"type"`
+		MaxRetries    *int                   `json:"max_retries"`
+		Backoff       json.RawMessage        `json:"backoff"`
+		VisiblePolicy *VisibleResponsePolicy `json:"visible_response"`
 	}
 	if err := decodeStrict(data, &wire); err != nil {
 		return fmt.Errorf("decode action: %w", err)
@@ -130,7 +135,7 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 
 	switch wire.Type {
 	case ActionPassthrough:
-		if wire.MaxRetries != nil || len(wire.Backoff) != 0 {
+		if wire.MaxRetries != nil || len(wire.Backoff) != 0 || wire.VisiblePolicy != nil {
 			return fmt.Errorf("passthrough action cannot contain retry fields")
 		}
 		*a = NewPassthroughAction()
@@ -143,7 +148,11 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 		if err := decodeStrict(wire.Backoff, &backoff); err != nil {
 			return fmt.Errorf("decode backoff: %w", err)
 		}
-		action, err := newRetryAction(wire.Type, *wire.MaxRetries, backoff)
+		visiblePolicy := VisibleResponseDisconnect
+		if wire.VisiblePolicy != nil {
+			visiblePolicy = *wire.VisiblePolicy
+		}
+		action, err := newRetryAction(wire.Type, *wire.MaxRetries, backoff, visiblePolicy)
 		if err != nil {
 			return err
 		}
@@ -152,6 +161,13 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 	default:
 		return fmt.Errorf("unknown action type %q", wire.Type)
 	}
+}
+
+func optionalVisibleResponsePolicy(policy VisibleResponsePolicy) *VisibleResponsePolicy {
+	if policy == VisibleResponseDisconnect {
+		return nil
+	}
+	return &policy
 }
 
 func decodeStrict(data []byte, value any) error {

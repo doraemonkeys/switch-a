@@ -76,6 +76,7 @@ const DECISION_VALUES = [
   "commit_current",
   "retry_same",
   "switch_provider",
+  "abort_client",
 ] as const;
 const DECISION_REASONS = [
   "action_passthrough",
@@ -94,6 +95,7 @@ const DECISION_REASONS = [
   "auth_unavailable",
   "provider_lookup_error",
   "response_already_visible",
+  "client_retry_requested",
   "client_cancelled",
 ] as const;
 const HEALTH_VERDICTS = ["success", "failure", "neutral"] as const;

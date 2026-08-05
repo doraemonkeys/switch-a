@@ -368,7 +368,7 @@ func responseAnalysisMode(statusCode int, plan errorrule.DetectionPlan) (respons
 	}
 	switch plan {
 	case errorrule.DetectionProbe:
-		return responseanalysis.ProbeMode(), nil
+		return responseanalysis.ProbeAndGateMode(), nil
 	case errorrule.DetectionObserveOnly:
 		return responseanalysis.ObserveMode(responseanalysis.BoundaryPassthroughOnly)
 	default:
@@ -419,6 +419,13 @@ func (p *pendingHTTPResponse) finishForwarding(forwarding *responseanalysis.Forw
 	}
 	milestone := forwarding.AwaitSemanticOrCompletion()
 	if milestone.Matched {
+		if result, aborted := p.abortVisibleSemantic(forwarding, milestone); aborted {
+			milestone.Observation.Release()
+			return result
+		}
+		// A failed abort means completion won the race; Continue is harmless in
+		// that case and required when the rule explicitly preserves the stream.
+		_ = forwarding.Continue(responseanalysis.TransitionSemanticDecision)
 		milestone.Observation.Release()
 	}
 	completion := forwarding.Wait()
@@ -435,6 +442,44 @@ func (p *pendingHTTPResponse) finishForwarding(forwarding *responseanalysis.Forw
 	p.recordWinningRule(result.semantic)
 	p.finishCapture(completion)
 	return result
+}
+
+func (p *pendingHTTPResponse) abortVisibleSemantic(
+	forwarding *responseanalysis.ForwardingResponse,
+	milestone responseanalysis.SemanticMilestone,
+) (forwardResult, bool) {
+	// A semantic match can arrive after the probe has released bytes to the
+	// client. If the rule opts into client-owned recovery, stop the forwarding
+	// state machine immediately. Returning with an incomplete SSE stream is
+	// intentional: retry-capable clients can replay the original request while
+	// no provider error frame is exposed as a terminal response.
+	matches, matched := p.matcher.Facts()
+	if !matched || matches.Winner == nil {
+		return forwardResult{}, false
+	}
+	decision, err := errorrule.DecideVisibleResponse(matches.Winner.Rule.Action)
+	if err != nil || decision.Value != errorrule.DecisionAbortClient {
+		return forwardResult{}, false
+	}
+	if _, err := forwarding.Discard(responseanalysis.TransitionSemanticDecision); err != nil {
+		return forwardResult{}, false
+	}
+
+	completion := forwarding.Wait()
+	result := p.resultFromCompletion(completion)
+	result.semantic = p.semanticFacts(milestone.Observation, milestone.State, completion.BoundaryReason)
+	if completion.HasSemanticObservation {
+		completion.SemanticObservation.Release()
+	}
+	if completion.HasUsageObservation && completion.UsageObservation.Usage != nil {
+		usage := *completion.UsageObservation.Usage
+		result.tokenUsage = &usage
+		completion.UsageObservation.Release()
+	}
+	result.semantic.decision = decision
+	p.recordWinningRule(result.semantic)
+	p.finishCapture(completion)
+	return result, true
 }
 
 func (p *pendingHTTPResponse) discard(
@@ -489,6 +534,11 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 	switch completion.Termination {
 	case responseanalysis.TerminationCompleted:
 		result.success = p.head.StatusCode < defaults.StatusClientError
+	case responseanalysis.TerminationDiscarded:
+		// A late semantic abort intentionally closes the stream without a
+		// protocol-level error. The semantic evidence carries the user-visible
+		// decision; this attempt is not a successful 2xx completion.
+		result.success = false
 	case responseanalysis.TerminationClientCancelled:
 		result.clientCanceled = true
 		result.failureKind = attemptFailureCanceled

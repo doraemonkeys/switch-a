@@ -28,6 +28,10 @@ func encodeRule(rule errorrule.Rule) (ruleRow, error) {
 		CreatedAt:    rule.CreatedAt.UTC(),
 		UpdatedAt:    rule.UpdatedAt.UTC(),
 	}
+	if rule.Action.Type() != errorrule.ActionPassthrough {
+		policy := string(rule.Action.VisibleResponsePolicy())
+		row.VisiblePolicy = &policy
+	}
 	if providerID, scoped := rule.Target.ProviderID(); scoped {
 		value := string(providerID)
 		row.ProviderID = &value
@@ -108,7 +112,7 @@ func decodeTarget(row ruleRow) (errorrule.Target, error) {
 func decodeAction(row ruleRow) (errorrule.Action, error) {
 	switch errorrule.ActionType(row.ActionType) {
 	case errorrule.ActionPassthrough:
-		if row.MaxRetries != nil || row.BackoffInitialDelay != nil || row.BackoffMaxDelay != nil ||
+		if row.VisiblePolicy != nil || row.MaxRetries != nil || row.BackoffInitialDelay != nil || row.BackoffMaxDelay != nil ||
 			row.BackoffMultiplier != nil || row.BackoffJitter != nil {
 			return errorrule.Action{}, fmt.Errorf("passthrough rule %q contains retry fields", row.ID)
 		}
@@ -124,10 +128,14 @@ func decodeAction(row ruleRow) (errorrule.Action, error) {
 			Multiplier:   *row.BackoffMultiplier,
 			Jitter:       *row.BackoffJitter,
 		}
-		if errorrule.ActionType(row.ActionType) == errorrule.ActionRetryOnly {
-			return errorrule.NewRetryOnlyAction(*row.MaxRetries, backoff)
+		visiblePolicy := errorrule.VisibleResponseDisconnect
+		if row.VisiblePolicy != nil {
+			visiblePolicy = errorrule.VisibleResponsePolicy(*row.VisiblePolicy)
 		}
-		return errorrule.NewRetryThenSwitchAction(*row.MaxRetries, backoff)
+		if errorrule.ActionType(row.ActionType) == errorrule.ActionRetryOnly {
+			return errorrule.NewRetryOnlyActionWithVisibleResponse(*row.MaxRetries, backoff, visiblePolicy)
+		}
+		return errorrule.NewRetryThenSwitchActionWithVisibleResponse(*row.MaxRetries, backoff, visiblePolicy)
 	default:
 		return errorrule.Action{}, fmt.Errorf("rule %q has unknown action type %q", row.ID, row.ActionType)
 	}

@@ -42,6 +42,10 @@ func ProbeMode() AnalysisMode {
 	return pending.ProbeMode()
 }
 
+func ProbeAndGateMode() AnalysisMode {
+	return pending.ProbeAndGateMode()
+}
+
 func ObserveMode(reason BoundaryReason) (AnalysisMode, error) {
 	return pending.ObserveMode(reason)
 }

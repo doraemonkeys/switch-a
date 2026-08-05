@@ -69,17 +69,7 @@ func (c *coordinator[T]) commitForwarding(reason BoundaryReason, observation *T,
 
 	writeResponseHead(c.input.Writer, c.input.StatusCode, c.input.Header)
 	c.headersCommitted = true
-	var writeErr error
-	for index := 0; index < c.prefix.count; index++ {
-		chunk := &c.prefix.chunks[index]
-		if writeErr == nil {
-			writeErr = c.writeRaw(chunk.bytes)
-		}
-		chunk.grant.Release()
-		chunk.bytes = nil
-		chunk.grant = nil
-	}
-	c.prefix = rawPrefix{}
+	writeErr := c.flushPrefix()
 	if writeErr == nil && len(extraRaw) > 0 {
 		writeErr = c.writeRaw(extraRaw)
 	}
@@ -95,6 +85,21 @@ func (c *coordinator[T]) commitForwarding(reason BoundaryReason, observation *T,
 	}
 	c.shared.boundary.publish(boundary)
 	c.trace(traceProbeReleased, reason)
+	return writeErr
+}
+
+func (c *coordinator[T]) flushPrefix() error {
+	var writeErr error
+	for index := 0; index < c.prefix.count; index++ {
+		chunk := &c.prefix.chunks[index]
+		if writeErr == nil {
+			writeErr = c.writeRaw(chunk.bytes)
+		}
+		chunk.grant.Release()
+		chunk.bytes = nil
+		chunk.grant = nil
+	}
+	c.prefix = rawPrefix{}
 	return writeErr
 }
 

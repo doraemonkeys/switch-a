@@ -90,10 +90,18 @@ func (p *pendingHTTPResponse) finishCapture(completion responseanalysis.Completi
 	}
 	reason := requestcapture.TerminationReasonEOF
 	failure := requestcapture.FailureObservation{}
-	if completion.HasSemanticObservation {
+	switch {
+	case completion.Termination == responseanalysis.TerminationDiscarded && completion.HasSemanticObservation:
+		// A late semantic match was deliberately absorbed after the stream had
+		// become visible. Marking it as committed would tell capture consumers that
+		// the provider error was intentionally delivered, which is the opposite of
+		// the client-retry contract.
+		reason = requestcapture.TerminationReasonInternalErrorAbsorbed
+		failure = semanticCaptureFailure()
+	case completion.HasSemanticObservation:
 		reason = requestcapture.TerminationReasonInternalErrorCommitted
 		failure = semanticCaptureFailure()
-	} else {
+	default:
 		switch completion.Termination {
 		case responseanalysis.TerminationClientCancelled:
 			reason = requestcapture.TerminationReasonClientDisconnect

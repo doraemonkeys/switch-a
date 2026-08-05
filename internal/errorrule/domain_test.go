@@ -125,11 +125,15 @@ func TestActionUnionJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRetryThenSwitchAction() error = %v", err)
 	}
+	commitSwitch, err := NewRetryThenSwitchActionWithVisibleResponse(0, model.BackoffPolicy{}, VisibleResponseCommit)
+	if err != nil {
+		t.Fatalf("NewRetryThenSwitchActionWithVisibleResponse() error = %v", err)
+	}
 	maxRetry, err := NewRetryOnlyAction(MaxRuleRetries, model.BackoffPolicy{})
 	if err != nil {
 		t.Fatalf("NewRetryOnlyAction(max) error = %v", err)
 	}
-	cases := []Action{NewPassthroughAction(), retryOnly, retrySwitch, maxRetry}
+	cases := []Action{NewPassthroughAction(), retryOnly, retrySwitch, commitSwitch, maxRetry}
 	for _, action := range cases {
 		encoded, err := json.Marshal(action)
 		if err != nil {
@@ -147,8 +151,10 @@ func TestActionUnionJSON(t *testing.T) {
 	invalid := []string{
 		`{"type":"passthrough","max_retries":0}`,
 		`{"type":"passthrough","backoff":{"initial_delay":"0s","max_delay":"0s"}}`,
+		`{"type":"passthrough","visible_response":"commit_current"}`,
 		`{"type":"retry_only","backoff":{"initial_delay":"0s","max_delay":"0s"}}`,
 		`{"type":"retry_then_switch","max_retries":1}`,
+		`{"type":"retry_only","max_retries":1,"backoff":{"initial_delay":"0s","max_delay":"0s"},"visible_response":"unknown"}`,
 		`{"type":"retry_only","max_retries":1001,"backoff":{"initial_delay":"0s","max_delay":"0s"}}`,
 		`{"type":"unknown"}`,
 		`{"type":"passthrough","exhaustion_behavior":"commit"}`,
@@ -169,6 +175,9 @@ func TestActionUnionJSON(t *testing.T) {
 	policy, ok := retryOnly.RetryPolicy()
 	if !ok || policy.MaxRetries != 2 || policy.Backoff != backoff {
 		t.Fatalf("RetryPolicy() = (%#v, %v)", policy, ok)
+	}
+	if retryOnly.VisibleResponsePolicy() != VisibleResponseDisconnect || commitSwitch.VisibleResponsePolicy() != VisibleResponseCommit {
+		t.Fatalf("visible policies default=%q commit=%q", retryOnly.VisibleResponsePolicy(), commitSwitch.VisibleResponsePolicy())
 	}
 }
 

@@ -15,11 +15,13 @@ export type InternalErrorRuleAction =
       readonly type: "retry_only";
       readonly max_retries: number;
       readonly backoff: RuleBackoffPolicy;
+      readonly visible_response?: "disconnect_client" | "commit_current";
     }
   | {
       readonly type: "retry_then_switch";
       readonly max_retries: number;
       readonly backoff: RuleBackoffPolicy;
+      readonly visible_response?: "disconnect_client" | "commit_current";
     };
 
 export interface InternalErrorRuleSpec {
