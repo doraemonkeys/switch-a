@@ -48,11 +48,18 @@ const REQUEST_ATTEMPT_SWITCH_MODES = [
   "replacement",
   "failover",
 ] as const;
+// Must mirror internal/model.RequestAttemptOutcome; the HTTP normalization
+// path (classifyHTTPAttemptOutcome) emits values the websocket-only legacy
+// four never covered, and a mismatch here rejects the whole log detail parse.
 const REQUEST_ATTEMPT_OUTCOMES = [
   "upstream_handshake_rejected",
   "upstream_transport_error",
   "upstream_semantic_error",
   "visible_session",
+  "upstream_completed",
+  "upstream_http_status_error",
+  "upstream_incomplete",
+  "gateway_error",
 ] as const;
 
 function isRecord(value: unknown): value is JsonRecord {

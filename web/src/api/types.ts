@@ -302,7 +302,11 @@ export type RequestAttemptOutcome =
   | "upstream_handshake_rejected"
   | "upstream_transport_error"
   | "upstream_semantic_error"
-  | "visible_session";
+  | "visible_session"
+  | "upstream_completed"
+  | "upstream_http_status_error"
+  | "upstream_incomplete"
+  | "gateway_error";
 
 /**
  * Represents a single provider attempt within a request.

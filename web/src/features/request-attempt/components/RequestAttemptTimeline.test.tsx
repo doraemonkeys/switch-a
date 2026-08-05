@@ -290,6 +290,75 @@ describe("RequestAttemptTimeline", () => {
     });
   });
 
+  describe("HTTP-normalized outcome classification", () => {
+    it("styles a completed upstream attempt as success", () => {
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={[
+            createMockAttempt({
+              id: 1,
+              attempt: 0,
+              status_code: 200,
+              outcome: "upstream_completed",
+            }),
+          ]}
+        />,
+      );
+
+      const cards = container.querySelectorAll(".border");
+      expect(cards[0]).toHaveClass("border-green-200");
+      expect(screen.getByText("Upstream completed")).toBeInTheDocument();
+    });
+
+    it("styles a rule-absorbed semantic error attempt as semantic, not success", () => {
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={[
+            createMockAttempt({
+              id: 1,
+              attempt: 0,
+              status_code: 200,
+              outcome: "upstream_semantic_error",
+              result_visible_to_client: false,
+            }),
+          ]}
+        />,
+      );
+
+      const cards = container.querySelectorAll(".border");
+      expect(cards[0]).toHaveClass("border-amber-200");
+      expect(cards[0]).not.toHaveClass("border-green-200");
+      expect(
+        screen.getByText(
+          "Semantic error suppressed before client-visible data",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it.each([
+      ["upstream_http_status_error", "Upstream returned an error status"],
+      ["upstream_incomplete", "Upstream response incomplete"],
+      ["gateway_error", "Gateway error"],
+    ])("marks %s as failed", (outcome, label) => {
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={[
+            createMockAttempt({
+              id: 1,
+              attempt: 0,
+              status_code: 502,
+              outcome: outcome as RequestAttempt["outcome"],
+            }),
+          ]}
+        />,
+      );
+
+      const cards = container.querySelectorAll(".border");
+      expect(cards[0]).toHaveClass("border-red-200");
+      expect(screen.getByText(label)).toBeInTheDocument();
+    });
+  });
+
   describe("no response badge", () => {
     it("shows 'No Response' badge when status_code is 0", () => {
       const attempts = [createMockAttempt({ status_code: 0 })];

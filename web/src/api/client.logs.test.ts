@@ -244,4 +244,37 @@ describe("createApiClient logs API", () => {
       "logs/1.attempts[0].attempt_evidence_json must be present",
     );
   });
+
+  // The HTTP normalization path (classifyHTTPAttemptOutcome) emits outcome
+  // values beyond the websocket-only legacy four; every one of them must parse
+  // or the whole log detail is silently dropped by the list-row fallback.
+  it("accepts nested attempts with every HTTP-normalized outcome value", async () => {
+    const outcomes = [
+      "upstream_completed",
+      "upstream_http_status_error",
+      "upstream_incomplete",
+      "gateway_error",
+    ] as const;
+
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          ...normalizedLog,
+          attempts: outcomes.map((outcome, index) => ({
+            ...normalizedAttempt,
+            id: 10 + index,
+            attempt: 1 + index,
+            outcome,
+          })),
+        }),
+    });
+
+    const result = await api.logs.get(1);
+
+    expect(result.attempts?.map((attempt) => attempt.outcome)).toEqual([
+      ...outcomes,
+    ]);
+  });
 });

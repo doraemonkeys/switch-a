@@ -1,5 +1,6 @@
 import type {
   RequestAttempt,
+  RequestAttemptOutcome,
   RequestAttemptPhase,
   RequestAttemptSwitchMode,
 } from "@/api/types";
@@ -94,6 +95,20 @@ export function getAttemptOutcomePresentation(
             : "Semantic error ended this provider attempt",
         tone: "warning",
       };
+    case "upstream_completed":
+      return { text: "Upstream completed", tone: "info" };
+    case "upstream_http_status_error":
+      return {
+        text: "Upstream returned an error status",
+        tone: "error",
+      };
+    case "upstream_incomplete":
+      return {
+        text: "Upstream response incomplete",
+        tone: "warning",
+      };
+    case "gateway_error":
+      return { text: "Gateway error", tone: "error" };
     case "visible_session":
       return {
         text: "This provider owned the client-visible session",
@@ -140,6 +155,25 @@ function getVisualState(
   return "neutral";
 }
 
+// Non-WebSocket attempts classify failure explicitly by outcome instead of
+// "any outcome present": upstream_completed and upstream_semantic_error both
+// legitimately carry HTTP 200 while meaning success vs. rule-absorbed error,
+// so a blanket truthiness check would mislabel both.
+function isFailureOutcome(
+  outcome: RequestAttemptOutcome | null | undefined,
+): boolean {
+  switch (outcome) {
+    case "upstream_handshake_rejected":
+    case "upstream_transport_error":
+    case "upstream_http_status_error":
+    case "upstream_incomplete":
+    case "gateway_error":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function buildAttemptPresentation(
   attempt: RequestAttempt,
   isWebSocket: boolean,
@@ -156,13 +190,17 @@ export function buildAttemptPresentation(
       hasError ||
       isNoResponse ||
       attempt.status_code >= 400
-    : Boolean(attempt.outcome) ||
+    : isFailureOutcome(attempt.outcome) ||
       hasError ||
       isNoResponse ||
       attempt.status_code >= 400;
   const isSuccess = isWebSocket
     ? ownsVisibleSession && !hasFailure
-    : !hasFailure && attempt.status_code >= 200 && attempt.status_code < 400;
+    : !hasFailure &&
+      attempt.status_code >= 200 &&
+      attempt.status_code < 400 &&
+      // A rule-absorbed semantic error may carry 200; it is never success.
+      attempt.outcome !== "upstream_semantic_error";
   return Object.freeze({
     hasError,
     hasBodySnippet: (attempt.body_snippet?.length ?? 0) > 0,
