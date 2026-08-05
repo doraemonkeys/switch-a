@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   filterProviders,
+  hasProviderListFilterQuery,
+  normalizeProviderListFilters,
   readProviderListFilters,
-  writeProviderListFilter,
+  writeProviderListFilters,
 } from "./providerFilters";
 
 const providers = [
@@ -74,14 +76,46 @@ describe("provider list filters", () => {
     ).toBe("");
   });
 
-  it("updates one filter without discarding unrelated URL state", () => {
+  it("normalizes persisted values before they reach the filter model", () => {
+    expect(
+      normalizeProviderListFilters({
+        searchQuery: "gpt",
+        groupId: 42,
+        visibility: "unexpected",
+      }),
+    ).toEqual({ searchQuery: "gpt", groupId: "", visibility: "" });
+    expect(normalizeProviderListFilters(null)).toEqual({
+      searchQuery: "",
+      groupId: "",
+      visibility: "",
+    });
+  });
+
+  it("writes the complete filter state without discarding unrelated URL state", () => {
     const current = new URLSearchParams("tab=usage&status=healthy");
 
     expect(
-      writeProviderListFilter(current, "visibility", "enabled").toString(),
-    ).toBe("tab=usage&status=enabled");
-    expect(writeProviderListFilter(current, "visibility", "").toString()).toBe(
-      "tab=usage",
+      writeProviderListFilters(current, {
+        searchQuery: "gpt",
+        groupId: "primary",
+        visibility: "enabled",
+      }).toString(),
+    ).toBe("tab=usage&status=enabled&search=gpt&group=primary");
+    expect(
+      writeProviderListFilters(current, {
+        searchQuery: "",
+        groupId: "",
+        visibility: "",
+      }).toString(),
+    ).toBe("tab=usage");
+  });
+
+  it("distinguishes explicit URL filter state from unrelated parameters", () => {
+    expect(hasProviderListFilterQuery(new URLSearchParams("tab=usage"))).toBe(
+      false,
+    );
+    expect(hasProviderListFilterQuery(new URLSearchParams("status="))).toBe(
+      true,
     );
   });
 });

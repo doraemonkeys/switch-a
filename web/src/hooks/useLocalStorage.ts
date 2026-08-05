@@ -10,6 +10,11 @@ export function useLocalStorage<T>(
 ): [T, (value: T | ((prev: T) => T)) => void] {
   // Use ref to stabilize initialValue reference (avoids re-renders when inline objects/arrays are passed)
   const initialValueRef = useRef(initialValue);
+  const snapshotRef = useRef<{
+    key: string;
+    serializedValue: string | null;
+    value: T;
+  } | null>(null);
 
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
@@ -33,12 +38,25 @@ export function useLocalStorage<T>(
   );
 
   const getSnapshot = useCallback((): T => {
+    let item: string | null = null;
     try {
-      const item = localStorage.getItem(key);
-      return item !== null ? JSON.parse(item) : initialValueRef.current;
+      item = localStorage.getItem(key);
+      const cachedSnapshot = snapshotRef.current;
+      if (
+        cachedSnapshot?.key === key &&
+        cachedSnapshot.serializedValue === item
+      ) {
+        return cachedSnapshot.value;
+      }
+
+      const value = item !== null ? JSON.parse(item) : initialValueRef.current;
+      snapshotRef.current = { key, serializedValue: item, value };
+      return value;
     } catch (error) {
       console.error(`Error reading localStorage key "${key}":`, error);
-      return initialValueRef.current;
+      const value = initialValueRef.current;
+      snapshotRef.current = { key, serializedValue: item, value };
+      return value;
     }
   }, [key]);
 

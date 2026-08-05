@@ -67,20 +67,25 @@ describe("useLocalStorage", () => {
     expect(mockStorage["testKey"]).toBe(JSON.stringify(15));
   });
 
-  it("should handle object values via JSON serialization", () => {
-    // Test that objects are properly serialized to localStorage
-    const { result } = renderHook(() =>
-      useLocalStorage<string>("objectKey", "initial"),
+  it("should preserve object snapshot identity until storage changes", () => {
+    const initialValue = { name: "initial", count: 0 };
+    const storedValue = { name: "stored", count: 1 };
+    mockStorage["objectKey"] = JSON.stringify(storedValue);
+    const { result, rerender } = renderHook(() =>
+      useLocalStorage("objectKey", initialValue),
     );
+    const firstSnapshot = result.current[0];
 
-    // Set a JSON string value (simulating object storage)
+    rerender();
+    expect(result.current[0]).toBe(firstSnapshot);
+
+    const updatedValue = { name: "updated", count: 2 };
     act(() => {
-      result.current[1](JSON.stringify({ name: "test", count: 5 }));
+      result.current[1](updatedValue);
     });
 
-    expect(mockStorage["objectKey"]).toBe(
-      JSON.stringify(JSON.stringify({ name: "test", count: 5 })),
-    );
+    expect(mockStorage["objectKey"]).toBe(JSON.stringify(updatedValue));
+    expect(result.current[0]).toEqual(updatedValue);
   });
 
   it("should handle array values via JSON serialization", () => {

@@ -14,6 +14,12 @@ export interface ProviderListFilters {
   visibility: ProviderVisibilityFilter;
 }
 
+export const EMPTY_PROVIDER_LIST_FILTERS: ProviderListFilters = {
+  searchQuery: "",
+  groupId: "",
+  visibility: "",
+};
+
 export type ProviderListFilterField = keyof ProviderListFilters;
 
 interface FilterableProvider {
@@ -43,21 +49,65 @@ export function readProviderListFilters(
   };
 }
 
-export function writeProviderListFilter<K extends ProviderListFilterField>(
+export function normalizeProviderListFilters(
+  value: unknown,
+): ProviderListFilters {
+  if (!value || typeof value !== "object") {
+    return EMPTY_PROVIDER_LIST_FILTERS;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const visibility = candidate.visibility;
+
+  return {
+    searchQuery:
+      typeof candidate.searchQuery === "string" ? candidate.searchQuery : "",
+    groupId: typeof candidate.groupId === "string" ? candidate.groupId : "",
+    visibility:
+      typeof visibility === "string" && isProviderVisibilityFilter(visibility)
+        ? visibility
+        : "",
+  };
+}
+
+export function hasProviderListFilterQuery(
   searchParams: URLSearchParams,
-  field: K,
-  value: ProviderListFilters[K],
+): boolean {
+  return Object.values(FILTER_QUERY_PARAMETERS).some((parameter) =>
+    searchParams.has(parameter),
+  );
+}
+
+export function writeProviderListFilters(
+  searchParams: URLSearchParams,
+  filters: ProviderListFilters,
 ): URLSearchParams {
   const nextSearchParams = new URLSearchParams(searchParams);
-  const parameter = FILTER_QUERY_PARAMETERS[field];
 
-  if (value === "") {
-    nextSearchParams.delete(parameter);
-  } else {
-    nextSearchParams.set(parameter, value);
+  for (const field of Object.keys(
+    FILTER_QUERY_PARAMETERS,
+  ) as ProviderListFilterField[]) {
+    const parameter = FILTER_QUERY_PARAMETERS[field];
+    const value = filters[field];
+    if (value === "") {
+      nextSearchParams.delete(parameter);
+    } else {
+      nextSearchParams.set(parameter, value);
+    }
   }
 
   return nextSearchParams;
+}
+
+export function providerListFiltersEqual(
+  left: ProviderListFilters,
+  right: ProviderListFilters,
+): boolean {
+  return (
+    left.searchQuery === right.searchQuery &&
+    left.groupId === right.groupId &&
+    left.visibility === right.visibility
+  );
 }
 
 export function hasProviderListFilters(filters: ProviderListFilters): boolean {
