@@ -102,7 +102,7 @@ func (p *pendingHTTPResponse) finishCapture(completion responseanalysis.Completi
 				cancelErr = context.Canceled
 			}
 			_, failure = capturefailure.HTTPForward(
-				contextError(p.pctx.r.Context()), cancelErr, capturefailure.HTTPForwardOriginUpstreamRead,
+				contextError(p.pctx.r.Context()), cancelErr, capturefailure.HTTPForwardOriginClientCancel,
 			)
 		case responseanalysis.TerminationClientWriteFailure:
 			reason = requestcapture.TerminationReasonWriteError

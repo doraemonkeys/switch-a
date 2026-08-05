@@ -71,6 +71,7 @@ export type DebugCaptureFailureCode =
   | "failure_body_read"
   | "drain_read"
   | "upstream_read"
+  | "client_cancel"
   | "client_write"
   | "client_accept"
   | "websocket_dial"

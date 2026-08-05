@@ -132,6 +132,7 @@ func TestCanonicalCaptureValues(t *testing.T) {
 			FailureCodeFailureBodyRead,
 			FailureCodeDrainRead,
 			FailureCodeUpstreamRead,
+			FailureCodeClientCancel,
 			FailureCodeClientWrite,
 			FailureCodeClientAccept,
 			FailureCodeWebSocketDial,

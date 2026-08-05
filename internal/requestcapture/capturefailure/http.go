@@ -8,6 +8,11 @@ const (
 	HTTPForwardOriginUpstreamRead HTTPForwardOrigin = iota
 	HTTPForwardOriginReadTimeout
 	HTTPForwardOriginClientWrite
+	// HTTPForwardOriginClientCancel reports a client-initiated cancellation of
+	// the forwarding exchange. Unlike an upstream read failure, the responsible
+	// peer is the client; the failure fact must say so instead of inheriting the
+	// upstream_read defaults.
+	HTTPForwardOriginClientCancel
 )
 
 func HTTPFetch(
@@ -80,6 +85,15 @@ func HTTPForward(
 		class = requestcapture.FailureClassWrite
 		code = requestcapture.FailureCodeClientWrite
 		fallback = requestcapture.TerminationReasonWriteError
+	case HTTPForwardOriginClientCancel:
+		// The site stays response_read (that is where the exchange ended), but
+		// peer/code must identify the client as the cause rather than the
+		// upstream. The class default is canceled so the fact is precise even
+		// when the request context error is unavailable.
+		peer = requestcapture.FailurePeerClient
+		class = requestcapture.FailureClassCanceled
+		code = requestcapture.FailureCodeClientCancel
+		fallback = requestcapture.TerminationReasonClientDisconnect
 	}
 
 	fact := fromErrorWithContext(contextError, site, peer, class, code, err)

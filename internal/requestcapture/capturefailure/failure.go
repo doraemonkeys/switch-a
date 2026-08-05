@@ -348,6 +348,7 @@ func canonicalCode(code requestcapture.FailureCode) requestcapture.FailureCode {
 		requestcapture.FailureCodeFailureBodyRead,
 		requestcapture.FailureCodeDrainRead,
 		requestcapture.FailureCodeUpstreamRead,
+		requestcapture.FailureCodeClientCancel,
 		requestcapture.FailureCodeClientWrite,
 		requestcapture.FailureCodeClientAccept,
 		requestcapture.FailureCodeWebSocketDial,

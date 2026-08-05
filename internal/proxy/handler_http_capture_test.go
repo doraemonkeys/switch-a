@@ -17,6 +17,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 
 	"go.uber.org/zap"
@@ -235,6 +236,76 @@ func TestHTTPCaptureMergesResponseCredentialEvidenceBeforeTerminalDiagnostic(t *
 		t.Fatalf("response-aware diagnostic = %q", message)
 	}
 }
+func TestHTTPCaptureClientCancellationRecordsClientFacingFailure(t *testing.T) {
+	t.Parallel()
+
+	provider := captureTestProvider("https://provider.invalid")
+	manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
+		ID:   provider.ID,
+		Name: provider.Name,
+	}})
+	defer manager.Close()
+	gateway := manager.BeginGateway(requestcapture.GatewayStart{GatewayRequestID: "client-cancel"})
+
+	// Cancel the client request context before the exchange finishes: a client
+	// disconnect must be recorded as a client-facing cancellation, never as an
+	// upstream read failure, so downstream diagnostics are not misled.
+	request := httptest.NewRequest(http.MethodPost, "https://provider.invalid/v1/messages", nil)
+	canceledCtx, cancel := context.WithCancel(request.Context())
+	cancel()
+	request = request.WithContext(canceledCtx)
+
+	pctx := &proxyContext{
+		apiType:             APITypeClaude,
+		r:                   request,
+		body:                []byte(`{"model":"claude-3"}`),
+		capture:             gateway,
+		captureParticipates: true,
+	}
+	handler := &Handler{logger: zap.NewNop()}
+	exchange := handler.beginHTTPExchange(
+		pctx,
+		httpAttemptContext{
+			provider:        &provider,
+			selectionMode:   requestcapture.SelectionModeInitial,
+			selectionSource: requestcapture.SelectionSourceStrategy,
+		},
+		requestcapture.CredentialPhaseInitial,
+		request,
+	)
+	head := upstreamtransport.ResponseHead{
+		StatusCode:    http.StatusOK,
+		Protocol:      "HTTP/1.1",
+		SourceHeader:  http.Header{"Content-Type": {"application/json"}},
+		Header:        http.Header{"Content-Type": {"application/json"}},
+		Trailer:       make(http.Header),
+		ContentLength: -1,
+	}
+	pending := &pendingHTTPResponse{head: head, exchange: exchange, pctx: pctx}
+	pending.finishCapture(responseanalysis.Completion{Termination: responseanalysis.TerminationClientCancelled})
+	gateway.Finish(requestcapture.GatewayOutcome{})
+
+	page, err := readCaptureTestPage(manager, session, requestcapture.ListQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListRecords() error = %v", err)
+	}
+	if len(page.Records) != 1 || !page.Records[0].HasFailure {
+		t.Fatalf("records = %#v, want one structured failure", page.Records)
+	}
+	record := page.Records[0]
+	if record.TerminationReason != requestcapture.TerminationReasonClientDisconnect ||
+		record.SourceCompletion != requestcapture.SourceCompletionPartial {
+		t.Fatalf("termination/source = %q/%q", record.TerminationReason, record.SourceCompletion)
+	}
+	primary := record.Failure.Primary
+	if primary.Site != requestcapture.FailureSiteResponseRead ||
+		primary.Peer != requestcapture.FailurePeerClient ||
+		primary.Class != requestcapture.FailureClassCanceled ||
+		primary.Code != requestcapture.FailureCodeClientCancel {
+		t.Fatalf("failure fact = %#v, want response_read/client/canceled/client_cancel", primary)
+	}
+}
+
 func TestHandlerCaptureEnabledPreservesHTTPAndSSEBehavior(t *testing.T) {
 	tests := []struct {
 		name        string

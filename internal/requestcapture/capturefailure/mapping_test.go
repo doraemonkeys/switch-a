@@ -198,6 +198,27 @@ func TestHTTPPreparationAndForwardMapControlFlowOrigin(t *testing.T) {
 			wantClass:  requestcapture.FailureClassCanceled,
 			wantCode:   requestcapture.FailureCodeClientWrite,
 		},
+		{
+			name:       "client cancel with request context",
+			contextErr: context.Canceled,
+			err:        opaque,
+			origin:     HTTPForwardOriginClientCancel,
+			wantReason: requestcapture.TerminationReasonClientDisconnect,
+			wantSite:   requestcapture.FailureSiteResponseRead,
+			wantPeer:   requestcapture.FailurePeerClient,
+			wantClass:  requestcapture.FailureClassCanceled,
+			wantCode:   requestcapture.FailureCodeClientCancel,
+		},
+		{
+			name:       "client cancel without context error",
+			err:        opaque,
+			origin:     HTTPForwardOriginClientCancel,
+			wantReason: requestcapture.TerminationReasonCanceled,
+			wantSite:   requestcapture.FailureSiteResponseRead,
+			wantPeer:   requestcapture.FailurePeerClient,
+			wantClass:  requestcapture.FailureClassCanceled,
+			wantCode:   requestcapture.FailureCodeClientCancel,
+		},
 	}
 	for _, test := range forwardTests {
 		test := test

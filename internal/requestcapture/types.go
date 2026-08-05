@@ -183,6 +183,7 @@ const (
 	FailureCodeFailureBodyRead              = capturevalue.FailureCodeFailureBodyRead
 	FailureCodeDrainRead                    = capturevalue.FailureCodeDrainRead
 	FailureCodeUpstreamRead                 = capturevalue.FailureCodeUpstreamRead
+	FailureCodeClientCancel                 = capturevalue.FailureCodeClientCancel
 	FailureCodeClientWrite                  = capturevalue.FailureCodeClientWrite
 	FailureCodeClientAccept                 = capturevalue.FailureCodeClientAccept
 	FailureCodeWebSocketDial                = capturevalue.FailureCodeWebSocketDial

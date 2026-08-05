@@ -1,6 +1,9 @@
 package capturevalue
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 type SessionState uint8
 
@@ -155,6 +158,7 @@ const (
 	FailureCodeFailureBodyRead    FailureCode = "failure_body_read"
 	FailureCodeDrainRead          FailureCode = "drain_read"
 	FailureCodeUpstreamRead       FailureCode = "upstream_read"
+	FailureCodeClientCancel       FailureCode = "client_cancel"
 	FailureCodeClientWrite        FailureCode = "client_write"
 	FailureCodeClientAccept       FailureCode = "client_accept"
 	FailureCodeWebSocketDial      FailureCode = "websocket_dial"
@@ -610,63 +614,43 @@ func CanonicalFailureClass(value FailureClass) (FailureClass, bool) {
 	}
 }
 
+// knownFailureCodes is the canonical FailureCode registry. A single list keeps
+// the catalog extensible without a two-line-per-code switch; every code in the
+// enum block above must appear here, and new codes cost one entry, not three.
+var knownFailureCodes = []FailureCode{
+	FailureCodeUnknown,
+	FailureCodeMissingBaseURL,
+	FailureCodeMissingAPIKey,
+	FailureCodeMissingCredentials,
+	FailureCodeRequestBuild,
+	FailureCodeCredentialApply,
+	FailureCodeGatewayContext,
+	FailureCodeDNS,
+	FailureCodeConnection,
+	FailureCodeRoundTrip,
+	FailureCodeUnexpectedStatus,
+	FailureCodeFailureBodyRead,
+	FailureCodeDrainRead,
+	FailureCodeUpstreamRead,
+	FailureCodeClientCancel,
+	FailureCodeClientWrite,
+	FailureCodeClientAccept,
+	FailureCodeWebSocketDial,
+	FailureCodeHandshakeRejected,
+	FailureCodeWebSocketUpgrade,
+	FailureCodeReplayWrite,
+	FailureCodeRelayRead,
+	FailureCodeRelayWrite,
+	FailureCodeMessageRead,
+	FailureCodeMessageWrite,
+	FailureCodeProtocolViolation,
+	FailureCodeWebSocketClose,
+	FailureCodeProviderSemantic,
+}
+
 func CanonicalFailureCode(value FailureCode) (FailureCode, bool) {
-	switch value {
-	case FailureCodeUnknown:
-		return FailureCodeUnknown, true
-	case FailureCodeMissingBaseURL:
-		return FailureCodeMissingBaseURL, true
-	case FailureCodeMissingAPIKey:
-		return FailureCodeMissingAPIKey, true
-	case FailureCodeMissingCredentials:
-		return FailureCodeMissingCredentials, true
-	case FailureCodeRequestBuild:
-		return FailureCodeRequestBuild, true
-	case FailureCodeCredentialApply:
-		return FailureCodeCredentialApply, true
-	case FailureCodeGatewayContext:
-		return FailureCodeGatewayContext, true
-	case FailureCodeDNS:
-		return FailureCodeDNS, true
-	case FailureCodeConnection:
-		return FailureCodeConnection, true
-	case FailureCodeRoundTrip:
-		return FailureCodeRoundTrip, true
-	case FailureCodeUnexpectedStatus:
-		return FailureCodeUnexpectedStatus, true
-	case FailureCodeFailureBodyRead:
-		return FailureCodeFailureBodyRead, true
-	case FailureCodeDrainRead:
-		return FailureCodeDrainRead, true
-	case FailureCodeUpstreamRead:
-		return FailureCodeUpstreamRead, true
-	case FailureCodeClientWrite:
-		return FailureCodeClientWrite, true
-	case FailureCodeClientAccept:
-		return FailureCodeClientAccept, true
-	case FailureCodeWebSocketDial:
-		return FailureCodeWebSocketDial, true
-	case FailureCodeHandshakeRejected:
-		return FailureCodeHandshakeRejected, true
-	case FailureCodeWebSocketUpgrade:
-		return FailureCodeWebSocketUpgrade, true
-	case FailureCodeReplayWrite:
-		return FailureCodeReplayWrite, true
-	case FailureCodeRelayRead:
-		return FailureCodeRelayRead, true
-	case FailureCodeRelayWrite:
-		return FailureCodeRelayWrite, true
-	case FailureCodeMessageRead:
-		return FailureCodeMessageRead, true
-	case FailureCodeMessageWrite:
-		return FailureCodeMessageWrite, true
-	case FailureCodeProtocolViolation:
-		return FailureCodeProtocolViolation, true
-	case FailureCodeWebSocketClose:
-		return FailureCodeWebSocketClose, true
-	case FailureCodeProviderSemantic:
-		return FailureCodeProviderSemantic, true
-	default:
-		return FailureCodeUnknown, false
+	if slices.Contains(knownFailureCodes, value) {
+		return value, true
 	}
+	return FailureCodeUnknown, false
 }
