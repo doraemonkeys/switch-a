@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ErrorBodyParser } from "./ErrorBodyParser";
+import { ResponseBodyParser } from "./ResponseBodyParser";
 
-describe("ErrorBodyParser", () => {
+describe("ResponseBodyParser", () => {
   it("renders structured object errors and an accessible raw view", () => {
     render(
-      <ErrorBodyParser
+      <ResponseBodyParser
         body={JSON.stringify({
           error: {
             type: "invalid_request_error",
@@ -13,6 +13,7 @@ describe("ErrorBodyParser", () => {
           },
         })}
         statusCode={400}
+        tone="error"
       />,
     );
 
@@ -24,14 +25,26 @@ describe("ErrorBodyParser", () => {
   });
 
   it("keeps valid JSON arrays on a safe structured path", () => {
-    render(<ErrorBodyParser body='["first","second"]' statusCode={502} />);
+    render(
+      <ResponseBodyParser
+        body='["first","second"]'
+        statusCode={502}
+        tone="error"
+      />,
+    );
 
     expect(screen.getByText("value:")).toBeInTheDocument();
     expect(screen.getByText('["first","second"]')).toBeInTheDocument();
   });
 
   it("falls back to raw text for non-JSON bodies", () => {
-    render(<ErrorBodyParser body="upstream disconnected" statusCode={502} />);
+    render(
+      <ResponseBodyParser
+        body="upstream disconnected"
+        statusCode={502}
+        tone="error"
+      />,
+    );
 
     expect(screen.getByText("upstream disconnected")).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Raw response" })).toBeNull();
@@ -39,8 +52,21 @@ describe("ErrorBodyParser", () => {
 
   it("does not render empty bodies", () => {
     const { container } = render(
-      <ErrorBodyParser body="  " statusCode={500} />,
+      <ResponseBodyParser body="  " statusCode={500} tone="error" />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders non-error bodies without the error frame", () => {
+    const { container } = render(
+      <ResponseBodyParser
+        body={"event: response.created\ndata: {}"}
+        statusCode={200}
+        tone="neutral"
+      />,
+    );
+
+    expect(screen.getByText(/event: response\.created/)).toBeInTheDocument();
+    expect(container.querySelector(".bg-red-50\\/50")).not.toBeInTheDocument();
   });
 });

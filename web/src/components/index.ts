@@ -5,7 +5,7 @@ export * from "./ConfirmModal";
 export * from "./CopyButton";
 export * from "./detail-drawers";
 export {
-  ErrorBodyParser,
+  ResponseBodyParser,
   RequestAttemptTimeline,
   RequestEvidenceViewer,
 } from "../features/request-attempt";

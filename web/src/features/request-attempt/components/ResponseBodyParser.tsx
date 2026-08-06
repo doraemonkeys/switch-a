@@ -1,3 +1,11 @@
+/**
+ * Renders an attempt's response body snippet with a tone derived from the
+ * attempt's health assessment. Body snippets are captured for both error and
+ * non-error attempts (e.g. a client-canceled stream's last payload), so the
+ * red error treatment is opt-in via `tone` rather than unconditional.
+ */
+export type ResponseBodyTone = "error" | "warning" | "neutral";
+
 interface ParsedError {
   type?: string;
   code?: string;
@@ -14,31 +22,87 @@ interface DiagnosticTip {
   severity: "info" | "warning" | "error";
 }
 
-interface ErrorBodyParserProps {
+interface ResponseBodyParserProps {
   body: string;
   statusCode: number;
   userAgent?: string;
+  tone?: ResponseBodyTone;
   className?: string;
 }
 
-export function ErrorBodyParser({
+const NEUTRAL_BODY_CLASS =
+  "p-3 rounded-lg bg-bg-tertiary border border-border-light";
+const NEUTRAL_TEXT_CLASS =
+  "text-sm text-text-secondary font-mono whitespace-pre-wrap break-words";
+
+interface ToneStyles {
+  box: string;
+  header: string;
+  icon: string;
+  accent: string;
+  divider: string;
+  detail: string;
+  raw: string;
+  rawText: string;
+}
+
+const ERROR_STYLES: ToneStyles = {
+  box: "rounded-lg border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10 overflow-hidden",
+  header:
+    "px-3 py-2 bg-red-100/50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 flex items-center gap-2",
+  icon: "text-red-600 dark:text-red-400",
+  accent: "text-red-700 dark:text-red-300",
+  divider: "border-red-200 dark:border-red-800",
+  detail: "text-red-600 dark:text-red-400",
+  raw: "p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800",
+  rawText:
+    "text-sm text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap break-words",
+};
+
+const WARNING_STYLES: ToneStyles = {
+  box: "rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-900/10 overflow-hidden",
+  header:
+    "px-3 py-2 bg-amber-100/50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 flex items-center gap-2",
+  icon: "text-amber-600 dark:text-amber-400",
+  accent: "text-amber-700 dark:text-amber-300",
+  divider: "border-amber-200 dark:border-amber-800",
+  detail: "text-amber-600 dark:text-amber-400",
+  raw: "p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800",
+  rawText:
+    "text-sm text-amber-700 dark:text-amber-300 font-mono whitespace-pre-wrap break-words",
+};
+
+export function ResponseBodyParser({
   body,
   statusCode,
   userAgent,
+  tone = "neutral",
   className = "",
-}: ErrorBodyParserProps) {
+}: ResponseBodyParserProps) {
   if (!body || body.trim() === "") {
     return null;
   }
+
+  // Non-error bodies are evidence, not diagnostics: render them plain instead
+  // of forcing them through the error frame.
+  if (tone === "neutral") {
+    return (
+      <div className={`${NEUTRAL_BODY_CLASS} ${className}`}>
+        <p className={NEUTRAL_TEXT_CLASS}>{body}</p>
+      </div>
+    );
+  }
+
   const parsed = parseErrorBody(body);
+  const styles = tone === "warning" ? WARNING_STYLES : ERROR_STYLES;
   const tips = generateDiagnosticTips(parsed, statusCode, userAgent);
 
   return (
     <div className={`space-y-3 ${className}`}>
       {parsed.isJson ? (
-        <StructuredError parsed={parsed} />
+        <StructuredError parsed={parsed} styles={styles} />
       ) : (
-        <RawErrorDisplay body={body} />
+        <RawErrorDisplay body={body} styles={styles} />
       )}
 
       {tips.length > 0 && <DiagnosticTips tips={tips} />}
@@ -57,11 +121,17 @@ export function ErrorBodyParser({
   );
 }
 
-function StructuredError({ parsed }: { parsed: ParsedError }) {
+function StructuredError({
+  parsed,
+  styles,
+}: {
+  parsed: ParsedError;
+  styles: ToneStyles;
+}) {
   return (
-    <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10 overflow-hidden">
-      <div className="px-3 py-2 bg-red-100/50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 flex items-center gap-2">
-        <span className="text-red-600 dark:text-red-400">
+    <div className={styles.box}>
+      <div className={`${styles.header} flex items-center gap-2`}>
+        <span className={styles.icon}>
           <svg
             className="w-4 h-4"
             fill="none"
@@ -76,26 +146,24 @@ function StructuredError({ parsed }: { parsed: ParsedError }) {
             />
           </svg>
         </span>
-        <span className="text-sm font-medium text-red-700 dark:text-red-300">
+        <span className={`text-sm font-medium ${styles.accent}`}>
           {parsed.type || parsed.code || "Error"}
         </span>
       </div>
 
       <div className="p-3 space-y-2">
         {parsed.message && (
-          <p className="text-sm text-red-700 dark:text-red-300">
-            {parsed.message}
-          </p>
+          <p className={`text-sm ${styles.accent}`}>{parsed.message}</p>
         )}
 
         {parsed.details && Object.keys(parsed.details).length > 0 && (
-          <div className="pt-2 mt-2 border-t border-red-200 dark:border-red-800">
+          <div className={`pt-2 mt-2 border-t ${styles.divider}`}>
             <p className="text-xs text-text-muted mb-1.5">Details:</p>
             <div className="space-y-1">
               {Object.entries(parsed.details).map(([key, value]) => (
                 <div key={key} className="flex items-start gap-2 text-xs">
                   <span className="text-text-muted min-w-[80px]">{key}:</span>
-                  <span className="text-red-600 dark:text-red-400 font-mono break-all">
+                  <span className={`${styles.detail} font-mono break-all`}>
                     {typeof value === "object"
                       ? JSON.stringify(value)
                       : String(value)}
@@ -107,7 +175,7 @@ function StructuredError({ parsed }: { parsed: ParsedError }) {
         )}
 
         {parsed.allowedClients && parsed.allowedClients.length > 0 && (
-          <div className="pt-2 mt-2 border-t border-red-200 dark:border-red-800">
+          <div className={`pt-2 mt-2 border-t ${styles.divider}`}>
             <p className="text-xs text-text-muted mb-1.5">Allowed Clients:</p>
             <div className="flex flex-wrap gap-1.5">
               {parsed.allowedClients.map((client) => (
@@ -126,12 +194,16 @@ function StructuredError({ parsed }: { parsed: ParsedError }) {
   );
 }
 
-function RawErrorDisplay({ body }: { body: string }) {
+function RawErrorDisplay({
+  body,
+  styles,
+}: {
+  body: string;
+  styles: ToneStyles;
+}) {
   return (
-    <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-      <p className="text-sm text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap break-words">
-        {body}
-      </p>
+    <div className={styles.raw}>
+      <p className={styles.rawText}>{body}</p>
     </div>
   );
 }

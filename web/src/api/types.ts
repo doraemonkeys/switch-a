@@ -309,6 +309,22 @@ export type RequestAttemptOutcome =
   | "gateway_error";
 
 /**
+ * Backend health assessment for an attempt. Mirrors internal/errorrule:
+ * client_cancelled and incomplete classify as neutral, not failure — the UI
+ * must not re-derive failure from outcome + status alone.
+ */
+export type RequestAttemptHealthVerdict = "success" | "failure" | "neutral";
+
+export type RequestAttemptHealthCause =
+  | "normal_completion"
+  | "transport_failure"
+  | "http_status_failure"
+  | "semantic_retry_then_switch"
+  | "semantic_neutral"
+  | "client_cancelled"
+  | "incomplete";
+
+/**
  * Represents a single provider attempt within a request.
  *
  * WebSocket lifecycle attribution stays on RequestLog. Attempt rows only carry
@@ -332,6 +348,9 @@ export interface RequestAttempt {
   phase?: RequestAttemptPhase | null;
   outcome?: RequestAttemptOutcome | null;
   result_visible_to_client?: boolean | null;
+  /** Authoritative health assessment; present on normalized_v1 attempts. */
+  health_verdict?: RequestAttemptHealthVerdict | null;
+  health_cause?: RequestAttemptHealthCause | null;
   attempt_evidence_json: string | null;
   body_snippet?: string; // First ~512 bytes of error response
   req_body_snippet?: string; // First ~512 bytes of request body (error attempts only)

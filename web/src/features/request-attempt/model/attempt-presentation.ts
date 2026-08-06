@@ -103,6 +103,11 @@ export function getAttemptOutcomePresentation(
         tone: "error",
       };
     case "upstream_incomplete":
+      // A client-side cancel is not an upstream failure; the backend health
+      // cause discriminates it from a genuinely truncated upstream stream.
+      if (attempt.health_cause === "client_cancelled") {
+        return { text: "Client canceled the response", tone: "info" };
+      }
       return {
         text: "Upstream response incomplete",
         tone: "warning",
@@ -119,6 +124,33 @@ export function getAttemptOutcomePresentation(
   }
 }
 
+// Backend health verdicts are authoritative for normalized attempts:
+// client_cancelled and incomplete are neutral there, so re-deriving failure
+// from outcome + status would mislabel them. Semantic errors keep their
+// amber state (rule-absorbed, not failure) unless the verdict says failure.
+function getVerdictVisualState(
+  attempt: RequestAttempt,
+  isWebSocket: boolean,
+): AttemptVisualState | null {
+  const verdict = attempt.health_verdict;
+  if (verdict == null) {
+    return null;
+  }
+  if (verdict === "failure") {
+    return "failure";
+  }
+  if (verdict === "success") {
+    return "success";
+  }
+  if (attempt.outcome === "upstream_semantic_error") {
+    return "semantic";
+  }
+  if (isWebSocket && attempt.status_code === WEBSOCKET_UPGRADE_STATUS_CODE) {
+    return "upgrade";
+  }
+  return "neutral";
+}
+
 function getVisualState(
   attempt: RequestAttempt,
   isWebSocket: boolean,
@@ -127,6 +159,10 @@ function getVisualState(
   hasError: boolean,
   isNoResponse: boolean,
 ): AttemptVisualState {
+  const verdictState = getVerdictVisualState(attempt, isWebSocket);
+  if (verdictState != null) {
+    return verdictState;
+  }
   if (isSuccess) {
     return "success";
   }
@@ -174,6 +210,49 @@ function isFailureOutcome(
   }
 }
 
+function hasHeuristicFailure(
+  attempt: RequestAttempt,
+  isWebSocket: boolean,
+  ownsVisibleSession: boolean,
+  hasError: boolean,
+  isNoResponse: boolean,
+): boolean {
+  if (isWebSocket) {
+    return (
+      (attempt.outcome !== undefined &&
+        attempt.outcome !== null &&
+        !ownsVisibleSession) ||
+      hasError ||
+      isNoResponse ||
+      attempt.status_code >= 400
+    );
+  }
+  return (
+    isFailureOutcome(attempt.outcome) ||
+    hasError ||
+    isNoResponse ||
+    attempt.status_code >= 400
+  );
+}
+
+function isHeuristicSuccess(
+  attempt: RequestAttempt,
+  isWebSocket: boolean,
+  ownsVisibleSession: boolean,
+  hasFailure: boolean,
+): boolean {
+  if (isWebSocket) {
+    return ownsVisibleSession && !hasFailure;
+  }
+  return (
+    !hasFailure &&
+    attempt.status_code >= 200 &&
+    attempt.status_code < 400 &&
+    // A rule-absorbed semantic error may carry 200; it is never success.
+    attempt.outcome !== "upstream_semantic_error"
+  );
+}
+
 export function buildAttemptPresentation(
   attempt: RequestAttempt,
   isWebSocket: boolean,
@@ -181,26 +260,23 @@ export function buildAttemptPresentation(
   const hasError = (attempt.error?.length ?? 0) > 0;
   const isNoResponse = attempt.status_code === NO_RESPONSE_STATUS_CODE;
   const ownsVisibleSession = attempt.outcome === "visible_session";
-  // Outcome, status, and explicit error axes own classification. switch_reason
-  // is intentionally excluded because it records routing history, not verdict.
-  const hasFailure = isWebSocket
-    ? (attempt.outcome !== undefined &&
-        attempt.outcome !== null &&
-        !ownsVisibleSession) ||
-      hasError ||
-      isNoResponse ||
-      attempt.status_code >= 400
-    : isFailureOutcome(attempt.outcome) ||
-      hasError ||
-      isNoResponse ||
-      attempt.status_code >= 400;
-  const isSuccess = isWebSocket
-    ? ownsVisibleSession && !hasFailure
-    : !hasFailure &&
-      attempt.status_code >= 200 &&
-      attempt.status_code < 400 &&
-      // A rule-absorbed semantic error may carry 200; it is never success.
-      attempt.outcome !== "upstream_semantic_error";
+  // The backend health verdict owns classification when present; the
+  // outcome/status/error heuristics below only cover attempts recorded without
+  // one (legacy rows). switch_reason is excluded because it records routing
+  // history, not verdict.
+  const hasHealthVerdict = attempt.health_verdict != null;
+  const hasFailure = hasHealthVerdict
+    ? attempt.health_verdict === "failure"
+    : hasHeuristicFailure(
+        attempt,
+        isWebSocket,
+        ownsVisibleSession,
+        hasError,
+        isNoResponse,
+      );
+  const isSuccess = hasHealthVerdict
+    ? attempt.health_verdict === "success"
+    : isHeuristicSuccess(attempt, isWebSocket, ownsVisibleSession, hasFailure);
   return Object.freeze({
     hasError,
     hasBodySnippet: (attempt.body_snippet?.length ?? 0) > 0,

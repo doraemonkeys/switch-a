@@ -155,6 +155,112 @@ function registerWebSocketLifecycleAttributionTests() {
   });
 }
 
+function registerHealthVerdictClassificationTests() {
+  describe("health verdict classification", () => {
+    it("treats a client-cancelled attempt as neutral, not failure", () => {
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={[
+            createMockAttempt({
+              id: 1,
+              attempt: 0,
+              status_code: 200,
+              outcome: "upstream_incomplete",
+              error: "client canceled response forwarding",
+              result_visible_to_client: true,
+              health_verdict: "neutral",
+              health_cause: "client_cancelled",
+            }),
+          ]}
+        />,
+      );
+
+      const card = container.querySelector("article");
+      expect(card).toHaveClass("border-border-light");
+      expect(card).not.toHaveClass("border-red-200");
+      expect(card).not.toHaveClass("border-green-200");
+
+      const dot = container.querySelector(".rounded-full.w-3.h-3");
+      expect(dot).toHaveClass("bg-gray-400");
+
+      expect(
+        screen.getByText("Client canceled the response"),
+      ).toBeInTheDocument();
+
+      // The recorded error text is evidence, not a failure banner.
+      const errorBox = container.querySelector(".mt-2.p-2.rounded.border");
+      expect(errorBox).not.toHaveClass("bg-red-100\\/50");
+    });
+
+    it("renders a visible payload body without error styling", () => {
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={[
+            createMockAttempt({
+              id: 1,
+              attempt: 0,
+              status_code: 200,
+              outcome: "upstream_incomplete",
+              error: "client canceled response forwarding",
+              result_visible_to_client: true,
+              health_verdict: "neutral",
+              health_cause: "client_cancelled",
+              body_snippet:
+                'event: response.created\ndata: {"type":"response.created"}',
+            }),
+          ]}
+        />,
+      );
+
+      expect(screen.getByText("Response Body:")).toBeInTheDocument();
+      expect(
+        container.querySelector(".bg-red-50\\/50"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/event: response\.created/)).toBeInTheDocument();
+    });
+
+    it("honors a failure health verdict regardless of HTTP status", () => {
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={[
+            createMockAttempt({
+              id: 1,
+              attempt: 0,
+              status_code: 200,
+              outcome: "upstream_semantic_error",
+              health_verdict: "failure",
+              health_cause: "semantic_retry_then_switch",
+            }),
+          ]}
+        />,
+      );
+
+      const card = container.querySelector("article");
+      expect(card).toHaveClass("border-red-200");
+    });
+
+    it("honors a success health verdict", () => {
+      const { container } = render(
+        <RequestAttemptTimeline
+          attempts={[
+            createMockAttempt({
+              id: 1,
+              attempt: 0,
+              status_code: 200,
+              outcome: "upstream_completed",
+              health_verdict: "success",
+              health_cause: "normal_completion",
+            }),
+          ]}
+        />,
+      );
+
+      const card = container.querySelector("article");
+      expect(card).toHaveClass("border-green-200");
+    });
+  });
+}
+
 describe("RequestAttemptTimeline", () => {
   describe("empty/null handling", () => {
     it("returns null when attempts is empty array", () => {
@@ -527,5 +633,6 @@ describe("RequestAttemptTimeline", () => {
     });
   });
 
+  registerHealthVerdictClassificationTests();
   registerWebSocketLifecycleAttributionTests();
 });

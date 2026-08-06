@@ -13,7 +13,10 @@ import {
   AttemptProviderMeta,
   AttemptSelectionMetadata,
 } from "./AttemptMetadata";
-import { ErrorBodyParser } from "./ErrorBodyParser";
+import {
+  ResponseBodyParser,
+  type ResponseBodyTone,
+} from "./ResponseBodyParser";
 import { RequestEvidenceViewer } from "./RequestEvidenceViewer";
 
 const CARD_CLASSES: Record<AttemptVisualState | "success_last", string> = {
@@ -39,6 +42,42 @@ const DOT_CLASSES: Record<AttemptVisualState, string> = {
   no_response: "bg-gray-400",
   neutral: "bg-gray-400",
 };
+
+// The recorded error text is colored by the attempt's health classification:
+// only true failures get the red treatment, rule-absorbed errors stay amber,
+// and client-driven endings (cancel, clean close) render as neutral evidence.
+const ERROR_BOX_STYLES: Record<AttemptVisualState, string> = {
+  failure:
+    "bg-red-100/50 dark:bg-red-900/20 border-red-200 dark:border-red-800",
+  semantic:
+    "bg-amber-100/50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800",
+  warning:
+    "bg-amber-100/50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800",
+  success: "bg-bg-tertiary border-border-light",
+  upgrade: "bg-bg-tertiary border-border-light",
+  no_response: "bg-bg-tertiary border-border-light",
+  neutral: "bg-bg-tertiary border-border-light",
+};
+
+const ERROR_TEXT_STYLES: Record<AttemptVisualState, string> = {
+  failure: "text-red-700 dark:text-red-300",
+  semantic: "text-amber-700 dark:text-amber-300",
+  warning: "text-amber-700 dark:text-amber-300",
+  success: "text-text-secondary",
+  upgrade: "text-text-secondary",
+  no_response: "text-text-secondary",
+  neutral: "text-text-secondary",
+};
+
+function getBodyTone(visualState: AttemptVisualState): ResponseBodyTone {
+  if (visualState === "failure") {
+    return "error";
+  }
+  if (visualState === "semantic" || visualState === "warning") {
+    return "warning";
+  }
+  return "neutral";
+}
 const WEBSOCKET_SUCCESS_BADGE_CLASS =
   "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
 
@@ -152,8 +191,12 @@ export function AttemptNode({
         />
 
         {presentation.hasError && (
-          <div className="mt-2 p-2 rounded bg-red-100/50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-            <p className="text-xs text-red-700 dark:text-red-300 font-mono break-words">
+          <div
+            className={`mt-2 p-2 rounded border ${ERROR_BOX_STYLES[presentation.visualState]}`}
+          >
+            <p
+              className={`text-xs font-mono break-words ${ERROR_TEXT_STYLES[presentation.visualState]}`}
+            >
               {attempt.error}
             </p>
           </div>
@@ -173,10 +216,11 @@ export function AttemptNode({
         {presentation.hasBodySnippet && (
           <div className="mt-2">
             <p className="text-xs text-text-muted mb-1.5">Response Body:</p>
-            <ErrorBodyParser
+            <ResponseBodyParser
               body={attempt.body_snippet!}
               statusCode={attempt.status_code}
               userAgent={userAgent}
+              tone={getBodyTone(presentation.visualState)}
             />
           </div>
         )}
