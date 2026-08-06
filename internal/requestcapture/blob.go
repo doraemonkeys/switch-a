@@ -415,7 +415,7 @@ func (r *recordState) retainResponseTrailersLocked(outcome Outcome, allowMetadat
 	if r.httpResponse == nil || len(outcome.ResponseTrailers) == 0 {
 		return
 	}
-	evidence := outcome.CredentialEvidence
+	evidence := r.credentialEvidence
 	trailers := (redaction.Sanitizer{}).HeadersWithEvidence(
 		outcome.ResponseTrailers,
 		r.sensitiveHeaderNames,
@@ -433,8 +433,8 @@ func (r *recordState) retainResponseTrailersLocked(outcome Outcome, allowMetadat
 		r.markOverflowLocked()
 		r.session.logMetadataTruncationLocked(r.gateway, r, "response_trailers", maxRetainedHeaderBytes)
 	}
-	// Trailer credentials can change the fail-closed policy even when their
-	// optional snapshot could not be retained.
+	// Retained attempt evidence remains authoritative even when an optional trailer
+	// snapshot cannot be admitted under the memory budget.
 	r.redactAllHeaders = r.redactAllHeaders || trailers.RedactAll || trailers.Discovered
 }
 
@@ -491,9 +491,9 @@ func (r *recordState) finishLocked(outcome Outcome, enforceRetention bool) {
 	session := r.session
 	outcome = normalizedRecordOutcome(outcome, r.disabled)
 	r.retainResponseTrailersLocked(outcome, enforceRetention)
-	r.retainWebSocketCloseLocked(outcome.WebSocketClose, outcome.CredentialEvidence, enforceRetention)
+	r.retainWebSocketCloseLocked(outcome.WebSocketClose, r.credentialEvidence, enforceRetention)
 	failure, hasFailure := (redaction.Sanitizer{}).FailureDetailed(
-		outcome.Failure, outcome.CredentialEvidence, r.redactAllHeaders,
+		outcome.Failure, r.credentialEvidence, r.redactAllHeaders,
 	)
 	if hasFailure {
 		charge := estimateFailureCharge(failure)
@@ -605,6 +605,7 @@ func (s *sessionState) releaseRecordLocked(record *recordState) {
 	record.httpResponse = nil
 	record.wsHandshake = nil
 	record.wsClose = nil
+	record.credentialEvidence = CredentialEvidence{}
 	record.sensitiveHeaderNames = nil
 	record.redactAllHeaders = false
 	record.responseObserved = false

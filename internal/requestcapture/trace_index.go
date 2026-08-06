@@ -493,6 +493,7 @@ func (g *gatewayState) severEntryLocked(entry *traceEntryState) int64 {
 		stub.gateway = nil
 		stub.entry = nil
 		stub.generation = 0
+		stub.credentialEvidence = CredentialEvidence{}
 		stub.completed = true
 		entry.stubOwner = nil
 	}

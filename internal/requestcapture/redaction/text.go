@@ -159,14 +159,6 @@ func boundedTrailerKeys(source http.Header) ([]string, bool) {
 	return result, truncated
 }
 
-func normalizedCredentialKey(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	for strings.HasSuffix(value, "[]") {
-		value = strings.TrimSuffix(value, "[]")
-	}
-	return strings.ReplaceAll(value, "-", "_")
-}
-
 func scrubText(value string, secrets []string) string {
 	if value == "" || len(secrets) == 0 {
 		return scrubTextWithReplacer(value, credentialReplacer{bounded: true})
@@ -174,8 +166,8 @@ func scrubText(value string, secrets []string) string {
 	return scrubTextWithReplacer(value, compileCredentialReplacer(secrets))
 }
 
-// ScrubText exposes the complete structured-text redaction path to callers that
-// already hold explicit borrowed credential evidence.
+// ScrubText exposes exact injected-key replacement to callers that already hold
+// attempt-scoped redaction evidence.
 func ScrubText(value string, secrets []string) string {
 	return scrubText(value, secrets)
 }
@@ -184,14 +176,10 @@ func scrubTextWithReplacer(value string, replacer credentialReplacer) string {
 	if !replacer.bounded {
 		return RedactedValue
 	}
-	result := replacer.replace(value)
-	var ok bool
-	result, ok = redactStructuredCredentialValues(result)
-	if !ok {
-		return RedactedValue
-	}
-	result = authValuePattern.ReplaceAllString(result, "$1 "+RedactedValue)
-	return keyValuePattern.ReplaceAllString(result, "$1"+RedactedValue)
+	// Capture policy is intentionally exact-value based. The proxy supplies only
+	// the API key it injected, so unrelated user credentials and provider payload
+	// diagnostics remain available for debugging.
+	return replacer.replace(value)
 }
 
 func failureFactPresent(fact capturevalue.FailureFact) bool {
@@ -260,31 +248,23 @@ func (s Sanitizer) failureFactDetailed(
 	}
 
 	secrets := evidence.valuesView()
-	if result.Code != capturevalue.FailureCodeProviderSemantic {
-		if input.ProviderErrorType != "" || input.ProviderErrorCode != "" {
-			truncated = true
-		}
-		result.ProviderErrorType = ""
-		result.ProviderErrorCode = ""
-	} else {
-		providerType := SanitizedText(
-			input.ProviderErrorType,
-			secrets,
-			MaxRetainedProviderErrorFieldBytes,
-			"PROVIDER_ERROR_TYPE",
-		)
-		providerCode := SanitizedText(
-			input.ProviderErrorCode,
-			secrets,
-			MaxRetainedProviderErrorFieldBytes,
-			"PROVIDER_ERROR_CODE",
-		)
-		result.ProviderErrorType = providerType.Value
-		result.ProviderErrorCode = providerCode.Value
-		truncated = truncated || providerType.Truncated || providerCode.Truncated ||
-			providerType.Value != input.ProviderErrorType ||
-			providerCode.Value != input.ProviderErrorCode
-	}
+	providerType := SanitizedText(
+		input.ProviderErrorType,
+		secrets,
+		MaxRetainedProviderErrorFieldBytes,
+		"PROVIDER_ERROR_TYPE",
+	)
+	providerCode := SanitizedText(
+		input.ProviderErrorCode,
+		secrets,
+		MaxRetainedProviderErrorFieldBytes,
+		"PROVIDER_ERROR_CODE",
+	)
+	result.ProviderErrorType = providerType.Value
+	result.ProviderErrorCode = providerCode.Value
+	truncated = truncated || providerType.Truncated || providerCode.Truncated ||
+		providerType.Value != input.ProviderErrorType ||
+		providerCode.Value != input.ProviderErrorCode
 	message := SanitizedText(input.Message, secrets, MaxRetainedErrorBytes, "FAILURE_MESSAGE")
 	result.Message = message.Value
 	return result, truncated || message.Truncated || message.Value != input.Message

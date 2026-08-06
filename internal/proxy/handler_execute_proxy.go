@@ -96,7 +96,9 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		result, continueExecution := h.executeLogicalAttempt(ctx, pctx, state, attempt, rules)
 		h.applyForwardResult(state, result)
 		h.recordAttempt(pctx, attempt, result, attemptIndex, attemptStart)
-		h.attachHTTPAttemptEvidence(pctx, result, attemptFactsFromForwardResult(ctx, result))
+		facts := attemptFactsFromForwardResult(ctx, result)
+		facts.InjectedAPIKey = injectedAPIKeyForCapture(attempt.provider, pctx.apiType)
+		h.attachHTTPAttemptEvidence(pctx, result, facts)
 		if !continueExecution {
 			break
 		}
@@ -501,6 +503,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 			IsSSE: state.isSSE, FirstByteVisible: state.firstByteVisible,
 			CtxErr: pctx.r.Context().Err(), IsStatusFailover: state.isStatusFailover,
 			IsClientWriteError: state.isClientWriteError, SemanticError: state.semanticError,
+			InjectedAPIKey: injectedAPIKeyForCapture(state.providerUsed, pctx.apiType),
 		},
 		FirstTokenMs: state.firstTokenMs, ResponseBytes: state.responseBytes,
 		TokenUsage: state.tokenUsage, Latency: time.Since(pctx.startTime),

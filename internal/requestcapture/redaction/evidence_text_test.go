@@ -117,24 +117,23 @@ func TestSensitiveHeaderEvidenceSealMergeAndBounds(t *testing.T) {
 	nilEvidence.failClosed()
 }
 
-func TestSanitizedTextScrubsExactAndStructuredCredentials(t *testing.T) {
+func TestSanitizedTextScrubsOnlyExactCredential(t *testing.T) {
 	input := `round trip failed: Bearer exact-secret token=pattern-secret {"client_secret":{"nested":["json-secret"]},"safe":"visible"}`
 	result := SanitizedText(input, []string{"exact-secret"}, MaxRetainedErrorBytes, "ERROR")
-	for _, secret := range []string{"exact-secret", "pattern-secret", "json-secret"} {
-		if strings.Contains(result.Value, secret) {
-			t.Fatalf("sanitized text leaked %q: %q", secret, result.Value)
-		}
+	if strings.Contains(result.Value, "exact-secret") || !strings.Contains(result.Value, "pattern-secret") ||
+		!strings.Contains(result.Value, "json-secret") {
+		t.Fatalf("provider diagnostics were changed unexpectedly: %q", result.Value)
 	}
 	if result.Truncated || !strings.Contains(result.Value, `"safe":"visible"`) {
 		t.Fatalf("sanitized text lost safe context: %#v", result)
 	}
 
 	structured := ScrubText(`{"access_token":["first",{"deep":true}],"safe":7}`, nil)
-	if strings.Contains(structured, "first") || !strings.Contains(structured, `"safe":7`) {
+	if !strings.Contains(structured, "first") || !strings.Contains(structured, `"safe":7`) {
 		t.Fatalf("structured scrub = %q", structured)
 	}
-	if got := ScrubText(`{"access_token":[`, nil); got != RedactedValue {
-		t.Fatalf("malformed credential-shaped JSON = %q, want fail-closed marker", got)
+	if got := ScrubText(`{"access_token":[`, nil); got == RedactedValue {
+		t.Fatalf("malformed provider JSON was unnecessarily suppressed: %q", got)
 	}
 	if got := ScrubText(`{"safe":[`, nil); got == RedactedValue {
 		t.Fatalf("malformed non-credential text was unnecessarily suppressed: %q", got)
@@ -230,15 +229,17 @@ func TestFailureDetailedCanonicalizesAndRedactsDiagnostics(t *testing.T) {
 		result.Secondary.Message,
 	} {
 		if strings.Contains(value, "secret") {
-			t.Fatalf("failure diagnostic leaked credential: %#v", result)
+			t.Fatalf("failure diagnostic leaked injected credential: %#v", result)
 		}
 	}
 
 	nonSemantic := input
 	nonSemantic.Primary.Code = capturevalue.FailureCodeRoundTrip
 	result, _ = sanitizer.FailureDetailed(nonSemantic, sealedCredentialsForTest("secret"), false)
-	if result.Primary.ProviderErrorType != "" || result.Primary.ProviderErrorCode != "" || !result.Truncated {
-		t.Fatalf("non-semantic provider fields survived: %#v", result)
+	if !strings.Contains(result.Primary.ProviderErrorType, RedactedValue) ||
+		!strings.Contains(result.Primary.ProviderErrorCode, RedactedValue) ||
+		!strings.Contains(result.Primary.Message, RedactedValue) || !result.Truncated {
+		t.Fatalf("non-semantic provider fields were not preserved: %#v", result)
 	}
 
 	invalid := input

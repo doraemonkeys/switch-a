@@ -1,8 +1,6 @@
 package websocketproxy
 
 import (
-	"net/http"
-
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
@@ -141,9 +139,14 @@ func sourceEndpointComplete(observedBytes, expectedBytes int64, reachedEOF, read
 	return capturebridge.SourceEndpointComplete(observedBytes, expectedBytes, reachedEOF, readFailed)
 }
 
-func captureCredentialMaterial(headers http.Header) (
+func captureCredentialMaterial(injectedAPIKey string) (
 	requestcapture.SensitiveHeaderEvidence,
 	requestcapture.CredentialEvidence,
 ) {
-	return capturebridge.CredentialMaterial(headers)
+	return capturebridge.CredentialMaterial(injectedAPIKey)
+}
+
+func emptyCaptureCredentialEvidence() requestcapture.CredentialEvidence {
+	_, evidence := captureCredentialMaterial("")
+	return evidence
 }

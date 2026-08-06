@@ -3,55 +3,10 @@ package redaction
 import (
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
-)
-
-var (
-	defaultSensitiveHeaderNames = [...]string{
-		"authorization",
-		"proxy-authorization",
-		"cookie",
-		"set-cookie",
-		"x-api-key",
-		"api-key",
-		"x-goog-api-key",
-		"x-access-token",
-		"x-amz-credential",
-		"x-amz-security-token",
-		"x-auth-token",
-		"x-goog-credential",
-	}
-	defaultSensitiveQueryKeys = map[string]struct{}{
-		"access_token":         {},
-		"api_key":              {},
-		"apikey":               {},
-		"authorization":        {},
-		"auth":                 {},
-		"client_secret":        {},
-		"credential":           {},
-		"id_token":             {},
-		"key":                  {},
-		"password":             {},
-		"refresh_token":        {},
-		"secret":               {},
-		"session_token":        {},
-		"sig":                  {},
-		"signature":            {},
-		"token":                {},
-		"x_amz_credential":     {},
-		"x_amz_security_token": {},
-		"x_amz_signature":      {},
-		"x_goog_credential":    {},
-		"x_goog_signature":     {},
-	}
-	authValuePattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+`)
-	keyValuePattern  = regexp.MustCompile(
-		`(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|client[_-]?(?:secret|assertion)|x[_-]amz[_-]?(?:signature|credential|security[_-]?token)|x[_-]goog[_-]?(?:signature|credential)|authorization|password|secret|token)["']?(?:\[\])?\s*[:=]\s*["']?)[^"',\s;&}\]]+`,
-	)
 )
 
 type Sanitizer struct{}
@@ -187,8 +142,8 @@ func (s Sanitizer) HeadersWithEvidence(
 	evidence CredentialEvidence,
 	redactAll bool,
 ) HeaderSanitization {
-	// An incomplete producer inventory cannot prove that an ordinary-looking
-	// field does not echo a credential, so every retained value must fail closed.
+	// Unsealed evidence cannot prove that the attempt's injected key was supplied,
+	// so the legacy fail-closed boundary remains for malformed producers.
 	return s.HeadersDetailed(
 		source,
 		extraSensitive,
@@ -240,9 +195,8 @@ func (target Target) Sanitize(s Sanitizer, secrets []string) TargetSanitization 
 func (s Sanitizer) TargetWithEvidence(target Target, evidence CredentialEvidence) TargetSanitization {
 	result := target.Sanitize(s, evidence.valuesView())
 	if !evidence.Sealed() || evidence.Overflowed() {
-		// URL userinfo and known query keys are insufficient when the producer
-		// could not certify every credential value; path, host, and safe-looking
-		// query components may still echo an unknown secret.
+		// Runtime producers always seal attempt evidence, including the empty case.
+		// Keep fail-closed behavior for malformed integrations.
 		result.Target = TextSanitization{Value: RedactedValue, Truncated: true}
 		result.Host = TextSanitization{Value: RedactedValue, Truncated: true}
 	}
@@ -320,7 +274,15 @@ func (Sanitizer) sanitizeParsedURL(parsed url.URL, secrets []string) TargetSanit
 			Host:   host,
 		}
 	}
-	parsed.User = nil
+	if parsed.User != nil {
+		username := scrubTextWithReplacer(parsed.User.Username(), replacer)
+		if password, present := parsed.User.Password(); present {
+			password = scrubTextWithReplacer(password, replacer)
+			parsed.User = url.UserPassword(username, password)
+		} else {
+			parsed.User = url.User(username)
+		}
+	}
 	host := sanitizedTextWithReplacer(parsed.Host, replacer, MaxRetainedHostBytes, "HOST")
 	parsed.Host = host.Value
 	parsed.Scheme = scrubTextWithReplacer(parsed.Scheme, replacer)
@@ -338,13 +300,6 @@ func (Sanitizer) sanitizeParsedURL(parsed url.URL, secrets []string) TargetSanit
 		}
 	}
 	for key, values := range query {
-		if _, sensitive := defaultSensitiveQueryKeys[normalizedCredentialKey(key)]; sensitive {
-			for index := range values {
-				values[index] = RedactedValue
-			}
-			query[key] = values
-			continue
-		}
 		for index, value := range values {
 			values[index] = scrubTextWithReplacer(value, replacer)
 		}
@@ -412,8 +367,8 @@ func (s Sanitizer) RequestDetailed(raw RequestMetadata, targetInput Target) Requ
 			Trailers:      trailers.Value,
 		},
 		SensitiveNames: names.names,
-		// A value absent from sealed producer evidence cannot be scrubbed from
-		// later opaque metadata, so discovery of such a value poisons future text.
+		// Explicit sensitive-header extensions still fail closed; runtime capture
+		// seals this inventory empty and redacts only the injected API key.
 		RedactAll: headerRedactAll || headerDiscovered,
 		Truncated: method.Truncated || targetResult.Target.Truncated || targetResult.Host.Truncated ||
 			headers.Truncated || trailers.Truncated || names.truncated,

@@ -59,7 +59,7 @@ func TestEncodeMatchesSharedGoldenFixture(t *testing.T) {
 }
 
 func TestEncodeEnvelopePolicies(t *testing.T) {
-	semantic, err := NewSemanticError(validFacts(t))
+	semantic, err := NewSemanticError(validFacts(t), "")
 	if err != nil {
 		t.Fatalf("NewSemanticError() error = %v", err)
 	}
@@ -128,18 +128,22 @@ func TestEncodeEnvelopePolicies(t *testing.T) {
 
 func TestSanitizeSnippet(t *testing.T) {
 	input := "  Authorization: Bearer secret-token; x-api-key=another Cookie: session=abc  "
-	got := SanitizeSnippet(input)
-	if strings.Contains(got, "secret-token") || strings.Contains(got, "another") || strings.Contains(got, "session=abc") {
-		t.Fatalf("secret survived redaction: %q", got)
+	got := SanitizeSnippet(input, "")
+	if got != strings.TrimSpace(input) {
+		t.Fatalf("transparent sanitize = %q", got)
+	}
+	got = SanitizeSnippet(input, "secret-token")
+	if strings.Contains(got, "secret-token") || !strings.Contains(got, "another") || !strings.Contains(got, "session=abc") {
+		t.Fatalf("exact-key sanitize changed unrelated evidence: %q", got)
 	}
 	if !strings.Contains(got, RedactedPlaceholder) {
-		t.Fatalf("redaction marker absent: %q", got)
+		t.Fatalf("redaction marker absent for explicit key: %q", got)
 	}
-	if got := SanitizeSnippet(" \t\n "); got != "" {
+	if got := SanitizeSnippet(" \t\n ", ""); got != "" {
 		t.Fatalf("blank sanitize = %q", got)
 	}
 	unicode := strings.Repeat("界", SnippetLimitBytes)
-	got = SanitizeSnippet(unicode)
+	got = SanitizeSnippet(unicode, "")
 	if len(got) > SnippetLimitBytes || !json.Valid([]byte(`"`+got+`"`)) {
 		t.Fatalf("UTF-8 truncation produced %d invalid bytes", len(got))
 	}
@@ -148,13 +152,13 @@ func TestSanitizeSnippet(t *testing.T) {
 	}
 }
 
-func TestNewSemanticErrorBuildsBoundedSanitizedValue(t *testing.T) {
+func TestNewSemanticErrorPreservesDiagnosticsAndRedactsExplicitKey(t *testing.T) {
 	facts := validFacts(t)
 	facts.Rule.Winner.Rule.Name = "Authorization: secret"
 	facts.Rule.Winner.Rule.Keywords[0] = "Bearer raw-token"
 	facts.Rule.Winner.MatchedKeywords[0] = "Bearer raw-token"
 	facts.Rule.Matches[0] = facts.Rule.Winner
-	semantic, err := NewSemanticError(facts)
+	semantic, err := NewSemanticError(facts, "raw-token")
 	if err != nil {
 		t.Fatalf("NewSemanticError() error = %v", err)
 	}
@@ -162,8 +166,8 @@ func TestNewSemanticErrorBuildsBoundedSanitizedValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode() error = %v", err)
 	}
-	if strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "raw-token") {
-		t.Fatalf("semantic evidence leaked sanitized values: %s", encoded)
+	if !strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "raw-token") {
+		t.Fatalf("semantic evidence did not follow explicit-key policy: %s", encoded)
 	}
 	if semantic.Retry.GlobalAttemptsRemaining == nil || *semantic.Retry.GlobalAttemptsRemaining != "3" {
 		t.Fatalf("remaining attempts = %v", semantic.Retry.GlobalAttemptsRemaining)
@@ -250,7 +254,7 @@ func TestNewSemanticErrorRejectsInvalidFacts(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			facts := validFacts(t)
 			testCase.mutate(&facts)
-			if _, err := NewSemanticError(facts); err == nil {
+			if _, err := NewSemanticError(facts, ""); err == nil {
 				t.Fatal("NewSemanticError() unexpectedly succeeded")
 			}
 		})
@@ -275,7 +279,7 @@ func TestNewSemanticErrorAlternateAndUnlimitedBranches(t *testing.T) {
 		Outcome: AlternateActivated, ProviderID: &provider, SwitchMode: &mode, SwitchReason: &reason,
 	}
 	facts.Retry.GlobalAttemptsUnlimited = true
-	semantic, err := NewSemanticError(facts)
+	semantic, err := NewSemanticError(facts, "")
 	if err != nil {
 		t.Fatalf("activated alternate: %v", err)
 	}
@@ -283,12 +287,12 @@ func TestNewSemanticErrorAlternateAndUnlimitedBranches(t *testing.T) {
 		t.Fatalf("semantic = %#v", semantic)
 	}
 	facts.Decision.Reason = errorrule.ReasonProviderDeleted
-	if _, err := NewSemanticError(facts); err == nil {
+	if _, err := NewSemanticError(facts, ""); err == nil {
 		t.Fatal("provider-unavailable decision accepted a rule-exhausted switch reason")
 	}
 	providerReason := errorrule.SwitchReasonProviderUnavailable
 	facts.Alternate.SwitchReason = &providerReason
-	if _, err := NewSemanticError(facts); err != nil {
+	if _, err := NewSemanticError(facts, ""); err != nil {
 		t.Fatalf("provider-unavailable switch: %v", err)
 	}
 
@@ -300,7 +304,7 @@ func TestNewSemanticErrorAlternateAndUnlimitedBranches(t *testing.T) {
 	} {
 		facts := validFacts(t)
 		facts.Alternate = alternate
-		if _, err := NewSemanticError(facts); err != nil {
+		if _, err := NewSemanticError(facts, ""); err != nil {
 			t.Fatalf("alternate %q: %v", alternate.Outcome, err)
 		}
 	}

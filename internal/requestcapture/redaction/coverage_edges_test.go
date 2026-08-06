@@ -72,7 +72,7 @@ func TestEvidenceMergeAndHeaderCredentialSetFailClosedAtInternalBounds(t *testin
 
 	discovered := discoverHeaderCredentials(
 		http.Header{"Authorization": {strings.Repeat("x", MaxRetainedCredentialValueBytes+1)}},
-		nil,
+		[]string{"Authorization"},
 		nil,
 		false,
 	)
@@ -114,65 +114,6 @@ func TestHeaderNormalizationCookieAndReplacerEdges(t *testing.T) {
 	}
 	if got := replacer.replace("long-secret short"); got != RedactedValue+" "+RedactedValue {
 		t.Fatalf("ordered replacement = %q", got)
-	}
-}
-
-func TestStructuredCredentialScannerRejectsAmbiguityAndBoundsDepth(t *testing.T) {
-	t.Parallel()
-
-	if got, ok := redactStructuredCredentialValues(`"unterminated`); !ok || got != `"unterminated` {
-		t.Fatalf("unterminated non-key text = (%q, %t)", got, ok)
-	}
-	if _, ok := redactStructuredCredentialValues(`{"token\q":"secret"}`); ok {
-		t.Fatal("invalid credential-shaped key was not rejected")
-	}
-	if got, ok := redactStructuredCredentialValues(`{"safe\q":1}`); !ok || got != `{"safe\q":1}` {
-		t.Fatalf("invalid non-credential key = (%q, %t)", got, ok)
-	}
-	if !isStructuredCredentialKey("client_assertion") || !isStructuredCredentialKey("custom-token") ||
-		isStructuredCredentialKey("safe") {
-		t.Fatal("structured credential key classification is inconsistent")
-	}
-	if !credentialKeyHint(`"TOKEN\q"`) || credentialKeyHint(`"safe\q"`) {
-		t.Fatal("credential key hint classification is inconsistent")
-	}
-
-	if _, ok := scanJSONString("plain", 0); ok {
-		t.Fatal("unquoted string was accepted as a JSON string")
-	}
-	if end, ok := scanJSONString(`"escaped\"quote"`, 0); !ok || end != len(`"escaped\"quote"`) {
-		t.Fatalf("escaped JSON string scan = (%d, %t)", end, ok)
-	}
-	if end, ok := scanJSONString(`"unterminated`, 0); ok || end != len(`"unterminated`) {
-		t.Fatalf("unterminated JSON string scan = (%d, %t)", end, ok)
-	}
-
-	if _, ok := scanJSONValue("", 0); ok {
-		t.Fatal("empty JSON value was accepted")
-	}
-	if end, ok := scanJSONValue(`"value"`, 0); !ok || end != len(`"value"`) {
-		t.Fatalf("quoted JSON value scan = (%d, %t)", end, ok)
-	}
-	if end, ok := scanJSONValue("true,rest", 0); !ok || end != len("true") {
-		t.Fatalf("primitive JSON value scan = (%d, %t)", end, ok)
-	}
-	if end, ok := scanJSONValue(`[{"nested":[1]}]`, 0); !ok || end != len(`[{"nested":[1]}]`) {
-		t.Fatalf("nested JSON value scan = (%d, %t)", end, ok)
-	}
-	for _, malformed := range []string{`[}`, `[{"unterminated]`, `[1`} {
-		if _, ok := scanJSONValue(malformed, 0); ok {
-			t.Fatalf("malformed nested JSON value %q was accepted", malformed)
-		}
-	}
-	tooDeep := strings.Repeat("[", maximumCredentialJSONDepth+1) + strings.Repeat("]", maximumCredentialJSONDepth+1)
-	if _, ok := scanJSONValue(tooDeep, 0); ok {
-		t.Fatal("credential JSON deeper than the fixed parser stack was accepted")
-	}
-	if got := skipJSONSpace(" \t\r\n", 0); got != 4 {
-		t.Fatalf("skipJSONSpace() = %d, want 4", got)
-	}
-	if !isJSONValueDelimiter(',') || isJSONValueDelimiter('x') {
-		t.Fatal("JSON value delimiter classification is inconsistent")
 	}
 }
 

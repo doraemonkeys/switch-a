@@ -111,6 +111,13 @@ func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiTyp
 	return headers
 }
 
+func injectedAPIKeyForCapture(provider *model.Provider, apiType string) string {
+	if provider == nil || model.NormalizeProviderCredentialType(provider.CredentialType) != model.ProviderCredentialTypeAPIKey {
+		return ""
+	}
+	return strings.TrimSpace(provider.APIKeyForAPIType(apiType))
+}
+
 func (h *Gateway) prepareWebSocketDialHeaders(ctx context.Context, r *http.Request, provider *model.Provider, apiType, globalAuthMode string) (http.Header, error) {
 	headers, err := h.prepareWebSocketAttemptHeaders(ctx, r, provider, apiType, globalAuthMode)
 	if err != nil {

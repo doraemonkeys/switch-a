@@ -2,7 +2,6 @@ package redaction
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 )
 
@@ -248,11 +247,6 @@ func (set *headerCredentialSet) slice() []string {
 }
 
 func isSensitiveHeaderName(name string, extra []string) bool {
-	for _, sensitive := range defaultSensitiveHeaderNames {
-		if equalNormalizedHeaderName(name, sensitive) {
-			return true
-		}
-	}
 	for _, sensitive := range extra {
 		if equalNormalizedHeaderName(name, sensitive) {
 			return true
@@ -431,165 +425,4 @@ func ReplaceCredentialValues(value string, secrets []string) string {
 		return value
 	}
 	return compileCredentialReplacer(secrets).replace(value)
-}
-
-func redactStructuredCredentialValues(value string) (string, bool) {
-	var builder strings.Builder
-	cursor := 0
-	replaced := false
-	for offset := 0; offset < len(value); {
-		if value[offset] != '"' {
-			offset++
-			continue
-		}
-		keyEnd, ok := scanJSONString(value, offset)
-		if !ok {
-			break
-		}
-		next := skipJSONSpace(value, keyEnd)
-		if next >= len(value) || value[next] != ':' {
-			offset = keyEnd
-			continue
-		}
-		key, err := strconv.Unquote(value[offset:keyEnd])
-		if err != nil {
-			if credentialKeyHint(value[offset:keyEnd]) {
-				return "", false
-			}
-			offset = keyEnd
-			continue
-		}
-		if !isStructuredCredentialKey(key) {
-			offset = keyEnd
-			continue
-		}
-		valueStart := skipJSONSpace(value, next+1)
-		valueEnd, ok := scanJSONValue(value, valueStart)
-		if !ok {
-			return "", false
-		}
-		if !replaced {
-			builder.Grow(len(value))
-		}
-		builder.WriteString(value[cursor:valueStart])
-		builder.WriteString(`"[REDACTED]"`)
-		cursor = valueEnd
-		offset = valueEnd
-		replaced = true
-	}
-	if !replaced {
-		return value, true
-	}
-	builder.WriteString(value[cursor:])
-	return builder.String(), true
-}
-
-func isStructuredCredentialKey(key string) bool {
-	key = normalizedCredentialKey(key)
-	if _, sensitive := defaultSensitiveQueryKeys[key]; sensitive {
-		return true
-	}
-	if key == "client_assertion" {
-		return true
-	}
-	for _, suffix := range []string{"_credential", "_signature", "_token", "_secret", "_assertion"} {
-		if strings.HasSuffix(key, suffix) {
-			return true
-		}
-	}
-	return false
-}
-
-func credentialKeyHint(raw string) bool {
-	raw = strings.ToLower(raw)
-	for _, hint := range []string{"token", "secret", "credential", "signature", "assertion"} {
-		if strings.Contains(raw, hint) {
-			return true
-		}
-	}
-	return false
-}
-
-func scanJSONString(value string, start int) (int, bool) {
-	if start >= len(value) || value[start] != '"' {
-		return start, false
-	}
-	escaped := false
-	for index := start + 1; index < len(value); index++ {
-		switch {
-		case escaped:
-			escaped = false
-		case value[index] == '\\':
-			escaped = true
-		case value[index] == '"':
-			return index + 1, true
-		}
-	}
-	return len(value), false
-}
-
-func scanJSONValue(value string, start int) (int, bool) {
-	if start >= len(value) {
-		return start, false
-	}
-	if value[start] == '"' {
-		return scanJSONString(value, start)
-	}
-	if value[start] != '[' && value[start] != '{' {
-		end := start
-		for end < len(value) && !isJSONValueDelimiter(value[end]) {
-			end++
-		}
-		return end, end > start
-	}
-	stack := [maximumCredentialJSONDepth]byte{}
-	depth := 1
-	stack[0] = value[start]
-	for index := start + 1; index < len(value); index++ {
-		switch value[index] {
-		case '"':
-			end, ok := scanJSONString(value, index)
-			if !ok {
-				return len(value), false
-			}
-			index = end - 1
-		case '[', '{':
-			if depth == len(stack) {
-				return len(value), false
-			}
-			stack[depth] = value[index]
-			depth++
-		case ']', '}':
-			opening := stack[depth-1]
-			if value[index] == ']' && opening != '[' || value[index] == '}' && opening != '{' {
-				return len(value), false
-			}
-			depth--
-			if depth == 0 {
-				return index + 1, true
-			}
-		}
-	}
-	return len(value), false
-}
-
-func skipJSONSpace(value string, start int) int {
-	for start < len(value) {
-		switch value[start] {
-		case ' ', '\t', '\r', '\n':
-			start++
-		default:
-			return start
-		}
-	}
-	return start
-}
-
-func isJSONValueDelimiter(value byte) bool {
-	switch value {
-	case ' ', '\t', '\r', '\n', ',', '}', ']':
-		return true
-	default:
-		return false
-	}
 }

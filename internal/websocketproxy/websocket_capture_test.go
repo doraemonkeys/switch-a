@@ -619,8 +619,8 @@ func TestWebSocketCapturePersistsOnlyObservedCloseFrames(t *testing.T) {
 				closeSnapshot.Clean != test.clean {
 				t.Fatalf("close snapshot = %#v", closeSnapshot)
 			}
-			if strings.Contains(closeSnapshot.Reason, "close-secret") {
-				t.Fatalf("close reason leaked credential: %q", closeSnapshot.Reason)
+			if closeSnapshot.Reason != "closed for close-secret" {
+				t.Fatalf("close reason was unexpectedly redacted: %q", closeSnapshot.Reason)
 			}
 			if test.clean {
 				if detail.Summary.HasFailure {
@@ -632,8 +632,7 @@ func TestWebSocketCapturePersistsOnlyObservedCloseFrames(t *testing.T) {
 				detail.Summary.Failure.Primary.Code != requestcapture.FailureCodeWebSocketClose ||
 				detail.Summary.Failure.Primary.WebSocketCloseCode != int(test.code) ||
 				detail.Summary.Failure.Primary.Peer != captureFailurePeer(test.peer) ||
-				strings.Contains(detail.Summary.Failure.Primary.Message, "close-secret") ||
-				!strings.Contains(detail.Summary.Failure.Primary.Message, "[REDACTED]") {
+				!strings.Contains(detail.Summary.Failure.Primary.Message, "close-secret") {
 				t.Fatalf("abnormal close failure = present:%t observation:%#v", detail.Summary.HasFailure, detail.Summary.Failure)
 			}
 		})
@@ -689,7 +688,7 @@ func TestWebSocketCaptureCleanCloseWinsContextRace(t *testing.T) {
 	}
 }
 
-func TestWebSocketCaptureDropsOpaqueFailureMessageWithoutSealedCredentialEvidence(t *testing.T) {
+func TestWebSocketCapturePreservesOpaqueFailureMessageWithSealedEmptyEvidence(t *testing.T) {
 	t.Parallel()
 
 	manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
@@ -721,23 +720,23 @@ func TestWebSocketCaptureDropsOpaqueFailureMessageWithoutSealedCredentialEvidenc
 
 	detail := getWebSocketCaptureTestDetail(t, manager, session, recorder.ID())
 	if !detail.Summary.HasFailure ||
-		detail.Summary.Failure.Primary.ProviderErrorType != "" ||
-		detail.Summary.Failure.Primary.ProviderErrorCode != "" ||
-		detail.Summary.Failure.Primary.Message != "" ||
-		!detail.Summary.Failure.Truncated {
+		detail.Summary.Failure.Primary.ProviderErrorType != "opaque-provider-type" ||
+		detail.Summary.Failure.Primary.ProviderErrorCode != "opaque-provider-code" ||
+		detail.Summary.Failure.Primary.Message != "opaque-provider-diagnostic" ||
+		detail.Summary.Failure.Truncated {
 		t.Fatalf("query failure = present:%t observation:%#v", detail.Summary.HasFailure, detail.Summary.Failure)
 	}
 	exported := exportWebSocketCaptureMetadata(t, manager, session, []string{recorder.ID()})
 	if !exported.Summary.HasFailure ||
-		exported.Summary.Failure.Primary.ProviderErrorType != "" ||
-		exported.Summary.Failure.Primary.ProviderErrorCode != "" ||
-		exported.Summary.Failure.Primary.Message != "" ||
-		!exported.Summary.Failure.Truncated {
+		exported.Summary.Failure.Primary.ProviderErrorType != "opaque-provider-type" ||
+		exported.Summary.Failure.Primary.ProviderErrorCode != "opaque-provider-code" ||
+		exported.Summary.Failure.Primary.Message != "opaque-provider-diagnostic" ||
+		exported.Summary.Failure.Truncated {
 		t.Fatalf("export failure = present:%t observation:%#v", exported.Summary.HasFailure, exported.Summary.Failure)
 	}
 }
 
-func TestWebSocketCaptureRetainsRedactedProviderSemanticIdentity(t *testing.T) {
+func TestWebSocketCaptureRetainsProviderSemanticIdentityExceptInjectedKey(t *testing.T) {
 	t.Parallel()
 
 	const credential = "provider-semantic-secret"
@@ -770,12 +769,9 @@ func TestWebSocketCaptureRetainsRedactedProviderSemanticIdentity(t *testing.T) {
 		fact := failure.Primary
 		if !present || fact.Code != requestcapture.FailureCodeProviderSemantic ||
 			fact.HTTPStatusCode != http.StatusTooManyRequests ||
-			!strings.Contains(fact.ProviderErrorType, "[REDACTED]") ||
-			!strings.Contains(fact.ProviderErrorCode, "[REDACTED]") ||
-			!strings.Contains(fact.Message, "[REDACTED]") ||
-			strings.Contains(fact.ProviderErrorType, credential) ||
-			strings.Contains(fact.ProviderErrorCode, credential) ||
-			strings.Contains(fact.Message, credential) {
+			!strings.Contains(fact.ProviderErrorType, credential) ||
+			!strings.Contains(fact.ProviderErrorCode, credential) ||
+			!strings.Contains(fact.Message, credential) {
 			t.Fatalf("provider semantic failure = present:%t observation:%#v", present, failure)
 		}
 	}

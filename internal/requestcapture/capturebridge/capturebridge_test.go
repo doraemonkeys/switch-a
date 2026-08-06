@@ -13,18 +13,10 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
 )
 
-func TestCredentialMaterialRecognizesWireAndProgrammaticHeaderShapes(t *testing.T) {
+func TestCredentialMaterialContainsOnlyInjectedAPIKey(t *testing.T) {
 	t.Parallel()
 
-	headers := http.Header{
-		"authorization":       {"Bearer authorization-secret"},
-		"Proxy_Authorization": {"Basic proxy-secret"},
-		"Cookie":              {`session="cookie-secret"; preference=dark`},
-		"Set-Cookie":          {"refresh=set-cookie-secret; Path=/; HttpOnly"},
-		"x-api-key":           {"api-secret"},
-		"X-Ignored":           {"public-value"},
-	}
-	sensitiveHeaders, evidence := CredentialMaterial(headers)
+	sensitiveHeaders, evidence := CredentialMaterial(" api-secret ")
 	if !sensitiveHeaders.Sealed() || sensitiveHeaders.Overflowed() {
 		t.Fatalf("sensitive header evidence = sealed:%t overflowed:%t", sensitiveHeaders.Sealed(), sensitiveHeaders.Overflowed())
 	}
@@ -34,84 +26,43 @@ func TestCredentialMaterialRecognizesWireAndProgrammaticHeaderShapes(t *testing.
 
 	diagnostic := "authorization-secret proxy-secret cookie-secret dark set-cookie-secret api-secret public-value"
 	sanitized := redaction.SanitizedTextWithEvidence(diagnostic, evidence, len(diagnostic)*2, "TEST")
-	for _, secret := range []string{
+	if strings.Contains(sanitized.Value, "api-secret") {
+		t.Fatalf("injected API key was retained: %q", sanitized.Value)
+	}
+	for _, retained := range []string{
 		"authorization-secret",
 		"proxy-secret",
 		"cookie-secret",
 		"dark",
 		"set-cookie-secret",
-		"api-secret",
+		"public-value",
 	} {
-		if strings.Contains(sanitized.Value, secret) {
-			t.Fatalf("sanitized diagnostic retained %q: %q", secret, sanitized.Value)
+		if !strings.Contains(sanitized.Value, retained) {
+			t.Fatalf("user/provider value %q was removed: %q", retained, sanitized.Value)
 		}
-	}
-	if !strings.Contains(sanitized.Value, "public-value") {
-		t.Fatalf("non-credential diagnostic was removed: %q", sanitized.Value)
 	}
 }
 
-func TestKnownSensitiveHeaderNameNormalizesWithoutBroadMatching(t *testing.T) {
+func TestCredentialMaterialWithNoInjectedKeyPreservesDiagnostics(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name      string
-		input     string
-		want      string
-		sensitive bool
-	}{
-		{name: "case", input: "aUtHoRiZaTiOn", want: "Authorization", sensitive: true},
-		{name: "underscore", input: " X_ACCESS_TOKEN ", want: "X-Access-Token", sensitive: true},
-		{name: "same length mismatch", input: "X-Api-Kez", sensitive: false},
-		{name: "different length", input: "Authorization-Extra", sensitive: false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, sensitive := knownSensitiveHeaderName(test.input)
-			if got != test.want || sensitive != test.sensitive {
-				t.Fatalf("knownSensitiveHeaderName(%q) = (%q, %t), want (%q, %t)", test.input, got, sensitive, test.want, test.sensitive)
-			}
-		})
+	_, evidence := CredentialMaterial("")
+	const diagnostic = "Bearer user-token session=cookie-token provider-secret"
+	got := redaction.SanitizedTextWithEvidence(diagnostic, evidence, 128, "TEST")
+	if got.Value != diagnostic || got.Truncated {
+		t.Fatalf("diagnostic = %#v, want unchanged", got)
 	}
 }
 
 func TestCredentialMaterialFailsClosedWhenEvidenceCapacityIsExceeded(t *testing.T) {
 	t.Parallel()
 
-	values := make([]string, 80)
-	for index := range values {
-		values[index] = "Bearer token-" + strings.Repeat("x", index+1)
-	}
-	_, evidence := CredentialMaterial(http.Header{"Authorization": values})
+	_, evidence := CredentialMaterial(strings.Repeat("x", redaction.MaxRetainedCredentialValueBytes+1))
 	if !evidence.Sealed() || !evidence.Overflowed() {
 		t.Fatalf("overflow evidence = sealed:%t overflowed:%t", evidence.Sealed(), evidence.Overflowed())
 	}
 	if got := redaction.SanitizedTextWithEvidence("otherwise-safe", evidence, 64, "TEST").Value; got != redaction.RedactedValue {
 		t.Fatalf("overflowed evidence did not fail closed: %q", got)
-	}
-}
-
-func TestCaptureCredentialValueHandlesEmptyAndCookieComponents(t *testing.T) {
-	t.Parallel()
-
-	var evidence requestcapture.CredentialEvidence
-	captureCredentialValue(&evidence, "Authorization", "  ")
-	captureCredentialValue(&evidence, "Authorization", "opaque-without-scheme")
-	captureCredentialValue(&evidence, "Cookie", `first=one; quoted="two"; flag`)
-	captureCredentialValue(&evidence, "Set-Cookie", "only=first; ignored=second")
-	evidence.Seal()
-
-	diagnostic := "opaque-without-scheme one two flag first ignored=second"
-	sanitized := redaction.SanitizedTextWithEvidence(diagnostic, evidence, len(diagnostic)*2, "TEST")
-	for _, secret := range []string{"opaque-without-scheme", "one", "two", "flag", "first"} {
-		if strings.Contains(sanitized.Value, secret) {
-			t.Fatalf("cookie/auth component %q was retained: %q", secret, sanitized.Value)
-		}
-	}
-	// Set-Cookie intentionally admits only its first cookie-pair; attributes are
-	// protocol metadata and must not exhaust the bounded evidence set.
-	if !strings.Contains(sanitized.Value, "ignored=second") {
-		t.Fatalf("Set-Cookie attributes unexpectedly entered credential evidence: %q", sanitized.Value)
 	}
 }
 

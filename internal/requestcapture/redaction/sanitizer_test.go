@@ -9,7 +9,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 )
 
-func TestHeadersDetailedRedactsAuthenticationShapesAndSafeEchoes(t *testing.T) {
+func TestHeadersDetailedRedactsOnlyExplicitCredentialValue(t *testing.T) {
 	const (
 		authorization = "Bearer auth-secret"
 		proxyAuth     = "Basic proxy-secret"
@@ -31,27 +31,21 @@ func TestHeadersDetailedRedactsAuthenticationShapesAndSafeEchoes(t *testing.T) {
 
 	result := (Sanitizer{}).HeadersDetailed(
 		source,
-		[]string{" x-custom-credential "},
 		nil,
+		[]string{custom},
 		false,
 	)
-	if !result.Discovered || result.RedactAll || result.Truncated {
+	if result.Discovered || result.RedactAll || result.Truncated {
 		t.Fatalf("header sanitization state = %#v", result)
 	}
-	for _, name := range []string{
-		"authorization", "Proxy_Authorization", "Cookie", "Set-Cookie", "X_Custom_Credential",
-	} {
-		if got := result.Value[name]; len(got) != 1 || got[0] != RedactedValue {
-			t.Fatalf("sensitive header %q = %#v", name, got)
+	for _, name := range []string{"authorization", "Proxy_Authorization", "Cookie", "Set-Cookie"} {
+		if got := result.Value[name]; len(got) != 1 || got[0] != source[name][0] {
+			t.Fatalf("provider header %q changed: %#v", name, got)
 		}
 	}
-	for _, secret := range []string{
-		authorization, "auth-secret", proxyAuth, "proxy-secret",
-		cookie, "cookie-secret", setCookie, "set-secret", custom,
-	} {
-		if strings.Contains(result.Value["X-Safe"][0], secret) {
-			t.Fatalf("safe header echo leaked %q: %q", secret, result.Value["X-Safe"][0])
-		}
+	if result.Value["X_Custom_Credential"][0] != RedactedValue ||
+		strings.Contains(result.Value["X-Safe"][0], custom) {
+		t.Fatalf("injected value was not replaced on every header surface: %#v", result.Value)
 	}
 
 	clone := (Sanitizer{}).Headers(source, []string{"X-Custom-Credential"})
@@ -84,7 +78,7 @@ func TestHeadersDetailedFailsClosedAndBoundsAttackerInput(t *testing.T) {
 	for index := range tooManyValues {
 		tooManyValues[index] = "secret"
 	}
-	if got := sanitizer.HeadersDetailed(http.Header{"Authorization": tooManyValues}, nil, nil, false); !got.RedactAll || !got.Truncated || len(got.Value["Authorization"]) != MaxRetainedHeaderValuesPerField {
+	if got := sanitizer.HeadersDetailed(http.Header{"Authorization": tooManyValues}, nil, nil, false); got.RedactAll || !got.Truncated || len(got.Value["Authorization"]) != MaxRetainedHeaderValuesPerField {
 		t.Fatalf("oversized header values = %#v", got)
 	}
 
@@ -107,7 +101,7 @@ func TestHeadersDetailedFailsClosedAndBoundsAttackerInput(t *testing.T) {
 	}
 }
 
-func TestURLSanitizationRemovesUserinfoSensitiveQueryAndCredentialEchoes(t *testing.T) {
+func TestURLSanitizationReplacesOnlyExactCredentialEchoes(t *testing.T) {
 	const secret = "exact-secret"
 	raw := "https://user:password@example.test/path/" + secret +
 		"?refresh_token=query-secret&token%5B%5D=array-secret&safe=" + secret +
@@ -116,19 +110,18 @@ func TestURLSanitizationRemovesUserinfoSensitiveQueryAndCredentialEchoes(t *test
 	if result.Truncated {
 		t.Fatalf("bounded URL unexpectedly truncated: %#v", result)
 	}
-	for _, leaked := range []string{"user", "password", secret, "query-secret", "array-secret", "aws-secret"} {
-		if strings.Contains(result.Value, leaked) {
-			t.Fatalf("sanitized URL leaked %q: %q", leaked, result.Value)
-		}
+	if !strings.Contains(result.Value, "user:password") || !strings.Contains(result.Value, "query-secret") ||
+		!strings.Contains(result.Value, "array-secret") || !strings.Contains(result.Value, "aws-secret") {
+		t.Fatalf("unrelated URL metadata was removed: %q", result.Value)
 	}
 	parsed, err := url.Parse(result.Value)
 	if err != nil {
 		t.Fatalf("parse sanitized URL: %v", err)
 	}
-	if parsed.User != nil || parsed.Query().Get("refresh_token") != RedactedValue ||
-		parsed.Query().Get("token[]") != RedactedValue ||
+	if parsed.User == nil || parsed.Query().Get("refresh_token") != "query-secret" ||
+		parsed.Query().Get("token[]") != "array-secret" ||
 		parsed.Query().Get("safe") != RedactedValue ||
-		parsed.Query().Get("X-Amz-Signature") != RedactedValue {
+		parsed.Query().Get("X-Amz-Signature") != "aws-secret" {
 		t.Fatalf("sanitized URL components = %#v", parsed)
 	}
 
@@ -155,7 +148,7 @@ func TestTargetVariantsAndCredentialBounds(t *testing.T) {
 	if got := BorrowedHTTPTarget(nil).Sanitize(sanitizer, nil); got != (TargetSanitization{}) {
 		t.Fatalf("nil HTTP target = %#v", got)
 	}
-	webSocket := BorrowedWebSocketTarget("wss://example.test/socket?api_key=secret").Sanitize(sanitizer, nil)
+	webSocket := BorrowedWebSocketTarget("wss://example.test/socket?api_key=secret").Sanitize(sanitizer, []string{"secret"})
 	if parsed, err := url.Parse(webSocket.Target.Value); err != nil || parsed.Query().Get("api_key") != RedactedValue || webSocket.Host.Value != "example.test" {
 		t.Fatalf("WebSocket target = %#v, parse error = %v", webSocket, err)
 	}

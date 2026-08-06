@@ -54,6 +54,13 @@ func (o *WebSocketSessionOrchestrator) finalizeTerminalSession(session *WebSocke
 	if o == nil || session == nil {
 		return session
 	}
+	// Freeze the endpoint identity alongside each provider attempt before any
+	// evidence serializer runs. The API key is then selected from the provider
+	// model and this stable API type, never from observed header text.
+	session.APIType = o.apiType
+	for index := range session.Attempts {
+		session.Attempts[index].APIType = o.apiType
+	}
 	if session.ProbeOutcome == webSocketSelectionProbeOutcomeUnknown {
 		session.ProbeOutcome = o.probeOutcome
 	}

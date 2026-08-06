@@ -569,6 +569,32 @@ func TestAssessWebSocketSession_PreservesEnvelopeAndProviderErrorTypesInEvidence
 	}
 }
 
+func TestAssessWebSocketSession_RedactsOnlyInjectedAPIKey(t *testing.T) {
+	t.Parallel()
+
+	const injectedKey = "provider-key"
+	assessment := assessWebSocketSession(&WebSocketSessionResult{
+		APIType:       "codex",
+		FinalProvider: &model.Provider{ID: "provider-final", CredentialType: model.ProviderCredentialTypeAPIKey, APIKey: injectedKey},
+		FinalResult: &WebSocketResult{
+			TerminalCause: model.TerminalUpstreamSemanticError,
+			UpstreamError: &WebSocketUpstreamError{
+				EnvelopeType: "error",
+				Message:      "provider-key rejected client-token",
+				Raw:          `{"message":"provider-key rejected client-token"}`,
+			},
+		},
+	})
+	if assessment.SessionEvidenceJSON == nil {
+		t.Fatal("SessionEvidenceJSON = nil, want upstream evidence")
+	}
+	if strings.Contains(*assessment.SessionEvidenceJSON, injectedKey) ||
+		!strings.Contains(*assessment.SessionEvidenceJSON, "client-token") ||
+		!strings.Contains(*assessment.SessionEvidenceJSON, "[REDACTED]") {
+		t.Fatalf("SessionEvidenceJSON = %q, want only injected key redacted", *assessment.SessionEvidenceJSON)
+	}
+}
+
 func TestAssessWebSocketSession_PostVisibleClientScopedSemanticErrorStaysUnknown(t *testing.T) {
 	t.Parallel()
 

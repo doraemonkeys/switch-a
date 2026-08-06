@@ -27,11 +27,11 @@ const (
 	MaxRetainedProviderErrorFieldBytes = 128
 	MaxRetainedErrorBytes              = 2 << 10
 	MaxRetainedCloseReasonBytes        = 1 << 10
-	maximumCredentialJSONDepth         = 32
 )
 
-// CredentialEvidence is a borrowed, fixed-capacity redaction input. It may be
-// copied by value between proxy phases, but request capture never retains it.
+// CredentialEvidence is fixed-capacity attempt-scoped evidence containing only
+// the static API key switch-a injected. It may be copied between proxy phases
+// and retained for the lifetime of one capture record.
 type CredentialEvidence struct {
 	values   [MaxRetainedCredentialValues]string
 	count    uint8
@@ -40,9 +40,9 @@ type CredentialEvidence struct {
 	sealed   bool
 }
 
-// SensitiveHeaderEvidence carries the configured, nonstandard credential
-// header names inspected by a producer. Common authentication headers are
-// always discovered directly from the borrowed HTTP header maps.
+// SensitiveHeaderEvidence remains an explicit fail-closed contract between
+// capture producers and the sanitizer. Runtime producers seal it empty because
+// header names no longer determine whether user-owned values are hidden.
 type SensitiveHeaderEvidence struct {
 	names    [MaxRetainedSensitiveHeaderNames]string
 	count    uint8

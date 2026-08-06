@@ -804,7 +804,7 @@ func TestPrepareWebSocketDialHeaders_ManagedAuthErrorAndLogHelpers(t *testing.T)
 	if got := webSocketClientTransportStatusCode(0, nil); got != StatusCodeNoResponse {
 		t.Fatalf("webSocketClientTransportStatusCode(0, nil) = %d, want %d", got, StatusCodeNoResponse)
 	}
-	evidence := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, nil, errors.New("fallback transport error"), false)
+	evidence := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, nil, errors.New("fallback transport error"), false, "")
 	if evidence == nil {
 		t.Fatal("buildWebSocketEvidence() = nil, want transport evidence")
 	}

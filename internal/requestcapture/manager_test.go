@@ -455,19 +455,19 @@ func TestHTTPRecordDetailSanitizationAndCounters(t *testing.T) {
 	recorder.ObserveResponse(HTTPResponseHead{
 		StatusCode:         http.StatusOK,
 		Protocol:           "HTTP/2.0",
-		Headers:            http.Header{"ChatGPT-Account-Id": {"account-secret"}, "Set-Cookie": {"cookie-secret"}},
+		Headers:            http.Header{"ChatGPT-Account-Id": {"account-id"}, "Set-Cookie": {"cookie-value"}},
 		ContentLength:      8,
 		DeclaredTrailers:   http.Header{"ChatGPT-Account-Id": nil},
-		SensitiveHeaders:   testSensitiveHeaderEvidence("ChatGPT-Account-Id"),
-		CredentialEvidence: testCredentialEvidence("account-secret"),
+		SensitiveHeaders:   testSensitiveHeaderEvidence(),
+		CredentialEvidence: testCredentialEvidence("account-id"),
 	})
 	recorder.ObserveUpstream([]byte("response"))
 	recorder.ObserveClientWrite(8)
 	recorder.Finish(Outcome{
 		SourceCompletion:   SourceCompletionComplete,
 		TerminationReason:  TerminationReasonEOF,
-		ResponseTrailers:   http.Header{"ChatGPT-Account-Id": {"account-secret"}},
-		CredentialEvidence: testCredentialEvidence("account-secret"),
+		ResponseTrailers:   http.Header{"ChatGPT-Account-Id": {"account-id"}},
+		CredentialEvidence: testCredentialEvidence("account-id"),
 	})
 	gateway.Finish(GatewayOutcome{})
 
@@ -485,16 +485,17 @@ func TestHTTPRecordDetailSanitizationAndCounters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sanitized URL parse error = %v", err)
 	}
-	if sanitizedURL.User != nil || sanitizedURL.Query().Get("api_key") != redactedValue ||
+	if sanitizedURL.User == nil || sanitizedURL.User.Username() != "user" ||
+		sanitizedURL.Query().Get("api_key") != redactedValue ||
 		sanitizedURL.Query().Get("safe") != "yes" {
 		t.Fatalf("sanitized URL = %q", detail.HTTP.Request.URL)
 	}
-	if detail.HTTP.Request.Headers["Authorization"][0] != redactedValue {
+	if detail.HTTP.Request.Headers["Authorization"][0] != "Bearer "+redactedValue {
 		t.Fatalf("authorization leaked: %#v", detail.HTTP.Request.Headers)
 	}
-	if detail.HTTP.Response.Headers["ChatGPT-Account-Id"][0] != redactedValue ||
-		detail.HTTP.Response.Trailers["ChatGPT-Account-Id"][0] != redactedValue {
-		t.Fatalf("custom credential header leaked: %#v", detail.HTTP.Response)
+	if detail.HTTP.Response.Headers["ChatGPT-Account-Id"][0] != "account-id" ||
+		detail.HTTP.Response.Trailers["ChatGPT-Account-Id"][0] != "account-id" {
+		t.Fatalf("provider-owned response header was redacted: %#v", detail.HTTP.Response)
 	}
 
 	// Returned maps and pointers are detached from retained state.

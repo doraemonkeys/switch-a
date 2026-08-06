@@ -81,7 +81,11 @@ func assessWebSocketSession(session *WebSocketSessionResult) webSocketAssessment
 		isSyntheticFinal = session.syntheticFinalFromSuppressedPayload
 	}
 
-	assessment := newWebSocketAssessment(provider, gateway, result, fallback, transparentRetry, isSyntheticFinal)
+	injectedAPIKey := injectedAPIKeyForCapture(provider, "")
+	if session != nil {
+		injectedAPIKey = injectedAPIKeyForCapture(provider, session.APIType)
+	}
+	assessment := newWebSocketAssessment(provider, gateway, result, fallback, transparentRetry, isSyntheticFinal, injectedAPIKey)
 	if result == nil {
 		return assessment
 	}
@@ -103,6 +107,7 @@ func newWebSocketAssessment(
 	fallback error,
 	transparentRetry bool,
 	isSyntheticFinal bool,
+	injectedAPIKey string,
 ) webSocketAssessment {
 	assessment := webSocketAssessment{
 		SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
@@ -135,7 +140,7 @@ func newWebSocketAssessment(
 		assessment.TerminationActor,
 		assessment.ServiceOutcome,
 	)
-	assessment.SessionEvidenceJSON = buildWebSocketEvidence(gateway, result, fallback, isSyntheticFinal)
+	assessment.SessionEvidenceJSON = buildWebSocketEvidence(gateway, result, fallback, isSyntheticFinal, injectedAPIKey)
 	return assessment
 }
 
@@ -418,7 +423,7 @@ func classifyWebSocketProviderFailure(provider *model.Provider, result *WebSocke
 }
 
 func assessWebSocketHealth(provider *model.Provider, result *WebSocketResult) webSocketHealthAssessment {
-	assessment := newWebSocketAssessment(provider, webSocketGatewayEvidenceInput{}, result, resultError(result), false, false)
+	assessment := newWebSocketAssessment(provider, webSocketGatewayEvidenceInput{}, result, resultError(result), false, false, "")
 	if assessment.providerFailure.autoDisableUntil != nil {
 		return webSocketHealthAssessment{
 			markFailure:   shouldTrackWebSocketFailureInHealth(result),

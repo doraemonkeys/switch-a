@@ -1,7 +1,6 @@
 package attemptevidence
 
 import (
-	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -11,22 +10,21 @@ const (
 	RedactedPlaceholder = "[REDACTED]"
 )
 
-var (
-	secretHeaderPattern = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|x-api-key|api[_-]?key|cookie|set-cookie)\b\s*[:=]\s*[^\r\n,;]+`)
-	bearerTokenPattern  = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+\b`)
-	basicTokenPattern   = regexp.MustCompile(`(?i)\bbasic\s+[A-Za-z0-9._~+/=-]+\b`)
-)
-
-// SanitizeSnippet centralizes the evidence redaction boundary so transport and
-// semantic siblings cannot drift into different credential taxonomies.
-func SanitizeSnippet(value string) string {
+// SanitizeSnippet bounds an evidence snippet and, when supplied, removes only
+// the exact API key that switch-a injected for the current provider attempt.
+// Evidence is intentionally transparent by default: provider-owned tokens,
+// cookies, URLs, and diagnostics are useful debugging facts and are not
+// classified by appearance alone.
+func SanitizeSnippet(value, injectedAPIKey string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return ""
 	}
-	sanitized := secretHeaderPattern.ReplaceAllString(trimmed, `$1: `+RedactedPlaceholder)
-	sanitized = bearerTokenPattern.ReplaceAllString(sanitized, "Bearer "+RedactedPlaceholder)
-	sanitized = basicTokenPattern.ReplaceAllString(sanitized, "Basic "+RedactedPlaceholder)
+	sanitized := trimmed
+	key := strings.TrimSpace(injectedAPIKey)
+	if key != "" {
+		sanitized = strings.ReplaceAll(sanitized, key, RedactedPlaceholder)
+	}
 	return truncateUTF8(sanitized, SnippetLimitBytes)
 }
 

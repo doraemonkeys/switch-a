@@ -215,7 +215,10 @@ func newNormalizedRequestAttempt(requestID, providerID string, createdAt time.Ti
 // session row so the handler can attribute replacement, failover, health, and
 // persistence to the provider that actually produced each pre-visible outcome.
 type WebSocketAttemptResult struct {
-	Provider            *model.Provider
+	Provider *model.Provider
+	// APIType binds attempt evidence to the endpoint whose API key switch-a
+	// injected. It is intentionally explicit rather than inferred from headers.
+	APIType             string
 	Attempt             int
 	SelectionMode       providerSwitchMode
 	SelectionMetadata   selector.SelectionMetadata
@@ -346,7 +349,9 @@ func (r WebSocketAttemptResult) shouldReplaceBeforeClientVisible() bool {
 // switches. The runtime worker can extend this with post-upgrade visibility
 // boundaries later without changing the pre-visible orchestration contract.
 type WebSocketSessionResult struct {
-	RequestID         string
+	RequestID string
+	// APIType identifies the endpoint for the terminal session evidence.
+	APIType           string
 	FinalProvider     *model.Provider
 	FinalResult       *WebSocketResult
 	FinalErr          error

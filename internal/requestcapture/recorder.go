@@ -94,12 +94,13 @@ type Recorder struct {
 }
 
 type transitionRecorderState struct {
-	session      *sessionState
-	boundSession atomic.Pointer[sessionState]
-	gateway      *gatewayState
-	entry        *traceEntryState
-	generation   uint64
-	completed    bool
+	session            *sessionState
+	boundSession       atomic.Pointer[sessionState]
+	gateway            *gatewayState
+	entry              *traceEntryState
+	generation         uint64
+	credentialEvidence CredentialEvidence
+	completed          bool
 }
 
 type recordState struct {
@@ -113,30 +114,26 @@ type recordState struct {
 	charge       int64
 	traceEntry   *traceEntryState
 
-	disabled        bool
-	completed       bool
-	evicted         bool
-	overflowCounted bool
+	disabled, completed, evicted, overflowCounted bool
 
-	summary              RecordSummary
-	request              RequestSnapshot
-	requestBody          *blob
-	responseBody         blobBuilder
-	older                *recordState
-	newer                *recordState
-	providerBefore       *recordState
-	providerAfter        *recordState
-	httpResponse         *HTTPResponseSnapshot
-	wsHandshake          *WebSocketHandshakeSnapshot
-	wsClose              *WebSocketCloseSnapshot
-	sensitiveHeaderNames []string
-	redactAllHeaders     bool
-	responseObserved     bool
-	stateFaultLogged     bool
-	messages             []*messageState
-	messageByID          map[string]*messageState
-	observedBytes        int64
-	writtenBytes         int64
+	summary                                              RecordSummary
+	request                                              RequestSnapshot
+	requestBody                                          *blob
+	responseBody                                         blobBuilder
+	older                                                *recordState
+	newer                                                *recordState
+	providerBefore                                       *recordState
+	providerAfter                                        *recordState
+	httpResponse                                         *HTTPResponseSnapshot
+	wsHandshake                                          *WebSocketHandshakeSnapshot
+	wsClose                                              *WebSocketCloseSnapshot
+	credentialEvidence                                   CredentialEvidence
+	sensitiveHeaderNames                                 []string
+	redactAllHeaders, responseObserved, stateFaultLogged bool
+	messages                                             []*messageState
+	messageByID                                          map[string]*messageState
+	observedBytes                                        int64
+	writtenBytes                                         int64
 }
 
 type messageState struct {
@@ -515,8 +512,13 @@ func (r *recordState) observeHTTPResponseLocked(head HTTPResponseHead) {
 		return
 	}
 	r.responseObserved = true
+	metadata := responseMetadata(head)
+	// The injected key belongs to the upstream attempt, not an individual
+	// response phase. Keeping the start-time evidence authoritative prevents a
+	// sparse failure/fallback event from accidentally changing capture policy.
+	metadata.CredentialEvidence = r.credentialEvidence
 	result := (redaction.Sanitizer{}).HTTPResponseDetailed(
-		responseMetadata(head),
+		metadata,
 		r.sensitiveHeaderNames,
 		r.redactAllHeaders,
 	)
@@ -560,8 +562,10 @@ func (r *recordState) observeWebSocketHandshakeLocked(handshake WebSocketHandsha
 		return
 	}
 	r.responseObserved = true
+	metadata := handshakeMetadata(handshake)
+	metadata.CredentialEvidence = r.credentialEvidence
 	result := (redaction.Sanitizer{}).WebSocketHandshakeDetailed(
-		handshakeMetadata(handshake),
+		metadata,
 		r.sensitiveHeaderNames,
 		r.redactAllHeaders,
 	)
@@ -621,7 +625,7 @@ func (r *recordState) messageResultLocked(ref MessageRef, result MessageResult) 
 		return
 	}
 	failure, hasFailure := (redaction.Sanitizer{}).FailureDetailed(
-		result.Failure, result.CredentialEvidence, r.redactAllHeaders,
+		result.Failure, r.credentialEvidence, r.redactAllHeaders,
 	)
 	if hasFailure {
 		charge := estimateFailureCharge(failure)

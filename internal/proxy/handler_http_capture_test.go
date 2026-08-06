@@ -62,7 +62,7 @@ func TestBeginGatewayCaptureDisabledDoesNotBuildRecorderOrAllocate(t *testing.T)
 	}
 }
 
-func TestHTTPCaptureCredentialCollectorCoversKnownHeadersAndParsedComponents(t *testing.T) {
+func TestHTTPCaptureRedactsOnlyInjectedAPIKey(t *testing.T) {
 	t.Parallel()
 
 	credentialComponents := []string{
@@ -71,9 +71,9 @@ func TestHTTPCaptureCredentialCollectorCoversKnownHeadersAndParsedComponents(t *
 		"cookie-secret",
 		"quoted-cookie-secret",
 		"set-cookie-secret",
-		"x-api-secret",
+		"x-api-value",
 		"api-secret",
-		"goog-api-secret",
+		"goog-api-value",
 		"access-token-secret",
 		"amz-credential-secret",
 		"amz-security-secret",
@@ -96,7 +96,7 @@ func TestHTTPCaptureCredentialCollectorCoversKnownHeadersAndParsedComponents(t *
 		"X-Goog-Credential":    {credentialComponents[12]},
 		"ChatGPT-Account-Id":   {credentialComponents[13]},
 	}
-	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(headers)
+	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(credentialComponents[6])
 	if !sensitiveHeaders.Sealed() || sensitiveHeaders.Overflowed() ||
 		!credentialEvidence.Sealed() || credentialEvidence.Overflowed() {
 		t.Fatalf(
@@ -133,6 +133,7 @@ func TestHTTPCaptureCredentialCollectorCoversKnownHeadersAndParsedComponents(t *
 		},
 		requestcapture.CredentialPhaseInitial,
 		request,
+		credentialComponents[6],
 	)
 	fact := capturefailure.Fact(
 		requestcapture.FailureSiteTransport,
@@ -160,14 +161,17 @@ func TestHTTPCaptureCredentialCollectorCoversKnownHeadersAndParsedComponents(t *
 	if message == "" || !strings.Contains(message, "[REDACTED]") {
 		t.Fatalf("redacted diagnostic = %q, want retained redaction markers", message)
 	}
-	for _, credential := range credentialComponents {
-		if strings.Contains(message, credential) {
-			t.Fatalf("diagnostic leaked credential %q: %q", credential, message)
+	if strings.Contains(message, credentialComponents[6]) {
+		t.Fatalf("diagnostic retained injected API key: %q", message)
+	}
+	for index, value := range credentialComponents {
+		if index != 6 && !strings.Contains(message, value) {
+			t.Fatalf("diagnostic removed non-injected value %q: %q", value, message)
 		}
 	}
 }
 
-func TestHTTPCaptureMergesResponseCredentialEvidenceBeforeTerminalDiagnostic(t *testing.T) {
+func TestHTTPCapturePreservesResponseCredentialsInTerminalDiagnostic(t *testing.T) {
 	t.Parallel()
 
 	const responseCredential = "response-cookie-secret"
@@ -195,6 +199,7 @@ func TestHTTPCaptureMergesResponseCredentialEvidenceBeforeTerminalDiagnostic(t *
 		},
 		requestcapture.CredentialPhaseInitial,
 		request,
+		"",
 	)
 	head := upstreamtransport.ResponseHead{
 		StatusCode:    http.StatusOK,
@@ -231,9 +236,8 @@ func TestHTTPCaptureMergesResponseCredentialEvidenceBeforeTerminalDiagnostic(t *
 		t.Fatalf("records = %#v, want one structured failure", page.Records)
 	}
 	message := page.Records[0].Failure.Primary.Message
-	if message == "" || strings.Contains(message, responseCredential) ||
-		!strings.Contains(message, "[REDACTED]") {
-		t.Fatalf("response-aware diagnostic = %q", message)
+	if !strings.Contains(message, responseCredential) || strings.Contains(message, "[REDACTED]") {
+		t.Fatalf("response diagnostic = %q, want provider credential unchanged", message)
 	}
 }
 func TestHTTPCaptureClientCancellationRecordsClientFacingFailure(t *testing.T) {
@@ -272,6 +276,7 @@ func TestHTTPCaptureClientCancellationRecordsClientFacingFailure(t *testing.T) {
 		},
 		requestcapture.CredentialPhaseInitial,
 		request,
+		"",
 	)
 	head := upstreamtransport.ResponseHead{
 		StatusCode:    http.StatusOK,
@@ -383,7 +388,7 @@ func TestHandlerCaptureEnabledPreservesHTTPAndSSEBehavior(t *testing.T) {
 			if got := detail.HTTP.Response.Trailers["X-Capture-Trailer"]; len(got) != 1 || got[0] != "finished" {
 				t.Fatalf("response trailer = %#v, want finished", got)
 			}
-			if got := detail.HTTP.Request.Headers["Authorization"]; len(got) != 1 || got[0] != "[REDACTED]" {
+			if got := detail.HTTP.Request.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer [REDACTED]" {
 				t.Fatalf("Authorization snapshot = %#v, want redacted", got)
 			}
 		})
@@ -684,15 +689,15 @@ func TestHandlerCaptureSanitizesAuthPreparationFailureTransition(t *testing.T) {
 	if transition.TerminationReason != requestcapture.TerminationReasonPreparationError {
 		t.Fatalf("preparation termination = %q, want preparation_error", transition.TerminationReason)
 	}
-	if transition.Provider.TargetURL == "" || strings.Contains(transition.Provider.TargetURL, credential) {
-		t.Fatalf("sanitized target URL = %q, want non-empty URL without credential", transition.Provider.TargetURL)
+	if transition.Provider.TargetURL == "" || !strings.Contains(transition.Provider.TargetURL, credential) {
+		t.Fatalf("target URL = %q, want provider credential visible", transition.Provider.TargetURL)
 	}
-	if !strings.Contains(transition.Provider.TargetURL, "opaque=%5BREDACTED%5D") {
-		t.Fatalf("sanitized target URL = %q, want redacted opaque query", transition.Provider.TargetURL)
+	if !strings.Contains(transition.Provider.TargetURL, "opaque=") {
+		t.Fatalf("target URL = %q, want opaque query retained", transition.Provider.TargetURL)
 	}
 	if !transition.HasFailure ||
 		transition.Failure.Primary.Code != requestcapture.FailureCodeCredentialApply ||
-		transition.Failure.Primary.Message != "" {
+		strings.Contains(transition.Failure.Primary.Message, "[REDACTED]") {
 		t.Fatalf("structured preparation failure = present:%t observation:%#v", transition.HasFailure, transition.Failure)
 	}
 }

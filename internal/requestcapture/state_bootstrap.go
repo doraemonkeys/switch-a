@@ -212,6 +212,7 @@ func (g *gatewayState) beginRecordLocked(
 		protocol:             protocol,
 		charge:               recordCharge,
 		request:              requestResult.Snapshot,
+		credentialEvidence:   raw.CredentialEvidence,
 		sensitiveHeaderNames: requestResult.SensitiveNames,
 		redactAllHeaders:     requestResult.RedactAll,
 		messageByID:          make(map[string]*messageState),
@@ -286,10 +287,11 @@ func (g *gatewayState) beginTransitionRecorderLocked(attempt AttemptMetadata, ev
 	}
 	entry.charge += transitionRecorderChargeBytes
 	stub := &transitionRecorderState{
-		session:    session,
-		gateway:    g,
-		entry:      entry,
-		generation: session.generation,
+		session:            session,
+		gateway:            g,
+		entry:              entry,
+		generation:         session.generation,
+		credentialEvidence: evidence,
 	}
 	stub.boundSession.Store(session)
 	entry.stubOwner = stub
@@ -575,7 +577,7 @@ func (r *transitionRecorderState) finishLocked(outcome Outcome) {
 	session := r.session
 	termination := retainedTerminationReason(outcome.TerminationReason)
 	failure, hasFailure := (redaction.Sanitizer{}).FailureDetailed(
-		outcome.Failure, outcome.CredentialEvidence, false,
+		outcome.Failure, r.credentialEvidence, false,
 	)
 	charge := addRetainedCharge64(int64(len(termination.Value)), estimateFailureCharge(failure))
 	if session.reserveLocked(charge, false) {

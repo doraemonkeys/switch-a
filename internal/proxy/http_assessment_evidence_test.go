@@ -345,26 +345,16 @@ func newNormalizedRequestAttemptForTest(providerID string) model.RequestAttempt 
 	return newNormalizedRequestAttempt("req-test", providerID, time.Unix(0, 0))
 }
 
-// TestNonWebSocketEvidence_RedactsSecretsInRawErrorSnippet locks in the fix
-// for a real leak: `UpstreamReadError` wrappers frequently embed upstream
-// request URLs and header dumps into their `Error()` text. Without
-// redaction at the evidence layer those secrets land verbatim in
-// `attempt_evidence_json`. The regex classes (header-shaped secrets,
-// Bearer/Basic auth prefixes) mirror the WS sanitize path so both
-// protocols share one taxonomy.
-//
-// Each redaction class is exercised in isolation so a regression in any
-// one regex fails the test in that sub-case rather than being masked by
-// another class's match. The combined-in-one-error layout that real
-// traffic sometimes produces is covered separately in `combined`.
-func TestNonWebSocketEvidence_RedactsSecretsInRawErrorSnippet(t *testing.T) {
+// TestNonWebSocketEvidence_PreservesProviderDiagnostics keeps transport
+// evidence transparent. The only redaction boundary is an explicit API key
+// supplied by switch-a, never a regex classification of provider text.
+func TestNonWebSocketEvidence_PreservesProviderDiagnostics(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name      string
 		innerText string
-		// secrets lists every literal that must NOT appear in the
-		// serialized evidence payload. Keeping it per-case makes a
-		// regression point at the exact failing class.
+		// secrets lists literals that must remain visible in the serialized
+		// evidence payload, keeping each diagnostic shape independently covered.
 		secrets []string
 	}{
 		{
@@ -396,14 +386,32 @@ func TestNonWebSocketEvidence_RedactsSecretsInRawErrorSnippet(t *testing.T) {
 				t.Fatal("expected evidence envelope, got nil")
 			}
 			payload := *encoded
-			if !strings.Contains(payload, "[REDACTED]") {
-				t.Fatalf("payload missing [REDACTED] placeholder, got %q", payload)
-			}
 			for _, leak := range tc.secrets {
-				if strings.Contains(payload, leak) {
-					t.Fatalf("payload leaked secret %q, got %q", leak, payload)
+				if !strings.Contains(payload, leak) {
+					t.Fatalf("transparent evidence omitted diagnostic %q, got %q", leak, payload)
 				}
 			}
 		})
+	}
+}
+
+func TestNonWebSocketEvidence_RedactsExplicitInjectedAPIKey(t *testing.T) {
+	t.Parallel()
+
+	const injectedKey = "sk-switch-a"
+	encoded := buildNonWebSocketAttemptEvidence(nonWebSocketRuntimeFacts{
+		IsSSE:             true,
+		TerminalErr:       NewUpstreamReadError(errors.New("Authorization: Bearer sk-switch-a; provider-token")),
+		ResponseCommitted: true,
+		FirstByteVisible:  true,
+		InjectedAPIKey:    injectedKey,
+	})
+	if encoded == nil {
+		t.Fatal("expected evidence envelope, got nil")
+	}
+	if strings.Contains(*encoded, injectedKey) ||
+		!strings.Contains(*encoded, "[REDACTED]") ||
+		!strings.Contains(*encoded, "provider-token") {
+		t.Fatalf("evidence = %q, want only explicit key redacted", *encoded)
 	}
 }

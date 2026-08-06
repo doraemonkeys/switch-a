@@ -51,7 +51,7 @@ type nonWebSocketTransportPayload struct {
 // the DB column NULL, which keeps `session_evidence_json` clean of
 // noise-only rows.
 func buildNonWebSocketSessionEvidence(facts nonWebSocketRuntimeFacts) *string {
-	return marshalNonWebSocketEvidence(deriveNonWebSocketTransportDiagnostic(facts))
+	return marshalNonWebSocketEvidence(deriveNonWebSocketTransportDiagnostic(facts), facts.InjectedAPIKey)
 }
 
 // buildNonWebSocketAttemptEvidence produces the attempt-level evidence. It
@@ -59,7 +59,7 @@ func buildNonWebSocketSessionEvidence(facts nonWebSocketRuntimeFacts) *string {
 // explicitly after recordAttempt rather than folding it into recordAttempt
 // itself, so the HTTP attempt abstraction stays protocol-agnostic.
 func buildNonWebSocketAttemptEvidence(facts nonWebSocketRuntimeFacts) *string {
-	return marshalNonWebSocketEvidence(deriveNonWebSocketTransportDiagnostic(facts))
+	return marshalNonWebSocketEvidence(deriveNonWebSocketTransportDiagnostic(facts), facts.InjectedAPIKey)
 }
 
 // deriveNonWebSocketTransportDiagnostic adapts `nonWebSocketRuntimeFacts` to
@@ -88,18 +88,15 @@ func deriveNonWebSocketTransportDiagnostic(facts nonWebSocketRuntimeFacts) *tran
 	})
 }
 
-func marshalNonWebSocketEvidence(diag *transportDiagnostic) *string {
+func marshalNonWebSocketEvidence(diag *transportDiagnostic, injectedAPIKey string) *string {
 	if diag == nil {
 		return nil
 	}
-	// Redaction lives in the evidence layer (see transport_diagnostic.go doc
-	// comment on `truncateRawErrorSnippet`): the derivation function
-	// preserves raw fact text so unit tests can round-trip it, and every
-	// serializer is responsible for scrubbing secrets before the snippet
-	// hits the DB. SSE wrappers like `UpstreamReadError` readily quote
-	// upstream URLs with query-string credentials, so skipping this step
-	// leaks `api_key=...` verbatim into `attempt_evidence_json`.
-	diag.RawErrorSnippet = sanitizeEvidenceSnippet(diag.RawErrorSnippet)
+	// The derivation function preserves raw fact text so unit tests can
+	// round-trip it. Serialization is the single boundary where the explicitly
+	// injected switch-a API key is replaced; all other provider diagnostics,
+	// URLs, and token-shaped values remain available for debugging.
+	diag.RawErrorSnippet = sanitizeEvidenceSnippet(diag.RawErrorSnippet, injectedAPIKey)
 	payload := nonWebSocketEvidence{
 		Version: nonWebSocketEvidenceSchemaVersion,
 		Transport: &nonWebSocketTransportPayload{
@@ -118,10 +115,10 @@ func marshalNonWebSocketEvidence(diag *transportDiagnostic) *string {
 	return &s
 }
 
-// sanitizeEvidenceSnippet keeps legacy transport serializers on the same
-// evidence-layer redaction boundary as semantic attempt evidence.
-func sanitizeEvidenceSnippet(value string) string {
-	return attemptevidence.SanitizeSnippet(value)
+// sanitizeEvidenceSnippet keeps transport and semantic evidence on one
+// explicit-key boundary, so diagnostics do not drift into separate heuristics.
+func sanitizeEvidenceSnippet(value, injectedAPIKey string) string {
+	return attemptevidence.SanitizeSnippet(value, injectedAPIKey)
 }
 
 // attachHTTPAttemptEvidence is the single HTTP attempt-observability boundary.
@@ -149,7 +146,7 @@ func (h *Handler) attachHTTPAttemptEvidence(
 		return
 	}
 
-	semantic, err := buildSemanticAttemptEvidence(result)
+	semantic, err := buildSemanticAttemptEvidence(result, facts.InjectedAPIKey)
 	if err != nil {
 		h.logSemanticEvidenceFailure(result.semantic, err)
 		attempt.AttemptEvidenceJSON = transportEvidence
@@ -204,7 +201,7 @@ func classifyHTTPAttemptOutcome(result forwardResult) model.RequestAttemptOutcom
 	}
 }
 
-func buildSemanticAttemptEvidence(result forwardResult) (attemptevidence.SemanticError, error) {
+func buildSemanticAttemptEvidence(result forwardResult, injectedAPIKey string) (attemptevidence.SemanticError, error) {
 	semantic := result.semantic
 	if semantic == nil {
 		return attemptevidence.SemanticError{}, errors.New("semantic attempt facts are required")
@@ -257,7 +254,7 @@ func buildSemanticAttemptEvidence(result forwardResult) (attemptevidence.Semanti
 		Health: attemptevidence.HealthFacts{
 			Assessment: result.health, CircuitOpened: result.healthCircuitOpened,
 		},
-	})
+	}, injectedAPIKey)
 }
 
 func nonNegativeUint64(value int64) uint64 {

@@ -42,9 +42,10 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 					selectionMetadata,
 					requestcapture.CredentialPhaseInitial,
 				),
-				Target:            requestcapture.WebSocketTransitionTarget(upstreamURL),
-				TerminationReason: reason,
-				Failure:           failure,
+				Target:             requestcapture.WebSocketTransitionTarget(upstreamURL),
+				TerminationReason:  reason,
+				Failure:            failure,
+				CredentialEvidence: emptyCaptureCredentialEvidence(),
 			})
 		}
 		return attemptResult
@@ -54,6 +55,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
 		URL:                 upstreamURL,
 		Headers:             dialHeaders,
+		InjectedAPIKey:      injectedAPIKeyForCapture(provider, o.apiType),
 		Capture:             o.capture,
 		CaptureParticipates: o.captureParticipates,
 		Attempt: webSocketCaptureAttemptMetadata(
@@ -331,9 +333,10 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 					selectionMetadata,
 					requestcapture.CredentialPhaseRefreshed,
 				),
-				Target:            requestcapture.WebSocketTransitionTarget(upstreamURL),
-				TerminationReason: reason,
-				Failure:           failure,
+				Target:             requestcapture.WebSocketTransitionTarget(upstreamURL),
+				TerminationReason:  reason,
+				Failure:            failure,
+				CredentialEvidence: emptyCaptureCredentialEvidence(),
 			})
 		}
 		return DialExchange{}, configAttempt, true
@@ -342,6 +345,7 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
 		URL:                 upstreamURL,
 		Headers:             dialHeaders,
+		InjectedAPIKey:      injectedAPIKeyForCapture(provider, o.apiType),
 		Capture:             o.capture,
 		CaptureParticipates: o.captureParticipates,
 		Attempt: webSocketCaptureAttemptMetadata(

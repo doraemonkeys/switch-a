@@ -103,6 +103,11 @@ type logRequestInputs struct {
 // Note: Uses context.Background() with timeout because this runs after the HTTP response
 // completes and the request context may already be cancelled.
 func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
+	// The provider selected for the terminal logical request owns the only
+	// credential that may be redacted. Keeping this derivation at the evidence
+	// boundary prevents provider-owned bearer tokens and diagnostics from being
+	// classified by shape alone.
+	inputs.Facts.InjectedAPIKey = injectedAPIKeyForCapture(inputs.Provider, pctx.apiType)
 	assessment := assessNonWebSocketRequest(inputs.Facts)
 
 	log := &model.RequestLog{
@@ -208,6 +213,9 @@ type nonWebSocketRuntimeFacts struct {
 	IsStatusFailover   bool
 	IsClientWriteError bool
 	SemanticError      bool
+	// InjectedAPIKey is explicit switch-a credential evidence. It is never
+	// inferred from headers, URLs, cookies, or provider error text.
+	InjectedAPIKey string
 }
 
 func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAssessment {

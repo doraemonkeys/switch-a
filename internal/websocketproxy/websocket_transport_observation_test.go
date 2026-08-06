@@ -209,6 +209,7 @@ func TestBuildWebSocketEvidence_SyntheticFinal_SkipsTransportDiagnostic(t *testi
 		result,
 		errors.New("no provider"),
 		true, // isSyntheticFinal
+		"",
 	)
 	if evidenceJSON == nil {
 		t.Fatal("evidenceJSON = nil, want gateway evidence present")
@@ -240,7 +241,7 @@ func TestBuildWebSocketEvidence_LivePathEmitsTransportDiagnostic(t *testing.T) {
 			FailurePeer: webSocketPeerUpstream,
 		},
 	}
-	evidenceJSON := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, result, nil, false)
+	evidenceJSON := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, result, nil, false, "")
 	if evidenceJSON == nil {
 		t.Fatal("evidenceJSON = nil, want transport diagnostic")
 	}
@@ -318,7 +319,7 @@ func TestBuildWebSocketEvidence_SuppressedPreVisibleYieldsNilTransport(t *testin
 		t.Fatalf("TransportObservation = %+v, want zero for suppressed-pre-visible",
 			result.TransportObservation)
 	}
-	evidenceJSON := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, result, nil, false)
+	evidenceJSON := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, result, nil, false, "")
 	if evidenceJSON == nil {
 		t.Fatal("evidenceJSON = nil, want upstream_event evidence")
 	}
@@ -386,6 +387,7 @@ func TestBuildWebSocketEvidence_AlwaysStampsSchemaVersion(t *testing.T) {
 		nil,
 		nil,
 		false,
+		"",
 	)
 	if evidenceJSON == nil {
 		t.Fatal("evidenceJSON = nil")
@@ -401,7 +403,7 @@ func TestBuildWebSocketEvidence_AlwaysStampsSchemaVersion(t *testing.T) {
 func TestBuildWebSocketEvidence_EmptyEnvelopeReturnsNil(t *testing.T) {
 	t.Parallel()
 
-	if got := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, nil, nil, false); got != nil {
+	if got := buildWebSocketEvidence(webSocketGatewayEvidenceInput{}, nil, nil, false, ""); got != nil {
 		t.Fatalf("evidenceJSON = %q, want nil for empty envelope", *got)
 	}
 }

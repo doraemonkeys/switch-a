@@ -184,9 +184,10 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 		if dialExchange.captureMode.Participates() {
 			reason, failure := webSocketClientAccept(contextError(ctx), err)
 			dialCaptureOutcome = requestcapture.Outcome{
-				SourceCompletion:  requestcapture.SourceCompletionPartial,
-				TerminationReason: reason,
-				Failure:           failure,
+				SourceCompletion:   requestcapture.SourceCompletionPartial,
+				TerminationReason:  reason,
+				Failure:            failure,
+				CredentialEvidence: dialExchange.credentialEvidence,
 			}
 		}
 		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, err, time.Since(attemptStart))
@@ -208,9 +209,10 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 		if dialExchange.captureMode.Participates() {
 			reason, failure := webSocketReplayWrite(contextError(ctx), replayErr)
 			dialCaptureOutcome = requestcapture.Outcome{
-				SourceCompletion:  requestcapture.SourceCompletionPartial,
-				TerminationReason: reason,
-				Failure:           failure,
+				SourceCompletion:   requestcapture.SourceCompletionPartial,
+				TerminationReason:  reason,
+				Failure:            failure,
+				CredentialEvidence: dialExchange.credentialEvidence,
 			}
 		}
 		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, replayErr, time.Since(attemptStart))
@@ -265,6 +267,7 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	}
 	if dialExchange.captureMode.Participates() {
 		dialCaptureOutcome = webSocketRelayCaptureOutcome(ctx, relayResult, result)
+		dialCaptureOutcome.CredentialEvidence = dialExchange.credentialEvidence
 	}
 	return attemptResult
 }

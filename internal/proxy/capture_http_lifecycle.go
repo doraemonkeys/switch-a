@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
@@ -23,11 +25,18 @@ type httpCaptureExchange struct {
 	completedAt        time.Time
 }
 
-func captureCredentialMaterial(headers http.Header) (
+func captureCredentialMaterial(injectedAPIKey string) (
 	requestcapture.SensitiveHeaderEvidence,
 	requestcapture.CredentialEvidence,
 ) {
-	return capturebridge.CredentialMaterial(headers)
+	return capturebridge.CredentialMaterial(injectedAPIKey)
+}
+
+func injectedAPIKeyForCapture(provider *model.Provider, apiType string) string {
+	if provider == nil || model.NormalizeProviderCredentialType(provider.CredentialType) != model.ProviderCredentialTypeAPIKey {
+		return ""
+	}
+	return strings.TrimSpace(provider.APIKeyForAPIType(apiType))
 }
 
 func (h *Handler) captureHTTPPreparationFailure(
@@ -36,6 +45,7 @@ func (h *Handler) captureHTTPPreparationFailure(
 	attempt httpAttemptContext,
 	phase requestcapture.CredentialPhase,
 	request *http.Request,
+	injectedAPIKey string,
 	failureCode requestcapture.FailureCode,
 	err error,
 ) {
@@ -46,8 +56,8 @@ func (h *Handler) captureHTTPPreparationFailure(
 	var credentialEvidence requestcapture.CredentialEvidence
 	if request != nil {
 		target = requestcapture.HTTPTransitionTarget(request.URL)
-		_, credentialEvidence = captureCredentialMaterial(request.Header)
 	}
+	_, credentialEvidence = captureCredentialMaterial(injectedAPIKey)
 	reason, failure := capturefailure.HTTPPreparation(contextError(ctx), err, failureCode)
 	pctx.capture.Transition(requestcapture.TransitionStart{
 		Attempt: attempt.metadata(pctx.apiType, phase), Target: target,
@@ -175,12 +185,6 @@ func (e *httpCaptureExchange) observeResponse(
 	if !e.mode.CapturesPayload() {
 		return body
 	}
-	responseSensitiveHeaders, responseCredentialEvidence := captureCredentialMaterial(head.SourceHeader)
-	e.sensitiveHeaders.Merge(responseSensitiveHeaders)
-	e.sensitiveHeaders.Seal()
-	e.credentialEvidence.Merge(responseCredentialEvidence)
-	e.credentialEvidence.Seal()
-
 	e.recorder.ObserveResponse(requestcapture.HTTPResponseHead{
 		StatusCode:         head.StatusCode,
 		Protocol:           head.Protocol,
@@ -224,12 +228,9 @@ func (e httpCaptureExchange) finish(
 		CompletedAt:       e.completedAt,
 	}
 	if e.mode.CapturesPayload() {
-		_, trailerCredentialEvidence := captureCredentialMaterial(trailers)
-		e.credentialEvidence.Merge(trailerCredentialEvidence)
-		e.credentialEvidence.Seal()
 		outcome.ResponseTrailers = trailers
-		outcome.CredentialEvidence = e.credentialEvidence
 	}
+	outcome.CredentialEvidence = e.credentialEvidence
 	e.recorder.Finish(outcome)
 }
 
@@ -245,12 +246,13 @@ func (h *Handler) beginHTTPExchange(
 	attempt httpAttemptContext,
 	phase requestcapture.CredentialPhase,
 	request *http.Request,
+	injectedAPIKey string,
 ) httpCaptureExchange {
 	if !pctx.captureParticipates {
 		return httpCaptureExchange{}
 	}
 
-	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(request.Header)
+	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(injectedAPIKey)
 	recorder := pctx.capture.BeginHTTP(requestcapture.RawHTTPStart{
 		Attempt: attempt.metadata(pctx.apiType, phase),
 		URL:     request.URL,

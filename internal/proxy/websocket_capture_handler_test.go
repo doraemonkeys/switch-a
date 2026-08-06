@@ -205,7 +205,7 @@ func TestHandlerWebSocketCaptureEndToEndLiveCloseAndExport(t *testing.T) {
 		exported.WebSocket.Close.Reason != closeReason {
 		t.Fatalf("exported websocket metadata = %#v", exported)
 	}
-	if authorization := exported.Request.Headers["Authorization"]; len(authorization) != 1 || authorization[0] != "[REDACTED]" {
+	if authorization := exported.Request.Headers["Authorization"]; len(authorization) != 1 || authorization[0] != "Bearer [REDACTED]" {
 		t.Fatalf("exported Authorization = %#v, want redacted", authorization)
 	}
 }
@@ -653,8 +653,8 @@ func TestHandlerWebSocketCaptureCredentialRefreshCreatesTwoPhysicalExchanges(t *
 		initialDetail.WebSocket.HandshakeBody.CapturedBytes != int64(len(initialBody)) {
 		t.Fatalf("initial handshake detail = %#v", initialDetail.WebSocket)
 	}
-	if got := initialDetail.WebSocket.Request.Headers["Authorization"]; len(got) != 1 || got[0] != "[REDACTED]" {
-		t.Fatalf("initial Authorization = %#v, want redacted", got)
+	if got := initialDetail.WebSocket.Request.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer initial-token" {
+		t.Fatalf("initial Authorization = %#v, want access token visible", got)
 	}
 	exportedInitial := exportWebSocketCaptureMetadata(t, manager, session, []string{initial.RecordID})
 	var exportedHandshakeBody *webSocketCaptureExportBlob
@@ -787,9 +787,9 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 		entry.CredentialPhase != requestcapture.CredentialPhaseInitial {
 		t.Fatalf("transition = %#v", entry)
 	}
-	if strings.Contains(entry.Provider.TargetURL, secret) ||
-		strings.Contains(entry.Failure.Primary.Message, secret) {
-		t.Fatalf("transition leaked credential: %#v", entry)
+	if !strings.Contains(entry.Provider.TargetURL, secret) ||
+		strings.Contains(entry.Failure.Primary.Message, "[REDACTED]") {
+		t.Fatalf("transition provider diagnostics were unexpectedly redacted: %#v", entry)
 	}
 	if !entry.HasFailure || entry.Failure.Primary.Code != requestcapture.FailureCodeCredentialApply {
 		t.Fatalf("transition failure = present:%t observation:%#v", entry.HasFailure, entry.Failure)
@@ -801,7 +801,7 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 	if len(exported.GatewayTrace.Entries) != 2 ||
 		exported.GatewayTrace.Entries[0].Kind != requestcapture.TraceEntryTransition ||
 		exported.GatewayTrace.Entries[0].TerminationReason != requestcapture.TerminationReasonPreparationError ||
-		strings.Contains(exported.GatewayTrace.Entries[0].Failure.Primary.Message, secret) ||
+		strings.Contains(exported.GatewayTrace.Entries[0].Failure.Primary.Message, "[REDACTED]") ||
 		!exported.GatewayTrace.Entries[0].HasFailure {
 		t.Fatalf("exported preparation transition = %#v", exported.GatewayTrace)
 	}

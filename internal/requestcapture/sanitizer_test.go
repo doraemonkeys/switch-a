@@ -11,7 +11,7 @@ import (
 	"unsafe"
 )
 
-func TestSanitizerHeadersCaseInsensitiveAndCustom(t *testing.T) {
+func TestSanitizerHeadersRedactsOnlyExplicitInjectedKey(t *testing.T) {
 	input := http.Header{
 		"aUtHoRiZaTiOn":       {"Bearer auth-secret"},
 		"Proxy-Authorization": {"Basic proxy-secret"},
@@ -23,16 +23,14 @@ func TestSanitizerHeadersCaseInsensitiveAndCustom(t *testing.T) {
 		"ChatGPT-Account-Id":  {"account-secret"},
 		"X-Safe":              {"safe"},
 	}
-	output := (sanitizer{}).headers(input, []string{"chatgpt-account-id"})
+	output := (sanitizer{}).headersDetailed(input, nil, []string{"api-secret"}, false).value
 	for name, values := range output {
-		if strings.EqualFold(name, "X-Safe") {
-			if values[0] != "safe" {
-				t.Fatalf("safe header = %q", values[0])
-			}
-			continue
+		want := input[name][0]
+		if strings.EqualFold(name, "API-Key") {
+			want = redactedValue
 		}
-		if values[0] != redactedValue {
-			t.Fatalf("%s = %q", name, values[0])
+		if values[0] != want {
+			t.Fatalf("%s = %q, want %q", name, values[0], want)
 		}
 	}
 	output["X-Safe"][0] = "changed"
@@ -41,46 +39,41 @@ func TestSanitizerHeadersCaseInsensitiveAndCustom(t *testing.T) {
 	}
 }
 
-func TestSanitizerURLRemovesUserInfoAndSensitiveQueries(t *testing.T) {
+func TestSanitizerURLPreservesUserInfoAndUnrelatedCredentialQueries(t *testing.T) {
 	raw := "https://user:pass@example.test/path?token=one&TOKEN=two&safe=credential-value&encoded=credential%2Dvalue"
 	output := (sanitizer{}).url(raw, []string{"credential-value"})
-	if strings.Contains(output, "user") || strings.Contains(output, "pass") ||
-		strings.Contains(output, "one") || strings.Contains(output, "two") ||
-		strings.Contains(output, "credential-value") {
-		t.Fatalf("URL leaked secret: %q", output)
-	}
 	parsed, err := url.Parse(output)
 	if err != nil {
 		t.Fatalf("sanitized URL parse error = %v", err)
 	}
-	if parsed.User != nil {
-		t.Fatalf("sanitized URL retained userinfo: %q", output)
+	if parsed.User == nil || parsed.User.Username() != "user" {
+		t.Fatalf("sanitized URL removed userinfo: %q", output)
 	}
 	query := parsed.Query()
-	for _, key := range []string{"token", "TOKEN", "safe", "encoded"} {
-		for _, value := range query[key] {
-			if value != redactedValue {
-				t.Fatalf("query %q value = %q in %q", key, value, output)
-			}
+	if query.Get("token") != "one" || query.Get("TOKEN") != "two" {
+		t.Fatalf("unrelated token queries changed: %q", output)
+	}
+	for _, key := range []string{"safe", "encoded"} {
+		if query.Get(key) != redactedValue {
+			t.Fatalf("query %q = %q, want exact key replacement", key, query.Get(key))
 		}
 	}
 }
 
-func TestSanitizedTextScrubsStructuredAndAuthForms(t *testing.T) {
+func TestSanitizedTextScrubsOnlyExactInjectedKey(t *testing.T) {
 	input := "Bearer bearer-secret API_KEY=key-secret exact-secret"
 	output := sanitizedText(input, []string{"exact-secret"}, maxRetainedErrorBytes, "FAILURE_MESSAGE").value
-	for _, secret := range []string{"bearer-secret", "key-secret", "exact-secret"} {
-		if strings.Contains(output, secret) {
-			t.Fatalf("text leaked %q: %q", secret, output)
-		}
+	if strings.Contains(output, "exact-secret") || !strings.Contains(output, "bearer-secret") ||
+		!strings.Contains(output, "key-secret") {
+		t.Fatalf("unexpected exact-key sanitization: %q", output)
 	}
-	if strings.Count(output, redactedValue) < 3 {
+	if strings.Count(output, redactedValue) != 1 {
 		t.Fatalf("text was not redacted: %q", output)
 	}
 
 	plain := sanitizedText("password: hunter2", nil, maxRetainedErrorBytes, "FAILURE_MESSAGE").value
-	if strings.Contains(plain, "hunter2") {
-		t.Fatalf("auth-shaped text leaked: %q", plain)
+	if plain != "password: hunter2" {
+		t.Fatalf("auth-shaped text changed: %q", plain)
 	}
 }
 
@@ -104,27 +97,31 @@ func TestSanitizerSnapshotsWhitelistAndSort(t *testing.T) {
 		t.Fatalf("provider snapshot = %#v", provider)
 	}
 	if strings.Contains(provider.TargetURL, "secret") {
-		t.Fatalf("provider target leaked: %q", provider.TargetURL)
+		t.Fatalf("provider target leaked injected key: %q", provider.TargetURL)
 	}
 	request := s.request(raw, target)
 	if request.Headers["X-Credential"][0] != redactedValue ||
 		request.Trailers["Authorization"][0] != redactedValue {
-		t.Fatalf("request snapshot leaked: %#v", request)
+		t.Fatalf("request exact-key snapshot = %#v", request)
 	}
 	response := s.httpResponse(HTTPResponseHead{
-		StatusCode:       http.StatusOK,
-		Protocol:         "HTTP/2.0",
-		DeclaredTrailers: http.Header{"z": nil, "a": nil},
-		Headers:          http.Header{"Set-Cookie": {"secret"}},
+		StatusCode:         http.StatusOK,
+		Protocol:           "HTTP/2.0",
+		DeclaredTrailers:   http.Header{"z": nil, "a": nil},
+		Headers:            http.Header{"Set-Cookie": {"secret"}},
+		SensitiveHeaders:   testSensitiveHeaderEvidence(),
+		CredentialEvidence: testCredentialEvidence(),
 	})
-	if response.DeclaredTrailerKeys[0] != "a" || response.Headers["Set-Cookie"][0] != redactedValue {
+	if response.DeclaredTrailerKeys[0] != "a" || response.Headers["Set-Cookie"][0] != "secret" {
 		t.Fatalf("HTTP response snapshot = %#v", response)
 	}
 	handshake := s.webSocketHandshake(WebSocketHandshake{
-		StatusCode: http.StatusSwitchingProtocols,
-		Headers:    http.Header{"Cookie": {"secret"}},
+		StatusCode:         http.StatusSwitchingProtocols,
+		Headers:            http.Header{"Cookie": {"secret"}},
+		SensitiveHeaders:   testSensitiveHeaderEvidence(),
+		CredentialEvidence: testCredentialEvidence(),
 	})
-	if handshake.Headers["Cookie"][0] != redactedValue {
+	if handshake.Headers["Cookie"][0] != "secret" {
 		t.Fatalf("handshake = %#v", handshake)
 	}
 }
@@ -143,7 +140,7 @@ func TestSanitizerScrubsCredentialValuesFromEveryHeaderSurface(t *testing.T) {
 		"request trailer": request.Trailers["X-Trailer"],
 	} {
 		if len(values) != 1 || strings.Contains(values[0], secret) {
-			t.Fatalf("%s leaked credential: %#v", name, values)
+			t.Fatalf("%s leaked injected key: %#v", name, values)
 		}
 	}
 
@@ -152,7 +149,7 @@ func TestSanitizerScrubsCredentialValuesFromEveryHeaderSurface(t *testing.T) {
 		CredentialEvidence: testCredentialEvidence(secret),
 	})
 	if got := response.Headers["X-Debug"][0]; strings.Contains(got, secret) {
-		t.Fatalf("response header leaked credential: %q", got)
+		t.Fatalf("response header leaked injected key: %q", got)
 	}
 
 	handshake := s.webSocketHandshake(WebSocketHandshake{
@@ -160,7 +157,7 @@ func TestSanitizerScrubsCredentialValuesFromEveryHeaderSurface(t *testing.T) {
 		CredentialEvidence: testCredentialEvidence(secret),
 	})
 	if got := handshake.Headers["X-Debug"][0]; strings.Contains(got, secret) {
-		t.Fatalf("websocket handshake header leaked credential: %q", got)
+		t.Fatalf("websocket handshake header leaked injected key: %q", got)
 	}
 
 	authShaped := s.headersDetailed(
@@ -169,8 +166,8 @@ func TestSanitizerScrubsCredentialValuesFromEveryHeaderSurface(t *testing.T) {
 		nil,
 		false,
 	)
-	if got := authShaped.value["X-Debug"][0]; strings.Contains(got, "opaque-token") {
-		t.Fatalf("authentication-shaped value leaked without credential metadata: %q", got)
+	if got := authShaped.value["X-Debug"][0]; got != "Bearer opaque-token" {
+		t.Fatalf("authentication-shaped value changed without injected-key evidence: %q", got)
 	}
 }
 
@@ -182,7 +179,9 @@ func TestSanitizerDiscoversCredentialsAcrossEachHeaderMap(t *testing.T) {
 			"Cookie":        {"session=cookie-secret"},
 			"X-Debug":       {"auth-secret cookie-secret"},
 		},
-		Trailers: http.Header{"X-Trailer": {"auth-secret cookie-secret"}},
+		Trailers:           http.Header{"X-Trailer": {"auth-secret cookie-secret"}},
+		SensitiveHeaders:   testSensitiveHeaderEvidence(),
+		CredentialEvidence: testCredentialEvidence(),
 	}, borrowedWebSocketTarget("https://auth-secret.example.test/path?debug=auth-secret&cookie=cookie-secret"))
 	for surface, value := range map[string]string{
 		"request URL":     request.URL,
@@ -190,32 +189,32 @@ func TestSanitizerDiscoversCredentialsAcrossEachHeaderMap(t *testing.T) {
 		"request header":  request.Headers["X-Debug"][0],
 		"request trailer": request.Trailers["X-Trailer"][0],
 	} {
-		if strings.Contains(value, "auth-secret") || strings.Contains(value, "cookie-secret") {
-			t.Fatalf("%s leaked discovered credential: %q", surface, value)
+		if !strings.Contains(value, "auth-secret") && !strings.Contains(value, "cookie-secret") {
+			t.Fatalf("%s was unexpectedly redacted: %q", surface, value)
 		}
 	}
 
 	response := s.httpResponse(HTTPResponseHead{Headers: http.Header{
 		"X-Auth-Token": {"response-secret"},
 		"X-Debug":      {"response-secret"},
-	}})
-	if got := response.Headers["X-Debug"][0]; strings.Contains(got, "response-secret") {
-		t.Fatalf("response header leaked discovered credential: %q", got)
+	}, SensitiveHeaders: testSensitiveHeaderEvidence(), CredentialEvidence: testCredentialEvidence()})
+	if got := response.Headers["X-Debug"][0]; !strings.Contains(got, "response-secret") {
+		t.Fatalf("response header was unexpectedly redacted: %q", got)
 	}
 	response = s.httpResponse(HTTPResponseHead{Headers: http.Header{
 		"Set-Cookie": {"session=cookie-secret; Path=/"},
 		"X-Debug":    {"cookie-secret"},
-	}})
-	if got := response.Headers["X-Debug"][0]; strings.Contains(got, "cookie-secret") {
-		t.Fatalf("response cookie component leaked: %q", got)
+	}, SensitiveHeaders: testSensitiveHeaderEvidence(), CredentialEvidence: testCredentialEvidence()})
+	if got := response.Headers["X-Debug"][0]; !strings.Contains(got, "cookie-secret") {
+		t.Fatalf("response cookie value was unexpectedly redacted: %q", got)
 	}
 
 	handshake := s.webSocketHandshake(WebSocketHandshake{Headers: http.Header{
 		"X-Amz-Security-Token": {"websocket-secret"},
 		"X-Debug":              {"websocket-secret"},
-	}})
-	if got := handshake.Headers["X-Debug"][0]; strings.Contains(got, "websocket-secret") {
-		t.Fatalf("websocket handshake leaked discovered credential: %q", got)
+	}, SensitiveHeaders: testSensitiveHeaderEvidence(), CredentialEvidence: testCredentialEvidence()})
+	if got := handshake.Headers["X-Debug"][0]; !strings.Contains(got, "websocket-secret") {
+		t.Fatalf("websocket handshake value was unexpectedly redacted: %q", got)
 	}
 
 	trailers := s.headersDetailed(
@@ -227,26 +226,25 @@ func TestSanitizerDiscoversCredentialsAcrossEachHeaderMap(t *testing.T) {
 		nil,
 		false,
 	)
-	if got := trailers.value["X-Debug"][0]; strings.Contains(got, "trailer-secret") {
-		t.Fatalf("response trailer leaked discovered credential: %q", got)
+	if got := trailers.value["X-Debug"][0]; !strings.Contains(got, "trailer-secret") {
+		t.Fatalf("response trailer value was unexpectedly redacted: %q", got)
 	}
 }
 
-func TestSanitizerStructuredCredentialValuesAndReplacementAreBounded(t *testing.T) {
+func TestSanitizerLeavesStructuredProviderDiagnosticsIntactExceptExactKey(t *testing.T) {
 	input := `prepare failed: {"access_token":["array-secret"],"nested":{"client_assertion":{"value":"assertion-secret"}},"vendor_signature":["signature-secret"]}`
 	output := scrubText(input, []string{"E", "E", "array-secret"})
-	for _, secret := range []string{"array-secret", "assertion-secret", "signature-secret"} {
-		if strings.Contains(output, secret) {
-			t.Fatalf("structured metadata leaked %q: %q", secret, output)
-		}
+	if strings.Contains(output, "array-secret") || !strings.Contains(output, "assertion-secret") ||
+		!strings.Contains(output, "signature-secret") {
+		t.Fatalf("structured provider diagnostic changed unexpectedly: %q", output)
 	}
-	if len(output) > len(input)+8*len(redactedValue) {
+	if len(output) > len(input)+len(redactedValue) {
 		t.Fatalf("single-pass replacement expanded unexpectedly: input=%d output=%d", len(input), len(output))
 	}
 
 	ambiguous := scrubText(`{"access_token":[unterminated`, nil)
-	if ambiguous != redactedValue {
-		t.Fatalf("ambiguous credential JSON = %q, want fail-closed marker", ambiguous)
+	if ambiguous != `{"access_token":[unterminated` {
+		t.Fatalf("ambiguous provider JSON changed unexpectedly: %q", ambiguous)
 	}
 }
 
@@ -284,7 +282,7 @@ func TestSanitizerTightClonesRetainedSubstrings(t *testing.T) {
 	}
 }
 
-func TestSanitizerNormalizesSensitiveQueryKeys(t *testing.T) {
+func TestSanitizerPreservesSensitiveLookingQueryKeys(t *testing.T) {
 	raw := "https://example.test/path?refresh_token=one&id-token=two&client_secret=three&session-token=four&token%5B%5D=five&api-key=six&X-Amz-Signature=aws-signature&X-Amz-Security-Token=aws-token&X-Amz-Credential=aws-credential&X-Goog-Signature=goog-signature&X-Goog-Credential=goog-credential&sig=azure-signature&safe=visible"
 	output := (sanitizer{}).url(raw, nil)
 	parsed, err := url.Parse(output)
@@ -297,8 +295,8 @@ func TestSanitizerNormalizesSensitiveQueryKeys(t *testing.T) {
 		"X-Amz-Signature", "X-Amz-Security-Token", "X-Amz-Credential",
 		"X-Goog-Signature", "X-Goog-Credential", "sig",
 	} {
-		if got := query.Get(key); got != redactedValue {
-			t.Fatalf("query %q = %q, want redacted", key, got)
+		if query.Get(key) == redactedValue {
+			t.Fatalf("query %q was redacted without injected-key evidence", key)
 		}
 	}
 	if got := query.Get("safe"); got != "visible" {
@@ -306,14 +304,14 @@ func TestSanitizerNormalizesSensitiveQueryKeys(t *testing.T) {
 	}
 }
 
-func TestSanitizerScrubsJSONCredentialShapesWithoutCredentialMetadata(t *testing.T) {
+func TestSanitizerPreservesJSONCredentialShapesWithoutCredentialMetadata(t *testing.T) {
 	input := `prepare failed: {"access_token":"access-secret","refresh_token":"refresh-secret","client_secret":"client-secret","id_token":"id-secret","session_token":"session-secret"}`
 	output := sanitizedText(input, nil, maxRetainedErrorBytes, "FAILURE_MESSAGE").value
 	for _, secret := range []string{
 		"access-secret", "refresh-secret", "client-secret", "id-secret", "session-secret",
 	} {
-		if strings.Contains(output, secret) {
-			t.Fatalf("preparation error leaked %q: %q", secret, output)
+		if !strings.Contains(output, secret) {
+			t.Fatalf("provider diagnostic was redacted %q: %q", secret, output)
 		}
 	}
 }
@@ -536,9 +534,10 @@ func TestProviderFailureDiagnosticsRequireSemanticCodeAndSealedEvidence(t *testi
 
 	input.Primary.Code = FailureCodeRoundTrip
 	result, _ = (sanitizer{}).failureDetailed(input, sealed, false)
-	if result.Primary.ProviderErrorType != "" || result.Primary.ProviderErrorCode != "" ||
-		!result.Truncated {
-		t.Fatalf("non-semantic provider fields survived: %#v", result)
+	if !strings.Contains(result.Primary.ProviderErrorType, redactedValue) ||
+		!strings.Contains(result.Primary.ProviderErrorCode, redactedValue) ||
+		!strings.Contains(result.Primary.Message, redactedValue) || !result.Truncated {
+		t.Fatalf("non-semantic provider fields were not preserved with exact redaction: %#v", result)
 	}
 
 	result, _ = (sanitizer{}).failureDetailed(input, CredentialEvidence{}, false)
@@ -598,7 +597,7 @@ func TestInitialCredentialDiscoveryDoesNotPoisonSealedLaterFailure(t *testing.T)
 		nil,
 		false,
 	)
-	if !response.redactAll {
-		t.Fatal("unavailable response evidence did not poison later opaque metadata")
+	if response.redactAll {
+		t.Fatal("sealed empty response evidence poisoned later opaque metadata")
 	}
 }
