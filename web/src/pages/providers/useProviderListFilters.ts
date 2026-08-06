@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
@@ -34,7 +34,21 @@ export function useProviderListFilters() {
   const urlGroupId = urlFilters.groupId;
   const urlVisibility = urlFilters.visibility;
 
+  // A setFilter() write lands in two stores that commit at different times:
+  // useLocalStorage dispatches a synchronous store event that React flushes
+  // before the router navigation commits. On that intermediate render the URL
+  // still holds the old filters while localStorage already holds the new ones,
+  // so the mirror logic below would mistake the user's own write for an
+  // outdated persisted value and overwrite it — and the rehydrate logic would
+  // then put the old filter back into the URL. Skipping one effect pass after
+  // an explicit user write lets both stores converge before any mirroring runs.
+  const userWritePendingRef = useRef(false);
+
   useEffect(() => {
+    if (userWritePendingRef.current) {
+      userWritePendingRef.current = false;
+      return;
+    }
     const currentPersistedFilters: ProviderListFilters = {
       searchQuery: persistedSearchQuery,
       groupId: persistedGroupId,
@@ -80,6 +94,8 @@ export function useProviderListFilters() {
     value: ProviderListFilters[K],
   ) => {
     const nextFilters = { ...filters, [field]: value };
+
+    userWritePendingRef.current = true;
 
     // Replacing history keeps typing in the search field from polluting Back,
     // while local storage carries the same selection across feature navigation.

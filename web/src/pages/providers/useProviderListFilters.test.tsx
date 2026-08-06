@@ -93,4 +93,24 @@ describe("useProviderListFilters", () => {
       screen.getByRole("combobox", { name: "Provider status" }),
     ).toHaveValue("unhealthy");
   });
+
+  it("clears a URL-driven filter when All Providers is selected", async () => {
+    const user = userEvent.setup();
+    renderNavigation("/providers?status=enabled");
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Provider status" }),
+      "All Providers",
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Provider status" }),
+    ).toHaveValue("");
+    expect(screen.getByTestId("location-search")).toHaveTextContent("");
+    expect(
+      JSON.parse(
+        localStorage.getItem(PROVIDER_LIST_FILTER_STORAGE_KEY) ?? "null",
+      ),
+    ).toEqual({ searchQuery: "", groupId: "", visibility: "" });
+  });
 });
