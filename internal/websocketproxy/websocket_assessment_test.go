@@ -595,6 +595,49 @@ func TestAssessWebSocketSession_RedactsOnlyInjectedAPIKey(t *testing.T) {
 	}
 }
 
+func TestAssessWebSocketSession_RedactsOAuthAccessTokenOnly(t *testing.T) {
+	t.Parallel()
+
+	const (
+		accessToken  = "oauth-access-token"
+		refreshToken = "oauth-refresh-token"
+		idToken      = "oauth-id-token"
+	)
+	secretData, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
+		AccessToken: accessToken, RefreshToken: refreshToken, IDToken: idToken,
+	})
+	if err != nil {
+		t.Fatalf("EncodeChatGPTProviderSecret() error = %v", err)
+	}
+	assessment := assessWebSocketSession(&WebSocketSessionResult{
+		APIType: "codex",
+		FinalProvider: &model.Provider{
+			ID:             "provider-final",
+			CredentialType: model.ProviderCredentialTypeChatGPT,
+			Credential:     &model.ProviderCredential{SecretData: secretData},
+		},
+		FinalResult: &WebSocketResult{
+			TerminalCause: model.TerminalUpstreamSemanticError,
+			UpstreamError: &WebSocketUpstreamError{
+				EnvelopeType: "error",
+				Message:      accessToken + " rejected " + refreshToken + " " + idToken + " client-token",
+				Raw:          `{"message":"` + accessToken + ` rejected ` + refreshToken + ` ` + idToken + ` client-token"}`,
+			},
+		},
+	})
+	if assessment.SessionEvidenceJSON == nil {
+		t.Fatal("SessionEvidenceJSON = nil, want upstream evidence")
+	}
+	evidence := *assessment.SessionEvidenceJSON
+	if strings.Contains(evidence, accessToken) ||
+		!strings.Contains(evidence, refreshToken) ||
+		!strings.Contains(evidence, idToken) ||
+		!strings.Contains(evidence, "client-token") ||
+		!strings.Contains(evidence, "[REDACTED]") {
+		t.Fatalf("SessionEvidenceJSON = %q, want only OAuth access token redacted", evidence)
+	}
+}
+
 func TestAssessWebSocketSession_PostVisibleClientScopedSemanticErrorStaysUnknown(t *testing.T) {
 	t.Parallel()
 

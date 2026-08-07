@@ -55,7 +55,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
 		URL:                 upstreamURL,
 		Headers:             dialHeaders,
-		InjectedAPIKey:      injectedAPIKeyForCapture(provider, o.apiType),
+		InjectedCredential:  injectedCredentialForCapture(provider, o.apiType),
 		Capture:             o.capture,
 		CaptureParticipates: o.captureParticipates,
 		Attempt: webSocketCaptureAttemptMetadata(
@@ -345,7 +345,7 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
 		URL:                 upstreamURL,
 		Headers:             dialHeaders,
-		InjectedAPIKey:      injectedAPIKeyForCapture(provider, o.apiType),
+		InjectedCredential:  injectedCredentialForCapture(provider, o.apiType),
 		Capture:             o.capture,
 		CaptureParticipates: o.captureParticipates,
 		Attempt: webSocketCaptureAttemptMetadata(

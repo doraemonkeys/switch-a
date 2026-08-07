@@ -9,11 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
 )
 
-func TestCredentialMaterialContainsOnlyInjectedAPIKey(t *testing.T) {
+func TestCredentialMaterialContainsOnlyInjectedCredential(t *testing.T) {
 	t.Parallel()
 
 	sensitiveHeaders, evidence := CredentialMaterial(" api-secret ")
@@ -27,7 +28,7 @@ func TestCredentialMaterialContainsOnlyInjectedAPIKey(t *testing.T) {
 	diagnostic := "authorization-secret proxy-secret cookie-secret dark set-cookie-secret api-secret public-value"
 	sanitized := redaction.SanitizedTextWithEvidence(diagnostic, evidence, len(diagnostic)*2, "TEST")
 	if strings.Contains(sanitized.Value, "api-secret") {
-		t.Fatalf("injected API key was retained: %q", sanitized.Value)
+		t.Fatalf("injected credential was retained: %q", sanitized.Value)
 	}
 	for _, retained := range []string{
 		"authorization-secret",
@@ -43,7 +44,7 @@ func TestCredentialMaterialContainsOnlyInjectedAPIKey(t *testing.T) {
 	}
 }
 
-func TestCredentialMaterialWithNoInjectedKeyPreservesDiagnostics(t *testing.T) {
+func TestCredentialMaterialWithNoInjectedCredentialPreservesDiagnostics(t *testing.T) {
 	t.Parallel()
 
 	_, evidence := CredentialMaterial("")
@@ -51,6 +52,87 @@ func TestCredentialMaterialWithNoInjectedKeyPreservesDiagnostics(t *testing.T) {
 	got := redaction.SanitizedTextWithEvidence(diagnostic, evidence, 128, "TEST")
 	if got.Value != diagnostic || got.Truncated {
 		t.Fatalf("diagnostic = %#v, want unchanged", got)
+	}
+}
+
+func TestInjectedCredentialValueUsesOnlySwitchAUpstreamSecret(t *testing.T) {
+	t.Parallel()
+
+	oauthSecret, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
+		AccessToken:  " oauth-access-token ",
+		RefreshToken: "oauth-refresh-token",
+		IDToken:      "oauth-id-token",
+	})
+	if err != nil {
+		t.Fatalf("EncodeChatGPTProviderSecret() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		provider *model.Provider
+		apiType  string
+		want     string
+	}{
+		{name: "nil provider"},
+		{
+			name: "provider api key",
+			provider: &model.Provider{
+				CredentialType: model.ProviderCredentialTypeAPIKey,
+				APIKey:         " provider-api-key ",
+			},
+			apiType: "claude",
+			want:    "provider-api-key",
+		},
+		{
+			name: "api type override",
+			provider: &model.Provider{
+				CredentialType: model.ProviderCredentialTypeAPIKey,
+				APIKey:         "provider-api-key",
+				APITypes: []model.ProviderAPIType{{
+					APIType: "codex",
+					APIKey:  " codex-api-key ",
+				}},
+			},
+			apiType: "codex",
+			want:    "codex-api-key",
+		},
+		{
+			name: "oauth access token",
+			provider: &model.Provider{
+				CredentialType: model.ProviderCredentialTypeChatGPT,
+				Credential:     &model.ProviderCredential{SecretData: oauthSecret},
+			},
+			apiType: "codex",
+			want:    "oauth-access-token",
+		},
+		{
+			name: "oauth credential missing",
+			provider: &model.Provider{
+				CredentialType: model.ProviderCredentialTypeChatGPT,
+			},
+		},
+		{
+			name: "oauth credential malformed",
+			provider: &model.Provider{
+				CredentialType: model.ProviderCredentialTypeChatGPT,
+				Credential:     &model.ProviderCredential{SecretData: "{"},
+			},
+		},
+		{
+			name: "unsupported credential type",
+			provider: &model.Provider{
+				CredentialType: model.ProviderCredentialType("unsupported"),
+				APIKey:         "must-not-be-used",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := InjectedCredentialValue(test.provider, test.apiType); got != test.want {
+				t.Fatalf("InjectedCredentialValue() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

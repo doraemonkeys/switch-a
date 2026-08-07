@@ -139,11 +139,11 @@ func sourceEndpointComplete(observedBytes, expectedBytes int64, reachedEOF, read
 	return capturebridge.SourceEndpointComplete(observedBytes, expectedBytes, reachedEOF, readFailed)
 }
 
-func captureCredentialMaterial(injectedAPIKey string) (
+func captureCredentialMaterial(injectedCredential string) (
 	requestcapture.SensitiveHeaderEvidence,
 	requestcapture.CredentialEvidence,
 ) {
-	return capturebridge.CredentialMaterial(injectedAPIKey)
+	return capturebridge.CredentialMaterial(injectedCredential)
 }
 
 func emptyCaptureCredentialEvidence() requestcapture.CredentialEvidence {

@@ -81,11 +81,11 @@ func assessWebSocketSession(session *WebSocketSessionResult) webSocketAssessment
 		isSyntheticFinal = session.syntheticFinalFromSuppressedPayload
 	}
 
-	injectedAPIKey := injectedAPIKeyForCapture(provider, "")
+	injectedCredential := injectedCredentialForCapture(provider, "")
 	if session != nil {
-		injectedAPIKey = injectedAPIKeyForCapture(provider, session.APIType)
+		injectedCredential = injectedCredentialForCapture(provider, session.APIType)
 	}
-	assessment := newWebSocketAssessment(provider, gateway, result, fallback, transparentRetry, isSyntheticFinal, injectedAPIKey)
+	assessment := newWebSocketAssessment(provider, gateway, result, fallback, transparentRetry, isSyntheticFinal, injectedCredential)
 	if result == nil {
 		return assessment
 	}
@@ -107,7 +107,7 @@ func newWebSocketAssessment(
 	fallback error,
 	transparentRetry bool,
 	isSyntheticFinal bool,
-	injectedAPIKey string,
+	injectedCredential string,
 ) webSocketAssessment {
 	assessment := webSocketAssessment{
 		SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
@@ -140,7 +140,7 @@ func newWebSocketAssessment(
 		assessment.TerminationActor,
 		assessment.ServiceOutcome,
 	)
-	assessment.SessionEvidenceJSON = buildWebSocketEvidence(gateway, result, fallback, isSyntheticFinal, injectedAPIKey)
+	assessment.SessionEvidenceJSON = buildWebSocketEvidence(gateway, result, fallback, isSyntheticFinal, injectedCredential)
 	return assessment
 }
 

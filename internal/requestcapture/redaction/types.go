@@ -30,8 +30,8 @@ const (
 )
 
 // CredentialEvidence is fixed-capacity attempt-scoped evidence containing only
-// the static API key switch-a injected. It may be copied between proxy phases
-// and retained for the lifetime of one capture record.
+// the provider credential switch-a injected: a static API key or OAuth access
+// token. It may be copied between proxy phases and retained for one record.
 type CredentialEvidence struct {
 	values   [MaxRetainedCredentialValues]string
 	count    uint8

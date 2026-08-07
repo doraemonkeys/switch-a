@@ -112,7 +112,7 @@ func (realDialer) Dial(ctx context.Context, url string, opts *websocket.DialOpti
 type WebSocketDialRequest struct {
 	URL                 string
 	Headers             http.Header
-	InjectedAPIKey      string
+	InjectedCredential  string
 	Capture             requestcapture.GatewayRecorder
 	CaptureParticipates bool
 	Attempt             requestcapture.AttemptMetadata
@@ -201,7 +201,7 @@ func beginWebSocketDialCapture(
 		return requestcapture.Recorder{}, requestcapture.SensitiveHeaderEvidence{}, requestcapture.CredentialEvidence{}, captureModeNone
 	}
 
-	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(request.InjectedAPIKey)
+	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(request.InjectedCredential)
 	recorder := request.Capture.BeginWebSocket(requestcapture.RawWebSocketStart{
 		Attempt:   request.Attempt,
 		TargetURL: request.URL,

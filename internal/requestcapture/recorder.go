@@ -513,7 +513,7 @@ func (r *recordState) observeHTTPResponseLocked(head HTTPResponseHead) {
 	}
 	r.responseObserved = true
 	metadata := responseMetadata(head)
-	// The injected key belongs to the upstream attempt, not an individual
+	// The injected credential belongs to the upstream attempt, not an individual
 	// response phase. Keeping the start-time evidence authoritative prevents a
 	// sparse failure/fallback event from accidentally changing capture policy.
 	metadata.CredentialEvidence = r.credentialEvidence

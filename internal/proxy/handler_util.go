@@ -107,7 +107,7 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 	// credential that may be redacted. Keeping this derivation at the evidence
 	// boundary prevents provider-owned bearer tokens and diagnostics from being
 	// classified by shape alone.
-	inputs.Facts.InjectedAPIKey = injectedAPIKeyForCapture(inputs.Provider, pctx.apiType)
+	inputs.Facts.InjectedCredential = injectedCredentialForCapture(inputs.Provider, pctx.apiType)
 	assessment := assessNonWebSocketRequest(inputs.Facts)
 
 	log := &model.RequestLog{
@@ -213,9 +213,9 @@ type nonWebSocketRuntimeFacts struct {
 	IsStatusFailover   bool
 	IsClientWriteError bool
 	SemanticError      bool
-	// InjectedAPIKey is explicit switch-a credential evidence. It is never
+	// InjectedCredential is explicit switch-a credential evidence. It is never
 	// inferred from headers, URLs, cookies, or provider error text.
-	InjectedAPIKey string
+	InjectedCredential string
 }
 
 func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAssessment {

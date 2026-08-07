@@ -395,23 +395,24 @@ func TestNonWebSocketEvidence_PreservesProviderDiagnostics(t *testing.T) {
 	}
 }
 
-func TestNonWebSocketEvidence_RedactsExplicitInjectedAPIKey(t *testing.T) {
+func TestNonWebSocketEvidence_RedactsExplicitInjectedCredential(t *testing.T) {
 	t.Parallel()
 
-	const injectedKey = "sk-switch-a"
+	const injectedCredential = "oauth-access-token"
 	encoded := buildNonWebSocketAttemptEvidence(nonWebSocketRuntimeFacts{
-		IsSSE:             true,
-		TerminalErr:       NewUpstreamReadError(errors.New("Authorization: Bearer sk-switch-a; provider-token")),
-		ResponseCommitted: true,
-		FirstByteVisible:  true,
-		InjectedAPIKey:    injectedKey,
+		IsSSE:              true,
+		TerminalErr:        NewUpstreamReadError(errors.New("Authorization: Bearer oauth-access-token; refresh-token; provider-token")),
+		ResponseCommitted:  true,
+		FirstByteVisible:   true,
+		InjectedCredential: injectedCredential,
 	})
 	if encoded == nil {
 		t.Fatal("expected evidence envelope, got nil")
 	}
-	if strings.Contains(*encoded, injectedKey) ||
+	if strings.Contains(*encoded, injectedCredential) ||
 		!strings.Contains(*encoded, "[REDACTED]") ||
+		!strings.Contains(*encoded, "refresh-token") ||
 		!strings.Contains(*encoded, "provider-token") {
-		t.Fatalf("evidence = %q, want only explicit key redacted", *encoded)
+		t.Fatalf("evidence = %q, want only explicit credential redacted", *encoded)
 	}
 }

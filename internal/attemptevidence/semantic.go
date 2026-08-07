@@ -10,9 +10,9 @@ import (
 )
 
 // NewSemanticError preserves semantic diagnostics and replaces only the
-// explicitly supplied switch-a API key. An empty key intentionally means that
-// no static key was injected for this attempt.
-func NewSemanticError(facts Facts, injectedAPIKey string) (SemanticError, error) {
+// explicitly supplied switch-a credential. An empty value intentionally means
+// that no switch-a-owned credential was injected for this attempt.
+func NewSemanticError(facts Facts, injectedCredential string) (SemanticError, error) {
 	if err := validateFacts(facts); err != nil {
 		return SemanticError{}, err
 	}
@@ -24,11 +24,11 @@ func NewSemanticError(facts Facts, injectedAPIKey string) (SemanticError, error)
 	}
 	matchedKeywords := make([]string, len(winner.MatchedKeywords))
 	for index, keyword := range winner.MatchedKeywords {
-		matchedKeywords[index] = SanitizeSnippet(keyword, injectedAPIKey)
+		matchedKeywords[index] = SanitizeSnippet(keyword, injectedCredential)
 	}
 	keywords := make([]string, len(winner.Rule.Keywords))
 	for index, keyword := range winner.Rule.Keywords {
-		keywords[index] = SanitizeSnippet(keyword, injectedAPIKey)
+		keywords[index] = SanitizeSnippet(keyword, injectedCredential)
 	}
 	var remaining *string
 	if !facts.Retry.GlobalAttemptsUnlimited {
@@ -60,7 +60,7 @@ func NewSemanticError(facts Facts, injectedAPIKey string) (SemanticError, error)
 		Rule: Rule{
 			Revision: facts.Rule.Revision.String(), WinnerID: winner.Rule.ID,
 			NormalizedSnapshot: NormalizedRuleSnapshot{
-				Name: SanitizeSnippet(winner.Rule.Name, injectedAPIKey), Enabled: winner.Rule.Enabled,
+				Name: SanitizeSnippet(winner.Rule.Name, injectedCredential), Enabled: winner.Rule.Enabled,
 				Target: winner.Rule.Target, APIType: winner.Rule.APIType,
 				Keywords: keywords, MatchMode: winner.Rule.MatchMode,
 				Action: winner.Rule.Action, Position: winner.Rule.Position,

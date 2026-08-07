@@ -166,7 +166,7 @@ func scrubText(value string, secrets []string) string {
 	return scrubTextWithReplacer(value, compileCredentialReplacer(secrets))
 }
 
-// ScrubText exposes exact injected-key replacement to callers that already hold
+// ScrubText exposes exact injected-credential replacement to callers that hold
 // attempt-scoped redaction evidence.
 func ScrubText(value string, secrets []string) string {
 	return scrubText(value, secrets)
@@ -177,8 +177,8 @@ func scrubTextWithReplacer(value string, replacer credentialReplacer) string {
 		return RedactedValue
 	}
 	// Capture policy is intentionally exact-value based. The proxy supplies only
-	// the API key it injected, so unrelated user credentials and provider payload
-	// diagnostics remain available for debugging.
+	// the credential it injected, so unrelated user credentials and provider
+	// payload diagnostics remain available for debugging.
 	return replacer.replace(value)
 }
 

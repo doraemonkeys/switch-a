@@ -142,7 +142,7 @@ func (s Sanitizer) HeadersWithEvidence(
 	evidence CredentialEvidence,
 	redactAll bool,
 ) HeaderSanitization {
-	// Unsealed evidence cannot prove that the attempt's injected key was supplied,
+	// Unsealed evidence cannot prove that the attempt's injected credential was supplied,
 	// so the legacy fail-closed boundary remains for malformed producers.
 	return s.HeadersDetailed(
 		source,
@@ -368,7 +368,7 @@ func (s Sanitizer) RequestDetailed(raw RequestMetadata, targetInput Target) Requ
 		},
 		SensitiveNames: names.names,
 		// Explicit sensitive-header extensions still fail closed; runtime capture
-		// seals this inventory empty and redacts only the injected API key.
+		// seals this inventory empty and redacts only the injected credential.
 		RedactAll: headerRedactAll || headerDiscovered,
 		Truncated: method.Truncated || targetResult.Target.Truncated || targetResult.Host.Truncated ||
 			headers.Truncated || trailers.Truncated || names.truncated,

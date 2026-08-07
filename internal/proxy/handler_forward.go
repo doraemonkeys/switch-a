@@ -216,12 +216,12 @@ func (h *Handler) prepareForwardRequest(
 ) (*http.Request, error) {
 	request, failureCode, err := h.buildProviderRequest(ctx, pctx, attempt.provider)
 	if err != nil {
-		h.captureHTTPPreparationFailure(ctx, pctx, attempt, phase, nil, injectedAPIKeyForCapture(attempt.provider, pctx.apiType), failureCode, err)
+		h.captureHTTPPreparationFailure(ctx, pctx, attempt, phase, nil, injectedCredentialForCapture(attempt.provider, pctx.apiType), failureCode, err)
 		return nil, err
 	}
 	if err := h.applyForwardCredentials(ctx, request.Header, attempt.provider, pctx); err != nil {
 		h.captureHTTPPreparationFailure(
-			ctx, pctx, attempt, phase, request, injectedAPIKeyForCapture(attempt.provider, pctx.apiType), requestcapture.FailureCodeCredentialApply, err,
+			ctx, pctx, attempt, phase, request, injectedCredentialForCapture(attempt.provider, pctx.apiType), requestcapture.FailureCodeCredentialApply, err,
 		)
 		return nil, err
 	}
@@ -249,7 +249,7 @@ func (h *Handler) fetchPendingHTTPResponse(
 	request *http.Request,
 	rules *errorrule.CompiledRuleSet,
 ) (*pendingHTTPResponse, error) {
-	exchange := h.beginHTTPExchange(pctx, attempt, phase, request, injectedAPIKeyForCapture(attempt.provider, pctx.apiType))
+	exchange := h.beginHTTPExchange(pctx, attempt, phase, request, injectedCredentialForCapture(attempt.provider, pctx.apiType))
 	if pctx.liveBytes != nil {
 		pctx.liveBytes.BytesSent.Add(int64(len(pctx.body)))
 		pctx.liveBytes.LastActivityAt.Store(time.Now().UnixMilli())

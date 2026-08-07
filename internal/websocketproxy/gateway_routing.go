@@ -11,6 +11,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
 	"github.com/google/uuid"
@@ -111,11 +112,8 @@ func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiTyp
 	return headers
 }
 
-func injectedAPIKeyForCapture(provider *model.Provider, apiType string) string {
-	if provider == nil || model.NormalizeProviderCredentialType(provider.CredentialType) != model.ProviderCredentialTypeAPIKey {
-		return ""
-	}
-	return strings.TrimSpace(provider.APIKeyForAPIType(apiType))
+func injectedCredentialForCapture(provider *model.Provider, apiType string) string {
+	return capturebridge.InjectedCredentialValue(provider, apiType)
 }
 
 func (h *Gateway) prepareWebSocketDialHeaders(ctx context.Context, r *http.Request, provider *model.Provider, apiType, globalAuthMode string) (http.Header, error) {

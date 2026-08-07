@@ -39,11 +39,11 @@ const (
 )
 
 // sanitizeEvidenceSnippet keeps WebSocket evidence transparent unless the
-// current attempt explicitly supplied a switch-a API key. This avoids losing
+// current attempt explicitly supplied a switch-a credential. This avoids losing
 // provider-owned tokens or close/error diagnostics merely because they resemble
 // credentials.
-func sanitizeEvidenceSnippet(value, injectedAPIKey string) string {
-	return attemptevidence.SanitizeSnippet(value, injectedAPIKey)
+func sanitizeEvidenceSnippet(value, injectedCredential string) string {
+	return attemptevidence.SanitizeSnippet(value, injectedCredential)
 }
 
 type transportDiagnostic struct {
@@ -110,35 +110,35 @@ func buildWebSocketEvidence(
 	result *WebSocketResult,
 	fallback error,
 	isSyntheticFinal bool,
-	injectedAPIKey string,
+	injectedCredential string,
 ) *string {
 	evidence := webSocketEvidence{SchemaVersion: webSocketEvidenceSchemaVersion}
 	if gateway.StatusCode > 0 || gateway.ErrorCode != "" || gateway.Message != "" {
 		evidence.Gateway = &webSocketGatewayEvidence{
 			TerminalStatusCode:     gateway.StatusCode,
-			TerminalErrorCode:      sanitizeEvidenceSnippet(gateway.ErrorCode, injectedAPIKey),
-			TerminalMessageSnippet: sanitizeEvidenceSnippet(gateway.Message, injectedAPIKey),
+			TerminalErrorCode:      sanitizeEvidenceSnippet(gateway.ErrorCode, injectedCredential),
+			TerminalMessageSnippet: sanitizeEvidenceSnippet(gateway.Message, injectedCredential),
 		}
 	}
 	if result != nil && (result.HandshakeStatusCode > 0 || result.HandshakeBodySnippet != "") {
 		evidence.UpstreamHandshake = &webSocketUpstreamHandshakeEvidence{
 			StatusCode:  result.HandshakeStatusCode,
-			BodySnippet: sanitizeEvidenceSnippet(result.HandshakeBodySnippet, injectedAPIKey),
+			BodySnippet: sanitizeEvidenceSnippet(result.HandshakeBodySnippet, injectedCredential),
 		}
 	}
 	if transport := buildWebSocketTransportDiagnostic(result, fallback, isSyntheticFinal); transport != nil {
-		transport.RawErrorSnippet = sanitizeEvidenceSnippet(transport.RawErrorSnippet, injectedAPIKey)
-		transport.CloseReasonSnippet = sanitizeEvidenceSnippet(transport.CloseReasonSnippet, injectedAPIKey)
+		transport.RawErrorSnippet = sanitizeEvidenceSnippet(transport.RawErrorSnippet, injectedCredential)
+		transport.CloseReasonSnippet = sanitizeEvidenceSnippet(transport.CloseReasonSnippet, injectedCredential)
 		evidence.Transport = transport
 	}
 	if result != nil && result.UpstreamError != nil {
 		evidence.UpstreamEvent = &webSocketUpstreamEventEvidence{
-			EnvelopeType:      sanitizeEvidenceSnippet(result.UpstreamError.EnvelopeType, injectedAPIKey),
-			ProviderErrorType: sanitizeEvidenceSnippet(result.UpstreamError.ProviderErrorType, injectedAPIKey),
-			ProviderErrorCode: sanitizeEvidenceSnippet(result.UpstreamError.Code, injectedAPIKey),
+			EnvelopeType:      sanitizeEvidenceSnippet(result.UpstreamError.EnvelopeType, injectedCredential),
+			ProviderErrorType: sanitizeEvidenceSnippet(result.UpstreamError.ProviderErrorType, injectedCredential),
+			ProviderErrorCode: sanitizeEvidenceSnippet(result.UpstreamError.Code, injectedCredential),
 			StatusCode:        result.UpstreamError.StatusCode,
-			MessageSnippet:    sanitizeEvidenceSnippet(result.UpstreamError.Message, injectedAPIKey),
-			RawPayloadSnippet: sanitizeEvidenceSnippet(result.UpstreamError.Raw, injectedAPIKey),
+			MessageSnippet:    sanitizeEvidenceSnippet(result.UpstreamError.Message, injectedCredential),
+			RawPayloadSnippet: sanitizeEvidenceSnippet(result.UpstreamError.Raw, injectedCredential),
 		}
 	}
 	// When only the schema-version marker is populated, suppress the envelope
@@ -162,7 +162,7 @@ func buildWebSocketAttemptEvidence(attempt WebSocketAttemptResult) *string {
 		Message:    attempt.GatewayMessage,
 	}
 	if attempt.Result != nil {
-		return buildWebSocketEvidence(gateway, attempt.Result, attempt.terminalErr(), false, injectedAPIKeyForCapture(attempt.Provider, attempt.APIType))
+		return buildWebSocketEvidence(gateway, attempt.Result, attempt.terminalErr(), false, injectedCredentialForCapture(attempt.Provider, attempt.APIType))
 	}
 	// Synthesize a minimal WebSocketResult so the evidence builder has a
 	// canonical observation carrier. FailurePeer=upstream reflects that a nil
@@ -178,7 +178,7 @@ func buildWebSocketAttemptEvidence(attempt WebSocketAttemptResult) *string {
 		},
 		attempt.terminalErr(),
 		false,
-		injectedAPIKeyForCapture(attempt.Provider, attempt.APIType),
+		injectedCredentialForCapture(attempt.Provider, attempt.APIType),
 	)
 }
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -25,18 +24,15 @@ type httpCaptureExchange struct {
 	completedAt        time.Time
 }
 
-func captureCredentialMaterial(injectedAPIKey string) (
+func captureCredentialMaterial(injectedCredential string) (
 	requestcapture.SensitiveHeaderEvidence,
 	requestcapture.CredentialEvidence,
 ) {
-	return capturebridge.CredentialMaterial(injectedAPIKey)
+	return capturebridge.CredentialMaterial(injectedCredential)
 }
 
-func injectedAPIKeyForCapture(provider *model.Provider, apiType string) string {
-	if provider == nil || model.NormalizeProviderCredentialType(provider.CredentialType) != model.ProviderCredentialTypeAPIKey {
-		return ""
-	}
-	return strings.TrimSpace(provider.APIKeyForAPIType(apiType))
+func injectedCredentialForCapture(provider *model.Provider, apiType string) string {
+	return capturebridge.InjectedCredentialValue(provider, apiType)
 }
 
 func (h *Handler) captureHTTPPreparationFailure(
@@ -45,7 +41,7 @@ func (h *Handler) captureHTTPPreparationFailure(
 	attempt httpAttemptContext,
 	phase requestcapture.CredentialPhase,
 	request *http.Request,
-	injectedAPIKey string,
+	injectedCredential string,
 	failureCode requestcapture.FailureCode,
 	err error,
 ) {
@@ -57,7 +53,7 @@ func (h *Handler) captureHTTPPreparationFailure(
 	if request != nil {
 		target = requestcapture.HTTPTransitionTarget(request.URL)
 	}
-	_, credentialEvidence = captureCredentialMaterial(injectedAPIKey)
+	_, credentialEvidence = captureCredentialMaterial(injectedCredential)
 	reason, failure := capturefailure.HTTPPreparation(contextError(ctx), err, failureCode)
 	pctx.capture.Transition(requestcapture.TransitionStart{
 		Attempt: attempt.metadata(pctx.apiType, phase), Target: target,
@@ -246,13 +242,13 @@ func (h *Handler) beginHTTPExchange(
 	attempt httpAttemptContext,
 	phase requestcapture.CredentialPhase,
 	request *http.Request,
-	injectedAPIKey string,
+	injectedCredential string,
 ) httpCaptureExchange {
 	if !pctx.captureParticipates {
 		return httpCaptureExchange{}
 	}
 
-	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(injectedAPIKey)
+	sensitiveHeaders, credentialEvidence := captureCredentialMaterial(injectedCredential)
 	recorder := pctx.capture.BeginHTTP(requestcapture.RawHTTPStart{
 		Attempt: attempt.metadata(pctx.apiType, phase),
 		URL:     request.URL,

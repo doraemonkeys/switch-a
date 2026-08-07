@@ -11,19 +11,19 @@ const (
 )
 
 // SanitizeSnippet bounds an evidence snippet and, when supplied, removes only
-// the exact API key that switch-a injected for the current provider attempt.
+// the exact credential that switch-a injected for the current provider attempt.
 // Evidence is intentionally transparent by default: provider-owned tokens,
 // cookies, URLs, and diagnostics are useful debugging facts and are not
 // classified by appearance alone.
-func SanitizeSnippet(value, injectedAPIKey string) string {
+func SanitizeSnippet(value, injectedCredential string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return ""
 	}
 	sanitized := trimmed
-	key := strings.TrimSpace(injectedAPIKey)
-	if key != "" {
-		sanitized = strings.ReplaceAll(sanitized, key, RedactedPlaceholder)
+	credential := strings.TrimSpace(injectedCredential)
+	if credential != "" {
+		sanitized = strings.ReplaceAll(sanitized, credential, RedactedPlaceholder)
 	}
 	return truncateUTF8(sanitized, SnippetLimitBytes)
 }
