@@ -36,52 +36,38 @@ func TestIsUpstreamReadError(t *testing.T) {
 	})
 }
 
-func TestIsClientCancellation(t *testing.T) {
-	t.Run("returns true for context.Canceled", func(t *testing.T) {
-		if !isClientCancellation(context.Canceled) {
-			t.Error("expected true for context.Canceled")
-		}
-	})
+func TestClassifyClientTermination_UsesRequestContext(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	timedOut, cancelTimeout := context.WithTimeout(context.Background(), 0)
+	defer cancelTimeout()
 
-	t.Run("returns true for context.DeadlineExceeded", func(t *testing.T) {
-		if !isClientCancellation(context.DeadlineExceeded) {
-			t.Error("expected true for context.DeadlineExceeded")
-		}
-	})
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want clientTermination
+	}{
+		{name: "nil context", want: clientTerminationNone},
+		{name: "active request", ctx: context.Background(), want: clientTerminationNone},
+		{name: "request canceled", ctx: canceled, want: clientTerminationDisconnect},
+		{name: "request deadline exceeded", ctx: timedOut, want: clientTerminationTimeout},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifyClientTermination(test.ctx); got != test.want {
+				t.Fatalf("classifyClientTermination() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
 
-	t.Run("returns true for wrapped context.Canceled", func(t *testing.T) {
-		err := fmt.Errorf("request failed: %w", context.Canceled)
-		if !isClientCancellation(err) {
-			t.Error("expected true for wrapped context.Canceled")
-		}
-	})
-
-	t.Run("returns true for wrapped context.DeadlineExceeded", func(t *testing.T) {
-		err := fmt.Errorf("timeout: %w", context.DeadlineExceeded)
-		if !isClientCancellation(err) {
-			t.Error("expected true for wrapped context.DeadlineExceeded")
-		}
-	})
-
-	t.Run("returns false for regular error", func(t *testing.T) {
-		err := errors.New("connection refused")
-		if isClientCancellation(err) {
-			t.Error("expected false for regular error")
-		}
-	})
-
-	t.Run("returns false for nil", func(t *testing.T) {
-		if isClientCancellation(nil) {
-			t.Error("expected false for nil")
-		}
-	})
-
-	t.Run("returns false for upstream errors", func(t *testing.T) {
-		err := NewUpstreamReadError(errors.New("upstream failed"))
-		if isClientCancellation(err) {
-			t.Error("expected false for upstream read error")
-		}
-	})
+func TestMergeClientTermination_PreservesFirstObservedCause(t *testing.T) {
+	if got := mergeClientTermination(clientTerminationNone, clientTerminationTimeout); got != clientTerminationTimeout {
+		t.Fatalf("merge none/timeout = %d, want timeout", got)
+	}
+	if got := mergeClientTermination(clientTerminationDisconnect, clientTerminationTimeout); got != clientTerminationDisconnect {
+		t.Fatalf("merge disconnect/timeout = %d, want disconnect", got)
+	}
 }
 
 func TestUpstreamReadError(t *testing.T) {

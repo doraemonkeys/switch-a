@@ -87,7 +87,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 	for {
 		if err := ctx.Err(); err != nil {
 			state.lastErr = err
-			state.clientCanceled = true
+			state.clientTermination = classifyClientTermination(ctx)
 			break
 		}
 		attempt := state.attemptContext()
@@ -173,14 +173,14 @@ func (h *Handler) executeLogicalAttempt(
 	)
 	if err != nil {
 		result := failureResult(attemptFailureTransport, err)
-		if isClientCancellation(err) {
-			result.clientCanceled = true
-			result.failureKind = attemptFailureCanceled
+		result.clientTermination = classifyClientTermination(ctx)
+		if result.clientTermination.observed() {
+			result.failureKind = attemptFailureClientTerminated
 		}
 		h.assessAndApplyHealth(ctx, pctx, state.currentProvider.ID, &result, errorrule.AttemptFacts{
-			TransportFailure: !result.clientCanceled, ClientCancelled: result.clientCanceled,
+			TransportFailure: !result.clientTermination.observed(), ClientCancelled: result.clientTermination.observed(),
 		}, errorrule.Action{})
-		if result.clientCanceled {
+		if result.clientTermination.observed() {
 			return result, false
 		}
 		return h.resolveLegacyFailure(ctx, pctx, state, nil, result)
@@ -241,17 +241,20 @@ func (h *Handler) refreshUnauthorizedSubexchange(
 	)
 	if discardErr != nil {
 		permit.Release()
-		result := failureResult(attemptFailureCanceled, discardErr)
-		result.clientCanceled = isClientCancellation(discardErr) || ctx.Err() != nil
+		result := failureResult(attemptFailureInternal, discardErr)
+		result.clientTermination = classifyClientTermination(ctx)
+		if result.clientTermination.observed() {
+			result.failureKind = attemptFailureClientTerminated
+		}
 		return nil, &result, false
 	}
 	activatedProvider, activateErr := permit.Activate()
 	if activateErr != nil {
 		discarded.failureKind = attemptFailureInternal
 		discarded.failureMessage = activateErr.Error()
-		discarded.clientCanceled = isClientCancellation(activateErr) || ctx.Err() != nil
-		if discarded.clientCanceled {
-			discarded.failureKind = attemptFailureCanceled
+		discarded.clientTermination = classifyClientTermination(ctx)
+		if discarded.clientTermination.observed() {
+			discarded.failureKind = attemptFailureClientTerminated
 		}
 		return nil, &discarded, false
 	}
@@ -262,11 +265,14 @@ func (h *Handler) refreshUnauthorizedSubexchange(
 	)
 	if err != nil {
 		result := failureResult(attemptFailureTransport, err)
-		result.clientCanceled = isClientCancellation(err)
+		result.clientTermination = classifyClientTermination(ctx)
+		if result.clientTermination.observed() {
+			result.failureKind = attemptFailureClientTerminated
+		}
 		h.assessAndApplyHealth(ctx, pctx, state.currentProvider.ID, &result, errorrule.AttemptFacts{
-			TransportFailure: !result.clientCanceled, ClientCancelled: result.clientCanceled,
+			TransportFailure: !result.clientTermination.observed(), ClientCancelled: result.clientTermination.observed(),
 		}, errorrule.Action{})
-		if result.clientCanceled {
+		if result.clientTermination.observed() {
 			return nil, &result, false
 		}
 		resolved, again := h.resolveLegacyFailure(ctx, pctx, state, nil, result)
@@ -303,7 +309,13 @@ func (h *Handler) resolvePendingResponse(
 	}
 	if boundary.Forwarding == nil {
 		result := pending.internalFailure(errors.New("response resolved without forwarding capability"))
-		result.clientCanceled = boundary.Reason == responseanalysis.BoundaryClientCancelled
+		if boundary.Reason == responseanalysis.BoundaryClientCancelled {
+			result.clientTermination = classifyClientTermination(ctx)
+			if !result.clientTermination.observed() {
+				result.clientTermination = clientTerminationDisconnect
+			}
+			result.failureKind = attemptFailureClientTerminated
+		}
 		return result, false
 	}
 	result := pending.finishForwarding(boundary.Forwarding)
@@ -366,7 +378,7 @@ func (h *Handler) finalizeCommittedAttempt(
 		TransportFailure: result.failureKind == attemptFailureRead,
 		SemanticMatched:  semanticMatched, Committable2xx: result.statusCode >= http.StatusOK && result.statusCode < http.StatusMultipleChoices,
 		Completed:       result.failureKind == attemptFailureNone,
-		ClientCancelled: result.clientCanceled,
+		ClientCancelled: result.clientTermination.observed(),
 	}
 	h.assessAndApplyHealth(ctx, pctx, state.currentProvider.ID, result, facts, action)
 	h.finalizeCommittedResponse(pctx, state, result)
@@ -453,7 +465,7 @@ func (h *Handler) applyForwardResult(state *retryState, result forwardResult) {
 	state.success = result.success
 	state.isSSE = result.isSSE
 	state.responseCommitted = result.responseCommitted
-	state.clientCanceled = state.clientCanceled || result.clientCanceled
+	state.clientTermination = mergeClientTermination(state.clientTermination, result.clientTermination)
 	state.semanticError = result.semantic != nil
 	state.firstTokenMs = result.firstTokenMs
 	state.responseBytes = result.responseBytes
@@ -469,7 +481,7 @@ func attemptFactsFromForwardResult(ctx context.Context, result forwardResult) no
 		ClientTransportStatusCode: result.statusCode, Success: result.success,
 		ResponseCommitted: result.responseCommitted,
 		ServiceStarted:    nonWebSocketServiceStarted(result.statusCode, result.responseCommitted),
-		ClientCanceled:    result.clientCanceled, TerminalErr: result.terminalError(),
+		ClientTermination: result.clientTermination, TerminalErr: result.terminalError(),
 		IsSSE: result.isSSE, FirstByteVisible: result.firstByteVisible, CtxErr: ctx.Err(),
 		IsStatusFailover: result.isStatusFailover, IsClientWriteError: result.isClientWriteError,
 		SemanticError: result.semantic != nil,
@@ -499,7 +511,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 			ClientTransportStatusCode: clientStatus, Success: state.success,
 			ResponseCommitted: state.responseCommitted,
 			ServiceStarted:    nonWebSocketServiceStarted(clientStatus, state.responseCommitted),
-			ClientCanceled:    state.clientCanceled, TerminalErr: state.lastErr,
+			ClientTermination: state.clientTermination, TerminalErr: state.lastErr,
 			IsSSE: state.isSSE, FirstByteVisible: state.firstByteVisible,
 			CtxErr: pctx.r.Context().Err(), IsStatusFailover: state.isStatusFailover,
 			IsClientWriteError: state.isClientWriteError, SemanticError: state.semanticError,

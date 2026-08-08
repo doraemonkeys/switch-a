@@ -409,6 +409,7 @@ export type TerminationReason =
   | "websocket_connection_limit_reached"
   | "client_request_error"
   | "client_disconnect"
+  | "timeout"
   | "transport_error"
   | "upstream_semantic_error"
   | "upstream_handshake_rejected"

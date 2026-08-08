@@ -418,6 +418,7 @@ func parseTerminationReason(s string) (model.TerminationReason, string) {
 		model.TerminationReasonWebSocketConnectionLimitReached,
 		model.TerminationReasonClientRequestError,
 		model.TerminationReasonClientDisconnect,
+		model.TerminationReasonTimeout,
 		model.TerminationReasonTransportError,
 		model.TerminationReasonUpstreamSemanticError,
 		model.TerminationReasonUpstreamHandshakeRejected,

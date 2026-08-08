@@ -571,7 +571,7 @@ type retryState struct {
 	isSSE             bool
 	headersWritten    bool
 	responseCommitted bool
-	clientCanceled    bool
+	clientTermination clientTermination
 	semanticError     bool
 	// Transport observation plumbing — mirrored from forwardResult so the
 	// final logRequest/evidence path can reconstruct the observation without

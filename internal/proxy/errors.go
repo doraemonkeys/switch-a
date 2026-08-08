@@ -64,10 +64,35 @@ func IsUpstreamReadError(err error) bool {
 	return errors.As(err, &upstreamErr)
 }
 
-// isClientCancellation checks if the error indicates a client-side cancellation.
-// These errors should NOT trigger circuit breaker as they don't indicate provider issues:
-//   - context.Canceled: client disconnected or request was cancelled
-//   - context.DeadlineExceeded: client-side timeout was reached
-func isClientCancellation(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+type clientTermination uint8
+
+const (
+	clientTerminationNone clientTermination = iota
+	clientTerminationDisconnect
+	clientTerminationTimeout
+)
+
+func classifyClientTermination(ctx context.Context) clientTermination {
+	if ctx == nil {
+		return clientTerminationNone
+	}
+	switch ctx.Err() {
+	case context.Canceled:
+		return clientTerminationDisconnect
+	case context.DeadlineExceeded:
+		return clientTerminationTimeout
+	default:
+		return clientTerminationNone
+	}
+}
+
+func (termination clientTermination) observed() bool {
+	return termination != clientTerminationNone
+}
+
+func mergeClientTermination(current, next clientTermination) clientTermination {
+	if current.observed() {
+		return current
+	}
+	return next
 }

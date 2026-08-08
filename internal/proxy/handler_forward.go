@@ -29,14 +29,14 @@ const maxAttemptSnippetBytes = 512
 type attemptFailureKind string
 
 const (
-	attemptFailureNone        attemptFailureKind = ""
-	attemptFailurePreparation attemptFailureKind = "preparation"
-	attemptFailureTransport   attemptFailureKind = "transport"
-	attemptFailureStatus      attemptFailureKind = "status"
-	attemptFailureRead        attemptFailureKind = "upstream_read"
-	attemptFailureWrite       attemptFailureKind = "client_write"
-	attemptFailureCanceled    attemptFailureKind = "client_canceled"
-	attemptFailureInternal    attemptFailureKind = "internal"
+	attemptFailureNone             attemptFailureKind = ""
+	attemptFailurePreparation      attemptFailureKind = "preparation"
+	attemptFailureTransport        attemptFailureKind = "transport"
+	attemptFailureStatus           attemptFailureKind = "status"
+	attemptFailureRead             attemptFailureKind = "upstream_read"
+	attemptFailureWrite            attemptFailureKind = "client_write"
+	attemptFailureClientTerminated attemptFailureKind = "client_terminated"
+	attemptFailureInternal         attemptFailureKind = "internal"
 )
 
 // semanticAttemptFacts is deliberately value-only; evidence consumers can
@@ -73,7 +73,7 @@ type semanticAttemptFacts struct {
 type forwardResult struct {
 	headersWritten      bool
 	responseCommitted   bool
-	clientCanceled      bool
+	clientTermination   clientTermination
 	firstByteVisible    bool
 	isStatusFailover    bool
 	isClientWriteError  bool
@@ -501,9 +501,9 @@ func (p *pendingHTTPResponse) discard(
 	if err != nil {
 		result.failureKind = attemptFailureInternal
 		result.failureMessage = err.Error()
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			result.clientCanceled = true
-			result.failureKind = attemptFailureCanceled
+		if termination := classifyClientTermination(p.pctx.r.Context()); termination.observed() {
+			result.clientTermination = termination
+			result.failureKind = attemptFailureClientTerminated
 		}
 	}
 	p.exchange.completedAt = time.Now()
@@ -540,9 +540,19 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 		// decision; this attempt is not a successful 2xx completion.
 		result.success = false
 	case responseanalysis.TerminationClientCancelled:
-		result.clientCanceled = true
-		result.failureKind = attemptFailureCanceled
-		result.failureMessage = "client canceled response forwarding"
+		result.clientTermination = classifyClientTermination(p.pctx.r.Context())
+		if !result.clientTermination.observed() {
+			// The response coordinator can only emit this termination after its
+			// request context closes. Preserve that invariant if a custom Context
+			// implementation does not expose the canonical error value.
+			result.clientTermination = clientTerminationDisconnect
+		}
+		result.failureKind = attemptFailureClientTerminated
+		if result.clientTermination == clientTerminationTimeout {
+			result.failureMessage = "client request deadline exceeded"
+		} else {
+			result.failureMessage = "client canceled response forwarding"
+		}
 	case responseanalysis.TerminationClientWriteFailure:
 		result.failureKind = attemptFailureWrite
 		result.failureMessage = "client response write failed"

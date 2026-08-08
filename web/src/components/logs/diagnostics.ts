@@ -124,6 +124,7 @@ const TERMINATION_REASON_PRESENTATION: Record<
   },
   client_request_error: { label: "Client Request Error", tone: "warning" },
   client_disconnect: { label: "Client Disconnect", tone: "info" },
+  timeout: { label: "Timeout", tone: "warning" },
   transport_error: { label: "Transport Error", tone: "warning" },
   upstream_semantic_error: {
     label: "Upstream Semantic Error",

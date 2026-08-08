@@ -87,6 +87,7 @@ const TERMINATION_REASON_OPTIONS: Array<{
   },
   { value: "client_request_error", label: "Client Request Error" },
   { value: "client_disconnect", label: "Client Disconnect" },
+  { value: "timeout", label: "Timeout" },
   { value: "transport_error", label: "Transport Error" },
   { value: "upstream_semantic_error", label: "Upstream Semantic Error" },
   {

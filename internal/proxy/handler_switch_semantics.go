@@ -412,11 +412,11 @@ func (h *Handler) storeVisibleContinuitySeedFromContext(
 }
 
 func shouldStoreHTTPVisibleContinuitySeed(state *retryState) bool {
-	if state == nil || !state.responseCommitted || !state.firstByteVisible || state.success || state.clientCanceled {
+	if state == nil || !state.responseCommitted || !state.firstByteVisible || state.success || state.clientTermination.observed() {
 		return false
 	}
 	if state.lastErr == nil {
 		return false
 	}
-	return !isClientCancellation(state.lastErr)
+	return true
 }

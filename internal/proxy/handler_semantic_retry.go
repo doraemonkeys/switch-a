@@ -85,7 +85,7 @@ func (h *Handler) retrySemanticSameProvider(
 		globalMaxAttempts: globalAttemptLimit(pctx.cfg.globalMaxAttempts),
 	})
 	if err != nil {
-		if isClientCancellation(err) {
+		if classifyClientTermination(ctx).observed() {
 			return h.cancelPendingResponse(pending, semantic, result, err)
 		}
 		reason, ok := selector.ProviderRejectionReason(err)
@@ -199,7 +199,7 @@ func (h *Handler) resolveSemanticAlternateFailure(
 			semantic.decision = updated
 		}
 	}
-	if pending != nil && resolved.clientCanceled && !resolved.discarded {
+	if pending != nil && resolved.clientTermination.observed() && !resolved.discarded {
 		cancelErr := ctx.Err()
 		if cancelErr == nil {
 			cancelErr = errors.New("alternate reservation canceled")
@@ -216,7 +216,7 @@ func (h *Handler) resolveSemanticAlternateFailure(
 
 func semanticAlternateFailureOutcome(result forwardResult) (errorrule.AlternateOutcome, attemptevidence.AlternateOutcome) {
 	switch {
-	case result.clientCanceled:
+	case result.clientTermination.observed():
 		return errorrule.AlternateCancelled, attemptevidence.AlternateReleased
 	case result.failureKind == attemptFailureInternal:
 		return errorrule.AlternateFailed, attemptevidence.AlternateFailed
@@ -256,7 +256,8 @@ func (h *Handler) cancelPendingResponse(
 	prior forwardResult,
 	err error,
 ) (forwardResult, bool) {
-	captureReason := requestcapture.TerminationReasonCanceled
+	termination := classifyClientTermination(pending.pctx.r.Context())
+	captureReason := captureReasonForClientTermination(termination)
 	captureFailure := requestcapture.FailureObservation{}
 	if semantic != nil {
 		captureReason = requestcapture.TerminationReasonInternalErrorAbsorbed
@@ -270,8 +271,11 @@ func (h *Handler) cancelPendingResponse(
 	if discardErr != nil && err == nil {
 		err = discardErr
 	}
-	result.clientCanceled = true
-	result.failureKind = attemptFailureCanceled
+	result.clientTermination = termination
+	result.failureKind = attemptFailureInternal
+	if result.clientTermination.observed() {
+		result.failureKind = attemptFailureClientTerminated
+	}
 	if err != nil {
 		result.failureMessage = err.Error()
 	}

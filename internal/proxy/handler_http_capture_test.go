@@ -40,6 +40,25 @@ func (p *disabledCaptureProbe) BeginGateway(requestcapture.GatewayStart) request
 
 var gatewayRecorderSink requestcapture.GatewayRecorder
 
+func TestCaptureReasonForClientTermination(t *testing.T) {
+	tests := []struct {
+		name        string
+		termination clientTermination
+		want        requestcapture.TerminationReason
+	}{
+		{name: "no client termination", want: requestcapture.TerminationReasonCanceled},
+		{name: "disconnect", termination: clientTerminationDisconnect, want: requestcapture.TerminationReasonClientDisconnect},
+		{name: "timeout", termination: clientTerminationTimeout, want: requestcapture.TerminationReasonTimeout},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := captureReasonForClientTermination(test.termination); got != test.want {
+				t.Fatalf("captureReasonForClientTermination() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBeginGatewayCaptureDisabledDoesNotBuildRecorderOrAllocate(t *testing.T) {
 	probe := &disabledCaptureProbe{}
 	handler := &Handler{capture: probe}

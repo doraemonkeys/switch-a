@@ -24,6 +24,17 @@ type httpCaptureExchange struct {
 	completedAt        time.Time
 }
 
+func captureReasonForClientTermination(termination clientTermination) requestcapture.TerminationReason {
+	switch termination {
+	case clientTerminationDisconnect:
+		return requestcapture.TerminationReasonClientDisconnect
+	case clientTerminationTimeout:
+		return requestcapture.TerminationReasonTimeout
+	default:
+		return requestcapture.TerminationReasonCanceled
+	}
+}
+
 func captureCredentialMaterial(injectedCredential string) (
 	requestcapture.SensitiveHeaderEvidence,
 	requestcapture.CredentialEvidence,
@@ -110,12 +121,11 @@ func (p *pendingHTTPResponse) finishCapture(completion responseanalysis.Completi
 	default:
 		switch completion.Termination {
 		case responseanalysis.TerminationClientCancelled:
-			reason = requestcapture.TerminationReasonClientDisconnect
 			cancelErr := contextError(p.pctx.r.Context())
 			if cancelErr == nil {
 				cancelErr = context.Canceled
 			}
-			_, failure = capturefailure.HTTPForward(
+			reason, failure = capturefailure.HTTPForward(
 				contextError(p.pctx.r.Context()), cancelErr, capturefailure.HTTPForwardOriginClientCancel,
 			)
 		case responseanalysis.TerminationClientWriteFailure:

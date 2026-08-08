@@ -91,6 +91,21 @@ describe("getLogLifecyclePresentation", () => {
     expect(lifecycle.transportStatusLabel).toBe("502");
   });
 
+  it("keeps client timeout distinct from client disconnect", () => {
+    const lifecycle = getLogLifecyclePresentation({
+      ...baseLog,
+      is_websocket: false,
+      client_transport_status_code: 503,
+      service_outcome: "abandoned_by_client",
+      completion_state: "incomplete",
+      termination_actor: "client",
+      termination_reason: "timeout",
+    });
+
+    expect(lifecycle.terminationReasonLabel).toBe("Timeout");
+    expect(lifecycle.terminationActorLabel).toBe("Client");
+  });
+
   it("renders legacy rows explicitly without normalized remapping", () => {
     const lifecycle = getLogLifecyclePresentation({
       ...legacyLog,

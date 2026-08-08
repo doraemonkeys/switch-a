@@ -85,7 +85,7 @@ func (h *Handler) attemptLegacyRetry(
 ) legacyRetryResolution {
 	delay := state.currentProvider.Backoff.DelayForRetry(state.providerAttempt)
 	if err := h.backoff.Wait(ctx, delay); err != nil {
-		return legacyRetryResolution{disposition: legacyRetryTerminal, result: h.cancelLegacyRetry(pending, result, err)}
+		return legacyRetryResolution{disposition: legacyRetryTerminal, result: h.cancelLegacyRetry(ctx, pending, result, err)}
 	}
 	if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
 		return legacyRetryResolution{result: result}
@@ -94,7 +94,7 @@ func (h *Handler) attemptLegacyRetry(
 	if cancelErr := legacyRetryCancellation(ctx, err); cancelErr != nil {
 		return legacyRetryResolution{
 			disposition: legacyRetryTerminal,
-			result:      h.cancelLegacyRetry(pending, result, cancelErr),
+			result:      h.cancelLegacyRetry(ctx, pending, result, cancelErr),
 		}
 	}
 	if err != nil || permit == nil {
@@ -109,11 +109,11 @@ func (h *Handler) attemptLegacyRetry(
 }
 
 func legacyRetryCancellation(ctx context.Context, err error) error {
-	if isClientCancellation(err) {
-		return err
-	}
-	if ctx == nil {
+	if !classifyClientTermination(ctx).observed() {
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	return ctx.Err()
 }
@@ -127,6 +127,7 @@ func providerRetryRejectionReason(err error) errorrule.DecisionReason {
 }
 
 func (h *Handler) cancelLegacyRetry(
+	ctx context.Context,
 	pending *pendingHTTPResponse,
 	result forwardResult,
 	err error,
@@ -135,8 +136,11 @@ func (h *Handler) cancelLegacyRetry(
 		canceled, _ := h.cancelPendingResponse(pending, nil, result, err)
 		return canceled
 	}
-	result.clientCanceled = true
-	result.failureKind = attemptFailureCanceled
+	result.clientTermination = classifyClientTermination(ctx)
+	result.failureKind = attemptFailureInternal
+	if result.clientTermination.observed() {
+		result.failureKind = attemptFailureClientTerminated
+	}
 	if err != nil {
 		result.failureMessage = err.Error()
 	}
@@ -169,7 +173,7 @@ func (h *Handler) activateLegacyRetry(
 			permit.Release()
 			return legacyRetryResolution{
 				disposition: legacyRetryTerminal,
-				result:      h.cancelLegacyRetry(pending, result, discardErr),
+				result:      h.cancelLegacyRetry(ctx, pending, result, discardErr),
 			}
 		}
 		discarded.failureKind = result.failureKind
@@ -181,9 +185,9 @@ func (h *Handler) activateLegacyRetry(
 	if err != nil {
 		result.failureKind = attemptFailureInternal
 		result.failureMessage = err.Error()
-		result.clientCanceled = isClientCancellation(err) || ctx.Err() != nil
-		if result.clientCanceled {
-			result.failureKind = attemptFailureCanceled
+		result.clientTermination = classifyClientTermination(ctx)
+		if result.clientTermination.observed() {
+			result.failureKind = attemptFailureClientTerminated
 		}
 		return legacyRetryResolution{disposition: legacyRetryTerminal, result: result}
 	}
@@ -236,7 +240,7 @@ func (h *Handler) commitLegacyFailure(
 	result forwardResult,
 	resolved forwardResult,
 ) (forwardResult, bool) {
-	if pending == nil || resolved.clientCanceled || resolved.discarded {
+	if pending == nil || resolved.clientTermination.observed() || resolved.discarded {
 		return resolved, false
 	}
 	committed, err := pending.commit(responseanalysis.TransitionExecutorDecision)
@@ -272,9 +276,9 @@ func (h *Handler) activateAlternate(
 	excluded[state.currentProvider.ID] = true
 	reservation, err := h.reserveAlternateProvider(ctx, preview.request(), excluded)
 	if err != nil {
-		if isClientCancellation(err) {
-			result.clientCanceled = true
-			result.failureKind = attemptFailureCanceled
+		result.clientTermination = classifyClientTermination(ctx)
+		if result.clientTermination.observed() {
+			result.failureKind = attemptFailureClientTerminated
 		}
 		return false, result, false
 	}
@@ -285,9 +289,9 @@ func (h *Handler) activateAlternate(
 		}
 	}()
 	if err := reservation.PrepareActivation(ctx); err != nil {
-		if isClientCancellation(err) {
-			result.clientCanceled = true
-			result.failureKind = attemptFailureCanceled
+		result.clientTermination = classifyClientTermination(ctx)
+		if result.clientTermination.observed() {
+			result.failureKind = attemptFailureClientTerminated
 		} else {
 			result.failureKind = attemptFailureInternal
 			result.failureMessage = err.Error()
@@ -309,26 +313,11 @@ func (h *Handler) activateAlternate(
 		result.failureMessage = err.Error()
 		return false, result, false
 	}
-	if pending != nil {
-		captureFailure := statusCaptureFailure(result.statusCode)
-		if discardCause == responseanalysis.TransitionSemanticDecision {
-			captureFailure = semanticCaptureFailure()
-		}
-		discarded, discardErr := pending.discard(discardCause, captureReason, captureFailure)
-		if discardErr != nil {
-			if discarded.discarded {
-				discarded.inheritHealth(result)
-				return false, discarded, false
-			}
-			result.clientCanceled = isClientCancellation(discardErr) || ctx.Err() != nil
-			result.failureKind = attemptFailureCanceled
-			result.failureMessage = discardErr.Error()
-			return false, result, false
-		}
-		discarded.failureKind = result.failureKind
-		discarded.failureMessage = result.failureMessage
-		discarded.inheritHealth(result)
-		result = discarded
+	result, discardFailed := discardPendingForAlternateActivation(
+		ctx, pending, result, discardCause, captureReason,
+	)
+	if discardFailed {
+		return false, result, false
 	}
 	if err := state.switchTracker.commitProviderSwitch(preview); err != nil {
 		result.failureKind = attemptFailureInternal
@@ -362,6 +351,40 @@ func (h *Handler) activateAlternate(
 	result.switchReason = switchReason
 	result.done = false
 	return true, result, true
+}
+
+func discardPendingForAlternateActivation(
+	ctx context.Context,
+	pending *pendingHTTPResponse,
+	result forwardResult,
+	discardCause responseanalysis.TransitionCause,
+	captureReason requestcapture.TerminationReason,
+) (forwardResult, bool) {
+	if pending == nil {
+		return result, false
+	}
+	captureFailure := statusCaptureFailure(result.statusCode)
+	if discardCause == responseanalysis.TransitionSemanticDecision {
+		captureFailure = semanticCaptureFailure()
+	}
+	discarded, discardErr := pending.discard(discardCause, captureReason, captureFailure)
+	if discardErr == nil {
+		discarded.failureKind = result.failureKind
+		discarded.failureMessage = result.failureMessage
+		discarded.inheritHealth(result)
+		return discarded, false
+	}
+	if discarded.discarded {
+		discarded.inheritHealth(result)
+		return discarded, true
+	}
+	result.clientTermination = classifyClientTermination(ctx)
+	result.failureKind = attemptFailureInternal
+	if result.clientTermination.observed() {
+		result.failureKind = attemptFailureClientTerminated
+	}
+	result.failureMessage = discardErr.Error()
+	return result, true
 }
 
 func cloneProviderExclusions(source map[string]bool) map[string]bool {

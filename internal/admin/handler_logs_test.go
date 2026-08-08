@@ -493,6 +493,16 @@ func TestGetLogs_InvalidParams(t *testing.T) {
 	}
 }
 
+func TestParseTerminationReason_AcceptsTimeout(t *testing.T) {
+	got, errMsg := parseTerminationReason(string(model.TerminationReasonTimeout))
+	if errMsg != "" {
+		t.Fatalf("parseTerminationReason(timeout) error = %q", errMsg)
+	}
+	if got != model.TerminationReasonTimeout {
+		t.Fatalf("parseTerminationReason(timeout) = %q, want %q", got, model.TerminationReasonTimeout)
+	}
+}
+
 func TestGetLogs_StoreErrors(t *testing.T) {
 	h, st, _ := testHandler()
 	st.logsErr = errors.New("database error")

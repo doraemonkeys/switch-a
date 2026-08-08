@@ -41,9 +41,9 @@ func TestNonWebSocketEvidence_PureClientCancel_ReturnsNil(t *testing.T) {
 	// evidence, so `service_outcome = abandoned_by_client` rows stay
 	// clean in the evidence column (plan acceptance criterion #7).
 	got := buildNonWebSocketSessionEvidence(nonWebSocketRuntimeFacts{
-		IsSSE:          true,
-		ClientCanceled: true,
-		CtxErr:         context.Canceled,
+		IsSSE:             true,
+		ClientTermination: clientTerminationDisconnect,
+		CtxErr:            context.Canceled,
 	})
 	if got != nil {
 		t.Fatalf("pure cancel must not produce evidence, got %q", *got)
@@ -182,7 +182,7 @@ func TestNonWebSocketEvidence_StageBoundaries(t *testing.T) {
 func TestNonWebSocketEvidence_CtxPlusIdleTimeout_EmitsDiagnostic(t *testing.T) {
 	t.Parallel()
 	// Acceptance criterion #14: ctx cancel racing an idle timeout must
-	// still surface the transport signal. `clientCanceled` on the request
+	// still surface the transport signal. Client termination on the request
 	// axis is unaffected; that is asserted elsewhere by the assessment
 	// tests.
 	encoded := buildNonWebSocketSessionEvidence(nonWebSocketRuntimeFacts{
@@ -271,10 +271,10 @@ func TestAttachHTTPAttemptEvidence_NoEvidenceWhenDerivationReturnsNil(t *testing
 	// NULL and the v2 renderer isn't given an empty payload to parse.
 	pctx := &proxyContext{}
 	pctx.attempts = append(pctx.attempts, newNormalizedRequestAttemptForTest("target"))
-	(&Handler{logger: zap.NewNop()}).attachHTTPAttemptEvidence(pctx, forwardResult{clientCanceled: true}, nonWebSocketRuntimeFacts{
-		IsSSE:          true,
-		ClientCanceled: true,
-		CtxErr:         context.Canceled,
+	(&Handler{logger: zap.NewNop()}).attachHTTPAttemptEvidence(pctx, forwardResult{clientTermination: clientTerminationDisconnect}, nonWebSocketRuntimeFacts{
+		IsSSE:             true,
+		ClientTermination: clientTerminationDisconnect,
+		CtxErr:            context.Canceled,
 	})
 	if pctx.attempts[0].AttemptEvidenceJSON != nil {
 		t.Fatalf("attempt evidence must stay nil for pure cancel, got %q",
@@ -293,7 +293,7 @@ func TestAttemptFactsFromForwardResult_PreservesObservation(t *testing.T) {
 		statusCode:         http.StatusOK,
 		success:            false,
 		responseCommitted:  true,
-		clientCanceled:     false,
+		clientTermination:  clientTerminationNone,
 		failureKind:        attemptFailureRead,
 		failureMessage:     inner.Error(),
 		isSSE:              true,

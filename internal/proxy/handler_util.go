@@ -192,9 +192,9 @@ type nonWebSocketAssessment struct {
 // nonWebSocketRuntimeFacts aggregates SSE/non-WS observation inputs so the
 // assessment and evidence layers share one shape. The struct deliberately
 // splits transport observation (IsSSE / FirstByteVisible / CtxErr /
-// IsStatusFailover / IsClientWriteError) from the legacy request-level
-// fields (ClientTransportStatusCode / Success / ResponseCommitted /
-// ServiceStarted / ClientCanceled / TerminalErr); this keeps the evidence
+// IsStatusFailover / IsClientWriteError) from the request-level fields
+// (ClientTransportStatusCode / Success / ResponseCommitted / ServiceStarted /
+// ClientTermination / TerminalErr); this keeps the evidence
 // derivation pure while the termination/outcome logic stays isolated on
 // request-level axes.
 type nonWebSocketRuntimeFacts struct {
@@ -202,7 +202,7 @@ type nonWebSocketRuntimeFacts struct {
 	Success                   bool
 	ResponseCommitted         bool
 	ServiceStarted            bool
-	ClientCanceled            bool
+	ClientTermination         clientTermination
 	TerminalErr               error
 	// Transport observation inputs ? only meaningful when IsSSE is true.
 	// Keeping them on the same struct avoids a second parameter pack; when
@@ -232,7 +232,7 @@ func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAsses
 
 func deriveNonWebSocketServiceOutcome(facts nonWebSocketRuntimeFacts) model.ServiceOutcome {
 	switch {
-	case facts.ClientCanceled:
+	case facts.ClientTermination.observed():
 		return model.ServiceOutcomeAbandonedByClient
 	case !facts.ServiceStarted:
 		return model.ServiceOutcomeNeverStarted
@@ -262,8 +262,11 @@ func deriveNonWebSocketTermination(
 	facts nonWebSocketRuntimeFacts,
 	serviceOutcome model.ServiceOutcome,
 ) (*model.TerminationActor, *model.TerminationReason) {
-	if facts.ClientCanceled {
+	switch facts.ClientTermination {
+	case clientTerminationDisconnect:
 		return ptr(model.TerminationActorClient), ptr(model.TerminationReasonClientDisconnect)
+	case clientTerminationTimeout:
+		return ptr(model.TerminationActorClient), ptr(model.TerminationReasonTimeout)
 	}
 
 	switch {

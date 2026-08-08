@@ -229,6 +229,7 @@ const (
 	TerminationReasonWebSocketConnectionLimitReached TerminationReason = "websocket_connection_limit_reached"
 	TerminationReasonClientRequestError              TerminationReason = "client_request_error"
 	TerminationReasonClientDisconnect                TerminationReason = "client_disconnect"
+	TerminationReasonTimeout                         TerminationReason = "timeout"
 	TerminationReasonTransportError                  TerminationReason = "transport_error"
 	TerminationReasonUpstreamSemanticError           TerminationReason = "upstream_semantic_error"
 	TerminationReasonUpstreamHandshakeRejected       TerminationReason = "upstream_handshake_rejected"

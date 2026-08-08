@@ -209,8 +209,8 @@ func TestContextCancellation_DoesNotTriggerCircuitBreaker(t *testing.T) {
 	}
 }
 
-// TestDeadlineExceeded_DoesNotTriggerCircuitBreaker verifies that client-side
-// deadline exceeded does NOT trigger circuit breaker.
+// TestDeadlineExceeded_DoesNotTriggerCircuitBreaker verifies that a client-side
+// deadline remains health-neutral without being mislabeled as a disconnect.
 func TestDeadlineExceeded_DoesNotTriggerCircuitBreaker(t *testing.T) {
 	// Create an upstream server that takes longer than the client timeout
 	serverDone := make(chan struct{})
@@ -265,6 +265,17 @@ func TestDeadlineExceeded_DoesNotTriggerCircuitBreaker(t *testing.T) {
 		for i, call := range calls {
 			t.Errorf("  call %d: providerID=%q, err=%v", i, call.providerID, call.err)
 		}
+	}
+	waitFor(t, func() bool { return store.LogsLen() == 1 }, clientDisconnectIntegrationTimeout)
+	log := store.LastLog()
+	if reason := requestLogTerminationReason(log); reason != model.TerminationReasonTimeout {
+		t.Fatalf("TerminationReason = %q, want %q", reason, model.TerminationReasonTimeout)
+	}
+	if log.TerminationActor == nil || *log.TerminationActor != model.TerminationActorClient {
+		t.Fatalf("TerminationActor = %v, want %q", log.TerminationActor, model.TerminationActorClient)
+	}
+	if outcome := requestLogServiceOutcome(log); outcome != model.ServiceOutcomeAbandonedByClient {
+		t.Fatalf("ServiceOutcome = %q, want %q", outcome, model.ServiceOutcomeAbandonedByClient)
 	}
 }
 
@@ -367,12 +378,10 @@ func TestUpstream5xx_TriggerCircuitBreaker(t *testing.T) {
 	}
 }
 
-// TestClientDisconnectDuringSSE_MarksSuccessAndNoError verifies that when a client
-// disconnects mid-SSE-stream, the upstream 200 is still counted as a success:
-//   - markSuccess is called (not markFailure) — circuit breaker stays accurate
-//   - No error_msg is written to the request log — dashboard shows clean history
-//   - success=true in the log — consistent with the upstream actually succeeding
-func TestClientDisconnectDuringSSE_MarksSuccessAndNoError(t *testing.T) {
+// TestClientDisconnectDuringSSE_IsHealthNeutralAndPersistsClientOutcome verifies
+// that an incomplete upstream exchange changes neither side of provider health
+// while the normalized lifecycle still attributes termination to the client.
+func TestClientDisconnectDuringSSE_IsHealthNeutralAndPersistsClientOutcome(t *testing.T) {
 	serverDone := make(chan struct{})
 
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
