@@ -18,6 +18,8 @@ import (
 
 const clientDisconnectIntegrationTimeout = 5 * time.Second
 
+const delayedClientDisconnectAfterUpstreamEOF = 250 * time.Millisecond
+
 func TestHandler_RealSSEClientDisconnectPersistsClientAttribution(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -212,5 +214,83 @@ func TestHandler_UpstreamFirstByteTimeoutIsNotClientDisconnect(t *testing.T) {
 	}
 	if failures := health.getMarkFailureCalls(); len(failures) != 1 {
 		t.Fatalf("MarkFailure calls = %d, want one upstream timeout failure", len(failures))
+	}
+}
+
+func TestHandler_UpstreamEOFBeforeDelayedClientDisconnectIsNormalCompletion(t *testing.T) {
+	upstreamReturned := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			// Flushing before the body forces a streaming response, so the proxy
+			// observes the upstream connection's EOF instead of a buffered write.
+			flusher.Flush()
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+		close(upstreamReturned)
+	}))
+	defer upstream.Close()
+
+	store := newMockStore()
+	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
+	store.providers = []model.Provider{{
+		ID: "upstream-eof-provider", Name: "Upstream EOF Provider", APIKey: "test-key",
+		AuthMode: "bearer", Enabled: true,
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "upstream-eof-provider", APIType: APITypeClaude, BaseURL: upstream.URL,
+		}},
+	}}
+	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	requestCtx, cancelRequest := context.WithCancel(t.Context())
+	defer cancelRequest()
+	request, err := http.NewRequestWithContext(
+		requestCtx,
+		http.MethodPost,
+		proxyServer.URL+RouteClaudeMessages,
+		strings.NewReader(`{"model":"claude-test"}`),
+	)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := proxyServer.Client().Do(request)
+	if err != nil {
+		t.Fatalf("client.Do() error = %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response to upstream EOF: %v", err)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("response body = %q, want upstream body", body)
+	}
+	select {
+	case <-upstreamReturned:
+	case <-time.After(clientDisconnectIntegrationTimeout):
+		t.Fatal("upstream did not return after writing the response")
+	}
+	waitFor(t, func() bool { return store.LogsLen() == 1 }, clientDisconnectIntegrationTimeout)
+	// The upstream has already reached EOF. A later client close must not
+	// overwrite the completed exchange with a client-disconnect attribution.
+	time.Sleep(delayedClientDisconnectAfterUpstreamEOF)
+	cancelRequest()
+	if err := response.Body.Close(); err != nil {
+		t.Fatalf("close client response body: %v", err)
+	}
+
+	log := store.LastLog()
+	if reason := requestLogTerminationReason(log); reason == model.TerminationReasonClientDisconnect {
+		t.Fatalf("TerminationReason = %q, upstream EOF followed by delayed client close must remain normal", reason)
+	}
+	if outcome := requestLogServiceOutcome(log); outcome != model.ServiceOutcomeCompleted {
+		t.Fatalf("ServiceOutcome = %q, want %q", outcome, model.ServiceOutcomeCompleted)
+	}
+	if completion := requestLogCompletionState(log); completion != model.CompletionStateCompleted {
+		t.Fatalf("CompletionState = %q, want %q", completion, model.CompletionStateCompleted)
 	}
 }
