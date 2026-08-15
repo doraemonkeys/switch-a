@@ -74,6 +74,38 @@ func TestProxyRouteRegistration_CodexWebSearch(t *testing.T) {
 	}
 }
 
+// TestProxyRouteRegistration_CodexResponsesCompact pins the two base-URL
+// shapes used by Responses clients. Compaction is an HTTP-only POST contract,
+// unlike the GET /responses route reserved for WebSocket upgrades.
+func TestProxyRouteRegistration_CodexResponsesCompact(t *testing.T) {
+	s := testServer(t)
+
+	for _, path := range []string{"/responses/compact", "/v1/responses/compact"} {
+		t.Run("POST "+path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-5"}`))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			s.server.Handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+			}
+		})
+
+		t.Run("GET "+path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+
+			s.server.Handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+			}
+		})
+	}
+}
+
 // TestProxyRouteRegistration_APINamespaces verifies the explicit namespace
 // routes reach the proxy handler for both methods, again via the real mux.
 func TestProxyRouteRegistration_APINamespaces(t *testing.T) {
@@ -86,6 +118,7 @@ func TestProxyRouteRegistration_APINamespaces(t *testing.T) {
 		{http.MethodPost, "/claude/v1/messages"},
 		{http.MethodGet, "/claude/v1/models"},
 		{http.MethodPost, "/codex/responses"},
+		{http.MethodPost, "/codex/responses/compact"},
 		{http.MethodPost, "/codex/alpha/search"},
 		// GET model discovery must proxy through (503 on the empty store), not
 		// hit the 426 rule reserved for the WebSocket-only /responses endpoint.

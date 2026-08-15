@@ -58,6 +58,16 @@
       { "method": "POST", "pattern": "/responses", "match": "exact" },
       { "method": "GET", "pattern": "/v1/responses", "match": "exact" },
       { "method": "POST", "pattern": "/v1/responses", "match": "exact" },
+      {
+        "method": "POST",
+        "pattern": "/responses/",
+        "match": "prefix"
+      },
+      {
+        "method": "POST",
+        "pattern": "/v1/responses/",
+        "match": "prefix"
+      },
       { "method": "POST", "pattern": "/alpha/search", "match": "exact" },
       {
         "method": "POST",

@@ -129,6 +129,8 @@ var definitions = []Definition{
 			{Method: MethodPost, Pattern: RouteCodexResponses, Match: RouteMatchExact},
 			{Method: MethodGet, Pattern: RouteCodexResponsesV1, Match: RouteMatchExact},
 			{Method: MethodPost, Pattern: RouteCodexResponsesV1, Match: RouteMatchExact},
+			{Method: MethodPost, Pattern: RouteCodexResponsesSubtree, Match: RouteMatchPrefix},
+			{Method: MethodPost, Pattern: RouteCodexResponsesSubtreeV1, Match: RouteMatchPrefix},
 			{Method: MethodPost, Pattern: RouteCodexWebSearch, Match: RouteMatchExact},
 			{Method: MethodPost, Pattern: RouteCodexWebSearchV1, Match: RouteMatchExact},
 		},

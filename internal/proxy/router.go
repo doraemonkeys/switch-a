@@ -24,10 +24,12 @@ const (
 	RouteClaudeCountTokens = apicontract.RouteClaudeCountTokens
 	RouteClaudeModels      = apicontract.RouteClaudeModels
 	// Codex API routes
-	RouteCodexResponses   = apicontract.RouteCodexResponses
-	RouteCodexResponsesV1 = apicontract.RouteCodexResponsesV1
-	RouteCodexWebSearch   = apicontract.RouteCodexWebSearch
-	RouteCodexWebSearchV1 = apicontract.RouteCodexWebSearchV1
+	RouteCodexResponses          = apicontract.RouteCodexResponses
+	RouteCodexResponsesV1        = apicontract.RouteCodexResponsesV1
+	RouteCodexResponsesSubtree   = apicontract.RouteCodexResponsesSubtree
+	RouteCodexResponsesSubtreeV1 = apicontract.RouteCodexResponsesSubtreeV1
+	RouteCodexWebSearch          = apicontract.RouteCodexWebSearch
+	RouteCodexWebSearchV1        = apicontract.RouteCodexWebSearchV1
 	// OpenAI-compatible Chat Completions API routes (Grok, DeepSeek OpenAI)
 	RouteGrokChatCompletions   = apicontract.RouteChatCompletions
 	RouteGrokChatCompletionsV1 = apicontract.RouteChatCompletionsV1

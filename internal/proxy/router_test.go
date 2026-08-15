@@ -79,6 +79,37 @@ func TestResolveAPIType(t *testing.T) {
 			wantOK:   true,
 		},
 		{
+			name:     "codex responses compact",
+			method:   "POST",
+			path:     RouteCodexResponsesSubtree + "compact",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
+		{
+			name:     "codex v1 responses compact",
+			method:   "POST",
+			path:     RouteCodexResponsesSubtreeV1 + "compact",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
+		{
+			name:   "codex responses compact is post only",
+			method: "GET",
+			path:   RouteCodexResponsesSubtree + "compact",
+		},
+		{
+			name:     "codex responses post subtree accepts another endpoint",
+			method:   "POST",
+			path:     RouteCodexResponsesSubtree + "resp_123/cancel",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
+		{
+			name:   "codex responses subtree requires segment boundary",
+			method: "POST",
+			path:   "/responses-evil/compact",
+		},
+		{
 			name:     "codex web search",
 			method:   "POST",
 			path:     "/alpha/search",
@@ -159,6 +190,13 @@ func TestResolveAPIType(t *testing.T) {
 			name:     "codex web search namespace",
 			method:   "POST",
 			path:     "/codex/alpha/search",
+			wantType: APITypeCodex,
+			wantOK:   true,
+		},
+		{
+			name:     "codex responses compact namespace",
+			method:   "POST",
+			path:     "/codex/responses/compact",
 			wantType: APITypeCodex,
 			wantOK:   true,
 		},
@@ -269,8 +307,12 @@ func TestResolveAPIType(t *testing.T) {
 func TestBareProxyRoutes(t *testing.T) {
 	routes := BareProxyRoutes()
 	seen := make(map[string]bool, len(routes))
-	foundSearch := false
-	foundVersionedSearch := false
+	wantCodexPOSTRoutes := map[string]bool{
+		RouteCodexResponsesSubtree:   false,
+		RouteCodexResponsesSubtreeV1: false,
+		RouteCodexWebSearch:          false,
+		RouteCodexWebSearchV1:        false,
+	}
 
 	for _, route := range routes {
 		key := route.Method + " " + route.Pattern
@@ -282,12 +324,15 @@ func TestBareProxyRoutes(t *testing.T) {
 		if _, ok := ResolveAPIType(route.Method, route.Pattern); !ok {
 			t.Fatalf("registered route %q cannot be resolved", key)
 		}
-		foundSearch = foundSearch || key == "POST "+RouteCodexWebSearch
-		foundVersionedSearch = foundVersionedSearch || key == "POST "+RouteCodexWebSearchV1
+		if _, tracked := wantCodexPOSTRoutes[route.Pattern]; tracked && route.Method == "POST" {
+			wantCodexPOSTRoutes[route.Pattern] = true
+		}
 	}
 
-	if !foundSearch || !foundVersionedSearch {
-		t.Fatalf("Codex web-search routes missing: bare=%v v1=%v", foundSearch, foundVersionedSearch)
+	for route, found := range wantCodexPOSTRoutes {
+		if !found {
+			t.Errorf("Codex POST route %q is missing", route)
+		}
 	}
 
 	routes[0] = BareProxyRoute{Method: "DELETE", Pattern: "/mutated"}
@@ -364,6 +409,18 @@ func TestBuildUpstreamPath(t *testing.T) {
 			wantPath:     "/responses",
 		},
 		{
+			name:         "codex compact passthrough",
+			originalPath: RouteCodexResponsesSubtree + "compact",
+			apiType:      APITypeCodex,
+			wantPath:     RouteCodexResponsesSubtree + "compact",
+		},
+		{
+			name:         "codex v1 compact normalizes",
+			originalPath: RouteCodexResponsesSubtreeV1 + "compact",
+			apiType:      APITypeCodex,
+			wantPath:     RouteCodexResponsesSubtree + "compact",
+		},
+		{
 			name:         "codex web search passthrough",
 			originalPath: RouteCodexWebSearch,
 			apiType:      APITypeCodex,
@@ -428,6 +485,12 @@ func TestBuildUpstreamPath(t *testing.T) {
 			originalPath: "/codex/v1/responses",
 			apiType:      APITypeCodex,
 			wantPath:     "/responses",
+		},
+		{
+			name:         "codex namespace normalizes compact v1",
+			originalPath: "/codex/v1/responses/compact",
+			apiType:      APITypeCodex,
+			wantPath:     RouteCodexResponsesSubtree + "compact",
 		},
 		{
 			name:         "codex namespace strips from web search",

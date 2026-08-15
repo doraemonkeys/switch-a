@@ -145,6 +145,11 @@ func TestResolveRequestUsesFrozenRouteSemantics(t *testing.T) {
 		{method: http.MethodPost, path: "/v1beta/models/x:generateContent", want: "gemini", ok: true},
 		{method: http.MethodGet, path: "/v1beta/models/x"},
 		{method: http.MethodGet, path: "/responses", want: "codex", ok: true},
+		{method: http.MethodPost, path: "/responses/compact", want: "codex", ok: true},
+		{method: http.MethodPost, path: "/v1/responses/compact", want: "codex", ok: true},
+		{method: http.MethodPost, path: "/responses/resp_123/cancel", want: "codex", ok: true},
+		{method: http.MethodGet, path: "/responses/compact"},
+		{method: http.MethodPost, path: "/responses-evil/compact"},
 		{method: http.MethodPost, path: "/deepseek-openai/v1/chat/completions", want: "deepseek-openai", ok: true},
 		{method: http.MethodHead, path: "/grok/v1/models", want: "grok", ok: true},
 		{method: http.MethodDelete, path: "/grok/v1/models"},
@@ -199,6 +204,7 @@ func TestRewriteUpstreamPathUsesRequestPathPolicy(t *testing.T) {
 	}{
 		{name: "Claude preserves v1", path: "/claude/v1/messages", apiType: "claude", wantPath: "/v1/messages"},
 		{name: "Codex strips optional v1", path: "/codex/v1/responses", apiType: "codex", wantPath: "/responses"},
+		{name: "Codex compact strips namespace and optional v1", path: "/codex/v1/responses/compact", apiType: "codex", wantPath: "/responses/compact"},
 		{name: "Codex root v1", path: "/v1", apiType: "codex", wantPath: "/"},
 		{name: "Codex preserves v1beta", path: "/v1beta/models", apiType: "codex", wantPath: "/v1beta/models"},
 		{name: "Gemini preserves v1beta", path: "/gemini/v1beta/models/x", apiType: "gemini", wantPath: "/v1beta/models/x"},
@@ -235,8 +241,8 @@ func TestRouteProjectionsAreDefensiveAndDeterministic(t *testing.T) {
 		t.Fatalf("NamespaceRoutePatterns() = %v, want %v", got, wantPatterns)
 	}
 	routes := BareRoutes()
-	if len(routes) != 12 {
-		t.Fatalf("BareRoutes() returned %d routes, want 12", len(routes))
+	if len(routes) != 14 {
+		t.Fatalf("BareRoutes() returned %d routes, want 14", len(routes))
 	}
 	routes[0] = BareRoute{Method: http.MethodDelete, Pattern: "/mutated"}
 	if fresh := BareRoutes()[0]; fresh.Method == http.MethodDelete || fresh.Pattern == "/mutated" {

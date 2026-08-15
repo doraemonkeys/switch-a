@@ -15,17 +15,19 @@ const (
 // Route path constants are owned with their API definitions so mux
 // registration and request classification cannot evolve independently.
 const (
-	RouteClaudeMessages    = "/v1/messages"
-	RouteClaudeCountTokens = "/v1/messages/count_tokens"
-	RouteClaudeModels      = "/v1/models"
-	RouteCodexResponses    = "/responses"
-	RouteCodexResponsesV1  = "/v1/responses"
-	RouteCodexWebSearch    = "/alpha/search"
-	RouteCodexWebSearchV1  = "/v1/alpha/search"
-	RouteChatCompletions   = "/chat/completions"
-	RouteChatCompletionsV1 = "/v1/chat/completions"
-	RouteGeminiV1Beta      = "/v1beta/"
-	RouteCustomPrefix      = "/custom/"
+	RouteClaudeMessages          = "/v1/messages"
+	RouteClaudeCountTokens       = "/v1/messages/count_tokens"
+	RouteClaudeModels            = "/v1/models"
+	RouteCodexResponses          = "/responses"
+	RouteCodexResponsesV1        = "/v1/responses"
+	RouteCodexResponsesSubtree   = "/responses/"
+	RouteCodexResponsesSubtreeV1 = "/v1/responses/"
+	RouteCodexWebSearch          = "/alpha/search"
+	RouteCodexWebSearchV1        = "/v1/alpha/search"
+	RouteChatCompletions         = "/chat/completions"
+	RouteChatCompletionsV1       = "/v1/chat/completions"
+	RouteGeminiV1Beta            = "/v1beta/"
+	RouteCustomPrefix            = "/custom/"
 )
 
 type RouteMatch string
