@@ -3,14 +3,13 @@ module github.com/doraemonkeys/switch-a
 go 1.25
 
 require (
-	github.com/andybalholm/brotli v1.2.2
 	github.com/coder/websocket v1.8.15
 	github.com/doraemonkeys/mylog v0.4.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/spf13/viper v1.21.0
-	go.uber.org/zap v1.27.1
-	go.yaml.in/yaml/v3 v3.0.4
+	go.uber.org/zap v1.28.0
+	go.yaml.in/yaml/v3 v3.0.5
 	gorm.io/gorm v1.31.2
 )
 
