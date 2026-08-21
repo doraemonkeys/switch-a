@@ -227,17 +227,71 @@ func TestRealSchedulerAndAccountDefensivePaths(t *testing.T) {
 }
 
 func TestUsageQueueSaturationRetainsLatestOwnership(t *testing.T) {
-	queue := make(chan testObservation, 1)
+	queue := newUsageQueue[testObservation](1, nil, testObservationOps().Release)
 	firstRelease := &releaseCounter{}
 	lastRelease := &releaseCounter{}
-	queue <- testObservation{ID: "first", release: firstRelease}
+	queue.offer(testObservation{ID: "first", release: firstRelease})
 
-	coalesceUsage(queue, testObservation{ID: "last", release: lastRelease}, testObservationOps().Release)
-	if got := <-queue; got.ID != "last" {
+	queue.offer(testObservation{ID: "last", release: lastRelease})
+	got, ok := queue.take()
+	if !ok || got.ID != "last" {
 		t.Fatalf("coalesced usage=%#v", got)
 	}
 	if firstRelease.count.Load() != 1 || lastRelease.count.Load() != 0 {
 		t.Fatalf("release counts first=%d last=%d", firstRelease.count.Load(), lastRelease.count.Load())
+	}
+}
+
+func TestUsageQueueSaturationPreservesProductionOrderAndOwnership(t *testing.T) {
+	type partialUsage struct {
+		values  map[string]int64
+		release *releaseCounter
+	}
+	releases := make([]*releaseCounter, maxObservationQueueCapacity+1)
+	samples := make([]partialUsage, len(releases))
+	fields := []map[string]int64{
+		{"prompt": 1},
+		{"prompt": 2},
+		{"completion": 3},
+		{"total": 4},
+		{"completion": 5},
+	}
+	for index := range samples {
+		releases[index] = &releaseCounter{}
+		samples[index] = partialUsage{values: fields[index], release: releases[index]}
+	}
+	release := func(observation *partialUsage) {
+		observation.release.releaseOnce()
+		*observation = partialUsage{}
+	}
+	overlay := func(current *partialUsage, later partialUsage) {
+		for field, value := range later.values {
+			current.values[field] = value
+		}
+	}
+	queue := newUsageQueue(maxObservationQueueCapacity, overlay, release)
+	for _, sample := range samples {
+		queue.offer(sample)
+	}
+
+	got, ok := queue.take()
+	if !ok || got.values["prompt"] != 2 || got.values["completion"] != 5 || got.values["total"] != 4 {
+		t.Fatalf("ordered usage fold=%#v", got)
+	}
+	if _, ok := queue.take(); ok {
+		t.Fatal("saturated queue retained a reordered observation behind the aggregate")
+	}
+	if releases[0].count.Load() != 0 {
+		t.Fatalf("aggregate owner released before dequeue: count=%d", releases[0].count.Load())
+	}
+	for index := 1; index < len(releases); index++ {
+		if releases[index].count.Load() != 1 {
+			t.Fatalf("sample %d release count=%d", index, releases[index].count.Load())
+		}
+	}
+	release(&got)
+	if releases[0].count.Load() != 1 {
+		t.Fatalf("aggregate release count=%d", releases[0].count.Load())
 	}
 }
 

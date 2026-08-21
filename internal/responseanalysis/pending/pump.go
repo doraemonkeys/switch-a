@@ -184,7 +184,7 @@ type pumpConfig[T any] struct {
 	observations       ObservationOps[T]
 	failureReason      func(error) BoundaryReason
 	events             chan<- pumpEvent[T]
-	usage              chan T
+	usage              *usageQueue[T]
 	startAck           chan readStartAck
 	rawAck             chan pumpDirective
 	observationAck     chan pumpDirective
@@ -297,12 +297,28 @@ func newObservationEmitter[T any](
 ) func(T) bool {
 	return func(observation T) bool {
 		kind := config.observations.Inspect(observation)
+		hasOrthogonalUsage := config.observations.HasUsage != nil && config.observations.HasUsage(observation)
+		if hasOrthogonalUsage && kind != ObservationIgnore && kind != ObservationUsage {
+			// Usage is accounting evidence independent of whether the same event is
+			// control, client-visible, or semantically decisive.
+			var usageObservation T
+			if config.observations.CloneUsage != nil {
+				usageObservation = config.observations.CloneUsage(observation)
+			} else {
+				usageObservation = config.observations.Clone(observation)
+			}
+			config.usage.offer(usageObservation)
+		}
 		switch kind {
 		case ObservationIgnore:
-			config.observations.Release(&observation)
+			if hasOrthogonalUsage {
+				config.usage.offer(observation)
+			} else {
+				config.observations.Release(&observation)
+			}
 			return true
 		case ObservationUsage:
-			coalesceUsage(config.usage, observation, config.observations.Release)
+			config.usage.offer(observation)
 			return true
 		case ObservationSemanticMatch, ObservationClientVisible, ObservationFailOpen:
 			reason := BoundaryReason("")
@@ -381,23 +397,6 @@ func sendPumpTerminal[T any](
 	err error,
 ) {
 	config.events <- terminalEvent[T](source, decodedBytes, err)
-}
-
-func coalesceUsage[T any](queue chan T, observation T, release func(*T)) {
-	select {
-	case queue <- observation:
-		return
-	default:
-	}
-
-	// Completion represents final usage, so saturation replaces the oldest
-	// queued sample. The pump is the only producer; the coordinator only drains.
-	select {
-	case stale := <-queue:
-		release(&stale)
-	default:
-	}
-	queue <- observation
 }
 
 func sendAnalysisFailure[T any](

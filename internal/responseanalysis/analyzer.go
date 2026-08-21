@@ -109,6 +109,9 @@ func (a *Analyzer) Start(ctx context.Context, input StartInput) *PendingResponse
 		CommandQueueCapacity:     PumpCommandQueueCapacity,
 		Observations: pending.ObservationOps[Observation]{
 			Inspect:       observationInspector(input.Match),
+			HasUsage:      runtimeObservationHasUsage,
+			CloneUsage:    cloneRuntimeUsageObservation,
+			OverlayUsage:  overlayRuntimeUsage,
 			FailureReason: observationFailureReason,
 			Clone:         cloneRuntimeObservation,
 			Release: func(observation *Observation) {

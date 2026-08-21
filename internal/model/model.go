@@ -336,12 +336,12 @@ type RequestLog struct {
 	ContentType   string `gorm:"default:''" json:"content_type"`  // Request Content-Type header
 	// Phase 4 token usage statistics (P3)
 	// Uses pointers to distinguish NULL (unknown/parse failed) from 0 (explicitly zero)
-	PromptTokens             *int64  `gorm:"default:null;index" json:"prompt_tokens,omitempty"`         // Input tokens (OpenAI: prompt_tokens, Claude: input_tokens)
-	CompletionTokens         *int64  `gorm:"default:null;index" json:"completion_tokens,omitempty"`     // Output tokens (OpenAI: completion_tokens, Claude: output_tokens)
-	TotalTokens              *int64  `gorm:"default:null;index" json:"total_tokens,omitempty"`          // Total tokens
-	ReasoningTokens          *int64  `gorm:"default:null;index" json:"reasoning_tokens,omitempty"`      // OpenAI reasoning tokens included in output tokens
-	CacheReadInputTokens     *int64  `gorm:"default:null" json:"cache_read_input_tokens,omitempty"`     // Claude: tokens read from cache (billed at 10%)
-	CacheCreationInputTokens *int64  `gorm:"default:null" json:"cache_creation_input_tokens,omitempty"` // Claude: tokens written to cache (billed at 125%)
+	PromptTokens             *int64  `gorm:"default:null;index" json:"prompt_tokens,omitempty"`         // Observed provider-reported input token count
+	CompletionTokens         *int64  `gorm:"default:null;index" json:"completion_tokens,omitempty"`     // Observed provider-reported output token count
+	TotalTokens              *int64  `gorm:"default:null;index" json:"total_tokens,omitempty"`          // Observed provider-reported total token count
+	ReasoningTokens          *int64  `gorm:"default:null;index" json:"reasoning_tokens,omitempty"`      // Observed reasoning subset of provider-reported output tokens
+	CacheReadInputTokens     *int64  `gorm:"default:null" json:"cache_read_input_tokens,omitempty"`     // Observed input tokens read from a provider cache
+	CacheCreationInputTokens *int64  `gorm:"default:null" json:"cache_creation_input_tokens,omitempty"` // Observed input tokens written to a provider cache
 	UsageDetails             *string `gorm:"type:text;default:null" json:"usage_details,omitempty"`     // JSON: full usage details (service_tier, TTL breakdown, etc.)
 	RequestedReasoningObservation
 	// Attempts is populated by API, not stored directly in database.

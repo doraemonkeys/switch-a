@@ -171,7 +171,7 @@ func TestGzipAnalysisAndUsageObservation(t *testing.T) {
 		t.Fatal(failure)
 	}
 	observations := analyze(protocol, bytes.NewReader(wire.Bytes()))
-	if len(observations) != 1 || observations[0].Class != EventClientVisible || observations[0].Usage == nil || observations[0].Usage.TotalTokens != 7 {
+	if len(observations) != 1 || observations[0].Class != EventClientVisible || observations[0].Usage == nil || observations[0].Usage.TotalTokens.Present {
 		t.Fatalf("observations = %#v", observations)
 	}
 }
@@ -179,7 +179,7 @@ func TestGzipAnalysisAndUsageObservation(t *testing.T) {
 func TestObserveUsageDelegatesToAdapterOwnedParser(t *testing.T) {
 	t.Parallel()
 	usage := ObserveUsage([]byte(`{"usage":{"input_tokens":2,"output_tokens":3}}`), nil)
-	if usage == nil || usage.PromptTokens != 2 || usage.CompletionTokens != 3 || usage.TotalTokens != 5 {
+	if usage == nil || usage.PromptTokens.Value != 2 || usage.CompletionTokens.Value != 3 || usage.TotalTokens.Present {
 		t.Fatalf("usage = %#v", usage)
 	}
 }
@@ -367,8 +367,9 @@ func TestCapturedCodexUsageUsesNegotiatedMediaWhenResponseTypeIsMissing(t *testi
 		t.Fatalf("observations = %#v", observations)
 	}
 	usage := observations[0].Usage
-	if usage.PromptTokens != 51114 || usage.CompletionTokens != 103 || usage.TotalTokens != 51217 ||
-		usage.CacheReadInputTokens != 49920 || usage.ReasoningTokens != 8 {
+	if usage.PromptTokens.Value != 51114 || usage.CompletionTokens.Value != 103 || usage.TotalTokens.Value != 51217 ||
+		usage.CacheReadInputTokens.Value != 49920 || usage.ReasoningTokens.Value != 8 || usage.CacheCreation == nil ||
+		usage.CacheCreation.InputTokens.Value != 0 || !usage.CacheCreation.InputTokens.Present {
 		t.Fatalf("usage = %#v", usage)
 	}
 }

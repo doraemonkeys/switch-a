@@ -6,6 +6,7 @@
     "display_order": 0,
     "semantic_error_supported": true,
     "request_dialect": "anthropic_messages",
+    "token_usage_semantics": "anthropic_messages",
     "upstream_path_policy": "preserve",
     "error_family": "anthropic_messages",
     "response_protocol_ids": [
@@ -30,6 +31,7 @@
     "display_order": 1,
     "semantic_error_supported": true,
     "request_dialect": "anthropic_messages",
+    "token_usage_semantics": "anthropic_messages",
     "upstream_path_policy": "preserve",
     "error_family": "anthropic_messages",
     "response_protocol_ids": [
@@ -46,6 +48,7 @@
     "display_order": 2,
     "semantic_error_supported": true,
     "request_dialect": "openai_responses",
+    "token_usage_semantics": "openai_compatible",
     "upstream_path_policy": "strip_optional_v1",
     "error_family": "openai_responses",
     "response_protocol_ids": [
@@ -83,6 +86,7 @@
     "display_order": 3,
     "semantic_error_supported": true,
     "request_dialect": "google_generate_content",
+    "token_usage_semantics": "google_generate_content",
     "upstream_path_policy": "preserve",
     "error_family": "google_generate_content",
     "response_protocol_ids": [
@@ -101,6 +105,7 @@
     "display_order": 4,
     "semantic_error_supported": true,
     "request_dialect": "openai_chat_completions",
+    "token_usage_semantics": "openai_compatible",
     "upstream_path_policy": "strip_optional_v1",
     "error_family": "openai_chat_completions",
     "response_protocol_ids": [
@@ -128,6 +133,7 @@
     "display_order": 5,
     "semantic_error_supported": true,
     "request_dialect": "openai_chat_completions",
+    "token_usage_semantics": "openai_compatible",
     "upstream_path_policy": "strip_optional_v1",
     "error_family": "openai_chat_completions",
     "response_protocol_ids": [

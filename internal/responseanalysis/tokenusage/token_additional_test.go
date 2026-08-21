@@ -5,50 +5,50 @@ import (
 	"testing"
 )
 
-func TestTokenUsageMergeHandlesNilAndCacheCreation(t *testing.T) {
+func TestTokenUsageAccumulateHandlesNilAndCacheCreation(t *testing.T) {
 	other := &TokenUsage{
-		PromptTokens:         10,
-		CompletionTokens:     5,
-		TotalTokens:          15,
-		ReasoningTokens:      6,
-		CacheReadInputTokens: 3,
+		PromptTokens:         observed(10),
+		CompletionTokens:     observed(5),
+		TotalTokens:          observed(15),
+		ReasoningTokens:      observed(6),
+		CacheReadInputTokens: observed(3),
 		CacheCreation: &CacheCreation{
-			InputTokens:            7,
-			Ephemeral1hInputTokens: 2,
-			Ephemeral5mInputTokens: 1,
+			InputTokens:            observed(7),
+			Ephemeral1hInputTokens: observed(2),
+			Ephemeral5mInputTokens: observed(1),
 		},
 	}
 
-	if cloned := (*TokenUsage)(nil).Merge(other); cloned == nil || cloned.TotalTokens != 15 {
-		t.Fatalf("nil Merge() = %#v, want cloned usage totals", cloned)
+	if cloned := (*TokenUsage)(nil).Accumulate(other); cloned == nil || cloned.TotalTokens.Value != 15 {
+		t.Fatalf("nil Accumulate() = %#v, want cloned usage totals", cloned)
 	}
 
 	current := &TokenUsage{
-		PromptTokens:         1,
-		CompletionTokens:     2,
-		TotalTokens:          3,
-		ReasoningTokens:      4,
-		CacheReadInputTokens: 4,
+		PromptTokens:         observed(1),
+		CompletionTokens:     observed(2),
+		TotalTokens:          observed(3),
+		ReasoningTokens:      observed(4),
+		CacheReadInputTokens: observed(4),
 	}
-	merged := current.Merge(other)
+	merged := current.Accumulate(other)
 	if merged != current {
-		t.Fatal("expected Merge to update the receiver in place")
+		t.Fatal("expected Accumulate to update the receiver in place")
 	}
-	if merged.PromptTokens != 11 || merged.CompletionTokens != 7 || merged.TotalTokens != 18 {
+	if merged.PromptTokens.Value != 11 || merged.CompletionTokens.Value != 7 || merged.TotalTokens.Value != 18 {
 		t.Fatalf("merged totals = %#v, want receiver plus other", merged)
 	}
-	if merged.CacheReadInputTokens != 7 {
-		t.Fatalf("CacheReadInputTokens = %d, want 7", merged.CacheReadInputTokens)
+	if merged.CacheReadInputTokens.Value != 7 {
+		t.Fatalf("CacheReadInputTokens = %d, want 7", merged.CacheReadInputTokens.Value)
 	}
-	if merged.ReasoningTokens != 10 {
-		t.Fatalf("ReasoningTokens = %d, want 10", merged.ReasoningTokens)
+	if merged.ReasoningTokens.Value != 10 {
+		t.Fatalf("ReasoningTokens = %d, want 10", merged.ReasoningTokens.Value)
 	}
 	if merged.CacheCreation == nil {
 		t.Fatal("expected cache creation totals to be initialized")
 	}
-	if merged.CacheCreation.InputTokens != 7 ||
-		merged.CacheCreation.Ephemeral1hInputTokens != 2 ||
-		merged.CacheCreation.Ephemeral5mInputTokens != 1 {
+	if merged.CacheCreation.InputTokens.Value != 7 ||
+		merged.CacheCreation.Ephemeral1hInputTokens.Value != 2 ||
+		merged.CacheCreation.Ephemeral5mInputTokens.Value != 1 {
 		t.Fatalf("cache creation = %#v, want merged cache creation totals", merged.CacheCreation)
 	}
 }
@@ -56,17 +56,17 @@ func TestTokenUsageMergeHandlesNilAndCacheCreation(t *testing.T) {
 func TestUsageParsingHelpersHandleTypedAndMissingValues(t *testing.T) {
 	t.Parallel()
 
-	if got, ok := usageInt64(float64(42)); !ok || got != 42 {
-		t.Fatalf("usageInt64(float64) = (%d, %t), want (42, true)", got, ok)
+	if got := usageInt64(float64(42)); !got.Present || got.Value != 42 {
+		t.Fatalf("usageInt64(float64) = %#v, want observed 42", got)
 	}
-	if got, ok := usageInt64(int64(7)); !ok || got != 7 {
-		t.Fatalf("usageInt64(int64) = (%d, %t), want (7, true)", got, ok)
+	if got := usageInt64(int64(7)); !got.Present || got.Value != 7 {
+		t.Fatalf("usageInt64(int64) = %#v, want observed 7", got)
 	}
-	if got, ok := usageInt64(int(3)); !ok || got != 3 {
-		t.Fatalf("usageInt64(int) = (%d, %t), want (3, true)", got, ok)
+	if got := usageInt64(int(3)); !got.Present || got.Value != 3 {
+		t.Fatalf("usageInt64(int) = %#v, want observed 3", got)
 	}
-	if got, ok := usageInt64("nope"); ok || got != 0 {
-		t.Fatalf("usageInt64(string) = (%d, %t), want (0, false)", got, ok)
+	if got := usageInt64("nope"); got.Present || got.Value != 0 {
+		t.Fatalf("usageInt64(string) = %#v, want absent", got)
 	}
 
 	values := map[string]any{
@@ -102,17 +102,17 @@ func TestBuildCacheCreationFromUsageMapParsesNestedValues(t *testing.T) {
 	if cacheCreation == nil {
 		t.Fatal("expected cache creation values to be parsed")
 	}
-	if cacheCreation.InputTokens != 11 {
-		t.Fatalf("InputTokens = %d, want 11", cacheCreation.InputTokens)
+	if cacheCreation.InputTokens.Value != 11 {
+		t.Fatalf("InputTokens = %d, want 11", cacheCreation.InputTokens.Value)
 	}
-	if cacheCreation.Ephemeral1hInputTokens != 5 || cacheCreation.Ephemeral5mInputTokens != 2 {
+	if cacheCreation.Ephemeral1hInputTokens.Value != 5 || cacheCreation.Ephemeral5mInputTokens.Value != 2 {
 		t.Fatalf("cache creation = %#v, want nested ephemeral values", cacheCreation)
 	}
 
 	tokenOnly := buildCacheCreationFromUsageMap(map[string]any{
 		"cache_creation_input_tokens": int64(4),
 	})
-	if tokenOnly == nil || tokenOnly.InputTokens != 4 {
+	if tokenOnly == nil || tokenOnly.InputTokens.Value != 4 {
 		t.Fatalf("tokenOnly = %#v, want cache creation with input tokens", tokenOnly)
 	}
 }

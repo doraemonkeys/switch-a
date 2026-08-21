@@ -19,7 +19,7 @@ type coordinator[T any] struct {
 	account *requestAccount
 
 	events         chan pumpEvent[T]
-	usage          chan T
+	usage          *usageQueue[T]
 	startAck       chan readStartAck
 	rawAck         chan pumpDirective
 	observationAck chan pumpDirective
@@ -120,7 +120,7 @@ func Start[T any](ctx context.Context, config Config[T], input StartInput[T]) *R
 		shared:         shared,
 		account:        account,
 		events:         make(chan pumpEvent[T]),
-		usage:          make(chan T, config.ObservationQueueCapacity),
+		usage:          newUsageQueue(config.ObservationQueueCapacity, config.Observations.OverlayUsage, config.Observations.Release),
 		startAck:       make(chan readStartAck),
 		rawAck:         make(chan pumpDirective),
 		observationAck: make(chan pumpDirective),
@@ -204,8 +204,10 @@ func (c *coordinator[T]) run(ctx context.Context) {
 			c.handleCommand(command)
 		case event := <-c.events:
 			c.handlePumpEvent(event)
-		case observation := <-c.usage:
-			c.storeUsage(observation)
+		case <-c.usage.ready:
+			if observation, ok := c.usage.take(); ok {
+				c.storeUsage(observation)
+			}
 		case <-c.timerSignals.ready:
 			c.handlePendingTimerSignals()
 		case <-cancelled:
@@ -592,6 +594,11 @@ func (c *coordinator[T]) handlePumpTermination(terminal pumpTerminal) {
 
 func (c *coordinator[T]) storeUsage(observation T) {
 	if c.hasUsage {
+		if c.config.Observations.OverlayUsage != nil {
+			c.config.Observations.OverlayUsage(&c.usageValue, observation)
+			c.config.Observations.Release(&observation)
+			return
+		}
 		c.config.Observations.Release(&c.usageValue)
 	}
 	c.usageValue = observation
@@ -600,12 +607,11 @@ func (c *coordinator[T]) storeUsage(observation T) {
 
 func (c *coordinator[T]) drainUsage() {
 	for {
-		select {
-		case observation := <-c.usage:
-			c.storeUsage(observation)
-		default:
+		observation, ok := c.usage.take()
+		if !ok {
 			return
 		}
+		c.storeUsage(observation)
 	}
 }
 

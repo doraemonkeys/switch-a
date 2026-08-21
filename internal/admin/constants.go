@@ -36,8 +36,7 @@ const (
 	// MaxLogsLimit caps query results to prevent excessive memory usage and
 	// slow responses. 1000 is enough for most debugging sessions while
 	// keeping response times under a second with typical database sizes.
-	MaxLogsLimit               = 1000
-	DefaultTimeSeriesRangeDays = 30 // Default fallback range for "all" period time series
+	MaxLogsLimit = 1000
 )
 
 // Request body size limits.

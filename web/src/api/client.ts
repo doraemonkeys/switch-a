@@ -11,6 +11,7 @@ import {
   parseRequestLog,
   parseStatsResponse,
 } from "./contracts";
+import { parseTokenUsageResponse } from "./token-usage-decoders";
 import { parseAPICatalog } from "./api-catalog";
 import {
   createErrorDetectionApi,
@@ -28,6 +29,7 @@ import type {
   SystemStatus,
   LogFilter,
   StatsParams,
+  TokenUsageParams,
   BatchProviderRequest,
   BatchProviderResponse,
   ExportedConfig,
@@ -99,6 +101,16 @@ export type {
   RequestEvidence,
   TerminationActor,
   TerminationReason,
+  TokenBreakdownDTO,
+  TokenSummaryDTO,
+  TokenBucketDTO,
+  TokenProviderRankDTO,
+  TokenModelRankDTO,
+  TokenTimeRangeDTO,
+  TokenCoverageDTO,
+  TokenDataQualityDTO,
+  TokenUsageResponse,
+  TokenUsageParams,
 } from "./types";
 export type {
   ProviderImportCandidate,
@@ -204,6 +216,19 @@ function buildStatsQuery(params?: StatsParams): string {
   const query = new URLSearchParams();
   if (params?.period) query.set("period", params.period);
   if (params?.granularity) query.set("granularity", params.granularity);
+  if (params?.as_of) query.set("as_of", params.as_of);
+  return query.toString();
+}
+
+// Build query string for token-usage API
+function buildTokenUsageQuery(params?: TokenUsageParams): string {
+  const query = new URLSearchParams();
+  if (params?.period) query.set("period", params.period);
+  if (params?.granularity) query.set("granularity", params.granularity);
+  if (params?.as_of) query.set("as_of", params.as_of);
+  if (params?.provider_id) query.set("provider_id", params.provider_id);
+  if (params?.model) query.set("model", params.model);
+  if (params?.api_type) query.set("api_type", params.api_type);
   return query.toString();
 }
 
@@ -551,6 +576,16 @@ export function createApiClient(deps: ApiClientDeps) {
         const queryStr = buildStatsQuery(params);
         return parseStatsResponse(
           await request<unknown>(queryStr ? `/stats?${queryStr}` : "/stats"),
+        );
+      },
+    },
+    tokenUsage: {
+      get: async (params?: TokenUsageParams) => {
+        const queryStr = buildTokenUsageQuery(params);
+        return parseTokenUsageResponse(
+          await request<unknown>(
+            queryStr ? `/token-usage?${queryStr}` : "/token-usage",
+          ),
         );
       },
     },

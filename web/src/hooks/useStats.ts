@@ -1,23 +1,28 @@
-import { useState } from "react";
 import { useApi } from "../api";
 import type { StatsParams, StatsResponse } from "../api/client";
 import { useQuery } from "./useQuery";
+
+const EMPTY_STATS_PARAMS: StatsParams = {};
 
 interface UseStatsResult {
   stats: StatsResponse | null;
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
-  setParams: (params: StatsParams) => void;
-  params: StatsParams;
 }
 
-/** Fetches the server snapshot identified by the current statistics params. */
-export function useStats(initialParams?: StatsParams): UseStatsResult {
+/** Fetches the server snapshot identified by the controlled statistics params. */
+export function useStats(
+  params: StatsParams = EMPTY_STATS_PARAMS,
+): UseStatsResult {
   const api = useApi();
-  const [params, setParams] = useState<StatsParams>(initialParams ?? {});
+  const queryKey = JSON.stringify([
+    params.period,
+    params.granularity,
+    params.as_of,
+  ]);
   const query = useQuery(() => api.stats.get(params), {
-    queryKey: params,
+    queryKey,
     errorMessage: "Failed to fetch stats",
   });
 
@@ -26,7 +31,5 @@ export function useStats(initialParams?: StatsParams): UseStatsResult {
     loading: query.loading,
     error: query.error,
     refetch: query.refetch,
-    setParams,
-    params,
   };
 }

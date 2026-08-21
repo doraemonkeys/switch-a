@@ -176,6 +176,9 @@ type DriverFactory[T any] func(io.Reader, allocation.Reserver) (Driver[T], error
 
 type ObservationOps[T any] struct {
 	Inspect       func(T) ObservationKind
+	HasUsage      func(T) bool
+	CloneUsage    func(T) T
+	OverlayUsage  func(*T, T)
 	FailureReason func(T) BoundaryReason
 	Clone         func(T) T
 	Release       func(*T)

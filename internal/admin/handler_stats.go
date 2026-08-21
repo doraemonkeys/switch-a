@@ -2,114 +2,15 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
 )
-
-// validPeriods contains the allowed period values for stats API.
-// Unexported to prevent external mutation.
-var validPeriods = map[string]bool{
-	"24h": true,
-	"7d":  true,
-	"30d": true,
-	"all": true,
-}
-
-// validGranularities contains the allowed granularity values for stats API.
-// Unexported to prevent external mutation.
-var validGranularities = map[string]time.Duration{
-	"5m":  5 * time.Minute,
-	"15m": 15 * time.Minute,
-	"1h":  time.Hour,
-	"6h":  6 * time.Hour,
-	"1d":  24 * time.Hour,
-}
-
-// minGranularityByPeriod defines the minimum allowed granularity for each period.
-// This prevents excessive data points from large time ranges with small granularities.
-// Unexported to prevent external mutation.
-var minGranularityByPeriod = map[string]time.Duration{
-	"24h": 5 * time.Minute, // 24h allows 5m minimum (288 points max)
-	"7d":  time.Hour,       // 7d allows 1h minimum (168 points max)
-	"30d": 6 * time.Hour,   // 30d allows 6h minimum (120 points max)
-	"all": 24 * time.Hour,  // all allows 1d minimum
-}
-
-// periodToDuration converts a period string to time.Duration.
-// Returns 0 for "all" to indicate no time limit.
-func periodToDuration(period string) time.Duration {
-	switch period {
-	case "24h":
-		return 24 * time.Hour
-	case "7d":
-		return 7 * 24 * time.Hour
-	case "30d":
-		return 30 * 24 * time.Hour
-	default: // "all"
-		return 0
-	}
-}
-
-// formatGranularity converts a duration to a human-readable granularity string.
-func formatGranularity(d time.Duration) string {
-	switch d {
-	case 5 * time.Minute:
-		return "5m"
-	case 15 * time.Minute:
-		return "15m"
-	case time.Hour:
-		return "1h"
-	case 6 * time.Hour:
-		return "6h"
-	case 24 * time.Hour:
-		return "1d"
-	default:
-		return d.String()
-	}
-}
-
-// statsParams holds validated parameters for the stats API.
-type statsParams struct {
-	period      string
-	granularity time.Duration
-}
-
-// validateStatsParams validates and returns stats query parameters.
-// Returns nil params and writes error response if validation fails.
-func (h *Handler) validateStatsParams(w http.ResponseWriter, r *http.Request) *statsParams {
-	period := r.URL.Query().Get("period")
-	if period == "" {
-		period = "24h"
-	}
-	if !validPeriods[period] {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid period: must be '24h', '7d', '30d', or 'all'")
-		return nil
-	}
-
-	granularityStr := r.URL.Query().Get("granularity")
-	var granularity time.Duration
-	if granularityStr != "" {
-		var ok bool
-		granularity, ok = validGranularities[granularityStr]
-		if !ok {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid granularity: must be '5m', '15m', '1h', '6h', or '1d'")
-			return nil
-		}
-
-		minGranularity := minGranularityByPeriod[period]
-		if granularity < minGranularity {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation,
-				"Granularity too fine for period: "+period+" requires minimum granularity of "+formatGranularity(minGranularity))
-			return nil
-		}
-	}
-
-	return &statsParams{period: period, granularity: granularity}
-}
 
 // calculateProviderStats computes provider health statistics.
 // Providers without explicit health state are counted as healthy.
@@ -147,17 +48,6 @@ func buildRequestsByProviderOutcome(logStats *model.LogStats, providerNameMap ma
 		})
 	}
 	return result
-}
-
-// getTimeSeriesStartTime determines the start time for time series based on period and log stats.
-func getTimeSeriesStartTime(period string, startTime time.Time, earliestLog time.Time, now time.Time) time.Time {
-	if period != "all" {
-		return startTime
-	}
-	if !earliestLog.IsZero() {
-		return earliestLog
-	}
-	return now.Add(-DefaultTimeSeriesRangeDays * 24 * time.Hour)
 }
 
 // StatsResponse represents the response for the stats API.
@@ -198,20 +88,25 @@ type TimeRange struct {
 // Query parameters:
 //   - period: statistics time range (24h/7d/30d/all, default: 24h)
 //   - granularity: time bucket size for time series (5m/15m/1h/6h/1d, optional)
+//   - as_of: RFC3339 exclusive end shared with token analytics for boundary alignment
 func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
-	params := h.validateStatsParams(w, r)
-	if params == nil {
+	window, err := h.statsWindowResolver.ResolveStats(r.URL.Query())
+	if err != nil {
+		h.writeStatsWindowError(w, err)
 		return
 	}
 
 	ctx := r.Context()
-	now := time.Now().UTC()
-	startTime, endTime := h.calculateTimeRange(params.period, now)
-
-	logStats, err := h.store.GetLogStats(ctx, startTime, endTime)
+	logStats, err := h.store.GetLogStats(ctx, window.Start, window.End)
 	if err != nil {
 		h.logger.Error("failed to get log stats", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get statistics")
+		return
+	}
+	earliest := timePointer(logStats.EarliestLog)
+	window, err = analyticswindow.ResolveAll(window, earliest)
+	if err != nil {
+		h.writeStatsWindowError(w, err)
 		return
 	}
 
@@ -222,11 +117,10 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := h.buildStatsResponse(logStats, providerStats, providerNameMap, startTime, endTime, params.period)
+	resp := h.buildStatsResponse(logStats, providerStats, providerNameMap, window.Start, window.End)
 
-	if params.granularity > 0 {
-		tsStartTime := getTimeSeriesStartTime(params.period, startTime, logStats.EarliestLog, now)
-		timeSeries, err := h.store.GetLogTimeSeries(ctx, tsStartTime, endTime, params.granularity)
+	if window.Granularity > 0 {
+		timeSeries, err := h.store.GetLogTimeSeries(ctx, window.Start, window.End, window.Granularity)
 		if err != nil {
 			h.logger.Error("failed to get log time series", zap.Error(err))
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to get time series statistics")
@@ -241,14 +135,22 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// calculateTimeRange returns start and end times based on period.
-func (h *Handler) calculateTimeRange(period string, now time.Time) (time.Time, time.Time) {
-	duration := periodToDuration(period)
-	var startTime time.Time
-	if duration > 0 {
-		startTime = now.Add(-duration)
+func (h *Handler) writeStatsWindowError(w http.ResponseWriter, err error) {
+	var validationErr *analyticswindow.ValidationError
+	if !errors.As(err, &validationErr) {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid analytics window")
+		return
 	}
-	return startTime, now
+	writeErrorWithDetails(w, http.StatusBadRequest, ErrCodeValidation, "Invalid analytics window", map[string]string{
+		validationErr.Field: validationErr.Reason,
+	})
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 // fetchProviderStats retrieves providers and calculates health statistics.
@@ -279,7 +181,6 @@ func (h *Handler) buildStatsResponse(
 	providerStats ProviderStats,
 	providerNameMap map[string]string,
 	startTime, endTime time.Time,
-	period string,
 ) StatsResponse {
 	resp := StatsResponse{
 		TotalRequests:             logStats.TotalRequests,
@@ -290,10 +191,6 @@ func (h *Handler) buildStatsResponse(
 		RequestsByProviderOutcome: buildRequestsByProviderOutcome(logStats, providerNameMap),
 		TimeRange:                 TimeRange{Start: startTime, End: endTime},
 		OutcomeTimeSeries:         []model.TimeSeriesPoint{},
-	}
-
-	if period == "all" && !logStats.EarliestLog.IsZero() {
-		resp.TimeRange.Start = logStats.EarliestLog
 	}
 
 	return resp

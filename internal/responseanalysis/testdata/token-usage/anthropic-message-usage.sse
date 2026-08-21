@@ -1,0 +1,5 @@
+event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":4}}

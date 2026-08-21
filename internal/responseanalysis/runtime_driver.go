@@ -129,3 +129,22 @@ func cloneRuntimeObservation(source Observation) Observation {
 	}
 	return clone
 }
+
+func runtimeObservationHasUsage(observation Observation) bool {
+	return observation.Usage != nil
+}
+
+func cloneRuntimeUsageObservation(source Observation) Observation {
+	return Observation{
+		ProtocolID: source.ProtocolID,
+		Class:      EventUsage,
+		Usage:      source.Usage.Clone(),
+	}
+}
+
+func overlayRuntimeUsage(current *Observation, later Observation) {
+	if current == nil {
+		return
+	}
+	current.Usage = current.Usage.OverlayObserved(later.Usage)
+}

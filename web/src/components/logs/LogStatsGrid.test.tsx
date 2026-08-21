@@ -58,8 +58,12 @@ describe("LogStatsGrid", () => {
       <LogStatsGrid
         stats={mockStats}
         statsLoading={false}
-        params={{ period: "24h", granularity: "1h" }}
-        onParamsChange={vi.fn()}
+        window={{
+          period: "24h",
+          granularity: "1h",
+          as_of: "2026-04-02T00:00:00.000Z",
+        }}
+        onWindowIntent={vi.fn()}
         hasActiveFilters={false}
       />,
     );
@@ -88,8 +92,12 @@ describe("LogStatsGrid", () => {
       <LogStatsGrid
         stats={mockStats}
         statsLoading={false}
-        params={{ period: "24h", granularity: "1h" }}
-        onParamsChange={vi.fn()}
+        window={{
+          period: "24h",
+          granularity: "1h",
+          as_of: "2026-04-02T00:00:00.000Z",
+        }}
+        onWindowIntent={vi.fn()}
         hasActiveFilters
       />,
     );
@@ -108,8 +116,12 @@ describe("LogStatsGrid", () => {
       <LogStatsGrid
         stats={mockStats}
         statsLoading={false}
-        params={{ period: "24h", granularity: "1h" }}
-        onParamsChange={handleParamsChange}
+        window={{
+          period: "24h",
+          granularity: "1h",
+          as_of: "2026-04-02T00:00:00.000Z",
+        }}
+        onWindowIntent={handleParamsChange}
         hasActiveFilters={false}
       />,
     );
@@ -119,8 +131,8 @@ describe("LogStatsGrid", () => {
     });
 
     expect(handleParamsChange).toHaveBeenCalledWith({
+      type: "period-selected",
       period: "7d",
-      granularity: "6h",
     });
   });
 
@@ -131,8 +143,12 @@ describe("LogStatsGrid", () => {
       <LogStatsGrid
         stats={mockStats}
         statsLoading={false}
-        params={{ period: "7d", granularity: "6h" }}
-        onParamsChange={handleParamsChange}
+        window={{
+          period: "7d",
+          granularity: "6h",
+          as_of: "2026-04-02T00:00:00.000Z",
+        }}
+        onWindowIntent={handleParamsChange}
         hasActiveFilters={false}
       />,
     );
@@ -142,7 +158,7 @@ describe("LogStatsGrid", () => {
     });
 
     expect(handleParamsChange).toHaveBeenCalledWith({
-      period: "7d",
+      type: "granularity-selected",
       granularity: "1d",
     });
   });

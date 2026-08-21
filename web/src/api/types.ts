@@ -631,7 +631,22 @@ export interface StatsParams {
   period?: StatsPeriod;
   /** Time bucket size for time series (optional) */
   granularity?: StatsGranularity;
+  /** Shared exclusive end timestamp across analytics endpoints */
+  as_of?: string;
 }
+
+export type {
+  TokenBreakdownDTO,
+  TokenSummaryDTO,
+  TokenBucketDTO,
+  TokenProviderRankDTO,
+  TokenModelRankDTO,
+  TokenTimeRangeDTO,
+  TokenCoverageDTO,
+  TokenDataQualityDTO,
+  TokenUsageResponse,
+  TokenUsageParams,
+} from "./token-usage-types";
 
 // ProviderStats represents provider health statistics
 export interface ProviderStats {

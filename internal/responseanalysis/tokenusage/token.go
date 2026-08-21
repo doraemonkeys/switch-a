@@ -3,37 +3,122 @@ package tokenusage
 import (
 	"bytes"
 	"encoding/json"
+	"math/big"
+	"strconv"
+	"strings"
 )
 
 // Constants for token parsing buffer sizes.
 const (
-	defaultTokenParseBytes   = 4 * 1024  // 4KB, tail buffer default size
-	fullCaptureThreshold     = 32 * 1024 // 32KB, below this we capture full response
-	MaxSSEBuffer             = 64 * 1024 // 64KB, SSE buffer max limit
-	MinBufferReallocCapacity = 8 * 1024  // 8KB, minimum capacity threshold for buffer reallocation
+	defaultTokenParseBytes     = 4 * 1024  // 4KB, tail buffer default size
+	fullCaptureThreshold       = 32 * 1024 // 32KB, below this we capture full response
+	MaxSSEBuffer               = 64 * 1024 // 64KB, SSE buffer max limit
+	MinBufferReallocCapacity   = 8 * 1024  // 8KB, minimum capacity threshold for buffer reallocation
+	maxUsageIntegerLexemeBytes = 64
+	maxUsageIntegerExponent    = 64
 )
 
-// TokenUsage represents complete token usage statistics.
-type TokenUsage struct {
-	// === Common fields (unified semantics across providers) ===
-	PromptTokens     int64 // Total input tokens (OpenAI: prompt_tokens, Claude: input_tokens)
-	CompletionTokens int64 // Output tokens (OpenAI: completion_tokens, Claude: output_tokens)
-	TotalTokens      int64 // Total
-	ReasoningTokens  int64 // OpenAI reasoning tokens included in output/completion tokens
-
-	// === Claude cache ===
-	CacheReadInputTokens int64          // Tokens read from cache (billed at 10% of standard input)
-	CacheCreation        *CacheCreation // Tokens written to cache (billed at 125% of standard, with TTL breakdown)
-
-	// === Metadata ===
-	ServiceTier string // "standard" / "scale" etc.
+// ObservedCount keeps the provider value separate from whether the provider
+// actually supplied it. Analytics needs that distinction because an explicit
+// zero is evidence while an omitted or invalid value is unknown.
+type ObservedCount struct {
+	Value   int64
+	Present bool
 }
 
-// CacheCreation holds cache write statistics (with TTL breakdown).
+func observedCount(value int64) ObservedCount {
+	return ObservedCount{Value: value, Present: true}
+}
+
+func (c *ObservedCount) UnmarshalJSON(data []byte) error {
+	if c == nil {
+		return nil
+	}
+	*c = ObservedCount{}
+	value, ok := parseJSONInteger(data)
+	if ok {
+		*c = observedCount(value)
+	}
+	// A malformed counter is one absent fact, not a reason to discard other
+	// independent counters from the same usage envelope.
+	return nil
+}
+
+func parseJSONInteger(data []byte) (int64, bool) {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || (data[0] != '-' && (data[0] < '0' || data[0] > '9')) {
+		return 0, false
+	}
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err != nil {
+		return 0, false
+	}
+	return parseIntegerString(number.String())
+}
+
+func parseIntegerString(value string) (int64, bool) {
+	if len(value) > maxUsageIntegerLexemeBytes || !usageExponentWithinBound(value) {
+		return 0, false
+	}
+	rational, ok := new(big.Rat).SetString(value)
+	if !ok || !rational.IsInt() || !rational.Num().IsInt64() {
+		return 0, false
+	}
+	return rational.Num().Int64(), true
+}
+
+func usageExponentWithinBound(value string) bool {
+	index := strings.IndexAny(value, "eE")
+	if index < 0 {
+		return true
+	}
+	exponentText := value[index+1:]
+	if exponentText == "" {
+		return false
+	}
+	exponent, err := strconv.ParseInt(exponentText, 10, 16)
+	return err == nil && exponent >= -maxUsageIntegerExponent && exponent <= maxUsageIntegerExponent
+}
+
+func overlayCount(current *ObservedCount, later ObservedCount) {
+	if later.Present {
+		*current = later
+	}
+}
+
+func accumulateCount(current *ObservedCount, addition ObservedCount) {
+	if !addition.Present {
+		return
+	}
+	current.Value += addition.Value
+	current.Present = true
+}
+
+func countPointer(count ObservedCount) *int64 {
+	if !count.Present {
+		return nil
+	}
+	value := count.Value
+	return &value
+}
+
+// TokenUsage represents the raw usage facts observed in one provider payload.
+type TokenUsage struct {
+	PromptTokens         ObservedCount
+	CompletionTokens     ObservedCount
+	TotalTokens          ObservedCount
+	ReasoningTokens      ObservedCount
+	CacheReadInputTokens ObservedCount
+	CacheCreation        *CacheCreation
+	ServiceTier          string
+}
+
+// CacheCreation holds provider-reported cache write facts and optional TTL
+// breakdowns without assigning protocol-specific accounting semantics.
 type CacheCreation struct {
-	InputTokens            int64 // cache_creation_input_tokens total
-	Ephemeral1hInputTokens int64 // 1-hour ephemeral cache
-	Ephemeral5mInputTokens int64 // 5-minute ephemeral cache
+	InputTokens            ObservedCount
+	Ephemeral1hInputTokens ObservedCount
+	Ephemeral5mInputTokens ObservedCount
 }
 
 // Clone returns a deep copy so callers can snapshot accumulated usage safely.
@@ -51,10 +136,9 @@ func (u *TokenUsage) Clone() *TokenUsage {
 	return &clone
 }
 
-// Merge adds another usage sample into the receiver.
-// WebSocket sessions may emit multiple billable events over one connection, so the
-// connection log needs an accumulated total rather than the last event only.
-func (u *TokenUsage) Merge(other *TokenUsage) *TokenUsage {
+// OverlayObserved combines cumulative or partial samples from one HTTP/SSE
+// response. A later field replaces an earlier field only when it was observed.
+func (u *TokenUsage) OverlayObserved(other *TokenUsage) *TokenUsage {
 	if other == nil {
 		return u
 	}
@@ -62,19 +146,50 @@ func (u *TokenUsage) Merge(other *TokenUsage) *TokenUsage {
 		return other.Clone()
 	}
 
-	u.PromptTokens += other.PromptTokens
-	u.CompletionTokens += other.CompletionTokens
-	u.TotalTokens += other.TotalTokens
-	u.ReasoningTokens += other.ReasoningTokens
-	u.CacheReadInputTokens += other.CacheReadInputTokens
+	overlayCount(&u.PromptTokens, other.PromptTokens)
+	overlayCount(&u.CompletionTokens, other.CompletionTokens)
+	overlayCount(&u.TotalTokens, other.TotalTokens)
+	overlayCount(&u.ReasoningTokens, other.ReasoningTokens)
+	overlayCount(&u.CacheReadInputTokens, other.CacheReadInputTokens)
 
+	if other.CacheCreation != nil {
+		if u.CacheCreation == nil {
+			cacheCreation := *other.CacheCreation
+			u.CacheCreation = &cacheCreation
+		} else {
+			overlayCount(&u.CacheCreation.InputTokens, other.CacheCreation.InputTokens)
+			overlayCount(&u.CacheCreation.Ephemeral1hInputTokens, other.CacheCreation.Ephemeral1hInputTokens)
+			overlayCount(&u.CacheCreation.Ephemeral5mInputTokens, other.CacheCreation.Ephemeral5mInputTokens)
+		}
+	}
+	if other.ServiceTier != "" {
+		u.ServiceTier = other.ServiceTier
+	}
+	return u
+}
+
+// Accumulate combines distinct completed billable responses in one WebSocket
+// session. Presence unions even when the added value is explicitly zero.
+func (u *TokenUsage) Accumulate(other *TokenUsage) *TokenUsage {
+	if other == nil {
+		return u
+	}
+	if u == nil {
+		return other.Clone()
+	}
+
+	accumulateCount(&u.PromptTokens, other.PromptTokens)
+	accumulateCount(&u.CompletionTokens, other.CompletionTokens)
+	accumulateCount(&u.TotalTokens, other.TotalTokens)
+	accumulateCount(&u.ReasoningTokens, other.ReasoningTokens)
+	accumulateCount(&u.CacheReadInputTokens, other.CacheReadInputTokens)
 	if other.CacheCreation != nil {
 		if u.CacheCreation == nil {
 			u.CacheCreation = &CacheCreation{}
 		}
-		u.CacheCreation.InputTokens += other.CacheCreation.InputTokens
-		u.CacheCreation.Ephemeral1hInputTokens += other.CacheCreation.Ephemeral1hInputTokens
-		u.CacheCreation.Ephemeral5mInputTokens += other.CacheCreation.Ephemeral5mInputTokens
+		accumulateCount(&u.CacheCreation.InputTokens, other.CacheCreation.InputTokens)
+		accumulateCount(&u.CacheCreation.Ephemeral1hInputTokens, other.CacheCreation.Ephemeral1hInputTokens)
+		accumulateCount(&u.CacheCreation.Ephemeral5mInputTokens, other.CacheCreation.Ephemeral5mInputTokens)
 	}
 
 	if u.ServiceTier == "" {
@@ -86,137 +201,52 @@ func (u *TokenUsage) Merge(other *TokenUsage) *TokenUsage {
 	return u
 }
 
-// BillableInputTokens returns the billable equivalent input tokens.
-// Claude billing: cache_read * 0.1 + cache_creation * 1.25 + uncached * 1.0
+// BillableInputTokens returns the legacy cache-adjusted approximation for
+// protocols whose read/write multipliers are 0.1 and 1.25. Raw capture and
+// analytics deliberately do not use this provider-pricing helper.
 func (u *TokenUsage) BillableInputTokens() float64 {
 	if u == nil {
 		return 0
 	}
-	uncached := u.PromptTokens - u.CacheReadInputTokens
+	uncached := u.PromptTokens.Value - u.CacheReadInputTokens.Value
 	uncached = max(uncached, 0) // Protect against anomalous provider counters.
 	var cacheCreation int64
 	if u.CacheCreation != nil {
-		cacheCreation = u.CacheCreation.InputTokens
+		cacheCreation = u.CacheCreation.InputTokens.Value
 	}
-	return float64(uncached) + float64(u.CacheReadInputTokens)*0.1 + float64(cacheCreation)*1.25
+	return float64(uncached) + float64(u.CacheReadInputTokens.Value)*0.1 + float64(cacheCreation)*1.25
 }
 
 // CacheHitRatio returns the cache hit ratio.
 func (u *TokenUsage) CacheHitRatio() float64 {
-	if u == nil || u.PromptTokens == 0 {
+	if u == nil || u.PromptTokens.Value == 0 {
 		return 0
 	}
-	return float64(u.CacheReadInputTokens) / float64(u.PromptTokens)
-}
-
-// tailBuffer is a ring buffer that retains the last N bytes.
-// Used to extract the `usage` field from response tail.
-type tailBuffer struct {
-	buf  []byte
-	size int
-	pos  int
-	full bool
-}
-
-func newTailBuffer(size int) *tailBuffer {
-	return &tailBuffer{buf: make([]byte, size), size: size}
-}
-
-func (tb *tailBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	if n >= tb.size {
-		copy(tb.buf, p[n-tb.size:])
-		tb.pos = 0
-		tb.full = true
-		return n, nil
-	}
-	// Check for wrap-around
-	if tb.pos+n >= tb.size {
-		tb.full = true
-	}
-	// Segmented copy
-	firstPart := tb.size - tb.pos
-	if firstPart >= n {
-		copy(tb.buf[tb.pos:], p)
-	} else {
-		copy(tb.buf[tb.pos:], p[:firstPart])
-		copy(tb.buf, p[firstPart:])
-	}
-	tb.pos = (tb.pos + n) % tb.size
-	return n, nil
-}
-
-// Bytes returns buffer content in write order.
-// Uses make + copy to avoid potential over-allocation from append.
-func (tb *tailBuffer) Bytes() []byte {
-	if !tb.full {
-		return tb.buf[:tb.pos]
-	}
-	// When pos == 0, buf is already in correct order, return a copy
-	if tb.pos == 0 {
-		result := make([]byte, tb.size)
-		copy(result, tb.buf)
-		return result
-	}
-	result := make([]byte, tb.size)
-	n := copy(result, tb.buf[tb.pos:])
-	copy(result[n:], tb.buf[:tb.pos])
-	return result
-}
-
-// CaptureBuffer captures response data before it is parsed into usage fields.
-// The transport layer chooses the concrete strategy based on response size.
-type CaptureBuffer interface {
-	Write(p []byte) (int, error)
-	Bytes() []byte
-}
-
-// fullCaptureBuffer captures the entire response (for small responses).
-type fullCaptureBuffer struct {
-	buf *bytes.Buffer
-}
-
-func (b *fullCaptureBuffer) Write(p []byte) (int, error) { return b.buf.Write(p) }
-func (b *fullCaptureBuffer) Bytes() []byte               { return b.buf.Bytes() }
-
-// NewCaptureBuffer selects the buffer strategy based on Content-Length.
-func NewCaptureBuffer(contentLength int64) CaptureBuffer {
-	if contentLength == 0 {
-		return nil // Empty response, avoid meaningless allocation
-	}
-	if contentLength > 0 && contentLength <= fullCaptureThreshold {
-		return &fullCaptureBuffer{buf: bytes.NewBuffer(make([]byte, 0, contentLength))}
-	}
-	return newTailBuffer(defaultTokenParseBytes)
-}
-
-func newCaptureBuffer(contentLength int64) CaptureBuffer {
-	return NewCaptureBuffer(contentLength)
+	return float64(u.CacheReadInputTokens.Value) / float64(u.PromptTokens.Value)
 }
 
 // cacheCreationField holds nested cache creation details with TTL breakdown.
 type cacheCreationField struct {
-	Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
-	Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens ObservedCount `json:"ephemeral_1h_input_tokens"`
+	Ephemeral5mInputTokens ObservedCount `json:"ephemeral_5m_input_tokens"`
 }
 
-// tokenDetailsField models provider-specific nested token detail objects.
-// OpenAI has shipped both singular and plural input-token detail keys across APIs,
-// so normalization must accept either alias before Request Logs are persisted.
+// tokenDetailsField models nested token detail objects. Compatible APIs have
+// shipped both singular and plural parent keys, so normalization accepts both.
 type tokenDetailsField struct {
-	CachedTokens    int64 `json:"cached_tokens"`
-	ReasoningTokens int64 `json:"reasoning_tokens"`
+	CachedTokens     ObservedCount `json:"cached_tokens"`
+	ReasoningTokens  ObservedCount `json:"reasoning_tokens"`
+	CacheWriteTokens ObservedCount `json:"cache_write_tokens"`
 }
 
-// usageField represents OpenAI/Claude usage format.
+// usageField represents the supported snake_case usage envelopes.
 type usageField struct {
-	// OpenAI
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
-	// OpenAI nested token details.
-	// `input_tokens_details` is the current Responses/Codex shape while
-	// `input_token_details` still appears in some Realtime payloads.
+	// Prompt/completion aliases.
+	PromptTokens     ObservedCount `json:"prompt_tokens"`
+	CompletionTokens ObservedCount `json:"completion_tokens"`
+	TotalTokens      ObservedCount `json:"total_tokens"`
+	ReasoningTokens  ObservedCount `json:"reasoning_tokens"`
+	// Nested token details use singular and plural compatibility aliases.
 	PromptTokensDetails     *tokenDetailsField `json:"prompt_tokens_details"`
 	InputTokensDetails      *tokenDetailsField `json:"input_tokens_details"`
 	InputTokenDetails       *tokenDetailsField `json:"input_token_details"`
@@ -224,27 +254,27 @@ type usageField struct {
 	OutputTokensDetails     *tokenDetailsField `json:"output_tokens_details"`
 	OutputTokenDetails      *tokenDetailsField `json:"output_token_details"`
 
-	// Claude basic
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	// Input/output aliases.
+	InputTokens  ObservedCount `json:"input_tokens"`
+	OutputTokens ObservedCount `json:"output_tokens"`
 
-	// Claude cache (flat fields - message_delta format)
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	// Flat cache facts.
+	CacheReadInputTokens     ObservedCount `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens ObservedCount `json:"cache_creation_input_tokens"`
 
-	// Claude cache (nested object - message_start format, with TTL breakdown)
+	// Nested cache TTL facts.
 	CacheCreation *cacheCreationField `json:"cache_creation"`
 
 	// Metadata
 	ServiceTier string `json:"service_tier"`
 }
 
-// usageMetadataField represents Gemini usage metadata format.
+// usageMetadataField represents the supported camelCase usage metadata envelope.
 type usageMetadataField struct {
-	PromptTokenCount        int64 `json:"promptTokenCount"`
-	CandidatesTokenCount    int64 `json:"candidatesTokenCount"`
-	TotalTokenCount         int64 `json:"totalTokenCount"`
-	CachedContentTokenCount int64 `json:"cachedContentTokenCount"` // Gemini cache
+	PromptTokenCount        ObservedCount `json:"promptTokenCount"`
+	CandidatesTokenCount    ObservedCount `json:"candidatesTokenCount"`
+	TotalTokenCount         ObservedCount `json:"totalTokenCount"`
+	CachedContentTokenCount ObservedCount `json:"cachedContentTokenCount"`
 }
 
 // usageResponse is a unified response structure compatible with multiple API formats.
@@ -252,10 +282,10 @@ type usageMetadataField struct {
 // - message_start: may have nested cache_creation object
 // - message_delta: usually has flat cache_creation_input_tokens
 type usageResponse struct {
-	// OpenAI / Claude format
+	// Snake-case usage envelope.
 	Usage *usageField `json:"usage"`
 
-	// Gemini format
+	// Camel-case usage envelope.
 	UsageMetadata *usageMetadataField `json:"usageMetadata"`
 }
 
@@ -266,44 +296,9 @@ var usageKeys = [][]byte{
 
 // Parse extracts usage fields from a provider response payload.
 // It first tries direct JSON decoding, then falls back to usage-object extraction
-// so truncated or prefixed payloads still yield billable accounting when possible.
+// so truncated or prefixed payloads still yield observed usage facts when possible.
 func Parse(data []byte) *TokenUsage {
 	return ParseWithLogger(data, nil)
-}
-
-// Logger interface for debug logging during parsing.
-type Logger interface {
-	Debug(msg string, keysAndValues ...any)
-}
-
-// ZapLoggerAdapter adapts *zap.SugaredLogger to the Logger interface.
-// This allows the token parsing code to use zap for structured logging.
-type ZapLoggerAdapter struct {
-	logger ZapSugaredLogger
-}
-
-// ZapSugaredLogger defines the minimal interface needed from *zap.SugaredLogger.
-// Using an interface allows for easier testing and decoupling.
-type ZapSugaredLogger interface {
-	// Debugw logs a message with key-value pairs at debug level.
-	Debugw(msg string, keysAndValues ...any)
-}
-
-// NewZapLoggerAdapter creates a new adapter for a zap sugared logger.
-func NewZapLoggerAdapter(logger ZapSugaredLogger) *ZapLoggerAdapter {
-	if logger == nil {
-		return nil
-	}
-	return &ZapLoggerAdapter{logger: logger}
-}
-
-// Debug implements the Logger interface for ZapLoggerAdapter.
-func (a *ZapLoggerAdapter) Debug(msg string, keysAndValues ...any) {
-	if a == nil || a.logger == nil {
-		return
-	}
-	// Use Debugw to log message with key-value pairs
-	a.logger.Debugw(msg, keysAndValues...)
 }
 
 // ParseWithLogger behaves like Parse but emits debug diagnostics during recovery paths.
@@ -371,7 +366,9 @@ func extractUsageObject(data []byte, logger Logger) *TokenUsage {
 		}
 		// Parse extracted object
 		var usage map[string]any
-		if err := json.Unmarshal(data[start:end], &usage); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(data[start:end]))
+		decoder.UseNumber()
+		if err := decoder.Decode(&usage); err != nil {
 			if logger != nil {
 				logger.Debug("bracket extracted JSON parse failed",
 					"error", err,
@@ -398,90 +395,91 @@ func convertToTokenUsage(resp *usageResponse) *TokenUsage {
 	return nil
 }
 
-// convertUsageFieldToTokenUsage converts OpenAI/Claude usage field to TokenUsage.
+// convertUsageFieldToTokenUsage normalizes a snake-case usage envelope.
 func convertUsageFieldToTokenUsage(u *usageField) *TokenUsage {
-	// Claude uses input_tokens/output_tokens
-	// OpenAI uses prompt_tokens/completion_tokens
-	prompt := u.PromptTokens
-	if prompt == 0 {
-		prompt = u.InputTokens
-	}
-	completion := u.CompletionTokens
-	if completion == 0 {
-		completion = u.OutputTokens
-	}
-	total := u.TotalTokens
-	if total == 0 {
-		total = prompt + completion
-	}
+	prompt := firstObservedCount(u.PromptTokens, u.InputTokens)
+	completion := firstObservedCount(u.CompletionTokens, u.OutputTokens)
 	cacheRead := resolveCacheReadFromUsageField(u)
 	reasoning := resolveReasoningTokensFromUsageField(u)
-	// Return only if at least one field has a value
-	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 && reasoning == 0 {
-		return nil
-	}
-
 	result := &TokenUsage{
 		PromptTokens:         prompt,
 		CompletionTokens:     completion,
-		TotalTokens:          total,
+		TotalTokens:          u.TotalTokens,
 		ReasoningTokens:      reasoning,
 		CacheReadInputTokens: cacheRead,
 		ServiceTier:          u.ServiceTier,
+		CacheCreation:        resolveCacheCreationFromUsageField(u),
 	}
-
-	// Handle cache write statistics (compatible with both nested and flat formats)
-	if u.CacheCreationInputTokens > 0 || u.CacheCreation != nil {
-		result.CacheCreation = &CacheCreation{
-			InputTokens: u.CacheCreationInputTokens,
-		}
-		// If there's a nested cache_creation object, extract TTL details
-		if u.CacheCreation != nil {
-			result.CacheCreation.Ephemeral1hInputTokens = u.CacheCreation.Ephemeral1hInputTokens
-			result.CacheCreation.Ephemeral5mInputTokens = u.CacheCreation.Ephemeral5mInputTokens
-		}
+	if !result.hasObservedCount() {
+		return nil
 	}
-
 	return result
 }
 
-// convertUsageMetadataToTokenUsage converts Gemini usage metadata to TokenUsage.
+// convertUsageMetadataToTokenUsage normalizes a camel-case usage envelope.
 func convertUsageMetadataToTokenUsage(m *usageMetadataField) *TokenUsage {
-	if m.PromptTokenCount == 0 && m.CandidatesTokenCount == 0 && m.TotalTokenCount == 0 {
-		return nil
-	}
-	return &TokenUsage{
+	result := &TokenUsage{
 		PromptTokens:         m.PromptTokenCount,
 		CompletionTokens:     m.CandidatesTokenCount,
 		TotalTokens:          m.TotalTokenCount,
-		CacheReadInputTokens: m.CachedContentTokenCount, // Gemini cache mapping
+		CacheReadInputTokens: m.CachedContentTokenCount,
 	}
+	if !result.hasObservedCount() {
+		return nil
+	}
+	return result
 }
 
-func usageInt64(value any) (int64, bool) {
+func firstObservedCount(counts ...ObservedCount) ObservedCount {
+	for _, count := range counts {
+		if count.Present {
+			return count
+		}
+	}
+	return ObservedCount{}
+}
+
+func (u *TokenUsage) hasObservedCount() bool {
+	if u == nil {
+		return false
+	}
+	if u.PromptTokens.Present || u.CompletionTokens.Present || u.TotalTokens.Present ||
+		u.ReasoningTokens.Present || u.CacheReadInputTokens.Present {
+		return true
+	}
+	return u.CacheCreation != nil && (u.CacheCreation.InputTokens.Present ||
+		u.CacheCreation.Ephemeral1hInputTokens.Present || u.CacheCreation.Ephemeral5mInputTokens.Present)
+}
+
+func usageInt64(value any) ObservedCount {
 	switch n := value.(type) {
+	case json.Number:
+		if value, ok := parseIntegerString(n.String()); ok {
+			return observedCount(value)
+		}
 	case float64:
-		return int64(n), true
+		if value, ok := parseIntegerString(strconv.FormatFloat(n, 'f', -1, 64)); ok {
+			return observedCount(value)
+		}
 	case int64:
-		return n, true
+		return observedCount(n)
 	case int:
-		return int64(n), true
-	default:
-		return 0, false
+		return observedCount(int64(n))
 	}
+	return ObservedCount{}
 }
 
-func lookupUsageInt64(m map[string]any, keys ...string) int64 {
+func lookupUsageInt64(m map[string]any, keys ...string) ObservedCount {
 	for _, key := range keys {
 		value, ok := m[key]
 		if !ok {
 			continue
 		}
-		if number, ok := usageInt64(value); ok {
+		if number := usageInt64(value); number.Present {
 			return number
 		}
 	}
-	return 0
+	return ObservedCount{}
 }
 
 func lookupUsageString(m map[string]any, key string) string {
@@ -508,29 +506,29 @@ func lookupNestedUsageMap(m map[string]any, key string) map[string]any {
 	return childMap
 }
 
-func lookupNestedUsageInt64(m map[string]any, parentKey, childKey string) int64 {
+func lookupNestedUsageInt64(m map[string]any, parentKey, childKey string) ObservedCount {
 	childMap := lookupNestedUsageMap(m, parentKey)
 	if childMap == nil {
-		return 0
+		return ObservedCount{}
 	}
 	return lookupUsageInt64(childMap, childKey)
 }
 
-func lookupFirstNestedUsageInt64(m map[string]any, childKey string, parentKeys ...string) int64 {
+func lookupFirstNestedUsageInt64(m map[string]any, childKey string, parentKeys ...string) ObservedCount {
 	for _, parentKey := range parentKeys {
 		value := lookupNestedUsageInt64(m, parentKey, childKey)
-		if value != 0 {
+		if value.Present {
 			return value
 		}
 	}
-	return 0
+	return ObservedCount{}
 }
 
-func resolveCacheReadFromUsageField(u *usageField) int64 {
+func resolveCacheReadFromUsageField(u *usageField) ObservedCount {
 	if u == nil {
-		return 0
+		return ObservedCount{}
 	}
-	if u.CacheReadInputTokens != 0 {
+	if u.CacheReadInputTokens.Present {
 		return u.CacheReadInputTokens
 	}
 	for _, details := range []*tokenDetailsField{
@@ -538,32 +536,56 @@ func resolveCacheReadFromUsageField(u *usageField) int64 {
 		u.InputTokensDetails,
 		u.InputTokenDetails,
 	} {
-		if details != nil && details.CachedTokens != 0 {
+		if details != nil && details.CachedTokens.Present {
 			return details.CachedTokens
 		}
 	}
-	return 0
+	return ObservedCount{}
 }
 
-func resolveReasoningTokensFromUsageField(u *usageField) int64 {
+func resolveReasoningTokensFromUsageField(u *usageField) ObservedCount {
 	if u == nil {
-		return 0
+		return ObservedCount{}
+	}
+	if u.ReasoningTokens.Present {
+		return u.ReasoningTokens
 	}
 	for _, details := range []*tokenDetailsField{
 		u.CompletionTokensDetails,
 		u.OutputTokensDetails,
 		u.OutputTokenDetails,
 	} {
-		if details != nil && details.ReasoningTokens != 0 {
+		if details != nil && details.ReasoningTokens.Present {
 			return details.ReasoningTokens
 		}
 	}
-	return 0
+	return ObservedCount{}
 }
 
-func resolveCacheReadTokens(m map[string]any) int64 {
+func resolveCacheCreationFromUsageField(u *usageField) *CacheCreation {
+	inputTokens := u.CacheCreationInputTokens
+	if !inputTokens.Present {
+		for _, details := range []*tokenDetailsField{u.PromptTokensDetails, u.InputTokensDetails, u.InputTokenDetails} {
+			if details != nil && details.CacheWriteTokens.Present {
+				inputTokens = details.CacheWriteTokens
+				break
+			}
+		}
+	}
+	result := &CacheCreation{InputTokens: inputTokens}
+	if u.CacheCreation != nil {
+		result.Ephemeral1hInputTokens = u.CacheCreation.Ephemeral1hInputTokens
+		result.Ephemeral5mInputTokens = u.CacheCreation.Ephemeral5mInputTokens
+	}
+	if !result.InputTokens.Present && !result.Ephemeral1hInputTokens.Present && !result.Ephemeral5mInputTokens.Present {
+		return nil
+	}
+	return result
+}
+
+func resolveCacheReadTokens(m map[string]any) ObservedCount {
 	cacheRead := lookupUsageInt64(m, "cache_read_input_tokens", "cachedContentTokenCount")
-	if cacheRead != 0 {
+	if cacheRead.Present {
 		return cacheRead
 	}
 	return lookupFirstNestedUsageInt64(
@@ -575,9 +597,9 @@ func resolveCacheReadTokens(m map[string]any) int64 {
 	)
 }
 
-func resolveReasoningTokens(m map[string]any) int64 {
+func resolveReasoningTokens(m map[string]any) ObservedCount {
 	reasoning := lookupUsageInt64(m, "reasoning_tokens")
-	if reasoning != 0 {
+	if reasoning.Present {
 		return reasoning
 	}
 	return lookupFirstNestedUsageInt64(
@@ -591,22 +613,26 @@ func resolveReasoningTokens(m map[string]any) int64 {
 
 func buildCacheCreationFromUsageMap(m map[string]any) *CacheCreation {
 	cacheCreationTokens := lookupUsageInt64(m, "cache_creation_input_tokens")
-	cacheCreationMap := lookupNestedUsageMap(m, "cache_creation")
-
-	if cacheCreationTokens == 0 && cacheCreationMap == nil {
-		return nil
+	if !cacheCreationTokens.Present {
+		cacheCreationTokens = lookupFirstNestedUsageInt64(
+			m,
+			"cache_write_tokens",
+			"prompt_tokens_details",
+			"input_tokens_details",
+			"input_token_details",
+		)
 	}
-
+	cacheCreationMap := lookupNestedUsageMap(m, "cache_creation")
 	cacheCreation := &CacheCreation{
 		InputTokens: cacheCreationTokens,
 	}
-
-	if cacheCreationMap == nil {
-		return cacheCreation
+	if cacheCreationMap != nil {
+		cacheCreation.Ephemeral1hInputTokens = lookupUsageInt64(cacheCreationMap, "ephemeral_1h_input_tokens")
+		cacheCreation.Ephemeral5mInputTokens = lookupUsageInt64(cacheCreationMap, "ephemeral_5m_input_tokens")
 	}
-
-	cacheCreation.Ephemeral1hInputTokens = lookupUsageInt64(cacheCreationMap, "ephemeral_1h_input_tokens")
-	cacheCreation.Ephemeral5mInputTokens = lookupUsageInt64(cacheCreationMap, "ephemeral_5m_input_tokens")
+	if !cacheCreation.InputTokens.Present && !cacheCreation.Ephemeral1hInputTokens.Present && !cacheCreation.Ephemeral5mInputTokens.Present {
+		return nil
+	}
 	return cacheCreation
 }
 
@@ -618,14 +644,6 @@ func normalizeUsageMap(m map[string]any) *TokenUsage {
 	cacheRead := resolveCacheReadTokens(m)
 	reasoning := resolveReasoningTokens(m)
 
-	if total == 0 {
-		total = prompt + completion
-	}
-
-	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 && reasoning == 0 {
-		return nil
-	}
-
 	result := &TokenUsage{
 		PromptTokens:         prompt,
 		CompletionTokens:     completion,
@@ -635,7 +653,9 @@ func normalizeUsageMap(m map[string]any) *TokenUsage {
 		ServiceTier:          lookupUsageString(m, "service_tier"),
 	}
 	result.CacheCreation = buildCacheCreationFromUsageMap(m)
-
+	if !result.hasObservedCount() {
+		return nil
+	}
 	return result
 }
 
@@ -651,8 +671,8 @@ func TruncateForLog(data []byte, maxLen int) string {
 // This contains fields that are less frequently queried but still useful.
 type UsageDetailsJSON struct {
 	ServiceTier            string `json:"service_tier,omitempty"`
-	Ephemeral1hInputTokens int64  `json:"ephemeral_1h_input_tokens,omitempty"`
-	Ephemeral5mInputTokens int64  `json:"ephemeral_5m_input_tokens,omitempty"`
+	Ephemeral1hInputTokens *int64 `json:"ephemeral_1h_input_tokens,omitempty"`
+	Ephemeral5mInputTokens *int64 `json:"ephemeral_5m_input_tokens,omitempty"`
 }
 
 // ToModelFields converts TokenUsage to fields suitable for RequestLog.
@@ -663,22 +683,15 @@ func (u *TokenUsage) ToModelFields() (promptTokens, completionTokens, totalToken
 		return nil, nil, nil, nil, nil, nil, nil
 	}
 
-	// Core token fields
-	promptTokens = &u.PromptTokens
-	completionTokens = &u.CompletionTokens
-	totalTokens = &u.TotalTokens
-	if u.ReasoningTokens > 0 {
-		reasoningTokens = &u.ReasoningTokens
-	}
-
-	// Cache read tokens (if present)
-	if u.CacheReadInputTokens > 0 {
-		cacheReadTokens = &u.CacheReadInputTokens
-	}
-
-	// Cache creation tokens (if present)
-	if u.CacheCreation != nil && u.CacheCreation.InputTokens > 0 {
-		cacheCreationTokens = &u.CacheCreation.InputTokens
+	// This is the single raw-fact persistence boundary. Mapping presence here
+	// prevents transport writers from inventing completeness independently.
+	promptTokens = countPointer(u.PromptTokens)
+	completionTokens = countPointer(u.CompletionTokens)
+	totalTokens = countPointer(u.TotalTokens)
+	reasoningTokens = countPointer(u.ReasoningTokens)
+	cacheReadTokens = countPointer(u.CacheReadInputTokens)
+	if u.CacheCreation != nil {
+		cacheCreationTokens = countPointer(u.CacheCreation.InputTokens)
 	}
 
 	// Build extended details JSON (only if there's something to store)
@@ -686,12 +699,11 @@ func (u *TokenUsage) ToModelFields() (promptTokens, completionTokens, totalToken
 		ServiceTier: u.ServiceTier,
 	}
 	if u.CacheCreation != nil {
-		details.Ephemeral1hInputTokens = u.CacheCreation.Ephemeral1hInputTokens
-		details.Ephemeral5mInputTokens = u.CacheCreation.Ephemeral5mInputTokens
+		details.Ephemeral1hInputTokens = countPointer(u.CacheCreation.Ephemeral1hInputTokens)
+		details.Ephemeral5mInputTokens = countPointer(u.CacheCreation.Ephemeral5mInputTokens)
 	}
 
-	// Only serialize if there's meaningful data
-	if details.ServiceTier != "" || details.Ephemeral1hInputTokens > 0 || details.Ephemeral5mInputTokens > 0 {
+	if details.ServiceTier != "" || details.Ephemeral1hInputTokens != nil || details.Ephemeral5mInputTokens != nil {
 		if jsonBytes, err := json.Marshal(details); err == nil {
 			jsonStr := string(jsonBytes)
 			usageDetails = &jsonStr

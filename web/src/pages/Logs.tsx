@@ -2,8 +2,14 @@ import { useState } from "react";
 import { useLogs, DEFAULT_LIMIT } from "../hooks/useLogs";
 import { useProviders } from "../hooks/useProviders";
 import { useStats } from "../hooks/useStats";
-import { LogFilters, LogDetailModal } from "../components";
-import type { RequestLog, StatsParams } from "../api/types";
+import { useTokenUsage } from "../hooks/useTokenUsage";
+import {
+  LogFilters,
+  LogDetailModal,
+  TokenUsageAnalyticsPanel,
+} from "../components";
+import type { RequestLog } from "../api/types";
+import { useAnalyticsWindow } from "../features/analytics-window/useAnalyticsWindow";
 import { api } from "../api/client";
 import {
   LogsHeader,
@@ -16,11 +22,6 @@ import {
   createClearedLogFilterPatch,
   isLogFilterActive,
 } from "../components/logs/filtering";
-
-const DEFAULT_STATS_PARAMS: StatsParams = {
-  period: "24h",
-  granularity: "1h",
-};
 
 export function Logs() {
   const limit = DEFAULT_LIMIT;
@@ -36,12 +37,15 @@ export function Logs() {
     sortOrder,
   } = useLogs({ limit, offset: 0 });
   const { providers } = useProviders();
+
+  const { window: analyticsWindow, applyIntent: applyAnalyticsWindowIntent } =
+    useAnalyticsWindow();
+  const { stats, loading: statsLoading } = useStats(analyticsWindow);
   const {
-    stats,
-    loading: statsLoading,
-    params: statsParams,
-    setParams: setStatsParams,
-  } = useStats(DEFAULT_STATS_PARAMS);
+    data: tokenUsage,
+    loading: tokenUsageLoading,
+    error: tokenUsageError,
+  } = useTokenUsage(analyticsWindow);
 
   // Selected log for detail modal (fetched with attempts)
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
@@ -55,6 +59,11 @@ export function Logs() {
       // Fallback to partial log if fetch fails
       setSelectedLog(log);
     }
+  };
+
+  const handleGlobalRefresh = async () => {
+    applyAnalyticsWindowIntent({ type: "refresh-requested" });
+    await refetch();
   };
 
   // Calculate pagination values
@@ -92,7 +101,7 @@ export function Logs() {
 
   return (
     <div className="space-y-6">
-      <LogsHeader loading={loading} onRefresh={refetch} />
+      <LogsHeader loading={loading} onRefresh={handleGlobalRefresh} />
 
       {error && <ErrorBanner message={error.message} />}
 
@@ -127,11 +136,22 @@ export function Logs() {
         />
       )}
 
+      {/* Token Usage Analytics Panel */}
+      <TokenUsageAnalyticsPanel
+        data={tokenUsage}
+        loading={tokenUsageLoading}
+        error={tokenUsageError}
+        window={analyticsWindow}
+        onWindowIntent={applyAnalyticsWindowIntent}
+        hasActiveFilters={hasActiveFilters}
+      />
+
+      {/* Normalized Outcome Stats Grid */}
       <LogStatsGrid
         stats={stats}
         statsLoading={statsLoading}
-        params={statsParams}
-        onParamsChange={setStatsParams}
+        window={analyticsWindow}
+        onWindowIntent={applyAnalyticsWindowIntent}
         hasActiveFilters={hasActiveFilters}
       />
 

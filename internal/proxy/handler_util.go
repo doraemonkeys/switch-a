@@ -149,11 +149,11 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 	if inputs.TokenUsage != nil {
 		h.logger.Debug("token usage captured",
 			zap.String("request_id", pctx.requestID),
-			zap.Int64("prompt_tokens", inputs.TokenUsage.PromptTokens),
-			zap.Int64("completion_tokens", inputs.TokenUsage.CompletionTokens),
-			zap.Int64("total_tokens", inputs.TokenUsage.TotalTokens),
-			zap.Int64("reasoning_tokens", inputs.TokenUsage.ReasoningTokens),
-			zap.Int64("cache_read_tokens", inputs.TokenUsage.CacheReadInputTokens),
+			zap.Int64("prompt_tokens", inputs.TokenUsage.PromptTokens.Value),
+			zap.Int64("completion_tokens", inputs.TokenUsage.CompletionTokens.Value),
+			zap.Int64("total_tokens", inputs.TokenUsage.TotalTokens.Value),
+			zap.Int64("reasoning_tokens", inputs.TokenUsage.ReasoningTokens.Value),
+			zap.Int64("cache_read_tokens", inputs.TokenUsage.CacheReadInputTokens.Value),
 		)
 		// Convert TokenUsage to model fields for database storage
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens,

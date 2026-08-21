@@ -14,6 +14,8 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
+	"github.com/doraemonkeys/switch-a/internal/admin/tokenusageapi"
+	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 	"github.com/doraemonkeys/switch-a/internal/buildinfo"
 	"github.com/doraemonkeys/switch-a/internal/config"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
@@ -29,6 +31,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/server"
 	"github.com/doraemonkeys/switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/internal/tokenanalytics"
+	tokenanalyticssqlite "github.com/doraemonkeys/switch-a/internal/tokenanalytics/sqlite"
 
 	"go.uber.org/zap"
 )
@@ -285,6 +289,72 @@ func openApplicationStore(dbPath string, clock internal.Clock) (*store.SQLiteSto
 	return sqlStore, nil
 }
 
+type resourceCloser interface {
+	Close() error
+}
+
+type applicationAnalytics struct {
+	repository *tokenanalyticssqlite.Repository
+	window     analyticswindow.Resolver
+	handler    *tokenusageapi.Handler
+}
+
+type applicationStorage struct {
+	writer    *store.SQLiteStore
+	cached    *store.CachedStore
+	analytics *applicationAnalytics
+}
+
+func newApplicationAnalytics(databasePath string, clock internal.Clock, log *zap.Logger) (*applicationAnalytics, error) {
+	repository, err := tokenanalyticssqlite.Open(databasePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize token analytics repository: %w", err)
+	}
+	window := analyticswindow.NewResolver(clock)
+	handler, err := tokenusageapi.NewHandler(tokenusageapi.Config{
+		Analyzer:       tokenanalytics.NewService(repository),
+		WindowResolver: &window,
+		Clock:          clock,
+		Logger:         log,
+	})
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("failed to initialize token usage admin API: %w", err), repository.Close())
+	}
+	return &applicationAnalytics{repository: repository, window: window, handler: handler}, nil
+}
+
+func (runtime *applicationAnalytics) Close() error {
+	return runtime.repository.Close()
+}
+
+func openApplicationStorage(databasePath string, clock internal.Clock, log *zap.Logger) (*applicationStorage, error) {
+	writer, err := openApplicationStore(databasePath, clock)
+	if err != nil {
+		return nil, err
+	}
+	analytics, err := newApplicationAnalytics(databasePath, clock, log)
+	if err != nil {
+		return nil, errors.Join(err, writer.Close())
+	}
+	cached := store.NewCachedStore(store.CachedStoreConfig{Store: writer})
+	if err := writer.InitDefaultConfig(context.Background()); err != nil {
+		return nil, errors.Join(fmt.Errorf("failed to initialize default config: %w", err), closeApplicationStores(analytics, writer))
+	}
+	return &applicationStorage{writer: writer, cached: cached, analytics: analytics}, nil
+}
+
+func (storage *applicationStorage) Close() error {
+	return closeApplicationStores(storage.analytics, storage.writer)
+}
+
+// closeApplicationStores preserves the ownership dependency: analytics reads
+// must stop before the writer connection they share is released.
+func closeApplicationStores(analyticsReader, writerStore resourceCloser) error {
+	analyticsErr := analyticsReader.Close()
+	writerErr := writerStore.Close()
+	return errors.Join(analyticsErr, writerErr)
+}
+
 // startApplicationStickyCache owns both sticky background loops so callers
 // cannot accidentally close SQLite before the final write-behind flush.
 func startApplicationStickyCache(
@@ -339,25 +409,16 @@ func run() error {
 	// The store migration loads and compiles persisted rules before any HTTP or
 	// background work starts, so an invalid durable rule makes startup atomic.
 	clock := internal.RealClock{}
-	sqlStore, err := openApplicationStore(cfg.DBPath, clock)
+	storage, err := openApplicationStorage(cfg.DBPath, clock, log)
 	if err != nil {
 		return err
 	}
-
-	// Wrap with caching layer to reduce database pressure for config reads.
-	// Each proxy request reads 10+ config values; caching prevents database
-	// overload under high QPS while allowing config changes to propagate quickly.
-	st := store.NewCachedStore(store.CachedStoreConfig{
-		Store: sqlStore,
-		// Default TTL of 5 seconds balances responsiveness with performance
-	})
-	defer func() { _ = sqlStore.Close() }()
-
-	// Initialize default configuration
-	ctx := context.Background()
-	if err := sqlStore.InitDefaultConfig(ctx); err != nil {
-		return fmt.Errorf("failed to initialize default config: %w", err)
-	}
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			log.Error("failed to close application stores", zap.Error(closeErr))
+		}
+	}()
+	sqlStore, st, analyticsRuntime := storage.writer, storage.cached, storage.analytics
 
 	errorRuntime, err := newInternalErrorRuntime(st.InternalErrorRuleRepository(), st, log)
 	if err != nil {
@@ -465,6 +526,8 @@ func run() error {
 		CaptureSessions:     captureManager,
 		CaptureQueries:      captureManager,
 		CaptureExports:      captureManager,
+		AnalyticsWindow:     &analyticsRuntime.window,
+		TokenUsageHandler:   analyticsRuntime.handler,
 	})
 
 	statsWorker, err := startRuleStatsWorker(errorRuntime.ruleStatistics, log)

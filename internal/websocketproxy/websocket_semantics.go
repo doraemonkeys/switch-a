@@ -423,7 +423,7 @@ func (o *codexWebSocketMessageObserver) captureCodexUsageState(state codexObserv
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	o.tokenUsage = o.tokenUsage.Merge(usage)
+	o.tokenUsage = o.tokenUsage.Accumulate(usage)
 	if state.usageKey != "" {
 		o.seenUsageKeys[state.usageKey] = struct{}{}
 	}

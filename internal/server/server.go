@@ -13,6 +13,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/admin"
 	admindebugcapture "github.com/doraemonkeys/switch-a/internal/admin/debugcapture"
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
+	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
@@ -147,6 +148,8 @@ type AdminConfig struct {
 	CaptureSessions     admindebugcapture.CaptureSessions
 	CaptureQueries      admindebugcapture.CaptureQueries
 	CaptureExports      admindebugcapture.CaptureExports
+	AnalyticsWindow     *analyticswindow.Resolver
+	TokenUsageHandler   http.Handler
 }
 
 // HealthResponse represents the health check response.
@@ -260,6 +263,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 		ProviderImports:     cfg.Auth,
 		ProviderImportStore: cfg.ProviderImportStore,
 		InternalErrorRules:  cfg.InternalErrorRules,
+		StatsWindowResolver: cfg.AnalyticsWindow,
 		Logger:              cfg.Logger,
 	})
 
@@ -337,6 +341,9 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 
 	// Stats route
 	mux.Handle("GET /admin/api/stats", auth.WrapFunc(adminHandler.GetStats))
+	if cfg.TokenUsageHandler != nil {
+		mux.Handle("GET /admin/api/token-usage", auth.Wrap(cfg.TokenUsageHandler))
+	}
 
 	// Unknown admin API paths must not fall through into the SPA handler.
 	mux.Handle("/admin/api/", auth.WrapFunc(s.handleAdminAPINotFound))

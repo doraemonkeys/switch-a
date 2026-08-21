@@ -139,7 +139,7 @@ func TestRuntimeObservationOperationsAndDriverDefensivePaths(t *testing.T) {
 	source := Observation{
 		Class:  EventError,
 		Fields: &SemanticFields{Type: "Type", Code: "Code", Message: "Message", Reason: "Reason"},
-		Usage:  &tokenusage.TokenUsage{PromptTokens: 1, ServiceTier: "Tier"},
+		Usage:  &tokenusage.TokenUsage{PromptTokens: tokenusage.ObservedCount{Value: 1, Present: true}, ServiceTier: "Tier"},
 	}
 	clone := cloneRuntimeObservation(source)
 	source.Fields.Message = "mutated"

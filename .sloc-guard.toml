@@ -40,3 +40,11 @@ warn_at = 900
 max_files = 50
 max_dirs = 20
 count_exclude = ["*_test.go", "*.test.*", "tmpclaude-*"]
+
+# Window resolution and token analytics are cohesive bounded contexts used beyond
+# admin HTTP delivery. Keep them as peers under internal without relaxing the
+# repository's per-directory file limit or any SLOC limit.
+[[structure.rules]]
+scope = "./internal"
+max_dirs = 22
+reason = "analyticswindow and tokenanalytics are independent shared domains"
