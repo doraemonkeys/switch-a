@@ -4,7 +4,45 @@ import { MemoryRouter } from "react-router";
 import { AppRoutes } from "./App";
 import { ApiContext } from "@/api/context";
 import { ToastProvider } from "@/components/Toast";
-import type { ApiClient } from "@/api/client";
+import type { ApiClient, TokenUsageResponse } from "@/api/client";
+
+const EMPTY_TOKEN_USAGE_RESPONSE: TokenUsageResponse = {
+  summary: {
+    total_tokens: "0",
+    input_tokens: "0",
+    output_tokens: "0",
+    fresh_input_tokens: "0",
+    cache_read_input_tokens: "0",
+    cache_creation_input_tokens: "0",
+    unclassified_input_tokens: "0",
+    standard_output_tokens: "0",
+    reasoning_tokens: "0",
+    unclassified_output_tokens: "0",
+    cache_hit_rate: 0,
+    reasoning_ratio: 0,
+  },
+  timeseries: [],
+  by_provider: [],
+  by_model: [],
+  time_range: {
+    start: "2026-08-20T16:00:00Z",
+    end: "2026-08-21T16:00:00Z",
+    granularity: "1h",
+  },
+  coverage: {
+    total_requests: 0,
+    observed_requests: 0,
+    comparable_requests: 0,
+    without_usage_requests: 0,
+    rate: 0,
+  },
+  data_quality: {
+    quality_rate: 0,
+    partial_requests: 0,
+    invalid_requests: 0,
+    unknown_semantics_requests: 0,
+  },
+};
 
 function createMockApiClient(): ApiClient {
   return {
@@ -105,6 +143,9 @@ function createMockApiClient(): ApiClient {
       },
       testMessage: vi.fn(),
     },
+    tokenUsage: {
+      get: vi.fn().mockResolvedValue(EMPTY_TOKEN_USAGE_RESPONSE),
+    },
     stats: {
       get: vi.fn().mockResolvedValue({
         total_requests: 0,
@@ -153,10 +194,15 @@ function createMockApiClient(): ApiClient {
 }
 
 // Test component that replicates App routing without BrowserRouter basename issues
-function TestApp({ initialPath = "/" }: { initialPath?: string }) {
-  const mockApi = createMockApiClient();
+function TestApp({
+  initialPath = "/",
+  apiClient = createMockApiClient(),
+}: {
+  initialPath?: string;
+  apiClient?: ApiClient;
+}) {
   return (
-    <ApiContext.Provider value={mockApi}>
+    <ApiContext.Provider value={apiClient}>
       <ToastProvider>
         <MemoryRouter initialEntries={[initialPath]}>
           <AppRoutes />
@@ -201,6 +247,9 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Config/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Logs/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Token Usage/i }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /Debug Capture/i }),
     ).toBeInTheDocument();
@@ -254,12 +303,40 @@ describe("App", () => {
     });
   });
 
-  it("should navigate to logs page", async () => {
-    render(<TestApp initialPath="/logs" />);
+  it("keeps Logs focused on request logs and outcome stats", async () => {
+    const apiClient = createMockApiClient();
+    render(<TestApp initialPath="/logs" apiClient={apiClient} />);
 
     expect(
       await screen.findByRole("heading", { name: /Request Logs/i }),
     ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiClient.stats.get).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Token Usage Analytics" }),
+    ).not.toBeInTheDocument();
+    expect(apiClient.tokenUsage.get).not.toHaveBeenCalled();
+  });
+
+  it("renders Token Usage as an authenticated top-level route", async () => {
+    const apiClient = createMockApiClient();
+    render(<TestApp initialPath="/token-usage" apiClient={apiClient} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Token Usage Analytics" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Token Usage" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await waitFor(() => {
+      expect(apiClient.tokenUsage.get).toHaveBeenCalledWith({
+        period: "24h",
+        granularity: "1h",
+        as_of: expect.any(String),
+      });
+    });
   });
 
   it("opens the sole editor route with decoded provider/API prefill", async () => {

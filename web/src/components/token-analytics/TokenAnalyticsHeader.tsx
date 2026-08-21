@@ -178,9 +178,9 @@ export function TokenAnalyticsHeader({
                   Global Scope & Alignment
                 </h4>
                 <p>
-                  Metrics in this panel represent system-wide aggregates for all
-                  requests across the selected time range. Table filters on the
-                  request logs do not scope these global totals.
+                  Metrics on this page represent system-wide aggregates for all
+                  requests across the selected time range. Only the time-range
+                  and bucket controls on this page change the report scope.
                 </p>
               </section>
 

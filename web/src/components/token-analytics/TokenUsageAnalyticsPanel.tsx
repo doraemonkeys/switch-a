@@ -18,7 +18,6 @@ interface TokenUsageAnalyticsPanelProps {
   error: Error | null;
   window: AnalyticsWindow;
   onWindowIntent: (intent: AnalyticsWindowIntent) => void;
-  hasActiveFilters?: boolean;
 }
 
 export function TokenUsageAnalyticsPanel({
@@ -27,7 +26,6 @@ export function TokenUsageAnalyticsPanel({
   error,
   window,
   onWindowIntent,
-  hasActiveFilters = false,
 }: TokenUsageAnalyticsPanelProps) {
   const isEmpty =
     data &&
@@ -54,17 +52,6 @@ export function TokenUsageAnalyticsPanel({
         coverage={data?.coverage}
         dataQuality={data?.data_quality}
       />
-
-      {/* Table filter notice */}
-      {hasActiveFilters && (
-        <div
-          role="note"
-          className="rounded-xl border border-warning-light bg-warning-light/40 dark:bg-amber-950/20 p-3.5 text-xs text-warning-dark dark:text-amber-300"
-        >
-          Active table filters do not scope this token analytics panel. Use the
-          analytics window controls above to change the global time range.
-        </div>
-      )}
 
       {/* Error state */}
       {error && !data && (

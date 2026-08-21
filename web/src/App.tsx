@@ -8,6 +8,7 @@ import { Groups } from "@/pages/Groups";
 import { Login } from "@/pages/Login";
 import { Logs } from "@/pages/Logs";
 import { Monitor } from "@/pages/Monitor";
+import { TokenUsage } from "@/pages/TokenUsage";
 import { Providers } from "@/pages/providers";
 import { RoutingPolicies } from "@/pages/RoutingPolicies";
 import { APICatalogProvider } from "@/api";
@@ -41,6 +42,7 @@ export function AppRoutes() {
         <Route path="error-detection" element={<ErrorDetection />} />
         <Route path="config" element={<Config />} />
         <Route path="logs" element={<Logs />} />
+        <Route path="token-usage" element={<TokenUsage />} />
         <Route path="debug-capture" element={<DebugCapturePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

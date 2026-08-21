@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
 import { ApiProvider } from "@/api/ApiContext";
@@ -19,6 +19,7 @@ const NAVIGATION_CASES = [
   },
   { name: "Config", href: "/config", icon: "⚙️" },
   { name: "Logs", href: "/logs", icon: "📋" },
+  { name: "Token Usage", href: "/token-usage", icon: "📈" },
   { name: "Debug Capture", href: "/debug-capture", icon: "🐞" },
 ] as const;
 
@@ -37,7 +38,10 @@ const stoppedStatus: DebugCaptureStatus = {
   session: null,
 };
 
-function renderWithRouter(status: DebugCaptureStatus = stoppedStatus) {
+function renderWithRouter(
+  status: DebugCaptureStatus = stoppedStatus,
+  initialEntry = "/",
+) {
   return render(
     <ApiProvider>
       <DebugCaptureContext.Provider
@@ -51,7 +55,7 @@ function renderWithRouter(status: DebugCaptureStatus = stoppedStatus) {
           stopCapture: vi.fn(),
         }}
       >
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[initialEntry]}>
           <Layout />
         </MemoryRouter>
       </DebugCaptureContext.Provider>
@@ -79,6 +83,38 @@ describe("Layout", () => {
       expect(screen.getByText(icon)).toBeInTheDocument();
     },
   );
+
+  it("exposes current-route semantics in a named responsive primary menu", () => {
+    renderWithRouter(stoppedStatus, "/token-usage");
+
+    const menu = screen.getByRole("navigation", { name: "Primary" });
+    const tokenUsageLink = within(menu).getByRole("link", {
+      name: "Token Usage",
+    });
+    expect(tokenUsageLink).toHaveAttribute("aria-current", "page");
+    expect(menu).toHaveClass("w-full", "lg:w-52", "lg:shrink-0");
+
+    const menuList = within(menu).getByRole("list");
+    expect(menuList).toHaveClass("flex", "min-w-max", "lg:block", "lg:min-w-0");
+    expect(screen.getByText("📈")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("keeps Token Usage immediately after Logs in the primary menu", () => {
+    renderWithRouter();
+
+    const menu = within(screen.getByRole("navigation", { name: "Primary" }));
+    const links = menu.getAllByRole("link");
+    const logsIndex = links.indexOf(menu.getByRole("link", { name: "Logs" }));
+    const tokenUsageIndex = links.indexOf(
+      menu.getByRole("link", { name: "Token Usage" }),
+    );
+    const debugCaptureIndex = links.indexOf(
+      menu.getByRole("link", { name: "Debug Capture" }),
+    );
+
+    expect(tokenUsageIndex).toBe(logsIndex + 1);
+    expect(debugCaptureIndex).toBe(tokenUsageIndex + 1);
+  });
 
   it("shows the global badge only while capture is active", () => {
     const { rerender } = renderWithRouter();
