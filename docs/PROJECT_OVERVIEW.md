@@ -61,7 +61,7 @@ switch-a/
 │   └── src/
 │       ├── api/           # API client with DI support
 │       ├── components/    # Reusable UI components
-│       ├── pages/         # Route pages (Dashboard, Providers, Groups, Config, Logs, Monitor)
+│       ├── pages/         # Route pages (Dashboard, Providers, Groups, Config, Logs, Token Usage, Monitor)
 │       ├── hooks/         # Custom hooks (useConfig, useConfigExport)
 │       └── config/        # Frontend constants
 └── docs/                  # Documentation
@@ -110,3 +110,4 @@ Defined in `internal/interfaces.go`:
 | Groups     | `/groups`    | Group management, strategy config    |
 | Config     | `/config`    | Runtime config (sticky TTL, circuit breaker thresholds) |
 | Logs       | `/logs`      | Request log viewer with filters      |
+| Token Usage | `/token-usage` | Global token analytics and data quality |

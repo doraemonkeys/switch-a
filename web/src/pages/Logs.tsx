@@ -2,12 +2,7 @@ import { useState } from "react";
 import { useLogs, DEFAULT_LIMIT } from "../hooks/useLogs";
 import { useProviders } from "../hooks/useProviders";
 import { useStats } from "../hooks/useStats";
-import { useTokenUsage } from "../hooks/useTokenUsage";
-import {
-  LogFilters,
-  LogDetailModal,
-  TokenUsageAnalyticsPanel,
-} from "../components";
+import { LogFilters, LogDetailModal } from "../components";
 import type { RequestLog } from "../api/types";
 import { useAnalyticsWindow } from "../features/analytics-window/useAnalyticsWindow";
 import { api } from "../api/client";
@@ -41,11 +36,6 @@ export function Logs() {
   const { window: analyticsWindow, applyIntent: applyAnalyticsWindowIntent } =
     useAnalyticsWindow();
   const { stats, loading: statsLoading } = useStats(analyticsWindow);
-  const {
-    data: tokenUsage,
-    loading: tokenUsageLoading,
-    error: tokenUsageError,
-  } = useTokenUsage(analyticsWindow);
 
   // Selected log for detail modal (fetched with attempts)
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
@@ -61,7 +51,7 @@ export function Logs() {
     }
   };
 
-  const handleGlobalRefresh = async () => {
+  const handleLogsRefresh = async () => {
     applyAnalyticsWindowIntent({ type: "refresh-requested" });
     await refetch();
   };
@@ -101,7 +91,7 @@ export function Logs() {
 
   return (
     <div className="space-y-6">
-      <LogsHeader loading={loading} onRefresh={handleGlobalRefresh} />
+      <LogsHeader loading={loading} onRefresh={handleLogsRefresh} />
 
       {error && <ErrorBanner message={error.message} />}
 
@@ -135,16 +125,6 @@ export function Logs() {
           onPageChange={handlePageChange}
         />
       )}
-
-      {/* Token Usage Analytics Panel */}
-      <TokenUsageAnalyticsPanel
-        data={tokenUsage}
-        loading={tokenUsageLoading}
-        error={tokenUsageError}
-        window={analyticsWindow}
-        onWindowIntent={applyAnalyticsWindowIntent}
-        hasActiveFilters={hasActiveFilters}
-      />
 
       {/* Normalized Outcome Stats Grid */}
       <LogStatsGrid

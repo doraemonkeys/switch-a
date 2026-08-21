@@ -108,7 +108,6 @@ interface RenderPanelOptions {
   error?: Error | null;
   window?: AnalyticsWindow;
   onWindowIntent?: (intent: AnalyticsWindowIntent) => void;
-  hasActiveFilters?: boolean;
 }
 
 function renderPanel({
@@ -117,7 +116,6 @@ function renderPanel({
   error = null,
   window = mockWindow,
   onWindowIntent = vi.fn(),
-  hasActiveFilters = false,
 }: RenderPanelOptions = {}) {
   const view = render(
     <TokenUsageAnalyticsPanel
@@ -126,7 +124,6 @@ function renderPanel({
       error={error}
       window={window}
       onWindowIntent={onWindowIntent}
-      hasActiveFilters={hasActiveFilters}
     />,
   );
   return { ...view, onWindowIntent };
@@ -180,16 +177,6 @@ describe("TokenUsageAnalyticsPanel", () => {
     );
 
     expect(onWindowIntent).toHaveBeenCalledWith({ type: "refresh-requested" });
-  });
-
-  it("displays active table filter notice", () => {
-    renderPanel({ hasActiveFilters: true });
-
-    expect(
-      screen.getByText(
-        /Active table filters do not scope this token analytics panel/i,
-      ),
-    ).toBeInTheDocument();
   });
 
   it("displays data quality warning when quality is below 100%", () => {

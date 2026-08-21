@@ -17,6 +17,7 @@ const navItems: Array<{
   { to: "/error-detection", label: "Error Detection", icon: "🛡️" },
   { to: "/config", label: "Config", icon: "⚙️" },
   { to: "/logs", label: "Logs", icon: "📋" },
+  { to: "/token-usage", label: "Token Usage", icon: "📈" },
   {
     to: "/debug-capture",
     label: "Debug Capture",
@@ -73,25 +74,30 @@ export function Layout() {
       </header>
 
       <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex gap-6">
+        <div className="flex flex-col gap-6 lg:flex-row">
           {/* Sidebar Navigation */}
-          <nav className="w-52 shrink-0">
-            <div className="bg-white rounded-xl border border-border p-2 shadow-sm">
-              <ul className="space-y-1">
+          <nav
+            aria-label="Primary"
+            className="w-full min-w-0 lg:w-52 lg:shrink-0"
+          >
+            <div className="overflow-x-auto rounded-xl border border-border bg-white p-2 shadow-sm lg:overflow-visible">
+              <ul className="flex min-w-max gap-1 lg:block lg:min-w-0 lg:space-y-1">
                 {navItems.map((item) => (
-                  <li key={item.to}>
+                  <li key={item.to} className="shrink-0">
                     <NavLink
                       to={item.to}
                       end={item.to === "/"}
                       className={({ isActive }) =>
-                        `flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 ${
+                        `flex items-center gap-3 whitespace-nowrap px-4 py-2.5 rounded-lg transition-all duration-200 ${
                           isActive
                             ? "bg-linear-to-r from-primary to-indigo-500 text-white shadow-md"
                             : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                         }`
                       }
                     >
-                      <span className="text-base">{item.icon}</span>
+                      <span className="text-base" aria-hidden="true">
+                        {item.icon}
+                      </span>
                       <span className="font-medium text-sm">{item.label}</span>
                       {item.showCaptureStatus && <DebugCaptureStatusBadge />}
                     </NavLink>
@@ -101,7 +107,7 @@ export function Layout() {
             </div>
 
             {/* Version Info */}
-            <div className="mt-4 px-4 py-3 bg-white rounded-xl border border-border text-center">
+            <div className="mt-4 hidden rounded-xl border border-border bg-white px-4 py-3 text-center lg:block">
               <p className="text-xs text-text-muted">Version {APP_VERSION}</p>
             </div>
           </nav>
