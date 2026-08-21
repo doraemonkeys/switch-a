@@ -730,9 +730,9 @@ func TestWebSocketResultCloneDeepCopiesMutableFields(t *testing.T) {
 			"X-Test": []string{"original"},
 		},
 		TokenUsage: &TokenUsage{
-			PromptTokens: 1,
+			PromptTokens: observedTokenCount(1),
 			CacheCreation: &CacheCreation{
-				InputTokens: 2,
+				InputTokens: observedTokenCount(2),
 			},
 		},
 		UpstreamError: &WebSocketUpstreamError{
@@ -750,13 +750,13 @@ func TestWebSocketResultCloneDeepCopiesMutableFields(t *testing.T) {
 	}
 
 	clone.HandshakeHeaders.Set("X-Test", "clone")
-	clone.TokenUsage.CacheCreation.InputTokens = 9
+	clone.TokenUsage.CacheCreation.InputTokens.Value = 9
 	clone.UpstreamError.Code = "different"
 
 	if got := original.HandshakeHeaders.Get("X-Test"); got != "original" {
 		t.Fatalf("original header = %q, want original", got)
 	}
-	if got := original.TokenUsage.CacheCreation.InputTokens; got != 2 {
+	if got := original.TokenUsage.CacheCreation.InputTokens.Value; got != 2 {
 		t.Fatalf("original cache creation = %d, want 2", got)
 	}
 	if got := original.UpstreamError.Code; got != "rate_limit_error" {

@@ -20,6 +20,18 @@ const (
 // built-in contracts whose response semantics are known by the gateway.
 const CustomAPITypePrefix = "custom:"
 
+// TokenUsageSemantics identifies how persisted provider counters project into
+// canonical input, output, and total tokens. Unknown keeps custom and future
+// protocols out of calculations until their counter relationships are explicit.
+type TokenUsageSemantics string
+
+const (
+	TokenUsageSemanticsUnknown               TokenUsageSemantics = "unknown"
+	TokenUsageSemanticsAnthropicMessages     TokenUsageSemantics = "anthropic_messages"
+	TokenUsageSemanticsOpenAICompatible      TokenUsageSemantics = "openai_compatible"
+	TokenUsageSemanticsGoogleGenerateContent TokenUsageSemantics = "google_generate_content"
+)
+
 // ErrorFamily selects the bounded, root-relative semantic-error predicate.
 type ErrorFamily string
 
@@ -76,6 +88,7 @@ type Definition struct {
 	DisplayOrder           int                  `json:"display_order"`
 	SemanticErrorSupported bool                 `json:"semantic_error_supported"`
 	RequestDialect         RequestDialect       `json:"request_dialect"`
+	TokenUsageSemantics    TokenUsageSemantics  `json:"token_usage_semantics"`
 	UpstreamPathPolicy     UpstreamPathPolicy   `json:"upstream_path_policy"`
 	ErrorFamily            ErrorFamily          `json:"error_family"`
 	ResponseProtocolIDs    []ResponseProtocolID `json:"response_protocol_ids"`
@@ -91,6 +104,7 @@ var definitions = []Definition{
 		DisplayOrder:           0,
 		SemanticErrorSupported: true,
 		RequestDialect:         RequestDialectAnthropicMessages,
+		TokenUsageSemantics:    TokenUsageSemanticsAnthropicMessages,
 		UpstreamPathPolicy:     UpstreamPathPreserve,
 		ErrorFamily:            ErrorFamilyAnthropicMessages,
 		ResponseProtocolIDs:    []ResponseProtocolID{ProtocolAnthropicMessagesJSON, ProtocolAnthropicMessagesSSE},
@@ -108,6 +122,7 @@ var definitions = []Definition{
 		DisplayOrder:           1,
 		SemanticErrorSupported: true,
 		RequestDialect:         RequestDialectAnthropicMessages,
+		TokenUsageSemantics:    TokenUsageSemanticsAnthropicMessages,
 		UpstreamPathPolicy:     UpstreamPathPreserve,
 		ErrorFamily:            ErrorFamilyAnthropicMessages,
 		ResponseProtocolIDs:    []ResponseProtocolID{ProtocolAnthropicMessagesJSON, ProtocolAnthropicMessagesSSE},
@@ -120,6 +135,7 @@ var definitions = []Definition{
 		DisplayOrder:           2,
 		SemanticErrorSupported: true,
 		RequestDialect:         RequestDialectOpenAIResponses,
+		TokenUsageSemantics:    TokenUsageSemanticsOpenAICompatible,
 		UpstreamPathPolicy:     UpstreamPathStripOptionalV1,
 		ErrorFamily:            ErrorFamilyOpenAIResponses,
 		ResponseProtocolIDs:    []ResponseProtocolID{ProtocolOpenAIResponsesJSON, ProtocolOpenAIResponsesSSE},
@@ -142,6 +158,7 @@ var definitions = []Definition{
 		DisplayOrder:           3,
 		SemanticErrorSupported: true,
 		RequestDialect:         RequestDialectGoogleGenerateContent,
+		TokenUsageSemantics:    TokenUsageSemanticsGoogleGenerateContent,
 		UpstreamPathPolicy:     UpstreamPathPreserve,
 		ErrorFamily:            ErrorFamilyGoogleGenerateContent,
 		ResponseProtocolIDs:    []ResponseProtocolID{ProtocolGoogleGenerateContentJSON, ProtocolGoogleGenerateContentSSE},
@@ -157,6 +174,7 @@ var definitions = []Definition{
 		DisplayOrder:           4,
 		SemanticErrorSupported: true,
 		RequestDialect:         RequestDialectOpenAIChatCompletions,
+		TokenUsageSemantics:    TokenUsageSemanticsOpenAICompatible,
 		UpstreamPathPolicy:     UpstreamPathStripOptionalV1,
 		ErrorFamily:            ErrorFamilyOpenAIChatCompletions,
 		ResponseProtocolIDs:    []ResponseProtocolID{ProtocolOpenAIChatCompletionsJSON, ProtocolOpenAIChatCompletionsSSE},
@@ -173,6 +191,7 @@ var definitions = []Definition{
 		DisplayOrder:           5,
 		SemanticErrorSupported: true,
 		RequestDialect:         RequestDialectOpenAIChatCompletions,
+		TokenUsageSemantics:    TokenUsageSemanticsOpenAICompatible,
 		UpstreamPathPolicy:     UpstreamPathStripOptionalV1,
 		ErrorFamily:            ErrorFamilyOpenAIChatCompletions,
 		ResponseProtocolIDs:    []ResponseProtocolID{ProtocolOpenAIChatCompletionsJSON, ProtocolOpenAIChatCompletionsSSE},
@@ -196,7 +215,7 @@ func Lookup(apiType string) (Definition, bool) {
 			return cloneDefinition(definition), true
 		}
 	}
-	return Definition{}, false
+	return Definition{TokenUsageSemantics: TokenUsageSemanticsUnknown}, false
 }
 
 // IsBuiltIn reports whether apiType names a registered built-in contract.

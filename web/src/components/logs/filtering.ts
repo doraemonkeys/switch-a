@@ -1,49 +1,38 @@
 import type { LogFilter } from "../../api/types";
 
+const TABLE_SCOPING_FILTER_KEYS = [
+  "provider_id",
+  "api_type",
+  "semantics_version",
+  "completion_state",
+  "service_outcome",
+  "client_action",
+  "termination_actor",
+  "termination_reason",
+  "client_transport_status_code",
+  "is_sse",
+  "is_websocket",
+  "user_id",
+  "start_time",
+  "end_time",
+  "min_latency",
+  "min_retry_count",
+  "has_retries",
+  "session_committed",
+  "client_visible",
+  "commit_source",
+] as const satisfies readonly (keyof LogFilter)[];
+
+function hasFilterValue(value: LogFilter[keyof LogFilter]): boolean {
+  return value !== undefined && value !== "";
+}
+
 export function isLogFilterActive(filter: LogFilter): boolean {
-  return !!(
-    filter.provider_id ||
-    filter.api_type ||
-    filter.semantics_version ||
-    filter.completion_state ||
-    filter.service_outcome ||
-    filter.client_action ||
-    filter.termination_actor ||
-    filter.termination_reason ||
-    filter.client_transport_status_code !== undefined ||
-    filter.is_sse !== undefined ||
-    filter.is_websocket !== undefined ||
-    filter.start_time ||
-    filter.end_time ||
-    filter.has_retries !== undefined ||
-    filter.min_retry_count !== undefined ||
-    filter.session_committed !== undefined ||
-    filter.client_visible !== undefined ||
-    filter.commit_source
-  );
+  return TABLE_SCOPING_FILTER_KEYS.some((key) => hasFilterValue(filter[key]));
 }
 
 export function createClearedLogFilterPatch(): Partial<LogFilter> {
-  return {
-    provider_id: undefined,
-    api_type: undefined,
-    semantics_version: undefined,
-    completion_state: undefined,
-    service_outcome: undefined,
-    client_action: undefined,
-    termination_actor: undefined,
-    termination_reason: undefined,
-    client_transport_status_code: undefined,
-    is_sse: undefined,
-    is_websocket: undefined,
-    start_time: undefined,
-    end_time: undefined,
-    min_latency: undefined,
-    user_id: undefined,
-    has_retries: undefined,
-    min_retry_count: undefined,
-    session_committed: undefined,
-    client_visible: undefined,
-    commit_source: undefined,
-  };
+  return Object.fromEntries(
+    TABLE_SCOPING_FILTER_KEYS.map((key) => [key, undefined]),
+  ) as Partial<LogFilter>;
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -24,6 +25,45 @@ func (s *nilTimeSeriesStore) GetLogTimeSeries(_ context.Context, _ time.Time, _ 
 
 type timeSeriesErrorStore struct {
 	*mockStore
+}
+
+type statsFixedClock struct {
+	now time.Time
+}
+
+func (c statsFixedClock) Now() time.Time {
+	return c.now
+}
+
+type statsArgumentStore struct {
+	*mockStore
+	statsCalls      int
+	statsStart      time.Time
+	statsEnd        time.Time
+	timeSeriesCalls int
+	timeSeriesStart time.Time
+	timeSeriesEnd   time.Time
+	granularity     time.Duration
+}
+
+func (s *statsArgumentStore) GetLogStats(ctx context.Context, start, end time.Time) (*model.LogStats, error) {
+	s.statsCalls++
+	s.statsStart = start
+	s.statsEnd = end
+	return s.mockStore.GetLogStats(ctx, start, end)
+}
+
+func (s *statsArgumentStore) GetLogTimeSeries(ctx context.Context, start, end time.Time, granularity time.Duration) ([]model.TimeSeriesPoint, error) {
+	s.timeSeriesCalls++
+	s.timeSeriesStart = start
+	s.timeSeriesEnd = end
+	s.granularity = granularity
+	return s.mockStore.GetLogTimeSeries(ctx, start, end, granularity)
+}
+
+func setStatsClock(handler *Handler, now time.Time) {
+	resolver := analyticswindow.NewResolver(statsFixedClock{now: now})
+	handler.statsWindowResolver = &resolver
 }
 
 func (s *timeSeriesErrorStore) GetLogTimeSeries(_ context.Context, _ time.Time, _ time.Time, _ time.Duration) ([]model.TimeSeriesPoint, error) {
@@ -595,47 +635,6 @@ func TestGetStats_WithoutGranularity(t *testing.T) {
 	}
 }
 
-func TestFormatGranularity_KnownAndFallbackValues(t *testing.T) {
-	tests := []struct {
-		name  string
-		input time.Duration
-		want  string
-	}{
-		{name: "5m", input: 5 * time.Minute, want: "5m"},
-		{name: "15m", input: 15 * time.Minute, want: "15m"},
-		{name: "1h", input: time.Hour, want: "1h"},
-		{name: "6h", input: 6 * time.Hour, want: "6h"},
-		{name: "1d", input: 24 * time.Hour, want: "1d"},
-		{name: "fallback", input: 90 * time.Minute, want: (90 * time.Minute).String()},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := formatGranularity(tt.input); got != tt.want {
-				t.Fatalf("formatGranularity(%s) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGetTimeSeriesStartTime_Branches(t *testing.T) {
-	now := time.Date(2026, time.April, 6, 2, 30, 0, 0, time.UTC)
-	startTime := now.Add(-24 * time.Hour)
-	earliestLog := now.Add(-72 * time.Hour)
-
-	if got := getTimeSeriesStartTime("24h", startTime, earliestLog, now); !got.Equal(startTime) {
-		t.Fatalf("24h start time = %s, want %s", got, startTime)
-	}
-	if got := getTimeSeriesStartTime("all", startTime, earliestLog, now); !got.Equal(earliestLog) {
-		t.Fatalf("all start time with earliest log = %s, want %s", got, earliestLog)
-	}
-
-	wantFallback := now.Add(-DefaultTimeSeriesRangeDays * 24 * time.Hour)
-	if got := getTimeSeriesStartTime("all", startTime, time.Time{}, now); !got.Equal(wantFallback) {
-		t.Fatalf("all fallback start time = %s, want %s", got, wantFallback)
-	}
-}
-
 func TestBuildStatsResponse_AllPeriodUsesEarliestLog(t *testing.T) {
 	h, _, _ := testHandler()
 
@@ -667,9 +666,8 @@ func TestBuildStatsResponse_AllPeriodUsesEarliestLog(t *testing.T) {
 		logStats,
 		ProviderStats{Total: 1, Healthy: 1},
 		map[string]string{"p1": "Provider 1"},
-		startTime,
+		earliestLog,
 		endTime,
-		"all",
 	)
 
 	if !resp.TimeRange.Start.Equal(earliestLog) {
@@ -680,6 +678,74 @@ func TestBuildStatsResponse_AllPeriodUsesEarliestLog(t *testing.T) {
 	}
 	if len(resp.RequestsByProviderOutcome) != 1 || resp.RequestsByProviderOutcome[0].Name != "Provider 1" {
 		t.Fatalf("RequestsByProviderOutcome = %+v, want provider name mapping preserved", resp.RequestsByProviderOutcome)
+	}
+}
+
+func TestGetStatsAsOfAlignsExactExclusiveEnd(t *testing.T) {
+	handler, store, _ := testHandler()
+	captured := &statsArgumentStore{mockStore: store}
+	handler.store = captured
+	setStatsClock(handler, time.Date(2030, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/api/stats?period=24h&granularity=1h&as_of=2026-08-21T08%3A30%3A45%2B08%3A00", nil)
+	recorder := httptest.NewRecorder()
+	handler.GetStats(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", recorder.Code, recorder.Body.String())
+	}
+	wantEnd := time.Date(2026, time.August, 21, 0, 30, 45, 0, time.UTC)
+	wantStart := wantEnd.Add(-24 * time.Hour)
+	if captured.statsCalls != 1 || !captured.statsStart.Equal(wantStart) || !captured.statsEnd.Equal(wantEnd) {
+		t.Fatalf("GetLogStats arguments = calls %d [%s,%s), want [%s,%s)", captured.statsCalls, captured.statsStart, captured.statsEnd, wantStart, wantEnd)
+	}
+	if captured.timeSeriesCalls != 1 || !captured.timeSeriesStart.Equal(wantStart) || !captured.timeSeriesEnd.Equal(wantEnd) || captured.granularity != time.Hour {
+		t.Fatalf("GetLogTimeSeries arguments = calls %d [%s,%s) %s", captured.timeSeriesCalls, captured.timeSeriesStart, captured.timeSeriesEnd, captured.granularity)
+	}
+	var response StatsResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.TimeRange.Start.Equal(wantStart) || !response.TimeRange.End.Equal(wantEnd) {
+		t.Fatalf("response range = %+v, want [%s,%s)", response.TimeRange, wantStart, wantEnd)
+	}
+}
+
+func TestGetStatsOmittedAsOfUsesInjectedClock(t *testing.T) {
+	handler, store, _ := testHandler()
+	captured := &statsArgumentStore{mockStore: store}
+	handler.store = captured
+	wantEnd := time.Date(2026, time.August, 21, 2, 3, 4, 0, time.UTC)
+	setStatsClock(handler, wantEnd)
+
+	recorder := httptest.NewRecorder()
+	handler.GetStats(recorder, httptest.NewRequest(http.MethodGet, "/admin/api/stats", nil))
+
+	if recorder.Code != http.StatusOK || !captured.statsEnd.Equal(wantEnd) || captured.timeSeriesCalls != 0 {
+		t.Fatalf("status/end/timeseries = %d/%s/%d, want 200/%s/0", recorder.Code, captured.statsEnd, captured.timeSeriesCalls, wantEnd)
+	}
+}
+
+func TestGetStatsRejectsInvalidAsOfWithoutStorageAccess(t *testing.T) {
+	tests := []string{
+		"/admin/api/stats?as_of=",
+		"/admin/api/stats?as_of=not-a-time",
+		"/admin/api/stats?as_of=2026-08-21T00%3A00%3A00Z&as_of=2026-08-21T01%3A00%3A00Z",
+	}
+	for _, target := range tests {
+		t.Run(target, func(t *testing.T) {
+			handler, store, _ := testHandler()
+			captured := &statsArgumentStore{mockStore: store}
+			handler.store = captured
+			setStatsClock(handler, time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC))
+
+			recorder := httptest.NewRecorder()
+			handler.GetStats(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+
+			if recorder.Code != http.StatusBadRequest || captured.statsCalls != 0 {
+				t.Fatalf("status/storage calls = %d/%d, want 400/0; body: %s", recorder.Code, captured.statsCalls, recorder.Body.String())
+			}
+		})
 	}
 }
 

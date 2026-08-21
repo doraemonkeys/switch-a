@@ -56,6 +56,9 @@ export function createMockApiClient(): ApiClient {
     stats: {
       get: vi.fn(),
     },
+    tokenUsage: {
+      get: vi.fn(),
+    },
     requests: {
       active: vi.fn().mockResolvedValue({ requests: [], count: 0 }),
     },

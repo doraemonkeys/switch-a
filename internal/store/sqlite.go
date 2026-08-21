@@ -112,6 +112,9 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	if err := migrateRequestLogLifecycleFields(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate request log lifecycle fields: %w", err)
 	}
+	if err := migrateRequestLogAnalyticsIndexes(db); err != nil { // coverage-ignore -- idempotent schema migration
+		return nil, fmt.Errorf("migrate request-log analytics indexes: %w", err)
+	}
 
 	ruleRepository, err := errorrulesqlite.Open(context.Background(), errorrulesqlite.Config{
 		DB:    db,

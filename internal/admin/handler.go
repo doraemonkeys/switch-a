@@ -11,6 +11,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
 	adminproviderimport "github.com/doraemonkeys/switch-a/internal/admin/providerimport"
+	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
@@ -112,6 +113,7 @@ type Handler struct {
 	auth                  ProviderAuthService
 	providerImportHandler *adminproviderimport.Handler
 	internalErrorRules    *adminerrorruleapi.Handler
+	statsWindowResolver   *analyticswindow.Resolver
 	logger                *zap.Logger
 }
 
@@ -126,20 +128,26 @@ type Config struct {
 	ProviderImports     ProviderImportService
 	ProviderImportStore ProviderImportStore
 	InternalErrorRules  *adminerrorruleapi.Handler
+	StatsWindowResolver *analyticswindow.Resolver
 	Logger              *zap.Logger
 }
 
 // NewHandler creates a new admin handler.
 func NewHandler(cfg Config) *Handler {
+	if cfg.StatsWindowResolver == nil {
+		resolver := analyticswindow.NewResolver(internal.RealClock{})
+		cfg.StatsWindowResolver = &resolver
+	}
 	handler := &Handler{
-		store:              cfg.Store,
-		health:             cfg.Health,
-		concurrency:        cfg.Concurrency,
-		providerLifecycles: cfg.ProviderLifecycles,
-		activeReqList:      cfg.ActiveReqList,
-		auth:               cfg.Auth,
-		internalErrorRules: cfg.InternalErrorRules,
-		logger:             cfg.Logger,
+		store:               cfg.Store,
+		health:              cfg.Health,
+		concurrency:         cfg.Concurrency,
+		providerLifecycles:  cfg.ProviderLifecycles,
+		activeReqList:       cfg.ActiveReqList,
+		auth:                cfg.Auth,
+		internalErrorRules:  cfg.InternalErrorRules,
+		statsWindowResolver: cfg.StatsWindowResolver,
+		logger:              cfg.Logger,
 	}
 	handler.providerImportHandler = adminproviderimport.NewHandler(adminproviderimport.Config{
 		ProviderCatalog: cfg.Store,

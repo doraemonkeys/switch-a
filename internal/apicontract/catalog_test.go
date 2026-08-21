@@ -49,6 +49,9 @@ func TestCatalogInvariants(t *testing.T) {
 		if definition.RequestDialect == "" {
 			t.Errorf("definition %q has no request dialect", definition.APIType)
 		}
+		if definition.TokenUsageSemantics == TokenUsageSemanticsUnknown || definition.TokenUsageSemantics == "" {
+			t.Errorf("definition %q has no known token usage semantics", definition.APIType)
+		}
 		if definition.UpstreamPathPolicy != UpstreamPathPreserve && definition.UpstreamPathPolicy != UpstreamPathStripOptionalV1 {
 			t.Errorf("definition %q has unknown upstream path policy %q", definition.APIType, definition.UpstreamPathPolicy)
 		}
@@ -70,11 +73,39 @@ func TestCatalogInvariants(t *testing.T) {
 	}
 }
 
+func TestCatalogTokenUsageSemantics(t *testing.T) {
+	t.Parallel()
+
+	want := map[APIType]TokenUsageSemantics{
+		APITypeClaude:         TokenUsageSemanticsAnthropicMessages,
+		APITypeDeepSeekClaude: TokenUsageSemanticsAnthropicMessages,
+		APITypeCodex:          TokenUsageSemanticsOpenAICompatible,
+		APITypeGemini:         TokenUsageSemanticsGoogleGenerateContent,
+		APITypeGrok:           TokenUsageSemanticsOpenAICompatible,
+		APITypeDeepSeekOpenAI: TokenUsageSemanticsOpenAICompatible,
+	}
+	for _, definition := range All() {
+		if got := definition.TokenUsageSemantics; got != want[definition.APIType] {
+			t.Errorf("%q token usage semantics = %q, want %q", definition.APIType, got, want[definition.APIType])
+		}
+	}
+	for _, apiType := range []string{"custom:tool", "unregistered", ""} {
+		definition, ok := Lookup(apiType)
+		if ok {
+			t.Errorf("Lookup(%q) unexpectedly found a built-in", apiType)
+		}
+		if got := definition.TokenUsageSemantics; got != TokenUsageSemanticsUnknown {
+			t.Errorf("Lookup(%q) token usage semantics = %q, want %q", apiType, got, TokenUsageSemanticsUnknown)
+		}
+	}
+}
+
 func TestCatalogReturnsDefensiveCopies(t *testing.T) {
 	t.Parallel()
 
 	definitions := All()
 	definitions[0].Label = "mutated"
+	definitions[0].TokenUsageSemantics = TokenUsageSemanticsUnknown
 	definitions[0].ResponseProtocolIDs[0] = "mutated"
 	definitions[0].UnnamespacedRoutes[0].Pattern = "/mutated"
 
@@ -82,7 +113,10 @@ func TestCatalogReturnsDefensiveCopies(t *testing.T) {
 	if !ok {
 		t.Fatal("Claude definition missing")
 	}
-	if fresh.Label == "mutated" || fresh.ResponseProtocolIDs[0] == "mutated" || fresh.UnnamespacedRoutes[0].Pattern == "/mutated" {
+	if fresh.Label == "mutated" ||
+		fresh.TokenUsageSemantics == TokenUsageSemanticsUnknown ||
+		fresh.ResponseProtocolIDs[0] == "mutated" ||
+		fresh.UnnamespacedRoutes[0].Pattern == "/mutated" {
 		t.Fatal("All exposed mutable catalog state")
 	}
 

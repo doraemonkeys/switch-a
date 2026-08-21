@@ -43,6 +43,9 @@ const (
 	terminalCauseColumnName           = "terminal_cause"
 	commitSourceColumnName            = "commit_source"
 	recoveryActionColumnName          = "recovery_action"
+	requestLogProviderCreatedAtIndex  = "idx_request_logs_provider_created_at"
+	requestLogModelCreatedAtIndex     = "idx_request_logs_model_created_at"
+	requestLogAPITypeCreatedAtIndex   = "idx_request_logs_api_type_created_at"
 )
 
 const usageLimitPolicyColumnName = "usage_limit_policy"
@@ -50,6 +53,33 @@ const usageLimitPolicyColumnName = "usage_limit_policy"
 const (
 	legacySuccessValue = 1
 )
+
+var requestLogAnalyticsIndexes = []struct {
+	name    string
+	columns string
+}{
+	{name: requestLogProviderCreatedAtIndex, columns: "provider_id, created_at"},
+	{name: requestLogModelCreatedAtIndex, columns: "model, created_at"},
+	{name: requestLogAPITypeCreatedAtIndex, columns: "api_type, created_at"},
+}
+
+// migrateRequestLogAnalyticsIndexes keeps every supported exact filter paired
+// with the bounded time range. Separate narrow composites avoid the write cost
+// and schema coupling of a token-column covering index.
+func migrateRequestLogAnalyticsIndexes(db *gorm.DB) error {
+	for _, index := range requestLogAnalyticsIndexes {
+		statement := fmt.Sprintf(
+			"CREATE INDEX IF NOT EXISTS %s ON %s (%s)",
+			index.name,
+			requestLogsTableName,
+			index.columns,
+		)
+		if err := db.Exec(statement).Error; err != nil {
+			return fmt.Errorf("create request-log analytics index %s: %w", index.name, err)
+		}
+	}
+	return nil
+}
 
 // migrateBaseURLToAPIType moves base_url from the providers table to provider_api_types.
 // Idempotent: skips if providers.base_url column no longer exists.

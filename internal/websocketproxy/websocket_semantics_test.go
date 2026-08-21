@@ -106,6 +106,35 @@ func TestCodexWebSocketMessageObserver_TracksCompletionObservedOnResponseComplet
 	}
 }
 
+func TestCodexWebSocketMessageObserverAccumulatesDistinctUsageAndDeduplicatesKeys(t *testing.T) {
+	t.Parallel()
+	observer := newCodexWebSocketMessageObserver("gpt-5.4", nil, nil, nil)
+	first := []byte(`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":12}}}`)
+	second := []byte(`{"type":"response.done","response":{"id":"resp_2","usage":{"input_tokens":3,"input_token_details":{"cached_tokens":0,"cache_write_tokens":5},"output_tokens":1,"output_token_details":{"reasoning_tokens":1},"total_tokens":4}}}`)
+
+	observer.ObserveUpstreamMessage(websocket.MessageText, first)
+	observer.ObserveUpstreamMessage(websocket.MessageText, first)
+	observer.ObserveUpstreamMessage(websocket.MessageText, second)
+
+	usage := observer.Snapshot().TokenUsage
+	if usage == nil || usage.PromptTokens != observedTokenCount(13) ||
+		usage.CompletionTokens != observedTokenCount(3) ||
+		usage.TotalTokens != observedTokenCount(16) ||
+		usage.CacheReadInputTokens != observedTokenCount(2) ||
+		usage.ReasoningTokens != observedTokenCount(1) ||
+		usage.CacheCreation == nil || usage.CacheCreation.InputTokens != observedTokenCount(5) {
+		t.Fatalf("usage = %#v", usage)
+	}
+
+	unkeyed := newCodexWebSocketMessageObserver("gpt-5.4", nil, nil, nil)
+	unkeyedEvent := []byte(`{"type":"response.completed","response":{"usage":{"input_tokens":1}}}`)
+	unkeyed.ObserveUpstreamMessage(websocket.MessageText, unkeyedEvent)
+	unkeyed.ObserveUpstreamMessage(websocket.MessageText, unkeyedEvent)
+	if got := unkeyed.Snapshot().TokenUsage; got == nil || got.PromptTokens != observedTokenCount(2) {
+		t.Fatalf("unkeyed usage = %#v, want both completed responses accumulated", got)
+	}
+}
+
 func TestCodexWebSocketMessageObserver_ParseDegradedOnInvalidUpstreamJSON(t *testing.T) {
 	t.Parallel()
 
@@ -786,7 +815,7 @@ func TestCodexWebSocketSemantics_HelperBranches(t *testing.T) {
 	if !state.needsUsage {
 		t.Fatal("first usage state needsUsage = false, want true")
 	}
-	state = observer.captureCodexUsageState(state, &TokenUsage{PromptTokens: 5})
+	state = observer.captureCodexUsageState(state, &TokenUsage{PromptTokens: observedTokenCount(5)})
 	if state.needsUsage {
 		t.Fatal("captureCodexUsageState() kept needsUsage=true, want false")
 	}
@@ -795,7 +824,7 @@ func TestCodexWebSocketSemantics_HelperBranches(t *testing.T) {
 	if secondState.needsUsage {
 		t.Fatal("duplicate usage event requested usage parse again, want dedupe")
 	}
-	if snapshot := observer.Snapshot(); snapshot.TokenUsage == nil || snapshot.TokenUsage.PromptTokens != 5 {
+	if snapshot := observer.Snapshot(); snapshot.TokenUsage == nil || snapshot.TokenUsage.PromptTokens.Value != 5 {
 		t.Fatalf("Snapshot().TokenUsage = %#v, want PromptTokens=5", snapshot.TokenUsage)
 	}
 

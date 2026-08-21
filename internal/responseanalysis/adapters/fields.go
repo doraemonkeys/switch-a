@@ -409,7 +409,8 @@ func usageFromObject(document jsonDocument, usage jsonValue, google bool, resour
 		prompt := usageInteger(document, usage, "promptTokenCount", resources)
 		completion := usageInteger(document, usage, "candidatesTokenCount", resources)
 		total := usageInteger(document, usage, "totalTokenCount", resources)
-		if prompt == 0 && completion == 0 && total == 0 {
+		cacheRead := usageInteger(document, usage, "cachedContentTokenCount", resources)
+		if !anyUsageCountPresent(prompt, completion, total, cacheRead) {
 			return nil
 		}
 		if !resources.reserve(tokenUsageBytes) {
@@ -419,28 +420,39 @@ func usageFromObject(document jsonDocument, usage jsonValue, google bool, resour
 			PromptTokens:         prompt,
 			CompletionTokens:     completion,
 			TotalTokens:          total,
-			CacheReadInputTokens: usageInteger(document, usage, "cachedContentTokenCount", resources),
+			CacheReadInputTokens: cacheRead,
 		}
 	}
 
 	prompt := usageInteger(document, usage, "prompt_tokens", resources)
-	if prompt == 0 {
+	if !prompt.Present {
 		prompt = usageInteger(document, usage, "input_tokens", resources)
 	}
 	completion := usageInteger(document, usage, "completion_tokens", resources)
-	if completion == 0 {
+	if !completion.Present {
 		completion = usageInteger(document, usage, "output_tokens", resources)
 	}
 	total := usageInteger(document, usage, "total_tokens", resources)
-	if total == 0 {
-		total = prompt + completion
-	}
 	cacheRead := usageInteger(document, usage, "cache_read_input_tokens", resources)
-	if cacheRead == 0 {
+	if !cacheRead.Present {
 		cacheRead = firstNestedUsageInteger(document, usage, "cached_tokens", resources, "prompt_tokens_details", "input_tokens_details", "input_token_details")
 	}
-	reasoning := firstNestedUsageInteger(document, usage, "reasoning_tokens", resources, "completion_tokens_details", "output_tokens_details", "output_token_details")
-	if prompt == 0 && completion == 0 && total == 0 && cacheRead == 0 && reasoning == 0 {
+	reasoning := usageInteger(document, usage, "reasoning_tokens", resources)
+	if !reasoning.Present {
+		reasoning = firstNestedUsageInteger(document, usage, "reasoning_tokens", resources, "completion_tokens_details", "output_tokens_details", "output_token_details")
+	}
+	cacheCreationInput := usageInteger(document, usage, "cache_creation_input_tokens", resources)
+	if !cacheCreationInput.Present {
+		cacheCreationInput = firstNestedUsageInteger(document, usage, "cache_write_tokens", resources, "prompt_tokens_details", "input_tokens_details", "input_token_details")
+	}
+	cacheCreationObject, nested := objectField(document, usage, "cache_creation")
+	ephemeral1h := tokenusage.ObservedCount{}
+	ephemeral5m := tokenusage.ObservedCount{}
+	if nested {
+		ephemeral1h = usageInteger(document, cacheCreationObject, "ephemeral_1h_input_tokens", resources)
+		ephemeral5m = usageInteger(document, cacheCreationObject, "ephemeral_5m_input_tokens", resources)
+	}
+	if !anyUsageCountPresent(prompt, completion, total, cacheRead, reasoning, cacheCreationInput, ephemeral1h, ephemeral5m) {
 		return nil
 	}
 	if !resources.reserve(tokenUsageBytes) {
@@ -459,28 +471,35 @@ func usageFromObject(document jsonDocument, usage jsonValue, google bool, resour
 	if serviceTier, status := usageIdentifierField(document, usage, "service_tier", maxUsageServiceTierBytes, resources); status == fieldValid {
 		result.ServiceTier = serviceTier
 	}
-	cacheCreation, nested := objectField(document, usage, "cache_creation")
-	cacheCreationInput := usageInteger(document, usage, "cache_creation_input_tokens", resources)
-	if cacheCreationInput > 0 || nested {
+	if anyUsageCountPresent(cacheCreationInput, ephemeral1h, ephemeral5m) {
 		if !resources.reserve(cacheCreationBytes) {
 			return nil
 		}
-		result.CacheCreation = &tokenusage.CacheCreation{InputTokens: cacheCreationInput}
-		if nested {
-			result.CacheCreation.Ephemeral1hInputTokens = usageInteger(document, cacheCreation, "ephemeral_1h_input_tokens", resources)
-			result.CacheCreation.Ephemeral5mInputTokens = usageInteger(document, cacheCreation, "ephemeral_5m_input_tokens", resources)
+		result.CacheCreation = &tokenusage.CacheCreation{
+			InputTokens:            cacheCreationInput,
+			Ephemeral1hInputTokens: ephemeral1h,
+			Ephemeral5mInputTokens: ephemeral5m,
 		}
 	}
 	return result
 }
 
-func usageInteger(document jsonDocument, object jsonValue, name string, resources *resourceContext) int64 {
+func anyUsageCountPresent(counts ...tokenusage.ObservedCount) bool {
+	for _, count := range counts {
+		if count.Present {
+			return true
+		}
+	}
+	return false
+}
+
+func usageInteger(document jsonDocument, object jsonValue, name string, resources *resourceContext) tokenusage.ObservedCount {
 	if resources == nil || resources.err != nil {
-		return 0
+		return tokenusage.ObservedCount{}
 	}
 	value, ok := document.objectField(object, name)
 	if !ok || value.kind != jsonNumber {
-		return 0
+		return tokenusage.ObservedCount{}
 	}
 	transient := resourceContext{reserver: resources.reserver}
 	canonical, status := canonicalNumber(document.data, value, 20, &transient)
@@ -489,7 +508,7 @@ func usageInteger(document jsonDocument, object jsonValue, name string, resource
 			resources.err = transient.err
 		}
 		transient.release()
-		return 0
+		return tokenusage.ObservedCount{}
 	}
 	number, err := strconv.ParseInt(canonical, 10, 64)
 	if transient.err != nil && resources.err == nil {
@@ -497,22 +516,22 @@ func usageInteger(document jsonDocument, object jsonValue, name string, resource
 	}
 	transient.release()
 	if err != nil {
-		return 0
+		return tokenusage.ObservedCount{}
 	}
-	return number
+	return tokenusage.ObservedCount{Value: number, Present: true}
 }
 
-func firstNestedUsageInteger(document jsonDocument, usage jsonValue, child string, resources *resourceContext, parents ...string) int64 {
+func firstNestedUsageInteger(document jsonDocument, usage jsonValue, child string, resources *resourceContext, parents ...string) tokenusage.ObservedCount {
 	for _, parent := range parents {
 		object, ok := objectField(document, usage, parent)
 		if !ok {
 			continue
 		}
-		if value := usageInteger(document, object, child, resources); value != 0 {
+		if value := usageInteger(document, object, child, resources); value.Present {
 			return value
 		}
 	}
-	return 0
+	return tokenusage.ObservedCount{}
 }
 
 func standardRootUsage(document jsonDocument, resources *resourceContext) *tokenusage.TokenUsage {

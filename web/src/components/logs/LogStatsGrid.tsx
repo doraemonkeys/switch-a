@@ -2,14 +2,17 @@ import type {
   OutcomeTimeSeriesPoint,
   ServiceOutcome,
   StatsGranularity,
-  StatsParams,
   StatsPeriod,
   StatsResponse,
 } from "../../api/types";
+import {
+  GRANULARITY_OPTIONS_BY_PERIOD,
+  type AnalyticsWindow,
+  type AnalyticsWindowIntent,
+} from "../../features/analytics-window/analytics-window";
 import { formatDuration } from "../../lib/utils";
 import { getStatVariantClass, type StatVariantValue } from "./utils";
 
-const DEFAULT_STATS_PERIOD: StatsPeriod = "24h";
 const PERIOD_LABELS: Record<StatsPeriod, string> = {
   "24h": "Last 24 hours",
   "7d": "Last 7 days",
@@ -28,18 +31,6 @@ const GRANULARITY_LABELS: Record<StatsGranularity, string> = {
   "1h": "1 hour",
   "6h": "6 hours",
   "1d": "1 day",
-};
-const GRANULARITY_OPTIONS_BY_PERIOD: Record<StatsPeriod, StatsGranularity[]> = {
-  "24h": ["5m", "15m", "1h"],
-  "7d": ["1h", "6h", "1d"],
-  "30d": ["6h", "1d"],
-  all: ["1d"],
-};
-const DEFAULT_GRANULARITY_BY_PERIOD: Record<StatsPeriod, StatsGranularity> = {
-  "24h": "1h",
-  "7d": "6h",
-  "30d": "1d",
-  all: "1d",
 };
 const OUTCOME_ORDER: ServiceOutcome[] = [
   "completed",
@@ -94,8 +85,8 @@ const CHART_BUCKET_GAP_PX = 1;
 interface LogStatsGridProps {
   stats: StatsResponse | null;
   statsLoading: boolean;
-  params: StatsParams;
-  onParamsChange: (params: StatsParams) => void;
+  window: AnalyticsWindow;
+  onWindowIntent: (intent: AnalyticsWindowIntent) => void;
   hasActiveFilters: boolean;
 }
 
@@ -112,32 +103,6 @@ function getStatsPeriodLabel(period: StatsPeriod): string {
 
 function getGranularityLabel(granularity: StatsGranularity): string {
   return GRANULARITY_LABELS[granularity];
-}
-
-function isGranularityAllowed(
-  period: StatsPeriod,
-  granularity: StatsGranularity | undefined,
-): granularity is StatsGranularity {
-  if (!granularity) {
-    return false;
-  }
-
-  return GRANULARITY_OPTIONS_BY_PERIOD[period].includes(granularity);
-}
-
-function getSelectedPeriod(params: StatsParams): StatsPeriod {
-  return params.period ?? DEFAULT_STATS_PERIOD;
-}
-
-function getSelectedGranularity(
-  period: StatsPeriod,
-  params: StatsParams,
-): StatsGranularity {
-  if (isGranularityAllowed(period, params.granularity)) {
-    return params.granularity;
-  }
-
-  return DEFAULT_GRANULARITY_BY_PERIOD[period];
 }
 
 function formatRangeLabel(
@@ -192,12 +157,11 @@ function formatPointTooltip(
 export function LogStatsGrid({
   stats,
   statsLoading,
-  params,
-  onParamsChange,
+  window,
+  onWindowIntent,
   hasActiveFilters,
 }: LogStatsGridProps) {
-  const period = getSelectedPeriod(params);
-  const granularity = getSelectedGranularity(period, params);
+  const { period, granularity } = window;
   const avgLatencyValue =
     stats?.avg_latency_ms !== undefined
       ? formatDuration(stats.avg_latency_ms, { smallestUnit: "ms" })
@@ -239,10 +203,7 @@ export function LogStatsGrid({
             options={PERIOD_OPTIONS}
             onChange={(value) => {
               const nextPeriod = value as StatsPeriod;
-              onParamsChange({
-                period: nextPeriod,
-                granularity: DEFAULT_GRANULARITY_BY_PERIOD[nextPeriod],
-              });
+              onWindowIntent({ type: "period-selected", period: nextPeriod });
             }}
           />
           <StatsSelect
@@ -254,8 +215,8 @@ export function LogStatsGrid({
               label: getGranularityLabel(value),
             }))}
             onChange={(value) =>
-              onParamsChange({
-                period,
+              onWindowIntent({
+                type: "granularity-selected",
                 granularity: value as StatsGranularity,
               })
             }

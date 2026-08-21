@@ -15,6 +15,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
 
 	"github.com/coder/websocket"
 )
@@ -27,6 +28,10 @@ const (
 type Handler = Gateway
 
 func NewHandler(cfg Config) *Gateway { return NewGateway(cfg) }
+
+func observedTokenCount(value int64) tokenusage.ObservedCount {
+	return tokenusage.ObservedCount{Value: value, Present: true}
+}
 
 type LiveBytesTracker struct {
 	BytesSent, BytesReceived, MsgsSent, MsgsReceived atomic.Int64

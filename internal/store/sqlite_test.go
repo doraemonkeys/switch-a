@@ -54,3 +54,31 @@ func TestNewSQLiteStore_CreatesProviderStateAndRoutingPolicyTables(t *testing.T)
 		}
 	}
 }
+
+func TestNewSQLiteStoreCreatesNarrowRequestLogAnalyticsIndexes(t *testing.T) {
+	store := setupTestStore(t)
+	wantColumns := map[string][]string{
+		requestLogProviderCreatedAtIndex: {"provider_id", "created_at"},
+		requestLogModelCreatedAtIndex:    {"model", "created_at"},
+		requestLogAPITypeCreatedAtIndex:  {"api_type", "created_at"},
+	}
+
+	for indexName, expectedColumns := range wantColumns {
+		var columns []string
+		if err := store.db.Raw(
+			"SELECT name FROM pragma_index_info(?) ORDER BY seqno",
+			indexName,
+		).Scan(&columns).Error; err != nil {
+			t.Fatalf("read %s columns: %v", indexName, err)
+		}
+		if len(columns) != len(expectedColumns) {
+			t.Fatalf("%s columns = %v, want %v", indexName, columns, expectedColumns)
+		}
+		for index := range columns {
+			if columns[index] != expectedColumns[index] {
+				t.Errorf("%s columns = %v, want %v", indexName, columns, expectedColumns)
+				break
+			}
+		}
+	}
+}

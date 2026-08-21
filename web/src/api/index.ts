@@ -17,6 +17,19 @@ export {
   parseAPICatalog,
 } from "./api-catalog";
 export type { APICatalog, APICatalogEntry } from "./api-catalog";
+export { parseTokenUsageResponse } from "./token-usage-decoders";
+export type {
+  TokenBreakdownDTO,
+  TokenSummaryDTO,
+  TokenBucketDTO,
+  TokenProviderRankDTO,
+  TokenModelRankDTO,
+  TokenTimeRangeDTO,
+  TokenCoverageDTO,
+  TokenDataQualityDTO,
+  TokenUsageResponse,
+  TokenUsageParams,
+} from "./token-usage-types";
 export { createDebugCaptureApi } from "./debug-capture";
 export type { DebugCaptureApi } from "./debug-capture";
 export type {

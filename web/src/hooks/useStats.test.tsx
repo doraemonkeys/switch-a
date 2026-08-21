@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiClient, StatsResponse } from "../api/client";
 import { createMockApiClient, createWrapper } from "./test-utils";
@@ -76,8 +76,9 @@ describe("useStats", () => {
     expect(mockApi.stats.get).toHaveBeenCalledWith({});
   });
 
-  it("supports stats param updates", async () => {
-    const { result } = renderHook(() => useStats(), {
+  it("refetches when controlled stats params change", async () => {
+    const { result, rerender } = renderHook(({ params }) => useStats(params), {
+      initialProps: { params: {} },
       wrapper: createWrapper(mockApi),
     });
 
@@ -85,9 +86,7 @@ describe("useStats", () => {
       expect(result.current.loading).toBe(false);
     });
 
-    act(() => {
-      result.current.setParams({ period: "7d", granularity: "1h" });
-    });
+    rerender({ params: { period: "7d", granularity: "1h" } });
 
     await waitFor(() => {
       expect(mockApi.stats.get).toHaveBeenCalledWith({

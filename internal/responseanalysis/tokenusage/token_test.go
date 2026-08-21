@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func observed(value int64) ObservedCount {
+	return ObservedCount{Value: value, Present: true}
+}
+
 // ============================================================
 // tailBuffer tests
 // ============================================================
@@ -167,8 +171,8 @@ func TestNewCaptureBuffer_Unknown(t *testing.T) {
 
 func TestTokenUsage_BillableInputTokens_Basic(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:     1000,
-		CompletionTokens: 500,
+		PromptTokens:     observed(1000),
+		CompletionTokens: observed(500),
 	}
 	got := usage.BillableInputTokens()
 	// uncached = 1000, no cache = 1000.0
@@ -179,11 +183,11 @@ func TestTokenUsage_BillableInputTokens_Basic(t *testing.T) {
 
 func TestTokenUsage_BillableInputTokens_WithCache(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:         1000,
-		CompletionTokens:     500,
-		CacheReadInputTokens: 600, // 600 from cache
+		PromptTokens:         observed(1000),
+		CompletionTokens:     observed(500),
+		CacheReadInputTokens: observed(600), // 600 from cache
 		CacheCreation: &CacheCreation{
-			InputTokens: 200, // 200 written to cache
+			InputTokens: observed(200), // 200 written to cache
 		},
 	}
 	got := usage.BillableInputTokens()
@@ -204,8 +208,8 @@ func TestTokenUsage_BillableInputTokens_Nil(t *testing.T) {
 
 func TestTokenUsage_CacheHitRatio(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:         1000,
-		CacheReadInputTokens: 600,
+		PromptTokens:         observed(1000),
+		CacheReadInputTokens: observed(600),
 	}
 	got := usage.CacheHitRatio()
 	if got != 0.6 {
@@ -215,7 +219,7 @@ func TestTokenUsage_CacheHitRatio(t *testing.T) {
 
 func TestTokenUsage_CacheHitRatio_Zero(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens: 0,
+		PromptTokens: observed(0),
 	}
 	got := usage.CacheHitRatio()
 	if got != 0 {
@@ -241,14 +245,14 @@ func TestParseTokenUsage_OpenAI(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 25 {
-		t.Errorf("expected PromptTokens=25, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 25 {
+		t.Errorf("expected PromptTokens=25, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 150 {
-		t.Errorf("expected CompletionTokens=150, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 150 {
+		t.Errorf("expected CompletionTokens=150, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.TotalTokens != 175 {
-		t.Errorf("expected TotalTokens=175, got %d", usage.TotalTokens)
+	if !usage.TotalTokens.Present || usage.TotalTokens.Value != 175 {
+		t.Errorf("expected observed TotalTokens=175, got %#v", usage.TotalTokens)
 	}
 }
 
@@ -258,8 +262,8 @@ func TestParseTokenUsage_OpenAI_WithPromptTokenDetails(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.CacheReadInputTokens != 45 {
-		t.Errorf("expected CacheReadInputTokens=45, got %d", usage.CacheReadInputTokens)
+	if usage.CacheReadInputTokens.Value != 45 {
+		t.Errorf("expected CacheReadInputTokens=45, got %d", usage.CacheReadInputTokens.Value)
 	}
 }
 
@@ -269,8 +273,8 @@ func TestParseTokenUsage_OpenAI_WithCompletionReasoningTokens(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.ReasoningTokens != 18 {
-		t.Errorf("expected ReasoningTokens=18, got %d", usage.ReasoningTokens)
+	if usage.ReasoningTokens.Value != 18 {
+		t.Errorf("expected ReasoningTokens=18, got %d", usage.ReasoningTokens.Value)
 	}
 }
 
@@ -280,17 +284,17 @@ func TestParseTokenUsage_OpenAIRealtime_WithInputTokenDetails(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 64 {
-		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 64 {
+		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 16 {
-		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 16 {
+		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.TotalTokens != 80 {
-		t.Errorf("expected TotalTokens=80, got %d", usage.TotalTokens)
+	if usage.TotalTokens.Value != 80 {
+		t.Errorf("expected TotalTokens=80, got %d", usage.TotalTokens.Value)
 	}
-	if usage.CacheReadInputTokens != 9 {
-		t.Errorf("expected CacheReadInputTokens=9, got %d", usage.CacheReadInputTokens)
+	if usage.CacheReadInputTokens.Value != 9 {
+		t.Errorf("expected CacheReadInputTokens=9, got %d", usage.CacheReadInputTokens.Value)
 	}
 }
 
@@ -300,17 +304,17 @@ func TestParseTokenUsage_OpenAIResponses_WithInputTokensDetails(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 64 {
-		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 64 {
+		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 16 {
-		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 16 {
+		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.TotalTokens != 80 {
-		t.Errorf("expected TotalTokens=80, got %d", usage.TotalTokens)
+	if usage.TotalTokens.Value != 80 {
+		t.Errorf("expected TotalTokens=80, got %d", usage.TotalTokens.Value)
 	}
-	if usage.CacheReadInputTokens != 9 {
-		t.Errorf("expected CacheReadInputTokens=9, got %d", usage.CacheReadInputTokens)
+	if usage.CacheReadInputTokens.Value != 9 {
+		t.Errorf("expected CacheReadInputTokens=9, got %d", usage.CacheReadInputTokens.Value)
 	}
 }
 
@@ -320,14 +324,14 @@ func TestParseTokenUsage_OpenAIResponses_WithOutputReasoningTokens(t *testing.T)
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 64 {
-		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 64 {
+		t.Errorf("expected PromptTokens=64, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 16 {
-		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 16 {
+		t.Errorf("expected CompletionTokens=16, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.ReasoningTokens != 12 {
-		t.Errorf("expected ReasoningTokens=12, got %d", usage.ReasoningTokens)
+	if usage.ReasoningTokens.Value != 12 {
+		t.Errorf("expected ReasoningTokens=12, got %d", usage.ReasoningTokens.Value)
 	}
 }
 
@@ -341,14 +345,14 @@ func TestParseTokenUsage_Claude_Basic(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 25 {
-		t.Errorf("expected PromptTokens=25, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 25 {
+		t.Errorf("expected PromptTokens=25, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 150 {
-		t.Errorf("expected CompletionTokens=150, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 150 {
+		t.Errorf("expected CompletionTokens=150, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.TotalTokens != 175 {
-		t.Errorf("expected TotalTokens=175, got %d", usage.TotalTokens)
+	if usage.TotalTokens.Present {
+		t.Errorf("expected missing total to remain absent, got %#v", usage.TotalTokens)
 	}
 }
 
@@ -359,20 +363,20 @@ func TestParseTokenUsage_Claude_WithCache_Flat(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 2009 {
-		t.Errorf("expected PromptTokens=2009, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 2009 {
+		t.Errorf("expected PromptTokens=2009, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 125 {
-		t.Errorf("expected CompletionTokens=125, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 125 {
+		t.Errorf("expected CompletionTokens=125, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.CacheReadInputTokens != 19040 {
-		t.Errorf("expected CacheReadInputTokens=19040, got %d", usage.CacheReadInputTokens)
+	if usage.CacheReadInputTokens.Value != 19040 {
+		t.Errorf("expected CacheReadInputTokens=19040, got %d", usage.CacheReadInputTokens.Value)
 	}
 	if usage.CacheCreation == nil {
 		t.Fatal("expected non-nil CacheCreation")
 	}
-	if usage.CacheCreation.InputTokens != 358 {
-		t.Errorf("expected CacheCreation.InputTokens=358, got %d", usage.CacheCreation.InputTokens)
+	if usage.CacheCreation.InputTokens.Value != 358 {
+		t.Errorf("expected CacheCreation.InputTokens=358, got %d", usage.CacheCreation.InputTokens.Value)
 	}
 	if usage.ServiceTier != "standard" {
 		t.Errorf("expected ServiceTier='standard', got %q", usage.ServiceTier)
@@ -386,23 +390,23 @@ func TestParseTokenUsage_Claude_WithCache_Nested(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 100 {
-		t.Errorf("expected PromptTokens=100, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 100 {
+		t.Errorf("expected PromptTokens=100, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CacheReadInputTokens != 500 {
-		t.Errorf("expected CacheReadInputTokens=500, got %d", usage.CacheReadInputTokens)
+	if usage.CacheReadInputTokens.Value != 500 {
+		t.Errorf("expected CacheReadInputTokens=500, got %d", usage.CacheReadInputTokens.Value)
 	}
 	if usage.CacheCreation == nil {
 		t.Fatal("expected non-nil CacheCreation")
 	}
-	if usage.CacheCreation.InputTokens != 200 {
-		t.Errorf("expected CacheCreation.InputTokens=200, got %d", usage.CacheCreation.InputTokens)
+	if usage.CacheCreation.InputTokens.Value != 200 {
+		t.Errorf("expected CacheCreation.InputTokens=200, got %d", usage.CacheCreation.InputTokens.Value)
 	}
-	if usage.CacheCreation.Ephemeral1hInputTokens != 200 {
-		t.Errorf("expected Ephemeral1hInputTokens=200, got %d", usage.CacheCreation.Ephemeral1hInputTokens)
+	if usage.CacheCreation.Ephemeral1hInputTokens.Value != 200 {
+		t.Errorf("expected Ephemeral1hInputTokens=200, got %d", usage.CacheCreation.Ephemeral1hInputTokens.Value)
 	}
-	if usage.CacheCreation.Ephemeral5mInputTokens != 0 {
-		t.Errorf("expected Ephemeral5mInputTokens=0, got %d", usage.CacheCreation.Ephemeral5mInputTokens)
+	if usage.CacheCreation.Ephemeral5mInputTokens.Value != 0 {
+		t.Errorf("expected Ephemeral5mInputTokens=0, got %d", usage.CacheCreation.Ephemeral5mInputTokens.Value)
 	}
 }
 
@@ -416,14 +420,14 @@ func TestParseTokenUsage_Gemini(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 25 {
-		t.Errorf("expected PromptTokens=25, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 25 {
+		t.Errorf("expected PromptTokens=25, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 150 {
-		t.Errorf("expected CompletionTokens=150, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 150 {
+		t.Errorf("expected CompletionTokens=150, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.TotalTokens != 175 {
-		t.Errorf("expected TotalTokens=175, got %d", usage.TotalTokens)
+	if usage.TotalTokens.Value != 175 {
+		t.Errorf("expected TotalTokens=175, got %d", usage.TotalTokens.Value)
 	}
 }
 
@@ -433,8 +437,8 @@ func TestParseTokenUsage_Gemini_WithCache(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.CacheReadInputTokens != 30 {
-		t.Errorf("expected CacheReadInputTokens=30, got %d", usage.CacheReadInputTokens)
+	if usage.CacheReadInputTokens.Value != 30 {
+		t.Errorf("expected CacheReadInputTokens=30, got %d", usage.CacheReadInputTokens.Value)
 	}
 }
 
@@ -468,8 +472,8 @@ func TestParseTokenUsage_NullUsage(t *testing.T) {
 func TestParseTokenUsage_ZeroTokens(t *testing.T) {
 	data := []byte(`{"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`)
 	usage := Parse(data)
-	if usage != nil {
-		t.Error("expected nil for zero tokens")
+	if usage == nil || !usage.PromptTokens.Present || !usage.CompletionTokens.Present || !usage.TotalTokens.Present {
+		t.Fatalf("expected explicit zero counts to remain observed, got %#v", usage)
 	}
 }
 
@@ -492,11 +496,11 @@ func TestParseTokenUsage_TruncatedJSON_OpenAI(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
-	if usage.PromptTokens != 100 {
-		t.Errorf("expected PromptTokens=100, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 100 {
+		t.Errorf("expected PromptTokens=100, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 200 {
-		t.Errorf("expected CompletionTokens=200, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 200 {
+		t.Errorf("expected CompletionTokens=200, got %d", usage.CompletionTokens.Value)
 	}
 }
 
@@ -506,11 +510,11 @@ func TestParseTokenUsage_TruncatedJSON_Claude(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
-	if usage.PromptTokens != 50 {
-		t.Errorf("expected PromptTokens=50, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 50 {
+		t.Errorf("expected PromptTokens=50, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CacheReadInputTokens != 20 {
-		t.Errorf("expected CacheReadInputTokens=20, got %d", usage.CacheReadInputTokens)
+	if usage.CacheReadInputTokens.Value != 20 {
+		t.Errorf("expected CacheReadInputTokens=20, got %d", usage.CacheReadInputTokens.Value)
 	}
 }
 
@@ -520,8 +524,8 @@ func TestParseTokenUsage_TruncatedJSON_Gemini(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
-	if usage.PromptTokens != 30 {
-		t.Errorf("expected PromptTokens=30, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 30 {
+		t.Errorf("expected PromptTokens=30, got %d", usage.PromptTokens.Value)
 	}
 }
 
@@ -533,8 +537,8 @@ func TestParseTokenUsage_UsageInContent(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 10 {
-		t.Errorf("expected PromptTokens=10, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 10 {
+		t.Errorf("expected PromptTokens=10, got %d", usage.PromptTokens.Value)
 	}
 }
 
@@ -549,8 +553,8 @@ func TestParseTokenUsage_WithPrefix(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 50 {
-		t.Errorf("expected PromptTokens=50, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 50 {
+		t.Errorf("expected PromptTokens=50, got %d", usage.PromptTokens.Value)
 	}
 }
 
@@ -562,14 +566,14 @@ func TestParseTokenUsage_UsageCrossesTailBufferBoundary(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage from bracket matching")
 	}
-	if usage.PromptTokens != 500 {
-		t.Errorf("expected PromptTokens=500, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 500 {
+		t.Errorf("expected PromptTokens=500, got %d", usage.PromptTokens.Value)
 	}
-	if usage.CompletionTokens != 250 {
-		t.Errorf("expected CompletionTokens=250, got %d", usage.CompletionTokens)
+	if usage.CompletionTokens.Value != 250 {
+		t.Errorf("expected CompletionTokens=250, got %d", usage.CompletionTokens.Value)
 	}
-	if usage.TotalTokens != 750 {
-		t.Errorf("expected TotalTokens=750, got %d", usage.TotalTokens)
+	if usage.TotalTokens.Value != 750 {
+		t.Errorf("expected TotalTokens=750, got %d", usage.TotalTokens.Value)
 	}
 }
 
@@ -590,8 +594,8 @@ func TestParseTokenUsage_NestedUsageField(t *testing.T) {
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 100 {
-		t.Errorf("expected PromptTokens=100, got %d", usage.PromptTokens)
+	if usage.PromptTokens.Value != 100 {
+		t.Errorf("expected PromptTokens=100, got %d", usage.PromptTokens.Value)
 	}
 }
 
@@ -646,9 +650,9 @@ func TestTokenUsage_ToModelFields_Nil(t *testing.T) {
 
 func TestTokenUsage_ToModelFields_Basic(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:     100,
-		CompletionTokens: 200,
-		TotalTokens:      300,
+		PromptTokens:     observed(100),
+		CompletionTokens: observed(200),
+		TotalTokens:      observed(300),
 	}
 	prompt, completion, total, reasoning, cacheRead, cacheCreate, details := usage.ToModelFields()
 
@@ -677,14 +681,14 @@ func TestTokenUsage_ToModelFields_Basic(t *testing.T) {
 
 func TestTokenUsage_ToModelFields_WithCache(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:         1000,
-		CompletionTokens:     500,
-		TotalTokens:          1500,
-		CacheReadInputTokens: 600,
+		PromptTokens:         observed(1000),
+		CompletionTokens:     observed(500),
+		TotalTokens:          observed(1500),
+		CacheReadInputTokens: observed(600),
 		CacheCreation: &CacheCreation{
-			InputTokens:            200,
-			Ephemeral1hInputTokens: 150,
-			Ephemeral5mInputTokens: 50,
+			InputTokens:            observed(200),
+			Ephemeral1hInputTokens: observed(150),
+			Ephemeral5mInputTokens: observed(50),
 		},
 	}
 	prompt, completion, total, _, cacheRead, cacheCreate, details := usage.ToModelFields()
@@ -718,10 +722,10 @@ func TestTokenUsage_ToModelFields_WithCache(t *testing.T) {
 
 func TestTokenUsage_ToModelFields_WithReasoningTokens(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:     100,
-		CompletionTokens: 200,
-		TotalTokens:      300,
-		ReasoningTokens:  75,
+		PromptTokens:     observed(100),
+		CompletionTokens: observed(200),
+		TotalTokens:      observed(300),
+		ReasoningTokens:  observed(75),
 	}
 	_, _, _, reasoning, _, _, _ := usage.ToModelFields()
 
@@ -732,9 +736,9 @@ func TestTokenUsage_ToModelFields_WithReasoningTokens(t *testing.T) {
 
 func TestTokenUsage_ToModelFields_WithServiceTier(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:     100,
-		CompletionTokens: 200,
-		TotalTokens:      300,
+		PromptTokens:     observed(100),
+		CompletionTokens: observed(200),
+		TotalTokens:      observed(300),
 		ServiceTier:      "standard",
 	}
 	_, _, _, _, _, _, details := usage.ToModelFields()
@@ -747,35 +751,33 @@ func TestTokenUsage_ToModelFields_WithServiceTier(t *testing.T) {
 	}
 }
 
-func TestTokenUsage_ToModelFields_ZeroCacheNotStored(t *testing.T) {
+func TestTokenUsage_ToModelFields_ObservedZeroCacheStored(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:         100,
-		CompletionTokens:     200,
-		TotalTokens:          300,
-		CacheReadInputTokens: 0, // Zero should not be stored as pointer
+		PromptTokens:         observed(100),
+		CompletionTokens:     observed(200),
+		TotalTokens:          observed(300),
+		CacheReadInputTokens: observed(0),
 	}
 	_, _, _, _, cacheRead, _, _ := usage.ToModelFields()
 
-	// Zero cache read should not result in a pointer (to distinguish from NULL)
-	if cacheRead != nil {
-		t.Errorf("expected nil for zero CacheReadInputTokens, got %v", *cacheRead)
+	if cacheRead == nil || *cacheRead != 0 {
+		t.Errorf("expected pointer for observed zero CacheReadInputTokens, got %v", cacheRead)
 	}
 }
 
 func TestTokenUsage_ToModelFields_CacheCreationWithZeroTokens(t *testing.T) {
 	usage := &TokenUsage{
-		PromptTokens:     100,
-		CompletionTokens: 200,
-		TotalTokens:      300,
+		PromptTokens:     observed(100),
+		CompletionTokens: observed(200),
+		TotalTokens:      observed(300),
 		CacheCreation: &CacheCreation{
-			InputTokens: 0, // Zero creation tokens
+			InputTokens: observed(0),
 		},
 	}
 	_, _, _, _, _, cacheCreate, _ := usage.ToModelFields()
 
-	// Zero cache creation should not be stored
-	if cacheCreate != nil {
-		t.Errorf("expected nil for zero CacheCreation.InputTokens, got %v", *cacheCreate)
+	if cacheCreate == nil || *cacheCreate != 0 {
+		t.Errorf("expected pointer for observed zero CacheCreation.InputTokens, got %v", cacheCreate)
 	}
 }
 
@@ -785,14 +787,14 @@ func TestTokenUsage_ToModelFields_CacheCreationWithZeroTokens(t *testing.T) {
 
 func BenchmarkTokenUsage_ToModelFields(b *testing.B) {
 	usage := &TokenUsage{
-		PromptTokens:         2009,
-		CompletionTokens:     125,
-		TotalTokens:          2134,
-		CacheReadInputTokens: 19040,
+		PromptTokens:         observed(2009),
+		CompletionTokens:     observed(125),
+		TotalTokens:          observed(2134),
+		CacheReadInputTokens: observed(19040),
 		CacheCreation: &CacheCreation{
-			InputTokens:            358,
-			Ephemeral1hInputTokens: 200,
-			Ephemeral5mInputTokens: 158,
+			InputTokens:            observed(358),
+			Ephemeral1hInputTokens: observed(200),
+			Ephemeral5mInputTokens: observed(158),
 		},
 		ServiceTier: "standard",
 	}
