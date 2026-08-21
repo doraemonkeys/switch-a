@@ -20,14 +20,16 @@ GO_EXE := $(shell go env GOEXE)
 GOPLS_VERSION := latest
 GOPLS_MODULE := golang.org/x/tools/gopls
 GOPLS := $(GO_TOOL_BIN)/gopls$(GO_EXE)
-GO_TEST_COVERAGE_VERSION := v2.17.1
+# Hosted CI follows stable Go, so quality tools resolve their current compatible releases.
+GO_TEST_COVERAGE_VERSION := latest
 GO_TEST_COVERAGE_MODULE := github.com/vladopajic/go-test-coverage/v2
 GO_TEST_COVERAGE := $(GO_TOOL_BIN)/go-test-coverage$(GO_EXE)
-# Hosted CI follows stable Go, so the analyzer must understand that toolchain's AST.
-GOLANGCI_LINT_VERSION := v2.13.1
+GOLANGCI_LINT_VERSION := latest
 GOLANGCI_LINT_MODULE := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 GOLANGCI_LINT := $(GO_TOOL_BIN)/golangci-lint$(GO_EXE)
-SLOC_GUARD_VERSION := 0.4.0
+SLOC_GUARD_VERSION := latest
+# Cargo installs the newest release when no version constraint is supplied.
+SLOC_GUARD_VERSION_ARG := $(if $(filter latest,$(SLOC_GUARD_VERSION)),,--version $(SLOC_GUARD_VERSION))
 ifeq ($(OS),Windows_NT)
     PROJECT_ROOT_NATIVE := $(shell pwd -W)
 else
@@ -111,7 +113,7 @@ install-go-tools:
 	GOBIN="$(GO_TOOL_BIN_NATIVE)" go install $(GOPLS_MODULE)@$(GOPLS_VERSION)
 
 install-sloc-guard:
-	cargo install sloc-guard --version $(SLOC_GUARD_VERSION) --root "$(TOOLS_ROOT_NATIVE)" --locked --force
+	cargo install sloc-guard $(SLOC_GUARD_VERSION_ARG) --root "$(TOOLS_ROOT_NATIVE)" --locked --force
 
 ensure-go-test-coverage:
 	@if [ ! -x "$(GO_TEST_COVERAGE)" ]; then \
@@ -145,7 +147,7 @@ ensure-sloc-guard:
 		echo "Missing required tool: sloc-guard"; \
 		echo "Expected executable: $(SLOC_GUARD)"; \
 		echo "Install manually with:"; \
-		echo "  cargo install sloc-guard --version $(SLOC_GUARD_VERSION) --root \"$(TOOLS_ROOT_NATIVE)\" --locked --force"; \
+		echo "  cargo install sloc-guard $(SLOC_GUARD_VERSION_ARG) --root \"$(TOOLS_ROOT_NATIVE)\" --locked --force"; \
 		exit 1; \
 	fi
 
