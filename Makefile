@@ -23,7 +23,8 @@ GOPLS := $(GO_TOOL_BIN)/gopls$(GO_EXE)
 GO_TEST_COVERAGE_VERSION := v2.17.1
 GO_TEST_COVERAGE_MODULE := github.com/vladopajic/go-test-coverage/v2
 GO_TEST_COVERAGE := $(GO_TOOL_BIN)/go-test-coverage$(GO_EXE)
-GOLANGCI_LINT_VERSION := v2.12.2
+# Hosted CI follows stable Go, so the analyzer must understand that toolchain's AST.
+GOLANGCI_LINT_VERSION := v2.13.1
 GOLANGCI_LINT_MODULE := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 GOLANGCI_LINT := $(GO_TOOL_BIN)/golangci-lint$(GO_EXE)
 SLOC_GUARD_VERSION := 0.4.0
