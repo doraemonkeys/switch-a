@@ -21,7 +21,7 @@ import (
 
 func TestHandlerIntegrationReadsCanonicalSQLiteSnapshot(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "token-usage-integration.db")
-	writer, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	writer, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -110,7 +110,7 @@ func TestHandlerIntegrationReadsCanonicalSQLiteSnapshot(t *testing.T) {
 
 func TestHandlerIntegrationRealWorldHeterogeneousTraffic(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "token-usage-heterogeneous.db")
-	writer, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	writer, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}

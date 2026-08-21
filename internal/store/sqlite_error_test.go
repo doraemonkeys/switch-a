@@ -17,7 +17,7 @@ func setupClosedStore(t *testing.T) *SQLiteStore {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	store, err := NewSQLiteStore(dbPath, internal.RealClock{})
+	store, err := NewSQLiteStore(dbPath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -32,7 +32,7 @@ func setupClosedStore(t *testing.T) *SQLiteStore {
 
 func TestNewSQLiteStore_InvalidPath(t *testing.T) {
 	// Use an invalid path that will cause sqlite to fail
-	store, err := NewSQLiteStore("/nonexistent/path/that/cannot/exist/test.db", internal.RealClock{})
+	store, err := NewSQLiteStore("/nonexistent/path/that/cannot/exist/test.db", internal.RealClock{}, nil)
 	if err == nil {
 		store.Close()
 		t.Fatal("expected error for invalid path, got nil")

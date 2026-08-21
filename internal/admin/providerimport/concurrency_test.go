@@ -19,7 +19,7 @@ import (
 
 func TestCommitProviderImportRejectsCredentialRotationAfterPreviewWithoutMutation(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "provider-import.db")
-	persistentStore, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	persistentStore, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -123,7 +123,7 @@ func TestCommitProviderImportRejectsCredentialRotationAfterPreviewWithoutMutatio
 
 func TestCommitProviderImportPersistsProductionSplitCredentialCreateAndUpdate(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "provider-import-split.db")
-	persistentStore, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	persistentStore, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}

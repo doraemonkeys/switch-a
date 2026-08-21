@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/doraemonkeys/switch-a/internal/instant"
 )
 
 const (
@@ -60,6 +62,7 @@ const (
 	reasonBlank          validationReason = "blank"
 	reasonDuplicate      validationReason = "duplicate"
 	reasonMalformed      validationReason = "malformed"
+	reasonOutOfRange     validationReason = "out_of_range"
 	reasonUnsupported    validationReason = "unsupported"
 	reasonIncompatible   validationReason = "incompatible"
 	reasonInvalidRange   validationReason = "invalid_range"
@@ -184,6 +187,9 @@ func (r Resolver) resolve(values url.Values, defaultGranularity bool) (Window, e
 		endTime = r.clock.Now()
 	}
 	endTime = endTime.UTC()
+	if _, err := instant.UnixNano(endTime); err != nil {
+		return Window{}, newValidationError("as_of", reasonOutOfRange)
+	}
 
 	window := Window{
 		Period:          period,
@@ -196,6 +202,9 @@ func (r Resolver) resolve(values url.Values, defaultGranularity bool) (Window, e
 		window.StartResolution = StartUnresolved
 	} else {
 		window.Start = endTime.Add(-periodDuration)
+		if _, err := instant.UnixNano(window.Start); err != nil {
+			return Window{}, newValidationError("as_of", reasonOutOfRange)
+		}
 		if err := validateBucketCount(window); err != nil {
 			return Window{}, err
 		}
@@ -218,6 +227,9 @@ func ResolveAll(window Window, earliest *time.Time) (Window, error) {
 	}
 
 	window.Start = earliest.UTC()
+	if _, err := instant.UnixNano(window.Start); err != nil {
+		return window, newValidationError("period", reasonOutOfRange)
+	}
 	if !window.Start.Before(window.End) {
 		return window, newValidationError("period", reasonInvalidRange)
 	}

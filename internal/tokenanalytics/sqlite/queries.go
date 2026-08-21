@@ -53,20 +53,20 @@ SELECT
 	COALESCE(SUM(class = 'partial'), 0),
 	COALESCE(SUM(class = 'invalid'), 0),
 	COALESCE(SUM(class = 'unknown_semantics'), 0),
-	MIN(created_at)
+	MIN(created_at_unix_nano)
 FROM classified`
 
 const bucketQuerySuffix = `
 ,
-bucket_config(granularity_seconds) AS (VALUES (?)),
-bucketed AS (
+	bucket_config(granularity_nanoseconds, granularity_seconds) AS (VALUES (?, ?)),
+	bucketed AS (
 	SELECT
 		(
-			(CAST(strftime('%s', created_at) AS INTEGER) / granularity_seconds)
+			(created_at_unix_nano / granularity_nanoseconds)
 			- CASE
-				WHEN CAST(strftime('%s', created_at) AS INTEGER) < 0
-					AND CAST(strftime('%s', created_at) AS INTEGER) % granularity_seconds != 0
-				THEN 1
+				WHEN created_at_unix_nano < 0
+					AND created_at_unix_nano % granularity_nanoseconds != 0
+					THEN 1
 				ELSE 0
 			END
 		) * granularity_seconds AS bucket_start_unix,
@@ -149,7 +149,7 @@ func (s *Snapshot) ReadSummary(ctx context.Context, query tokenanalytics.Query) 
 
 	var values breakdownText
 	var record tokenanalytics.SummaryRecord
-	var earliest nullableTime
+	var earliest sql.NullInt64
 	destinations := values.destinations()
 	destinations = append(destinations,
 		&record.TotalRequests,
@@ -168,7 +168,7 @@ func (s *Snapshot) ReadSummary(ctx context.Context, query tokenanalytics.Query) 
 		return tokenanalytics.SummaryRecord{}, fmt.Errorf("read token analytics summary: %w", err)
 	}
 	if earliest.Valid {
-		value := earliest.Time.UTC()
+		value := time.Unix(0, earliest.Int64).UTC()
 		record.EarliestMatchingTime = &value
 	}
 	return record, nil
@@ -189,7 +189,8 @@ func (s *Snapshot) ReadBuckets(ctx context.Context, query tokenanalytics.Query) 
 		return nil, err
 	}
 	granularitySeconds := int64(query.Window.Granularity / time.Second)
-	args := appendProjectionArgs(projection.args, granularitySeconds)
+	granularityNanoseconds := query.Window.Granularity.Nanoseconds()
+	args := appendProjectionArgs(projection.args, granularityNanoseconds, granularitySeconds)
 	rows, err := s.tx.QueryContext(ctx, projection.sql+bucketQuerySuffix, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read token analytics buckets: %w", err)
@@ -399,54 +400,6 @@ func parseExactInt64(value string) (int64, error) {
 	}
 	return parsed, nil
 }
-
-type nullableTime struct {
-	Time  time.Time
-	Valid bool
-}
-
-func (value *nullableTime) Scan(source any) error {
-	if source == nil {
-		value.Valid = false
-		value.Time = time.Time{}
-		return nil
-	}
-	switch typed := source.(type) {
-	case time.Time:
-		value.Time = typed
-		value.Valid = true
-		return nil
-	case string:
-		return value.parse(typed)
-	case []byte:
-		return value.parse(string(typed))
-	default:
-		return fmt.Errorf("unsupported SQLite time type %T", source)
-	}
-}
-
-func (value *nullableTime) parse(raw string) error {
-	formats := []string{
-		time.RFC3339Nano,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999Z07:00",
-		"2006-01-02 15:04:05.999999999",
-		"2006-01-02 15:04:05-07:00",
-		"2006-01-02 15:04:05Z07:00",
-		"2006-01-02 15:04:05",
-	}
-	for _, format := range formats {
-		parsed, err := time.Parse(format, raw)
-		if err == nil {
-			value.Time = parsed
-			value.Valid = true
-			return nil
-		}
-	}
-	return fmt.Errorf("unsupported SQLite time value")
-}
-
-var _ sql.Scanner = (*nullableTime)(nil)
 
 func combineCloseErrors(errorsToJoin ...error) error {
 	nonNil := make([]error, 0, len(errorsToJoin))

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/instant"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"gorm.io/gorm"
@@ -21,6 +22,18 @@ const (
 )
 
 func (s *SQLiteStore) InsertLog(ctx context.Context, log *model.RequestLog) error {
+	createdAt := log.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = s.clock.Now()
+	}
+	createdAtUnixNano, err := instant.UnixNano(createdAt)
+	if err != nil {
+		return fmt.Errorf("insert log: created_at: %w", err)
+	}
+	// Assigning the resolved value prevents GORM's CreatedAt callback from taking
+	// a second clock reading and breaking the text/key instant invariant.
+	log.CreatedAt = createdAt
+	log.CreatedAtUnixNano = &createdAtUnixNano
 	if err := s.db.WithContext(ctx).Create(log).Error; err != nil {
 		return fmt.Errorf("insert log: %w", err)
 	}

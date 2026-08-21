@@ -13,9 +13,35 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/config"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestLogRequestLogTimestampMigrationEmitsBoundedQuarantineDiagnostics(t *testing.T) {
+	core, observed := observer.New(zapcore.DebugLevel)
+	report := store.RequestLogTimestampMigrationReport{
+		BackfilledCount: 500,
+		InvalidCount:    20,
+		InvalidIDs:      []uint{4, 5, 6},
+	}
+
+	logRequestLogTimestampMigration(zap.New(core), report)
+
+	entries := observed.All()
+	if len(entries) != 1 || entries[0].Level != zap.WarnLevel {
+		t.Fatalf("entries = %+v, want one warning", entries)
+	}
+	fields := entries[0].ContextMap()
+	if fields["migration_id"] != requestLogTimestampMigrationID ||
+		fields["backfilled_count"] != int64(500) ||
+		fields["invalid_count"] != int64(20) ||
+		fields["invalid_id_sample_truncated"] != true {
+		t.Fatalf("fields = %+v", fields)
+	}
+}
 
 const (
 	cleanupObservationTimeout = time.Second

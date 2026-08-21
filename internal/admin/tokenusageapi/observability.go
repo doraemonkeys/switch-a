@@ -65,11 +65,9 @@ func (h *Handler) logFailed(operationID string, query tokenanalytics.Query, err 
 	fields := lifecycleFields(operationID, query, window)
 	fields = append(fields,
 		zap.String("failure_stage", string(stage)),
+		zap.String("failure_code", string(tokenanalytics.FailureCodeOf(err))),
 		zap.String("failure_reason", failureReason(err)),
 		zap.Duration("duration", duration),
-		// Retain the stage while deliberately dropping the raw cause: the domain's
-		// stable Error text is sufficient for correlation and cannot leak SQL.
-		zap.Error(tokenanalytics.NewFailure(stage, nil)),
 	)
 	h.logger.Error(queryFailedMessage, fields...)
 }

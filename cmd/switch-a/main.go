@@ -281,8 +281,12 @@ func completeServerLifecycle(wait, drainServers, stopStatistics lifecycleStep) e
 	return errors.Join(waitErr, drainErr, statisticsErr)
 }
 
-func openApplicationStore(dbPath string, clock internal.Clock) (*store.SQLiteStore, error) {
-	sqlStore, err := store.NewSQLiteStore(dbPath, clock)
+func openApplicationStore(
+	dbPath string,
+	clock internal.Clock,
+	observeTimestampMigration store.RequestLogTimestampMigrationObserver,
+) (*store.SQLiteStore, error) {
+	sqlStore, err := store.NewSQLiteStore(dbPath, clock, observeTimestampMigration)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize store: %w", err)
 	}
@@ -328,7 +332,9 @@ func (runtime *applicationAnalytics) Close() error {
 }
 
 func openApplicationStorage(databasePath string, clock internal.Clock, log *zap.Logger) (*applicationStorage, error) {
-	writer, err := openApplicationStore(databasePath, clock)
+	writer, err := openApplicationStore(databasePath, clock, func(report store.RequestLogTimestampMigrationReport) {
+		logRequestLogTimestampMigration(log, report)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -341,6 +347,26 @@ func openApplicationStorage(databasePath string, clock internal.Clock, log *zap.
 		return nil, errors.Join(fmt.Errorf("failed to initialize default config: %w", err), closeApplicationStores(analytics, writer))
 	}
 	return &applicationStorage{writer: writer, cached: cached, analytics: analytics}, nil
+}
+
+const requestLogTimestampMigrationID = "request_log_created_at_instants"
+
+func logRequestLogTimestampMigration(log *zap.Logger, report store.RequestLogTimestampMigrationReport) {
+	if report.BackfilledCount == 0 && report.InvalidCount == 0 {
+		return
+	}
+	fields := []zap.Field{
+		zap.String("migration_id", requestLogTimestampMigrationID),
+		zap.Int64("backfilled_count", report.BackfilledCount),
+		zap.Int64("invalid_count", report.InvalidCount),
+		zap.Uints("invalid_id_sample", report.InvalidIDs),
+		zap.Bool("invalid_id_sample_truncated", report.InvalidCount > int64(len(report.InvalidIDs))),
+	}
+	if report.InvalidCount > 0 {
+		log.Warn("request-log timestamp migration completed with quarantined rows", fields...)
+		return
+	}
+	log.Info("request-log timestamp migration completed", fields...)
 }
 
 func (storage *applicationStorage) Close() error {

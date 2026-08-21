@@ -114,7 +114,7 @@ func setupCachedStoreTest(t *testing.T) (*CachedStore, *configOnlyStore, *mockCl
 	t.Helper()
 
 	// Create temporary SQLite store as base
-	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
+	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create SQLite store: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestCachedStore_ApplyConfigImport_WrappedErrorKeepsLiveConfigCache(t *testi
 }
 
 func TestCachedStore_ApplyConfigImport_UnsupportedWrappedStoreFails(t *testing.T) {
-	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
+	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create SQLite store: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestCachedStore_SetConfig_ErrorDoesNotInvalidate(t *testing.T) {
 }
 
 func TestCachedStore_DefaultTTL(t *testing.T) {
-	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
+	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create SQLite store: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestCachedStore_DefaultTTL(t *testing.T) {
 }
 
 func TestCachedStore_GetConfig_StoreError(t *testing.T) {
-	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
+	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create SQLite store: %v", err)
 	}
@@ -519,7 +519,7 @@ func (s *errorOnGetStore) GetConfig(ctx context.Context, key string) (string, er
 
 // Ensure CachedStore still passes through other Store methods
 func TestCachedStore_PassthroughMethods(t *testing.T) {
-	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{})
+	sqlStore, err := NewSQLiteStore(":memory:", internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create SQLite store: %v", err)
 	}

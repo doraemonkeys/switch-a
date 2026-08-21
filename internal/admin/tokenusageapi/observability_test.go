@@ -157,6 +157,7 @@ func TestObservabilityAllPeriodLogsTruthfulLowerBoundLifecycle(t *testing.T) {
 			name: "data-dependent overflow",
 			analyzer: &analyzerStub{err: tokenanalytics.NewFailureForWindow(
 				tokenanalytics.FailureStageResponseMap,
+				tokenanalytics.FailureCodeWindowResolution,
 				&analyticswindow.ValidationError{Field: "granularity", Reason: "too_many_buckets"},
 				overflowWindow,
 			)},
@@ -166,7 +167,7 @@ func TestObservabilityAllPeriodLogsTruthfulLowerBoundLifecycle(t *testing.T) {
 		},
 		{
 			name:       "summary failure",
-			analyzer:   &analyzerStub{err: tokenanalytics.NewFailure(tokenanalytics.FailureStageSummary, errors.New("storage"))},
+			analyzer:   &analyzerStub{err: tokenanalytics.NewFailure(tokenanalytics.FailureStageSummary, tokenanalytics.FailureCodeRepository, errors.New("storage"))},
 			wantStatus: http.StatusInternalServerError,
 			wantEvent:  queryFailedMessage,
 		},
@@ -231,6 +232,85 @@ func TestObservabilityAllPeriodLogsTruthfulLowerBoundLifecycle(t *testing.T) {
 	}
 }
 
+func TestObservabilityFailureCodesRemainDistinguishable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		err       error
+		wantStage tokenanalytics.FailureStage
+		wantCode  tokenanalytics.FailureCode
+	}{
+		{
+			name:      "repository stage",
+			err:       tokenanalytics.NewFailure(tokenanalytics.FailureStageTimeSeries, tokenanalytics.FailureCodeRepository, errors.New("private repository detail")),
+			wantStage: tokenanalytics.FailureStageTimeSeries,
+			wantCode:  tokenanalytics.FailureCodeRepository,
+		},
+		{
+			name:      "rejected bucket key",
+			err:       tokenanalytics.NewFailure(tokenanalytics.FailureStageResponseMap, tokenanalytics.FailureCodeBucketKeyRejected, errors.New("private bucket detail")),
+			wantStage: tokenanalytics.FailureStageResponseMap,
+			wantCode:  tokenanalytics.FailureCodeBucketKeyRejected,
+		},
+		{
+			name:      "snapshot close",
+			err:       tokenanalytics.NewFailure(tokenanalytics.FailureStageResponseMap, tokenanalytics.FailureCodeSnapshotClose, errors.New("private close detail")),
+			wantStage: tokenanalytics.FailureStageResponseMap,
+			wantCode:  tokenanalytics.FailureCodeSnapshotClose,
+		},
+		{
+			name:      "unexpected analyzer",
+			err:       errors.New("private unexpected detail"),
+			wantStage: tokenanalytics.FailureStageResponseMap,
+			wantCode:  tokenanalytics.FailureCodeUnexpectedAnalyzerError,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			startedAt := time.Date(2026, time.August, 21, 1, 0, 0, 0, time.UTC)
+			clock := &sequenceClock{values: []time.Time{startedAt, startedAt.Add(time.Millisecond)}}
+			resolver := analyticswindow.NewResolver(clock)
+			core, observed := observer.New(zap.InfoLevel)
+			handler, err := NewHandler(Config{
+				Analyzer:       &analyzerStub{err: test.err},
+				WindowResolver: &resolver,
+				Clock:          clock,
+				OperationIDs:   &operationIDStub{id: "failure-code-operation"},
+				Logger:         zap.New(core),
+			})
+			if err != nil {
+				t.Fatalf("NewHandler() error = %v", err)
+			}
+
+			recorder := httptest.NewRecorder()
+			handler.GetTokenUsage(recorder, httptest.NewRequest(http.MethodGet, "/admin/api/token-usage", nil))
+
+			entries := observed.All()
+			if recorder.Code != http.StatusInternalServerError || len(entries) != 2 {
+				t.Fatalf("status/log count = %d/%d, want 500/2", recorder.Code, len(entries))
+			}
+			fields := entries[1].ContextMap()
+			if fields["operation_id"] != "failure-code-operation" ||
+				fields["failure_stage"] != string(test.wantStage) ||
+				fields["failure_code"] != string(test.wantCode) {
+				t.Fatalf("failure fields = %+v, want operation/stage/code %q/%q/%q", fields, "failure-code-operation", test.wantStage, test.wantCode)
+			}
+			if serialized := fmt.Sprint(entries); strings.Contains(serialized, "private") {
+				t.Fatalf("structured logs leaked underlying cause: %s", serialized)
+			}
+			if strings.Contains(recorder.Body.String(), "private") {
+				t.Fatalf("public error leaked underlying cause: %s", recorder.Body.String())
+			}
+			assertErrorEnvelope(t, recorder, internalErrorCode, internalErrorMessage)
+		})
+	}
+}
+
 func TestObservabilityFailureUsesStableStageAndRedactsSensitiveInputs(t *testing.T) {
 	const (
 		bodySentinel  = "BODY-CREDENTIAL-SENTINEL"
@@ -241,7 +321,7 @@ func TestObservabilityFailureUsesStableStageAndRedactsSensitiveInputs(t *testing
 	clock := &sequenceClock{values: []time.Time{startedAt, startedAt.Add(9 * time.Millisecond)}}
 	resolver := analyticswindow.NewResolver(clock)
 	core, observed := observer.New(zap.InfoLevel)
-	analyzerErr := tokenanalytics.NewFailure(tokenanalytics.FailureStageSummary, errors.New(causeSentinel))
+	analyzerErr := tokenanalytics.NewFailure(tokenanalytics.FailureStageSummary, tokenanalytics.FailureCodeRepository, errors.New(causeSentinel))
 	handler, err := NewHandler(Config{
 		Analyzer:       &analyzerStub{err: analyzerErr},
 		WindowResolver: &resolver,
@@ -268,9 +348,14 @@ func TestObservabilityFailureUsesStableStageAndRedactsSensitiveInputs(t *testing
 	if startedFields["operation_id"] != "failure-operation-id" || failedFields["operation_id"] != "failure-operation-id" {
 		t.Fatalf("operation IDs = %v/%v", startedFields["operation_id"], failedFields["operation_id"])
 	}
-	if failedFields["failure_stage"] != string(tokenanalytics.FailureStageSummary) || failedFields["failure_reason"] != failureReasonQueryFailed ||
-		failedFields["duration"] != 9*time.Millisecond || failedFields["error"] != "token analytics request failed" {
+	if failedFields["failure_stage"] != string(tokenanalytics.FailureStageSummary) ||
+		failedFields["failure_code"] != string(tokenanalytics.FailureCodeRepository) ||
+		failedFields["failure_reason"] != failureReasonQueryFailed ||
+		failedFields["duration"] != 9*time.Millisecond {
 		t.Fatalf("failure fields = %+v", failedFields)
+	}
+	if _, exists := failedFields["error"]; exists {
+		t.Fatalf("unbounded error field was logged: %+v", failedFields)
 	}
 	serialized := fmt.Sprint(entries)
 	for _, sentinel := range []string{bodySentinel, authSentinel, causeSentinel} {

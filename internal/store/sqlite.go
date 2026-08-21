@@ -9,6 +9,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	storemigration "github.com/doraemonkeys/switch-a/internal/store/migration"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -26,8 +27,15 @@ type SQLiteStore struct {
 	ruleRepository      *errorrulesqlite.Repository
 }
 
+// RequestLogTimestampMigrationObserver keeps storage independent of a logging
+// implementation while delivering diagnostics before any later startup stage
+// can fail and make them unrecoverable.
+type RequestLogTimestampMigrationReport = storemigration.RequestLogTimestampMigrationReport
+
+type RequestLogTimestampMigrationObserver func(RequestLogTimestampMigrationReport)
+
 // NewSQLiteStore creates a new SQLite store with the given database path and clock.
-func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
+func NewSQLiteStore(dbPath string, clock internal.Clock, observeTimestampMigration RequestLogTimestampMigrationObserver) (*SQLiteStore, error) {
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -90,29 +98,37 @@ func NewSQLiteStore(dbPath string, clock internal.Clock) (*SQLiteStore, error) {
 	if err := migrateProviderStateTables(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate provider credential/auth state tables: %w", err)
 	}
-	if err := migrateProviderUsageLimitPolicyStorage(db); err != nil { // coverage-ignore -- one-time migration
+	if err := storemigration.MigrateProviderUsageLimitPolicyStorage(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate provider usage-limit policy storage: %w", err)
 	}
-	if err := migrateRoutingPolicyLifecycleStorage(db); err != nil { // coverage-ignore -- one-time migration
+	if err := storemigration.MigrateRoutingPolicyLifecycleStorage(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate routing policy lifecycle storage: %w", err)
 	}
 
-	if err := migrateBaseURLToAPIType(db); err != nil { // coverage-ignore -- one-time migration
+	if err := storemigration.MigrateBaseURLToAPIType(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate base_url: %w", err)
 	}
-	if err := migrateStickyConfig(db); err != nil { // coverage-ignore -- one-time migration
+	if err := storemigration.MigrateStickyConfig(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate sticky config: %w", err)
 	}
-	if err := migrateGlobalMaxAttemptsConfig(db); err != nil { // coverage-ignore -- one-time migration
+	if err := storemigration.MigrateGlobalMaxAttemptsConfig(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate global max attempts config: %w", err)
 	}
-	if err := migrateWebSocketColumn(db); err != nil { // coverage-ignore -- one-time migration
+	if err := storemigration.MigrateWebSocketColumn(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate websocket column: %w", err)
 	}
-	if err := migrateRequestLogLifecycleFields(db); err != nil { // coverage-ignore -- one-time migration
+	if err := storemigration.MigrateRequestLogLifecycleFields(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate request log lifecycle fields: %w", err)
 	}
-	if err := migrateRequestLogAnalyticsIndexes(db); err != nil { // coverage-ignore -- idempotent schema migration
+	timestampMigrationReport, err := storemigration.MigrateRequestLogCreatedAtInstants(db)
+	if err != nil { // coverage-ignore -- one-time timestamp backfill
+		return nil, fmt.Errorf("migrate request-log timestamp instants: %w", err)
+	}
+	if observeTimestampMigration != nil {
+		timestampMigrationReport.InvalidIDs = append([]uint(nil), timestampMigrationReport.InvalidIDs...)
+		observeTimestampMigration(timestampMigrationReport)
+	}
+	if err := storemigration.MigrateRequestLogAnalyticsIndexes(db); err != nil { // coverage-ignore -- idempotent schema migration
 		return nil, fmt.Errorf("migrate request-log analytics indexes: %w", err)
 	}
 

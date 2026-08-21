@@ -8,8 +8,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 )
 
-// FailureStage identifies the single boundary that failed without exposing its
-// storage cause to HTTP clients or logs.
+// FailureStage identifies the boundary that failed without exposing its
+// underlying storage or validation error to HTTP clients.
 type FailureStage string
 
 const (
@@ -21,28 +21,52 @@ const (
 	FailureStageResponseMap  FailureStage = "response_map"
 )
 
+// FailureCode is a bounded, non-sensitive explanation suitable for structured
+// diagnostics. The underlying error remains available through Unwrap only.
+type FailureCode string
+
+const (
+	FailureCodeRepository              FailureCode = "repository_error"
+	FailureCodeSnapshotUnavailable     FailureCode = "snapshot_unavailable"
+	FailureCodeSummaryValidation       FailureCode = "summary_validation_error"
+	FailureCodeWindowResolution        FailureCode = "window_resolution_error"
+	FailureCodeBucketSetValidation     FailureCode = "bucket_set_validation_error"
+	FailureCodeBucketKeyRejected       FailureCode = "bucket_key_rejected"
+	FailureCodeProviderRankValidation  FailureCode = "provider_rank_validation_error"
+	FailureCodeModelRankValidation     FailureCode = "model_rank_validation_error"
+	FailureCodeSnapshotClose           FailureCode = "snapshot_close_error"
+	FailureCodeUnexpectedAnalyzerError FailureCode = "unexpected_analyzer_error"
+)
+
 const failureMessage = "token analytics request failed"
 
-// Failure carries a stable public error while retaining its cause and optional
-// resolved decision range for internal control flow and lifecycle diagnostics.
+// Failure carries a stable public error while retaining safe diagnostic context,
+// its underlying cause, and an optional resolved decision range.
 type Failure struct {
 	Stage     FailureStage
+	code      FailureCode
 	cause     error
 	window    analyticswindow.Window
 	hasWindow bool
 }
 
-// NewFailure creates one stage-qualified failure. Services should wrap a cause
-// only at the boundary where it first enters the token analytics domain.
-func NewFailure(stage FailureStage, cause error) *Failure {
-	return &Failure{Stage: stage, cause: cause}
+// NewFailure creates one stage-qualified failure. Services should wrap an
+// underlying error only where it first enters the token analytics domain.
+func NewFailure(stage FailureStage, code FailureCode, cause error) *Failure {
+	return &Failure{Stage: stage, code: normalizeFailureCode(code), cause: cause}
 }
 
 // NewFailureForWindow retains the exact resolved decision range after the
 // service has discovered an all-period lower bound. The public error remains
 // stable while adapters can reconstruct truthful lifecycle context.
-func NewFailureForWindow(stage FailureStage, cause error, window analyticswindow.Window) *Failure {
-	return &Failure{Stage: stage, cause: cause, window: window, hasWindow: window.HasResolvedStart()}
+func NewFailureForWindow(stage FailureStage, code FailureCode, cause error, window analyticswindow.Window) *Failure {
+	return &Failure{
+		Stage:     stage,
+		code:      normalizeFailureCode(code),
+		cause:     cause,
+		window:    window,
+		hasWindow: window.HasResolvedStart(),
+	}
 }
 
 func (e *Failure) Error() string {
@@ -58,6 +82,34 @@ func (e *Failure) Unwrap() error {
 func IsFailureAt(err error, stage FailureStage) bool {
 	var failure *Failure
 	return errors.As(err, &failure) && failure.Stage == stage
+}
+
+// FailureCodeOf returns a bounded diagnostic for every analyzer failure. Errors
+// outside this domain deliberately collapse to one safe adapter-facing code.
+func FailureCodeOf(err error) FailureCode {
+	var failure *Failure
+	if !errors.As(err, &failure) {
+		return FailureCodeUnexpectedAnalyzerError
+	}
+	return normalizeFailureCode(failure.code)
+}
+
+func normalizeFailureCode(code FailureCode) FailureCode {
+	switch code {
+	case FailureCodeRepository,
+		FailureCodeSnapshotUnavailable,
+		FailureCodeSummaryValidation,
+		FailureCodeWindowResolution,
+		FailureCodeBucketSetValidation,
+		FailureCodeBucketKeyRejected,
+		FailureCodeProviderRankValidation,
+		FailureCodeModelRankValidation,
+		FailureCodeSnapshotClose,
+		FailureCodeUnexpectedAnalyzerError:
+		return code
+	default:
+		return FailureCodeUnexpectedAnalyzerError
+	}
 }
 
 // ResolvedFailureWindow returns decision context only when the service reached a

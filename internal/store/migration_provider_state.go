@@ -11,12 +11,27 @@ import (
 )
 
 const (
+	providersTableName           = "providers"
+	providerCredentialDataColumn = "credential_data"
+
 	// Legacy provider rows predate the one-account/one-provider invariant. A
 	// deterministic loser remains visible for repair but cannot refresh or route
 	// with an account another provider already owns.
 	providerAuthReasonLegacyDuplicateBinding = "legacy_duplicate_account_binding"
 	providerAuthErrorLegacyDuplicateBinding  = "legacy credential binding is already owned by another provider; reauthentication required"
 )
+
+func tableColumnExists(db *gorm.DB, tableName, columnName string) (bool, error) {
+	var count int64
+	err := db.Raw(
+		fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, tableName),
+		columnName,
+	).Scan(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
 
 // migrateProviderStateTables backfills the new credential/auth tables without
 // overwriting rows that were already created by a newer binary, then drops the

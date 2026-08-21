@@ -41,10 +41,11 @@ max_files = 50
 max_dirs = 20
 count_exclude = ["*_test.go", "*.test.*", "tmpclaude-*"]
 
-# Window resolution and token analytics are cohesive bounded contexts used beyond
-# admin HTTP delivery. Keep them as peers under internal without relaxing the
-# repository's per-directory file limit or any SLOC limit.
+# Window resolution, exact-instant validation, and token analytics are cohesive
+# domains used by independent storage, query, and delivery layers. Keeping them
+# as peers avoids making those layers depend on one another; this rule changes
+# only the direct-domain count and preserves every file and nested-folder limit.
 [[structure.rules]]
 scope = "./internal"
-max_dirs = 22
-reason = "analyticswindow and tokenanalytics are independent shared domains"
+max_dirs = 23
+reason = "analyticswindow, instant, and tokenanalytics are independent shared domains"
