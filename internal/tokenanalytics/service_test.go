@@ -260,8 +260,8 @@ func TestServiceAnalyzeRejectsAllPeriodBucketOverflow(t *testing.T) {
 		End:             end,
 		StartResolution: analyticswindow.StartUnresolved,
 	}})
-	if !IsFailureAt(err, FailureStageResponseMap) {
-		t.Fatalf("Analyze() error = %v, want response_map failure", err)
+	if !IsFailureAt(err, FailureStageResponseMap) || FailureCodeOf(err) != FailureCodeWindowResolution {
+		t.Fatalf("Analyze() error = %v, code %q; want response_map/%q", err, FailureCodeOf(err), FailureCodeWindowResolution)
 	}
 	var validationErr *analyticswindow.ValidationError
 	if !errors.As(err, &validationErr) || validationErr.Reason != "too_many_buckets" {
@@ -339,8 +339,8 @@ func TestServiceAnalyzeWrapsRepositoryFailuresOnceAndCloses(t *testing.T) {
 			}
 			reader := &fakeReader{snapshot: snapshot, err: test.openError}
 			_, err := NewService(reader).Analyze(context.Background(), fixedQuery())
-			if !IsFailureAt(err, test.stage) {
-				t.Fatalf("Analyze() error = %v, want stage %q", err, test.stage)
+			if !IsFailureAt(err, test.stage) || FailureCodeOf(err) != FailureCodeRepository {
+				t.Fatalf("Analyze() error = %v, code %q; want stage/code %q/%q", err, FailureCodeOf(err), test.stage, FailureCodeRepository)
 			}
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Analyze() error = %v, want errors.Is(context.Canceled)", err)
@@ -375,8 +375,9 @@ func TestServiceAnalyzeHandlesSnapshotLifecycleFailures(t *testing.T) {
 		closeCause := errors.New("private close detail")
 		snapshot := &fakeSnapshot{closeErr: closeCause}
 		report, err := NewService(&fakeReader{snapshot: snapshot}).Analyze(context.Background(), fixedQuery())
-		if !IsFailureAt(err, FailureStageResponseMap) || !errors.Is(err, closeCause) || !errors.Is(err, errSnapshotClose) {
-			t.Fatalf("Analyze() error = %v, want response_map close failure", err)
+		if !IsFailureAt(err, FailureStageResponseMap) || FailureCodeOf(err) != FailureCodeSnapshotClose ||
+			!errors.Is(err, closeCause) || !errors.Is(err, errSnapshotClose) {
+			t.Fatalf("Analyze() error = %v, code %q; want response_map/%q close failure", err, FailureCodeOf(err), FailureCodeSnapshotClose)
 		}
 		if err.Error() != failureMessage {
 			t.Fatalf("safe error text leaked close detail: %q", err.Error())
@@ -517,16 +518,19 @@ func TestServiceAnalyzeRejectsInvalidBreakdownAtEveryLevel(t *testing.T) {
 	invalid.TotalTokens++
 	tests := []struct {
 		name      string
+		code      FailureCode
 		configure func(*fakeSnapshot)
 	}{
-		{name: "summary", configure: func(snapshot *fakeSnapshot) { snapshot.summary.Breakdown = invalid }},
-		{name: "bucket", configure: func(snapshot *fakeSnapshot) {
+		{name: "summary", code: FailureCodeSummaryValidation, configure: func(snapshot *fakeSnapshot) {
+			snapshot.summary.Breakdown = invalid
+		}},
+		{name: "bucket", code: FailureCodeBucketSetValidation, configure: func(snapshot *fakeSnapshot) {
 			snapshot.buckets = []BucketRecord{{AlignedStart: fixedQuery().Window.Start, Breakdown: invalid}}
 		}},
-		{name: "provider", configure: func(snapshot *fakeSnapshot) {
+		{name: "provider", code: FailureCodeProviderRankValidation, configure: func(snapshot *fakeSnapshot) {
 			snapshot.providers = []ProviderRankRecord{{ProviderID: "provider", Breakdown: invalid}}
 		}},
-		{name: "model", configure: func(snapshot *fakeSnapshot) {
+		{name: "model", code: FailureCodeModelRankValidation, configure: func(snapshot *fakeSnapshot) {
 			snapshot.models = []ModelRankRecord{{Model: "model", Breakdown: invalid}}
 		}},
 	}
@@ -537,13 +541,29 @@ func TestServiceAnalyzeRejectsInvalidBreakdownAtEveryLevel(t *testing.T) {
 			snapshot := &fakeSnapshot{}
 			test.configure(snapshot)
 			_, err := NewService(&fakeReader{snapshot: snapshot}).Analyze(context.Background(), fixedQuery())
-			if !IsFailureAt(err, FailureStageResponseMap) {
-				t.Fatalf("Analyze() error = %v, want response_map failure", err)
+			if !IsFailureAt(err, FailureStageResponseMap) || FailureCodeOf(err) != test.code {
+				t.Fatalf("Analyze() error = %v, code %q; want response_map/%q", err, FailureCodeOf(err), test.code)
 			}
 			if snapshot.closed != 1 {
 				t.Fatalf("snapshot close count = %d, want 1", snapshot.closed)
 			}
 		})
+	}
+}
+
+func TestServiceAnalyzeClassifiesRejectedBucketKey(t *testing.T) {
+	t.Parallel()
+
+	query := fixedQuery()
+	snapshot := &fakeSnapshot{buckets: []BucketRecord{{
+		AlignedStart: query.Window.Start.Add(-time.Hour),
+	}}}
+	_, err := NewService(&fakeReader{snapshot: snapshot}).Analyze(context.Background(), query)
+	if !IsFailureAt(err, FailureStageResponseMap) || FailureCodeOf(err) != FailureCodeBucketKeyRejected {
+		t.Fatalf("Analyze() error = %v, code %q; want response_map/%q", err, FailureCodeOf(err), FailureCodeBucketKeyRejected)
+	}
+	if !errors.Is(err, errInvalidBucketSet) || !errors.Is(err, errBucketKeyRejected) {
+		t.Fatalf("Analyze() error = %v, want preserved bucket-set and bucket-key causes", err)
 	}
 }
 
@@ -647,26 +667,35 @@ func TestRepositoryFailureContract(t *testing.T) {
 	t.Parallel()
 
 	cause := errors.New("sensitive storage detail")
-	err := NewFailure(FailureStageSummary, cause)
+	err := NewFailure(FailureStageSummary, FailureCodeRepository, cause)
 	if err.Error() != failureMessage || err.Unwrap() != cause {
 		t.Fatalf("failure contract = error %q unwrap %v", err.Error(), err.Unwrap())
 	}
 	if !IsFailureAt(err, FailureStageSummary) || IsFailureAt(err, FailureStageTimeSeries) || IsFailureAt(cause, FailureStageSummary) {
 		t.Fatal("failure stage detection did not preserve the stable stage")
 	}
+	if FailureCodeOf(err) != FailureCodeRepository {
+		t.Fatalf("FailureCodeOf() = %q, want %q", FailureCodeOf(err), FailureCodeRepository)
+	}
 	if _, ok := ResolvedFailureWindow(err); ok {
 		t.Fatal("plain failure unexpectedly exposed window context")
 	}
 
 	window := fixedQuery().Window
-	windowed := NewFailureForWindow(FailureStageTimeSeries, cause, window)
+	windowed := NewFailureForWindow(FailureStageTimeSeries, FailureCodeRepository, cause, window)
 	got, ok := ResolvedFailureWindow(windowed)
 	if !ok || !got.Start.Equal(window.Start) || !got.End.Equal(window.End) {
 		t.Fatalf("resolved failure window = %+v/%v, want %+v", got, ok, window)
 	}
 	window.StartResolution = analyticswindow.StartUnresolved
-	if _, ok := ResolvedFailureWindow(NewFailureForWindow(FailureStageSummary, cause, window)); ok {
+	if _, ok := ResolvedFailureWindow(NewFailureForWindow(FailureStageSummary, FailureCodeRepository, cause, window)); ok {
 		t.Fatal("unresolved failure exposed a timestamp")
+	}
+	if code := FailureCodeOf(errors.New("outside domain")); code != FailureCodeUnexpectedAnalyzerError {
+		t.Fatalf("naked error code = %q, want %q", code, FailureCodeUnexpectedAnalyzerError)
+	}
+	if code := FailureCodeOf(NewFailure(FailureStageResponseMap, FailureCode("unregistered"), cause)); code != FailureCodeUnexpectedAnalyzerError {
+		t.Fatalf("unregistered code = %q, want %q", code, FailureCodeUnexpectedAnalyzerError)
 	}
 }
 

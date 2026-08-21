@@ -129,7 +129,7 @@ func TestProviderImportReceiptPersistsAcrossStoreReopen(t *testing.T) {
 		clock.Now(),
 	)
 
-	first, err := NewSQLiteStore(dbPath, clock)
+	first, err := NewSQLiteStore(dbPath, clock, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore(first) error = %v", err)
 	}
@@ -141,7 +141,7 @@ func TestProviderImportReceiptPersistsAcrossStoreReopen(t *testing.T) {
 		t.Fatalf("Close(first) error = %v", err)
 	}
 
-	reopened, err := NewSQLiteStore(dbPath, clock)
+	reopened, err := NewSQLiteStore(dbPath, clock, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore(reopened) error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestProviderImportReceiptPersistsAcrossStoreReopen(t *testing.T) {
 
 func TestProviderImportReceiptExpiryDeletesAndAllowsImportIDReuse(t *testing.T) {
 	clock := &mockClock{now: time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)}
-	store, err := NewSQLiteStore(":memory:", clock)
+	store, err := NewSQLiteStore(":memory:", clock, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -210,7 +210,7 @@ func TestProviderImportReceiptExpiryDeletesAndAllowsImportIDReuse(t *testing.T) 
 
 func TestProviderImportReceiptReservationPrunesUnrelatedExpiredRows(t *testing.T) {
 	clock := &mockClock{now: time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)}
-	store, err := NewSQLiteStore(":memory:", clock)
+	store, err := NewSQLiteStore(":memory:", clock, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -263,12 +263,12 @@ func TestProviderImportReceiptReservationPrunesUnrelatedExpiredRows(t *testing.T
 func TestProviderImportReceiptReservationSerializesStoreInstances(t *testing.T) {
 	clock := &mockClock{now: time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)}
 	dbPath := filepath.Join(t.TempDir(), "receipt-concurrent.db")
-	first, err := NewSQLiteStore(dbPath, clock)
+	first, err := NewSQLiteStore(dbPath, clock, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore(first) error = %v", err)
 	}
 	t.Cleanup(func() { _ = first.Close() })
-	second, err := NewSQLiteStore(dbPath, clock)
+	second, err := NewSQLiteStore(dbPath, clock, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore(second) error = %v", err)
 	}

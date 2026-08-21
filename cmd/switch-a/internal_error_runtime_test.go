@@ -27,7 +27,7 @@ import (
 const expectedResponseProbeProcessBudget = 64 << 20
 
 func TestNewInternalErrorRuntimeBuildsSingletonGraph(t *testing.T) {
-	sqlStore, err := openApplicationStore(filepath.Join(t.TempDir(), "runtime.db"), internal.RealClock{})
+	sqlStore, err := openApplicationStore(filepath.Join(t.TempDir(), "runtime.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestNewInternalErrorRuntimeBuildsSingletonGraph(t *testing.T) {
 }
 
 func TestNewInternalErrorRuntimeRejectsIncompleteOrReusedGraph(t *testing.T) {
-	sqlStore, err := openApplicationStore(filepath.Join(t.TempDir(), "invalid-graph.db"), internal.RealClock{})
+	sqlStore, err := openApplicationStore(filepath.Join(t.TempDir(), "invalid-graph.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestNewInternalErrorRuntimeRejectsIncompleteOrReusedGraph(t *testing.T) {
 
 func TestInternalErrorRuntimeShutdownFlushesBeforeRestart(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "restart.db")
-	initialStore, err := openApplicationStore(databasePath, internal.RealClock{})
+	initialStore, err := openApplicationStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestInternalErrorRuntimeShutdownFlushesBeforeRestart(t *testing.T) {
 	}
 	initialClosed = true
 
-	restartedStore, err := openApplicationStore(databasePath, internal.RealClock{})
+	restartedStore, err := openApplicationStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("restart failed: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestInternalErrorRuntimeShutdownFlushesBeforeRestart(t *testing.T) {
 
 func TestOpenApplicationStoreRejectsInvalidPersistedRules(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "invalid-rule.db")
-	initialStore, err := openApplicationStore(databasePath, internal.RealClock{})
+	initialStore, err := openApplicationStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestOpenApplicationStoreRejectsInvalidPersistedRules(t *testing.T) {
 	}
 	databaseClosed = true
 
-	invalidStore, err := openApplicationStore(databasePath, internal.RealClock{})
+	invalidStore, err := openApplicationStore(databasePath, internal.RealClock{}, nil)
 	if invalidStore != nil {
 		_ = invalidStore.Close()
 		t.Fatal("invalid persisted rules unexpectedly produced an application store")

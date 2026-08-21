@@ -290,7 +290,7 @@ func newProxyHarness(t *testing.T, options proxyHarnessOptions) *proxyHarness {
 	}
 
 	databasePath := filepath.Join(t.TempDir(), "v5b.db")
-	backend, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	backend, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("open backend: %v", err)
 	}

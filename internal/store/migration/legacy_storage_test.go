@@ -1,4 +1,4 @@
-package store
+package migration
 
 import (
 	"testing"
@@ -40,7 +40,7 @@ func TestMigrateBaseURLToAPIType_BackfillsProviderAPITypeRowsAndDropsLegacyColum
 		t.Fatalf("seed provider_api_types: %v", err)
 	}
 
-	if err := migrateBaseURLToAPIType(db); err != nil {
+	if err := MigrateBaseURLToAPIType(db); err != nil {
 		t.Fatalf("migrateBaseURLToAPIType() error = %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestMigrateBaseURLToAPIType_NoLegacyColumn(t *testing.T) {
 		t.Fatalf("seed provider_api_types: %v", err)
 	}
 
-	if err := migrateBaseURLToAPIType(db); err != nil {
+	if err := MigrateBaseURLToAPIType(db); err != nil {
 		t.Fatalf("migrateBaseURLToAPIType(no legacy column) error = %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestMigrateStickyConfig_ValueMapping(t *testing.T) {
 			db := setupMigrationTestDB(t)
 			seedConfig(t, db, legacyStickyEnabledConfigKey, tt.legacy)
 
-			if err := migrateStickyConfig(db); err != nil {
+			if err := MigrateStickyConfig(db); err != nil {
 				t.Fatalf("migrateStickyConfig error: %v", err)
 			}
 
@@ -155,7 +155,7 @@ func TestMigrateStickyConfig_NoLegacyKey(t *testing.T) {
 	t.Parallel()
 
 	db := setupMigrationTestDB(t)
-	if err := migrateStickyConfig(db); err != nil {
+	if err := MigrateStickyConfig(db); err != nil {
 		t.Fatalf("migrateStickyConfig error: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestMigrateStickyConfig_ExistingStickyModeNotOverwritten(t *testing.T) {
 	seedConfig(t, db, legacyStickyEnabledConfigKey, "true")
 	seedConfig(t, db, stickyModeConfigKey, string(model.StickyModeOff))
 
-	if err := migrateStickyConfig(db); err != nil {
+	if err := MigrateStickyConfig(db); err != nil {
 		t.Fatalf("migrateStickyConfig error: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestMigrateGlobalMaxAttemptsConfig_RenamesLegacyKey(t *testing.T) {
 	db := setupMigrationTestDB(t)
 	seedConfig(t, db, legacyMaxRetriesConfigKey, "7")
 
-	if err := migrateGlobalMaxAttemptsConfig(db); err != nil {
+	if err := MigrateGlobalMaxAttemptsConfig(db); err != nil {
 		t.Fatalf("migrateGlobalMaxAttemptsConfig error: %v", err)
 	}
 
@@ -199,7 +199,7 @@ func TestMigrateGlobalMaxAttemptsConfig_NoLegacyKey(t *testing.T) {
 	t.Parallel()
 
 	db := setupMigrationTestDB(t)
-	if err := migrateGlobalMaxAttemptsConfig(db); err != nil {
+	if err := MigrateGlobalMaxAttemptsConfig(db); err != nil {
 		t.Fatalf("migrateGlobalMaxAttemptsConfig error: %v", err)
 	}
 
@@ -213,7 +213,7 @@ func TestMigrateGlobalMaxAttemptsConfig_ExistingCurrentKeyNotOverwritten(t *test
 	seedConfig(t, db, legacyMaxRetriesConfigKey, "7")
 	seedConfig(t, db, globalMaxAttemptsConfigKey, "4")
 
-	if err := migrateGlobalMaxAttemptsConfig(db); err != nil {
+	if err := MigrateGlobalMaxAttemptsConfig(db); err != nil {
 		t.Fatalf("migrateGlobalMaxAttemptsConfig error: %v", err)
 	}
 

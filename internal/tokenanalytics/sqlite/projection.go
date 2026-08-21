@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
+	"github.com/doraemonkeys/switch-a/internal/instant"
 	"github.com/doraemonkeys/switch-a/internal/tokenanalytics"
 )
 
@@ -14,6 +15,11 @@ const (
 	classUnknownSemantic = "unknown_semantics"
 	classPartial         = "partial"
 	classComparable      = "comparable"
+
+	createdAtUnixNanoIndex         = "idx_request_logs_created_at_unix_nano"
+	providerCreatedAtUnixNanoIndex = "idx_request_logs_provider_created_at_unix_nano"
+	modelCreatedAtUnixNanoIndex    = "idx_request_logs_model_created_at_unix_nano"
+	apiTypeCreatedAtUnixNanoIndex  = "idx_request_logs_api_type_created_at_unix_nano"
 )
 
 const projectionSQLTemplate = `
@@ -39,7 +45,7 @@ filtered AS (
 		rl.provider_id,
 		rl.api_type,
 		rl.model,
-		rl.created_at,
+		rl.created_at_unix_nano,
 		rl.prompt_tokens,
 		rl.completion_tokens,
 		rl.total_tokens,
@@ -47,7 +53,7 @@ filtered AS (
 		rl.cache_read_input_tokens,
 		rl.cache_creation_input_tokens,
 		COALESCE(sc.token_semantics, pc.unknown_semantics) AS token_semantics
-	FROM request_logs AS rl
+	FROM request_logs AS rl INDEXED BY %s
 	CROSS JOIN projection_contract AS pc
 	LEFT JOIN semantic_contract AS sc ON sc.api_type = rl.api_type
 	WHERE %s
@@ -300,11 +306,19 @@ func buildProjection(query tokenanalytics.Query) (projection, error) {
 	}
 	args = append(args, contractBindings...)
 
-	predicates := []string{"rl.created_at < ?"}
-	args = append(args, query.Window.End.UTC())
+	endUnixNano, err := instant.UnixNano(query.Window.End)
+	if err != nil {
+		return projection{}, fmt.Errorf("%w: end instant: %w", errInvalidWindow, err)
+	}
+	predicates := []string{"rl.created_at_unix_nano < ?"}
+	args = append(args, endUnixNano)
 	if query.Window.HasResolvedStart() {
-		predicates = append(predicates, "rl.created_at >= ?")
-		args = append(args, query.Window.Start.UTC())
+		startUnixNano, err := instant.UnixNano(query.Window.Start)
+		if err != nil {
+			return projection{}, fmt.Errorf("%w: start instant: %w", errInvalidWindow, err)
+		}
+		predicates = append(predicates, "rl.created_at_unix_nano >= ?")
+		args = append(args, startUnixNano)
 	}
 	if query.ProviderID != nil {
 		predicates = append(predicates, "rl.provider_id = ?")
@@ -321,7 +335,24 @@ func buildProjection(query tokenanalytics.Query) (projection, error) {
 
 	sql := fmt.Sprintf(projectionSQLTemplate,
 		strings.Join(valueRows, ", "),
+		projectionIndex(query),
 		strings.Join(predicates, " AND "),
 	)
 	return projection{sql: sql, args: args}, nil
+}
+
+// Ranking GROUP BY clauses otherwise tempt SQLite into full scans of an index
+// whose leading column only helps output order. Pinning the index that matches
+// the active exact filter keeps the instant range bounded for every query shape.
+func projectionIndex(query tokenanalytics.Query) string {
+	switch {
+	case query.APIType != nil:
+		return apiTypeCreatedAtUnixNanoIndex
+	case query.Model != nil:
+		return modelCreatedAtUnixNanoIndex
+	case query.ProviderID != nil:
+		return providerCreatedAtUnixNanoIndex
+	default:
+		return createdAtUnixNanoIndex
+	}
 }

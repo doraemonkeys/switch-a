@@ -122,7 +122,8 @@ func TestHandlerRejectsEveryInvalidScalarBeforeStartingAnalysis(t *testing.T) {
 	tests := []string{
 		"period=", "period=invalid", "period=24h&period=7d",
 		"granularity=", "granularity=10m", "period=7d&granularity=5m", "granularity=1h&granularity=6h",
-		"as_of=", "as_of=invalid", "as_of=2026-08-21T00%3A00%3A00Z&as_of=2026-08-21T01%3A00%3A00Z",
+		"as_of=", "as_of=invalid", "as_of=1500-01-01T00%3A00%3A00Z", "as_of=2300-01-01T00%3A00%3A00Z",
+		"as_of=2026-08-21T00%3A00%3A00Z&as_of=2026-08-21T01%3A00%3A00Z",
 		"provider_id=", "provider_id=p1&provider_id=p2", "provider_id=" + tooLongProvider,
 		"model=", "model=m1&model=m2", "model=" + tooLongModel,
 		"api_type=", "api_type=a1&api_type=a2", "api_type=" + tooLongAPIType,
@@ -149,9 +150,33 @@ func TestHandlerRejectsEveryInvalidScalarBeforeStartingAnalysis(t *testing.T) {
 	}
 }
 
+func TestHandlerReturnsStableOutOfRangeWindowError(t *testing.T) {
+	analyzer := &analyzerStub{}
+	handler := newTestHandler(t, analyzer, time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC))
+	recorder := httptest.NewRecorder()
+
+	handler.GetTokenUsage(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/admin/api/token-usage?period=all&as_of=2300-01-01T00%3A00%3A00Z", nil),
+	)
+
+	var response struct {
+		Code    string            `json:"code"`
+		Message string            `json:"message"`
+		Details map[string]string `json:"details"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if recorder.Code != http.StatusBadRequest || response.Code != validationErrorCode ||
+		response.Message != validationErrorMessage || response.Details["as_of"] != "out_of_range" || analyzer.calls != 0 {
+		t.Fatalf("status/response/analyzer calls = %d/%+v/%d", recorder.Code, response, analyzer.calls)
+	}
+}
+
 func TestHandlerMapsDataDependentWindowValidationToBadRequest(t *testing.T) {
 	cause := &analyticswindow.ValidationError{Field: "granularity", Reason: "too_many_buckets"}
-	analyzer := &analyzerStub{err: tokenanalytics.NewFailure(tokenanalytics.FailureStageResponseMap, cause)}
+	analyzer := &analyzerStub{err: tokenanalytics.NewFailure(tokenanalytics.FailureStageResponseMap, tokenanalytics.FailureCodeWindowResolution, cause)}
 	handler := newTestHandler(t, analyzer, time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC))
 
 	recorder := httptest.NewRecorder()

@@ -41,7 +41,7 @@ var (
 func TestV5BConfigRevisionRestartAndProviderCascade(t *testing.T) {
 	ctx := context.Background()
 	databasePath := filepath.Join(t.TempDir(), "config-restart.db")
-	backend, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	backend, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("open backend: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestV5BConfigRevisionRestartAndProviderCascade(t *testing.T) {
 		t.Fatalf("close backend before restart: %v", err)
 	}
 	backend = nil
-	restarted, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	restarted, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("restart backend: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestV5BConfigRevisionRestartAndProviderCascade(t *testing.T) {
 
 func TestV5BStatisticsRetryAndGenerationIsolation(t *testing.T) {
 	ctx := context.Background()
-	backend, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "statistics.db"), internal.RealClock{})
+	backend, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "statistics.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("open backend: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestV5BRuleSnapshotReadsDoNotQuerySQLite(t *testing.T) {
 }
 
 func TestV5BMultiAttemptPersistenceAcceptsHeterogeneousEvidence(t *testing.T) {
-	backend, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "attempts.db"), internal.RealClock{})
+	backend, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "attempts.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

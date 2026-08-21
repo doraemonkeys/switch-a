@@ -1,4 +1,4 @@
-package store
+package migration
 
 import (
 	"errors"
@@ -124,4 +124,45 @@ func insertLegacyProvider(t *testing.T, db *gorm.DB, provider *model.Provider, c
 
 func strPtr(value string) *string {
 	return &value
+}
+
+func setupWebSocketMigrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db := openMigrationSQLiteDB(t, "ws_migration.db")
+	if err := db.Exec(`CREATE TABLE IF NOT EXISTS request_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		is_web_socket BOOLEAN DEFAULT 0,
+		is_websocket BOOLEAN DEFAULT 0,
+		provider_id TEXT DEFAULT '',
+		created_at DATETIME
+	)`).Error; err != nil {
+		t.Fatalf("create legacy request_logs table: %v", err)
+	}
+
+	return db
+}
+
+func setupRequestLogLifecycleMigrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db := openMigrationSQLiteDB(t, "request_log_lifecycle_migration.db")
+	createLegacyTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		request_id TEXT,
+		is_websocket BOOLEAN DEFAULT 0,
+		provider_id TEXT DEFAULT '',
+		semantics_version TEXT DEFAULT 'normalized_v1',
+		session_committed BOOLEAN,
+		client_visible BOOLEAN,
+		sticky_written BOOLEAN,
+		probe_outcome TEXT,
+		commit_source TEXT,
+		created_at DATETIME
+	)`, requestLogsTableName)
+	if err := db.Exec(createLegacyTableSQL).Error; err != nil {
+		t.Fatalf("create request_logs: %v", err)
+	}
+
+	return db
 }

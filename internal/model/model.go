@@ -323,6 +323,9 @@ type RequestLog struct {
 	// orthogonal boundary anchored the persisted session lifecycle.
 	CommitSource *CommitSource `gorm:"type:text;default:null" json:"commit_source"`
 	CreatedAt    time.Time     `gorm:"index" json:"created_at"`
+	// The integer key makes range semantics independent of CreatedAt's retained
+	// offset-bearing representation and remains exact at half-open boundaries.
+	CreatedAtUnixNano *int64 `gorm:"column:created_at_unix_nano;default:null" json:"-"`
 	// Phase 1 diagnostic fields (P0)
 	RequestPath     string `gorm:"default:''" json:"request_path"`      // Relative path like /v1/messages (without base_url)
 	RequestMethod   string `gorm:"default:''" json:"request_method"`    // HTTP method: GET/POST/PUT/DELETE

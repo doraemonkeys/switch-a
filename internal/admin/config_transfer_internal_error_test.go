@@ -24,7 +24,7 @@ import (
 
 func configTransferStore(t *testing.T) *store.SQLiteStore {
 	t.Helper()
-	result, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "config.db"), internal.RealClock{})
+	result, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "config.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

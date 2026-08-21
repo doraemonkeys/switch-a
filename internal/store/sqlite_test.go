@@ -13,7 +13,7 @@ func setupTestStore(t *testing.T) *SQLiteStore {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	store, err := NewSQLiteStore(dbPath, internal.RealClock{})
+	store, err := NewSQLiteStore(dbPath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -58,9 +58,10 @@ func TestNewSQLiteStore_CreatesProviderStateAndRoutingPolicyTables(t *testing.T)
 func TestNewSQLiteStoreCreatesNarrowRequestLogAnalyticsIndexes(t *testing.T) {
 	store := setupTestStore(t)
 	wantColumns := map[string][]string{
-		requestLogProviderCreatedAtIndex: {"provider_id", "created_at"},
-		requestLogModelCreatedAtIndex:    {"model", "created_at"},
-		requestLogAPITypeCreatedAtIndex:  {"api_type", "created_at"},
+		requestLogCreatedAtUnixNanoIndex:         {requestLogCreatedAtUnixNanoColumn},
+		requestLogProviderCreatedAtUnixNanoIndex: {"provider_id", requestLogCreatedAtUnixNanoColumn},
+		requestLogModelCreatedAtUnixNanoIndex:    {"model", requestLogCreatedAtUnixNanoColumn},
+		requestLogAPITypeCreatedAtUnixNanoIndex:  {"api_type", requestLogCreatedAtUnixNanoColumn},
 	}
 
 	for indexName, expectedColumns := range wantColumns {
@@ -79,6 +80,11 @@ func TestNewSQLiteStoreCreatesNarrowRequestLogAnalyticsIndexes(t *testing.T) {
 				t.Errorf("%s columns = %v, want %v", indexName, columns, expectedColumns)
 				break
 			}
+		}
+	}
+	for _, legacyIndexName := range legacyRequestLogAnalyticsIndexes {
+		if store.db.Migrator().HasIndex(&model.RequestLog{}, legacyIndexName) {
+			t.Errorf("legacy lexical analytics index %s still exists", legacyIndexName)
 		}
 	}
 }

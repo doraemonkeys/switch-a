@@ -101,7 +101,7 @@ func TestAdminInternalErrorRouteBoundariesStayExact(t *testing.T) {
 
 func newInternalErrorRouteServer(t *testing.T) *AdminServer {
 	t.Helper()
-	sqlStore, err := storepkg.NewSQLiteStore(filepath.Join(t.TempDir(), "routes.db"), internal.RealClock{})
+	sqlStore, err := storepkg.NewSQLiteStore(filepath.Join(t.TempDir(), "routes.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

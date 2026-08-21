@@ -24,7 +24,7 @@ type testDatabase struct {
 func newTestDatabase(t *testing.T) *testDatabase {
 	t.Helper()
 	databasePath := filepath.Join(t.TempDir(), "token-analytics.db")
-	writer, err := store.NewSQLiteStore(databasePath, internal.RealClock{})
+	writer, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}

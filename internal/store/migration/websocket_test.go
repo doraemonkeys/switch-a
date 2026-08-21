@@ -1,4 +1,4 @@
-package store
+package migration
 
 import "testing"
 
@@ -13,7 +13,7 @@ func TestMigrateWebSocketColumn_CopiesData(t *testing.T) {
 		t.Fatalf("seed regular log: %v", err)
 	}
 
-	if err := migrateWebSocketColumn(db); err != nil {
+	if err := MigrateWebSocketColumn(db); err != nil {
 		t.Fatalf("migrateWebSocketColumn error: %v", err)
 	}
 
@@ -45,7 +45,7 @@ func TestMigrateWebSocketColumn_NoLegacyColumn(t *testing.T) {
 		t.Fatalf("create table: %v", err)
 	}
 
-	if err := migrateWebSocketColumn(db); err != nil {
+	if err := MigrateWebSocketColumn(db); err != nil {
 		t.Fatalf("migrateWebSocketColumn error: %v", err)
 	}
 }

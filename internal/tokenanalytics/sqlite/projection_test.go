@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -56,6 +57,20 @@ func TestProjectionBindsCatalogSemantics(t *testing.T) {
 		literal := "'" + semantics.(string) + "'"
 		if strings.Contains(projection.sql, literal) {
 			t.Errorf("projection SQL embeds protocol semantics %s instead of binding the API contract", literal)
+		}
+	}
+}
+
+func TestProjectionRejectsUnrepresentableWindowBounds(t *testing.T) {
+	t.Parallel()
+
+	representable := time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC)
+	for _, query := range []tokenanalytics.Query{
+		testQuery(time.Date(1500, time.January, 1, 0, 0, 0, 0, time.UTC), representable, time.Hour),
+		testQuery(representable, time.Date(2300, time.January, 1, 0, 0, 0, 0, time.UTC), time.Hour),
+	} {
+		if _, err := buildProjection(query); !errors.Is(err, errInvalidWindow) {
+			t.Fatalf("buildProjection() error = %v, want %v", err, errInvalidWindow)
 		}
 	}
 }

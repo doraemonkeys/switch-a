@@ -1,4 +1,4 @@
-package store
+package migration
 
 import (
 	"database/sql"
@@ -34,7 +34,7 @@ func TestMigrateRoutingPolicyLifecycleStorage_AddsColumnsAndBackfillsEnabled(t *
 		t.Fatalf("insert legacy routing policy: %v", err)
 	}
 
-	if err := migrateRoutingPolicyLifecycleStorage(db); err != nil {
+	if err := MigrateRoutingPolicyLifecycleStorage(db); err != nil {
 		t.Fatalf("migrateRoutingPolicyLifecycleStorage() error: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestMigrateRoutingPolicyLifecycleStorage_BackfillsEnabledAndAddsTargetProvi
 		t.Fatalf("seed legacy routing policy row: %v", err)
 	}
 
-	if err := migrateRoutingPolicyLifecycleStorage(db); err != nil {
+	if err := MigrateRoutingPolicyLifecycleStorage(db); err != nil {
 		t.Fatalf("migrateRoutingPolicyLifecycleStorage error: %v", err)
 	}
 

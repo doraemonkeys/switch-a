@@ -115,6 +115,52 @@ func TestResolveAsOfPreservesExactInstantInUTC(t *testing.T) {
 	}
 }
 
+func TestResolveAsOfEnforcesSignedNanosecondDomain(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewResolver(fakeClock{now: time.Time{}})
+	for _, value := range []string{
+		"1677-09-21T00:12:43.145224192Z",
+		"2262-04-11T23:47:16.854775807Z",
+	} {
+		window, err := resolver.ResolveTokenUsage(url.Values{
+			"period": {PeriodAll},
+			"as_of":  {value},
+		})
+		if err != nil {
+			t.Fatalf("ResolveTokenUsage(%q) error = %v", value, err)
+		}
+		if window.End.Format(time.RFC3339Nano) != value {
+			t.Fatalf("End = %s, want %s", window.End.Format(time.RFC3339Nano), value)
+		}
+	}
+
+	for _, value := range []string{
+		"1677-09-21T00:12:43.145224191Z",
+		"2262-04-11T23:47:16.854775808Z",
+	} {
+		_, err := resolver.ResolveTokenUsage(url.Values{
+			"period": {PeriodAll},
+			"as_of":  {value},
+		})
+		assertValidationError(t, err, "as_of", reasonOutOfRange)
+	}
+
+	_, err := resolver.ResolveTokenUsage(nil)
+	assertValidationError(t, err, "as_of", reasonOutOfRange)
+}
+
+func TestResolveFixedWindowRejectsUnrepresentableStart(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewResolver(fakeClock{now: time.Time{}})
+	_, err := resolver.ResolveTokenUsage(url.Values{
+		"period": {Period24Hours},
+		"as_of":  {"1677-09-21T00:12:43.145224192Z"},
+	})
+	assertValidationError(t, err, "as_of", reasonOutOfRange)
+}
+
 func TestResolveRejectsInvalidScalarWindowValues(t *testing.T) {
 	t.Parallel()
 

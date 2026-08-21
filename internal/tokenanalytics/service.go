@@ -15,6 +15,7 @@ var (
 	errInvalidQualityPartition = errors.New("token analytics quality partition is invalid")
 	errInvalidBreakdown        = errors.New("token analytics breakdown does not conserve tokens")
 	errInvalidBucketSet        = errors.New("token analytics bucket set is invalid")
+	errBucketKeyRejected       = errors.New("token analytics bucket key is outside the response window")
 	errInvalidProviderRanks    = errors.New("token analytics provider ranking is invalid")
 	errInvalidModelRanks       = errors.New("token analytics model ranking is invalid")
 )
@@ -37,10 +38,10 @@ func NewService(reader SnapshotReader) *Service {
 func (s *Service) Analyze(ctx context.Context, query Query) (report Report, err error) {
 	snapshot, openErr := s.reader.OpenSnapshot(ctx)
 	if openErr != nil {
-		return Report{}, NewFailure(FailureStageSnapshotOpen, openErr)
+		return Report{}, NewFailure(FailureStageSnapshotOpen, FailureCodeRepository, openErr)
 	}
 	if snapshot == nil {
-		return Report{}, NewFailure(FailureStageSnapshotOpen, errNilSnapshot)
+		return Report{}, NewFailure(FailureStageSnapshotOpen, FailureCodeSnapshotUnavailable, errNilSnapshot)
 	}
 	defer func() {
 		closeErr := snapshot.Close()
@@ -50,47 +51,47 @@ func (s *Service) Analyze(ctx context.Context, query Query) (report Report, err 
 
 		// A report is not successful until its read snapshot has been released.
 		report = Report{}
-		err = NewFailureForWindow(FailureStageResponseMap, errors.Join(errSnapshotClose, closeErr), query.Window)
+		err = NewFailureForWindow(FailureStageResponseMap, FailureCodeSnapshotClose, errors.Join(errSnapshotClose, closeErr), query.Window)
 	}()
 
 	summary, readErr := snapshot.ReadSummary(ctx, query)
 	if readErr != nil {
-		return Report{}, NewFailure(FailureStageSummary, readErr)
+		return Report{}, NewFailure(FailureStageSummary, FailureCodeRepository, readErr)
 	}
 	if validateErr := validateSummary(summary, !query.Window.HasResolvedStart()); validateErr != nil {
-		return Report{}, NewFailure(FailureStageResponseMap, validateErr)
+		return Report{}, NewFailure(FailureStageResponseMap, FailureCodeSummaryValidation, validateErr)
 	}
 
 	resolvedWindow, resolveErr := analyticswindow.ResolveAll(query.Window, summary.EarliestMatchingTime)
 	if resolveErr != nil {
-		return Report{}, NewFailureForWindow(FailureStageResponseMap, resolveErr, resolvedWindow)
+		return Report{}, NewFailureForWindow(FailureStageResponseMap, FailureCodeWindowResolution, resolveErr, resolvedWindow)
 	}
 	query.Window = resolvedWindow
 
 	bucketRecords, readErr := snapshot.ReadBuckets(ctx, query)
 	if readErr != nil {
-		return Report{}, NewFailureForWindow(FailureStageTimeSeries, readErr, query.Window)
+		return Report{}, NewFailureForWindow(FailureStageTimeSeries, FailureCodeRepository, readErr, query.Window)
 	}
 	providerRecords, readErr := snapshot.ReadProviderRanks(ctx, query, TopRankLimit)
 	if readErr != nil {
-		return Report{}, NewFailureForWindow(FailureStageProviderRank, readErr, query.Window)
+		return Report{}, NewFailureForWindow(FailureStageProviderRank, FailureCodeRepository, readErr, query.Window)
 	}
 	modelRecords, readErr := snapshot.ReadModelRanks(ctx, query, TopRankLimit)
 	if readErr != nil {
-		return Report{}, NewFailureForWindow(FailureStageModelRank, readErr, query.Window)
+		return Report{}, NewFailureForWindow(FailureStageModelRank, FailureCodeRepository, readErr, query.Window)
 	}
 
 	timeSeries, mapErr := mapBuckets(resolvedWindow, bucketRecords)
 	if mapErr != nil {
-		return Report{}, NewFailureForWindow(FailureStageResponseMap, mapErr, query.Window)
+		return Report{}, NewFailureForWindow(FailureStageResponseMap, bucketFailureCode(mapErr), mapErr, query.Window)
 	}
 	byProvider, mapErr := mapProviderRanks(providerRecords, summary.TotalTokens)
 	if mapErr != nil {
-		return Report{}, NewFailureForWindow(FailureStageResponseMap, mapErr, query.Window)
+		return Report{}, NewFailureForWindow(FailureStageResponseMap, FailureCodeProviderRankValidation, mapErr, query.Window)
 	}
 	byModel, mapErr := mapModelRanks(modelRecords, summary.TotalTokens)
 	if mapErr != nil {
-		return Report{}, NewFailureForWindow(FailureStageResponseMap, mapErr, query.Window)
+		return Report{}, NewFailureForWindow(FailureStageResponseMap, FailureCodeModelRankValidation, mapErr, query.Window)
 	}
 
 	return Report{
@@ -235,7 +236,7 @@ func mapBuckets(window analyticswindow.Window, records []BucketRecord) ([]Bucket
 		key := normalizedTime(record.AlignedStart)
 		index, exists := positions[key]
 		if !exists {
-			return nil, errInvalidBucketSet
+			return nil, errors.Join(errInvalidBucketSet, errBucketKeyRejected)
 		}
 		if _, duplicate := seen[key]; duplicate {
 			return nil, errInvalidBucketSet
@@ -247,6 +248,13 @@ func mapBuckets(window analyticswindow.Window, records []BucketRecord) ([]Bucket
 		result[index].ComparableRequests = record.ComparableRequests
 	}
 	return result, nil
+}
+
+func bucketFailureCode(err error) FailureCode {
+	if errors.Is(err, errBucketKeyRejected) {
+		return FailureCodeBucketKeyRejected
+	}
+	return FailureCodeBucketSetValidation
 }
 
 func mapProviderRanks(records []ProviderRankRecord, totalTokens int64) ([]ProviderRank, error) {
