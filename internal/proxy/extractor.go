@@ -3,13 +3,18 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy/requestbody"
+
+	"go.uber.org/zap"
 )
 
 // ModelUnknown is returned when the model cannot be extracted from the request.
@@ -25,6 +30,17 @@ const MaxUserAgentLength = 512
 
 // MaxReqBodySnippetLength is the maximum length of request body snippet to store.
 const MaxReqBodySnippetLength = 512
+
+const (
+	bytesPerMiB           int64 = 1 << 20
+	maxBoundedBodyBytes         = math.MaxInt64 - 1
+	contentEncodingHeader       = "Content-Encoding"
+)
+
+// RequestSemanticDecoder provides a bounded decoded view without owning wire bytes.
+type RequestSemanticDecoder interface {
+	Decode(wire []byte, contentEncodingValues []string, maxDecodedBytes int64) ([]byte, error)
+}
 
 // RequestInfo contains information extracted from a proxy request.
 type RequestInfo struct {
@@ -201,7 +217,7 @@ func ConsumeAndReplaceBody(r *http.Request, maxBodySizeMB int64) ([]byte, error)
 	originalBody := r.Body
 	defer originalBody.Close()
 
-	maxBytes := maxBodySizeMB * 1024 * 1024
+	maxBytes := requestBodyLimitBytes(maxBodySizeMB)
 
 	// Use LimitReader to prevent reading too much
 	limitedReader := io.LimitReader(originalBody, maxBytes+1)
@@ -219,4 +235,48 @@ func ConsumeAndReplaceBody(r *http.Request, maxBodySizeMB int64) ([]byte, error)
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	return body, nil
+}
+
+func requestBodyLimitBytes(maxBodySizeMB int64) int64 {
+	if maxBodySizeMB <= 0 {
+		return 0
+	}
+	if maxBodySizeMB > maxBoundedBodyBytes/bytesPerMiB {
+		return maxBoundedBodyBytes
+	}
+	return maxBodySizeMB * bytesPerMiB
+}
+
+func (h *Handler) decodeSemanticRequestBody(
+	requestID string,
+	apiType string,
+	request *http.Request,
+	wireBody []byte,
+	maxDecodedBytes int64,
+) []byte {
+	contentEncodings := request.Header.Values(contentEncodingHeader)
+	semanticBody, err := h.requestSemanticDecoder.Decode(wireBody, contentEncodings, maxDecodedBytes)
+	if err == nil {
+		return semanticBody
+	}
+
+	failure := requestbody.FailureInternal
+	coding := ""
+	var decodeErr *requestbody.DecodeError
+	if errors.As(err, &decodeErr) {
+		failure = decodeErr.Failure
+		coding = decodeErr.Coding
+	}
+	// Semantic inspection is observational: a decoder failure must not alter
+	// the raw request that an upstream may still understand.
+	h.logger.Warn("request body semantic decoding failed",
+		zap.String("request_id", requestID),
+		zap.String("api_type", apiType),
+		zap.String("path", request.URL.Path),
+		zap.Strings("content_encoding", contentEncodings),
+		zap.String("content_coding", coding),
+		zap.String("failure", string(failure)),
+		zap.Error(err),
+	)
+	return nil
 }

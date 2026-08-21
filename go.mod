@@ -7,6 +7,7 @@ require (
 	github.com/doraemonkeys/mylog v0.4.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
+	github.com/klauspost/compress v1.19.2
 	github.com/spf13/viper v1.21.0
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.5

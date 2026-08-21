@@ -58,12 +58,8 @@ func (a RegistryAnalyzer) Analyze(
 	}
 	defer stream.Release()
 
-	grant, err := reserver.Reserve(allocation.ClassDecodedBuffer, responseanalysis.PumpReadBufferBytes)
-	if err != nil || grant == nil {
-		result.Failure = analysisFailure(err)
-		return result
-	}
-	defer grant.Release()
+	// The endpoint already owns the bounded request body and this scratch buffer;
+	// reserving through NoopReserver would create lifecycle ceremony without accounting.
 	buffer := make([]byte, responseanalysis.PumpReadBufferBytes)
 
 	// The endpoint must stop decoding as soon as its rule evaluator has a

@@ -49,6 +49,7 @@ type Handler struct {
 	analyzer                   ResponseAnalyzer
 	ruleStats                  RuleStatistics
 	backoff                    BackoffWaiter
+	requestSemanticDecoder     RequestSemanticDecoder
 }
 
 // firstWriteResponseWriter tracks first data write to enable sticky session fallback.
@@ -460,6 +461,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleBodyError(w, err, cfg.maxBodySizeMB)
 		return
 	}
+	semanticBody := h.decodeSemanticRequestBody(requestID, apiType, r, body, requestBodyLimitBytes(cfg.maxBodySizeMB))
 
 	// Build proxy context
 	pctx := &proxyContext{
@@ -473,14 +475,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		info: RequestInfo{
 			ClientIP:    ExtractClientIP(r, cfg.trustProxy),
 			UserID:      ExtractUserID(r, cfg.userHeader),
-			Model:       ExtractModel(r, apiType, body),
+			Model:       ExtractModel(r, apiType, semanticBody),
 			APIType:     apiType,
 			Path:        r.URL.Path,
 			Method:      r.Method,
 			UserAgent:   ExtractUserAgent(r),
 			RequestID:   ExtractRequestIDHeader(r),
 			ContentType: ExtractContentType(r),
-			Reasoning:   ExtractRequestedReasoning(apiType, r.URL.Path, body),
+			Reasoning:   ExtractRequestedReasoning(apiType, r.URL.Path, semanticBody),
 		},
 		startTime: startTime,
 		requestID: requestID,

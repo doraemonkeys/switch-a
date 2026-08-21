@@ -11,6 +11,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/proxy/requestbody"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
@@ -100,6 +101,7 @@ type Config struct {
 	ResponseAnalyzer           ResponseAnalyzer
 	RuleStatistics             RuleStatistics
 	BackoffWaiter              BackoffWaiter
+	RequestSemanticDecoder     RequestSemanticDecoder
 	Logger                     *zap.Logger
 }
 
@@ -135,6 +137,10 @@ func NewHandler(cfg Config) *Handler {
 	if backoff == nil {
 		backoff = timerBackoffWaiter{}
 	}
+	requestSemanticDecoder := cfg.RequestSemanticDecoder
+	if requestSemanticDecoder == nil {
+		requestSemanticDecoder = requestbody.NewDecoder()
+	}
 	visibleContinuitySeedStore := cfg.VisibleContinuitySeedStore
 	if visibleContinuitySeedStore == nil {
 		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
@@ -158,6 +164,7 @@ func NewHandler(cfg Config) *Handler {
 		analyzer:                   analyzer,
 		ruleStats:                  cfg.RuleStatistics,
 		backoff:                    backoff,
+		requestSemanticDecoder:     requestSemanticDecoder,
 	}
 	handler.webSocketGateway = websocketproxy.NewGateway(websocketproxy.Config{
 		Store: cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,
