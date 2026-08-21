@@ -10,7 +10,8 @@ It includes a browser-based admin UI, stores its data in SQLite, and ships the f
 
 ## Why Switch-A over a typical "X-to-API" gateway?
 
-- **Transparent forwarding instead of brittle conversion.** Except where routing, authentication, or protocol safety requires it, Switch-A leaves request bodies untouched and does not hard-code upstream-specific headers or parameters. That should be a basic gateway capability, yet many "X-to-API" tools get it wrong. New model names and request fields pass through automatically, so upstream model releases do not require a Switch-A update. You also avoid the shared content fingerprints common to hard-coded GPT proxies, reducing the risk of detection, mass flagging, or account bans.
+- **Transparent forwarding instead of brittle conversion.** Except where routing, authentication, or protocol safety requires it, Switch-A leaves request bodies untouched. You also avoid the shared content fingerprints common to hard-coded GPT proxies, reducing the risk of detection, mass flagging, or account bans.
+- **No magic strings.** Switch-A does not hard-code upstream-specific headers or parameters. That should be a basic gateway capability, yet many "X-to-API" tools get it wrong. New model names and request fields pass through automatically, so upstream model releases do not require a Switch-A update.
 - **The strongest GPT WebSocket adaptation and failover available.** WebSocket handling is a first-class part of Switch-A, not a compatibility patch. Connection setup, streaming lifecycle, safe provider switching, session continuity, and per-attempt diagnostics are modeled end to end.
 
 ## Features
