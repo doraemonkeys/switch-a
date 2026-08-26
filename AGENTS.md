@@ -26,6 +26,21 @@
 
 - Local CI: `make ci`.
 
+
+
+## GPT Header
+
+| 字段                  | 表示什么                         | 能否判断同一对话/客户端                            |
+| --------------------- | -------------------------------- | -------------------------------------------------- |
+| `X-Client-Request-Id` | Codex/OpenAI 的逻辑 API 请求编号 | 同一个值更像同一请求及其重试，不代表整个对话       |
+| `X-Codex-Window-Id`   | Codex Desktop 窗口编号           | 可以判断同一个窗口，但不是账号，也未必等于同一对话 |
+| `Thread-Id`           | Codex 任务/对话线程              | 判断同一对话最合适                                 |
+| `Session-Id`          | 当前 Codex 会话                  | 比线程更偏运行会话                                 |
+| `installation_id`     | Codex Desktop 安装实例           | 判断同一个客户端安装最合适                         |
+| `Chatgpt-Account-Id`  | switch-a 选中的上游 ChatGPT 账号 | 是 provider 账号，不是 Codex 客户端身份            |
+
+用户 client 请求的原始 API Key 可以作为不同客户端/设备的标识。
+
 ## Project Overview
 
 - [OVERVIEW](docs/PROJECT_OVERVIEW.md)
