@@ -4,6 +4,7 @@ import { useConfigExport } from "../hooks/useConfigExport";
 import { useToast } from "../hooks/useToast";
 import { ConfigForm } from "../components/ConfigForm";
 import { ConfigImportModal } from "../components/ConfigImportModal";
+import { downloadJsonFile } from "../lib/jsonDownload";
 
 // Download icon
 const DownloadIcon = () => (
@@ -54,24 +55,8 @@ export function Config() {
     try {
       const config = await exportConfig();
 
-      // Create downloadable blob
-      const blob = new Blob([JSON.stringify(config, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-
-      // Generate filename with date
       const date = new Date().toISOString().split("T")[0];
-      const filename = `switch-a-config-${date}.json`;
-
-      // Trigger download
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      downloadJsonFile(`switch-a-config-${date}.json`, config);
 
       toast.success("配置导出成功");
     } catch (err) {

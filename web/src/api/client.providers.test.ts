@@ -185,6 +185,33 @@ describe("createApiClient providers API", () => {
     );
   });
 
+  it("should export one provider as Codex auth.json", async () => {
+    const authDocument = {
+      auth_mode: "chatgpt",
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: "id-token",
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        account_id: "account-123",
+      },
+      last_refresh: "2026-08-26T00:15:00Z",
+    };
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(authDocument),
+    });
+
+    const result = await api.providers.exportCodexAuth("gpt/provider");
+
+    expect(result).toEqual(authDocument);
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/providers/gpt%2Fprovider/codex-auth",
+      expect.any(Object),
+    );
+  });
+
   it("should batch enable providers", async () => {
     const batchRequest = { action: "enable" as const, ids: ["1", "2", "3"] };
     const batchResponse = {

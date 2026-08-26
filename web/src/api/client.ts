@@ -40,6 +40,7 @@ import type {
   ActiveRequestsResponse,
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatusResponse,
+  CodexAuthDocument,
   ApiErrorDetails,
 } from "./types";
 import type {
@@ -92,6 +93,7 @@ export type {
   ActiveRequestsResponse,
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatusResponse,
+  CodexAuthDocument,
   CompletionState,
   LegacyRequestLog,
   NormalizedRequestLog,
@@ -413,6 +415,10 @@ function createProvidersApi(request: AuthenticatedRequestFn) {
       request<void>(`/providers/${id}/refresh-credential`, { method: "POST" }),
     refreshUsage: (id: string) =>
       request<void>(`/providers/${id}/refresh-usage`, { method: "POST" }),
+    exportCodexAuth: (id: string) =>
+      request<CodexAuthDocument>(
+        `/providers/${encodeURIComponent(id)}/codex-auth`,
+      ),
     batch: (data: BatchProviderRequest) =>
       request<BatchProviderResponse>("/providers/batch", {
         method: "POST",

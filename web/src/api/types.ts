@@ -175,6 +175,20 @@ export interface ChatGPTLoginStatusResponse {
   auth?: ProviderAuthView | null;
 }
 
+export interface CodexAuthTokens {
+  id_token: string;
+  access_token: string;
+  refresh_token: string;
+  account_id: string;
+}
+
+export interface CodexAuthDocument {
+  auth_mode: "chatgpt";
+  OPENAI_API_KEY: null;
+  tokens: CodexAuthTokens;
+  last_refresh?: string;
+}
+
 export interface RoutingPolicy {
   id: string;
   api_type: string;

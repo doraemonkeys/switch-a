@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Provider } from "../../api/client";
 import { ProvidersTableBody } from "./ProvidersTableBody";
 
@@ -71,6 +72,8 @@ describe("ProvidersTableBody", () => {
             onEdit={vi.fn()}
             onDelete={vi.fn()}
             onReset={vi.fn()}
+            onExportCodexAuth={vi.fn()}
+            exportingProviderId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
@@ -110,6 +113,8 @@ describe("ProvidersTableBody", () => {
             onEdit={vi.fn()}
             onDelete={vi.fn()}
             onReset={vi.fn()}
+            onExportCodexAuth={vi.fn()}
+            exportingProviderId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
@@ -142,6 +147,8 @@ describe("ProvidersTableBody", () => {
             onEdit={vi.fn()}
             onDelete={vi.fn()}
             onReset={vi.fn()}
+            onExportCodexAuth={vi.fn()}
+            exportingProviderId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "GPT Account"}
@@ -156,5 +163,70 @@ describe("ProvidersTableBody", () => {
     expect(
       screen.getByTitle("Filter by group: GPT Account (group disabled)"),
     ).toBeInTheDocument();
+  });
+
+  it("offers Codex auth export only for a paused GPT provider with active auth", async () => {
+    const user = userEvent.setup();
+    const pausedProvider = { ...buildProvider(), enabled: false };
+    const onExportCodexAuth = vi.fn();
+
+    render(
+      <table>
+        <tbody>
+          <ProvidersTableBody
+            loading={false}
+            providers={[pausedProvider]}
+            filteredProviders={[pausedProvider]}
+            onToggle={vi.fn()}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onReset={vi.fn()}
+            onExportCodexAuth={onExportCodexAuth}
+            exportingProviderId={null}
+            onAddClick={vi.fn()}
+            onImportClick={vi.fn()}
+            getGroupName={() => "Ungrouped"}
+            getGroupEnabled={() => undefined}
+          />
+        </tbody>
+      </table>,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Export Codex auth.json for GPT Provider",
+      }),
+    );
+    expect(onExportCodexAuth).toHaveBeenCalledWith(pausedProvider);
+  });
+
+  it("hides Codex auth export until the GPT provider is paused", () => {
+    const provider = buildProvider();
+
+    render(
+      <table>
+        <tbody>
+          <ProvidersTableBody
+            loading={false}
+            providers={[provider]}
+            filteredProviders={[provider]}
+            onToggle={vi.fn()}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onReset={vi.fn()}
+            onExportCodexAuth={vi.fn()}
+            exportingProviderId={null}
+            onAddClick={vi.fn()}
+            onImportClick={vi.fn()}
+            getGroupName={() => "Ungrouped"}
+            getGroupEnabled={() => undefined}
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /Export Codex auth\.json/ }),
+    ).not.toBeInTheDocument();
   });
 });

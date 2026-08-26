@@ -27,6 +27,7 @@ import {
   FolderOpen,
   RefreshCw,
   ServerCrash,
+  Download,
 } from "lucide-react";
 import {
   getProviderStatus,
@@ -44,6 +45,8 @@ export interface ProvidersTableBodyProps {
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onReset: (provider: Provider) => void;
+  onExportCodexAuth: (provider: Provider) => void;
+  exportingProviderId: string | null;
   onAddClick: () => void;
   onImportClick: () => void;
   onGroupClick?: (groupId: string) => void;
@@ -162,6 +165,8 @@ function ActionsCell({
   onToggle,
   onEdit,
   onDelete,
+  onExportCodexAuth,
+  exportingProviderId,
 }: {
   provider: Provider;
   status: string;
@@ -170,8 +175,15 @@ function ActionsCell({
   onToggle: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
+  onExportCodexAuth: (provider: Provider) => void;
+  exportingProviderId: string | null;
 }) {
   const showReset = status === "unhealthy" || status === "pending-recovery";
+  const canExportCodexAuth =
+    provider.credential_type === "chatgpt" &&
+    !provider.enabled &&
+    resolveProviderAuthView(provider)?.status === "active";
+  const isExporting = exportingProviderId === provider.id;
 
   return (
     <div className="flex items-center justify-end gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity">
@@ -202,6 +214,20 @@ function ActionsCell({
           <Play className="w-4 h-4" />
         )}
       </button>
+      {canExportCodexAuth && (
+        <button
+          type="button"
+          onClick={() => onExportCodexAuth(provider)}
+          disabled={isExporting}
+          className="p-1.5 text-text-muted hover:text-primary hover:bg-primary-light rounded-md transition-colors disabled:cursor-wait disabled:opacity-50"
+          title="Export Codex auth.json; keep this provider paused while the file is in use"
+          aria-label={`Export Codex auth.json for ${provider.name}`}
+        >
+          <Download
+            className={`w-4 h-4 ${isExporting ? "animate-pulse" : ""}`}
+          />
+        </button>
+      )}
       <button
         onClick={() => onEdit(provider)}
         className="p-1.5 text-text-muted hover:text-primary hover:bg-bg-hover rounded-md transition-colors"
@@ -360,6 +386,8 @@ function ProviderRow({
   onEdit,
   onDelete,
   onReset,
+  onExportCodexAuth,
+  exportingProviderId,
   onGroupClick,
   onViewDetail,
   getGroupName,
@@ -370,6 +398,8 @@ function ProviderRow({
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onReset: (provider: Provider) => void;
+  onExportCodexAuth: (provider: Provider) => void;
+  exportingProviderId: string | null;
   onGroupClick?: (groupId: string) => void;
   onViewDetail?: (provider: Provider) => void;
   getGroupName: (groupId: string | null) => string;
@@ -471,6 +501,8 @@ function ProviderRow({
           onToggle={onToggle}
           onEdit={onEdit}
           onDelete={onDelete}
+          onExportCodexAuth={onExportCodexAuth}
+          exportingProviderId={exportingProviderId}
         />
       </td>
     </tr>
@@ -485,6 +517,8 @@ export function ProvidersTableBody({
   onEdit,
   onDelete,
   onReset,
+  onExportCodexAuth,
+  exportingProviderId,
   onAddClick,
   onImportClick,
   onGroupClick,
@@ -560,6 +594,8 @@ export function ProvidersTableBody({
           onEdit={onEdit}
           onDelete={onDelete}
           onReset={onReset}
+          onExportCodexAuth={onExportCodexAuth}
+          exportingProviderId={exportingProviderId}
           onGroupClick={onGroupClick}
           onViewDetail={onViewDetail}
           getGroupName={getGroupName}

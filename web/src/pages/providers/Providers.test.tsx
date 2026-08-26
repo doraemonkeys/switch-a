@@ -38,6 +38,8 @@ function createProviderActions() {
     handleSaveProvider: vi.fn(),
     handleRefreshCredential: vi.fn(),
     handleRefreshUsage: vi.fn(),
+    handleExportCodexAuth: vi.fn(),
+    exportingProviderId: null,
   };
 }
 

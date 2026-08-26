@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useProviders } from "../../hooks/useProviders";
 import { useToast } from "../../hooks/useToast";
 import { ApiError, type Provider, type ProviderInput } from "../../api/client";
+import { downloadJsonFile } from "../../lib/jsonDownload";
 import { useProviderConfirmations } from "./useProviderConfirmations";
 
 function isCredentialBindingConflict(error: unknown): boolean {
@@ -24,8 +26,12 @@ export function useProviderActions() {
     resetProvider,
     refreshCredential,
     refreshUsage,
+    exportCodexAuth,
   } = useProviders();
   const toast = useToast();
+  const [exportingProviderId, setExportingProviderId] = useState<string | null>(
+    null,
+  );
   const confirmations = useProviderConfirmations({
     deleteProvider,
     resetProvider,
@@ -100,6 +106,23 @@ export function useProviderActions() {
     }
   };
 
+  const handleExportCodexAuth = async (provider: Provider) => {
+    setExportingProviderId(provider.id);
+    try {
+      const authDocument = await exportCodexAuth(provider.id);
+      downloadJsonFile("auth.json", authDocument);
+      toast.success(
+        `Codex auth.json exported for "${provider.name}". Keep this provider paused while the file is in use.`,
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to export Codex auth.json",
+      );
+    } finally {
+      setExportingProviderId(null);
+    }
+  };
+
   return {
     providers,
     hasSnapshot,
@@ -111,5 +134,7 @@ export function useProviderActions() {
     handleSaveProvider,
     handleRefreshCredential,
     handleRefreshUsage,
+    handleExportCodexAuth,
+    exportingProviderId,
   };
 }

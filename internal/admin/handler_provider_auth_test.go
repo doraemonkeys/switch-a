@@ -193,6 +193,152 @@ func TestStartChatGPTProviderLogin(t *testing.T) {
 	}
 }
 
+func TestExportProviderCodexAuth(t *testing.T) {
+	lastRefresh := time.Date(2026, time.August, 26, 0, 15, 0, 0, time.UTC)
+	credential, err := json.Marshal(model.ChatGPTProviderCredential{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		IDToken:      "id-token",
+		AccountID:    "account-123",
+		LastRefresh:  lastRefresh,
+	})
+	if err != nil {
+		t.Fatalf("marshal credential: %v", err)
+	}
+	provider := &model.Provider{
+		ID:             "gpt-provider",
+		Name:           "Paused GPT",
+		Enabled:        false,
+		CredentialType: model.ProviderCredentialTypeChatGPT,
+		Credential: model.ProviderCredentialFromLegacy(
+			"gpt-provider",
+			model.ProviderCredentialTypeChatGPT,
+			string(credential),
+		),
+	}
+	store := newMockStore()
+	store.providers[provider.ID] = provider
+	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/providers/gpt-provider/codex-auth", nil)
+	req.SetPathValue("id", provider.ID)
+	recorder := httptest.NewRecorder()
+
+	handler.ExportProviderCodexAuth(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Disposition"); got != `attachment; filename="auth.json"` {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+
+	var document providerauth.CodexAuthDocument
+	if err := json.NewDecoder(recorder.Body).Decode(&document); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if document.OpenAIAPIKey != nil || document.Tokens.AccountID != "account-123" {
+		t.Fatalf("document = %#v", document)
+	}
+	if document.AuthMode != "chatgpt" {
+		t.Fatalf("auth_mode = %q, want chatgpt", document.AuthMode)
+	}
+	if document.Tokens.AccessToken != "access-token" || document.Tokens.RefreshToken != "refresh-token" || document.Tokens.IDToken != "id-token" {
+		t.Fatalf("tokens = %#v", document.Tokens)
+	}
+	if document.LastRefresh == nil || !document.LastRefresh.Equal(lastRefresh) {
+		t.Fatalf("last_refresh = %v, want %v", document.LastRefresh, lastRefresh)
+	}
+	if store.providers[provider.ID] != provider || provider.Enabled {
+		t.Fatal("export changed or replaced the persisted provider")
+	}
+}
+
+func TestExportProviderCodexAuthRejectsIneligibleProvider(t *testing.T) {
+	testCases := []struct {
+		name        string
+		provider    *model.Provider
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "non GPT provider",
+			provider:    &model.Provider{ID: "static", Enabled: false, CredentialType: model.ProviderCredentialTypeAPIKey},
+			wantStatus:  http.StatusConflict,
+			wantMessage: "only supported for GPT providers",
+		},
+		{
+			name:        "enabled GPT provider",
+			provider:    &model.Provider{ID: "enabled", Enabled: true, CredentialType: model.ProviderCredentialTypeChatGPT},
+			wantStatus:  http.StatusConflict,
+			wantMessage: "Pause the provider",
+		},
+		{
+			name:        "missing credential",
+			provider:    &model.Provider{ID: "missing", Enabled: false, CredentialType: model.ProviderCredentialTypeChatGPT},
+			wantStatus:  http.StatusConflict,
+			wantMessage: "active GPT credential",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := newMockStore()
+			store.providers[testCase.provider.ID] = testCase.provider
+			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			req := httptest.NewRequest(http.MethodGet, "/admin/api/providers/"+testCase.provider.ID+"/codex-auth", nil)
+			req.SetPathValue("id", testCase.provider.ID)
+			recorder := httptest.NewRecorder()
+
+			handler.ExportProviderCodexAuth(recorder, req)
+
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, testCase.wantStatus)
+			}
+			if !strings.Contains(recorder.Body.String(), testCase.wantMessage) {
+				t.Fatalf("body = %q, want message containing %q", recorder.Body.String(), testCase.wantMessage)
+			}
+		})
+	}
+}
+
+func TestExportProviderCodexAuthReadFailures(t *testing.T) {
+	testCases := []struct {
+		name       string
+		id         string
+		storeErr   error
+		wantStatus int
+	}{
+		{name: "missing id", wantStatus: http.StatusBadRequest},
+		{name: "not found", id: "missing", wantStatus: http.StatusNotFound},
+		{name: "store failure", id: "gpt-provider", storeErr: errors.New("read failed"), wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := newMockStore()
+			store.getErr = testCase.storeErr
+			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			req := httptest.NewRequest(http.MethodGet, "/admin/api/providers/"+testCase.id+"/codex-auth", nil)
+			if testCase.id != "" {
+				req.SetPathValue("id", testCase.id)
+			}
+			recorder := httptest.NewRecorder()
+
+			handler.ExportProviderCodexAuth(recorder, req)
+
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, testCase.wantStatus)
+			}
+		})
+	}
+}
+
 func TestStartChatGPTProviderLogin_Error(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	handler := NewHandler(Config{

@@ -14,6 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const codexAuthExportFilename = "auth.json"
+
 // StartChatGPTProviderLogin handles POST /admin/api/provider-auth/chatgpt/start.
 func (h *Handler) StartChatGPTProviderLogin(w http.ResponseWriter, _ *http.Request) {
 	if h.auth == nil {
@@ -86,6 +88,41 @@ func (h *Handler) ImportChatGPTProviderCredential(w http.ResponseWriter, r *http
 	}
 
 	writeJSON(w, http.StatusOK, status)
+}
+
+// ExportProviderCodexAuth handles GET /admin/api/providers/{id}/codex-auth.
+func (h *Handler) ExportProviderCodexAuth(w http.ResponseWriter, r *http.Request) {
+	provider := h.getProviderForAuthAction(w, r, "export provider Codex auth.json")
+	if provider == nil {
+		return
+	}
+
+	document, err := providerauth.BuildCodexAuthDocument(provider)
+	if err != nil {
+		switch {
+		case errors.Is(err, providerauth.ErrCodexAuthExportRequiresChatGPT):
+			writeError(w, http.StatusConflict, ErrCodeConflict, "Codex auth export is only supported for GPT providers")
+		case errors.Is(err, providerauth.ErrCodexAuthExportRequiresPaused):
+			writeError(w, http.StatusConflict, ErrCodeConflict, "Pause the provider before exporting Codex auth.json")
+		default:
+			h.logger.Warn("provider credential unavailable for Codex auth export",
+				zap.String("provider_id", provider.ID),
+				zap.Error(err),
+			)
+			writeError(w, http.StatusConflict, ErrCodeConflict, "Provider does not have an active GPT credential to export")
+		}
+		return
+	}
+
+	// Credential downloads must never be cached or rendered inline by an intermediary.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+codexAuthExportFilename+`"`)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	writeJSON(w, http.StatusOK, document)
+	h.logger.Info("exported paused provider credential",
+		zap.String("provider_id", provider.ID),
+		zap.String("format", "codex_auth_json"),
+	)
 }
 
 // RefreshProviderCredential handles POST /admin/api/providers/{id}/refresh-credential.

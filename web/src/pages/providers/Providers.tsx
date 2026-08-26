@@ -46,6 +46,8 @@ export function Providers() {
     handleSaveProvider,
     handleRefreshCredential,
     handleRefreshUsage,
+    handleExportCodexAuth,
+    exportingProviderId,
   } = useProviderActions();
   const { groups } = useGroups();
   const { filters, setFilter } = useProviderListFilters();
@@ -191,6 +193,8 @@ export function Providers() {
                 onEdit={handleEditClick}
                 onDelete={handleDeleteClick}
                 onReset={handleResetClick}
+                onExportCodexAuth={handleExportCodexAuth}
+                exportingProviderId={exportingProviderId}
                 onAddClick={handleAddClick}
                 onImportClick={handleImportClick}
                 onGroupClick={(groupId) => setFilter("groupId", groupId)}

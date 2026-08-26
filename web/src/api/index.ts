@@ -94,6 +94,8 @@ export type {
   ChatGPTLoginStartResponse,
   ChatGPTLoginStatus,
   ChatGPTLoginStatusResponse,
+  CodexAuthTokens,
+  CodexAuthDocument,
   RoutingPolicy,
   RoutingPolicyInput,
   RoutingPolicyModelMatchType,

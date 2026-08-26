@@ -3,7 +3,7 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useProviders, useProvider } from "./useProviders";
 import { ApiContext } from "../api/context";
-import type { ApiClient, Provider } from "../api/client";
+import type { ApiClient, CodexAuthDocument, Provider } from "../api/client";
 import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 
 const mockProvider: Provider = {
@@ -47,6 +47,16 @@ function createMockApiClient() {
       reset: vi.fn().mockResolvedValue(undefined),
       refreshCredential: vi.fn().mockResolvedValue(undefined),
       refreshUsage: vi.fn().mockResolvedValue(undefined),
+      exportCodexAuth: vi.fn().mockResolvedValue({
+        auth_mode: "chatgpt",
+        OPENAI_API_KEY: null,
+        tokens: {
+          id_token: "id-token",
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          account_id: "account-123",
+        },
+      }),
     },
     groups: {
       list: vi.fn(),
@@ -284,6 +294,27 @@ describe("useProviders", () => {
 
     expect(mockApi.providers.refreshUsage).toHaveBeenCalledWith("1");
     expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
+  });
+
+  it("should export Codex auth without mutating or refetching providers", async () => {
+    const { result } = renderHook(() => useProviders(), {
+      wrapper: createWrapper(mockApi),
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    let exportedDocument: CodexAuthDocument | undefined;
+    await act(async () => {
+      exportedDocument = await result.current.exportCodexAuth("1");
+    });
+
+    expect(mockApi.providers.exportCodexAuth).toHaveBeenCalledWith("1");
+    expect(exportedDocument).toEqual(
+      expect.objectContaining({ OPENAI_API_KEY: null }),
+    );
+    expect(mockApi.providers.list).toHaveBeenCalledTimes(1);
   });
 
   it("should reconcile provider auth state after a rejected usage refresh", async () => {

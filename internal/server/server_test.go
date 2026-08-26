@@ -359,26 +359,34 @@ func TestAdminHandleNotFound(t *testing.T) {
 	}
 }
 
-func TestAdminProviderRefreshRoutesRequireAuth(t *testing.T) {
+func TestAdminProviderCredentialRoutesRequireAuth(t *testing.T) {
 	s := testAdminServer(t)
 
 	testCases := []struct {
-		name string
-		path string
+		name   string
+		method string
+		path   string
 	}{
 		{
-			name: "refresh credential",
-			path: "/admin/api/providers/test-provider/refresh-credential",
+			name:   "export Codex auth",
+			method: http.MethodGet,
+			path:   "/admin/api/providers/test-provider/codex-auth",
 		},
 		{
-			name: "refresh usage",
-			path: "/admin/api/providers/test-provider/refresh-usage",
+			name:   "refresh credential",
+			method: http.MethodPost,
+			path:   "/admin/api/providers/test-provider/refresh-credential",
+		},
+		{
+			name:   "refresh usage",
+			method: http.MethodPost,
+			path:   "/admin/api/providers/test-provider/refresh-usage",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			req := httptest.NewRequest(tc.method, tc.path, nil)
 			w := httptest.NewRecorder()
 
 			s.server.Handler.ServeHTTP(w, req)

@@ -1,5 +1,5 @@
 import { useApi } from "../api";
-import type { Provider, ProviderInput } from "../api/client";
+import type { CodexAuthDocument, Provider, ProviderInput } from "../api/client";
 import { useQuery } from "./useQuery";
 
 interface UseProvidersResult {
@@ -16,6 +16,7 @@ interface UseProvidersResult {
   resetProvider: (id: string) => Promise<void>;
   refreshCredential: (id: string) => Promise<void>;
   refreshUsage: (id: string) => Promise<void>;
+  exportCodexAuth: (id: string) => Promise<CodexAuthDocument>;
 }
 
 export function useProviders(): UseProvidersResult {
@@ -74,6 +75,9 @@ export function useProviders(): UseProvidersResult {
     }
   };
 
+  const exportCodexAuth = (id: string): Promise<CodexAuthDocument> =>
+    api.providers.exportCodexAuth(id);
+
   return {
     providers: query.data ?? [],
     hasSnapshot: query.data !== null,
@@ -88,6 +92,7 @@ export function useProviders(): UseProvidersResult {
     resetProvider,
     refreshCredential,
     refreshUsage,
+    exportCodexAuth,
   };
 }
 
