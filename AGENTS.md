@@ -41,6 +41,11 @@
 
 用户 client 请求的原始 API Key 可以作为不同客户端/设备的标识。
 
+## 其他
+
+写计划文档时，禁止引入非常规安全设计和校验；禁止在没有明确攻击者和攻击模式的情况下做 safety；禁止防备运维有碍 observability；禁止引入反人类的安全设计影响用户体验与正常功能。
+
+
 ## Project Overview
 
 - [OVERVIEW](docs/PROJECT_OVERVIEW.md)
