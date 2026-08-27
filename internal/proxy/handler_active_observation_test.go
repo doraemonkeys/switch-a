@@ -59,7 +59,7 @@ func TestHandlerActiveRequestExposesReasoningAndHTTPTraffic(t *testing.T) {
 		}},
 	}, "", "test-key")}
 	registry := NewActiveRequestRegistry()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:          store,
 		ActiveRegistry: registry,
 		Logger:         zap.NewNop(),

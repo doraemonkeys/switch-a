@@ -149,6 +149,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault(KeyPort, DefaultPort)
 	v.SetDefault(KeyAdminPort, DefaultAdminPort)
 	v.SetDefault(KeyDBPath, DefaultDBPath)
+	v.SetDefault(KeyCodexKeyringFile, DefaultCodexKeyringFile)
 	v.SetDefault(KeyLogPath, DefaultLogPath)
 	v.SetDefault(KeyLogMaxSizeMB, DefaultLogMaxSizeMB)
 	v.SetDefault(KeyLogMaxKeepDays, DefaultLogMaxKeepDays)

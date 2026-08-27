@@ -44,7 +44,7 @@ func TestHandler_ServeHTTP_PersistsRequestedReasoningObservation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := newMockStore()
-			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
 			w := httptest.NewRecorder()
 

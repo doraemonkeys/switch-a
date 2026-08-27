@@ -41,7 +41,7 @@ func TestWebSocketSessionOrchestrator_FinalSessionUsesSuppressedPayload(t *testi
 			},
 		}
 		orchestrator.replayBuffer.Record(websocket.MessageText, []byte("buffered request"), false)
-		if err := orchestrator.ensureClientAccepted(w, r); err != nil {
+		if err := orchestrator.ensureClientAccepted(w, r, orchestrator.subprotocol); err != nil {
 			t.Errorf("ensureClientAccepted() error = %v", err)
 			return
 		}

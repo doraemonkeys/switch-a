@@ -265,8 +265,10 @@ func (h *Handler) decodeSemanticRequestBody(
 	// the raw request that an upstream may still understand.
 	h.logger.Warn("request body semantic decoding failed",
 		zap.String("request_id", requestID),
+		zap.String("operation_id", requestID),
 		zap.String("api_type", apiType),
 		zap.String("path", request.URL.Path),
+		zap.String("content_encoding", normalizedHTTPContentCodings(contentEncodings)),
 		zap.Int("content_encoding_value_count", len(contentEncodings)),
 		zap.String("decode_failure", string(failure)),
 	)

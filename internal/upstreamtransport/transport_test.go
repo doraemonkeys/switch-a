@@ -26,12 +26,15 @@ func TestNewConfiguresIdentityPreservingTransport(t *testing.T) {
 		FirstByteTimeout: 47 * time.Millisecond,
 	}
 	transport := New(config)
-	if transport == nil || transport.client == nil {
+	if transport == nil || transport.followClient == nil || transport.rawClient == nil {
 		t.Fatal("New returned an uninitialized transport")
 	}
-	roundTripper, ok := transport.client.Transport.(*http.Transport)
+	roundTripper, ok := transport.followClient.Transport.(*http.Transport)
 	if !ok {
-		t.Fatalf("client transport type = %T, want *http.Transport", transport.client.Transport)
+		t.Fatalf("client transport type = %T, want *http.Transport", transport.followClient.Transport)
+	}
+	if transport.rawClient.Transport != transport.followClient.Transport {
+		t.Fatal("redirect clients do not share one RoundTripper")
 	}
 	if !roundTripper.DisableCompression {
 		t.Error("DisableCompression = false, raw upstream identity would be lost")
@@ -64,7 +67,7 @@ func TestCloseIdleConnectionsHandlesEveryInitializationState(t *testing.T) {
 	(&Transport{}).CloseIdleConnections()
 
 	closer := &recordingRoundTripper{}
-	transport := &Transport{client: &http.Client{Transport: closer}}
+	transport := &Transport{followClient: &http.Client{Transport: closer}}
 	transport.CloseIdleConnections()
 	if got := closer.closed.Load(); got != 1 {
 		t.Fatalf("CloseIdleConnections calls = %d, want 1", got)
@@ -445,7 +448,7 @@ func TestFetchReturnsNormalizedHeadAndLiveTrailer(t *testing.T) {
 		trailer: trailer,
 	}
 	var seenContextValue any
-	transport := &Transport{client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		seenContextValue = request.Context().Value(contextKey("operation"))
 		return &http.Response{
 			StatusCode:    http.StatusCreated,
@@ -456,14 +459,15 @@ func TestFetchReturnsNormalizedHeadAndLiveTrailer(t *testing.T) {
 			Body:          body,
 			Request:       request,
 		}, nil
-	})}}
+	})}
+	transport := &Transport{followClient: client, rawClient: client}
 
 	ctx := context.WithValue(t.Context(), contextKey("operation"), "op-17")
 	request, err := http.NewRequest(http.MethodGet, "http://upstream.example/events", nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	response, err := transport.Fetch(ctx, request)
+	response, err := transport.Fetch(ctx, request, ExecutionPolicy{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -511,7 +515,7 @@ func TestFetchPreservesCompressedWireIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	response, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request)
+	response, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -551,24 +555,25 @@ func TestFetchRejectsInvalidStateAndPropagatesRoundTripFailure(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	var nilTransport *Transport
-	if _, err := nilTransport.Fetch(t.Context(), request); err == nil {
+	if _, err := nilTransport.Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
 		t.Fatal("nil Transport.Fetch succeeded")
 	}
-	if _, err := (&Transport{}).Fetch(t.Context(), request); err == nil {
+	if _, err := (&Transport{}).Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
 		t.Fatal("uninitialized Transport.Fetch succeeded")
 	}
 
 	wantErr := errors.New("dial failed")
-	transport := &Transport{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, wantErr
-	})}}
-	if _, err := transport.Fetch(t.Context(), request); !errors.Is(err, wantErr) {
+	})}
+	transport := &Transport{followClient: client, rawClient: client}
+	if _, err := transport.Fetch(t.Context(), request, ExecutionPolicy{}); !errors.Is(err, wantErr) {
 		t.Fatalf("Fetch error = %v, want %v", err, wantErr)
 	}
-	if _, err := transport.Fetch(t.Context(), nil); err == nil {
+	if _, err := transport.Fetch(t.Context(), nil, ExecutionPolicy{}); err == nil {
 		t.Fatal("Fetch accepted nil request")
 	}
-	if _, err := transport.Fetch(nil, request); err == nil {
+	if _, err := transport.Fetch(nil, request, ExecutionPolicy{}); err == nil {
 		t.Fatal("Fetch accepted nil context")
 	}
 }

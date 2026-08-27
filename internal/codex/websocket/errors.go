@@ -8,6 +8,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 )
 
 type FailureClass string
@@ -65,13 +66,33 @@ func protocolFailure(stage string, result codexheaders.Result) error {
 			codexheaders.ReasonOperationUnavailable:
 			class = FailureIdentity
 		}
+		cause := fmt.Errorf("%s rejected: %s", decision.Field(), decision.Reason())
+		switch decision.Reason() {
+		case codexheaders.ReasonOwnerConflict, codexheaders.ReasonOperationConflict:
+			cause = codexrecovery.Mark(codexrecovery.ConditionStateConflict, cause)
+		case codexheaders.ReasonOwnerUnknown:
+			cause = codexrecovery.Mark(codexrecovery.ConditionNewThreadRequired, cause)
+		case codexheaders.ReasonMalformedHeader,
+			codexheaders.ReasonCarrierConflict,
+			codexheaders.ReasonInvalidEnvelope,
+			codexheaders.ReasonInvalidProjection,
+			codexheaders.ReasonDuplicateSecurityKey,
+			codexheaders.ReasonResponseEchoForbidden:
+			cause = codexrecovery.Mark(codexrecovery.ConditionProtocolInvalid, cause)
+		}
 		return &Failure{
 			Class: class,
 			Stage: stage,
-			Cause: fmt.Errorf("%s rejected: %s", decision.Field(), decision.Reason()),
+			Cause: cause,
 		}
 	}
-	return &Failure{Class: FailureProtocol, Stage: stage, Cause: errors.New("protocol decision rejected")}
+	cause := codexrecovery.Mark(codexrecovery.ConditionProtocolInvalid, errors.New("protocol decision rejected"))
+	return &Failure{Class: FailureProtocol, Stage: stage, Cause: cause}
+}
+
+func reconnectRequiredFailure(stage string) error {
+	cause := codexrecovery.Mark(codexrecovery.ConditionReconnectRequired, errors.New("current upstream connection is required"))
+	return &Failure{Class: FailureIdentity, Stage: stage, Cause: cause}
 }
 
 func continuityFailure(stage string, err error) error {

@@ -2,16 +2,25 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/admin"
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
+	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
+	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
+	codexws "github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storepkg "github.com/doraemonkeys/switch-a/internal/store"
 
@@ -20,6 +29,72 @@ import (
 
 // mockStore implements the store interface for testing.
 type mockStore struct{}
+
+func testCodexRuntimes(t *testing.T) (*codexhttp.Runtime, *codexws.Runtime) {
+	t.Helper()
+	document, err := codexkeyring.GenerateDocument(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := codexkeyring.Parse(document, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := storepkg.NewSQLiteStore(filepath.Join(t.TempDir(), "codex.db"), internal.RealClock{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = persistence.Close() })
+	repositories, err := persistence.OpenCodexRepositories(context.Background(), keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digester, err := codexidentity.NewDigester(keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := codexcontinuity.Limits{
+		PendingTTL: 24 * time.Hour, CommittedTTL: 30 * 24 * time.Hour,
+		TombstoneTTL: 7 * 24 * time.Hour, MaxBindings: 100,
+	}
+	policy, err := codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{
+		codexcontinuity.KindThreadID: limits, codexcontinuity.KindSessionID: limits,
+		codexcontinuity.KindConversationID: limits, codexcontinuity.KindWindowID: limits,
+		codexcontinuity.KindTurnState: limits, codexcontinuity.KindTurnMetadata: limits,
+		codexcontinuity.KindResponseReference: limits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuity, err := codexcontinuity.NewService(codexcontinuity.Config{
+		Store: repositories.Continuity, Digester: &digester, Policy: policy, Clock: internal.RealClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := providercookie.NewService(providercookie.ServiceConfig{
+		Repository: repositories.ProviderCookies, HandleDigester: keyring, Random: rand.Reader,
+		Clock: internal.RealClock{}, HostCanonicalizer: providercookie.HostCanonicalizerFunc(codexidentity.CanonicalizeCookieHost),
+		PublicSuffixList: codexidentity.PublicSuffixList{}, Policy: providercookie.DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheme := codexhttp.NewTrustedProxySchemeResolver(nil)
+	httpRuntime, err := codexhttp.New(codexhttp.Config{
+		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	webSocketRuntime, err := codexws.New(codexws.Config{
+		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httpRuntime, webSocketRuntime
+}
 
 func (m *mockStore) ListProviders(context.Context) ([]model.Provider, error) { return nil, nil }
 func (m *mockStore) ListProvidersByAPIType(context.Context, string) ([]model.Provider, error) {
@@ -100,10 +175,10 @@ func (m *mockStore) CleanOldAttempts(context.Context, time.Time) (int64, error) 
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
+	httpRuntime, webSocketRuntime := testCodexRuntimes(t)
 	return New(Config{
-		Port:   "0",
-		Logger: logger,
-		Store:  &mockStore{},
+		Port: "0", Logger: logger, Store: &mockStore{},
+		CodexHTTP: httpRuntime, CodexWebSocket: webSocketRuntime,
 	})
 }
 
@@ -182,10 +257,11 @@ func TestServerShutdown(t *testing.T) {
 
 func TestServerStartAndShutdown(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
+	httpRuntime, webSocketRuntime := testCodexRuntimes(t)
 	s := New(Config{
 		Port:   "0", // Use port 0 to get a random available port
-		Logger: logger,
-		Store:  &mockStore{},
+		Logger: logger, Store: &mockStore{},
+		CodexHTTP: httpRuntime, CodexWebSocket: webSocketRuntime,
 	})
 
 	// Start server in background

@@ -12,7 +12,7 @@ func TestScanServerSSEPreservesCompleteEventPrefixes(t *testing.T) {
 	raw := append(append(append([]byte(nil), created...), completed...), partial...)
 	before := append([]byte(nil), raw...)
 
-	scan := ScanServerSSE(FixtureCodexDesktop0150Alpha8, raw, false)
+	scan := ScanServerSSE(raw, false)
 	if scan.ConsumedBytes() != len(created)+len(completed) {
 		t.Fatalf("consumed = %d, want %d", scan.ConsumedBytes(), len(created)+len(completed))
 	}
@@ -45,12 +45,12 @@ func TestScanServerSSEPreservesCompleteEventPrefixes(t *testing.T) {
 
 func TestScanServerSSELeavesIncompleteInputForCaller(t *testing.T) {
 	partial := []byte("event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"ref\"}}")
-	scan := ScanServerSSE(FixtureCodexDesktop0150Alpha8, partial, false)
+	scan := ScanServerSSE(partial, false)
 	if scan.ConsumedBytes() != 0 || len(scan.Messages()) != 0 {
 		t.Fatalf("incomplete scan = consumed %d messages %#v", scan.ConsumedBytes(), scan.Messages())
 	}
 
-	final := ScanServerSSE(FixtureCodexDesktop0150Alpha8, partial, true)
+	final := ScanServerSSE(partial, true)
 	if final.ConsumedBytes() != len(partial) || len(final.Messages()) != 1 {
 		t.Fatalf("final scan = consumed %d messages %#v", final.ConsumedBytes(), final.Messages())
 	}
@@ -59,7 +59,7 @@ func TestScanServerSSELeavesIncompleteInputForCaller(t *testing.T) {
 		t.Fatalf("final response ID = %q", got)
 	}
 
-	empty := ScanServerSSE(FixtureCodexDesktop0150Alpha8, nil, true)
+	empty := ScanServerSSE(nil, true)
 	if empty.ConsumedBytes() != 0 || empty.Messages() != nil {
 		t.Fatalf("empty final scan = %#v", empty)
 	}
@@ -67,7 +67,7 @@ func TestScanServerSSELeavesIncompleteInputForCaller(t *testing.T) {
 
 func TestScanServerSSEKeepsNonDataEventsOpaque(t *testing.T) {
 	raw := []byte(": heartbeat\nevent: ping\nretry: 1000\n\n")
-	scan := ScanServerSSE(FixtureCodexDesktop0150Alpha8, raw, false)
+	scan := ScanServerSSE(raw, false)
 	if scan.ConsumedBytes() != len(raw) || len(scan.Messages()) != 1 {
 		t.Fatalf("scan = consumed %d messages %#v", scan.ConsumedBytes(), scan.Messages())
 	}
@@ -79,7 +79,7 @@ func TestScanServerSSEKeepsNonDataEventsOpaque(t *testing.T) {
 
 func TestScanServerSSEAcceptsTheStandardLeadingUTF8BOM(t *testing.T) {
 	raw := append([]byte{0xef, 0xbb, 0xbf}, []byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"bom-ref\"}}\n\n")...)
-	message := ScanServerSSE(FixtureCodexDesktop0150Alpha8, raw, false).Messages()[0]
+	message := ScanServerSSE(raw, false).Messages()[0]
 	result := DecideServerMessage(message, fixedLookup(OwnerCurrent))
 	decision := requireOnlyDecision(t, result)
 	if got := string(decision.Candidate().Value().Bytes()); got != "bom-ref" {
@@ -92,14 +92,14 @@ func TestScanServerSSEAcceptsTheStandardLeadingUTF8BOM(t *testing.T) {
 
 func TestScanServerSSEResponseMetadataReferenceIsTransportSpecific(t *testing.T) {
 	raw := []byte("event: response.metadata\ndata: {\"type\":\"response.metadata\",\"response_id\":\"metadata-ref\"}\n\n")
-	scan := ScanServerSSE(FixtureCodexDesktop0150Alpha8, raw, false)
+	scan := ScanServerSSE(raw, false)
 	decision := requireOnlyDecision(t, DecideServerMessage(scan.Messages()[0], fixedLookup(OwnerCurrent)))
 	if decision.Field() != FieldResponseReference || string(decision.Candidate().Value().Bytes()) != "metadata-ref" {
 		t.Fatalf("SSE metadata decision = %#v", decision)
 	}
 
 	frame := []byte(`{"type":"response.metadata","response_id":"must-stay-opaque-on-websocket"}`)
-	frameResult := DecideServerMessage(InspectServerFrame(FixtureCodexDesktop0150Alpha8, frame), fixedLookup(OwnerConflict))
+	frameResult := DecideServerMessage(InspectServerFrame(frame), fixedLookup(OwnerConflict))
 	if frameResult.Outcome() != ActionForward || len(frameResult.Decisions()) != 0 {
 		t.Fatalf("unconfirmed websocket metadata path was interpreted: %#v", frameResult.Decisions())
 	}
@@ -116,7 +116,7 @@ func TestScanServerSSEResponseMetadataReferenceIsTransportSpecific(t *testing.T)
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := []byte("data: {\"type\":\"response.metadata\",\"response_id\":" + test.value + "}\n\n")
-			message := ScanServerSSE(FixtureCodexDesktop0150Alpha8, body, false).Messages()[0]
+			message := ScanServerSSE(body, false).Messages()[0]
 			decision := requireOnlyDecision(t, DecideServerMessage(message, fixedLookup(OwnerCurrent)))
 			if decision.Action() != ActionReject || decision.Reason() != test.reason {
 				t.Fatalf("decision = %#v", decision)
@@ -125,19 +125,18 @@ func TestScanServerSSEResponseMetadataReferenceIsTransportSpecific(t *testing.T)
 	}
 }
 
-func TestScanServerSSEFailsClosedOnCompletedSecurityShape(t *testing.T) {
+func TestScanServerSSERejectsInvalidRecognizedSecurityShape(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		raw    string
 		reason Reason
 	}{
-		{name: "malformed JSON", raw: "data: {\n\n", reason: ReasonMalformedJSON},
 		{name: "duplicate response", raw: "data: {\"type\":\"response.completed\",\"response\":{},\"response\":{}}\n\n", reason: ReasonDuplicateSecurityKey},
 		{name: "invalid id", raw: "data: {\"type\":\"response.completed\",\"response\":{\"id\":null}}\n\n", reason: ReasonInvalidProjection},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			raw := []byte(test.raw)
-			scan := ScanServerSSE(FixtureCodexDesktop0150Alpha8, raw, false)
+			scan := ScanServerSSE(raw, false)
 			if scan.ConsumedBytes() != len(raw) || len(scan.Messages()) != 1 {
 				t.Fatalf("scan = consumed %d messages %#v", scan.ConsumedBytes(), scan.Messages())
 			}
@@ -153,14 +152,23 @@ func TestScanServerSSEFailsClosedOnCompletedSecurityShape(t *testing.T) {
 	}
 }
 
-func TestScanServerSSERejectsUnsupportedFixtureAfterBoundary(t *testing.T) {
-	raw := []byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"ref\"}}\r\r")
-	scan := ScanServerSSE(FixtureVersion("future"), raw, false)
-	if scan.ConsumedBytes() != len(raw) || len(scan.Messages()) != 1 {
-		t.Fatalf("scan = consumed %d messages %#v", scan.ConsumedBytes(), scan.Messages())
-	}
-	decision := requireOnlyDecision(t, DecideServerMessage(scan.Messages()[0], nil))
-	if decision.Reason() != ReasonUnsupportedFixture || decision.Field() != FieldEnvelope {
-		t.Fatalf("decision = %#v", decision)
+func TestScanServerSSEUnknownDataStaysOpaque(t *testing.T) {
+	for _, raw := range [][]byte{
+		[]byte("data: not-json\n\n"),
+		[]byte("data: []\n\n"),
+		[]byte("event: future\ndata: {\"type\":\"future.event\",\"response\":{\"id\":null}}\r\n\r\n"),
+	} {
+		scan := ScanServerSSE(raw, false)
+		if scan.ConsumedBytes() != len(raw) || len(scan.Messages()) != 1 {
+			t.Fatalf("scan = consumed %d messages %#v", scan.ConsumedBytes(), scan.Messages())
+		}
+		message := scan.Messages()[0]
+		result := DecideServerMessage(message, func(BindingCandidate) OwnerStatus {
+			t.Fatal("opaque SSE data performed an owner lookup")
+			return OwnerConflict
+		})
+		if message.Recognized() || result.Outcome() != ActionForward || len(result.Decisions()) != 0 || !bytes.Equal(result.ReplayBytes(), raw) {
+			t.Fatalf("opaque SSE result = %#v", result)
+		}
 	}
 }

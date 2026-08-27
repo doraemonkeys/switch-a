@@ -3,10 +3,12 @@ package internalerror_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -16,7 +18,13 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
+	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
+	codexws "github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
@@ -30,15 +38,107 @@ import (
 )
 
 const (
-	acceptanceRuleID    = errorrule.RuleID("11111111-1111-4111-8111-111111111111")
-	acceptanceKeyword   = "overloaded"
-	acceptanceModel     = "v5b-model"
-	acceptanceClientIP  = "203.0.113.17"
-	acceptanceUser      = "v5b-user"
-	primaryProviderID   = "v5b-primary"
-	secondaryProviderID = "v5b-secondary"
-	providerGroupID     = "v5b-group"
+	acceptanceRuleID              = errorrule.RuleID("11111111-1111-4111-8111-111111111111")
+	acceptanceKeyword             = "overloaded"
+	acceptanceModel               = "v5b-model"
+	acceptanceClientIP            = "203.0.113.17"
+	acceptanceUser                = "v5b-user"
+	primaryProviderID             = "v5b-primary"
+	secondaryProviderID           = "v5b-secondary"
+	providerGroupID               = "v5b-group"
+	acceptanceClientAuthorization = "Bearer v5b-client"
 )
+
+func acceptanceCodexRuntimes(t *testing.T, persistence *store.SQLiteStore) (*codexhttp.Runtime, *codexws.Runtime) {
+	t.Helper()
+	document, err := codexkeyring.GenerateDocument(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := codexkeyring.Parse(document, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := persistence.FinalizeStaticCredentialSubjects(ctx, keyring); err != nil {
+		t.Fatalf("finalize acceptance credential subjects: %v", err)
+	}
+	repositories, err := persistence.OpenCodexRepositories(ctx, keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digester, err := codexidentity.NewDigester(keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := codexcontinuity.Limits{
+		PendingTTL: 24 * time.Hour, CommittedTTL: 30 * 24 * time.Hour,
+		TombstoneTTL: 7 * 24 * time.Hour, MaxBindings: 100,
+	}
+	policy, err := codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{
+		codexcontinuity.KindThreadID: limits, codexcontinuity.KindSessionID: limits,
+		codexcontinuity.KindConversationID: limits, codexcontinuity.KindWindowID: limits,
+		codexcontinuity.KindTurnState: limits, codexcontinuity.KindTurnMetadata: limits,
+		codexcontinuity.KindResponseReference: limits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuity, err := codexcontinuity.NewService(codexcontinuity.Config{
+		Store: repositories.Continuity, Digester: &digester, Policy: policy, Clock: internal.RealClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := providercookie.NewService(providercookie.ServiceConfig{
+		Repository: repositories.ProviderCookies, HandleDigester: keyring, Random: rand.Reader,
+		Clock: internal.RealClock{}, HostCanonicalizer: providercookie.HostCanonicalizerFunc(codexidentity.CanonicalizeCookieHost),
+		PublicSuffixList: codexidentity.PublicSuffixList{}, Policy: providercookie.DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheme := codexhttp.NewTrustedProxySchemeResolver(nil)
+	httpRuntime, err := codexhttp.New(codexhttp.Config{
+		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	webSocketRuntime, err := codexws.New(codexws.Config{
+		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httpRuntime, webSocketRuntime
+}
+
+type acceptanceProviderAuthenticator struct{}
+
+func (acceptanceProviderAuthenticator) ApplyProviderCredentials(
+	_ context.Context,
+	headers http.Header,
+	candidate codexidentity.CandidateSnapshot,
+	_, _ string,
+	_ *http.Request,
+	finalURL *url.URL,
+) (codexidentity.AppliedIdentity, error) {
+	credential := candidate.Credential()
+	headers.Set("Authorization", "Bearer "+credential.SecretData)
+	subject, err := codexidentity.CredentialSubjectFromSession(credential.Subject)
+	if err != nil {
+		return codexidentity.AppliedIdentity{}, err
+	}
+	return codexidentity.AppliedIdentityFromRequest(candidate.Authority().Vendor(), finalURL, subject)
+}
+
+func (acceptanceProviderAuthenticator) RefreshCredentialSession(
+	context.Context,
+	credentialsession.Snapshot,
+) (bool, error) {
+	return false, nil
+}
 
 type wireResponse struct {
 	status      int
@@ -367,6 +467,7 @@ func newProxyHarness(t *testing.T, options proxyHarnessOptions) *proxyHarness {
 	}); err != nil {
 		t.Fatalf("compose backend config: %v", err)
 	}
+	httpRuntime, webSocketRuntime := acceptanceCodexRuntimes(t, backend)
 
 	repository := backend.InternalErrorRuleRepository()
 	accumulator, err := statistics.New(repository)
@@ -431,11 +532,14 @@ func newProxyHarness(t *testing.T, options proxyHarnessOptions) *proxyHarness {
 		Selector:                   providerSelector,
 		Health:                     options.health,
 		VisibleContinuitySeedStore: options.continuitySeeds,
+		Auth:                       acceptanceProviderAuthenticator{},
 		Capture:                    captureManager,
 		RuleSetProvider:            ruleReads,
 		ResponseAnalyzer:           analyzer,
 		RuleStatistics:             accumulator,
 		BackoffWaiter:              immediateBackoff{},
+		CodexHTTP:                  httpRuntime,
+		CodexWebSocket:             webSocketRuntime,
 		Logger:                     zap.NewNop(),
 	})
 	return &proxyHarness{
@@ -493,6 +597,7 @@ func (h *proxyHarness) serve(t *testing.T) *httptest.ResponseRecorder {
 	requestBody := fmt.Sprintf(`{"model":%q,"input":"acceptance"}`, acceptanceModel)
 	request := httptest.NewRequest(http.MethodPost, proxy.RouteCodexResponses, bytes.NewBufferString(requestBody))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", acceptanceClientAuthorization)
 	request.Header.Set("X-User-ID", acceptanceUser)
 	request.RemoteAddr = acceptanceClientIP + ":42000"
 	recorder := httptest.NewRecorder()

@@ -15,6 +15,14 @@ type testAppliedIdentity = codexidentity.AppliedIdentity
 type testCredentialSnapshot = credentialsession.Snapshot
 type testUpstreamURL = url.URL
 
+func testAppliedIdentityForCandidate(candidate testAuthCandidate, finalURL *testUpstreamURL) (testAppliedIdentity, error) {
+	subject, err := codexidentity.CredentialSubjectFromSession(candidate.Credential().Subject)
+	if err != nil {
+		return testAppliedIdentity{}, err
+	}
+	return codexidentity.AppliedIdentityFromRequest(candidate.Authority().Vendor(), finalURL, subject)
+}
+
 type testProviderValue interface {
 	model.Provider | *model.Provider
 }

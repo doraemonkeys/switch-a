@@ -65,7 +65,7 @@ func TestHandler_RealSSEClientDisconnectPersistsClientAttribution(t *testing.T) 
 				}},
 			}, "", "test-key")}
 			health := newTrackingHealthManager()
-			handler := NewHandler(Config{Store: store, Health: health, Logger: zap.NewNop()})
+			handler := newProxyCodexTestHandler(t, Config{Store: store, Health: health, Logger: zap.NewNop()})
 
 			proxyServer := httptest.NewUnstartedServer(handler)
 			proxyServer.EnableHTTP2 = test.enableHTTP2
@@ -94,6 +94,7 @@ func TestHandler_RealSSEClientDisconnectPersistsClientAttribution(t *testing.T) 
 				t.Fatalf("NewRequestWithContext() error = %v", err)
 			}
 			request.Header.Set("Content-Type", "application/json")
+			authorizeProxyCodexTestRequest(request)
 
 			response, err := client.Do(request)
 			if err != nil {
@@ -169,7 +170,7 @@ func TestHandler_UpstreamFirstByteTimeoutIsNotClientDisconnect(t *testing.T) {
 		}},
 	}, "", "test-key")}
 	health := newTrackingHealthManager()
-	handler := NewHandler(Config{Store: store, Health: health, Logger: zap.NewNop()})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Health: health, Logger: zap.NewNop()})
 	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()
 
@@ -241,7 +242,7 @@ func TestHandler_UpstreamEOFBeforeDelayedClientDisconnectIsNormalCompletion(t *t
 			ProviderID: "upstream-eof-provider", APIType: APITypeClaude, BaseURL: upstream.URL,
 		}},
 	}, "", "test-key")}
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()
 

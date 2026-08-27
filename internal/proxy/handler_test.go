@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,10 +18,11 @@ import (
 
 // Test timeout constants for consistent timing across tests.
 const (
-	testPollTimeout      = 100 * time.Millisecond
-	testResponseMaxDur   = 500 * time.Millisecond
-	testSlowDBDelay      = 5 * time.Second
-	testTimeoutWaitDelay = 3 * time.Second
+	testPollTimeout        = 100 * time.Millisecond
+	testResponseMaxDur     = 500 * time.Millisecond
+	testSlowDBDelay        = 5 * time.Second
+	testLogInsertTimeout   = 20 * time.Millisecond
+	testTimeoutGuardPeriod = 500 * time.Millisecond
 )
 
 // waitFor polls a condition until it returns true or timeout is reached.
@@ -216,11 +218,52 @@ func TestNewHandler_NilLoggerPanics(t *testing.T) {
 	})
 }
 
+func TestNewHandler_NilCodexRuntimePanics(t *testing.T) {
+	fixture := newProxyCodexFixture(t)
+	tests := []struct {
+		name      string
+		configure func(*Config)
+		want      string
+	}{
+		{
+			name: "HTTP runtime",
+			configure: func(config *Config) {
+				config.CodexHTTP = nil
+			},
+			want: "CodexHTTP is required",
+		},
+		{
+			name: "WebSocket runtime",
+			configure: func(config *Config) {
+				config.CodexWebSocket = nil
+			},
+			want: "CodexWebSocket is required",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := Config{
+				Store: newMockStore(), Logger: zap.NewNop(),
+				CodexHTTP: fixture.runtime, CodexWebSocket: fixture.webSocketRuntime,
+			}
+			test.configure(&config)
+			defer func() {
+				panicValue := recover()
+				message, ok := panicValue.(string)
+				if !ok || !strings.Contains(message, test.want) {
+					t.Fatalf("panic = %v, want message containing %q", panicValue, test.want)
+				}
+			}()
+			NewHandler(config)
+		})
+	}
+}
+
 func TestHandler_ServeHTTP_UnknownAPIType(t *testing.T) {
 	store := newMockStore()
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -248,7 +291,7 @@ func TestHandler_ServeHTTP_NoProviders(t *testing.T) {
 	store.providers = []model.Provider{} // No providers
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -297,7 +340,7 @@ func TestHandler_ServeHTTP_BodyTooLarge(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -339,7 +382,7 @@ func TestHandler_ServeHTTP_EmptyBaseURL_FailsFast(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -402,7 +445,7 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -478,7 +521,7 @@ func TestHandler_ServeHTTP_UsesRouteCredentialSnapshot(t *testing.T) {
 	}, "", "claude-override-key")}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -523,7 +566,7 @@ func TestHandler_ServeHTTP_SSEProxy(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -641,7 +684,7 @@ func TestHandler_LogsGatewayTransportStatus_ForFailoverStatusCodes(t *testing.T)
 			}
 			logger := zap.NewNop()
 
-			handler := NewHandler(Config{
+			handler := newProxyCodexTestHandler(t, Config{
 				Store:  store,
 				Logger: logger,
 			})
@@ -697,7 +740,7 @@ func TestHandler_LogsSuccessTrue_For2xxStatusCodes(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -760,7 +803,7 @@ func TestHandler_LogsNeverStartedOutcome_ForNonRetryable4xxStatusCodes(t *testin
 			}
 			logger := zap.NewNop()
 
-			handler := NewHandler(Config{
+			handler := newProxyCodexTestHandler(t, Config{
 				Store:  store,
 				Logger: logger,
 			})
@@ -894,7 +937,7 @@ func TestHandler_loadConfig(t *testing.T) {
 	store := newMockStore()
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -926,7 +969,7 @@ func TestHandler_loadConfig_defaults(t *testing.T) {
 	store.configs = map[string]string{} // Empty configs
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -1018,7 +1061,7 @@ func TestHandler_getTransport_caching(t *testing.T) {
 	store := newMockStore()
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -1056,7 +1099,7 @@ type slowMockStore struct {
 	*mockStore
 	insertDelay   time.Duration
 	insertStarted chan struct{} // signals when InsertLog starts executing
-	insertDone    chan struct{} // signals when InsertLog completes
+	insertResult  chan error    // reports the exact lifecycle outcome
 }
 
 func newSlowMockStore(delay time.Duration) *slowMockStore {
@@ -1066,110 +1109,34 @@ func newSlowMockStore(delay time.Duration) *slowMockStore {
 		// Buffer of 1 allows signaling without blocking the test goroutine.
 		// Non-blocking sends prevent deadlock if test doesn't wait for signal.
 		insertStarted: make(chan struct{}, 1),
-		insertDone:    make(chan struct{}, 1),
+		insertResult:  make(chan error, 1),
 	}
 }
 
-func (s *slowMockStore) InsertLog(ctx context.Context, log *model.RequestLog) error {
+func (s *slowMockStore) InsertLog(ctx context.Context, log *model.RequestLog) (err error) {
 	select {
 	case s.insertStarted <- struct{}{}:
 	default:
 	}
-	select {
-	case <-time.After(s.insertDelay):
-		// Delay completed, proceed with insert
+	defer func() {
 		select {
-		case s.insertDone <- struct{}{}:
+		case s.insertResult <- err:
 		default:
 		}
+	}()
+	timer := time.NewTimer(s.insertDelay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
 		return s.mockStore.InsertLog(ctx, log)
 	case <-ctx.Done():
-		// Context cancelled (timeout), return error
 		return ctx.Err()
 	}
 }
 
-func TestFirstWriteResponseWriter(t *testing.T) {
-	var callCount int
-	recorder := httptest.NewRecorder()
-
-	w := &firstWriteResponseWriter{
-		ResponseWriter: recorder,
-		onFirstWrite: func() {
-			callCount++
-		},
-	}
-
-	// First write should trigger callback
-	n, err := w.Write([]byte("hello"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if n != 5 {
-		t.Errorf("expected 5 bytes written, got %d", n)
-	}
-	if callCount != 1 {
-		t.Errorf("expected callback to be called once, got %d", callCount)
-	}
-
-	// Second write should NOT trigger callback again
-	n, err = w.Write([]byte("world"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if n != 5 {
-		t.Errorf("expected 5 bytes written, got %d", n)
-	}
-	if callCount != 1 {
-		t.Errorf("expected callback to still be 1, got %d", callCount)
-	}
-
-	// Verify body content
-	if recorder.Body.String() != "helloworld" {
-		t.Errorf("expected body 'helloworld', got %q", recorder.Body.String())
-	}
-}
-
-func TestFirstWriteResponseWriter_Flush(t *testing.T) {
-	recorder := httptest.NewRecorder()
-
-	w := &firstWriteResponseWriter{
-		ResponseWriter: recorder,
-		onFirstWrite:   func() {},
-	}
-
-	// Write and flush
-	_, _ = w.Write([]byte("data: test\n\n"))
-	w.Flush()
-
-	// Verify flushed was set (httptest.ResponseRecorder tracks this)
-	if !recorder.Flushed {
-		t.Error("expected Flush to be called on underlying ResponseWriter")
-	}
-}
-
-func TestFirstWriteResponseWriter_NilCallback(t *testing.T) {
-	recorder := httptest.NewRecorder()
-
-	w := &firstWriteResponseWriter{
-		ResponseWriter: recorder,
-		onFirstWrite:   nil, // No callback
-	}
-
-	// Should not panic with nil callback
-	n, err := w.Write([]byte("test"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if n != 4 {
-		t.Errorf("expected 4 bytes written, got %d", n)
-	}
-}
-
 func TestHandler_LogRequest_Timeout(t *testing.T) {
-	// Test that logRequest respects the timeout when the database is slow.
-	// The logInsertTimeout constant is 2 seconds, so we use a delay longer than that.
-	// We use a shorter timeout for testing by checking that the goroutine doesn't block.
+	// The injected test deadline preserves the production cancellation path
+	// while keeping repetition proportional to synchronization, not wall time.
 
 	// Create upstream server that returns 200 OK quickly
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1178,8 +1145,8 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 	}))
 	defer upstreamServer.Close()
 
-	// Create a slow store that takes longer than logInsertTimeout (2s)
-	// We use 5 seconds to ensure it exceeds the timeout
+	// The store delay must exceed both the injected and production bounds so
+	// only context cancellation can complete this test path.
 	store := newSlowMockStore(testSlowDBDelay)
 	store.providers = []model.Provider{
 		withTestStaticCredential(model.Provider{
@@ -1193,10 +1160,18 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
+	if handler.requestLogInsertTimeout != logInsertTimeout {
+		t.Fatalf(
+			"request log insert timeout = %v, want production default %v",
+			handler.requestLogInsertTimeout,
+			logInsertTimeout,
+		)
+	}
+	handler.requestLogInsertTimeout = testLogInsertTimeout
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1219,13 +1194,15 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 		t.Fatal("InsertLog goroutine did not start")
 	}
 
-	// The InsertLog should be cancelled by timeout (2s), not complete normally (5s)
-	// Wait a bit longer than the timeout to ensure it completes
+	// Observe the cancellation result directly; elapsed-time inference hid
+	// goroutine leaks and forced every repetition to pay a multi-second sleep.
 	select {
-	case <-store.insertDone:
-		t.Error("InsertLog completed normally, expected timeout cancellation")
-	case <-time.After(testTimeoutWaitDelay):
-		// Good, InsertLog was cancelled by timeout (didn't complete in 3s, which is > 2s timeout but < 5s delay)
+	case err := <-store.insertResult:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("InsertLog error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(testTimeoutGuardPeriod):
+		t.Fatal("InsertLog did not return after its context deadline")
 	}
 
 	// Verify no log was inserted (because timeout cancelled it)
@@ -1285,7 +1262,7 @@ func TestHandler_StickyCache_UpdatedOnClientDisconnect(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: sel,
 		Logger:   zap.NewNop(),
@@ -1293,10 +1270,19 @@ func TestHandler_StickyCache_UpdatedOnClientDisconnect(t *testing.T) {
 
 	// Create a cancellable context to simulate client disconnect.
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	req := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader(`{"model":"o3-pro"}`))
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	authorizeProxyCodexTestRequest(req)
+	recorder := httptest.NewRecorder()
+	responseVisible := make(chan struct{})
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+		onFirstWrite: func() {
+			close(responseVisible)
+		},
+	}
 
 	// Run the proxy in a goroutine; cancel context shortly after to simulate disconnect.
 	done := make(chan struct{})
@@ -1305,8 +1291,13 @@ func TestHandler_StickyCache_UpdatedOnClientDisconnect(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait a bit for the SSE stream to start flowing, then cancel (client disconnect).
-	time.Sleep(50 * time.Millisecond)
+	// Observe the client-visible stream boundary before cancellation. This keeps
+	// the test about mid-stream disconnect semantics even under suite contention.
+	select {
+	case <-responseVisible:
+	case <-time.After(5 * time.Second):
+		t.Fatal("proxy did not expose the upstream response before disconnect")
+	}
 	cancel()
 
 	// Wait for proxy to finish.

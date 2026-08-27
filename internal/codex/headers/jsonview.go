@@ -15,6 +15,8 @@ const (
 	eventResponseCreated       = "response.created"
 	eventResponseInProgress    = "response.in_progress"
 	eventResponseCompleted     = "response.completed"
+	eventResponseIncomplete    = "response.incomplete"
+	eventResponseFailed        = "response.failed"
 	eventResponseMetadata      = "response.metadata"
 	eventCodexResponseMetadata = "codex.response.metadata"
 )
@@ -35,81 +37,75 @@ type parseIssue struct {
 // wire buffer. Semantic input may be decompressed bytes supplied by an outer body
 // decoder; it is never used for replay.
 type MessageView struct {
-	present   bool
-	wire      []byte
-	eventType string
-	values    map[Field]OpaqueValue
-	issue     *parseIssue
-	direction messageDirection
+	present           bool
+	recognized        bool
+	wire              []byte
+	eventType         string
+	responseLifecycle ResponseLifecycle
+	values            map[Field]OpaqueValue
+	issue             *parseIssue
+	direction         messageDirection
 }
 
-func (v MessageView) EventType() string   { return v.eventType }
-func (v MessageView) ReplayBytes() []byte { return v.wire }
+func (v MessageView) Recognized() bool                     { return v.recognized }
+func (v MessageView) EventType() string                    { return v.eventType }
+func (v MessageView) ResponseLifecycle() ResponseLifecycle { return v.responseLifecycle }
+func (v MessageView) ReplayBytes() []byte                  { return v.wire }
 
 // InspectClientFrame observes a text-frame payload whose semantic and wire
 // bytes are identical.
-func InspectClientFrame(version FixtureVersion, raw []byte) MessageView {
-	return inspectMessage(version, raw, raw, directionClient)
+func InspectClientFrame(raw []byte) MessageView {
+	return inspectMessage(raw, raw, directionClient, false)
 }
 
 // InspectClientPayload separates semantic JSON from compressed/framed wire
 // bytes, allowing the caller to replay the latter byte-for-byte.
-func InspectClientPayload(version FixtureVersion, wire, semantic []byte) MessageView {
-	return inspectMessage(version, wire, semantic, directionClient)
+func InspectClientPayload(wire, semantic []byte) MessageView {
+	return inspectMessage(wire, semantic, directionClient, false)
 }
 
-func InspectServerFrame(version FixtureVersion, raw []byte) MessageView {
-	return inspectMessage(version, raw, raw, directionServer)
+func InspectServerFrame(raw []byte) MessageView {
+	return inspectMessage(raw, raw, directionServer, false)
 }
 
-func inspectMessage(version FixtureVersion, wire, semantic []byte, direction messageDirection) MessageView {
+func inspectMessage(wire, semantic []byte, direction messageDirection, serverSSE bool) MessageView {
 	view := MessageView{present: true, wire: wire, direction: direction}
-	if version != FixtureCodexDesktop0150Alpha8 {
-		view.issue = &parseIssue{reason: ReasonUnsupportedFixture, field: FieldEnvelope}
-		return view
-	}
 	root, err := decodeObject(semantic)
 	if err != nil {
-		reason := ReasonMalformedJSON
-		if errors.Is(err, errExpectedObject) {
-			reason = ReasonInvalidEnvelope
-		}
-		view.issue = &parseIssue{reason: reason, field: FieldEnvelope}
 		return view
 	}
 	typeField := root.exact("type")
-	if typeField.duplicate {
-		view.issue = &parseIssue{reason: ReasonDuplicateSecurityKey, field: FieldEnvelope}
-		return view
-	}
-	if !typeField.present {
+	if typeField.duplicate || !typeField.present {
 		return view
 	}
 	eventType, valid := decodeRequiredString(typeField.raw)
 	if !valid {
-		view.issue = &parseIssue{reason: ReasonInvalidEnvelope, field: FieldEnvelope}
 		return view
 	}
-	view.eventType = eventType
+	var recognized bool
 	if direction == directionClient {
-		inspectClientRoot(&view, root)
-		return view
+		recognized = inspectClientRoot(&view, eventType, root)
+	} else {
+		recognized = inspectServerRoot(&view, eventType, root, serverSSE)
 	}
-	inspectServerRoot(&view, root)
+	if recognized {
+		view.recognized = true
+		view.eventType = eventType
+	}
 	return view
 }
 
-func inspectClientRoot(view *MessageView, root objectView) {
-	switch view.eventType {
+func inspectClientRoot(view *MessageView, eventType string, root objectView) bool {
+	switch eventType {
 	case eventResponseCreate:
 		inspectResponseCreate(view, root)
-	case eventResponseInject:
-		// Public documentation establishes only the event envelope. The target
-		// fixture has no response_id shape, so forwarding would bypass the
-		// generation check while parsing a guessed path would forge evidence.
-		view.issue = &parseIssue{reason: ReasonEvidenceUnavailable, field: FieldResponseReference}
-	case eventResponseAppend:
-		view.issue = &parseIssue{reason: ReasonUnsupportedEvent, field: FieldResponseReference}
+		return true
+	case eventResponseInject, eventResponseAppend:
+		// These controls are connection-bound transport contracts. Their payload
+		// shape is intentionally opaque because no stable target field is evidenced.
+		return true
+	default:
+		return false
 	}
 }
 
@@ -167,13 +163,45 @@ func inspectResponseCreate(view *MessageView, root objectView) {
 	view.setValue(FieldResponseReference, value)
 }
 
-func inspectServerRoot(view *MessageView, root objectView) {
-	switch view.eventType {
+func inspectServerRoot(view *MessageView, eventType string, root objectView, sse bool) bool {
+	switch eventType {
 	case eventCodexResponseMetadata:
 		inspectServerMetadata(view, root)
-	case eventResponseCreated, eventResponseInProgress, eventResponseCompleted:
+		return true
+	case eventResponseMetadata:
+		if !sse {
+			return false
+		}
+		inspectSSEResponseMetadata(view, root)
+		return true
+	case eventResponseCreated, eventResponseInProgress:
+		view.responseLifecycle = ResponseLifecycleActive
 		inspectServerResponseReference(view, root)
+		return true
+	case eventResponseCompleted, eventResponseIncomplete, eventResponseFailed:
+		view.responseLifecycle = ResponseLifecycleTerminal
+		inspectServerResponseReference(view, root)
+		return true
+	default:
+		return false
 	}
+}
+
+func inspectSSEResponseMetadata(view *MessageView, root objectView) {
+	responseID := root.exact("response_id")
+	if responseID.duplicate {
+		view.issue = &parseIssue{reason: ReasonDuplicateSecurityKey, field: FieldResponseReference}
+		return
+	}
+	if !responseID.present {
+		return
+	}
+	value, valid := decodeRequiredString(responseID.raw)
+	if !valid {
+		view.issue = &parseIssue{reason: ReasonInvalidProjection, field: FieldResponseReference}
+		return
+	}
+	view.setValue(FieldResponseReference, value)
 }
 
 func inspectServerMetadata(view *MessageView, root objectView) {

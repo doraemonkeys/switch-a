@@ -121,7 +121,7 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureKeepsRouteTargetFixed(t *
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -133,7 +133,7 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureKeepsRouteTargetFixed(t *
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureStoresContinuitySeed(t *t
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		Selector:                   mockSel,
 		VisibleContinuitySeedStore: seedStore,
@@ -249,6 +249,7 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureStoresContinuitySeed(t *t
 	defer cancel()
 
 	headers := http.Header{}
+	headers.Set("Authorization", proxyCodexTestAuthorization)
 	headers.Set("X-User-ID", "seed-user")
 	headers.Set("X-Forwarded-For", "198.51.100.77")
 	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-5.4", &websocket.DialOptions{
@@ -319,7 +320,7 @@ func TestHandler_ServeHTTP_WebSocket_NormalCompletionDoesNotStoreContinuitySeed(
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		VisibleContinuitySeedStore: seedStore,
 		Logger:                     zap.NewNop(),
@@ -331,7 +332,7 @@ func TestHandler_ServeHTTP_WebSocket_NormalCompletionDoesNotStoreContinuitySeed(
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-5.4", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-5.4", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -376,7 +377,7 @@ func TestHandler_ServeHTTP_WebSocket_ClientTerminationDoesNotStoreContinuitySeed
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		VisibleContinuitySeedStore: seedStore,
 		Logger:                     zap.NewNop(),
@@ -388,7 +389,7 @@ func TestHandler_ServeHTTP_WebSocket_ClientTerminationDoesNotStoreContinuitySeed
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-5.4", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-5.4", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -449,7 +450,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleFailureDoesNotStoreContinuitySeed
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		VisibleContinuitySeedStore: seedStore,
 		Logger:                     zap.NewNop(),
@@ -461,7 +462,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleFailureDoesNotStoreContinuitySeed
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-5.4", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-5.4", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}

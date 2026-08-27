@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -81,6 +82,35 @@ type responseReferenceFixture struct {
 	Response struct {
 		ID string `json:"id"`
 	} `json:"response"`
+}
+
+func TestFixtureFilesUseLF(t *testing.T) {
+	fixtureFiles := 0
+	err := filepath.WalkDir("testdata", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		fixtureFiles++
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		// Fixture digests encode wire bytes, so checkout translation must not make
+		// protocol evidence depend on the developer's operating system.
+		if bytes.IndexByte(raw, '\r') >= 0 {
+			return fmt.Errorf("%s contains a carriage-return byte", filepath.ToSlash(path))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixtureFiles == 0 {
+		t.Fatal("fixture tree is empty")
+	}
 }
 
 func TestCodexDesktop0150Alpha8FixtureContract(t *testing.T) {
@@ -164,7 +194,7 @@ func TestCodexDesktop0150Alpha8FixtureContract(t *testing.T) {
 		"http-sse-response-metadata.txt":  eventResponseMetadata,
 	} {
 		raw := readFixture(t, file)
-		scan := ScanServerSSE(FixtureCodexDesktop0150Alpha8, raw, false)
+		scan := ScanServerSSE(raw, false)
 		messages := scan.Messages()
 		if scan.ConsumedBytes() != len(raw) || len(messages) != 1 || messages[0].EventType() != eventType {
 			t.Fatalf("%s scan consumed=%d messages=%#v", file, scan.ConsumedBytes(), messages)
@@ -202,7 +232,7 @@ func TestCodexDesktop0150Alpha8FixturesReplayByteForByte(t *testing.T) {
 					t.Fatal("fixture replay replaced or changed the original wire buffer")
 				}
 			case "sse_event":
-				scan := ScanServerSSE(FixtureCodexDesktop0150Alpha8, raw, false)
+				scan := ScanServerSSE(raw, false)
 				messages := scan.Messages()
 				if scan.ConsumedBytes() != len(raw) || len(messages) != 1 || messages[0].EventType() != fixture.EventType {
 					t.Fatalf("SSE fixture scan = consumed %d messages %#v", scan.ConsumedBytes(), messages)

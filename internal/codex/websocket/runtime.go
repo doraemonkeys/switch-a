@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sync"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientcredential"
@@ -14,18 +13,9 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 )
 
 const codexAPIType = "codex"
-
-type FeatureSource interface {
-	Snapshot() codexstartup.Snapshot
-}
-
-type FeatureSourceFunc func() codexstartup.Snapshot
-
-func (f FeatureSourceFunc) Snapshot() codexstartup.Snapshot { return f() }
 
 type ClientScopeDigester interface {
 	ClientScope([]byte) (codexidentity.ClientScope, error)
@@ -43,7 +33,6 @@ type Continuity interface {
 	ActivateResponse(codexcontinuity.Generation, codexcontinuity.Lease) error
 	DeactivateResponse(codexcontinuity.Generation, codexcontinuity.Binding) error
 	CloseConnection(codexcontinuity.Generation)
-	ValidateInject(context.Context, codexcontinuity.ValidateRequest, codexcontinuity.Generation) (codexcontinuity.Binding, error)
 }
 
 type ProviderCookies interface {
@@ -56,7 +45,6 @@ type ExternalSchemeResolver interface {
 }
 
 type Config struct {
-	Features        FeatureSource
 	ClientScopes    ClientScopeDigester
 	Continuity      Continuity
 	ProviderCookies ProviderCookies
@@ -64,19 +52,20 @@ type Config struct {
 }
 
 type Runtime struct {
-	features        FeatureSource
 	clientScopes    ClientScopeDigester
 	continuity      Continuity
 	providerCookies ProviderCookies
 	externalScheme  ExternalSchemeResolver
 }
 
-func New(config Config) *Runtime {
-	return &Runtime{
-		features: config.Features, clientScopes: config.ClientScopes,
-		continuity: config.Continuity, providerCookies: config.ProviderCookies,
-		externalScheme: config.ExternalScheme,
+func New(config Config) (*Runtime, error) {
+	if config.ClientScopes == nil || config.Continuity == nil || config.ProviderCookies == nil || config.ExternalScheme == nil {
+		return nil, fmt.Errorf("initialize Codex WebSocket runtime: client scopes, continuity, provider cookies, and external scheme are required")
 	}
+	return &Runtime{
+		clientScopes: config.ClientScopes, continuity: config.Continuity,
+		providerCookies: config.ProviderCookies, externalScheme: config.ExternalScheme,
+	}, nil
 }
 
 type ownerResolution struct {
@@ -89,7 +78,6 @@ type ownerResolution struct {
 // which may validate and commit state concurrently after the handshake.
 type Operation struct {
 	runtime     *Runtime
-	features    codexstartup.Snapshot
 	operationID string
 	apiType     string
 	headers     http.Header
@@ -102,61 +90,45 @@ type Operation struct {
 	requiredProtocolScope  *codexidentity.ProtocolScope
 	requiredAuthority      *codexidentity.UpstreamAuthority
 	preferredRouteTargetID string
+	routeTargetPreference  codexcontinuity.RouteTargetPreference
 	visibleRouteTargetID   string
 	physicalCandidate      *codexidentity.CandidateSnapshot
 	generation             *codexcontinuity.Generation
 
-	cookieRequest       *providercookie.Request
-	lastCookieAuthority *codexidentity.CookieAuthority
-	gatewaySetCookie    string
-	cookieClosed        bool
+	cookieBoundary      providerCookieBoundary
+	visibilityCommitted bool
+	replacementClosed   bool
 }
 
 func (r *Runtime) Begin(ctx context.Context, request *http.Request, apiType, operationID string) (*Operation, error) {
-	features := r.featureSnapshot()
-	op := &Operation{runtime: r, features: features, operationID: operationID, apiType: apiType}
-	if apiType != codexAPIType || (!features.Continuity && !features.ProviderCookieJar) {
-		return op, nil
+	if apiType != codexAPIType {
+		return nil, &Failure{Class: FailureProtocol, Stage: "begin", Cause: errors.New("codex WebSocket runtime only accepts Codex traffic")}
 	}
+	if r == nil {
+		return nil, &Failure{Class: FailureStorage, Stage: "begin", Cause: errors.New("codex WebSocket runtime is unavailable")}
+	}
+	op := &Operation{runtime: r, operationID: operationID, apiType: apiType}
 	if request == nil {
 		return nil, &Failure{Class: FailureProtocol, Stage: "begin", Cause: errors.New("request is required")}
 	}
 	op.headers = request.Header.Clone()
 
-	discovery, err := initialClientEvidence(request.Header, features.Continuity)
-	if err != nil {
+	if _, err := initialClientEvidence(request.Header); err != nil {
 		return nil, err
 	}
-	if err := r.bindClientScope(op, request.Header, features.ProviderCookieJar || len(discovery.Decisions()) > 0); err != nil {
+	if err := r.bindClientScope(op, request.Header, true); err != nil {
 		return nil, err
 	}
-	if features.Continuity {
-		if r.continuity == nil {
-			return nil, &Failure{Class: FailureStorage, Stage: "continuity", Cause: errors.New("continuity service is unavailable")}
-		}
-		if err := op.inspectClientInput(ctx, request.Header, codexheaders.MessageView{}, false); err != nil {
-			return nil, err
-		}
+	if err := op.inspectClientInput(ctx, request.Header, codexheaders.MessageView{}, false); err != nil {
+		return nil, err
 	}
-	if features.ProviderCookieJar {
-		if err := r.beginProviderCookies(ctx, op, request); err != nil {
-			return nil, err
-		}
+	if err := r.beginProviderCookies(ctx, op, request); err != nil {
+		return nil, err
 	}
 	return op, nil
 }
 
-func (r *Runtime) featureSnapshot() codexstartup.Snapshot {
-	if r == nil || r.features == nil {
-		return codexstartup.Snapshot{}
-	}
-	return r.features.Snapshot()
-}
-
-func initialClientEvidence(headers http.Header, enabled bool) (codexheaders.Result, error) {
-	if !enabled {
-		return codexheaders.Result{}, nil
-	}
+func initialClientEvidence(headers http.Header) (codexheaders.Result, error) {
 	// This pass exists only to decide whether client identity is required. Treat
 	// syntactically valid evidence as owned so policy is deferred until the
 	// authoritative ResolveOwner pass, including HTTP-to-WS continuity.
@@ -197,61 +169,26 @@ func (r *Runtime) bindClientScope(op *Operation, headers http.Header, required b
 	return nil
 }
 
-func (r *Runtime) beginProviderCookies(ctx context.Context, op *Operation, request *http.Request) error {
-	if r.providerCookies == nil || r.externalScheme == nil {
-		return &Failure{Class: FailureStorage, Stage: "provider_cookie", Cause: errors.New("provider cookie capability is unavailable")}
-	}
-	scheme, err := r.externalScheme.ResolveExternalScheme(request)
-	if err != nil {
-		return cookieFailure("external_scheme", err)
-	}
-	cookieOperationID, err := providercookie.NewOperationID(op.operationID)
-	if err != nil {
-		return cookieFailure("provider_cookie", err)
-	}
-	access, err := r.providerCookies.ResolveJar(ctx, cookieOperationID, gatewayHandle(request), op.clientScopes)
-	if err != nil {
-		return cookieFailure("resolve_cookie_jar", err)
-	}
-	op.cookieRequest, err = r.providerCookies.BeginRequest(cookieOperationID, access)
-	if err != nil {
-		return cookieFailure("begin_cookie_request", err)
-	}
-	if !access.Issued() && !access.Refresh() {
-		return nil
-	}
-	handle, err := providercookie.NewGatewayHandleCookie(access.HandleValue(), scheme)
-	if err != nil {
-		return cookieFailure("gateway_cookie", err)
-	}
-	op.gatewaySetCookie, err = handle.HeaderValue()
-	if err != nil {
-		return cookieFailure("gateway_cookie", err)
-	}
-	return nil
-}
-
-func (o *Operation) Features() codexstartup.Snapshot {
-	if o == nil {
-		return codexstartup.Snapshot{}
-	}
-	return o.features
-}
-
-func (o *Operation) GatewaySetCookie() string {
-	if o == nil {
-		return ""
-	}
-	return o.gatewaySetCookie
-}
-
 func (o *Operation) NeedsOwnerBootstrap() bool {
-	if o == nil || !o.features.Continuity {
-		return false
+	return false
+}
+
+func (o *Operation) ReplacementAllowed() bool {
+	if o == nil {
+		return true
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return o.requiredProtocolScope == nil
+	return !o.replacementClosed
+}
+
+func (o *Operation) closeReplacement() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	o.replacementClosed = true
+	o.mu.Unlock()
 }
 
 func (o *Operation) RequiredAuthority() (*codexidentity.UpstreamAuthority, string) {
@@ -268,13 +205,13 @@ func (o *Operation) RequiredAuthority() (*codexidentity.UpstreamAuthority, strin
 }
 
 func (o *Operation) InspectBootstrapFrame(ctx context.Context, text bool, payload []byte) error {
-	if o == nil || !o.features.Continuity {
+	if o == nil {
 		return nil
 	}
 	if !text {
-		return &Failure{Class: FailureProtocol, Stage: "bootstrap_frame", Cause: errors.New("owner bootstrap requires a text frame")}
+		return nil
 	}
-	message := codexheaders.InspectClientFrame(codexheaders.FixtureCodexDesktop0150Alpha8, payload)
+	message := codexheaders.InspectClientFrame(payload)
 	return o.inspectClientInput(ctx, o.headers, message, true)
 }
 
@@ -305,6 +242,9 @@ func (o *Operation) inspectClientInput(
 		AttestationLock: codexheaders.OperationUnlocked,
 	})
 	if decision.Rejected() {
+		if err := resolvedOwnerFailure("client_input", decision, owners); err != nil {
+			return err
+		}
 		return protocolFailure("client_input", decision)
 	}
 	if err := o.applyRequiredOwners(owners); err != nil {
@@ -363,9 +303,14 @@ func (o *Operation) applyRequiredOwners(owners map[[sha256.Size]byte]ownerResolu
 		if err := o.pinProtocolScopeLocked(scope, "continuity_scope"); err != nil {
 			return err
 		}
-		if o.preferredRouteTargetID == "" {
-			o.preferredRouteTargetID = resolution.binding.Owner.RouteTargetHint
-		} else if o.preferredRouteTargetID != resolution.binding.Owner.RouteTargetHint {
+		if o.visibleRouteTargetID == "" {
+			o.routeTargetPreference = o.routeTargetPreference.Add(resolution.binding.Owner.RouteTargetHint)
+		}
+	}
+	if o.visibleRouteTargetID == "" {
+		if preferred, consistent := o.routeTargetPreference.Value(); consistent {
+			o.preferredRouteTargetID = preferred
+		} else {
 			o.preferredRouteTargetID = ""
 		}
 	}
@@ -424,26 +369,19 @@ func ownerLookup(owners map[[sha256.Size]byte]ownerResolution) codexheaders.Owne
 	}
 }
 
-func gatewayHandle(request *http.Request) string {
-	values := make([]string, 0, 1)
-	for _, cookie := range request.Cookies() {
-		if cookie.Name == providercookie.GatewayHandleName {
-			values = append(values, cookie.Value)
+func resolvedOwnerFailure(
+	stage string,
+	result codexheaders.Result,
+	owners map[[sha256.Size]byte]ownerResolution,
+) error {
+	for _, decision := range result.Decisions() {
+		if decision.Action() != codexheaders.ActionReject {
+			continue
+		}
+		resolution, exists := owners[candidateKey(decision.Candidate())]
+		if exists && resolution.err != nil {
+			return continuityFailure(stage, resolution.err)
 		}
 	}
-	if len(values) == 1 {
-		return values[0]
-	}
-	if len(values) > 1 {
-		return "invalid-multiple-handle"
-	}
-	return ""
-}
-
-func cloneURL(source *url.URL) *url.URL {
-	if source == nil {
-		return nil
-	}
-	copyURL := *source
-	return &copyURL
+	return nil
 }

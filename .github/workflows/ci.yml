@@ -41,6 +41,37 @@ jobs:
       - name: Run Go quality gates
         run: make ci-go
 
+  fixture-check-windows:
+    name: Fixture checkout (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate fixture checkout
+        shell: pwsh
+        run: |
+          $fixtureRoot = "internal/codex/headers/testdata"
+          $fixtureFiles = @(git ls-files "$fixtureRoot/**")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to enumerate tracked fixtures"
+          }
+          if ($fixtureFiles.Count -eq 0) {
+            throw "No tracked fixture files found"
+          }
+          foreach ($fixture in $fixtureFiles) {
+            $attribute = git check-attr eol -- $fixture
+            if ($LASTEXITCODE -ne 0 -or $attribute -notmatch ': eol: lf$') {
+              throw "$fixture does not resolve to eol=lf: $attribute"
+            }
+            $bytes = [IO.File]::ReadAllBytes((Join-Path $PWD $fixture))
+            if ([Array]::IndexOf($bytes, [byte]13) -ge 0) {
+              throw "$fixture contains a carriage-return byte"
+            }
+          }
+
   web:
     name: Web
     runs-on: ubuntu-latest

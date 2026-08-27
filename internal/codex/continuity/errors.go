@@ -1,5 +1,5 @@
 // Package codexcontinuity owns durable Codex opaque-value ownership and the
-// process-local connection capability needed by response.inject.
+// process-local WebSocket response lifecycle.
 package codexcontinuity
 
 import (

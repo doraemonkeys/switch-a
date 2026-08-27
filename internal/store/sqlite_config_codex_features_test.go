@@ -4,26 +4,69 @@ import (
 	"context"
 	"testing"
 
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
-func TestCodexFeatureDefaultsArePersistedFalse(t *testing.T) {
+func TestInitDefaultConfigDeletesOnlyLegacyCodexRolloutRows(t *testing.T) {
+	configStore := setupTestStore(t)
+	ctx := context.Background()
+
+	for _, key := range legacyCodexRolloutConfigKeys {
+		if err := configStore.SetConfig(ctx, key, "true"); err != nil {
+			t.Fatalf("SetConfig(%q) error = %v", key, err)
+		}
+	}
+	const unrelatedKey = "operator_owned_setting"
+	if err := configStore.SetConfig(ctx, unrelatedKey, "preserve-me"); err != nil {
+		t.Fatalf("SetConfig(%q) error = %v", unrelatedKey, err)
+	}
+
+	for run := 1; run <= 2; run++ {
+		if err := configStore.InitDefaultConfig(ctx); err != nil {
+			t.Fatalf("InitDefaultConfig() run %d error = %v", run, err)
+		}
+		stored, err := configStore.GetAllConfig(ctx)
+		if err != nil {
+			t.Fatalf("GetAllConfig() run %d error = %v", run, err)
+		}
+		for _, key := range legacyCodexRolloutConfigKeys {
+			if _, exists := stored[key]; exists {
+				t.Errorf("legacy rollout row %q remains after run %d", key, run)
+			}
+		}
+		if stored[unrelatedKey] != "preserve-me" {
+			t.Errorf("unrelated row after run %d = %q", run, stored[unrelatedKey])
+		}
+		if stored[defaults.ConfigKeyWebSocketProbeClientModel] != DefaultWebSocketProbeClientModel {
+			t.Errorf("WebSocket probe setting after run %d = %q", run, stored[defaults.ConfigKeyWebSocketProbeClientModel])
+		}
+	}
+}
+
+func TestCodexRolloutKeysAreAbsentFromFreshDefaults(t *testing.T) {
 	configStore := setupTestStore(t)
 	ctx := context.Background()
 	if err := configStore.InitDefaultConfig(ctx); err != nil {
 		t.Fatalf("InitDefaultConfig() error = %v", err)
 	}
-	defaults := GetDefaultConfigs()
-	for _, key := range codexstartup.Keys() {
-		if got := defaults[key]; got != "false" {
-			t.Errorf("GetDefaultConfigs()[%q] = %q, want false", key, got)
+	configDefaults := GetDefaultConfigs()
+	stored, err := configStore.GetAllConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetAllConfig() error = %v", err)
+	}
+	for _, key := range legacyCodexRolloutConfigKeys {
+		if _, exists := configDefaults[key]; exists {
+			t.Errorf("GetDefaultConfigs() contains removed key %q", key)
 		}
-		got, err := configStore.GetConfig(ctx, key)
+		if _, exists := stored[key]; exists {
+			t.Errorf("fresh database contains removed key %q", key)
+		}
+		value, err := configStore.GetConfig(ctx, key)
 		if err != nil {
 			t.Fatalf("GetConfig(%q) error = %v", key, err)
 		}
-		if got != "false" {
-			t.Errorf("GetConfig(%q) = %q, want false", key, got)
+		if value != "" {
+			t.Errorf("GetConfig(%q) = %q, want empty", key, value)
 		}
 	}
 }

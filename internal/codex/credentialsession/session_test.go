@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -168,11 +169,24 @@ func (g *repositoryTestIDs) NewID() string {
 
 func newRepositoryTestDB(t *testing.T) (*gorm.DB, *Repository, repositoryTestClock) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	// A file in the test's private temporary directory keeps every invocation,
+	// including -count repetitions, independent across the full connection pool.
+	databasePath := filepath.Join(t.TempDir(), "repository.sqlite")
+	db, err := gorm.Open(sqlite.Open(databasePath), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cleanup is registered after TempDir so the pool closes before Go removes
+	// the database directory, which also avoids leaking handles between repeats.
+	t.Cleanup(func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("close repository test database: %v", err)
+		}
+	})
 	for _, statement := range []string{
 		`CREATE TABLE providers (id TEXT PRIMARY KEY, vendor TEXT NOT NULL)`,
 		`CREATE TABLE provider_api_types (provider_id TEXT NOT NULL, api_type TEXT NOT NULL, PRIMARY KEY(provider_id, api_type))`,

@@ -58,6 +58,10 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeModel)
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled: true, APIType: APITypeCodex,
+		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "client-",
+	}}
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
@@ -68,7 +72,7 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -80,7 +84,7 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -155,6 +159,10 @@ func TestHandler_ServeHTTP_WebSocket_ContinuitySeedLookupWaitsForProbeResolvedMo
 	store := newMockStore()
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeModel)
 	store.configs[ConfigKeyTrustProxyHeaders] = "true"
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled: true, APIType: APITypeCodex,
+		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "client-",
+	}}
 	provider := withTestStaticCredential(&model.Provider{
 		ID:   "ws-probe-seed-provider",
 		Name: "WS Probe Seed Provider",
@@ -183,7 +191,7 @@ func TestHandler_ServeHTTP_WebSocket_ContinuitySeedLookupWaitsForProbeResolvedMo
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		Selector:                   mockSel,
 		VisibleContinuitySeedStore: seedStore,
@@ -196,6 +204,7 @@ func TestHandler_ServeHTTP_WebSocket_ContinuitySeedLookupWaitsForProbeResolvedMo
 	defer cancel()
 
 	headers := http.Header{}
+	headers.Set("Authorization", proxyCodexTestAuthorization)
 	headers.Set("X-User-ID", "seed-user")
 	headers.Set("X-Forwarded-For", "198.51.100.44")
 	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
@@ -270,7 +279,7 @@ func TestHandler_ServeHTTP_WebSocket_ProbeDisabledKeepsHandshakeOnlySelection(t 
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -282,7 +291,7 @@ func TestHandler_ServeHTTP_WebSocket_ProbeDisabledKeepsHandshakeOnlySelection(t 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -359,7 +368,7 @@ func TestHandler_ServeHTTP_WebSocket_RoutingPolicyDemandUsesClientModel(t *testi
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -371,7 +380,7 @@ func TestHandler_ServeHTTP_WebSocket_RoutingPolicyDemandUsesClientModel(t *testi
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -439,7 +448,7 @@ func TestHandler_ServeHTTP_WebSocket_HandshakeModelWinsOverProbe(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -451,7 +460,7 @@ func TestHandler_ServeHTTP_WebSocket_HandshakeModelWinsOverProbe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=handshake-model", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=handshake-model", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -518,6 +527,10 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled: true, APIType: APITypeCodex,
+		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "client-",
+	}}
 
 	var retrySelections atomic.Int32
 	mockSel := &mockSelector{
@@ -539,7 +552,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -551,7 +564,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -599,6 +612,10 @@ func TestHandler_ServeHTTP_WebSocket_ProbeFailureReturnsGatewayErrorEvent(t *tes
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled: true, APIType: APITypeCodex,
+		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "client-",
+	}}
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
@@ -609,7 +626,7 @@ func TestHandler_ServeHTTP_WebSocket_ProbeFailureReturnsGatewayErrorEvent(t *tes
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -621,7 +638,7 @@ func TestHandler_ServeHTTP_WebSocket_ProbeFailureReturnsGatewayErrorEvent(t *tes
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}

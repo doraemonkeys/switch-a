@@ -52,9 +52,12 @@ log_max_keep_days: 7
 # 默认值: info
 log_level: "info"
 
-# Codex 持久状态 keyring 文件路径（相关功能关闭时可省略；文件内密钥不得写入本配置）
+# Codex 持久状态 keyring 路径。无历史状态引用且文件缺失时，启动会原子创建。
+# 若历史状态需要原 keyring 而文件缺失，或文件不可读、损坏、内容不完整，启动失败且不会覆盖。
+# 请与 data.db 一起持久化、保密和备份；不要把 keyring 内的密钥写入本配置。
 # 环境变量: SWITCHA_CODEX_KEYRING_FILE
-# codex_keyring_file: "/run/secrets/switch-a-codex-keyring.json"
+# 默认值: ./codex-keyring.json
+# codex_keyring_file: "./codex-keyring.json"
 
 # Debug 捕获的进程级安全上限（功能默认关闭）
 # 环境变量名称为 SWITCHA_ 加对应键名的大写形式

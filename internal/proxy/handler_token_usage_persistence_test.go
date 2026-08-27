@@ -35,7 +35,7 @@ func TestLogRequestPersistsObservedTokenPointersExactly(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			store := newMockStore()
-			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 			usage := responseanalysis.ObserveUsage(test.payload, nil)
 			if usage == nil {
 				t.Fatal("expected usage")
@@ -144,9 +144,10 @@ func TestHandlerPersistsHTTPAndInferredSSEUsage(t *testing.T) {
 				ID: "p1", Name: "provider", AuthMode: "bearer", Enabled: true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: APITypeCodex, BaseURL: upstream.URL}},
 			}, "", "test")}
-			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello"}`))
 			request.Header.Set("Content-Type", "application/json")
+			authorizeProxyCodexTestRequest(request)
 			if test.accept != "" {
 				request.Header.Set("Accept", test.accept)
 			}

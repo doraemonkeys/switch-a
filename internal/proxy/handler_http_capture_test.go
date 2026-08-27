@@ -435,7 +435,7 @@ func TestHandlerCaptureRecordsCredentialRefreshAsTwoPhysicalExchanges(t *testing
 	store := newMockStore()
 	store.providers = []model.Provider{captureTestProvider(upstream.URL)}
 	auth := &refreshingCaptureAuthenticator{}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:   store,
 		Auth:    auth,
 		Capture: manager,
@@ -500,7 +500,7 @@ func TestHandlerCaptureIndexesSameProviderRetries(t *testing.T) {
 	defer manager.Close()
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:   store,
 		Capture: manager,
 		Logger:  zap.NewNop(),
@@ -587,7 +587,7 @@ func TestHandlerCapturePreservesUnselectedStatusFailoverAsTransition(t *testing.
 			return &fallback, nil
 		},
 	}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: selector,
 		Capture:  manager,
@@ -676,7 +676,7 @@ func TestHandlerCaptureSanitizesAuthPreparationFailureTransition(t *testing.T) {
 			return &fallback, nil
 		},
 	}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: selector,
 		Auth: &failingPreparationCaptureAuthenticator{
@@ -730,7 +730,7 @@ func serveCaptureTestRequest(
 	t.Helper()
 	store := newMockStore()
 	store.providers = []model.Provider{captureTestProvider(upstreamURL)}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:   store,
 		Capture: capture,
 		Logger:  zap.NewNop(),
@@ -832,10 +832,10 @@ type refreshingCaptureAuthenticator struct {
 func (a *refreshingCaptureAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	_ testAuthCandidate,
+	candidate testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-	_ *testUpstreamURL,
+	finalURL *testUpstreamURL,
 ) (testAppliedIdentity, error) {
 	a.applyCalls++
 	token := "initial-token"
@@ -843,7 +843,7 @@ func (a *refreshingCaptureAuthenticator) ApplyProviderCredentials(
 		token = "refreshed-token"
 	}
 	headers.Set("Authorization", "Bearer "+token)
-	return testAppliedIdentity{}, nil
+	return testAppliedIdentityForCandidate(candidate, finalURL)
 }
 
 func (a *refreshingCaptureAuthenticator) RefreshCredentialSession(
@@ -866,14 +866,14 @@ func (a *failingPreparationCaptureAuthenticator) ApplyProviderCredentials(
 	candidate testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-	_ *testUpstreamURL,
+	finalURL *testUpstreamURL,
 ) (testAppliedIdentity, error) {
 	if candidate.RouteTargetID() == a.providerID {
 		headers.Set("Authorization", "Bearer "+a.credential)
 		return testAppliedIdentity{}, errors.New("credential " + a.credential + " was rejected")
 	}
 	headers.Set("Authorization", "Bearer fallback-token")
-	return testAppliedIdentity{}, nil
+	return testAppliedIdentityForCandidate(candidate, finalURL)
 }
 
 func (*failingPreparationCaptureAuthenticator) RefreshCredentialSession(

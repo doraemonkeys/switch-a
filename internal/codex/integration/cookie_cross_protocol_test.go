@@ -11,15 +11,12 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
 func TestProviderCookiesCrossHTTPAndWebSocketEquivalentSchemes(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, ProviderCookieJar: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	httpsCandidate, httpsApplied, httpsURL := fixtureCandidate(t, candidateSpec{})
 	handle := commitHTTPCookie(
 		t, fixture, "client-alpha", "", httpsCandidate, httpsApplied, httpsURL,
@@ -78,9 +75,7 @@ func TestProviderCookiesCrossHTTPAndWebSocketEquivalentSchemes(t *testing.T) {
 }
 
 func TestProviderCookieScopeIgnoresAPITypeButSeparatesJarAndAuthority(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, ProviderCookieJar: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	base, baseApplied, baseURL := fixtureCandidate(t, candidateSpec{})
 	handle := commitHTTPCookie(
 		t, fixture, "client-alpha", "", base, baseApplied, baseURL,
@@ -147,7 +142,7 @@ func TestProviderCookieScopeIgnoresAPITypeButSeparatesJarAndAuthority(t *testing
 
 func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 	t.Run("restart and key rotation preserve legacy ownership", func(t *testing.T) {
-		fixture := newRuntimeFixture(t, fixtureOptions{features: allFeatures})
+		fixture := newRuntimeFixture(t, fixtureOptions{})
 		base, baseApplied, baseURL := fixtureCandidate(t, candidateSpec{})
 		request := fixtureRequest(http.MethodPost, "client-alpha", http.Header{
 			"Thread-Id": {"restart-identity"},
@@ -213,7 +208,6 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		policy := providercookie.DefaultPolicy()
 		policy.MaxHandleBindingsGlobal = 1
 		fixture := newRuntimeFixture(t, fixtureOptions{
-			features:     codexstartup.Snapshot{UpstreamHeaderHygiene: true, ProviderCookieJar: true},
 			cookiePolicy: policy,
 		})
 		if _, err := fixture.http.Begin(
@@ -230,9 +224,7 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 	})
 
 	t.Run("cleanup retains only reachable authorities after grace", func(t *testing.T) {
-		fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-			UpstreamHeaderHygiene: true, ProviderCookieJar: true,
-		}})
+		fixture := newRuntimeFixture(t, fixtureOptions{})
 		base, baseApplied, baseURL := fixtureCandidate(t, candidateSpec{})
 		handle := commitHTTPCookie(
 			t, fixture, "client-alpha", "", base, baseApplied, baseURL,
@@ -289,9 +281,7 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 }
 
 func TestCookieStoreFailuresRemainTypedAcrossAdapters(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, ProviderCookieJar: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	sqlDB, err := fixture.db.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -309,6 +299,37 @@ func TestCookieStoreFailuresRemainTypedAcrossAdapters(t *testing.T) {
 		testAPIType, operationID("ws-cookie-store", 1),
 	)
 	requireWSFailure(t, err, codexws.FailureStorage)
+}
+
+func TestProviderCookieSurvivesWebSocketReconnectWithoutCrossingClientScope(t *testing.T) {
+	fixture := newRuntimeFixture(t, fixtureOptions{})
+	candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
+	handle := commitHTTPCookie(
+		t, fixture, "reconnect-cookie-client", "", candidate, applied, finalURL,
+		"reconnect_cookie=stable; Path=/; Secure; Max-Age=604800", operationID("cookie-reconnect-seed", 1),
+	)
+
+	for sequence := 1; sequence <= 2; sequence++ {
+		operation, headers := prepareWSCookieAttempt(
+			t, fixture, "reconnect-cookie-client", handle, candidate, applied,
+			websocketURL(t, finalURL), operationID("cookie-reconnect", sequence),
+		)
+		if got := headers.Get("Cookie"); got != "reconnect_cookie=stable" {
+			t.Fatalf("reconnect %d Cookie = %q", sequence, got)
+		}
+		if err := operation.OpenConnection(); err != nil {
+			t.Fatal(err)
+		}
+		operation.CloseConnection()
+	}
+
+	_, isolated := prepareWSCookieAttempt(
+		t, fixture, "other-reconnect-cookie-client", handle, candidate, applied,
+		websocketURL(t, finalURL), operationID("cookie-reconnect-isolated", 1),
+	)
+	if got := isolated.Get("Cookie"); got != "" {
+		t.Fatalf("different ClientScope received reconnected Cookie %q", got)
+	}
 }
 
 func commitHTTPCookie(

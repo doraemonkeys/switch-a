@@ -58,7 +58,7 @@ func TestBackoff_AppliesDelayOnSameProviderRetry(t *testing.T) {
 		}, "", "key1"),
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -139,7 +139,7 @@ func TestBackoff_NoDelayWhenBackoffNotConfigured(t *testing.T) {
 		}, "", "key1"),
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -203,7 +203,7 @@ func TestBackoff_RespectsMaxDelay(t *testing.T) {
 		}, "", "key1"),
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -268,7 +268,7 @@ func TestBackoff_CancelsOnContextDone(t *testing.T) {
 		}, "", "key1"),
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -358,7 +358,7 @@ func TestBackoff_NoDelayOnProviderSwitch(t *testing.T) {
 		}, "", "key2"),
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})

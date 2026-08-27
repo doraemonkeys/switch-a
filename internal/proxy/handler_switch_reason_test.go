@@ -74,7 +74,7 @@ func TestHandler_RecordsSwitchReasonInAttempts(t *testing.T) {
 		}, "", "key2"),
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -174,7 +174,7 @@ func TestHandler_RecordsPermanentErrorSwitchReason(t *testing.T) {
 				}, "", "key2"),
 			}
 
-			handler := NewHandler(Config{
+			handler := newProxyCodexTestHandler(t, Config{
 				Store:  store,
 				Logger: zap.NewNop(),
 			})
@@ -257,7 +257,7 @@ func TestHandler_RecordsUsageLimitSwitchReasonAndSuspendsConfiguredProvider(t *t
 	healthMgr.availableProviders["p1"] = true
 	healthMgr.availableProviders["p2"] = true
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Health: healthMgr,
 		Logger: zap.NewNop(),
@@ -343,7 +343,7 @@ func TestHandler_RecordsUsageLimitSwitchReasonWithoutSuspendingSwitchOnlyProvide
 	healthMgr.availableProviders["p1"] = true
 	healthMgr.availableProviders["p2"] = true
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Health: healthMgr,
 		Logger: zap.NewNop(),

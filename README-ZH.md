@@ -38,6 +38,12 @@ Switch-A 为应用提供统一、稳定的访问入口。它会按策略选择�
 
 命名空间只用于网关内部路由，转发到上游前会被移除。Switch-A 保留上游原生 API 协议，不负责在不同供应商的请求格式之间进行转换。
 
+### Codex 运行方式
+
+Codex Header 整理、WebSocket 子协议协商、会话连续性和上游 Cookie 隔离始终启用，不再有控制这些能力的运行时开关。未知 metadata、事件类型和字段会作为不透明内容原样转发，非 JSON 文本和 WebSocket 二进制帧也一样；Switch-A 只拒绝已识别协议控制字段中的非法值。
+
+若 keyring 不存在，且持久化数据中没有需要原 keyring 的 Codex 历史，Switch-A 会在启动时原子创建 `./codex-keyring.json`。可通过 `codex_keyring_file` 或 `SWITCHA_CODEX_KEYRING_FILE` 覆盖路径（环境变量优先），并应与数据库一起持久化和妥善保管。若历史状态需要原 keyring 而文件缺失，或配置的文件不可读、损坏、内容不完整，启动会失败且不会替换该文件；请恢复匹配的 keyring 或修正路径。
+
 ## 快速开始
 
 运行环境：
@@ -94,6 +100,7 @@ Windows 请使用 `go build -o switch-a.exe ./cmd/switch-a`，确保生成的文
 | `SWITCHA_DB_PATH` | SQLite 数据库路径 | `./data.db` |
 | `SWITCHA_LOG_PATH` | 日志文件路径 | `./logs/switch-a.log` |
 | `SWITCHA_LOG_LEVEL` | `debug`、`info`、`warn` 或 `error` | `info` |
+| `SWITCHA_CODEX_KEYRING_FILE` | Codex 持久状态 keyring 路径 | `./codex-keyring.json` |
 
 大部分路由和可靠性配置都在管理界面中维护，并持久化到 SQLite。所有启动选项见 [`config.example.yaml`](config.example.yaml)。
 
@@ -101,7 +108,7 @@ Windows 请使用 `go build -o switch-a.exe ./cmd/switch-a`，确保生成的文
 
 > **不要将 Switch-A 直接暴露在公网。** 两个服务默认都会监听所有网络接口。管理员令牌会保护管理 API，但代理路由目前没有客户端鉴权。
 
-如需远程访问，请将 Switch-A 放在私有网络中，或置于启用了身份认证与 TLS 的反向代理之后。`config.yaml`、SQLite 数据库和导出的配置可能包含上游凭据，请妥善保管。
+如需远程访问，请将 Switch-A 放在私有网络中，或置于启用了身份认证与 TLS 的反向代理之后。`config.yaml`、SQLite 数据库、Codex keyring 和导出的配置包含凭据或持久状态密钥，请妥善保管。
 
 ## 开发
 

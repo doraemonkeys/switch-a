@@ -102,7 +102,7 @@ func TestHandler_ServeHTTP_WebSocket_FallbackSelectionUsesLearnedModelAfterMidSe
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -114,7 +114,7 @@ func TestHandler_ServeHTTP_WebSocket_FallbackSelectionUsesLearnedModelAfterMidSe
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}

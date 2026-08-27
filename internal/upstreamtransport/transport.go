@@ -52,8 +52,23 @@ type RequestPolicy struct {
 	Headers HeaderPolicy
 }
 
+// RedirectPolicy belongs to exchange execution rather than request projection.
+// Server-managed Codex cookies need each 3xx response exposed to the attempt
+// coordinator, while ordinary HTTP retains net/http's standard redirect rules.
+type RedirectPolicy uint8
+
+const (
+	FollowRedirects RedirectPolicy = iota
+	ExposeRedirects
+)
+
+type ExecutionPolicy struct {
+	Redirects RedirectPolicy
+}
+
 type Transport struct {
-	client *http.Client
+	followClient *http.Client
+	rawClient    *http.Client
 }
 
 func New(config Config) *Transport {
@@ -72,20 +87,27 @@ func New(config Config) *Transport {
 		// would make Content-Encoding and client bytes disagree.
 		DisableCompression: true,
 	}
-	return &Transport{client: &http.Client{
-		Transport: roundTripper,
-		// Every response is an attempt boundary owned by the coordinator. Following
-		// here would create an unselected second exchange and could carry credentials
-		// or cookies to an authority that was never validated.
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
+	return &Transport{
+		followClient: &http.Client{Transport: roundTripper},
+		rawClient: &http.Client{
+			Transport: roundTripper,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
-	}}
+	}
 }
 
 func (t *Transport) CloseIdleConnections() {
-	if t != nil && t.client != nil {
-		t.client.CloseIdleConnections()
+	if t == nil {
+		return
+	}
+	if t.followClient != nil {
+		t.followClient.CloseIdleConnections()
+		return
+	}
+	if t.rawClient != nil {
+		t.rawClient.CloseIdleConnections()
 	}
 }
 
@@ -162,8 +184,12 @@ func (r *Response) Take() (ResponseHead, io.ReadCloser, error) {
 	return head, body, nil
 }
 
-func (t *Transport) Fetch(ctx context.Context, request *http.Request) (*Response, error) {
-	if t == nil || t.client == nil {
+func (t *Transport) Fetch(
+	ctx context.Context,
+	request *http.Request,
+	policy ExecutionPolicy,
+) (*Response, error) {
+	if t == nil || t.followClient == nil || t.rawClient == nil {
 		return nil, errors.New("upstream transport is not initialized")
 	}
 	if request == nil {
@@ -172,7 +198,11 @@ func (t *Transport) Fetch(ctx context.Context, request *http.Request) (*Response
 	if ctx == nil {
 		return nil, errors.New("upstream request context is required")
 	}
-	response, err := t.client.Do(request.WithContext(ctx)) //nolint:bodyclose // ownership moves through Response.TakeBody
+	client, err := t.clientFor(policy)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request.WithContext(ctx)) //nolint:bodyclose // ownership moves through Response.TakeBody
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +216,17 @@ func (t *Transport) Fetch(ctx context.Context, request *http.Request) (*Response
 		Trailer:       response.Trailer,
 		ContentLength: response.ContentLength,
 	}, response.Body)
+}
+
+func (t *Transport) clientFor(policy ExecutionPolicy) (*http.Client, error) {
+	switch policy.Redirects {
+	case FollowRedirects:
+		return t.followClient, nil
+	case ExposeRedirects:
+		return t.rawClient, nil
+	default:
+		return nil, errors.New("upstream redirect policy is invalid")
+	}
 }
 
 // NewResponse establishes the body ownership boundary for custom transports and

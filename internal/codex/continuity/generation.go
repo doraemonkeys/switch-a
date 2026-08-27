@@ -105,38 +105,6 @@ func (r *generationRegistry) activate(generation Generation, binding Binding) er
 	return nil
 }
 
-func (r *generationRegistry) validate(generation Generation, binding Binding) error {
-	r.mu.RLock()
-	entry, exists := r.entries[generation]
-	if !exists {
-		r.mu.RUnlock()
-		return errorOf(ErrorInactiveGeneration, binding.Kind, binding.ClaimOperationID, "connection generation is inactive", nil)
-	}
-	scopeMatches := entry.scope.Equal(binding.Owner.ProtocolScope)
-	_, active := entry.active[binding.Digest]
-	sessionID := entry.sessionID
-	r.mu.RUnlock()
-	if !scopeMatches {
-		return errorOf(ErrorConflict, binding.Kind, binding.ClaimOperationID, "connection generation belongs to another protocol scope", nil)
-	}
-	if !active {
-		return errorOf(ErrorInactiveGeneration, binding.Kind, binding.ClaimOperationID, "response is not active on this connection generation", nil)
-	}
-	observe(r.observer, Event{
-		At:            r.clock.Now().UTC(),
-		Action:        "inject_validate",
-		Outcome:       "active",
-		OperationID:   binding.ClaimOperationID,
-		SessionID:     sessionID,
-		Generation:    generation,
-		BindingKind:   binding.Kind,
-		Lifecycle:     binding.Lifecycle,
-		KeyVersion:    binding.Digest.KeyVersion(),
-		ProtocolScope: binding.Owner.ProtocolScope.String(),
-	})
-	return nil
-}
-
 func (r *generationRegistry) deactivate(generation Generation, binding Binding) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -271,16 +271,24 @@ func TestRunnerIsolatesCleanupErrorsAndReportsCookieFailure(t *testing.T) {
 
 func TestOwnerStopCancelsInFlightSweepAndHonorsDeadline(t *testing.T) {
 	release := make(chan struct{})
-	continuity := &fakeContinuityCleaner{blocked: release}
+	started := make(chan struct{})
+	continuity := &fakeContinuityCleaner{
+		blocked: release,
+		onCall:  func() { close(started) },
+	}
 	events := make(chan Event, 1)
 	runner := newTestRunner(t, &fakeMaintenanceClock{now: time.Now()}, &fakeCatalog{}, continuity, &fakeCookieCleaner{}, &sequenceIDs{}, events)
 	owner, err := runner.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("maintenance sweep did not start")
+	}
+	deadline, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	time.Sleep(time.Millisecond)
 	if err := owner.Stop(deadline); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop(deadline) = %v", err)
 	}
@@ -290,6 +298,63 @@ func TestOwnerStopCancelsInFlightSweepAndHonorsDeadline(t *testing.T) {
 	}
 	if event := awaitMaintenanceEvent(t, events); !errors.Is(event.ContinuityError, context.Canceled) {
 		t.Fatalf("canceled sweep event = %+v", event)
+	}
+}
+
+const alreadyExpiredStopStressRuns = 100
+
+func TestOwnerStopAlreadyExpiredContextWinsCompletedOwner(t *testing.T) {
+	completionErr := errors.New("owner completed")
+	tests := []struct {
+		name       string
+		newContext func() (context.Context, context.CancelFunc)
+	}{
+		{
+			name: "canceled",
+			newContext: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, cancel
+			},
+		},
+		{
+			name: "expired deadline",
+			newContext: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for range alreadyExpiredStopStressRuns {
+				ctx, cancelContext := test.newContext()
+				done := make(chan struct{})
+				close(done)
+				cancelSignaled := make(chan struct{})
+				owner := &Owner{
+					cancel: func() { close(cancelSignaled) },
+					done:   done,
+					err:    completionErr,
+				}
+
+				if err := owner.Stop(ctx); err != ctx.Err() {
+					t.Fatalf("Stop() = %v, want context error %v", err, ctx.Err())
+				}
+				select {
+				case <-cancelSignaled:
+				default:
+					t.Fatal("Stop returned before signaling owner cancellation")
+				}
+				if err := owner.Stop(ctx); err != ctx.Err() {
+					t.Fatalf("repeated Stop() = %v, want context error %v", err, ctx.Err())
+				}
+				if err := owner.Stop(context.Background()); !errors.Is(err, completionErr) {
+					t.Fatalf("Stop(join) = %v, want owner completion error %v", err, completionErr)
+				}
+				cancelContext()
+			}
+		})
 	}
 }
 

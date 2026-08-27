@@ -243,6 +243,11 @@ func (o *Owner) Stop(ctx context.Context) error {
 		return fmt.Errorf("stop Codex maintenance: context is required")
 	}
 	o.stopOnce.Do(o.cancel)
+	// A deadline that was already exhausted at the shutdown boundary is the
+	// caller's decision, even if the owner happened to finish concurrently.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-o.done:
 		o.mu.Lock()

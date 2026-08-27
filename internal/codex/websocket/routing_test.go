@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 )
 
 func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testing.T) {
@@ -17,9 +16,7 @@ func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testin
 	secondURL := mustURL(t, "wss://second.example.test/v1")
 
 	t.Run("continuity owner-free", func(t *testing.T) {
-		runtime := testRuntime(t, FeatureSourceFunc(func() codexstartup.Snapshot {
-			return codexstartup.Snapshot{Continuity: true}
-		}), nil)
+		runtime := testRuntime(t, nil)
 		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "owner-free")
 		if err != nil {
 			t.Fatal(err)
@@ -29,10 +26,7 @@ func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testin
 
 	t.Run("cookie-only", func(t *testing.T) {
 		repository := &testCookieRepository{}
-		runtime := New(Config{
-			Features: FeatureSourceFunc(func() codexstartup.Snapshot {
-				return codexstartup.Snapshot{ProviderCookieJar: true}
-			}),
+		runtime := newTestRuntime(t, Config{
 			ClientScopes: testClientDigester{}, ProviderCookies: newTestCookieService(t, repository),
 			ExternalScheme: testSchemeResolver("https"),
 		})
@@ -67,9 +61,7 @@ func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testin
 	})
 
 	t.Run("stateless first frame", func(t *testing.T) {
-		runtime := testRuntime(t, FeatureSourceFunc(func() codexstartup.Snapshot {
-			return codexstartup.Snapshot{Continuity: true}
-		}), nil)
+		runtime := testRuntime(t, nil)
 		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "stateless-first-frame")
 		if err != nil {
 			t.Fatal(err)
@@ -104,9 +96,6 @@ func assertOwnerFreeCrossAuthorityReplacement(
 }
 
 func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
-	features := FeatureSourceFunc(func() codexstartup.Snapshot {
-		return codexstartup.Snapshot{Continuity: true}
-	})
 	first, firstApplied := testCandidate(t, "route-a", "https://first.example.test/v1")
 	second, secondApplied := testCandidate(t, "route-b", "https://second.example.test/v1")
 	sameScope, sameScopeApplied := testCandidate(t, "route-same-scope", "https://first.example.test/v1")
@@ -116,11 +105,18 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 	t.Run("durable claim", func(t *testing.T) {
 		request := testRequest("client-a")
 		request.Header.Set("Thread-Id", "new-thread")
-		op, err := testRuntime(t, features, nil).Begin(context.Background(), request, codexAPIType, "claim-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), request, codexAPIType, "claim-pin")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := op.PrepareDial(context.Background(), make(http.Header), first, firstApplied, firstURL); err != nil {
+		permit, err := op.PrepareDial(context.Background(), make(http.Header), first, firstApplied, firstURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if authority, _ := op.RequiredAuthority(); authority != nil {
+			t.Fatal("durable claim pinned authority before physical disclosure")
+		}
+		if err := permit.Commit(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := op.PrepareDial(context.Background(), make(http.Header), sameScope, sameScopeApplied, firstURL); err != nil {
@@ -132,11 +128,18 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 	t.Run("attestation", func(t *testing.T) {
 		request := testRequest("client-a")
 		request.Header.Set("X-Oai-Attestation", "opaque-attestation")
-		op, err := testRuntime(t, features, nil).Begin(context.Background(), request, codexAPIType, "attestation-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), request, codexAPIType, "attestation-pin")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := op.PrepareDial(context.Background(), make(http.Header), first, firstApplied, firstURL); err != nil {
+		permit, err := op.PrepareDial(context.Background(), make(http.Header), first, firstApplied, firstURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if authority, _ := op.RequiredAuthority(); authority != nil {
+			t.Fatal("attestation pinned authority before physical disclosure")
+		}
+		if err := permit.Commit(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := op.PrepareDial(context.Background(), make(http.Header), sameScope, sameScopeApplied, firstURL); err != nil {
@@ -146,7 +149,7 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 	})
 
 	t.Run("active response", func(t *testing.T) {
-		op, err := testRuntime(t, features, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "response-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "response-pin")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -157,21 +160,33 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer op.CloseConnection()
-		if _, err := op.PrepareServerFrame(context.Background(), true, []byte(`{"type":"response.created","response":{"id":"response-pins-route"}}`)); err != nil {
+		permit, err := op.PrepareServerFrame(context.Background(), true, []byte(`{"type":"response.created","response":{"id":"response-pins-route"}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if authority, _ := op.RequiredAuthority(); authority != nil {
+			t.Fatal("active response pinned authority before downstream write")
+		}
+		if err := permit.Commit(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := op.CommitVisibility(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		assertCrossAuthorityRejected(t, op, second, secondApplied, secondURL)
 	})
 
 	t.Run("client visible route", func(t *testing.T) {
-		op, err := testRuntime(t, features, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "visible-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "visible-pin")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := op.PrepareDial(context.Background(), make(http.Header), first, firstApplied, firstURL); err != nil {
 			t.Fatal(err)
 		}
-		op.PinClientVisible()
+		if err := op.CommitVisibility(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := op.PrepareDial(context.Background(), make(http.Header), sameScope, sameScopeApplied, firstURL); Classify(err) != FailureIdentity {
 			t.Fatalf("visible route target changed: class=%q err=%v", Classify(err), err)
 		}

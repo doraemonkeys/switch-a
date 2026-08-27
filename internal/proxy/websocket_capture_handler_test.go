@@ -72,14 +72,14 @@ func (auth webSocketCaptureFailingAuthenticator) ApplyProviderCredentials(
 	candidate testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-	_ *testUpstreamURL,
+	finalURL *testUpstreamURL,
 ) (testAppliedIdentity, error) {
 	if candidate.RouteTargetID() == auth.providerID {
 		headers.Set("Authorization", "Bearer "+auth.secret)
 		return testAppliedIdentity{}, errors.New("credential preparation failed for " + auth.secret)
 	}
 	headers.Set("Authorization", "Bearer fallback-token")
-	return testAppliedIdentity{}, nil
+	return testAppliedIdentityForCandidate(candidate, finalURL)
 }
 
 func (webSocketCaptureFailingAuthenticator) RefreshCredentialSession(
@@ -141,7 +141,7 @@ func TestHandlerWebSocketCaptureEndToEndLiveCloseAndExport(t *testing.T) {
 	defer manager.Close()
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:   store,
 		Capture: manager,
 		Logger:  zaptest.NewLogger(t),
@@ -151,7 +151,7 @@ func TestHandlerWebSocketCaptureEndToEndLiveCloseAndExport(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=capture-model", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=capture-model", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestHandlerWebSocketCaptureEndToEndUnselectedSuppressionAndSelectedReplayLi
 			return fallbackProvider, nil
 		},
 	}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: selector,
 		Capture:  manager,
@@ -310,7 +310,7 @@ func TestHandlerWebSocketCaptureEndToEndUnselectedSuppressionAndSelectedReplayLi
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=capture-model", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=capture-model", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -591,7 +591,7 @@ func TestHandlerWebSocketCaptureCredentialRefreshCreatesTwoPhysicalExchanges(t *
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 	auth := &refreshingCaptureAuthenticator{}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:   store,
 		Auth:    auth,
 		Capture: manager,
@@ -602,7 +602,7 @@ func TestHandlerWebSocketCaptureCredentialRefreshCreatesTwoPhysicalExchanges(t *
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 			return fallbackProvider, nil
 		},
 	}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: selector,
 		Auth: webSocketCaptureFailingAuthenticator{
@@ -759,7 +759,7 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?token="+secret, nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?token="+secret, proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}

@@ -14,7 +14,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
@@ -237,6 +236,11 @@ func TestCookieAuthoritySwitchDiscardsOverlayAndMergeFailureFailsGate(t *testing
 
 func newCookieTestRuntime(t *testing.T, repository providercookie.Repository) *Runtime {
 	t.Helper()
+	return newAlwaysOnTestRuntime(t, Config{ProviderCookies: newCookieTestService(t, repository)})
+}
+
+func newCookieTestService(t *testing.T, repository providercookie.Repository) *providercookie.Service {
+	t.Helper()
 	random := make([]byte, 4096)
 	for index := range random {
 		random[index] = byte(index%251 + 1)
@@ -258,11 +262,7 @@ func newCookieTestRuntime(t *testing.T, repository providercookie.Repository) *R
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(Config{
-		Features:        FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{ProviderCookieJar: true} }),
-		ProviderCookies: service,
-		ExternalScheme:  NewTrustedProxySchemeResolver(nil),
-	})
+	return service
 }
 
 func gatewayCookieValue(t *testing.T, setCookie string) string {

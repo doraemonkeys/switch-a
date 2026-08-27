@@ -129,7 +129,7 @@ func TestGatewayMaybeLookupVisibleContinuityCandidate_RespectsModelDemand(t *tes
 	}).Candidate(observedAt)
 	seedStore := &routingTestSeedStore{candidate: seed}
 	store := newMockStore()
-	gateway := NewGateway(Config{Store: store, VisibleContinuitySeedStore: seedStore, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, VisibleContinuitySeedStore: seedStore, Logger: zaptest.NewLogger(t)})
 
 	known := newProviderSwitchTracker(&model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"}, 2, seedStore)
 	gateway.maybeLookupVisibleContinuityCandidate(context.Background(), &known)

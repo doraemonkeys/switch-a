@@ -1,4 +1,4 @@
-.PHONY: ci ci-go ci-web lint coverage gopls-check sloc clean test fmt format-check build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc web-fmt web-format-check rm-tmpclaude check-go-env tools install-tools install-go-tools install-sloc-guard ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
+.PHONY: ci ci-go ci-web fixture-check lint coverage gopls-check sloc clean test fmt format-check build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc web-fmt web-format-check rm-tmpclaude check-go-env tools install-tools install-go-tools install-sloc-guard ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
 
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -47,6 +47,8 @@ EXISTING_GO_FILES := git ls-files -z --cached --others --exclude-standard '*.go'
 GOPLS_CHECK := $(EXISTING_GO_FILES) | xargs -0 "$(GOPLS)" check -severity=hint
 GOFMT_CHECK := $(EXISTING_GO_FILES) | xargs -0 gofmt -l
 REQUIRED_GO_VERSION := $(shell awk '/^go / {print $$2}' go.mod)
+FIXTURE_ROOT := internal/codex/headers/testdata
+FIXTURE_TEST_PATTERN := ^(TestFixtureFilesUseLF|TestCodexDesktop0150Alpha8FixtureContract|TestCodexDesktop0150Alpha8FixturesReplayByteForByte)$$
 
 # 跨平台临时目录设置
 ifeq ($(OS),Windows_NT)
@@ -91,14 +93,18 @@ check-go-env:
 		;; \
 	esac
 
+fixture-check:
+	@git ls-files "$(FIXTURE_ROOT)/**" | git check-attr --stdin eol | awk -F ': ' 'BEGIN { checked = 0; failed = 0 } { checked++; if ($$3 != "lf") { printf "%s: eol=%s (want lf)\n", $$1, $$3; failed = 1 } } END { if (checked == 0) { print "No tracked fixture files found"; exit 1 } if (failed) exit 1 }'
+	go test -count=1 ./internal/codex/headers -run '$(FIXTURE_TEST_PATTERN)'
+
 # Hosted CI keeps Go and web gates separate so their jobs can run in parallel.
-ci-go: check-go-env coverage lint format-check gopls-check
+ci-go: check-go-env fixture-check coverage lint format-check gopls-check
 
 ci-web: web-coverage web-tsc web-lint web-format-check
 
 # Local CI also normalizes formatting and removes transient debug captures so a
 # successful run leaves the working tree ready for review.
-ci: check-go-env coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc gopls-check
+ci: check-go-env fixture-check coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc gopls-check
 
 rm-tmpclaude:
 	@rm -f tmpclaude-*

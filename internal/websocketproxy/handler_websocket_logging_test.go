@@ -23,7 +23,7 @@ func TestHandler_logWebSocketRequest_UsesHandshakeDiagnostics(t *testing.T) {
 	t.Parallel()
 
 	store := newMockStore()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -96,7 +96,7 @@ func TestHandler_logWebSocketRequest_UsesSemanticUpstreamError(t *testing.T) {
 	t.Parallel()
 
 	store := newMockStore()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -170,7 +170,7 @@ func TestHandler_logWebSocketRequest_PersistsCommitSource(t *testing.T) {
 	t.Parallel()
 
 	store := newMockStore()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -224,7 +224,7 @@ func TestHandler_logWebSocketRequest_PersistsVisibilityAndRecoveryAction(t *test
 	t.Parallel()
 
 	store := newMockStore()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -280,7 +280,7 @@ func TestHandler_logWebSocketRequest_UsesLifecycleProviderAttributionAndPersists
 	t.Parallel()
 
 	store := newMockStore()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -350,7 +350,7 @@ func TestHandler_logWebSocketRequest_PrefersLifecycleProviderOverLastAttempt(t *
 	t.Parallel()
 
 	store := newMockStore()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -417,7 +417,7 @@ func TestApplyWebSocketHealthOutcome_PostCommitTransportErrorMarksSuccess(t *tes
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -444,7 +444,7 @@ func TestApplyWebSocketHealthOutcome_PostCommitSemanticErrorMarksFailure(t *test
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -479,7 +479,7 @@ func TestApplyWebSocketHealthOutcome_UsageLimitHandshakeSuspendsProvider(t *test
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -540,7 +540,7 @@ func TestApplyWebSocketHealthOutcome_UsageLimitSemanticErrorSuspendsProvider(t *
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -592,7 +592,7 @@ func TestApplyWebSocketHealthOutcome_UsageLimitSemanticErrorSwitchOnlyDoesNotSus
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -633,7 +633,7 @@ func TestApplyWebSocketHealthOutcome_ClientScopedSemanticErrorDoesNotSuspendProv
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -669,7 +669,7 @@ func TestApplyWebSocketHealthOutcome_WebSocketConnectionLimitWithoutCompletionSt
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -705,7 +705,7 @@ func TestApplyWebSocketHealthOutcome_WebSocketConnectionLimitAfterCompletionMark
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -742,7 +742,7 @@ func TestApplyWebSocketHealthOutcome_PostVisibleTransportErrorWithoutCompletionD
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,
@@ -772,7 +772,7 @@ func TestPrepareWebSocketDialHeaders_ManagedAuthErrorAndLogHelpers(t *testing.T)
 	t.Parallel()
 
 	store := newMockStore()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Auth:   providerauth.NewService(providerauth.Config{}),
@@ -825,7 +825,7 @@ func TestApplyWebSocketSessionHealthOutcomesAndBytesTrackingObserver_NoOpBranche
 
 	store := newMockStore()
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newTestGateway(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 		Health: healthMgr,

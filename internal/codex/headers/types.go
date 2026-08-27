@@ -1,6 +1,6 @@
-// Package codexheaders turns the small, versioned Codex wire contract into
-// typed policy decisions. It never owns transport, persistence, or mutable
-// request state.
+// Package codexheaders recognizes the stable Codex wire fields owned by the
+// gateway and turns them into typed policy decisions. It never owns transport,
+// persistence, or mutable request state.
 package codexheaders
 
 import (
@@ -14,12 +14,6 @@ import (
 )
 
 const bindingInputCodec = "codex-header-binding/v1"
-
-// FixtureVersion selects an exact evidence catalog. New wire paths must not be
-// added to an existing catalog when a later Codex release changes its shape.
-type FixtureVersion string
-
-const FixtureCodexDesktop0150Alpha8 FixtureVersion = "codex-desktop-0.150.0-alpha.8"
 
 // Field is a normalized security-field category. Session aliases deliberately
 // collapse to one category while the other identity fields remain distinct.
@@ -77,18 +71,24 @@ const (
 	ReasonOwnerUnavailable      Reason = "owner_unavailable"
 	ReasonMalformedHeader       Reason = "malformed_header"
 	ReasonCarrierConflict       Reason = "carrier_conflict"
-	ReasonMalformedJSON         Reason = "malformed_json"
 	ReasonInvalidEnvelope       Reason = "invalid_envelope"
 	ReasonInvalidProjection     Reason = "invalid_projection"
 	ReasonDuplicateSecurityKey  Reason = "duplicate_security_key"
-	ReasonUnsupportedFixture    Reason = "unsupported_fixture"
-	ReasonEvidenceUnavailable   Reason = "evidence_unavailable"
-	ReasonUnsupportedEvent      Reason = "unsupported_event"
 	ReasonOperationUnlocked     Reason = "operation_unlocked"
 	ReasonOperationMatch        Reason = "operation_match"
 	ReasonOperationConflict     Reason = "operation_conflict"
 	ReasonOperationUnavailable  Reason = "operation_unavailable"
 	ReasonResponseEchoForbidden Reason = "response_echo_forbidden"
+)
+
+// ResponseLifecycle is the gateway-owned lifecycle effect of a recognized
+// server event. Unknown and future events remain ResponseLifecycleNone.
+type ResponseLifecycle uint8
+
+const (
+	ResponseLifecycleNone ResponseLifecycle = iota
+	ResponseLifecycleActive
+	ResponseLifecycleTerminal
 )
 
 // OwnerStatus is supplied by the continuity layer after looking up a binding

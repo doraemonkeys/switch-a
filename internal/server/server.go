@@ -154,7 +154,6 @@ type AdminConfig struct {
 	CaptureExports      admindebugcapture.CaptureExports
 	AnalyticsWindow     *analyticswindow.Resolver
 	TokenUsageHandler   http.Handler
-	CodexFeatures       admin.CodexFeatureValidator
 }
 
 // HealthResponse represents the health check response.
@@ -271,7 +270,6 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 		ProviderImportStore: cfg.ProviderImportStore,
 		InternalErrorRules:  cfg.InternalErrorRules,
 		StatsWindowResolver: cfg.AnalyticsWindow,
-		CodexFeatures:       cfg.CodexFeatures,
 		Logger:              cfg.Logger,
 	})
 

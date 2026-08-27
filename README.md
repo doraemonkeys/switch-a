@@ -38,6 +38,12 @@ Use an explicit namespace in the client base URL when different providers use si
 
 The namespace is removed before forwarding. Switch-A preserves the upstream API contract; it does not translate one provider's request format into another.
 
+### Codex operation
+
+Codex header hygiene, WebSocket subprotocol negotiation, session continuity, and provider-cookie isolation are always active; there are no runtime switches for these capabilities. Unknown metadata, event types, and fields remain opaque and are forwarded unchanged, as are non-JSON text and binary WebSocket frames. Switch-A rejects only malformed fields it recognizes as protocol controls.
+
+If the keyring is absent and no stored Codex history requires it, Switch-A atomically creates `./codex-keyring.json` at startup. Override the path with `codex_keyring_file` or `SWITCHA_CODEX_KEYRING_FILE` (the environment wins), and persist and protect it alongside the database. If stored history requires a missing keyring, or the configured file is unreadable, corrupt, or incomplete, startup fails without replacing the file; restore the matching keyring or correct the path.
+
 ## Quick start
 
 Requirements:
@@ -94,6 +100,7 @@ Startup settings can come from environment variables or `config.yaml`. Environme
 | `SWITCHA_DB_PATH` | SQLite database path | `./data.db` |
 | `SWITCHA_LOG_PATH` | Log file path | `./logs/switch-a.log` |
 | `SWITCHA_LOG_LEVEL` | `debug`, `info`, `warn`, or `error` | `info` |
+| `SWITCHA_CODEX_KEYRING_FILE` | Codex persistent-state keyring path | `./codex-keyring.json` |
 
 Most routing and reliability settings are managed in the admin UI and persisted in SQLite. See [`config.example.yaml`](config.example.yaml) for all startup options.
 
@@ -101,7 +108,7 @@ Most routing and reliability settings are managed in the admin UI and persisted 
 
 > **Do not expose Switch-A directly to the public internet.** Both servers listen on all network interfaces by default. The admin token protects the admin API, but proxy routes currently have no client authentication.
 
-For remote access, place Switch-A behind a private network or an authenticated reverse proxy with TLS. Keep `config.yaml`, the SQLite database, and exported configurations private because they may contain provider credentials.
+For remote access, place Switch-A behind a private network or an authenticated reverse proxy with TLS. Keep `config.yaml`, the SQLite database, the Codex keyring, and exported configurations private because they contain credentials or persistent-state secrets.
 
 ## Development
 

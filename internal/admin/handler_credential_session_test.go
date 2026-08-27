@@ -56,8 +56,12 @@ func (adminCredentialSigner) Sign(_ codexkeyring.HMACPurpose, input []byte) (cod
 
 func newCredentialSessionHandler(t *testing.T) (*Handler, *store.SQLiteStore) {
 	t.Helper()
-	repository, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "admin.db"), internal.RealClock{}, nil, adminCredentialSigner{})
+	repository, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "admin.db"), internal.RealClock{}, nil)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.FinalizeStaticCredentialSubjects(context.Background(), adminCredentialSigner{}); err != nil {
+		_ = repository.Close()
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repository.Close() })

@@ -153,7 +153,7 @@ func TestContextCancellation_DoesNotTriggerCircuitBreaker(t *testing.T) {
 	healthManager := newTrackingHealthManager()
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Health: healthManager,
 		Logger: logger,
@@ -241,7 +241,7 @@ func TestDeadlineExceeded_DoesNotTriggerCircuitBreaker(t *testing.T) {
 	healthManager := newTrackingHealthManager()
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Health: healthManager,
 		Logger: logger,
@@ -306,7 +306,7 @@ func TestUpstreamNetworkError_TriggerCircuitBreaker(t *testing.T) {
 	healthManager := newTrackingHealthManager()
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Health: healthManager,
 		Logger: logger,
@@ -354,7 +354,7 @@ func TestUpstream5xx_TriggerCircuitBreaker(t *testing.T) {
 	healthManager := newTrackingHealthManager()
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Health: healthManager,
 		Logger: logger,
@@ -411,7 +411,7 @@ func TestClientDisconnectDuringSSE_IsHealthNeutralAndPersistsClientOutcome(t *te
 	}
 
 	healthManager := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Health: healthManager,
 		Logger: zap.NewNop(),

@@ -49,7 +49,11 @@ type x3ScriptedTransport struct {
 	events *x3EventLog
 }
 
-func (t *x3ScriptedTransport) FetchUpstream(ctx context.Context, request *http.Request) (*upstreamtransport.Response, error) {
+func (t *x3ScriptedTransport) FetchUpstream(
+	ctx context.Context,
+	request *http.Request,
+	_ upstreamtransport.ExecutionPolicy,
+) (*upstreamtransport.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

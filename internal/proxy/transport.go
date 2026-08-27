@@ -37,8 +37,12 @@ func NewTransport(config TransportConfig) *Transport {
 	})}
 }
 
-func (t *Transport) FetchUpstream(ctx context.Context, request *http.Request) (*upstreamtransport.Response, error) {
-	return t.upstream.Fetch(ctx, request)
+func (t *Transport) FetchUpstream(
+	ctx context.Context,
+	request *http.Request,
+	policy upstreamtransport.ExecutionPolicy,
+) (*upstreamtransport.Response, error) {
+	return t.upstream.Fetch(ctx, request, policy)
 }
 
 func (t *Transport) CloseIdleConnections() {

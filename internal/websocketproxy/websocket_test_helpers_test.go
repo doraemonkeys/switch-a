@@ -25,13 +25,31 @@ import (
 )
 
 const (
-	hostileCaptureDeadline = 250 * time.Millisecond
-	testPollTimeout        = 100 * time.Millisecond
+	hostileCaptureDeadline  = 250 * time.Millisecond
+	testPollTimeout         = 100 * time.Millisecond
+	testClientAuthorization = "Bearer websocketproxy-test-client"
 )
 
 type Handler = Gateway
 
-func NewHandler(cfg Config) *Gateway { return NewGateway(cfg) }
+func newTestGateway(t *testing.T, cfg Config) *Gateway {
+	t.Helper()
+	if cfg.Codex == nil {
+		cfg.Codex = testCodexRuntime(t)
+	}
+	return NewGateway(cfg)
+}
+
+func codexDialOptions(subprotocols ...string) *websocket.DialOptions {
+	return &websocket.DialOptions{
+		Subprotocols: subprotocols,
+		HTTPHeader:   http.Header{"Authorization": {testClientAuthorization}},
+	}
+}
+
+func authorizeCodexRequest(request *http.Request) {
+	request.Header.Set("Authorization", testClientAuthorization)
+}
 
 func testCredentialSessions(routeTargetID, apiType string, kind credentialsession.Kind, secret string) []credentialsession.RouteSnapshot {
 	var subject credentialsession.Subject

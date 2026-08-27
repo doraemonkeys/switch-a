@@ -17,6 +17,17 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+func TestNewGateway_NilCodexRuntimePanics(t *testing.T) {
+	defer func() {
+		panicValue := recover()
+		message, ok := panicValue.(string)
+		if !ok || message != "websocketproxy: Codex runtime is required but was nil" {
+			t.Fatalf("panic = %v, want mandatory Codex runtime failure", panicValue)
+		}
+	}()
+	NewGateway(Config{Store: newMockStore(), Logger: zaptest.NewLogger(t)})
+}
+
 func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 	const (
 		providerID = "gateway-integration-provider"
@@ -59,7 +70,7 @@ func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 		APITypes:           []model.ProviderAPIType{{ProviderID: providerID, APIType: APITypeCodex, BaseURL: upstream.URL}},
 		CredentialSessions: testCredentialSessions(providerID, APITypeCodex, credentialsession.KindAPIKey, "provider-secret"),
 	}}
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		gateway.Handle(request.Context(), w, request, RequestConfig{
 			GlobalAuthMode: "bearer", GlobalMaxAttempts: 1,
@@ -69,7 +80,7 @@ func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", nil)
+	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", codexDialOptions())
 	if err != nil {
 		t.Fatalf("dial gateway websocket: %v", err)
 	}
@@ -96,8 +107,9 @@ func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 func TestGateway_NoProviderReturnsCanonicalGatewayFailure(t *testing.T) {
 	t.Parallel()
 	store := newMockStore()
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses?model=gpt-5", nil)
+	authorizeCodexRequest(request)
 	recorder := httptest.NewRecorder()
 
 	gateway.Handle(request.Context(), recorder, request, RequestConfig{GlobalMaxAttempts: 1}, APITypeCodex, "no-provider", time.Now())
@@ -173,15 +185,17 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 		{ID: "primary", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL}}, CredentialSessions: testCredentialSessions("primary", APITypeCodex, credentialsession.KindAPIKey, "primary-key")},
 		{ID: "fallback", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL}}, CredentialSessions: testCredentialSessions("fallback", APITypeCodex, credentialsession.KindAPIKey, "fallback-key")},
 	}
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 3}, "semantic-replacement")
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", &websocket.DialOptions{
-		Subprotocols: []string{"realtime.v2", subprotocol},
-	})
+	connection, _, err := websocket.Dial(
+		ctx,
+		wsURL(server)+"/responses?model=gpt-5",
+		codexDialOptions("realtime.v2", subprotocol),
+	)
 	if err != nil {
 		t.Fatalf("dial gateway websocket: %v", err)
 	}
@@ -240,13 +254,13 @@ func TestGateway_ReplacesProviderConfigurationFailureBeforeUpgrade(t *testing.T)
 		{ID: "misconfigured", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "misconfigured", APIType: APITypeCodex}}, CredentialSessions: testCredentialSessions("misconfigured", APITypeCodex, credentialsession.KindAPIKey, "key")},
 		{ID: "ready", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "ready", APIType: APITypeCodex, BaseURL: ready.URL}}, CredentialSessions: testCredentialSessions("ready", APITypeCodex, credentialsession.KindAPIKey, "key")},
 	}
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 2}, "configuration-replacement")
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", nil)
+	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", codexDialOptions())
 	if err != nil {
 		t.Fatalf("dial gateway websocket: %v", err)
 	}
@@ -270,17 +284,21 @@ type rotatingGatewayAuthenticator struct {
 func (auth *rotatingGatewayAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	_ codexidentity.CandidateSnapshot,
+	candidate codexidentity.CandidateSnapshot,
 	_, _ string,
 	_ *http.Request,
-	_ *url.URL,
+	finalURL *url.URL,
 ) (codexidentity.AppliedIdentity, error) {
 	token := "initial-token"
 	if auth.refreshed.Load() {
 		token = "refreshed-token"
 	}
 	headers.Set("Authorization", "Bearer "+token)
-	return codexidentity.AppliedIdentity{}, nil
+	subject, err := codexidentity.CredentialSubjectFromSession(candidate.Credential().Subject)
+	if err != nil {
+		return codexidentity.AppliedIdentity{}, err
+	}
+	return codexidentity.AppliedIdentityFromRequest(candidate.Authority().Vendor(), finalURL, subject)
 }
 
 func (auth *rotatingGatewayAuthenticator) RefreshCredentialSession(context.Context, credentialsession.Snapshot) (bool, error) {
@@ -332,15 +350,17 @@ func TestGateway_RetriesSameManagedProviderAfterUnauthorizedHandshake(t *testing
 		CredentialSessions: testCredentialSessions("managed", APITypeCodex, credentialsession.KindChatGPT, `{"access_token":"initial-token"}`),
 	}}
 	auth := &rotatingGatewayAuthenticator{}
-	gateway := NewGateway(Config{Store: store, Auth: auth, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Auth: auth, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 1}, "managed-refresh")
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", &websocket.DialOptions{
-		Subprotocols: []string{"realtime.v2", subprotocol},
-	})
+	connection, _, err := websocket.Dial(
+		ctx,
+		wsURL(server)+"/responses?model=gpt-5",
+		codexDialOptions("realtime.v2", subprotocol),
+	)
 	if err != nil {
 		t.Fatalf("dial gateway websocket: %v", err)
 	}

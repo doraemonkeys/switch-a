@@ -53,11 +53,11 @@ func TestHandler_ServeHTTP_CodexResponsesCompactForwardsOpaqueContract(t *testin
 			BaseURL:    upstreamServer.URL + "/backend-api/codex",
 		}},
 	}, "", "provider-key")}
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 
 	requestBody := `{"model":"gpt-5.6-sol","input":[{"role":"user","content":"compact me"}],"future_field":{"preserve":true}}`
 	req := httptest.NewRequest(http.MethodPost, RouteCodexResponsesSubtreeV1+"compact?source=codex", strings.NewReader(requestBody))
-	req.Header.Set("Authorization", "Bearer client-key")
+	authorizeProxyCodexTestRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Originator", "codex_cli_rs")
 	req.Header.Set("Version", "0.144.3")

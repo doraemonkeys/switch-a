@@ -40,7 +40,7 @@ func TestCaptureCompletionTimestampDoesNotCrossNextPhysicalAttempt(t *testing.T)
 	defer manager.Close()
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
-	handler := NewHandler(Config{Store: store, Capture: manager, Logger: zap.NewNop()})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Capture: manager, Logger: zap.NewNop()})
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-3"}`))
 	handler.ServeHTTP(httptest.NewRecorder(), request)

@@ -188,7 +188,7 @@ func TestHandler_ServeHTTP_PreVisibleReplacementSkipsFailoverIsolationAndPopulat
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -329,7 +329,7 @@ func TestHandler_ServeHTTP_SeededContinuityReentryTurnsSubsequentSwitchIntoFailo
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		Selector:                   mockSel,
 		VisibleContinuitySeedStore: seedStore,
@@ -553,7 +553,7 @@ func TestHandler_ServeHTTP_HTTPNormalCompletionDoesNotStoreContinuitySeed(t *tes
 	store.providers = []model.Provider{provider}
 	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		VisibleContinuitySeedStore: seedStore,
 		Logger:                     zap.NewNop(),
@@ -597,7 +597,7 @@ func TestHandler_ServeHTTP_ExhaustedStatusResponseStoresVisibleContinuitySeed(t 
 	store.providers = []model.Provider{provider}
 	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		VisibleContinuitySeedStore: seedStore,
 		Logger:                     zap.NewNop(),
@@ -653,17 +653,26 @@ func TestHandler_ServeHTTP_HTTPClientDisconnectDoesNotStoreContinuitySeed(t *tes
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:                      store,
 		VisibleContinuitySeedStore: seedStore,
 		Logger:                     zap.NewNop(),
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	req := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader(`{"model":"o3-pro"}`))
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	authorizeProxyCodexTestRequest(req)
+	recorder := httptest.NewRecorder()
+	responseVisible := make(chan struct{})
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+		onFirstWrite: func() {
+			close(responseVisible)
+		},
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -671,7 +680,15 @@ func TestHandler_ServeHTTP_HTTPClientDisconnectDoesNotStoreContinuitySeed(t *tes
 		close(done)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	// Cancellation must happen after the proxy has exposed upstream data. A
+	// fixed delay allowed cancellation to win before an upstream request existed
+	// when the full race suite contended for CPU, making the lifecycle assertion
+	// wait for an event that could never occur.
+	select {
+	case <-responseVisible:
+	case <-time.After(5 * time.Second):
+		t.Fatal("proxy did not expose the upstream response before disconnect")
+	}
 	cancel()
 
 	select {
@@ -723,7 +740,7 @@ func TestHandler_ServeHTTP_SameProviderRetryIncrementsProviderAttemptWithoutSwit
 	store.providers = []model.Provider{provider}
 	store.configs[ConfigKeyGlobalMaxAttempts] = "2"
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})

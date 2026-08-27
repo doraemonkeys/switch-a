@@ -3,31 +3,97 @@ package websocketproxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
+	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap/zaptest"
 )
 
-func testCodexOperation(t *testing.T, subprotocol bool) *codexws.Operation {
+func testCodexRuntime(t *testing.T) *codexws.Runtime {
 	t.Helper()
-	runtime := codexws.New(codexws.Config{Features: codexws.FeatureSourceFunc(func() codexstartup.Snapshot {
-		return codexstartup.Snapshot{WebSocketSubprotocol: subprotocol}
-	})})
-	operation, err := runtime.Begin(context.Background(), nil, APITypeCodex, "ws-boundary-test")
+	document, err := codexkeyring.GenerateDocument(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := codexkeyring.Parse(document, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "codex.db"), internal.RealClock{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = persistence.Close() })
+	repositories, err := persistence.OpenCodexRepositories(context.Background(), keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digesterValue, err := codexidentity.NewDigester(keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := codexcontinuity.Limits{
+		PendingTTL: 24 * time.Hour, CommittedTTL: 30 * 24 * time.Hour,
+		TombstoneTTL: 7 * 24 * time.Hour, MaxBindings: 100,
+	}
+	policy, err := codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{
+		codexcontinuity.KindThreadID: limits, codexcontinuity.KindSessionID: limits,
+		codexcontinuity.KindConversationID: limits, codexcontinuity.KindWindowID: limits,
+		codexcontinuity.KindTurnState: limits, codexcontinuity.KindTurnMetadata: limits,
+		codexcontinuity.KindResponseReference: limits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuity, err := codexcontinuity.NewService(codexcontinuity.Config{
+		Store: repositories.Continuity, Digester: &digesterValue, Policy: policy, Clock: internal.RealClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := providercookie.NewService(providercookie.ServiceConfig{
+		Repository: repositories.ProviderCookies, HandleDigester: keyring, Random: rand.Reader,
+		Clock: internal.RealClock{}, HostCanonicalizer: providercookie.HostCanonicalizerFunc(codexidentity.CanonicalizeCookieHost),
+		PublicSuffixList: codexidentity.PublicSuffixList{}, Policy: providercookie.DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := codexws.New(codexws.Config{
+		ClientScopes: &digesterValue, Continuity: continuity, ProviderCookies: cookies,
+		ExternalScheme: codexhttp.NewTrustedProxySchemeResolver(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime
+}
+
+func testCodexOperation(t *testing.T) *codexws.Operation {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
+	request.Header.Set("Authorization", "Bearer client")
+	operation, err := testCodexRuntime(t).Begin(context.Background(), request, APITypeCodex, "ws-boundary-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,21 +102,25 @@ func testCodexOperation(t *testing.T, subprotocol bool) *codexws.Operation {
 
 func TestCodexWebSocketBoundaryAdapters(t *testing.T) {
 	ctx := context.Background()
-	disabled := testCodexOperation(t, false)
+	operation := testCodexOperation(t)
 	orchestrator := &WebSocketSessionOrchestrator{
 		handler:        &Gateway{logger: zaptest.NewLogger(t)},
 		lifecycle:      newWebSocketLifecycleState(),
-		codexOperation: disabled,
+		codexOperation: operation,
 		requestID:      "boundary",
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
 	request.Header.Set("Sec-WebSocket-Protocol", "bad protocol")
-	if result := orchestrator.initializeSubprotocol(request); result != nil {
-		t.Fatalf("disabled subprotocol gate rejected legacy request: %#v", result)
+	if result := orchestrator.initializeSubprotocol(request); result == nil {
+		t.Fatal("always-on subprotocol gate accepted an invalid offer")
 	}
-	if len(orchestrator.subprotocol.DialOffer()) != 0 {
-		t.Fatalf("disabled subprotocol dial offer = %#v", orchestrator.subprotocol.DialOffer())
+	request.Header.Set("Sec-WebSocket-Protocol", "realtime.v2, realtime.v1")
+	if result := orchestrator.initializeSubprotocol(request); result != nil {
+		t.Fatalf("valid subprotocol offer rejected: %#v", result)
+	}
+	if len(orchestrator.subprotocol.DialOffer()) != 2 {
+		t.Fatalf("subprotocol dial offer = %#v", orchestrator.subprotocol.DialOffer())
 	}
 
 	clientGate := orchestrator.codexClientPreWrite(ctx)
@@ -87,14 +157,15 @@ func TestCodexWebSocketBoundaryAdapters(t *testing.T) {
 
 	for _, test := range []struct {
 		class       codexws.FailureClass
+		condition   codexrecovery.Condition
 		disposition requestcapture.MessageDisposition
 		status      websocket.StatusCode
 	}{
-		{codexws.FailureProtocol, requestcapture.MessageDispositionProtocolRejected, websocket.StatusPolicyViolation},
-		{codexws.FailureIdentity, requestcapture.MessageDispositionIdentityRejected, websocket.StatusPolicyViolation},
-		{codexws.FailureStorage, requestcapture.MessageDispositionStorageRejected, websocket.StatusInternalError},
+		{codexws.FailureProtocol, codexrecovery.ConditionProtocolInvalid, requestcapture.MessageDispositionProtocolRejected, websocket.StatusPolicyViolation},
+		{codexws.FailureIdentity, codexrecovery.ConditionStateConflict, requestcapture.MessageDispositionIdentityRejected, websocket.StatusPolicyViolation},
+		{codexws.FailureStorage, codexrecovery.ConditionStateStoreUnavailable, requestcapture.MessageDispositionStorageRejected, websocket.StatusTryAgainLater},
 	} {
-		failure := &codexws.Failure{Class: test.class, Stage: "test", Cause: errors.New("rejected")}
+		failure := &codexws.Failure{Class: test.class, Stage: "test", Cause: codexrecovery.Mark(test.condition, errors.New("rejected"))}
 		decision := codexRejectedWrite(failure)
 		if decision.Action != webSocketPreWriteActionReject || decision.RejectionDisposition != test.disposition {
 			t.Fatalf("class %s decision = %#v", test.class, decision)
@@ -115,6 +186,169 @@ func TestCodexWebSocketBoundaryAdapters(t *testing.T) {
 	var concrete *webSocketCodexCloseError
 	if !errors.As(closeError, &concrete) || concrete.As(new(error)) {
 		t.Fatal("close error As contract is unstable")
+	}
+}
+
+func TestCodexWebSocketRecoveryAdapterClassifiesRealBoundaryFailures(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	runtime := testCodexRuntime(t)
+	begin := func(operationID string) *codexws.Operation {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
+		request.Header.Set("Authorization", "Bearer client")
+		operation, err := runtime.Begin(ctx, request, APITypeCodex, operationID)
+		if err != nil {
+			t.Fatalf("begin %s: %v", operationID, err)
+		}
+		return operation
+	}
+	requireFailure := func(stage string, err error) error {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s unexpectedly succeeded", stage)
+		}
+		return err
+	}
+
+	_, protocolErr := runtime.Begin(ctx, nil, APITypeCodex, "protocol-invalid")
+	protocolErr = requireFailure("Runtime.Begin protocol validation", protocolErr)
+
+	var unavailableRuntime *codexws.Runtime
+	unavailableRequest := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
+	unavailableRequest.Header.Set("Authorization", "Bearer client")
+	_, storageErr := unavailableRuntime.Begin(ctx, unavailableRequest, APITypeCodex, "storage-unavailable")
+	storageErr = requireFailure("Runtime.Begin unavailable runtime", storageErr)
+
+	unknownRequest := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
+	unknownRequest.Header.Set("Authorization", "Bearer client")
+	unknownRequest.Header.Set("X-Codex-Turn-State", "unknown-turn-state")
+	_, newThreadErr := runtime.Begin(ctx, unknownRequest, APITypeCodex, "new-thread")
+	newThreadErr = requireFailure("Runtime.Begin unknown state", newThreadErr)
+
+	openConnectionErr := requireFailure("OpenConnection without provider", begin("open-connection").OpenConnection())
+
+	reconnectOperation := begin("reconnect")
+	reconnectFrame := reconnectOperation.ClassifyClientFrame(
+		ctx, true, []byte(`{"type":"response.append"}`),
+	)
+	_, reconnectErr := reconnectFrame.PrepareDelivery(ctx)
+	reconnectErr = requireFailure("append without current connection", reconnectErr)
+
+	provider := &model.Provider{
+		ID:                 "provider",
+		CredentialSessions: testCredentialSessions("provider", APITypeCodex, credentialsession.KindAPIKey, "secret"),
+	}
+	preparedA := testPreparedProviderAttempt(t, provider, APITypeCodex, "https://provider-a.example/v1/responses")
+	preparedB := testPreparedProviderAttempt(t, provider, APITypeCodex, "https://provider-b.example/v1/responses")
+	subject, err := codexidentity.CredentialSubjectFromSession(preparedA.credential.Subject)
+	if err != nil {
+		t.Fatalf("credential subject: %v", err)
+	}
+	preparedA.applied, err = codexidentity.AppliedIdentityFromRequest("openai", preparedA.finalURL, subject)
+	if err != nil {
+		t.Fatalf("provider A applied identity: %v", err)
+	}
+	preparedB.applied, err = codexidentity.AppliedIdentityFromRequest("openai", preparedB.finalURL, subject)
+	if err != nil {
+		t.Fatalf("provider B applied identity: %v", err)
+	}
+	_, prepareDialErr := begin("prepare-dial").PrepareDial(
+		ctx, preparedA.headers.Clone(), preparedA.candidate, preparedB.applied, preparedB.finalURL,
+	)
+	prepareDialErr = requireFailure("PrepareDial identity mismatch", prepareDialErr)
+
+	commitOperation := begin("permit-commit")
+	dialPermit, err := commitOperation.PrepareDial(
+		ctx, preparedA.headers.Clone(), preparedA.candidate, preparedA.applied, preparedA.finalURL,
+	)
+	if err != nil {
+		t.Fatalf("prepare permit-commit dial: %v", err)
+	}
+	if err := dialPermit.Commit(ctx); err != nil {
+		t.Fatalf("commit permit-commit dial: %v", err)
+	}
+	responsePermit, err := commitOperation.PrepareServerFrame(
+		ctx, true, []byte(`{"type":"response.created","response":{"id":"resp-permit-commit"}}`),
+	)
+	if err != nil {
+		t.Fatalf("prepare response lifecycle: %v", err)
+	}
+	commitErr := requireFailure("response lifecycle permit commit", responsePermit.Commit(ctx))
+
+	type expected struct {
+		name      string
+		err       error
+		condition codexrecovery.Condition
+		status    int
+		code      codexrecovery.ErrorCode
+		closeCode websocket.StatusCode
+	}
+	tests := []expected{
+		{"state conflict from permit commit", commitErr, codexrecovery.ConditionStateConflict, http.StatusConflict, codexrecovery.ErrorCodeStateConflict, websocket.StatusPolicyViolation},
+		{"reconnect from append delivery", reconnectErr, codexrecovery.ConditionReconnectRequired, http.StatusConflict, codexrecovery.ErrorCodeReconnectRequired, websocket.StatusServiceRestart},
+		{"new Thread from Begin", newThreadErr, codexrecovery.ConditionNewThreadRequired, http.StatusGone, codexrecovery.ErrorCodeNewThreadRequired, websocket.StatusPolicyViolation},
+		{"storage from nil Runtime Begin", storageErr, codexrecovery.ConditionStateStoreUnavailable, http.StatusServiceUnavailable, codexrecovery.ErrorCodeStateStoreUnavailable, websocket.StatusTryAgainLater},
+		{"protocol from nil request Begin", protocolErr, codexrecovery.ConditionProtocolInvalid, http.StatusBadRequest, codexrecovery.ErrorCodeProtocolInvalid, websocket.StatusPolicyViolation},
+		{"unclassified internal", errors.New("unclassified adapter failure"), codexrecovery.ConditionInternalFailure, http.StatusInternalServerError, codexrecovery.ErrorCodeInternal, websocket.StatusInternalError},
+	}
+	handler := &Gateway{logger: zaptest.NewLogger(t)}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			preUpgrade := codexWebSocketRecoveryDecision(test.err, codexrecovery.PhaseWebSocketPreUpgrade)
+			if preUpgrade.Condition() != test.condition ||
+				preUpgrade.HTTPStatus() != test.status ||
+				preUpgrade.ErrorCode() != test.code {
+				t.Fatalf("pre-upgrade decision = (%q, %d, %q), want (%q, %d, %q)",
+					preUpgrade.Condition(), preUpgrade.HTTPStatus(), preUpgrade.ErrorCode(),
+					test.condition, test.status, test.code,
+				)
+			}
+
+			accepted := codexWebSocketRecoveryDecision(test.err, codexrecovery.PhaseWebSocketAccepted)
+			if accepted.Condition() != test.condition ||
+				accepted.WebSocketCloseCode() != test.closeCode ||
+				accepted.ErrorCode() != test.code {
+				t.Fatalf("accepted decision = (%q, %d, %q), want (%q, %d, %q)",
+					accepted.Condition(), accepted.WebSocketCloseCode(), accepted.ErrorCode(),
+					test.condition, test.closeCode, test.code,
+				)
+			}
+
+			recorder := httptest.NewRecorder()
+			handler.writeCodexWebSocketFailureForOperation(recorder, "real-boundary", test.err)
+			if recorder.Code != test.status ||
+				!bytes.Contains(recorder.Body.Bytes(), []byte(test.code)) {
+				t.Fatalf("pre-upgrade envelope status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			var closeError websocket.CloseError
+			if err := newWebSocketCodexCloseError(test.err); !errors.As(err, &closeError) ||
+				closeError.Code != test.closeCode || closeError.Reason != string(test.code) {
+				t.Fatalf("accepted close = %#v (%v), want code=%d reason=%q",
+					closeError, err, test.closeCode, test.code,
+				)
+			}
+		})
+	}
+
+	for _, boundary := range []struct {
+		name string
+		err  error
+	}{
+		{"PrepareDial", prepareDialErr},
+		{"OpenConnection", openConnectionErr},
+	} {
+		t.Run(boundary.name+" maps identity fallback", func(t *testing.T) {
+			for _, phase := range []codexrecovery.CarrierPhase{
+				codexrecovery.PhaseWebSocketPreUpgrade,
+				codexrecovery.PhaseWebSocketAccepted,
+			} {
+				if got := codexWebSocketRecoveryDecision(boundary.err, phase).Condition(); got != codexrecovery.ConditionStateConflict {
+					t.Fatalf("%s condition = %q, want %q", phase, got, codexrecovery.ConditionStateConflict)
+				}
+			}
+		})
 	}
 }
 
@@ -510,7 +744,7 @@ func TestPreVisibleCodexGateRejectionsAreTypedAndDoNotWrite(t *testing.T) {
 		func(websocket.MessageType, []byte) { clientObserved = true },
 		nil,
 	)
-	if !clientObserved || clientRejection.Result == nil || !errors.Is(clientRejection.Result.Err, clientRejected) {
+	if clientObserved || clientRejection.Result == nil || !errors.Is(clientRejection.Result.Err, clientRejected) {
 		t.Fatalf("client rejection = %#v observed=%v", clientRejection, clientObserved)
 	}
 
@@ -558,16 +792,18 @@ func TestPreVisibleCodexGateRejectionsAreTypedAndDoNotWrite(t *testing.T) {
 	}
 }
 
-func TestGatewayCodexSubprotocolDisabledPreservesLegacyWireAndStripsHandle(t *testing.T) {
-	clientPayload := []byte{0, 1, 2, 3, 0xff}
-	serverPayload := []byte{0xfe, 4, 3, 2, 1}
+func TestGatewayCodexNegotiatesSubprotocolAndLeavesInjectTargetValidationUpstream(t *testing.T) {
+	clientPayload := []byte(`{"type":"response.create","model":"gpt-5"}`)
+	serverPayload := []byte(`{"type":"response.created","response":{"id":"response-1"}}`)
+	injectPayload := []byte(" \n{\"type\":\"response.inject\",\"response_id\":{\"unknown_shape\":[1,2,3]}}\t")
+	targetRejection := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"unknown response target"}}`)
 	upstreamOffer := make(chan string, 1)
 	upstreamCookie := make(chan string, 1)
-	upstreamPayload := make(chan []byte, 1)
+	upstreamPayload := make(chan []byte, 2)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		upstreamOffer <- request.Header.Get("Sec-WebSocket-Protocol")
 		upstreamCookie <- request.Header.Get("Cookie")
-		connection, err := websocket.Accept(w, request, nil)
+		connection, err := websocket.Accept(w, request, &websocket.AcceptOptions{Subprotocols: []string{"realtime.v2"}})
 		if err != nil {
 			t.Errorf("accept upstream: %v", err)
 			return
@@ -578,12 +814,25 @@ func TestGatewayCodexSubprotocolDisabledPreservesLegacyWireAndStripsHandle(t *te
 			t.Errorf("read upstream: %v", err)
 			return
 		}
-		if messageType != websocket.MessageBinary {
+		if messageType != websocket.MessageText {
 			t.Errorf("upstream message type = %d", messageType)
 		}
 		upstreamPayload <- append([]byte(nil), payload...)
-		if err := connection.Write(request.Context(), websocket.MessageBinary, serverPayload); err != nil {
+		if err := connection.Write(request.Context(), websocket.MessageText, serverPayload); err != nil {
 			t.Errorf("write upstream: %v", err)
+			return
+		}
+		messageType, payload, err = connection.Read(request.Context())
+		if err != nil {
+			t.Errorf("read inject upstream: %v", err)
+			return
+		}
+		if messageType != websocket.MessageText {
+			t.Errorf("inject upstream message type = %d", messageType)
+		}
+		upstreamPayload <- append([]byte(nil), payload...)
+		if err := connection.Write(request.Context(), websocket.MessageText, targetRejection); err != nil {
+			t.Errorf("write target rejection: %v", err)
 		}
 	}))
 	defer upstream.Close()
@@ -599,11 +848,9 @@ func TestGatewayCodexSubprotocolDisabledPreservesLegacyWireAndStripsHandle(t *te
 		}},
 		CredentialSessions: testCredentialSessions("provider", APITypeCodex, credentialsession.KindAPIKey, "secret"),
 	}}
-	runtime := codexws.New(codexws.Config{Features: codexws.FeatureSourceFunc(func() codexstartup.Snapshot {
-		return codexstartup.Snapshot{}
-	})})
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t), Codex: runtime})
-	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 1}, "disabled-wire")
+	runtime := testCodexRuntime(t)
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t), Codex: runtime})
+	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 1}, "always-on-wire")
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -611,48 +858,65 @@ func TestGatewayCodexSubprotocolDisabledPreservesLegacyWireAndStripsHandle(t *te
 	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", &websocket.DialOptions{
 		Subprotocols: []string{"realtime.v2", "realtime.v1"},
 		HTTPHeader: http.Header{
-			"Cookie": {providercookie.GatewayHandleName + "=must-not-leak; ordinary=kept"},
+			"Authorization": {"Bearer client"},
+			"Cookie":        {providercookie.GatewayHandleName + "=must-not-leak; ordinary=kept"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("dial gateway: %v", err)
 	}
 	defer connection.CloseNow()
-	if got := connection.Subprotocol(); got != "" {
-		t.Fatalf("disabled downstream subprotocol = %q", got)
+	if got := connection.Subprotocol(); got != "realtime.v2" {
+		t.Fatalf("downstream subprotocol = %q", got)
 	}
-	if err := connection.Write(ctx, websocket.MessageBinary, clientPayload); err != nil {
+	if err := connection.Write(ctx, websocket.MessageText, clientPayload); err != nil {
 		t.Fatalf("write client frame: %v", err)
 	}
 	messageType, payload, err := connection.Read(ctx)
 	if err != nil {
 		t.Fatalf("read server frame: %v", err)
 	}
-	if messageType != websocket.MessageBinary || !bytes.Equal(payload, serverPayload) {
+	if messageType != websocket.MessageText || !bytes.Equal(payload, serverPayload) {
 		t.Fatalf("server frame type=%d payload=%v", messageType, payload)
 	}
-	if got := <-upstreamOffer; got != "" {
-		t.Fatalf("disabled upstream subprotocol offer = %q", got)
+	if err := connection.Write(ctx, websocket.MessageText, injectPayload); err != nil {
+		t.Fatalf("write inject frame: %v", err)
 	}
-	if got := <-upstreamCookie; got != "ordinary=kept" {
+	messageType, payload, err = connection.Read(ctx)
+	if err != nil {
+		t.Fatalf("read target rejection: %v", err)
+	}
+	if messageType != websocket.MessageText || !bytes.Equal(payload, targetRejection) {
+		t.Fatalf("target rejection type=%d payload=%v", messageType, payload)
+	}
+	if got := <-upstreamOffer; got != "realtime.v2,realtime.v1" {
+		t.Fatalf("upstream subprotocol offer = %q", got)
+	}
+	if got := <-upstreamCookie; got != "" {
 		t.Fatalf("upstream cookie = %q", got)
 	}
 	if got := <-upstreamPayload; !bytes.Equal(got, clientPayload) {
 		t.Fatalf("upstream payload = %v", got)
+	}
+	if got := <-upstreamPayload; !bytes.Equal(got, injectPayload) {
+		t.Fatalf("upstream inject payload = %v", got)
 	}
 }
 
 func TestCodexWebSocketFailureAndAttemptAdapters(t *testing.T) {
 	handler := &Gateway{logger: zaptest.NewLogger(t)}
 	for _, test := range []struct {
-		class  codexws.FailureClass
-		status int
+		class     codexws.FailureClass
+		condition codexrecovery.Condition
+		status    int
 	}{
-		{codexws.FailureProtocol, http.StatusBadRequest},
-		{codexws.FailureStorage, http.StatusServiceUnavailable},
+		{codexws.FailureProtocol, codexrecovery.ConditionProtocolInvalid, http.StatusBadRequest},
+		{codexws.FailureStorage, codexrecovery.ConditionStateStoreUnavailable, http.StatusServiceUnavailable},
 	} {
 		recorder := httptest.NewRecorder()
-		handler.writeCodexWebSocketFailure(recorder, &codexws.Failure{Class: test.class, Stage: "test", Cause: errors.New("failed")})
+		handler.writeCodexWebSocketFailure(recorder, &codexws.Failure{
+			Class: test.class, Stage: "test", Cause: codexrecovery.Mark(test.condition, errors.New("failed")),
+		})
 		if recorder.Code != test.status {
 			t.Fatalf("class %s status=%d want=%d", test.class, recorder.Code, test.status)
 		}
@@ -660,23 +924,23 @@ func TestCodexWebSocketFailureAndAttemptAdapters(t *testing.T) {
 
 	applyCodexWebSocketRouteConstraint(nil, nil)
 	selectRequest := &model.SelectRequest{}
-	applyCodexWebSocketRouteConstraint(selectRequest, testCodexOperation(t, false))
+	applyCodexWebSocketRouteConstraint(selectRequest, testCodexOperation(t))
 	if selectRequest.RequiredAuthority != nil || selectRequest.PreferredRouteTargetID != "" {
-		t.Fatalf("unexpected disabled route constraint: %#v", selectRequest)
+		t.Fatalf("unexpected owner-free route constraint: %#v", selectRequest)
 	}
 
 	orchestrator := &WebSocketSessionOrchestrator{
 		handler:        handler,
 		lifecycle:      newWebSocketLifecycleState(),
-		codexOperation: testCodexOperation(t, false),
+		codexOperation: testCodexOperation(t),
 		requestID:      "attempt",
 	}
 	if err := orchestrator.prepareCodexPhysicalDial(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	prepared := webSocketPreparedProviderAttempt{}
-	if err := orchestrator.finishCodexPhysicalDial(context.Background(), prepared, DialExchange{}); err != nil {
-		t.Fatal(err)
+	if err := orchestrator.finishCodexPhysicalDial(context.Background(), prepared, DialExchange{}); codexws.Classify(err) != codexws.FailureStorage {
+		t.Fatalf("missing cookie authority error = %v", err)
 	}
 	if err := (*WebSocketSessionOrchestrator)(nil).prepareCodexPhysicalDial(context.Background(), &prepared); err != nil {
 		t.Fatal(err)
@@ -702,7 +966,7 @@ func TestCodexWebSocketFailureAndAttemptAdapters(t *testing.T) {
 	if err := orchestrator.prepareCodexPhysicalDial(context.Background(), &prepared); err != nil {
 		t.Fatalf("prepare physical dial: %v", err)
 	}
-	if prepared.boundaryPermit == nil || prepared.headers.Get("Cookie") != "ordinary=kept" {
+	if prepared.boundaryPermit == nil || prepared.headers.Get("Cookie") != "" {
 		t.Fatalf("prepared boundary=%#v headers=%v", prepared.boundaryPermit, prepared.headers)
 	}
 	if err := orchestrator.finishCodexPhysicalDial(context.Background(), prepared, DialExchange{}); err != nil {
@@ -758,7 +1022,7 @@ func TestCodexWebSocketFailureAndAttemptAdapters(t *testing.T) {
 }
 
 func TestCodexOrchestratorPinsRouteOnlyAtClientVisibility(t *testing.T) {
-	operation := testCodexOperation(t, false)
+	operation := testCodexOperation(t)
 	selectRequest := &model.SelectRequest{APIType: APITypeCodex}
 	visibleCallbacks := 0
 	orchestrator := newWebSocketSessionOrchestrator(&Gateway{logger: zaptest.NewLogger(t)}, webSocketSessionOrchestratorConfig{
@@ -798,6 +1062,19 @@ func TestCodexOrchestratorPinsRouteOnlyAtClientVisibility(t *testing.T) {
 		t.Fatalf("replacement physical attempt constrained selection: %#v", selectRequest)
 	}
 
+	decision := orchestrator.composeUpstreamPreWrite(context.Background(), nil)(webSocketPreWriteContext{
+		MessageType: websocket.MessageText, Data: []byte(`{"type":"future.application.frame"}`),
+	})
+	if decision.OnWriteConfirmed == nil {
+		t.Fatal("first upstream application frame has no visibility commit")
+	}
+	applyCodexWebSocketRouteConstraint(selectRequest, operation)
+	if selectRequest.RequiredAuthority != nil || selectRequest.PreferredRouteTargetID != "" {
+		t.Fatalf("first upstream frame pinned before physical write confirmation: %#v", selectRequest)
+	}
+	if err := decision.OnWriteConfirmed(); err != nil {
+		t.Fatal(err)
+	}
 	orchestrator.onClientVisible(webSocketVisibleWriteContext{})
 	applyCodexWebSocketRouteConstraint(selectRequest, operation)
 	if visibleCallbacks != 1 || selectRequest.RequiredAuthority == nil ||
