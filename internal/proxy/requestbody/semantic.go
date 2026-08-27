@@ -36,6 +36,8 @@ const (
 )
 
 // DecodeError preserves a machine-readable failure and the relevant coding.
+// Error deliberately omits Coding because it originates in an HTTP header;
+// diagnostic consumers should use Failure rather than format controlled bytes.
 type DecodeError struct {
 	Failure Failure
 	Coding  string
@@ -43,7 +45,7 @@ type DecodeError struct {
 }
 
 func (e *DecodeError) Error() string {
-	return fmt.Sprintf("request body semantic decoding failed: failure=%s coding=%q: %v", e.Failure, e.Coding, e.Cause)
+	return fmt.Sprintf("request body semantic decoding failed: failure=%s: %v", e.Failure, e.Cause)
 }
 
 func (e *DecodeError) Unwrap() error { return e.Cause }

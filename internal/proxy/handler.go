@@ -435,11 +435,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	pctx.selectReq = &model.SelectRequest{
-		ClientIP:   pctx.info.ClientIP,
-		User:       pctx.info.UserID,
-		APIType:    apiType,
-		Model:      pctx.info.Model,
-		StickyMode: cfg.stickyMode,
+		OperationID: requestID,
+		ClientIP:    pctx.info.ClientIP,
+		User:        pctx.info.UserID,
+		APIType:     apiType,
+		Model:       pctx.info.Model,
+		StickyMode:  cfg.stickyMode,
 	}
 	if required, preferred := codexOperation.RequiredAuthority(); required != nil {
 		pctx.selectReq.RequiredAuthority = required

@@ -10,6 +10,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -136,7 +137,13 @@ func (o *WebSocketSessionOrchestrator) rejectedUpgradeSubprotocolError(exchange 
 	}
 	_, err := o.subprotocol.BindUpstream(exchange.NegotiatedSubprotocol)
 	if err != nil {
-		o.logSubprotocolDecision("websocket.subprotocol_mismatch", exchange.NegotiatedSubprotocol, err.Error())
+		o.logSubprotocolDecision(
+			"websocket.subprotocol_mismatch",
+			webSocketSubprotocolPhaseUpstreamSelection,
+			websocketprotocol.PeerUpstream,
+			exchange.NegotiatedSubprotocol,
+			err,
+		)
 	}
 	return err
 }

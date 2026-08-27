@@ -531,11 +531,14 @@ type StickyEntry struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
-	ClientIP   string
-	User       string
-	APIType    string
-	Model      string
-	StickyMode StickyMode // Sticky session mode pre-loaded from runtime config
+	// OperationID is the server-generated request UUID used only to correlate
+	// selection decisions. It must never contain a client-provided request header.
+	OperationID string
+	ClientIP    string
+	User        string
+	APIType     string
+	Model       string
+	StickyMode  StickyMode // Sticky session mode pre-loaded from runtime config
 	// RequiredAuthority is a security boundary established by verified Codex
 	// state ownership. Route-target affinity must never widen this constraint.
 	RequiredAuthority *codexidentity.UpstreamAuthority

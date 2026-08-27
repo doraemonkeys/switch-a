@@ -2,6 +2,7 @@ package websocketproxy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -36,6 +37,31 @@ type webSocketSessionOrchestratorConfig struct {
 }
 
 type webSocketSelectionProbeObserverFactory func(apiType, initialModel string) WebSocketMessageObserver
+
+type webSocketSubprotocolPhase string
+
+const (
+	webSocketSubprotocolPhaseDisabled             webSocketSubprotocolPhase = "disabled"
+	webSocketSubprotocolPhaseProbeFixed           webSocketSubprotocolPhase = "probe_fixed"
+	webSocketSubprotocolPhaseUpstreamSelection    webSocketSubprotocolPhase = "upstream_selection"
+	webSocketSubprotocolPhaseDownstreamValidation webSocketSubprotocolPhase = "downstream_validation"
+)
+
+type webSocketSubprotocolValueState string
+
+const (
+	webSocketSubprotocolValueEmpty   webSocketSubprotocolValueState = "empty"
+	webSocketSubprotocolValuePresent webSocketSubprotocolValueState = "present"
+)
+
+type webSocketSubprotocolOutcome string
+
+const (
+	webSocketSubprotocolOutcomeAccepted webSocketSubprotocolOutcome = "accepted"
+	webSocketSubprotocolOutcomeMismatch webSocketSubprotocolOutcome = "mismatch"
+)
+
+const webSocketSubprotocolMismatchUnclassified = "unclassified_mismatch"
 
 // WebSocketSessionOrchestrator owns the provider-attempt loop because WebSocket
 // failover has different commitment boundaries from HTTP retries even though the
@@ -254,14 +280,22 @@ func (o *WebSocketSessionOrchestrator) ensureClientAccepted(w http.ResponseWrite
 		// first successfully forwarded upstream frame invokes the visible callback.
 		o.codexOperation.PinClientVisible()
 	}
-	o.logSubprotocolDecision("websocket.subprotocol_downstream_accepted", clientConn.Subprotocol(), "")
+	o.logSubprotocolDecision(
+		"websocket.subprotocol_downstream_accepted",
+		webSocketSubprotocolPhaseDownstreamValidation,
+		websocketprotocol.PeerDownstream,
+		clientConn.Subprotocol(),
+		nil,
+	)
 	return nil
 }
 
 func (o *WebSocketSessionOrchestrator) initializeSubprotocol(r *http.Request) *WebSocketSessionResult {
 	if o.codexOperation != nil && !o.codexOperation.Features().WebSocketSubprotocol {
 		o.subprotocol = websocketprotocol.New(websocketprotocol.Offer{})
-		o.logSubprotocolDecision("websocket.subprotocol_disabled", "", "")
+		o.logSubprotocolDecision(
+			"websocket.subprotocol_disabled", webSocketSubprotocolPhaseDisabled, "", "", nil,
+		)
 		return nil
 	}
 	negotiation, err := parseWebSocketSubprotocolNegotiation(r.Header)
@@ -284,24 +318,67 @@ func (o *WebSocketSessionOrchestrator) initializeSubprotocol(r *http.Request) *W
 func (o *WebSocketSessionOrchestrator) bindUpstreamSubprotocol(exchange DialExchange) error {
 	next, err := o.subprotocol.BindUpstream(exchange.NegotiatedSubprotocol)
 	if err != nil {
-		o.logSubprotocolDecision("websocket.subprotocol_mismatch", exchange.NegotiatedSubprotocol, err.Error())
+		o.logSubprotocolDecision(
+			"websocket.subprotocol_mismatch",
+			webSocketSubprotocolPhaseUpstreamSelection,
+			websocketprotocol.PeerUpstream,
+			exchange.NegotiatedSubprotocol,
+			err,
+		)
 		return err
 	}
 	o.subprotocol = next
-	o.logSubprotocolDecision("websocket.subprotocol_upstream_selected", exchange.NegotiatedSubprotocol, "")
+	o.logSubprotocolDecision(
+		"websocket.subprotocol_upstream_selected",
+		webSocketSubprotocolPhaseUpstreamSelection,
+		websocketprotocol.PeerUpstream,
+		exchange.NegotiatedSubprotocol,
+		nil,
+	)
 	return nil
 }
 
-func (o *WebSocketSessionOrchestrator) logSubprotocolDecision(event, actual, mismatchReason string) {
+func (o *WebSocketSessionOrchestrator) logSubprotocolDecision(
+	event string,
+	phase webSocketSubprotocolPhase,
+	peer websocketprotocol.Peer,
+	actual string,
+	decisionErr error,
+) {
 	if o == nil || o.handler == nil || o.handler.logger == nil {
 		return
 	}
+	outcome := webSocketSubprotocolOutcomeAccepted
+	mismatchReason := ""
+	peer = observableSubprotocolPeer(peer)
+	if decisionErr != nil {
+		outcome = webSocketSubprotocolOutcomeMismatch
+		mismatchReason = webSocketSubprotocolMismatchUnclassified
+		var mismatch *websocketprotocol.MismatchError
+		if errors.As(decisionErr, &mismatch) {
+			peer = observableSubprotocolPeer(mismatch.Peer)
+			mismatchReason = observableSubprotocolMismatchReason(mismatch.Reason)
+		}
+	}
 	fields := []zap.Field{
 		zap.String("request_id", o.requestID),
+		zap.String("session_id", o.requestID),
+		zap.Int("attempt_index", len(o.attempts)),
+		zap.Bool("attempt_active", o.currentLease != nil),
+		zap.String("negotiation_phase", string(phase)),
+		zap.String("negotiation_outcome", string(outcome)),
+		zap.String("peer", string(peer)),
 		zap.Bool("probe", o.probeOutcome != webSocketSelectionProbeOutcomeBypassed),
 		zap.Int("client_offer_count", len(o.subprotocol.ClientOffer())),
-		zap.String("selected_subprotocol", o.subprotocol.Selected()),
-		zap.String("actual_subprotocol", actual),
+		zap.Bool("selection_fixed", o.subprotocol.Fixed()),
+		zap.String("selected_state", string(subprotocolValueState(o.subprotocol.Selected()))),
+		zap.String("actual_state", string(subprotocolValueState(actual))),
+	}
+	if o.currentLease != nil {
+		fields = append(fields,
+			zap.String("provider_id", o.currentLease.ProviderID()),
+			zap.Uint64("provider_generation", o.currentLease.Generation()),
+		)
 	}
 	if mismatchReason != "" {
 		fields = append(fields, zap.String("mismatch_reason", mismatchReason))
@@ -309,6 +386,33 @@ func (o *WebSocketSessionOrchestrator) logSubprotocolDecision(event, actual, mis
 		return
 	}
 	o.handler.logger.Debug(event, fields...)
+}
+
+func subprotocolValueState(value string) webSocketSubprotocolValueState {
+	if value == "" {
+		return webSocketSubprotocolValueEmpty
+	}
+	return webSocketSubprotocolValuePresent
+}
+
+func observableSubprotocolPeer(peer websocketprotocol.Peer) websocketprotocol.Peer {
+	switch peer {
+	case websocketprotocol.PeerUpstream, websocketprotocol.PeerDownstream:
+		return peer
+	default:
+		return ""
+	}
+}
+
+func observableSubprotocolMismatchReason(reason websocketprotocol.MismatchReason) string {
+	switch reason {
+	case websocketprotocol.MismatchReasonUnexpectedSelection,
+		websocketprotocol.MismatchReasonMissingSelection,
+		websocketprotocol.MismatchReasonSelectionChanged:
+		return string(reason)
+	default:
+		return webSocketSubprotocolMismatchUnclassified
+	}
 }
 
 func (o *WebSocketSessionOrchestrator) trackCurrentAttempt(selection ProviderSelection) {

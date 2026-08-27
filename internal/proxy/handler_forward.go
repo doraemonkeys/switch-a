@@ -312,25 +312,11 @@ func (h *Handler) fetchPendingHTTPResponse(
 		phase,
 	)
 	h.captureProviderUsageObservation(pctx, attempt, head.SourceHeader, time.Now(), operationID)
-	if media.Source() == responseanalysis.ResponseMediaFromRequestAccept {
-		h.logger.Debug("inferred missing upstream response Content-Type from request Accept",
-			zap.String("request_id", pctx.requestID),
-			zap.String("operation_id", operationID),
-			zap.String("provider_id", attempt.provider.ID),
-			zap.String("api_type", pctx.apiType),
-			zap.String("response_media_type", media.ContentType()),
-			zap.Strings("request_accept", requestAccept),
-		)
-	} else if !media.Supported() {
-		h.logger.Debug("upstream response media type could not be resolved",
-			zap.String("request_id", pctx.requestID),
-			zap.String("operation_id", operationID),
-			zap.String("provider_id", attempt.provider.ID),
-			zap.String("api_type", pctx.apiType),
-			zap.String("response_content_type", head.SourceHeader.Get("Content-Type")),
-			zap.Strings("request_accept", requestAccept),
-		)
-	}
+	h.logHTTPResponseMediaDecision(media, httpResponseMediaLogContext{
+		requestID: pctx.requestID, operationID: operationID, providerID: attempt.provider.ID, apiType: pctx.apiType,
+		logicalAttempt: attempt.logicalAttemptIndex + 1, providerAttempt: attempt.providerAttemptIndex + 1,
+		acceptValueCount: len(requestAccept), contentTypeValueCount: len(head.SourceHeader.Values("Content-Type")),
+	})
 	analysisStartedAt := time.Now()
 	pending := h.analyzer.Start(ctx, responseanalysis.StartInput{
 		OperationID:     operationID,
@@ -356,6 +342,39 @@ func (h *Handler) fetchPendingHTTPResponse(
 		injectedCredential: injectedCredential,
 		codexAttempt:       codexAttempt,
 	}, nil
+}
+
+type httpResponseMediaLogContext struct {
+	requestID             string
+	operationID           string
+	providerID            string
+	apiType               string
+	logicalAttempt        int
+	providerAttempt       int
+	acceptValueCount      int
+	contentTypeValueCount int
+}
+
+func (h *Handler) logHTTPResponseMediaDecision(
+	media responseanalysis.ResponseMedia,
+	context httpResponseMediaLogContext,
+) {
+	if media.Source() != responseanalysis.ResponseMediaFromRequestAccept && media.Supported() {
+		return
+	}
+	h.logger.Debug("http response media decision",
+		zap.String("request_id", context.requestID),
+		zap.String("operation_id", context.operationID),
+		zap.String("provider_id", context.providerID),
+		zap.String("api_type", context.apiType),
+		zap.Int("logical_attempt", context.logicalAttempt),
+		zap.Int("provider_attempt", context.providerAttempt),
+		zap.String("media_source", string(media.Source())),
+		zap.String("media_decision", string(media.Decision())),
+		zap.String("media_reason", string(media.Reason())),
+		zap.Int("accept_value_count", context.acceptValueCount),
+		zap.Int("response_content_type_value_count", context.contentTypeValueCount),
+	)
 }
 
 func resolveHTTPResponseMedia(head *upstreamtransport.ResponseHead, requestAccept []string) responseanalysis.ResponseMedia {

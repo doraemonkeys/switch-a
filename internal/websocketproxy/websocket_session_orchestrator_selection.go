@@ -204,7 +204,9 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 	}
 
 	o.subprotocol = o.subprotocol.FixForProbe()
-	o.logSubprotocolDecision("websocket.subprotocol_probe_fixed", o.subprotocol.Selected(), "")
+	o.logSubprotocolDecision(
+		"websocket.subprotocol_probe_fixed", webSocketSubprotocolPhaseProbeFixed, "", "", nil,
+	)
 	if err := o.ensureClientAccepted(w, r); err != nil {
 		result := &WebSocketResult{
 			Err:           err,

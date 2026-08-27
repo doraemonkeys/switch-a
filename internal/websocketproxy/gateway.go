@@ -269,11 +269,12 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	selectReq := &model.SelectRequest{
-		ClientIP:   info.ClientIP,
-		User:       info.UserID,
-		APIType:    apiType,
-		Model:      info.Model,
-		StickyMode: cfg.StickyMode,
+		OperationID: requestID,
+		ClientIP:    info.ClientIP,
+		User:        info.UserID,
+		APIType:     apiType,
+		Model:       info.Model,
+		StickyMode:  cfg.StickyMode,
 	}
 	var codexOperation *codexws.Operation
 	if h.codex != nil {

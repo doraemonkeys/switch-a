@@ -100,6 +100,15 @@ func TestDecoderClassifiesFailures(t *testing.T) {
 	}
 }
 
+func TestDecodeErrorFormattingExcludesHeaderCoding(t *testing.T) {
+	t.Parallel()
+	const secretCoding = "codeql-secret-content-coding"
+	err := newDecodeError(FailureUnsupportedEncoding, secretCoding, errors.New("typed cause"))
+	if rendered := err.Error(); strings.Contains(rendered, secretCoding) {
+		t.Fatalf("DecodeError formatting contains header coding: %q", rendered)
+	}
+}
+
 func TestDecoderBoundsDecodedOutput(t *testing.T) {
 	t.Parallel()
 	payload := bytes.Repeat([]byte("x"), 4096)

@@ -29,6 +29,13 @@ func reqClientIP(req *model.SelectRequest) string {
 	return req.ClientIP
 }
 
+func reqOperationID(req *model.SelectRequest) string {
+	if req == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.OperationID)
+}
+
 func reqUser(req *model.SelectRequest) string {
 	if req == nil {
 		return ""

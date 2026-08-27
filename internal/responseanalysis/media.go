@@ -24,12 +24,40 @@ const (
 	ResponseMediaFromRequestAccept ResponseMediaSource = "request_accept"
 )
 
+// ResponseMediaDecision describes how the representation used by response
+// analysis was selected without exposing the header value that led to it.
+type ResponseMediaDecision string
+
+const (
+	ResponseMediaUseDeclared ResponseMediaDecision = "use_declared"
+	ResponseMediaInfer       ResponseMediaDecision = "infer"
+	ResponseMediaUnresolved  ResponseMediaDecision = "unresolved"
+)
+
+// ResponseMediaReason is a stable diagnostic classification. Callers can log it
+// safely because it never contains request- or upstream-controlled bytes.
+type ResponseMediaReason string
+
+const (
+	ResponseMediaDeclaredSupported   ResponseMediaReason = "declared_supported"
+	ResponseMediaDeclaredUnsupported ResponseMediaReason = "declared_unsupported"
+	ResponseMediaDeclaredMalformed   ResponseMediaReason = "declared_malformed"
+	ResponseMediaAcceptInferredJSON  ResponseMediaReason = "accept_inferred_json"
+	ResponseMediaAcceptInferredSSE   ResponseMediaReason = "accept_inferred_sse"
+	ResponseMediaAcceptAmbiguous     ResponseMediaReason = "accept_ambiguous"
+	ResponseMediaAcceptUnsupported   ResponseMediaReason = "accept_unsupported"
+	ResponseMediaAcceptMalformed     ResponseMediaReason = "accept_malformed"
+	ResponseMediaEvidenceMissing     ResponseMediaReason = "evidence_missing"
+)
+
 // ResponseMedia is the resolved representation shared by protocol analysis,
 // streaming behavior, timeout selection, and request-log semantics.
 type ResponseMedia struct {
 	contentType string
 	kind        framing.Kind
 	source      ResponseMediaSource
+	decision    ResponseMediaDecision
+	reason      ResponseMediaReason
 	supported   bool
 }
 
@@ -42,6 +70,20 @@ func (m ResponseMedia) Source() ResponseMediaSource {
 		return ResponseMediaUnknown
 	}
 	return m.source
+}
+
+func (m ResponseMedia) Decision() ResponseMediaDecision {
+	if m.decision == "" {
+		return ResponseMediaUnresolved
+	}
+	return m.decision
+}
+
+func (m ResponseMedia) Reason() ResponseMediaReason {
+	if m.reason == "" {
+		return ResponseMediaEvidenceMissing
+	}
+	return m.reason
 }
 
 func (m ResponseMedia) Supported() bool {
@@ -58,46 +100,63 @@ func (m ResponseMedia) IsEventStream() bool {
 func ResolveResponseMedia(responseContentType string, requestAccept []string) ResponseMedia {
 	if declared := strings.TrimSpace(responseContentType); declared != "" {
 		kind, supported := parseMediaKind(declared)
+		reason := ResponseMediaDeclaredSupported
+		if !supported {
+			reason = ResponseMediaDeclaredUnsupported
+			if _, _, err := mime.ParseMediaType(declared); err != nil {
+				reason = ResponseMediaDeclaredMalformed
+			}
+		}
 		return ResponseMedia{
 			contentType: declared,
 			kind:        kind,
 			source:      ResponseMediaFromContentType,
+			decision:    ResponseMediaUseDeclared,
+			reason:      reason,
 			supported:   supported,
 		}
 	}
 
-	kind, supported := uniqueAcceptedMediaKind(requestAccept)
+	kind, reason, supported := uniqueAcceptedMediaKind(requestAccept)
 	if !supported {
-		return ResponseMedia{source: ResponseMediaUnknown}
+		return ResponseMedia{source: ResponseMediaUnknown, decision: ResponseMediaUnresolved, reason: reason}
 	}
 	contentType := mediaTypeJSON
+	reason = ResponseMediaAcceptInferredJSON
 	if kind == framing.KindSSE {
 		contentType = mediaTypeEventStream
+		reason = ResponseMediaAcceptInferredSSE
 	}
 	return ResponseMedia{
 		contentType: contentType,
 		kind:        kind,
 		source:      ResponseMediaFromRequestAccept,
+		decision:    ResponseMediaInfer,
+		reason:      reason,
 		supported:   true,
 	}
 }
 
-func uniqueAcceptedMediaKind(headerValues []string) (framing.Kind, bool) {
+func uniqueAcceptedMediaKind(headerValues []string) (framing.Kind, ResponseMediaReason, bool) {
 	var resolved framing.Kind
 	hasResolved := false
+	hasEvidence := false
 	for _, headerValue := range headerValues {
+		if strings.TrimSpace(headerValue) != "" {
+			hasEvidence = true
+		}
 		mediaRanges, valid := splitHTTPList(headerValue)
 		if !valid {
-			return 0, false
+			return 0, ResponseMediaAcceptMalformed, false
 		}
 		for _, mediaRange := range mediaRanges {
 			mediaType, parameters, err := mime.ParseMediaType(mediaRange)
 			if err != nil {
-				return 0, false
+				return 0, ResponseMediaAcceptMalformed, false
 			}
 			accepted, valid := positiveQuality(parameters["q"])
 			if !valid {
-				return 0, false
+				return 0, ResponseMediaAcceptMalformed, false
 			}
 			if !accepted {
 				continue
@@ -106,16 +165,25 @@ func uniqueAcceptedMediaKind(headerValues []string) (framing.Kind, bool) {
 			if !supported {
 				// A missing response Content-Type cannot prove which one of several
 				// acceptable representations the upstream selected.
-				return 0, false
+				if strings.ContainsRune(mediaType, '*') {
+					return 0, ResponseMediaAcceptAmbiguous, false
+				}
+				return 0, ResponseMediaAcceptUnsupported, false
 			}
 			if hasResolved && resolved != kind {
-				return 0, false
+				return 0, ResponseMediaAcceptAmbiguous, false
 			}
 			resolved = kind
 			hasResolved = true
 		}
 	}
-	return resolved, hasResolved
+	if !hasEvidence {
+		return 0, ResponseMediaEvidenceMissing, false
+	}
+	if !hasResolved {
+		return 0, ResponseMediaAcceptUnsupported, false
+	}
+	return resolved, ResponseMediaAcceptInferredJSON, true
 }
 
 func positiveQuality(raw string) (bool, bool) {

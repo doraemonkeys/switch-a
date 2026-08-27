@@ -21,6 +21,14 @@ const (
 	PeerDownstream Peer = "downstream"
 )
 
+type MismatchReason string
+
+const (
+	MismatchReasonUnexpectedSelection MismatchReason = "unexpected_selection"
+	MismatchReasonMissingSelection    MismatchReason = "missing_selection"
+	MismatchReasonSelectionChanged    MismatchReason = "selection_changed"
+)
+
 // Offer preserves client preference order because a probe must make the same
 // deterministic choice before any upstream provider has been selected.
 type Offer struct {
@@ -133,13 +141,13 @@ func (n Negotiation) DownstreamOffer() ([]string, error) {
 func (n Negotiation) BindUpstream(actual string) (Negotiation, error) {
 	if n.fixed {
 		if actual != n.selected {
-			return n, newMismatch(PeerUpstream, n.selected, actual)
+			return n, newMismatch(PeerUpstream, fixedMismatchReason(n.selected, actual), n.selected, actual)
 		}
 		return n, nil
 	}
 
 	if actual != "" && !containsExact(n.offer.protocols, actual) {
-		return n, newMismatch(PeerUpstream, "a client-offered protocol", actual)
+		return n, newMismatch(PeerUpstream, MismatchReasonUnexpectedSelection, "a client-offered protocol", actual)
 	}
 	n.selected = actual
 	n.fixed = true
@@ -151,7 +159,7 @@ func (n Negotiation) ValidateDownstream(actual string) error {
 		return ErrSelectionNotFixed
 	}
 	if actual != n.selected {
-		return newMismatch(PeerDownstream, n.selected, actual)
+		return newMismatch(PeerDownstream, fixedMismatchReason(n.selected, actual), n.selected, actual)
 	}
 	return nil
 }
@@ -167,12 +175,24 @@ func containsExact(values []string, target string) bool {
 
 type MismatchError struct {
 	Peer     Peer
+	Reason   MismatchReason
 	Expected string
 	Actual   string
 }
 
-func newMismatch(peer Peer, expected, actual string) *MismatchError {
-	return &MismatchError{Peer: peer, Expected: expected, Actual: actual}
+func fixedMismatchReason(expected, actual string) MismatchReason {
+	switch {
+	case expected == "" && actual != "":
+		return MismatchReasonUnexpectedSelection
+	case expected != "" && actual == "":
+		return MismatchReasonMissingSelection
+	default:
+		return MismatchReasonSelectionChanged
+	}
+}
+
+func newMismatch(peer Peer, reason MismatchReason, expected, actual string) *MismatchError {
+	return &MismatchError{Peer: peer, Reason: reason, Expected: expected, Actual: actual}
 }
 
 func (e *MismatchError) Error() string {

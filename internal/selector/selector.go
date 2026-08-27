@@ -444,13 +444,11 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 
 	lease, acquired := s.acquireProvider(scope, provider)
 	if !acquired {
-		// Log sticky cache deletion for observability.
-		// This helps identify when high load causes session affinity loss.
-		s.logger.Debug("sticky cache deleted due to concurrency limit",
-			zap.String("provider_id", provider.ID),
-			zap.String("client_ip", stickyKey.IP),
-			zap.String("user", stickyKey.User),
-			zap.String("api_type", stickyKey.APIType),
+		s.observeStickyBindingDecision(
+			scope.req,
+			provider.ID,
+			stickyBindingDecisionEvicted,
+			stickyBindingDecisionReasonProviderConcurrencyExhausted,
 		)
 		s.sticky.Delete(stickyKey)
 		return nil, nil

@@ -3,9 +3,11 @@ package websocketproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestWebSocketForwarderNegotiatesSameSubprotocolOnBothConnections(t *testing.T) {
@@ -263,6 +266,122 @@ func TestRejectedSwitchingProtocolsResponseStillEnforcesFixedSelection(t *testin
 		NegotiatedSubprotocol: "",
 	}); err != nil {
 		t.Fatalf("ordinary rejected handshake error = %v, want nil", err)
+	}
+}
+
+func TestSubprotocolDecisionLogsTypedContextWithoutRawTokens(t *testing.T) {
+	const (
+		requestID      = "server-generated-session-id"
+		selectedMarker = "private-client-offer-marker"
+		actualMarker   = "private-upstream-selection-marker"
+	)
+	core, observed := observer.New(zap.DebugLevel)
+	newOrchestrator := func() *WebSocketSessionOrchestrator {
+		orchestrator := &WebSocketSessionOrchestrator{
+			handler:      &Gateway{logger: zap.New(core)},
+			requestID:    requestID,
+			probeOutcome: webSocketSelectionProbeOutcomeBypassed,
+		}
+		request := httptest.NewRequest(http.MethodGet, "http://gateway.test/ws", nil)
+		request.Header.Set("Sec-WebSocket-Protocol", selectedMarker)
+		if result := orchestrator.initializeSubprotocol(request); result != nil {
+			t.Fatalf("initializeSubprotocol() result = %+v, want nil", result)
+		}
+		return orchestrator
+	}
+
+	accepted := newOrchestrator()
+	if err := accepted.bindUpstreamSubprotocol(DialExchange{NegotiatedSubprotocol: selectedMarker}); err != nil {
+		t.Fatalf("bind matching upstream selection: %v", err)
+	}
+	mismatched := newOrchestrator()
+	mismatched.subprotocol = mismatched.subprotocol.FixForProbe()
+	mismatchErr := mismatched.bindUpstreamSubprotocol(DialExchange{NegotiatedSubprotocol: actualMarker})
+	if !errors.Is(mismatchErr, websocketprotocol.ErrSubprotocolMismatch) {
+		t.Fatalf("bind mismatched upstream selection = %v, want subprotocol mismatch", mismatchErr)
+	}
+	missing := newOrchestrator()
+	missing.subprotocol = missing.subprotocol.FixForProbe()
+	missingErr := missing.bindUpstreamSubprotocol(DialExchange{})
+	if !errors.Is(missingErr, websocketprotocol.ErrSubprotocolMismatch) {
+		t.Fatalf("bind empty upstream selection = %v, want subprotocol mismatch", missingErr)
+	}
+	mismatched.logSubprotocolDecision(
+		"websocket.subprotocol_mismatch",
+		webSocketSubprotocolPhaseUpstreamSelection,
+		websocketprotocol.Peer(selectedMarker),
+		actualMarker,
+		&websocketprotocol.MismatchError{
+			Peer: websocketprotocol.Peer(actualMarker), Reason: websocketprotocol.MismatchReason(selectedMarker),
+			Expected: selectedMarker, Actual: actualMarker,
+		},
+	)
+
+	entries := observed.All()
+	if len(entries) != 4 {
+		t.Fatalf("subprotocol log count = %d, want 4", len(entries))
+	}
+	for _, entry := range entries {
+		encoded := fmt.Sprintf("%s %+v", entry.Message, entry.ContextMap())
+		for _, forbidden := range []string{
+			selectedMarker, actualMarker, mismatchErr.Error(), missingErr.Error(),
+			"selected_subprotocol", "actual_subprotocol",
+		} {
+			if strings.Contains(encoded, forbidden) {
+				t.Fatalf("subprotocol log contains raw negotiation data %q: %s", forbidden, encoded)
+			}
+		}
+	}
+
+	acceptedContext := entries[0].ContextMap()
+	wantAccepted := map[string]any{
+		"request_id":          requestID,
+		"session_id":          requestID,
+		"attempt_index":       int64(0),
+		"negotiation_phase":   string(webSocketSubprotocolPhaseUpstreamSelection),
+		"negotiation_outcome": string(webSocketSubprotocolOutcomeAccepted),
+		"peer":                string(websocketprotocol.PeerUpstream),
+		"client_offer_count":  int64(1),
+		"selection_fixed":     true,
+		"selected_state":      string(webSocketSubprotocolValuePresent),
+		"actual_state":        string(webSocketSubprotocolValuePresent),
+	}
+	for key, want := range wantAccepted {
+		if got := acceptedContext[key]; got != want {
+			t.Errorf("accepted log field %s = %#v, want %#v", key, got, want)
+		}
+	}
+
+	mismatchContext := entries[1].ContextMap()
+	wantMismatch := map[string]any{
+		"negotiation_phase":   string(webSocketSubprotocolPhaseUpstreamSelection),
+		"negotiation_outcome": string(webSocketSubprotocolOutcomeMismatch),
+		"peer":                string(websocketprotocol.PeerUpstream),
+		"selection_fixed":     true,
+		"selected_state":      string(webSocketSubprotocolValuePresent),
+		"actual_state":        string(webSocketSubprotocolValuePresent),
+		"mismatch_reason":     string(websocketprotocol.MismatchReasonSelectionChanged),
+	}
+	for key, want := range wantMismatch {
+		if got := mismatchContext[key]; got != want {
+			t.Errorf("mismatch log field %s = %#v, want %#v", key, got, want)
+		}
+	}
+
+	emptyContext := entries[2].ContextMap()
+	if got := emptyContext["mismatch_reason"]; got != string(websocketprotocol.MismatchReasonMissingSelection) {
+		t.Errorf("empty-selection mismatch_reason = %#v, want %q", got, websocketprotocol.MismatchReasonMissingSelection)
+	}
+	if got := emptyContext["actual_state"]; got != string(webSocketSubprotocolValueEmpty) {
+		t.Errorf("empty-selection actual_state = %#v, want %q", got, webSocketSubprotocolValueEmpty)
+	}
+
+	unclassifiedContext := entries[3].ContextMap()
+	if got := unclassifiedContext["mismatch_reason"]; got != webSocketSubprotocolMismatchUnclassified {
+		t.Errorf("unclassified mismatch_reason = %#v, want %q", got, webSocketSubprotocolMismatchUnclassified)
+	}
+	if got := unclassifiedContext["peer"]; got != "" {
+		t.Errorf("unclassified peer = %#v, want empty typed value", got)
 	}
 }
 

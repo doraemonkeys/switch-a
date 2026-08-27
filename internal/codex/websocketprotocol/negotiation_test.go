@@ -107,14 +107,15 @@ func TestNegotiationRejectsEndpointMismatch(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		run  func() error
-		peer Peer
+		name   string
+		run    func() error
+		peer   Peer
+		reason MismatchReason
 	}{
-		{name: "non probe upstream unoffered", run: func() error { _, err := New(offer).BindUpstream("other"); return err }, peer: PeerUpstream},
-		{name: "probe upstream empty", run: func() error { _, err := New(offer).FixForProbe().BindUpstream(""); return err }, peer: PeerUpstream},
-		{name: "probe upstream different casing", run: func() error { _, err := New(offer).FixForProbe().BindUpstream("REALTIME.V2"); return err }, peer: PeerUpstream},
-		{name: "downstream mismatch", run: func() error { return New(offer).FixForProbe().ValidateDownstream("") }, peer: PeerDownstream},
+		{name: "non probe upstream unoffered", run: func() error { _, err := New(offer).BindUpstream("other"); return err }, peer: PeerUpstream, reason: MismatchReasonUnexpectedSelection},
+		{name: "probe upstream empty", run: func() error { _, err := New(offer).FixForProbe().BindUpstream(""); return err }, peer: PeerUpstream, reason: MismatchReasonMissingSelection},
+		{name: "probe upstream different casing", run: func() error { _, err := New(offer).FixForProbe().BindUpstream("REALTIME.V2"); return err }, peer: PeerUpstream, reason: MismatchReasonSelectionChanged},
+		{name: "downstream mismatch", run: func() error { return New(offer).FixForProbe().ValidateDownstream("") }, peer: PeerDownstream, reason: MismatchReasonMissingSelection},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -124,8 +125,8 @@ func TestNegotiationRejectsEndpointMismatch(t *testing.T) {
 				t.Fatalf("error = %v, want mismatch", err)
 			}
 			var mismatch *MismatchError
-			if !errors.As(err, &mismatch) || mismatch.Peer != test.peer {
-				t.Fatalf("mismatch = %#v, want peer %q", mismatch, test.peer)
+			if !errors.As(err, &mismatch) || mismatch.Peer != test.peer || mismatch.Reason != test.reason {
+				t.Fatalf("mismatch = %#v, want peer %q reason %q", mismatch, test.peer, test.reason)
 			}
 		})
 	}
