@@ -14,6 +14,8 @@ import (
 	admindebugcapture "github.com/doraemonkeys/switch-a/internal/admin/debugcapture"
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
 	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
+	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
@@ -47,8 +49,8 @@ type store interface {
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	ListProvidersByAPIType(ctx context.Context, apiType string) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (*model.Provider, error)
-	CreateProvider(ctx context.Context, p *model.Provider, options ...model.ProviderWriteOptions) error
-	UpdateProvider(ctx context.Context, p *model.Provider, options ...model.ProviderWriteOptions) error
+	CreateProvider(ctx context.Context, p *model.Provider) error
+	UpdateProvider(ctx context.Context, p *model.Provider) error
 	DeleteProvider(ctx context.Context, id string) error
 
 	// Routing policy operations
@@ -129,6 +131,8 @@ type Config struct {
 	RuleSetProvider            errorrule.RuleSetProvider
 	ResponseAnalyzer           proxy.ResponseAnalyzer
 	RuleStatistics             proxy.RuleStatistics
+	CodexHTTP                  *codexhttp.Runtime
+	CodexWebSocket             *codexws.Runtime
 }
 
 // AdminConfig holds admin server configuration.
@@ -150,6 +154,7 @@ type AdminConfig struct {
 	CaptureExports      admindebugcapture.CaptureExports
 	AnalyticsWindow     *analyticswindow.Resolver
 	TokenUsageHandler   http.Handler
+	CodexFeatures       admin.CodexFeatureValidator
 }
 
 // HealthResponse represents the health check response.
@@ -180,6 +185,8 @@ func New(cfg Config) *Server {
 		RuleSetProvider:            cfg.RuleSetProvider,
 		ResponseAnalyzer:           cfg.ResponseAnalyzer,
 		RuleStatistics:             cfg.RuleStatistics,
+		CodexHTTP:                  cfg.CodexHTTP,
+		CodexWebSocket:             cfg.CodexWebSocket,
 		Logger:                     cfg.Logger,
 	})
 
@@ -264,6 +271,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 		ProviderImportStore: cfg.ProviderImportStore,
 		InternalErrorRules:  cfg.InternalErrorRules,
 		StatsWindowResolver: cfg.AnalyticsWindow,
+		CodexFeatures:       cfg.CodexFeatures,
 		Logger:              cfg.Logger,
 	})
 
@@ -297,12 +305,17 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("DELETE /admin/api/provider-imports/{import_id}", auth.WrapFunc(adminHandler.CancelProviderImport))
 	mux.Handle("GET /admin/api/provider-auth/chatgpt/sessions/{login_id}", auth.WrapFunc(adminHandler.GetChatGPTProviderLoginStatus))
 	mux.Handle("POST /admin/api/providers/batch", auth.WrapFunc(adminHandler.BatchProviderAction))
+	mux.Handle("GET /admin/api/credential-sessions", auth.WrapFunc(adminHandler.ListCredentialSessions))
+	mux.Handle("POST /admin/api/credential-sessions", auth.WrapFunc(adminHandler.CreateCredentialSession))
+	mux.Handle("GET /admin/api/credential-sessions/{id}", auth.WrapFunc(adminHandler.GetCredentialSession))
+	mux.Handle("PUT /admin/api/credential-sessions/{id}", auth.WrapFunc(adminHandler.UpdateCredentialSession))
+	mux.Handle("DELETE /admin/api/credential-sessions/{id}", auth.WrapFunc(adminHandler.DeleteCredentialSession))
+	mux.Handle("POST /admin/api/credential-sessions/{id}/refresh", auth.WrapFunc(adminHandler.RefreshCredentialSession))
+	mux.Handle("POST /admin/api/credential-sessions/{id}/refresh-usage", auth.WrapFunc(adminHandler.RefreshCredentialSessionUsage))
 	mux.Handle("GET /admin/api/providers/{id}", auth.WrapFunc(adminHandler.GetProvider))
 	mux.Handle("PUT /admin/api/providers/{id}", auth.WrapFunc(adminHandler.UpdateProvider))
 	mux.Handle("DELETE /admin/api/providers/{id}", auth.WrapFunc(adminHandler.DeleteProvider))
-	mux.Handle("GET /admin/api/providers/{id}/codex-auth", auth.WrapFunc(adminHandler.ExportProviderCodexAuth))
-	mux.Handle("POST /admin/api/providers/{id}/refresh-credential", auth.WrapFunc(adminHandler.RefreshProviderCredential))
-	mux.Handle("POST /admin/api/providers/{id}/refresh-usage", auth.WrapFunc(adminHandler.RefreshProviderUsage))
+	mux.Handle("GET /admin/api/credential-sessions/{id}/codex-auth", auth.WrapFunc(adminHandler.ExportCredentialSessionCodexAuth))
 	mux.Handle("POST /admin/api/providers/{id}/enable", auth.WrapFunc(adminHandler.EnableProvider))
 	mux.Handle("POST /admin/api/providers/{id}/disable", auth.WrapFunc(adminHandler.DisableProvider))
 	mux.Handle("POST /admin/api/providers/{id}/reset", auth.WrapFunc(adminHandler.ResetProvider))

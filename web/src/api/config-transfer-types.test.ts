@@ -5,6 +5,13 @@ import type * as Public from ".";
 
 type DirectSurface = [
   Direct.ExportedAPIType,
+  Direct.ExportedCredentialSession,
+  Direct.ExportedCredentialSubject,
+  Direct.ExportedCredentialAuthState,
+  Direct.ExportedCredentialUsageSnapshot,
+  Direct.ExportedCredentialUsageWindow,
+  Direct.CredentialSessionKind,
+  Direct.CredentialSessionTransferMode,
   Direct.ExportedProvider,
   Direct.ExportedGroup,
   Direct.ExportedRoutingPolicy,
@@ -26,6 +33,13 @@ type DirectSurface = [
 
 type LegacySurface = [
   Legacy.ExportedAPIType,
+  Legacy.ExportedCredentialSession,
+  Legacy.ExportedCredentialSubject,
+  Legacy.ExportedCredentialAuthState,
+  Legacy.ExportedCredentialUsageSnapshot,
+  Legacy.ExportedCredentialUsageWindow,
+  Legacy.CredentialSessionKind,
+  Legacy.CredentialSessionTransferMode,
   Legacy.ExportedProvider,
   Legacy.ExportedGroup,
   Legacy.ExportedRoutingPolicy,
@@ -47,6 +61,13 @@ type LegacySurface = [
 
 type PublicSurface = [
   Public.ExportedAPIType,
+  Public.ExportedCredentialSession,
+  Public.ExportedCredentialSubject,
+  Public.ExportedCredentialAuthState,
+  Public.ExportedCredentialUsageSnapshot,
+  Public.ExportedCredentialUsageWindow,
+  Public.CredentialSessionKind,
+  Public.CredentialSessionTransferMode,
   Public.ExportedProvider,
   Public.ExportedGroup,
   Public.ExportedRoutingPolicy,

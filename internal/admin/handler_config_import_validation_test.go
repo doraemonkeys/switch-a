@@ -1,137 +1,46 @@
 package admin
 
 import (
-	"encoding/json"
 	"slices"
 	"testing"
-
-	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
-func mustMarshalChatGPTCredential(t *testing.T, credential model.ChatGPTProviderCredential) string {
-	t.Helper()
-
-	payload, err := json.Marshal(credential)
-	if err != nil {
-		t.Fatalf("marshal credential: %v", err)
-	}
-	return string(payload)
-}
-
 func TestValidateExportedProvider_MalformedURL(t *testing.T) {
-	p := &ExportedProvider{
-		ID:       "p1",
-		Name:     "Test",
-		APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "not-a-url"}},
+	provider := &ExportedProvider{
+		ID: "p1", Name: "Test", AuthMode: "bearer",
+		APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "not-a-url", CredentialSessionID: "session-1"}},
 	}
-
-	warnings := validateExportedProvider(p)
+	warnings := validateExportedProvider(provider)
 	if !slices.Contains(warnings, "Provider 'p1' has malformed base_url for api_type: claude") {
-		t.Errorf("expected malformed base_url warning, got: %v", warnings)
+		t.Fatalf("warnings = %v", warnings)
 	}
 }
 
-func TestValidateExportedProvider_ChatGPTDoesNotRequireAPIKey(t *testing.T) {
-	credentialData, err := json.Marshal(model.ChatGPTProviderCredential{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
-		IDToken:      "id-token",
-		AccountID:    "acct_test",
-	})
-	if err != nil {
-		t.Fatalf("marshal credentialData: %v", err)
+func TestValidateExportedProvider_RequiresSessionReference(t *testing.T) {
+	provider := &ExportedProvider{
+		ID: "p1", Name: "Test", AuthMode: "bearer",
+		APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.example.com"}},
 	}
-
-	p := &ExportedProvider{
-		ID:             "gpt",
-		Name:           "GPT Provider",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		Credential: &ExportedProviderCredential{
-			SecretData:       string(credentialData),
-			BindingAccountID: strPtr("acct_test"),
-		},
-		AuthState: &ExportedProviderAuthState{
-			Status: model.ProviderAuthStatusActive,
-		},
+	warnings := validateExportedProvider(provider)
+	if !slices.Contains(warnings, "Provider 'p1' has no credential_session_id for api_type: claude") {
+		t.Fatalf("warnings = %v", warnings)
 	}
-
-	warnings := validateExportedProvider(p)
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %v, want none", warnings)
+	if imported, ok := buildProviderFromExport(provider, nil); ok || imported != nil {
+		t.Fatalf("buildProviderFromExport() = (%#v, %v), want rejection", imported, ok)
 	}
 }
 
-func TestValidateExportedProvider_ChatGPTBlankStatusRequiresReadyCredential(t *testing.T) {
-	p := &ExportedProvider{
-		ID:             "gpt",
-		Name:           "GPT Provider",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		AuthState:      &ExportedProviderAuthState{},
+func TestBuildProviderFromExport_AcceptsExplicitSessionReference(t *testing.T) {
+	provider, ok := buildProviderFromExport(&ExportedProvider{
+		ID: "p1", Name: "Test", AuthMode: "bearer", Weight: 1,
+		APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://api.example.com", CredentialSessionID: "session-1"}},
+	}, nil)
+	if !ok {
+		t.Fatal("buildProviderFromExport() rejected current contract")
 	}
-
-	warnings := validateExportedProvider(p)
-	if !slices.Contains(warnings, "Provider 'gpt' has incomplete or invalid GPT login") {
-		t.Fatalf("warnings = %v, want GPT login warning", warnings)
-	}
-}
-
-func TestBuildProviderFromExport_ChatGPTBlankStatusAcceptsReadyCredential(t *testing.T) {
-	p := &ExportedProvider{
-		ID:             "gpt",
-		Name:           "GPT Provider",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		Credential: &ExportedProviderCredential{
-			SecretData: mustMarshalChatGPTCredential(t, model.ChatGPTProviderCredential{
-				AccessToken:  "access-token",
-				RefreshToken: "refresh-token",
-				IDToken:      "id-token",
-				AccountID:    "acct_test",
-			}),
-			BindingAccountID: strPtr("acct_test"),
-		},
-		AuthState: &ExportedProviderAuthState{},
-	}
-
-	provider, ok := buildProviderFromExport(p, map[string]bool{})
-	if !ok || provider == nil {
-		t.Fatal("buildProviderFromExport() rejected ready legacy ChatGPT payload")
-	}
-	if provider.AuthState == nil {
-		t.Fatal("AuthState = nil, want normalized auth snapshot")
-	}
-	if provider.AuthState.Status != model.ProviderAuthStatusNotConnected {
-		t.Fatalf("AuthState.Status = %q, want %q after normalization", provider.AuthState.Status, model.ProviderAuthStatusNotConnected)
-	}
-}
-
-func TestBuildProviderFromExport_ChatGPTBlankStatusRejectsIncompleteCredential(t *testing.T) {
-	p := &ExportedProvider{
-		ID:             "gpt",
-		Name:           "GPT Provider",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		AuthState:      &ExportedProviderAuthState{},
-	}
-
-	if provider, ok := buildProviderFromExport(p, map[string]bool{}); ok || provider != nil {
-		t.Fatalf("buildProviderFromExport() = (%#v, %v), want rejection", provider, ok)
-	}
-}
-
-func TestValidateExportedProvider_WhitespaceKeysWarnAsMissing(t *testing.T) {
-	p := &ExportedProvider{
-		ID:     "p1",
-		Name:   "Test",
-		APIKey: "   ",
-		APITypes: []ExportedAPIType{{
-			APIType: "claude",
-			BaseURL: "https://api.example.com",
-			APIKey:  "   ",
-		}},
-	}
-
-	warnings := validateExportedProvider(p)
-	if !slices.Contains(warnings, "Provider 'p1' has no api_key for api_type: claude") {
-		t.Errorf("expected missing api_key warning, got: %v", warnings)
+	snapshot, found := provider.CredentialSessionForAPIType("codex")
+	if !found || snapshot.SessionID != "session-1" {
+		t.Fatalf("credential session = %#v", snapshot)
 	}
 }
 
@@ -152,12 +61,11 @@ func TestMigrateConfigKey(t *testing.T) {
 		{"legacy max retries", "max_retries", "6", "global_max_attempts", "6"},
 		{"other key", "sticky_ttl", "300", "sticky_ttl", "300"},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotKey, gotValue := migrateConfigKey(tt.key, tt.value)
-			if gotKey != tt.wantKey || gotValue != tt.wantValue {
-				t.Errorf("migrateConfigKey(%q, %q) = (%q, %q), want (%q, %q)", tt.key, tt.value, gotKey, gotValue, tt.wantKey, tt.wantValue)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			gotKey, gotValue := migrateConfigKey(testCase.key, testCase.value)
+			if gotKey != testCase.wantKey || gotValue != testCase.wantValue {
+				t.Fatalf("migrateConfigKey(%q, %q) = (%q, %q), want (%q, %q)", testCase.key, testCase.value, gotKey, gotValue, testCase.wantKey, testCase.wantValue)
 			}
 		})
 	}

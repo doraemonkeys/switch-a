@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth/codexquota"
 	"go.uber.org/zap"
@@ -14,13 +15,14 @@ const providerUsageObservationTimeout = 5 * time.Second
 
 func (h *Handler) captureProviderUsageObservation(
 	pctx *proxyContext,
-	provider *model.Provider,
+	attempt httpAttemptContext,
 	header http.Header,
 	observedAt time.Time,
 	operationID string,
 ) {
-	if h.usageObserver == nil || pctx == nil || provider == nil ||
-		model.NormalizeProviderCredentialType(provider.CredentialType) != model.ProviderCredentialTypeChatGPT {
+	credential := attempt.candidate.Credential()
+	if h.usageObserver == nil || pctx == nil || attempt.provider == nil ||
+		credential.Kind != credentialsession.KindChatGPT || credential.SessionID == "" {
 		return
 	}
 
@@ -29,7 +31,8 @@ func (h *Handler) captureProviderUsageObservation(
 		h.logger.Debug("rejected malformed Codex quota response headers",
 			zap.String("request_id", pctx.requestID),
 			zap.String("operation_id", operationID),
-			zap.String("provider_id", provider.ID),
+			zap.String("provider_id", attempt.provider.ID),
+			zap.String("session_id", credential.SessionID),
 			zap.Strings("rejected_headers", rejectedHeaders),
 		)
 	}
@@ -39,14 +42,15 @@ func (h *Handler) captureProviderUsageObservation(
 	if pctx.usageObservations == nil {
 		pctx.usageObservations = make(map[string]*model.ProviderUsageSnapshot)
 	}
-	current := pctx.usageObservations[provider.ID]
+	current := pctx.usageObservations[credential.SessionID]
 	if current == nil || current.FetchedAt == nil || snapshot.FetchedAt.After(*current.FetchedAt) {
-		pctx.usageObservations[provider.ID] = snapshot
+		pctx.usageObservations[credential.SessionID] = snapshot
 	}
 	h.logger.Debug("captured Codex quota response observation",
 		zap.String("request_id", pctx.requestID),
 		zap.String("operation_id", operationID),
-		zap.String("provider_id", provider.ID),
+		zap.String("provider_id", attempt.provider.ID),
+		zap.String("session_id", credential.SessionID),
 		zap.Bool("primary_window_observed", snapshot.FiveHour != nil),
 		zap.Bool("secondary_window_observed", snapshot.OneWeek != nil),
 	)
@@ -58,18 +62,18 @@ func (h *Handler) scheduleProviderUsagePersistence(pctx *proxyContext) {
 	}
 	requestID := pctx.requestID
 	observations := make(map[string]*model.ProviderUsageSnapshot, len(pctx.usageObservations))
-	for providerID, snapshot := range pctx.usageObservations {
-		observations[providerID] = model.CloneProviderUsageSnapshot(snapshot)
+	for sessionID, snapshot := range pctx.usageObservations {
+		observations[sessionID] = model.CloneProviderUsageSnapshot(snapshot)
 	}
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), providerUsageObservationTimeout)
 		defer cancel()
-		for providerID, snapshot := range observations {
-			if err := h.usageObserver.ObserveProviderUsage(ctx, providerID, snapshot); err != nil {
+		for sessionID, snapshot := range observations {
+			if err := h.usageObserver.ObserveCredentialSessionUsage(ctx, sessionID, snapshot); err != nil {
 				h.logger.Warn("failed to persist Codex quota response observation",
 					zap.String("request_id", requestID),
-					zap.String("provider_id", providerID),
+					zap.String("session_id", sessionID),
 					zap.Error(err),
 				)
 			}

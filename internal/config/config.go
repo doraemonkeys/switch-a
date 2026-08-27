@@ -35,14 +35,15 @@ func configureViperPaths(v *viper.Viper, configPath string) {
 // Debug-capture values use runtime-native units so conversion cannot be repeated or
 // interpreted differently by the composition root and the capture manager.
 type Config struct {
-	Port           string
-	AdminPort      string
-	DBPath         string
-	AdminToken     string
-	LogPath        string
-	LogMaxSizeMB   int
-	LogMaxKeepDays int
-	LogLevel       string
+	Port             string
+	AdminPort        string
+	DBPath           string
+	AdminToken       string
+	LogPath          string
+	LogMaxSizeMB     int
+	LogMaxKeepDays   int
+	LogLevel         string
+	CodexKeyringFile string
 
 	DebugCaptureMemoryCeilingBytes     int64
 	DebugCaptureMaxActiveRecords       int
@@ -64,14 +65,15 @@ type Config struct {
 // validated. Keeping this representation private prevents MiB and seconds from
 // leaking beyond the configuration boundary.
 type serializedConfig struct {
-	Port           string `mapstructure:"port"`
-	AdminPort      string `mapstructure:"admin_port"`
-	DBPath         string `mapstructure:"db_path"`
-	AdminToken     string `mapstructure:"admin_token"`
-	LogPath        string `mapstructure:"log_path"`
-	LogMaxSizeMB   int    `mapstructure:"log_max_size_mb"`
-	LogMaxKeepDays int    `mapstructure:"log_max_keep_days"`
-	LogLevel       string `mapstructure:"log_level"`
+	Port             string `mapstructure:"port"`
+	AdminPort        string `mapstructure:"admin_port"`
+	DBPath           string `mapstructure:"db_path"`
+	AdminToken       string `mapstructure:"admin_token"`
+	LogPath          string `mapstructure:"log_path"`
+	LogMaxSizeMB     int    `mapstructure:"log_max_size_mb"`
+	LogMaxKeepDays   int    `mapstructure:"log_max_keep_days"`
+	LogLevel         string `mapstructure:"log_level"`
+	CodexKeyringFile string `mapstructure:"codex_keyring_file"`
 
 	DebugCaptureMemoryCeilingMiB        int64 `mapstructure:"debug_capture_memory_ceiling_mib"`
 	DebugCaptureMaxActiveRecords        int64 `mapstructure:"debug_capture_max_active_records"`
@@ -178,6 +180,7 @@ func bindEnvironment(v *viper.Viper) {
 	_ = v.BindEnv(KeyLogMaxSizeMB, EnvLogMaxSizeMB)
 	_ = v.BindEnv(KeyLogMaxKeepDays, EnvLogMaxKeepDays)
 	_ = v.BindEnv(KeyLogLevel, EnvLogLevel)
+	_ = v.BindEnv(KeyCodexKeyringFile, EnvCodexKeyringFile)
 	_ = v.BindEnv(KeyDebugCaptureMemoryCeilingMiB, EnvDebugCaptureMemoryCeilingMiB)
 	_ = v.BindEnv(KeyDebugCaptureMaxActiveRecords, EnvDebugCaptureMaxActiveRecords)
 	_ = v.BindEnv(KeyDebugCaptureMaxActiveTraces, EnvDebugCaptureMaxActiveTraces)
@@ -261,6 +264,7 @@ func (serialized serializedConfig) runtimeConfig() (*Config, error) {
 		LogMaxSizeMB:                       serialized.LogMaxSizeMB,
 		LogMaxKeepDays:                     serialized.LogMaxKeepDays,
 		LogLevel:                           serialized.LogLevel,
+		CodexKeyringFile:                   serialized.CodexKeyringFile,
 		DebugCaptureMemoryCeilingBytes:     memoryCeilingBytes,
 		DebugCaptureMaxActiveRecords:       maxActiveRecords,
 		DebugCaptureMaxActiveTraces:        maxActiveTraces,

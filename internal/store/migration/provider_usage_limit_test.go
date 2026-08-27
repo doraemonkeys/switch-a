@@ -9,65 +9,36 @@ import (
 func TestMigrateProviderUsageLimitPolicyStorage_BackfillsDerivedDefaults(t *testing.T) {
 	t.Parallel()
 
-	db := setupProviderStateMigrationDB(t)
-	providers := []model.Provider{
-		{
-			ID:               "relay-default",
-			Name:             "Relay Default",
-			APIKey:           "key",
-			CredentialType:   model.ProviderCredentialTypeAPIKey,
-			UsageLimitPolicy: model.ProviderUsageLimitPolicySwitchProvider,
-			APITypes:         []model.ProviderAPIType{{ProviderID: "relay-default", APIType: "claude", BaseURL: "https://api.example.com"}},
-			Enabled:          true,
-		},
-		{
-			ID:               "gpt-default",
-			Name:             "GPT Default",
-			CredentialType:   model.ProviderCredentialTypeChatGPT,
-			UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend,
-			APITypes:         []model.ProviderAPIType{{ProviderID: "gpt-default", APIType: "codex", BaseURL: "https://chatgpt.com/backend-api/codex"}},
-			Enabled:          true,
-		},
-		{
-			ID:               "gpt-explicit",
-			Name:             "GPT Explicit",
-			CredentialType:   model.ProviderCredentialTypeChatGPT,
-			UsageLimitPolicy: model.ProviderUsageLimitPolicySwitchProvider,
-			APITypes:         []model.ProviderAPIType{{ProviderID: "gpt-explicit", APIType: "codex", BaseURL: "https://chatgpt.com/backend-api/codex"}},
-			Enabled:          true,
-		},
+	db := setupMigrationTestDB(t)
+	if err := db.Exec(`CREATE TABLE providers (
+		id TEXT PRIMARY KEY,
+		credential_type TEXT NOT NULL,
+		usage_limit_policy TEXT NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
 	}
-	for i := range providers {
-		if err := db.Omit("Credential", "AuthState").Create(&providers[i]).Error; err != nil {
-			t.Fatalf("create provider %q: %v", providers[i].ID, err)
-		}
+	if err := db.Exec(`INSERT INTO providers (id, credential_type, usage_limit_policy) VALUES
+		('relay-default', 'api_key', 'switch_provider'),
+		('gpt-default', 'chatgpt', 'suspend'),
+		('gpt-explicit', 'chatgpt', 'switch_provider')`).Error; err != nil {
+		t.Fatal(err)
 	}
 
 	if err := MigrateProviderUsageLimitPolicyStorage(db); err != nil {
 		t.Fatalf("MigrateProviderUsageLimitPolicyStorage: %v", err)
 	}
 
-	var relayDefault model.Provider
-	if err := db.First(&relayDefault, "id = ?", "relay-default").Error; err != nil {
-		t.Fatalf("read relay-default: %v", err)
-	}
-	if relayDefault.UsageLimitPolicy != "" {
-		t.Fatalf("relay-default UsageLimitPolicy = %q, want empty inherit-default value", relayDefault.UsageLimitPolicy)
-	}
-
-	var gptDefault model.Provider
-	if err := db.First(&gptDefault, "id = ?", "gpt-default").Error; err != nil {
-		t.Fatalf("read gpt-default: %v", err)
-	}
-	if gptDefault.UsageLimitPolicy != "" {
-		t.Fatalf("gpt-default UsageLimitPolicy = %q, want empty inherit-default value", gptDefault.UsageLimitPolicy)
-	}
-
-	var gptExplicit model.Provider
-	if err := db.First(&gptExplicit, "id = ?", "gpt-explicit").Error; err != nil {
-		t.Fatalf("read gpt-explicit: %v", err)
-	}
-	if gptExplicit.UsageLimitPolicy != model.ProviderUsageLimitPolicySwitchProvider {
-		t.Fatalf("gpt-explicit UsageLimitPolicy = %q, want %q", gptExplicit.UsageLimitPolicy, model.ProviderUsageLimitPolicySwitchProvider)
+	for _, tc := range []struct{ id, want string }{
+		{id: "relay-default", want: ""},
+		{id: "gpt-default", want: ""},
+		{id: "gpt-explicit", want: string(model.ProviderUsageLimitPolicySwitchProvider)},
+	} {
+		var got string
+		if err := db.Raw(`SELECT usage_limit_policy FROM providers WHERE id = ?`, tc.id).Scan(&got).Error; err != nil {
+			t.Fatalf("read %s: %v", tc.id, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s usage_limit_policy = %q, want %q", tc.id, got, tc.want)
+		}
 	}
 }

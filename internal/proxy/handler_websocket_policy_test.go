@@ -33,14 +33,14 @@ func TestHandler_ServeHTTP_WebSocket_PreCommitSemanticErrorSkipsStickyAndMarksFa
 	}))
 	defer upstream.Close()
 
-	wsProvider := &model.Provider{
-		ID:       "ws-semantic-precommit",
-		Name:     "WS Semantic Precommit Provider",
-		APIKey:   "key",
+	wsProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-semantic-precommit",
+		Name: "WS Semantic Precommit Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-semantic-precommit", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*wsProvider}
@@ -140,14 +140,14 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 	}))
 	defer upstream.Close()
 
-	wsProvider := &model.Provider{
-		ID:       "ws-semantic-postcommit",
-		Name:     "WS Semantic Postcommit Provider",
-		APIKey:   "key",
+	wsProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-semantic-postcommit",
+		Name: "WS Semantic Postcommit Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-semantic-postcommit", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*wsProvider}
@@ -224,10 +224,10 @@ func TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID: "ws-p1", Name: "WS Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+		withTestStaticCredential(model.Provider{
+			ID: "ws-p1", Name: "WS Provider", AuthMode: "bearer", Enabled: true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
+		}, "", "key"),
 	}
 
 	healthMgr := newTrackingHealthManager()
@@ -273,10 +273,10 @@ func TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected(t *testing.T) {
 		t.Run(test.apiType, func(t *testing.T) {
 			store := newMockStore()
 			store.providers = []model.Provider{
-				{
-					ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+				withTestStaticCredential(model.Provider{
+					ID: "p1", Name: "Provider", AuthMode: "bearer", Enabled: true,
 					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: test.apiType, BaseURL: "http://example.com"}},
-				},
+				}, "", "key"),
 			}
 
 			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
@@ -308,10 +308,10 @@ func TestHandler_ServeHTTP_NonUpgradeGET_Returns426(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			store := newMockStore()
 			store.providers = []model.Provider{
-				{
-					ID: "p1", Name: "Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+				withTestStaticCredential(model.Provider{
+					ID: "p1", Name: "Provider", AuthMode: "bearer", Enabled: true,
 					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "http://example.com"}},
-				},
+				}, "", "key"),
 			}
 
 			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})

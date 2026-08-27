@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
@@ -42,8 +42,8 @@ func captureCredentialMaterial(injectedCredential string) (
 	return capturebridge.CredentialMaterial(injectedCredential)
 }
 
-func injectedCredentialForCapture(provider *model.Provider, apiType string) string {
-	return capturebridge.InjectedCredentialValue(provider, apiType)
+func injectedCredentialForCapture(candidate codexidentity.CandidateSnapshot, appliedHeaders http.Header) string {
+	return capturebridge.InjectedCredentialFromSnapshot(candidate.Credential(), appliedHeaders)
 }
 
 func (h *Handler) captureHTTPPreparationFailure(

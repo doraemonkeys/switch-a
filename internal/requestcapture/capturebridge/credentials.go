@@ -1,9 +1,10 @@
 package capturebridge
 
 import (
+	"net/http"
 	"strings"
 
-	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 )
 
@@ -22,26 +23,20 @@ func CredentialMaterial(injectedCredential string) (
 	return sensitiveHeaders, evidence
 }
 
-// InjectedCredentialValue resolves the exact secret switch-a places on the
-// upstream request. Capture policy follows credential ownership, not header or
-// token shape: static providers contribute their API key, while login-backed
-// providers contribute only the OAuth access token used for bearer auth.
-func InjectedCredentialValue(provider *model.Provider, apiType string) string {
-	if provider == nil {
-		return ""
-	}
-	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
-	case model.ProviderCredentialTypeAPIKey:
-		return strings.TrimSpace(provider.APIKeyForAPIType(apiType))
-	case model.ProviderCredentialTypeChatGPT:
-		if provider.Credential == nil {
+// InjectedCredentialFromSnapshot resolves the exact secret present on an
+// already-sanitized attempt. ChatGPT refresh can change the access token without
+// mutating the immutable candidate snapshot, so its value must come from the
+// final applied headers rather than from persisted selection evidence.
+func InjectedCredentialFromSnapshot(snapshot credentialsession.Snapshot, appliedHeaders http.Header) string {
+	switch snapshot.Kind {
+	case credentialsession.KindAPIKey:
+		return strings.TrimSpace(snapshot.SecretData)
+	case credentialsession.KindChatGPT:
+		scheme, token, ok := strings.Cut(strings.TrimSpace(appliedHeaders.Get("Authorization")), " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") {
 			return ""
 		}
-		secret, err := model.DecodeChatGPTProviderSecret(provider.Credential.SecretData)
-		if err != nil || secret == nil {
-			return ""
-		}
-		return strings.TrimSpace(secret.AccessToken)
+		return strings.TrimSpace(token)
 	default:
 		return ""
 	}

@@ -1,0 +1,430 @@
+// Package codexhttp composes the Codex security deep modules at the HTTP
+// attempt boundary. It owns no persistence or protocol parsing rules.
+package codexhttp
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sync"
+
+	"github.com/doraemonkeys/switch-a/internal/codex/clientcredential"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
+	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
+	"github.com/doraemonkeys/switch-a/internal/codex/headers"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/startup"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
+)
+
+const codexAPIType = "codex"
+
+type FeatureSource interface {
+	Snapshot() codexstartup.Snapshot
+}
+
+type FeatureSourceFunc func() codexstartup.Snapshot
+
+func (f FeatureSourceFunc) Snapshot() codexstartup.Snapshot { return f() }
+
+type ClientScopeDigester interface {
+	ClientScope([]byte) (codexidentity.ClientScope, error)
+	ClientScopeCandidates([]byte) ([]codexidentity.ClientScope, error)
+}
+
+type Continuity interface {
+	ResolveOwner(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error)
+	AcquireExisting(context.Context, codexcontinuity.ValidateRequest) (codexcontinuity.Lease, error)
+	Claim(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
+	PrepareVisible(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
+	Commit(context.Context, codexcontinuity.Lease) (codexcontinuity.Binding, error)
+	AbandonBeforeDisclosure(context.Context, codexcontinuity.Lease) error
+}
+
+type ProviderCookies interface {
+	ResolveJar(context.Context, providercookie.OperationID, string, []codexidentity.ClientScope) (providercookie.JarAccess, error)
+	BeginRequest(providercookie.OperationID, providercookie.JarAccess) (*providercookie.Request, error)
+}
+
+type ExternalSchemeResolver interface {
+	ResolveExternalScheme(*http.Request) (providercookie.ResolvedExternalScheme, error)
+}
+
+type Config struct {
+	Features        FeatureSource
+	ClientScopes    ClientScopeDigester
+	Continuity      Continuity
+	ProviderCookies ProviderCookies
+	ExternalScheme  ExternalSchemeResolver
+}
+
+type Runtime struct {
+	features        FeatureSource
+	clientScopes    ClientScopeDigester
+	continuity      Continuity
+	providerCookies ProviderCookies
+	externalScheme  ExternalSchemeResolver
+}
+
+func New(config Config) *Runtime {
+	return &Runtime{
+		features: config.Features, clientScopes: config.ClientScopes,
+		continuity: config.Continuity, providerCookies: config.ProviderCookies,
+		externalScheme: config.ExternalScheme,
+	}
+}
+
+type ownerResolution struct {
+	status  codexheaders.OwnerStatus
+	binding codexcontinuity.Binding
+	err     error
+}
+
+type Operation struct {
+	runtime     *Runtime
+	features    codexstartup.Snapshot
+	featuresSet bool
+	operationID string
+	apiType     string
+
+	currentClientScope codexidentity.ClientScope
+	clientScopes       []codexidentity.ClientScope
+	hasClientScope     bool
+	clientDecision     codexheaders.Result
+	owners             map[[sha256.Size]byte]ownerResolution
+
+	mu                     sync.Mutex
+	requiredProtocolScope  *codexidentity.ProtocolScope
+	requiredAuthority      *codexidentity.UpstreamAuthority
+	preferredRouteTargetID string
+	attestationAuthority   *codexidentity.UpstreamAuthority
+	requestClaimsPrepared  bool
+	requestClaimsCommitted bool
+	requestClaimLeases     []codexcontinuity.Lease
+
+	cookieRequest       *providercookie.Request
+	lastCookieAuthority *codexidentity.CookieAuthority
+	gatewaySetCookie    string
+	cookieClosed        bool
+}
+
+func (r *Runtime) Begin(
+	ctx context.Context,
+	request *http.Request,
+	apiType string,
+	operationID string,
+	wireBody []byte,
+	semanticBody []byte,
+) (*Operation, error) {
+	features, featuresSet := r.featureSnapshot()
+	op := &Operation{
+		runtime: r, features: features, featuresSet: featuresSet,
+		operationID: operationID, apiType: apiType,
+	}
+	if apiType != codexAPIType || (!features.Continuity && !features.ProviderCookieJar) {
+		return op, nil
+	}
+	if request == nil {
+		return nil, clientError("begin", errors.New("request is required"))
+	}
+	message, discovery := discoverClientEvidence(features, request.Header, wireBody, semanticBody)
+	if features.ProviderCookieJar || len(discovery.Decisions()) > 0 {
+		if err := op.bindClientScope(request.Header); err != nil {
+			return nil, err
+		}
+	}
+
+	if features.Continuity {
+		if err := op.beginContinuity(ctx, request.Header, message, discovery); err != nil {
+			return nil, err
+		}
+	}
+
+	if features.ProviderCookieJar {
+		if err := op.beginProviderCookies(ctx, request); err != nil {
+			return nil, err
+		}
+	}
+	return op, nil
+}
+
+func (r *Runtime) featureSnapshot() (codexstartup.Snapshot, bool) {
+	if r == nil || r.features == nil {
+		return codexstartup.Snapshot{}, false
+	}
+	return r.features.Snapshot(), true
+}
+
+func discoverClientEvidence(
+	features codexstartup.Snapshot,
+	headers http.Header,
+	wireBody []byte,
+	semanticBody []byte,
+) (codexheaders.MessageView, codexheaders.Result) {
+	if !features.Continuity {
+		return codexheaders.MessageView{}, codexheaders.Result{}
+	}
+	var message codexheaders.MessageView
+	if len(wireBody) > 0 {
+		message = codexheaders.InspectClientPayload(
+			codexheaders.FixtureCodexDesktop0150Alpha8,
+			wireBody,
+			semanticBody,
+		)
+	}
+	discovery := codexheaders.DecideClient(codexheaders.ClientInput{
+		Headers: headers, Message: message,
+		Owners: func(codexheaders.BindingCandidate) codexheaders.OwnerStatus {
+			return codexheaders.OwnerUnknown
+		},
+		AttestationLock: codexheaders.OperationUnlocked,
+	})
+	return message, discovery
+}
+
+func (o *Operation) bindClientScope(headers http.Header) error {
+	if o == nil || o.runtime == nil || o.runtime.clientScopes == nil {
+		return dependencyError("client_scope", errors.New("client scope digester is unavailable"))
+	}
+	credential := clientcredential.Extract(map[string][]string(headers))
+	if credential.State != clientcredential.StateSingle {
+		return clientError("client_scope", fmt.Errorf("client credential is not a single canonical value (state %s)", credential.State))
+	}
+	defer credential.Clear()
+	current, err := o.runtime.clientScopes.ClientScope(credential.Token)
+	if err != nil {
+		return dependencyError("client_scope", err)
+	}
+	candidates, err := o.runtime.clientScopes.ClientScopeCandidates(credential.Token)
+	if err != nil {
+		return dependencyError("client_scope", err)
+	}
+	o.currentClientScope = current
+	o.clientScopes = candidates
+	o.hasClientScope = true
+	return nil
+}
+
+func (o *Operation) beginContinuity(
+	ctx context.Context,
+	headers http.Header,
+	message codexheaders.MessageView,
+	discovery codexheaders.Result,
+) error {
+	if o.runtime.continuity == nil {
+		return dependencyError("continuity", errors.New("continuity service is unavailable"))
+	}
+	if len(discovery.Decisions()) > 0 && !o.hasClientScope {
+		return clientError("client_scope", errors.New("state-bearing request requires one client credential"))
+	}
+	return o.resolveClientDecision(ctx, headers, message, discovery)
+}
+
+func (o *Operation) beginProviderCookies(ctx context.Context, request *http.Request) error {
+	if o.runtime.providerCookies == nil || o.runtime.externalScheme == nil {
+		return dependencyError("provider_cookie", errors.New("provider cookie capability is unavailable"))
+	}
+	scheme, err := o.runtime.externalScheme.ResolveExternalScheme(request)
+	if err != nil {
+		return dependencyError("external_scheme", err)
+	}
+	cookieOperationID, err := providercookie.NewOperationID(o.operationID)
+	if err != nil {
+		return dependencyError("provider_cookie", err)
+	}
+	access, err := o.runtime.providerCookies.ResolveJar(ctx, cookieOperationID, gatewayHandle(request), o.clientScopes)
+	if err != nil {
+		return dependencyError("provider_cookie", err)
+	}
+	o.cookieRequest, err = o.runtime.providerCookies.BeginRequest(cookieOperationID, access)
+	if err != nil {
+		return dependencyError("provider_cookie", err)
+	}
+	if !access.Issued() && !access.Refresh() {
+		return nil
+	}
+	handle, err := providercookie.NewGatewayHandleCookie(access.HandleValue(), scheme)
+	if err != nil {
+		return dependencyError("provider_cookie", err)
+	}
+	o.gatewaySetCookie, err = handle.HeaderValue()
+	if err != nil {
+		return dependencyError("provider_cookie", err)
+	}
+	return nil
+}
+
+func (o *Operation) Features() codexstartup.Snapshot {
+	if o == nil {
+		return codexstartup.Snapshot{}
+	}
+	return o.features
+}
+
+func (o *Operation) RequestPolicy() upstreamtransport.RequestPolicy {
+	policy := upstreamtransport.RequestPolicy{}
+	// Header hygiene is a Codex rollout. Other protocols retain the historical
+	// pass-through contract regardless of the process-wide feature snapshot.
+	if o == nil || o.apiType != codexAPIType || !o.featuresSet || !o.features.UpstreamHeaderHygiene {
+		policy.Headers = upstreamtransport.PreserveClientHeaders
+	}
+	if o != nil && o.features.ProviderCookieJar {
+		policy.Cookies = upstreamtransport.ServerManagedCookies
+	}
+	return policy
+}
+
+func (o *Operation) RequiredAuthority() (*codexidentity.UpstreamAuthority, string) {
+	if o == nil {
+		return nil, ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.requiredAuthority == nil {
+		return nil, ""
+	}
+	authority := *o.requiredAuthority
+	return &authority, o.preferredRouteTargetID
+}
+
+func (o *Operation) resolveClientDecision(
+	ctx context.Context,
+	headers http.Header,
+	message codexheaders.MessageView,
+	discovery codexheaders.Result,
+) error {
+	o.owners = make(map[[sha256.Size]byte]ownerResolution)
+	for _, decision := range discovery.Decisions() {
+		candidate := decision.Candidate()
+		if _, persistent := candidate.PersistentNamespace(); !persistent {
+			continue
+		}
+		key := candidateKey(candidate)
+		if _, exists := o.owners[key]; exists {
+			continue
+		}
+		binding, err := o.runtime.continuity.ResolveOwner(ctx, codexcontinuity.ResolveRequest{
+			Evidence: evidence(candidate), ClientScopeCandidates: o.clientScopes,
+			OperationID: o.operationID,
+		})
+		resolution := ownerResolution{binding: binding, err: err}
+		switch {
+		case err == nil:
+			resolution.status = codexheaders.OwnerCurrent
+		case codexcontinuity.IsError(err, codexcontinuity.ErrorUnknown):
+			resolution.status = codexheaders.OwnerUnknown
+		case codexcontinuity.IsError(err, codexcontinuity.ErrorConflict),
+			codexcontinuity.IsError(err, codexcontinuity.ErrorExpired):
+			resolution.status = codexheaders.OwnerConflict
+		default:
+			resolution.status = codexheaders.OwnerUnavailable
+		}
+		o.owners[key] = resolution
+	}
+	o.clientDecision = codexheaders.DecideClient(codexheaders.ClientInput{
+		Headers: headers, Message: message,
+		Owners: func(candidate codexheaders.BindingCandidate) codexheaders.OwnerStatus {
+			if resolution, exists := o.owners[candidateKey(candidate)]; exists {
+				return resolution.status
+			}
+			return codexheaders.OwnerUnavailable
+		},
+		AttestationLock: codexheaders.OperationUnlocked,
+	})
+	if o.clientDecision.Rejected() {
+		for _, decision := range o.clientDecision.Decisions() {
+			if decision.Reason() == codexheaders.ReasonOwnerUnavailable {
+				return dependencyError("continuity_owner", o.owners[candidateKey(decision.Candidate())].err)
+			}
+		}
+		return clientError("continuity_owner", decisionError(o.clientDecision))
+	}
+
+	for _, resolution := range o.owners {
+		if resolution.status != codexheaders.OwnerCurrent {
+			continue
+		}
+		scope := resolution.binding.Owner.ProtocolScope
+		if scope.APIType() != o.apiType {
+			return clientError("continuity_scope", errors.New("owner protocol API type conflicts with this request"))
+		}
+		if o.requiredProtocolScope != nil && !o.requiredProtocolScope.Equal(scope) {
+			return clientError("continuity_scope", errors.New("request evidence belongs to multiple protocol scopes"))
+		}
+		copyScope := scope
+		o.requiredProtocolScope = &copyScope
+		authority := scope.Authority()
+		o.requiredAuthority = &authority
+		if o.preferredRouteTargetID == "" {
+			o.preferredRouteTargetID = resolution.binding.Owner.RouteTargetHint
+		} else if o.preferredRouteTargetID != resolution.binding.Owner.RouteTargetHint {
+			o.preferredRouteTargetID = ""
+		}
+	}
+	return nil
+}
+
+func candidateKey(candidate codexheaders.BindingCandidate) [sha256.Size]byte {
+	return sha256.Sum256(candidate.DigestInput())
+}
+
+func evidence(candidate codexheaders.BindingCandidate) codexcontinuity.Evidence {
+	return codexcontinuity.Evidence{Kind: continuityKind(candidate.Field()), DigestInput: candidate.DigestInput()}
+}
+
+func continuityKind(field codexheaders.Field) codexcontinuity.Kind {
+	switch field {
+	case codexheaders.FieldThreadID:
+		return codexcontinuity.KindThreadID
+	case codexheaders.FieldSessionID:
+		return codexcontinuity.KindSessionID
+	case codexheaders.FieldConversationID:
+		return codexcontinuity.KindConversationID
+	case codexheaders.FieldWindowID:
+		return codexcontinuity.KindWindowID
+	case codexheaders.FieldTurnState:
+		return codexcontinuity.KindTurnState
+	case codexheaders.FieldTurnMetadata:
+		return codexcontinuity.KindTurnMetadata
+	case codexheaders.FieldResponseReference:
+		return codexcontinuity.KindResponseReference
+	default:
+		return ""
+	}
+}
+
+func decisionError(result codexheaders.Result) error {
+	for _, decision := range result.Decisions() {
+		if decision.Action() == codexheaders.ActionReject {
+			return fmt.Errorf("%s rejected: %s", decision.Field(), decision.Reason())
+		}
+	}
+	return errors.New("codex request was rejected")
+}
+
+func gatewayHandle(request *http.Request) string {
+	values := make([]string, 0, 1)
+	for _, cookie := range request.Cookies() {
+		if cookie.Name == providercookie.GatewayHandleName {
+			values = append(values, cookie.Value)
+		}
+	}
+	if len(values) == 1 {
+		return values[0]
+	}
+	if len(values) > 1 {
+		return "invalid-multiple-handle"
+	}
+	return ""
+}
+
+func cloneURL(source *url.URL) *url.URL {
+	if source == nil {
+		return nil
+	}
+	copyURL := *source
+	return &copyURL
+}

@@ -6,55 +6,55 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"go.uber.org/zap"
 )
 
 const providerUsageObservationMinInterval = 30 * time.Second
 
-// ObserveProviderUsage merges quota facts already carried by a Codex response.
+// ObserveCredentialSessionUsage merges quota facts already carried by a Codex response.
 // It never calls the upstream usage endpoint, so normal traffic can keep the
 // admin snapshot fresh without a second account request.
-func (s *Service) ObserveProviderUsage(
+func (s *Service) ObserveCredentialSessionUsage(
 	ctx context.Context,
-	providerID string,
+	sessionID string,
 	snapshot *model.ProviderUsageSnapshot,
 ) error {
-	providerID = strings.TrimSpace(providerID)
-	if providerID == "" || snapshot == nil || snapshot.FetchedAt == nil || snapshot.FetchedAt.IsZero() {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || snapshot == nil || snapshot.FetchedAt == nil || snapshot.FetchedAt.IsZero() {
 		return nil
 	}
-
-	next, owner := s.beginProviderUsageObservation(providerID, snapshot)
+	next, owner := s.beginProviderUsageObservation(sessionID, snapshot)
 	if !owner {
 		return nil
 	}
 
 	for next != nil {
-		if err := s.persistObservedProviderUsage(ctx, providerID, next); err != nil {
-			s.finishProviderUsageObservation(providerID)
+		if err := s.persistObservedProviderUsage(ctx, sessionID, next); err != nil {
+			s.finishProviderUsageObservation(sessionID)
 			return err
 		}
-		next = s.takeQueuedProviderUsageObservation(providerID)
+		next = s.takeQueuedProviderUsageObservation(sessionID)
 	}
 	return nil
 }
 
 func (s *Service) beginProviderUsageObservation(
-	providerID string,
+	sessionID string,
 	snapshot *model.ProviderUsageSnapshot,
 ) (*model.ProviderUsageSnapshot, bool) {
 	cloned := model.CloneProviderUsageSnapshot(snapshot)
 	s.usageObservationMu.Lock()
 	defer s.usageObservationMu.Unlock()
 
-	if inFlight := s.inFlightUsageObservations[providerID]; inFlight != nil {
+	if inFlight := s.inFlightUsageObservations[sessionID]; inFlight != nil {
 		if usageSnapshotNewer(cloned, inFlight.latest) {
 			inFlight.latest = cloned
 		}
 		return nil, false
 	}
-	s.inFlightUsageObservations[providerID] = &inFlightProviderUsageObservation{}
+	s.inFlightUsageObservations[sessionID] = &inFlightProviderUsageObservation{}
 	return cloned, true
 }
 
@@ -83,50 +83,46 @@ func (s *Service) finishProviderUsageObservation(providerID string) {
 
 func (s *Service) persistObservedProviderUsage(
 	ctx context.Context,
-	providerID string,
+	sessionID string,
 	observed *model.ProviderUsageSnapshot,
 ) error {
-	reader, ok := s.credentialStore.(providerCredentialReader)
+	store, ok := s.credentialStore.(CredentialStore)
 	if !ok {
 		return nil
 	}
-	ownedCtx, release, err := s.withProviderCredentialMutations(ctx, []string{providerID})
+	ownedCtx, release, err := s.withCredentialSessionMutations(ctx, []string{sessionID})
 	if err != nil {
-		return fmt.Errorf("acquire usage observation mutation for provider %q: %w", providerID, err)
+		return fmt.Errorf("acquire usage observation mutation for session %q: %w", sessionID, err)
 	}
 	defer release()
 
-	provider, err := reader.GetProvider(ownedCtx, providerID)
+	session, err := store.GetCredentialSession(ownedCtx, sessionID)
 	if err != nil {
-		return fmt.Errorf("reload provider %q before usage observation: %w", providerID, err)
+		return fmt.Errorf("reload credential session %q before usage observation: %w", sessionID, err)
 	}
-	if provider == nil || model.NormalizeProviderCredentialType(provider.CredentialType) != providerCredentialTypeChatGPT {
+	if session == nil || session.Kind != credentialsession.KindChatGPT {
 		return nil
 	}
 
-	authState := providerAuthStateSnapshot(provider)
-	if authState == nil {
-		return nil
-	}
-	merged, changed, reason := mergeObservedProviderUsage(authState.UsageSnapshot, observed)
+	merged, changed, reason := mergeObservedProviderUsage(providerUsageSnapshot(session.AuthState.UsageSnapshot), observed)
 	if !changed {
 		s.logger.Debug("skipped provider usage response observation",
-			zap.String("provider_id", providerID),
+			zap.String("session_id", sessionID),
 			zap.String("reason", reason),
 		)
 		return nil
 	}
 
-	updatedState := authState.Clone()
-	updatedState.UsageSnapshot = merged
+	updatedState := session.AuthState.Clone()
+	updatedState.UsageSnapshot = credentialSessionUsageSnapshot(merged)
 	if merged.PlanType != "" {
 		updatedState.PlanType = merged.PlanType
 	}
-	if err := s.persistProviderAuthState(ownedCtx, providerID, updatedState); err != nil {
+	if err := s.persistCredentialSessionAuthState(ownedCtx, sessionID, updatedState); err != nil {
 		return err
 	}
 	s.logger.Debug("persisted provider usage response observation",
-		zap.String("provider_id", providerID),
+		zap.String("session_id", sessionID),
 		zap.Timep("fetched_at", merged.FetchedAt),
 		zap.Bool("primary_window_observed", observed.FiveHour != nil),
 		zap.Bool("secondary_window_observed", observed.OneWeek != nil),

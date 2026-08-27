@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/coder/websocket"
@@ -76,7 +77,11 @@ func TestBuildWebSocketDialHeaders(t *testing.T) {
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Upgrade", "websocket")
 
-	provider := &model.Provider{APIKey: "sk-provider-key", AuthMode: "bearer"}
+	provider := &model.Provider{
+		ID:                 "p1",
+		AuthMode:           "bearer",
+		CredentialSessions: testCredentialSessions("p1", "codex", credentialsession.KindAPIKey, "sk-provider-key"),
+	}
 	headers := buildWebSocketDialHeaders(request, provider, "codex", "auto")
 
 	if got := headers.Get("Authorization"); got != "Bearer sk-provider-key" {
@@ -101,14 +106,14 @@ func TestBuildWebSocketDialHeaders_UsesAPITypeKeyOverride(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/responses", nil)
 	provider := &model.Provider{
-		APIKey:   "default-key",
+		ID:       "p1",
 		AuthMode: "bearer",
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "p1",
 			APIType:    "codex",
 			BaseURL:    "https://example.com",
-			APIKey:     "codex-key",
 		}},
+		CredentialSessions: testCredentialSessions("p1", "codex", credentialsession.KindAPIKey, "codex-key"),
 	}
 
 	headers := buildWebSocketDialHeaders(request, provider, "codex", "auto")
@@ -140,8 +145,15 @@ func TestBuildWebSocketDialHeaders_FiltersSecWebSocketHeaders(t *testing.T) {
 	r.Header.Set("Sec-WebSocket-Protocol", "graphql-ws")
 	r.Header.Set("Connection", "Upgrade")
 	r.Header.Set("Upgrade", "websocket")
+	r.Header.Set("Authorization", "Bearer client-secret")
+	r.Header.Set("X-Api-Key", "client-secret")
+	r.Header.Set("ChatGPT-Account-Id", "client-account")
 
-	provider := &model.Provider{APIKey: "sk-key", AuthMode: "bearer"}
+	provider := &model.Provider{
+		ID:                 "p1",
+		AuthMode:           "bearer",
+		CredentialSessions: testCredentialSessions("p1", "codex", credentialsession.KindAPIKey, "sk-key"),
+	}
 	headers := buildWebSocketDialHeaders(r, provider, "codex", "auto")
 
 	// Business headers should pass through.
@@ -155,33 +167,13 @@ func TestBuildWebSocketDialHeaders_FiltersSecWebSocketHeaders(t *testing.T) {
 			t.Errorf("%s should be filtered, got %q", h, got)
 		}
 	}
-}
-
-// TestIsWebSocketHandshakeHeader tests the handshake header classification.
-func TestIsWebSocketHandshakeHeader(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		key      string
-		expected bool
-	}{
-		{"Sec-WebSocket-Key", true},
-		{"Sec-Websocket-Version", true},
-		{"Sec-WebSocket-Extensions", true},
-		{"Sec-WebSocket-Protocol", true},
-		{"sec-websocket-key", true},
-		{"Authorization", false},
-		{"OpenAI-Beta", false},
-		{"Sec-Fetch-Mode", false}, // 14 chars prefix doesn't match
-		{"Sec-", false},
+	if got := headers.Get("Authorization"); got != "Bearer sk-key" {
+		t.Errorf("Authorization = %q, want provider credential", got)
 	}
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			t.Parallel()
-			got := isWebSocketHandshakeHeader(tt.key)
-			if got != tt.expected {
-				t.Errorf("isWebSocketHandshakeHeader(%q) = %v, want %v", tt.key, got, tt.expected)
-			}
-		})
+	for _, h := range []string{"X-Api-Key", "ChatGPT-Account-Id"} {
+		if got := headers.Get(h); got != "" {
+			t.Errorf("%s should be removed before provider injection, got %q", h, got)
+		}
 	}
 }
 

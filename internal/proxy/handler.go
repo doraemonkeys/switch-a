@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -50,80 +53,7 @@ type Handler struct {
 	ruleStats                  RuleStatistics
 	backoff                    BackoffWaiter
 	requestSemanticDecoder     RequestSemanticDecoder
-}
-
-// firstWriteResponseWriter tracks first data write to enable sticky session fallback.
-// When an SSE stream outlives the sticky TTL, we use the active provider registry
-// to maintain session affinity. This wrapper signals when actual data starts flowing
-// so the registry can mark the request as having received data.
-// It also tracks the time of first write for TTFT (Time To First Token) metrics,
-// and counts total bytes written for transfer statistics.
-type firstWriteResponseWriter struct {
-	http.ResponseWriter
-	onFirstWrite   func()
-	onCommit       func()
-	onWrite        func(int, time.Time)
-	onPayload      func([]byte)
-	written        bool
-	committed      bool
-	firstWriteTime time.Time // Time of first data write (for TTFT calculation)
-	bytesWritten   int64     // Total bytes written to client
-	writeErr       error
-}
-
-func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
-	writeTime := time.Now()
-	n, err := w.ResponseWriter.Write(p)
-	switch {
-	case err != nil:
-		w.writeErr = err
-	case n != len(p):
-		w.writeErr = io.ErrShortWrite
-	}
-	if n > 0 {
-		w.observeWrite(p[:n], writeTime)
-	}
-	return n, err
-}
-
-func (w *firstWriteResponseWriter) observeWrite(payload []byte, writeTime time.Time) {
-	w.commit()
-	if !w.written {
-		w.firstWriteTime = writeTime
-		if w.onFirstWrite != nil {
-			w.onFirstWrite()
-		}
-		w.written = true
-	}
-	w.bytesWritten += int64(len(payload))
-	if w.onWrite != nil {
-		w.onWrite(len(payload), writeTime)
-	}
-	if w.onPayload != nil {
-		w.onPayload(payload)
-	}
-}
-
-func (w *firstWriteResponseWriter) WriteHeader(statusCode int) {
-	w.ResponseWriter.WriteHeader(statusCode)
-	w.commit()
-}
-
-func (w *firstWriteResponseWriter) commit() {
-	if w == nil || w.committed {
-		return
-	}
-	w.committed = true
-	if w.onCommit != nil {
-		w.onCommit()
-	}
-}
-
-// Flush preserves http.Flusher interface for SSE streaming.
-func (w *firstWriteResponseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
+	codexHTTP                  *codexhttp.Runtime
 }
 
 // Store defines the minimal storage interface needed by the proxy handler.
@@ -184,14 +114,14 @@ func (p staticRuleSetProvider) CurrentRuleSet() *errorrule.CompiledRuleSet {
 // ProviderAuthenticator is defined at the proxy boundary so credential refresh
 // can be fault-injected without coupling request orchestration to its producer.
 type ProviderAuthenticator interface {
-	ApplyProviderCredentials(context.Context, http.Header, *model.Provider, string, string, *http.Request) error
-	RefreshProviderCredentials(context.Context, *model.Provider) (bool, error)
+	ApplyProviderCredentials(context.Context, http.Header, codexidentity.CandidateSnapshot, string, string, *http.Request, *url.URL) (codexidentity.AppliedIdentity, error)
+	RefreshCredentialSession(context.Context, credentialsession.Snapshot) (bool, error)
 }
 
 // ProviderUsageObserver is separate from credential injection because quota
 // observation is an optional post-response write, not an authentication step.
 type ProviderUsageObserver interface {
-	ObserveProviderUsage(context.Context, string, *model.ProviderUsageSnapshot) error
+	ObserveCredentialSessionUsage(context.Context, string, *model.ProviderUsageSnapshot) error
 }
 
 // RequestCapture is the proxy-owned view of the process capture manager.
@@ -394,6 +324,7 @@ type proxyContext struct {
 	isSticky            bool                   // Whether provider came from sticky cache
 	attempts            []model.RequestAttempt // Attempts made during this request
 	usageObservations   map[string]*model.ProviderUsageSnapshot
+	codex               *codexhttp.Operation
 }
 
 // ServeHTTP handles proxy requests.
@@ -462,6 +393,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	semanticBody := h.decodeSemanticRequestBody(requestID, apiType, r, body, requestBodyLimitBytes(cfg.maxBodySizeMB))
+	codexOperation, err := h.codexHTTP.Begin(ctx, r, apiType, requestID, body, semanticBody)
+	if err != nil {
+		h.handleCodexHTTPBeginError(w, requestID, err)
+		return
+	}
+	defer codexOperation.Discard()
 
 	// Build proxy context
 	pctx := &proxyContext{
@@ -486,6 +423,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 		startTime: startTime,
 		requestID: requestID,
+		codex:     codexOperation,
 		liveBytes: &LiveBytesTracker{},
 		attempts:  make([]model.RequestAttempt, 0),
 	}
@@ -497,11 +435,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	pctx.selectReq = &model.SelectRequest{
-		ClientIP:   pctx.info.ClientIP,
-		User:       pctx.info.UserID,
-		APIType:    apiType,
-		Model:      pctx.info.Model,
-		StickyMode: cfg.stickyMode,
+		OperationID: requestID,
+		ClientIP:    pctx.info.ClientIP,
+		User:        pctx.info.UserID,
+		APIType:     apiType,
+		Model:       pctx.info.Model,
+		StickyMode:  cfg.stickyMode,
+	}
+	if required, preferred := codexOperation.RequiredAuthority(); required != nil {
+		pctx.selectReq.RequiredAuthority = required
+		pctx.selectReq.PreferredRouteTargetID = preferred
 	}
 
 	// Execute proxy with retry logic
@@ -606,6 +549,9 @@ type retryState struct {
 	// failureDisposition carries provider-scoped retry semantics inferred from the
 	// last upstream failure, such as "switch now" or "suspend until reset".
 	failureDisposition providerFailureDisposition
+	// injectedCredential is attempt-scoped evidence derived from the final
+	// sanitized and applied request, including any refreshed ChatGPT token.
+	injectedCredential string
 }
 
 // registerActiveRequest registers or updates the active request in the registry.
@@ -690,18 +636,11 @@ func (h *Handler) buildProviderRequest(
 			fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
 	}
 
-	if model.NormalizeProviderCredentialType(provider.CredentialType) == model.ProviderCredentialTypeAPIKey && provider.APIKeyForAPIType(pctx.apiType) == "" {
-		h.logger.Error("missing api_key for api_type",
-			zap.String("provider_id", provider.ID),
-			zap.String("api_type", pctx.apiType),
-		)
-		return nil, requestcapture.FailureCodeMissingAPIKey,
-			fmt.Errorf("provider %q has no api_key configured for api_type %q", provider.ID, pctx.apiType)
-	}
-
 	upstreamURL := h.buildFullURL(baseURL, upstreamPath, pctx.r.URL.RawQuery)
 
-	req, err := BuildUpstreamRequest(ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r)
+	req, err := BuildUpstreamRequestWithPolicy(
+		ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r, pctx.codex.RequestPolicy(),
+	)
 	if err != nil {
 		h.logger.Error("failed to build upstream request", zap.Error(err))
 		return nil, requestcapture.FailureCodeRequestBuild, err

@@ -1,26 +1,36 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/providerauth"
 
 	"go.uber.org/zap"
 )
 
 // ConfigExportVersion is the current version of the config export format.
-const ConfigExportVersion = "4.0"
+const ConfigExportVersion = "5.0"
+
+type CredentialSessionTransferMode string
+
+const (
+	CredentialSessionTransferStaticSecret   CredentialSessionTransferMode = "static_secret"
+	CredentialSessionTransferReauthenticate CredentialSessionTransferMode = "reauthenticate"
+	configRestoreReauthenticationReason                                   = "config_restore_requires_verified_reauthentication"
+)
 
 // ExportedConfig represents the full exported configuration.
 type ExportedConfig struct {
 	Version            string                      `json:"version"`
 	ExportedAt         time.Time                   `json:"exported_at"`
 	Providers          []ExportedProvider          `json:"providers"`
+	CredentialSessions []ExportedCredentialSession `json:"credential_sessions"`
 	Groups             []ExportedGroup             `json:"groups"`
 	RoutingPolicies    []ExportedRoutingPolicy     `json:"routing_policies"`
 	Settings           map[string]string           `json:"settings"`
@@ -32,13 +42,9 @@ type ExportedConfig struct {
 type ExportedProvider struct {
 	ID               string                         `json:"id"`
 	Name             string                         `json:"name"`
-	APIKey           string                         `json:"api_key"`
 	APITypes         []ExportedAPIType              `json:"api_types"`
 	AuthMode         string                         `json:"auth_mode"`
-	CredentialType   model.ProviderCredentialType   `json:"credential_type,omitempty"`
 	UsageLimitPolicy model.ProviderUsageLimitPolicy `json:"usage_limit_policy,omitempty"`
-	Credential       *ExportedProviderCredential    `json:"credential,omitempty"`
-	AuthState        *ExportedProviderAuthState     `json:"auth_state,omitempty"`
 	GroupID          *string                        `json:"group_id,omitempty"`
 	Weight           int                            `json:"weight"`
 	Priority         int                            `json:"priority"`
@@ -51,27 +57,19 @@ type ExportedProvider struct {
 	Enabled          bool                           `json:"enabled"`
 }
 
-// ExportedProviderCredential mirrors provider_credentials without repeating provider_id.
-type ExportedProviderCredential struct {
-	SecretData       string  `json:"secret_data,omitempty"`
-	BindingAccountID *string `json:"binding_account_id,omitempty"`
-	Version          int64   `json:"version,omitempty"`
+type ExportedCredentialSession struct {
+	ID           string                        `json:"id"`
+	Vendor       string                        `json:"vendor"`
+	Kind         credentialsession.Kind        `json:"kind"`
+	TransferMode CredentialSessionTransferMode `json:"transfer_mode"`
+	SecretData   string                        `json:"secret_data,omitempty"`
+	Version      int64                         `json:"version"`
+	Subject      credentialsession.Subject     `json:"subject"`
+	AuthState    credentialsession.AuthState   `json:"auth_state"`
 }
 
-// ExportedProviderAuthState mirrors provider_auth_states without repeating provider_id.
-type ExportedProviderAuthState struct {
-	Status               model.ProviderAuthStatus     `json:"status,omitempty"`
-	StatusReason         string                       `json:"status_reason,omitempty"`
-	LastError            string                       `json:"last_error,omitempty"`
-	LastTransitionAt     *time.Time                   `json:"last_transition_at,omitempty"`
-	Email                string                       `json:"email,omitempty"`
-	AccountID            string                       `json:"account_id,omitempty"`
-	PlanType             string                       `json:"plan_type,omitempty"`
-	ExpiresAt            *time.Time                   `json:"expires_at,omitempty"`
-	LastRefreshAt        *time.Time                   `json:"last_refresh_at,omitempty"`
-	UsageSnapshot        *model.ProviderUsageSnapshot `json:"usage_snapshot,omitempty"`
-	RefreshFailCount     int                          `json:"refresh_fail_count,omitempty"`
-	LastRefreshFailureAt *time.Time                   `json:"last_refresh_failure_at,omitempty"`
+type credentialSessionLister interface {
+	ListCredentialSessions(context.Context) ([]credentialsession.Session, error)
 }
 
 // ExportedBackoff represents backoff settings in the export format.
@@ -86,9 +84,9 @@ type ExportedBackoff struct {
 
 // ExportedAPIType represents an API type with its base URL in the export format.
 type ExportedAPIType struct {
-	APIType string `json:"api_type"`
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key,omitempty"`
+	APIType             string `json:"api_type"`
+	BaseURL             string `json:"base_url"`
+	CredentialSessionID string `json:"credential_session_id"`
 }
 
 // ExportedGroup represents a group in the export format.
@@ -154,11 +152,29 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionRepository, ok := h.store.(credentialSessionLister)
+	if !ok {
+		h.logger.Error("credential session repository is unavailable for config export")
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to export config")
+		return
+	}
+	sessions, err := sessionRepository.ListCredentialSessions(ctx)
+	if err != nil {
+		h.logger.Error("failed to list credential sessions for export", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to export config")
+		return
+	}
+
 	// Convert to export format
 	exportedProviders := make([]ExportedProvider, len(providers))
 	for i := range providers {
 		exportedProviders[i] = buildExportedProvider(&providers[i])
 	}
+	exportedSessions := make([]ExportedCredentialSession, len(sessions))
+	for index := range sessions {
+		exportedSessions[index] = buildExportedCredentialSession(&sessions[index])
+	}
+	sort.Slice(exportedSessions, func(i, j int) bool { return exportedSessions[i].ID < exportedSessions[j].ID })
 
 	exportedGroups := make([]ExportedGroup, len(groups))
 	for i := range groups {
@@ -181,6 +197,7 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 		Version:            ConfigExportVersion,
 		ExportedAt:         time.Now().UTC(),
 		Providers:          exportedProviders,
+		CredentialSessions: exportedSessions,
 		Groups:             exportedGroups,
 		RoutingPolicies:    exportedRoutingPolicies,
 		InternalErrorRules: exportedRules,
@@ -193,26 +210,41 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, export)
 }
 
+func buildExportedCredentialSession(session *credentialsession.Session) ExportedCredentialSession {
+	exported := ExportedCredentialSession{
+		ID:      session.ID,
+		Vendor:  session.Vendor,
+		Kind:    session.Kind,
+		Version: session.Version,
+	}
+	if session.Kind == credentialsession.KindChatGPT {
+		// A config document is bearer-controlled input, so it may describe how to
+		// restore a login but can never carry the proof that activates one.
+		exported.TransferMode = CredentialSessionTransferReauthenticate
+		exported.Subject = credentialsession.PendingSubject()
+		exported.AuthState = credentialsession.AuthState{
+			Status:       credentialsession.AuthStatusReauthRequired,
+			StatusReason: configRestoreReauthenticationReason,
+		}
+		return exported
+	}
+	exported.TransferMode = CredentialSessionTransferStaticSecret
+	exported.SecretData = session.SecretData
+	exported.Subject = session.Subject()
+	exported.AuthState = session.AuthState.Clone()
+	return exported
+}
+
 func buildExportedProvider(p *model.Provider) ExportedProvider {
 	canonical := *p
 	canonical.APITypes = append([]model.ProviderAPIType(nil), p.APITypes...)
-	providerauth.NormalizeProviderForPersistence(&canonical)
-	credential := exportedProviderCredential(canonical.Credential)
-	authState := exportedProviderAuthState(canonical.AuthState)
-	if authState == nil {
-		authState = exportedProviderAuthState(model.ProviderAuthStateFromCredential(
-			canonical.ID,
-			canonical.CredentialType,
-			canonical.Credential,
-		))
-	}
 
 	apiTypes := make([]ExportedAPIType, len(canonical.APITypes))
 	for i, at := range canonical.APITypes {
 		apiTypes[i] = ExportedAPIType{
-			APIType: at.APIType,
-			BaseURL: at.BaseURL,
-			APIKey:  model.NormalizeAPIKey(at.APIKey),
+			APIType:             at.APIType,
+			BaseURL:             at.BaseURL,
+			CredentialSessionID: credentialSessionIDForAPIType(&canonical, at.APIType),
 		}
 	}
 	sort.Slice(apiTypes, func(i, j int) bool {
@@ -228,13 +260,9 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 	return ExportedProvider{
 		ID:               canonical.ID,
 		Name:             canonical.Name,
-		APIKey:           model.NormalizeAPIKey(canonical.APIKey),
 		APITypes:         apiTypes,
 		AuthMode:         canonical.AuthMode,
-		CredentialType:   model.NormalizeProviderCredentialType(canonical.CredentialType),
 		UsageLimitPolicy: canonical.UsageLimitPolicy,
-		Credential:       credential,
-		AuthState:        authState,
 		GroupID:          groupID,
 		Weight:           canonical.Weight,
 		Priority:         canonical.Priority,
@@ -251,6 +279,14 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 		AcceptFailover: string(canonical.AcceptFailover),
 		Enabled:        canonical.Enabled,
 	}
+}
+
+func credentialSessionIDForAPIType(provider *model.Provider, apiType string) string {
+	snapshot, ok := provider.CredentialSessionForAPIType(apiType)
+	if !ok {
+		return ""
+	}
+	return snapshot.SessionID
 }
 
 func buildExportedGroup(g *model.Group) ExportedGroup {
@@ -288,38 +324,5 @@ func buildExportedRoutingPolicy(policy *model.RoutingPolicy) ExportedRoutingPoli
 		TargetProviderID: targetProviderID,
 		AllowedGroupIDs:  normalizeRoutingPolicyStrings(groupIDs),
 		AllowedVendors:   normalizeRoutingPolicyStrings(vendors),
-	}
-}
-
-func exportedProviderCredential(credential *model.ProviderCredential) *ExportedProviderCredential {
-	if credential == nil {
-		return nil
-	}
-	normalized := model.NormalizeProviderCredentialRecord(credential.ProviderID, credential)
-	return &ExportedProviderCredential{
-		SecretData:       normalized.SecretData,
-		BindingAccountID: normalized.BindingAccountID,
-		Version:          normalized.Version,
-	}
-}
-
-func exportedProviderAuthState(authState *model.ProviderAuthState) *ExportedProviderAuthState {
-	if authState == nil {
-		return nil
-	}
-	normalized := authState.Clone()
-	return &ExportedProviderAuthState{
-		Status:               normalized.Status,
-		StatusReason:         normalized.StatusReason,
-		LastError:            normalized.LastError,
-		LastTransitionAt:     normalized.LastTransitionAt,
-		Email:                normalized.Email,
-		AccountID:            normalized.AccountID,
-		PlanType:             normalized.PlanType,
-		ExpiresAt:            normalized.ExpiresAt,
-		LastRefreshAt:        normalized.LastRefreshAt,
-		UsageSnapshot:        model.CloneProviderUsageSnapshot(normalized.UsageSnapshot),
-		RefreshFailCount:     normalized.RefreshFailCount,
-		LastRefreshFailureAt: normalized.LastRefreshFailureAt,
 	}
 }

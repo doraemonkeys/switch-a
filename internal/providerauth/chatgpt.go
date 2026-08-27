@@ -29,71 +29,9 @@ const (
 	chatGPTImportedIDTokenKind     = "id_token"
 )
 
-type storedChatGPTCredential struct {
-	model.ChatGPTProviderCredential
-	AuthStatus ProviderAuthStatus `json:"auth_status,omitempty"`
-	AuthReason string             `json:"auth_reason,omitempty"`
-	LastError  string             `json:"last_error,omitempty"`
-}
-
 // The model package owns the persisted wire contract; this alias keeps verifier
 // terminology local without maintaining a second, drift-prone schema.
 type chatGPTCredentialSecret = model.ChatGPTProviderSecret
-
-func encodeChatGPTCredential(credential model.ChatGPTProviderCredential) (string, error) {
-	payload, err := json.Marshal(credential)
-	if err != nil {
-		return "", fmt.Errorf("marshal chatgpt credential: %w", err)
-	}
-	return string(payload), nil
-}
-
-func encodeStoredChatGPTCredential(credential storedChatGPTCredential) (string, error) {
-	payload, err := json.Marshal(credential)
-	if err != nil {
-		return "", fmt.Errorf("marshal stored chatgpt credential: %w", err)
-	}
-	return string(payload), nil
-}
-
-func decodeChatGPTCredential(raw string) (*model.ChatGPTProviderCredential, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, fmt.Errorf("missing chatgpt credential payload")
-	}
-	var credential model.ChatGPTProviderCredential
-	if err := json.Unmarshal([]byte(raw), &credential); err != nil {
-		return nil, fmt.Errorf("decode chatgpt credential payload: %w", err)
-	}
-	return &credential, nil
-}
-
-func decodeStoredChatGPTCredential(raw string) (*storedChatGPTCredential, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, fmt.Errorf("missing chatgpt credential payload")
-	}
-	var credential storedChatGPTCredential
-	if err := json.Unmarshal([]byte(raw), &credential); err != nil {
-		return nil, fmt.Errorf("decode stored chatgpt credential payload: %w", err)
-	}
-	return &credential, nil
-}
-
-func newStoredChatGPTCredential(
-	credential *model.ChatGPTProviderCredential,
-	status ProviderAuthStatus,
-	reason string,
-	lastError string,
-) *storedChatGPTCredential {
-	if credential == nil {
-		return nil
-	}
-	return &storedChatGPTCredential{
-		ChatGPTProviderCredential: *cloneChatGPTCredential(credential),
-		AuthStatus:                status,
-		AuthReason:                strings.TrimSpace(reason),
-		LastError:                 strings.TrimSpace(lastError),
-	}
-}
 
 func encodeChatGPTCredentialSecret(credential *model.ChatGPTProviderCredential) (string, error) {
 	if credential == nil {

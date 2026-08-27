@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
@@ -58,12 +59,13 @@ type HealthChecker interface {
 
 // Config holds selector configuration.
 type Config struct {
-	Store         Store
-	HealthChecker HealthChecker
-	StickyCache   internal.StickyCache
-	Limiter       *ConcurrencyLimiter
-	Clock         internal.Clock
-	Logger        *zap.Logger
+	Store             Store
+	HealthChecker     HealthChecker
+	AuthorityResolver CandidateAuthorityResolver
+	StickyCache       internal.StickyCache
+	Limiter           *ConcurrencyLimiter
+	Clock             internal.Clock
+	Logger            *zap.Logger
 }
 
 // SelectResult keeps the selected provider behind its exact lease so dispatch
@@ -82,11 +84,21 @@ func (r *SelectResult) Provider() *model.Provider {
 	return r.Lease.Provider()
 }
 
+// CandidateSnapshot exposes the exact selection-time identity snapshot carried
+// by the lease so authentication does not independently resolve mutable state.
+func (r *SelectResult) CandidateSnapshot() (codexidentity.CandidateSnapshot, bool) {
+	if r == nil || r.Lease == nil {
+		return codexidentity.CandidateSnapshot{}, false
+	}
+	return r.Lease.CandidateSnapshot()
+}
+
 // SelectionSource explains how the selector reached the chosen provider.
 type SelectionSource string
 
 const (
 	SelectionSourceStrategy         SelectionSource = "strategy"
+	SelectionSourcePreferredRoute   SelectionSource = "preferred_route_target"
 	SelectionSourceStickyContinuity SelectionSource = "sticky_continuity"
 	SelectionSourceActiveContinuity SelectionSource = "active_continuity"
 	SelectionSourceAlternate        SelectionSource = "alternate"
@@ -116,7 +128,7 @@ type SelectionMetadata struct {
 
 func (m SelectionMetadata) UsesContinuity() bool {
 	switch m.Source {
-	case SelectionSourceStickyContinuity, SelectionSourceActiveContinuity:
+	case SelectionSourcePreferredRoute, SelectionSourceStickyContinuity, SelectionSourceActiveContinuity:
 		return true
 	default:
 		return false
@@ -166,12 +178,13 @@ func BuildSelectionMetadataAt(req *model.SelectRequest, source SelectionSource, 
 
 // Selector selects providers based on strategies and health status.
 type Selector struct {
-	store   Store
-	health  HealthChecker
-	sticky  internal.StickyCache
-	limiter *ConcurrencyLimiter
-	clock   internal.Clock
-	logger  *zap.Logger
+	store    Store
+	health   HealthChecker
+	resolver CandidateAuthorityResolver
+	sticky   internal.StickyCache
+	limiter  *ConcurrencyLimiter
+	clock    internal.Clock
+	logger   *zap.Logger
 }
 
 // NewSelector creates a new provider selector.
@@ -183,12 +196,13 @@ func NewSelector(cfg Config) *Selector {
 		cfg.Logger = zap.NewNop()
 	}
 	return &Selector{
-		store:   cfg.Store,
-		health:  cfg.HealthChecker,
-		sticky:  cfg.StickyCache,
-		limiter: cfg.Limiter,
-		clock:   cfg.Clock,
-		logger:  cfg.Logger,
+		store:    cfg.Store,
+		health:   cfg.HealthChecker,
+		resolver: cfg.AuthorityResolver,
+		sticky:   cfg.StickyCache,
+		limiter:  cfg.Limiter,
+		clock:    cfg.Clock,
+		logger:   cfg.Logger,
 	}
 }
 
@@ -202,8 +216,19 @@ func (s *Selector) SelectWithMetadata(ctx context.Context, req *model.SelectRequ
 		return nil, err
 	}
 
+	lease, err := s.selectPreferredRoute(ctx, scope, nil)
+	if err != nil {
+		return nil, err
+	}
+	if lease != nil {
+		return &SelectResult{
+			Lease:    lease,
+			Metadata: BuildSelectionMetadataAt(req, SelectionSourcePreferredRoute, s.selectionTimestamp()),
+		}, nil
+	}
+
 	// Check sticky cache first.
-	lease, err := s.checkStickyCache(ctx, scope)
+	lease, err = s.checkStickyCache(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +268,17 @@ func (s *Selector) SelectExcludingWithMetadata(ctx context.Context, req *model.S
 		return nil, err
 	}
 
+	lease, err := s.selectPreferredRoute(ctx, scope, excludeIDs)
+	if err != nil {
+		return nil, err
+	}
+	if lease != nil {
+		return &SelectResult{
+			Lease:    lease,
+			Metadata: BuildSelectionMetadataAt(req, SelectionSourcePreferredRoute, s.selectionTimestamp()),
+		}, nil
+	}
+
 	// Check sticky cache first (if no exclusions)
 	if len(excludeIDs) == 0 {
 		lease, err := s.checkStickyCache(ctx, scope)
@@ -257,7 +293,7 @@ func (s *Selector) SelectExcludingWithMetadata(ctx context.Context, req *model.S
 		}
 	}
 
-	lease, err := s.selectExcludingInternal(ctx, scope, excludeIDs)
+	lease, err = s.selectExcludingInternal(ctx, scope, excludeIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -270,13 +306,7 @@ func (s *Selector) SelectExcludingWithMetadata(ctx context.Context, req *model.S
 // selectExcludingInternal performs the actual provider selection without sticky cache check.
 // This is extracted to allow SelectWithMetadata to track whether the result came from sticky cache.
 func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderSelectionEligibility, excludeIDs map[string]bool) (*ProviderLease, error) {
-	req := scope.req
-
-	// Get all enabled providers for this API type
-	providers, err := s.store.ListProvidersByAPIType(ctx, reqAPIType(req))
-	if err != nil {
-		return nil, err
-	}
+	providers := scope.Providers()
 
 	if len(providers) == 0 {
 		return nil, internal.ErrNoProvider
@@ -351,6 +381,36 @@ func buildStickyKey(req *model.SelectRequest) model.StickyKey {
 	return BuildContinuityKey(req)
 }
 
+// selectPreferredRoute applies the route hint only after a verified Authority
+// has narrowed the candidate set. Without that boundary, a provider ID could
+// silently steer a state-bearing request to a different security owner.
+func (s *Selector) selectPreferredRoute(
+	ctx context.Context,
+	scope *ProviderSelectionEligibility,
+	excludeIDs map[string]bool,
+) (*ProviderLease, error) {
+	if scope == nil {
+		return nil, nil
+	}
+	providerID := reqPreferredRouteTargetID(scope.req)
+	if providerID == "" || (excludeIDs != nil && excludeIDs[providerID]) {
+		return nil, nil
+	}
+	provider := scope.Provider(providerID)
+	if provider == nil {
+		return nil, nil
+	}
+	allowed, err := scope.AllowsProvider(ctx, provider)
+	if err != nil || !allowed {
+		return nil, err
+	}
+	lease, acquired := s.acquireProvider(scope, provider)
+	if !acquired {
+		return nil, nil
+	}
+	return lease, nil
+}
+
 // checkStickyCache checks for a cached sticky provider and returns it if available.
 // It returns an error when eligibility cannot be evaluated safely, preserving the
 // non-sticky path's contract for transient auth-state read failures.
@@ -367,8 +427,8 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 	}
 
 	// Get and verify provider
-	provider, err := s.store.GetProvider(ctx, providerID)
-	if err != nil || provider == nil {
+	provider := scope.Provider(providerID)
+	if provider == nil {
 		s.sticky.Delete(stickyKey)
 		return nil, nil
 	}
@@ -382,15 +442,13 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 		return nil, nil
 	}
 
-	lease, acquired := s.acquireProvider(provider)
+	lease, acquired := s.acquireProvider(scope, provider)
 	if !acquired {
-		// Log sticky cache deletion for observability.
-		// This helps identify when high load causes session affinity loss.
-		s.logger.Debug("sticky cache deleted due to concurrency limit",
-			zap.String("provider_id", provider.ID),
-			zap.String("client_ip", stickyKey.IP),
-			zap.String("user", stickyKey.User),
-			zap.String("api_type", stickyKey.APIType),
+		s.observeStickyBindingDecision(
+			scope.req,
+			provider.ID,
+			stickyBindingDecisionEvicted,
+			stickyBindingDecisionReasonProviderConcurrencyExhausted,
 		)
 		s.sticky.Delete(stickyKey)
 		return nil, nil
@@ -426,18 +484,9 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, scope *ProviderSele
 
 		groupID := *p.GroupID
 		if _, exists := groupMap[groupID]; !exists {
-			// Load group info
-			group, err := s.store.GetGroup(ctx, groupID)
-			if err != nil {
-				s.logger.Warn("failed to load group, skipping provider",
-					zap.String("group_id", groupID),
-					zap.String("provider_id", p.ID),
-					zap.Error(err))
-				// Fail-closed: skip this provider instead of treating as ungrouped
+			group, ok := scope.Group(p.ID)
+			if !ok || !group.Enabled {
 				continue
-			}
-			if !group.Enabled {
-				continue // Skip disabled groups
 			}
 			groupMap[groupID] = &groupCandidate{
 				GroupID:   groupID,
@@ -501,7 +550,7 @@ func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelection
 
 		// The lease is the ownership result of selection, not an incidental
 		// counter mutation that downstream code must reconstruct from an ID.
-		if lease, acquired := s.acquireProvider(selected); acquired {
+		if lease, acquired := s.acquireProvider(scope, selected); acquired {
 			return lease, nil
 		}
 
@@ -512,19 +561,27 @@ func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelection
 	return nil, nil
 }
 
-func (s *Selector) acquireProvider(provider *model.Provider) (*ProviderLease, bool) {
-	if s == nil || s.limiter == nil || provider == nil {
+func (s *Selector) acquireProvider(scope *ProviderSelectionEligibility, provider *model.Provider) (*ProviderLease, bool) {
+	if s == nil || s.limiter == nil || scope == nil || provider == nil {
 		return nil, false
 	}
 	slot, acquired := s.limiter.acquireUnderLifecycle(provider.ID, provider.Concurrency)
 	if !acquired {
 		return nil, false
 	}
-	return newProviderLease(provider, slot), true
+	candidate, resolved := scope.CandidateSnapshot(provider.ID)
+	return newProviderLeaseWithCandidate(provider, slot, candidate, resolved), true
 }
 
 func (s *Selector) selectionScope(ctx context.Context, req *model.SelectRequest) (*ProviderSelectionEligibility, error) {
-	return NewProviderSelectionEligibility(ctx, s.store, s.health, req)
+	if s == nil || s.store == nil {
+		return nil, internal.ErrNoProvider
+	}
+	providers, err := s.store.ListProvidersByAPIType(ctx, reqAPIType(req))
+	if err != nil {
+		return nil, err
+	}
+	return newProviderSelectionEligibility(ctx, s.store, s.health, s.resolver, req, providers)
 }
 
 // removeProvider removes a provider from the candidates list by ID.

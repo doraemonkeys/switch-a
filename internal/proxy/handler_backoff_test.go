@@ -41,21 +41,21 @@ func TestBackoff_AppliesDelayOnSameProviderRetry(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:         "p1",
-			Name:       "Provider 1",
-			APIKey:     "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-			MaxRetries: 2, // Allow 2 retries (3 attempts total)
+			MaxRetries: 2,
 			Backoff: model.BackoffPolicy{
 				InitialDelay: model.Duration(50 * time.Millisecond),
 				MaxDelay:     model.Duration(200 * time.Millisecond),
 				Multiplier:   2.0,
-				Jitter:       false, // Disable jitter for predictable timing
+				Jitter:       false,
 			},
-		},
+		}, "", "key1"),
 	}
 
 	handler := NewHandler(Config{
@@ -128,16 +128,15 @@ func TestBackoff_NoDelayWhenBackoffNotConfigured(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:         "p1",
-			Name:       "Provider 1",
-			APIKey:     "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 			MaxRetries: 2,
-			// No Backoff configured (zero value)
-		},
+		}, "", "key1"),
 	}
 
 	handler := NewHandler(Config{
@@ -187,21 +186,21 @@ func TestBackoff_RespectsMaxDelay(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:         "p1",
-			Name:       "Provider 1",
-			APIKey:     "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-			MaxRetries: 4, // Allow 4 retries (5 attempts total)
+			MaxRetries: 4,
 			Backoff: model.BackoffPolicy{
 				InitialDelay: model.Duration(50 * time.Millisecond),
-				MaxDelay:     model.Duration(100 * time.Millisecond), // Cap at 100ms
+				MaxDelay:     model.Duration(100 * time.Millisecond),
 				Multiplier:   2.0,
 				Jitter:       false,
 			},
-		},
+		}, "", "key1"),
 	}
 
 	handler := NewHandler(Config{
@@ -252,21 +251,21 @@ func TestBackoff_CancelsOnContextDone(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:         "p1",
-			Name:       "Provider 1",
-			APIKey:     "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-			MaxRetries: 10, // Many retries
+			MaxRetries: 10,
 			Backoff: model.BackoffPolicy{
-				InitialDelay: model.Duration(500 * time.Millisecond), // Long delay
+				InitialDelay: model.Duration(500 * time.Millisecond),
 				MaxDelay:     model.Duration(5 * time.Second),
 				Multiplier:   2.0,
 				Jitter:       false,
 			},
-		},
+		}, "", "key1"),
 	}
 
 	handler := NewHandler(Config{
@@ -331,32 +330,32 @@ func TestBackoff_NoDelayOnProviderSwitch(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:         "p1",
-			Name:       "Provider 1",
-			APIKey:     "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
 			Priority:   1,
-			MaxRetries: 0, // No retries - switch to next provider
+			MaxRetries: 0,
 			Backoff: model.BackoffPolicy{
-				InitialDelay: model.Duration(500 * time.Millisecond), // Would cause long delay if applied
+				InitialDelay: model.Duration(500 * time.Millisecond),
 				MaxDelay:     model.Duration(5 * time.Second),
 				Multiplier:   2.0,
 				Jitter:       false,
 			},
-		},
-		{
-			ID:         "p2",
-			Name:       "Provider 2",
-			APIKey:     "key2",
+		}, "", "key1"),
+		withTestStaticCredential(model.Provider{
+			ID:   "p2",
+			Name: "Provider 2",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
 			Priority:   0,
 			MaxRetries: 0,
-		},
+		}, "", "key2"),
 	}
 
 	handler := NewHandler(Config{

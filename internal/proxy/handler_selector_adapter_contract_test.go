@@ -60,30 +60,23 @@ func (*x3AdapterStore) GetConfig(context.Context, string) (string, error) {
 	return selector.StrategyPriority, nil
 }
 
-func (*x3AdapterStore) GetProviderAuthState(_ context.Context, providerID string) (*model.ProviderAuthState, error) {
-	return &model.ProviderAuthState{
-		ProviderID: providerID,
-		Status:     model.ProviderAuthStatusActive,
-	}, nil
-}
-
 func (*x3AdapterStore) ListRoutingPoliciesByAPIType(context.Context, string) ([]model.RoutingPolicy, error) {
 	return nil, nil
 }
 
 func newX3ConcreteSelectorAdapter() (*selector.Selector, httpProviderSelector, *selector.ConcurrencyLimiter) {
 	limiter := selector.NewConcurrencyLimiter()
-	store := &x3AdapterStore{providers: []model.Provider{{
-		ID:          x3AdapterProviderID,
-		Name:        "Adapter Provider",
-		APIKey:      "adapter-api-key",
+	store := &x3AdapterStore{providers: []model.Provider{withTestStaticCredential(model.Provider{
+		ID:   x3AdapterProviderID,
+		Name: "Adapter Provider",
+
 		Enabled:     true,
 		Concurrency: x3AdapterConcurrency,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: x3AdapterProviderID,
 			APIType:    x3AdapterAPIType,
 		}},
-	}}}
+	}, "", "adapter-api-key")}}
 	concrete := selector.NewSelector(selector.Config{
 		Store:   store,
 		Limiter: limiter,

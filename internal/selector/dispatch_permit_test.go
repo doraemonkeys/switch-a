@@ -29,7 +29,6 @@ func TestProviderDispatchPermitAdoptsValidatedSnapshotOnActivation(t *testing.T)
 	original := current.Lease.Provider()
 	store.mutate(func(store *lifecycleStore) {
 		store.providers[provider.ID].Name = "after-refresh"
-		store.providers[provider.ID].APIKey = "rotated-key"
 	})
 
 	permit, err := selector.ReserveSameProviderDispatch(
@@ -40,7 +39,7 @@ func TestProviderDispatchPermitAdoptsValidatedSnapshotOnActivation(t *testing.T)
 		t.Fatalf("ReserveSameProviderDispatch() error = %v", err)
 	}
 	validated := permit.Provider()
-	if validated == nil || validated.Name != "after-refresh" || validated.APIKey != "rotated-key" {
+	if validated == nil || validated.Name != "after-refresh" {
 		t.Fatalf("validated provider = %#v", validated)
 	}
 	if current.Lease.Provider() != original || current.Lease.Provider().Name != "before-refresh" {

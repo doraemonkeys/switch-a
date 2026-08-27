@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storepkg "github.com/doraemonkeys/switch-a/internal/store"
@@ -22,7 +23,6 @@ type lifecycleStore struct {
 	providerErr     error
 	groups          map[string]*model.Group
 	groupErr        error
-	authStates      map[string]*model.ProviderAuthState
 	authErr         error
 	routingPolicies []model.RoutingPolicy
 	routingErr      error
@@ -33,17 +33,12 @@ type lifecycleStore struct {
 
 func newLifecycleStore(providers ...model.Provider) *lifecycleStore {
 	result := &lifecycleStore{
-		providers:  make(map[string]*model.Provider, len(providers)),
-		groups:     make(map[string]*model.Group),
-		authStates: make(map[string]*model.ProviderAuthState),
+		providers: make(map[string]*model.Provider, len(providers)),
+		groups:    make(map[string]*model.Group),
 	}
 	for i := range providers {
 		provider := cloneTestProvider(&providers[i])
 		result.providers[provider.ID] = provider
-		result.authStates[provider.ID] = &model.ProviderAuthState{
-			ProviderID: provider.ID,
-			Status:     model.ProviderAuthStatusActive,
-		}
 	}
 	return result
 }
@@ -53,6 +48,9 @@ func (s *lifecycleStore) ListProvidersByAPIType(_ context.Context, apiType strin
 	defer s.mu.RUnlock()
 	if s.providerErr != nil {
 		return nil, s.providerErr
+	}
+	if s.authErr != nil {
+		return nil, s.authErr
 	}
 	providers := make([]model.Provider, 0, len(s.providers))
 	for _, provider := range s.providers {
@@ -88,6 +86,9 @@ func (s *lifecycleStore) GetProvider(ctx context.Context, id string) (*model.Pro
 	if s.providerErr != nil {
 		return nil, s.providerErr
 	}
+	if s.authErr != nil {
+		return nil, s.authErr
+	}
 	provider := s.providers[id]
 	return cloneTestProvider(provider), nil
 }
@@ -108,15 +109,6 @@ func (s *lifecycleStore) GetGroup(_ context.Context, id string) (*model.Group, e
 
 func (s *lifecycleStore) GetConfig(_ context.Context, _ string) (string, error) {
 	return StrategyPriority, nil
-}
-
-func (s *lifecycleStore) GetProviderAuthState(_ context.Context, providerID string) (*model.ProviderAuthState, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.authErr != nil {
-		return nil, s.authErr
-	}
-	return s.authStates[providerID].Clone(), nil
 }
 
 func (s *lifecycleStore) ListRoutingPoliciesByAPIType(_ context.Context, apiType string) ([]model.RoutingPolicy, error) {
@@ -154,26 +146,32 @@ func cloneTestProvider(provider *model.Provider) *model.Provider {
 	if provider == nil {
 		return nil
 	}
-	clone := *provider
-	clone.APITypes = append([]model.ProviderAPIType(nil), provider.APITypes...)
-	if provider.GroupID != nil {
-		groupID := *provider.GroupID
-		clone.GroupID = &groupID
-	}
-	clone.AuthState = provider.AuthState.Clone()
-	clone.Credential = provider.Credential.Clone()
-	return &clone
+	return cloneProviderSelectionSnapshot(provider)
 }
 
 func retryTestProvider(id string) model.Provider {
+	subject, _ := credentialsession.AccountSubject("test-subject-" + id)
 	return model.Provider{
 		ID:          id,
-		APIKey:      "test-key",
 		Enabled:     true,
 		Concurrency: 1,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: id,
 			APIType:    "claude",
+			BaseURL:    "https://" + id + ".example.test",
+		}},
+		CredentialSessions: []credentialsession.RouteSnapshot{{
+			RouteTargetID: id,
+			APIType:       "claude",
+			Credential: credentialsession.Snapshot{
+				SessionID:  "test-session-" + id,
+				Vendor:     "test-vendor",
+				Kind:       credentialsession.KindAPIKey,
+				SecretData: "test-key",
+				Version:    1,
+				Subject:    subject,
+				AuthState:  credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
+			},
 		}},
 	}
 }
@@ -493,7 +491,8 @@ func TestSameProviderRetryStableRejectionReasons(t *testing.T) {
 		{
 			name: "auth unavailable",
 			mutate: func(store *lifecycleStore) {
-				store.authStates["provider-a"].Status = model.ProviderAuthStatusReauthRequired
+				store.providers["provider-a"].CredentialSessions[0].Credential.AuthState.Status =
+					credentialsession.AuthStatusReauthRequired
 			},
 			want: errorrule.ReasonAuthUnavailable,
 		},
@@ -571,7 +570,8 @@ func TestSameProviderRetryRevalidationRacesObserveLiveMutation(t *testing.T) {
 			name: "auth mutation",
 			mutate: func(store *lifecycleStore, _ *ConcurrencyLimiter) {
 				store.mutate(func(store *lifecycleStore) {
-					store.authStates["provider-a"].Status = model.ProviderAuthStatusReauthRequired
+					store.providers["provider-a"].CredentialSessions[0].Credential.AuthState.Status =
+						credentialsession.AuthStatusReauthRequired
 				})
 			},
 			want: errorrule.ReasonAuthUnavailable,

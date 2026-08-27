@@ -84,9 +84,7 @@ func (s *Service) replaceChatGPTProviderImportReservationLocked(rawBytes, retain
 func chatGPTProviderImportSecretBytes(candidates []ChatGPTProviderImportCandidate) int64 {
 	var total int64
 	for _, candidate := range candidates {
-		if candidate.Credential != nil {
-			total += int64(len(candidate.Credential.SecretData))
-		}
+		total += int64(len(candidate.Credential.SecretData))
 	}
 	return total
 }

@@ -2,7 +2,6 @@ import type {
   AuthMode,
   ConfigKey,
   FailoverScope,
-  ProviderCredentialType,
   ProviderUsageLimitPolicy,
   Strategy,
 } from "../config/constants";
@@ -12,16 +11,14 @@ import type { RoutingPolicyModelMatchType } from "./routing-policy-types";
 export interface ExportedAPIType {
   api_type: string;
   base_url: string;
-  api_key?: string;
+  credential_session_id: string;
 }
 
 export interface ExportedProvider {
   id: string;
   name: string;
-  api_key: string;
   api_types: ExportedAPIType[];
   auth_mode: AuthMode;
-  credential_type?: ProviderCredentialType;
   usage_limit_policy?: ProviderUsageLimitPolicy;
   group_id?: string | null;
   weight: number;
@@ -33,6 +30,54 @@ export interface ExportedProvider {
   failover_scope?: FailoverScope;
   accept_failover?: FailoverScope;
   enabled: boolean;
+}
+
+export type CredentialSessionKind = "api_key" | "chatgpt";
+export type CredentialSessionTransferMode = "static_secret" | "reauthenticate";
+
+export interface ExportedCredentialSubject {
+  kind: "pending" | "account" | "keyed_digest";
+  value?: string;
+  key_version?: string;
+}
+
+export interface ExportedCredentialUsageWindow {
+  used_percent: number;
+  window_seconds: number;
+  reset_at?: string;
+}
+
+export interface ExportedCredentialUsageSnapshot {
+  fetched_at?: string;
+  plan_type?: string;
+  five_hour?: ExportedCredentialUsageWindow;
+  one_week?: ExportedCredentialUsageWindow;
+}
+
+export interface ExportedCredentialAuthState {
+  status: "not_connected" | "active" | "reauth_required";
+  status_reason?: string;
+  last_error?: string;
+  last_transition_at?: string;
+  email?: string;
+  account_id?: string;
+  plan_type?: string;
+  expires_at?: string;
+  last_refresh_at?: string;
+  usage_snapshot?: ExportedCredentialUsageSnapshot;
+  refresh_fail_count?: number;
+  last_refresh_failure_at?: string;
+}
+
+export interface ExportedCredentialSession {
+  id: string;
+  vendor: string;
+  kind: CredentialSessionKind;
+  transfer_mode: CredentialSessionTransferMode;
+  secret_data?: string;
+  version: number;
+  subject: ExportedCredentialSubject;
+  auth_state: ExportedCredentialAuthState;
 }
 
 export interface ExportedGroup {
@@ -76,6 +121,7 @@ export interface ExportedConfig {
   version: string;
   exported_at: string;
   providers: ExportedProvider[];
+  credential_sessions: ExportedCredentialSession[];
   groups: ExportedGroup[];
   routing_policies: ExportedRoutingPolicy[];
   settings: Partial<Record<ConfigKey, string>>;
@@ -107,6 +153,7 @@ export interface ImportConfigRequest {
   version: string;
   import_scope: ImportScope;
   providers: ExportedProvider[];
+  credential_sessions: ExportedCredentialSession[];
   groups: ExportedGroup[];
   routing_policies: ExportedRoutingPolicy[];
   settings: Partial<Record<ConfigKey, string>>;
@@ -122,6 +169,7 @@ export interface ChangeCount {
 
 export interface ImportChanges {
   providers: ChangeCount;
+  credential_sessions: ChangeCount;
   groups: ChangeCount;
   routing_policies: ChangeCount;
   settings: ChangeCount;
@@ -144,6 +192,7 @@ export interface AppliedCount {
 
 export interface ImportedCounts {
   providers: AppliedCount;
+  credential_sessions: AppliedCount;
   groups: AppliedCount;
   routing_policies: AppliedCount;
   settings: AppliedCount;

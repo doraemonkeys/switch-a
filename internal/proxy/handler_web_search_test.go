@@ -41,10 +41,10 @@ func TestHandler_ServeHTTP_CodexWebSearchForwardsOpaqueContract(t *testing.T) {
 	defer upstreamServer.Close()
 
 	store := newMockStore()
-	store.providers = []model.Provider{{
-		ID:       "codex-provider",
-		Name:     "Codex Provider",
-		APIKey:   "provider-key",
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID:   "codex-provider",
+		Name: "Codex Provider",
+
 		AuthMode: AuthModeBearer,
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
@@ -52,7 +52,7 @@ func TestHandler_ServeHTTP_CodexWebSearchForwardsOpaqueContract(t *testing.T) {
 			APIType:    APITypeCodex,
 			BaseURL:    upstreamServer.URL + "/backend-api/codex",
 		}},
-	}}
+	}, "", "provider-key")}
 	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
 
 	requestBody := `{"model":"gpt-5","input":"find docs","commands":{"search_query":[{"q":"switch-a"}]},"future_field":{"preserve":true}}`

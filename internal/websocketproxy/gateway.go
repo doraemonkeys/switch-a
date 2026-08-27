@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -79,6 +83,7 @@ type ProviderLease interface {
 	// CapabilityIdentity returns a process-local opaque identity. Copies of one
 	// lease share it; separately acquired slots never do. Zero is invalid.
 	CapabilityIdentity() uintptr
+	CandidateSnapshot() (codexidentity.CandidateSnapshot, bool)
 	Held() bool
 	Release() bool
 }
@@ -107,12 +112,12 @@ type Selector interface {
 }
 
 type ProviderAuthenticator interface {
-	ApplyProviderCredentials(context.Context, http.Header, *model.Provider, string, string, *http.Request) error
-	RefreshProviderCredentials(context.Context, *model.Provider) (bool, error)
+	ApplyProviderCredentials(context.Context, http.Header, codexidentity.CandidateSnapshot, string, string, *http.Request, *url.URL) (codexidentity.AppliedIdentity, error)
+	RefreshCredentialSession(context.Context, credentialsession.Snapshot) (bool, error)
 }
 
 type ProviderUsageObserver interface {
-	ObserveProviderUsage(context.Context, string, *model.ProviderUsageSnapshot) error
+	ObserveCredentialSessionUsage(context.Context, string, *model.ProviderUsageSnapshot) error
 }
 
 type RequestCapture interface {
@@ -160,6 +165,7 @@ type Config struct {
 	UsageObserver              ProviderUsageObserver
 	Capture                    RequestCapture
 	Forwarder                  *WebSocketForwarder
+	Codex                      *codexws.Runtime
 	Logger                     *zap.Logger
 }
 
@@ -175,6 +181,7 @@ type Gateway struct {
 	usageObserver              ProviderUsageObserver
 	capture                    RequestCapture
 	wsForwarder                *WebSocketForwarder
+	codex                      *codexws.Runtime
 	logger                     *zap.Logger
 	fallbackCounter            atomic.Int64
 	fallbackLeaseGeneration    atomic.Uint64
@@ -199,7 +206,7 @@ func NewGateway(cfg Config) *Gateway {
 		store: cfg.Store, selector: cfg.Selector, health: cfg.Health,
 		activeSessions: cfg.ActiveSessions, visibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
 		auth: cfg.Auth, usageObserver: usageObserver,
-		capture: cfg.Capture, wsForwarder: forwarder, logger: cfg.Logger,
+		capture: cfg.Capture, wsForwarder: forwarder, codex: cfg.Codex, logger: cfg.Logger,
 	}
 }
 
@@ -262,11 +269,26 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	selectReq := &model.SelectRequest{
-		ClientIP:   info.ClientIP,
-		User:       info.UserID,
-		APIType:    apiType,
-		Model:      info.Model,
-		StickyMode: cfg.StickyMode,
+		OperationID: requestID,
+		ClientIP:    info.ClientIP,
+		User:        info.UserID,
+		APIType:     apiType,
+		Model:       info.Model,
+		StickyMode:  cfg.StickyMode,
+	}
+	var codexOperation *codexws.Operation
+	if h.codex != nil {
+		var err error
+		codexOperation, err = h.codex.Begin(ctx, r, apiType, requestID)
+		if err != nil {
+			h.writeCodexWebSocketFailure(w, err)
+			return
+		}
+		defer codexOperation.DiscardCookies()
+		if setCookie := codexOperation.GatewaySetCookie(); setCookie != "" {
+			w.Header().Add("Set-Cookie", setCookie)
+		}
+		applyCodexWebSocketRouteConstraint(selectReq, codexOperation)
 	}
 	newObserver, tracker, applyObservation, onClientVisible := h.newWebSocketObserverPipeline(apiType, requestID)
 	orchestrator := newWebSocketSessionOrchestrator(h, webSocketSessionOrchestratorConfig{
@@ -285,6 +307,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		tracker:             tracker,
 		capture:             capture,
 		captureParticipates: captureParticipates,
+		codexOperation:      codexOperation,
 	})
 	if captureParticipates {
 		// Exchange records must close before their gateway, but only after sticky,
@@ -328,6 +351,38 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	applyWebSocketSessionHealthOutcomes(ctx, h, session)
 	go h.logWebSocketSession(info, session, time.Since(startTime))
+}
+
+func applyCodexWebSocketRouteConstraint(request *model.SelectRequest, operation *codexws.Operation) {
+	if request == nil || operation == nil {
+		return
+	}
+	authority, routeTargetID := operation.RequiredAuthority()
+	request.RequiredAuthority = authority
+	request.PreferredRouteTargetID = routeTargetID
+}
+
+func (h *Gateway) writeCodexWebSocketFailure(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	code := ErrCodeWebSocketUpgrade
+	message := "WebSocket protocol state was rejected"
+	if codexws.Classify(err) == codexws.FailureStorage {
+		status = http.StatusServiceUnavailable
+		code = ErrCodeInternalError
+		message = "WebSocket state service is unavailable"
+	}
+	h.logger.Warn("websocket.codex_boundary_rejected",
+		zap.String("failure_class", string(codexws.Classify(err))),
+		zap.Error(err),
+	)
+	h.writeGatewayError(w, status, code, message)
+}
+
+func websocketCloseStatusForCodexFailure(err error) websocket.StatusCode {
+	if codexws.Classify(err) == codexws.FailureStorage {
+		return websocket.StatusInternalError
+	}
+	return websocket.StatusPolicyViolation
 }
 
 func (h *Gateway) newWebSocketObserverPipeline(
@@ -402,134 +457,6 @@ func newWebSocketGatewayFailureResult(statusCode int, terminalCause model.Termin
 		TerminalCause:       terminalCause,
 		CommitSource:        model.CommitUnknown,
 		Err:                 err,
-	}
-}
-
-// logWebSocketSession persists the session lifecycle in RequestLog while
-// keeping RequestAttempt rows scoped to provider attempts only.
-func (h *Gateway) logWebSocketSession(info RequestInfo, session *WebSocketSessionResult, latency time.Duration) {
-	if session == nil {
-		return
-	}
-
-	result := session.FinalResult
-	attempts := session.RequestAttempts()
-	assessment := assessWebSocketSession(session)
-	sessionCommitted := assessment.SessionCommitted
-	clientVisible := assessment.ClientVisible
-	commitSource := model.CommitUnknown
-	if result != nil {
-		if result.CommitSource != "" {
-			commitSource = result.CommitSource
-		}
-	}
-
-	log := &model.RequestLog{
-		RequestID:                     session.RequestID,
-		APIType:                       info.APIType,
-		Model:                         info.Model,
-		ClientIP:                      info.ClientIP,
-		UserID:                        info.UserID,
-		SemanticsVersion:              assessment.SemanticsVersion,
-		ClientTransportStatusCode:     ptr(assessment.ClientTransportStatusCode),
-		CompletionState:               ptr(assessment.CompletionState),
-		ServiceOutcome:                ptr(assessment.ServiceOutcome),
-		TerminationActor:              assessment.TerminationActor,
-		TerminationReason:             assessment.TerminationReason,
-		ClientAction:                  ptr(assessment.ClientAction),
-		SessionEvidenceJSON:           assessment.SessionEvidenceJSON,
-		LatencyMs:                     latency.Milliseconds(),
-		IsWebSocket:                   true,
-		IsSticky:                      session.IsSticky,
-		RetryCount:                    session.RetryCount(),
-		SessionCommitted:              &sessionCommitted,
-		ClientVisible:                 &clientVisible,
-		CommitSource:                  &commitSource,
-		CreatedAt:                     time.Now(),
-		RequestPath:                   info.Path,
-		RequestMethod:                 info.Method,
-		UserAgent:                     info.UserAgent,
-		RequestIDHeader:               info.RequestID,
-		RequestedReasoningObservation: info.Reasoning,
-	}
-
-	if session.FinalProvider != nil {
-		log.ProviderID = session.FinalProvider.ID
-	}
-
-	if result != nil {
-		log.ResponseBytes = result.BytesUpstreamToClient
-		log.RequestBytes = result.BytesClientToUpstream
-	}
-
-	if result != nil && result.TokenUsage != nil {
-		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
-			log.ReasoningTokens, log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), logInsertTimeout)
-	defer cancel()
-
-	if insertErr := h.store.InsertLog(ctx, log); insertErr != nil { // coverage-ignore // store error path only reachable with a failing database
-		h.logger.Error("failed to insert websocket request log", zap.Error(insertErr))
-		return
-	}
-	if len(attempts) > 0 {
-		if insertErr := h.store.InsertAttempts(ctx, attempts); insertErr != nil { // coverage-ignore -- attempt insert errors are logged but don't affect response
-			h.logger.Error("failed to insert websocket request attempts", zap.Error(insertErr))
-		}
-	}
-}
-
-func applyWebSocketSessionHealthOutcomes(ctx context.Context, h *Gateway, session *WebSocketSessionResult) {
-	if session == nil {
-		return
-	}
-	finalProviderSawSemanticOutcome := false
-	for _, attempt := range session.Attempts {
-		if attempt.Provider == nil {
-			continue
-		}
-		if session.FinalProvider != nil &&
-			attempt.Provider.ID == session.FinalProvider.ID &&
-			attempt.Result != nil &&
-			(attempt.Result.UpstreamError != nil || attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError) {
-			finalProviderSawSemanticOutcome = true
-		}
-		applyWebSocketHealthOutcome(ctx, h, attempt.Provider, attempt.Result)
-	}
-	if session.FinalProvider == nil || session.FinalResult == nil || finalProviderSawSemanticOutcome {
-		return
-	}
-	if session.FinalResult.UpstreamError != nil || session.FinalResult.TerminalCause == model.TerminalUpstreamSemanticError {
-		applyWebSocketHealthOutcome(ctx, h, session.FinalProvider, session.FinalResult)
-	}
-}
-
-func applyWebSocketHealthOutcome(
-	ctx context.Context,
-	h *Gateway,
-	provider *model.Provider,
-	result *WebSocketResult,
-) {
-	if provider == nil || result == nil {
-		return
-	}
-	healthAssessment := assessWebSocketHealth(provider, result)
-	if healthAssessment.markFailure {
-		h.markFailure(ctx, provider.ID, result.Err)
-	}
-	if healthAssessment.suspendUntil != nil {
-		h.suspendProviderUntil(
-			ctx,
-			provider.ID,
-			*healthAssessment.suspendUntil,
-			healthAssessment.suspendReason,
-		)
-		return
-	}
-	if healthAssessment.markSuccess {
-		h.markSuccess(ctx, provider.ID)
 	}
 }
 

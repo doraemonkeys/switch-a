@@ -138,6 +138,13 @@ export type {
   // Config export/import types
   ExportedAPIType,
   ExportedProvider,
+  ExportedCredentialAuthState,
+  ExportedCredentialSession,
+  ExportedCredentialSubject,
+  ExportedCredentialUsageSnapshot,
+  ExportedCredentialUsageWindow,
+  CredentialSessionKind,
+  CredentialSessionTransferMode,
   ExportedGroup,
   ExportedInternalErrorRule,
   ExportedRoutingPolicy,

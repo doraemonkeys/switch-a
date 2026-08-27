@@ -162,7 +162,7 @@ func buildWebSocketAttemptEvidence(attempt WebSocketAttemptResult) *string {
 		Message:    attempt.GatewayMessage,
 	}
 	if attempt.Result != nil {
-		return buildWebSocketEvidence(gateway, attempt.Result, attempt.terminalErr(), false, injectedCredentialForCapture(attempt.Provider, attempt.APIType))
+		return buildWebSocketEvidence(gateway, attempt.Result, attempt.terminalErr(), false, attempt.injectedCredential)
 	}
 	// Synthesize a minimal WebSocketResult so the evidence builder has a
 	// canonical observation carrier. FailurePeer=upstream reflects that a nil
@@ -178,7 +178,7 @@ func buildWebSocketAttemptEvidence(attempt WebSocketAttemptResult) *string {
 		},
 		attempt.terminalErr(),
 		false,
-		injectedCredentialForCapture(attempt.Provider, attempt.APIType),
+		attempt.injectedCredential,
 	)
 }
 

@@ -6,89 +6,6 @@ import (
 	"testing"
 )
 
-func TestCopyHeaders(t *testing.T) {
-	tests := []struct {
-		name        string
-		srcHeaders  map[string]string
-		wantHeaders map[string]string
-		skipHeaders map[string]bool
-	}{
-		{
-			name: "copies normal headers",
-			srcHeaders: map[string]string{
-				"Content-Type": "application/json",
-				"Accept":       "text/html",
-				"X-Custom":     "value",
-			},
-			wantHeaders: map[string]string{
-				"Content-Type": "application/json",
-				"Accept":       "text/html",
-				"X-Custom":     "value",
-			},
-		},
-		{
-			name: "skips hop-by-hop headers",
-			srcHeaders: map[string]string{
-				"Content-Type":      "application/json",
-				"Connection":        "keep-alive",
-				"Keep-Alive":        "timeout=5",
-				"Transfer-Encoding": "chunked",
-				"Upgrade":           "websocket",
-			},
-			wantHeaders: map[string]string{
-				"Content-Type": "application/json",
-			},
-			skipHeaders: map[string]bool{
-				"Connection":        true,
-				"Keep-Alive":        true,
-				"Transfer-Encoding": true,
-				"Upgrade":           true,
-			},
-		},
-		{
-			name: "skips auth headers",
-			srcHeaders: map[string]string{
-				"Content-Type":  "application/json",
-				"Authorization": "Bearer token",
-				"X-Api-Key":     "key123",
-			},
-			wantHeaders: map[string]string{
-				"Content-Type": "application/json",
-			},
-			skipHeaders: map[string]bool{
-				"Authorization": true,
-				"X-Api-Key":     true,
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			src := make(http.Header)
-			for k, v := range tt.srcHeaders {
-				src.Set(k, v)
-			}
-
-			dst := make(http.Header)
-			CopyHeaders(dst, src)
-
-			// Check expected headers are present
-			for k, v := range tt.wantHeaders {
-				if got := dst.Get(k); got != v {
-					t.Errorf("header %q = %q, want %q", k, got, v)
-				}
-			}
-
-			// Check skipped headers are absent
-			for k := range tt.skipHeaders {
-				if got := dst.Get(k); got != "" {
-					t.Errorf("header %q should be skipped, got %q", k, got)
-				}
-			}
-		})
-	}
-}
-
 func TestEnsureExplicitUserAgentHeader(t *testing.T) {
 	t.Run("suppresses default user agent when absent", func(t *testing.T) {
 		headers := make(http.Header)
@@ -109,32 +26,6 @@ func TestEnsureExplicitUserAgentHeader(t *testing.T) {
 			t.Fatalf("User-Agent = %q, want %q", got, "switch-a-test/1.0")
 		}
 	})
-}
-
-func TestIsAuthHeader(t *testing.T) {
-	tests := []struct {
-		header string
-		want   bool
-	}{
-		{"Authorization", true},
-		{"authorization", true},
-		{"AUTHORIZATION", true},
-		{"X-Api-Key", true},
-		{"x-api-key", true},
-		{"X-API-KEY", true},
-		{"Content-Type", false},
-		{"X-Custom", false},
-		{"Auth", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.header, func(t *testing.T) {
-			got := isAuthHeader(tt.header)
-			if got != tt.want {
-				t.Errorf("isAuthHeader(%q) = %v, want %v", tt.header, got, tt.want)
-			}
-		})
-	}
 }
 
 func TestDetectAuthMode(t *testing.T) {

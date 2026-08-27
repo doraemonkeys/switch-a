@@ -118,6 +118,7 @@ type webSocketPreWriteAction uint8
 const (
 	webSocketPreWriteActionForward webSocketPreWriteAction = iota
 	webSocketPreWriteActionSuppress
+	webSocketPreWriteActionReject
 )
 
 type webSocketPreWriteDecision struct {
@@ -125,6 +126,9 @@ type webSocketPreWriteDecision struct {
 	SuppressedUpstreamError *WebSocketUpstreamError
 	SuppressedMessageType   websocket.MessageType
 	SuppressedMessageData   []byte
+	Err                     error
+	RejectionDisposition    requestcapture.MessageDisposition
+	OnWriteConfirmed        func() error
 }
 
 type webSocketVisibleWriteContext struct {
@@ -299,16 +303,13 @@ type webSocketRelayOptions struct {
 	Observer                 WebSocketMessageObserver
 	OnFirstUpstreamMessage   func(WebSocketObservation)
 	PreWriteToClient         func(webSocketPreWriteContext) webSocketPreWriteDecision
+	PreWriteToUpstream       func(webSocketPreWriteContext) webSocketPreWriteDecision
 	OnClientVisible          func(webSocketVisibleWriteContext)
 	InitialClientReadCh      <-chan webSocketInitialReadResult
 	PreVisibleReplayBuffer   *preVisibleClientMessageBuffer
 	Lifecycle                *webSocketLifecycleState
 	PreserveClientOnSuppress bool
 	SkipPreVisibleWindow     bool
-	// SkipClientToUpstream is used for post-visible failover handoff when the
-	// downstream connection must remain open for upstream-driven continuity but
-	// the old relay must not poison the client socket by canceling a blocked read.
-	SkipClientToUpstream bool
 	// PreserveClientOnPreVisibleFailure keeps the downstream socket open when a
 	// fallback attempt dies before any upstream bytes become client-visible, so
 	// the orchestrator can keep switching providers or surface the suppressed

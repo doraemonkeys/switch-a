@@ -12,6 +12,8 @@ import {
   COMMON_VENDORS,
   ERROR_CODES,
   CONFIG_KEYS,
+  CODEX_FEATURE_KEYS,
+  CODEX_FEATURES,
   DEFAULTS,
   DEFAULT_PROVIDER_MAX_RETRIES,
   ADD_PROVIDER_DEFAULTS,
@@ -212,7 +214,43 @@ describe("CONFIG_KEYS", () => {
   });
 
   it("should have exactly 17 config keys", () => {
-    expect(Object.keys(CONFIG_KEYS)).toHaveLength(17);
+    expect(Object.keys(CONFIG_KEYS)).toHaveLength(21);
+  });
+});
+
+describe("Codex feature registry projection", () => {
+  it("matches the backend key contract in rollout order", () => {
+    expect(CODEX_FEATURE_KEYS).toEqual([
+      "codex_upstream_header_hygiene_enabled",
+      "codex_websocket_subprotocol_enabled",
+      "codex_continuity_enabled",
+      "codex_provider_cookie_jar_enabled",
+    ]);
+    expect(CODEX_FEATURES.map((feature) => feature.key)).toEqual(
+      CODEX_FEATURE_KEYS,
+    );
+  });
+
+  it("defaults every feature off and keeps Cookie independent of continuity", () => {
+    expect(CODEX_FEATURES.every((feature) => !feature.defaultValue)).toBe(true);
+    expect(DEFAULTS.CODEX_UPSTREAM_HEADER_HYGIENE).toBe(false);
+    expect(DEFAULTS.CODEX_WEBSOCKET_SUBPROTOCOL).toBe(false);
+    expect(DEFAULTS.CODEX_CONTINUITY).toBe(false);
+    expect(DEFAULTS.CODEX_PROVIDER_COOKIE_JAR).toBe(false);
+
+    const continuity = CODEX_FEATURES.find(
+      (feature) => feature.key === CONFIG_KEYS.CODEX_CONTINUITY,
+    );
+    const cookie = CODEX_FEATURES.find(
+      (feature) => feature.key === CONFIG_KEYS.CODEX_PROVIDER_COOKIE_JAR,
+    );
+    expect(continuity?.requires).toEqual([
+      CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE,
+    ]);
+    expect(cookie?.requires).toEqual([
+      CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE,
+    ]);
+    expect(cookie?.requires).not.toContain(CONFIG_KEYS.CODEX_CONTINUITY);
   });
 });
 

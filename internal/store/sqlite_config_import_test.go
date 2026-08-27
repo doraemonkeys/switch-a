@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -13,15 +14,14 @@ func TestApplyConfigImport_RollsBackEarlierWritesOnProviderRoutingPolicyConflict
 	ctx := context.Background()
 
 	targetProviderID := "p-exact"
-	if err := store.CreateProvider(ctx, &model.Provider{
+	if err := store.CreateProvider(ctx, credentialBackedTestProvider(t, store, &model.Provider{
 		ID:      targetProviderID,
 		Name:    "Exact Provider",
-		APIKey:  "key-exact",
 		Enabled: true,
 		APITypes: []model.ProviderAPIType{
 			{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
 		},
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
@@ -48,11 +48,13 @@ func TestApplyConfigImport_RollsBackEarlierWritesOnProviderRoutingPolicyConflict
 			{
 				ID:      targetProviderID,
 				Name:    "Exact Provider",
-				APIKey:  "key-exact",
 				Enabled: true,
 				APITypes: []model.ProviderAPIType{
 					{ProviderID: targetProviderID, APIType: "claude", BaseURL: "https://claude.example"},
 				},
+				CredentialSessions: []credentialsession.RouteSnapshot{{
+					RouteTargetID: targetProviderID, APIType: "claude", Credential: credentialsession.Snapshot{SessionID: targetProviderID + "-codex-session"},
+				}},
 			},
 		},
 	})
@@ -87,16 +89,15 @@ func TestApplyConfigImport_NaturalKeyRoutingPolicyUpdateClearsExactProviderTarge
 	}
 
 	targetProviderID := "p-target"
-	if err := store.CreateProvider(ctx, &model.Provider{
+	if err := store.CreateProvider(ctx, credentialBackedTestProvider(t, store, &model.Provider{
 		ID:      targetProviderID,
 		Name:    "Target Provider",
-		APIKey:  "key-target",
 		Vendor:  "openai",
 		Enabled: true,
 		APITypes: []model.ProviderAPIType{
 			{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
 		},
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 
@@ -166,15 +167,14 @@ func TestApplyConfigImport_UpsertsGroupsProvidersPoliciesAndSettings(t *testing.
 	}
 
 	targetProviderID := "p-existing"
-	if err := store.CreateProvider(ctx, &model.Provider{
+	if err := store.CreateProvider(ctx, credentialBackedTestProvider(t, store, &model.Provider{
 		ID:      targetProviderID,
 		Name:    "Existing Provider",
-		APIKey:  "key-existing",
 		Enabled: true,
 		APITypes: []model.ProviderAPIType{
 			{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://old.example"},
 		},
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 
@@ -202,7 +202,10 @@ func TestApplyConfigImport_UpsertsGroupsProvidersPoliciesAndSettings(t *testing.
 		t.Fatalf("SetConfigs() error = %v", err)
 	}
 
+	pNewSession := testStaticCredentialSession("p-new-claude-session", "vendor-b", "key-new")
+	updatedSession := testStaticCredentialSession("p-existing-updated-session", "vendor-a", "key-updated")
 	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
+		CredentialSessions: []credentialsession.Session{pNewSession, updatedSession},
 		Groups: []model.Group{
 			{
 				ID:       existingGroup.ID,
@@ -223,21 +226,26 @@ func TestApplyConfigImport_UpsertsGroupsProvidersPoliciesAndSettings(t *testing.
 			{
 				ID:      targetProviderID,
 				Name:    "Updated Provider",
-				APIKey:  "key-updated",
 				Enabled: true,
 				Vendor:  "vendor-a",
 				APITypes: []model.ProviderAPIType{
 					{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://updated.example"},
 				},
+				CredentialSessions: []credentialsession.RouteSnapshot{{
+					RouteTargetID: targetProviderID, APIType: "codex", Credential: credentialsession.Snapshot{SessionID: updatedSession.ID},
+				}},
 			},
 			{
 				ID:      "p-new",
 				Name:    "New Provider",
-				APIKey:  "key-new",
+				Vendor:  "vendor-b",
 				Enabled: true,
 				APITypes: []model.ProviderAPIType{
 					{ProviderID: "p-new", APIType: "claude", BaseURL: "https://new.example"},
 				},
+				CredentialSessions: []credentialsession.RouteSnapshot{{
+					RouteTargetID: "p-new", APIType: "claude", Credential: credentialsession.Snapshot{SessionID: pNewSession.ID},
+				}},
 			},
 		},
 		RoutingPolicyMode: ConfigImportRoutingPolicyModeReplace,
@@ -358,15 +366,14 @@ func TestApplyConfigImport_RoutingPolicyModeControlsEmptySliceSemantics(t *testi
 		}
 
 		targetProviderID := "p-existing"
-		if err := store.CreateProvider(ctx, &model.Provider{
+		if err := store.CreateProvider(ctx, credentialBackedTestProvider(t, store, &model.Provider{
 			ID:      targetProviderID,
 			Name:    "Existing Provider",
-			APIKey:  "key-existing",
 			Enabled: true,
 			APITypes: []model.ProviderAPIType{
 				{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
 			},
-		}); err != nil {
+		})); err != nil {
 			t.Fatalf("CreateProvider() error = %v", err)
 		}
 
@@ -442,15 +449,14 @@ func TestApplyConfigImport_RoutingPolicyModeControlsEmptySliceSemantics(t *testi
 		}
 
 		targetProviderID := "p-existing"
-		if err := store.CreateProvider(ctx, &model.Provider{
+		if err := store.CreateProvider(ctx, credentialBackedTestProvider(t, store, &model.Provider{
 			ID:      targetProviderID,
 			Name:    "Existing Provider",
-			APIKey:  "key-existing",
 			Enabled: true,
 			APITypes: []model.ProviderAPIType{
 				{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
 			},
-		}); err != nil {
+		})); err != nil {
 			t.Fatalf("CreateProvider() error = %v", err)
 		}
 
@@ -496,15 +502,14 @@ func TestApplyConfigImport_RollsBackEarlierWritesOnPreservedRoutingPolicyConflic
 	ctx := context.Background()
 
 	targetProviderID := "p-exact"
-	if err := store.CreateProvider(ctx, &model.Provider{
+	if err := store.CreateProvider(ctx, credentialBackedTestProvider(t, store, &model.Provider{
 		ID:      targetProviderID,
 		Name:    "Exact Provider",
-		APIKey:  "key-exact",
 		Enabled: true,
 		APITypes: []model.ProviderAPIType{
 			{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
 		},
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
@@ -525,11 +530,13 @@ func TestApplyConfigImport_RollsBackEarlierWritesOnPreservedRoutingPolicyConflic
 			{
 				ID:      targetProviderID,
 				Name:    "Exact Provider",
-				APIKey:  "key-exact",
 				Enabled: true,
 				APITypes: []model.ProviderAPIType{
 					{ProviderID: targetProviderID, APIType: "claude", BaseURL: "https://claude.example"},
 				},
+				CredentialSessions: []credentialsession.RouteSnapshot{{
+					RouteTargetID: targetProviderID, APIType: "claude", Credential: credentialsession.Snapshot{SessionID: targetProviderID + "-codex-session"},
+				}},
 			},
 		},
 	})
@@ -566,15 +573,14 @@ func TestApplyConfigImport_ReplaceModeDeletesConflictingPoliciesBeforeProviderUp
 	ctx := context.Background()
 
 	targetProviderID := "p-exact"
-	if err := store.CreateProvider(ctx, &model.Provider{
+	if err := store.CreateProvider(ctx, credentialBackedTestProvider(t, store, &model.Provider{
 		ID:      targetProviderID,
 		Name:    "Exact Provider",
-		APIKey:  "key-exact",
 		Enabled: true,
 		APITypes: []model.ProviderAPIType{
 			{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"},
 		},
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 	if err := store.CreateRoutingPolicy(ctx, &model.RoutingPolicy{
@@ -595,11 +601,13 @@ func TestApplyConfigImport_ReplaceModeDeletesConflictingPoliciesBeforeProviderUp
 			{
 				ID:      targetProviderID,
 				Name:    "Exact Provider",
-				APIKey:  "key-exact",
 				Enabled: true,
 				APITypes: []model.ProviderAPIType{
 					{ProviderID: targetProviderID, APIType: "claude", BaseURL: "https://claude.example"},
 				},
+				CredentialSessions: []credentialsession.RouteSnapshot{{
+					RouteTargetID: targetProviderID, APIType: "claude", Credential: credentialsession.Snapshot{SessionID: targetProviderID + "-codex-session"},
+				}},
 			},
 		},
 	})

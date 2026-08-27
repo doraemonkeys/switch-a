@@ -4,6 +4,9 @@ package model
 import (
 	"strings"
 	"time"
+
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 )
 
 // Scope defines the failover scope for vendor isolation.
@@ -59,16 +62,11 @@ func IsValidStickyMode(m StickyMode) bool {
 type Provider struct {
 	ID       string            `gorm:"primaryKey" json:"id"`
 	Name     string            `gorm:"not null" json:"name"`
-	APIKey   string            `gorm:"not null" json:"api_key"`
 	APITypes []ProviderAPIType `gorm:"foreignKey:ProviderID" json:"api_types"`
 	AuthMode string            `gorm:"default:auto" json:"auth_mode"`
-	// CredentialType defines how this provider authenticates upstream requests.
-	// Static API key providers continue using APIKey/API type overrides, while
-	// login-backed providers resolve credentials from the split provider_credentials table.
-	CredentialType ProviderCredentialType `gorm:"type:text;default:api_key" json:"credential_type"`
-	// UsageLimitPolicy stores only an explicit override. Empty values inherit the
-	// credential-derived default so credential_type changes can update effective
-	// quota behavior without rewriting persisted state.
+	// UsageLimitPolicy stores only an explicit route-target override. Empty values
+	// use the target-independent switch-provider default; a target can reference
+	// different credential kinds for different API types.
 	UsageLimitPolicy ProviderUsageLimitPolicy `gorm:"type:text;default:''" json:"usage_limit_policy"`
 	GroupID          *string                  `gorm:"index" json:"group_id"`
 	Group            *Group                   `gorm:"foreignKey:GroupID" json:"-"`
@@ -91,12 +89,9 @@ type Provider struct {
 	Enabled        bool      `gorm:"default:true;index" json:"enabled"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
-	// Credential persists refresh-capable secret material outside the provider row
-	// so auth-state updates no longer need to rewrite the entire provider record.
-	Credential *ProviderCredential `gorm:"foreignKey:ProviderID" json:"-"`
-	// AuthState captures lifecycle and summary fields separately from Health so
-	// reauthentication does not pollute temporary availability semantics.
-	AuthState *ProviderAuthState `gorm:"foreignKey:ProviderID" json:"-"`
+	// CredentialSessions is an immutable, request-ready projection loaded from the
+	// explicit RouteTarget/APIType -> CredentialSession references.
+	CredentialSessions []credentialsession.RouteSnapshot `gorm:"-" json:"-"`
 	// Health is populated by admin API handlers, not stored in database.
 	Health *HealthState `gorm:"-" json:"health,omitempty"`
 }
@@ -111,16 +106,41 @@ func (p *Provider) BaseURLForAPIType(apiType string) string {
 	return ""
 }
 
-// APIKeyForAPIType returns the effective API key for the given API type.
-// API-type credentials take precedence because routing first selects api_type,
-// then resolves the endpoint/auth pair for that concrete upstream contract.
-func (p *Provider) APIKeyForAPIType(apiType string) string {
-	if at, ok := p.APITypeConfig(apiType); ok {
-		if apiKey := NormalizeAPIKey(at.APIKey); apiKey != "" {
-			return apiKey
+// CredentialSessionForAPIType returns the already-preloaded snapshot for one
+// routing capability. It never performs storage IO, which keeps selector and
+// identity decisions internally consistent for the lifetime of the candidate.
+func (p *Provider) CredentialSessionForAPIType(apiType string) (*credentialsession.Snapshot, bool) {
+	if p == nil {
+		return nil, false
+	}
+	for index := range p.CredentialSessions {
+		if p.CredentialSessions[index].APIType == apiType {
+			return &p.CredentialSessions[index].Credential, true
 		}
 	}
-	return NormalizeAPIKey(p.APIKey)
+	return nil, false
+}
+
+// CredentialSessionIDs returns a stable unique set suitable for session-keyed
+// mutation coordination when a route-target write changes multiple API types.
+func (p *Provider) CredentialSessionIDs() []string {
+	if p == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(p.CredentialSessions))
+	ids := make([]string, 0, len(p.CredentialSessions))
+	for _, route := range p.CredentialSessions {
+		id := strings.TrimSpace(route.Credential.SessionID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // APITypeConfig returns the configured API-type entry for the given API type.
@@ -134,13 +154,12 @@ func (p *Provider) APITypeConfig(apiType string) (ProviderAPIType, bool) {
 }
 
 // ProviderAPIType represents the association between Provider and API types.
-// Each entry carries its own endpoint contract. Most providers inherit the
-// provider-level API key, but api_type may override it for split credentials.
+// Credentials are intentionally absent: the explicit route_target_credentials
+// relation owns the API-type-to-session mapping.
 type ProviderAPIType struct {
 	ProviderID string `gorm:"primaryKey" json:"provider_id"`
 	APIType    string `gorm:"primaryKey;index" json:"api_type"`
 	BaseURL    string `gorm:"not null;default:''" json:"base_url"`
-	APIKey     string `gorm:"not null;default:''" json:"api_key"`
 }
 
 // NormalizeAPIKey trims surrounding whitespace so blank paste artifacts do not
@@ -512,11 +531,20 @@ type StickyEntry struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
-	ClientIP   string
-	User       string
-	APIType    string
-	Model      string
-	StickyMode StickyMode // Sticky session mode pre-loaded from runtime config
+	// OperationID is the server-generated request UUID used only to correlate
+	// selection decisions. It must never contain a client-provided request header.
+	OperationID string
+	ClientIP    string
+	User        string
+	APIType     string
+	Model       string
+	StickyMode  StickyMode // Sticky session mode pre-loaded from runtime config
+	// RequiredAuthority is a security boundary established by verified Codex
+	// state ownership. Route-target affinity must never widen this constraint.
+	RequiredAuthority *codexidentity.UpstreamAuthority
+	// PreferredRouteTargetID is only a route hint inside RequiredAuthority. A
+	// missing or ineligible target falls back within that authority.
+	PreferredRouteTargetID string
 	// SwitchMode keeps replacement and failover explicit so selector isolation only
 	// runs when the request has actually left visible continuity.
 	SwitchMode SwitchMode

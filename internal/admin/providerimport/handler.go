@@ -2,6 +2,7 @@ package providerimport
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,12 +12,16 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/store"
+	"github.com/google/uuid"
 
 	"go.uber.org/zap"
 )
+
+var errProviderImportCatalogUnavailable = errors.New("provider import catalog unavailable")
 
 // PreviewProviderImport handles POST /admin/api/provider-imports. Preview is a
 // local parse-and-stage operation: it intentionally performs no token refresh or
@@ -148,7 +153,6 @@ func buildProviderImportPreviewResponse(
 	preview *providerauth.ChatGPTProviderImportPreview,
 	providers []model.Provider,
 ) (ProviderImportPreviewResponse, []providerauth.ChatGPTProviderImportCandidateDisposition) {
-	bindings := indexProviderImportBindings(providers)
 	providerIDs := newProviderImportIDAllocator(providers, len(preview.Items))
 
 	items := make([]ProviderImportPreviewItem, 0, len(preview.Items))
@@ -183,23 +187,10 @@ func buildProviderImportPreviewResponse(
 		}
 
 		if source.State == providerauth.ChatGPTProviderImportCandidateStateReady {
-			if binding, ok := bindingForPreviewItem(bindings, source.Auth); ok {
-				item.Status = providerauth.ChatGPTProviderImportCandidateStateExisting
-				disposition.State = providerauth.ChatGPTProviderImportCandidateStateExisting
-				disposition.ExpectedProviderID = binding.provider.ID
-				disposition.ExpectedCredentialVersion = binding.version
-				disposition.ExpectedCredentialCreatedAt = binding.provider.Credential.CreatedAt
-				item.ProviderID = binding.provider.ID
-				item.Name = boundedProviderImportText(binding.provider.Name, maxProviderImportNameCharacters)
-				item.Priority = binding.provider.Priority
-				item.Concurrency = binding.provider.Concurrency
-				item.ExistingProviderID = binding.provider.ID
-				item.ExistingProviderName = item.Name
-				item.Message = fmt.Sprintf("This account is already connected to provider %q; updating replaces credentials without changing its settings.", binding.provider.Name)
-			} else {
-				item.ProviderID = providerIDs.allocate(item.Name, source.Auth)
-				item.DefaultSelected = true
-			}
+			// Account subjects are intentionally not indexed here. Two logins for the
+			// same upstream account remain independent rotation/failure domains.
+			item.ProviderID = providerIDs.allocate(item.Name, source.Auth)
+			item.DefaultSelected = true
 		} else {
 			// Blocked rows still get a stable display ID, but do not reserve it
 			// from actionable rows that may share the same source name.
@@ -228,17 +219,26 @@ func buildProviderImportPreviewResponse(
 }
 
 func (h *Handler) buildProviderImportBundle(
+	ctx context.Context,
 	req ProviderImportCommitRequest,
 	candidates map[string]providerauth.ChatGPTProviderImportCandidate,
 ) (*store.ProviderImportBundle, map[string]ProviderImportCommitResultItem, error) {
 	bundle := &store.ProviderImportBundle{}
 	results := make(map[string]ProviderImportCommitResultItem, len(req.Items))
 	groupID := normalizedProviderImportGroupID(req.GroupID)
+	providers, err := h.store.ListProviders(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: load provider sessions for import commit: %w", errProviderImportCatalogUnavailable, err)
+	}
+	providersByID := make(map[string]model.Provider, len(providers))
+	for index := range providers {
+		providersByID[providers[index].ID] = providers[index]
+	}
 
 	for i := range req.Items {
 		selection := req.Items[i]
 		candidate := candidates[selection.CandidateID]
-		if candidate.State != providerauth.ChatGPTProviderImportCandidateStateReady || candidate.Credential == nil || candidate.AuthState == nil {
+		if candidate.State != providerauth.ChatGPTProviderImportCandidateStateReady {
 			return nil, nil, fmt.Errorf("candidate %q is not importable", selection.CandidateID)
 		}
 		if candidate.Disposition == nil {
@@ -246,80 +246,148 @@ func (h *Handler) buildProviderImportBundle(
 		}
 		disposition := *candidate.Disposition
 
-		switch selection.Action {
-		case providerImportActionCreate:
-			if disposition.State != providerauth.ChatGPTProviderImportCandidateStateReady {
-				return nil, nil, &store.ProviderImportConflictError{Conflicts: []store.ProviderImportConflict{{
-					CandidateID:           selection.CandidateID,
-					Kind:                  store.ProviderImportConflictAccountAlreadyBound,
-					ProviderID:            selection.ProviderID,
-					ConflictingProviderID: disposition.ExpectedProviderID,
-				}}}
-			}
-			provider := model.Provider{
-				ID:             selection.ProviderID,
-				Name:           strings.TrimSpace(selection.Name),
-				CredentialType: model.ProviderCredentialTypeChatGPT,
-				GroupID:        groupID,
-				Weight:         *selection.Weight,
-				Priority:       selection.Priority,
-				Concurrency:    selection.Concurrency,
-				MaxRetries:     *selection.MaxRetries,
-				Backoff:        *selection.Backoff,
-				FailoverScope:  model.ScopeAny,
-				AcceptFailover: model.ScopeAny,
-				Enabled:        true,
-			}
-			if err := providerauth.ApplyChatGPTProviderImportCandidate(&provider, candidate); err != nil {
-				return nil, nil, err
-			}
-			bundle.Creates = append(bundle.Creates, store.ProviderImportCreate{
-				CandidateID: selection.CandidateID,
-				Provider:    provider,
-			})
-			results[selection.CandidateID] = ProviderImportCommitResultItem{
-				CandidateID: selection.CandidateID,
-				Outcome:     providerImportOutcomeCreated,
-				ProviderID:  provider.ID,
-				Name:        provider.Name,
-			}
-
-		case providerImportActionUpdate:
-			if disposition.State != providerauth.ChatGPTProviderImportCandidateStateExisting {
-				return nil, nil, &store.ProviderImportConflictError{Conflicts: []store.ProviderImportConflict{{
-					CandidateID: selection.CandidateID,
-					Kind:        store.ProviderImportConflictAccountBindingMismatch,
-					ProviderID:  selection.ProviderID,
-				}}}
-			}
-			if selection.ProviderID != disposition.ExpectedProviderID {
-				return nil, nil, &store.ProviderImportConflictError{Conflicts: []store.ProviderImportConflict{{
-					CandidateID:           selection.CandidateID,
-					Kind:                  store.ProviderImportConflictAccountBindingMismatch,
-					ProviderID:            selection.ProviderID,
-					ConflictingProviderID: disposition.ExpectedProviderID,
-				}}}
-			}
-			credentialTarget := model.Provider{ID: disposition.ExpectedProviderID}
-			if err := providerauth.ApplyChatGPTProviderImportCandidate(&credentialTarget, candidate); err != nil {
-				return nil, nil, err
-			}
-			bundle.CredentialUpdates = append(bundle.CredentialUpdates, store.ProviderImportCredentialUpdate{
-				CandidateID:                 selection.CandidateID,
-				ProviderID:                  disposition.ExpectedProviderID,
-				ExpectedCredentialVersion:   disposition.ExpectedCredentialVersion,
-				ExpectedCredentialCreatedAt: disposition.ExpectedCredentialCreatedAt,
-				Credential:                  *credentialTarget.Credential,
-				AuthState:                   *credentialTarget.AuthState,
-			})
-			results[selection.CandidateID] = ProviderImportCommitResultItem{
-				CandidateID: selection.CandidateID,
-				Outcome:     providerImportOutcomeUpdated,
-				ProviderID:  disposition.ExpectedProviderID,
-			}
+		if err := appendProviderImportSelection(bundle, results, groupID, providersByID, selection, candidate, disposition); err != nil {
+			return nil, nil, err
 		}
 	}
 	return bundle, results, nil
+}
+
+func appendProviderImportSelection(
+	bundle *store.ProviderImportBundle,
+	results map[string]ProviderImportCommitResultItem,
+	groupID *string,
+	providersByID map[string]model.Provider,
+	selection ProviderImportCommitItem,
+	candidate providerauth.ChatGPTProviderImportCandidate,
+	disposition providerauth.ChatGPTProviderImportCandidateDisposition,
+) error {
+	switch selection.Action {
+	case providerImportActionCreate:
+		created, result, err := buildProviderImportCreate(selection, candidate, groupID)
+		if err != nil {
+			return err
+		}
+		bundle.Creates = append(bundle.Creates, created)
+		results[selection.CandidateID] = result
+	case providerImportActionUpdate:
+		updated, result, err := buildProviderImportUpdate(selection, candidate, disposition, providersByID)
+		if err != nil {
+			return err
+		}
+		bundle.CredentialUpdates = append(bundle.CredentialUpdates, updated)
+		results[selection.CandidateID] = result
+	}
+	return nil
+}
+
+func buildProviderImportCreate(
+	selection ProviderImportCommitItem,
+	candidate providerauth.ChatGPTProviderImportCandidate,
+	groupID *string,
+) (store.ProviderImportCreate, ProviderImportCommitResultItem, error) {
+	provider := model.Provider{
+		ID:       selection.ProviderID,
+		Name:     strings.TrimSpace(selection.Name),
+		AuthMode: "bearer",
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: selection.ProviderID,
+			APIType:    "codex",
+			BaseURL:    providerauth.ChatGPTCodexBaseURL(),
+		}},
+		GroupID:        groupID,
+		Weight:         *selection.Weight,
+		Priority:       selection.Priority,
+		Concurrency:    selection.Concurrency,
+		MaxRetries:     *selection.MaxRetries,
+		Backoff:        *selection.Backoff,
+		FailoverScope:  model.ScopeAny,
+		AcceptFailover: model.ScopeAny,
+		Enabled:        true,
+	}
+	session, err := importedChatGPTSession(candidate, uuid.NewString())
+	if err != nil {
+		return store.ProviderImportCreate{}, ProviderImportCommitResultItem{}, err
+	}
+	provider.Vendor = session.Vendor
+	snapshot, err := session.Snapshot()
+	if err != nil {
+		return store.ProviderImportCreate{}, ProviderImportCommitResultItem{}, err
+	}
+	provider.CredentialSessions = []credentialsession.RouteSnapshot{{
+		RouteTargetID: provider.ID,
+		APIType:       "codex",
+		Credential:    snapshot,
+	}}
+	return store.ProviderImportCreate{
+		CandidateID: selection.CandidateID,
+		Provider:    provider,
+		Sessions:    []credentialsession.Session{session},
+	}, ProviderImportCommitResultItem{
+		CandidateID: selection.CandidateID,
+		Outcome:     providerImportOutcomeCreated,
+		ProviderID:  provider.ID,
+		Name:        provider.Name,
+	}, nil
+}
+
+func buildProviderImportUpdate(
+	selection ProviderImportCommitItem,
+	candidate providerauth.ChatGPTProviderImportCandidate,
+	disposition providerauth.ChatGPTProviderImportCandidateDisposition,
+	providersByID map[string]model.Provider,
+) (store.ProviderImportCredentialUpdate, ProviderImportCommitResultItem, error) {
+	if disposition.State != providerauth.ChatGPTProviderImportCandidateStateExisting {
+		return store.ProviderImportCredentialUpdate{}, ProviderImportCommitResultItem{}, providerImportConflict(selection, store.ProviderImportConflictSessionNotFound)
+	}
+	target, exists := providersByID[selection.ProviderID]
+	if !exists {
+		return store.ProviderImportCredentialUpdate{}, ProviderImportCommitResultItem{}, providerImportConflict(selection, store.ProviderImportConflictProviderNotFound)
+	}
+	targetSession, ok := target.CredentialSessionForAPIType("codex")
+	if !ok || targetSession.Kind != credentialsession.KindChatGPT ||
+		targetSession.SessionID != disposition.ExpectedSessionID || disposition.ExpectedCredentialVersion < 1 {
+		return store.ProviderImportCredentialUpdate{}, ProviderImportCommitResultItem{}, providerImportConflict(selection, store.ProviderImportConflictSessionNotFound)
+	}
+	updated, err := importedChatGPTSession(candidate, targetSession.SessionID)
+	if err != nil {
+		return store.ProviderImportCredentialUpdate{}, ProviderImportCommitResultItem{}, err
+	}
+	updatedSubject := updated.Subject()
+	if targetSession.Subject.Kind != credentialsession.SubjectAccount || string(targetSession.Subject.Value) != string(updatedSubject.Value) {
+		return store.ProviderImportCredentialUpdate{}, ProviderImportCommitResultItem{}, fmt.Errorf("candidate %q subject does not match credential session %q", selection.CandidateID, targetSession.SessionID)
+	}
+	return store.ProviderImportCredentialUpdate{
+		CandidateID:     selection.CandidateID,
+		SessionID:       targetSession.SessionID,
+		ExpectedVersion: disposition.ExpectedCredentialVersion,
+		SecretData:      updated.SecretData,
+		Subject:         updated.Subject(),
+		AuthState:       updated.AuthState,
+	}, ProviderImportCommitResultItem{
+		CandidateID: selection.CandidateID,
+		Outcome:     providerImportOutcomeUpdated,
+		ProviderID:  selection.ProviderID,
+	}, nil
+}
+
+func providerImportConflict(selection ProviderImportCommitItem, kind store.ProviderImportConflictKind) error {
+	return &store.ProviderImportConflictError{Conflicts: []store.ProviderImportConflict{{
+		CandidateID: selection.CandidateID,
+		Kind:        kind,
+		ProviderID:  selection.ProviderID,
+	}}}
+}
+
+func importedChatGPTSession(
+	candidate providerauth.ChatGPTProviderImportCandidate,
+	sessionID string,
+) (credentialsession.Session, error) {
+	session, err := providerauth.BuildCredentialSessionFromChatGPTProviderImportCandidate(candidate, sessionID)
+	if err != nil {
+		return credentialsession.Session{}, err
+	}
+	return *session, nil
 }
 
 func buildProviderImportCommitResponse(
@@ -494,33 +562,6 @@ func normalizeProviderImportUpdateItem(item *ProviderImportCommitItem, index int
 	// Update intentionally ignores provider settings: the explicit action only
 	// rotates credentials and preserves the provider's routing configuration.
 	return nil
-}
-
-func indexProviderImportBindings(providers []model.Provider) map[string]providerImportBinding {
-	bindings := make(map[string]providerImportBinding)
-	for i := range providers {
-		provider := &providers[i]
-		if provider.Credential == nil || provider.Credential.BindingAccountID == nil {
-			continue
-		}
-		accountID := strings.TrimSpace(*provider.Credential.BindingAccountID)
-		if accountID == "" {
-			continue
-		}
-		bindings[accountID] = providerImportBinding{provider: provider, version: provider.Credential.Version}
-	}
-	return bindings
-}
-
-func bindingForPreviewItem(
-	bindings map[string]providerImportBinding,
-	auth *providerauth.ProviderAuthView,
-) (providerImportBinding, bool) {
-	if auth == nil {
-		return providerImportBinding{}, false
-	}
-	binding, ok := bindings[strings.TrimSpace(auth.AccountID)]
-	return binding, ok
 }
 
 func normalizedProviderImportGroupID(groupID *string) *string {

@@ -1,0 +1,165 @@
+{
+  "schema_version": 2,
+  "codex": {
+    "product": "Codex Desktop",
+    "version": "0.150.0-alpha.8",
+    "desktop_build": "26.820.60940",
+    "user_agent": "Codex Desktop/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)"
+  },
+  "official_source": {
+    "repository": "https://github.com/openai/codex",
+    "tag": "rust-v0.150.0-alpha.8",
+    "commit": "fcbdb57851be70192fd0c21faa9e529146e93ff1",
+    "files": [
+      "codex-rs/core/src/responses_metadata.rs",
+      "codex-rs/core/src/client.rs",
+      "codex-rs/codex-api/src/common.rs",
+      "codex-rs/codex-api/src/endpoint/responses_websocket.rs",
+      "codex-rs/codex-api/src/endpoint/responses.rs",
+      "codex-rs/codex-api/src/sse/responses.rs",
+      "codex-rs/codex-api/tests/sse_end_to_end.rs"
+    ]
+  },
+  "capture_evidence": {
+    "source": "docs/.capture/switch-a-debug-capture-websocket-ce_dW7_B0OWbe8WawQ8NM0HO4XU.ndjson",
+    "source_is_gitignored": true,
+    "record_index": 0,
+    "handshake": {
+      "status_code": 101,
+      "turn_state_header_present": false,
+      "set_cookie_header_present": true
+    }
+  },
+  "fixtures": [
+    {
+      "file": "ws-client-response-create-warmup.json",
+      "wire_format": "websocket_text",
+      "evidence_kind": "capture",
+      "direction": "client_to_upstream",
+      "event_type": "response.create",
+      "message_sequence": 1,
+      "derivation": "capture-derived minimal projection with observed values preserved",
+      "captured_frame_size": 85709,
+      "captured_frame_sha256": "9ca20a5bc18668d0734a806e3f24f6186e3d8e179034916641e5c48662f30715",
+      "fixture_sha256": "ac293b12089c34d8d0632c038472760005d09dd4a6d32e96530203fe9aefa81d"
+    },
+    {
+      "file": "ws-server-codex-response-metadata.json",
+      "wire_format": "websocket_text",
+      "evidence_kind": "capture",
+      "direction": "upstream_to_client",
+      "event_type": "codex.response.metadata",
+      "message_sequence": 3,
+      "derivation": "capture-derived minimal projection with observed values preserved",
+      "captured_frame_size": 516,
+      "captured_frame_sha256": "d8fbc1e4ce291b577b466c3a7b487b024a428947ab6e2baecfd7517073cb7bf3",
+      "fixture_sha256": "d8fbc1e4ce291b577b466c3a7b487b024a428947ab6e2baecfd7517073cb7bf3"
+    },
+    {
+      "file": "ws-client-response-create-second.json",
+      "wire_format": "websocket_text",
+      "evidence_kind": "capture",
+      "direction": "client_to_upstream",
+      "event_type": "response.create",
+      "message_sequence": 8,
+      "derivation": "capture-derived minimal projection with observed values preserved",
+      "captured_frame_size": 32844,
+      "captured_frame_sha256": "ed2b37b8cbc5c7013f5ba9417a49e5f493bfb5e4e290ea4266c81e0134051fbe",
+      "fixture_sha256": "da80a2030a519e6b403e611feafd5b70369cbe7860a2ed617f09d0149ca5773a"
+    },
+    {
+      "file": "ws-server-response-created.json",
+      "wire_format": "websocket_text",
+      "evidence_kind": "capture",
+      "direction": "upstream_to_client",
+      "event_type": "response.created",
+      "message_sequence": 4,
+      "derivation": "capture-derived minimal projection with observed values preserved",
+      "captured_frame_size": 68183,
+      "captured_frame_sha256": "61e97d2c7368d02764eca967b6db3e7c7d0132389ebea013389cfb1638b88576",
+      "fixture_sha256": "a0ddb5a4bf22a3d11845489ee54dd9ec5bf118e7e4d9051290440e4ed3d2f8d6"
+    },
+    {
+      "file": "ws-server-response-in-progress.json",
+      "wire_format": "websocket_text",
+      "evidence_kind": "capture",
+      "direction": "upstream_to_client",
+      "event_type": "response.in_progress",
+      "message_sequence": 5,
+      "derivation": "capture-derived minimal projection with observed values preserved",
+      "captured_frame_size": 68187,
+      "captured_frame_sha256": "117e1a78659dbc1306f3e2c4a5df2e954853a5abb39f9dc0bcae4505183989db",
+      "fixture_sha256": "8ebf234ccd7d507c0870a93151c702df1bec6aaccf8a728d7b3d785ec3b27d14"
+    },
+    {
+      "file": "ws-server-response-completed.json",
+      "wire_format": "websocket_text",
+      "evidence_kind": "capture",
+      "direction": "upstream_to_client",
+      "event_type": "response.completed",
+      "message_sequence": 7,
+      "derivation": "capture-derived minimal projection with observed values preserved",
+      "captured_frame_size": 68359,
+      "captured_frame_sha256": "490f2b681240abf2317b526d77165c87ca7f74e14657d54b3f020764ee36f737",
+      "fixture_sha256": "83c249cc8b0ed38c9dd03f5a87d4ef566232a4119224cb64c31c1a17bbe972c7"
+    },
+    {
+      "file": "http-sse-response-created.txt",
+      "wire_format": "sse_event",
+      "evidence_kind": "official_source",
+      "direction": "upstream_to_client",
+      "event_type": "response.created",
+      "derivation": "minimal semantic fixture from the pinned target-tag SSE parser tests",
+      "source_file": "codex-rs/codex-api/src/sse/responses.rs",
+      "source_symbol": "process_sse_ignores_response_model_field_in_payload",
+      "fixture_sha256": "536c4d30a68844b8d7fba6bd3d79dcf08774ae514c26de053352100a625d308c"
+    },
+    {
+      "file": "http-sse-response-completed.txt",
+      "wire_format": "sse_event",
+      "evidence_kind": "official_source",
+      "direction": "upstream_to_client",
+      "event_type": "response.completed",
+      "derivation": "minimal semantic fixture from the pinned target-tag end-to-end SSE contract",
+      "source_file": "codex-rs/codex-api/tests/sse_end_to_end.rs",
+      "source_symbol": "responses_stream_parses_items_and_completed_end_to_end",
+      "fixture_sha256": "209bb6a8f827fcedb5ae6324a119d96f295c9dc56c6bbccb1f3377312e6afcd8"
+    },
+    {
+      "file": "http-sse-response-metadata.txt",
+      "wire_format": "sse_event",
+      "evidence_kind": "official_source",
+      "direction": "upstream_to_client",
+      "event_type": "response.metadata",
+      "derivation": "minimal semantic fixture from the pinned target-tag response metadata contract",
+      "source_file": "codex-rs/codex-api/src/sse/responses.rs",
+      "source_symbol": "responses_stream_event_model_verification_reads_metadata_field",
+      "fixture_sha256": "e2e22510d8081aeb36bbc6585461724fcc68fd050ab3a4340cd5e5691fc6011b"
+    }
+  ],
+  "confirmed_paths": [
+    "response.create.client_metadata.session_id",
+    "response.create.client_metadata.thread_id",
+    "response.create.client_metadata[\"x-codex-window-id\"]",
+    "response.create.client_metadata[\"x-codex-turn-metadata\"]",
+    "response.create.previous_response_id",
+    "codex.response.metadata.headers[\"x-codex-turn-state\"]",
+    "response.created.response.id",
+    "response.in_progress.response.id",
+    "response.completed.response.id",
+    "http_sse.response.metadata.response_id"
+  ],
+  "confirmed_absences": [
+    "101.headers[\"x-codex-turn-state\"]",
+    "second response.create.client_metadata[\"x-codex-turn-state\"]"
+  ],
+  "unconfirmed_paths": [
+    "response.inject.response_id",
+    "response.append",
+    "http_json.response.id"
+  ],
+  "evidence_gaps": [
+    "target-version response.inject interaction capture",
+    "target-version non-streaming HTTP JSON response capture or source path"
+  ]
+}

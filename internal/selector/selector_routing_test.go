@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -47,9 +48,7 @@ func TestSelector_Select_FiltersByRoutingPolicyAndAuthState(t *testing.T) {
 		"g1": {ID: "g1", Name: "Allowed Group", Strategy: StrategyPriority, Enabled: true},
 		"g2": {ID: "g2", Name: "Outside Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-allowed"] = &model.ProviderAuthState{ProviderID: "p-allowed", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-reauth"] = &model.ProviderAuthState{ProviderID: "p-reauth", Status: model.ProviderAuthStatusReauthRequired}
-	store.authStates["p-outside"] = &model.ProviderAuthState{ProviderID: "p-outside", Status: model.ProviderAuthStatusActive}
+	store.authStates["p-reauth"] = &credentialsession.AuthState{Status: credentialsession.AuthStatusReauthRequired}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled: true,
@@ -108,8 +107,6 @@ func TestSelector_Select_NoRoutingPolicyForAPITypeKeepsDefaultSelection(t *testi
 		"g1": {ID: "g1", Name: "Group 1", Strategy: StrategyPriority, Enabled: true},
 		"g2": {ID: "g2", Name: "Group 2", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p1"] = &model.ProviderAuthState{ProviderID: "p1", Status: model.ProviderAuthStatusActive}
-	store.authStates["p2"] = &model.ProviderAuthState{ProviderID: "p2", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled: true,
@@ -165,8 +162,6 @@ func TestSelector_Select_DisabledRoutingPolicyFallsBackToDefaultSelection(t *tes
 	store.groups = map[string]*model.Group{
 		"g-default": {ID: "g-default", Name: "Default Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-default"] = &model.ProviderAuthState{ProviderID: "p-default", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-disabled-target"] = &model.ProviderAuthState{ProviderID: "p-disabled-target", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			ID:               1,
@@ -225,8 +220,6 @@ func TestSelector_Select_StickyCacheEvictsProviderRejectedByRoutingPolicy(t *tes
 		"g-allowed": {ID: "g-allowed", Name: "Allowed Group", Strategy: StrategyPriority, Enabled: true},
 		"g-blocked": {ID: "g-blocked", Name: "Blocked Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-allowed"] = &model.ProviderAuthState{ProviderID: "p-allowed", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-blocked"] = &model.ProviderAuthState{ProviderID: "p-blocked", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled: true,
@@ -344,8 +337,6 @@ func TestSelector_Select_StickyCacheEvictsProviderRejectedByExactProviderRule(t 
 	store.groups = map[string]*model.Group{
 		"g-exact": {ID: "g-exact", Name: "Exact Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-exact"] = &model.ProviderAuthState{ProviderID: "p-exact", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-sticky-blocked"] = &model.ProviderAuthState{ProviderID: "p-sticky-blocked", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled:          true,
@@ -430,9 +421,6 @@ func TestSelector_SelectExcluding_FailoverStaysWithinRoutingPolicyClosure(t *tes
 		"g-allowed": {ID: "g-allowed", Name: "Allowed Group", Strategy: StrategyPriority, Enabled: true},
 		"g-blocked": {ID: "g-blocked", Name: "Blocked Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-primary"] = &model.ProviderAuthState{ProviderID: "p-primary", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-allowed-failover"] = &model.ProviderAuthState{ProviderID: "p-allowed-failover", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-outside-policy"] = &model.ProviderAuthState{ProviderID: "p-outside-policy", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled: true,
@@ -498,8 +486,6 @@ func TestSelector_SelectExcluding_ExactProviderRuleDoesNotEscapeOnRetry(t *testi
 	store.groups = map[string]*model.Group{
 		"g-exact": {ID: "g-exact", Name: "Exact Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-exact"] = &model.ProviderAuthState{ProviderID: "p-exact", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-other"] = &model.ProviderAuthState{ProviderID: "p-other", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled:          true,
@@ -589,8 +575,6 @@ func TestSelectorSelect_ModelPrefixRuleOnlyConstrainsMatchingModels(t *testing.T
 	store.groups = map[string]*model.Group{
 		"g-default": {ID: "g-default", Name: "Default Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates[defaultProviderID] = &model.ProviderAuthState{ProviderID: defaultProviderID, Status: model.ProviderAuthStatusActive}
-	store.authStates[targetProviderID] = &model.ProviderAuthState{ProviderID: targetProviderID, Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled:          true,
@@ -671,8 +655,6 @@ func TestSelectorSelectUnknownModelIgnoresModelOnlyRoutingRules(t *testing.T) {
 		"g-default":    {ID: "g-default", Name: "Default Group", Strategy: StrategyPriority, Enabled: true},
 		"g-model-only": {ID: "g-model-only", Name: "Model Group", Strategy: StrategyPriority, Enabled: true},
 	}
-	store.authStates["p-default"] = &model.ProviderAuthState{ProviderID: "p-default", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-model-only"] = &model.ProviderAuthState{ProviderID: "p-model-only", Status: model.ProviderAuthStatusActive}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled:         true,

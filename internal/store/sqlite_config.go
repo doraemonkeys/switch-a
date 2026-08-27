@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
@@ -15,7 +16,7 @@ import (
 // Returns a new map each time to prevent mutation of shared state.
 // This is exported so the admin API can return defaults separately from user values.
 func GetDefaultConfigs() map[string]string {
-	return map[string]string{
+	configDefaults := map[string]string{
 		"auth_mode":                DefaultAuthMode,
 		"user_header":              DefaultUserHeader,
 		"trust_proxy_headers":      DefaultTrustProxyHeaders,
@@ -34,6 +35,10 @@ func GetDefaultConfigs() map[string]string {
 		"log_retention_days":   DefaultLogRetentionDays,
 		"inter_group_strategy": DefaultInterGroupStrategy,
 	}
+	for key, value := range codexstartup.Defaults() {
+		configDefaults[key] = value
+	}
+	return configDefaults
 }
 
 func (s *SQLiteStore) GetConfig(ctx context.Context, key string) (string, error) {

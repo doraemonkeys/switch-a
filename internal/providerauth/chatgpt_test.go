@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func makeTestJWT(t *testing.T, claims map[string]any) string {
@@ -22,99 +20,6 @@ func makeTestJWT(t *testing.T, claims map[string]any) string {
 	}
 
 	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
-}
-
-func mustEncodeChatGPTCredential(t *testing.T, credential model.ChatGPTProviderCredential) string {
-	t.Helper()
-
-	raw, err := encodeChatGPTCredential(credential)
-	if err != nil {
-		t.Fatalf("encodeChatGPTCredential returned error: %v", err)
-	}
-	return raw
-}
-
-func TestEncodeDecodeChatGPTCredential_RoundTrip(t *testing.T) {
-	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
-	resetAt := now.Add(5 * time.Hour)
-	raw, err := encodeChatGPTCredential(model.ChatGPTProviderCredential{
-		AccessToken:   "access-token",
-		RefreshToken:  "refresh-token",
-		IDToken:       "id-token",
-		OAuthIssuer:   "https://issuer.example.com/",
-		OAuthClientID: "client-id",
-		AccountID:     "acct_test",
-		Email:         "user@example.com",
-		PlanType:      "team",
-		Usage: &model.ProviderUsageSnapshot{
-			FetchedAt: &now,
-			PlanType:  "team",
-			FiveHour: &model.ProviderUsageWindow{
-				UsedPercent:   12.5,
-				WindowSeconds: 5 * 60 * 60,
-				ResetAt:       &resetAt,
-			},
-		},
-		LastRefresh: now.Add(-time.Minute),
-		ExpiresAt:   now.Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("encodeChatGPTCredential returned error: %v", err)
-	}
-
-	credential, err := decodeChatGPTCredential(raw)
-	if err != nil {
-		t.Fatalf("decodeChatGPTCredential returned error: %v", err)
-	}
-	if credential.AccessToken != "access-token" {
-		t.Fatalf("AccessToken = %q, want %q", credential.AccessToken, "access-token")
-	}
-	if credential.PlanType != "team" {
-		t.Fatalf("PlanType = %q, want %q", credential.PlanType, "team")
-	}
-	if credential.OAuthIssuer != "https://issuer.example.com/" {
-		t.Fatalf("OAuthIssuer = %q, want %q", credential.OAuthIssuer, "https://issuer.example.com/")
-	}
-	if credential.OAuthClientID != "client-id" {
-		t.Fatalf("OAuthClientID = %q, want %q", credential.OAuthClientID, "client-id")
-	}
-	if credential.Usage == nil || credential.Usage.FiveHour == nil {
-		t.Fatal("Usage = nil, want five-hour snapshot")
-	}
-	if credential.Usage.FiveHour.UsedPercent != 12.5 {
-		t.Fatalf("UsedPercent = %v, want %v", credential.Usage.FiveHour.UsedPercent, 12.5)
-	}
-}
-
-func TestDecodeChatGPTCredential_Errors(t *testing.T) {
-	testCases := []struct {
-		name string
-		raw  string
-		want string
-	}{
-		{
-			name: "missing payload",
-			raw:  "   ",
-			want: "missing chatgpt credential payload",
-		},
-		{
-			name: "invalid json",
-			raw:  "{",
-			want: "decode chatgpt credential payload",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := decodeChatGPTCredential(tc.raw)
-			if err == nil {
-				t.Fatal("decodeChatGPTCredential returned nil error")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
-			}
-		})
-	}
 }
 
 func TestNewChatGPTCredentialFromTokens_UsesJWTClaims(t *testing.T) {

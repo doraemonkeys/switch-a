@@ -53,8 +53,9 @@ func TestImportConfig_SelectionScopeImportsExactProvidersAndPreservesRoutingPoli
 	st.config[configStickyModeKey] = "off"
 
 	importReq := ImportConfigRequest{
-		Version:     ConfigExportVersion,
-		ImportScope: selectionConfigImportScope(nil, []string{"provider-selected", "provider-selected"}),
+		Version:            ConfigExportVersion,
+		ImportScope:        selectionConfigImportScope(nil, []string{"provider-selected", "provider-selected"}),
+		CredentialSessions: []ExportedCredentialSession{importedTestSession("provider-selected-session", "selected"), importedTestSession("provider-sibling-session", "sibling"), importedTestSession("provider-unselected-session", "unselected")},
 		Groups: []ExportedGroup{
 			{
 				ID:       selectedGroupID,
@@ -181,8 +182,9 @@ func TestImportConfig_SelectionScopeGroupImportsProvidersInThatGroup(t *testing.
 	st.config[configStickyModeKey] = "off"
 
 	importReq := ImportConfigRequest{
-		Version:     ConfigExportVersion,
-		ImportScope: selectionConfigImportScope([]string{selectedGroupID, selectedGroupID}, nil),
+		Version:            ConfigExportVersion,
+		ImportScope:        selectionConfigImportScope([]string{selectedGroupID, selectedGroupID}, nil),
+		CredentialSessions: []ExportedCredentialSession{importedTestSession("provider-selected-session", "selected"), importedTestSession("provider-sibling-session", "sibling"), importedTestSession("provider-unselected-session", "unselected")},
 		Groups: []ExportedGroup{
 			{
 				ID:       selectedGroupID,
@@ -253,8 +255,9 @@ func TestImportConfig_SelectionScopeProviderMissingParentGroupReportsSingleDepen
 
 	missingGroupID := "group-missing"
 	importReq := ImportConfigRequest{
-		Version:     ConfigExportVersion,
-		ImportScope: selectionConfigImportScope(nil, []string{"provider-selected"}),
+		Version:            ConfigExportVersion,
+		ImportScope:        selectionConfigImportScope(nil, []string{"provider-selected"}),
+		CredentialSessions: []ExportedCredentialSession{importedTestSession("provider-selected-session", "selected")},
 		Providers: []ExportedProvider{
 			scopeTestProvider(
 				"provider-selected",
@@ -464,7 +467,7 @@ func TestImportConfig_SelectionScopeRejectsMissingSelections(t *testing.T) {
 func TestImportConfig_RejectsMissingScopeModeDuringPreviewAndApply(t *testing.T) {
 	h, _, _ := testHandler()
 
-	body := []byte(`{"version":"4.0","providers":[],"groups":[],"routing_policies":[],"settings":{},"internal_error_rules":[]}`)
+	body := []byte(`{"version":"5.0","providers":[],"credential_sessions":[],"groups":[],"routing_policies":[],"settings":{},"internal_error_rules":[]}`)
 
 	previewReq := httptest.NewRequest(http.MethodPost, "/admin/api/config/import?dry_run=true", bytes.NewReader(body))
 	previewReq.Header.Set("Content-Type", "application/json")

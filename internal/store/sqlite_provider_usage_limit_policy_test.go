@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -16,8 +17,6 @@ func TestProviderUsageLimitPolicyPersistsAcrossCreateAndUpdate(t *testing.T) {
 	provider := &model.Provider{
 		ID:               "policy-provider",
 		Name:             "Policy Provider",
-		APIKey:           "key",
-		CredentialType:   model.ProviderCredentialTypeAPIKey,
 		UsageLimitPolicy: model.ProviderUsageLimitPolicySwitchProvider,
 		Enabled:          true,
 		APITypes: []model.ProviderAPIType{{
@@ -26,6 +25,7 @@ func TestProviderUsageLimitPolicyPersistsAcrossCreateAndUpdate(t *testing.T) {
 			BaseURL:    "https://api.example.com",
 		}},
 	}
+	provider = credentialBackedTestProvider(t, store, provider)
 
 	if err := store.CreateProvider(ctx, provider); err != nil {
 		t.Fatalf("CreateProvider failed: %v", err)
@@ -61,24 +61,23 @@ func TestProviderUsageLimitPolicyPersistsAcrossCreateAndUpdate(t *testing.T) {
 	}
 }
 
-func TestProviderUsageLimitPolicyDefaultRemainsCredentialDerivedAcrossUpdates(t *testing.T) {
+func TestProviderUsageLimitPolicyDefaultRemainsStableAcrossSessionRebind(t *testing.T) {
 	t.Parallel()
 
 	store := setupTestStore(t)
 	ctx := context.Background()
 
 	provider := &model.Provider{
-		ID:             "policy-default-provider",
-		Name:           "Policy Default Provider",
-		APIKey:         "key",
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-		Enabled:        true,
+		ID:      "policy-default-provider",
+		Name:    "Policy Default Provider",
+		Enabled: true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "policy-default-provider",
 			APIType:    "claude",
 			BaseURL:    "https://api.example.com",
 		}},
 	}
+	provider = credentialBackedTestProvider(t, store, provider)
 
 	if err := store.CreateProvider(ctx, provider); err != nil {
 		t.Fatalf("CreateProvider failed: %v", err)
@@ -95,7 +94,24 @@ func TestProviderUsageLimitPolicyDefaultRemainsCredentialDerivedAcrossUpdates(t 
 		t.Fatalf("effective UsageLimitPolicy after create = %q, want %q", created.UsageLimitPolicyOrDefault(), model.ProviderUsageLimitPolicySwitchProvider)
 	}
 
-	created.CredentialType = model.ProviderCredentialTypeChatGPT
+	chatSession := &credentialsession.Session{
+		ID:         "policy-default-chatgpt-session",
+		Vendor:     provider.Vendor,
+		Kind:       credentialsession.KindChatGPT,
+		SecretData: `{"access_token":"token"}`,
+		Version:    1,
+		AuthState: credentialsession.AuthState{
+			Status:    credentialsession.AuthStatusActive,
+			AccountID: "account-1",
+		},
+	}
+	if err := chatSession.SetSubject(mustAccountSubject(t, "account-1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCredentialSession(ctx, chatSession); err != nil {
+		t.Fatalf("CreateCredentialSession failed: %v", err)
+	}
+	created.CredentialSessions[0].Credential.SessionID = chatSession.ID
 	if err := store.UpdateProvider(ctx, created); err != nil {
 		t.Fatalf("UpdateProvider failed: %v", err)
 	}
@@ -105,9 +121,18 @@ func TestProviderUsageLimitPolicyDefaultRemainsCredentialDerivedAcrossUpdates(t 
 		t.Fatalf("GetProvider after update failed: %v", err)
 	}
 	if updated.UsageLimitPolicy != "" {
-		t.Fatalf("stored UsageLimitPolicy after credential_type update = %q, want empty inherit-default value", updated.UsageLimitPolicy)
+		t.Fatalf("stored UsageLimitPolicy after session rebind = %q, want empty inherit-default value", updated.UsageLimitPolicy)
 	}
-	if updated.UsageLimitPolicyOrDefault() != model.ProviderUsageLimitPolicySuspend {
-		t.Fatalf("effective UsageLimitPolicy after credential_type update = %q, want %q", updated.UsageLimitPolicyOrDefault(), model.ProviderUsageLimitPolicySuspend)
+	if updated.UsageLimitPolicyOrDefault() != model.ProviderUsageLimitPolicySwitchProvider {
+		t.Fatalf("effective UsageLimitPolicy after session rebind = %q, want %q", updated.UsageLimitPolicyOrDefault(), model.ProviderUsageLimitPolicySwitchProvider)
 	}
+}
+
+func mustAccountSubject(t *testing.T, accountID string) credentialsession.Subject {
+	t.Helper()
+	subject, err := credentialsession.AccountSubject(accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return subject
 }

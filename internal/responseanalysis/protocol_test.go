@@ -302,41 +302,50 @@ func TestMediaAndCodingParsers(t *testing.T) {
 func TestResolveResponseMediaUsesOnlyAuthoritativeOrUnambiguousEvidence(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name        string
-		contentType string
-		accept      []string
-		wantType    string
-		wantSource  ResponseMediaSource
-		wantSSE     bool
-		wantSupport bool
+		name         string
+		contentType  string
+		accept       []string
+		wantType     string
+		wantSource   ResponseMediaSource
+		wantDecision ResponseMediaDecision
+		wantReason   ResponseMediaReason
+		wantSSE      bool
+		wantSupport  bool
 	}{
 		{
 			name: "declared response type is authoritative", contentType: "application/problem+json",
 			accept: []string{mediaTypeEventStream}, wantType: "application/problem+json",
-			wantSource: ResponseMediaFromContentType, wantSupport: true,
+			wantSource: ResponseMediaFromContentType, wantDecision: ResponseMediaUseDeclared,
+			wantReason: ResponseMediaDeclaredSupported, wantSupport: true,
 		},
 		{
 			name: "missing type recovers one accepted SSE representation", accept: []string{mediaTypeEventStream},
-			wantType: mediaTypeEventStream, wantSource: ResponseMediaFromRequestAccept, wantSSE: true, wantSupport: true,
+			wantType: mediaTypeEventStream, wantSource: ResponseMediaFromRequestAccept, wantDecision: ResponseMediaInfer,
+			wantReason: ResponseMediaAcceptInferredSSE, wantSSE: true, wantSupport: true,
 		},
 		{
 			name:     "equivalent JSON ranges remain unambiguous",
 			accept:   []string{`application/json; q=0.8, application/problem+json; profile="a,b"`},
-			wantType: mediaTypeJSON, wantSource: ResponseMediaFromRequestAccept, wantSupport: true,
+			wantType: mediaTypeJSON, wantSource: ResponseMediaFromRequestAccept, wantDecision: ResponseMediaInfer,
+			wantReason: ResponseMediaAcceptInferredJSON, wantSupport: true,
 		},
 		{
 			name:     "zero quality alternatives are not acceptable",
 			accept:   []string{"text/plain; q=0", mediaTypeEventStream},
-			wantType: mediaTypeEventStream, wantSource: ResponseMediaFromRequestAccept, wantSSE: true, wantSupport: true,
+			wantType: mediaTypeEventStream, wantSource: ResponseMediaFromRequestAccept, wantDecision: ResponseMediaInfer,
+			wantReason: ResponseMediaAcceptInferredSSE, wantSSE: true, wantSupport: true,
 		},
-		{name: "JSON and SSE are ambiguous", accept: []string{mediaTypeJSON + ", " + mediaTypeEventStream}, wantSource: ResponseMediaUnknown},
-		{name: "wildcard is ambiguous", accept: []string{"*/*"}, wantSource: ResponseMediaUnknown},
-		{name: "invalid quality is rejected", accept: []string{mediaTypeEventStream + "; q=2"}, wantSource: ResponseMediaUnknown},
+		{name: "JSON and SSE are ambiguous", accept: []string{mediaTypeJSON + ", " + mediaTypeEventStream}, wantSource: ResponseMediaUnknown, wantDecision: ResponseMediaUnresolved, wantReason: ResponseMediaAcceptAmbiguous},
+		{name: "wildcard is ambiguous", accept: []string{"*/*"}, wantSource: ResponseMediaUnknown, wantDecision: ResponseMediaUnresolved, wantReason: ResponseMediaAcceptAmbiguous},
+		{name: "unsupported accept is unresolved", accept: []string{"text/plain"}, wantSource: ResponseMediaUnknown, wantDecision: ResponseMediaUnresolved, wantReason: ResponseMediaAcceptUnsupported},
+		{name: "invalid quality is rejected", accept: []string{mediaTypeEventStream + "; q=2"}, wantSource: ResponseMediaUnknown, wantDecision: ResponseMediaUnresolved, wantReason: ResponseMediaAcceptMalformed},
 		{
 			name: "unsupported declared type does not defer to Accept", contentType: "text/plain",
 			accept: []string{mediaTypeEventStream}, wantType: "text/plain", wantSource: ResponseMediaFromContentType,
+			wantDecision: ResponseMediaUseDeclared, wantReason: ResponseMediaDeclaredUnsupported,
 		},
-		{name: "missing evidence remains unknown", wantSource: ResponseMediaUnknown},
+		{name: "malformed declared type remains authoritative", contentType: "application/json; broken", wantType: "application/json; broken", wantSource: ResponseMediaFromContentType, wantDecision: ResponseMediaUseDeclared, wantReason: ResponseMediaDeclaredMalformed},
+		{name: "missing evidence remains unknown", wantSource: ResponseMediaUnknown, wantDecision: ResponseMediaUnresolved, wantReason: ResponseMediaEvidenceMissing},
 	}
 	for _, test := range tests {
 		test := test
@@ -344,6 +353,7 @@ func TestResolveResponseMediaUsesOnlyAuthoritativeOrUnambiguousEvidence(t *testi
 			t.Parallel()
 			media := ResolveResponseMedia(test.contentType, test.accept)
 			if media.ContentType() != test.wantType || media.Source() != test.wantSource ||
+				media.Decision() != test.wantDecision || media.Reason() != test.wantReason ||
 				media.IsEventStream() != test.wantSSE || media.Supported() != test.wantSupport {
 				t.Fatalf("media = %#v", media)
 			}

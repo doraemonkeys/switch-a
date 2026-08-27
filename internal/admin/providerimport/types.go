@@ -56,7 +56,7 @@ type DraftService interface {
 	ClaimChatGPTProviderImport(importID string) ([]providerauth.ChatGPTProviderImportCandidate, error)
 	ReleaseChatGPTProviderImportClaim(importID string) error
 	VerifyChatGPTProviderImportCandidates(ctx context.Context, candidates []providerauth.ChatGPTProviderImportCandidate) error
-	InvalidateProviderCredentialSessions(providerIDs []string)
+	InvalidateCredentialSessions(sessionIDs []string)
 	FinalizeChatGPTProviderImport(importID string) error
 	CancelChatGPTProviderImport(importID string) error
 }
@@ -69,7 +69,7 @@ type ProviderCatalog interface {
 
 // Store is the narrow transactional boundary required by bulk import.
 type Store interface {
-	WithProviderCredentialMutations(ctx context.Context, providerIDs []string) (ownedCtx context.Context, release func(), err error)
+	WithCredentialSessionMutations(ctx context.Context, sessionIDs []string) (ownedCtx context.Context, release func(), err error)
 	GetProviderImportReceipt(ctx context.Context, importID string) (*store.ProviderImportReceipt, error)
 	ApplyProviderImport(ctx context.Context, bundle *store.ProviderImportBundle) error
 }
@@ -207,9 +207,4 @@ type ProviderImportCommitResponse struct {
 	ImportID string                           `json:"import_id"`
 	Summary  ProviderImportCommitSummary      `json:"summary"`
 	Items    []ProviderImportCommitResultItem `json:"items"`
-}
-
-type providerImportBinding struct {
-	provider *model.Provider
-	version  int64
 }

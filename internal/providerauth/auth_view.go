@@ -5,16 +5,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
-// ProviderAuthStatus describes the persisted authentication lifecycle visible to admins.
-type ProviderAuthStatus = model.ProviderAuthStatus
+// ProviderAuthStatus is retained as the admin vocabulary while the lifecycle
+// itself is owned exclusively by CredentialSession.
+type ProviderAuthStatus = credentialsession.AuthStatus
 
 const (
-	ProviderAuthStatusNotConnected   = model.ProviderAuthStatusNotConnected
-	ProviderAuthStatusActive         = model.ProviderAuthStatusActive
-	ProviderAuthStatusReauthRequired = model.ProviderAuthStatusReauthRequired
+	ProviderAuthStatusNotConnected   = credentialsession.AuthStatusNotConnected
+	ProviderAuthStatusActive         = credentialsession.AuthStatusActive
+	ProviderAuthStatusReauthRequired = credentialsession.AuthStatusReauthRequired
 )
 
 const (
@@ -27,9 +29,10 @@ const (
 	ProviderAuthReasonTokenInvalidated    = "token_invalidated"
 )
 
-// ProviderAuthView is the explicit admin-facing auth summary returned by admin APIs.
+// ProviderAuthView is the explicit admin-facing summary of one credential
+// session. Its historical name describes the UI surface, not an ownership link.
 type ProviderAuthView struct {
-	Type          model.ProviderCredentialType `json:"type"`
+	Type          credentialsession.Kind       `json:"type"`
 	Status        ProviderAuthStatus           `json:"status"`
 	Reason        string                       `json:"reason,omitempty"`
 	Email         string                       `json:"email,omitempty"`
@@ -41,157 +44,99 @@ type ProviderAuthView struct {
 	LastError     string                       `json:"last_error,omitempty"`
 }
 
-// ProviderAuthStateError reports that a provider is blocked by its persisted auth lifecycle.
+// ProviderAuthStateError reports that a credential session is blocked by its
+// persisted authentication lifecycle. ProviderID is optional routing context;
+// SessionID is the mutation and identity boundary.
 type ProviderAuthStateError struct {
 	ProviderID string
+	SessionID  string
 	Status     ProviderAuthStatus
 	Reason     string
 	LastError  string
 }
 
 func (e *ProviderAuthStateError) Error() string {
+	credential := fmt.Sprintf("credential session %q", e.SessionID)
+	if e.SessionID == "" {
+		credential = "credential session"
+	}
 	switch e.Status {
 	case ProviderAuthStatusReauthRequired:
 		if e.Reason != "" {
-			return fmt.Sprintf("provider %q requires reauthentication (%s)", e.ProviderID, e.Reason)
+			return fmt.Sprintf("%s requires reauthentication (%s)", credential, e.Reason)
 		}
-		return fmt.Sprintf("provider %q requires reauthentication", e.ProviderID)
+		return fmt.Sprintf("%s requires reauthentication", credential)
 	default:
-		return fmt.Sprintf("provider %q is not connected", e.ProviderID)
+		return fmt.Sprintf("%s is not connected", credential)
 	}
 }
 
-// UnsupportedProviderAuthActionError reports that an explicit auth action does not apply
-// to the provider's credential type.
-type UnsupportedProviderAuthActionError struct {
-	ProviderID     string
-	Action         string
-	CredentialType model.ProviderCredentialType
-}
-
-func (e *UnsupportedProviderAuthActionError) Error() string {
-	return fmt.Sprintf(
-		"%s is not supported for provider %q with credential type %q",
-		e.Action,
-		e.ProviderID,
-		e.CredentialType,
-	)
-}
-
-// BuildProviderAuthView maps the locally persisted provider snapshot to the explicit admin auth view.
-func BuildProviderAuthView(provider *model.Provider) *ProviderAuthView {
-	if provider == nil {
+// BuildCredentialSessionAuthView maps the immutable session snapshot used by
+// routing. It never rehydrates or interprets a Provider-owned projection.
+func BuildCredentialSessionAuthView(snapshot *credentialsession.Snapshot) *ProviderAuthView {
+	if snapshot == nil {
 		return nil
 	}
-
-	credentialType := model.NormalizeProviderCredentialType(provider.CredentialType)
-	authState := providerAuthStateSnapshot(provider)
-	if credentialType == providerCredentialTypeAPIKey {
-		authState = apiKeyAuthStateSnapshot(provider, authState)
-	}
-
-	if credentialType == providerCredentialTypeChatGPT {
-		if credential, err := DecodeProviderChatGPTCredential(provider); err != nil {
-			authState = buildChatGPTAuthState(
-				provider.ID,
-				authState,
-				nil,
-				ProviderAuthStatusNotConnected,
-				ProviderAuthReasonCredentialInvalid,
-				err.Error(),
-				nil,
-				time.Time{},
-			)
-		} else if credential == nil && authState.Status == ProviderAuthStatusActive {
-			authState = buildChatGPTAuthState(
-				provider.ID,
-				authState,
-				nil,
-				ProviderAuthStatusNotConnected,
-				ProviderAuthReasonLoginRequired,
-				"",
-				nil,
-				time.Time{},
-			)
+	state := credentialsession.NormalizeAuthState(snapshot.Kind, snapshot.AuthState.Clone())
+	switch snapshot.Kind {
+	case credentialsession.KindAPIKey:
+		if strings.TrimSpace(snapshot.SecretData) == "" {
+			state.Status = credentialsession.AuthStatusNotConnected
+			state.StatusReason = ProviderAuthReasonMissingAPIKey
+		}
+	case credentialsession.KindChatGPT:
+		credential, err := decodeChatGPTCredentialSession(snapshot)
+		if err != nil {
+			state.Status = credentialsession.AuthStatusNotConnected
+			state.StatusReason = ProviderAuthReasonCredentialInvalid
+			state.LastError = err.Error()
+		} else if credential == nil || !credential.Ready() {
+			state.Status = credentialsession.AuthStatusNotConnected
+			state.StatusReason = ProviderAuthReasonLoginRequired
 		}
 	}
-
-	return buildProviderAuthView(credentialType, authState)
+	return buildCredentialSessionAuthView(snapshot.Kind, state)
 }
 
-func apiKeyAuthStateSnapshot(
-	provider *model.Provider,
-	authState *model.ProviderAuthState,
-) *model.ProviderAuthState {
-	if staticProviderCredentialReady(provider) {
-		return authState
+func chatGPTCredentialAuthView(credential *model.ChatGPTProviderCredential) *ProviderAuthView {
+	snapshot, err := chatGPTCredentialSessionSnapshot(credential, "")
+	if err != nil {
+		return buildCredentialSessionAuthView(credentialsession.KindChatGPT, credentialsession.AuthState{
+			Status: credentialsession.AuthStatusNotConnected, StatusReason: ProviderAuthReasonCredentialInvalid,
+			LastError: err.Error(),
+		})
 	}
-	state := &model.ProviderAuthState{
-		Status:       ProviderAuthStatusNotConnected,
-		StatusReason: ProviderAuthReasonMissingAPIKey,
-	}
-	if authState != nil {
-		state = authState.Clone()
-		state.Status = ProviderAuthStatusNotConnected
-		state.StatusReason = ProviderAuthReasonMissingAPIKey
-	}
-	return model.NormalizeProviderAuthStateRecord(provider.ID, providerCredentialTypeAPIKey, state)
+	return BuildCredentialSessionAuthView(&snapshot)
 }
 
-// HasCompleteChatGPTCredential gates config writes on persisted secret material without
-// conflating that with the current auth lifecycle.
-func HasCompleteChatGPTCredential(provider *model.Provider) bool {
-	credential, err := DecodeProviderChatGPTCredential(provider)
-	return err == nil && credential != nil && credential.Ready()
-}
-
-func buildChatGPTAuthViewFromCredential(credential *model.ChatGPTProviderCredential) *ProviderAuthView {
-	return buildProviderAuthView(
-		providerCredentialTypeChatGPT,
-		buildChatGPTAuthState(
-			"",
-			nil,
-			credential,
-			ProviderAuthStatusActive,
-			"",
-			"",
-			cloneProviderUsageSnapshot(chatGPTUsageSnapshot(credential)),
-			chatGPTLastRefreshAt(credential),
-		),
-	)
-}
-
-func buildProviderAuthView(
-	credentialType model.ProviderCredentialType,
-	authState *model.ProviderAuthState,
-) *ProviderAuthView {
-	normalized := model.NormalizeProviderAuthStateRecord("", credentialType, authState)
+func buildCredentialSessionAuthView(kind credentialsession.Kind, state credentialsession.AuthState) *ProviderAuthView {
+	state = credentialsession.NormalizeAuthState(kind, state)
 	return &ProviderAuthView{
-		Type:          credentialType,
-		Status:        normalized.Status,
-		Reason:        providerAuthReason(credentialType, normalized),
-		Email:         strings.TrimSpace(normalized.Email),
-		AccountID:     strings.TrimSpace(normalized.AccountID),
-		PlanType:      strings.TrimSpace(normalized.PlanType),
-		Usage:         cloneProviderUsageSnapshot(normalized.UsageSnapshot),
-		ExpiresAt:     cloneTimePtr(normalized.ExpiresAt),
-		LastRefreshAt: cloneTimePtr(normalized.LastRefreshAt),
-		LastError:     strings.TrimSpace(normalized.LastError),
+		Type: kind, Status: state.Status, Reason: credentialSessionAuthReason(kind, state),
+		Email: strings.TrimSpace(state.Email), AccountID: strings.TrimSpace(state.AccountID),
+		PlanType: strings.TrimSpace(state.PlanType), Usage: providerUsageSnapshot(state.UsageSnapshot),
+		ExpiresAt: cloneAuthViewTime(state.ExpiresAt), LastRefreshAt: cloneAuthViewTime(state.LastRefreshAt),
+		LastError: strings.TrimSpace(state.LastError),
 	}
 }
 
-func providerAuthReason(
-	credentialType model.ProviderCredentialType,
-	authState *model.ProviderAuthState,
-) string {
-	if authState == nil || authState.Status == ProviderAuthStatusActive {
+func credentialSessionAuthReason(kind credentialsession.Kind, state credentialsession.AuthState) string {
+	if state.Status == credentialsession.AuthStatusActive {
 		return ""
 	}
-	if reason := strings.TrimSpace(authState.StatusReason); reason != "" {
+	if reason := strings.TrimSpace(state.StatusReason); reason != "" {
 		return reason
 	}
-	if credentialType == providerCredentialTypeChatGPT {
+	if kind == credentialsession.KindChatGPT {
 		return ProviderAuthReasonLoginRequired
 	}
 	return ""
+}
+
+func cloneAuthViewTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	clone := value.UTC()
+	return &clone
 }

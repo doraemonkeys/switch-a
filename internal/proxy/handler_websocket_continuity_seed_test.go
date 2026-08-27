@@ -21,7 +21,7 @@ import (
 
 const postVisibleFailoverObservationTimeout = 10 * testPollTimeout
 
-func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProviderAsFailover(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureKeepsRouteTargetFixed(t *testing.T) {
 	t.Parallel()
 
 	var (
@@ -68,28 +68,28 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 	}))
 	defer fallback.Close()
 
-	primaryProvider := &model.Provider{
-		ID:             "ws-visible-origin",
-		Name:           "WS Visible Origin",
-		APIKey:         "origin-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-visible-origin",
+		Name: "WS Visible Origin",
+
 		AuthMode:       "bearer",
 		Enabled:        true,
 		Vendor:         "vendor-a",
 		FailoverScope:  model.ScopeVendor,
 		AcceptFailover: model.ScopeAny,
 		APITypes:       []model.ProviderAPIType{{ProviderID: "ws-visible-origin", APIType: "codex", BaseURL: primary.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:             "ws-visible-fallback",
-		Name:           "WS Visible Fallback",
-		APIKey:         "fallback-key",
+	}, "", "origin-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-visible-fallback",
+		Name: "WS Visible Fallback",
+
 		AuthMode:       "bearer",
 		Enabled:        true,
 		Vendor:         "vendor-a",
 		FailoverScope:  model.ScopeAny,
 		AcceptFailover: model.ScopeVendor,
 		APITypes:       []model.ProviderAPIType{{ProviderID: "ws-visible-fallback", APIType: "codex", BaseURL: fallback.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
@@ -149,33 +149,30 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleSuppressedFailureSwitchesProvide
 	if msgType != websocket.MessageText || string(payload) != `{"type":"response.created","response":{"id":"origin-visible"}}` {
 		t.Fatalf("origin payload = (%v, %q), want origin visible response", msgType, string(payload))
 	}
-	// The fallback crosses two real WebSocket servers and persistence starts only
-	// after their close handshake. Coverage and race scheduling therefore need a
-	// wider bound than the unit-test polling default without changing production timing.
-	waitFor(t, func() bool { return retrySelections.Load() == 1 && fallbackAccepts.Load() == 1 }, postVisibleFailoverObservationTimeout)
-	_, _, _ = conn.Read(ctx)
+	if _, _, err := conn.Read(ctx); err == nil {
+		t.Fatal("post-visible provider failure must terminate the fixed-route session")
+	}
 	// Persistence is intentionally asynchronous after the WebSocket session ends.
 	// Explicit teardown makes that lifecycle edge deterministic instead of waiting
 	// for a close handshake while this test is no longer reading control frames.
 	_ = conn.CloseNow()
 
-	if got := retrySelections.Load(); got != 1 {
-		t.Fatalf("retry selections = %d, want 1", got)
+	if got := retrySelections.Load(); got != 0 {
+		t.Fatalf("retry selections = %d, want 0 after client-visible data", got)
 	}
-
-	waitFor(t, func() bool { return store.AttemptsLen() >= 2 }, postVisibleFailoverObservationTimeout)
-	attempts := store.LastAttempts(2)
+	if got := fallbackAccepts.Load(); got != 0 {
+		t.Fatalf("fallback accepts = %d, want 0 after client-visible data", got)
+	}
+	waitFor(t, func() bool { return store.AttemptsLen() >= 1 }, postVisibleFailoverObservationTimeout)
+	attempts := store.LastAttempts(1)
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want one fixed-route attempt", len(attempts))
+	}
 	if attempts[0].SwitchMode != model.RequestAttemptSwitchModeInitial {
 		t.Fatalf("first attempt SwitchMode = %q, want %q", attempts[0].SwitchMode, model.RequestAttemptSwitchModeInitial)
 	}
-	if attempts[1].SwitchMode != model.RequestAttemptSwitchModeFailover {
-		t.Fatalf("second attempt SwitchMode = %q, want %q", attempts[1].SwitchMode, model.RequestAttemptSwitchModeFailover)
-	}
-	if attempts[1].ContinuityOriginProviderID != primaryProvider.ID {
-		t.Fatalf("second attempt ContinuityOriginProviderID = %q, want %q", attempts[1].ContinuityOriginProviderID, primaryProvider.ID)
-	}
-	if attempts[1].ProviderSwitchCount != 1 {
-		t.Fatalf("second attempt ProviderSwitchCount = %d, want 1", attempts[1].ProviderSwitchCount)
+	if attempts[0].ProviderSwitchCount != 0 {
+		t.Fatalf("provider switch count = %d, want 0", attempts[0].ProviderSwitchCount)
 	}
 }
 
@@ -207,17 +204,17 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureStoresContinuitySeed(t *t
 	}))
 	defer primary.Close()
 
-	primaryProvider := &model.Provider{
-		ID:             "ws-visible-seed-origin",
-		Name:           "WS Visible Seed Origin",
-		APIKey:         "origin-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-visible-seed-origin",
+		Name: "WS Visible Seed Origin",
+
 		AuthMode:       "bearer",
 		Enabled:        true,
 		Vendor:         "vendor-a",
 		FailoverScope:  model.ScopeVendor,
 		AcceptFailover: model.ScopeAny,
 		APITypes:       []model.ProviderAPIType{{ProviderID: "ws-visible-seed-origin", APIType: "codex", BaseURL: primary.URL}},
-	}
+	}, "", "origin-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider}
@@ -310,14 +307,14 @@ func TestHandler_ServeHTTP_WebSocket_NormalCompletionDoesNotStoreContinuitySeed(
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       "ws-normal-provider",
-		Name:     "WS Normal Provider",
-		APIKey:   "normal-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "ws-normal-provider",
+		Name: "WS Normal Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-normal-provider", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "normal-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
@@ -367,14 +364,14 @@ func TestHandler_ServeHTTP_WebSocket_ClientTerminationDoesNotStoreContinuitySeed
 	upstream := newEchoWSServer(t)
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       "ws-client-close-provider",
-		Name:     "WS Client Close Provider",
-		APIKey:   "client-close-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "ws-client-close-provider",
+		Name: "WS Client Close Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-client-close-provider", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "client-close-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
@@ -440,14 +437,14 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleFailureDoesNotStoreContinuitySeed
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       "ws-previsible-provider",
-		Name:     "WS PreVisible Provider",
-		APIKey:   "previsible-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "ws-previsible-provider",
+		Name: "WS PreVisible Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-previsible-provider", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "previsible-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}

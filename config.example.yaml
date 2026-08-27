@@ -52,6 +52,10 @@ log_max_keep_days: 7
 # 默认值: info
 log_level: "info"
 
+# Codex 持久状态 keyring 文件路径（相关功能关闭时可省略；文件内密钥不得写入本配置）
+# 环境变量: SWITCHA_CODEX_KEYRING_FILE
+# codex_keyring_file: "/run/secrets/switch-a-codex-keyring.json"
+
 # Debug 捕获的进程级安全上限（功能默认关闭）
 # 环境变量名称为 SWITCHA_ 加对应键名的大写形式
 # 内存上限不能低于默认 session quota 256 MiB

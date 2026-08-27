@@ -94,15 +94,18 @@ describe("createApiClient config API read and update operations", () => {
 
   it("should export config", async () => {
     const exportedConfig = {
-      version: "4.0",
+      version: "5.0",
       exported_at: "2025-01-13T10:00:00Z",
       providers: [
         {
           id: "provider-1",
           name: "OpenAI",
-          api_key: "sk-***",
           api_types: [
-            { api_type: "claude", base_url: "https://api.openai.com" },
+            {
+              api_type: "claude",
+              base_url: "https://api.openai.com",
+              credential_session_id: "session-1",
+            },
           ],
           auth_mode: "bearer",
           weight: 1,
@@ -112,6 +115,7 @@ describe("createApiClient config API read and update operations", () => {
           enabled: true,
         },
       ],
+      credential_sessions: [],
       groups: [
         {
           id: "group-1",
@@ -165,7 +169,7 @@ describe("createApiClient config API import operations", () => {
 
   it("should preview config import (dry run)", async () => {
     const importRequest = {
-      version: "4.0",
+      version: "5.0",
       import_scope: {
         mode: "full" as const,
       },
@@ -173,9 +177,12 @@ describe("createApiClient config API import operations", () => {
         {
           id: "provider-1",
           name: "OpenAI",
-          api_key: "sk-new",
           api_types: [
-            { api_type: "claude", base_url: "https://api.openai.com" },
+            {
+              api_type: "claude",
+              base_url: "https://api.openai.com",
+              credential_session_id: "session-1",
+            },
           ],
           auth_mode: "bearer" as const,
           weight: 1,
@@ -185,6 +192,7 @@ describe("createApiClient config API import operations", () => {
           enabled: true,
         },
       ],
+      credential_sessions: [],
       groups: [],
       routing_policies: [
         {
@@ -207,6 +215,7 @@ describe("createApiClient config API import operations", () => {
       dry_run: true,
       changes: {
         providers: { add: 0, update: 1, delete: 0, unchanged: 0 },
+        credential_sessions: { add: 0, update: 0, delete: 0, unchanged: 0 },
         groups: { add: 0, update: 0, delete: 0, unchanged: 0 },
         routing_policies: { add: 1, update: 0, delete: 0, unchanged: 0 },
         settings: { add: 0, update: 1, delete: 0, unchanged: 0 },
@@ -236,7 +245,7 @@ describe("createApiClient config API import operations", () => {
 
   it("forwards the preview rule ETag exactly for selection import", async () => {
     const importRequest = {
-      version: "4.0",
+      version: "5.0",
       import_scope: {
         mode: "selection" as const,
         selection: {
@@ -248,9 +257,12 @@ describe("createApiClient config API import operations", () => {
         {
           id: "provider-1",
           name: "OpenAI",
-          api_key: "sk-new",
           api_types: [
-            { api_type: "claude", base_url: "https://api.openai.com" },
+            {
+              api_type: "claude",
+              base_url: "https://api.openai.com",
+              credential_session_id: "session-1",
+            },
           ],
           auth_mode: "bearer" as const,
           weight: 1,
@@ -260,6 +272,7 @@ describe("createApiClient config API import operations", () => {
           enabled: true,
         },
       ],
+      credential_sessions: [],
       groups: [],
       routing_policies: [
         {
@@ -282,6 +295,7 @@ describe("createApiClient config API import operations", () => {
       success: true,
       applied: {
         providers: { added: 0, updated: 1, deleted: 0 },
+        credential_sessions: { added: 0, updated: 0, deleted: 0 },
         groups: { added: 0, updated: 0, deleted: 0 },
         routing_policies: { added: 1, updated: 0, deleted: 0 },
         settings: { added: 0, updated: 1, deleted: 0 },
@@ -314,9 +328,10 @@ describe("createApiClient config API import operations", () => {
 
   it("omits the rule precondition for settings-only import", async () => {
     const importRequest = {
-      version: "4.0",
+      version: "5.0",
       import_scope: { mode: "settings_only" as const },
       providers: [],
+      credential_sessions: [],
       groups: [],
       routing_policies: [],
       settings: { auth_mode: "auto" },
@@ -326,6 +341,7 @@ describe("createApiClient config API import operations", () => {
       success: true,
       applied: {
         providers: { added: 0, updated: 0, deleted: 0 },
+        credential_sessions: { added: 0, updated: 0, deleted: 0 },
         groups: { added: 0, updated: 0, deleted: 0 },
         routing_policies: { added: 0, updated: 0, deleted: 0 },
         settings: { added: 0, updated: 1, deleted: 0 },
@@ -354,9 +370,10 @@ describe("createApiClient config API import operations", () => {
 
   it("surfaces a stale preview without re-fetching or replacing its ETag", async () => {
     const importRequest = {
-      version: "4.0",
+      version: "5.0",
       import_scope: { mode: "full" as const },
       providers: [],
+      credential_sessions: [],
       groups: [],
       routing_policies: [],
       settings: {},
@@ -394,11 +411,12 @@ describe("createApiClient config API import operations", () => {
 
   it("should handle import with warnings", async () => {
     const importRequest = {
-      version: "4.0",
+      version: "5.0",
       import_scope: {
         mode: "settings_only" as const,
       },
       providers: [],
+      credential_sessions: [],
       groups: [],
       routing_policies: [],
       settings: {},
@@ -408,6 +426,7 @@ describe("createApiClient config API import operations", () => {
       dry_run: true,
       changes: {
         providers: { add: 0, update: 0, delete: 0, unchanged: 0 },
+        credential_sessions: { add: 0, update: 0, delete: 0, unchanged: 0 },
         groups: { add: 0, update: 0, delete: 0, unchanged: 0 },
         routing_policies: { add: 0, update: 0, delete: 0, unchanged: 0 },
         settings: { add: 0, update: 0, delete: 0, unchanged: 0 },
@@ -434,8 +453,9 @@ describe("createApiClient config API import operations", () => {
       import_scope: {
         mode: "full" as const,
       },
-      version: "4.0",
+      version: "5.0",
       providers: [],
+      credential_sessions: [],
       groups: [],
       routing_policies: [],
       settings: {},
@@ -447,6 +467,7 @@ describe("createApiClient config API import operations", () => {
         dry_run: true,
         changes: {
           providers: { add: 0, update: 0, delete: 0, unchanged: 0 },
+          credential_sessions: { add: 0, update: 0, delete: 0, unchanged: 0 },
           groups: { add: 0, update: 0, delete: 0, unchanged: 0 },
           routing_policies: { add: 0, update: 0, delete: 0, unchanged: 0 },
           settings: { add: 0, update: 0, delete: 0, unchanged: 0 },

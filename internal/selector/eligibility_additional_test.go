@@ -423,8 +423,6 @@ func TestSelectorSelectWithMetadataReportsStickyOrigin(t *testing.T) {
 			APITypes: []model.ProviderAPIType{{ProviderID: "p-sticky", APIType: "codex"}},
 		},
 	}
-	store.authStates["p-primary"] = &model.ProviderAuthState{ProviderID: "p-primary", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-sticky"] = &model.ProviderAuthState{ProviderID: "p-sticky", Status: model.ProviderAuthStatusActive}
 
 	req := &model.SelectRequest{
 		ClientIP:   "192.168.1.10",
@@ -480,8 +478,6 @@ func TestSelectorSelectWithMetadataReportsFreshSelection(t *testing.T) {
 			APITypes: []model.ProviderAPIType{{ProviderID: "p-secondary", APIType: "codex"}},
 		},
 	}
-	store.authStates["p-primary"] = &model.ProviderAuthState{ProviderID: "p-primary", Status: model.ProviderAuthStatusActive}
-	store.authStates["p-secondary"] = &model.ProviderAuthState{ProviderID: "p-secondary", Status: model.ProviderAuthStatusActive}
 
 	sel := NewSelector(Config{
 		Store:         store,

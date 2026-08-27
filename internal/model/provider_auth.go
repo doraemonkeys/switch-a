@@ -5,58 +5,6 @@ import (
 	"time"
 )
 
-// ProviderCredentialType identifies the upstream credential source for a provider.
-type ProviderCredentialType string
-
-const (
-	// ProviderCredentialTypeAPIKey uses the provider/API-type API key fields.
-	ProviderCredentialTypeAPIKey ProviderCredentialType = "api_key"
-	// ProviderCredentialTypeChatGPT uses a ChatGPT OAuth login captured locally.
-	ProviderCredentialTypeChatGPT ProviderCredentialType = "chatgpt"
-)
-
-// CredentialBindingResolution describes how a provider write handles a ChatGPT
-// account that is already bound to another provider. Reject is the safe default;
-// Replace is only used after an explicit confirmation in the admin UI.
-type CredentialBindingResolution string
-
-const (
-	CredentialBindingResolutionReject  CredentialBindingResolution = "reject"
-	CredentialBindingResolutionReplace CredentialBindingResolution = "replace"
-)
-
-// ProviderWriteOptions carries explicit persistence decisions that are applied
-// atomically with a provider mutation.
-type ProviderWriteOptions struct {
-	CredentialBindingResolution CredentialBindingResolution
-}
-
-// IsValidCredentialBindingResolution reports whether a write resolution is supported.
-func IsValidCredentialBindingResolution(value CredentialBindingResolution) bool {
-	return value == "" ||
-		value == CredentialBindingResolutionReject ||
-		value == CredentialBindingResolutionReplace
-}
-
-// IsValidProviderCredentialType reports whether the credential type is supported.
-// Empty values remain valid so pre-migration records normalize to the static API-key mode.
-func IsValidProviderCredentialType(value ProviderCredentialType) bool {
-	switch value {
-	case "", ProviderCredentialTypeAPIKey, ProviderCredentialTypeChatGPT:
-		return true
-	default:
-		return false
-	}
-}
-
-// NormalizeProviderCredentialType applies the domain default for legacy rows.
-func NormalizeProviderCredentialType(value ProviderCredentialType) ProviderCredentialType {
-	if value == "" {
-		return ProviderCredentialTypeAPIKey
-	}
-	return value
-}
-
 // ProviderUsageWindow captures one upstream quota window for admin display.
 type ProviderUsageWindow struct {
 	UsedPercent   float64    `json:"used_percent"`
@@ -64,9 +12,9 @@ type ProviderUsageWindow struct {
 	ResetAt       *time.Time `json:"reset_at,omitempty"`
 }
 
-// ProviderUsageSnapshot stores the latest non-sensitive quota data derived from
-// provider-owned credentials. Persisting it alongside the credential keeps the
-// admin surface readable even when the upstream usage endpoint is temporarily unavailable.
+// ProviderUsageSnapshot is the transport-neutral quota payload embedded in a
+// credential session's auth state. Keeping it with the session preserves the
+// admin view even when the upstream usage endpoint is temporarily unavailable.
 type ProviderUsageSnapshot struct {
 	FetchedAt *time.Time           `json:"fetched_at,omitempty"`
 	PlanType  string               `json:"plan_type,omitempty"`
@@ -74,7 +22,7 @@ type ProviderUsageSnapshot struct {
 	OneWeek   *ProviderUsageWindow `json:"one_week,omitempty"`
 }
 
-// ChatGPTProviderCredential persists the OAuth tokens needed to proxy Codex requests.
+// ChatGPTProviderCredential is the in-memory decoded form of one session secret.
 type ChatGPTProviderCredential struct {
 	AccessToken   string                 `json:"access_token"`
 	RefreshToken  string                 `json:"refresh_token"`
@@ -101,7 +49,7 @@ type ChatGPTProviderSecret struct {
 }
 
 // Ready reports whether the secret can participate in the normal refresh path;
-// account identity intentionally lives in ProviderCredential.BindingAccountID.
+// account identity intentionally lives in the CredentialSession auth snapshot.
 func (s *ChatGPTProviderSecret) Ready() bool {
 	return s != nil &&
 		strings.TrimSpace(s.AccessToken) != "" &&

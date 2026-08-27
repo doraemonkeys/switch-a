@@ -63,11 +63,16 @@ func (h *Handler) CommitProviderImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
 		return
 	}
-	bundle, selectedResults, err := h.buildProviderImportBundle(req, candidates)
+	bundle, selectedResults, err := h.buildProviderImportBundle(r.Context(), req, candidates)
 	if err != nil {
 		var conflict *store.ProviderImportConflictError
 		if errors.As(err, &conflict) {
 			writeProviderImportConflict(w, conflict)
+			return
+		}
+		if errors.Is(err, errProviderImportCatalogUnavailable) {
+			h.logProviderImportError("provider import commit catalog lookup failed", importID, err)
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to inspect existing providers")
 			return
 		}
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
@@ -278,10 +283,10 @@ func (h *Handler) commitProviderImportAtLifecycleBoundary(
 	var committedPayload []byte
 	committed := false
 	mutation := func() error {
-		providerIDs := providerImportCredentialMutationIDs(bundle)
-		mutationContext, releaseCredentialMutations, err := h.providerImportStore.WithProviderCredentialMutations(
+		sessionIDs := providerImportCredentialMutationIDs(bundle)
+		mutationContext, releaseCredentialMutations, err := h.providerImportStore.WithCredentialSessionMutations(
 			ctx,
-			providerIDs,
+			sessionIDs,
 		)
 		if err != nil {
 			return err
@@ -292,7 +297,7 @@ func (h *Handler) commitProviderImportAtLifecycleBoundary(
 			w, mutationContext, importID, bundle, responsePayload,
 		)
 		if committed {
-			h.providerImports.InvalidateProviderCredentialSessions(providerIDs)
+			h.providerImports.InvalidateCredentialSessions(sessionIDs)
 		}
 		return nil
 	}

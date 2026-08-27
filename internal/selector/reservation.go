@@ -239,6 +239,10 @@ func cloneSelectRequest(source *model.SelectRequest) *model.SelectRequest {
 		return nil
 	}
 	clone := *source
+	if source.RequiredAuthority != nil {
+		authority := *source.RequiredAuthority
+		clone.RequiredAuthority = &authority
+	}
 	clone.ProviderSwitchHistory = source.ProviderSwitchHistory.Clone()
 	clone.ProviderContinuityContext = source.ProviderContinuityContext.Clone()
 	if source.VisibleContinuitySeedCandidate != nil {

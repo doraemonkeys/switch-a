@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ const (
 	chatGPTOAuthUserAgent    = "github.com/doraemonkeys/switch-a/0.1"
 	chatGPTCodexOriginator   = "codex_cli_rs"
 	chatGPTCodexBaseURL      = "https://chatgpt.com/backend-api/codex"
+	chatGPTVendor            = "openai"
 	chatGPTAPIAudience       = "https://api.openai.com/v1"
 	codexAPIType             = "codex"
 	authModeAuto             = "auto"
@@ -39,27 +41,16 @@ const (
 	callbackPageTitle        = "Switch-A GPT Login"
 )
 
-const (
-	providerCredentialTypeAPIKey  = model.ProviderCredentialTypeAPIKey
-	providerCredentialTypeChatGPT = model.ProviderCredentialTypeChatGPT
-)
-
 // CredentialStore persists refresh-capable secrets and the non-sensitive auth
 // state snapshot without overwriting unrelated provider configuration.
 type CredentialStore interface {
-	UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error
-	UpdateProviderAuthState(ctx context.Context, providerID string, authState *model.ProviderAuthState) error
-}
-
-type providerCredentialMutationCoordinator interface {
-	WithProviderCredentialMutations(
+	GetCredentialSession(ctx context.Context, sessionID string) (*credentialsession.Session, error)
+	WithCredentialSessionMutations(
 		ctx context.Context,
-		providerIDs []string,
+		sessionIDs []string,
 	) (ownedCtx context.Context, release func(), err error)
-}
-
-type providerCredentialReader interface {
-	GetProvider(ctx context.Context, id string) (*model.Provider, error)
+	UpdateCredentialSessionCAS(ctx context.Context, sessionID string, expectedVersion int64, secretData string, subject credentialsession.Subject, authState credentialsession.AuthState) (int64, error)
+	UpdateCredentialSessionAuthState(ctx context.Context, sessionID string, authState credentialsession.AuthState) error
 }
 
 // OAuthHTTPDoer performs outbound OAuth token requests.
@@ -81,7 +72,7 @@ func (uuidIDGenerator) NewID() string {
 
 // Config configures the provider auth service.
 type Config struct {
-	CredentialStore CredentialStore
+	CredentialStore any
 	HTTPClient      OAuthHTTPDoer
 	Clock           internal.Clock
 	Logger          *zap.Logger
@@ -119,7 +110,7 @@ type inFlightProviderUsageObservation struct {
 
 // Service manages provider-backed authentication flows and credential injection.
 type Service struct {
-	credentialStore CredentialStore
+	credentialStore any
 	httpClient      OAuthHTTPDoer
 	clock           internal.Clock
 	logger          *zap.Logger
@@ -217,37 +208,4 @@ func LoopbackCallbackPort() int {
 // ChatGPTCodexBaseURL returns the upstream base URL used by ChatGPT-backed Codex providers.
 func ChatGPTCodexBaseURL() string {
 	return chatGPTCodexBaseURL
-}
-
-// staticProviderCredentialReady reports whether a non-ChatGPT provider already
-// carries usable API-key material in its persisted configuration.
-func staticProviderCredentialReady(provider *model.Provider) bool {
-	if model.HasAPIKey(provider.APIKey) {
-		return true
-	}
-	for _, apiType := range provider.APITypes {
-		if model.HasAPIKey(apiType.APIKey) {
-			return true
-		}
-	}
-	return false
-}
-
-// NormalizeProviderForPersistence applies provider-type-specific invariants before the
-// provider is validated and persisted.
-func NormalizeProviderForPersistence(provider *model.Provider) {
-	provider.CredentialType = model.NormalizeProviderCredentialType(provider.CredentialType)
-	switch provider.CredentialType {
-	case providerCredentialTypeChatGPT:
-		provider.APIKey = ""
-		provider.AuthMode = authModeBearer
-		provider.APITypes = []model.ProviderAPIType{{
-			ProviderID: provider.ID,
-			APIType:    codexAPIType,
-			BaseURL:    chatGPTCodexBaseURL,
-			APIKey:     "",
-		}}
-	case providerCredentialTypeAPIKey:
-		provider.Credential = nil
-	}
 }

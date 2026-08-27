@@ -1,18 +1,57 @@
 package admin
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
 )
+
+func TestConfigImportSnapshotIncludesUnreferencedCredentialSessions(t *testing.T) {
+	handler, st, _ := testHandler()
+	exported := importedTestSession("orphan-session", "orphan-secret")
+	session := &credentialsession.Session{
+		ID: exported.ID, Vendor: exported.Vendor, Kind: exported.Kind,
+		SecretData: exported.SecretData, Version: exported.Version, AuthState: exported.AuthState,
+	}
+	if err := session.SetSubject(exported.Subject); err != nil {
+		t.Fatal(err)
+	}
+	st.credentialSessions[session.ID] = session
+
+	snapshot, err := handler.loadConfigImportSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := snapshot.credentialSessions[session.ID]; !exists {
+		t.Fatal("unreferenced credential session was absent from import snapshot")
+	}
+	staged := stageConfigImport(
+		&ImportConfigRequest{ImportScope: fullConfigImportScope(), CredentialSessions: []ExportedCredentialSession{exported}},
+		snapshot.providers,
+		snapshot.credentialSessions,
+		snapshot.groups,
+		snapshot.routingPolicies,
+		snapshot.settings,
+		snapshot.rules,
+	)
+	if staged.changes.CredentialSessions != (ChangeCount{Unchanged: 1}) {
+		t.Fatalf("credential session changes = %+v, want one unchanged", staged.changes.CredentialSessions)
+	}
+}
 
 func TestResolveImportConfigRequest_SelectionKeepsProviderImportsExactAndNormalizesScopeIDs(t *testing.T) {
 	groupA := "group-a"
 	groupB := "group-b"
 	req := &ImportConfigRequest{
+		CredentialSessions: []ExportedCredentialSession{
+			importedTestSession("provider-z-session", "key-z"), importedTestSession("provider-a-session", "key-a"),
+			importedTestSession("provider-b-session", "key-b"), importedTestSession("provider-c-session", "key-c"),
+		},
 		ImportScope: selectionConfigImportScope(
 			[]string{" " + groupB + " ", groupB},
 			[]string{" provider-a ", "provider-a"},
@@ -71,6 +110,9 @@ func TestResolveImportConfigRequest_SelectionWarnsWhenSelectedProviderGroupIsMis
 	missingGroupID := "group-missing"
 	req := &ImportConfigRequest{
 		ImportScope: selectionConfigImportScope(nil, []string{"provider-a"}),
+		CredentialSessions: []ExportedCredentialSession{
+			importedTestSession("provider-a-session", "key-a"),
+		},
 		Providers: []ExportedProvider{
 			scopeTestProvider("provider-a", "Selected Provider", "codex", "https://selected.example", &missingGroupID),
 		},
@@ -183,6 +225,7 @@ func TestStageConfigImport_SetsExplicitRoutingPolicyMode(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	if fullStaged.bundle.RoutingPolicyMode != store.ConfigImportRoutingPolicyModeReplace {
 		t.Fatalf("full routing policy mode = %q, want %q", fullStaged.bundle.RoutingPolicyMode, store.ConfigImportRoutingPolicyModeReplace)
@@ -194,6 +237,9 @@ func TestStageConfigImport_SetsExplicitRoutingPolicyMode(t *testing.T) {
 	selectionStaged := stageConfigImport(
 		&ImportConfigRequest{
 			ImportScope: selectionConfigImportScope([]string{groupID}, nil),
+			CredentialSessions: []ExportedCredentialSession{
+				importedTestSession("provider-b-session", "key-b"),
+			},
 			Groups: []ExportedGroup{
 				{ID: groupID, Name: "Group A", Strategy: DefaultStrategy, Weight: DefaultWeight, Enabled: true},
 			},
@@ -202,6 +248,7 @@ func TestStageConfigImport_SetsExplicitRoutingPolicyMode(t *testing.T) {
 			},
 		},
 		existingProviders,
+		nil,
 		nil,
 		existingRoutingPolicies,
 		nil,
@@ -229,15 +276,13 @@ func scopeTestProvider(
 	groupID *string,
 ) ExportedProvider {
 	return ExportedProvider{
-		ID:             strings.TrimSpace(id),
-		Name:           name,
-		APIKey:         "key-" + strings.TrimSpace(id),
-		APITypes:       []ExportedAPIType{{APIType: apiType, BaseURL: baseURL}},
-		AuthMode:       DefaultAuthMode,
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-		GroupID:        groupID,
-		Weight:         DefaultWeight,
-		Enabled:        true,
+		ID:       strings.TrimSpace(id),
+		Name:     name,
+		APITypes: []ExportedAPIType{{APIType: apiType, BaseURL: baseURL, CredentialSessionID: strings.TrimSpace(id) + "-session"}},
+		AuthMode: DefaultAuthMode,
+		GroupID:  groupID,
+		Weight:   DefaultWeight,
+		Enabled:  true,
 	}
 }
 

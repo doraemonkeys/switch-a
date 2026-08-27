@@ -2,6 +2,7 @@ package websocketproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/upstreamheaders"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -37,31 +41,53 @@ func (e *webSocketProviderConfigError) Unwrap() error {
 	return e.err
 }
 
-func (h *Gateway) validateWebSocketProviderReady(provider *model.Provider, apiType string) (string, error) {
+func (h *Gateway) validateWebSocketProviderReady(
+	provider *model.Provider,
+	apiType string,
+	candidate codexidentity.CandidateSnapshot,
+) (string, credentialsession.Snapshot, error) {
+	if provider == nil {
+		return "", credentialsession.Snapshot{}, &webSocketProviderConfigError{
+			missingField: "provider",
+			err:          errors.New("provider is required"),
+		}
+	}
 	baseURL := provider.BaseURLForAPIType(apiType)
 	if baseURL == "" {
-		return "", &webSocketProviderConfigError{
+		return "", credentialsession.Snapshot{}, &webSocketProviderConfigError{
 			missingField: "base_url",
 			err:          fmt.Errorf("no base_url for api_type %q", apiType),
 		}
 	}
-	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
-	case model.ProviderCredentialTypeChatGPT:
+	if candidate.RouteTargetID() != provider.ID || candidate.APIType() != apiType {
+		return "", credentialsession.Snapshot{}, &webSocketProviderConfigError{
+			missingField: "credentials",
+			err:          fmt.Errorf("provider %q has no immutable credential candidate for api_type %q", provider.ID, apiType),
+		}
+	}
+	snapshot := candidate.Credential()
+	switch snapshot.Kind {
+	case credentialsession.KindChatGPT:
 		if h.auth == nil {
-			return "", &webSocketProviderConfigError{
+			return "", credentialsession.Snapshot{}, &webSocketProviderConfigError{
 				missingField: "credentials",
 				err:          fmt.Errorf("provider %q requires managed credentials for websocket", provider.ID),
 			}
 		}
-	default:
-		if provider.APIKeyForAPIType(apiType) == "" {
-			return "", &webSocketProviderConfigError{
+	case credentialsession.KindAPIKey:
+		if model.NormalizeAPIKey(snapshot.SecretData) == "" {
+			return "", credentialsession.Snapshot{}, &webSocketProviderConfigError{
 				missingField: "api_key",
 				err:          fmt.Errorf("no api_key for api_type %q", apiType),
 			}
 		}
+	default:
+		return "", credentialsession.Snapshot{}, &webSocketProviderConfigError{
+			missingField: "credentials",
+			err:          fmt.Errorf("provider %q has unsupported credential kind %q for api_type %q", provider.ID, snapshot.Kind, apiType),
+		}
 	}
-	return baseURL, nil
+	return baseURL, snapshot, nil
 }
 
 // extractWebSocketModel extracts the model identifier from a WebSocket request.
@@ -91,33 +117,46 @@ func (h *Gateway) webSocketSelectionConsumesHiddenModel(ctx context.Context, req
 
 // buildWebSocketPassthroughHeaders copies client-controlled handshake headers
 // that belong to the wire protocol rather than provider authentication.
-func buildWebSocketPassthroughHeaders(r *http.Request) http.Header {
-	headers := make(http.Header)
-	for key, values := range r.Header {
-		if hopByHopHeaders[key] || isAuthHeader(key) || isWebSocketHandshakeHeader(key) {
-			continue
-		}
-		for _, value := range values {
-			headers.Add(key, value)
-		}
+func buildWebSocketPassthroughHeaders(r *http.Request, sanitizeProviderHeaders bool) http.Header {
+	if sanitizeProviderHeaders {
+		return upstreamheaders.ForWebSocketAttempt(r.Header)
 	}
-	return headers
+	return upstreamheaders.ForWebSocketTransportAttempt(r.Header)
 }
 
 // buildWebSocketDialHeaders preserves static-auth behavior for tests and
 // fallback paths that do not use the managed provider auth service.
 func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiType, globalAuthMode string) http.Header {
-	headers := buildWebSocketPassthroughHeaders(r)
-	SetAuthHeader(headers, provider.APIKeyForAPIType(apiType), provider.AuthMode, globalAuthMode, r)
+	headers := buildWebSocketPassthroughHeaders(r, true)
+	credential, ok := provider.CredentialSessionForAPIType(apiType)
+	if ok && credential.Kind == credentialsession.KindAPIKey {
+		SetAuthHeader(headers, credential.SecretData, provider.AuthMode, globalAuthMode, r)
+	}
 	return headers
 }
 
-func injectedCredentialForCapture(provider *model.Provider, apiType string) string {
-	return capturebridge.InjectedCredentialValue(provider, apiType)
+func injectedCredentialForCapture(credential credentialsession.Snapshot, headers http.Header) string {
+	return capturebridge.InjectedCredentialFromSnapshot(credential, headers)
 }
 
 func (h *Gateway) prepareWebSocketDialHeaders(ctx context.Context, r *http.Request, provider *model.Provider, apiType, globalAuthMode string) (http.Header, error) {
-	headers, err := h.prepareWebSocketAttemptHeaders(ctx, r, provider, apiType, globalAuthMode)
+	credential, ok := provider.CredentialSessionForAPIType(apiType)
+	if !ok || credential == nil {
+		return nil, fmt.Errorf("provider %q has no credential session for api_type %q", provider.ID, apiType)
+	}
+	finalURL, err := url.Parse(provider.BaseURLForAPIType(apiType))
+	if err != nil {
+		return nil, err
+	}
+	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
+		RouteTargetID: provider.ID,
+		APIType:       apiType,
+		Credential:    *credential,
+	}, apiType, finalURL)
+	if err != nil {
+		return nil, err
+	}
+	headers, _, err := h.prepareWebSocketAttemptHeaders(ctx, r, provider, candidate, apiType, globalAuthMode, finalURL, true)
 	if err != nil {
 		return nil, err
 	}
@@ -128,21 +167,31 @@ func (h *Gateway) prepareWebSocketAttemptHeaders(
 	ctx context.Context,
 	r *http.Request,
 	provider *model.Provider,
+	candidate codexidentity.CandidateSnapshot,
 	apiType,
 	globalAuthMode string,
-) (http.Header, error) {
-	headers := buildWebSocketPassthroughHeaders(r)
+	finalURL *url.URL,
+	sanitizeProviderHeaders bool,
+) (http.Header, codexidentity.AppliedIdentity, error) {
+	headers := buildWebSocketPassthroughHeaders(r, sanitizeProviderHeaders)
 	if h.auth != nil {
-		if err := h.auth.ApplyProviderCredentials(ctx, headers, provider, apiType, globalAuthMode, r); err != nil {
+		applied, err := h.auth.ApplyProviderCredentials(ctx, headers, candidate, provider.AuthMode, globalAuthMode, r, finalURL)
+		if err != nil {
 			// The orchestrator retains this partial request only as sanitizer input;
 			// the compatibility wrapper above still returns nil and no dial can occur.
-			return headers, err
+			return headers, codexidentity.AppliedIdentity{}, err
 		}
-		return headers, nil
+		return headers, applied, nil
 	}
 
-	SetAuthHeader(headers, provider.APIKeyForAPIType(apiType), provider.AuthMode, globalAuthMode, r)
-	return headers, nil
+	credential := candidate.Credential()
+	if credential.Kind != credentialsession.KindAPIKey {
+		return headers, codexidentity.AppliedIdentity{}, fmt.Errorf("provider %q requires managed credentials for websocket", provider.ID)
+	}
+	SetAuthHeader(headers, credential.SecretData, provider.AuthMode, globalAuthMode, r)
+	authority := candidate.Authority()
+	applied, err := codexidentity.NewAppliedIdentity(authority.Vendor(), authority.Origin(), authority.Subject())
+	return headers, applied, err
 }
 
 func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
@@ -261,7 +310,7 @@ func (h *Gateway) selectProviderWithTracking(
 			return ProviderSelection{}, err
 		}
 		return ProviderSelection{
-			Lease:    h.newFallbackProviderLease(provider),
+			Lease:    h.newFallbackProviderLease(provider, req.APIType),
 			Metadata: selector.BuildSelectionMetadataAt(req, selector.SelectionSourceStrategy, time.Now()),
 		}, nil
 	}
@@ -405,21 +454,6 @@ const (
 	authModeXAPI    = "x-api-key"
 	headerUserAgent = "User-Agent"
 )
-
-var hopByHopHeaders = map[string]bool{
-	"Connection": true, "Keep-Alive": true, "Proxy-Authenticate": true,
-	"Proxy-Authorization": true, "Te": true, "Trailer": true,
-	"Transfer-Encoding": true, "Upgrade": true,
-}
-
-func isAuthHeader(key string) bool {
-	lower := strings.ToLower(key)
-	return lower == "authorization" || lower == "x-api-key"
-}
-
-func isWebSocketHandshakeHeader(key string) bool {
-	return len(key) > 14 && strings.EqualFold(key[:14], "Sec-Websocket-")
-}
 
 func detectAuthMode(r *http.Request) string {
 	if r.Header.Get("Authorization") != "" {

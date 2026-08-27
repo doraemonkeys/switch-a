@@ -48,9 +48,8 @@ func TestHandlerActiveRequestExposesReasoningAndHTTPTraffic(t *testing.T) {
 	t.Cleanup(release)
 
 	store := newMockStore()
-	store.providers = []model.Provider{{
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
 		ID:       "provider-1",
-		APIKey:   "test-key",
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
@@ -58,7 +57,7 @@ func TestHandlerActiveRequestExposesReasoningAndHTTPTraffic(t *testing.T) {
 			APIType:    APITypeClaude,
 			BaseURL:    upstream.URL,
 		}},
-	}}
+	}, "", "test-key")}
 	registry := NewActiveRequestRegistry()
 	handler := NewHandler(Config{
 		Store:          store,

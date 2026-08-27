@@ -140,10 +140,10 @@ func TestHandlerPersistsHTTPAndInferredSSEUsage(t *testing.T) {
 			defer upstream.Close()
 
 			store := newMockStore()
-			store.providers = []model.Provider{{
-				ID: "p1", Name: "provider", APIKey: "test", AuthMode: "bearer", Enabled: true,
+			store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+				ID: "p1", Name: "provider", AuthMode: "bearer", Enabled: true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: APITypeCodex, BaseURL: upstream.URL}},
-			}}
+			}, "", "test")}
 			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello"}`))
 			request.Header.Set("Content-Type", "application/json")

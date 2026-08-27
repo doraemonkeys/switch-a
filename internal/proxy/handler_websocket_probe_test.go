@@ -46,14 +46,14 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	}))
 	defer upstream.Close()
 
-	provider := &model.Provider{
-		ID:       "ws-probe-select-p1",
-		Name:     "WS Probe Select Provider",
-		APIKey:   "ws-key",
+	provider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-probe-select-p1",
+		Name: "WS Probe Select Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-select-p1", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "ws-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
@@ -155,14 +155,14 @@ func TestHandler_ServeHTTP_WebSocket_ContinuitySeedLookupWaitsForProbeResolvedMo
 	store := newMockStore()
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeModel)
 	store.configs[ConfigKeyTrustProxyHeaders] = "true"
-	provider := &model.Provider{
-		ID:       "ws-probe-seed-provider",
-		Name:     "WS Probe Seed Provider",
-		APIKey:   "ws-key",
+	provider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-probe-seed-provider",
+		Name: "WS Probe Seed Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-seed-provider", APIType: APITypeCodex, BaseURL: upstream.URL}},
-	}
+	}, "", "ws-key")
 	store.providers = []model.Provider{*provider}
 
 	mockSel := &mockSelector{
@@ -242,14 +242,14 @@ func TestHandler_ServeHTTP_WebSocket_ProbeDisabledKeepsHandshakeOnlySelection(t 
 	}))
 	defer upstream.Close()
 
-	provider := &model.Provider{
-		ID:       "ws-probe-disabled-p1",
-		Name:     "WS Probe Disabled Provider",
-		APIKey:   "ws-key",
+	provider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-probe-disabled-p1",
+		Name: "WS Probe Disabled Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-disabled-p1", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "ws-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
@@ -329,14 +329,14 @@ func TestHandler_ServeHTTP_WebSocket_RoutingPolicyDemandUsesClientModel(t *testi
 	}))
 	defer upstream.Close()
 
-	provider := &model.Provider{
-		ID:       "ws-routing-policy-lookup-p1",
-		Name:     "WS Routing Policy Lookup Provider",
-		APIKey:   "ws-key",
+	provider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-routing-policy-lookup-p1",
+		Name: "WS Routing Policy Lookup Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-routing-policy-lookup-p1", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "ws-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
@@ -418,14 +418,14 @@ func TestHandler_ServeHTTP_WebSocket_HandshakeModelWinsOverProbe(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	provider := &model.Provider{
-		ID:       "ws-probe-handshake-p1",
-		Name:     "WS Probe Handshake Provider",
-		APIKey:   "ws-key",
+	provider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-probe-handshake-p1",
+		Name: "WS Probe Handshake Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-handshake-p1", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "ws-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
@@ -499,22 +499,22 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 	}))
 	defer fallback.Close()
 
-	primaryProvider := &model.Provider{
-		ID:       "ws-probe-config-primary",
-		Name:     "WS Probe Config Primary",
-		APIKey:   "primary-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-probe-config-primary",
+		Name: "WS Probe Config Primary",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-config-primary", APIType: "codex", BaseURL: ""}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       "ws-probe-config-fallback",
-		Name:     "WS Probe Config Fallback",
-		APIKey:   "fallback-key",
+	}, "", "primary-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-probe-config-fallback",
+		Name: "WS Probe Config Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-config-fallback", APIType: "codex", BaseURL: fallback.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
@@ -588,14 +588,14 @@ func TestHandler_ServeHTTP_WebSocket_ProbeFailureReturnsGatewayErrorEvent(t *tes
 
 	const prompt = `{"type":"response.create","response":{"model":"client-model","instructions":"hello"}}`
 
-	provider := &model.Provider{
-		ID:       "ws-probe-terminal-error",
-		Name:     "WS Probe Terminal Error",
-		APIKey:   "error-key",
+	provider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-probe-terminal-error",
+		Name: "WS Probe Terminal Error",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-probe-terminal-error", APIType: "codex", BaseURL: ""}},
-	}
+	}, "", "error-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}

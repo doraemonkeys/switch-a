@@ -9,10 +9,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
@@ -950,21 +953,22 @@ type webSocketCaptureFailingAuthenticator struct {
 func (a webSocketCaptureFailingAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	provider *model.Provider,
+	candidate codexidentity.CandidateSnapshot,
 	_, _ string,
 	_ *http.Request,
-) error {
-	if provider.ID == a.providerID {
+	_ *url.URL,
+) (codexidentity.AppliedIdentity, error) {
+	if candidate.RouteTargetID() == a.providerID {
 		headers.Set("Authorization", "Bearer "+a.secret)
-		return errors.New("credential preparation failed for " + a.secret)
+		return codexidentity.AppliedIdentity{}, errors.New("credential preparation failed for " + a.secret)
 	}
 	headers.Set("Authorization", "Bearer fallback-token")
-	return nil
+	return codexidentity.AppliedIdentity{}, nil
 }
 
-func (webSocketCaptureFailingAuthenticator) RefreshProviderCredentials(
+func (webSocketCaptureFailingAuthenticator) RefreshCredentialSession(
 	context.Context,
-	*model.Provider,
+	credentialsession.Snapshot,
 ) (bool, error) {
 	return false, nil
 }

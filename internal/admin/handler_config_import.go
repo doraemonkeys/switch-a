@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -60,6 +61,7 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	staged := stageConfigImport(
 		&req,
 		snapshot.providers,
+		snapshot.credentialSessions,
 		snapshot.groups,
 		snapshot.routingPolicies,
 		snapshot.settings,
@@ -79,19 +81,7 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 
 	// If dry_run, return preview
 	if dryRun {
-		if staged.previewRejectsWarning && len(staged.warnings) > 0 {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(staged.warnings, "; "))
-			return
-		}
-		resp := ImportPreviewResponse{
-			DryRun:          true,
-			Changes:         staged.changes,
-			Warnings:        append([]string{}, staged.warnings...),
-			RuleSetRevision: ruleRevision.String(),
-			RuleSetETag:     formatInternalErrorRuleETag(ruleRevision),
-		}
-		w.Header().Set("ETag", resp.RuleSetETag)
-		writeJSON(w, http.StatusOK, resp)
+		h.writeConfigImportPreview(w, ctx, snapshot.settings, staged, ruleRevision)
 		return
 	}
 
@@ -113,12 +103,14 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		staged.bundle.ExpectedRuleRevision = &expected
 	}
 
-	err = h.applyConfigImportAtLifecycleBoundary(ctx, staged.changes, &staged.bundle)
+	err = h.applyValidatedConfigImport(ctx, staged.changes, &staged.bundle)
 	if err != nil {
 		switch {
+		case isCodexFeatureConfigError(err):
+			h.writeCodexFeatureConfigError(w, err)
+			return
 		case errors.Is(err, store.ErrRoutingPolicyConflict),
-			errors.Is(err, store.ErrRoutingPolicyReferenceConflict),
-			errors.Is(err, store.ErrCredentialBindingConflict):
+			errors.Is(err, store.ErrRoutingPolicyReferenceConflict):
 			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return
 		case errors.Is(err, errorrulesqlite.ErrRevisionMismatch):
@@ -147,6 +139,55 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) writeConfigImportPreview(
+	w http.ResponseWriter,
+	ctx context.Context,
+	currentSettings map[string]string,
+	staged stagedConfigImport,
+	ruleRevision errorrule.Revision,
+) {
+	if err := h.validateCodexFeatureCandidate(ctx, currentSettings, staged.bundle.Settings); err != nil {
+		h.writeCodexFeatureConfigError(w, err)
+		return
+	}
+	if staged.previewRejectsWarning && len(staged.warnings) > 0 {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(staged.warnings, "; "))
+		return
+	}
+	resp := ImportPreviewResponse{
+		DryRun:          true,
+		Changes:         staged.changes,
+		Warnings:        append([]string{}, staged.warnings...),
+		RuleSetRevision: ruleRevision.String(),
+		RuleSetETag:     formatInternalErrorRuleETag(ruleRevision),
+	}
+	w.Header().Set("ETag", resp.RuleSetETag)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) applyValidatedConfigImport(
+	ctx context.Context,
+	changes ImportChanges,
+	bundle *store.ConfigImportBundle,
+) error {
+	// Config imports share the same validation/persistence boundary as direct
+	// updates so concurrent admin requests cannot create an invalid feature set.
+	h.configMutationMu.Lock()
+	defer h.configMutationMu.Unlock()
+	currentSettings, err := h.store.GetAllConfig(ctx)
+	if err != nil {
+		return err
+	}
+	snapshot, err := h.codexFeatureCandidate(ctx, currentSettings, bundle.Settings)
+	if err != nil {
+		return err
+	}
+	if err := h.applyConfigImportAtLifecycleBoundary(ctx, changes, bundle); err != nil {
+		return err
+	}
+	return h.publishCodexFeatures(snapshot)
+}
+
 func newConfigImportResult(changes ImportChanges, revision errorrule.Revision) ImportResult {
 	return ImportResult{
 		Success:         true,
@@ -157,6 +198,11 @@ func newConfigImportResult(changes ImportChanges, revision errorrule.Revision) I
 				Added:   changes.Providers.Add,
 				Updated: changes.Providers.Update,
 				Deleted: changes.Providers.Delete,
+			},
+			CredentialSessions: AppliedCount{
+				Added:   changes.CredentialSessions.Add,
+				Updated: changes.CredentialSessions.Update,
+				Deleted: changes.CredentialSessions.Delete,
 			},
 			Groups: AppliedCount{
 				Added:   changes.Groups.Add,
@@ -183,19 +229,28 @@ func newConfigImportResult(changes ImportChanges, revision errorrule.Revision) I
 }
 
 type configImportSnapshot struct {
-	providers       map[string]*model.Provider
-	groups          map[string]*model.Group
-	routingPolicies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy
-	settings        map[string]string
-	ruleRepository  *errorrulesqlite.Repository
-	ruleRevision    errorrule.Revision
-	rules           []errorrule.Rule
+	providers          map[string]*model.Provider
+	credentialSessions map[string]credentialsession.Snapshot
+	groups             map[string]*model.Group
+	routingPolicies    map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy
+	settings           map[string]string
+	ruleRepository     *errorrulesqlite.Repository
+	ruleRevision       errorrule.Revision
+	rules              []errorrule.Rule
 }
 
 func (h *Handler) loadConfigImportSnapshot(ctx context.Context) (configImportSnapshot, error) {
 	providers, err := h.store.ListProviders(ctx)
 	if err != nil {
 		return configImportSnapshot{}, fmt.Errorf("list providers: %w", err)
+	}
+	credentialRepository, ok := h.store.(credentialSessionLister)
+	if !ok {
+		return configImportSnapshot{}, fmt.Errorf("credential sessions are unavailable")
+	}
+	credentialSessions, err := credentialRepository.ListCredentialSessions(ctx)
+	if err != nil {
+		return configImportSnapshot{}, fmt.Errorf("list credential sessions: %w", err)
 	}
 	groups, err := h.store.ListGroups(ctx)
 	if err != nil {
@@ -211,14 +266,22 @@ func (h *Handler) loadConfigImportSnapshot(ctx context.Context) (configImportSna
 	}
 
 	snapshot := configImportSnapshot{
-		providers:       make(map[string]*model.Provider, len(providers)),
-		groups:          make(map[string]*model.Group, len(groups)),
-		routingPolicies: make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(routingPolicies)),
-		settings:        settings,
-		ruleRepository:  configRuleRepository(h.store),
+		providers:          make(map[string]*model.Provider, len(providers)),
+		credentialSessions: make(map[string]credentialsession.Snapshot, len(credentialSessions)),
+		groups:             make(map[string]*model.Group, len(groups)),
+		routingPolicies:    make(map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy, len(routingPolicies)),
+		settings:           settings,
+		ruleRepository:     configRuleRepository(h.store),
 	}
 	for i := range providers {
 		snapshot.providers[providers[i].ID] = &providers[i]
+	}
+	for i := range credentialSessions {
+		credentialSnapshot, snapshotErr := credentialSessions[i].Snapshot()
+		if snapshotErr != nil {
+			return configImportSnapshot{}, fmt.Errorf("snapshot credential session %q: %w", credentialSessions[i].ID, snapshotErr)
+		}
+		snapshot.credentialSessions[credentialSnapshot.SessionID] = credentialSnapshot
 	}
 	for i := range groups {
 		snapshot.groups[groups[i].ID] = &groups[i]
@@ -238,7 +301,7 @@ func (h *Handler) applyConfigImportAtLifecycleBoundary(
 	bundle *store.ConfigImportBundle,
 ) error {
 	apply := func() error { return h.store.ApplyConfigImport(ctx, bundle) }
-	if !hasChanges(changes.Providers) && !hasChanges(changes.Groups) &&
+	if !hasChanges(changes.Providers) && !hasChanges(changes.CredentialSessions) && !hasChanges(changes.Groups) &&
 		!hasChanges(changes.RoutingPolicies) {
 		return apply()
 	}
@@ -257,14 +320,16 @@ func validateImportRequest(
 	req *ImportConfigRequest,
 	existingGroups map[string]*model.Group,
 	suppressedProviderGroupRefs map[string]struct{},
+	declaredCredentialSessions map[string]struct{},
 ) []string {
-	estimatedWarnings := len(req.Providers)*2 + len(req.Groups) + len(req.Settings)
+	estimatedWarnings := len(req.Providers)*2 + len(req.CredentialSessions) + len(req.Groups) + len(req.Settings)
 	warnings := make([]string, 0, estimatedWarnings)
 
 	// Validate providers
 	for _, p := range req.Providers {
 		warnings = append(warnings, validateExportedProvider(&p)...)
 	}
+	warnings = append(warnings, validateCredentialSessionReferences(req, declaredCredentialSessions)...)
 
 	// Validate groups
 	for _, g := range req.Groups {
@@ -297,21 +362,8 @@ func validateExportedProvider(p *ExportedProvider) []string {
 		return warnings
 	}
 
-	credentialType := model.NormalizeProviderCredentialType(p.CredentialType)
-	if !IsValidProviderCredentialType(credentialType) {
-		return append(warnings, "Provider '"+p.ID+"' has invalid credential_type: "+string(p.CredentialType))
-	}
 	if !model.IsValidProviderUsageLimitPolicy(p.UsageLimitPolicy) {
 		warnings = append(warnings, "Provider '"+p.ID+"' has invalid usage_limit_policy: "+string(p.UsageLimitPolicy))
-	}
-	if p.AuthState != nil && p.AuthState.Status != "" && !model.IsValidProviderAuthStatus(p.AuthState.Status) {
-		warnings = append(warnings, "Provider '"+p.ID+"' has invalid auth_state.status: "+string(p.AuthState.Status))
-	}
-	if credentialType == model.ProviderCredentialTypeChatGPT {
-		if chatGPTCredentialMustBeReady(p) && !exportedChatGPTProviderReady(p) {
-			warnings = append(warnings, "Provider '"+p.ID+"' has incomplete or invalid GPT login")
-		}
-		return warnings
 	}
 
 	for _, at := range p.APITypes {
@@ -325,8 +377,8 @@ func validateExportedProvider(p *ExportedProvider) []string {
 			// of providers with malformed URLs that would fail at proxy routing time.
 			warnings = append(warnings, "Provider '"+p.ID+"' has malformed base_url for api_type: "+at.APIType)
 		}
-		if !model.HasAPIKey(p.APIKey) && !model.HasAPIKey(at.APIKey) {
-			warnings = append(warnings, "Provider '"+p.ID+"' has no api_key for api_type: "+at.APIType)
+		if strings.TrimSpace(at.CredentialSessionID) == "" {
+			warnings = append(warnings, "Provider '"+p.ID+"' has no credential_session_id for api_type: "+at.APIType)
 		}
 	}
 	if p.AuthMode != "" && !IsValidAuthMode(p.AuthMode) {
@@ -336,20 +388,23 @@ func validateExportedProvider(p *ExportedProvider) []string {
 	return warnings
 }
 
-// chatGPTCredentialMustBeReady preserves legacy/manual import intent encoded in
-// the raw export payload before auth-state normalization rewrites blank values.
-func chatGPTCredentialMustBeReady(p *ExportedProvider) bool {
-	if p == nil || p.AuthState == nil {
-		return false
+func validateCredentialSessionReferences(
+	req *ImportConfigRequest,
+	declared map[string]struct{},
+) []string {
+	warnings := make([]string, 0)
+	for _, provider := range req.Providers {
+		for _, apiType := range provider.APITypes {
+			id := strings.TrimSpace(apiType.CredentialSessionID)
+			if id == "" {
+				continue
+			}
+			if _, ok := declared[id]; !ok {
+				warnings = append(warnings, "Provider '"+provider.ID+"' references missing credential session '"+id+"'")
+			}
+		}
 	}
-	return p.AuthState.Status == "" || p.AuthState.Status == model.ProviderAuthStatusActive
-}
-
-func exportedChatGPTProviderReady(provider *ExportedProvider) bool {
-	if provider == nil {
-		return false
-	}
-	return canImportProvider(provider, nil)
+	return warnings
 }
 
 // validateExportedGroup validates a single group and returns warnings.
@@ -414,6 +469,7 @@ func (h *Handler) calculateImportChanges(
 	staged := stageConfigImport(
 		req,
 		existingProviders,
+		credentialSessionsFromProviders(existingProviders),
 		existingGroups,
 		nil,
 		existingSettings,
@@ -443,6 +499,7 @@ func (h *Handler) applyImportChanges(
 	staged := stageConfigImport(
 		req,
 		existingProviders,
+		credentialSessionsFromProviders(existingProviders),
 		existingGroups,
 		existingRoutingPolicyMap,
 		existingSettings,
@@ -464,6 +521,11 @@ func (h *Handler) applyImportChanges(
 			Updated: staged.changes.Providers.Update,
 			Deleted: staged.changes.Providers.Delete,
 		},
+		CredentialSessions: AppliedCount{
+			Added:   staged.changes.CredentialSessions.Add,
+			Updated: staged.changes.CredentialSessions.Update,
+			Deleted: staged.changes.CredentialSessions.Delete,
+		},
 		Groups: AppliedCount{
 			Added:   staged.changes.Groups.Add,
 			Updated: staged.changes.Groups.Update,
@@ -480,4 +542,14 @@ func (h *Handler) applyImportChanges(
 			Deleted: staged.changes.Settings.Delete,
 		},
 	}, nil
+}
+
+func credentialSessionsFromProviders(providers map[string]*model.Provider) map[string]credentialsession.Snapshot {
+	sessions := make(map[string]credentialsession.Snapshot)
+	for _, provider := range providers {
+		for _, route := range provider.CredentialSessions {
+			sessions[route.Credential.SessionID] = route.Credential
+		}
+	}
+	return sessions
 }

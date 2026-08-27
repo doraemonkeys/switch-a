@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
@@ -82,32 +82,28 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 
 // CreateProviderRequest represents the request to create a provider.
 type CreateProviderRequest struct {
-	ID                          string                            `json:"id"`
-	Name                        string                            `json:"name"`
-	APIKey                      string                            `json:"api_key"`
-	APITypes                    []APITypeInput                    `json:"api_types"`
-	AuthMode                    string                            `json:"auth_mode"`
-	CredentialType              model.ProviderCredentialType      `json:"credential_type"`
-	UsageLimitPolicy            model.ProviderUsageLimitPolicy    `json:"usage_limit_policy"`
-	CredentialLoginID           string                            `json:"credential_login_id,omitempty"`
-	CredentialBindingResolution model.CredentialBindingResolution `json:"credential_binding_resolution,omitempty"`
-	GroupID                     *string                           `json:"group_id"`
-	Weight                      int                               `json:"weight"`
-	Priority                    int                               `json:"priority"`
-	Concurrency                 int                               `json:"concurrency"`
-	MaxRetries                  *int                              `json:"max_retries"`     // Pointer to distinguish unset (nil) from explicit 0
-	Backoff                     *model.BackoffPolicy              `json:"backoff"`         // Exponential backoff for same-provider retries
-	Vendor                      string                            `json:"vendor"`          // Empty = no isolation, "*" = wildcard (see model.Provider.Vendor)
-	FailoverScope               *model.Scope                      `json:"failover_scope"`  // Pointer to distinguish unset (nil) from explicit empty
-	AcceptFailover              *model.Scope                      `json:"accept_failover"` // Governs true failover only; pre-visible replacement stays allowed
-	Enabled                     *bool                             `json:"enabled"`
+	ID               string                         `json:"id"`
+	Name             string                         `json:"name"`
+	APITypes         []APITypeInput                 `json:"api_types"`
+	AuthMode         string                         `json:"auth_mode"`
+	UsageLimitPolicy model.ProviderUsageLimitPolicy `json:"usage_limit_policy"`
+	GroupID          *string                        `json:"group_id"`
+	Weight           int                            `json:"weight"`
+	Priority         int                            `json:"priority"`
+	Concurrency      int                            `json:"concurrency"`
+	MaxRetries       *int                           `json:"max_retries"`
+	Backoff          *model.BackoffPolicy           `json:"backoff"`
+	Vendor           string                         `json:"vendor"`
+	FailoverScope    *model.Scope                   `json:"failover_scope"`
+	AcceptFailover   *model.Scope                   `json:"accept_failover"`
+	Enabled          *bool                          `json:"enabled"`
 }
 
 // APITypeInput represents an API type entry with endpoint details.
 type APITypeInput struct {
-	APIType string `json:"api_type"`
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
+	APIType             string `json:"api_type"`
+	BaseURL             string `json:"base_url"`
+	CredentialSessionID string `json:"credential_session_id"`
 }
 
 // isValidBaseURL checks that a base URL has a scheme and host,
@@ -138,6 +134,9 @@ func validateAPITypeInputs(apiTypes []APITypeInput) string {
 		}
 		if !isValidBaseURL(at.BaseURL) {
 			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
+		}
+		if at.CredentialSessionID == "" {
+			return "credential_session_id is required for api_type: " + at.APIType
 		}
 	}
 	return ""
@@ -171,17 +170,8 @@ func validateProviderConfiguration(provider *model.Provider) string {
 		return errMsg
 	}
 
-	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
-	case model.ProviderCredentialTypeChatGPT:
-		if !providerauth.HasCompleteChatGPTCredential(provider) {
-			return "GPT login is incomplete or invalid for this provider"
-		}
-	default:
-		for _, at := range provider.APITypes {
-			if !model.HasAPIKey(provider.APIKey) && !model.HasAPIKey(at.APIKey) {
-				return "api_key is required for api_type: " + at.APIType + " when provider default api_key is empty"
-			}
-		}
+	if len(provider.CredentialSessions) != len(provider.APITypes) {
+		return "every api_type requires one credential session reference"
 	}
 	return ""
 }
@@ -195,11 +185,7 @@ func (req *CreateProviderRequest) validate() string {
 	if req.Name == "" {
 		return "Provider name is required"
 	}
-	if model.NormalizeProviderCredentialType(req.CredentialType) == model.ProviderCredentialTypeChatGPT {
-		if req.CredentialLoginID == "" {
-			return "credential_login_id is required for chatgpt providers"
-		}
-	} else if errMsg := validateAPITypeInputs(req.APITypes); errMsg != "" {
+	if errMsg := validateAPITypeInputs(req.APITypes); errMsg != "" {
 		return errMsg
 	}
 	if req.MaxRetries != nil && *req.MaxRetries < 0 {
@@ -216,18 +202,8 @@ func (req *CreateProviderRequest) validate() string {
 	if req.AcceptFailover != nil && !model.IsValidScope(*req.AcceptFailover) {
 		return "Invalid accept_failover: must be 'none', 'vendor', or 'any'"
 	}
-	if !IsValidProviderCredentialType(req.CredentialType) {
-		return "Invalid credential_type: must be 'api_key' or 'chatgpt'"
-	}
 	if !model.IsValidProviderUsageLimitPolicy(req.UsageLimitPolicy) {
 		return "Invalid usage_limit_policy: must be 'switch_provider' or 'suspend'"
-	}
-	if !model.IsValidCredentialBindingResolution(req.CredentialBindingResolution) {
-		return "Invalid credential_binding_resolution: must be 'reject' or 'replace'"
-	}
-	if req.CredentialBindingResolution == model.CredentialBindingResolutionReplace &&
-		model.NormalizeProviderCredentialType(req.CredentialType) != model.ProviderCredentialTypeChatGPT {
-		return "credential_binding_resolution=replace is only valid for chatgpt providers"
 	}
 	if req.AuthMode != "" && !IsValidAuthMode(req.AuthMode) {
 		return "Invalid auth_mode: must be 'auto', 'bearer', or 'x-api-key'"
@@ -243,18 +219,14 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 			ProviderID: req.ID,
 			APIType:    at.APIType,
 			BaseURL:    at.BaseURL,
-			APIKey:     model.NormalizeAPIKey(at.APIKey),
 		}
 	}
 
-	credentialType := model.NormalizeProviderCredentialType(req.CredentialType)
 	provider := &model.Provider{
 		ID:               req.ID,
 		Name:             req.Name,
-		APIKey:           model.NormalizeAPIKey(req.APIKey),
 		APITypes:         apiTypes,
 		AuthMode:         req.AuthMode,
-		CredentialType:   credentialType,
 		UsageLimitPolicy: req.UsageLimitPolicy,
 		GroupID:          req.GroupID,
 		Weight:           req.Weight,
@@ -266,6 +238,16 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 		FailoverScope:    model.ScopeAny,
 		AcceptFailover:   model.ScopeAny,
 		Enabled:          true,
+	}
+	provider.CredentialSessions = make([]credentialsession.RouteSnapshot, len(req.APITypes))
+	for index := range req.APITypes {
+		provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
+			RouteTargetID: req.ID,
+			APIType:       req.APITypes[index].APIType,
+			Credential: credentialsession.Snapshot{
+				SessionID: req.APITypes[index].CredentialSessionID,
+			},
+		}
 	}
 
 	// Apply explicit values where provided
@@ -294,66 +276,12 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 	return provider
 }
 
-type providerPersistencePlan struct {
-	chatGPTLoginID string
-}
-
-func (h *Handler) prepareProviderForPersistence(provider *model.Provider, credentialLoginID string) (providerPersistencePlan, string) {
-	plan := providerPersistencePlan{}
-	providerauth.NormalizeProviderForPersistence(provider)
-	switch model.NormalizeProviderCredentialType(provider.CredentialType) {
-	case model.ProviderCredentialTypeChatGPT:
-		if credentialLoginID != "" {
-			if h.auth == nil {
-				return plan, "GPT login is unavailable in this build"
-			}
-			if err := h.auth.ApplyChatGPTLogin(provider, credentialLoginID); err != nil {
-				return plan, err.Error()
-			}
-			plan.chatGPTLoginID = credentialLoginID
-		}
-		if !providerauth.HasCompleteChatGPTCredential(provider) {
-			return plan, "GPT login is required for chatgpt credential providers"
-		}
-	default:
-		provider.Credential = nil
-	}
-	return plan, ""
-}
-
-func (h *Handler) commitProviderPersistencePlan(plan providerPersistencePlan) {
-	if plan.chatGPTLoginID == "" || h.auth == nil {
-		return
-	}
-	// The provider write has already succeeded, so surfacing a cleanup failure to the
-	// caller would misreport the durable result. Log and keep the login reusable.
-	if err := h.auth.FinalizeChatGPTLogin(plan.chatGPTLoginID); err != nil {
-		h.logger.Warn("failed to finalize chatgpt login after provider persistence",
-			zap.String("login_id", plan.chatGPTLoginID),
-			zap.Error(err))
-	}
-}
-
 func (h *Handler) handleProviderPersistenceError(
 	w http.ResponseWriter,
 	id string,
 	action string,
 	err error,
 ) bool {
-	var conflict *store.CredentialBindingConflictError
-	if errors.As(err, &conflict) {
-		h.logger.Warn("rejected provider persistence due to duplicate GPT credential binding",
-			zap.String("id", id),
-			zap.String("account_id", conflict.AccountID),
-			zap.String("bound_provider_id", conflict.ProviderID),
-		)
-		writeErrorWithDetails(w, http.StatusConflict, ErrCodeConflict, conflict.Error(), map[string]string{
-			"kind":        "credential_binding",
-			"account_id":  conflict.AccountID,
-			"provider_id": conflict.ProviderID,
-		})
-		return true
-	}
 	if errors.Is(err, store.ErrRoutingPolicyReferenceConflict) {
 		writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 		return true
@@ -391,11 +319,6 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	provider := req.toProvider()
-	plan, errMsg := h.prepareProviderForPersistence(provider, req.CredentialLoginID)
-	if errMsg != "" {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
-		return
-	}
 	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
 		return
@@ -419,41 +342,40 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.mutateProviderGeneration(req.ID, func() error {
-		return h.store.CreateProvider(r.Context(), provider, store.ProviderWriteOptions{
-			CredentialBindingResolution: req.CredentialBindingResolution,
-		})
+		return h.store.CreateProvider(r.Context(), provider)
 	}); err != nil {
 		h.handleProviderPersistenceError(w, req.ID, "create", err)
 		return
 	}
+	persisted, err := h.store.GetProvider(r.Context(), req.ID)
+	if err != nil {
+		h.logger.Error("failed to reload created provider", zap.String("id", req.ID), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to create provider")
+		return
+	}
 
-	h.commitProviderPersistencePlan(plan)
 	writeJSON(w, http.StatusCreated, ProviderResponse{
-		ProviderPayload: h.providerPayload(provider),
+		ProviderPayload: h.providerPayload(persisted),
 		Warnings:        warnings,
 	})
 }
 
 // UpdateProviderRequest represents the request to update a provider.
 type UpdateProviderRequest struct {
-	Name                        *string                           `json:"name"`
-	APIKey                      *string                           `json:"api_key"`
-	APITypes                    []APITypeInput                    `json:"api_types"`
-	AuthMode                    *string                           `json:"auth_mode"`
-	CredentialType              *model.ProviderCredentialType     `json:"credential_type"`
-	UsageLimitPolicy            *model.ProviderUsageLimitPolicy   `json:"usage_limit_policy"`
-	CredentialLoginID           string                            `json:"credential_login_id,omitempty"`
-	CredentialBindingResolution model.CredentialBindingResolution `json:"credential_binding_resolution,omitempty"`
-	GroupID                     *string                           `json:"group_id"`
-	Weight                      *int                              `json:"weight"`
-	Priority                    *int                              `json:"priority"`
-	Concurrency                 *int                              `json:"concurrency"`
-	MaxRetries                  *int                              `json:"max_retries"`
-	Backoff                     *model.BackoffPolicy              `json:"backoff"` // Exponential backoff for same-provider retries
-	Vendor                      *string                           `json:"vendor"`
-	FailoverScope               *model.Scope                      `json:"failover_scope"`
-	AcceptFailover              *model.Scope                      `json:"accept_failover"` // Governs true failover only; pre-visible replacement stays allowed
-	Enabled                     *bool                             `json:"enabled"`
+	Name             *string                         `json:"name"`
+	APITypes         []APITypeInput                  `json:"api_types"`
+	AuthMode         *string                         `json:"auth_mode"`
+	UsageLimitPolicy *model.ProviderUsageLimitPolicy `json:"usage_limit_policy"`
+	GroupID          *string                         `json:"group_id"`
+	Weight           *int                            `json:"weight"`
+	Priority         *int                            `json:"priority"`
+	Concurrency      *int                            `json:"concurrency"`
+	MaxRetries       *int                            `json:"max_retries"`
+	Backoff          *model.BackoffPolicy            `json:"backoff"`
+	Vendor           *string                         `json:"vendor"`
+	FailoverScope    *model.Scope                    `json:"failover_scope"`
+	AcceptFailover   *model.Scope                    `json:"accept_failover"`
+	Enabled          *bool                           `json:"enabled"`
 }
 
 // validate checks that all provided fields have valid values.
@@ -476,9 +398,6 @@ func (req *UpdateProviderRequest) validate() string {
 			return errMsg
 		}
 	}
-	if req.CredentialType != nil && !IsValidProviderCredentialType(*req.CredentialType) {
-		return "Invalid credential_type: must be 'api_key' or 'chatgpt'"
-	}
 	if req.UsageLimitPolicy != nil && !model.IsValidProviderUsageLimitPolicy(*req.UsageLimitPolicy) {
 		return "Invalid usage_limit_policy: must be 'switch_provider' or 'suspend'"
 	}
@@ -496,13 +415,6 @@ func (req *UpdateProviderRequest) validate() string {
 	if req.AcceptFailover != nil && !model.IsValidScope(*req.AcceptFailover) {
 		return "Invalid accept_failover: must be 'none', 'vendor', or 'any'"
 	}
-	if !model.IsValidCredentialBindingResolution(req.CredentialBindingResolution) {
-		return "Invalid credential_binding_resolution: must be 'reject' or 'replace'"
-	}
-	if req.CredentialBindingResolution == model.CredentialBindingResolutionReplace &&
-		(req.CredentialType == nil || model.NormalizeProviderCredentialType(*req.CredentialType) != model.ProviderCredentialTypeChatGPT) {
-		return "credential_binding_resolution=replace is only valid when updating a chatgpt provider"
-	}
 	return ""
 }
 
@@ -511,9 +423,6 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 	if req.Name != nil {
 		provider.Name = *req.Name
 	}
-	if req.APIKey != nil {
-		provider.APIKey = model.NormalizeAPIKey(*req.APIKey)
-	}
 	if req.APITypes != nil {
 		apiTypes := make([]model.ProviderAPIType, len(req.APITypes))
 		for i, at := range req.APITypes {
@@ -521,16 +430,22 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 				ProviderID: provider.ID,
 				APIType:    at.APIType,
 				BaseURL:    at.BaseURL,
-				APIKey:     model.NormalizeAPIKey(at.APIKey),
 			}
 		}
 		provider.APITypes = apiTypes
+		provider.CredentialSessions = make([]credentialsession.RouteSnapshot, len(req.APITypes))
+		for index := range req.APITypes {
+			provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
+				RouteTargetID: provider.ID,
+				APIType:       req.APITypes[index].APIType,
+				Credential: credentialsession.Snapshot{
+					SessionID: req.APITypes[index].CredentialSessionID,
+				},
+			}
+		}
 	}
 	if req.AuthMode != nil {
 		provider.AuthMode = *req.AuthMode
-	}
-	if req.CredentialType != nil {
-		provider.CredentialType = model.NormalizeProviderCredentialType(*req.CredentialType)
 	}
 	if req.UsageLimitPolicy != nil {
 		provider.UsageLimitPolicy = *req.UsageLimitPolicy
@@ -598,11 +513,6 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	originalEnabled := provider.Enabled
 
 	req.applyTo(provider)
-	plan, errMsg := h.prepareProviderForPersistence(provider, req.CredentialLoginID)
-	if errMsg != "" {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
-		return
-	}
 	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
 		return
@@ -626,21 +536,24 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.mutateProviderGeneration(id, func() error {
-		return h.store.UpdateProvider(r.Context(), provider, store.ProviderWriteOptions{
-			CredentialBindingResolution: req.CredentialBindingResolution,
-		})
+		return h.store.UpdateProvider(r.Context(), provider)
 	}); err != nil {
 		h.handleProviderPersistenceError(w, id, "update", err)
 		return
 	}
 
-	h.commitProviderPersistencePlan(plan)
 	if provider.Enabled != originalEnabled {
 		h.syncHealthManagerState(r.Context(), id, provider.Enabled)
 	}
+	persisted, err := h.store.GetProvider(r.Context(), id)
+	if err != nil {
+		h.logger.Error("failed to reload updated provider", zap.String("id", id), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update provider")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, ProviderResponse{
-		ProviderPayload: h.providerPayload(provider),
+		ProviderPayload: h.providerPayload(persisted),
 		Warnings:        warnings,
 	})
 }

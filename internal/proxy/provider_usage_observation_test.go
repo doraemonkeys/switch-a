@@ -3,52 +3,79 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth/codexquota"
 	"go.uber.org/zap/zaptest"
 )
 
 type recordedProviderUsageObservation struct {
-	providerID string
-	snapshot   *model.ProviderUsageSnapshot
+	sessionID string
+	snapshot  *model.ProviderUsageSnapshot
 }
 
 type recordingProviderUsageObserver struct {
 	observed chan recordedProviderUsageObservation
 }
 
-func (o *recordingProviderUsageObserver) ObserveProviderUsage(
+func (o *recordingProviderUsageObserver) ObserveCredentialSessionUsage(
 	_ context.Context,
-	providerID string,
+	sessionID string,
 	snapshot *model.ProviderUsageSnapshot,
 ) error {
-	o.observed <- recordedProviderUsageObservation{providerID: providerID, snapshot: snapshot}
+	o.observed <- recordedProviderUsageObservation{sessionID: sessionID, snapshot: snapshot}
 	return nil
+}
+
+func chatGPTUsageAttempt(t *testing.T, providerID, sessionID string) httpAttemptContext {
+	t.Helper()
+	subject, err := credentialsession.AccountSubject("acct-usage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalURL, err := url.Parse("https://chatgpt.com/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
+		RouteTargetID: providerID, APIType: "codex",
+		Credential: credentialsession.Snapshot{
+			SessionID: sessionID, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+			SecretData: "opaque", Version: 1, Subject: subject,
+			AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
+		},
+	}, "codex", finalURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httpAttemptContext{provider: &model.Provider{ID: providerID}, candidate: candidate}
 }
 
 func TestHandlerCapturesAndPersistsLatestCodexQuotaObservation(t *testing.T) {
 	observer := &recordingProviderUsageObserver{observed: make(chan recordedProviderUsageObservation, 1)}
 	handler := &Handler{usageObserver: observer, logger: zaptest.NewLogger(t)}
 	pctx := &proxyContext{requestID: "request-1"}
-	provider := &model.Provider{ID: "provider-1", CredentialType: model.ProviderCredentialTypeChatGPT}
+	attempt := chatGPTUsageAttempt(t, "provider-1", "session-1")
 	firstAt := time.Date(2026, time.August, 4, 4, 0, 0, 0, time.UTC)
 	latestAt := firstAt.Add(time.Second)
 
-	handler.captureProviderUsageObservation(pctx, provider, http.Header{
+	handler.captureProviderUsageObservation(pctx, attempt, http.Header{
 		codexquota.HeaderPrimaryUsedPercent: {"10"},
 	}, firstAt, "operation-1")
-	handler.captureProviderUsageObservation(pctx, provider, http.Header{
+	handler.captureProviderUsageObservation(pctx, attempt, http.Header{
 		codexquota.HeaderPrimaryUsedPercent: {"20"},
 	}, latestAt, "operation-2")
 	handler.scheduleProviderUsagePersistence(pctx)
 
 	select {
 	case observation := <-observer.observed:
-		if observation.providerID != provider.ID {
-			t.Fatalf("providerID = %q, want %q", observation.providerID, provider.ID)
+		if observation.sessionID != "session-1" {
+			t.Fatalf("sessionID = %q, want session-1", observation.sessionID)
 		}
 		if observation.snapshot.FetchedAt == nil || !observation.snapshot.FetchedAt.Equal(latestAt) {
 			t.Fatalf("FetchedAt = %v, want %v", observation.snapshot.FetchedAt, latestAt)
@@ -67,12 +94,16 @@ func TestHandlerIgnoresQuotaHeadersForUnmanagedProviders(t *testing.T) {
 	pctx := &proxyContext{requestID: "request-1"}
 	header := http.Header{codexquota.HeaderPrimaryUsedPercent: {"10"}}
 
-	handler.captureProviderUsageObservation(pctx, &model.Provider{
-		ID: "api-1", CredentialType: model.ProviderCredentialTypeAPIKey,
+	handler.captureProviderUsageObservation(pctx, httpAttemptContext{
+		provider: &model.Provider{ID: "api-1"},
 	}, header, time.Now(), "operation-1")
-	handler.captureProviderUsageObservation(pctx, &model.Provider{
-		ID: "chatgpt-1", CredentialType: model.ProviderCredentialTypeChatGPT,
-	}, http.Header{codexquota.HeaderPrimaryUsedPercent: {"invalid"}}, time.Now(), "operation-2")
+	handler.captureProviderUsageObservation(
+		pctx,
+		chatGPTUsageAttempt(t, "chatgpt-1", "session-1"),
+		http.Header{codexquota.HeaderPrimaryUsedPercent: {"invalid"}},
+		time.Now(),
+		"operation-2",
+	)
 	handler.scheduleProviderUsagePersistence(pctx)
 
 	select {

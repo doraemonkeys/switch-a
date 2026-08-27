@@ -31,15 +31,17 @@ func (s *Selector) SelectActive(
 	if err != nil {
 		return nil, err
 	}
-	provider, err := s.store.GetProvider(ctx, active.ProviderID())
-	if err != nil {
-		return nil, err
-	}
-	allowed, err := scope.AllowsProvider(ctx, provider)
+	provider := scope.Provider(active.ProviderID())
+	allowed, _, err := scope.allowsExistingRoute(ctx, provider, true)
 	if err != nil {
 		return nil, err
 	}
 	if !allowed {
+		return nil, internal.ErrNoProvider
+	}
+	candidate, resolved := scope.CandidateSnapshot(provider.ID)
+	activeCandidate, activeResolved := active.CandidateSnapshot()
+	if activeResolved && (!resolved || !sameCandidateIdentity(activeCandidate, candidate)) {
 		return nil, internal.ErrNoProvider
 	}
 
@@ -47,7 +49,7 @@ func (s *Selector) SelectActive(
 	if !acquired {
 		return nil, internal.ErrNoProvider
 	}
-	lease := newProviderLease(provider, slot)
+	lease := newProviderLeaseWithCandidate(provider, slot, candidate, resolved)
 	return &SelectResult{
 		Lease:    lease,
 		Metadata: BuildSelectionMetadataAt(req, SelectionSourceActiveContinuity, s.selectionTimestamp()),

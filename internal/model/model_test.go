@@ -4,19 +4,19 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 )
 
 func TestProvider_JSON(t *testing.T) {
 	groupID := "g1"
 	p := Provider{
-		ID:     "p1",
-		Name:   "Test Provider",
-		APIKey: "key123",
+		ID:   "p1",
+		Name: "Test Provider",
 		APITypes: []ProviderAPIType{{
 			ProviderID: "p1",
 			APIType:    "claude",
 			BaseURL:    "https://api.example.com",
-			APIKey:     "type-key",
 		}},
 		AuthMode: "bearer",
 		GroupID:  &groupID,
@@ -43,7 +43,6 @@ func TestProviderAPIType_JSON(t *testing.T) {
 		ProviderID: "p1",
 		APIType:    "claude",
 		BaseURL:    "https://api.example.com",
-		APIKey:     "type-key",
 	}
 
 	data, err := json.Marshal(pat)
@@ -58,8 +57,7 @@ func TestProviderAPIType_JSON(t *testing.T) {
 
 	if pat2.ProviderID != pat.ProviderID ||
 		pat2.APIType != pat.APIType ||
-		pat2.BaseURL != pat.BaseURL ||
-		pat2.APIKey != pat.APIKey {
+		pat2.BaseURL != pat.BaseURL {
 		t.Errorf("round-trip failed: got %+v", pat2)
 	}
 }
@@ -320,49 +318,30 @@ func TestProvider_BaseURLForAPIType(t *testing.T) {
 	}
 }
 
-func TestProvider_APIKeyForAPIType(t *testing.T) {
+func TestProvider_CredentialSessionForAPIType(t *testing.T) {
 	p := Provider{
-		ID:     "p1",
-		APIKey: "default-key",
+		ID: "p1",
 		APITypes: []ProviderAPIType{
 			{ProviderID: "p1", APIType: "claude", BaseURL: "https://claude.example.com"},
-			{
-				ProviderID: "p1",
-				APIType:    "codex",
-				BaseURL:    "https://codex.example.com",
-				APIKey:     "codex-key",
-			},
+			{ProviderID: "p1", APIType: "codex", BaseURL: "https://codex.example.com"},
 		},
-	}
-
-	if got := p.APIKeyForAPIType("claude"); got != "default-key" {
-		t.Errorf("APIKeyForAPIType(claude) = %q, want %q", got, "default-key")
-	}
-	if got := p.APIKeyForAPIType("codex"); got != "codex-key" {
-		t.Errorf("APIKeyForAPIType(codex) = %q, want %q", got, "codex-key")
-	}
-
-	// Unknown API type falls back to the provider default because callers may
-	// resolve credentials separately from endpoint validation.
-	if got := p.APIKeyForAPIType("gemini"); got != "default-key" {
-		t.Errorf("APIKeyForAPIType(gemini) = %q, want %q", got, "default-key")
-	}
-}
-
-func TestProvider_APIKeyForAPIType_IgnoresWhitespaceOverride(t *testing.T) {
-	p := Provider{
-		ID:     "p1",
-		APIKey: " default-key ",
-		APITypes: []ProviderAPIType{{
-			ProviderID: "p1",
-			APIType:    "claude",
-			BaseURL:    "https://claude.example.com",
-			APIKey:     "   ",
+		CredentialSessions: []credentialsession.RouteSnapshot{{
+			RouteTargetID: "p1",
+			APIType:       "codex",
+			Credential: credentialsession.Snapshot{
+				SessionID:  "session-codex",
+				Kind:       credentialsession.KindAPIKey,
+				SecretData: "codex-key",
+			},
 		}},
 	}
 
-	if got := p.APIKeyForAPIType("claude"); got != "default-key" {
-		t.Errorf("APIKeyForAPIType(claude) = %q, want %q", got, "default-key")
+	snapshot, ok := p.CredentialSessionForAPIType("codex")
+	if !ok || snapshot.SessionID != "session-codex" || snapshot.SecretData != "codex-key" {
+		t.Fatalf("CredentialSessionForAPIType(codex) = %#v, %t", snapshot, ok)
+	}
+	if snapshot, ok := p.CredentialSessionForAPIType("claude"); ok || snapshot != nil {
+		t.Fatalf("CredentialSessionForAPIType(claude) = %#v, %t; want missing", snapshot, ok)
 	}
 }
 

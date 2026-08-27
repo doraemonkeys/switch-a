@@ -2,9 +2,9 @@ package selector
 
 import (
 	"context"
-	"errors"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -53,11 +53,6 @@ func TestNewProviderSelectionEligibilityAndAllowsProvider(t *testing.T) {
 			TargetProviderID: stringPtr("p-eligible"),
 		},
 	}
-	store.authStates["p-eligible"] = &model.ProviderAuthState{
-		ProviderID: "p-eligible",
-		Status:     model.ProviderAuthStatusActive,
-	}
-
 	health := newMockHealthChecker()
 	req := &model.SelectRequest{APIType: " codex "}
 	eligibility, err := NewProviderSelectionEligibility(context.Background(), store, health, req)
@@ -66,18 +61,14 @@ func TestNewProviderSelectionEligibilityAndAllowsProvider(t *testing.T) {
 	}
 
 	newProvider := func() *model.Provider {
-		return &model.Provider{
-			ID:             "p-eligible",
-			Enabled:        true,
-			CredentialType: model.ProviderCredentialTypeAPIKey,
-			Credential: &model.ProviderCredential{
-				ProviderID: "p-eligible",
-				SecretData: "api-key",
-			},
+		provider := store.credentialSessionProvider(model.Provider{
+			ID:      "p-eligible",
+			Enabled: true,
 			APITypes: []model.ProviderAPIType{
 				{ProviderID: "p-eligible", APIType: "codex"},
 			},
-		}
+		}, "codex")
+		return &provider
 	}
 
 	if !eligibility.IsEligible(context.Background(), newProvider()) {
@@ -110,24 +101,18 @@ func TestNewProviderSelectionEligibilityAndAllowsProvider(t *testing.T) {
 	}
 
 	eligibility.routing = routingPolicyResolution{}
-	store.authStateErr = errors.New("auth state unavailable")
-	if allowed, err := eligibility.AllowsProvider(context.Background(), newProvider()); err == nil || allowed {
-		t.Fatalf("AllowsProvider(auth error) = (%v, %v), want (false, error)", allowed, err)
+	missingSession := newProvider()
+	missingSession.CredentialSessions = nil
+	if allowed, err := eligibility.AllowsProvider(context.Background(), missingSession); err != nil || allowed {
+		t.Fatalf("AllowsProvider(missing session) = (%v, %v), want (false, nil)", allowed, err)
 	}
 
-	store.authStateErr = nil
-	store.authStates["p-eligible"] = &model.ProviderAuthState{
-		ProviderID: "p-eligible",
-		Status:     model.ProviderAuthStatusNotConnected,
-	}
-	if allowed, err := eligibility.AllowsProvider(context.Background(), newProvider()); err != nil || allowed {
+	inactive := newProvider()
+	inactive.CredentialSessions[0].Credential.AuthState.Status = credentialsession.AuthStatusNotConnected
+	if allowed, err := eligibility.AllowsProvider(context.Background(), inactive); err != nil || allowed {
 		t.Fatalf("AllowsProvider(inactive auth) = (%v, %v), want (false, nil)", allowed, err)
 	}
 
-	store.authStates["p-eligible"] = &model.ProviderAuthState{
-		ProviderID: "p-eligible",
-		Status:     model.ProviderAuthStatusActive,
-	}
 	health.available["p-eligible"] = false
 	if allowed, err := eligibility.AllowsProvider(context.Background(), newProvider()); err != nil || allowed {
 		t.Fatalf("AllowsProvider(unhealthy) = (%v, %v), want (false, nil)", allowed, err)
@@ -319,68 +304,35 @@ func TestRoutingPolicyResolutionAllowsProviderCoversConstraintModes(t *testing.T
 	}
 }
 
-func TestProviderSelectionEligibilityProviderAuthStateCoversFallbackPaths(t *testing.T) {
+func TestCredentialSessionUsableRequiresActiveImmutableSnapshot(t *testing.T) {
 	t.Parallel()
 
-	store := newMockStore()
-	eligibility := &ProviderSelectionEligibility{source: store}
-
-	nilState, err := eligibility.providerAuthState(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("providerAuthState(nil) error = %v", err)
+	active := credentialsession.Snapshot{
+		SessionID:  "session-a",
+		Vendor:     "vendor-a",
+		Kind:       credentialsession.KindAPIKey,
+		SecretData: "secret",
+		Version:    1,
+		AuthState:  credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
-	if nilState.ProviderID != "" || nilState.Status != model.DefaultProviderAuthStatus(model.ProviderCredentialTypeAPIKey) {
-		t.Fatalf("providerAuthState(nil) = %#v, want normalized zero-provider api-key state", nilState)
+	if !credentialSessionUsable(active) {
+		t.Fatal("active immutable credential snapshot was rejected")
 	}
-
-	providerWithEmbeddedState := &model.Provider{
-		ID:             "provider-embedded",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		AuthState: &model.ProviderAuthState{
-			Status: model.ProviderAuthStatus("invalid"),
+	for name, mutate := range map[string]func(*credentialsession.Snapshot){
+		"missing session": func(snapshot *credentialsession.Snapshot) { snapshot.SessionID = "" },
+		"missing secret":  func(snapshot *credentialsession.Snapshot) { snapshot.SecretData = "" },
+		"invalid version": func(snapshot *credentialsession.Snapshot) { snapshot.Version = 0 },
+		"inactive": func(snapshot *credentialsession.Snapshot) {
+			snapshot.AuthState.Status = credentialsession.AuthStatusReauthRequired
 		},
-	}
-	embeddedState, err := eligibility.providerAuthState(context.Background(), providerWithEmbeddedState)
-	if err != nil {
-		t.Fatalf("providerAuthState(embedded) error = %v", err)
-	}
-	if embeddedState.ProviderID != "provider-embedded" || embeddedState.Status != model.ProviderAuthStatusNotConnected {
-		t.Fatalf("providerAuthState(embedded) = %#v, want normalized chatgpt state", embeddedState)
-	}
-
-	store.authStates["provider-store"] = &model.ProviderAuthState{
-		Status: model.ProviderAuthStatusActive,
-	}
-	storeState, err := eligibility.providerAuthState(context.Background(), &model.Provider{
-		ID:             "provider-store",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-	})
-	if err != nil {
-		t.Fatalf("providerAuthState(store) error = %v", err)
-	}
-	if storeState.ProviderID != "provider-store" || storeState.Status != model.ProviderAuthStatusActive {
-		t.Fatalf("providerAuthState(store) = %#v, want active stored state", storeState)
-	}
-
-	store.authStateErr = errors.New("auth state unavailable")
-	if _, err := eligibility.providerAuthState(context.Background(), &model.Provider{ID: "provider-error"}); err == nil {
-		t.Fatal("providerAuthState(store error) = nil error, want propagated error")
-	}
-
-	store.authStateErr = nil
-	fallbackState, err := eligibility.providerAuthState(context.Background(), &model.Provider{
-		ID:             "provider-fallback",
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-		Credential: &model.ProviderCredential{
-			ProviderID: "provider-fallback",
-			SecretData: "api-key",
-		},
-	})
-	if err != nil {
-		t.Fatalf("providerAuthState(fallback) error = %v", err)
-	}
-	if fallbackState.ProviderID != "provider-fallback" || fallbackState.Status != model.ProviderAuthStatusActive {
-		t.Fatalf("providerAuthState(fallback) = %#v, want active fallback credential state", fallbackState)
+	} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := active
+			mutate(&snapshot)
+			if credentialSessionUsable(snapshot) {
+				t.Fatal("unusable credential session was accepted")
+			}
+		})
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
@@ -17,6 +18,7 @@ import (
 // mockStore implements Store interface for testing.
 type mockStore struct {
 	providers           map[string]*model.Provider
+	credentialSessions  map[string]*credentialsession.Session
 	routingPolicies     map[uint]*model.RoutingPolicy
 	nextRoutingPolicyID uint
 	groups              map[string]*model.Group
@@ -37,14 +39,46 @@ type mockStore struct {
 
 func newMockStore() *mockStore {
 	return &mockStore{
-		providers:       make(map[string]*model.Provider),
-		routingPolicies: make(map[uint]*model.RoutingPolicy),
-		groups:          make(map[string]*model.Group),
-		healthStates:    make(map[string]*model.HealthState),
-		config:          make(map[string]string),
-		logs:            []model.RequestLog{},
-		attempts:        make(map[string][]model.RequestAttempt),
+		providers:          make(map[string]*model.Provider),
+		credentialSessions: make(map[string]*credentialsession.Session),
+		routingPolicies:    make(map[uint]*model.RoutingPolicy),
+		groups:             make(map[string]*model.Group),
+		healthStates:       make(map[string]*model.HealthState),
+		config:             make(map[string]string),
+		logs:               []model.RequestLog{},
+		attempts:           make(map[string][]model.RequestAttempt),
 	}
+}
+
+func (m *mockStore) ListCredentialSessions(_ context.Context) ([]credentialsession.Session, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	byID := make(map[string]credentialsession.Session, len(m.credentialSessions))
+	for id, session := range m.credentialSessions {
+		byID[id] = *session.Clone()
+	}
+	for _, provider := range m.providers {
+		for _, route := range provider.CredentialSessions {
+			if _, exists := byID[route.Credential.SessionID]; exists {
+				continue
+			}
+			session := credentialsession.Session{
+				ID: route.Credential.SessionID, Vendor: route.Credential.Vendor, Kind: route.Credential.Kind,
+				SecretData: route.Credential.SecretData, Version: route.Credential.Version,
+				AuthState: route.Credential.AuthState.Clone(),
+			}
+			if err := session.SetSubject(route.Credential.Subject); err != nil {
+				return nil, err
+			}
+			byID[session.ID] = session
+		}
+	}
+	result := make([]credentialsession.Session, 0, len(byID))
+	for _, session := range byID {
+		result = append(result, session)
+	}
+	return result, nil
 }
 
 func (m *mockStore) ListProviders(_ context.Context) ([]model.Provider, error) {
@@ -68,7 +102,7 @@ func (m *mockStore) GetProvider(_ context.Context, id string) (*model.Provider, 
 	return nil, store.ErrNotFound
 }
 
-func (m *mockStore) CreateProvider(_ context.Context, p *model.Provider, _ ...store.ProviderWriteOptions) error {
+func (m *mockStore) CreateProvider(_ context.Context, p *model.Provider) error {
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -76,7 +110,7 @@ func (m *mockStore) CreateProvider(_ context.Context, p *model.Provider, _ ...st
 	return nil
 }
 
-func (m *mockStore) UpdateProvider(_ context.Context, p *model.Provider, _ ...store.ProviderWriteOptions) error {
+func (m *mockStore) UpdateProvider(_ context.Context, p *model.Provider) error {
 	if m.updateErr != nil {
 		return m.updateErr
 	}
@@ -288,6 +322,10 @@ func (m *mockStore) ApplyConfigImport(_ context.Context, bundle *store.ConfigImp
 	}
 	if m.configErr != nil && len(bundle.Settings) > 0 {
 		return m.configErr
+	}
+	for index := range bundle.CredentialSessions {
+		session := bundle.CredentialSessions[index]
+		m.credentialSessions[session.ID] = session.Clone()
 	}
 	for i := range bundle.Groups {
 		group := bundle.Groups[i]

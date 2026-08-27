@@ -11,16 +11,6 @@ import (
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("not found")
 
-// ErrCredentialBindingConflict reports that a login-backed credential is already
-// bound to another provider. This is surfaced as a conflict instead of a generic
-// validation error because the payload is internally valid but violates a global
-// uniqueness invariant.
-var ErrCredentialBindingConflict = errors.New("credential binding conflict")
-
-// ErrCredentialVersionConflict reports that a credential write raced with another
-// successful update and the caller must re-read before retrying.
-var ErrCredentialVersionConflict = errors.New("credential version conflict")
-
 // ErrProviderImportConflict reports that an atomic provider import plan no longer
 // matches durable provider state. Callers can safely re-preview and retry because
 // the store returns this error before committing any mutation in the bundle.
@@ -52,40 +42,15 @@ var ErrRoutingPolicyConflict = errors.New("routing policy conflict")
 // break a direct routing-policy reference or an exact-provider API-type contract.
 var ErrRoutingPolicyReferenceConflict = errors.New("routing policy reference conflict")
 
-// CredentialBindingConflictError describes which provider already owns the login.
-type CredentialBindingConflictError struct {
-	AccountID  string
-	ProviderID string
-}
-
-func (e *CredentialBindingConflictError) Error() string {
-	return fmt.Sprintf("GPT account %q is already bound to provider %q", e.AccountID, e.ProviderID)
-}
-
-func (e *CredentialBindingConflictError) Is(target error) bool {
-	return target == ErrCredentialBindingConflict
-}
-
-// CredentialVersionConflictError describes the stale version that lost the CAS race.
-type CredentialVersionConflictError struct {
-	ProviderID      string
-	ExpectedVersion int64
-	CurrentVersion  int64
-}
-
 // ProviderImportConflictKind identifies the invariant that rejected one selected
 // import candidate. Stable values let the admin surface present targeted recovery
 // actions without parsing human-readable database errors.
 type ProviderImportConflictKind string
 
 const (
-	ProviderImportConflictDuplicateProviderID       ProviderImportConflictKind = "duplicate_provider_id"
-	ProviderImportConflictDuplicateAccountBinding   ProviderImportConflictKind = "duplicate_account_binding"
 	ProviderImportConflictProviderAlreadyExists     ProviderImportConflictKind = "provider_already_exists"
 	ProviderImportConflictProviderNotFound          ProviderImportConflictKind = "provider_not_found"
-	ProviderImportConflictAccountBindingMismatch    ProviderImportConflictKind = "account_binding_mismatch"
-	ProviderImportConflictAccountAlreadyBound       ProviderImportConflictKind = "account_already_bound"
-	ProviderImportConflictGroupNotFound             ProviderImportConflictKind = "group_not_found"
+	ProviderImportConflictSessionNotFound           ProviderImportConflictKind = "credential_session_not_found"
 	ProviderImportConflictCredentialVersionMismatch ProviderImportConflictKind = "credential_version_mismatch"
 )
 
@@ -94,12 +59,8 @@ const (
 // cross this error boundary.
 type ProviderImportConflict struct {
 	CandidateID               string                     `json:"candidate_id"`
-	ConflictingCandidateID    string                     `json:"conflicting_candidate_id,omitempty"`
 	Kind                      ProviderImportConflictKind `json:"kind"`
 	ProviderID                string                     `json:"provider_id,omitempty"`
-	ConflictingProviderID     string                     `json:"conflicting_provider_id,omitempty"`
-	AccountID                 string                     `json:"account_id,omitempty"`
-	GroupID                   string                     `json:"group_id,omitempty"`
 	ExpectedCredentialVersion int64                      `json:"expected_credential_version,omitempty"`
 	CurrentCredentialVersion  int64                      `json:"current_credential_version,omitempty"`
 }
@@ -123,19 +84,6 @@ func (e *ProviderImportConflictError) Error() string {
 
 func (e *ProviderImportConflictError) Is(target error) bool {
 	return target == ErrProviderImportConflict
-}
-
-func (e *CredentialVersionConflictError) Error() string {
-	return fmt.Sprintf(
-		"provider %q credential version conflict: expected %d, current %d",
-		e.ProviderID,
-		e.ExpectedVersion,
-		e.CurrentVersion,
-	)
-}
-
-func (e *CredentialVersionConflictError) Is(target error) bool {
-	return target == ErrCredentialVersionConflict
 }
 
 // RoutingPolicyConflictError describes which routing rule key is already claimed.

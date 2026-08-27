@@ -9,6 +9,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
@@ -20,6 +21,7 @@ import (
 
 type httpAttemptContext struct {
 	provider             *model.Provider
+	candidate            codexidentity.CandidateSnapshot
 	logicalAttemptIndex  int
 	providerAttemptIndex int
 	selectionMode        requestcapture.SelectionMode
@@ -97,7 +99,6 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		h.applyForwardResult(state, result)
 		h.recordAttempt(pctx, attempt, result, attemptIndex, attemptStart)
 		facts := attemptFactsFromForwardResult(ctx, result)
-		facts.InjectedCredential = injectedCredentialForCapture(attempt.provider, pctx.apiType)
 		h.attachHTTPAttemptEvidence(pctx, result, facts)
 		if !continueExecution {
 			break
@@ -137,8 +138,10 @@ func (h *Handler) startInitialSelection(ctx context.Context, pctx *proxyContext,
 }
 
 func (state *retryState) attemptContext() httpAttemptContext {
+	candidate, _ := state.currentLease.CandidateSnapshot()
 	return httpAttemptContext{
 		provider:             state.currentProvider,
+		candidate:            candidate,
 		logicalAttemptIndex:  int(state.ledger.LogicalAttemptsStarted()) - 1,
 		providerAttemptIndex: state.providerAttempt,
 		selectionMode:        requestAttemptSelectionMode(state.selectionMode),
@@ -206,7 +209,7 @@ func (h *Handler) refreshUnauthorizedSubexchange(
 	if pending.head.StatusCode != http.StatusUnauthorized || h.auth == nil {
 		return pending, nil, false
 	}
-	refreshed, refreshErr := h.auth.RefreshProviderCredentials(ctx, state.currentProvider)
+	refreshed, refreshErr := h.auth.RefreshCredentialSession(ctx, attempt.candidate.Credential())
 	if refreshErr != nil || !refreshed {
 		if refreshErr != nil {
 			h.logger.Warn("provider credential refresh failed",
@@ -474,6 +477,7 @@ func (h *Handler) applyForwardResult(state *retryState, result forwardResult) {
 	state.firstByteVisible = result.firstByteVisible
 	state.isStatusFailover = result.isStatusFailover
 	state.isClientWriteError = result.isClientWriteError
+	state.injectedCredential = result.injectedCredential
 }
 
 func attemptFactsFromForwardResult(ctx context.Context, result forwardResult) nonWebSocketRuntimeFacts {
@@ -484,7 +488,7 @@ func attemptFactsFromForwardResult(ctx context.Context, result forwardResult) no
 		ClientTermination: result.clientTermination, TerminalErr: result.terminalError(),
 		IsSSE: result.isSSE, FirstByteVisible: result.firstByteVisible, CtxErr: ctx.Err(),
 		IsStatusFailover: result.isStatusFailover, IsClientWriteError: result.isClientWriteError,
-		SemanticError: result.semantic != nil,
+		SemanticError: result.semantic != nil, InjectedCredential: result.injectedCredential,
 	}
 }
 
@@ -515,7 +519,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 			IsSSE: state.isSSE, FirstByteVisible: state.firstByteVisible,
 			CtxErr: pctx.r.Context().Err(), IsStatusFailover: state.isStatusFailover,
 			IsClientWriteError: state.isClientWriteError, SemanticError: state.semanticError,
-			InjectedCredential: injectedCredentialForCapture(state.providerUsed, pctx.apiType),
+			InjectedCredential: state.injectedCredential,
 		},
 		FirstTokenMs: state.firstTokenMs, ResponseBytes: state.responseBytes,
 		TokenUsage: state.tokenUsage, Latency: time.Since(pctx.startTime),

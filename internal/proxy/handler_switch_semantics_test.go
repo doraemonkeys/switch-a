@@ -136,26 +136,26 @@ func TestHandler_ServeHTTP_PreVisibleReplacementSkipsFailoverIsolationAndPopulat
 	}))
 	defer fallbackServer.Close()
 
-	primaryProvider := &model.Provider{
-		ID:             "http-replacement-primary",
-		Name:           "HTTP Replacement Primary",
-		APIKey:         "primary-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "http-replacement-primary",
+		Name: "HTTP Replacement Primary",
+
 		AuthMode:       "bearer",
 		Enabled:        true,
 		FailoverScope:  model.ScopeNone,
 		AcceptFailover: model.ScopeNone,
 		APITypes:       []model.ProviderAPIType{{ProviderID: "http-replacement-primary", APIType: "claude", BaseURL: primaryServer.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:             "http-replacement-fallback",
-		Name:           "HTTP Replacement Fallback",
-		APIKey:         "fallback-key",
+	}, "", "primary-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "http-replacement-fallback",
+		Name: "HTTP Replacement Fallback",
+
 		AuthMode:       "bearer",
 		Enabled:        true,
 		FailoverScope:  model.ScopeNone,
 		AcceptFailover: model.ScopeNone,
 		APITypes:       []model.ProviderAPIType{{ProviderID: "http-replacement-fallback", APIType: "claude", BaseURL: fallbackServer.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.configs[ConfigKeyGlobalMaxAttempts] = "2"
@@ -266,28 +266,28 @@ func TestHandler_ServeHTTP_SeededContinuityReentryTurnsSubsequentSwitchIntoFailo
 		ObservedAt:          time.Now().Add(-2 * time.Second),
 	})
 
-	primaryProvider := &model.Provider{
-		ID:             "http-seeded-primary",
-		Name:           "HTTP Seeded Primary",
-		APIKey:         "primary-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "http-seeded-primary",
+		Name: "HTTP Seeded Primary",
+
 		AuthMode:       "bearer",
 		Enabled:        true,
 		Vendor:         "vendor-a",
 		FailoverScope:  model.ScopeVendor,
 		AcceptFailover: model.ScopeAny,
 		APITypes:       []model.ProviderAPIType{{ProviderID: "http-seeded-primary", APIType: "claude", BaseURL: primaryServer.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:             "http-seeded-fallback",
-		Name:           "HTTP Seeded Fallback",
-		APIKey:         "fallback-key",
+	}, "", "primary-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "http-seeded-fallback",
+		Name: "HTTP Seeded Fallback",
+
 		AuthMode:       "bearer",
 		Enabled:        true,
 		Vendor:         "vendor-a",
 		FailoverScope:  model.ScopeAny,
 		AcceptFailover: model.ScopeVendor,
 		APITypes:       []model.ProviderAPIType{{ProviderID: "http-seeded-fallback", APIType: "claude", BaseURL: fallbackServer.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.configs[ConfigKeyGlobalMaxAttempts] = "2"
@@ -540,14 +540,14 @@ func TestHandler_ServeHTTP_HTTPNormalCompletionDoesNotStoreContinuitySeed(t *tes
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       "http-normal-provider",
-		Name:     "HTTP Normal Provider",
-		APIKey:   "normal-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "http-normal-provider",
+		Name: "HTTP Normal Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "http-normal-provider", APIType: "claude", BaseURL: upstream.URL}},
-	}
+	}, "", "normal-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
@@ -584,14 +584,14 @@ func TestHandler_ServeHTTP_ExhaustedStatusResponseStoresVisibleContinuitySeed(t 
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       "http-failure-provider",
-		Name:     "HTTP Failure Provider",
-		APIKey:   "failure-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "http-failure-provider",
+		Name: "HTTP Failure Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "http-failure-provider", APIType: "claude", BaseURL: upstream.URL}},
-	}
+	}, "", "failure-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
@@ -641,14 +641,14 @@ func TestHandler_ServeHTTP_HTTPClientDisconnectDoesNotStoreContinuitySeed(t *tes
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       "http-disconnect-provider",
-		Name:     "HTTP Disconnect Provider",
-		APIKey:   "disconnect-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "http-disconnect-provider",
+		Name: "HTTP Disconnect Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "http-disconnect-provider", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "disconnect-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
@@ -709,15 +709,15 @@ func TestHandler_ServeHTTP_SameProviderRetryIncrementsProviderAttemptWithoutSwit
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:         "same-provider-retry",
-		Name:       "Same Provider Retry",
-		APIKey:     "retry-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "same-provider-retry",
+		Name: "Same Provider Retry",
+
 		AuthMode:   "bearer",
 		Enabled:    true,
 		MaxRetries: 1,
 		APITypes:   []model.ProviderAPIType{{ProviderID: "same-provider-retry", APIType: "claude", BaseURL: upstream.URL}},
-	}
+	}, "", "retry-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}

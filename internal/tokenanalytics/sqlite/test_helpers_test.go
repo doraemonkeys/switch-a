@@ -58,7 +58,7 @@ func (database *testDatabase) insertLog(t *testing.T, log model.RequestLog) {
 
 func (database *testDatabase) createProvider(t *testing.T, id, name string) {
 	t.Helper()
-	provider := model.Provider{ID: id, Name: name, APIKey: "test-only", Enabled: true}
+	provider := model.Provider{ID: id, Name: name, Enabled: true}
 	if err := database.writer.CreateProvider(context.Background(), &provider); err != nil {
 		t.Fatalf("CreateProvider(%q) error = %v", id, err)
 	}

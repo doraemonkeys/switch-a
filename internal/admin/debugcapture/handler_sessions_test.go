@@ -18,7 +18,7 @@ import (
 
 func TestStartSessionResolvesSafeProviderIdentities(t *testing.T) {
 	catalog := &stubProviderCatalog{providers: []model.Provider{
-		{ID: "provider-a", Name: "Provider A", APIKey: "must-not-cross-boundary"},
+		{ID: "provider-a", Name: "Provider A"},
 		{ID: "provider-b", Name: "Provider B"},
 	}}
 	var captured requestcapture.StartRequest

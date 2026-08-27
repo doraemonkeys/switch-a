@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -11,11 +12,18 @@ import (
 
 func configImportTestProvider(id string) model.Provider {
 	return model.Provider{
-		ID: id, Name: "Provider " + id, APIKey: "secret", AuthMode: "bearer", Enabled: true,
+		ID: id, Name: "Provider " + id, AuthMode: "bearer", Enabled: true,
 		APITypes: []model.ProviderAPIType{{
-			ProviderID: id, APIType: "codex", BaseURL: "https://example.com", APIKey: "secret",
+			ProviderID: id, APIType: "codex", BaseURL: "https://example.com",
+		}},
+		CredentialSessions: []credentialsession.RouteSnapshot{{
+			RouteTargetID: id, APIType: "codex", Credential: credentialsession.Snapshot{SessionID: id + "-session"},
 		}},
 	}
+}
+
+func configImportTestSession(id string) credentialsession.Session {
+	return testStaticCredentialSession(id+"-session", "", "secret")
 }
 
 func configImportTestRule(id, providerID string) errorrulesqlite.ImportedRule {
@@ -34,8 +42,9 @@ func TestApplyConfigImportAndProviderDeleteShareRuleTransaction(t *testing.T) {
 	ctx := context.Background()
 	expected := errorrule.Revision(0)
 	bundle := &ConfigImportBundle{
-		Providers:         []model.Provider{configImportTestProvider("provider-a")},
-		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+		CredentialSessions: []credentialsession.Session{configImportTestSession("provider-a")},
+		Providers:          []model.Provider{configImportTestProvider("provider-a")},
+		RoutingPolicyMode:  ConfigImportRoutingPolicyModePreserve,
 		RuleImport: errorrulesqlite.ImportRequest{
 			Mode:  errorrulesqlite.ImportModeFull,
 			Rules: []errorrulesqlite.ImportedRule{configImportTestRule("11111111-1111-4111-8111-111111111111", "provider-a")},
@@ -70,9 +79,10 @@ func TestApplyConfigImportInvalidRuleRollsBackOtherConfig(t *testing.T) {
 	}
 	expected := errorrule.Revision(0)
 	err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
-		Providers:         []model.Provider{configImportTestProvider("provider-a")},
-		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
-		Settings:          map[string]string{"probe-key": "after"},
+		CredentialSessions: []credentialsession.Session{configImportTestSession("provider-a")},
+		Providers:          []model.Provider{configImportTestProvider("provider-a")},
+		RoutingPolicyMode:  ConfigImportRoutingPolicyModePreserve,
+		Settings:           map[string]string{"probe-key": "after"},
 		RuleImport: errorrulesqlite.ImportRequest{
 			Mode:  errorrulesqlite.ImportModeFull,
 			Rules: []errorrulesqlite.ImportedRule{configImportTestRule("11111111-1111-4111-8111-111111111111", "missing-provider")},
@@ -98,8 +108,9 @@ func TestApplyConfigImportSettingsOnlyPreservesRuleDomain(t *testing.T) {
 	ctx := context.Background()
 	expected := errorrule.Revision(0)
 	if err := store.ApplyConfigImport(ctx, &ConfigImportBundle{
-		Providers:         []model.Provider{configImportTestProvider("provider-a")},
-		RoutingPolicyMode: ConfigImportRoutingPolicyModePreserve,
+		CredentialSessions: []credentialsession.Session{configImportTestSession("provider-a")},
+		Providers:          []model.Provider{configImportTestProvider("provider-a")},
+		RoutingPolicyMode:  ConfigImportRoutingPolicyModePreserve,
 		RuleImport: errorrulesqlite.ImportRequest{
 			Mode:  errorrulesqlite.ImportModeFull,
 			Rules: []errorrulesqlite.ImportedRule{configImportTestRule("11111111-1111-4111-8111-111111111111", "provider-a")},

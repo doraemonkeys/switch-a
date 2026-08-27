@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 )
 
 const (
@@ -103,13 +103,12 @@ func (s *Service) parseSub2APIChatGPTImport(raw []byte, now time.Time) (parsedSu
 		seenCandidateIDs[candidateID] = struct{}{}
 
 		item, candidate := parseSub2APIAccount(rawAccount, candidateID, sourceIndex, now)
-		if candidate.Credential != nil && candidate.AuthState != nil {
-			accountID := normalizedBindingAccountID(candidate.Credential.BindingAccountID)
+		if candidate.State == ChatGPTProviderImportCandidateStateReady {
+			accountID := strings.TrimSpace(string(candidate.Credential.Subject.Value))
 			if earlierCandidateID, duplicate := seenAccountIDs[accountID]; duplicate {
 				item.State = ChatGPTProviderImportCandidateStateDuplicate
 				candidate.State = ChatGPTProviderImportCandidateStateDuplicate
-				candidate.Credential = nil
-				candidate.AuthState = nil
+				candidate.Credential = credentialsession.Snapshot{}
 				warning := ChatGPTProviderImportWarning{
 					Code: ChatGPTProviderImportWarningDuplicateAccount,
 					Message: fmt.Sprintf(
@@ -208,15 +207,14 @@ func parseSub2APIAccount(
 		candidate.Warnings = append(candidate.Warnings, warning)
 	}
 
-	provider := &model.Provider{}
-	if err := applyChatGPTCredential(provider, credential); err != nil {
+	snapshot, err := chatGPTCredentialSessionSnapshot(credential, "")
+	if err != nil {
 		return invalidSub2APIAccount(item, candidate, "Account credentials could not be staged: "+err.Error())
 	}
 	item.State = ChatGPTProviderImportCandidateStateReady
-	item.Auth = buildChatGPTAuthViewFromCredential(credential)
+	item.Auth = BuildCredentialSessionAuthView(&snapshot)
 	candidate.State = ChatGPTProviderImportCandidateStateReady
-	candidate.Credential = provider.Credential.Clone()
-	candidate.AuthState = provider.AuthState.Clone()
+	candidate.Credential = snapshot
 	return item, candidate
 }
 

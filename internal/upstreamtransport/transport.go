@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
+	"github.com/doraemonkeys/switch-a/internal/codex/upstreamheaders"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
@@ -24,6 +26,30 @@ var ErrBodyTransferred = errors.New("upstream response body already transferred"
 type Config struct {
 	ConnectTimeout   time.Duration
 	FirstByteTimeout time.Duration
+}
+
+// CookiePolicy controls only client Cookie handling at the upstream boundary.
+// The gateway handle is always removed independently of this policy.
+type CookiePolicy uint8
+
+const (
+	PreserveClientCookies CookiePolicy = iota
+	ServerManagedCookies
+)
+
+// HeaderPolicy keeps rollout gating separate from Cookie policy. Sanitization
+// remains the safe zero value for callers that do not participate in the Codex
+// feature snapshot.
+type HeaderPolicy uint8
+
+const (
+	SanitizeProviderHeaders HeaderPolicy = iota
+	PreserveClientHeaders
+)
+
+type RequestPolicy struct {
+	Cookies CookiePolicy
+	Headers HeaderPolicy
 }
 
 type Transport struct {
@@ -46,7 +72,15 @@ func New(config Config) *Transport {
 		// would make Content-Encoding and client bytes disagree.
 		DisableCompression: true,
 	}
-	return &Transport{client: &http.Client{Transport: roundTripper}}
+	return &Transport{client: &http.Client{
+		Transport: roundTripper,
+		// Every response is an attempt boundary owned by the coordinator. Following
+		// here would create an unselected second exchange and could carry credentials
+		// or cookies to an authority that was never validated.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}}
 }
 
 func (t *Transport) CloseIdleConnections() {
@@ -172,8 +206,22 @@ func BuildRequest(
 	body []byte,
 	original *http.Request,
 ) (*http.Request, error) {
+	return BuildRequestWithPolicy(ctx, method, upstreamURL, body, original, RequestPolicy{})
+}
+
+func BuildRequestWithPolicy(
+	ctx context.Context,
+	method string,
+	upstreamURL string,
+	body []byte,
+	original *http.Request,
+	policy RequestPolicy,
+) (*http.Request, error) {
 	if original == nil {
 		return nil, errors.New("original request is required")
+	}
+	if err := policy.validate(); err != nil {
+		return nil, err
 	}
 	var source io.Reader
 	if body != nil {
@@ -183,12 +231,52 @@ func BuildRequest(
 	if err != nil {
 		return nil, err
 	}
-	copyRequestHeaders(request.Header, original.Header)
+	if policy.Headers == PreserveClientHeaders {
+		request.Header = upstreamheaders.ForHTTPTransportAttempt(original.Header)
+	} else {
+		request.Header = upstreamheaders.ForHTTPAttempt(original.Header)
+	}
+	applyCookiePolicy(request.Header, policy.Cookies)
 	if _, present := request.Header["User-Agent"]; !present {
 		request.Header["User-Agent"] = nil
 	}
 	request.Host = request.URL.Host
 	return request, nil
+}
+
+func (p RequestPolicy) validate() error {
+	if p.Cookies != PreserveClientCookies && p.Cookies != ServerManagedCookies {
+		return errors.New("upstream cookie policy is invalid")
+	}
+	if p.Headers != SanitizeProviderHeaders && p.Headers != PreserveClientHeaders {
+		return errors.New("upstream header policy is invalid")
+	}
+	return nil
+}
+func applyCookiePolicy(header http.Header, policy CookiePolicy) {
+	if policy == ServerManagedCookies {
+		header.Del("Cookie")
+		return
+	}
+	values := header.Values("Cookie")
+	header.Del("Cookie")
+	for _, value := range values {
+		kept := make([]string, 0, strings.Count(value, ";")+1)
+		for _, pair := range strings.Split(value, ";") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			name, _, _ := strings.Cut(pair, "=")
+			if name == providercookie.GatewayHandleName {
+				continue
+			}
+			kept = append(kept, pair)
+		}
+		if len(kept) > 0 {
+			header.Add("Cookie", strings.Join(kept, "; "))
+		}
+	}
 }
 
 var hopByHopResponseHeaders = map[string]struct{}{
@@ -234,33 +322,6 @@ func connectionTokens(values []string) []string {
 		}
 	}
 	return tokens
-}
-
-func copyRequestHeaders(target, source http.Header) {
-	connectionHeaders := connectionTokens(source.Values("Connection"))
-	for key, values := range source {
-		canonical := http.CanonicalHeaderKey(key)
-		// BuildRequest replays a buffered entity rather than the original transfer,
-		// so forwarding its trailer declaration would promise values that cannot arrive.
-		if canonical == "Trailer" {
-			continue
-		}
-		if _, excluded := hopByHopResponseHeaders[canonical]; excluded || containsHeader(connectionHeaders, canonical) {
-			continue
-		}
-		for _, value := range values {
-			target.Add(canonical, value)
-		}
-	}
-}
-
-func containsHeader(headers []string, target string) bool {
-	for _, header := range headers {
-		if strings.EqualFold(header, target) {
-			return true
-		}
-	}
-	return false
 }
 
 func cloneHeader(source http.Header) http.Header {

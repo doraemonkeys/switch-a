@@ -260,23 +260,32 @@ func (h *Handler) decodeSemanticRequestBody(
 		return semanticBody
 	}
 
-	failure := requestbody.FailureInternal
-	coding := ""
-	var decodeErr *requestbody.DecodeError
-	if errors.As(err, &decodeErr) {
-		failure = decodeErr.Failure
-		coding = decodeErr.Coding
-	}
+	failure := semanticDecodeFailure(err)
 	// Semantic inspection is observational: a decoder failure must not alter
 	// the raw request that an upstream may still understand.
 	h.logger.Warn("request body semantic decoding failed",
 		zap.String("request_id", requestID),
 		zap.String("api_type", apiType),
 		zap.String("path", request.URL.Path),
-		zap.Strings("content_encoding", contentEncodings),
-		zap.String("content_coding", coding),
-		zap.String("failure", string(failure)),
-		zap.Error(err),
+		zap.Int("content_encoding_value_count", len(contentEncodings)),
+		zap.String("decode_failure", string(failure)),
 	)
 	return nil
+}
+
+func semanticDecodeFailure(err error) requestbody.Failure {
+	var decodeErr *requestbody.DecodeError
+	if !errors.As(err, &decodeErr) {
+		return requestbody.FailureInternal
+	}
+	switch decodeErr.Failure {
+	case requestbody.FailureInvalidLimit,
+		requestbody.FailureInvalidEncoding,
+		requestbody.FailureUnsupportedEncoding,
+		requestbody.FailureContentDecoding,
+		requestbody.FailureDecodedBodyTooLarge:
+		return decodeErr.Failure
+	default:
+		return requestbody.FailureInternal
+	}
 }

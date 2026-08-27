@@ -262,6 +262,10 @@ export const CONFIG_KEYS = {
   GLOBAL_MAX_ATTEMPTS: "global_max_attempts",
   LOG_RETENTION_DAYS: "log_retention_days",
   INTER_GROUP_STRATEGY: "inter_group_strategy",
+  CODEX_UPSTREAM_HEADER_HYGIENE: "codex_upstream_header_hygiene_enabled",
+  CODEX_WEBSOCKET_SUBPROTOCOL: "codex_websocket_subprotocol_enabled",
+  CODEX_CONTINUITY: "codex_continuity_enabled",
+  CODEX_PROVIDER_COOKIE_JAR: "codex_provider_cookie_jar_enabled",
 } as const;
 
 export type ConfigKey = (typeof CONFIG_KEYS)[keyof typeof CONFIG_KEYS];
@@ -311,7 +315,68 @@ export const DEFAULTS = {
   // Strategy
   INTER_GROUP_STRATEGY: STRATEGIES.PRIORITY,
   PROVIDER_WEIGHT: 1,
+
+  // Codex protocol rollout features
+  CODEX_UPSTREAM_HEADER_HYGIENE: false,
+  CODEX_WEBSOCKET_SUBPROTOCOL: false,
+  CODEX_CONTINUITY: false,
+  CODEX_PROVIDER_COOKIE_JAR: false,
 } as const;
+
+export const CODEX_FEATURE_KEYS = [
+  CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE,
+  CONFIG_KEYS.CODEX_WEBSOCKET_SUBPROTOCOL,
+  CONFIG_KEYS.CODEX_CONTINUITY,
+  CONFIG_KEYS.CODEX_PROVIDER_COOKIE_JAR,
+] as const;
+
+export type CodexFeatureKey = (typeof CODEX_FEATURE_KEYS)[number];
+
+interface CodexFeatureDefinition {
+  key: CodexFeatureKey;
+  label: string;
+  description: string;
+  defaultValue: boolean;
+  requires: readonly CodexFeatureKey[];
+}
+
+// This is the UI projection of internal/codex/startup's registry. Rendering and
+// dependency affordances consume this one collection so the form cannot expose
+// session identity separately from continuity or couple Cookie to continuity.
+export const CODEX_FEATURES = [
+  {
+    key: CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE,
+    label: "Upstream Header Hygiene",
+    description:
+      "Rebuild each upstream attempt without client or previous-attempt authentication and account headers.",
+    defaultValue: DEFAULTS.CODEX_UPSTREAM_HEADER_HYGIENE,
+    requires: [],
+  },
+  {
+    key: CONFIG_KEYS.CODEX_WEBSOCKET_SUBPROTOCOL,
+    label: "WebSocket Subprotocol",
+    description:
+      "Negotiate one matching WebSocket subprotocol across the downstream and upstream connections.",
+    defaultValue: DEFAULTS.CODEX_WEBSOCKET_SUBPROTOCOL,
+    requires: [],
+  },
+  {
+    key: CONFIG_KEYS.CODEX_CONTINUITY,
+    label: "Continuity and Session Identity",
+    description:
+      "Keep Codex state, response references, and session identity on the same verified security scope.",
+    defaultValue: DEFAULTS.CODEX_CONTINUITY,
+    requires: [CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE],
+  },
+  {
+    key: CONFIG_KEYS.CODEX_PROVIDER_COOKIE_JAR,
+    label: "Provider Cookie Jar",
+    description:
+      "Persist upstream cookies in an isolated server-side jar; this remains independent of continuity.",
+    defaultValue: DEFAULTS.CODEX_PROVIDER_COOKIE_JAR,
+    requires: [CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE],
+  },
+] as const satisfies readonly CodexFeatureDefinition[];
 
 /**
  * Default provider max retries value.

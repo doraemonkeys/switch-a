@@ -12,11 +12,6 @@ func TestProviderSelectionEligibility_ReplacementSkipsFailoverIsolation(t *testi
 	t.Parallel()
 
 	store := newMockStore()
-	store.authStates["candidate"] = &model.ProviderAuthState{
-		ProviderID: "candidate",
-		Status:     model.ProviderAuthStatusActive,
-	}
-
 	eligibility, err := NewProviderSelectionEligibility(context.Background(), store, newMockHealthChecker(), &model.SelectRequest{
 		APIType:    "codex",
 		SwitchMode: model.SwitchModeReplacement,
@@ -37,15 +32,14 @@ func TestProviderSelectionEligibility_ReplacementSkipsFailoverIsolation(t *testi
 		t.Fatalf("NewProviderSelectionEligibility() error = %v", err)
 	}
 
-	allowed, err := eligibility.AllowsProvider(context.Background(), &model.Provider{
+	provider := store.credentialSessionProvider(model.Provider{
 		ID:             "candidate",
 		Enabled:        true,
 		Vendor:         "vendor-b",
 		AcceptFailover: model.ScopeNone,
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-		Credential:     &model.ProviderCredential{ProviderID: "candidate", SecretData: "secret"},
 		APITypes:       []model.ProviderAPIType{{ProviderID: "candidate", APIType: "codex"}},
-	})
+	}, "codex")
+	allowed, err := eligibility.AllowsProvider(context.Background(), &provider)
 	if err != nil {
 		t.Fatalf("AllowsProvider() error = %v", err)
 	}
@@ -70,8 +64,6 @@ func TestProviderSelectionEligibility_FailoverAppliesVendorIsolation(t *testing.
 				Enabled:        true,
 				Vendor:         "vendor-a",
 				AcceptFailover: model.ScopeAny,
-				CredentialType: model.ProviderCredentialTypeAPIKey,
-				Credential:     &model.ProviderCredential{ProviderID: "candidate-any", SecretData: "secret"},
 				APITypes:       []model.ProviderAPIType{{ProviderID: "candidate-any", APIType: "codex"}},
 			},
 			want: true,
@@ -83,8 +75,6 @@ func TestProviderSelectionEligibility_FailoverAppliesVendorIsolation(t *testing.
 				Enabled:        true,
 				Vendor:         "vendor-b",
 				AcceptFailover: model.ScopeVendor,
-				CredentialType: model.ProviderCredentialTypeAPIKey,
-				Credential:     &model.ProviderCredential{ProviderID: "candidate-vendor-mismatch", SecretData: "secret"},
 				APITypes:       []model.ProviderAPIType{{ProviderID: "candidate-vendor-mismatch", APIType: "codex"}},
 			},
 			want: false,
@@ -96,18 +86,14 @@ func TestProviderSelectionEligibility_FailoverAppliesVendorIsolation(t *testing.
 				Enabled:        true,
 				Vendor:         "vendor-a",
 				AcceptFailover: model.ScopeNone,
-				CredentialType: model.ProviderCredentialTypeAPIKey,
-				Credential:     &model.ProviderCredential{ProviderID: "candidate-none", SecretData: "secret"},
 				APITypes:       []model.ProviderAPIType{{ProviderID: "candidate-none", APIType: "codex"}},
 			},
 			want: false,
 		},
 	}
 	for _, candidate := range candidates {
-		store.authStates[candidate.provider.ID] = &model.ProviderAuthState{
-			ProviderID: candidate.provider.ID,
-			Status:     model.ProviderAuthStatusActive,
-		}
+		hydrated := store.credentialSessionProvider(*candidate.provider, "codex")
+		*candidate.provider = hydrated
 	}
 
 	eligibility, err := NewProviderSelectionEligibility(context.Background(), store, newMockHealthChecker(), &model.SelectRequest{
@@ -147,10 +133,6 @@ func TestProviderSelectionEligibility_ReplacementStillUsesSwitchHistory(t *testi
 	t.Parallel()
 
 	store := newMockStore()
-	store.authStates["candidate"] = &model.ProviderAuthState{
-		ProviderID: "candidate",
-		Status:     model.ProviderAuthStatusActive,
-	}
 	eligibility, err := NewProviderSelectionEligibility(context.Background(), store, newMockHealthChecker(), &model.SelectRequest{
 		APIType:    "codex",
 		SwitchMode: model.SwitchModeReplacement,
@@ -165,13 +147,12 @@ func TestProviderSelectionEligibility_ReplacementStillUsesSwitchHistory(t *testi
 		t.Fatalf("NewProviderSelectionEligibility() error = %v", err)
 	}
 
-	allowed, err := eligibility.AllowsProvider(context.Background(), &model.Provider{
-		ID:             "candidate",
-		Enabled:        true,
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-		Credential:     &model.ProviderCredential{ProviderID: "candidate", SecretData: "secret"},
-		APITypes:       []model.ProviderAPIType{{ProviderID: "candidate", APIType: "codex"}},
-	})
+	provider := store.credentialSessionProvider(model.Provider{
+		ID:       "candidate",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "candidate", APIType: "codex"}},
+	}, "codex")
+	allowed, err := eligibility.AllowsProvider(context.Background(), &provider)
 	if err != nil {
 		t.Fatalf("AllowsProvider() error = %v", err)
 	}

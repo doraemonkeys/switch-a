@@ -9,7 +9,11 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/startup"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
@@ -83,8 +87,11 @@ func (store *routingTestSeedStore) CompareAndConsume(model.StickyKey, string) (*
 
 func routingTestProvider(id string) model.Provider {
 	return model.Provider{
-		ID: id, Name: id, Enabled: true, APIKey: id + "-key",
-		APITypes: []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://" + id + ".example"}},
+		ID:                 id,
+		Name:               id,
+		Enabled:            true,
+		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://" + id + ".example"}},
+		CredentialSessions: testCredentialSessions(id, APITypeCodex, credentialsession.KindAPIKey, id+"-key"),
 	}
 }
 
@@ -94,6 +101,117 @@ func routingTestSelection(provider *model.Provider, source selector.SelectionSou
 	return ProviderSelection{
 		Lease:    lease,
 		Metadata: selector.SelectionMetadata{Source: source},
+	}
+}
+
+func TestPrepareWebSocketProviderAttemptUsesImmutableLeaseCredential(t *testing.T) {
+	t.Parallel()
+
+	provider := routingTestProvider("immutable")
+	gateway := &Gateway{logger: zaptest.NewLogger(t)}
+	lease := gateway.newFallbackProviderLease(&provider, APITypeCodex)
+	selected, ok := lease.CandidateSnapshot()
+	if !ok {
+		t.Fatal("fallback lease did not freeze a credential candidate")
+	}
+	selectedCredential := selected.Credential()
+	provider.CredentialSessions[0].Credential.SecretData = "rotated-after-selection"
+	orchestrator := &WebSocketSessionOrchestrator{
+		handler:        gateway,
+		apiType:        APITypeCodex,
+		globalAuthMode: "bearer",
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/v1/responses?trace=1", nil)
+
+	prepared, failureCode, err := orchestrator.prepareProviderAttempt(context.Background(), request, &provider, lease)
+	if err != nil {
+		t.Fatalf("prepareProviderAttempt() error = %v", err)
+	}
+	if failureCode != "" {
+		t.Fatalf("failure code = %q, want empty", failureCode)
+	}
+	if got := prepared.headers.Get("Authorization"); got != "Bearer "+selectedCredential.SecretData {
+		t.Fatalf("Authorization = %q, want frozen selection credential", got)
+	}
+	if got := prepared.finalURL.String(); got != "wss://immutable.example/responses?trace=1" {
+		t.Fatalf("final dial URL = %q", got)
+	}
+	if prepared.credential.SecretData != selectedCredential.SecretData {
+		t.Fatalf("prepared credential = %q, want frozen %q", prepared.credential.SecretData, selectedCredential.SecretData)
+	}
+}
+
+func TestPrepareWebSocketProviderAttemptUsesImmutableCodexHygieneSnapshot(t *testing.T) {
+	tests := []struct {
+		name       string
+		apiType    string
+		enabled    bool
+		wantLegacy bool
+	}{
+		{name: "Codex enabled", apiType: APITypeCodex, enabled: true},
+		{name: "Codex disabled", apiType: APITypeCodex, wantLegacy: true},
+		{name: "non-Codex ignores enabled flag", apiType: "claude", enabled: true, wantLegacy: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			features := codexstartup.Snapshot{UpstreamHeaderHygiene: test.enabled}
+			runtime := codexws.New(codexws.Config{Features: codexws.FeatureSourceFunc(func() codexstartup.Snapshot {
+				return features
+			})})
+			path := "/codex/v1/responses"
+			if test.apiType != APITypeCodex {
+				path = "/v1/messages"
+			}
+			request := httptest.NewRequest(http.MethodGet, "http://gateway.test"+path, nil)
+			request.Header.Set("Authorization", "Bearer client")
+			request.Header.Set("X-Api-Key", "client-key")
+			request.Header.Set("ChatGPT-Account-Id", "client-account")
+			request.Header.Set("X-Client-Request-Id", "logical-request")
+			request.Header.Set("Sec-WebSocket-Key", "transport-owned")
+			operation, err := runtime.Begin(context.Background(), request, test.apiType, "ws-hygiene")
+			if err != nil {
+				t.Fatal(err)
+			}
+			features.UpstreamHeaderHygiene = !test.enabled
+
+			provider := routingTestProviderForAPI("provider", test.apiType)
+			gateway := &Gateway{logger: zaptest.NewLogger(t), auth: providerauth.NewService(providerauth.Config{})}
+			lease := gateway.newFallbackProviderLease(&provider, test.apiType)
+			orchestrator := &WebSocketSessionOrchestrator{
+				handler: gateway, apiType: test.apiType, globalAuthMode: "bearer", codexOperation: operation,
+			}
+			prepared, failureCode, err := orchestrator.prepareProviderAttempt(context.Background(), request, &provider, lease)
+			if err != nil || failureCode != "" {
+				t.Fatalf("prepareProviderAttempt() = failure:%q err:%v", failureCode, err)
+			}
+			if got := prepared.headers.Get("Authorization"); got != "Bearer provider-key" {
+				t.Fatalf("Authorization = %q", got)
+			}
+			if got := prepared.headers.Get("X-Client-Request-Id"); got != "logical-request" {
+				t.Fatalf("X-Client-Request-Id = %q", got)
+			}
+			if got := prepared.headers.Get("Sec-WebSocket-Key"); got != "" {
+				t.Fatalf("transport-owned header survived: %q", got)
+			}
+			wantAPIKey, wantAccount := "", ""
+			if test.wantLegacy {
+				wantAPIKey, wantAccount = "client-key", "client-account"
+			}
+			if got := prepared.headers.Get("X-Api-Key"); got != wantAPIKey {
+				t.Fatalf("X-Api-Key = %q, want %q", got, wantAPIKey)
+			}
+			if got := prepared.headers.Get("ChatGPT-Account-Id"); got != wantAccount {
+				t.Fatalf("ChatGPT-Account-Id = %q, want %q", got, wantAccount)
+			}
+		})
+	}
+}
+
+func routingTestProviderForAPI(id, apiType string) model.Provider {
+	return model.Provider{
+		ID: id, Name: id, Enabled: true, AuthMode: "bearer",
+		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: apiType, BaseURL: "https://" + id + ".example"}},
+		CredentialSessions: testCredentialSessions(id, apiType, credentialsession.KindAPIKey, "provider-key"),
 	}
 }
 

@@ -62,22 +62,22 @@ func TestHandler_ServeHTTP_WebSocket_FallbackSelectionUsesLearnedModelAfterMidSe
 	}))
 	defer fallback.Close()
 
-	primaryProvider := &model.Provider{
-		ID:       "ws-model-retry-primary",
-		Name:     "WS Model Retry Primary",
-		APIKey:   "primary-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-model-retry-primary",
+		Name: "WS Model Retry Primary",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-model-retry-primary", APIType: "codex", BaseURL: primary.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       "ws-model-retry-fallback",
-		Name:     "WS Model Retry Fallback",
-		APIKey:   "fallback-key",
+	}, "", "primary-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-model-retry-fallback",
+		Name: "WS Model Retry Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-model-retry-fallback", APIType: "codex", BaseURL: fallback.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}

@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
-	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
@@ -21,15 +25,17 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	w http.ResponseWriter,
 	r *http.Request,
 	provider *model.Provider,
+	lease ProviderLease,
 	attempt int,
 	selectionMode providerSwitchMode,
 	selectionMetadata selector.SelectionMetadata,
 ) WebSocketAttemptResult {
 	attemptStart := time.Now()
 
-	upstreamURL, dialHeaders, failureCode, err := o.prepareProviderAttempt(ctx, r, provider)
+	prepared, failureCode, err := o.prepareProviderAttempt(ctx, r, provider, lease)
 	if err != nil {
 		attemptResult := newWebSocketProviderConfigurationAttempt(provider, o.apiType, attempt, selectionMode, selectionMetadata, err, time.Since(attemptStart))
+		attemptResult.injectedCredential = prepared.injectedCredential
 		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
 		o.applySessionLifecycleToAttempt(&attemptResult)
 		if o.captureParticipates {
@@ -42,7 +48,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 					selectionMetadata,
 					requestcapture.CredentialPhaseInitial,
 				),
-				Target:             requestcapture.WebSocketTransitionTarget(upstreamURL),
+				Target:             requestcapture.WebSocketTransitionTarget(prepared.upstreamURL),
 				TerminationReason:  reason,
 				Failure:            failure,
 				CredentialEvidence: emptyCaptureCredentialEvidence(),
@@ -50,12 +56,17 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 		}
 		return attemptResult
 	}
+	if err := o.prepareCodexPhysicalDial(ctx, &prepared); err != nil {
+		return o.newCodexBoundaryAttempt(provider, DialExchange{}, attempt, selectionMode, selectionMetadata, attemptStart, err, prepared.injectedCredential)
+	}
 
 	recoveryAttempted := false
+	injectedCredential := prepared.injectedCredential
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
-		URL:                 upstreamURL,
-		Headers:             dialHeaders,
-		InjectedCredential:  injectedCredentialForCapture(provider, o.apiType),
+		URL:                 prepared.upstreamURL,
+		Headers:             prepared.headers,
+		Subprotocols:        o.subprotocol.DialOffer(),
+		InjectedCredential:  prepared.injectedCredential,
 		Capture:             o.capture,
 		CaptureParticipates: o.captureParticipates,
 		Attempt: webSocketCaptureAttemptMetadata(
@@ -66,16 +77,33 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 			requestcapture.CredentialPhaseInitial,
 		),
 	})
+	if err := o.finishCodexPhysicalDial(ctx, prepared, dialExchange); err != nil {
+		return o.newCodexBoundaryAttempt(provider, dialExchange, attempt, selectionMode, selectionMetadata, attemptStart, err, prepared.injectedCredential)
+	}
 	o.handler.scheduleProviderUsageObservation(
-		o.requestID, provider, dialExchange.HandshakeHeaders, dialExchange.HandshakeObservedAt,
+		o.requestID, provider, prepared.credential, dialExchange.HandshakeHeaders, dialExchange.HandshakeObservedAt,
 	)
 	if !dialExchange.Accepted() {
+		if protocolErr := o.rejectedUpgradeSubprotocolError(dialExchange); protocolErr != nil {
+			attemptResult := o.newSubprotocolViolationAttempt(
+				provider,
+				dialExchange,
+				attempt,
+				selectionMode,
+				selectionMetadata,
+				attemptStart,
+				protocolErr,
+				prepared.injectedCredential,
+			)
+			o.queueRejectedDialCapture(ctx, dialExchange, attemptResult)
+			return attemptResult
+		}
 		resolution := o.resolveRejectedProviderDial(
 			ctx,
 			r,
 			provider,
 			dialExchange,
-			upstreamURL,
+			prepared,
 			attempt,
 			selectionMode,
 			selectionMetadata,
@@ -86,6 +114,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 		}
 		dialExchange = resolution.exchange
 		recoveryAttempted = resolution.recoveryAttempted
+		injectedCredential = resolution.injectedCredential
 	}
 	return o.relayAcceptedProviderAttempt(
 		ctx,
@@ -98,14 +127,65 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 		selectionMetadata,
 		attemptStart,
 		recoveryAttempted,
+		injectedCredential,
 	)
 }
 
+func (o *WebSocketSessionOrchestrator) rejectedUpgradeSubprotocolError(exchange DialExchange) error {
+	if exchange.HandshakeStatusCode != http.StatusSwitchingProtocols {
+		return nil
+	}
+	_, err := o.subprotocol.BindUpstream(exchange.NegotiatedSubprotocol)
+	if err != nil {
+		o.logSubprotocolDecision(
+			"websocket.subprotocol_mismatch",
+			webSocketSubprotocolPhaseUpstreamSelection,
+			websocketprotocol.PeerUpstream,
+			exchange.NegotiatedSubprotocol,
+			err,
+		)
+	}
+	return err
+}
+
+func (o *WebSocketSessionOrchestrator) newSubprotocolViolationAttempt(
+	provider *model.Provider,
+	exchange DialExchange,
+	attempt int,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
+	attemptStart time.Time,
+	err error,
+	injectedCredential string,
+) WebSocketAttemptResult {
+	if o.clientConn != nil {
+		closeWebSocketSubprotocolViolation(o.clientConn)
+		o.clientConn = nil
+	}
+	result := exchange.toWebSocketResult()
+	result.Err = err
+	result.TerminalCause = model.TerminalInternalError
+	o.applySessionLifecycleToResult(result)
+	attemptResult := newWebSocketForwardAttemptResult(
+		provider,
+		attempt,
+		selectionMode,
+		selectionMetadata,
+		result,
+		err,
+		time.Since(attemptStart),
+	)
+	attemptResult.injectedCredential = injectedCredential
+	o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
+	return attemptResult
+}
+
 type rejectedWebSocketDialResolution struct {
-	exchange          DialExchange
-	terminalAttempt   WebSocketAttemptResult
-	recoveryAttempted bool
-	accepted          bool
+	exchange           DialExchange
+	terminalAttempt    WebSocketAttemptResult
+	recoveryAttempted  bool
+	injectedCredential string
+	accepted           bool
 }
 
 func (o *WebSocketSessionOrchestrator) resolveRejectedProviderDial(
@@ -113,7 +193,7 @@ func (o *WebSocketSessionOrchestrator) resolveRejectedProviderDial(
 	r *http.Request,
 	provider *model.Provider,
 	dialExchange DialExchange,
-	upstreamURL string,
+	prepared webSocketPreparedProviderAttempt,
 	attempt int,
 	selectionMode providerSwitchMode,
 	selectionMetadata selector.SelectionMetadata,
@@ -129,6 +209,7 @@ func (o *WebSocketSessionOrchestrator) resolveRejectedProviderDial(
 		nil,
 		time.Since(attemptStart),
 	)
+	attemptResult.injectedCredential = prepared.injectedCredential
 	o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
 	o.applySessionLifecycleToAttempt(&attemptResult)
 	if !o.shouldRecoverUnauthorized(attemptResult) {
@@ -141,7 +222,7 @@ func (o *WebSocketSessionOrchestrator) resolveRejectedProviderDial(
 		ctx,
 		r,
 		provider,
-		upstreamURL,
+		prepared,
 		attempt,
 		selectionMode,
 		selectionMetadata,
@@ -152,9 +233,10 @@ func (o *WebSocketSessionOrchestrator) resolveRejectedProviderDial(
 	}
 	if recoveredExchange.Accepted() {
 		return rejectedWebSocketDialResolution{
-			exchange:          recoveredExchange,
-			recoveryAttempted: true,
-			accepted:          true,
+			exchange:           recoveredExchange,
+			recoveryAttempted:  true,
+			injectedCredential: recoveredAttempt.injectedCredential,
+			accepted:           true,
 		}
 	}
 
@@ -192,40 +274,73 @@ func (o *WebSocketSessionOrchestrator) queueCredentialRefreshDrainCapture(dialEx
 	})
 }
 
+type webSocketPreparedProviderAttempt struct {
+	upstreamURL        string
+	finalURL           *url.URL
+	headers            http.Header
+	candidate          codexidentity.CandidateSnapshot
+	applied            codexidentity.AppliedIdentity
+	credential         credentialsession.Snapshot
+	injectedCredential string
+	boundaryPermit     *codexws.Permit
+}
+
 func (o *WebSocketSessionOrchestrator) prepareProviderAttempt(
 	ctx context.Context,
 	r *http.Request,
 	provider *model.Provider,
-) (string, http.Header, requestcapture.FailureCode, error) {
-	baseURL, err := o.handler.validateWebSocketProviderReady(provider, o.apiType)
+	lease ProviderLease,
+) (webSocketPreparedProviderAttempt, requestcapture.FailureCode, error) {
+	var candidate codexidentity.CandidateSnapshot
+	if lease != nil {
+		candidate, _ = lease.CandidateSnapshot()
+	}
+	baseURL, credential, err := o.handler.validateWebSocketProviderReady(provider, o.apiType, candidate)
 	if err != nil {
 		failureCode := webSocketConfigurationFailureCode(err)
 		if !o.captureParticipates {
-			return "", nil, failureCode, err
+			return webSocketPreparedProviderAttempt{}, failureCode, err
 		}
 		// Readiness checks can reject credentials even when the transport target is
 		// already determined. Retaining that known target makes a no-dial transition
 		// diagnostically useful without pretending a physical exchange occurred.
 		knownBaseURL := provider.BaseURLForAPIType(o.apiType)
 		if knownBaseURL == "" {
-			return "", nil, failureCode, err
+			return webSocketPreparedProviderAttempt{}, failureCode, err
 		}
 		upstreamPath := BuildUpstreamPath(r.URL.Path, o.apiType)
-		return httpToWSURL(o.handler.buildFullURL(knownBaseURL, upstreamPath, r.URL.RawQuery)), nil, failureCode, err
+		return webSocketPreparedProviderAttempt{
+			upstreamURL: httpToWSURL(o.handler.buildFullURL(knownBaseURL, upstreamPath, r.URL.RawQuery)),
+		}, failureCode, err
 	}
 
 	upstreamPath := BuildUpstreamPath(r.URL.Path, o.apiType)
 	upstreamURL := httpToWSURL(o.handler.buildFullURL(baseURL, upstreamPath, r.URL.RawQuery))
-
-	dialHeaders, err := o.handler.prepareWebSocketAttemptHeaders(ctx, r, provider, o.apiType, o.globalAuthMode)
+	finalURL, err := url.Parse(upstreamURL)
 	if err != nil {
-		return upstreamURL, dialHeaders, requestcapture.FailureCodeCredentialApply, &webSocketProviderConfigError{
+		return webSocketPreparedProviderAttempt{upstreamURL: upstreamURL}, requestcapture.FailureCodeUnknown, err
+	}
+
+	dialHeaders, applied, err := o.handler.prepareWebSocketAttemptHeaders(
+		ctx, r, provider, candidate, o.apiType, o.globalAuthMode, finalURL, o.codexUpstreamHeaderHygiene(),
+	)
+	prepared := webSocketPreparedProviderAttempt{
+		upstreamURL:        upstreamURL,
+		finalURL:           finalURL,
+		headers:            dialHeaders,
+		candidate:          candidate,
+		applied:            applied,
+		credential:         credential,
+		injectedCredential: injectedCredentialForCapture(credential, dialHeaders),
+	}
+	if err != nil {
+		return prepared, requestcapture.FailureCodeCredentialApply, &webSocketProviderConfigError{
 			missingField: "credentials",
 			err:          err,
 		}
 	}
 
-	return upstreamURL, dialHeaders, "", nil
+	return prepared, "", nil
 }
 
 func webSocketConfigurationFailureCode(err error) requestcapture.FailureCode {
@@ -282,13 +397,13 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 	ctx context.Context,
 	r *http.Request,
 	provider *model.Provider,
-	upstreamURL string,
+	prepared webSocketPreparedProviderAttempt,
 	attempt int,
 	selectionMode providerSwitchMode,
 	selectionMetadata selector.SelectionMetadata,
 	attemptStart time.Time,
 ) (DialExchange, WebSocketAttemptResult, bool) {
-	refreshed, err := o.handler.auth.RefreshProviderCredentials(ctx, provider)
+	refreshed, err := o.handler.auth.RefreshCredentialSession(ctx, prepared.credential)
 	if !refreshed {
 		return DialExchange{}, WebSocketAttemptResult{}, false
 	}
@@ -301,7 +416,10 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 		return DialExchange{}, WebSocketAttemptResult{}, false
 	}
 
-	dialHeaders, err := o.handler.prepareWebSocketAttemptHeaders(ctx, r, provider, o.apiType, o.globalAuthMode)
+	dialHeaders, applied, err := o.handler.prepareWebSocketAttemptHeaders(
+		ctx, r, provider, prepared.candidate, o.apiType, o.globalAuthMode, prepared.finalURL, o.codexUpstreamHeaderHygiene(),
+	)
+	refreshedInjectedCredential := injectedCredentialForCapture(prepared.credential, dialHeaders)
 	if err != nil {
 		configErr := &webSocketProviderConfigError{
 			missingField: "credentials",
@@ -316,6 +434,7 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 			configErr,
 			time.Since(attemptStart),
 		)
+		configAttempt.injectedCredential = refreshedInjectedCredential
 		o.stampAttemptSelectionContext(&configAttempt, selectionMode, selectionMetadata)
 		configAttempt.RecoveryAttempted = true
 		o.applySessionLifecycleToAttempt(&configAttempt)
@@ -333,7 +452,7 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 					selectionMetadata,
 					requestcapture.CredentialPhaseRefreshed,
 				),
-				Target:             requestcapture.WebSocketTransitionTarget(upstreamURL),
+				Target:             requestcapture.WebSocketTransitionTarget(prepared.upstreamURL),
 				TerminationReason:  reason,
 				Failure:            failure,
 				CredentialEvidence: emptyCaptureCredentialEvidence(),
@@ -341,11 +460,22 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 		}
 		return DialExchange{}, configAttempt, true
 	}
+	prepared.applied = applied
+	prepared.headers = dialHeaders
+	if err := o.prepareCodexPhysicalDial(ctx, &prepared); err != nil {
+		configAttempt := newWebSocketProviderConfigurationAttempt(
+			provider, o.apiType, attempt, selectionMode, selectionMetadata, err, time.Since(attemptStart),
+		)
+		configAttempt.injectedCredential = refreshedInjectedCredential
+		o.applySessionLifecycleToAttempt(&configAttempt)
+		return DialExchange{}, configAttempt, true
+	}
 
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
-		URL:                 upstreamURL,
+		URL:                 prepared.upstreamURL,
 		Headers:             dialHeaders,
-		InjectedCredential:  injectedCredentialForCapture(provider, o.apiType),
+		Subprotocols:        o.subprotocol.DialOffer(),
+		InjectedCredential:  refreshedInjectedCredential,
 		Capture:             o.capture,
 		CaptureParticipates: o.captureParticipates,
 		Attempt: webSocketCaptureAttemptMetadata(
@@ -356,19 +486,94 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 			requestcapture.CredentialPhaseRefreshed,
 		),
 	})
+	if err := o.finishCodexPhysicalDial(ctx, prepared, dialExchange); err != nil {
+		return dialExchange, o.newCodexBoundaryAttempt(
+			provider, dialExchange, attempt, selectionMode, selectionMetadata,
+			attemptStart, err, refreshedInjectedCredential,
+		), true
+	}
 	o.handler.scheduleProviderUsageObservation(
-		o.requestID, provider, dialExchange.HandshakeHeaders, dialExchange.HandshakeObservedAt,
+		o.requestID, provider, prepared.credential, dialExchange.HandshakeHeaders, dialExchange.HandshakeObservedAt,
 	)
 	if dialExchange.Accepted() {
-		return dialExchange, WebSocketAttemptResult{RecoveryAttempted: true}, true
+		return dialExchange, WebSocketAttemptResult{
+			RecoveryAttempted:  true,
+			injectedCredential: refreshedInjectedCredential,
+		}, true
 	}
 
 	dialResult := dialExchange.toWebSocketResult()
 	recoveredAttempt := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, dialResult, nil, time.Since(attemptStart))
+	recoveredAttempt.injectedCredential = refreshedInjectedCredential
 	o.stampAttemptSelectionContext(&recoveredAttempt, selectionMode, selectionMetadata)
 	recoveredAttempt.RecoveryAttempted = true
 	o.applySessionLifecycleToAttempt(&recoveredAttempt)
 	return dialExchange, recoveredAttempt, true
+}
+
+func (o *WebSocketSessionOrchestrator) prepareCodexPhysicalDial(
+	ctx context.Context,
+	prepared *webSocketPreparedProviderAttempt,
+) error {
+	if o == nil || o.codexOperation == nil || prepared == nil {
+		return nil
+	}
+	permit, err := o.codexOperation.PrepareDial(
+		ctx, prepared.headers, prepared.candidate, prepared.applied, prepared.finalURL,
+	)
+	if err != nil {
+		return err
+	}
+	prepared.boundaryPermit = permit
+	applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
+	return nil
+}
+
+func (o *WebSocketSessionOrchestrator) codexUpstreamHeaderHygiene() bool {
+	return o != nil && o.apiType == APITypeCodex && o.codexOperation != nil &&
+		o.codexOperation.Features().UpstreamHeaderHygiene
+}
+
+func (o *WebSocketSessionOrchestrator) finishCodexPhysicalDial(
+	ctx context.Context,
+	prepared webSocketPreparedProviderAttempt,
+	exchange DialExchange,
+) error {
+	if o == nil || o.codexOperation == nil {
+		return nil
+	}
+	if prepared.boundaryPermit != nil {
+		if err := prepared.boundaryPermit.Commit(ctx); err != nil {
+			return err
+		}
+	}
+	return o.codexOperation.ApplyHandshake(prepared.finalURL, exchange.HandshakeHeaders)
+}
+
+func (o *WebSocketSessionOrchestrator) newCodexBoundaryAttempt(
+	provider *model.Provider,
+	exchange DialExchange,
+	attempt int,
+	selectionMode providerSwitchMode,
+	selectionMetadata selector.SelectionMetadata,
+	attemptStart time.Time,
+	err error,
+	injectedCredential string,
+) WebSocketAttemptResult {
+	if exchange.Conn != nil {
+		_ = exchange.Conn.Close(websocketCloseStatusForCodexFailure(err), "websocket state boundary rejected")
+	}
+	result := exchange.toWebSocketResult()
+	result.Err = err
+	result.TerminalCause = model.TerminalInternalError
+	result.CommitSource = model.CommitUnknown
+	o.applySessionLifecycleToResult(result)
+	attemptResult := newWebSocketForwardAttemptResult(
+		provider, attempt, selectionMode, selectionMetadata, result, err, time.Since(attemptStart),
+	)
+	attemptResult.injectedCredential = injectedCredential
+	o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
+	return attemptResult
 }
 
 func (o *WebSocketSessionOrchestrator) stampAttemptSelectionContext(
@@ -383,176 +588,4 @@ func (o *WebSocketSessionOrchestrator) stampAttemptSelectionContext(
 	attempt.SelectionMetadata = selectionMetadata
 	attempt.ProviderAttempt = 1
 	attempt.ProviderSwitchCount = o.switchTracker.providerSwitchCount()
-}
-
-func (o *WebSocketSessionOrchestrator) replayBufferedMessages(
-	ctx context.Context,
-	upstreamConn *websocket.Conn,
-	observer WebSocketMessageObserver,
-	captureOptions webSocketRelayOptions,
-) (int64, bool, error) {
-	captureOptions = captureOptions.withCaptureHooks()
-	if o.replayBuffer == nil {
-		return 0, false, nil
-	}
-
-	snapshot := o.replayBuffer.Snapshot()
-	if !snapshot.Enabled {
-		if o.lifecycle != nil && o.lifecycle.Snapshot().ClientVisible {
-			// Once the session is already visible, a disabled pre-visible replay buffer
-			// is expected rather than fatal. Post-visible failover reuses the live
-			// downstream socket without trying to resurrect the pre-visible window.
-			return 0, false, nil
-		}
-		return 0, false, errors.New("pre-visible replay buffer disabled")
-	}
-	if len(snapshot.Messages) == 0 {
-		// Suppression can happen before the client sends any replayable frame. In that
-		// case the replacement provider should continue with a clean socket rather than
-		// treating "nothing to replay" as a synthetic transport failure.
-		return 0, false, nil
-	}
-
-	var replayedBytes int64
-	for index, message := range snapshot.Messages {
-		source := requestcapture.MessageSourceReplay
-		lineage := requestcapture.MessageLineage{}
-		sourceLineage := message.Lineage
-		if !message.Delivered {
-			// The bootstrap selector read this frame before a provider was chosen. Its
-			// first physical delivery is still the live event; only later attempts are
-			// replay events linked back to that stable original message identity.
-			source = requestcapture.MessageSourceLive
-			lineage = message.Lineage
-			sourceLineage = requestcapture.MessageLineage{}
-		}
-		captured := captureWebSocketMessageRead(
-			captureOptions,
-			requestcapture.MessageDirectionClientToUpstream,
-			message.MessageType,
-			message.Data,
-			source,
-			lineage,
-			sourceLineage,
-		)
-		o.observeReplayClientMessage(observer, message.MessageType, message.Data)
-		if err := upstreamConn.Write(ctx, message.MessageType, message.Data); err != nil {
-			captureWebSocketMessageResult(
-				captureOptions,
-				captured,
-				requestcapture.MessageDispositionWriteFailed,
-				false,
-				err,
-			)
-			return replayedBytes, true, err
-		}
-		if !message.Delivered {
-			o.replayBuffer.MarkDelivered(index, captured.Lineage)
-		}
-		captureWebSocketMessageResult(
-			captureOptions,
-			captured,
-			requestcapture.MessageDispositionForwarded,
-			true,
-			nil,
-		)
-		replayedBytes += int64(len(message.Data))
-	}
-	return replayedBytes, true, nil
-}
-
-func (o *WebSocketSessionOrchestrator) observeReplayClientMessage(
-	observer WebSocketMessageObserver,
-	messageType websocket.MessageType,
-	data []byte,
-) {
-	switch tracked := observer.(type) {
-	case *bytesTrackingObserver:
-		if tracked.inner != nil {
-			tracked.inner.ObserveClientMessage(messageType, data)
-		}
-	default:
-		if observer != nil {
-			observer.ObserveClientMessage(messageType, data)
-		}
-	}
-}
-
-func (o *WebSocketSessionOrchestrator) captureSuppressedAttempt(
-	provider *model.Provider,
-	relayResult *webSocketRelaySessionResult,
-) {
-	if relayResult == nil || relayResult.SuppressedUpstreamError == nil || provider == nil {
-		return
-	}
-
-	messageType := relayResult.SuppressedMessageType
-	if messageType == 0 {
-		// Semantic failover only suppresses JSON application frames, so a missing
-		// type means we are reconstructing legacy helper output rather than a real
-		// binary payload.
-		messageType = websocket.MessageText
-	}
-
-	payload := append([]byte(nil), relayResult.SuppressedMessageData...)
-	if len(payload) == 0 && relayResult.SuppressedUpstreamError.Raw != "" {
-		payload = []byte(relayResult.SuppressedUpstreamError.Raw)
-	}
-
-	o.suppressedAttempt = &webSocketSuppressedAttempt{
-		provider:      provider,
-		messageType:   messageType,
-		payload:       payload,
-		upstreamError: relayResult.SuppressedUpstreamError.Clone(),
-	}
-}
-
-func (o *WebSocketSessionOrchestrator) clearSuppressedAttempt() { o.suppressedAttempt = nil }
-
-func (o *WebSocketSessionOrchestrator) shouldSwitchProvider(attempt WebSocketAttemptResult) bool {
-	if attempt.Result == nil {
-		return false
-	}
-	if attempt.ReplayFailed {
-		return false
-	}
-	if attempt.shouldReplaceBeforeClientVisible() {
-		return true
-	}
-	if attempt.Result.ClientVisible {
-		return o.shouldFailoverAfterClientVisible(attempt)
-	}
-	if attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError {
-		return o.suppressedAttempt != nil &&
-			attempt.Result.UpstreamError != nil &&
-			attempt.Result.UpstreamError.IsSwitchableProviderScoped()
-	}
-	return false
-}
-
-func (o *WebSocketSessionOrchestrator) shouldFailoverAfterClientVisible(attempt WebSocketAttemptResult) bool {
-	if o == nil || o.suppressedAttempt == nil || attempt.Result == nil {
-		return false
-	}
-	if attempt.Result.UpstreamError == nil {
-		return false
-	}
-	if !attempt.Result.UpstreamError.IsSwitchableProviderScoped() {
-		return false
-	}
-	return o.switchTracker.continuityContext != nil
-}
-
-func (o *WebSocketSessionOrchestrator) shouldFallbackToSuppressedPayload(attempt WebSocketAttemptResult) bool {
-	if o.suppressedAttempt == nil || attempt.Result == nil || attempt.Result.ClientVisible {
-		return false
-	}
-	if attempt.Result.TerminalCause == model.TerminalClientDisconnect ||
-		attempt.Result.TerminalCause == model.TerminalInternalError {
-		return false
-	}
-	if attempt.ReplayFailed {
-		return true
-	}
-	return attempt.clientAccepted() && !o.shouldSwitchProvider(attempt)
 }

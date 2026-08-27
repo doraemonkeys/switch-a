@@ -2,7 +2,6 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -78,47 +77,6 @@ func assertConfigMissing(t *testing.T, db *gorm.DB, key string) {
 	err := db.First(&cfg, "key = ?", key).Error
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("config %q should be missing, err=%v", key, err)
-	}
-}
-
-func setupProviderStateMigrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-
-	db := setupMigrationTestDB(t)
-	if err := db.AutoMigrate(
-		&model.Provider{},
-		&model.ProviderAPIType{},
-		&model.ProviderCredential{},
-		&model.ProviderAuthState{},
-	); err != nil {
-		t.Fatalf("auto-migrate provider state tables: %v", err)
-	}
-
-	hasCredentialData, err := tableColumnExists(db, providersTableName, providerCredentialDataColumn)
-	if err != nil {
-		t.Fatalf("check legacy provider credential column: %v", err)
-	}
-	if !hasCredentialData {
-		if err := db.Exec(
-			fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s TEXT DEFAULT ''`, providersTableName, providerCredentialDataColumn),
-		).Error; err != nil {
-			t.Fatalf("add legacy provider credential column: %v", err)
-		}
-	}
-
-	return db
-}
-
-func insertLegacyProvider(t *testing.T, db *gorm.DB, provider *model.Provider, credentialData string) {
-	t.Helper()
-
-	if err := db.Omit("Credential", "AuthState").Create(provider).Error; err != nil {
-		t.Fatalf("create legacy provider: %v", err)
-	}
-	if err := db.Model(&model.Provider{}).
-		Where("id = ?", provider.ID).
-		Update(providerCredentialDataColumn, credentialData).Error; err != nil {
-		t.Fatalf("seed legacy credential shadow for %q: %v", provider.ID, err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"sync/atomic"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -67,6 +68,8 @@ func (l *SlotLease) Generation() uint64 {
 
 type providerLeaseState struct {
 	provider               atomic.Pointer[model.Provider]
+	candidate              codexidentity.CandidateSnapshot
+	candidateResolved      bool
 	slot                   SlotLease
 	dispatchPermitReserved atomic.Bool
 }
@@ -78,10 +81,23 @@ type ProviderLease struct {
 }
 
 func newProviderLease(provider *model.Provider, slot *SlotLease) *ProviderLease {
+	return newProviderLeaseWithCandidate(provider, slot, codexidentity.CandidateSnapshot{}, false)
+}
+
+func newProviderLeaseWithCandidate(
+	provider *model.Provider,
+	slot *SlotLease,
+	candidate codexidentity.CandidateSnapshot,
+	resolved bool,
+) *ProviderLease {
 	if provider == nil || slot == nil {
 		return nil
 	}
-	state := &providerLeaseState{slot: *slot}
+	state := &providerLeaseState{
+		slot:              *slot,
+		candidate:         candidate,
+		candidateResolved: resolved,
+	}
 	state.provider.Store(provider)
 	return &ProviderLease{state: state}
 }
@@ -93,6 +109,16 @@ func (l *ProviderLease) Provider() *model.Provider {
 		return nil
 	}
 	return l.state.provider.Load()
+}
+
+// CandidateSnapshot returns the immutable route/session identity resolved at
+// selection time. Authentication consumers must use this snapshot instead of
+// re-reading Provider credential projections.
+func (l *ProviderLease) CandidateSnapshot() (codexidentity.CandidateSnapshot, bool) {
+	if l == nil || l.state == nil || !l.state.candidateResolved {
+		return codexidentity.CandidateSnapshot{}, false
+	}
+	return l.state.candidate, true
 }
 
 func (l *ProviderLease) replaceProvider(provider *model.Provider) {

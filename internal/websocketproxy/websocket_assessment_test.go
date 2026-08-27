@@ -33,7 +33,7 @@ func TestClassifyWebSocketUpstreamFailure_ManagedProviderSuspendsOnUsageLimit(t 
 	observedAt := time.Date(2026, time.March, 26, 10, 0, 0, 0, time.UTC)
 	resetAt := observedAt.Add(30 * time.Minute).Truncate(time.Second)
 	disposition := classifyWebSocketUpstreamFailureForProvider(&model.Provider{
-		CredentialType: model.ProviderCredentialTypeChatGPT,
+		UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend,
 	}, &WebSocketUpstreamError{
 		EventType: codexUsageLimitErrorType, StatusCode: http.StatusTooManyRequests,
 		ObservedAt: observedAt, ResetAt: &resetAt,
@@ -62,7 +62,7 @@ func TestClassifyWebSocketUpstreamFailure_UsesStatusCodeFieldAndLatestResetEvide
 		t.Fatal("buildWebSocketUpstreamError() = nil, want semantic error")
 	}
 	disposition := classifyWebSocketUpstreamFailureForProvider(&model.Provider{
-		CredentialType: model.ProviderCredentialTypeChatGPT,
+		UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend,
 	}, upstreamErr)
 	if disposition.switchReason != SwitchReasonUsageLimitReached {
 		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, SwitchReasonUsageLimitReached)
@@ -574,8 +574,9 @@ func TestAssessWebSocketSession_RedactsOnlyInjectedAPIKey(t *testing.T) {
 
 	const injectedKey = "provider-key"
 	assessment := assessWebSocketSession(&WebSocketSessionResult{
-		APIType:       "codex",
-		FinalProvider: &model.Provider{ID: "provider-final", CredentialType: model.ProviderCredentialTypeAPIKey, APIKey: injectedKey},
+		APIType:            "codex",
+		FinalProvider:      &model.Provider{ID: "provider-final"},
+		injectedCredential: injectedKey,
 		FinalResult: &WebSocketResult{
 			TerminalCause: model.TerminalUpstreamSemanticError,
 			UpstreamError: &WebSocketUpstreamError{
@@ -603,19 +604,10 @@ func TestAssessWebSocketSession_RedactsOAuthAccessTokenOnly(t *testing.T) {
 		refreshToken = "oauth-refresh-token"
 		idToken      = "oauth-id-token"
 	)
-	secretData, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
-		AccessToken: accessToken, RefreshToken: refreshToken, IDToken: idToken,
-	})
-	if err != nil {
-		t.Fatalf("EncodeChatGPTProviderSecret() error = %v", err)
-	}
 	assessment := assessWebSocketSession(&WebSocketSessionResult{
-		APIType: "codex",
-		FinalProvider: &model.Provider{
-			ID:             "provider-final",
-			CredentialType: model.ProviderCredentialTypeChatGPT,
-			Credential:     &model.ProviderCredential{SecretData: secretData},
-		},
+		APIType:            "codex",
+		FinalProvider:      &model.Provider{ID: "provider-final"},
+		injectedCredential: accessToken,
 		FinalResult: &WebSocketResult{
 			TerminalCause: model.TerminalUpstreamSemanticError,
 			UpstreamError: &WebSocketUpstreamError{

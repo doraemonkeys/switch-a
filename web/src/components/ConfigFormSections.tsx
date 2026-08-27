@@ -7,5 +7,6 @@ export { TimeoutSettingsSection } from "./config-form-sections";
 export { RequestLimitsSection } from "./config-form-sections";
 export { StickySessionSection } from "./config-form-sections";
 export { CircuitBreakerSection } from "./config-form-sections";
+export { CodexFeaturesSection } from "./config-form-sections";
 export { OtherSettingsSection } from "./config-form-sections";
 export { ConfigFormActions } from "./config-form-sections";

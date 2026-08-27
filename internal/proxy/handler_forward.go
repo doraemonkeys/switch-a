@@ -10,10 +10,10 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
+	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
-	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
-	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
@@ -102,6 +102,7 @@ type forwardResult struct {
 	healthCircuitOpened bool
 	switchReason        string
 	discarded           bool
+	injectedCredential  string
 }
 
 func (r *forwardResult) inheritHealth(source forwardResult) {
@@ -167,47 +168,6 @@ func (m *semanticMatchTracker) Facts() (errorrule.MatchResult, bool) {
 	return m.result, m.matched
 }
 
-type pendingHTTPResponse struct {
-	head              upstreamtransport.ResponseHead
-	media             responseanalysis.ResponseMedia
-	pending           *responseanalysis.PendingResponse
-	writer            *firstWriteResponseWriter
-	exchange          httpCaptureExchange
-	matcher           *semanticMatchTracker
-	rules             *errorrule.CompiledRuleSet
-	statsOnce         sync.Once
-	snippet           *boundedSnippet
-	pctx              *proxyContext
-	operationID       string
-	providerID        string
-	logicalAttempt    uint64
-	providerAttempt   uint64
-	credentialPhase   attemptevidence.CredentialPhase
-	analysisStartedAt time.Time
-}
-
-type boundedSnippet struct {
-	bytes []byte
-}
-
-func (b *boundedSnippet) Observe(payload []byte) {
-	if b == nil || len(b.bytes) >= maxAttemptSnippetBytes || len(payload) == 0 {
-		return
-	}
-	remaining := maxAttemptSnippetBytes - len(b.bytes)
-	if len(payload) > remaining {
-		payload = payload[:remaining]
-	}
-	b.bytes = append(b.bytes, payload...)
-}
-
-func (b *boundedSnippet) String() string {
-	if b == nil {
-		return ""
-	}
-	return string(b.bytes)
-}
-
 func (h *Handler) prepareForwardRequest(
 	ctx context.Context,
 	pctx *proxyContext,
@@ -216,29 +176,62 @@ func (h *Handler) prepareForwardRequest(
 ) (*http.Request, error) {
 	request, failureCode, err := h.buildProviderRequest(ctx, pctx, attempt.provider)
 	if err != nil {
-		h.captureHTTPPreparationFailure(ctx, pctx, attempt, phase, nil, injectedCredentialForCapture(attempt.provider, pctx.apiType), failureCode, err)
+		h.captureHTTPPreparationFailure(ctx, pctx, attempt, phase, nil, injectedCredentialForCapture(attempt.candidate, nil), failureCode, err)
 		return nil, err
 	}
-	if err := h.applyForwardCredentials(ctx, request.Header, attempt.provider, pctx); err != nil {
+	applied, err := h.applyForwardCredentials(ctx, request, attempt, pctx)
+	if err != nil {
 		h.captureHTTPPreparationFailure(
-			ctx, pctx, attempt, phase, request, injectedCredentialForCapture(attempt.provider, pctx.apiType), requestcapture.FailureCodeCredentialApply, err,
+			ctx, pctx, attempt, phase, request, injectedCredentialForCapture(attempt.candidate, request.Header), requestcapture.FailureCodeCredentialApply, err,
 		)
 		return nil, err
 	}
+	codexAttempt, err := pctx.codex.PrepareAttempt(ctx, request, attempt.candidate, applied)
+	if err != nil {
+		h.captureHTTPPreparationFailure(
+			ctx, pctx, attempt, phase, request, injectedCredentialForCapture(attempt.candidate, request.Header), requestcapture.FailureCodeCredentialApply, err,
+		)
+		return nil, err
+	}
+	if required, preferred := pctx.codex.RequiredAuthority(); required != nil {
+		pctx.selectReq.RequiredAuthority = required
+		pctx.selectReq.PreferredRouteTargetID = preferred
+	}
+	request = request.WithContext(context.WithValue(request.Context(), codexAttemptContextKey{}, codexAttempt))
 	return request, nil
+}
+
+type codexAttemptContextKey struct{}
+
+func codexAttemptFromRequest(request *http.Request) *codexhttp.Attempt {
+	if request == nil {
+		return nil
+	}
+	attempt, _ := request.Context().Value(codexAttemptContextKey{}).(*codexhttp.Attempt)
+	return attempt
 }
 
 func (h *Handler) applyForwardCredentials(
 	ctx context.Context,
-	headers http.Header,
-	provider *model.Provider,
+	request *http.Request,
+	attempt httpAttemptContext,
 	pctx *proxyContext,
-) error {
+) (codexidentity.AppliedIdentity, error) {
 	if h.auth != nil {
-		return h.auth.ApplyProviderCredentials(ctx, headers, provider, pctx.apiType, pctx.cfg.globalAuthMode, pctx.r)
+		applied, err := h.auth.ApplyProviderCredentials(
+			ctx,
+			request.Header,
+			attempt.candidate,
+			attempt.provider.AuthMode,
+			pctx.cfg.globalAuthMode,
+			pctx.r,
+			request.URL,
+		)
+		return applied, err
 	}
-	SetAuthHeader(headers, provider.APIKeyForAPIType(pctx.apiType), provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
-	return nil
+	snapshot := attempt.candidate.Credential()
+	SetAuthHeader(request.Header, snapshot.SecretData, attempt.provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
+	return codexidentity.AppliedIdentity{}, nil
 }
 
 func (h *Handler) fetchPendingHTTPResponse(
@@ -249,18 +242,34 @@ func (h *Handler) fetchPendingHTTPResponse(
 	request *http.Request,
 	rules *errorrule.CompiledRuleSet,
 ) (*pendingHTTPResponse, error) {
-	exchange := h.beginHTTPExchange(pctx, attempt, phase, request, injectedCredentialForCapture(attempt.provider, pctx.apiType))
+	injectedCredential := injectedCredentialForCapture(attempt.candidate, request.Header)
+	exchange := h.beginHTTPExchange(pctx, attempt, phase, request, injectedCredential)
 	if pctx.liveBytes != nil {
 		pctx.liveBytes.BytesSent.Add(int64(len(pctx.body)))
 		pctx.liveBytes.LastActivityAt.Store(time.Now().UnixMilli())
 	}
 	response, err := pctx.transport.FetchUpstream(ctx, request)
+	codexAttempt := codexAttemptFromRequest(request)
+	if disclosureErr := codexAttempt.MarkDisclosed(ctx); disclosureErr != nil {
+		if response != nil {
+			if body, takeErr := response.TakeBody(); takeErr == nil {
+				_ = body.Close()
+			}
+		}
+		finishHTTPFetchFailure(ctx, pctx, exchange, disclosureErr)
+		return nil, disclosureErr
+	}
 	if err != nil {
 		finishHTTPFetchFailure(ctx, pctx, exchange, err)
 		return nil, err
 	}
 	head, body, err := response.Take()
 	if err != nil {
+		finishHTTPFetchFailure(ctx, pctx, exchange, err)
+		return nil, err
+	}
+	if err := codexAttempt.ObserveResponse(&head); err != nil {
+		_ = body.Close()
 		finishHTTPFetchFailure(ctx, pctx, exchange, err)
 		return nil, err
 	}
@@ -278,9 +287,15 @@ func (h *Handler) fetchPendingHTTPResponse(
 	}
 
 	snippet := &boundedSnippet{}
-	writer := h.newAttemptResponseWriter(pctx, &exchange, snippet)
 	requestAccept := request.Header.Values("Accept")
 	media := resolveHTTPResponseMedia(&head, requestAccept)
+	writer := h.newAttemptResponseWriter(
+		pctx,
+		&exchange,
+		snippet,
+		codexAttempt,
+		pctx.apiType == APITypeCodex && media.IsEventStream(),
+	)
 	idleDuration := pctx.cfg.readTimeout
 	if media.IsEventStream() {
 		idleDuration = pctx.cfg.sseIdleTimeout
@@ -296,26 +311,12 @@ func (h *Handler) fetchPendingHTTPResponse(
 		attempt.providerAttemptIndex,
 		phase,
 	)
-	h.captureProviderUsageObservation(pctx, attempt.provider, head.SourceHeader, time.Now(), operationID)
-	if media.Source() == responseanalysis.ResponseMediaFromRequestAccept {
-		h.logger.Debug("inferred missing upstream response Content-Type from request Accept",
-			zap.String("request_id", pctx.requestID),
-			zap.String("operation_id", operationID),
-			zap.String("provider_id", attempt.provider.ID),
-			zap.String("api_type", pctx.apiType),
-			zap.String("response_media_type", media.ContentType()),
-			zap.Strings("request_accept", requestAccept),
-		)
-	} else if !media.Supported() {
-		h.logger.Debug("upstream response media type could not be resolved",
-			zap.String("request_id", pctx.requestID),
-			zap.String("operation_id", operationID),
-			zap.String("provider_id", attempt.provider.ID),
-			zap.String("api_type", pctx.apiType),
-			zap.String("response_content_type", head.SourceHeader.Get("Content-Type")),
-			zap.Strings("request_accept", requestAccept),
-		)
-	}
+	h.captureProviderUsageObservation(pctx, attempt, head.SourceHeader, time.Now(), operationID)
+	h.logHTTPResponseMediaDecision(media, httpResponseMediaLogContext{
+		requestID: pctx.requestID, operationID: operationID, providerID: attempt.provider.ID, apiType: pctx.apiType,
+		logicalAttempt: attempt.logicalAttemptIndex + 1, providerAttempt: attempt.providerAttemptIndex + 1,
+		acceptValueCount: len(requestAccept), contentTypeValueCount: len(head.SourceHeader.Values("Content-Type")),
+	})
 	analysisStartedAt := time.Now()
 	pending := h.analyzer.Start(ctx, responseanalysis.StartInput{
 		OperationID:     operationID,
@@ -338,7 +339,42 @@ func (h *Handler) fetchPendingHTTPResponse(
 		logicalAttempt:  uint64(attempt.logicalAttemptIndex + 1),
 		providerAttempt: uint64(attempt.providerAttemptIndex + 1),
 		credentialPhase: evidenceCredentialPhase(phase), analysisStartedAt: analysisStartedAt,
+		injectedCredential: injectedCredential,
+		codexAttempt:       codexAttempt,
 	}, nil
+}
+
+type httpResponseMediaLogContext struct {
+	requestID             string
+	operationID           string
+	providerID            string
+	apiType               string
+	logicalAttempt        int
+	providerAttempt       int
+	acceptValueCount      int
+	contentTypeValueCount int
+}
+
+func (h *Handler) logHTTPResponseMediaDecision(
+	media responseanalysis.ResponseMedia,
+	context httpResponseMediaLogContext,
+) {
+	if media.Source() != responseanalysis.ResponseMediaFromRequestAccept && media.Supported() {
+		return
+	}
+	h.logger.Debug("http response media decision",
+		zap.String("request_id", context.requestID),
+		zap.String("operation_id", context.operationID),
+		zap.String("provider_id", context.providerID),
+		zap.String("api_type", context.apiType),
+		zap.Int("logical_attempt", context.logicalAttempt),
+		zap.Int("provider_attempt", context.providerAttempt),
+		zap.String("media_source", string(media.Source())),
+		zap.String("media_decision", string(media.Decision())),
+		zap.String("media_reason", string(media.Reason())),
+		zap.Int("accept_value_count", context.acceptValueCount),
+		zap.Int("response_content_type_value_count", context.contentTypeValueCount),
+	)
 }
 
 func resolveHTTPResponseMedia(head *upstreamtransport.ResponseHead, requestAccept []string) responseanalysis.ResponseMedia {
@@ -380,9 +416,51 @@ func (h *Handler) newAttemptResponseWriter(
 	pctx *proxyContext,
 	exchange *httpCaptureExchange,
 	snippet *boundedSnippet,
+	codexAttempt *codexhttp.Attempt,
+	scanServerSSE bool,
 ) *firstWriteResponseWriter {
-	return &firstWriteResponseWriter{
+	writer := &firstWriteResponseWriter{
 		ResponseWriter: pctx.w,
+		prepareVisible: func(header http.Header) (*codexhttp.Visibility, error) {
+			return codexAttempt.PrepareVisible(pctx.r.Context(), header)
+		},
+		commitVisible: func(visibility *codexhttp.Visibility) error {
+			return visibility.Commit(context.WithoutCancel(pctx.r.Context()))
+		},
+		onGateFailure: func(err error) {
+			for name := range pctx.w.Header() {
+				pctx.w.Header().Del(name)
+			}
+			h.logger.Error("codex_http.pre_commit_failed",
+				zap.String("request_id", pctx.requestID),
+				zap.String("decision", "gateway_error"),
+				zap.Error(err),
+			)
+			h.writeGatewayError(
+				pctx.w, http.StatusServiceUnavailable, ErrCodeInternalError,
+				"Codex response state could not be committed",
+			)
+		},
+		onStreamGateFailure: func(err error) {
+			h.logger.Error("codex_http.sse_pre_commit_failed",
+				zap.String("request_id", pctx.requestID),
+				zap.String("decision", "stream_terminated_pending_retained"),
+				zap.Error(err),
+			)
+		},
+		onUncertain: func() {
+			h.logger.Warn("codex_http.response_write_uncertain",
+				zap.String("request_id", pctx.requestID),
+				zap.String("decision", "pending_retained"),
+			)
+		},
+		onCommitError: func(err error) {
+			h.logger.Error("codex_http.response_commit_failed",
+				zap.String("request_id", pctx.requestID),
+				zap.String("decision", "pending_retained"),
+				zap.Error(err),
+			)
+		},
 		onFirstWrite: func() {
 			if h.activeRegistry != nil {
 				h.activeRegistry.MarkDataReceived(pctx.requestID)
@@ -399,225 +477,11 @@ func (h *Handler) newAttemptResponseWriter(
 		},
 		onPayload: snippet.Observe,
 	}
-}
-
-func (p *pendingHTTPResponse) awaitBoundary() responseanalysis.Boundary {
-	return p.pending.AwaitBoundary()
-}
-
-func (p *pendingHTTPResponse) commit(cause responseanalysis.TransitionCause) (forwardResult, error) {
-	forwarding, err := p.pending.Commit(cause)
-	if err != nil {
-		return p.internalFailure(err), err
+	if scanServerSSE {
+		writer.sseGate = codexAttempt.NewSSEGate()
+		writer.sseContext = pctx.r.Context()
 	}
-	return p.finishForwarding(forwarding), nil
-}
-
-func (p *pendingHTTPResponse) finishForwarding(forwarding *responseanalysis.ForwardingResponse) forwardResult {
-	if forwarding == nil {
-		return p.internalFailure(errors.New("forwarding response is required"))
-	}
-	milestone := forwarding.AwaitSemanticOrCompletion()
-	if milestone.Matched {
-		if result, aborted := p.abortVisibleSemantic(forwarding, milestone); aborted {
-			milestone.Observation.Release()
-			return result
-		}
-		// A failed abort means completion won the race; Continue is harmless in
-		// that case and required when the rule explicitly preserves the stream.
-		_ = forwarding.Continue(responseanalysis.TransitionSemanticDecision)
-		milestone.Observation.Release()
-	}
-	completion := forwarding.Wait()
-	result := p.resultFromCompletion(completion)
-	if completion.HasSemanticObservation {
-		result.semantic = p.semanticFacts(completion.SemanticObservation, completion.State, completion.BoundaryReason)
-		completion.SemanticObservation.Release()
-	}
-	if completion.HasUsageObservation && completion.UsageObservation.Usage != nil {
-		usage := *completion.UsageObservation.Usage
-		result.tokenUsage = &usage
-		completion.UsageObservation.Release()
-	}
-	p.recordWinningRule(result.semantic)
-	p.finishCapture(completion)
-	return result
-}
-
-func (p *pendingHTTPResponse) abortVisibleSemantic(
-	forwarding *responseanalysis.ForwardingResponse,
-	milestone responseanalysis.SemanticMilestone,
-) (forwardResult, bool) {
-	// A semantic match can arrive after the probe has released bytes to the
-	// client. If the rule opts into client-owned recovery, stop the forwarding
-	// state machine immediately. Returning with an incomplete SSE stream is
-	// intentional: retry-capable clients can replay the original request while
-	// no provider error frame is exposed as a terminal response.
-	matches, matched := p.matcher.Facts()
-	if !matched || matches.Winner == nil {
-		return forwardResult{}, false
-	}
-	decision, err := errorrule.DecideVisibleResponse(matches.Winner.Rule.Action)
-	if err != nil || decision.Value != errorrule.DecisionAbortClient {
-		return forwardResult{}, false
-	}
-	if _, err := forwarding.Discard(responseanalysis.TransitionSemanticDecision); err != nil {
-		return forwardResult{}, false
-	}
-
-	completion := forwarding.Wait()
-	result := p.resultFromCompletion(completion)
-	result.semantic = p.semanticFacts(milestone.Observation, milestone.State, completion.BoundaryReason)
-	if completion.HasSemanticObservation {
-		completion.SemanticObservation.Release()
-	}
-	if completion.HasUsageObservation && completion.UsageObservation.Usage != nil {
-		usage := *completion.UsageObservation.Usage
-		result.tokenUsage = &usage
-		completion.UsageObservation.Release()
-	}
-	result.semantic.decision = decision
-	p.recordWinningRule(result.semantic)
-	p.finishCapture(completion)
-	return result, true
-}
-
-func (p *pendingHTTPResponse) discard(
-	cause responseanalysis.TransitionCause,
-	reason requestcapture.TerminationReason,
-	failure requestcapture.FailureObservation,
-) (forwardResult, error) {
-	receipt, err := p.pending.Discard(cause)
-	result := forwardResult{
-		statusCode: p.head.StatusCode, isSSE: p.media.IsEventStream(),
-		upstreamBytes: receipt.UpstreamBytesRead, decodedBytes: receipt.DecodedBytesAnalyzed,
-		responseBytes:    receipt.ClientBodyBytesWritten,
-		peakRequestBytes: receipt.PeakRequestBytes, peakProcessBytes: receipt.PeakProcessBytes,
-		headersWritten: receipt.HeadersCommitted, responseCommitted: receipt.HeadersCommitted,
-		firstByteVisible: receipt.ClientBodyBytesWritten > 0,
-		boundaryReason:   receipt.BoundaryReason, analysisFailure: receipt.AnalysisFailure,
-		elapsedMs: time.Since(p.analysisStartedAt).Milliseconds(), discarded: receipt.Cause != "",
-	}
-	if err != nil {
-		result.failureKind = attemptFailureInternal
-		result.failureMessage = err.Error()
-		if termination := classifyClientTermination(p.pctx.r.Context()); termination.observed() {
-			result.clientTermination = termination
-			result.failureKind = attemptFailureClientTerminated
-		}
-	}
-	p.exchange.completedAt = time.Now()
-	sourceCompletion := requestcapture.SourceCompletionPartial
-	if p.exchange.sourceCompletionAfterError() == requestcapture.SourceCompletionComplete {
-		sourceCompletion = requestcapture.SourceCompletionComplete
-	}
-	p.pctx.finishHTTPCaptureExchange(p.exchange, p.head.Trailer, sourceCompletion, reason, failure)
-	return result, err
-}
-
-func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.Completion) forwardResult {
-	result := forwardResult{
-		headersWritten: completion.HeadersCommitted, responseCommitted: completion.HeadersCommitted,
-		firstByteVisible: completion.ClientBodyBytesWritten > 0,
-		statusCode:       p.head.StatusCode, isSSE: p.media.IsEventStream(),
-		responseBytes: completion.ClientBodyBytesWritten, upstreamBytes: completion.UpstreamBytesRead,
-		decodedBytes:     completion.DecodedBytesAnalyzed,
-		peakRequestBytes: completion.PeakRequestBytes, peakProcessBytes: completion.PeakProcessBytes,
-		elapsedMs: time.Since(p.analysisStartedAt).Milliseconds(), boundaryReason: completion.BoundaryReason,
-		readTermination: completion.ReadTermination, analysisFailure: completion.AnalysisFailure,
-		bodySnippet: p.snippet.String(), done: true,
-	}
-	if p.media.IsEventStream() && p.writer.written && !p.writer.firstWriteTime.IsZero() {
-		value := p.writer.firstWriteTime.Sub(p.pctx.startTime).Milliseconds()
-		result.firstTokenMs = &value
-	}
-	switch completion.Termination {
-	case responseanalysis.TerminationCompleted:
-		result.success = p.head.StatusCode < defaults.StatusClientError
-	case responseanalysis.TerminationDiscarded:
-		// A late semantic abort intentionally closes the stream without a
-		// protocol-level error. The semantic evidence carries the user-visible
-		// decision; this attempt is not a successful 2xx completion.
-		result.success = false
-	case responseanalysis.TerminationClientCancelled:
-		result.clientTermination = classifyClientTermination(p.pctx.r.Context())
-		if !result.clientTermination.observed() {
-			// The response coordinator can only emit this termination after its
-			// request context closes. Preserve that invariant if a custom Context
-			// implementation does not expose the canonical error value.
-			result.clientTermination = clientTerminationDisconnect
-		}
-		result.failureKind = attemptFailureClientTerminated
-		if result.clientTermination == clientTerminationTimeout {
-			result.failureMessage = "client request deadline exceeded"
-		} else {
-			result.failureMessage = "client canceled response forwarding"
-		}
-	case responseanalysis.TerminationClientWriteFailure:
-		result.failureKind = attemptFailureWrite
-		result.failureMessage = "client response write failed"
-		result.isClientWriteError = true
-	case responseanalysis.TerminationUpstreamReadFailure:
-		result.failureKind = attemptFailureRead
-		if completion.ReadTermination == responseanalysis.ReadTerminationIdleTimeout {
-			result.failureMessage = "upstream response idle timeout"
-		} else {
-			result.failureMessage = "upstream response read failed"
-		}
-	default:
-		result.failureKind = attemptFailureInternal
-		result.failureMessage = "response forwarding failed internally"
-	}
-	return result
-}
-
-func (p *pendingHTTPResponse) semanticFacts(
-	observation responseanalysis.Observation,
-	state responseanalysis.ResolutionState,
-	reason responseanalysis.BoundaryReason,
-) *semanticAttemptFacts {
-	matches, matched := p.matcher.Facts()
-	if !matched || matches.Winner == nil {
-		return nil
-	}
-	return &semanticAttemptFacts{
-		requestID: p.pctx.requestID, operationID: p.operationID, providerID: p.providerID,
-		logicalAttempt: p.logicalAttempt, providerAttempt: p.providerAttempt,
-		credentialPhase: p.credentialPhase,
-		matches:         append([]errorrule.RuleMatch(nil), matches.All...), winner: *matches.Winner,
-		protocolID: observation.ProtocolID, revision: p.rules.Revision(), windowState: state, releaseCause: reason,
-		alternateOutcome: attemptevidence.AlternateNotRequested,
-	}
-}
-
-func (p *pendingHTTPResponse) recordWinningRule(facts *semanticAttemptFacts) {
-	if facts == nil || p == nil || p.pctx == nil {
-		return
-	}
-	p.statsOnce.Do(func() {
-		handler := p.pctx.handler
-		if handler == nil || handler.ruleStats == nil {
-			return
-		}
-		if err := handler.ruleStats.Hit(statistics.HandleFor(facts.winner.Rule), time.Now()); err != nil {
-			handler.logger.Warn("failed to record internal-error rule hit",
-				zap.String("request_id", p.pctx.requestID),
-				zap.String("rule_id", string(facts.winner.Rule.ID)),
-				zap.Error(err),
-			)
-		}
-	})
-}
-
-func (p *pendingHTTPResponse) internalFailure(err error) forwardResult {
-	message := "pending response failed"
-	if err != nil {
-		message = err.Error()
-	}
-	return forwardResult{
-		statusCode: p.head.StatusCode, isSSE: p.media.IsEventStream(),
-		failureKind: attemptFailureInternal, failureMessage: message,
-	}
+	return writer
 }
 
 func cloneTokenUsage(source *tokenusage.TokenUsage) *tokenusage.TokenUsage {
