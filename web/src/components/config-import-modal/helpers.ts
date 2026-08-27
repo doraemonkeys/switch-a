@@ -118,6 +118,7 @@ export function buildImportRequest(
     version: parsedConfig.version,
     import_scope: scope,
     providers: parsedConfig.providers,
+    credential_sessions: parsedConfig.credential_sessions,
     groups: parsedConfig.groups,
     routing_policies: parsedConfig.routing_policies,
     settings: parsedConfig.settings,

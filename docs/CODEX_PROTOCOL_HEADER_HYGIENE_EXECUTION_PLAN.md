@@ -32,7 +32,7 @@
 
 ### 3. 扩大会话身份边界
 
-复用 `internal/codexidentity` 生成的 ClientScope、ProtocolScope、`internal/codexheaders` 和统一 continuity 存储，不增加第二套持久化。会话身份以“规范化字段类别 + 完整 opaque 值”的 HMAC 为键：未知值在凭据注入和 AppliedIdentity 校验完成后、首次发送上游前按 `pending -> committed` 生命周期原子认领当前 ClientScope 和 ProtocolScope；同 owner 保留，RouteTarget 切换可延续，ClientScope、Authority 或 APIType 冲突时删除整 Header，不重新认领。
+复用 `internal/codex/identity` 生成的 ClientScope、ProtocolScope、`internal/codex/headers` 和统一 continuity 存储，不增加第二套持久化。会话身份以“规范化字段类别 + 完整 opaque 值”的 HMAC 为键：未知值在凭据注入和 AppliedIdentity 校验完成后、首次发送上游前按 `pending -> committed` 生命周期原子认领当前 ClientScope 和 ProtocolScope；同 owner 保留，RouteTarget 切换可延续，ClientScope、Authority 或 APIType 冲突时删除整 Header，不重新认领。
 
 Header 名和 `Session-Id` 别名大小写不敏感。
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -112,7 +113,7 @@ func (s *Service) GetChatGPTLoginStatus(loginID string) (*ChatGPTLoginStatusResp
 		response = &ChatGPTLoginStatusResponse{
 			LoginID: loginID,
 			Status:  ChatGPTLoginStatusCompleted,
-			Auth:    buildChatGPTAuthViewFromCredential(&completed.credential),
+			Auth:    chatGPTCredentialAuthView(&completed.credential),
 		}
 	} else if _, ok := s.pendingByLoginID[loginID]; ok {
 		response = &ChatGPTLoginStatusResponse{
@@ -152,14 +153,56 @@ func (s *Service) lookupCompletedChatGPTLogin(loginID string) (*model.ChatGPTPro
 	return &credential, nil
 }
 
-// ApplyChatGPTLogin stages a finished login session onto the provider without
-// consuming the session so the admin layer can finalize only after persistence succeeds.
-func (s *Service) ApplyChatGPTLogin(provider *model.Provider, loginID string) error {
+// BuildCredentialSessionFromChatGPTLogin snapshots a completed login without
+// consuming it; the admin layer finalizes only after durable session creation.
+func (s *Service) BuildCredentialSessionFromChatGPTLogin(loginID, sessionID string) (*credentialsession.Session, error) {
 	credential, err := s.lookupCompletedChatGPTLogin(loginID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return applyChatGPTCredential(provider, credential)
+	snapshot, err := chatGPTCredentialSessionSnapshot(credential, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	session := &credentialsession.Session{
+		ID: snapshot.SessionID, Vendor: snapshot.Vendor, Kind: snapshot.Kind,
+		SecretData: snapshot.SecretData, Version: snapshot.Version, AuthState: snapshot.AuthState,
+	}
+	if err := session.SetSubject(snapshot.Subject); err != nil {
+		return nil, err
+	}
+	return session, session.Validate()
+}
+
+func chatGPTCredentialSessionSnapshot(
+	credential *model.ChatGPTProviderCredential,
+	sessionID string,
+) (credentialsession.Snapshot, error) {
+	if credential == nil || !credential.Ready() {
+		return credentialsession.Snapshot{}, fmt.Errorf("complete chatgpt credential is required")
+	}
+	secretData, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
+		AccessToken: credential.AccessToken, RefreshToken: credential.RefreshToken,
+		IDToken: credential.IDToken, OAuthIssuer: credential.OAuthIssuer, OAuthClientID: credential.OAuthClientID,
+	})
+	if err != nil {
+		return credentialsession.Snapshot{}, err
+	}
+	subject, err := credentialsession.AccountSubject(credential.AccountID)
+	if err != nil {
+		return credentialsession.Snapshot{}, err
+	}
+	return credentialsession.Snapshot{
+		SessionID: sessionID, Vendor: chatGPTVendor, Kind: credentialsession.KindChatGPT,
+		SecretData: secretData, Version: 1,
+		Subject: subject,
+		AuthState: credentialsession.AuthState{
+			Status: credentialsession.AuthStatusActive, Email: credential.Email,
+			AccountID: credential.AccountID, PlanType: credential.PlanType,
+			ExpiresAt: timePointer(credential.ExpiresAt), LastRefreshAt: timePointer(credential.LastRefresh),
+			UsageSnapshot: credentialSessionUsageSnapshot(credential.Usage),
+		},
+	}, nil
 }
 
 // FinalizeChatGPTLogin consumes a finished login session after the provider write succeeds.

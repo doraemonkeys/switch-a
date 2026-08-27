@@ -12,7 +12,7 @@ const (
 )
 
 // IsValidProviderUsageLimitPolicy reports whether the policy is supported.
-// Empty values remain valid so legacy rows can still derive a default policy.
+// Empty values remain valid and use the route-target default.
 func IsValidProviderUsageLimitPolicy(value ProviderUsageLimitPolicy) bool {
 	switch value {
 	case "", ProviderUsageLimitPolicySwitchProvider, ProviderUsageLimitPolicySuspend:
@@ -22,24 +22,18 @@ func IsValidProviderUsageLimitPolicy(value ProviderUsageLimitPolicy) bool {
 	}
 }
 
-// DefaultProviderUsageLimitPolicy derives the default from the provider's
-// credential ownership. Managed ChatGPT logins have trustworthy reset windows,
-// while other providers default to switching away without timed suspension.
-func DefaultProviderUsageLimitPolicy(credentialType ProviderCredentialType) ProviderUsageLimitPolicy {
-	if NormalizeProviderCredentialType(credentialType) == ProviderCredentialTypeChatGPT {
-		return ProviderUsageLimitPolicySuspend
-	}
+// DefaultProviderUsageLimitPolicy is independent of credential kind because one
+// route target may reference different session kinds for different API types.
+// Operators must opt into suspension explicitly when that behavior is desired.
+func DefaultProviderUsageLimitPolicy() ProviderUsageLimitPolicy {
 	return ProviderUsageLimitPolicySwitchProvider
 }
 
-// NormalizeProviderUsageLimitPolicy applies the credential-derived default when
-// no explicit override is stored.
-func NormalizeProviderUsageLimitPolicy(
-	value ProviderUsageLimitPolicy,
-	credentialType ProviderCredentialType,
-) ProviderUsageLimitPolicy {
+// NormalizeProviderUsageLimitPolicy applies the route-target default when no
+// explicit override is stored.
+func NormalizeProviderUsageLimitPolicy(value ProviderUsageLimitPolicy) ProviderUsageLimitPolicy {
 	if value == "" {
-		return DefaultProviderUsageLimitPolicy(credentialType)
+		return DefaultProviderUsageLimitPolicy()
 	}
 	return value
 }
@@ -47,7 +41,7 @@ func NormalizeProviderUsageLimitPolicy(
 // UsageLimitPolicyOrDefault returns the effective policy for runtime decisions.
 func (p *Provider) UsageLimitPolicyOrDefault() ProviderUsageLimitPolicy {
 	if p == nil {
-		return DefaultProviderUsageLimitPolicy(ProviderCredentialTypeAPIKey)
+		return DefaultProviderUsageLimitPolicy()
 	}
-	return NormalizeProviderUsageLimitPolicy(p.UsageLimitPolicy, p.CredentialType)
+	return NormalizeProviderUsageLimitPolicy(p.UsageLimitPolicy)
 }

@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
-func pausedChatGPTProviderForCodexExport(t *testing.T) *model.Provider {
+func pausedChatGPTSessionForCodexExport(t *testing.T) *credentialsession.Snapshot {
 	t.Helper()
 	secret, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
 		AccessToken:  " access-token ",
@@ -19,28 +20,24 @@ func pausedChatGPTProviderForCodexExport(t *testing.T) *model.Provider {
 	if err != nil {
 		t.Fatalf("encode credential secret: %v", err)
 	}
+	subject, err := credentialsession.AccountSubject("account-123")
+	if err != nil {
+		t.Fatalf("build credential subject: %v", err)
+	}
 	lastRefresh := time.Date(2026, time.August, 26, 8, 15, 0, 0, time.FixedZone("SGT", 8*60*60))
-	return &model.Provider{
-		ID:             "gpt-paused",
-		Enabled:        false,
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		Credential: &model.ProviderCredential{
-			ProviderID: "gpt-paused",
-			SecretData: secret,
-		},
-		AuthState: &model.ProviderAuthState{
-			ProviderID:    "gpt-paused",
-			Status:        model.ProviderAuthStatusActive,
-			AccountID:     " account-123 ",
-			LastRefreshAt: &lastRefresh,
+	return &credentialsession.Snapshot{
+		SessionID: "gpt-session", Kind: credentialsession.KindChatGPT, SecretData: secret,
+		Subject: subject,
+		AuthState: credentialsession.AuthState{
+			Status: credentialsession.AuthStatusActive, LastRefreshAt: &lastRefresh,
 		},
 	}
 }
 
 func TestBuildCodexAuthDocument(t *testing.T) {
-	provider := pausedChatGPTProviderForCodexExport(t)
+	snapshot := pausedChatGPTSessionForCodexExport(t)
 
-	document, err := BuildCodexAuthDocument(provider)
+	document, err := BuildCodexAuthDocument(snapshot, false)
 	if err != nil {
 		t.Fatalf("BuildCodexAuthDocument() error = %v", err)
 	}
@@ -71,37 +68,34 @@ func TestBuildCodexAuthDocument(t *testing.T) {
 		t.Fatalf("payload = %s, want %s", payload, want)
 	}
 
-	if provider.Enabled {
-		t.Fatal("export mutated the provider lifecycle state")
-	}
-	if provider.Credential.SecretData == "" {
+	if snapshot.SecretData == "" {
 		t.Fatal("export mutated the persisted credential")
 	}
 }
 
 func TestBuildCodexAuthDocumentRejectsIneligibleProviders(t *testing.T) {
-	active := pausedChatGPTProviderForCodexExport(t)
-	active.Enabled = true
-	reauthRequired := pausedChatGPTProviderForCodexExport(t)
-	reauthRequired.AuthState.Status = model.ProviderAuthStatusReauthRequired
-	incomplete := pausedChatGPTProviderForCodexExport(t)
-	incomplete.Credential.SecretData = `{"access_token":"access-token"}`
+	active := pausedChatGPTSessionForCodexExport(t)
+	reauthRequired := pausedChatGPTSessionForCodexExport(t)
+	reauthRequired.AuthState.Status = credentialsession.AuthStatusReauthRequired
+	incomplete := pausedChatGPTSessionForCodexExport(t)
+	incomplete.SecretData = `{"access_token":"access-token"}`
 
 	testCases := []struct {
 		name     string
-		provider *model.Provider
+		snapshot *credentialsession.Snapshot
+		enabled  bool
 		want     error
 	}{
-		{name: "missing provider", want: ErrCodexAuthExportProviderRequired},
-		{name: "static API key provider", provider: &model.Provider{CredentialType: model.ProviderCredentialTypeAPIKey}, want: ErrCodexAuthExportRequiresChatGPT},
-		{name: "enabled GPT provider", provider: active, want: ErrCodexAuthExportRequiresPaused},
-		{name: "reauthentication required", provider: reauthRequired, want: ErrCodexAuthExportCredentialUnavailable},
-		{name: "incomplete credential", provider: incomplete, want: ErrCodexAuthExportCredentialUnavailable},
+		{name: "missing session", want: ErrCodexAuthExportProviderRequired},
+		{name: "static API key session", snapshot: &credentialsession.Snapshot{Kind: credentialsession.KindAPIKey}, want: ErrCodexAuthExportRequiresChatGPT},
+		{name: "enabled route", snapshot: active, enabled: true, want: ErrCodexAuthExportRequiresPaused},
+		{name: "reauthentication required", snapshot: reauthRequired, want: ErrCodexAuthExportCredentialUnavailable},
+		{name: "incomplete credential", snapshot: incomplete, want: ErrCodexAuthExportCredentialUnavailable},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := BuildCodexAuthDocument(testCase.provider)
+			_, err := BuildCodexAuthDocument(testCase.snapshot, testCase.enabled)
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("error = %v, want errors.Is(%v)", err, testCase.want)
 			}

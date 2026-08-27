@@ -81,9 +81,9 @@ func assessWebSocketSession(session *WebSocketSessionResult) webSocketAssessment
 		isSyntheticFinal = session.syntheticFinalFromSuppressedPayload
 	}
 
-	injectedCredential := injectedCredentialForCapture(provider, "")
+	injectedCredential := ""
 	if session != nil {
-		injectedCredential = injectedCredentialForCapture(provider, session.APIType)
+		injectedCredential = session.injectedCredential
 	}
 	assessment := newWebSocketAssessment(provider, gateway, result, fallback, transparentRetry, isSyntheticFinal, injectedCredential)
 	if result == nil {

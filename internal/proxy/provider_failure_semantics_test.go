@@ -18,9 +18,7 @@ func TestClassifyProviderFailure_UsageLimitReachedUsesPrimaryReset(t *testing.T)
 	header.Set(headerCodexPrimaryResetAt, strconv.FormatInt(resetAt.Unix(), 10))
 
 	body := `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(resetAt.Unix(), 10) + `}}`
-	disposition := classifyProviderFailureForProvider(&model.Provider{
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-	}, http.StatusTooManyRequests, header, body, observedAt)
+	disposition := classifyProviderFailureForProvider(&model.Provider{UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend}, http.StatusTooManyRequests, header, body, observedAt)
 
 	if disposition.switchReason != SwitchReasonUsageLimitReached {
 		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, SwitchReasonUsageLimitReached)
@@ -44,9 +42,7 @@ func TestClassifyProviderFailure_UsageLimitReachedUsesLaterResetWhenBothWindowsA
 	header.Set(headerCodexSecondaryResetAt, strconv.FormatInt(secondaryReset.Unix(), 10))
 
 	body := `{"type":"error","error":{"type":"usage_limit_reached","resets_at":` + strconv.FormatInt(primaryReset.Unix(), 10) + `}}`
-	disposition := classifyProviderFailureForProvider(&model.Provider{
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-	}, http.StatusTooManyRequests, header, body, observedAt)
+	disposition := classifyProviderFailureForProvider(&model.Provider{UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend}, http.StatusTooManyRequests, header, body, observedAt)
 
 	if disposition.autoDisableUntil == nil || !disposition.autoDisableUntil.Equal(secondaryReset) {
 		t.Fatalf("autoDisableUntil = %v, want %v", disposition.autoDisableUntil, secondaryReset)

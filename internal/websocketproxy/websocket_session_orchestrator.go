@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -30,6 +32,7 @@ type webSocketSessionOrchestratorConfig struct {
 	tracker                   LiveTraffic
 	capture                   requestcapture.GatewayRecorder
 	captureParticipates       bool
+	codexOperation            *codexws.Operation
 }
 
 type webSocketSelectionProbeObserverFactory func(apiType, initialModel string) WebSocketMessageObserver
@@ -72,11 +75,8 @@ type WebSocketSessionOrchestrator struct {
 	suppressedAttempt   *webSocketSuppressedAttempt
 	probeOutcome        webSocketSelectionProbeOutcome
 	captureCompletions  []webSocketDialCaptureCompletion
-}
-
-type webSocketDialCaptureCompletion struct {
-	exchange DialExchange
-	outcome  requestcapture.Outcome
+	subprotocol         websocketprotocol.Negotiation
+	codexOperation      *codexws.Operation
 }
 
 func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrchestratorConfig) *WebSocketSessionOrchestrator {
@@ -86,7 +86,7 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 			return newWebSocketMessageObserver(apiType, initialModel, nil, nil, nil)
 		}
 	}
-	return &WebSocketSessionOrchestrator{
+	orchestrator := &WebSocketSessionOrchestrator{
 		handler:                   handler,
 		info:                      cfg.info,
 		selectReq:                 cfg.selectReq,
@@ -100,39 +100,31 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		newObserver:               cfg.newObserver,
 		newSelectionProbeObserver: selectionProbeObserverFactory,
 		applyObservation:          cfg.applyObservation,
-		onClientVisible:           cfg.onClientVisible,
 		tracker:                   cfg.tracker,
 		capture:                   cfg.capture,
 		captureParticipates:       cfg.captureParticipates,
+		codexOperation:            cfg.codexOperation,
 		excludedProviders:         make(map[string]bool),
 		switchTracker:             newProviderSwitchTracker(cfg.selectReq, cfg.maxAttempts, handler.visibleContinuitySeedStore),
 		attempts:                  make([]WebSocketAttemptResult, 0),
 		lifecycle:                 newWebSocketLifecycleState(),
 		replayBuffer:              newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
 	}
+	orchestrator.onClientVisible = orchestrator.codexVisibleCallback(cfg.onClientVisible)
+	return orchestrator
 }
 
-func (o *WebSocketSessionOrchestrator) queueCaptureCompletion(exchange DialExchange, outcome requestcapture.Outcome) {
-	if o == nil || !exchange.captureMode.Participates() {
-		return
+func (o *WebSocketSessionOrchestrator) codexVisibleCallback(
+	next func(webSocketVisibleWriteContext),
+) func(webSocketVisibleWriteContext) {
+	return func(visible webSocketVisibleWriteContext) {
+		if o != nil && o.codexOperation != nil {
+			o.codexOperation.PinClientVisible()
+		}
+		if next != nil {
+			next(visible)
+		}
 	}
-	if outcome.CompletedAt.IsZero() {
-		outcome.CompletedAt = time.Now()
-	}
-	o.captureCompletions = append(o.captureCompletions, webSocketDialCaptureCompletion{
-		exchange: exchange,
-		outcome:  outcome,
-	})
-}
-
-func (o *WebSocketSessionOrchestrator) finishCaptureCompletions() {
-	if o == nil {
-		return
-	}
-	for _, completion := range o.captureCompletions {
-		finishWebSocketDialCapture(completion.exchange, completion.outcome)
-	}
-	o.captureCompletions = nil
 }
 
 func (o *WebSocketSessionOrchestrator) newAttemptObserver() WebSocketMessageObserver {
@@ -140,147 +132,6 @@ func (o *WebSocketSessionOrchestrator) newAttemptObserver() WebSocketMessageObse
 		return nil
 	}
 	return o.newObserver(o.info.Model)
-}
-
-func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
-	ctx context.Context,
-	w http.ResponseWriter,
-	r *http.Request,
-	provider *model.Provider,
-	dialExchange DialExchange,
-	attempt int,
-	selectionMode providerSwitchMode,
-	selectionMetadata selector.SelectionMetadata,
-	attemptStart time.Time,
-	recoveryAttempted bool,
-) WebSocketAttemptResult {
-	dialCaptureOutcome := requestcapture.Outcome{
-		SourceCompletion:  requestcapture.SourceCompletionPartial,
-		TerminationReason: requestcapture.TerminationReasonWebSocketRelayError,
-	}
-	if dialExchange.captureMode.Participates() {
-		defer func() {
-			o.queueCaptureCompletion(dialExchange, dialCaptureOutcome)
-		}()
-	}
-
-	upstreamConn := dialExchange.Conn
-	defer func() {
-		if upstreamConn != nil {
-			_ = upstreamConn.CloseNow()
-		}
-	}()
-
-	if err := o.ensureClientAccepted(w, r); err != nil {
-		_ = upstreamConn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
-		upstreamConn = nil
-		result := &WebSocketResult{
-			Err:           err,
-			TerminalCause: model.TerminalClientUpgradeRejected,
-			CommitSource:  model.CommitUnknown,
-		}
-		dialExchange.applyHandshake(result)
-		o.applySessionLifecycleToResult(result)
-		if dialExchange.captureMode.Participates() {
-			reason, failure := webSocketClientAccept(contextError(ctx), err)
-			dialCaptureOutcome = requestcapture.Outcome{
-				SourceCompletion:   requestcapture.SourceCompletionPartial,
-				TerminationReason:  reason,
-				Failure:            failure,
-				CredentialEvidence: dialExchange.credentialEvidence,
-			}
-		}
-		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, err, time.Since(attemptStart))
-		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
-		return attemptResult
-	}
-
-	observer, captureOptions := o.newAttemptRelayContext(dialExchange)
-	replayedBytes, replayed, replayErr := o.replayBufferedMessages(ctx, upstreamConn, observer, captureOptions)
-	if replayErr != nil {
-		result := &WebSocketResult{
-			BytesClientToUpstream: replayedBytes,
-			Err:                   replayErr,
-			TerminalCause:         model.TerminalUpstreamTransportError,
-			CommitSource:          model.CommitUnknown,
-		}
-		dialExchange.applyHandshake(result)
-		o.applySessionLifecycleToResult(result)
-		if dialExchange.captureMode.Participates() {
-			reason, failure := webSocketReplayWrite(contextError(ctx), replayErr)
-			dialCaptureOutcome = requestcapture.Outcome{
-				SourceCompletion:   requestcapture.SourceCompletionPartial,
-				TerminationReason:  reason,
-				Failure:            failure,
-				CredentialEvidence: dialExchange.credentialEvidence,
-			}
-		}
-		attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, replayErr, time.Since(attemptStart))
-		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
-		attemptResult.ReplayFailed = true
-		attemptResult.RecoveryAttempted = recoveryAttempted
-		return attemptResult
-	}
-
-	initialClientReadCh := o.takeInitialClientReadChannel()
-	postVisibleFailover := selectionMode == model.SwitchModeFailover && o.lifecycle != nil && o.lifecycle.Snapshot().ClientVisible
-	relayResult := o.handler.wsForwarder.relay(ctx, o.clientConn, upstreamConn, webSocketRelayOptions{
-		GatewayCapture: captureOptions.GatewayCapture,
-		Capture:        captureOptions.Capture,
-		CaptureMode:    captureOptions.CaptureMode,
-
-		CredentialEvidence:                captureOptions.CredentialEvidence,
-		InitialClientReadCh:               initialClientReadCh,
-		Observer:                          observer,
-		OnFirstUpstreamMessage:            o.applyObservation,
-		OnClientVisible:                   o.onClientVisible,
-		PreWriteToClient:                  newAllowlistedProviderScopedSuppressDecision(o.replayBuffer),
-		PreVisibleReplayBuffer:            o.replayBuffer,
-		Lifecycle:                         o.lifecycle,
-		PreserveClientOnSuppress:          true,
-		SkipClientToUpstream:              postVisibleFailover,
-		SkipPreVisibleWindow:              replayed && o.suppressedAttempt != nil,
-		PreserveClientOnPreVisibleFailure: o.suppressedAttempt != nil,
-	})
-	upstreamConn = nil
-
-	result := relayResult.toWebSocketResult()
-	dialExchange.applyHandshake(result)
-	result.BytesClientToUpstream += replayedBytes
-	if observer != nil {
-		mergeWebSocketObservation(result, observer.Snapshot())
-	}
-	if result.UpstreamError != nil {
-		result.TerminalCause = model.TerminalUpstreamSemanticError
-	}
-	o.captureSuppressedAttempt(provider, relayResult)
-	if result.ClientVisible && relayResult.SuppressedUpstreamError == nil {
-		o.clearSuppressedAttempt()
-	}
-
-	attemptResult := newWebSocketForwardAttemptResult(provider, attempt, selectionMode, selectionMetadata, result, result.Err, time.Since(attemptStart))
-	o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
-	attemptResult.RecoveryAttempted = recoveryAttempted
-	attemptResult.RecoverySucceeded = recoveryAttempted && attemptResult.clientAccepted()
-	if result.ClientVisible {
-		o.switchTracker.markClientVisible(provider, time.Now())
-	}
-	if dialExchange.captureMode.Participates() {
-		dialCaptureOutcome = webSocketRelayCaptureOutcome(ctx, relayResult, result)
-		dialCaptureOutcome.CredentialEvidence = dialExchange.credentialEvidence
-	}
-	return attemptResult
-}
-
-func (o *WebSocketSessionOrchestrator) newAttemptRelayContext(
-	dialExchange DialExchange,
-) (WebSocketMessageObserver, webSocketRelayOptions) {
-	return o.newAttemptObserver(), webSocketRelayOptions{
-		GatewayCapture:     o.capture,
-		Capture:            dialExchange.capture,
-		CaptureMode:        dialExchange.captureMode,
-		CredentialEvidence: dialExchange.credentialEvidence,
-	}
 }
 
 func (o *WebSocketSessionOrchestrator) takeInitialClientReadChannel() <-chan webSocketInitialReadResult {
@@ -301,6 +152,9 @@ func (o *WebSocketSessionOrchestrator) learnResolvedModel(modelName string) {
 
 func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseWriter, r *http.Request) *WebSocketSessionResult {
 	defer o.cleanup()
+	if session := o.initializeSubprotocol(r); session != nil {
+		return session
+	}
 
 	if bootstrapSession := o.bootstrapSelectionContext(ctx, w, r); bootstrapSession != nil {
 		return bootstrapSession
@@ -325,7 +179,7 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 		o.currentLease = selection.Lease
 		o.trackCurrentAttempt(selection)
 
-		attemptResult := o.executeProviderAttempt(ctx, w, r, selection.Provider(), attempt, selectionMode, selection.Metadata)
+		attemptResult := o.executeProviderAttempt(ctx, w, r, selection.Provider(), selection.Lease, attempt, selectionMode, selection.Metadata)
 		o.attempts = append(o.attempts, attemptResult)
 
 		if attemptResult.Result != nil {
@@ -369,14 +223,92 @@ func (o *WebSocketSessionOrchestrator) ensureClientAccepted(w http.ResponseWrite
 	if o.clientConn != nil {
 		return nil
 	}
+	if !o.subprotocol.Fixed() && len(o.subprotocol.ClientOffer()) == 0 {
+		// A protocol-free session has only one possible result. Fixing that result
+		// here keeps focused transport tests valid without weakening the rule that
+		// a non-empty client offer must be resolved by the upstream first.
+		next, err := o.subprotocol.BindUpstream("")
+		if err != nil {
+			return err
+		}
+		o.subprotocol = next
+	}
 
-	clientConn, err := o.handler.wsForwarder.acceptClient(w, r)
+	downstreamOffer, err := o.subprotocol.DownstreamOffer()
 	if err != nil {
+		return err
+	}
+	clientConn, err := o.handler.wsForwarder.acceptClient(w, r, downstreamOffer...)
+	if err != nil {
+		return err
+	}
+	if err := o.subprotocol.ValidateDownstream(clientConn.Subprotocol()); err != nil {
+		closeWebSocketSubprotocolViolation(clientConn)
 		return err
 	}
 	o.clientConn = clientConn
 	o.lifecycle.MarkClientAccepted()
+	if o.codexOperation != nil {
+		// A non-probe 101 is already observable. Probe acceptance has no physical
+		// provider yet, so PinClientVisible intentionally remains a no-op until the
+		// first successfully forwarded upstream frame invokes the visible callback.
+		o.codexOperation.PinClientVisible()
+	}
+	o.logSubprotocolDecision("websocket.subprotocol_downstream_accepted", clientConn.Subprotocol(), "")
 	return nil
+}
+
+func (o *WebSocketSessionOrchestrator) initializeSubprotocol(r *http.Request) *WebSocketSessionResult {
+	if o.codexOperation != nil && !o.codexOperation.Features().WebSocketSubprotocol {
+		o.subprotocol = websocketprotocol.New(websocketprotocol.Offer{})
+		o.logSubprotocolDecision("websocket.subprotocol_disabled", "", "")
+		return nil
+	}
+	negotiation, err := parseWebSocketSubprotocolNegotiation(r.Header)
+	if err == nil {
+		o.subprotocol = negotiation
+		return nil
+	}
+	return o.finalizeSelectionFailureSession(newWebSocketSelectionFailureSession(
+		o.requestID,
+		o.isSticky,
+		o.attempts,
+		http.StatusBadRequest,
+		model.TerminalClientUpgradeRejected,
+		ErrCodeWebSocketUpgrade,
+		"Invalid WebSocket subprotocol offer",
+		err,
+	))
+}
+
+func (o *WebSocketSessionOrchestrator) bindUpstreamSubprotocol(exchange DialExchange) error {
+	next, err := o.subprotocol.BindUpstream(exchange.NegotiatedSubprotocol)
+	if err != nil {
+		o.logSubprotocolDecision("websocket.subprotocol_mismatch", exchange.NegotiatedSubprotocol, err.Error())
+		return err
+	}
+	o.subprotocol = next
+	o.logSubprotocolDecision("websocket.subprotocol_upstream_selected", exchange.NegotiatedSubprotocol, "")
+	return nil
+}
+
+func (o *WebSocketSessionOrchestrator) logSubprotocolDecision(event, actual, mismatchReason string) {
+	if o == nil || o.handler == nil || o.handler.logger == nil {
+		return
+	}
+	fields := []zap.Field{
+		zap.String("request_id", o.requestID),
+		zap.Bool("probe", o.probeOutcome != webSocketSelectionProbeOutcomeBypassed),
+		zap.Int("client_offer_count", len(o.subprotocol.ClientOffer())),
+		zap.String("selected_subprotocol", o.subprotocol.Selected()),
+		zap.String("actual_subprotocol", actual),
+	}
+	if mismatchReason != "" {
+		fields = append(fields, zap.String("mismatch_reason", mismatchReason))
+		o.handler.logger.Warn(event, fields...)
+		return
+	}
+	o.handler.logger.Debug(event, fields...)
 }
 
 func (o *WebSocketSessionOrchestrator) trackCurrentAttempt(selection ProviderSelection) {

@@ -242,6 +242,10 @@ func TestBuildRequestCopiesOnlyEndToEndHeaders(t *testing.T) {
 	original := httptest.NewRequest(http.MethodPost, "http://client.example/original", nil)
 	original.Header = http.Header{
 		"Accept":              {"application/json", "text/plain"},
+		"authorization":       {"Bearer client-token"},
+		"X-API-KEY":           {"client-api-key"},
+		"chatgpt-account-id":  {"client-account"},
+		"X-Client-Request-Id": {"logical-request-42"},
 		"Connection":          {"keep-alive, X-Private", "x-another"},
 		"Keep-Alive":          {"timeout=5"},
 		"Proxy-Authenticate":  {"challenge"},
@@ -279,7 +283,11 @@ func TestBuildRequestCopiesOnlyEndToEndHeaders(t *testing.T) {
 	if got := request.Header.Get("X-End-To-End"); got != "preserved" {
 		t.Fatalf("X-End-To-End = %q", got)
 	}
+	if got := request.Header.Get("X-Client-Request-Id"); got != "logical-request-42" {
+		t.Fatalf("X-Client-Request-Id = %q, want logical-request-42", got)
+	}
 	for _, removed := range []string{
+		"Authorization", "X-Api-Key", "ChatGPT-Account-Id",
 		"Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
 		"Proxy-Connection", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
 		"X-Private", "X-Another",
@@ -294,6 +302,37 @@ func TestBuildRequestCopiesOnlyEndToEndHeaders(t *testing.T) {
 	original.Header.Set("X-End-To-End", "mutated")
 	if got := request.Header.Get("X-End-To-End"); got != "preserved" {
 		t.Fatalf("request header aliases original: %q", got)
+	}
+}
+
+func TestBuildRequestDoesNotCarryCredentialsFromPriorAttempt(t *testing.T) {
+	t.Parallel()
+
+	client := httptest.NewRequest(http.MethodPost, "http://client.example", nil)
+	client.Header.Set("X-Client-Request-Id", "logical-request-42")
+	first, err := BuildRequest(t.Context(), http.MethodPost, "https://first.example", nil, client)
+	if err != nil {
+		t.Fatalf("build first attempt: %v", err)
+	}
+	first.Header.Set("Authorization", "Bearer first-provider")
+	first.Header.Set("X-Api-Key", "first-api-key")
+	first.Header.Set("ChatGPT-Account-Id", "first-account")
+
+	second, err := BuildRequest(t.Context(), http.MethodPost, "https://second.example", nil, first)
+	if err != nil {
+		t.Fatalf("build second attempt: %v", err)
+	}
+	if got := second.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want prior credential removed", got)
+	}
+	if got := second.Header.Get("X-Api-Key"); got != "" {
+		t.Fatalf("X-Api-Key = %q, want prior credential removed", got)
+	}
+	if got := second.Header.Get("ChatGPT-Account-Id"); got != "" {
+		t.Fatalf("ChatGPT-Account-Id = %q, want prior account removed", got)
+	}
+	if got := second.Header.Get("X-Client-Request-Id"); got != "logical-request-42" {
+		t.Fatalf("X-Client-Request-Id = %q, want stable logical request ID", got)
 	}
 }
 
@@ -539,12 +578,6 @@ func TestHeaderHelpersCoverCaseAndEmptyInputs(t *testing.T) {
 
 	if got := connectionTokens([]string{" keep-alive, X-One ", "", ",x-two,"}); !reflect.DeepEqual(got, []string{"Keep-Alive", "X-One", "X-Two"}) {
 		t.Fatalf("connectionTokens = %#v", got)
-	}
-	if !containsHeader([]string{"X-One"}, "x-one") {
-		t.Fatal("containsHeader missed case-insensitive match")
-	}
-	if containsHeader([]string{"X-One"}, "X-Two") {
-		t.Fatal("containsHeader returned false positive")
 	}
 	if cloneHeader(nil) != nil {
 		t.Fatal("cloneHeader(nil) was non-nil")

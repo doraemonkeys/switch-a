@@ -11,11 +11,9 @@ func TestBuildProviderFromExport_PreservesInheritedUsageLimitPolicyStorage(t *te
 	t.Parallel()
 
 	provider, ok := buildProviderFromExport(&ExportedProvider{
-		ID:             "relay-provider",
-		Name:           "Relay Provider",
-		APIKey:         "relay-key",
-		APITypes:       []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.example.com"}},
-		CredentialType: model.ProviderCredentialTypeAPIKey,
+		ID:       "relay-provider",
+		Name:     "Relay Provider",
+		APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.example.com", CredentialSessionID: "relay-session"}},
 	}, nil)
 	if !ok {
 		t.Fatal("buildProviderFromExport returned ok=false")
@@ -35,10 +33,9 @@ func TestBuildExportedProvider_OmitsInheritedUsageLimitPolicy(t *testing.T) {
 	t.Parallel()
 
 	exported := buildExportedProvider(&model.Provider{
-		ID:             "gpt-provider",
-		Name:           "GPT Provider",
-		AuthMode:       "bearer",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
+		ID:       "gpt-provider",
+		Name:     "GPT Provider",
+		AuthMode: "bearer",
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "gpt-provider",
 			APIType:    "codex",
@@ -61,7 +58,6 @@ func TestBuildExportedProvider_PreservesExplicitUsageLimitPolicy(t *testing.T) {
 		ID:               "relay-provider",
 		Name:             "Relay Provider",
 		AuthMode:         "bearer",
-		CredentialType:   model.ProviderCredentialTypeAPIKey,
 		UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "relay-provider",
@@ -81,8 +77,7 @@ func TestValidateExportedProvider_InvalidUsageLimitPolicyWarns(t *testing.T) {
 	warnings := validateExportedProvider(&ExportedProvider{
 		ID:               "relay-provider",
 		Name:             "Relay Provider",
-		APIKey:           "relay-key",
-		APITypes:         []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.example.com"}},
+		APITypes:         []ExportedAPIType{{APIType: "claude", BaseURL: "https://api.example.com", CredentialSessionID: "relay-session"}},
 		UsageLimitPolicy: model.ProviderUsageLimitPolicy("drop"),
 	})
 

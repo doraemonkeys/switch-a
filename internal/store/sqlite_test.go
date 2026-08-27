@@ -1,11 +1,17 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
 
 func setupTestStore(t *testing.T) *SQLiteStore {
@@ -34,15 +40,75 @@ func TestNewSQLiteStore(t *testing.T) {
 	}
 }
 
-func TestNewSQLiteStore_CreatesProviderStateAndRoutingPolicyTables(t *testing.T) {
+func TestNewSQLiteStoreEnablesForeignKeysOnEveryPooledConnection(t *testing.T) {
+	store := setupTestStore(t)
+	database, err := store.db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const poolSize = 4
+	database.SetMaxOpenConns(poolSize)
+	database.SetMaxIdleConns(poolSize)
+
+	connections := make([]*sql.Conn, 0, poolSize)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for range poolSize {
+		connection, err := database.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connections = append(connections, connection)
+	}
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+	for index, connection := range connections {
+		var enabled int
+		if err := connection.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&enabled); err != nil {
+			t.Fatalf("connection %d PRAGMA: %v", index, err)
+		}
+		if enabled != 1 {
+			t.Fatalf("connection %d foreign_keys = %d, want 1", index, enabled)
+		}
+	}
+}
+
+func TestSQLiteForeignKeyConnectionConfigurationFailsClosed(t *testing.T) {
+	if got := sqliteDSN("file:test.db?mode=memory"); !strings.Contains(got, "&_pragma=foreign_keys(1)") {
+		t.Fatalf("sqliteDSN(existing query) = %q", got)
+	}
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := assertSQLiteForeignKeys(db); err == nil {
+		t.Fatal("assertSQLiteForeignKeys accepted disabled enforcement")
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := assertSQLiteForeignKeys(db); err == nil {
+		t.Fatal("assertSQLiteForeignKeys accepted a closed database")
+	}
+}
+
+func TestNewSQLiteStore_CreatesCredentialSessionAndRoutingPolicyTables(t *testing.T) {
 	store := setupTestStore(t)
 
 	testCases := []struct {
 		name  string
 		model any
 	}{
-		{name: "provider_credentials", model: &model.ProviderCredential{}},
-		{name: "provider_auth_states", model: &model.ProviderAuthState{}},
+		{name: "credential_sessions", model: "credential_sessions"},
+		{name: "route_target_credentials", model: "route_target_credentials"},
 		{name: "routing_policies", model: &model.RoutingPolicy{}},
 		{name: "routing_policy_groups", model: &model.RoutingPolicyGroup{}},
 		{name: "routing_policy_vendors", model: &model.RoutingPolicyVendor{}},
@@ -51,6 +117,11 @@ func TestNewSQLiteStore_CreatesProviderStateAndRoutingPolicyTables(t *testing.T)
 	for _, tc := range testCases {
 		if !store.db.Migrator().HasTable(tc.model) {
 			t.Fatalf("table %s was not created", tc.name)
+		}
+	}
+	for _, obsolete := range []string{"provider_credentials", "provider_auth_states"} {
+		if store.db.Migrator().HasTable(obsolete) {
+			t.Fatalf("obsolete provider-owned credential table %s still exists", obsolete)
 		}
 	}
 }

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storepkg "github.com/doraemonkeys/switch-a/internal/store"
@@ -80,18 +80,30 @@ func (s *Selector) revalidateProvider(
 	if err := validateCurrentProvider(provider, lease.ProviderID(), reqAPIType(req)); err != nil {
 		return nil, err
 	}
-	if err := s.revalidateProviderRouting(ctx, req, provider); err != nil {
-		return nil, err
-	}
-	if err := s.revalidateProviderGroup(ctx, provider); err != nil {
-		return nil, err
-	}
-
-	authState, err := s.revalidateProviderAuth(ctx, provider, reqAPIType(req))
+	scope, err := newProviderSelectionEligibility(
+		ctx,
+		s.store,
+		nil,
+		s.resolver,
+		req,
+		[]model.Provider{*provider},
+	)
 	if err != nil {
-		return nil, err
+		return nil, providerLookupFailure(err, "")
 	}
-	provider.AuthState = authState
+	allowed, reason, err := scope.allowsExistingRoute(ctx, provider, false)
+	if err != nil {
+		return nil, providerLookupFailure(err, "")
+	}
+	if !allowed {
+		return nil, rejectProvider(reason, nil)
+	}
+	liveCandidate, liveResolved := scope.CandidateSnapshot(provider.ID)
+	leaseCandidate, leaseResolved := lease.CandidateSnapshot()
+	if leaseResolved && (!liveResolved || !sameCandidateIdentity(leaseCandidate, liveCandidate)) {
+		return nil, rejectProvider(errorrule.ReasonAuthUnavailable, nil)
+	}
+	provider = scope.Provider(provider.ID)
 
 	// A lifecycle retirement that won while store reads were in flight must invalidate the
 	// result before a permit or reservation can establish its dispatch boundary.
@@ -126,51 +138,6 @@ func validateCurrentProvider(provider *model.Provider, providerID, apiType strin
 	}
 }
 
-func (s *Selector) revalidateProviderRouting(
-	ctx context.Context,
-	req *model.SelectRequest,
-	provider *model.Provider,
-) error {
-	policies, err := listRoutingPoliciesByAPIType(ctx, s.store, reqAPIType(req))
-	if err != nil {
-		return providerLookupFailure(err, "")
-	}
-	if !resolveRoutingPolicy(policies, req).allowsProvider(provider) {
-		return rejectProvider(errorrule.ReasonRoutingChanged, nil)
-	}
-	return nil
-}
-
-func (s *Selector) revalidateProviderGroup(ctx context.Context, provider *model.Provider) error {
-	if provider.GroupID == nil || *provider.GroupID == "" {
-		return nil
-	}
-	group, err := s.store.GetGroup(ctx, *provider.GroupID)
-	if err != nil {
-		return providerLookupFailure(err, errorrule.ReasonGroupDisabled)
-	}
-	if group == nil || !group.Enabled {
-		return rejectProvider(errorrule.ReasonGroupDisabled, nil)
-	}
-	return nil
-}
-
-func (s *Selector) revalidateProviderAuth(
-	ctx context.Context,
-	provider *model.Provider,
-	apiType string,
-) (*model.ProviderAuthState, error) {
-	authScope := &ProviderSelectionEligibility{source: s.store}
-	authState, err := authScope.providerAuthState(ctx, provider)
-	if err != nil {
-		return nil, providerLookupFailure(err, "")
-	}
-	if !providerHasUsableAuthPath(provider, apiType, authState) {
-		return nil, rejectProvider(errorrule.ReasonAuthUnavailable, nil)
-	}
-	return authState, nil
-}
-
 func providerLookupFailure(err error, notFoundReason errorrule.DecisionReason) error {
 	if contextError(err) != nil {
 		return err
@@ -181,18 +148,12 @@ func providerLookupFailure(err error, notFoundReason errorrule.DecisionReason) e
 	return rejectProvider(errorrule.ReasonProviderLookupError, err)
 }
 
-func providerHasUsableAuthPath(
-	provider *model.Provider,
-	apiType string,
-	authState *model.ProviderAuthState,
-) bool {
-	if provider == nil || authState == nil || authState.Status != model.ProviderAuthStatusActive {
-		return false
-	}
-	if model.NormalizeProviderCredentialType(provider.CredentialType) == model.ProviderCredentialTypeChatGPT {
-		return provider.Credential != nil && strings.TrimSpace(provider.Credential.SecretData) != ""
-	}
-	return model.HasAPIKey(provider.APIKeyForAPIType(apiType))
+func sameCandidateIdentity(left, right codexidentity.CandidateSnapshot) bool {
+	return left.RouteTargetID() == right.RouteTargetID() &&
+		left.CredentialSessionID() == right.CredentialSessionID() &&
+		left.CredentialVersion() == right.CredentialVersion() &&
+		left.APIType() == right.APIType() &&
+		left.Authority().Equal(right.Authority())
 }
 
 func contextError(err error) error {

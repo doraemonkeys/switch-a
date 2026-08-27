@@ -39,9 +39,9 @@ func TestHandlerDecodesZstdSemanticsAndForwardsOriginalWireBody(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	store := newMockStore()
-	store.providers = []model.Provider{{
-		ID:       "provider-zstd",
-		APIKey:   "test-key",
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID: "provider-zstd",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
@@ -49,7 +49,7 @@ func TestHandlerDecodesZstdSemanticsAndForwardsOriginalWireBody(t *testing.T) {
 			APIType:    APITypeCodex,
 			BaseURL:    upstream.URL,
 		}},
-	}}
+	}, "", "test-key")}
 	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
 	request := httptest.NewRequest(http.MethodPost, RouteCodexResponses, bytes.NewReader(wireBody))
 	request.Header.Set("Content-Type", "application/json")

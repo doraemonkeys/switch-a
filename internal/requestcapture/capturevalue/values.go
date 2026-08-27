@@ -218,9 +218,12 @@ const (
 type MessageDisposition string
 
 const (
-	MessageDispositionForwarded   MessageDisposition = "forwarded"
-	MessageDispositionSuppressed  MessageDisposition = "suppressed"
-	MessageDispositionWriteFailed MessageDisposition = "write_failed"
+	MessageDispositionForwarded        MessageDisposition = "forwarded"
+	MessageDispositionSuppressed       MessageDisposition = "suppressed"
+	MessageDispositionWriteFailed      MessageDisposition = "write_failed"
+	MessageDispositionIdentityRejected MessageDisposition = "identity_rejected"
+	MessageDispositionProtocolRejected MessageDisposition = "protocol_rejected"
+	MessageDispositionStorageRejected  MessageDisposition = "storage_rejected"
 )
 
 type ProviderIdentity struct {
@@ -478,6 +481,12 @@ func CanonicalMessageDisposition(value MessageDisposition) (MessageDisposition, 
 		return MessageDispositionSuppressed, true
 	case MessageDispositionWriteFailed:
 		return MessageDispositionWriteFailed, true
+	case MessageDispositionIdentityRejected:
+		return MessageDispositionIdentityRejected, true
+	case MessageDispositionProtocolRejected:
+		return MessageDispositionProtocolRejected, true
+	case MessageDispositionStorageRejected:
+		return MessageDispositionStorageRejected, true
 	default:
 		return "", false
 	}

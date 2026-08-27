@@ -12,6 +12,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
 	"github.com/coder/websocket"
+	"go.uber.org/zap"
 )
 
 const (
@@ -20,6 +21,129 @@ const (
 	webSocketPreVisibleFailureStatusCode = http.StatusBadGateway
 	webSocketPreVisibleFailureMessage    = "Upstream WebSocket session failed before becoming visible"
 )
+
+// Session finalization owns both the canonical result and its external
+// consequences. Persisting logs and applying health exactly once from this
+// boundary prevents the gateway bootstrap path from interpreting attempt state.
+func (h *Gateway) logWebSocketSession(info RequestInfo, session *WebSocketSessionResult, latency time.Duration) {
+	if session == nil {
+		return
+	}
+
+	result := session.FinalResult
+	attempts := session.RequestAttempts()
+	assessment := assessWebSocketSession(session)
+	sessionCommitted := assessment.SessionCommitted
+	clientVisible := assessment.ClientVisible
+	commitSource := model.CommitUnknown
+	if result != nil && result.CommitSource != "" {
+		commitSource = result.CommitSource
+	}
+
+	log := &model.RequestLog{
+		RequestID:                     session.RequestID,
+		APIType:                       info.APIType,
+		Model:                         info.Model,
+		ClientIP:                      info.ClientIP,
+		UserID:                        info.UserID,
+		SemanticsVersion:              assessment.SemanticsVersion,
+		ClientTransportStatusCode:     ptr(assessment.ClientTransportStatusCode),
+		CompletionState:               ptr(assessment.CompletionState),
+		ServiceOutcome:                ptr(assessment.ServiceOutcome),
+		TerminationActor:              assessment.TerminationActor,
+		TerminationReason:             assessment.TerminationReason,
+		ClientAction:                  ptr(assessment.ClientAction),
+		SessionEvidenceJSON:           assessment.SessionEvidenceJSON,
+		LatencyMs:                     latency.Milliseconds(),
+		IsWebSocket:                   true,
+		IsSticky:                      session.IsSticky,
+		RetryCount:                    session.RetryCount(),
+		SessionCommitted:              &sessionCommitted,
+		ClientVisible:                 &clientVisible,
+		CommitSource:                  &commitSource,
+		CreatedAt:                     time.Now(),
+		RequestPath:                   info.Path,
+		RequestMethod:                 info.Method,
+		UserAgent:                     info.UserAgent,
+		RequestIDHeader:               info.RequestID,
+		RequestedReasoningObservation: info.Reasoning,
+	}
+	if session.FinalProvider != nil {
+		log.ProviderID = session.FinalProvider.ID
+	}
+	if result != nil {
+		log.ResponseBytes = result.BytesUpstreamToClient
+		log.RequestBytes = result.BytesClientToUpstream
+	}
+	if result != nil && result.TokenUsage != nil {
+		log.PromptTokens, log.CompletionTokens, log.TotalTokens,
+			log.ReasoningTokens, log.CacheReadInputTokens, log.CacheCreationInputTokens, log.UsageDetails = result.TokenUsage.ToModelFields()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), logInsertTimeout)
+	defer cancel()
+	if insertErr := h.store.InsertLog(ctx, log); insertErr != nil { // coverage-ignore // store error path only reachable with a failing database
+		h.logger.Error("failed to insert websocket request log", zap.Error(insertErr))
+		return
+	}
+	if len(attempts) > 0 {
+		if insertErr := h.store.InsertAttempts(ctx, attempts); insertErr != nil { // coverage-ignore -- attempt insert errors are logged but don't affect response
+			h.logger.Error("failed to insert websocket request attempts", zap.Error(insertErr))
+		}
+	}
+}
+
+func applyWebSocketSessionHealthOutcomes(ctx context.Context, h *Gateway, session *WebSocketSessionResult) {
+	if session == nil {
+		return
+	}
+	finalProviderSawSemanticOutcome := false
+	for _, attempt := range session.Attempts {
+		if attempt.Provider == nil {
+			continue
+		}
+		if session.FinalProvider != nil &&
+			attempt.Provider.ID == session.FinalProvider.ID &&
+			attempt.Result != nil &&
+			(attempt.Result.UpstreamError != nil || attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError) {
+			finalProviderSawSemanticOutcome = true
+		}
+		applyWebSocketHealthOutcome(ctx, h, attempt.Provider, attempt.Result)
+	}
+	if session.FinalProvider == nil || session.FinalResult == nil || finalProviderSawSemanticOutcome {
+		return
+	}
+	if session.FinalResult.UpstreamError != nil || session.FinalResult.TerminalCause == model.TerminalUpstreamSemanticError {
+		applyWebSocketHealthOutcome(ctx, h, session.FinalProvider, session.FinalResult)
+	}
+}
+
+func applyWebSocketHealthOutcome(
+	ctx context.Context,
+	h *Gateway,
+	provider *model.Provider,
+	result *WebSocketResult,
+) {
+	if provider == nil || result == nil {
+		return
+	}
+	healthAssessment := assessWebSocketHealth(provider, result)
+	if healthAssessment.markFailure {
+		h.markFailure(ctx, provider.ID, result.Err)
+	}
+	if healthAssessment.suspendUntil != nil {
+		h.suspendProviderUntil(
+			ctx,
+			provider.ID,
+			*healthAssessment.suspendUntil,
+			healthAssessment.suspendReason,
+		)
+		return
+	}
+	if healthAssessment.markSuccess {
+		h.markSuccess(ctx, provider.ID)
+	}
+}
 
 func (o *WebSocketSessionOrchestrator) finalSessionFromLastAttempt(ctx context.Context) *WebSocketSessionResult {
 	if len(o.attempts) == 0 {
@@ -127,6 +251,9 @@ func (o *WebSocketSessionOrchestrator) sessionFromSuppressedPayload(_ context.Co
 	if hasLastAttempt && lastAttempt.Result != nil {
 		session.ResolvedModel = lastAttempt.Result.Model
 	}
+	if hasLastAttempt {
+		session.injectedCredential = lastAttempt.injectedCredential
+	}
 	return o.finalizeTerminalSession(session)
 }
 
@@ -180,17 +307,18 @@ func applyLastAttemptToSuppressedPayload(
 
 func (o *WebSocketSessionOrchestrator) sessionFromAttempt(attempt WebSocketAttemptResult) *WebSocketSessionResult {
 	session := &WebSocketSessionResult{
-		RequestID:         o.requestID,
-		FinalProvider:     attempt.Provider,
-		FinalResult:       attempt.Result.Clone(),
-		FinalErr:          attempt.terminalErr(),
-		Attempts:          append([]WebSocketAttemptResult(nil), o.attempts...),
-		IsSticky:          o.isSticky,
-		ClientAccepted:    attempt.clientAccepted(),
-		ProbeOutcome:      o.probeOutcome,
-		GatewayStatusCode: attempt.GatewayStatusCode,
-		GatewayErrorCode:  attempt.GatewayErrorCode,
-		GatewayMessage:    attempt.GatewayMessage,
+		RequestID:          o.requestID,
+		FinalProvider:      attempt.Provider,
+		FinalResult:        attempt.Result.Clone(),
+		FinalErr:           attempt.terminalErr(),
+		Attempts:           append([]WebSocketAttemptResult(nil), o.attempts...),
+		IsSticky:           o.isSticky,
+		ClientAccepted:     attempt.clientAccepted(),
+		ProbeOutcome:       o.probeOutcome,
+		GatewayStatusCode:  attempt.GatewayStatusCode,
+		GatewayErrorCode:   attempt.GatewayErrorCode,
+		GatewayMessage:     attempt.GatewayMessage,
+		injectedCredential: attempt.injectedCredential,
 	}
 	if attempt.Result != nil {
 		session.ResolvedModel = attempt.Result.Model

@@ -6,32 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"go.uber.org/zap/zaptest"
 )
 
 type usageObservationStore struct {
 	mu              sync.Mutex
-	provider        *model.Provider
+	session         *credentialsession.Session
 	authStateWrites int
 	getStarted      chan struct{}
 	releaseGet      chan struct{}
 	getStartOnce    sync.Once
 }
 
-func (s *usageObservationStore) UpdateProviderCredential(context.Context, string, model.ProviderCredentialType, string) error {
-	return nil
-}
-
-func (s *usageObservationStore) UpdateProviderAuthState(_ context.Context, _ string, state *model.ProviderAuthState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.authStateWrites++
-	s.provider.AuthState = state.Clone()
-	return nil
-}
-
-func (s *usageObservationStore) GetProvider(context.Context, string) (*model.Provider, error) {
+func (s *usageObservationStore) GetCredentialSession(context.Context, string) (*credentialsession.Session, error) {
 	if s.getStarted != nil {
 		s.getStartOnce.Do(func() { close(s.getStarted) })
 	}
@@ -40,74 +29,99 @@ func (s *usageObservationStore) GetProvider(context.Context, string) (*model.Pro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	clone := *s.provider
-	clone.AuthState = s.provider.AuthState.Clone()
-	return &clone, nil
+	return s.session.Clone(), nil
 }
 
-func TestObserveProviderUsageMergesResponseSnapshotWithoutChangingAuthLifecycle(t *testing.T) {
+func (s *usageObservationStore) WithCredentialSessionMutations(
+	ctx context.Context,
+	_ []string,
+) (context.Context, func(), error) {
+	return ctx, func() {}, nil
+}
+
+func (s *usageObservationStore) UpdateCredentialSessionCAS(
+	context.Context,
+	string,
+	int64,
+	string,
+	credentialsession.Subject,
+	credentialsession.AuthState,
+) (int64, error) {
+	return 0, nil
+}
+
+func (s *usageObservationStore) UpdateCredentialSessionAuthState(
+	_ context.Context,
+	_ string,
+	state credentialsession.AuthState,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authStateWrites++
+	s.session.AuthState = state.Clone()
+	return nil
+}
+
+func usageSession(kind credentialsession.Kind, usage *model.ProviderUsageSnapshot) *credentialsession.Session {
+	status := credentialsession.DefaultAuthStatus(kind)
+	if kind == credentialsession.KindChatGPT {
+		status = credentialsession.AuthStatusActive
+	}
+	return &credentialsession.Session{
+		ID: "session-1", Vendor: "openai", Kind: kind, SecretData: "opaque", Version: 1,
+		AuthState: credentialsession.AuthState{
+			Status: status, PlanType: "plus",
+			UsageSnapshot: credentialSessionUsageSnapshot(usage),
+		},
+	}
+}
+
+func TestObserveCredentialSessionUsageMergesResponseSnapshotWithoutChangingAuthLifecycle(t *testing.T) {
 	currentAt := time.Date(2026, time.August, 4, 4, 0, 0, 0, time.UTC)
 	weeklyReset := currentAt.Add(7 * 24 * time.Hour)
-	store := &usageObservationStore{provider: &model.Provider{
-		ID:             "chatgpt-1",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		AuthState: &model.ProviderAuthState{
-			ProviderID: "chatgpt-1",
-			Status:     model.ProviderAuthStatusActive,
-			PlanType:   "plus",
-			UsageSnapshot: &model.ProviderUsageSnapshot{
-				FetchedAt: &currentAt,
-				PlanType:  "plus",
-				OneWeek: &model.ProviderUsageWindow{
-					UsedPercent: 20, WindowSeconds: 7 * 24 * 60 * 60, ResetAt: &weeklyReset,
-				},
-			},
+	store := &usageObservationStore{session: usageSession(credentialsession.KindChatGPT, &model.ProviderUsageSnapshot{
+		FetchedAt: &currentAt, PlanType: "plus",
+		OneWeek: &model.ProviderUsageWindow{
+			UsedPercent: 20, WindowSeconds: 7 * 24 * 60 * 60, ResetAt: &weeklyReset,
 		},
-	}}
+	})}
 	service := NewService(Config{CredentialStore: store, Logger: zaptest.NewLogger(t)})
 	observedAt := currentAt.Add(time.Minute)
 	primaryReset := observedAt.Add(5 * time.Hour)
 
-	err := service.ObserveProviderUsage(context.Background(), "chatgpt-1", &model.ProviderUsageSnapshot{
-		FetchedAt: &observedAt,
-		PlanType:  "pro",
+	err := service.ObserveCredentialSessionUsage(context.Background(), "session-1", &model.ProviderUsageSnapshot{
+		FetchedAt: &observedAt, PlanType: "pro",
 		FiveHour: &model.ProviderUsageWindow{
 			UsedPercent: 35, WindowSeconds: 5 * 60 * 60, ResetAt: &primaryReset,
 		},
 	})
 	if err != nil {
-		t.Fatalf("ObserveProviderUsage error = %v", err)
+		t.Fatalf("ObserveCredentialSessionUsage error = %v", err)
 	}
 	if store.authStateWrites != 1 {
 		t.Fatalf("auth state writes = %d, want 1", store.authStateWrites)
 	}
-	state := store.provider.AuthState
-	if state.Status != model.ProviderAuthStatusActive {
+	state := store.session.AuthState
+	if state.Status != credentialsession.AuthStatusActive {
 		t.Fatalf("Status = %q, want active", state.Status)
 	}
-	if state.PlanType != "pro" || state.UsageSnapshot.PlanType != "pro" {
-		t.Fatalf("plan types = (%q, %q), want pro", state.PlanType, state.UsageSnapshot.PlanType)
+	usage := providerUsageSnapshot(state.UsageSnapshot)
+	if state.PlanType != "pro" || usage.PlanType != "pro" {
+		t.Fatalf("plan types = (%q, %q), want pro", state.PlanType, usage.PlanType)
 	}
-	if state.UsageSnapshot.FiveHour == nil || state.UsageSnapshot.FiveHour.UsedPercent != 35 {
-		t.Fatalf("FiveHour = %#v", state.UsageSnapshot.FiveHour)
+	if usage.FiveHour == nil || usage.FiveHour.UsedPercent != 35 {
+		t.Fatalf("FiveHour = %#v", usage.FiveHour)
 	}
-	if state.UsageSnapshot.OneWeek == nil || state.UsageSnapshot.OneWeek.UsedPercent != 20 {
-		t.Fatalf("OneWeek = %#v, want preserved window", state.UsageSnapshot.OneWeek)
+	if usage.OneWeek == nil || usage.OneWeek.UsedPercent != 20 {
+		t.Fatalf("OneWeek = %#v, want preserved window", usage.OneWeek)
 	}
 }
 
-func TestObserveProviderUsageCoalescesConcurrentSnapshotsPerProvider(t *testing.T) {
+func TestObserveCredentialSessionUsageCoalescesPerSession(t *testing.T) {
 	currentAt := time.Date(2026, time.August, 4, 4, 0, 0, 0, time.UTC)
 	store := &usageObservationStore{
-		provider: &model.Provider{
-			ID: "chatgpt-1", CredentialType: model.ProviderCredentialTypeChatGPT,
-			AuthState: &model.ProviderAuthState{
-				ProviderID: "chatgpt-1", Status: model.ProviderAuthStatusActive,
-				UsageSnapshot: &model.ProviderUsageSnapshot{FetchedAt: &currentAt},
-			},
-		},
-		getStarted: make(chan struct{}),
-		releaseGet: make(chan struct{}),
+		session:    usageSession(credentialsession.KindChatGPT, &model.ProviderUsageSnapshot{FetchedAt: &currentAt}),
+		getStarted: make(chan struct{}), releaseGet: make(chan struct{}),
 	}
 	service := NewService(Config{CredentialStore: store, Logger: zaptest.NewLogger(t)})
 	firstAt := currentAt.Add(time.Minute)
@@ -115,40 +129,35 @@ func TestObserveProviderUsageCoalescesConcurrentSnapshotsPerProvider(t *testing.
 	latestAt := currentAt.Add(3 * time.Minute)
 	done := make(chan error, 1)
 	go func() {
-		done <- service.ObserveProviderUsage(context.Background(), "chatgpt-1", usageSnapshotAt(firstAt, 10))
+		done <- service.ObserveCredentialSessionUsage(context.Background(), "session-1", usageSnapshotAt(firstAt, 10))
 	}()
 	<-store.getStarted
-
-	if err := service.ObserveProviderUsage(context.Background(), "chatgpt-1", usageSnapshotAt(secondAt, 20)); err != nil {
-		t.Fatalf("queued observation error = %v", err)
+	if err := service.ObserveCredentialSessionUsage(context.Background(), "session-1", usageSnapshotAt(secondAt, 20)); err != nil {
+		t.Fatal(err)
 	}
-	if err := service.ObserveProviderUsage(context.Background(), "chatgpt-1", usageSnapshotAt(latestAt, 30)); err != nil {
-		t.Fatalf("replacement observation error = %v", err)
+	if err := service.ObserveCredentialSessionUsage(context.Background(), "session-1", usageSnapshotAt(latestAt, 30)); err != nil {
+		t.Fatal(err)
 	}
 	close(store.releaseGet)
 	if err := <-done; err != nil {
-		t.Fatalf("owner observation error = %v", err)
+		t.Fatal(err)
 	}
-
 	if store.authStateWrites != 2 {
-		t.Fatalf("auth state writes = %d, want initial plus coalesced latest", store.authStateWrites)
+		t.Fatalf("auth state writes = %d, want 2", store.authStateWrites)
 	}
-	usage := store.provider.AuthState.UsageSnapshot
+	usage := providerUsageSnapshot(store.session.AuthState.UsageSnapshot)
 	if usage.FetchedAt == nil || !usage.FetchedAt.Equal(latestAt) || usage.FiveHour.UsedPercent != 30 {
 		t.Fatalf("final usage = %#v, want latest observation", usage)
 	}
 }
 
-func TestObserveProviderUsageIgnoresNonChatGPTAndIncompleteObservations(t *testing.T) {
-	store := &usageObservationStore{provider: &model.Provider{
-		ID: "api-1", CredentialType: model.ProviderCredentialTypeAPIKey,
-		AuthState: &model.ProviderAuthState{ProviderID: "api-1", Status: model.ProviderAuthStatusActive},
-	}}
+func TestObserveCredentialSessionUsageIgnoresStaticAndIncompleteObservations(t *testing.T) {
+	store := &usageObservationStore{session: usageSession(credentialsession.KindAPIKey, nil)}
 	service := NewService(Config{CredentialStore: store, Logger: zaptest.NewLogger(t)})
 	now := time.Now()
 	for _, snapshot := range []*model.ProviderUsageSnapshot{nil, {}, {FetchedAt: &now}} {
-		if err := service.ObserveProviderUsage(context.Background(), "api-1", snapshot); err != nil {
-			t.Fatalf("ObserveProviderUsage(%#v) error = %v", snapshot, err)
+		if err := service.ObserveCredentialSessionUsage(context.Background(), "session-1", snapshot); err != nil {
+			t.Fatalf("ObserveCredentialSessionUsage(%#v) error = %v", snapshot, err)
 		}
 	}
 	if store.authStateWrites != 0 {
@@ -185,8 +194,6 @@ func TestMergeObservedProviderUsageRejectsStaleAndTooFrequentSnapshots(t *testin
 func usageSnapshotAt(at time.Time, usedPercent float64) *model.ProviderUsageSnapshot {
 	return &model.ProviderUsageSnapshot{
 		FetchedAt: &at,
-		FiveHour: &model.ProviderUsageWindow{
-			UsedPercent: usedPercent, WindowSeconds: 5 * 60 * 60,
-		},
+		FiveHour:  &model.ProviderUsageWindow{UsedPercent: usedPercent, WindowSeconds: 5 * 60 * 60},
 	}
 }

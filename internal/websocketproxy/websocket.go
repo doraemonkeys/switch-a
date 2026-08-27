@@ -4,8 +4,10 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
@@ -48,6 +50,7 @@ const (
 	webSocketPreVisibleClientReadWindow = 50 * time.Millisecond
 
 	webSocketSemanticReplacementCloseReason = "semantic replacement"
+	webSocketSubprotocolMismatchCloseReason = "websocket subprotocol mismatch"
 	maxDrainBytes                           = 64 * 1024
 	maxSnippetBytes                         = 512
 )
@@ -112,6 +115,7 @@ func (realDialer) Dial(ctx context.Context, url string, opts *websocket.DialOpti
 type WebSocketDialRequest struct {
 	URL                 string
 	Headers             http.Header
+	Subprotocols        []string
 	InjectedCredential  string
 	Capture             requestcapture.GatewayRecorder
 	CaptureParticipates bool
@@ -130,6 +134,7 @@ type DialExchange struct {
 	HandshakeProtocol        string
 	HandshakeContentLength   int64
 	HandshakeHeaders         http.Header
+	NegotiatedSubprotocol    string
 	HandshakeBodySnippet     string
 	ObservedFailureBodyBytes int64
 	FailureBodyPresent       bool
@@ -148,17 +153,18 @@ func (e DialExchange) Accepted() bool {
 
 func (e DialExchange) toWebSocketResult() *WebSocketResult {
 	return &WebSocketResult{
-		HandshakeAccepted:    e.Accepted(),
-		HandshakeStatusCode:  e.HandshakeStatusCode,
-		HandshakeProtocol:    e.HandshakeProtocol,
-		HandshakeBodySnippet: e.HandshakeBodySnippet,
-		HandshakeHeaders:     e.HandshakeHeaders,
-		HandshakeObservedAt:  e.HandshakeObservedAt,
-		HandshakeStartedAt:   e.StartedAt,
-		HandshakeCompletedAt: e.CompletedAt,
-		Err:                  e.Err,
-		TerminalCause:        classifyDialFailure(e.HandshakeStatusCode),
-		CommitSource:         model.CommitUnknown,
+		HandshakeAccepted:     e.Accepted(),
+		HandshakeStatusCode:   e.HandshakeStatusCode,
+		HandshakeProtocol:     e.HandshakeProtocol,
+		HandshakeBodySnippet:  e.HandshakeBodySnippet,
+		HandshakeHeaders:      e.HandshakeHeaders,
+		NegotiatedSubprotocol: e.NegotiatedSubprotocol,
+		HandshakeObservedAt:   e.HandshakeObservedAt,
+		HandshakeStartedAt:    e.StartedAt,
+		HandshakeCompletedAt:  e.CompletedAt,
+		Err:                   e.Err,
+		TerminalCause:         classifyDialFailure(e.HandshakeStatusCode),
+		CommitSource:          model.CommitUnknown,
 	}
 }
 
@@ -170,6 +176,7 @@ func (e DialExchange) applyHandshake(result *WebSocketResult) {
 	result.HandshakeStatusCode = e.HandshakeStatusCode
 	result.HandshakeProtocol = e.HandshakeProtocol
 	result.HandshakeHeaders = e.HandshakeHeaders
+	result.NegotiatedSubprotocol = e.NegotiatedSubprotocol
 	result.HandshakeObservedAt = e.HandshakeObservedAt
 	result.HandshakeStartedAt = e.StartedAt
 	result.HandshakeCompletedAt = e.CompletedAt
@@ -299,6 +306,10 @@ type WebSocketResult struct {
 	// handler can apply the same provider-failure semantics it uses on HTTP.
 	HandshakeHeaders http.Header
 
+	// NegotiatedSubprotocol is the protocol selected on the physical upstream
+	// connection. A successful session exposes the same value downstream.
+	NegotiatedSubprotocol string
+
 	// HandshakeObservedAt fixes the response timestamp for relative reset-window
 	// headers. WebSocket health handling runs after orchestration, so recomputing
 	// these windows from a later wall clock would incorrectly extend cooldowns.
@@ -418,17 +429,57 @@ func (f *WebSocketForwarder) ForwardObserved(
 	onClientVisible func(webSocketVisibleWriteContext),
 ) (*WebSocketResult, error) {
 	start := time.Now()
+	negotiation, err := parseWebSocketSubprotocolNegotiation(r.Header)
+	if err != nil {
+		return &WebSocketResult{
+			HandshakeStatusCode: http.StatusBadRequest,
+			Duration:            time.Since(start),
+			Err:                 err,
+			TerminalCause:       model.TerminalClientUpgradeRejected,
+			CommitSource:        model.CommitUnknown,
+		}, nil
+	}
 
 	dialExchange := f.dialUpstream(ctx, WebSocketDialRequest{
-		URL:     upstreamURL,
-		Headers: extraHeaders,
+		URL:          upstreamURL,
+		Headers:      extraHeaders,
+		Subprotocols: negotiation.DialOffer(),
 	})
 	if !dialExchange.Accepted() {
 		result := dialExchange.toWebSocketResult()
+		if dialExchange.HandshakeStatusCode == http.StatusSwitchingProtocols {
+			if _, protocolErr := negotiation.BindUpstream(dialExchange.NegotiatedSubprotocol); protocolErr != nil {
+				result.HandshakeStatusCode = http.StatusBadGateway
+				result.Err = protocolErr
+				result.TerminalCause = model.TerminalInternalError
+			}
+		}
 		result.Duration = time.Since(start)
 		return result, nil
 	}
-	clientConn, err := f.acceptClient(w, r)
+	negotiation, err = negotiation.BindUpstream(dialExchange.NegotiatedSubprotocol)
+	if err != nil {
+		closeWebSocketSubprotocolViolation(dialExchange.Conn)
+		result := dialExchange.toWebSocketResult()
+		result.HandshakeAccepted = false
+		result.HandshakeStatusCode = http.StatusBadGateway
+		result.Duration = time.Since(start)
+		result.Err = err
+		result.TerminalCause = model.TerminalInternalError
+		return result, nil
+	}
+	downstreamOffer, err := negotiation.DownstreamOffer()
+	if err != nil {
+		closeWebSocketSubprotocolViolation(dialExchange.Conn)
+		result := dialExchange.toWebSocketResult()
+		result.HandshakeAccepted = false
+		result.HandshakeStatusCode = http.StatusBadGateway
+		result.Duration = time.Since(start)
+		result.Err = err
+		result.TerminalCause = model.TerminalInternalError
+		return result, nil
+	}
+	clientConn, err := f.acceptClient(w, r, downstreamOffer...)
 	if err != nil {
 		_ = dialExchange.Conn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
 		result := &WebSocketResult{
@@ -439,6 +490,19 @@ func (f *WebSocketForwarder) ForwardObserved(
 		}
 		dialExchange.applyHandshake(result)
 		return result, err
+	}
+	if err := negotiation.ValidateDownstream(clientConn.Subprotocol()); err != nil {
+		closeWebSocketSubprotocolViolation(clientConn)
+		closeWebSocketSubprotocolViolation(dialExchange.Conn)
+		result := &WebSocketResult{
+			ClientAccepted: true,
+			Duration:       time.Since(start),
+			Err:            err,
+			TerminalCause:  model.TerminalInternalError,
+			CommitSource:   model.CommitUnknown,
+		}
+		dialExchange.applyHandshake(result)
+		return result, nil
 	}
 
 	lifecycle := newWebSocketLifecycleState()
@@ -475,12 +539,20 @@ func (f *WebSocketForwarder) dialUpstream(ctx context.Context, request WebSocket
 	EnsureExplicitUserAgentHeader(dialHeaders)
 
 	exchange := DialExchange{StartedAt: time.Now()}
-	capture, sensitiveHeaders, credentialEvidence, captureMode := beginWebSocketDialCapture(request, dialHeaders)
+	captureHeaders := dialHeaders.Clone()
+	if len(request.Subprotocols) > 0 {
+		// coder/websocket materializes this header from DialOptions after capture
+		// starts. Projecting the dedicated option into the capture-only snapshot
+		// preserves wire fidelity without treating it as a passthrough header.
+		captureHeaders.Set(websocketprotocol.HeaderName, strings.Join(request.Subprotocols, ","))
+	}
+	capture, sensitiveHeaders, credentialEvidence, captureMode := beginWebSocketDialCapture(request, captureHeaders)
 	exchange.capture = capture
 	exchange.captureMode = captureMode
 	exchange.credentialEvidence = credentialEvidence
 	upstreamConn, resp, err := f.dialer.Dial(ctx, request.URL, &websocket.DialOptions{
-		HTTPHeader: dialHeaders,
+		HTTPHeader:   dialHeaders,
+		Subprotocols: append([]string(nil), request.Subprotocols...),
 	})
 	exchange.CompletedAt = time.Now()
 	exchange.Err = err
@@ -490,6 +562,7 @@ func (f *WebSocketForwarder) dialUpstream(ctx context.Context, request WebSocket
 		exchange.HandshakeProtocol = resp.Proto
 		exchange.HandshakeContentLength = resp.ContentLength
 		exchange.HandshakeHeaders = resp.Header.Clone()
+		exchange.NegotiatedSubprotocol = resp.Header.Get(websocketprotocol.HeaderName)
 		if exchange.captureMode.CapturesPayload() {
 			exchange.capture.ObserveWebSocketHandshake(requestcapture.WebSocketHandshake{
 				StatusCode:         resp.StatusCode,
@@ -525,18 +598,45 @@ func (f *WebSocketForwarder) dialUpstream(ctx context.Context, request WebSocket
 	}
 	upstreamConn.SetReadLimit(wsReadLimit)
 	exchange.Conn = upstreamConn
+	exchange.NegotiatedSubprotocol = upstreamConn.Subprotocol()
 	return exchange
 }
 
-func (f *WebSocketForwarder) acceptClient(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
+func (f *WebSocketForwarder) acceptClient(w http.ResponseWriter, r *http.Request, subprotocols ...string) (*websocket.Conn, error) {
 	// Accept the client's WebSocket upgrade only after the provider handshake succeeds.
 	// This avoids hiding upstream handshake failures behind an already-open proxy socket.
 	clientConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
+		Subprotocols:       append([]string(nil), subprotocols...),
 	})
 	if err != nil {
 		return nil, err
 	}
 	clientConn.SetReadLimit(wsReadLimit)
 	return clientConn, nil
+}
+
+func parseWebSocketSubprotocolNegotiation(headers http.Header) (websocketprotocol.Negotiation, error) {
+	offer, err := websocketprotocol.ParseClientOffer(webSocketSubprotocolHeaderValues(headers))
+	if err != nil {
+		return websocketprotocol.Negotiation{}, err
+	}
+	return websocketprotocol.New(offer), nil
+}
+
+func webSocketSubprotocolHeaderValues(headers http.Header) []string {
+	var values []string
+	for name, headerValues := range headers {
+		if strings.EqualFold(name, websocketprotocol.HeaderName) {
+			values = append(values, headerValues...)
+		}
+	}
+	return values
+}
+
+func closeWebSocketSubprotocolViolation(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	_ = conn.Close(websocket.StatusProtocolError, webSocketSubprotocolMismatchCloseReason)
 }

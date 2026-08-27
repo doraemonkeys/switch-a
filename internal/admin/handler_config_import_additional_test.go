@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
 )
@@ -35,27 +36,24 @@ func TestConfigImportRetiresEveryPotentiallyAffectedProviderGeneration(t *testin
 
 func importedTestProvider(id, name, apiType, baseURL string) ExportedProvider {
 	return ExportedProvider{
-		ID:             id,
-		Name:           name,
-		APIKey:         "key-" + id,
-		APITypes:       []ExportedAPIType{{APIType: apiType, BaseURL: baseURL}},
-		AuthMode:       DefaultAuthMode,
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-		Enabled:        true,
-		Weight:         DefaultWeight,
+		ID:       id,
+		Name:     name,
+		APITypes: []ExportedAPIType{{APIType: apiType, BaseURL: baseURL, CredentialSessionID: id + "-session"}},
+		AuthMode: DefaultAuthMode,
+		Enabled:  true,
+		Weight:   DefaultWeight,
 	}
 }
 
 func storedTestProvider(id, name, apiType, baseURL string) *model.Provider {
 	return &model.Provider{
-		ID:             id,
-		Name:           name,
-		APIKey:         "key-" + id,
-		APITypes:       []model.ProviderAPIType{{ProviderID: id, APIType: apiType, BaseURL: baseURL}},
-		AuthMode:       DefaultAuthMode,
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-		Enabled:        true,
-		Weight:         DefaultWeight,
+		ID:                 id,
+		Name:               name,
+		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: apiType, BaseURL: baseURL}},
+		CredentialSessions: []credentialsession.RouteSnapshot{testConfigCredentialRoute(id, apiType, id+"-session", "key-"+id)},
+		AuthMode:           DefaultAuthMode,
+		Enabled:            true,
+		Weight:             DefaultWeight,
 	}
 }
 
@@ -80,12 +78,15 @@ func TestCalculateImportChanges_CountsAddsUpdatesAndSkipsInvalidEntries(t *testi
 
 	req := &ImportConfigRequest{
 		ImportScope: fullConfigImportScope(),
+		CredentialSessions: []ExportedCredentialSession{
+			importedTestSession("p-existing-session", "key-p-existing"),
+			importedTestSession("p-new-session", "key-p-new"),
+		},
 		Providers: []ExportedProvider{
 			importedTestProvider("p-existing", "Updated Provider", "claude", "https://new.example"),
 			importedTestProvider("p-new", "New Provider", "codex", "https://codex.example"),
 			{
 				Name:     "Missing ID",
-				APIKey:   "ignored",
 				APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://skip.example"}},
 				Enabled:  true,
 			},
@@ -157,6 +158,10 @@ func TestApplyImportChanges_TracksAddsUpdatesAndMutatesStore(t *testing.T) {
 
 	req := &ImportConfigRequest{
 		ImportScope: fullConfigImportScope(),
+		CredentialSessions: []ExportedCredentialSession{
+			importedTestSession("p-existing-session", "key-p-existing"),
+			importedTestSession("p-new-session", "key-p-new"),
+		},
 		Providers: []ExportedProvider{
 			importedTestProvider("p-existing", "Updated Provider", "claude", "https://new.example"),
 			importedTestProvider("p-new", "New Provider", "codex", "https://codex.example"),
@@ -215,5 +220,13 @@ func TestApplyImportChanges_TracksAddsUpdatesAndMutatesStore(t *testing.T) {
 	}
 	if got := st.config[configGlobalMaxAttemptsKey]; got != "5" {
 		t.Fatalf("global_max_attempts = %q, want 5", got)
+	}
+}
+
+func importedTestSession(id, secret string) ExportedCredentialSession {
+	return ExportedCredentialSession{
+		ID: id, Vendor: "openai", Kind: credentialsession.KindAPIKey, TransferMode: CredentialSessionTransferStaticSecret,
+		SecretData: secret, Version: 1, Subject: credentialsession.PendingSubject(),
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
 }

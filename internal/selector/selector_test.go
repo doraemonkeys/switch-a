@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -17,7 +18,7 @@ type mockStore struct {
 	providers        []model.Provider
 	groups           map[string]*model.Group
 	configs          map[string]string
-	authStates       map[string]*model.ProviderAuthState
+	authStates       map[string]*credentialsession.AuthState
 	routingPolicies  []model.RoutingPolicy
 	err              error
 	authStateErr     error
@@ -33,7 +34,7 @@ func newMockStore() *mockStore {
 			"sticky_mode":          "model",
 			"sticky_ttl":           "300",
 		},
-		authStates: make(map[string]*model.ProviderAuthState),
+		authStates: make(map[string]*credentialsession.AuthState),
 	}
 }
 
@@ -41,11 +42,18 @@ func stringPtr(value string) *string {
 	return &value
 }
 
-func (m *mockStore) ListProvidersByAPIType(_ context.Context, _ string) ([]model.Provider, error) {
+func (m *mockStore) ListProvidersByAPIType(_ context.Context, apiType string) ([]model.Provider, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.providers, nil
+	if m.authStateErr != nil {
+		return nil, m.authStateErr
+	}
+	providers := make([]model.Provider, len(m.providers))
+	for index := range m.providers {
+		providers[index] = m.credentialSessionProvider(m.providers[index], apiType)
+	}
+	return providers, nil
 }
 
 func (m *mockStore) GetGroup(_ context.Context, id string) (*model.Group, error) {
@@ -69,26 +77,60 @@ func (m *mockStore) GetProvider(_ context.Context, id string) (*model.Provider, 
 	if m.err != nil {
 		return nil, m.err
 	}
+	if m.authStateErr != nil {
+		return nil, m.authStateErr
+	}
 	for _, p := range m.providers {
 		if p.ID == id {
-			provider := p
+			apiType := ""
+			if len(p.APITypes) > 0 {
+				apiType = p.APITypes[0].APIType
+			}
+			provider := m.credentialSessionProvider(p, apiType)
 			return &provider, nil
 		}
 	}
 	return nil, nil
 }
 
-func (m *mockStore) GetProviderAuthState(_ context.Context, providerID string) (*model.ProviderAuthState, error) {
-	if m.authStateErr != nil {
-		return nil, m.authStateErr
+func (m *mockStore) credentialSessionProvider(provider model.Provider, apiType string) model.Provider {
+	provider = *cloneProviderSelectionSnapshot(&provider)
+	if apiType == "" && len(provider.APITypes) > 0 {
+		apiType = provider.APITypes[0].APIType
 	}
-	if m.err != nil {
-		return nil, m.err
+	if _, ok := provider.CredentialSessionForAPIType(apiType); ok {
+		return provider
 	}
-	if authState, ok := m.authStates[providerID]; ok {
-		return authState.Clone(), nil
+	kind := credentialsession.KindAPIKey
+	secret := "test-secret"
+	vendor := provider.Vendor
+	if vendor == "" {
+		vendor = "test-vendor"
 	}
-	return nil, nil
+	status := credentialsession.DefaultAuthStatus(kind)
+	if authState := m.authStates[provider.ID]; authState != nil {
+		status = authState.Status
+	}
+	subject, _ := credentialsession.AccountSubject("test-subject-" + provider.ID)
+	provider.CredentialSessions = append(provider.CredentialSessions, credentialsession.RouteSnapshot{
+		RouteTargetID: provider.ID,
+		APIType:       apiType,
+		Credential: credentialsession.Snapshot{
+			SessionID:  "test-session-" + provider.ID + "-" + apiType,
+			Vendor:     vendor,
+			Kind:       kind,
+			SecretData: secret,
+			Version:    1,
+			Subject:    subject,
+			AuthState:  credentialsession.AuthState{Status: status},
+		},
+	})
+	for index := range provider.APITypes {
+		if provider.APITypes[index].APIType == apiType && provider.APITypes[index].BaseURL == "" {
+			provider.APITypes[index].BaseURL = "https://" + provider.ID + ".example.test"
+		}
+	}
+	return provider
 }
 
 func (m *mockStore) ListRoutingPoliciesByAPIType(_ context.Context, apiType string) ([]model.RoutingPolicy, error) {

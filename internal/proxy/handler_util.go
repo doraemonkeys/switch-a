@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
@@ -82,6 +83,21 @@ func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code,
 	}
 }
 
+func (h *Handler) handleCodexHTTPBeginError(w http.ResponseWriter, requestID string, err error) {
+	status := http.StatusServiceUnavailable
+	message := "Codex security state is temporarily unavailable"
+	if codexhttp.IsKind(err, codexhttp.ErrorClientInput) {
+		status = http.StatusBadRequest
+		message = "Codex request state could not be validated"
+	}
+	h.logger.Warn("codex_http.request_rejected",
+		zap.String("request_id", requestID),
+		zap.String("decision", "failed_closed"),
+		zap.Error(err),
+	)
+	h.writeGatewayError(w, status, ErrCodeInternalError, message)
+}
+
 // logRequestInputs bundles the runtime inputs needed to build a request
 // log and its evidence. Centralizing them here stops the logRequest
 // signature from drifting every time a new observation field lands; the
@@ -103,11 +119,6 @@ type logRequestInputs struct {
 // Note: Uses context.Background() with timeout because this runs after the HTTP response
 // completes and the request context may already be cancelled.
 func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
-	// The provider selected for the terminal logical request owns the only
-	// credential that may be redacted. Keeping this derivation at the evidence
-	// boundary prevents provider-owned bearer tokens and diagnostics from being
-	// classified by shape alone.
-	inputs.Facts.InjectedCredential = injectedCredentialForCapture(inputs.Provider, pctx.apiType)
 	assessment := assessNonWebSocketRequest(inputs.Facts)
 
 	log := &model.RequestLog{
@@ -355,4 +366,50 @@ func (h *Handler) buildFullURL(baseURL, path, query string) string {
 		return joined + "?" + query
 	}
 	return joined
+}
+
+// AuthMode constants define how provider credentials map onto upstream HTTP
+// request headers.
+const (
+	AuthModeAuto   = "auto"
+	AuthModeBearer = "bearer"
+	AuthModeXAPI   = "x-api-key"
+
+	headerUserAgent = "User-Agent"
+)
+
+// EnsureExplicitUserAgentHeader preserves the caller's omission of User-Agent.
+// Go injects its own default when the field is absent, so the proxy must carry
+// an explicit empty value through both HTTP and WebSocket transports.
+func EnsureExplicitUserAgentHeader(headers http.Header) {
+	if len(headers.Values(headerUserAgent)) > 0 {
+		return
+	}
+	headers.Set(headerUserAgent, "")
+}
+
+func DetectAuthMode(r *http.Request) string {
+	if r.Header.Get("Authorization") != "" {
+		return AuthModeBearer
+	}
+	if r.Header.Get("X-Api-Key") != "" {
+		return AuthModeXAPI
+	}
+	return AuthModeBearer
+}
+
+func SetAuthHeader(dst http.Header, apiKey, providerAuthMode, globalAuthMode string, originalReq *http.Request) {
+	mode := providerAuthMode
+	if mode == "" {
+		mode = globalAuthMode
+	}
+	if mode == AuthModeAuto {
+		mode = DetectAuthMode(originalReq)
+	}
+
+	if mode == AuthModeXAPI {
+		dst.Set("x-api-key", apiKey)
+		return
+	}
+	dst.Set("Authorization", "Bearer "+apiKey)
 }

@@ -15,6 +15,7 @@ var supportedConfigImportModes = []ConfigImportMode{
 type resolvedConfigImport struct {
 	Scope              resolvedConfigImportScope
 	Providers          []ExportedProvider
+	CredentialSessions []ExportedCredentialSession
 	Groups             []ExportedGroup
 	RoutingPolicies    []ExportedRoutingPolicy
 	Settings           map[string]string
@@ -44,6 +45,7 @@ func resolveImportConfigRequest(req *ImportConfigRequest) (resolvedConfigImport,
 		return resolved, warnings
 	case scope.Mode == ConfigImportModeFull:
 		resolved.Providers = req.Providers
+		resolved.CredentialSessions = req.CredentialSessions
 		resolved.Groups = req.Groups
 		resolved.RoutingPolicies = req.RoutingPolicies
 		resolved.Settings = req.Settings
@@ -210,9 +212,35 @@ func resolveSelectedImportConfigRequest(
 		selectedProviderIDs,
 		selectedGroupIDs,
 	)
+	resolved.CredentialSessions = selectExportedCredentialSessionsForImport(
+		req.CredentialSessions,
+		resolved.Providers,
+	)
 	resolved.InternalErrorRules = req.InternalErrorRules
 	resolved.RuleProviderIDs = expandedRuleProviderIDs(req.Providers, selectedProviderIDs, selectedGroupIDs)
 	return resolved, warnings
+}
+
+func selectExportedCredentialSessionsForImport(
+	sessions []ExportedCredentialSession,
+	providers []ExportedProvider,
+) []ExportedCredentialSession {
+	referenced := make(map[string]struct{})
+	for _, provider := range providers {
+		for _, apiType := range provider.APITypes {
+			id := strings.TrimSpace(apiType.CredentialSessionID)
+			if id != "" {
+				referenced[id] = struct{}{}
+			}
+		}
+	}
+	selected := make([]ExportedCredentialSession, 0, len(referenced))
+	for _, session := range sessions {
+		if _, ok := referenced[strings.TrimSpace(session.ID)]; ok {
+			selected = append(selected, session)
+		}
+	}
+	return selected
 }
 
 func expandedRuleProviderIDs(

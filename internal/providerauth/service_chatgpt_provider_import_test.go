@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -234,8 +235,9 @@ func TestPreviewSub2APIChatGPTImport_StagesSafeRichPreview(t *testing.T) {
 	if secret.AccessToken != accessToken || secret.RefreshToken != "refresh-secret" || secret.IDToken != idToken {
 		t.Fatalf("staged secret = %#v, want original credential tokens", secret)
 	}
-	if candidate.Credential.BindingAccountID == nil || *candidate.Credential.BindingAccountID != "acct-ready" {
-		t.Fatalf("BindingAccountID = %#v, want acct-ready", candidate.Credential.BindingAccountID)
+	if candidate.Credential.Subject.Kind != credentialsession.SubjectAccount ||
+		string(candidate.Credential.Subject.Value) != "acct-ready" {
+		t.Fatalf("Subject = %#v, want acct-ready account", candidate.Credential.Subject)
 	}
 	candidateJSON, err := json.Marshal(candidate)
 	if err != nil {
@@ -249,7 +251,7 @@ func TestPreviewSub2APIChatGPTImport_StagesSafeRichPreview(t *testing.T) {
 
 	// Claims return deep clones so request-specific enrichment cannot mutate a retryable draft.
 	candidates[0].Credential.SecretData = "mutated"
-	candidates[0].AuthState.UsageSnapshot.FiveHour.UsedPercent = 99
+	candidates[0].Credential.AuthState.UsageSnapshot.FiveHour.UsedPercent = 99
 	candidates[0].Disposition.State = ChatGPTProviderImportCandidateStateExisting
 	if err := service.ReleaseChatGPTProviderImportClaim(preview.ImportID); err != nil {
 		t.Fatalf("ReleaseChatGPTProviderImportClaim returned error: %v", err)
@@ -261,34 +263,24 @@ func TestPreviewSub2APIChatGPTImport_StagesSafeRichPreview(t *testing.T) {
 	if retrievedAgain[0].Credential.SecretData == "mutated" {
 		t.Fatal("staged credential shared mutable state with a retrieved candidate")
 	}
-	if retrievedAgain[0].AuthState.UsageSnapshot.FiveHour.UsedPercent != 17.5 {
+	if retrievedAgain[0].Credential.AuthState.UsageSnapshot.FiveHour.UsedPercent != 17.5 {
 		t.Fatal("staged usage snapshot shared mutable state with a retrieved candidate")
 	}
 	if retrievedAgain[0].Disposition == nil || retrievedAgain[0].Disposition.State != ChatGPTProviderImportCandidateStateReady {
 		t.Fatal("staged disposition shared mutable state with a retrieved candidate")
 	}
 
-	provider := &model.Provider{
-		ID:          "provider-final",
-		Name:        "Edited in preview",
-		Priority:    8,
-		Concurrency: 4,
-	}
-	if err := ApplyChatGPTProviderImportCandidate(provider, retrievedAgain[0]); err != nil {
-		t.Fatalf("ApplyChatGPTProviderImportCandidate returned error: %v", err)
-	}
-	if provider.Name != "Edited in preview" || provider.Priority != 8 || provider.Concurrency != 4 {
-		t.Fatalf("ApplyChatGPTProviderImportCandidate overwrote caller-owned routing fields: %#v", provider)
-	}
-	if provider.CredentialType != model.ProviderCredentialTypeChatGPT || provider.AuthMode != authModeBearer {
-		t.Fatalf("provider auth normalization = %#v, want ChatGPT bearer", provider)
-	}
-	if provider.Credential.ProviderID != provider.ID || provider.AuthState.ProviderID != provider.ID {
-		t.Fatalf("split records not rebound to provider %q", provider.ID)
-	}
-	decoded, err := DecodeProviderChatGPTCredential(provider)
+	session, err := BuildCredentialSessionFromChatGPTProviderImportCandidate(retrievedAgain[0], "session-final")
 	if err != nil {
-		t.Fatalf("DecodeProviderChatGPTCredential returned error: %v", err)
+		t.Fatalf("BuildCredentialSessionFromChatGPTProviderImportCandidate returned error: %v", err)
+	}
+	appliedSnapshot, err := session.Snapshot()
+	if err != nil {
+		t.Fatalf("Session.Snapshot returned error: %v", err)
+	}
+	decoded, err := decodeChatGPTCredentialSession(&appliedSnapshot)
+	if err != nil {
+		t.Fatalf("decodeChatGPTCredentialSession returned error: %v", err)
 	}
 	if decoded.AccountID != "acct-ready" || decoded.RefreshToken != "refresh-secret" {
 		t.Fatalf("decoded applied credential = %#v, want staged account and refresh token", decoded)
@@ -445,9 +437,8 @@ func TestPreviewSub2APIChatGPTImport_ClassifiesAccountsIndependently(t *testing.
 		}
 	}
 	dispositions[0].State = ChatGPTProviderImportCandidateStateExisting
-	dispositions[0].ExpectedProviderID = "bound-provider"
+	dispositions[0].ExpectedSessionID = "bound-session"
 	dispositions[0].ExpectedCredentialVersion = 7
-	dispositions[0].ExpectedCredentialCreatedAt = now.Add(-24 * time.Hour)
 	if err := service.SealChatGPTProviderImportPreview(preview.ImportID, dispositions); err != nil {
 		t.Fatalf("SealChatGPTProviderImportPreview returned error: %v", err)
 	}
@@ -461,12 +452,11 @@ func TestPreviewSub2APIChatGPTImport_ClassifiesAccountsIndependently(t *testing.
 	}
 	if disposition := allCandidates[0].Disposition; disposition == nil ||
 		disposition.State != ChatGPTProviderImportCandidateStateExisting ||
-		disposition.ExpectedProviderID != "bound-provider" ||
-		disposition.ExpectedCredentialVersion != 7 ||
-		!disposition.ExpectedCredentialCreatedAt.Equal(now.Add(-24*time.Hour)) {
-		t.Fatalf("sealed existing disposition = %#v, want bound-provider version 7", disposition)
+		disposition.ExpectedSessionID != "bound-session" ||
+		disposition.ExpectedCredentialVersion != 7 {
+		t.Fatalf("sealed existing disposition = %#v, want bound-session version 7", disposition)
 	}
-	if err := ApplyChatGPTProviderImportCandidate(&model.Provider{ID: "blocked"}, allCandidates[1]); !errors.Is(err, ErrChatGPTProviderImportInvalidCandidate) {
+	if _, err := BuildCredentialSessionFromChatGPTProviderImportCandidate(allCandidates[1], "blocked"); !errors.Is(err, ErrChatGPTProviderImportInvalidCandidate) {
 		t.Fatalf("apply duplicate error = %v, want ErrChatGPTProviderImportInvalidCandidate", err)
 	}
 	if err := service.ReleaseChatGPTProviderImportClaim(preview.ImportID); err != nil {
@@ -858,15 +848,12 @@ func TestChatGPTProviderImportValidationHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("apply rejects missing records and nil provider", func(t *testing.T) {
+	t.Run("builder rejects missing records and session id", func(t *testing.T) {
 		candidate := ChatGPTProviderImportCandidate{
 			CandidateID: "candidate",
 			State:       ChatGPTProviderImportCandidateStateReady,
 		}
-		if err := ApplyChatGPTProviderImportCandidate(nil, candidate); !errors.Is(err, ErrChatGPTProviderImportInvalidCandidate) {
-			t.Fatalf("nil provider error = %v, want ErrChatGPTProviderImportInvalidCandidate", err)
-		}
-		if err := ApplyChatGPTProviderImportCandidate(&model.Provider{}, candidate); !errors.Is(err, ErrChatGPTProviderImportInvalidCandidate) {
+		if _, err := BuildCredentialSessionFromChatGPTProviderImportCandidate(candidate, "session"); !errors.Is(err, ErrChatGPTProviderImportInvalidCandidate) {
 			t.Fatalf("missing records error = %v, want ErrChatGPTProviderImportInvalidCandidate", err)
 		}
 	})
@@ -887,11 +874,6 @@ func TestChatGPTProviderImportValidationHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("binding account normalization handles nil", func(t *testing.T) {
-		if got := normalizedBindingAccountID(nil); got != "" {
-			t.Fatalf("normalizedBindingAccountID(nil) = %q, want empty", got)
-		}
-	})
 }
 
 func TestPreviewSub2APIChatGPTImport_HandlesSessionIDCollisionsAndShutdown(t *testing.T) {
@@ -958,23 +940,16 @@ func TestSealChatGPTProviderImportPreview_ValidatesAndFreezesDisposition(t *test
 		{{CandidateID: "unknown", State: ChatGPTProviderImportCandidateStateReady}},
 		{{CandidateID: "candidate-existing", State: ChatGPTProviderImportCandidateStateDuplicate}},
 		{{
-			CandidateID:        "candidate-existing",
-			State:              ChatGPTProviderImportCandidateStateReady,
-			ExpectedProviderID: "not-allowed-for-create",
+			CandidateID:       "candidate-existing",
+			State:             ChatGPTProviderImportCandidateStateReady,
+			ExpectedSessionID: "not-allowed-for-create",
 		}},
 		{{CandidateID: "candidate-existing", State: ChatGPTProviderImportCandidateStateExisting}},
 		{{
 			CandidateID:               "candidate-existing",
 			State:                     ChatGPTProviderImportCandidateStateExisting,
-			ExpectedProviderID:        "bound-provider",
-			ExpectedCredentialVersion: 9,
-		}},
-		{{
-			CandidateID:                 "candidate-existing",
-			State:                       ChatGPTProviderImportCandidateStateExisting,
-			ExpectedProviderID:          "bound-provider",
-			ExpectedCredentialVersion:   -1,
-			ExpectedCredentialCreatedAt: now.Add(-time.Hour),
+			ExpectedSessionID:         "bound-session",
+			ExpectedCredentialVersion: -1,
 		}},
 	}
 	for _, dispositions := range invalidDispositions {
@@ -984,11 +959,10 @@ func TestSealChatGPTProviderImportPreview_ValidatesAndFreezesDisposition(t *test
 	}
 
 	disposition := ChatGPTProviderImportCandidateDisposition{
-		CandidateID:                 "candidate-existing",
-		State:                       ChatGPTProviderImportCandidateStateExisting,
-		ExpectedProviderID:          " bound-provider ",
-		ExpectedCredentialVersion:   9,
-		ExpectedCredentialCreatedAt: now.Add(-time.Hour),
+		CandidateID:               "candidate-existing",
+		State:                     ChatGPTProviderImportCandidateStateExisting,
+		ExpectedSessionID:         " bound-session ",
+		ExpectedCredentialVersion: 9,
 	}
 	if err := service.SealChatGPTProviderImportPreview(preview.ImportID, []ChatGPTProviderImportCandidateDisposition{disposition}); err != nil {
 		t.Fatalf("SealChatGPTProviderImportPreview returned error: %v", err)
@@ -1001,8 +975,7 @@ func TestSealChatGPTProviderImportPreview_ValidatesAndFreezesDisposition(t *test
 		t.Fatalf("ClaimChatGPTProviderImport returned error: %v", err)
 	}
 	got := candidates[0].Disposition
-	if got == nil || got.ExpectedProviderID != "bound-provider" || got.ExpectedCredentialVersion != 9 ||
-		!got.ExpectedCredentialCreatedAt.Equal(now.Add(-time.Hour)) {
+	if got == nil || got.ExpectedSessionID != "bound-session" || got.ExpectedCredentialVersion != 9 {
 		t.Fatalf("Disposition = %#v, want normalized immutable expectation", got)
 	}
 

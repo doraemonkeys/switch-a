@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"go.uber.org/zap"
@@ -30,10 +31,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		primaryAttempts.Add(1)
 		store.mu.Lock()
-		store.authStates[primaryID] = &model.ProviderAuthState{
-			ProviderID: primaryID,
-			Status:     model.ProviderAuthStatusReauthRequired,
-		}
+		store.providers[0].CredentialSessions[0].Credential.AuthState.Status = credentialsession.AuthStatusReauthRequired
 		store.mu.Unlock()
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"retryable"}`))
@@ -48,34 +46,26 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 	}))
 	defer fallbackServer.Close()
 
-	storePrimary := model.Provider{
-		ID:         primaryID,
-		Name:       "Retry Auth Primary",
-		APIKey:     "primary-key",
+	storePrimary := withTestStaticCredential(model.Provider{
+		ID:   primaryID,
+		Name: "Retry Auth Primary",
+
 		AuthMode:   "bearer",
 		Enabled:    true,
 		MaxRetries: 1,
 		APITypes:   []model.ProviderAPIType{{ProviderID: primaryID, APIType: "claude", BaseURL: primaryServer.URL}},
-	}
+	}, "", "primary-key")
 	selectedPrimary := storePrimary
-	selectedPrimary.AuthState = &model.ProviderAuthState{
-		ProviderID: primaryID,
-		Status:     model.ProviderAuthStatusActive,
-	}
-	fallbackProvider := &model.Provider{
-		ID:       fallbackID,
-		Name:     "Retry Auth Fallback",
-		APIKey:   "fallback-key",
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   fallbackID,
+		Name: "Retry Auth Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: fallbackID, APIType: "claude", BaseURL: fallbackServer.URL}},
-	}
+	}, "", "fallback-key")
 
 	store.providers = []model.Provider{storePrimary, *fallbackProvider}
-	store.authStates[primaryID] = &model.ProviderAuthState{
-		ProviderID: primaryID,
-		Status:     model.ProviderAuthStatusActive,
-	}
 
 	mockSel := &mockSelector{
 		selectWithMetadataFunc: func(_ context.Context, req *model.SelectRequest) (*selectResult, error) {
@@ -91,7 +81,8 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 		reserveSameProviderDispatch: func(_ context.Context, current providerLease, _ *model.SelectRequest) (sameProviderDispatchPermit, error) {
 			store.mu.Lock()
 			defer store.mu.Unlock()
-			if state := store.authStates[primaryID]; state == nil || state.Status != model.ProviderAuthStatusActive {
+			credential, exists := store.providers[0].CredentialSessionForAPIType("claude")
+			if !exists || credential.AuthState.Status != credentialsession.AuthStatusActive {
 				return nil, internal.ErrNoProvider
 			}
 			return newLocalSameProviderDispatchPermit(current.Provider(), current), nil
@@ -174,23 +165,23 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 	}))
 	defer fallbackServer.Close()
 
-	primaryProvider := &model.Provider{
-		ID:         primaryID,
-		Name:       "Retry Policy Primary",
-		APIKey:     "primary-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   primaryID,
+		Name: "Retry Policy Primary",
+
 		AuthMode:   "bearer",
 		Enabled:    true,
 		MaxRetries: 1,
 		APITypes:   []model.ProviderAPIType{{ProviderID: primaryID, APIType: "claude", BaseURL: primaryServer.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       fallbackID,
-		Name:     "Retry Policy Fallback",
-		APIKey:   "fallback-key",
+	}, "", "primary-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   fallbackID,
+		Name: "Retry Policy Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: fallbackID, APIType: "claude", BaseURL: fallbackServer.URL}},
-	}
+	}, "", "fallback-key")
 
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -343,40 +344,21 @@ func TestSelectProviderFallback_FiltersByRoutingPolicyAndAuthState(t *testing.T)
 	blockedGroup := "g-blocked"
 
 	store := newMockStore()
+	allowed := withTestStaticCredential(model.Provider{
+		ID: "p-allowed", Name: "Allowed Provider", Enabled: true, GroupID: &allowedGroup,
+		APITypes: []model.ProviderAPIType{{ProviderID: "p-allowed", APIType: "codex", BaseURL: "https://allowed.example"}},
+	}, "codex", "allowed-key")
+	reauth := withTestStaticCredential(model.Provider{
+		ID: "p-reauth", Name: "Reauth Provider", Enabled: true, GroupID: &allowedGroup,
+		APITypes: []model.ProviderAPIType{{ProviderID: "p-reauth", APIType: "codex", BaseURL: "https://reauth.example"}},
+	}, "codex", "reauth-key")
+	reauth.CredentialSessions[0].Credential.AuthState.Status = credentialsession.AuthStatusReauthRequired
+	outside := withTestStaticCredential(model.Provider{
+		ID: "p-outside", Name: "Outside Policy Provider", Enabled: true, GroupID: &blockedGroup,
+		APITypes: []model.ProviderAPIType{{ProviderID: "p-outside", APIType: "codex", BaseURL: "https://outside.example"}},
+	}, "codex", "outside-key")
 	store.providers = []model.Provider{
-		{
-			ID:       "p-allowed",
-			Name:     "Allowed Provider",
-			Enabled:  true,
-			GroupID:  &allowedGroup,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p-allowed", APIType: "codex"}},
-		},
-		{
-			ID:       "p-reauth",
-			Name:     "Reauth Provider",
-			Enabled:  true,
-			GroupID:  &allowedGroup,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p-reauth", APIType: "codex"}},
-		},
-		{
-			ID:       "p-outside",
-			Name:     "Outside Policy Provider",
-			Enabled:  true,
-			GroupID:  &blockedGroup,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p-outside", APIType: "codex"}},
-		},
-	}
-	store.authStates["p-allowed"] = &model.ProviderAuthState{
-		ProviderID: "p-allowed",
-		Status:     model.ProviderAuthStatusActive,
-	}
-	store.authStates["p-reauth"] = &model.ProviderAuthState{
-		ProviderID: "p-reauth",
-		Status:     model.ProviderAuthStatusReauthRequired,
-	}
-	store.authStates["p-outside"] = &model.ProviderAuthState{
-		ProviderID: "p-outside",
-		Status:     model.ProviderAuthStatusActive,
+		allowed, reauth, outside,
 	}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
@@ -408,28 +390,20 @@ func TestSelectProviderFallback_FiltersByRoutingPolicyAndAuthState(t *testing.T)
 func TestSelectProviderFallback_ExactProviderRuleFiltersCandidates(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
+		withTestStaticCredential(model.Provider{
 			ID:       "p-other",
 			Name:     "Other Provider",
 			Enabled:  true,
 			Priority: 0,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p-other", APIType: "codex"}},
-		},
-		{
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-other", APIType: "codex", BaseURL: "https://other.example"}},
+		}, "codex", "other-key"),
+		withTestStaticCredential(model.Provider{
 			ID:       "p-exact",
 			Name:     "Exact Provider",
 			Enabled:  true,
 			Priority: 10,
-			APITypes: []model.ProviderAPIType{{ProviderID: "p-exact", APIType: "codex"}},
-		},
-	}
-	store.authStates["p-other"] = &model.ProviderAuthState{
-		ProviderID: "p-other",
-		Status:     model.ProviderAuthStatusActive,
-	}
-	store.authStates["p-exact"] = &model.ProviderAuthState{
-		ProviderID: "p-exact",
-		Status:     model.ProviderAuthStatusActive,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p-exact", APIType: "codex", BaseURL: "https://exact.example"}},
+		}, "codex", "exact-key"),
 	}
 	store.routingPolicies = []model.RoutingPolicy{
 		{
@@ -462,9 +436,9 @@ func TestSelectProviderFallback_ExactProviderRuleFiltersCandidates(t *testing.T)
 func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
-		{ID: "p3", Name: "Provider 3", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p3", APIType: "claude"}}},
+		withTestStaticCredential(model.Provider{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://p1.example"}}}, "claude", "p1-key"),
+		withTestStaticCredential(model.Provider{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: "https://p2.example"}}}, "claude", "p2-key"),
+		withTestStaticCredential(model.Provider{ID: "p3", Name: "Provider 3", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p3", APIType: "claude", BaseURL: "https://p3.example"}}}, "claude", "p3-key"),
 	}
 	logger := zap.NewNop()
 
@@ -500,8 +474,8 @@ func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 func TestSelectProviderFallback_AttemptOffset(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
-		{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
+		withTestStaticCredential(model.Provider{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://p1.example"}}}, "claude", "p1-key"),
+		withTestStaticCredential(model.Provider{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: "https://p2.example"}}}, "claude", "p2-key"),
 	}
 	logger := zap.NewNop()
 

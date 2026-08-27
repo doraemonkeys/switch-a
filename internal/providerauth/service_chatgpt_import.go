@@ -118,6 +118,6 @@ func (s *Service) ImportChatGPTLogin(ctx context.Context, rawAuthData string) (*
 	return &ChatGPTLoginStatusResponse{
 		LoginID: loginID,
 		Status:  ChatGPTLoginStatusCompleted,
-		Auth:    buildChatGPTAuthViewFromCredential(credential),
+		Auth:    chatGPTCredentialAuthView(credential),
 	}, nil
 }

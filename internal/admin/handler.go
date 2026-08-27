@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
 	adminproviderimport "github.com/doraemonkeys/switch-a/internal/admin/providerimport"
 	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
+	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
@@ -28,8 +30,8 @@ type Store interface {
 	// Provider operations
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (*model.Provider, error)
-	CreateProvider(ctx context.Context, p *model.Provider, options ...store.ProviderWriteOptions) error
-	UpdateProvider(ctx context.Context, p *model.Provider, options ...store.ProviderWriteOptions) error
+	CreateProvider(ctx context.Context, p *model.Provider) error
+	UpdateProvider(ctx context.Context, p *model.Provider) error
 	DeleteProvider(ctx context.Context, id string) error
 
 	// Routing policy operations
@@ -93,15 +95,23 @@ type ProviderAuthService interface {
 	StartChatGPTLogin() (*providerauth.ChatGPTLoginStartResponse, error)
 	GetChatGPTLoginStatus(loginID string) (*providerauth.ChatGPTLoginStatusResponse, error)
 	ImportChatGPTLogin(ctx context.Context, rawAuthData string) (*providerauth.ChatGPTLoginStatusResponse, error)
-	ApplyChatGPTLogin(provider *model.Provider, loginID string) error
-	FinalizeChatGPTLogin(loginID string) error
-	BuildProviderAuthView(provider *model.Provider) *providerauth.ProviderAuthView
-	RefreshProviderCredentials(ctx context.Context, provider *model.Provider) (bool, error)
-	RefreshProviderUsage(ctx context.Context, provider *model.Provider) (bool, error)
 }
 
 type ProviderImportService = adminproviderimport.DraftService
 type ProviderImportStore = adminproviderimport.Store
+
+// CodexFeatureValidator is defined at the admin consumer boundary so the
+// control plane can prove startup/keyring capabilities without owning them.
+type CodexFeatureValidator interface {
+	ValidateCodexFeatures(ctx context.Context, snapshot codexstartup.Snapshot) error
+}
+
+// CodexFeaturePublisher is intentionally a second, optional capability. A
+// validator may support previews without owning runtime state; production
+// composition publishes only after the durable write succeeds.
+type CodexFeaturePublisher interface {
+	PublishCodexFeatures(snapshot codexstartup.Snapshot) error
+}
 
 // Handler handles admin API requests.
 type Handler struct {
@@ -114,6 +124,8 @@ type Handler struct {
 	providerImportHandler *adminproviderimport.Handler
 	internalErrorRules    *adminerrorruleapi.Handler
 	statsWindowResolver   *analyticswindow.Resolver
+	codexFeatureValidator CodexFeatureValidator
+	configMutationMu      sync.Mutex
 	logger                *zap.Logger
 }
 
@@ -129,6 +141,7 @@ type Config struct {
 	ProviderImportStore ProviderImportStore
 	InternalErrorRules  *adminerrorruleapi.Handler
 	StatsWindowResolver *analyticswindow.Resolver
+	CodexFeatures       CodexFeatureValidator
 	Logger              *zap.Logger
 }
 
@@ -139,15 +152,16 @@ func NewHandler(cfg Config) *Handler {
 		cfg.StatsWindowResolver = &resolver
 	}
 	handler := &Handler{
-		store:               cfg.Store,
-		health:              cfg.Health,
-		concurrency:         cfg.Concurrency,
-		providerLifecycles:  cfg.ProviderLifecycles,
-		activeReqList:       cfg.ActiveReqList,
-		auth:                cfg.Auth,
-		internalErrorRules:  cfg.InternalErrorRules,
-		statsWindowResolver: cfg.StatsWindowResolver,
-		logger:              cfg.Logger,
+		store:                 cfg.Store,
+		health:                cfg.Health,
+		concurrency:           cfg.Concurrency,
+		providerLifecycles:    cfg.ProviderLifecycles,
+		activeReqList:         cfg.ActiveReqList,
+		auth:                  cfg.Auth,
+		internalErrorRules:    cfg.InternalErrorRules,
+		statsWindowResolver:   cfg.StatsWindowResolver,
+		codexFeatureValidator: cfg.CodexFeatures,
+		logger:                cfg.Logger,
 	}
 	handler.providerImportHandler = adminproviderimport.NewHandler(adminproviderimport.Config{
 		ProviderCatalog: cfg.Store,

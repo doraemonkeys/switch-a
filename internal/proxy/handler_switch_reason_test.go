@@ -52,26 +52,26 @@ func TestHandler_RecordsSwitchReasonInAttempts(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:         "p1",
-			Name:       "Provider 1",
-			APIKey:     "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
-			MaxRetries: 1, // Allow 1 retry (2 attempts total)
+			MaxRetries: 1,
 			Priority:   1,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
-		{
-			ID:         "p2",
-			Name:       "Provider 2",
-			APIKey:     "key2",
+		}, "", "key1"),
+		withTestStaticCredential(model.Provider{
+			ID:   "p2",
+			Name: "Provider 2",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			MaxRetries: 0,
-			Priority:   0, // Lower priority, used after p1 exhausted
+			Priority:   0,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "key2"),
 	}
 
 	handler := NewHandler(Config{
@@ -152,26 +152,26 @@ func TestHandler_RecordsPermanentErrorSwitchReason(t *testing.T) {
 
 			store := newMockStore()
 			store.providers = []model.Provider{
-				{
-					ID:         "p1",
-					Name:       "Provider 1",
-					APIKey:     "key1",
+				withTestStaticCredential(model.Provider{
+					ID:   "p1",
+					Name: "Provider 1",
+
 					AuthMode:   "bearer",
 					Enabled:    true,
-					MaxRetries: 2, // Even with retries, permanent error should switch immediately
+					MaxRetries: 2,
 					Priority:   1,
 					APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-				},
-				{
-					ID:         "p2",
-					Name:       "Provider 2",
-					APIKey:     "key2",
+				}, "", "key1"),
+				withTestStaticCredential(model.Provider{
+					ID:   "p2",
+					Name: "Provider 2",
+
 					AuthMode:   "bearer",
 					Enabled:    true,
 					MaxRetries: 0,
 					Priority:   0,
 					APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
-				},
+				}, "", "key2"),
 			}
 
 			handler := NewHandler(Config{
@@ -231,27 +231,27 @@ func TestHandler_RecordsUsageLimitSwitchReasonAndSuspendsConfiguredProvider(t *t
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:               "p1",
-			Name:             "Provider 1",
-			APIKey:           "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:         "bearer",
 			UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend,
 			Enabled:          true,
 			MaxRetries:       2,
 			Priority:         1,
 			APITypes:         []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
-		{
-			ID:         "p2",
-			Name:       "Provider 2",
-			APIKey:     "key2",
+		}, "", "key1"),
+		withTestStaticCredential(model.Provider{
+			ID:   "p2",
+			Name: "Provider 2",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			MaxRetries: 0,
 			Priority:   0,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "key2"),
 	}
 	healthMgr := newMockHealthManager()
 	healthMgr.availableProviders["p1"] = true
@@ -318,26 +318,26 @@ func TestHandler_RecordsUsageLimitSwitchReasonWithoutSuspendingSwitchOnlyProvide
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:         "p1",
-			Name:       "Provider 1",
-			APIKey:     "key1",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Provider 1",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			MaxRetries: 2,
 			Priority:   1,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
-		{
-			ID:         "p2",
-			Name:       "Provider 2",
-			APIKey:     "key2",
+		}, "", "key1"),
+		withTestStaticCredential(model.Provider{
+			ID:   "p2",
+			Name: "Provider 2",
+
 			AuthMode:   "bearer",
 			Enabled:    true,
 			MaxRetries: 0,
 			Priority:   0,
 			APITypes:   []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "key2"),
 	}
 	healthMgr := newMockHealthManager()
 	healthMgr.availableProviders["p1"] = true

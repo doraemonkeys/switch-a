@@ -7,6 +7,7 @@ import {
   CircuitBreakerSection,
   TimeoutSettingsSection,
   RequestLimitsSection,
+  CodexFeaturesSection,
   OtherSettingsSection,
   ConfigFormActions,
 } from "./ConfigFormSections";
@@ -139,6 +140,11 @@ export function ConfigForm({
           getDefault={getDefault}
         />
         <RequestLimitsSection
+          getValue={getValue}
+          handleChange={handleChange}
+          getDefault={getDefault}
+        />
+        <CodexFeaturesSection
           getValue={getValue}
           handleChange={handleChange}
           getDefault={getDefault}

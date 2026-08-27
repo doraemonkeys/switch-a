@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 
@@ -483,10 +484,7 @@ func TestApplyWebSocketHealthOutcome_UsageLimitHandshakeSuspendsProvider(t *test
 		Logger: zap.NewNop(),
 		Health: healthMgr,
 	})
-	provider := &model.Provider{
-		ID:             "ws-p1",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-	}
+	provider := &model.Provider{ID: "ws-p1", UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend}
 
 	observedAt := time.Date(2026, time.March, 26, 12, 0, 0, 0, time.UTC)
 	bodyReset := observedAt.Add(5 * time.Minute)
@@ -547,10 +545,7 @@ func TestApplyWebSocketHealthOutcome_UsageLimitSemanticErrorSuspendsProvider(t *
 		Logger: zap.NewNop(),
 		Health: healthMgr,
 	})
-	provider := &model.Provider{
-		ID:             "ws-p1",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-	}
+	provider := &model.Provider{ID: "ws-p1", UsageLimitPolicy: model.ProviderUsageLimitPolicySuspend}
 
 	observedAt := time.Date(2026, time.March, 26, 14, 0, 0, 0, time.UTC)
 	resetAt := observedAt.Add(40 * time.Minute).Truncate(time.Second)
@@ -602,10 +597,7 @@ func TestApplyWebSocketHealthOutcome_UsageLimitSemanticErrorSwitchOnlyDoesNotSus
 		Logger: zap.NewNop(),
 		Health: healthMgr,
 	})
-	provider := &model.Provider{
-		ID:             "ws-p1",
-		CredentialType: model.ProviderCredentialTypeAPIKey,
-	}
+	provider := &model.Provider{ID: "ws-p1", UsageLimitPolicy: model.ProviderUsageLimitPolicySwitchProvider}
 
 	observedAt := time.Date(2026, time.March, 26, 14, 0, 0, 0, time.UTC)
 	resetAt := observedAt.Add(40 * time.Minute).Truncate(time.Second)
@@ -788,9 +780,14 @@ func TestPrepareWebSocketDialHeaders_ManagedAuthErrorAndLogHelpers(t *testing.T)
 
 	req := httptest.NewRequest(http.MethodGet, "http://proxy.test/v1/realtime?model=gpt-5.4", nil)
 	provider := &model.Provider{
-		ID:             "ws-chatgpt-invalid",
-		AuthMode:       "bearer",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
+		ID:       "ws-chatgpt-invalid",
+		AuthMode: "bearer",
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "ws-chatgpt-invalid",
+			APIType:    APITypeCodex,
+			BaseURL:    "https://provider.example",
+		}},
+		CredentialSessions: testCredentialSessions("ws-chatgpt-invalid", APITypeCodex, credentialsession.KindChatGPT, "invalid"),
 	}
 
 	headers, err := handler.prepareWebSocketDialHeaders(context.Background(), req, provider, APITypeCodex, "bearer")

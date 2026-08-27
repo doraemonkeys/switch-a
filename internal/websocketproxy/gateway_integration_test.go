@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"github.com/coder/websocket"
@@ -51,9 +54,10 @@ func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{{
-		ID: providerID, Name: "Gateway Integration Provider", APIKey: "provider-secret",
+		ID: providerID, Name: "Gateway Integration Provider",
 		AuthMode: "bearer", Enabled: true,
-		APITypes: []model.ProviderAPIType{{ProviderID: providerID, APIType: APITypeCodex, BaseURL: upstream.URL}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: providerID, APIType: APITypeCodex, BaseURL: upstream.URL}},
+		CredentialSessions: testCredentialSessions(providerID, APITypeCodex, credentialsession.KindAPIKey, "provider-secret"),
 	}}
 	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -115,14 +119,17 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 		clientData   = `{"type":"response.create","response":{"model":"gpt-5"}}`
 		semanticData = `{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`
 		fallbackData = `{"type":"response.created","provider":"fallback"}`
+		subprotocol  = "realtime.v1"
 	)
+	primaryProtocol := make(chan string, 1)
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		connection, err := websocket.Accept(w, request, nil)
+		connection, err := websocket.Accept(w, request, &websocket.AcceptOptions{Subprotocols: []string{subprotocol}})
 		if err != nil {
 			t.Errorf("accept primary websocket: %v", err)
 			return
 		}
 		defer connection.CloseNow()
+		primaryProtocol <- connection.Subprotocol()
 		if _, _, err := connection.Read(request.Context()); err != nil {
 			t.Errorf("read primary client frame: %v", err)
 			return
@@ -132,13 +139,18 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 		}
 	}))
 	defer primary.Close()
+	fallbackProtocol := make(chan string, 1)
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		connection, err := websocket.Accept(w, request, nil)
+		if got := request.Header.Get("Sec-WebSocket-Protocol"); got != subprotocol {
+			t.Errorf("replacement offer = %q, want fixed %q", got, subprotocol)
+		}
+		connection, err := websocket.Accept(w, request, &websocket.AcceptOptions{Subprotocols: []string{subprotocol}})
 		if err != nil {
 			t.Errorf("accept fallback websocket: %v", err)
 			return
 		}
 		defer connection.CloseNow()
+		fallbackProtocol <- connection.Subprotocol()
 		messageType, payload, err := connection.Read(request.Context())
 		if err != nil {
 			t.Errorf("read replayed client frame: %v", err)
@@ -158,8 +170,8 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "primary", APIKey: "primary-key", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL}}},
-		{ID: "fallback", APIKey: "fallback-key", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL}}},
+		{ID: "primary", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL}}, CredentialSessions: testCredentialSessions("primary", APITypeCodex, credentialsession.KindAPIKey, "primary-key")},
+		{ID: "fallback", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL}}, CredentialSessions: testCredentialSessions("fallback", APITypeCodex, credentialsession.KindAPIKey, "fallback-key")},
 	}
 	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 3}, "semantic-replacement")
@@ -167,9 +179,14 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", nil)
+	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", &websocket.DialOptions{
+		Subprotocols: []string{"realtime.v2", subprotocol},
+	})
 	if err != nil {
 		t.Fatalf("dial gateway websocket: %v", err)
+	}
+	if got := connection.Subprotocol(); got != subprotocol {
+		t.Fatalf("downstream Subprotocol() = %q, want %q", got, subprotocol)
 	}
 	if err := connection.Write(ctx, websocket.MessageText, []byte(clientData)); err != nil {
 		t.Fatalf("write client frame: %v", err)
@@ -180,6 +197,12 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 	}
 	if messageType != websocket.MessageText || string(payload) != fallbackData {
 		t.Fatalf("client-visible frame = (%v, %q), want fallback response", messageType, payload)
+	}
+	if got := <-primaryProtocol; got != subprotocol {
+		t.Fatalf("primary Subprotocol() = %q, want %q", got, subprotocol)
+	}
+	if got := <-fallbackProtocol; got != subprotocol {
+		t.Fatalf("fallback Subprotocol() = %q, want %q", got, subprotocol)
 	}
 	_, _, _ = connection.Read(ctx)
 	_ = connection.CloseNow()
@@ -214,8 +237,8 @@ func TestGateway_ReplacesProviderConfigurationFailureBeforeUpgrade(t *testing.T)
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "misconfigured", APIKey: "key", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "misconfigured", APIType: APITypeCodex}}},
-		{ID: "ready", APIKey: "key", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "ready", APIType: APITypeCodex, BaseURL: ready.URL}}},
+		{ID: "misconfigured", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "misconfigured", APIType: APITypeCodex}}, CredentialSessions: testCredentialSessions("misconfigured", APITypeCodex, credentialsession.KindAPIKey, "key")},
+		{ID: "ready", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "ready", APIType: APITypeCodex, BaseURL: ready.URL}}, CredentialSessions: testCredentialSessions("ready", APITypeCodex, credentialsession.KindAPIKey, "key")},
 	}
 	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 2}, "configuration-replacement")
@@ -247,39 +270,48 @@ type rotatingGatewayAuthenticator struct {
 func (auth *rotatingGatewayAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	_ *model.Provider,
+	_ codexidentity.CandidateSnapshot,
 	_, _ string,
 	_ *http.Request,
-) error {
+	_ *url.URL,
+) (codexidentity.AppliedIdentity, error) {
 	token := "initial-token"
 	if auth.refreshed.Load() {
 		token = "refreshed-token"
 	}
 	headers.Set("Authorization", "Bearer "+token)
-	return nil
+	return codexidentity.AppliedIdentity{}, nil
 }
 
-func (auth *rotatingGatewayAuthenticator) RefreshProviderCredentials(context.Context, *model.Provider) (bool, error) {
+func (auth *rotatingGatewayAuthenticator) RefreshCredentialSession(context.Context, credentialsession.Snapshot) (bool, error) {
 	auth.refreshCalls.Add(1)
 	auth.refreshed.Store(true)
 	return true, nil
 }
 
 func TestGateway_RetriesSameManagedProviderAfterUnauthorizedHandshake(t *testing.T) {
-	const responseData = `{"type":"response.created","provider":"refreshed"}`
+	const (
+		responseData = `{"type":"response.created","provider":"refreshed"}`
+		subprotocol  = "realtime.v1"
+	)
 	var upstreamCalls atomic.Int32
+	upstreamOffers := make(chan string, 2)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		upstreamCalls.Add(1)
+		upstreamOffers <- request.Header.Get("Sec-WebSocket-Protocol")
 		if request.Header.Get("Authorization") == "Bearer initial-token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		connection, err := websocket.Accept(w, request, nil)
+		connection, err := websocket.Accept(w, request, &websocket.AcceptOptions{Subprotocols: []string{subprotocol}})
 		if err != nil {
 			t.Errorf("accept refreshed websocket: %v", err)
 			return
 		}
 		defer connection.CloseNow()
+		if got := connection.Subprotocol(); got != subprotocol {
+			t.Errorf("upstream Subprotocol() = %q, want %q", got, subprotocol)
+		}
 		if _, _, err := connection.Read(request.Context()); err != nil {
 			t.Errorf("read client frame: %v", err)
 			return
@@ -294,9 +326,10 @@ func TestGateway_RetriesSameManagedProviderAfterUnauthorizedHandshake(t *testing
 
 	store := newMockStore()
 	store.providers = []model.Provider{{
-		ID: "managed", Enabled: true, CredentialType: model.ProviderCredentialTypeChatGPT,
-		AuthState: &model.ProviderAuthState{ProviderID: "managed", Status: model.ProviderAuthStatusActive},
-		APITypes:  []model.ProviderAPIType{{ProviderID: "managed", APIType: APITypeCodex, BaseURL: upstream.URL}},
+		ID:                 "managed",
+		Enabled:            true,
+		APITypes:           []model.ProviderAPIType{{ProviderID: "managed", APIType: APITypeCodex, BaseURL: upstream.URL}},
+		CredentialSessions: testCredentialSessions("managed", APITypeCodex, credentialsession.KindChatGPT, `{"access_token":"initial-token"}`),
 	}}
 	auth := &rotatingGatewayAuthenticator{}
 	gateway := NewGateway(Config{Store: store, Auth: auth, Logger: zaptest.NewLogger(t)})
@@ -305,9 +338,14 @@ func TestGateway_RetriesSameManagedProviderAfterUnauthorizedHandshake(t *testing
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", nil)
+	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", &websocket.DialOptions{
+		Subprotocols: []string{"realtime.v2", subprotocol},
+	})
 	if err != nil {
 		t.Fatalf("dial gateway websocket: %v", err)
+	}
+	if got := connection.Subprotocol(); got != subprotocol {
+		t.Fatalf("downstream Subprotocol() = %q, want %q", got, subprotocol)
 	}
 	if err := connection.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create"}`)); err != nil {
 		t.Fatalf("write client frame: %v", err)
@@ -321,6 +359,11 @@ func TestGateway_RetriesSameManagedProviderAfterUnauthorizedHandshake(t *testing
 	waitFor(t, func() bool { return store.LastLog() != nil }, testPollTimeout)
 	if auth.refreshCalls.Load() != 1 || upstreamCalls.Load() != 2 {
 		t.Fatalf("refresh calls = %d, upstream calls = %d, want 1/2", auth.refreshCalls.Load(), upstreamCalls.Load())
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if got := <-upstreamOffers; got != "realtime.v2,"+subprotocol {
+			t.Fatalf("dial %d offer = %q, want full client offer", attempt+1, got)
+		}
 	}
 }
 

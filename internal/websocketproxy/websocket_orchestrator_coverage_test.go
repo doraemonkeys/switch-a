@@ -5,11 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -279,31 +282,39 @@ func TestWebSocketProviderPreparationRetainsKnownCaptureTarget(t *testing.T) {
 		captureParticipates: true,
 	}
 
-	_, _, code, err := orchestrator.prepareProviderAttempt(context.Background(), request, &model.Provider{ID: "no-base"})
+	noBase := &model.Provider{ID: "no-base"}
+	_, code, err := orchestrator.prepareProviderAttempt(
+		context.Background(), request, noBase, orchestrator.handler.newFallbackProviderLease(noBase, APITypeCodex),
+	)
 	if err == nil || code != requestcapture.FailureCodeMissingBaseURL {
 		t.Fatalf("missing base URL preparation = code:%q error:%v", code, err)
 	}
 
 	missingKey := model.Provider{
-		ID:       "missing-key",
-		APITypes: []model.ProviderAPIType{{ProviderID: "missing-key", APIType: APITypeCodex, BaseURL: "https://provider.example"}},
+		ID:                 "missing-key",
+		APITypes:           []model.ProviderAPIType{{ProviderID: "missing-key", APIType: APITypeCodex, BaseURL: "https://provider.example"}},
+		CredentialSessions: testCredentialSessions("missing-key", APITypeCodex, credentialsession.KindAPIKey, ""),
 	}
-	upstreamURL, _, code, err := orchestrator.prepareProviderAttempt(context.Background(), request, &missingKey)
+	preparedMissingKey, code, err := orchestrator.prepareProviderAttempt(
+		context.Background(), request, &missingKey, orchestrator.handler.newFallbackProviderLease(&missingKey, APITypeCodex),
+	)
 	if err == nil || code != requestcapture.FailureCodeMissingAPIKey {
-		t.Fatalf("missing key preparation = URL:%q code:%q error:%v", upstreamURL, code, err)
+		t.Fatalf("missing key preparation = URL:%q code:%q error:%v", preparedMissingKey.upstreamURL, code, err)
 	}
-	if !strings.HasPrefix(upstreamURL, "wss://provider.example/") || !strings.Contains(upstreamURL, "trace=1") {
-		t.Fatalf("known diagnostic target = %q", upstreamURL)
+	if !strings.HasPrefix(preparedMissingKey.upstreamURL, "wss://provider.example/") || !strings.Contains(preparedMissingKey.upstreamURL, "trace=1") {
+		t.Fatalf("known diagnostic target = %q", preparedMissingKey.upstreamURL)
 	}
 
 	applyErr := errors.New("credential application failed")
 	provider := routingTestProvider("credential-error")
 	orchestrator.handler.auth = &orchestratorCoverageAuthenticator{applyErr: applyErr}
-	upstreamURL, headers, code, err := orchestrator.prepareProviderAttempt(context.Background(), request, &provider)
-	if !errors.Is(err, applyErr) || code != requestcapture.FailureCodeCredentialApply || upstreamURL == "" {
-		t.Fatalf("credential preparation = URL:%q code:%q error:%v", upstreamURL, code, err)
+	preparedCredentialError, code, err := orchestrator.prepareProviderAttempt(
+		context.Background(), request, &provider, orchestrator.handler.newFallbackProviderLease(&provider, APITypeCodex),
+	)
+	if !errors.Is(err, applyErr) || code != requestcapture.FailureCodeCredentialApply || preparedCredentialError.upstreamURL == "" {
+		t.Fatalf("credential preparation = URL:%q code:%q error:%v", preparedCredentialError.upstreamURL, code, err)
 	}
-	if got := headers.Get("Authorization"); got != "Bearer coverage-token" {
+	if got := preparedCredentialError.headers.Get("Authorization"); got != "Bearer coverage-token" {
 		t.Fatalf("partial sanitized header context = %q", got)
 	}
 
@@ -340,16 +351,17 @@ type orchestratorCoverageAuthenticator struct {
 func (a *orchestratorCoverageAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	_ *model.Provider,
+	_ codexidentity.CandidateSnapshot,
 	_, _ string,
 	_ *http.Request,
-) error {
+	_ *url.URL,
+) (codexidentity.AppliedIdentity, error) {
 	a.applies++
 	headers.Set("Authorization", "Bearer coverage-token")
-	return a.applyErr
+	return codexidentity.AppliedIdentity{}, a.applyErr
 }
 
-func (a *orchestratorCoverageAuthenticator) RefreshProviderCredentials(context.Context, *model.Provider) (bool, error) {
+func (a *orchestratorCoverageAuthenticator) RefreshCredentialSession(context.Context, credentialsession.Snapshot) (bool, error) {
 	a.refreshes++
 	return a.refresh, a.refreshErr
 }
@@ -357,6 +369,7 @@ func (a *orchestratorCoverageAuthenticator) RefreshProviderCredentials(context.C
 func TestWebSocketCredentialRecoveryKeepsOneProviderAttempt(t *testing.T) {
 	provider := routingTestProvider("recoverable")
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
+	prepared := testPreparedProviderAttempt(t, &provider, APITypeCodex, "wss://provider.example/responses")
 
 	newOrchestrator := func(auth ProviderAuthenticator, dialer WebSocketDialer) *WebSocketSessionOrchestrator {
 		return &WebSocketSessionOrchestrator{
@@ -377,7 +390,7 @@ func TestWebSocketCredentialRecoveryKeepsOneProviderAttempt(t *testing.T) {
 		auth := &orchestratorCoverageAuthenticator{}
 		orchestrator := newOrchestrator(auth, nil)
 		exchange, attempt, recovered := orchestrator.recoverUnauthorizedSameProvider(
-			context.Background(), request, &provider, "wss://provider.example/responses", 0,
+			context.Background(), request, &provider, prepared, 0,
 			providerSwitchModeInitial, selector.SelectionMetadata{}, time.Now(),
 		)
 		if recovered || exchange.Conn != nil || attempt.Result != nil || auth.refreshes != 1 || auth.applies != 0 {
@@ -390,7 +403,7 @@ func TestWebSocketCredentialRecoveryKeepsOneProviderAttempt(t *testing.T) {
 		auth := &orchestratorCoverageAuthenticator{refresh: true, refreshErr: refreshErr}
 		orchestrator := newOrchestrator(auth, nil)
 		_, _, recovered := orchestrator.recoverUnauthorizedSameProvider(
-			context.Background(), request, &provider, "wss://provider.example/responses", 0,
+			context.Background(), request, &provider, prepared, 0,
 			providerSwitchModeInitial, selector.SelectionMetadata{}, time.Now(),
 		)
 		if recovered || auth.refreshes != 1 || auth.applies != 0 {
@@ -408,7 +421,7 @@ func TestWebSocketCredentialRecoveryKeepsOneProviderAttempt(t *testing.T) {
 		orchestrator.captureParticipates = true
 
 		exchange, attempt, recovered := orchestrator.recoverUnauthorizedSameProvider(
-			context.Background(), request, &provider, "wss://provider.example/responses", 2,
+			context.Background(), request, &provider, prepared, 2,
 			providerSwitchModeReplacement, selector.SelectionMetadata{Source: selector.SelectionSourceStrategy}, time.Now(),
 		)
 		if !recovered || exchange.Conn != nil || !attempt.RecoveryAttempted || attempt.Result == nil || attempt.Result.TerminalCause != model.TerminalProviderConfigurationError {
@@ -434,7 +447,7 @@ func TestWebSocketCredentialRecoveryKeepsOneProviderAttempt(t *testing.T) {
 		resolution := orchestrator.resolveRejectedProviderDial(
 			context.Background(), request, &provider,
 			DialExchange{HandshakeStatusCode: http.StatusUnauthorized, Err: errors.New("unauthorized")},
-			"wss://provider.example/responses", 0, providerSwitchModeInitial,
+			prepared, 0, providerSwitchModeInitial,
 			selector.SelectionMetadata{}, time.Now(),
 		)
 		if resolution.accepted || !resolution.terminalAttempt.RecoveryAttempted || resolution.terminalAttempt.Result == nil {
@@ -451,7 +464,7 @@ func TestWebSocketCredentialRecoveryKeepsOneProviderAttempt(t *testing.T) {
 		resolution := orchestrator.resolveRejectedProviderDial(
 			context.Background(), request, &provider,
 			DialExchange{HandshakeStatusCode: http.StatusForbidden, Err: errors.New("forbidden")},
-			"wss://provider.example/responses", 0, providerSwitchModeInitial,
+			prepared, 0, providerSwitchModeInitial,
 			selector.SelectionMetadata{}, time.Now(),
 		)
 		if resolution.accepted || resolution.terminalAttempt.Result == nil || auth.refreshes != 0 {
@@ -495,7 +508,7 @@ func TestWebSocketPreVisibleRecoveryGuardsUnsafeTransitions(t *testing.T) {
 		}
 	})
 
-	t.Run("post-visible failover requires provider scope and continuity", func(t *testing.T) {
+	t.Run("post-visible routing is pinned", func(t *testing.T) {
 		switchable := &WebSocketUpstreamError{
 			EventType:  "auth_error",
 			Code:       "invalid_api_key",
@@ -520,21 +533,14 @@ func TestWebSocketPreVisibleRecoveryGuardsUnsafeTransitions(t *testing.T) {
 			t.Fatal("clean pre-visible close switched provider")
 		}
 
-		visibleAttempt := WebSocketAttemptResult{Result: &WebSocketResult{ClientVisible: true}}
-		if orchestrator.shouldFailoverAfterClientVisible(visibleAttempt) {
-			t.Fatal("visible attempt without semantic error failed over")
-		}
-		visibleAttempt.Result.UpstreamError = nonSwitchable
-		if orchestrator.shouldFailoverAfterClientVisible(visibleAttempt) {
-			t.Fatal("client-scoped semantic error failed over")
-		}
-		visibleAttempt.Result.UpstreamError = switchable
-		if orchestrator.shouldFailoverAfterClientVisible(visibleAttempt) {
-			t.Fatal("visible attempt without continuity failed over")
-		}
-		orchestrator.switchTracker.continuityContext = &model.ProviderContinuityContext{}
-		if !orchestrator.shouldFailoverAfterClientVisible(visibleAttempt) || !orchestrator.shouldSwitchProvider(visibleAttempt) {
-			t.Fatal("provider-scoped visible error with continuity did not fail over")
+		for _, upstreamError := range []*WebSocketUpstreamError{nil, nonSwitchable, switchable} {
+			visibleAttempt := WebSocketAttemptResult{Result: &WebSocketResult{
+				ClientVisible: true, UpstreamError: upstreamError,
+			}}
+			orchestrator.switchTracker.continuityContext = &model.ProviderContinuityContext{}
+			if orchestrator.shouldSwitchProvider(visibleAttempt) {
+				t.Fatal("client-visible route target was handed off")
+			}
 		}
 
 		internalFailure := WebSocketAttemptResult{Result: &WebSocketResult{
@@ -543,10 +549,6 @@ func TestWebSocketPreVisibleRecoveryGuardsUnsafeTransitions(t *testing.T) {
 		}}
 		if orchestrator.shouldFallbackToSuppressedPayload(internalFailure) {
 			t.Fatal("internal failure replayed a suppressed provider payload")
-		}
-		var nilOrchestrator *WebSocketSessionOrchestrator
-		if nilOrchestrator.shouldFailoverAfterClientVisible(visibleAttempt) {
-			t.Fatal("nil orchestrator failed over")
 		}
 	})
 }

@@ -87,8 +87,8 @@ func TestPreviewSub2APIChatGPTImport_RejectsOversizedCredentialSourcesBeforeEnco
 		t.Fatalf("ClaimChatGPTProviderImport returned error: %v", err)
 	}
 	for _, candidate := range candidates {
-		if candidate.Credential != nil || candidate.AuthState != nil {
-			t.Fatalf("oversized candidate retained credential records: %#v", candidate)
+		if candidate.Credential.Kind != "" || candidate.Credential.SecretData != "" {
+			t.Fatalf("oversized candidate retained credential session: %#v", candidate)
 		}
 	}
 }

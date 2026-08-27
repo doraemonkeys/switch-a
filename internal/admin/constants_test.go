@@ -230,43 +230,6 @@ func TestGetAPICatalogReturnsCanonicalProjection(t *testing.T) {
 	}
 }
 
-func TestConfigV4FixtureUsesCanonicalProviderExportShape(t *testing.T) {
-	t.Parallel()
-
-	data, err := os.ReadFile(filepath.Join("..", "..", "contracts", "internal-error", "v1", "config-v4.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Providers []json.RawMessage `json:"providers"`
-	}
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	if len(fixture.Providers) != 1 {
-		t.Fatalf("config fixture has %d providers, want 1", len(fixture.Providers))
-	}
-	var provider ExportedProvider
-	if err := json.Unmarshal(fixture.Providers[0], &provider); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := json.Marshal(provider)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var gotValue any
-	if err := json.Unmarshal(canonical, &gotValue); err != nil {
-		t.Fatal(err)
-	}
-	var wantValue any
-	if err := json.Unmarshal(fixture.Providers[0], &wantValue); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(gotValue, wantValue) {
-		t.Fatalf("provider fixture differs from ExportedProvider encoding\ngot:  %s\nwant: %s", canonical, fixture.Providers[0])
-	}
-}
-
 func TestIsValidConfigKey(t *testing.T) {
 	tests := []struct {
 		key  string

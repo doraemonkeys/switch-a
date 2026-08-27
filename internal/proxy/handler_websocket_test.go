@@ -27,14 +27,14 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "ws-p1",
-			Name:     "WS Provider",
-			APIKey:   "ws-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "ws-p1",
+			Name: "WS Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
+		}, "", "ws-key"),
 	}
 
 	registry := NewActiveRequestRegistry()
@@ -140,22 +140,22 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptReplacement(t
 	fallbackUpstream := newEchoWSServer(t)
 	defer fallbackUpstream.Close()
 
-	initialProvider := &model.Provider{
-		ID:       "ws-sticky-preaccept-p1",
-		Name:     "WS Sticky PreAccept P1",
-		APIKey:   "key-1",
+	initialProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-sticky-preaccept-p1",
+		Name: "WS Sticky PreAccept P1",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-sticky-preaccept-p1", APIType: "codex", BaseURL: initialUpstream.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       "ws-sticky-preaccept-p2",
-		Name:     "WS Sticky PreAccept P2",
-		APIKey:   "key-2",
+	}, "", "key-1")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-sticky-preaccept-p2",
+		Name: "WS Sticky PreAccept P2",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-sticky-preaccept-p2", APIType: "codex", BaseURL: fallbackUpstream.URL}},
-	}
+	}, "", "key-2")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*initialProvider, *fallbackProvider}
@@ -247,14 +247,14 @@ func TestHandler_ServeHTTP_WebSocket_ActiveRegistryTracking(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "reg-p1",
-			Name:     "Registry Provider",
-			APIKey:   "key",
+		withTestStaticCredential(model.Provider{
+			ID:   "reg-p1",
+			Name: "Registry Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "reg-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
+		}, "", "key"),
 	}
 
 	registry := NewActiveRequestRegistry()
@@ -330,14 +330,14 @@ func TestHandler_ServeHTTP_WebSocket_RegularHTTPNotAffected(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "http-p1",
-			Name:     "HTTP Provider",
-			APIKey:   "key",
+		withTestStaticCredential(model.Provider{
+			ID:   "http-p1",
+			Name: "HTTP Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "http-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
+		}, "", "key"),
 	}
 
 	handler := NewHandler(Config{
@@ -367,14 +367,14 @@ func TestHandler_ServeHTTP_WebSocket_WithSelector(t *testing.T) {
 	upstream := newEchoWSServer(t)
 	defer upstream.Close()
 
-	wsProvider := &model.Provider{
-		ID:       "ws-sel-p1",
-		Name:     "WS Selector Provider",
-		APIKey:   "ws-key",
+	wsProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-sel-p1",
+		Name: "WS Selector Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-sel-p1", APIType: "codex", BaseURL: upstream.URL}},
-	}
+	}, "", "ws-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*wsProvider}
@@ -482,14 +482,14 @@ func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModelDimensions(t *
 			}))
 			defer upstream.Close()
 
-			wsProvider := &model.Provider{
-				ID:       "ws-sticky-model-p1",
-				Name:     "WS Sticky Model Provider",
-				APIKey:   "ws-key",
+			wsProvider := withTestStaticCredential(&model.Provider{
+				ID:   "ws-sticky-model-p1",
+				Name: "WS Sticky Model Provider",
+
 				AuthMode: "bearer",
 				Enabled:  true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "ws-sticky-model-p1", APIType: "codex", BaseURL: upstream.URL}},
-			}
+			}, "", "ws-key")
 
 			store := newMockStore()
 			store.providers = []model.Provider{*wsProvider}
@@ -611,22 +611,22 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeCl
 	}))
 	defer fallback.Close()
 
-	primaryProvider := &model.Provider{
-		ID:       "ws-semantic-primary",
-		Name:     "WS Semantic Primary",
-		APIKey:   "primary-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-semantic-primary",
+		Name: "WS Semantic Primary",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-semantic-primary", APIType: "codex", BaseURL: primary.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       "ws-semantic-fallback",
-		Name:     "WS Semantic Fallback",
-		APIKey:   "fallback-key",
+	}, "", "primary-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-semantic-fallback",
+		Name: "WS Semantic Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-semantic-fallback", APIType: "codex", BaseURL: fallback.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
@@ -781,22 +781,22 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 	}))
 	defer primary.Close()
 
-	primaryProvider := &model.Provider{
-		ID:       "ws-semantic-origin",
-		Name:     "WS Semantic Origin",
-		APIKey:   "origin-key",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-semantic-origin",
+		Name: "WS Semantic Origin",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-semantic-origin", APIType: "codex", BaseURL: primary.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       "ws-semantic-broken",
-		Name:     "WS Semantic Broken",
-		APIKey:   "broken-key",
+	}, "", "origin-key")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-semantic-broken",
+		Name: "WS Semantic Broken",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-semantic-broken", APIType: "codex", BaseURL: "https://ws-semantic-broken.invalid"}},
-	}
+	}, "", "broken-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
@@ -939,10 +939,10 @@ func TestHandler_ServeHTTP_WebSocket_SuccessLogHasNoError(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID: "ws-p1", Name: "WS Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+		withTestStaticCredential(model.Provider{
+			ID: "ws-p1", Name: "WS Provider", AuthMode: "bearer", Enabled: true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
+		}, "", "key"),
 	}
 
 	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
@@ -980,10 +980,10 @@ func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID: "ws-p1", Name: "WS Provider", APIKey: "key", AuthMode: "bearer", Enabled: true,
+		withTestStaticCredential(model.Provider{
+			ID: "ws-p1", Name: "WS Provider", AuthMode: "bearer", Enabled: true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "ws-p1", APIType: "codex", BaseURL: upstream.URL}},
-		},
+		}, "", "key"),
 	}
 
 	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})

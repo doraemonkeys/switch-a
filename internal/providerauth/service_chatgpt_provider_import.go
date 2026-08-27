@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 
 	"go.uber.org/zap"
 )
@@ -94,9 +94,9 @@ type ChatGPTProviderImportPreviewItem struct {
 	Warnings    []ChatGPTProviderImportWarning      `json:"warnings"`
 }
 
-// ChatGPTProviderImportCandidate is the server-side commit material. Split
-// credential and auth-state records are cloned on retrieval and excluded from
-// JSON so an accidental handler serialization cannot disclose secrets.
+// ChatGPTProviderImportCandidate is the server-side commit material. The
+// credential session snapshot is cloned on retrieval and excluded from JSON so
+// an accidental handler serialization cannot disclose secrets.
 type ChatGPTProviderImportCandidate struct {
 	CandidateID string
 	SourceIndex int
@@ -104,8 +104,7 @@ type ChatGPTProviderImportCandidate struct {
 	Name        string
 	Concurrency int
 	Priority    int
-	Credential  *model.ProviderCredential                  `json:"-"`
-	AuthState   *model.ProviderAuthState                   `json:"-"`
+	Credential  credentialsession.Snapshot                 `json:"-"`
 	Disposition *ChatGPTProviderImportCandidateDisposition `json:"-"`
 	Warnings    []ChatGPTProviderImportWarning
 }
@@ -114,11 +113,10 @@ type ChatGPTProviderImportCandidate struct {
 // shown in preview. Create IDs remain user-editable, while existing bindings carry
 // the exact provider and credential version that commit must compare-and-swap.
 type ChatGPTProviderImportCandidateDisposition struct {
-	CandidateID                 string
-	State                       ChatGPTProviderImportCandidateState
-	ExpectedProviderID          string
-	ExpectedCredentialVersion   int64
-	ExpectedCredentialCreatedAt time.Time
+	CandidateID               string
+	State                     ChatGPTProviderImportCandidateState
+	ExpectedSessionID         string
+	ExpectedCredentialVersion int64
 }
 
 type stagedChatGPTProviderImport struct {
@@ -272,7 +270,7 @@ func (s *Service) SealChatGPTProviderImportPreview(
 	for _, rawDisposition := range dispositions {
 		disposition := rawDisposition
 		disposition.CandidateID = strings.TrimSpace(disposition.CandidateID)
-		disposition.ExpectedProviderID = strings.TrimSpace(disposition.ExpectedProviderID)
+		disposition.ExpectedSessionID = strings.TrimSpace(disposition.ExpectedSessionID)
 		candidate, exists := candidates[disposition.CandidateID]
 		if !exists {
 			return fmt.Errorf(
@@ -309,9 +307,8 @@ func validateChatGPTProviderImportDisposition(
 ) error {
 	if candidate.State != ChatGPTProviderImportCandidateStateReady {
 		if disposition.State != candidate.State ||
-			disposition.ExpectedProviderID != "" ||
-			disposition.ExpectedCredentialVersion != 0 ||
-			!disposition.ExpectedCredentialCreatedAt.IsZero() {
+			disposition.ExpectedSessionID != "" ||
+			disposition.ExpectedCredentialVersion != 0 {
 			return fmt.Errorf(
 				"%w: blocked candidate %s disposition cannot change",
 				ErrChatGPTProviderImportInvalidCandidate,
@@ -323,9 +320,8 @@ func validateChatGPTProviderImportDisposition(
 
 	switch disposition.State {
 	case ChatGPTProviderImportCandidateStateReady:
-		if disposition.ExpectedProviderID != "" ||
-			disposition.ExpectedCredentialVersion != 0 ||
-			!disposition.ExpectedCredentialCreatedAt.IsZero() {
+		if disposition.ExpectedSessionID != "" ||
+			disposition.ExpectedCredentialVersion != 0 {
 			return fmt.Errorf(
 				"%w: create candidate %s cannot bind an existing provider",
 				ErrChatGPTProviderImportInvalidCandidate,
@@ -333,11 +329,10 @@ func validateChatGPTProviderImportDisposition(
 			)
 		}
 	case ChatGPTProviderImportCandidateStateExisting:
-		if disposition.ExpectedProviderID == "" ||
-			disposition.ExpectedCredentialVersion < 0 ||
-			disposition.ExpectedCredentialCreatedAt.IsZero() {
+		if disposition.ExpectedSessionID == "" ||
+			disposition.ExpectedCredentialVersion < 1 {
 			return fmt.Errorf(
-				"%w: existing candidate %s requires a provider, non-negative credential version, and credential creation time",
+				"%w: existing candidate %s requires a credential session and positive version",
 				ErrChatGPTProviderImportInvalidCandidate,
 				candidate.CandidateID,
 			)
@@ -353,49 +348,57 @@ func validateChatGPTProviderImportDisposition(
 	return nil
 }
 
-// ApplyChatGPTProviderImportCandidate attaches cloned split records to the final
-// provider ID. Routing fields remain caller-owned so UI edits are not overwritten.
-func ApplyChatGPTProviderImportCandidate(
-	provider *model.Provider,
+// BuildCredentialSessionFromChatGPTProviderImportCandidate binds staged secret
+// material to the durable session ID chosen by the commit transaction.
+func BuildCredentialSessionFromChatGPTProviderImportCandidate(
 	candidate ChatGPTProviderImportCandidate,
-) error {
-	if provider == nil {
-		return fmt.Errorf("%w: provider is required", ErrChatGPTProviderImportInvalidCandidate)
-	}
+	sessionID string,
+) (*credentialsession.Session, error) {
 	if candidate.State != ChatGPTProviderImportCandidateStateReady {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: candidate %s is %s",
 			ErrChatGPTProviderImportInvalidCandidate,
 			candidate.CandidateID,
 			candidate.State,
 		)
 	}
-	if candidate.Credential == nil || candidate.AuthState == nil {
-		return fmt.Errorf(
+	snapshot := cloneCredentialSessionSnapshot(candidate.Credential)
+	snapshot.SessionID = strings.TrimSpace(sessionID)
+	if snapshot.Kind != credentialsession.KindChatGPT || strings.TrimSpace(snapshot.SecretData) == "" ||
+		!snapshot.Subject.Resolved() || snapshot.SessionID == "" {
+		return nil, fmt.Errorf(
 			"%w: candidate %s has no importable credential",
 			ErrChatGPTProviderImportInvalidCandidate,
 			candidate.CandidateID,
 		)
 	}
 
-	provider.CredentialType = providerCredentialTypeChatGPT
-	NormalizeProviderForPersistence(provider)
-	provider.Credential = model.NormalizeProviderCredentialRecord(provider.ID, candidate.Credential.Clone())
-	provider.AuthState = model.NormalizeProviderAuthStateRecord(
-		provider.ID,
-		providerCredentialTypeChatGPT,
-		candidate.AuthState.Clone(),
-	)
-	return nil
+	if snapshot.Version < 1 {
+		snapshot.Version = 1
+	}
+	session := &credentialsession.Session{
+		ID: snapshot.SessionID, Vendor: snapshot.Vendor, Kind: snapshot.Kind,
+		SecretData: snapshot.SecretData, Version: snapshot.Version, AuthState: snapshot.AuthState.Clone(),
+	}
+	if err := session.SetSubject(snapshot.Subject); err != nil {
+		return nil, err
+	}
+	return session, session.Validate()
 }
 
 func cloneChatGPTProviderImportCandidate(candidate ChatGPTProviderImportCandidate) ChatGPTProviderImportCandidate {
 	cloned := candidate
-	cloned.Credential = candidate.Credential.Clone()
-	cloned.AuthState = candidate.AuthState.Clone()
+	cloned.Credential = cloneCredentialSessionSnapshot(candidate.Credential)
 	cloned.Disposition = cloneChatGPTProviderImportCandidateDisposition(candidate.Disposition)
 	cloned.Warnings = append([]ChatGPTProviderImportWarning{}, candidate.Warnings...)
 	return cloned
+}
+
+func cloneCredentialSessionSnapshot(snapshot credentialsession.Snapshot) credentialsession.Snapshot {
+	clone := snapshot
+	clone.Subject = snapshot.Subject.Clone()
+	clone.AuthState = snapshot.AuthState.Clone()
+	return clone
 }
 
 func cloneChatGPTProviderImportCandidateDisposition(
@@ -406,11 +409,4 @@ func cloneChatGPTProviderImportCandidateDisposition(
 	}
 	cloned := *disposition
 	return &cloned
-}
-
-func normalizedBindingAccountID(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(*value)
 }

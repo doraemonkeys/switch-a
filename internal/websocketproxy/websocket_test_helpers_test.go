@@ -1,18 +1,22 @@
 package websocketproxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
@@ -28,6 +32,60 @@ const (
 type Handler = Gateway
 
 func NewHandler(cfg Config) *Gateway { return NewGateway(cfg) }
+
+func testCredentialSessions(routeTargetID, apiType string, kind credentialsession.Kind, secret string) []credentialsession.RouteSnapshot {
+	var subject credentialsession.Subject
+	if kind == credentialsession.KindChatGPT {
+		subject, _ = credentialsession.AccountSubject(routeTargetID + "-account")
+	} else {
+		subject, _ = credentialsession.KeyedDigestSubject("test-v1", bytes.Repeat([]byte{1}, 32))
+	}
+	authStatus := credentialsession.DefaultAuthStatus(kind)
+	if kind == credentialsession.KindChatGPT {
+		authStatus = credentialsession.AuthStatusActive
+	}
+	return []credentialsession.RouteSnapshot{{
+		RouteTargetID: routeTargetID,
+		APIType:       apiType,
+		Credential: credentialsession.Snapshot{
+			SessionID:  routeTargetID + "-" + apiType + "-credential",
+			Vendor:     "openai",
+			Kind:       kind,
+			SecretData: secret,
+			Version:    1,
+			Subject:    subject,
+			AuthState: credentialsession.AuthState{
+				Status: authStatus,
+			},
+		},
+	}}
+}
+
+func testPreparedProviderAttempt(t *testing.T, provider *model.Provider, apiType, upstreamURL string) webSocketPreparedProviderAttempt {
+	t.Helper()
+	credential, ok := provider.CredentialSessionForAPIType(apiType)
+	if !ok || credential == nil {
+		t.Fatalf("provider %q has no %q credential session", provider.ID, apiType)
+	}
+	finalURL, err := url.Parse(upstreamURL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
+		RouteTargetID: provider.ID,
+		APIType:       apiType,
+		Credential:    *credential,
+	}, apiType, finalURL)
+	if err != nil {
+		t.Fatalf("resolve candidate: %v", err)
+	}
+	return webSocketPreparedProviderAttempt{
+		upstreamURL: upstreamURL,
+		finalURL:    finalURL,
+		candidate:   candidate,
+		credential:  *credential,
+	}
+}
 
 func observedTokenCount(value int64) tokenusage.ObservedCount {
 	return tokenusage.ObservedCount{Value: value, Present: true}

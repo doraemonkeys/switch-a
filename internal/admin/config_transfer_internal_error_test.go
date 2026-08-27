@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
@@ -34,10 +35,23 @@ func configTransferStore(t *testing.T) *store.SQLiteStore {
 
 func createConfigTransferProvider(t *testing.T, target *store.SQLiteStore, id string) {
 	t.Helper()
+	session := &credentialsession.Session{
+		ID: id + "-session", Kind: credentialsession.KindAPIKey, SecretData: "secret", Version: 1,
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
+	}
+	if err := session.SetSubject(credentialsession.PendingSubject()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.CreateCredentialSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
 	provider := &model.Provider{
-		ID: id, Name: "Provider", APIKey: "secret", AuthMode: "bearer", Enabled: true,
+		ID: id, Name: "Provider", AuthMode: "bearer", Enabled: true,
 		APITypes: []model.ProviderAPIType{{
-			ProviderID: id, APIType: "codex", BaseURL: "https://example.com", APIKey: "secret",
+			ProviderID: id, APIType: "codex", BaseURL: "https://example.com",
+		}},
+		CredentialSessions: []credentialsession.RouteSnapshot{{
+			RouteTargetID: id, APIType: "codex", Credential: credentialsession.Snapshot{SessionID: session.ID},
 		}},
 	}
 	if err := target.CreateProvider(context.Background(), provider); err != nil {
@@ -80,7 +94,7 @@ func createConfigTransferRule(t *testing.T, target *store.SQLiteStore, id, provi
 	return result.Rules[0]
 }
 
-func TestConfigTransferV4RoundTripIncludesRulesButNotStats(t *testing.T) {
+func TestConfigTransferV5RoundTripIncludesRulesButNotStats(t *testing.T) {
 	source := configTransferStore(t)
 	createConfigTransferProvider(t, source, "provider-a")
 	rule := createConfigTransferRule(t, source, "11111111-1111-4111-8111-111111111111", "provider-a")
@@ -100,8 +114,12 @@ func TestConfigTransferV4RoundTripIncludesRulesButNotStats(t *testing.T) {
 	if err := json.Unmarshal(exportRecorder.Body.Bytes(), &exported); err != nil {
 		t.Fatal(err)
 	}
-	if exported.Version != "4.0" || len(exported.InternalErrorRules) != 1 || exported.InternalErrorRules[0].ID != rule.ID {
+	if exported.Version != ConfigExportVersion || len(exported.InternalErrorRules) != 1 || exported.InternalErrorRules[0].ID != rule.ID {
 		t.Fatalf("exported=%#v", exported)
+	}
+	if len(exported.CredentialSessions) != 1 ||
+		exported.CredentialSessions[0].TransferMode != CredentialSessionTransferStaticSecret {
+		t.Fatalf("static credential transfer = %#v", exported.CredentialSessions)
 	}
 	rawRule, _ := json.Marshal(exported.InternalErrorRules[0])
 	for _, forbidden := range []string{"position", "created_at", "updated_at", "generation", "hit_count", "last_hit_at"} {
@@ -112,9 +130,10 @@ func TestConfigTransferV4RoundTripIncludesRulesButNotStats(t *testing.T) {
 
 	destination := configTransferStore(t)
 	importRequest := ImportConfigRequest{
-		Version: "4.0", ImportScope: fullConfigImportScope(),
+		Version: ConfigExportVersion, ImportScope: fullConfigImportScope(),
 		Providers: exported.Providers, Groups: exported.Groups,
-		RoutingPolicies: exported.RoutingPolicies, Settings: exported.Settings,
+		CredentialSessions: exported.CredentialSessions,
+		RoutingPolicies:    exported.RoutingPolicies, Settings: exported.Settings,
 		InternalErrorRules: exported.InternalErrorRules,
 	}
 	body, _ := json.Marshal(importRequest)
@@ -138,6 +157,14 @@ func TestConfigTransferV4RoundTripIncludesRulesButNotStats(t *testing.T) {
 	}
 	if imported[0].Action.VisibleResponsePolicy() != errorrule.VisibleResponseCommit {
 		t.Fatalf("imported visible response policy = %q", imported[0].Action.VisibleResponsePolicy())
+	}
+	provider, err := destination.GetProvider(context.Background(), "provider-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, ok := provider.CredentialSessionForAPIType("codex")
+	if !ok || credential.SessionID != exported.CredentialSessions[0].ID || credential.SecretData != exported.CredentialSessions[0].SecretData {
+		t.Fatalf("static provider/session round-trip = %#v", provider)
 	}
 	stats, err := destination.InternalErrorRuleRepository().ListStats(context.Background())
 	if err != nil || len(stats) != 1 || stats[0].HitCount != 0 {

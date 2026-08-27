@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/providerauth"
 )
 
 const (
@@ -81,6 +81,7 @@ type ImportConfigRequest struct {
 	Version            string                      `json:"version"`
 	ImportScope        *ConfigImportScope          `json:"import_scope,omitempty"`
 	Providers          []ExportedProvider          `json:"providers"`
+	CredentialSessions []ExportedCredentialSession `json:"credential_sessions"`
 	Groups             []ExportedGroup             `json:"groups"`
 	RoutingPolicies    []ExportedRoutingPolicy     `json:"routing_policies"`
 	Settings           map[string]string           `json:"settings"`
@@ -90,6 +91,7 @@ type ImportConfigRequest struct {
 // ImportChanges represents the changes that will be applied during import.
 type ImportChanges struct {
 	Providers          ChangeCount `json:"providers"`
+	CredentialSessions ChangeCount `json:"credential_sessions"`
 	Groups             ChangeCount `json:"groups"`
 	RoutingPolicies    ChangeCount `json:"routing_policies"`
 	Settings           ChangeCount `json:"settings"`
@@ -124,6 +126,7 @@ type ImportResult struct {
 // ImportedCounts represents the counts of successfully imported items.
 type ImportedCounts struct {
 	Providers          AppliedCount `json:"providers"`
+	CredentialSessions AppliedCount `json:"credential_sessions"`
 	Groups             AppliedCount `json:"groups"`
 	RoutingPolicies    AppliedCount `json:"routing_policies"`
 	Settings           AppliedCount `json:"settings"`
@@ -143,20 +146,16 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.Name) == "" {
 		return nil, false
 	}
-	credentialType := model.NormalizeProviderCredentialType(p.CredentialType)
-	if !IsValidProviderCredentialType(credentialType) {
-		return nil, false
-	}
 	if !model.IsValidProviderUsageLimitPolicy(p.UsageLimitPolicy) {
 		return nil, false
 	}
 
-	authMode, ok := buildProviderAuthModeFromExport(credentialType, p.AuthMode)
+	authMode, ok := buildProviderAuthModeFromExport(p.AuthMode)
 	if !ok {
 		return nil, false
 	}
 
-	apiTypes, ok := buildProviderAPITypesFromExport(p.ID, credentialType, p.APITypes)
+	apiTypes, ok := buildProviderAPITypesFromExport(p.ID, p.APITypes)
 	if !ok {
 		return nil, false
 	}
@@ -164,10 +163,8 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	provider := &model.Provider{
 		ID:               p.ID,
 		Name:             p.Name,
-		APIKey:           model.NormalizeAPIKey(p.APIKey),
 		APITypes:         apiTypes,
 		AuthMode:         authMode,
-		CredentialType:   credentialType,
 		UsageLimitPolicy: p.UsageLimitPolicy,
 		GroupID:          buildProviderGroupIDFromExport(p.GroupID, validGroups),
 		Weight:           normalizeProviderWeightFromExport(p.Weight),
@@ -185,23 +182,27 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		AcceptFailover: normalizeProviderScopeFromExport(p.AcceptFailover),
 		Enabled:        p.Enabled,
 	}
-	provider.Credential = buildProviderCredentialFromExport(p, credentialType)
-	provider.AuthState = buildProviderAuthStateFromExport(p, credentialType)
-	providerauth.NormalizeProviderForPersistence(provider)
-	if !validateImportedProvider(provider, p, credentialType) {
+	provider.CredentialSessions = make([]credentialsession.RouteSnapshot, len(p.APITypes))
+	for index := range p.APITypes {
+		provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
+			RouteTargetID: p.ID,
+			APIType:       p.APITypes[index].APIType,
+			Credential: credentialsession.Snapshot{
+				SessionID: p.APITypes[index].CredentialSessionID,
+			},
+		}
+	}
+	if !validateImportedProvider(provider) {
 		return nil, false
 	}
 	return provider, true
 }
 
-func buildProviderAuthModeFromExport(
-	credentialType model.ProviderCredentialType,
-	exportedAuthMode string,
-) (string, bool) {
+func buildProviderAuthModeFromExport(exportedAuthMode string) (string, bool) {
 	if exportedAuthMode == "" {
 		return DefaultAuthMode, true
 	}
-	if credentialType != model.ProviderCredentialTypeChatGPT && !IsValidAuthMode(exportedAuthMode) {
+	if !IsValidAuthMode(exportedAuthMode) {
 		return "", false
 	}
 	return exportedAuthMode, true
@@ -209,23 +210,17 @@ func buildProviderAuthModeFromExport(
 
 func buildProviderAPITypesFromExport(
 	providerID string,
-	credentialType model.ProviderCredentialType,
 	exportedAPITypes []ExportedAPIType,
 ) ([]model.ProviderAPIType, bool) {
-	if credentialType == model.ProviderCredentialTypeChatGPT {
-		return nil, true
-	}
-
 	apiTypes := make([]model.ProviderAPIType, 0, len(exportedAPITypes))
 	for _, at := range exportedAPITypes {
-		if !IsValidAPIType(at.APIType) || at.BaseURL == "" {
+		if !IsValidAPIType(at.APIType) || at.BaseURL == "" || strings.TrimSpace(at.CredentialSessionID) == "" {
 			continue
 		}
 		apiTypes = append(apiTypes, model.ProviderAPIType{
 			ProviderID: providerID,
 			APIType:    at.APIType,
 			BaseURL:    at.BaseURL,
-			APIKey:     model.NormalizeAPIKey(at.APIKey),
 		})
 	}
 
@@ -254,41 +249,88 @@ func normalizeProviderScopeFromExport(exportedScope string) model.Scope {
 	return scope
 }
 
-func validateImportedProvider(
-	provider *model.Provider,
-	exported *ExportedProvider,
-	credentialType model.ProviderCredentialType,
-) bool {
-	if credentialType == model.ProviderCredentialTypeChatGPT {
-		return validateImportedChatGPTProvider(provider, exported)
-	}
+func validateImportedProvider(provider *model.Provider) bool {
 	if errMsg := validateProviderAPITypeConfiguration(provider); errMsg != "" {
 		return false
 	}
-	for _, at := range provider.APITypes {
-		if !model.HasAPIKey(provider.APIKey) && !model.HasAPIKey(at.APIKey) {
-			return false
-		}
-	}
-	return true
+	return len(provider.CredentialSessions) == len(provider.APITypes)
 }
 
-func validateImportedChatGPTProvider(provider *model.Provider, exported *ExportedProvider) bool {
-	if provider.AuthState == nil {
-		return false
+func buildCredentialSessionsFromExport(exported []ExportedCredentialSession) ([]credentialsession.Session, []string) {
+	sessions := make([]credentialsession.Session, 0, len(exported))
+	warnings := make([]string, 0)
+	seen := make(map[string]struct{}, len(exported))
+	for index := range exported {
+		item := exported[index]
+		id := strings.TrimSpace(item.ID)
+		if _, duplicate := seen[id]; duplicate {
+			warnings = append(warnings, "Duplicate credential session ID in import: "+id)
+			continue
+		}
+		seen[id] = struct{}{}
+		if item.Kind == credentialsession.KindChatGPT {
+			warnings = append(warnings, chatGPTConfigImportMutationWarning(id))
+			continue
+		}
+		session, err := buildStaticCredentialSessionFromExport(item)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("Invalid credential session %q: %v", item.ID, err))
+			continue
+		}
+		sessions = append(sessions, *session)
 	}
-	// Blank exported statuses are a legacy/manual-import shape. Preserve that
-	// intent before normalization rewrites the empty value to not_connected.
-	requiresReadyCredential := provider.AuthState.Status == model.ProviderAuthStatusActive ||
-		chatGPTCredentialMustBeReady(exported)
-	if !requiresReadyCredential {
-		return true
+	return sessions, warnings
+}
+
+func buildStaticCredentialSessionFromExport(item ExportedCredentialSession) (*credentialsession.Session, error) {
+	if item.TransferMode != CredentialSessionTransferStaticSecret {
+		return nil, fmt.Errorf("transfer_mode must be %q for static credentials", CredentialSessionTransferStaticSecret)
 	}
-	credential, err := providerauth.DecodeProviderChatGPTCredential(provider)
-	if err != nil || credential == nil {
-		return false
+	if item.Kind != credentialsession.KindAPIKey {
+		return nil, fmt.Errorf("only api_key credentials can carry transferable secret material")
 	}
-	return credential.Ready()
+	session := &credentialsession.Session{
+		ID:         strings.TrimSpace(item.ID),
+		Vendor:     strings.TrimSpace(item.Vendor),
+		Kind:       item.Kind,
+		SecretData: item.SecretData,
+		Version:    item.Version,
+		AuthState:  item.AuthState.Clone(),
+	}
+	if err := session.SetSubject(item.Subject); err != nil {
+		return nil, err
+	}
+	if err := session.Validate(); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func validateChatGPTReauthenticationDescriptor(item ExportedCredentialSession) error {
+	if item.TransferMode != CredentialSessionTransferReauthenticate || item.Kind != credentialsession.KindChatGPT {
+		return fmt.Errorf("chatgpt credentials must use transfer_mode %q", CredentialSessionTransferReauthenticate)
+	}
+	if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Vendor) == "" || item.Version < 1 {
+		return fmt.Errorf("chatgpt reauthentication descriptor requires id, vendor, and a positive version")
+	}
+	if item.SecretData != "" || !reflect.DeepEqual(item.Subject, credentialsession.PendingSubject()) {
+		return fmt.Errorf("chatgpt reauthentication descriptor cannot carry secret or resolved subject data")
+	}
+	expectedAuthState := credentialsession.AuthState{
+		Status:       credentialsession.AuthStatusReauthRequired,
+		StatusReason: configRestoreReauthenticationReason,
+	}
+	if !reflect.DeepEqual(item.AuthState, expectedAuthState) {
+		return fmt.Errorf("chatgpt reauthentication descriptor must carry only the canonical recovery state")
+	}
+	return nil
+}
+
+func chatGPTConfigImportMutationWarning(id string) string {
+	return fmt.Sprintf(
+		"Credential session %q cannot import ChatGPT credential material; restore it through verified login/provider-import",
+		id,
+	)
 }
 
 // buildGroupFromExport applies the same normalization that Create/Update paths use
@@ -324,11 +366,6 @@ func buildGroupFromExport(g *ExportedGroup) (*model.Group, bool) {
 	}, true
 }
 
-func canImportProvider(p *ExportedProvider, validGroups map[string]bool) bool {
-	_, ok := buildProviderFromExport(p, validGroups)
-	return ok
-}
-
 func providerImportDiffers(imported *ExportedProvider, existing *model.Provider, validGroups map[string]bool) bool {
 	importedCanonical, ok := canonicalProviderImportExportJSON(imported, validGroups)
 	if !ok {
@@ -355,50 +392,6 @@ func canonicalProviderImportExportJSON(
 		return nil, false
 	}
 	return payload, true
-}
-
-func buildProviderCredentialFromExport(
-	p *ExportedProvider,
-	credentialType model.ProviderCredentialType,
-) *model.ProviderCredential {
-	if credentialType != model.ProviderCredentialTypeChatGPT || p.Credential == nil {
-		return nil
-	}
-	record := &model.ProviderCredential{
-		ProviderID:       p.ID,
-		SecretData:       p.Credential.SecretData,
-		BindingAccountID: p.Credential.BindingAccountID,
-		Version:          p.Credential.Version,
-	}
-	if strings.TrimSpace(record.SecretData) == "" {
-		return nil
-	}
-	return model.NormalizeProviderCredentialRecord(p.ID, record)
-}
-
-func buildProviderAuthStateFromExport(
-	p *ExportedProvider,
-	credentialType model.ProviderCredentialType,
-) *model.ProviderAuthState {
-	if p.AuthState == nil {
-		return model.NormalizeProviderAuthStateRecord(p.ID, credentialType, nil)
-	}
-	state := &model.ProviderAuthState{
-		ProviderID:           p.ID,
-		Status:               p.AuthState.Status,
-		StatusReason:         p.AuthState.StatusReason,
-		LastError:            p.AuthState.LastError,
-		LastTransitionAt:     p.AuthState.LastTransitionAt,
-		Email:                p.AuthState.Email,
-		AccountID:            p.AuthState.AccountID,
-		PlanType:             p.AuthState.PlanType,
-		ExpiresAt:            p.AuthState.ExpiresAt,
-		LastRefreshAt:        p.AuthState.LastRefreshAt,
-		UsageSnapshot:        model.CloneProviderUsageSnapshot(p.AuthState.UsageSnapshot),
-		RefreshFailCount:     p.AuthState.RefreshFailCount,
-		LastRefreshFailureAt: p.AuthState.LastRefreshFailureAt,
-	}
-	return model.NormalizeProviderAuthStateRecord(p.ID, credentialType, state)
 }
 
 func groupImportDiffers(imported *ExportedGroup, existing *model.Group) bool {

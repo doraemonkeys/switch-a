@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 // chatgptAuthJWT builds an unsigned JWT carrying the OpenAI auth block, matching the
@@ -225,13 +223,17 @@ func TestImportChatGPTLogin(t *testing.T) {
 			t.Fatalf("auth status = %q, want active", status.Auth.Status)
 		}
 
-		// The staged session must feed the existing OAuth save path unchanged.
-		provider := &model.Provider{ID: "imported-provider"}
-		if err := service.ApplyChatGPTLogin(provider, status.LoginID); err != nil {
-			t.Fatalf("ApplyChatGPTLogin error = %v", err)
+		session, err := service.BuildCredentialSessionFromChatGPTLogin(status.LoginID, "imported-session")
+		if err != nil {
+			t.Fatalf("BuildCredentialSessionFromChatGPTLogin error = %v", err)
 		}
-		if !HasCompleteChatGPTCredential(provider) {
-			t.Fatal("provider lacks a complete chatgpt credential after import")
+		snapshot, err := session.Snapshot()
+		if err != nil {
+			t.Fatalf("Session.Snapshot error = %v", err)
+		}
+		credential, err := decodeChatGPTCredentialSession(&snapshot)
+		if err != nil || credential == nil || !credential.Ready() {
+			t.Fatalf("credential session = %#v, %v; want complete ChatGPT credential", credential, err)
 		}
 		if err := service.FinalizeChatGPTLogin(status.LoginID); err != nil {
 			t.Fatalf("FinalizeChatGPTLogin error = %v", err)

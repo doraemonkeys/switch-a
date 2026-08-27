@@ -2,13 +2,78 @@ package websocketproxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/codexquota"
+	tokenusage "github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
+
 	"github.com/coder/websocket"
+	"go.uber.org/zap"
 )
+
+const providerUsageObservationTimeout = 5 * time.Second
+
+// WebSocket lifecycle results keep their native usage vocabulary while parsing,
+// buffering, and billing semantics remain owned by the shared tokenusage module.
+type TokenUsage = tokenusage.TokenUsage
+type CacheCreation = tokenusage.CacheCreation
+type Logger = tokenusage.Logger
+type ZapLoggerAdapter = tokenusage.ZapLoggerAdapter
+type ZapSugaredLogger = tokenusage.ZapSugaredLogger
+
+func ParseWithLogger(data []byte, logger Logger) *TokenUsage {
+	return tokenusage.ParseWithLogger(data, logger)
+}
+
+func NewZapLoggerAdapter(logger ZapSugaredLogger) *ZapLoggerAdapter {
+	return tokenusage.NewZapLoggerAdapter(logger)
+}
+
+func (h *Gateway) scheduleProviderUsageObservation(
+	requestID string,
+	provider *model.Provider,
+	credential credentialsession.Snapshot,
+	header http.Header,
+	observedAt time.Time,
+) {
+	if h.usageObserver == nil || provider == nil ||
+		credential.Kind != credentialsession.KindChatGPT {
+		return
+	}
+	snapshot, rejectedHeaders := codexquota.ParseResponseHeaders(header, observedAt)
+	if len(rejectedHeaders) > 0 {
+		h.logger.Debug("rejected malformed Codex quota WebSocket handshake headers",
+			zap.String("request_id", requestID),
+			zap.String("provider_id", provider.ID),
+			zap.Strings("rejected_headers", rejectedHeaders),
+		)
+	}
+	if snapshot == nil {
+		return
+	}
+
+	providerID := provider.ID
+	sessionID := credential.SessionID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), providerUsageObservationTimeout)
+		defer cancel()
+		if err := h.usageObserver.ObserveCredentialSessionUsage(ctx, sessionID, snapshot); err != nil {
+			h.logger.Warn("failed to persist Codex quota WebSocket handshake observation",
+				zap.String("request_id", requestID),
+				zap.String("provider_id", providerID),
+				zap.String("credential_session_id", sessionID),
+				zap.Error(err),
+			)
+		}
+	}()
+}
 
 func parseTokenUsageWithLogger(data []byte, logger Logger) *TokenUsage {
 	return ParseWithLogger(data, logger)

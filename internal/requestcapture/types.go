@@ -206,6 +206,9 @@ const (
 	MessageDispositionForwarded             = capturevalue.MessageDispositionForwarded
 	MessageDispositionSuppressed            = capturevalue.MessageDispositionSuppressed
 	MessageDispositionWriteFailed           = capturevalue.MessageDispositionWriteFailed
+	MessageDispositionIdentityRejected      = capturevalue.MessageDispositionIdentityRejected
+	MessageDispositionProtocolRejected      = capturevalue.MessageDispositionProtocolRejected
+	MessageDispositionStorageRejected       = capturevalue.MessageDispositionStorageRejected
 	TraceEntryRecord                        = capturevalue.TraceEntryRecord
 	TraceEntryTransition                    = capturevalue.TraceEntryTransition
 )

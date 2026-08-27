@@ -1,6 +1,6 @@
 # Codex Provider Cookie Jar 执行计划
 
-> 复用 `internal/codexidentity` 的 ClientScope、UpstreamAuthority 和 AppliedIdentity 校验；Cookie Jar 使用独立发布开关，不依赖状态连续性开关是否启用。
+> 复用 `internal/codex/identity` 的 ClientScope、UpstreamAuthority 和 AppliedIdentity 校验；Cookie Jar 使用独立发布开关，不依赖状态连续性开关是否启用。
 
 ## 目标
 
@@ -10,7 +10,7 @@
 
 ## 所有权模型
 
-- `ClientScope`：由 `internal/codexidentity` 计算客户端 HMAC，用于校验 Handle 归属。
+- `ClientScope`：由 `internal/codex/identity` 计算客户端 HMAC，用于校验 Handle 归属。
 - `JarID`：服务端随机生成的持久 Jar 命名空间；客户端 Handle 只用于查找绑定当前 ClientScope 的 JarID，不能由客户端输入推导。
 - `CookieScope`：`JarID + UpstreamAuthority`，其中 Authority 为 `Vendor + normalized UpstreamOrigin + CredentialSubject`，不含 APIType 或 ProviderID。Origin 复用统一规范化规则，使 `wss/https` 和 `ws/http` 分别落入同一 Authority。
 - `CookieKey`：`Name + Domain + Path`，允许同名 Cookie 在不同 Domain/Path 下并存。
@@ -23,13 +23,13 @@ Handle 缺失、未知、过期或 ClientScope 不匹配时签发新 Handle 和�
 
 ### 1. 建立 Cookie 深模块
 
-新增 `internal/providercookie`，封装 RFC Cookie 的 Domain、Path、Secure、Expires、Max-Age 和删除语义。存储接口按使用方定义，SQLite 使用持久、版本化的 AEAD 密钥加密 Cookie 值，关联数据为 `JarID + Authority + CookieKey`，并提供过期、孤立 Authority 清理和容量上限。任何需要读写 Jar 的操作遇到密钥不可用或解密失败时返回显式错误，禁止读取、注入、覆盖或静默降级为空 Jar。
+新增 `internal/codex/cookie`，封装 RFC Cookie 的 Domain、Path、Secure、Expires、Max-Age 和删除语义。存储接口按使用方定义，SQLite 使用持久、版本化的 AEAD 密钥加密 Cookie 值，关联数据为 `JarID + Authority + CookieKey`，并提供过期、孤立 Authority 清理和容量上限。任何需要读写 Jar 的操作遇到密钥不可用或解密失败时返回显式错误，禁止读取、注入、覆盖或静默降级为空 Jar。
 
 所有限制使用命名常量。
 
 ### 2. 注入请求 Cookie
 
-HTTP 与 WebSocket 都在 Provider 选择和凭据注入完成后通过有效 Handle 取得 JarID，并通过 `internal/codexidentity` 取得和校验 `AppliedIdentity`、解析 CookieScope，从持久 Jar 与当前逻辑请求的同 Scope overlay 中按实际上游 URL 选取 Cookie，再生成上游 `Cookie` Header。
+HTTP 与 WebSocket 都在 Provider 选择和凭据注入完成后通过有效 Handle 取得 JarID，并通过 `internal/codex/identity` 取得和校验 `AppliedIdentity`、解析 CookieScope，从持久 Jar 与当前逻辑请求的同 Scope overlay 中按实际上游 URL 选取 Cookie，再生成上游 `Cookie` Header。
 
 删除客户端原始 `Cookie` 后再注入 Jar 结果。无效 Handle 使用本次新建的空 JarID；CookieScope 不匹配时加载当前 Scope 的 Jar，不复制其他 JarID 或 Authority 的 Cookie。
 

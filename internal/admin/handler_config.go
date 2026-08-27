@@ -1,10 +1,13 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
@@ -78,8 +81,11 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update all configs atomically in a single transaction
-	if err := h.store.SetConfigs(r.Context(), updates); err != nil {
+	if err := h.applyValidatedConfigUpdate(r.Context(), updates); err != nil {
+		if isCodexFeatureConfigError(err) {
+			h.writeCodexFeatureConfigError(w, err)
+			return
+		}
 		h.logger.Error("failed to update configs", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to update config")
 		return
@@ -108,4 +114,93 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) applyValidatedConfigUpdate(ctx context.Context, updates map[string]string) error {
+	// Serializing validation with persistence prevents two individually valid
+	// feature updates from interleaving into an invalid durable combination.
+	h.configMutationMu.Lock()
+	defer h.configMutationMu.Unlock()
+	current, err := h.store.GetAllConfig(ctx)
+	if err != nil {
+		return err
+	}
+	snapshot, err := h.codexFeatureCandidate(ctx, current, updates)
+	if err != nil {
+		return err
+	}
+	if err := h.store.SetConfigs(ctx, updates); err != nil {
+		return err
+	}
+	return h.publishCodexFeatures(snapshot)
+}
+
+func (h *Handler) validateCodexFeatureCandidate(
+	ctx context.Context,
+	current map[string]string,
+	updates map[string]string,
+) error {
+	_, err := h.codexFeatureCandidate(ctx, current, updates)
+	return err
+}
+
+func (h *Handler) codexFeatureCandidate(
+	ctx context.Context,
+	current map[string]string,
+	updates map[string]string,
+) (codexstartup.Snapshot, error) {
+	values := codexstartup.Defaults()
+	for key, value := range current {
+		if codexstartup.IsKey(key) {
+			values[key] = value
+		}
+	}
+	for key, value := range updates {
+		if codexstartup.IsKey(key) {
+			values[key] = value
+		}
+	}
+	snapshot, err := codexstartup.Parse(values)
+	if err != nil {
+		return codexstartup.Snapshot{}, err
+	}
+	if h.codexFeatureValidator != nil {
+		if err := h.codexFeatureValidator.ValidateCodexFeatures(ctx, snapshot); err != nil {
+			return codexstartup.Snapshot{}, err
+		}
+		return snapshot, nil
+	}
+	if err := snapshot.ValidateDependencies(); err != nil {
+		return codexstartup.Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (h *Handler) publishCodexFeatures(snapshot codexstartup.Snapshot) error {
+	publisher, ok := h.codexFeatureValidator.(CodexFeaturePublisher)
+	if !ok {
+		return nil
+	}
+	return publisher.PublishCodexFeatures(snapshot)
+}
+
+func (h *Handler) writeCodexFeatureConfigError(w http.ResponseWriter, err error) {
+	if h.logger != nil {
+		h.logger.Warn("rejected Codex feature configuration", zap.Error(err))
+	}
+	if isCodexFeatureConfigError(err) {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid Codex feature configuration: "+err.Error())
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		writeError(w, http.StatusRequestTimeout, ErrCodeInternal, "Codex feature validation did not complete")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to validate Codex feature configuration")
+}
+
+func isCodexFeatureConfigError(err error) bool {
+	return codexstartup.IsError(err, codexstartup.ErrorInvalidConfig) ||
+		codexstartup.IsError(err, codexstartup.ErrorDependency) ||
+		codexstartup.IsError(err, codexstartup.ErrorCapabilityMissing)
 }

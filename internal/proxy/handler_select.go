@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -24,6 +26,7 @@ type providerLease interface {
 	ProviderID() string
 	Generation() uint64
 	CapabilityIdentity() uintptr
+	CandidateSnapshot() (codexidentity.CandidateSnapshot, bool)
 	Held() bool
 	Release() bool
 }
@@ -198,12 +201,39 @@ func adaptSelection(result *selector.SelectResult, err error) (*providerSelectio
 // localProviderLease keeps selectorless deployments on the same explicit
 // cleanup contract without pretending that they participate in concurrency.
 type localProviderLease struct {
-	provider *model.Provider
-	released atomic.Bool
+	provider  *model.Provider
+	candidate codexidentity.CandidateSnapshot
+	resolved  bool
+	released  atomic.Bool
 }
 
 func newLocalProviderLease(provider *model.Provider) *localProviderLease {
-	return &localProviderLease{provider: provider}
+	return newLocalProviderLeaseForAPIType(provider, "")
+}
+
+func newLocalProviderLeaseForAPIType(provider *model.Provider, apiType string) *localProviderLease {
+	lease := &localProviderLease{provider: provider}
+	if provider == nil {
+		return lease
+	}
+	for _, route := range provider.CredentialSessions {
+		if apiType != "" && route.APIType != apiType {
+			continue
+		}
+		baseURL := provider.BaseURLForAPIType(route.APIType)
+		finalURL, err := url.Parse(baseURL)
+		if err != nil || finalURL.Scheme == "" || finalURL.Host == "" {
+			continue
+		}
+		candidate, err := codexidentity.NewAuthorityResolver().Resolve(route, route.APIType, finalURL)
+		if err != nil {
+			continue
+		}
+		lease.candidate = candidate
+		lease.resolved = true
+		break
+	}
+	return lease
 }
 
 func (l *localProviderLease) Provider() *model.Provider { return l.provider }
@@ -219,6 +249,12 @@ func (l *localProviderLease) CapabilityIdentity() uintptr {
 		return 0
 	}
 	return reflect.ValueOf(l).Pointer()
+}
+func (l *localProviderLease) CandidateSnapshot() (codexidentity.CandidateSnapshot, bool) {
+	if l == nil || !l.resolved {
+		return codexidentity.CandidateSnapshot{}, false
+	}
+	return l.candidate, true
 }
 func (l *localProviderLease) Held() bool {
 	return l != nil && l.provider != nil && !l.released.Load()
@@ -240,7 +276,7 @@ func (h *Handler) selectInitialProvider(
 		}
 		return &providerSelection{
 			provider: provider,
-			lease:    newLocalProviderLease(provider),
+			lease:    newLocalProviderLeaseForAPIType(provider, request.APIType),
 			metadata: selector.BuildSelectionMetadataAt(request, selector.SelectionSourceStrategy, time.Now()),
 		}, nil
 	}
@@ -483,7 +519,7 @@ func (h *Handler) reserveAlternateProvider(
 	}
 	return &localAlternateReservation{
 		provider: provider,
-		lease:    newLocalProviderLease(provider),
+		lease:    newLocalProviderLeaseForAPIType(provider, request.APIType),
 		metadata: selector.BuildSelectionMetadataAt(request, selector.SelectionSourceAlternate, time.Now()),
 	}, nil
 }

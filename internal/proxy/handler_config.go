@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -102,6 +104,8 @@ type Config struct {
 	RuleStatistics             RuleStatistics
 	BackoffWaiter              BackoffWaiter
 	RequestSemanticDecoder     RequestSemanticDecoder
+	CodexHTTP                  *codexhttp.Runtime
+	CodexWebSocket             *codexws.Runtime
 	Logger                     *zap.Logger
 }
 
@@ -141,6 +145,10 @@ func NewHandler(cfg Config) *Handler {
 	if requestSemanticDecoder == nil {
 		requestSemanticDecoder = requestbody.NewDecoder()
 	}
+	codexHTTP := cfg.CodexHTTP
+	if codexHTTP == nil {
+		codexHTTP = codexhttp.New(codexhttp.Config{})
+	}
 	visibleContinuitySeedStore := cfg.VisibleContinuitySeedStore
 	if visibleContinuitySeedStore == nil {
 		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
@@ -165,13 +173,14 @@ func NewHandler(cfg Config) *Handler {
 		ruleStats:                  cfg.RuleStatistics,
 		backoff:                    backoff,
 		requestSemanticDecoder:     requestSemanticDecoder,
+		codexHTTP:                  codexHTTP,
 	}
 	handler.webSocketGateway = websocketproxy.NewGateway(websocketproxy.Config{
 		Store: cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,
 		ActiveSessions:             newWebSocketActiveSessions(cfg.ActiveRegistry),
 		VisibleContinuitySeedStore: visibleContinuitySeedStore,
 		Auth:                       cfg.Auth, UsageObserver: usageObserver,
-		Capture: cfg.Capture, Logger: cfg.Logger,
+		Capture: cfg.Capture, Codex: cfg.CodexWebSocket, Logger: cfg.Logger,
 	})
 	return handler
 }

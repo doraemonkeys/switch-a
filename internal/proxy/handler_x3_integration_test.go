@@ -619,6 +619,12 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 	})
 	requestBody := []byte(`{"model":"x3-model"}`)
 	request := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(requestBody))
+	codexOperation, err := handler.codexHTTP.Begin(
+		request.Context(), request, APITypeCodex, x3TestRequestID, requestBody, requestBody,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	recorder := httptest.NewRecorder()
 	pctx := &proxyContext{
 		handler: handler, r: request, w: recorder,
@@ -629,7 +635,7 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 		transport: config.transport, apiType: APITypeCodex, body: requestBody,
 		info:      RequestInfo{Model: "x3-model", APIType: APITypeCodex, Path: "/responses", Method: http.MethodPost},
 		selectReq: &model.SelectRequest{APIType: APITypeCodex, Model: "x3-model", StickyMode: model.StickyModeOff},
-		startTime: time.Now(), requestID: x3TestRequestID, liveBytes: &LiveBytesTracker{},
+		startTime: time.Now(), requestID: x3TestRequestID, codex: codexOperation, liveBytes: &LiveBytesTracker{},
 		attempts: make([]model.RequestAttempt, 0),
 	}
 	pctx.capture = handler.beginGatewayCapture(pctx.requestID, pctx.startTime)
@@ -642,10 +648,10 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 }
 
 func x3Provider(id string) *model.Provider {
-	return &model.Provider{
-		ID: id, Name: "provider-" + id, Enabled: true, APIKey: "secret", AuthMode: "bearer",
+	return withTestStaticCredential(&model.Provider{
+		ID: id, Name: "provider-" + id, Enabled: true, AuthMode: "bearer",
 		APITypes: []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://" + id + ".example"}},
-	}
+	}, "", "secret")
 }
 
 func x3RetryOnlyAction(t *testing.T, retries int) errorrule.Action {
@@ -776,20 +782,21 @@ type x3Auth struct {
 func (a *x3Auth) ApplyProviderCredentials(
 	ctx context.Context,
 	header http.Header,
-	_ *model.Provider,
+	_ testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-) error {
+	_ *testUpstreamURL,
+) (testAppliedIdentity, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return testAppliedIdentity{}, err
 	}
 	a.applies.Add(1)
 	a.events.Add("auth:apply")
 	header.Set("Authorization", "Bearer refreshed")
-	return nil
+	return testAppliedIdentity{}, nil
 }
 
-func (a *x3Auth) RefreshProviderCredentials(ctx context.Context, _ *model.Provider) (bool, error) {
+func (a *x3Auth) RefreshCredentialSession(ctx context.Context, _ testCredentialSnapshot) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -893,6 +900,7 @@ func (l *x3EventLog) RequireOrder(t *testing.T, expected ...string) {
 
 type x3Lease struct {
 	provider        *model.Provider
+	candidate       testAuthCandidate
 	events          *x3EventLog
 	releaseObserver func()
 	released        atomic.Bool
@@ -900,7 +908,8 @@ type x3Lease struct {
 }
 
 func x3NewLease(provider *model.Provider, events *x3EventLog) *x3Lease {
-	return &x3Lease{provider: provider, events: events}
+	candidate, _ := newLocalProviderLease(provider).CandidateSnapshot()
+	return &x3Lease{provider: provider, candidate: candidate, events: events}
 }
 
 func (l *x3Lease) Provider() *model.Provider { return l.provider }
@@ -916,6 +925,9 @@ func (l *x3Lease) CapabilityIdentity() uintptr {
 		return 0
 	}
 	return reflect.ValueOf(l).Pointer()
+}
+func (l *x3Lease) CandidateSnapshot() (testAuthCandidate, bool) {
+	return l.candidate, l.candidate.CredentialSessionID() != ""
 }
 func (l *x3Lease) Held() bool { return l != nil && !l.released.Load() }
 func (l *x3Lease) Release() bool {

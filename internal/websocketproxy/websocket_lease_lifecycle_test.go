@@ -205,7 +205,7 @@ func TestWebSocketLeaseCleanupIsIndependentWithinOneProviderGeneration(t *testin
 func TestFallbackProviderLeaseHasCopySafeOpaqueIdentity(t *testing.T) {
 	provider := routingTestProvider("fallback")
 	gateway := &Gateway{}
-	lease := gateway.newFallbackProviderLease(&provider)
+	lease := gateway.newFallbackProviderLease(&provider, APITypeCodex)
 	if lease.Provider() != &provider || lease.ProviderID() != provider.ID || lease.Generation() == 0 ||
 		lease.CapabilityIdentity() == 0 || !lease.Held() {
 		t.Fatalf("fallback lease = %#v", lease)

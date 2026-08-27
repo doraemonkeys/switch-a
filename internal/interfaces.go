@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -15,10 +16,19 @@ type Store interface {
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	ListProvidersByAPIType(ctx context.Context, apiType string) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (*model.Provider, error)
-	CreateProvider(ctx context.Context, p *model.Provider, options ...model.ProviderWriteOptions) error
-	UpdateProvider(ctx context.Context, p *model.Provider, options ...model.ProviderWriteOptions) error
-	UpdateProviderCredential(ctx context.Context, id string, credentialType model.ProviderCredentialType, credentialData string) error
+	CreateProvider(ctx context.Context, p *model.Provider) error
+	UpdateProvider(ctx context.Context, p *model.Provider) error
 	DeleteProvider(ctx context.Context, id string) error
+	CreateCredentialSession(ctx context.Context, session *credentialsession.Session) (*credentialsession.Session, error)
+	GetCredentialSession(ctx context.Context, sessionID string) (*credentialsession.Session, error)
+	ListCredentialSessions(ctx context.Context) ([]credentialsession.Session, error)
+	ResolveCredentialSession(ctx context.Context, routeTargetID, apiType string) (credentialsession.RouteSnapshot, error)
+	BindCredentialSession(ctx context.Context, binding credentialsession.RouteBinding) error
+	CredentialSessionRouteTargetIDs(ctx context.Context, sessionID string) ([]string, error)
+	DeleteCredentialSession(ctx context.Context, sessionID string) error
+	WithCredentialSessionMutations(ctx context.Context, sessionIDs []string) (context.Context, func(), error)
+	UpdateCredentialSessionCAS(ctx context.Context, sessionID string, expectedVersion int64, secretData string, subject credentialsession.Subject, authState credentialsession.AuthState) (int64, error)
+	UpdateCredentialSessionAuthState(ctx context.Context, sessionID string, authState credentialsession.AuthState) error
 
 	// Group operations
 	ListGroups(ctx context.Context) ([]model.Group, error)

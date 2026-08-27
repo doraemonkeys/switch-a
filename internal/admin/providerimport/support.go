@@ -26,14 +26,14 @@ func providerImportCredentialMutationIDs(bundle *store.ProviderImportBundle) []s
 	if bundle == nil {
 		return nil
 	}
-	providerIDs := make([]string, 0, len(bundle.Creates)+len(bundle.CredentialUpdates))
+	sessionIDs := make([]string, 0, len(bundle.Creates)+len(bundle.CredentialUpdates))
 	for i := range bundle.Creates {
-		providerIDs = append(providerIDs, bundle.Creates[i].Provider.ID)
+		sessionIDs = append(sessionIDs, bundle.Creates[i].Provider.CredentialSessionIDs()...)
 	}
 	for i := range bundle.CredentialUpdates {
-		providerIDs = append(providerIDs, bundle.CredentialUpdates[i].ProviderID)
+		sessionIDs = append(sessionIDs, bundle.CredentialUpdates[i].SessionID)
 	}
-	return providerIDs
+	return sessionIDs
 }
 
 func (h *Handler) writeDurableProviderImportReplay(

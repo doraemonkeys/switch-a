@@ -1,0 +1,3 @@
+event: response.metadata
+data: {"type":"response.metadata","sequence_number":1,"response_id":"resp-1","metadata":{"openai_verification_recommendation":["trusted_access_for_cyber"]}}
+

@@ -16,7 +16,6 @@ func TestHealthState(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {
@@ -72,7 +71,6 @@ func TestGetHealthStatesByProviderIDs(t *testing.T) {
 	if err := store.CreateProvider(ctx, &model.Provider{
 		ID:      "p1",
 		Name:    "Provider One",
-		APIKey:  "key-1",
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("CreateProvider(p1) failed: %v", err)
@@ -80,7 +78,6 @@ func TestGetHealthStatesByProviderIDs(t *testing.T) {
 	if err := store.CreateProvider(ctx, &model.Provider{
 		ID:      "p2",
 		Name:    "Provider Two",
-		APIKey:  "key-2",
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("CreateProvider(p2) failed: %v", err)
@@ -149,7 +146,6 @@ func TestIncrementSuccessCount(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {
@@ -188,7 +184,6 @@ func TestIncrementSuccessCount_PreservesManualDisable(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {
@@ -227,7 +222,6 @@ func TestIncrementFailCount(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {
@@ -269,7 +263,6 @@ func TestAutoDisableUntil(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {
@@ -411,7 +404,6 @@ func TestAtomicRecoverIfExpired(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {
@@ -507,7 +499,6 @@ func TestAtomicRecoverIfExpired_ManualDisable(t *testing.T) {
 	provider := &model.Provider{
 		ID:      "p1",
 		Name:    "Test Provider",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	if err := store.CreateProvider(ctx, provider); err != nil {

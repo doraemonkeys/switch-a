@@ -140,14 +140,14 @@ func TestContextCancellation_DoesNotTriggerCircuitBreaker(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			Enabled:  true,
 			AuthMode: "bearer",
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-key"),
 	}
 
 	healthManager := newTrackingHealthManager()
@@ -228,14 +228,14 @@ func TestDeadlineExceeded_DoesNotTriggerCircuitBreaker(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			Enabled:  true,
 			AuthMode: "bearer",
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-key"),
 	}
 
 	healthManager := newTrackingHealthManager()
@@ -293,14 +293,14 @@ func TestUpstreamNetworkError_TriggerCircuitBreaker(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			Enabled:  true,
 			AuthMode: "bearer",
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: serverURL}},
-		},
+		}, "", "test-key"),
 	}
 
 	healthManager := newTrackingHealthManager()
@@ -341,14 +341,14 @@ func TestUpstream5xx_TriggerCircuitBreaker(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			Enabled:  true,
 			AuthMode: "bearer",
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-key"),
 	}
 
 	healthManager := newTrackingHealthManager()
@@ -400,14 +400,14 @@ func TestClientDisconnectDuringSSE_IsHealthNeutralAndPersistsClientOutcome(t *te
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			Enabled:  true,
 			AuthMode: "bearer",
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-key"),
 	}
 
 	healthManager := newTrackingHealthManager()

@@ -3,9 +3,11 @@ package admin
 import (
 	"fmt"
 	"maps"
+	"reflect"
 	"sort"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -23,6 +25,7 @@ type stagedConfigImport struct {
 func stageConfigImport(
 	req *ImportConfigRequest,
 	existingProviders map[string]*model.Provider,
+	existingCredentialSessions map[string]credentialsession.Snapshot,
 	existingGroups map[string]*model.Group,
 	existingRoutingPolicies map[model.RoutingPolicyNaturalKey]*model.RoutingPolicy,
 	existingSettings map[string]string,
@@ -37,10 +40,19 @@ func stageConfigImport(
 		return staged
 	}
 
+	finalGroups := stageImportedGroups(&staged, resolved.Groups, existingGroups)
+	validGroups := buildValidGroupsMap(resolved.Groups, existingGroups)
+	finalProviders := stageImportedProviders(&staged, resolved.Providers, existingProviders, validGroups)
+	declaredCredentialSessions := stageImportedCredentialSessions(
+		&staged,
+		resolved.CredentialSessions,
+		existingCredentialSessions,
+	)
 	validationRequest := &ImportConfigRequest{
-		Providers: resolved.Providers,
-		Groups:    resolved.Groups,
-		Settings:  resolved.Settings,
+		Providers:          resolved.Providers,
+		CredentialSessions: resolved.CredentialSessions,
+		Groups:             resolved.Groups,
+		Settings:           resolved.Settings,
 	}
 	staged.warnings = append(
 		staged.warnings,
@@ -48,12 +60,9 @@ func stageConfigImport(
 			validationRequest,
 			existingGroups,
 			buildScopedMissingProviderGroupRefs(req, resolved.Scope),
+			declaredCredentialSessions,
 		)...,
 	)
-
-	finalGroups := stageImportedGroups(&staged, resolved.Groups, existingGroups)
-	validGroups := buildValidGroupsMap(resolved.Groups, existingGroups)
-	finalProviders := stageImportedProviders(&staged, resolved.Providers, existingProviders, validGroups)
 	stageImportedRoutingPolicies(
 		&staged,
 		resolved,
@@ -64,6 +73,86 @@ func stageConfigImport(
 	stageImportedSettings(&staged, resolved.Settings, existingSettings)
 	stageImportedInternalErrorRules(&staged, resolved, existingRules, finalProviders)
 	return staged
+}
+
+func stageImportedCredentialSessions(
+	staged *stagedConfigImport,
+	exported []ExportedCredentialSession,
+	existing map[string]credentialsession.Snapshot,
+) map[string]struct{} {
+	declared := make(map[string]struct{}, len(exported))
+	seen := make(map[string]struct{}, len(exported))
+	for index := range exported {
+		item := exported[index]
+		id := strings.TrimSpace(item.ID)
+		if _, duplicate := seen[id]; duplicate {
+			staged.warnings = append(staged.warnings, "Duplicate credential session ID in import: "+id)
+			continue
+		}
+		seen[id] = struct{}{}
+
+		if item.Kind == credentialsession.KindChatGPT {
+			if err := stageChatGPTReauthenticationDescriptor(staged, item, existing); err != nil {
+				staged.warnings = append(staged.warnings, err.Error())
+				continue
+			}
+			declared[id] = struct{}{}
+			continue
+		}
+
+		session, err := buildStaticCredentialSessionFromExport(item)
+		if err != nil {
+			staged.warnings = append(staged.warnings, fmt.Sprintf("Invalid credential session %q: %v", item.ID, err))
+			continue
+		}
+		declared[session.ID] = struct{}{}
+		current, found := existing[session.ID]
+		differs := found && !credentialSessionImportEqual(*session, current)
+		if recordStagedUpsert(&staged.changes.CredentialSessions, found, differs) {
+			staged.bundle.CredentialSessions = append(staged.bundle.CredentialSessions, *session)
+		}
+	}
+	return declared
+}
+
+func stageChatGPTReauthenticationDescriptor(
+	staged *stagedConfigImport,
+	item ExportedCredentialSession,
+	existing map[string]credentialsession.Snapshot,
+) error {
+	id := strings.TrimSpace(item.ID)
+	if err := validateChatGPTReauthenticationDescriptor(item); err != nil {
+		return fmt.Errorf(
+			"credential session %q cannot import ChatGPT credential material; restore it through verified login/provider-import: %w",
+			id,
+			err,
+		)
+	}
+	current, found := existing[id]
+	if !found {
+		return fmt.Errorf(
+			"credential session %q requires verified ChatGPT reauthentication before import; create it with the same ID through login/provider-import and retry",
+			id,
+		)
+	}
+	if current.Kind != credentialsession.KindChatGPT || current.Vendor != strings.TrimSpace(item.Vendor) {
+		return fmt.Errorf(
+			"credential session %q reauthentication descriptor does not match the existing verified ChatGPT session",
+			id,
+		)
+	}
+	staged.changes.CredentialSessions.Unchanged++
+	return nil
+}
+
+func credentialSessionImportEqual(session credentialsession.Session, current credentialsession.Snapshot) bool {
+	return session.ID == current.SessionID &&
+		session.Vendor == current.Vendor &&
+		session.Kind == current.Kind &&
+		session.SecretData == current.SecretData &&
+		session.Version == current.Version &&
+		reflect.DeepEqual(session.Subject(), current.Subject) &&
+		reflect.DeepEqual(session.AuthState, current.AuthState)
 }
 
 func stageImportedInternalErrorRules(

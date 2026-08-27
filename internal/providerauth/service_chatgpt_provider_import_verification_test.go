@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
@@ -145,15 +145,20 @@ func providerImportVerifierCandidate(
 	if err != nil {
 		t.Fatalf("json.Marshal credential returned error: %v", err)
 	}
-	binding := accountID
+	subject, err := credentialsession.AccountSubject(accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return ChatGPTProviderImportCandidate{
 		CandidateID: candidateID,
 		State:       ChatGPTProviderImportCandidateStateReady,
-		Credential: &model.ProviderCredential{
-			SecretData:       string(secret),
-			BindingAccountID: &binding,
+		Credential: credentialsession.Snapshot{
+			Vendor: chatGPTVendor, Kind: credentialsession.KindChatGPT,
+			SecretData: string(secret), Version: 1, Subject: subject,
+			AuthState: credentialsession.AuthState{
+				Status: credentialsession.AuthStatusActive, AccountID: accountID,
+			},
 		},
-		AuthState: &model.ProviderAuthState{AccountID: accountID},
 	}
 }
 

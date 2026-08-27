@@ -17,7 +17,7 @@
 
 ## 身份边界
 
-- `ClientScope`：由 `internal/codexidentity` 对客户端原始 API Key 计算域分离 HMAC；第一版不读取 `installation_id`。共享 API Key 只提供租户级隔离；没有原始 API Key 时，携带本计划状态的请求关闭失败，无状态请求不受影响。
+- `ClientScope`：由 `internal/codex/identity` 对客户端原始 API Key 计算域分离 HMAC；第一版不读取 `installation_id`。共享 API Key 只提供租户级隔离；没有原始 API Key 时，携带本计划状态的请求关闭失败，无状态请求不受影响。
 - `UpstreamAuthority`：`Vendor + normalized UpstreamOrigin + CredentialSubject`。Origin 规范化统一 `wss -> https`、`ws -> http`，小写 host，折叠默认端口，拒绝 userinfo，且不包含 path、query 或 fragment。
 - `ProtocolScope`：`UpstreamAuthority + APIType`。
 - `RouteTarget`：`ProviderID`，只作为同一 Authority 内的路由提示。
@@ -26,7 +26,7 @@ ChatGPT 使用实际 `ChatGPT-Account-Id` 作为 `CredentialSubject`；其他认
 
 凭据模型分离 `CredentialSubject`、`CredentialSession` 和 `RouteTarget`：CredentialSession 持有 CredentialSubject、secret、版本和刷新状态，刷新按 CredentialSession 协调；RouteTarget 引用 CredentialSession，多个 RouteTarget 可共享同一会话。同一账号的独立登录会话可以共享 CredentialSubject，但不共享 secret 或刷新状态。
 
-选择前由 `internal/codexidentity.AuthorityResolver.Resolve(routeTargetSnapshot, apiType)` 从已预加载的 APIType、CredentialSession 和 AuthState 快照解析候选 Authority。ChatGPT 以 CredentialSession 的 CredentialSubject 为可信候选，`AuthState.AccountID` 只用于诊断；存在 Authority 硬约束但候选无法解析时，该候选不可选。选择后认证注入返回实际 `AppliedIdentity`，与预期 Authority 不一致时必须在任何状态发送上游前拒绝该候选。
+选择前由 `internal/codex/identity.AuthorityResolver.Resolve(routeTargetSnapshot, apiType)` 从已预加载的 APIType、CredentialSession 和 AuthState 快照解析候选 Authority。ChatGPT 以 CredentialSession 的 CredentialSubject 为可信候选，`AuthState.AccountID` 只用于诊断；存在 Authority 硬约束但候选无法解析时，该候选不可选。选择后认证注入返回实际 `AppliedIdentity`，与预期 Authority 不一致时必须在任何状态发送上游前拒绝该候选。
 
 ## 字段规则
 
@@ -71,7 +71,7 @@ Header 名大小写不敏感。只启用目标版本源码和 fixture 已确认�
 
 ### 1. 统一 owner 决策
 
-`internal/codexidentity` 统一生成 ClientScope、规范化 UpstreamOrigin、解析候选 Authority，并在认证注入后校验 `AppliedIdentity`。Selector 只接收 Authority 硬约束和 RouteTarget 偏好；`internal/codexheaders` 负责纯 Header/帧决策，`internal/codexcontinuity` 负责绑定生命周期。
+`internal/codex/identity` 统一生成 ClientScope、规范化 UpstreamOrigin、解析候选 Authority，并在认证注入后校验 `AppliedIdentity`。Selector 只接收 Authority 硬约束和 RouteTarget 偏好；`internal/codex/headers` 负责纯 Header/帧决策，`internal/codex/continuity` 负责绑定生命周期。
 
 持久绑定记录包含类型、状态键 HMAC、ClientScope、ProtocolScope、RouteTarget 提示、claim operation ID、生命周期、密钥版本和过期时间。统一类型增加 `response_ref`；持久 owner 绑定 ProtocolScope，当前 WebSocket 会话另记录活动 response ID 对应的 connection generation。Attestation 只记录在当前逻辑操作内，不进入该存储。
 

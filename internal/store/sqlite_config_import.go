@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
 	"gorm.io/gorm"
 )
+
+var ErrConfigImportChatGPTCredentialMutation = errors.New("generic config import cannot mutate ChatGPT credentials")
 
 // ConfigImportRoutingPolicyMode makes routing-policy scope explicit at the store
 // boundary so callers never rely on empty slices to mean two different things.
@@ -29,6 +33,7 @@ const (
 // that the store can apply atomically without re-running admin-level staging.
 type ConfigImportBundle struct {
 	Groups               []model.Group
+	CredentialSessions   []credentialsession.Session
 	Providers            []model.Provider
 	RoutingPolicyMode    ConfigImportRoutingPolicyMode
 	RoutingPolicies      []model.RoutingPolicy
@@ -46,11 +51,14 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 	if err != nil {
 		return err
 	}
-	providerIDs := make([]string, 0, len(bundle.Providers))
-	for i := range bundle.Providers {
-		providerIDs = append(providerIDs, bundle.Providers[i].ID)
+	sessionIDs := make([]string, 0, len(bundle.CredentialSessions))
+	for i := range bundle.CredentialSessions {
+		sessionIDs = append(sessionIDs, bundle.CredentialSessions[i].ID)
 	}
-	ownedCtx, release, err := s.WithProviderCredentialMutations(ctx, providerIDs)
+	for i := range bundle.Providers {
+		sessionIDs = append(sessionIDs, bundle.Providers[i].CredentialSessionIDs()...)
+	}
+	ownedCtx, release, err := s.WithCredentialSessionMutations(ctx, sessionIDs)
 	if err != nil {
 		return fmt.Errorf("apply config import: %w", err)
 	}
@@ -65,7 +73,13 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 			db:                  tx,
 			clock:               s.clock,
 			credentialMutations: s.credentialMutations,
+			credentialSessions:  nil,
+			credentialSigner:    s.credentialSigner,
 			ruleRepository:      s.ruleRepository,
+		}
+		txStore.credentialSessions, err = s.credentialSessions.WithDB(tx)
+		if err != nil {
+			return err
 		}
 		if err := applyImportedGroups(ownedCtx, txStore, bundle.Groups); err != nil {
 			return err
@@ -77,6 +91,9 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 			routingPolicyMode,
 			bundle.RoutingPolicies,
 		); err != nil {
+			return err
+		}
+		if err := applyImportedCredentialSessions(ownedCtx, txStore, bundle.CredentialSessions); err != nil {
 			return err
 		}
 		if err := applyImportedProviders(ownedCtx, txStore, bundle.Providers); err != nil {
@@ -106,6 +123,48 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 			return candidate, err
 		})
 	return err
+}
+
+func applyImportedCredentialSessions(
+	ctx context.Context,
+	txStore *SQLiteStore,
+	sessions []credentialsession.Session,
+) error {
+	for index := range sessions {
+		candidate := sessions[index]
+		if candidate.Kind == credentialsession.KindChatGPT {
+			// ChatGPT subject authority is produced only by the verified login/import
+			// mutation boundary. Keeping this check at persistence makes an admin
+			// staging regression fail closed and roll back the whole config bundle.
+			return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
+		}
+		current, err := txStore.GetCredentialSession(ctx, candidate.ID)
+		switch {
+		case err == nil:
+			if current.Vendor != candidate.Vendor || current.Kind != candidate.Kind {
+				return fmt.Errorf("credential session %q vendor and kind are immutable", candidate.ID)
+			}
+			if current.Version != candidate.Version {
+				return fmt.Errorf("credential session %q version mismatch: expected %d, current %d", candidate.ID, candidate.Version, current.Version)
+			}
+			if current.Vendor == candidate.Vendor && current.Kind == candidate.Kind &&
+				current.SecretData == candidate.SecretData &&
+				reflect.DeepEqual(current.Subject(), candidate.Subject()) &&
+				reflect.DeepEqual(current.AuthState, candidate.AuthState) {
+				continue
+			}
+			if _, err := txStore.UpdateCredentialSessionCAS(ctx, candidate.ID, current.Version, candidate.SecretData, candidate.Subject(), candidate.AuthState); err != nil {
+				return err
+			}
+		case errors.Is(err, credentialsession.ErrNotFound):
+			if _, err := txStore.CreateCredentialSession(ctx, &candidate); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+	}
+	return nil
 }
 
 func applyImportedGroups(

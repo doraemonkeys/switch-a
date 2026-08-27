@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 
@@ -73,55 +74,62 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 		name         string
 		provider     model.Provider
 		errorSnippet string
+		wantStatus   int
+		wantCode     string
+		wantReason   model.TerminationReason
 	}{
 		{
 			name: "missing base url",
-			provider: model.Provider{
-				ID:       "ws-missing-base-url",
-				Name:     "Missing Base URL",
-				APIKey:   "key",
+			provider: withTestStaticCredential(model.Provider{
+				ID:   "ws-missing-base-url",
+				Name: "Missing Base URL",
+
 				AuthMode: "bearer",
 				Enabled:  true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "ws-missing-base-url", APIType: "codex", BaseURL: ""}},
-			},
+			}, "", "key"),
 			errorSnippet: "base_url",
 		},
 		{
 			name: "missing api key",
-			provider: model.Provider{
-				ID:       "ws-missing-api-key",
-				Name:     "Missing API Key",
-				APIKey:   "",
+			provider: withTestStaticCredential(model.Provider{
+				ID:   "ws-missing-api-key",
+				Name: "Missing API Key",
+
 				AuthMode: "bearer",
 				Enabled:  true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "ws-missing-api-key", APIType: "codex", BaseURL: "https://example.invalid"}},
-			},
-			errorSnippet: "api_key",
+			}, "", ""),
+			errorSnippet: "No available provider",
+			wantStatus:   http.StatusServiceUnavailable,
+			wantCode:     ErrCodeProviderUnavailable,
+			wantReason:   model.TerminationReasonProviderUnavailable,
 		},
 		{
 			name: "chatgpt provider without auth service",
-			provider: model.Provider{
-				ID:             "ws-chatgpt-no-auth",
-				Name:           "ChatGPT Without Auth Service",
-				Enabled:        true,
-				CredentialType: model.ProviderCredentialTypeChatGPT,
-				Credential: model.ProviderCredentialFromLegacy(
-					"ws-chatgpt-no-auth",
-					model.ProviderCredentialTypeChatGPT,
-					testChatGPTCredentialData(t, "access-token", "refresh-token", "acct-test"),
-				),
+			provider: withTestChatGPTCredential(model.Provider{
+				ID:      "ws-chatgpt-no-auth",
+				Name:    "ChatGPT Without Auth Service",
+				Enabled: true,
 				APITypes: []model.ProviderAPIType{{
 					ProviderID: "ws-chatgpt-no-auth",
 					APIType:    "codex",
 					BaseURL:    "https://example.invalid",
 				}},
-			},
+			}, "codex", testChatGPTCredentialData(t, "access-token", "refresh-token", "acct-test")),
 			errorSnippet: "credentials",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantStatus == 0 {
+				tt.wantStatus = http.StatusBadGateway
+				tt.wantCode = ErrCodeWebSocketUpgrade
+			}
+			if tt.wantReason == "" {
+				tt.wantReason = model.TerminationReasonProviderConfigurationError
+			}
 			store := newMockStore()
 			store.providers = []model.Provider{tt.provider}
 
@@ -140,7 +148,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			if err != nil {
 				t.Fatalf("dial websocket through proxy: %v", err)
 			}
-			event := readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusBadGateway, ErrCodeWebSocketUpgrade)
+			event := readTerminalGatewayErrorEvent(t, ctx, conn, tt.wantStatus, tt.wantCode)
 			if !strings.Contains(event.Error.Message, tt.errorSnippet) {
 				t.Fatalf("gateway error message = %q, want snippet %q", event.Error.Message, tt.errorSnippet)
 			}
@@ -154,8 +162,8 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
 				t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 			}
-			if requestLogTerminationReason(log) != model.TerminationReasonProviderConfigurationError {
-				t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonProviderConfigurationError)
+			if requestLogTerminationReason(log) != tt.wantReason {
+				t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), tt.wantReason)
 			}
 			if log.CommitSource == nil || *log.CommitSource != model.CommitUnknown {
 				t.Fatalf("CommitSource = %v, want %q", log.CommitSource, model.CommitUnknown)
@@ -202,22 +210,22 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 	}))
 	defer fallback.Close()
 
-	providerPrimary := &model.Provider{
-		ID:       "ws-preaccept-primary",
-		Name:     "WS PreAccept Primary",
-		APIKey:   "primary-key",
+	providerPrimary := withTestStaticCredential(&model.Provider{
+		ID:   "ws-preaccept-primary",
+		Name: "WS PreAccept Primary",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-preaccept-primary", APIType: "codex", BaseURL: primary.URL}},
-	}
-	providerFallback := &model.Provider{
-		ID:       "ws-preaccept-fallback",
-		Name:     "WS PreAccept Fallback",
-		APIKey:   "fallback-key",
+	}, "", "primary-key")
+	providerFallback := withTestStaticCredential(&model.Provider{
+		ID:   "ws-preaccept-fallback",
+		Name: "WS PreAccept Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-preaccept-fallback", APIType: "codex", BaseURL: fallback.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*providerPrimary, *providerFallback}
@@ -318,22 +326,22 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSw
 	}))
 	defer fallback.Close()
 
-	providerPrimary := &model.Provider{
-		ID:       "ws-config-primary",
-		Name:     "WS Config Primary",
-		APIKey:   "",
+	providerPrimary := withTestStaticCredential(&model.Provider{
+		ID:   "ws-config-primary",
+		Name: "WS Config Primary",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-config-primary", APIType: "codex", BaseURL: "https://example.invalid"}},
-	}
-	providerFallback := &model.Provider{
-		ID:       "ws-config-fallback",
-		Name:     "WS Config Fallback",
-		APIKey:   "fallback-key",
+	}, "", "")
+	providerFallback := withTestStaticCredential(&model.Provider{
+		ID:   "ws-config-fallback",
+		Name: "WS Config Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-config-fallback", APIType: "codex", BaseURL: fallback.URL}},
-	}
+	}, "", "fallback-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*providerPrimary, *providerFallback}
@@ -412,14 +420,14 @@ func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *
 	defer upstream.Close()
 
 	store := newMockStore()
-	store.providers = []model.Provider{{
-		ID:       "ws-http-fallback",
-		Name:     "WS HTTP Fallback",
-		APIKey:   "key",
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID:   "ws-http-fallback",
+		Name: "WS HTTP Fallback",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-http-fallback", APIType: "codex", BaseURL: upstream.URL}},
-	}}
+	}, "", "key")}
 
 	handler := NewHandler(Config{
 		Store:  store,
@@ -498,25 +506,21 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 	}))
 	defer upstream.Close()
 
-	provider := &model.Provider{
-		ID:             "ws-chatgpt-refresh",
-		Name:           "WS ChatGPT Refresh",
-		Enabled:        true,
-		AuthMode:       "bearer",
-		CredentialType: model.ProviderCredentialTypeChatGPT,
-		Credential: model.ProviderCredentialFromLegacy(
-			"ws-chatgpt-refresh",
-			model.ProviderCredentialTypeChatGPT,
-			testChatGPTCredentialData(t, "access-old", "refresh-old", "acct-123"),
-		),
+	provider := withTestChatGPTCredential(&model.Provider{
+		ID:       "ws-chatgpt-refresh",
+		Name:     "WS ChatGPT Refresh",
+		Enabled:  true,
+		AuthMode: "bearer",
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "ws-chatgpt-refresh",
 			APIType:    "codex",
 			BaseURL:    upstream.URL,
 		}},
-	}
+	}, "codex", testChatGPTCredentialData(t, "access-old", "refresh-old", "acct-123"))
+	credentialStore := newWebSocketCredentialStore(t, provider.CredentialSessions[0].Credential)
 
 	authService := providerauth.NewService(providerauth.Config{
+		CredentialStore: credentialStore,
 		HTTPClient: mockOAuthHTTPClient{
 			do: func(req *http.Request) (*http.Response, error) {
 				refreshCalls.Add(1)
@@ -714,22 +718,22 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvid
 	}))
 	defer finalUpstream.Close()
 
-	initialProvider := &model.Provider{
-		ID:       "ws-preaccept-p1",
-		Name:     "WS PreAccept P1",
-		APIKey:   "key-1",
+	initialProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-preaccept-p1",
+		Name: "WS PreAccept P1",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-preaccept-p1", APIType: "codex", BaseURL: initialUpstream.URL}},
-	}
-	finalProvider := &model.Provider{
-		ID:       "ws-preaccept-p2",
-		Name:     "WS PreAccept P2",
-		APIKey:   "key-2",
+	}, "", "key-1")
+	finalProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-preaccept-p2",
+		Name: "WS PreAccept P2",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-preaccept-p2", APIType: "codex", BaseURL: finalUpstream.URL}},
-	}
+	}, "", "key-2")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*initialProvider, *finalProvider}
@@ -851,22 +855,22 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvid
 	}))
 	defer finalUpstream.Close()
 
-	initialProvider := &model.Provider{
-		ID:       "ws-transport-p1",
-		Name:     "WS Transport P1",
-		APIKey:   "key-1",
+	initialProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-transport-p1",
+		Name: "WS Transport P1",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-transport-p1", APIType: "codex", BaseURL: "https://ws-transport.invalid"}},
-	}
-	finalProvider := &model.Provider{
-		ID:       "ws-transport-p2",
-		Name:     "WS Transport P2",
-		APIKey:   "key-2",
+	}, "", "key-1")
+	finalProvider := withTestStaticCredential(&model.Provider{
+		ID:   "ws-transport-p2",
+		Name: "WS Transport P2",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-transport-p2", APIType: "codex", BaseURL: finalUpstream.URL}},
-	}
+	}, "", "key-2")
 
 	store := newMockStore()
 	store.providers = []model.Provider{*initialProvider, *finalProvider}
@@ -962,4 +966,80 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvid
 	if attempts[1].ProviderID != finalProvider.ID {
 		t.Fatalf("second attempt provider = %q, want %q", attempts[1].ProviderID, finalProvider.ID)
 	}
+}
+
+type webSocketCredentialStore struct {
+	mu      sync.Mutex
+	session *credentialsession.Session
+}
+
+func newWebSocketCredentialStore(t *testing.T, snapshot credentialsession.Snapshot) *webSocketCredentialStore {
+	t.Helper()
+	session := &credentialsession.Session{
+		ID:         snapshot.SessionID,
+		Vendor:     snapshot.Vendor,
+		Kind:       snapshot.Kind,
+		SecretData: snapshot.SecretData,
+		Version:    snapshot.Version,
+		AuthState:  snapshot.AuthState.Clone(),
+	}
+	if err := session.SetSubject(snapshot.Subject); err != nil {
+		t.Fatalf("set credential subject: %v", err)
+	}
+	return &webSocketCredentialStore{session: session}
+}
+
+func (s *webSocketCredentialStore) GetCredentialSession(_ context.Context, sessionID string) (*credentialsession.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.session == nil || s.session.ID != sessionID {
+		return nil, credentialsession.ErrNotFound
+	}
+	return s.session.Clone(), nil
+}
+
+func (s *webSocketCredentialStore) WithCredentialSessionMutations(
+	ctx context.Context,
+	_ []string,
+) (context.Context, func(), error) {
+	return ctx, func() {}, nil
+}
+
+func (s *webSocketCredentialStore) UpdateCredentialSessionCAS(
+	_ context.Context,
+	sessionID string,
+	expectedVersion int64,
+	secretData string,
+	subject credentialsession.Subject,
+	authState credentialsession.AuthState,
+) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.session == nil || s.session.ID != sessionID {
+		return 0, credentialsession.ErrNotFound
+	}
+	if s.session.Version != expectedVersion {
+		return 0, credentialsession.ErrVersionConflict
+	}
+	if err := s.session.SetSubject(subject); err != nil {
+		return 0, err
+	}
+	s.session.Version++
+	s.session.SecretData = secretData
+	s.session.AuthState = authState.Clone()
+	return s.session.Version, nil
+}
+
+func (s *webSocketCredentialStore) UpdateCredentialSessionAuthState(
+	_ context.Context,
+	sessionID string,
+	authState credentialsession.AuthState,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.session == nil || s.session.ID != sessionID {
+		return credentialsession.ErrNotFound
+	}
+	s.session.AuthState = authState.Clone()
+	return nil
 }

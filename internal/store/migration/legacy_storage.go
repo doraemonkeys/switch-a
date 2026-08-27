@@ -21,6 +21,8 @@ const (
 	routingPolicyEnabledColumn        = "enabled"
 	routingPolicyTargetProviderColumn = "target_provider_id"
 	usageLimitPolicyColumnName        = "usage_limit_policy"
+	legacyProviderCredentialAPIKey    = "api_key"
+	legacyProviderCredentialChatGPT   = "chatgpt"
 )
 
 // MigrateBaseURLToAPIType moves base_url from the providers table to provider_api_types.
@@ -193,14 +195,21 @@ func MigrateRoutingPolicyLifecycleStorage(db *gorm.DB) error {
 
 // MigrateProviderUsageLimitPolicyStorage rewrites rows that accidentally
 // persisted a credential-derived default back to the empty "inherit default"
-// representation so later credential_type changes can recompute the effective
-// policy without clobbering explicit overrides.
+// representation before M1 removes credential_type. Explicit overrides survive
+// the transition to the route-target-independent default.
 func MigrateProviderUsageLimitPolicyStorage(db *gorm.DB) error {
 	present, err := tableColumnExists(db, providersTableName, usageLimitPolicyColumnName)
 	if err != nil {
 		return err
 	}
 	if !present {
+		return nil
+	}
+	credentialTypePresent, err := tableColumnExists(db, providersTableName, "credential_type")
+	if err != nil {
+		return err
+	}
+	if !credentialTypePresent {
 		return nil
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -214,11 +223,11 @@ func MigrateProviderUsageLimitPolicyStorage(db *gorm.DB) error {
 				(COALESCE(NULLIF(TRIM(credential_type), ''), ?) != ? AND TRIM(usage_limit_policy) = ?)
 			  )
 		`,
-			string(model.ProviderCredentialTypeAPIKey),
-			string(model.ProviderCredentialTypeChatGPT),
+			legacyProviderCredentialAPIKey,
+			legacyProviderCredentialChatGPT,
 			string(model.ProviderUsageLimitPolicySuspend),
-			string(model.ProviderCredentialTypeAPIKey),
-			string(model.ProviderCredentialTypeChatGPT),
+			legacyProviderCredentialAPIKey,
+			legacyProviderCredentialChatGPT,
 			string(model.ProviderUsageLimitPolicySwitchProvider),
 		).Error
 	})

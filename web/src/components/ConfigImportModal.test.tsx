@@ -14,14 +14,19 @@ import type {
 } from "../api/types";
 
 const exportedConfig: ExportedConfig = {
-  version: "4.0",
+  version: "5.0",
   exported_at: "2026-03-29T00:00:00Z",
   providers: [
     {
       id: "provider-alpha-1",
       name: "Alpha One",
-      api_key: "sk-alpha-1",
-      api_types: [{ api_type: "claude", base_url: "https://api.alpha-1.test" }],
+      api_types: [
+        {
+          api_type: "claude",
+          base_url: "https://api.alpha-1.test",
+          credential_session_id: "alpha-session",
+        },
+      ],
       auth_mode: "bearer",
       group_id: "group-alpha",
       weight: 1,
@@ -33,8 +38,13 @@ const exportedConfig: ExportedConfig = {
     {
       id: "provider-beta-1",
       name: "Beta One",
-      api_key: "sk-beta-1",
-      api_types: [{ api_type: "openai", base_url: "https://api.beta-1.test" }],
+      api_types: [
+        {
+          api_type: "openai",
+          base_url: "https://api.beta-1.test",
+          credential_session_id: "beta-session",
+        },
+      ],
       auth_mode: "bearer",
       group_id: "group-beta",
       weight: 1,
@@ -46,8 +56,13 @@ const exportedConfig: ExportedConfig = {
     {
       id: "provider-solo",
       name: "Solo Provider",
-      api_key: "sk-solo",
-      api_types: [{ api_type: "gemini", base_url: "https://api.solo.test" }],
+      api_types: [
+        {
+          api_type: "gemini",
+          base_url: "https://api.solo.test",
+          credential_session_id: "solo-session",
+        },
+      ],
       auth_mode: "bearer",
       weight: 1,
       priority: 3,
@@ -56,6 +71,7 @@ const exportedConfig: ExportedConfig = {
       enabled: true,
     },
   ],
+  credential_sessions: [],
   groups: [
     {
       id: "group-alpha",
@@ -119,6 +135,13 @@ function createPreviewResponse(
         unchanged: 0,
         ...changes.providers,
       },
+      credential_sessions: {
+        add: 0,
+        update: 0,
+        delete: 0,
+        unchanged: 0,
+        ...changes.credential_sessions,
+      },
       groups: {
         add: 0,
         update: 0,
@@ -161,6 +184,7 @@ function createImportResult(
     success: true,
     applied: {
       providers: { added: 0, updated: 0, deleted: 0 },
+      credential_sessions: { added: 0, updated: 0, deleted: 0 },
       groups: { added: 0, updated: 0, deleted: 0 },
       routing_policies: { added: 0, updated: 0, deleted: 0 },
       settings: { added: 0, updated: 0, deleted: 0 },
@@ -225,7 +249,7 @@ describe("ConfigImportModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects pre-v4 files before preview because compatibility imports are unsupported", async () => {
+  it("rejects pre-v5 files before preview because compatibility imports are unsupported", async () => {
     const onPreview = vi.fn();
     render(
       <ConfigImportModal
@@ -240,13 +264,13 @@ describe("ConfigImportModal", () => {
     await uploadConfigFile({ ...exportedConfig, version: "3.0" });
 
     expect(
-      await screen.findByText(/配置文件版本必须为 4\.0/),
+      await screen.findByText(/配置文件版本必须为 5\.0/),
     ).toBeInTheDocument();
     expect(onPreview).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "预览变更" })).toBeDisabled();
   });
 
-  it("requires the v4 internal error rule partition in the uploaded file", async () => {
+  it("requires the v5 internal error rule partition in the uploaded file", async () => {
     render(
       <ConfigImportModal
         isOpen={true}
@@ -303,9 +327,10 @@ describe("ConfigImportModal", () => {
 
     await waitFor(() => {
       expect(onPreview).toHaveBeenCalledWith({
-        version: "4.0",
+        version: "5.0",
         import_scope: { mode: "full" },
         providers: exportedConfig.providers,
+        credential_sessions: exportedConfig.credential_sessions,
         groups: exportedConfig.groups,
         routing_policies: exportedConfig.routing_policies,
         settings: exportedConfig.settings,
@@ -318,9 +343,10 @@ describe("ConfigImportModal", () => {
     await waitFor(() => {
       expect(onImport).toHaveBeenCalledWith(
         {
-          version: "4.0",
+          version: "5.0",
           import_scope: { mode: "full" },
           providers: exportedConfig.providers,
+          credential_sessions: exportedConfig.credential_sessions,
           groups: exportedConfig.groups,
           routing_policies: exportedConfig.routing_policies,
           settings: exportedConfig.settings,
@@ -382,7 +408,7 @@ describe("ConfigImportModal", () => {
 
     await waitFor(() => {
       expect(onPreview).toHaveBeenCalledWith({
-        version: "4.0",
+        version: "5.0",
         import_scope: {
           mode: "selection",
           selection: {
@@ -391,6 +417,7 @@ describe("ConfigImportModal", () => {
           },
         },
         providers: exportedConfig.providers,
+        credential_sessions: exportedConfig.credential_sessions,
         groups: exportedConfig.groups,
         routing_policies: exportedConfig.routing_policies,
         settings: exportedConfig.settings,
@@ -453,7 +480,7 @@ describe("ConfigImportModal", () => {
 
     expect(await screen.findByText("变更预览")).toBeInTheDocument();
     expect(onPreview).toHaveBeenCalledWith({
-      version: "4.0",
+      version: "5.0",
       import_scope: {
         mode: "selection",
         selection: {
@@ -462,6 +489,7 @@ describe("ConfigImportModal", () => {
         },
       },
       providers: exportedConfig.providers,
+      credential_sessions: exportedConfig.credential_sessions,
       groups: exportedConfig.groups,
       routing_policies: exportedConfig.routing_policies,
       settings: exportedConfig.settings,
@@ -494,7 +522,7 @@ describe("ConfigImportModal", () => {
 
     await waitFor(() => {
       expect(onPreview).toHaveBeenCalledWith({
-        version: "4.0",
+        version: "5.0",
         import_scope: {
           mode: "selection",
           selection: {
@@ -503,6 +531,7 @@ describe("ConfigImportModal", () => {
           },
         },
         providers: exportedConfig.providers,
+        credential_sessions: exportedConfig.credential_sessions,
         groups: exportedConfig.groups,
         routing_policies: exportedConfig.routing_policies,
         settings: exportedConfig.settings,
@@ -535,7 +564,7 @@ describe("ConfigImportModal", () => {
 
     expect(
       screen.getByText(
-        /选中的 Group 会同时导入该 Group 下的 Providers 和对应 Internal Error Rules；选中的 Provider 会自动补齐其所属 Group/,
+        /选中的 Group 会同时导入其 Providers、Static Credential Sessions 和对应 Internal Error Rules；ChatGPT 描述符必须先通过已验证路径恢复/,
       ),
     ).toBeInTheDocument();
 
@@ -549,7 +578,7 @@ describe("ConfigImportModal", () => {
 
     await waitFor(() => {
       expect(onPreview).toHaveBeenCalledWith({
-        version: "4.0",
+        version: "5.0",
         import_scope: {
           mode: "selection",
           selection: {
@@ -558,6 +587,7 @@ describe("ConfigImportModal", () => {
           },
         },
         providers: exportedConfig.providers,
+        credential_sessions: exportedConfig.credential_sessions,
         groups: exportedConfig.groups,
         routing_policies: exportedConfig.routing_policies,
         settings: exportedConfig.settings,
@@ -598,9 +628,10 @@ describe("ConfigImportModal preview behavior", () => {
 
     await waitFor(() => {
       expect(onPreview).toHaveBeenCalledWith({
-        version: "4.0",
+        version: "5.0",
         import_scope: { mode: "settings_only" },
         providers: exportedConfig.providers,
+        credential_sessions: exportedConfig.credential_sessions,
         groups: exportedConfig.groups,
         routing_policies: exportedConfig.routing_policies,
         settings: exportedConfig.settings,
@@ -680,7 +711,7 @@ describe("ConfigImportModal preview behavior", () => {
         groups: { add: 0, update: 1, delete: 0 },
       }),
       warnings: [
-        'Selected provider "provider-missing" was not found in the import file',
+        'credential session "chat-session" requires verified ChatGPT reauthentication before import; create it with the same ID through login/provider-import and retry',
       ],
     });
 
@@ -702,7 +733,7 @@ describe("ConfigImportModal preview behavior", () => {
 
     expect(
       await screen.findByText(
-        'Selected provider "provider-missing" was not found in the import file',
+        'credential session "chat-session" requires verified ChatGPT reauthentication before import; create it with the same ID through login/provider-import and retry',
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+
 	"go.uber.org/zap"
 )
 
@@ -159,7 +161,8 @@ func verifyChatGPTProviderImportCandidate(
 	keys []chatGPTProviderImportJWK,
 	now time.Time,
 ) error {
-	if candidate == nil || candidate.Credential == nil || candidate.AuthState == nil {
+	if candidate == nil || candidate.State != ChatGPTProviderImportCandidateStateReady ||
+		candidate.Credential.Kind != credentialsession.KindChatGPT {
 		return ErrChatGPTProviderImportVerificationFailed
 	}
 	secret, err := decodeChatGPTCredentialSecret(candidate.Credential.SecretData)
@@ -200,8 +203,9 @@ func verifyChatGPTProviderImportCandidate(
 	}
 
 	accountID := accessClaims.AccountID
-	if normalizedBindingAccountID(candidate.Credential.BindingAccountID) != accountID ||
-		strings.TrimSpace(candidate.AuthState.AccountID) != accountID {
+	if candidate.Credential.Subject.Kind != credentialsession.SubjectAccount ||
+		strings.TrimSpace(string(candidate.Credential.Subject.Value)) != accountID ||
+		strings.TrimSpace(candidate.Credential.AuthState.AccountID) != accountID {
 		return ErrChatGPTProviderImportVerificationFailed
 	}
 	return nil

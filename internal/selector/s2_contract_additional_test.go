@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storepkg "github.com/doraemonkeys/switch-a/internal/store"
@@ -152,7 +153,7 @@ func TestRetryEligibilityFailsClosedOnDependencyAndCredentialLoss(t *testing.T) 
 		{
 			name: "api key removed",
 			mutate: func(store *lifecycleStore) {
-				store.providers["provider-a"].APIKey = ""
+				store.providers["provider-a"].CredentialSessions[0].Credential.SecretData = ""
 			},
 			want: errorrule.ReasonAuthUnavailable,
 		},
@@ -160,11 +161,11 @@ func TestRetryEligibilityFailsClosedOnDependencyAndCredentialLoss(t *testing.T) 
 			name: "login credential removed",
 			prepare: func(store *lifecycleStore) {
 				provider := store.providers["provider-a"]
-				provider.CredentialType = model.ProviderCredentialTypeChatGPT
-				provider.Credential = &model.ProviderCredential{ProviderID: provider.ID, SecretData: "session"}
+				provider.CredentialSessions[0].Credential.Kind = credentialsession.KindChatGPT
+				provider.CredentialSessions[0].Credential.SecretData = "session"
 			},
 			mutate: func(store *lifecycleStore) {
-				store.providers["provider-a"].Credential = nil
+				store.providers["provider-a"].CredentialSessions = nil
 			},
 			want: errorrule.ReasonAuthUnavailable,
 		},

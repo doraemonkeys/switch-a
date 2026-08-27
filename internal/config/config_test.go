@@ -11,6 +11,7 @@ func TestLoad_Success(t *testing.T) {
 	t.Setenv("SWITCHA_PORT", "9000")
 	t.Setenv("SWITCHA_ADMIN_PORT", "9001")
 	t.Setenv("SWITCHA_DB_PATH", "/tmp/test.db")
+	t.Setenv(EnvCodexKeyringFile, "/run/secrets/codex-keyring.json")
 
 	cfg, err := Load()
 	if err != nil {
@@ -28,6 +29,9 @@ func TestLoad_Success(t *testing.T) {
 	}
 	if cfg.DBPath != "/tmp/test.db" {
 		t.Errorf("DBPath = %q, want %q", cfg.DBPath, "/tmp/test.db")
+	}
+	if cfg.CodexKeyringFile != "/run/secrets/codex-keyring.json" {
+		t.Errorf("CodexKeyringFile = %q", cfg.CodexKeyringFile)
 	}
 }
 
@@ -60,6 +64,9 @@ func TestLoad_DefaultValues(t *testing.T) {
 	if cfg.LogLevel != DefaultLogLevel {
 		t.Errorf("LogLevel = %q, want default %q", cfg.LogLevel, DefaultLogLevel)
 	}
+	if cfg.CodexKeyringFile != "" {
+		t.Errorf("CodexKeyringFile = %q, want empty when no keyring is configured", cfg.CodexKeyringFile)
+	}
 }
 
 func TestLoad_MissingAdminToken(t *testing.T) {
@@ -82,6 +89,7 @@ log_path: "/var/log/app.log"
 log_max_size_mb: 50
 log_max_keep_days: 14
 log_level: "debug"
+codex_keyring_file: "/run/secrets/file-keyring.json"
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		t.Fatalf("failed to create config file: %v", err)
@@ -116,6 +124,9 @@ log_level: "debug"
 	if cfg.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "debug")
 	}
+	if cfg.CodexKeyringFile != "/run/secrets/file-keyring.json" {
+		t.Errorf("CodexKeyringFile = %q", cfg.CodexKeyringFile)
+	}
 }
 
 func TestLoadWithPath_EnvOverridesFile(t *testing.T) {
@@ -135,6 +146,7 @@ admin_token: "file-token"
 	// Set environment variables to override config file
 	t.Setenv("SWITCHA_PORT", "9999")
 	t.Setenv("SWITCHA_ADMIN_TOKEN", "env-token")
+	t.Setenv(EnvCodexKeyringFile, "/run/secrets/env-keyring.json")
 
 	cfg, err := LoadWithPath(configPath)
 	if err != nil {
@@ -155,6 +167,9 @@ admin_token: "file-token"
 	}
 	if cfg.DBPath != "/data/app.db" {
 		t.Errorf("DBPath = %q, want %q", cfg.DBPath, "/data/app.db")
+	}
+	if cfg.CodexKeyringFile != "/run/secrets/env-keyring.json" {
+		t.Errorf("CodexKeyringFile = %q, want environment override", cfg.CodexKeyringFile)
 	}
 }
 

@@ -76,7 +76,6 @@ func TestCreateProvider_Error(t *testing.T) {
 	p := &model.Provider{
 		ID:      "p1",
 		Name:    "Test",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	err := store.CreateProvider(ctx, p)
@@ -92,7 +91,6 @@ func TestUpdateProvider_Error(t *testing.T) {
 	p := &model.Provider{
 		ID:      "p1",
 		Name:    "Test",
-		APIKey:  "key",
 		Enabled: true,
 	}
 	err := store.UpdateProvider(ctx, p)

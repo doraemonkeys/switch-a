@@ -47,7 +47,6 @@ type mockStore struct {
 	mu               sync.Mutex
 	providers        []model.Provider
 	configs          map[string]string
-	authStates       map[string]*model.ProviderAuthState
 	routingPolicies  []model.RoutingPolicy
 	routingPolicyErr error
 	logs             []model.RequestLog
@@ -69,9 +68,8 @@ func newMockStore() *mockStore {
 			ConfigKeyStickyMode:             "model",
 			ConfigKeyStickyTTL:              "300",
 		},
-		authStates: make(map[string]*model.ProviderAuthState),
-		logs:       []model.RequestLog{},
-		attempts:   []model.RequestAttempt{},
+		logs:     []model.RequestLog{},
+		attempts: []model.RequestAttempt{},
 	}
 }
 
@@ -93,6 +91,13 @@ func (m *mockStore) GetConfig(_ context.Context, key string) (string, error) {
 	return m.configs[key], nil
 }
 
+func (m *mockStore) GetGroup(_ context.Context, groupID string) (*model.Group, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &model.Group{ID: groupID, Name: groupID, Strategy: "priority", Weight: 1, Enabled: true}, nil
+}
+
 func (m *mockStore) InsertLog(_ context.Context, log *model.RequestLog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -111,18 +116,6 @@ func (m *mockStore) InsertAttempts(_ context.Context, attempts []model.RequestAt
 	}
 	m.attempts = append(m.attempts, attempts...)
 	return nil
-}
-
-func (m *mockStore) GetProviderAuthState(_ context.Context, providerID string) (*model.ProviderAuthState, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.err != nil {
-		return nil, m.err
-	}
-	if authState, ok := m.authStates[providerID]; ok {
-		return authState.Clone(), nil
-	}
-	return nil, nil
 }
 
 func (m *mockStore) ListRoutingPoliciesByAPIType(_ context.Context, apiType string) ([]model.RoutingPolicy, error) {
@@ -300,7 +293,7 @@ func TestHandler_ServeHTTP_BodyTooLarge(t *testing.T) {
 	store := newMockStore()
 	store.configs[ConfigKeyMaxBodySize] = "1" // 1MB limit
 	store.providers = []model.Provider{
-		{ID: "p1", APIKey: "key", APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"}}},
+		withTestStaticCredential(model.Provider{ID: "p1", APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://api.example.com"}}}, "", "key"),
 	}
 	logger := zap.NewNop()
 
@@ -335,14 +328,14 @@ func TestHandler_ServeHTTP_EmptyBaseURL_FailsFast(t *testing.T) {
 	store := newMockStore()
 	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Wrong API Type Provider",
-			APIKey:   "test-api-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Wrong API Type Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: "https://api.example.com"}},
-		},
+		}, "", "test-api-key"),
 	}
 	logger := zap.NewNop()
 
@@ -398,14 +391,14 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-api-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-api-key"),
 	}
 	logger := zap.NewNop()
 
@@ -459,7 +452,7 @@ func TestHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	}
 }
 
-func TestHandler_ServeHTTP_UsesAPITypeKeyOverride(t *testing.T) {
+func TestHandler_ServeHTTP_UsesRouteCredentialSnapshot(t *testing.T) {
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer claude-override-key" {
 			t.Errorf("Authorization = %q, want %q", got, "Bearer claude-override-key")
@@ -471,19 +464,18 @@ func TestHandler_ServeHTTP_UsesAPITypeKeyOverride(t *testing.T) {
 	defer upstreamServer.Close()
 
 	store := newMockStore()
-	store.providers = []model.Provider{{
-		ID:       "p1",
-		Name:     "Test Provider",
-		APIKey:   "default-key",
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID:   "p1",
+		Name: "Test Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "p1",
 			APIType:    "claude",
 			BaseURL:    upstreamServer.URL,
-			APIKey:     "claude-override-key",
 		}},
-	}}
+	}, "", "claude-override-key")}
 	logger := zap.NewNop()
 
 	handler := NewHandler(Config{
@@ -520,14 +512,14 @@ func TestHandler_ServeHTTP_SSEProxy(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-api-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-api-key"),
 	}
 	logger := zap.NewNop()
 
@@ -638,14 +630,14 @@ func TestHandler_LogsGatewayTransportStatus_ForFailoverStatusCodes(t *testing.T)
 			store := newMockStore()
 			store.configs[ConfigKeyGlobalMaxAttempts] = "1" // Limit to a single upstream attempt
 			store.providers = []model.Provider{
-				{
-					ID:       "p1",
-					Name:     "Test Provider",
-					APIKey:   "test-api-key",
+				withTestStaticCredential(model.Provider{
+					ID:   "p1",
+					Name: "Test Provider",
+
 					AuthMode: "bearer",
 					Enabled:  true,
 					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-				},
+				}, "", "test-api-key"),
 			}
 			logger := zap.NewNop()
 
@@ -694,14 +686,14 @@ func TestHandler_LogsSuccessTrue_For2xxStatusCodes(t *testing.T) {
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-api-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-api-key"),
 	}
 	logger := zap.NewNop()
 
@@ -757,14 +749,14 @@ func TestHandler_LogsNeverStartedOutcome_ForNonRetryable4xxStatusCodes(t *testin
 
 			store := newMockStore()
 			store.providers = []model.Provider{
-				{
-					ID:       "p1",
-					Name:     "Test Provider",
-					APIKey:   "test-api-key",
+				withTestStaticCredential(model.Provider{
+					ID:   "p1",
+					Name: "Test Provider",
+
 					AuthMode: "bearer",
 					Enabled:  true,
 					APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-				},
+				}, "", "test-api-key"),
 			}
 			logger := zap.NewNop()
 
@@ -1190,14 +1182,14 @@ func TestHandler_LogRequest_Timeout(t *testing.T) {
 	// We use 5 seconds to ensure it exceeds the timeout
 	store := newSlowMockStore(testSlowDBDelay)
 	store.providers = []model.Provider{
-		{
-			ID:       "p1",
-			Name:     "Test Provider",
-			APIKey:   "test-api-key",
+		withTestStaticCredential(model.Provider{
+			ID:   "p1",
+			Name: "Test Provider",
+
 			AuthMode: "bearer",
 			Enabled:  true,
 			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: upstreamServer.URL}},
-		},
+		}, "", "test-api-key"),
 	}
 	logger := zap.NewNop()
 
@@ -1272,14 +1264,14 @@ func TestHandler_StickyCache_UpdatedOnClientDisconnect(t *testing.T) {
 	}))
 	defer upstreamServer.Close()
 
-	provider := model.Provider{
-		ID:       "p1",
-		Name:     "Test Provider",
-		APIKey:   "test-api-key",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "p1",
+		Name: "Test Provider",
+
 		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: upstreamServer.URL}},
-	}
+	}, "", "test-api-key")
 
 	store := newMockStore()
 	store.providers = []model.Provider{provider}

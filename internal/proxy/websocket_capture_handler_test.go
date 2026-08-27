@@ -69,21 +69,22 @@ type webSocketCaptureFailingAuthenticator struct {
 func (auth webSocketCaptureFailingAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	provider *model.Provider,
+	candidate testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-) error {
-	if provider.ID == auth.providerID {
+	_ *testUpstreamURL,
+) (testAppliedIdentity, error) {
+	if candidate.RouteTargetID() == auth.providerID {
 		headers.Set("Authorization", "Bearer "+auth.secret)
-		return errors.New("credential preparation failed for " + auth.secret)
+		return testAppliedIdentity{}, errors.New("credential preparation failed for " + auth.secret)
 	}
 	headers.Set("Authorization", "Bearer fallback-token")
-	return nil
+	return testAppliedIdentity{}, nil
 }
 
-func (webSocketCaptureFailingAuthenticator) RefreshProviderCredentials(
+func (webSocketCaptureFailingAuthenticator) RefreshCredentialSession(
 	context.Context,
-	*model.Provider,
+	testCredentialSnapshot,
 ) (bool, error) {
 	return false, nil
 }
@@ -121,10 +122,10 @@ func TestHandlerWebSocketCaptureEndToEndLiveCloseAndExport(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       providerID,
-		Name:     "Capture Live Provider",
-		APIKey:   "capture-live-secret",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   providerID,
+		Name: "Capture Live Provider",
+
 		AuthMode: AuthModeBearer,
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
@@ -132,7 +133,7 @@ func TestHandlerWebSocketCaptureEndToEndLiveCloseAndExport(t *testing.T) {
 			APIType:    APITypeCodex,
 			BaseURL:    upstream.URL,
 		}},
-	}
+	}, "", "capture-live-secret")
 	manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
 		ID:   provider.ID,
 		Name: provider.Name,
@@ -265,22 +266,22 @@ func TestHandlerWebSocketCaptureEndToEndUnselectedSuppressionAndSelectedReplayLi
 	}))
 	defer fallback.Close()
 
-	primaryProvider := &model.Provider{
-		ID:       primaryID,
-		Name:     "Capture Primary",
-		APIKey:   "primary-secret",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   primaryID,
+		Name: "Capture Primary",
+
 		AuthMode: AuthModeBearer,
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: primaryID, APIType: APITypeCodex, BaseURL: primary.URL}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       fallbackID,
-		Name:     "Capture Fallback",
-		APIKey:   "fallback-secret",
+	}, "", "primary-secret")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   fallbackID,
+		Name: "Capture Fallback",
+
 		AuthMode: AuthModeBearer,
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: fallbackID, APIType: APITypeCodex, BaseURL: fallback.URL}},
-	}
+	}, "", "fallback-secret")
 	// Only the replacement is selected for payload retention. The primary still
 	// participates as a transition so its live client read can publish lineage
 	// without retaining either physical frame.
@@ -570,10 +571,10 @@ func TestHandlerWebSocketCaptureCredentialRefreshCreatesTwoPhysicalExchanges(t *
 	}))
 	defer upstream.Close()
 
-	provider := model.Provider{
-		ID:       "provider",
-		Name:     "Provider",
-		APIKey:   "readiness-only",
+	provider := withTestStaticCredential(model.Provider{
+		ID:   "provider",
+		Name: "Provider",
+
 		Enabled:  true,
 		AuthMode: AuthModeBearer,
 		APITypes: []model.ProviderAPIType{{
@@ -581,7 +582,7 @@ func TestHandlerWebSocketCaptureCredentialRefreshCreatesTwoPhysicalExchanges(t *
 			APIType:    APITypeCodex,
 			BaseURL:    upstream.URL,
 		}},
-	}
+	}, "", "readiness-only")
 	manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
 		ID:   provider.ID,
 		Name: provider.Name,
@@ -704,10 +705,10 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 	}))
 	defer fallback.Close()
 
-	primaryProvider := &model.Provider{
-		ID:       primaryID,
-		Name:     "Preparation Primary",
-		APIKey:   "readiness-only",
+	primaryProvider := withTestStaticCredential(&model.Provider{
+		ID:   primaryID,
+		Name: "Preparation Primary",
+
 		Enabled:  true,
 		AuthMode: AuthModeBearer,
 		APITypes: []model.ProviderAPIType{{
@@ -715,11 +716,11 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 			APIType:    APITypeCodex,
 			BaseURL:    "https://upstream.example",
 		}},
-	}
-	fallbackProvider := &model.Provider{
-		ID:       fallbackID,
-		Name:     "Preparation Fallback",
-		APIKey:   "fallback-readiness-only",
+	}, "", "readiness-only")
+	fallbackProvider := withTestStaticCredential(&model.Provider{
+		ID:   fallbackID,
+		Name: "Preparation Fallback",
+
 		Enabled:  true,
 		AuthMode: AuthModeBearer,
 		APITypes: []model.ProviderAPIType{{
@@ -727,7 +728,7 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 			APIType:    APITypeCodex,
 			BaseURL:    fallback.URL,
 		}},
-	}
+	}, "", "fallback-readiness-only")
 	manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{
 		{ID: primaryID, Name: primaryProvider.Name},
 		{ID: fallbackID, Name: fallbackProvider.Name},

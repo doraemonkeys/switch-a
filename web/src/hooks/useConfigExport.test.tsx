@@ -10,14 +10,19 @@ import type {
 import { createMockApiClient, createWrapper } from "./test-utils";
 
 const mockExportedConfig: ExportedConfig = {
-  version: "4.0",
+  version: "5.0",
   exported_at: "2024-01-01T00:00:00Z",
   providers: [
     {
       id: "1",
       name: "Provider 1",
-      api_key: "key-123",
-      api_types: [{ api_type: "claude", base_url: "https://api.example.com" }],
+      api_types: [
+        {
+          api_type: "claude",
+          base_url: "https://api.example.com",
+          credential_session_id: "session-1",
+        },
+      ],
       auth_mode: "bearer",
       group_id: null,
       weight: 1,
@@ -27,6 +32,7 @@ const mockExportedConfig: ExportedConfig = {
       enabled: true,
     },
   ],
+  credential_sessions: [],
   groups: [
     {
       id: "g1",
@@ -58,6 +64,7 @@ const mockPreviewResponse: ImportPreviewResponse = {
   dry_run: true,
   changes: {
     providers: { add: 1, update: 0, delete: 0, unchanged: 0 },
+    credential_sessions: { add: 0, update: 0, delete: 0, unchanged: 0 },
     groups: { add: 0, update: 1, delete: 0, unchanged: 0 },
     routing_policies: { add: 0, update: 1, delete: 0, unchanged: 0 },
     settings: { add: 0, update: 2, delete: 0, unchanged: 0 },
@@ -72,6 +79,7 @@ const mockImportResult: ImportResult = {
   success: true,
   applied: {
     providers: { added: 1, updated: 0, deleted: 0 },
+    credential_sessions: { added: 0, updated: 0, deleted: 0 },
     groups: { added: 0, updated: 1, deleted: 0 },
     routing_policies: { added: 0, updated: 1, deleted: 0 },
     settings: { added: 0, updated: 2, deleted: 0 },
@@ -184,11 +192,12 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
-      version: "4.0",
+      version: "5.0",
       import_scope: {
         mode: "full" as const,
       },
       providers: mockExportedConfig.providers,
+      credential_sessions: mockExportedConfig.credential_sessions,
       groups: mockExportedConfig.groups,
       routing_policies: mockExportedConfig.routing_policies,
       settings: mockExportedConfig.settings,
@@ -211,11 +220,12 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
-      version: "4.0",
+      version: "5.0",
       import_scope: {
         mode: "full" as const,
       },
       providers: mockExportedConfig.providers,
+      credential_sessions: mockExportedConfig.credential_sessions,
       groups: mockExportedConfig.groups,
       routing_policies: mockExportedConfig.routing_policies,
       settings: mockExportedConfig.settings,
@@ -252,11 +262,12 @@ describe("useConfigExport", () => {
     });
 
     const importData = {
-      version: "4.0",
+      version: "5.0",
       import_scope: {
         mode: "settings_only" as const,
       },
       providers: [],
+      credential_sessions: [],
       groups: [],
       routing_policies: [],
       settings: {},
@@ -296,11 +307,12 @@ describe("useConfigExport", () => {
       try {
         await result.current.importConfig(
           {
-            version: "4.0",
+            version: "5.0",
             import_scope: {
               mode: "settings_only" as const,
             },
             providers: [],
+            credential_sessions: [],
             groups: [],
             routing_policies: [],
             settings: {},
@@ -330,11 +342,12 @@ describe("useConfigExport", () => {
     await act(async () => {
       try {
         await result.current.previewImport({
-          version: "4.0",
+          version: "5.0",
           import_scope: {
             mode: "settings_only" as const,
           },
           providers: [],
+          credential_sessions: [],
           groups: [],
           routing_policies: [],
           settings: {},

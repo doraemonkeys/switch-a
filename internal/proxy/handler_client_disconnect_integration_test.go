@@ -57,13 +57,13 @@ func TestHandler_RealSSEClientDisconnectPersistsClientAttribution(t *testing.T) 
 
 			store := newMockStore()
 			store.configs[ConfigKeyGlobalMaxAttempts] = "1"
-			store.providers = []model.Provider{{
-				ID: "sse-disconnect-provider", Name: "SSE Disconnect Provider", APIKey: "test-key",
+			store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+				ID: "sse-disconnect-provider", Name: "SSE Disconnect Provider",
 				AuthMode: "bearer", Enabled: true,
 				APITypes: []model.ProviderAPIType{{
 					ProviderID: "sse-disconnect-provider", APIType: APITypeCodex, BaseURL: upstream.URL,
 				}},
-			}}
+			}, "", "test-key")}
 			health := newTrackingHealthManager()
 			handler := NewHandler(Config{Store: store, Health: health, Logger: zap.NewNop()})
 
@@ -161,13 +161,13 @@ func TestHandler_UpstreamFirstByteTimeoutIsNotClientDisconnect(t *testing.T) {
 	store := newMockStore()
 	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
 	store.configs[ConfigKeyFirstByteTimeout] = "1"
-	store.providers = []model.Provider{{
-		ID: "slow-first-byte-provider", Name: "Slow First Byte Provider", APIKey: "test-key",
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID: "slow-first-byte-provider", Name: "Slow First Byte Provider",
 		AuthMode: "bearer", Enabled: true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "slow-first-byte-provider", APIType: APITypeClaude, BaseURL: upstream.URL,
 		}},
-	}}
+	}, "", "test-key")}
 	health := newTrackingHealthManager()
 	handler := NewHandler(Config{Store: store, Health: health, Logger: zap.NewNop()})
 	proxyServer := httptest.NewServer(handler)
@@ -234,13 +234,13 @@ func TestHandler_UpstreamEOFBeforeDelayedClientDisconnectIsNormalCompletion(t *t
 
 	store := newMockStore()
 	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
-	store.providers = []model.Provider{{
-		ID: "upstream-eof-provider", Name: "Upstream EOF Provider", APIKey: "test-key",
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID: "upstream-eof-provider", Name: "Upstream EOF Provider",
 		AuthMode: "bearer", Enabled: true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "upstream-eof-provider", APIType: APITypeClaude, BaseURL: upstream.URL,
 		}},
-	}}
+	}, "", "test-key")}
 	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
 	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()

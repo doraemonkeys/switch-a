@@ -18,12 +18,14 @@ func selectionConfigImportScope(groupIDs, providerIDs []string) *ConfigImportSco
 
 func importRequestFromExport(exported ExportedConfig) ImportConfigRequest {
 	return ImportConfigRequest{
-		Version:         exported.Version,
-		ImportScope:     fullConfigImportScope(),
-		Providers:       exported.Providers,
-		Groups:          exported.Groups,
-		RoutingPolicies: exported.RoutingPolicies,
-		Settings:        exported.Settings,
+		Version:            exported.Version,
+		ImportScope:        fullConfigImportScope(),
+		Providers:          exported.Providers,
+		CredentialSessions: exported.CredentialSessions,
+		Groups:             exported.Groups,
+		RoutingPolicies:    exported.RoutingPolicies,
+		Settings:           exported.Settings,
+		InternalErrorRules: exported.InternalErrorRules,
 	}
 }
 

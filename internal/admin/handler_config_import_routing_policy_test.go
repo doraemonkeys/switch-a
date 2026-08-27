@@ -19,7 +19,6 @@ func TestImportConfig_RoutingPolicies(t *testing.T) {
 	st.providers["p-existing"] = &model.Provider{
 		ID:       "p-existing",
 		Name:     "Existing Provider",
-		APIKey:   "key-existing",
 		APITypes: []model.ProviderAPIType{{ProviderID: "p-existing", APIType: "claude", BaseURL: "https://claude.example"}},
 		Vendor:   "anthropic",
 		Enabled:  true,
@@ -35,13 +34,13 @@ func TestImportConfig_RoutingPolicies(t *testing.T) {
 	st.nextRoutingPolicyID = 1
 	targetProviderID := "p-target"
 	importReq := ImportConfigRequest{
-		Version: ConfigExportVersion,
+		Version:            ConfigExportVersion,
+		CredentialSessions: []ExportedCredentialSession{importedTestSession("target-session", "key-target")},
 		Providers: []ExportedProvider{
 			{
 				ID:       targetProviderID,
 				Name:     "Target Provider",
-				APIKey:   "key-target",
-				APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://codex.example"}},
+				APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://codex.example", CredentialSessionID: "target-session"}},
 				Enabled:  true,
 			},
 		},
@@ -146,7 +145,6 @@ func TestImportConfig_RejectsDuplicateRoutingPolicyNaturalKeys(t *testing.T) {
 	st.providers["p-existing"] = &model.Provider{
 		ID:       "p-existing",
 		Name:     "Existing Provider",
-		APIKey:   "key-existing",
 		APITypes: []model.ProviderAPIType{{ProviderID: "p-existing", APIType: "claude", BaseURL: "https://claude.example"}},
 		Vendor:   "anthropic",
 		Enabled:  true,
@@ -184,7 +182,6 @@ func TestImportConfig_NaturalKeyUpdateCanSwitchExactProviderRuleBackToFilterMode
 	st.providers[targetProviderID] = &model.Provider{
 		ID:       targetProviderID,
 		Name:     "Target Provider",
-		APIKey:   "key-target",
 		Vendor:   "openai",
 		APITypes: []model.ProviderAPIType{{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"}},
 		Enabled:  true,
@@ -274,7 +271,6 @@ func TestImportConfig_RejectsProviderUpdateThatBreaksExistingExactRoutingPolicyD
 	st.providers[targetProviderID] = &model.Provider{
 		ID:       targetProviderID,
 		Name:     "Exact Provider",
-		APIKey:   "key-exact",
 		APITypes: []model.ProviderAPIType{{ProviderID: targetProviderID, APIType: "codex", BaseURL: "https://codex.example"}},
 		Enabled:  true,
 	}
@@ -286,13 +282,13 @@ func TestImportConfig_RejectsProviderUpdateThatBreaksExistingExactRoutingPolicyD
 	}
 
 	importReq := ImportConfigRequest{
-		Version: ConfigExportVersion,
+		Version:            ConfigExportVersion,
+		CredentialSessions: []ExportedCredentialSession{importedTestSession("exact-session", "key-exact")},
 		Providers: []ExportedProvider{
 			{
 				ID:       targetProviderID,
 				Name:     "Exact Provider",
-				APIKey:   "key-exact",
-				APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://claude.example"}},
+				APITypes: []ExportedAPIType{{APIType: "claude", BaseURL: "https://claude.example", CredentialSessionID: "exact-session"}},
 				Enabled:  true,
 			},
 		},

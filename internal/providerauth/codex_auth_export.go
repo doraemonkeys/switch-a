@@ -6,15 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 )
 
 const codexAuthModeChatGPT = "chatgpt"
 
 var (
-	ErrCodexAuthExportProviderRequired      = errors.New("provider is required")
-	ErrCodexAuthExportRequiresChatGPT       = errors.New("codex auth export requires a chatgpt provider")
-	ErrCodexAuthExportRequiresPaused        = errors.New("codex auth export requires a paused provider")
+	ErrCodexAuthExportProviderRequired      = errors.New("credential session is required")
+	ErrCodexAuthExportRequiresChatGPT       = errors.New("codex auth export requires a chatgpt credential session")
+	ErrCodexAuthExportRequiresPaused        = errors.New("codex auth export requires every referencing route target to be paused")
 	ErrCodexAuthExportCredentialUnavailable = errors.New("chatgpt credential is unavailable for codex auth export")
 )
 
@@ -38,21 +38,21 @@ type CodexAuthDocument struct {
 // consuming, unbinding, or otherwise mutating the provider. Requiring a manual pause
 // makes the shared refresh-token ownership decision explicit before the secret leaves
 // switch-a.
-func BuildCodexAuthDocument(provider *model.Provider) (CodexAuthDocument, error) {
-	if provider == nil {
+func BuildCodexAuthDocument(snapshot *credentialsession.Snapshot, hasEnabledRoute bool) (CodexAuthDocument, error) {
+	if snapshot == nil {
 		return CodexAuthDocument{}, ErrCodexAuthExportProviderRequired
 	}
-	if model.NormalizeProviderCredentialType(provider.CredentialType) != providerCredentialTypeChatGPT {
+	if snapshot.Kind != credentialsession.KindChatGPT {
 		return CodexAuthDocument{}, ErrCodexAuthExportRequiresChatGPT
 	}
-	if provider.Enabled {
+	if hasEnabledRoute {
 		return CodexAuthDocument{}, ErrCodexAuthExportRequiresPaused
 	}
-	if authView := BuildProviderAuthView(provider); authView == nil || authView.Status != ProviderAuthStatusActive {
+	if snapshot.AuthState.Status != credentialsession.AuthStatusActive {
 		return CodexAuthDocument{}, ErrCodexAuthExportCredentialUnavailable
 	}
 
-	credential, err := DecodeProviderChatGPTCredential(provider)
+	credential, err := decodeChatGPTCredentialSession(snapshot)
 	if err != nil {
 		return CodexAuthDocument{}, fmt.Errorf("%w: decode credential: %w", ErrCodexAuthExportCredentialUnavailable, err)
 	}

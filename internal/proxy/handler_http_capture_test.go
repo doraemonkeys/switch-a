@@ -747,10 +747,10 @@ func captureTestProvider(upstreamURL string) model.Provider {
 }
 
 func captureTestProviderWithIdentity(id, name, upstreamURL string) model.Provider {
-	return model.Provider{
-		ID:       id,
-		Name:     name,
-		APIKey:   "capture-secret",
+	return withTestStaticCredential(model.Provider{
+		ID:   id,
+		Name: name,
+
 		AuthMode: AuthModeBearer,
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
@@ -758,7 +758,7 @@ func captureTestProviderWithIdentity(id, name, upstreamURL string) model.Provide
 			APIType:    APITypeClaude,
 			BaseURL:    upstreamURL,
 		}},
-	}
+	}, "", "capture-secret")
 }
 
 func startCaptureTestManager(
@@ -832,22 +832,23 @@ type refreshingCaptureAuthenticator struct {
 func (a *refreshingCaptureAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	_ *model.Provider,
+	_ testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-) error {
+	_ *testUpstreamURL,
+) (testAppliedIdentity, error) {
 	a.applyCalls++
 	token := "initial-token"
 	if a.refreshed {
 		token = "refreshed-token"
 	}
 	headers.Set("Authorization", "Bearer "+token)
-	return nil
+	return testAppliedIdentity{}, nil
 }
 
-func (a *refreshingCaptureAuthenticator) RefreshProviderCredentials(
+func (a *refreshingCaptureAuthenticator) RefreshCredentialSession(
 	_ context.Context,
-	_ *model.Provider,
+	_ testCredentialSnapshot,
 ) (bool, error) {
 	a.refreshCalls++
 	a.refreshed = true
@@ -862,21 +863,22 @@ type failingPreparationCaptureAuthenticator struct {
 func (a *failingPreparationCaptureAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	provider *model.Provider,
+	candidate testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-) error {
-	if provider.ID == a.providerID {
+	_ *testUpstreamURL,
+) (testAppliedIdentity, error) {
+	if candidate.RouteTargetID() == a.providerID {
 		headers.Set("Authorization", "Bearer "+a.credential)
-		return errors.New("credential " + a.credential + " was rejected")
+		return testAppliedIdentity{}, errors.New("credential " + a.credential + " was rejected")
 	}
 	headers.Set("Authorization", "Bearer fallback-token")
-	return nil
+	return testAppliedIdentity{}, nil
 }
 
-func (*failingPreparationCaptureAuthenticator) RefreshProviderCredentials(
+func (*failingPreparationCaptureAuthenticator) RefreshCredentialSession(
 	context.Context,
-	*model.Provider,
+	testCredentialSnapshot,
 ) (bool, error) {
 	return false, nil
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
@@ -135,7 +136,8 @@ func TestProviderReservationFailedPrepareRollsBackExactlyOnce(t *testing.T) {
 		{
 			name: "auth unavailable",
 			mutate: func(store *lifecycleStore, _ *ConcurrencyLimiter) {
-				store.authStates["provider-alternate"].Status = model.ProviderAuthStatusReauthRequired
+				store.providers["provider-alternate"].CredentialSessions[0].Credential.AuthState.Status =
+					credentialsession.AuthStatusReauthRequired
 			},
 			want: errorrule.ReasonAuthUnavailable,
 		},

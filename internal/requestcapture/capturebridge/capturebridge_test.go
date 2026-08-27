@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
 )
@@ -55,82 +55,38 @@ func TestCredentialMaterialWithNoInjectedCredentialPreservesDiagnostics(t *testi
 	}
 }
 
-func TestInjectedCredentialValueUsesOnlySwitchAUpstreamSecret(t *testing.T) {
+func TestInjectedCredentialFromSnapshotUsesActualAppliedSecret(t *testing.T) {
 	t.Parallel()
-
-	oauthSecret, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
-		AccessToken:  " oauth-access-token ",
-		RefreshToken: "oauth-refresh-token",
-		IDToken:      "oauth-id-token",
-	})
-	if err != nil {
-		t.Fatalf("EncodeChatGPTProviderSecret() error = %v", err)
-	}
 
 	tests := []struct {
 		name     string
-		provider *model.Provider
-		apiType  string
+		snapshot credentialsession.Snapshot
+		headers  http.Header
 		want     string
 	}{
-		{name: "nil provider"},
 		{
-			name: "provider api key",
-			provider: &model.Provider{
-				CredentialType: model.ProviderCredentialTypeAPIKey,
-				APIKey:         " provider-api-key ",
-			},
-			apiType: "claude",
-			want:    "provider-api-key",
+			name:     "static credential comes from immutable snapshot",
+			snapshot: credentialsession.Snapshot{Kind: credentialsession.KindAPIKey, SecretData: " static-key "},
+			headers:  http.Header{"Authorization": {"Bearer unrelated"}},
+			want:     "static-key",
 		},
 		{
-			name: "api type override",
-			provider: &model.Provider{
-				CredentialType: model.ProviderCredentialTypeAPIKey,
-				APIKey:         "provider-api-key",
-				APITypes: []model.ProviderAPIType{{
-					APIType: "codex",
-					APIKey:  " codex-api-key ",
-				}},
-			},
-			apiType: "codex",
-			want:    "codex-api-key",
+			name:     "managed credential comes from post-refresh header",
+			snapshot: credentialsession.Snapshot{Kind: credentialsession.KindChatGPT, SecretData: "stale-persisted-secret"},
+			headers:  http.Header{"Authorization": {"bEaReR refreshed-access-token"}},
+			want:     "refreshed-access-token",
 		},
 		{
-			name: "oauth access token",
-			provider: &model.Provider{
-				CredentialType: model.ProviderCredentialTypeChatGPT,
-				Credential:     &model.ProviderCredential{SecretData: oauthSecret},
-			},
-			apiType: "codex",
-			want:    "oauth-access-token",
-		},
-		{
-			name: "oauth credential missing",
-			provider: &model.Provider{
-				CredentialType: model.ProviderCredentialTypeChatGPT,
-			},
-		},
-		{
-			name: "oauth credential malformed",
-			provider: &model.Provider{
-				CredentialType: model.ProviderCredentialTypeChatGPT,
-				Credential:     &model.ProviderCredential{SecretData: "{"},
-			},
-		},
-		{
-			name: "unsupported credential type",
-			provider: &model.Provider{
-				CredentialType: model.ProviderCredentialType("unsupported"),
-				APIKey:         "must-not-be-used",
-			},
+			name:     "managed credential rejects non-bearer header",
+			snapshot: credentialsession.Snapshot{Kind: credentialsession.KindChatGPT},
+			headers:  http.Header{"Authorization": {"Basic client-value"}},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if got := InjectedCredentialValue(test.provider, test.apiType); got != test.want {
-				t.Fatalf("InjectedCredentialValue() = %q, want %q", got, test.want)
+			if got := InjectedCredentialFromSnapshot(test.snapshot, test.headers); got != test.want {
+				t.Fatalf("InjectedCredentialFromSnapshot() = %q, want %q", got, test.want)
 			}
 		})
 	}

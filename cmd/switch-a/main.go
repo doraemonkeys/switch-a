@@ -285,8 +285,9 @@ func openApplicationStore(
 	dbPath string,
 	clock internal.Clock,
 	observeTimestampMigration store.RequestLogTimestampMigrationObserver,
+	staticSubjectSigners ...store.StaticCredentialSubjectSigner,
 ) (*store.SQLiteStore, error) {
-	sqlStore, err := store.NewSQLiteStore(dbPath, clock, observeTimestampMigration)
+	sqlStore, err := store.NewSQLiteStore(dbPath, clock, observeTimestampMigration, staticSubjectSigners...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize store: %w", err)
 	}
@@ -331,10 +332,15 @@ func (runtime *applicationAnalytics) Close() error {
 	return runtime.repository.Close()
 }
 
-func openApplicationStorage(databasePath string, clock internal.Clock, log *zap.Logger) (*applicationStorage, error) {
+func openApplicationStorage(
+	databasePath string,
+	clock internal.Clock,
+	log *zap.Logger,
+	staticSubjectSigners ...store.StaticCredentialSubjectSigner,
+) (*applicationStorage, error) {
 	writer, err := openApplicationStore(databasePath, clock, func(report store.RequestLogTimestampMigrationReport) {
 		logRequestLogTimestampMigration(log, report)
-	})
+	}, staticSubjectSigners...)
 	if err != nil {
 		return nil, err
 	}
@@ -400,9 +406,25 @@ func startApplicationStickyCache(
 	}
 }
 
+func logApplicationStartup(log *zap.Logger, cfg *config.Config) {
+	if cfg.ConfigFileUsed != "" {
+		log.Info("loaded config file", zap.String("path", cfg.ConfigFileUsed))
+	}
+	build := buildinfo.Current()
+	log.Info("starting switch-a",
+		zap.String("version", build.Version),
+		zap.String("commit", build.Commit),
+		zap.String("built_at", build.BuiltAt),
+		zap.String("proxy_port", cfg.Port),
+		zap.String("admin_port", cfg.AdminPort),
+		zap.String("log_path", cfg.LogPath),
+		zap.String("log_level", cfg.LogLevel),
+	)
+}
+
 func run() error {
 	// Load configuration
-	cfg, err := config.Load()
+	cfg, codexSecurity, err := loadApplicationConfigAndCodexSecurity()
 	if err != nil {
 		return err
 	}
@@ -416,26 +438,12 @@ func run() error {
 	})
 	defer func() { _ = log.Sync() }()
 
-	// Log which config file was loaded (if any)
-	if cfg.ConfigFileUsed != "" {
-		log.Info("loaded config file", zap.String("path", cfg.ConfigFileUsed))
-	}
-
-	build := buildinfo.Current()
-	log.Info("starting switch-a",
-		zap.String("version", build.Version),
-		zap.String("commit", build.Commit),
-		zap.String("built_at", build.BuiltAt),
-		zap.String("proxy_port", cfg.Port),
-		zap.String("admin_port", cfg.AdminPort),
-		zap.String("log_path", cfg.LogPath),
-		zap.String("log_level", cfg.LogLevel),
-	)
+	logApplicationStartup(log, cfg)
 
 	// The store migration loads and compiles persisted rules before any HTTP or
 	// background work starts, so an invalid durable rule makes startup atomic.
 	clock := internal.RealClock{}
-	storage, err := openApplicationStorage(cfg.DBPath, clock, log)
+	storage, err := openApplicationStorage(cfg.DBPath, clock, log, codexSecurity.staticSubjectSigners()...)
 	if err != nil {
 		return err
 	}
@@ -445,6 +453,17 @@ func run() error {
 		}
 	}()
 	sqlStore, st, analyticsRuntime := storage.writer, storage.cached, storage.analytics
+	codexSnapshot, err := validateAndLogCodexStartup(context.Background(), st, sqlStore, codexSecurity, log)
+	if err != nil {
+		return err
+	}
+	codexRuntime, err := startApplicationCodexLifecycle(
+		context.Background(), codexSnapshot, sqlStore, codexSecurity, clock, log,
+	)
+	if err != nil {
+		return err
+	}
+	defer stopApplicationCodexLifecycle(codexRuntime, log)
 
 	errorRuntime, err := newInternalErrorRuntime(st.InternalErrorRuleRepository(), st, log)
 	if err != nil {
@@ -533,6 +552,8 @@ func run() error {
 		RuleSetProvider:            errorRuntime.ruleRepository,
 		ResponseAnalyzer:           errorRuntime.responseAnalyzer,
 		RuleStatistics:             errorRuntime.ruleStatistics,
+		CodexHTTP:                  codexRuntime.HTTP,
+		CodexWebSocket:             codexRuntime.WebSocket,
 	})
 
 	// Create admin HTTP server (separate port for security)
@@ -554,6 +575,7 @@ func run() error {
 		CaptureExports:      captureManager,
 		AnalyticsWindow:     &analyticsRuntime.window,
 		TokenUsageHandler:   analyticsRuntime.handler,
+		CodexFeatures:       codexRuntime.Features,
 	})
 
 	statsWorker, err := startRuleStatsWorker(errorRuntime.ruleStatistics, log)

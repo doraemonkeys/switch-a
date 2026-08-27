@@ -168,50 +168,6 @@ func (s *CachedStore) InitDefaultConfig(ctx context.Context) error {
 	return nil
 }
 
-func (s *CachedStore) GetProviderAuthState(ctx context.Context, providerID string) (*model.ProviderAuthState, error) {
-	source, ok := s.Store.(interface {
-		GetProviderAuthState(ctx context.Context, providerID string) (*model.ProviderAuthState, error)
-	})
-	if !ok {
-		return nil, nil
-	}
-	return source.GetProviderAuthState(ctx, providerID)
-}
-
-func (s *CachedStore) UpdateProviderAuthState(
-	ctx context.Context,
-	providerID string,
-	authState *model.ProviderAuthState,
-) error {
-	source, ok := s.Store.(interface {
-		UpdateProviderAuthState(ctx context.Context, providerID string, authState *model.ProviderAuthState) error
-	})
-	if !ok {
-		return nil
-	}
-	return source.UpdateProviderAuthState(ctx, providerID, authState)
-}
-
-func (s *CachedStore) UpdateProviderCredentialState(
-	ctx context.Context,
-	providerID string,
-	credential *model.ProviderCredential,
-	authState *model.ProviderAuthState,
-) error {
-	source, ok := s.Store.(interface {
-		UpdateProviderCredentialState(
-			ctx context.Context,
-			providerID string,
-			credential *model.ProviderCredential,
-			authState *model.ProviderAuthState,
-		) error
-	})
-	if !ok {
-		return nil
-	}
-	return source.UpdateProviderCredentialState(ctx, providerID, credential, authState)
-}
-
 func (s *CachedStore) ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error) {
 	source, ok := s.Store.(interface {
 		ListRoutingPoliciesByAPIType(ctx context.Context, apiType string) ([]model.RoutingPolicy, error)
@@ -280,24 +236,6 @@ func (s *CachedStore) ApplyProviderImport(ctx context.Context, bundle *ProviderI
 		return fmt.Errorf("cached store wrapped %T, which does not support ApplyProviderImport", s.Store)
 	}
 	return source.ApplyProviderImport(ctx, bundle)
-}
-
-// WithProviderCredentialMutations deliberately delegates instead of owning a
-// second coordinator, so cached and uncached consumers share one exclusion domain.
-func (s *CachedStore) WithProviderCredentialMutations(
-	ctx context.Context,
-	providerIDs []string,
-) (context.Context, func(), error) {
-	source, ok := s.Store.(interface {
-		WithProviderCredentialMutations(context.Context, []string) (context.Context, func(), error)
-	})
-	if !ok {
-		return nil, nil, fmt.Errorf(
-			"cached store wrapped %T, which does not support provider credential mutation coordination",
-			s.Store,
-		)
-	}
-	return source.WithProviderCredentialMutations(ctx, providerIDs)
 }
 
 func (s *CachedStore) GetProviderImportReceipt(

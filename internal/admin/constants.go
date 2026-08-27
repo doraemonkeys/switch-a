@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
+	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
@@ -73,13 +74,8 @@ var validAuthModes = map[string]bool{
 	"x-api-key": true,
 }
 
-// validProviderCredentialTypes contains the supported provider credential source values.
-var validProviderCredentialTypes = map[model.ProviderCredentialType]bool{
-	model.ProviderCredentialTypeAPIKey:  true,
-	model.ProviderCredentialTypeChatGPT: true,
-}
-
-// validConfigKeys contains the allowed configuration keys.
+// validConfigKeys contains the non-Codex configuration keys. Codex rollout keys
+// come from codexstartup so the admin surface cannot drift from startup/store.
 // Unexported to prevent external mutation; use IsValidConfigKey() for validation.
 var validConfigKeys = map[string]bool{
 	"auth_mode":                true,
@@ -111,11 +107,6 @@ func IsValidAuthMode(m string) bool {
 	return validAuthModes[m]
 }
 
-// IsValidProviderCredentialType checks whether the provider credential source is supported.
-func IsValidProviderCredentialType(value model.ProviderCredentialType) bool {
-	return validProviderCredentialTypes[model.NormalizeProviderCredentialType(value)]
-}
-
 // CustomAPITypePrefix is the prefix for custom API types (e.g., "custom:mytool").
 const CustomAPITypePrefix = apicontract.CustomAPITypePrefix
 
@@ -134,13 +125,13 @@ func APICatalogResponse() apicontract.CatalogResponse {
 
 // IsValidConfigKey checks if the given config key is valid.
 func IsValidConfigKey(k string) bool {
-	return validConfigKeys[k]
+	return validConfigKeys[k] || codexstartup.IsKey(k)
 }
 
 // ConfigValidator is a function that validates a config value.
 type ConfigValidator func(value string) error
 
-// configValidators maps config keys to their validator functions.
+// configValidators maps non-Codex config keys to their validator functions.
 var configValidators = map[string]ConfigValidator{
 	"auth_mode":                validateAuthModeConfig,
 	"user_header":              nil, // Any string is valid
@@ -164,6 +155,12 @@ var configValidators = map[string]ConfigValidator{
 // ValidateConfigValue validates a config value for the given key.
 // Returns nil if validation passes or if no validator is defined for the key.
 func ValidateConfigValue(key, value string) error {
+	if codexstartup.IsKey(key) {
+		if err := codexstartup.ValidateValue(key, value); err != nil {
+			return fmt.Errorf("must be 'true' or 'false'")
+		}
+		return nil
+	}
 	validator, exists := configValidators[key]
 	if !exists || validator == nil {
 		return nil

@@ -235,6 +235,10 @@ type WebSocketAttemptResult struct {
 	RecoveryAttempted   bool
 	RecoverySucceeded   bool
 	ReplayFailed        bool
+	// injectedCredential is attempt-local redaction evidence. Keeping the exact
+	// applied value avoids consulting a mutable or subsequently refreshed route
+	// target after the physical exchange has completed.
+	injectedCredential string
 }
 
 type webSocketSelectionProbeOutcome = model.WebSocketProbeOutcome
@@ -351,19 +355,20 @@ func (r WebSocketAttemptResult) shouldReplaceBeforeClientVisible() bool {
 type WebSocketSessionResult struct {
 	RequestID string
 	// APIType identifies the endpoint for the terminal session evidence.
-	APIType           string
-	FinalProvider     *model.Provider
-	FinalResult       *WebSocketResult
-	FinalErr          error
-	Attempts          []WebSocketAttemptResult
-	IsSticky          bool
-	StickyWritten     bool
-	ClientAccepted    bool
-	ResolvedModel     string
-	ProbeOutcome      webSocketSelectionProbeOutcome
-	GatewayStatusCode int
-	GatewayErrorCode  string
-	GatewayMessage    string
+	APIType            string
+	FinalProvider      *model.Provider
+	FinalResult        *WebSocketResult
+	FinalErr           error
+	Attempts           []WebSocketAttemptResult
+	IsSticky           bool
+	StickyWritten      bool
+	ClientAccepted     bool
+	ResolvedModel      string
+	ProbeOutcome       webSocketSelectionProbeOutcome
+	GatewayStatusCode  int
+	GatewayErrorCode   string
+	GatewayMessage     string
+	injectedCredential string
 	// syntheticFinalFromSuppressedPayload marks sessions produced by the
 	// replaced-attempt suppressed-payload path. Session-level evidence
 	// derivation consults it as a second barrier on top of the structural
