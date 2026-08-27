@@ -9,63 +9,30 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
-func TestFeatureSnapshotAndClientRequestIDStayOperationScoped(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: allFeatures})
+func TestAlwaysOnPolicyAndClientRequestIDStayOperationScoped(t *testing.T) {
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	original := fixtureRequest(http.MethodPost, "client-feature-snapshot", http.Header{
 		"Cookie":              {"client_cookie=must-not-reach-provider"},
 		"X-Client-Request-Id": {"stable-logical-request"},
 	})
 
-	oldHTTP, err := fixture.http.Begin(
-		context.Background(), original, testAPIType, operationID("http-feature", 1), nil, nil,
+	httpOperation, err := fixture.http.Begin(
+		context.Background(), original, testAPIType, operationID("http-always-on", 1), nil, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldWS, err := fixture.ws.Begin(
-		context.Background(), original, testAPIType, operationID("ws-feature", 1),
-	)
-	if err != nil {
+	if _, err := fixture.ws.Begin(
+		context.Background(), original, testAPIType, operationID("ws-always-on", 1),
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	fixture.features.Set(codexstartup.Snapshot{})
-	newHTTP, err := fixture.http.Begin(
-		context.Background(), original, testAPIType, operationID("http-feature", 2), nil, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newWS, err := fixture.ws.Begin(
-		context.Background(), original, testAPIType, operationID("ws-feature", 2),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := oldHTTP.Features(); got != allFeatures {
-		t.Fatalf("existing HTTP operation features = %+v, want %+v", got, allFeatures)
-	}
-	if got := oldWS.Features(); got != allFeatures {
-		t.Fatalf("existing WebSocket operation features = %+v, want %+v", got, allFeatures)
-	}
-	if got := newHTTP.Features(); got != (codexstartup.Snapshot{}) {
-		t.Fatalf("new HTTP operation features = %+v, want all disabled", got)
-	}
-	if got := newWS.Features(); got != (codexstartup.Snapshot{}) {
-		t.Fatalf("new WebSocket operation features = %+v, want all disabled", got)
-	}
-	if err := (codexstartup.Snapshot{Continuity: true}).ValidateDependencies(); err == nil {
-		t.Fatal("continuity without upstream-header hygiene passed dependency validation")
-	}
-	if err := (codexstartup.Snapshot{ProviderCookieJar: true}).ValidateDependencies(); err == nil {
-		t.Fatal("provider cookie jar without upstream-header hygiene passed dependency validation")
-	}
-
-	policy := oldHTTP.RequestPolicy()
+	policy := httpOperation.RequestPolicy()
 	first, err := upstreamtransport.BuildRequestWithPolicy(
 		context.Background(), http.MethodPost, "https://api.example.test/v1/responses", nil, original, policy,
 	)
@@ -91,7 +58,7 @@ func TestFeatureSnapshotAndClientRequestIDStayOperationScoped(t *testing.T) {
 }
 
 func TestStructuredTraceAndSQLiteStaySecretFreeAcrossProtocols(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: allFeatures})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 	const (
 		clientSecret = "client-trace-secret"
@@ -204,6 +171,33 @@ func TestStructuredTraceAndSQLiteStaySecretFreeAcrossProtocols(t *testing.T) {
 			t.Fatal(readErr)
 		}
 		assertBytesExclude(t, path, contents, forbidden)
+	}
+}
+
+func TestAlwaysOnRuntimesTreatFutureContentAsOpaqueWithoutReleaseConfiguration(t *testing.T) {
+	fixture := newRuntimeFixture(t, fixtureOptions{})
+	opaque := []byte("future protocol bytes that are intentionally not JSON")
+	wire := append([]byte(nil), opaque...)
+	if _, err := fixture.http.Begin(
+		context.Background(), fixtureRequest(http.MethodPost, "always-on-opaque-client", nil),
+		testAPIType, operationID("release-opaque-http", 1), opaque, opaque,
+	); err != nil {
+		t.Fatal(err)
+	}
+	request := fixtureRequest(http.MethodGet, "always-on-opaque-client", nil)
+	operation, err := fixture.ws.Begin(
+		context.Background(), request, testAPIType, operationID("release-opaque-ws", 1),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := operation.ClassifyClientFrame(context.Background(), true, opaque)
+	if frame.Disposition() != codexws.ClientFrameForward || frame.Trace().Kind != codexws.ClientFrameOpaque ||
+		!frame.ReplayEligible() || !frame.ReplacementEligible() {
+		t.Fatalf("always-on opaque permit = %#v, err %v", frame.Trace(), frame.Rejection())
+	}
+	if !bytes.Equal(opaque, wire) {
+		t.Fatal("always-on runtime changed opaque release bytes")
 	}
 }
 

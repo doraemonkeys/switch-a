@@ -66,7 +66,7 @@ func TestResolveHTTPResponseMediaHandlesAbsentExchangeMetadata(t *testing.T) {
 	}
 }
 
-func TestLogHTTPResponseMediaDecisionKeepsHeaderValuesOutOfLogs(t *testing.T) {
+func TestLogHTTPResponseMediaDecisionRestoresNormalizedDiagnosticsWithoutOpaqueParameters(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name                string
@@ -74,14 +74,16 @@ func TestLogHTTPResponseMediaDecisionKeepsHeaderValuesOutOfLogs(t *testing.T) {
 		accept              []string
 		secrets             []string
 		wantReason          responseanalysis.ResponseMediaReason
+		wantContentType     string
 	}{
 		{
 			name: "inferred representation", accept: []string{
 				`application/json; profile="codeql-accept-secret-one"`,
 				`application/problem+json; profile="codeql-accept-secret-two"`,
 			},
-			secrets:    []string{"codeql-accept-secret-one", "codeql-accept-secret-two"},
-			wantReason: responseanalysis.ResponseMediaAcceptInferredJSON,
+			secrets:         []string{"codeql-accept-secret-one", "codeql-accept-secret-two"},
+			wantReason:      responseanalysis.ResponseMediaAcceptInferredJSON,
+			wantContentType: "application/json",
 		},
 		{
 			name: "unresolved accept", accept: []string{`text/plain; token="codeql-unsupported-accept"`},
@@ -89,9 +91,15 @@ func TestLogHTTPResponseMediaDecisionKeepsHeaderValuesOutOfLogs(t *testing.T) {
 		},
 		{
 			name: "unsupported declared type", responseContentType: `text/plain; token="codeql-content-type-secret"`,
-			accept:     []string{`application/json; token="codeql-ignored-accept"`},
-			secrets:    []string{"codeql-content-type-secret", "codeql-ignored-accept"},
-			wantReason: responseanalysis.ResponseMediaDeclaredUnsupported,
+			accept:          []string{`application/json; token="codeql-ignored-accept"`},
+			secrets:         []string{"codeql-content-type-secret", "codeql-ignored-accept"},
+			wantReason:      responseanalysis.ResponseMediaDeclaredUnsupported,
+			wantContentType: "text/plain",
+		},
+		{
+			name: "supported declared type", responseContentType: `Application/JSON; token="codeql-json-parameter"`,
+			secrets: []string{"codeql-json-parameter"}, wantReason: responseanalysis.ResponseMediaDeclaredSupported,
+			wantContentType: "application/json",
 		},
 	}
 	for _, test := range tests {
@@ -104,11 +112,15 @@ func TestLogHTTPResponseMediaDecisionKeepsHeaderValuesOutOfLogs(t *testing.T) {
 			if test.responseContentType != "" {
 				sourceHeader.Set("Content-Type", test.responseContentType)
 			}
+			sourceHeader.Add("Content-Encoding", "GZip, BR")
 			media := responseanalysis.ResolveResponseMedia(sourceHeader.Get("Content-Type"), test.accept)
 			handler.logHTTPResponseMediaDecision(media, httpResponseMediaLogContext{
 				requestID: "request-safe-id", operationID: "operation-safe-id", providerID: "provider-safe-id",
-				apiType: "codex", logicalAttempt: 2, providerAttempt: 3,
-				acceptValueCount: len(test.accept), contentTypeValueCount: len(sourceHeader.Values("Content-Type")),
+				apiType: "codex", logicalAttempt: 2, providerAttempt: 3, statusCode: http.StatusAccepted,
+				acceptValueCount:      len(test.accept),
+				contentType:           normalizedHTTPResponseContentType(sourceHeader.Values("Content-Type"), media.ContentType()),
+				contentTypeValueCount: len(sourceHeader.Values("Content-Type")),
+				contentEncoding:       normalizedHTTPContentCodings(sourceHeader.Values("Content-Encoding")),
 			})
 
 			entries := observed.All()
@@ -129,11 +141,11 @@ func TestLogHTTPResponseMediaDecisionKeepsHeaderValuesOutOfLogs(t *testing.T) {
 			if _, exists := context["request_accept"]; exists {
 				t.Fatalf("log contains raw Accept field: %#v", context)
 			}
-			if _, exists := context["response_content_type"]; exists {
-				t.Fatalf("log contains raw Content-Type field: %#v", context)
-			}
 			if context["request_id"] != "request-safe-id" || context["operation_id"] != "operation-safe-id" ||
 				context["logical_attempt"] != int64(2) || context["provider_attempt"] != int64(3) ||
+				context["http_status"] != int64(http.StatusAccepted) ||
+				context["response_content_type"] != test.wantContentType ||
+				context["response_content_encoding"] != "gzip,br" ||
 				context["accept_value_count"] != int64(len(test.accept)) ||
 				context["response_content_type_value_count"] != int64(len(sourceHeader.Values("Content-Type"))) ||
 				context["media_reason"] != string(test.wantReason) {

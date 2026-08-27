@@ -15,23 +15,30 @@ func TestSQLiteCredentialSessionCapabilitiesTrackSubjectsAndLiveRoutes(t *testin
 	store := newCredentialSessionStore(t)
 	ctx := context.Background()
 
-	store.credentialSigner = migrationSubjectSigner{version: "h-old"}
+	if err := store.FinalizeStaticCredentialSubjects(ctx, migrationSubjectSigner{version: "h-old"}); err != nil {
+		t.Fatal(err)
+	}
 	oldSession := mustCreateStaticSession(t, store, "session-old", "openai", "secret-old")
-	store.credentialSigner = migrationSubjectSigner{version: "h-current"}
+	if err := store.FinalizeStaticCredentialSubjects(ctx, migrationSubjectSigner{version: "h-current"}); err != nil {
+		t.Fatal(err)
+	}
 	currentSession := mustCreateStaticSession(t, store, "session-current", "openai", "secret-current")
-	store.credentialSigner = nil
 	pendingSession := mustCreateStaticSession(t, store, "session-pending", "openai", "secret-pending")
+	if err := store.db.Model(&credentialsession.Session{}).Where("id = ?", pendingSession.ID).Updates(map[string]any{
+		"subject_kind": credentialsession.SubjectPending, "subject_value": nil, "subject_key_version": "",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 
-	versions, err := store.RequiredCredentialSubjectKeyVersions(ctx)
+	inventory, err := store.InspectCodexPersistence(ctx)
 	if err != nil {
-		t.Fatalf("RequiredCredentialSubjectKeyVersions() error = %v", err)
+		t.Fatalf("InspectCodexPersistence() error = %v", err)
 	}
-	if want := []string{"h-current", "h-old"}; !reflect.DeepEqual(versions, want) {
-		t.Fatalf("RequiredCredentialSubjectKeyVersions() = %#v, want %#v", versions, want)
+	if want := []string{"h-current", "h-old"}; !reflect.DeepEqual(inventory.CredentialHMACVersions, want) {
+		t.Fatalf("CredentialHMACVersions = %#v, want %#v", inventory.CredentialHMACVersions, want)
 	}
-	resolved, err := store.CredentialSubjectsResolved(ctx)
-	if err != nil || !resolved {
-		t.Fatalf("CredentialSubjectsResolved(unreferenced pending) = (%t, %v), want resolved", resolved, err)
+	if got := inventory.PendingStaticCredentialSessionIDs; !reflect.DeepEqual(got, []string{pendingSession.ID}) {
+		t.Fatalf("unbound pending static IDs = %#v", got)
 	}
 
 	provider := providerWithSessionRefs("route-disabled", "openai", map[string]string{
@@ -53,9 +60,9 @@ func TestSQLiteCredentialSessionCapabilitiesTrackSubjectsAndLiveRoutes(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err = store.CredentialSubjectsResolved(ctx)
-	if err != nil || !resolved {
-		t.Fatalf("CredentialSubjectsResolved(disabled pending) = (%t, %v), want resolved", resolved, err)
+	inventory, err = store.InspectCodexPersistence(ctx)
+	if err != nil || inventory.PendingStaticCredentialSubjectCount() != 1 {
+		t.Fatalf("disabled pending inventory = (%+v, %v)", inventory, err)
 	}
 	if err := store.BindCredentialSession(ctx, credentialsession.RouteBinding{
 		RouteTargetID: provider.ID, APIType: "codex", SessionID: oldSession.ID,
@@ -78,9 +85,9 @@ func TestSQLiteCredentialSessionCapabilitiesTrackSubjectsAndLiveRoutes(t *testin
 	}); err != nil {
 		t.Fatalf("BindCredentialSession(pending) error = %v", err)
 	}
-	resolved, err = store.CredentialSubjectsResolved(ctx)
-	if err != nil || resolved {
-		t.Fatalf("CredentialSubjectsResolved(enabled pending) = (%t, %v), want unresolved", resolved, err)
+	inventory, err = store.InspectCodexPersistence(ctx)
+	if err != nil || inventory.PendingStaticCredentialSubjectCount() != 1 {
+		t.Fatalf("enabled pending inventory = (%+v, %v)", inventory, err)
 	}
 	routeIDs, err := store.CredentialSessionRouteTargetIDs(ctx, pendingSession.ID)
 	if err != nil || !reflect.DeepEqual(routeIDs, []string{provider.ID}) {
@@ -106,9 +113,9 @@ func TestSQLiteCredentialSessionCapabilitiesTrackSubjectsAndLiveRoutes(t *testin
 	if err := store.DeleteCredentialSession(ctx, pendingSession.ID); err != nil {
 		t.Fatalf("DeleteCredentialSession(pending) error = %v", err)
 	}
-	resolved, err = store.CredentialSubjectsResolved(ctx)
-	if err != nil || !resolved {
-		t.Fatalf("CredentialSubjectsResolved() = (%t, %v), want resolved", resolved, err)
+	inventory, err = store.InspectCodexPersistence(ctx)
+	if err != nil || inventory.PendingStaticCredentialSubjectCount() != 0 {
+		t.Fatalf("inventory after pending deletion = (%+v, %v)", inventory, err)
 	}
 	if err := store.DeleteCredentialSession(ctx, "missing-session"); !errors.Is(err, credentialsession.ErrNotFound) {
 		t.Fatalf("DeleteCredentialSession(missing) error = %v", err)
@@ -137,9 +144,10 @@ func TestSQLiteCredentialSessionCapabilitiesAllowExplicitReauthRecovery(t *testi
 	)); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := store.CredentialSubjectsResolved(ctx)
-	if err != nil || !resolved {
-		t.Fatalf("CredentialSubjectsResolved(recovery) = (%t, %v), want resolved startup capability", resolved, err)
+	inventory, err := store.InspectCodexPersistence(ctx)
+	if err != nil || inventory.PendingStaticCredentialSubjectCount() != 0 ||
+		!reflect.DeepEqual(inventory.PendingChatGPTReauthSessionIDs, []string{recovery.ID}) {
+		t.Fatalf("recovery inventory = (%+v, %v)", inventory, err)
 	}
 	if _, err := store.ResolveCredentialSession(ctx, "recovery-route", "codex"); err != nil {
 		t.Fatalf("durable recovery binding should remain inspectable: %v", err)
@@ -211,7 +219,9 @@ func TestSQLiteCredentialSessionUpdateFailureKeepsDurableVersion(t *testing.T) {
 	}
 
 	signErr := errors.New("subject signer unavailable")
-	store.credentialSigner = migrationSubjectSigner{err: signErr}
+	if err := store.FinalizeStaticCredentialSubjects(ctx, migrationSubjectSigner{err: signErr}); err != nil {
+		t.Fatalf("install failing signer: %v", err)
+	}
 	if _, err := store.UpdateCredentialSessionCAS(
 		owned,
 		created.ID,
@@ -254,11 +264,8 @@ func TestSQLiteCredentialSessionCapabilitiesPropagateContextCancellation(t *test
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := store.RequiredCredentialSubjectKeyVersions(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("RequiredCredentialSubjectKeyVersions(canceled) error = %v", err)
-	}
-	if _, err := store.CredentialSubjectsResolved(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("CredentialSubjectsResolved(canceled) error = %v", err)
+	if _, err := store.InspectCodexPersistence(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("InspectCodexPersistence(canceled) error = %v", err)
 	}
 	if _, err := store.CredentialSessionHasEnabledRoute(ctx, "session"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("CredentialSessionHasEnabledRoute(canceled) error = %v", err)

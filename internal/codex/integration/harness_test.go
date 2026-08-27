@@ -24,7 +24,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	glebarezsqlite "github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -37,15 +36,7 @@ const (
 	testContinuityLimit = int64(100)
 )
 
-var allFeatures = codexstartup.Snapshot{
-	UpstreamHeaderHygiene: true,
-	WebSocketSubprotocol:  true,
-	Continuity:            true,
-	ProviderCookieJar:     true,
-}
-
 type fixtureOptions struct {
-	features           codexstartup.Snapshot
 	continuityMax      int64
 	cookiePolicy       providercookie.Policy
 	hmacCurrent        string
@@ -53,7 +44,6 @@ type fixtureOptions struct {
 	databasePath       string
 	existingDB         *gorm.DB
 	existingClock      *fixtureClock
-	existingFeatures   *fixtureFeatureSource
 	existingTrace      *fixtureTrace
 	existingGeneration *fixtureGenerationIDs
 }
@@ -62,7 +52,6 @@ type runtimeFixture struct {
 	databasePath string
 	db           *gorm.DB
 	clock        *fixtureClock
-	features     *fixtureFeatureSource
 	trace        *fixtureTrace
 	generations  *fixtureGenerationIDs
 	keyring      *codexkeyring.Keyring
@@ -75,9 +64,6 @@ type runtimeFixture struct {
 
 func newRuntimeFixture(t *testing.T, options fixtureOptions) *runtimeFixture {
 	t.Helper()
-	if options.features == (codexstartup.Snapshot{}) {
-		options.features = allFeatures
-	}
 	if options.continuityMax == 0 {
 		options.continuityMax = testContinuityLimit
 	}
@@ -124,12 +110,6 @@ func newRuntimeFixture(t *testing.T, options fixtureOptions) *runtimeFixture {
 	if clock == nil {
 		clock = &fixtureClock{now: time.Date(2026, 8, 27, 5, 0, 0, 0, time.UTC)}
 	}
-	features := options.existingFeatures
-	if features == nil {
-		features = &fixtureFeatureSource{snapshot: options.features}
-	} else {
-		features.Set(options.features)
-	}
 	trace := options.existingTrace
 	if trace == nil {
 		trace = &fixtureTrace{}
@@ -174,28 +154,35 @@ func newRuntimeFixture(t *testing.T, options fixtureOptions) *runtimeFixture {
 	}
 
 	scheme := fixtureSchemeResolver("https")
+	httpRuntime, err := codexhttp.New(codexhttp.Config{
+		ClientScopes: digester, Continuity: continuity,
+		ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	webSocketRuntime, err := codexws.New(codexws.Config{
+		ClientScopes: digester, Continuity: continuity,
+		ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &runtimeFixture{
-		databasePath: options.databasePath, db: db, clock: clock, features: features,
+		databasePath: options.databasePath, db: db, clock: clock,
 		trace: trace, generations: generations, keyring: keyring, digester: digester,
 		continuity: continuity, cookies: cookies,
-		http: codexhttp.New(codexhttp.Config{
-			Features: features, ClientScopes: digester, Continuity: continuity,
-			ProviderCookies: cookies, ExternalScheme: scheme,
-		}),
-		ws: codexws.New(codexws.Config{
-			Features: features, ClientScopes: digester, Continuity: continuity,
-			ProviderCookies: cookies, ExternalScheme: scheme,
-		}),
+		http: httpRuntime, ws: webSocketRuntime,
 	}
 }
 
 func (f *runtimeFixture) restart(t *testing.T, hmacCurrent, aeadCurrent string) *runtimeFixture {
 	t.Helper()
 	return newRuntimeFixture(t, fixtureOptions{
-		features: f.features.Snapshot(), continuityMax: testContinuityLimit,
-		cookiePolicy: providercookie.DefaultPolicy(), hmacCurrent: hmacCurrent, aeadCurrent: aeadCurrent,
+		continuityMax: testContinuityLimit, cookiePolicy: providercookie.DefaultPolicy(),
+		hmacCurrent: hmacCurrent, aeadCurrent: aeadCurrent,
 		databasePath: f.databasePath, existingDB: f.db, existingClock: f.clock,
-		existingFeatures: f.features, existingTrace: f.trace, existingGeneration: f.generations,
+		existingTrace: f.trace, existingGeneration: f.generations,
 	})
 }
 
@@ -355,23 +342,6 @@ func (c *fixtureClock) Advance(delta time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(delta)
 	c.mu.Unlock()
-}
-
-type fixtureFeatureSource struct {
-	mu       sync.RWMutex
-	snapshot codexstartup.Snapshot
-}
-
-func (s *fixtureFeatureSource) Snapshot() codexstartup.Snapshot {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.snapshot
-}
-
-func (s *fixtureFeatureSource) Set(snapshot codexstartup.Snapshot) {
-	s.mu.Lock()
-	s.snapshot = snapshot
-	s.mu.Unlock()
 }
 
 type fixtureGenerationIDs struct {

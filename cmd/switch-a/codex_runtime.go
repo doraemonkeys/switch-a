@@ -12,7 +12,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
@@ -31,7 +30,6 @@ const (
 )
 
 type applicationCodexRuntime struct {
-	Features        *applicationCodexFeatureController
 	HTTP            *codexhttp.Runtime
 	WebSocket       *codexws.Runtime
 	continuity      *codexcontinuity.Service
@@ -41,16 +39,14 @@ type applicationCodexRuntime struct {
 
 func newApplicationCodexRuntime(
 	ctx context.Context,
-	initial codexstartup.Snapshot,
 	persistence *store.SQLiteStore,
 	security *applicationCodexSecurity,
 	clock internal.Clock,
 	log *zap.Logger,
 ) (*applicationCodexRuntime, error) {
-	if persistence == nil || clock == nil || log == nil {
-		return nil, fmt.Errorf("initialize Codex runtime: persistence, clock, and logger are required")
+	if persistence == nil || security == nil || security.keyring == nil || clock == nil || log == nil {
+		return nil, fmt.Errorf("initialize Codex runtime: persistence, keyring, clock, and logger are required")
 	}
-	features := newApplicationCodexFeatureController(initial, persistence, security)
 	scheme := codexhttp.NewTrustedProxySchemeResolver(nil)
 	digester, continuity, cookies, err := newApplicationCodexServices(
 		ctx,
@@ -65,16 +61,22 @@ func newApplicationCodexRuntime(
 		return nil, err
 	}
 
+	httpRuntime, err := codexhttp.New(codexhttp.Config{
+		ClientScopes: digester, Continuity: continuity,
+		ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize Codex HTTP runtime: %w", err)
+	}
+	webSocketRuntime, err := codexws.New(codexws.Config{
+		ClientScopes: digester, Continuity: continuity,
+		ProviderCookies: cookies, ExternalScheme: scheme,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize Codex WebSocket runtime: %w", err)
+	}
 	return &applicationCodexRuntime{
-		Features: features,
-		HTTP: codexhttp.New(codexhttp.Config{
-			Features: features, ClientScopes: digester, Continuity: continuity,
-			ProviderCookies: cookies, ExternalScheme: scheme,
-		}),
-		WebSocket: codexws.New(codexws.Config{
-			Features: features, ClientScopes: digester, Continuity: continuity,
-			ProviderCookies: cookies, ExternalScheme: scheme,
-		}),
+		HTTP: httpRuntime, WebSocket: webSocketRuntime,
 		continuity:      continuity,
 		providerCookies: cookies,
 	}, nil
@@ -89,8 +91,8 @@ func newApplicationCodexServices(
 	clock internal.Clock,
 	log *zap.Logger,
 ) (*codexidentity.Digester, *codexcontinuity.Service, *providercookie.Service, error) {
-	if security == nil || security.keyring == nil {
-		return nil, nil, nil, nil
+	if persistence == nil || security == nil || security.keyring == nil || random == nil || hostCanonicalizer == nil || clock == nil || log == nil {
+		return nil, nil, nil, fmt.Errorf("initialize Codex services: persistence, keyring, random source, host canonicalizer, clock, and logger are required")
 	}
 	identityDigester, err := codexidentity.NewDigester(security.keyring)
 	if err != nil {

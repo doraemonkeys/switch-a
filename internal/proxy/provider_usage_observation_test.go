@@ -115,7 +115,7 @@ func TestHandlerIgnoresQuotaHeadersForUnmanagedProviders(t *testing.T) {
 
 func TestNewHandlerWiresProviderUsageObserver(t *testing.T) {
 	observer := &recordingProviderUsageObserver{observed: make(chan recordedProviderUsageObservation, 1)}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store: newMockStore(), Logger: zaptest.NewLogger(t), UsageObserver: observer,
 	})
 	if handler.usageObserver != observer {

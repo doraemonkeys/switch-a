@@ -211,6 +211,16 @@ func codexAttemptFromRequest(request *http.Request) *codexhttp.Attempt {
 	return attempt
 }
 
+func redirectExecutionPolicy(
+	apiType string,
+	requestPolicy upstreamtransport.RequestPolicy,
+) upstreamtransport.ExecutionPolicy {
+	if apiType == APITypeCodex && requestPolicy.Cookies == upstreamtransport.ServerManagedCookies {
+		return upstreamtransport.ExecutionPolicy{Redirects: upstreamtransport.ExposeRedirects}
+	}
+	return upstreamtransport.ExecutionPolicy{Redirects: upstreamtransport.FollowRedirects}
+}
+
 func (h *Handler) applyForwardCredentials(
 	ctx context.Context,
 	request *http.Request,
@@ -248,7 +258,11 @@ func (h *Handler) fetchPendingHTTPResponse(
 		pctx.liveBytes.BytesSent.Add(int64(len(pctx.body)))
 		pctx.liveBytes.LastActivityAt.Store(time.Now().UnixMilli())
 	}
-	response, err := pctx.transport.FetchUpstream(ctx, request)
+	response, err := pctx.transport.FetchUpstream(
+		ctx,
+		request,
+		redirectExecutionPolicy(pctx.apiType, pctx.codex.RequestPolicy()),
+	)
 	codexAttempt := codexAttemptFromRequest(request)
 	if disclosureErr := codexAttempt.MarkDisclosed(ctx); disclosureErr != nil {
 		if response != nil {
@@ -315,7 +329,10 @@ func (h *Handler) fetchPendingHTTPResponse(
 	h.logHTTPResponseMediaDecision(media, httpResponseMediaLogContext{
 		requestID: pctx.requestID, operationID: operationID, providerID: attempt.provider.ID, apiType: pctx.apiType,
 		logicalAttempt: attempt.logicalAttemptIndex + 1, providerAttempt: attempt.providerAttemptIndex + 1,
-		acceptValueCount: len(requestAccept), contentTypeValueCount: len(head.SourceHeader.Values("Content-Type")),
+		statusCode: head.StatusCode, acceptValueCount: len(requestAccept),
+		contentType:           normalizedHTTPResponseContentType(head.SourceHeader.Values("Content-Type"), media.ContentType()),
+		contentTypeValueCount: len(head.SourceHeader.Values("Content-Type")),
+		contentEncoding:       normalizedHTTPContentCodings(head.SourceHeader.Values("Content-Encoding")),
 	})
 	analysisStartedAt := time.Now()
 	pending := h.analyzer.Start(ctx, responseanalysis.StartInput{
@@ -351,17 +368,17 @@ type httpResponseMediaLogContext struct {
 	apiType               string
 	logicalAttempt        int
 	providerAttempt       int
+	statusCode            int
 	acceptValueCount      int
+	contentType           string
 	contentTypeValueCount int
+	contentEncoding       string
 }
 
 func (h *Handler) logHTTPResponseMediaDecision(
 	media responseanalysis.ResponseMedia,
 	context httpResponseMediaLogContext,
 ) {
-	if media.Source() != responseanalysis.ResponseMediaFromRequestAccept && media.Supported() {
-		return
-	}
 	h.logger.Debug("http response media decision",
 		zap.String("request_id", context.requestID),
 		zap.String("operation_id", context.operationID),
@@ -369,6 +386,9 @@ func (h *Handler) logHTTPResponseMediaDecision(
 		zap.String("api_type", context.apiType),
 		zap.Int("logical_attempt", context.logicalAttempt),
 		zap.Int("provider_attempt", context.providerAttempt),
+		zap.Int("http_status", context.statusCode),
+		zap.String("response_content_type", context.contentType),
+		zap.String("response_content_encoding", context.contentEncoding),
 		zap.String("media_source", string(media.Source())),
 		zap.String("media_decision", string(media.Decision())),
 		zap.String("media_reason", string(media.Reason())),
@@ -431,21 +451,18 @@ func (h *Handler) newAttemptResponseWriter(
 			for name := range pctx.w.Header() {
 				pctx.w.Header().Del(name)
 			}
-			h.logger.Error("codex_http.pre_commit_failed",
-				zap.String("request_id", pctx.requestID),
-				zap.String("decision", "gateway_error"),
-				zap.Error(err),
-			)
-			h.writeGatewayError(
-				pctx.w, http.StatusServiceUnavailable, ErrCodeInternalError,
-				"Codex response state could not be committed",
+			h.writeCodexHTTPRecovery(
+				pctx.w,
+				pctx.requestID,
+				"codex_http.pre_commit_failed",
+				err,
 			)
 		},
 		onStreamGateFailure: func(err error) {
-			h.logger.Error("codex_http.sse_pre_commit_failed",
-				zap.String("request_id", pctx.requestID),
-				zap.String("decision", "stream_terminated_pending_retained"),
-				zap.Error(err),
+			h.logCodexHTTPRecovery(
+				pctx.requestID,
+				"codex_http.sse_committed_state_failed",
+				err,
 			)
 		},
 		onUncertain: func() {
@@ -455,10 +472,10 @@ func (h *Handler) newAttemptResponseWriter(
 			)
 		},
 		onCommitError: func(err error) {
-			h.logger.Error("codex_http.response_commit_failed",
-				zap.String("request_id", pctx.requestID),
-				zap.String("decision", "pending_retained"),
-				zap.Error(err),
+			h.logCodexHTTPRecovery(
+				pctx.requestID,
+				"codex_http.response_commit_failed",
+				err,
 			)
 		},
 		onFirstWrite: func() {

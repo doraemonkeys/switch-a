@@ -12,7 +12,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
@@ -24,7 +23,7 @@ func TestAttemptGuardAndAuthorityFailures(t *testing.T) {
 	if _, err := missing.PrepareAttempt(context.Background(), request, candidateA, appliedA); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("nil operation error = %v", err)
 	}
-	operation := &Operation{apiType: codexAPIType, features: codexstartup.Snapshot{Continuity: true}}
+	operation := &Operation{apiType: codexAPIType}
 	if _, err := operation.PrepareAttempt(context.Background(), nil, candidateA, appliedA); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("nil request error = %v", err)
 	}
@@ -33,21 +32,21 @@ func TestAttemptGuardAndAuthorityFailures(t *testing.T) {
 	if _, err := operation.PrepareAttempt(context.Background(), request, candidateA, appliedA); !IsKind(err, ErrorIdentityMismatch) {
 		t.Fatalf("required authority error = %v", err)
 	}
-	operation = &Operation{apiType: codexAPIType, features: codexstartup.Snapshot{ProviderCookieJar: true}}
+	operation = &Operation{apiType: codexAPIType}
 	if _, err := operation.PrepareAttempt(context.Background(), request, candidateA, appliedA); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("missing Cookie request error = %v", err)
 	}
-	disabled := &Operation{apiType: "claude"}
-	attempt, err := disabled.PrepareAttempt(context.Background(), request, codexidentity.CandidateSnapshot{}, codexidentity.AppliedIdentity{})
+	nonCodex := &Operation{apiType: "claude"}
+	attempt, err := nonCodex.PrepareAttempt(context.Background(), request, codexidentity.CandidateSnapshot{}, codexidentity.AppliedIdentity{})
 	if err != nil || attempt == nil {
-		t.Fatalf("disabled attempt = %v, %v", attempt, err)
+		t.Fatalf("non-Codex attempt = %v, %v", attempt, err)
 	}
 }
 
 func TestAttestationLocksLogicalOperationAuthority(t *testing.T) {
 	clientScope := testClientScope(t, "attestation-client")
 	continuity := &continuityRecorder{}
-	runtime := newContinuityTestRuntime(clientScope, continuity)
+	runtime := newContinuityTestRuntime(t, clientScope, continuity)
 	clientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	clientRequest.Header.Set("Authorization", "Bearer client")
 	clientRequest.Header.Set("X-Oai-Attestation", "attestation")
@@ -173,7 +172,7 @@ func TestRuntimeUtilityBranches(t *testing.T) {
 	if got := continuityKind(codexheaders.FieldAttestation); got != "" {
 		t.Fatalf("attestation continuity kind = %q", got)
 	}
-	if cloneURL(nil) != nil || (*Operation)(nil).Features() != (codexstartup.Snapshot{}) {
+	if cloneURL(nil) != nil {
 		t.Fatal("nil utility contract failed")
 	}
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/", nil)
@@ -203,33 +202,28 @@ func TestRuntimeUtilityBranches(t *testing.T) {
 	if err != nil || visibility == nil {
 		t.Fatalf("nil attempt visibility = %v, %v", visibility, err)
 	}
-	cookieOperation := &Operation{features: codexstartup.Snapshot{ProviderCookieJar: true}}
+	cookieOperation := &Operation{apiType: codexAPIType}
 	if err := (&Attempt{operation: cookieOperation}).ObserveResponse(&upstreamtransport.ResponseHead{}); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("missing Cookie response state error = %v", err)
 	}
 }
 
 func TestBeginAdditionalFailureBranches(t *testing.T) {
-	feature := FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} })
 	scope := testClientScope(t, "begin")
-	runtime := New(Config{Features: feature, ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}})
+	runtime := newAlwaysOnTestRuntime(t, Config{ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}})
 	if _, err := runtime.Begin(context.Background(), nil, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("nil request error = %v", err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/", nil)
 	request.Header.Set("Authorization", "Bearer client")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorDependencyUnavailable) {
-		t.Fatalf("missing continuity error = %v", err)
-	}
-	digestFailure := New(Config{
-		Features: feature, ClientScopes: testScopeDigester{err: errors.New("HMAC unavailable")}, Continuity: &continuityRecorder{},
+	digestFailure := newAlwaysOnTestRuntime(t, Config{
+		ClientScopes: testScopeDigester{err: errors.New("HMAC unavailable")}, Continuity: &continuityRecorder{},
 	})
 	request.Header.Set("Thread-Id", "state-requires-scope")
 	if _, err := digestFailure.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("scope digest error = %v", err)
 	}
-	conflictingOwner := New(Config{
-		Features:     feature,
+	conflictingOwner := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
 		Continuity:   &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorConflict}},
 	})
@@ -237,8 +231,7 @@ func TestBeginAdditionalFailureBranches(t *testing.T) {
 	if _, err := conflictingOwner.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("owner conflict error = %v", err)
 	}
-	unavailableOwner := New(Config{
-		Features:     feature,
+	unavailableOwner := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
 		Continuity:   &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}},
 	})
@@ -255,7 +248,7 @@ func bindOperationScopeForResponse(operation *Operation, scope codexidentity.Cli
 
 func beginContinuityOperation(t *testing.T, scope codexidentity.ClientScope, continuity *continuityRecorder, headers http.Header) *Operation {
 	t.Helper()
-	runtime := newContinuityTestRuntime(scope, continuity)
+	runtime := newContinuityTestRuntime(t, scope, continuity)
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client")
 	for name, values := range headers {
@@ -268,9 +261,8 @@ func beginContinuityOperation(t *testing.T, scope codexidentity.ClientScope, con
 	return operation
 }
 
-func newContinuityTestRuntime(scope codexidentity.ClientScope, continuity *continuityRecorder) *Runtime {
-	return New(Config{
-		Features:     FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} }),
+func newContinuityTestRuntime(t *testing.T, scope codexidentity.ClientScope, continuity *continuityRecorder) *Runtime {
+	return newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
 		Continuity:   continuity,
 	})

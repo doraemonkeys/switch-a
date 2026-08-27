@@ -41,7 +41,6 @@ type webSocketSelectionProbeObserverFactory func(apiType, initialModel string) W
 type webSocketSubprotocolPhase string
 
 const (
-	webSocketSubprotocolPhaseDisabled             webSocketSubprotocolPhase = "disabled"
 	webSocketSubprotocolPhaseProbeFixed           webSocketSubprotocolPhase = "probe_fixed"
 	webSocketSubprotocolPhaseUpstreamSelection    webSocketSubprotocolPhase = "upstream_selection"
 	webSocketSubprotocolPhaseDownstreamValidation webSocketSubprotocolPhase = "downstream_validation"
@@ -103,9 +102,14 @@ type WebSocketSessionOrchestrator struct {
 	captureCompletions  []webSocketDialCaptureCompletion
 	subprotocol         websocketprotocol.Negotiation
 	codexOperation      *codexws.Operation
+	probeBudget         webSocketProbeBudget
+	probeNow            func() time.Time
 }
 
 func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrchestratorConfig) *WebSocketSessionOrchestrator {
+	if cfg.apiType == APITypeCodex && cfg.codexOperation == nil {
+		panic("websocketproxy: Codex operation is required for Codex sessions")
+	}
 	selectionProbeObserverFactory := cfg.newSelectionProbeObserver
 	if selectionProbeObserverFactory == nil {
 		selectionProbeObserverFactory = func(apiType, initialModel string) WebSocketMessageObserver {
@@ -135,6 +139,8 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		attempts:                  make([]WebSocketAttemptResult, 0),
 		lifecycle:                 newWebSocketLifecycleState(),
 		replayBuffer:              newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
+		probeBudget:               defaultWebSocketProbeBudget(),
+		probeNow:                  time.Now,
 	}
 	orchestrator.onClientVisible = orchestrator.codexVisibleCallback(cfg.onClientVisible)
 	return orchestrator
@@ -144,9 +150,6 @@ func (o *WebSocketSessionOrchestrator) codexVisibleCallback(
 	next func(webSocketVisibleWriteContext),
 ) func(webSocketVisibleWriteContext) {
 	return func(visible webSocketVisibleWriteContext) {
-		if o != nil && o.codexOperation != nil {
-			o.codexOperation.PinClientVisible()
-		}
 		if next != nil {
 			next(visible)
 		}
@@ -221,6 +224,8 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 		if o.shouldFallbackToSuppressedPayload(attemptResult) {
 			return o.sessionFromSuppressedPayload(ctx)
 		}
+		o.commitFinalCodexAttempt(ctx, &attemptResult)
+		o.attempts[len(o.attempts)-1] = attemptResult
 		return o.sessionFromAttempt(attemptResult)
 	}
 }
@@ -245,22 +250,25 @@ func (o *WebSocketSessionOrchestrator) applySessionLifecycleToResult(result *Web
 	}
 }
 
-func (o *WebSocketSessionOrchestrator) ensureClientAccepted(w http.ResponseWriter, r *http.Request) error {
+func (o *WebSocketSessionOrchestrator) ensureClientAccepted(
+	w http.ResponseWriter,
+	r *http.Request,
+	negotiation websocketprotocol.Negotiation,
+) error {
 	if o.clientConn != nil {
 		return nil
 	}
-	if !o.subprotocol.Fixed() && len(o.subprotocol.ClientOffer()) == 0 {
+	if !negotiation.Fixed() && len(negotiation.ClientOffer()) == 0 {
 		// A protocol-free session has only one possible result. Fixing that result
-		// here keeps focused transport tests valid without weakening the rule that
-		// a non-empty client offer must be resolved by the upstream first.
-		next, err := o.subprotocol.BindUpstream("")
+		// here keeps the downstream accept boundary explicit even without an offer.
+		next, err := negotiation.BindUpstream("")
 		if err != nil {
 			return err
 		}
-		o.subprotocol = next
+		negotiation = next
 	}
 
-	downstreamOffer, err := o.subprotocol.DownstreamOffer()
+	downstreamOffer, err := negotiation.DownstreamOffer()
 	if err != nil {
 		return err
 	}
@@ -268,18 +276,15 @@ func (o *WebSocketSessionOrchestrator) ensureClientAccepted(w http.ResponseWrite
 	if err != nil {
 		return err
 	}
-	if err := o.subprotocol.ValidateDownstream(clientConn.Subprotocol()); err != nil {
+	if err := negotiation.ValidateDownstream(clientConn.Subprotocol()); err != nil {
 		closeWebSocketSubprotocolViolation(clientConn)
 		return err
 	}
+	// The downstream 101 is the first point where an ordinary selection becomes
+	// session state. Rejected upstream attempts retain the original full offer.
+	o.subprotocol = negotiation
 	o.clientConn = clientConn
 	o.lifecycle.MarkClientAccepted()
-	if o.codexOperation != nil {
-		// A non-probe 101 is already observable. Probe acceptance has no physical
-		// provider yet, so PinClientVisible intentionally remains a no-op until the
-		// first successfully forwarded upstream frame invokes the visible callback.
-		o.codexOperation.PinClientVisible()
-	}
 	o.logSubprotocolDecision(
 		"websocket.subprotocol_downstream_accepted",
 		webSocketSubprotocolPhaseDownstreamValidation,
@@ -291,13 +296,6 @@ func (o *WebSocketSessionOrchestrator) ensureClientAccepted(w http.ResponseWrite
 }
 
 func (o *WebSocketSessionOrchestrator) initializeSubprotocol(r *http.Request) *WebSocketSessionResult {
-	if o.codexOperation != nil && !o.codexOperation.Features().WebSocketSubprotocol {
-		o.subprotocol = websocketprotocol.New(websocketprotocol.Offer{})
-		o.logSubprotocolDecision(
-			"websocket.subprotocol_disabled", webSocketSubprotocolPhaseDisabled, "", "", nil,
-		)
-		return nil
-	}
 	negotiation, err := parseWebSocketSubprotocolNegotiation(r.Header)
 	if err == nil {
 		o.subprotocol = negotiation
@@ -315,7 +313,9 @@ func (o *WebSocketSessionOrchestrator) initializeSubprotocol(r *http.Request) *W
 	))
 }
 
-func (o *WebSocketSessionOrchestrator) bindUpstreamSubprotocol(exchange DialExchange) error {
+func (o *WebSocketSessionOrchestrator) acceptedSubprotocolNegotiation(
+	exchange DialExchange,
+) (websocketprotocol.Negotiation, error) {
 	next, err := o.subprotocol.BindUpstream(exchange.NegotiatedSubprotocol)
 	if err != nil {
 		o.logSubprotocolDecision(
@@ -325,17 +325,17 @@ func (o *WebSocketSessionOrchestrator) bindUpstreamSubprotocol(exchange DialExch
 			exchange.NegotiatedSubprotocol,
 			err,
 		)
-		return err
+		return o.subprotocol, err
 	}
-	o.subprotocol = next
-	o.logSubprotocolDecision(
+	o.logSubprotocolDecisionForNegotiation(
 		"websocket.subprotocol_upstream_selected",
 		webSocketSubprotocolPhaseUpstreamSelection,
 		websocketprotocol.PeerUpstream,
 		exchange.NegotiatedSubprotocol,
 		nil,
+		next,
 	)
-	return nil
+	return next, nil
 }
 
 func (o *WebSocketSessionOrchestrator) logSubprotocolDecision(
@@ -344,6 +344,22 @@ func (o *WebSocketSessionOrchestrator) logSubprotocolDecision(
 	peer websocketprotocol.Peer,
 	actual string,
 	decisionErr error,
+) {
+	if o == nil {
+		return
+	}
+	o.logSubprotocolDecisionForNegotiation(
+		event, phase, peer, actual, decisionErr, o.subprotocol,
+	)
+}
+
+func (o *WebSocketSessionOrchestrator) logSubprotocolDecisionForNegotiation(
+	event string,
+	phase webSocketSubprotocolPhase,
+	peer websocketprotocol.Peer,
+	actual string,
+	decisionErr error,
+	negotiation websocketprotocol.Negotiation,
 ) {
 	if o == nil || o.handler == nil || o.handler.logger == nil {
 		return
@@ -369,10 +385,13 @@ func (o *WebSocketSessionOrchestrator) logSubprotocolDecision(
 		zap.String("negotiation_outcome", string(outcome)),
 		zap.String("peer", string(peer)),
 		zap.Bool("probe", o.probeOutcome != webSocketSelectionProbeOutcomeBypassed),
-		zap.Int("client_offer_count", len(o.subprotocol.ClientOffer())),
-		zap.Bool("selection_fixed", o.subprotocol.Fixed()),
-		zap.String("selected_state", string(subprotocolValueState(o.subprotocol.Selected()))),
+		zap.Int("client_offer_count", len(negotiation.ClientOffer())),
+		zap.Strings("client_offered_subprotocols", negotiation.ClientOffer()),
+		zap.Bool("selection_fixed", negotiation.Fixed()),
+		zap.String("selected_state", string(subprotocolValueState(negotiation.Selected()))),
 		zap.String("actual_state", string(subprotocolValueState(actual))),
+		zap.String("selected_subprotocol", negotiation.Selected()),
+		zap.String("actual_subprotocol", actual),
 	}
 	if o.currentLease != nil {
 		fields = append(fields,
@@ -461,6 +480,22 @@ func (o *WebSocketSessionOrchestrator) cleanup() {
 	o.currentLease = nil
 	if o.clientConn != nil {
 		_ = o.clientConn.CloseNow()
+	}
+}
+
+func (o *WebSocketSessionOrchestrator) commitFinalCodexAttempt(ctx context.Context, attempt *WebSocketAttemptResult) {
+	if o == nil || o.codexOperation == nil || attempt == nil || attempt.Result == nil {
+		return
+	}
+	if !attempt.Result.HandshakeAccepted || !attempt.Result.ClientAccepted ||
+		errors.Is(attempt.Result.Err, websocketprotocol.ErrSubprotocolMismatch) {
+		return
+	}
+	if err := o.codexOperation.CommitCookies(ctx); err != nil {
+		attempt.ForwardErr = err
+		attempt.Result.Err = err
+		attempt.Result.TerminalCause = model.TerminalInternalError
+		attempt.Result.CloseCode = websocketCloseStatusForCodexFailure(err)
 	}
 }
 

@@ -256,6 +256,74 @@ func TestCompleteServerLifecyclePreservesDrainAndFlushOrder(t *testing.T) {
 	}
 }
 
+func TestApplicationActivationRecordsOrderAndReversesShutdown(t *testing.T) {
+	var calls []string
+	var events []applicationLifecycleEvent
+	recorder := applicationLifecycleRecorderFunc(func(event applicationLifecycleEvent) {
+		events = append(events, event)
+	})
+	step := func(component string) applicationActivationStep {
+		return applicationActivationStep{
+			component: component,
+			start: func() error {
+				calls = append(calls, "start:"+component)
+				return nil
+			},
+			stop: func() error {
+				calls = append(calls, "stop:"+component)
+				return nil
+			},
+		}
+	}
+	activation, err := activateApplicationComponents("startup-order", recorder, []applicationActivationStep{step("first"), step("second")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := []string{"start:first", "start:second", "stop:second", "stop:first"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("activation calls = %v, want %v", calls, wantCalls)
+	}
+	wantEvents := []applicationLifecycleEvent{
+		{StartupID: "startup-order", Phase: startupPhaseBackgroundOwners, Component: "first"},
+		{StartupID: "startup-order", Phase: startupPhaseBackgroundOwners, Component: "second"},
+		{StartupID: "startup-order", Phase: startupPhaseShutdownBackgrounds, Component: "second"},
+		{StartupID: "startup-order", Phase: startupPhaseShutdownBackgrounds, Component: "first"},
+	}
+	if !reflect.DeepEqual(events, wantEvents) {
+		t.Fatalf("activation events = %+v, want %+v", events, wantEvents)
+	}
+}
+
+func TestApplicationActivationRollsBackBeforeReturningStartFailure(t *testing.T) {
+	startErr := errors.New("second owner unavailable")
+	var calls []string
+	activation, err := activateApplicationComponents("startup-failure", nil, []applicationActivationStep{
+		{
+			component: "first",
+			start:     func() error { calls = append(calls, "start:first"); return nil },
+			stop:      func() error { calls = append(calls, "stop:first"); return nil },
+		},
+		{
+			component: "second",
+			start:     func() error { calls = append(calls, "start:second"); return startErr },
+			stop:      func() error { calls = append(calls, "stop:second"); return nil },
+		},
+	})
+	if activation != nil || !errors.Is(err, startErr) {
+		t.Fatalf("activation = %#v, error = %v", activation, err)
+	}
+	want := []string{"start:first", "start:second", "stop:first"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("rollback calls = %v, want %v", calls, want)
+	}
+}
+
 type countingRuleStatsRunner struct {
 	started       chan struct{}
 	finalizations atomic.Int32

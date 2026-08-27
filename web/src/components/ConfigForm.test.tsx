@@ -34,89 +34,23 @@ function renderConfigForm(
 }
 
 describe("ConfigForm", () => {
-  it("renders the four Codex feature controls with safe dependency affordances", () => {
+  it("omits Codex rollout controls", () => {
     renderConfigForm();
 
     expect(
-      screen.getByRole("checkbox", { name: /^Upstream Header Hygiene/i }),
-    ).not.toBeChecked();
+      screen.queryByRole("checkbox", { name: /^Upstream Header Hygiene/i }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: /^WebSocket Subprotocol/i }),
-    ).not.toBeChecked();
+      screen.queryByRole("checkbox", { name: /^WebSocket Subprotocol/i }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", {
+      screen.queryByRole("checkbox", {
         name: /^Continuity and Session Identity/i,
       }),
-    ).toBeDisabled();
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: /^Provider Cookie Jar/i }),
-    ).toBeDisabled();
-  });
-
-  it("maps independent and dependent Codex feature changes to backend keys", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderConfigForm(onSave);
-
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: /^WebSocket Subprotocol/i }),
-    );
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: /^Upstream Header Hygiene/i }),
-    );
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /^Continuity and Session Identity/i,
-      }),
-    );
-
-    expect(
-      screen.getByRole("checkbox", { name: /^Upstream Header Hygiene/i }),
-    ).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
-
-    await waitFor(() => {
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({
-          [CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE]: "true",
-          [CONFIG_KEYS.CODEX_WEBSOCKET_SUBPROTOCOL]: "true",
-          [CONFIG_KEYS.CODEX_CONTINUITY]: "true",
-        }),
-      );
-    });
-  });
-
-  it.each(["1", "TRUE"])(
-    "renders backend boolean alias %s as enabled",
-    (value) => {
-      renderConfigForm(undefined, {
-        [CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE]: value,
-      });
-
-      expect(
-        screen.getByRole("checkbox", { name: /^Upstream Header Hygiene/i }),
-      ).toBeChecked();
-      expect(
-        screen.getByRole("checkbox", {
-          name: /^Continuity and Session Identity/i,
-        }),
-      ).not.toBeDisabled();
-    },
-  );
-
-  it("keeps an invalid durable dependency state repairable", () => {
-    renderConfigForm(undefined, {
-      [CONFIG_KEYS.CODEX_UPSTREAM_HEADER_HYGIENE]: "false",
-      [CONFIG_KEYS.CODEX_CONTINUITY]: "true",
-    });
-
-    expect(
-      screen.getByRole("checkbox", { name: /^Upstream Header Hygiene/i }),
-    ).not.toBeDisabled();
-    expect(
-      screen.getByRole("checkbox", {
-        name: /^Continuity and Session Identity/i,
-      }),
-    ).not.toBeDisabled();
+      screen.queryByRole("checkbox", { name: /^Provider Cookie Jar/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("defaults websocket probe control to checked", () => {

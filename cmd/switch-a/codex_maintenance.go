@@ -9,7 +9,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	codexmaintenance "github.com/doraemonkeys/switch-a/internal/codex/maintenance"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
@@ -20,29 +19,36 @@ import (
 const defaultCodexMaintenanceSweepInterval = time.Hour
 
 type applicationCodexMaintenance struct {
-	owner *codexmaintenance.Owner
+	runner *codexmaintenance.Runner
+	owner  *codexmaintenance.Owner
 }
 
-func startApplicationCodexLifecycle(
+func newApplicationCodexLifecycle(
 	ctx context.Context,
-	initial codexstartup.Snapshot,
 	persistence *store.SQLiteStore,
 	security *applicationCodexSecurity,
 	clock internal.Clock,
 	log *zap.Logger,
 ) (*applicationCodexRuntime, error) {
-	runtime, err := newApplicationCodexRuntime(ctx, initial, persistence, security, clock, log)
+	runtime, err := newApplicationCodexRuntime(ctx, persistence, security, clock, log)
 	if err != nil {
 		return nil, err
 	}
-	maintenance, err := startApplicationCodexMaintenance(
-		ctx, persistence, runtime.continuity, runtime.providerCookies, clock, log,
+	maintenance, err := newApplicationCodexMaintenance(
+		persistence, runtime.continuity, runtime.providerCookies, clock, log,
 	)
 	if err != nil {
 		return nil, err
 	}
 	runtime.maintenance = maintenance
 	return runtime, nil
+}
+
+func startApplicationCodexLifecycle(ctx context.Context, runtime *applicationCodexRuntime) error {
+	if ctx == nil || runtime == nil || runtime.maintenance == nil {
+		return fmt.Errorf("start Codex lifecycle: context and composed runtime are required")
+	}
+	return runtime.maintenance.Start(ctx)
 }
 
 func stopApplicationCodexLifecycle(runtime *applicationCodexRuntime, log *zap.Logger) {
@@ -56,25 +62,15 @@ func stopApplicationCodexLifecycle(runtime *applicationCodexRuntime, log *zap.Lo
 	}
 }
 
-func startApplicationCodexMaintenance(
-	ctx context.Context,
+func newApplicationCodexMaintenance(
 	persistence *store.SQLiteStore,
 	continuity *codexcontinuity.Service,
 	cookies *providercookie.Service,
 	clock internal.Clock,
 	log *zap.Logger,
 ) (*applicationCodexMaintenance, error) {
-	if ctx == nil || persistence == nil || clock == nil || log == nil {
-		return nil, fmt.Errorf("initialize Codex maintenance: context, persistence, clock, and logger are required")
-	}
-	// A deployment with every Codex state feature disabled may intentionally have
-	// no keyring and therefore no state services. That ADR-defined startup mode
-	// remains inert rather than manufacturing cryptographic dependencies.
-	if continuity == nil && cookies == nil {
-		return &applicationCodexMaintenance{}, nil
-	}
-	if continuity == nil || cookies == nil {
-		return nil, fmt.Errorf("initialize Codex maintenance: continuity and Cookie services must be composed together")
+	if persistence == nil || continuity == nil || cookies == nil || clock == nil || log == nil {
+		return nil, fmt.Errorf("initialize Codex maintenance: persistence, continuity, Cookie services, clock, and logger are required")
 	}
 	interval, err := codexmaintenance.NewInterval(defaultCodexMaintenanceSweepInterval)
 	if err != nil {
@@ -91,11 +87,22 @@ func startApplicationCodexMaintenance(
 	if err != nil {
 		return nil, err
 	}
-	owner, err := runner.Start(ctx)
-	if err != nil {
-		return nil, err
+	return &applicationCodexMaintenance{runner: runner}, nil
+}
+
+func (m *applicationCodexMaintenance) Start(ctx context.Context) error {
+	if m == nil || m.runner == nil {
+		return fmt.Errorf("start Codex maintenance: composed runner is required")
 	}
-	return &applicationCodexMaintenance{owner: owner}, nil
+	if m.owner != nil {
+		return fmt.Errorf("start Codex maintenance: owner is already active")
+	}
+	owner, err := m.runner.Start(ctx)
+	if err != nil {
+		return err
+	}
+	m.owner = owner
+	return nil
 }
 
 func (m *applicationCodexMaintenance) Stop(ctx context.Context) error {

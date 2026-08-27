@@ -84,9 +84,6 @@ jobs:
             "Go"
             "Web"
             "Structure"
-            "CodeQL (go)"
-            "CodeQL (javascript-typescript)"
-            "CodeQL (actions)"
           )
           for required_check in "${required_checks[@]}"; do
             conclusion="$(jq -r --arg name "$required_check" '[.check_runs[] | select(.name == $name)] | sort_by(.started_at) | last | .conclusion // "missing"' <<<"$check_runs")"

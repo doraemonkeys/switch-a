@@ -10,7 +10,6 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
@@ -141,38 +140,34 @@ func TestPrepareWebSocketProviderAttemptUsesImmutableLeaseCredential(t *testing.
 	}
 }
 
-func TestPrepareWebSocketProviderAttemptUsesImmutableCodexHygieneSnapshot(t *testing.T) {
+func TestPrepareWebSocketProviderAttemptAppliesCodexHygieneOnlyToCodexOperations(t *testing.T) {
 	tests := []struct {
-		name       string
-		apiType    string
-		enabled    bool
-		wantLegacy bool
+		name    string
+		apiType string
 	}{
-		{name: "Codex enabled", apiType: APITypeCodex, enabled: true},
-		{name: "Codex disabled", apiType: APITypeCodex, wantLegacy: true},
-		{name: "non-Codex ignores enabled flag", apiType: "claude", enabled: true, wantLegacy: true},
+		{name: "Codex operation is sanitized", apiType: APITypeCodex},
+		{name: "non-Codex operation preserves legacy headers", apiType: "claude"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			features := codexstartup.Snapshot{UpstreamHeaderHygiene: test.enabled}
-			runtime := codexws.New(codexws.Config{Features: codexws.FeatureSourceFunc(func() codexstartup.Snapshot {
-				return features
-			})})
 			path := "/codex/v1/responses"
 			if test.apiType != APITypeCodex {
 				path = "/v1/messages"
 			}
 			request := httptest.NewRequest(http.MethodGet, "http://gateway.test"+path, nil)
-			request.Header.Set("Authorization", "Bearer client")
+			request.Header.Set("Authorization", "Bearer client-key")
 			request.Header.Set("X-Api-Key", "client-key")
 			request.Header.Set("ChatGPT-Account-Id", "client-account")
 			request.Header.Set("X-Client-Request-Id", "logical-request")
 			request.Header.Set("Sec-WebSocket-Key", "transport-owned")
-			operation, err := runtime.Begin(context.Background(), request, test.apiType, "ws-hygiene")
-			if err != nil {
-				t.Fatal(err)
+			var operation *codexws.Operation
+			if test.apiType == APITypeCodex {
+				var err error
+				operation, err = testCodexRuntime(t).Begin(context.Background(), request, test.apiType, "ws-hygiene")
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
-			features.UpstreamHeaderHygiene = !test.enabled
 
 			provider := routingTestProviderForAPI("provider", test.apiType)
 			gateway := &Gateway{logger: zaptest.NewLogger(t), auth: providerauth.NewService(providerauth.Config{})}
@@ -194,7 +189,7 @@ func TestPrepareWebSocketProviderAttemptUsesImmutableCodexHygieneSnapshot(t *tes
 				t.Fatalf("transport-owned header survived: %q", got)
 			}
 			wantAPIKey, wantAccount := "", ""
-			if test.wantLegacy {
+			if test.apiType != APITypeCodex {
 				wantAPIKey, wantAccount = "client-key", "client-account"
 			}
 			if got := prepared.headers.Get("X-Api-Key"); got != wantAPIKey {
@@ -224,7 +219,7 @@ func TestGatewaySelectProviderWithTracking_PrefersEligibleActiveContinuity(t *te
 	activeSource := routingTestSelection(&activeProvider, selector.SelectionSourceStrategy, 2)
 	activeAttempt := routingTestSelection(&activeProvider, selector.SelectionSourceActiveContinuity, 2)
 	selection := &routingTestSelector{initial: initial, active: activeAttempt}
-	gateway := NewGateway(Config{
+	gateway := newTestGateway(t, Config{
 		Store:          store,
 		Selector:       selection,
 		ActiveSessions: &routingTestActiveSessions{lease: activeSource.Lease, found: true},
@@ -287,7 +282,7 @@ func TestGatewaySelectProviderWithTracking_RejectsSharedOrWrongGenerationActiveL
 			activeSource := routingTestSelection(&activeProvider, selector.SelectionSourceStrategy, 2)
 			activeResult := tt.active(activeSource)
 			selection := &routingTestSelector{initial: initial, active: activeResult, activeErr: tt.activeErr}
-			gateway := NewGateway(Config{
+			gateway := newTestGateway(t, Config{
 				Store:          newMockStore(),
 				Selector:       selection,
 				ActiveSessions: &routingTestActiveSessions{lease: activeSource.Lease, found: true},
@@ -314,7 +309,7 @@ func TestGatewaySelectProviderWithTracking_PreservesSelectorContinuityAndRejects
 	provider := routingTestProvider("selected")
 	initial := routingTestSelection(&provider, selector.SelectionSourceStickyContinuity, 1)
 	selection := &routingTestSelector{initial: initial}
-	gateway := NewGateway(Config{Store: newMockStore(), Selector: selection, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: newMockStore(), Selector: selection, Logger: zaptest.NewLogger(t)})
 	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel}
 
 	selected, err := gateway.selectProviderWithTracking(context.Background(), req, 0, nil)
@@ -343,7 +338,7 @@ func TestGatewaySelectProviderWithTracking_FallbackNormalizesMissingProvider(t *
 	store := newMockStore()
 	provider := routingTestProvider("fallback")
 	store.providers = []model.Provider{provider}
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"}
 
 	selected, err := gateway.selectProviderWithTracking(context.Background(), req, 0, nil)
@@ -400,7 +395,7 @@ func TestSelectRequestForSameProviderRetry_RemovesCrossProviderState(t *testing.
 
 func TestGatewayStoresVisibleContinuitySeedFromContext(t *testing.T) {
 	seedStore := &routingTestSeedStore{}
-	gateway := NewGateway(Config{Store: newMockStore(), VisibleContinuitySeedStore: seedStore, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: newMockStore(), VisibleContinuitySeedStore: seedStore, Logger: zaptest.NewLogger(t)})
 	observedAt := time.Date(2026, time.August, 3, 4, 5, 6, 0, time.UTC)
 	req := &model.SelectRequest{ClientIP: "192.0.2.9", APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel}
 	continuity := &model.ProviderContinuityContext{VisibleOriginProviderID: "origin", VisibleOriginVendor: "openai"}
@@ -483,7 +478,7 @@ func TestGatewayAuthAndURLHelpers(t *testing.T) {
 		t.Fatalf("auto bearer = %q", got)
 	}
 
-	gateway := NewGateway(Config{Store: newMockStore(), Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: newMockStore(), Logger: zaptest.NewLogger(t)})
 	if got := gateway.buildFullURL("https://provider.example/base/", "/responses", "model=gpt-5"); got != "https://provider.example/base/responses?model=gpt-5" {
 		t.Fatalf("full URL = %q", got)
 	}

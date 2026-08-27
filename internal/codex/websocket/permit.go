@@ -15,8 +15,13 @@ type Permit struct {
 	leases     []codexcontinuity.Lease
 	activate   []codexcontinuity.Lease
 	deactivate []codexcontinuity.Binding
-	mu         sync.Mutex
-	committed  bool
+
+	pinProtocolScope bool
+	pinAuthority     bool
+	pinRouteTarget   bool
+	closeReplacement bool
+	mu               sync.Mutex
+	committed        bool
 }
 
 func (p *Permit) Commit(ctx context.Context) error {
@@ -37,8 +42,18 @@ func (p *Permit) Commit(ctx context.Context) error {
 	if err := p.commitResponseLifecycle(); err != nil {
 		return err
 	}
+	if err := p.operation.pinPhysicalCandidate(p.pinProtocolScope, p.pinAuthority, p.pinRouteTarget); err != nil {
+		return err
+	}
+	if p.closeReplacement {
+		p.operation.closeReplacement()
+	}
 	p.committed = true
 	return nil
+}
+
+func (p *Permit) PinsRouteTarget() bool {
+	return p != nil && p.pinRouteTarget
 }
 
 func (p *Permit) commitResponseLifecycle() error {

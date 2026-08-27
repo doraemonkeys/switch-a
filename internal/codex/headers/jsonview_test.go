@@ -78,14 +78,14 @@ func TestFixtureViewsPreserveExactWireBytes(t *testing.T) {
 			before := append([]byte(nil), raw...)
 			var result Result
 			if test.direction == directionClient {
-				view := InspectClientFrame(FixtureCodexDesktop0150Alpha8, raw)
-				if view.EventType() != test.event || !bytes.Equal(view.ReplayBytes(), raw) {
+				view := InspectClientFrame(raw)
+				if !view.Recognized() || view.EventType() != test.event || !bytes.Equal(view.ReplayBytes(), raw) {
 					t.Fatalf("view event=%q replay_equal=%t", view.EventType(), bytes.Equal(view.ReplayBytes(), raw))
 				}
 				result = DecideClient(ClientInput{Message: view, Owners: fixedLookup(OwnerCurrent)})
 			} else {
-				view := InspectServerFrame(FixtureCodexDesktop0150Alpha8, raw)
-				if view.EventType() != test.event || !bytes.Equal(view.ReplayBytes(), raw) {
+				view := InspectServerFrame(raw)
+				if !view.Recognized() || view.EventType() != test.event || !bytes.Equal(view.ReplayBytes(), raw) {
 					t.Fatalf("view event=%q replay_equal=%t", view.EventType(), bytes.Equal(view.ReplayBytes(), raw))
 				}
 				result = DecideServerMessage(view, fixedLookup(OwnerCurrent))
@@ -129,7 +129,7 @@ func TestInspectClientPayloadKeepsCompressedWire(t *testing.T) {
 	wire := compressed.Bytes()
 	beforeWire := append([]byte(nil), wire...)
 	beforeSemantic := append([]byte(nil), semantic...)
-	view := InspectClientPayload(FixtureCodexDesktop0150Alpha8, wire, semantic)
+	view := InspectClientPayload(wire, semantic)
 	result := DecideClient(ClientInput{Message: view, Owners: fixedLookup(OwnerCurrent)})
 	if result.Rejected() || !bytes.Equal(result.ReplayBytes(), beforeWire) || !bytes.Equal(semantic, beforeSemantic) {
 		t.Fatalf("compressed observation changed buffers: %#v", result.Decisions())
@@ -154,22 +154,13 @@ func TestInspectClientPayloadKeepsCompressedWire(t *testing.T) {
 	}
 }
 
-func TestClientJSONSecurityShapeValidation(t *testing.T) {
+func TestRecognizedClientJSONSecurityShapeValidation(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		body       string
 		wantReason Reason
 		wantField  Field
 	}{
-		{name: "empty JSON", body: ``, wantReason: ReasonMalformedJSON, wantField: FieldEnvelope},
-		{name: "truncated JSON", body: `{"type":`, wantReason: ReasonMalformedJSON, wantField: FieldEnvelope},
-		{name: "trailing JSON", body: `{"type":"other"}{}`, wantReason: ReasonMalformedJSON, wantField: FieldEnvelope},
-		{name: "non-object root", body: `[]`, wantReason: ReasonInvalidEnvelope, wantField: FieldEnvelope},
-		{name: "duplicate type", body: `{"type":"other","type":"response.create"}`, wantReason: ReasonDuplicateSecurityKey, wantField: FieldEnvelope},
-		{name: "escaped duplicate type", body: `{"type":"other","\u0074ype":"response.create"}`, wantReason: ReasonDuplicateSecurityKey, wantField: FieldEnvelope},
-		{name: "null type", body: `{"type":null}`, wantReason: ReasonInvalidEnvelope, wantField: FieldEnvelope},
-		{name: "non-string type", body: `{"type":1}`, wantReason: ReasonInvalidEnvelope, wantField: FieldEnvelope},
-		{name: "empty type", body: `{"type":""}`, wantReason: ReasonInvalidEnvelope, wantField: FieldEnvelope},
 		{name: "duplicate metadata container", body: `{"type":"response.create","client_metadata":{},"client_metadata":{}}`, wantReason: ReasonDuplicateSecurityKey, wantField: FieldEnvelope},
 		{name: "null metadata", body: `{"type":"response.create","client_metadata":null}`, wantReason: ReasonInvalidProjection, wantField: FieldEnvelope},
 		{name: "array metadata", body: `{"type":"response.create","client_metadata":[]}`, wantReason: ReasonInvalidProjection, wantField: FieldEnvelope},
@@ -185,7 +176,7 @@ func TestClientJSONSecurityShapeValidation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := DecideClient(ClientInput{
-				Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(test.body)),
+				Message: InspectClientFrame([]byte(test.body)),
 				Owners:  fixedLookup(OwnerCurrent),
 			})
 			decision := requireOnlyDecision(t, result)
@@ -206,7 +197,7 @@ func TestClientJSONUnknownPathsStayOpaque(t *testing.T) {
 	}
 	for index, body := range tests {
 		result := DecideClient(ClientInput{
-			Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(body)),
+			Message: InspectClientFrame([]byte(body)),
 			Owners:  fixedLookup(OwnerConflict),
 		})
 		if result.Outcome() != ActionForward || len(result.Decisions()) != 0 {
@@ -215,7 +206,7 @@ func TestClientJSONUnknownPathsStayOpaque(t *testing.T) {
 	}
 
 	missingMetadata := DecideClient(ClientInput{
-		Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(`{"type":"response.create"}`)),
+		Message: InspectClientFrame([]byte(`{"type":"response.create"}`)),
 		Owners:  fixedLookup(OwnerConflict),
 	})
 	if missingMetadata.Outcome() != ActionForward {
@@ -223,43 +214,86 @@ func TestClientJSONUnknownPathsStayOpaque(t *testing.T) {
 	}
 }
 
-func TestUnconfirmedClientEventsFailWithoutInventingAFieldShape(t *testing.T) {
-	for _, test := range []struct {
-		event  string
-		reason Reason
-	}{
-		{event: eventResponseInject, reason: ReasonEvidenceUnavailable},
-		{event: eventResponseAppend, reason: ReasonUnsupportedEvent},
-	} {
-		body := []byte(`{"type":"` + test.event + `","response":{"id":"must-not-be-read"},"response_id":"also-unknown"}`)
+func TestConnectionBoundClientEventsAreRecognizedWithoutInventingAFieldShape(t *testing.T) {
+	for _, event := range []string{eventResponseInject, eventResponseAppend} {
+		body := []byte(`{"type":"` + event + `","response":{"id":"must-not-be-read"},"response_id":"also-unknown"}`)
+		view := InspectClientFrame(body)
 		result := DecideClient(ClientInput{
-			Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, body),
+			Message: view,
 			Owners: func(BindingCandidate) OwnerStatus {
-				t.Fatal("unconfirmed event must not perform an owner lookup")
+				t.Fatal("connection-bound event must not perform an owner lookup")
 				return OwnerCurrent
 			},
 		})
-		decision := requireOnlyDecision(t, result)
-		if decision.Action() != ActionReject || decision.Reason() != test.reason || decision.Field() != FieldResponseReference {
-			t.Fatalf("decision = %#v", decision)
+		if !view.Recognized() || view.EventType() != event || result.Outcome() != ActionForward || len(result.Decisions()) != 0 {
+			t.Fatalf("event=%q recognized=%t decisions=%#v", view.EventType(), view.Recognized(), result.Decisions())
 		}
 		if !bytes.Equal(result.ReplayBytes(), body) {
-			t.Fatal("rejected event buffer was rewritten")
+			t.Fatal("connection-bound event buffer was rewritten")
 		}
 	}
 }
 
-func TestUnsupportedFixtureAndDirectionAreRejected(t *testing.T) {
-	unsupported := InspectClientFrame(FixtureVersion("future"), []byte(`{"type":"response.create"}`))
-	if decision := requireOnlyDecision(t, DecideClient(ClientInput{Message: unsupported})); decision.Reason() != ReasonUnsupportedFixture {
-		t.Fatalf("decision = %#v", decision)
+func TestUnrecognizedPayloadsStayOpaque(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body []byte
+	}{
+		{name: "empty", body: nil},
+		{name: "non JSON text", body: []byte("future wire format")},
+		{name: "truncated JSON", body: []byte(`{"type":`)},
+		{name: "trailing JSON", body: []byte(`{"type":"other"}{}`)},
+		{name: "JSON array", body: []byte(`[]`)},
+		{name: "JSON scalar", body: []byte(`7`)},
+		{name: "missing type", body: []byte(`{"future":true}`)},
+		{name: "unknown type", body: []byte(`{"type":"future.event","response":{"id":null}}`)},
+		{name: "duplicate type", body: []byte(`{"type":"other","type":"response.create"}`)},
+		{name: "escaped duplicate type", body: []byte(`{"type":"other","\u0074ype":"response.create"}`)},
+		{name: "null type", body: []byte(`{"type":null}`)},
+		{name: "non-string type", body: []byte(`{"type":1}`)},
+		{name: "empty type", body: []byte(`{"type":""}`)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, inspect := range []struct {
+				name   string
+				view   MessageView
+				decide func(MessageView, OwnerLookup) Result
+			}{
+				{name: "client", view: InspectClientFrame(test.body), decide: func(view MessageView, owners OwnerLookup) Result {
+					return DecideClient(ClientInput{Message: view, Owners: owners})
+				}},
+				{name: "server", view: InspectServerFrame(test.body), decide: DecideServerMessage},
+			} {
+				t.Run(inspect.name, func(t *testing.T) {
+					result := inspect.decide(inspect.view, func(BindingCandidate) OwnerStatus {
+						t.Fatal("opaque payload performed an owner lookup")
+						return OwnerConflict
+					})
+					if inspect.view.Recognized() || inspect.view.EventType() != "" || inspect.view.ResponseLifecycle() != ResponseLifecycleNone {
+						t.Fatalf("opaque view recognized event %q", inspect.view.EventType())
+					}
+					if result.Outcome() != ActionForward || len(result.Decisions()) != 0 || !bytes.Equal(result.ReplayBytes(), test.body) {
+						t.Fatalf("opaque result = %#v", result)
+					}
+				})
+			}
+		})
 	}
 
-	serverView := InspectServerFrame(FixtureCodexDesktop0150Alpha8, []byte(`{"type":"other"}`))
+	wire := []byte{0x1f, 0x8b, 0x08, 0x00}
+	view := InspectClientPayload(wire, nil)
+	result := DecideClient(ClientInput{Message: view})
+	if view.Recognized() || result.Outcome() != ActionForward || !bytes.Equal(result.ReplayBytes(), wire) {
+		t.Fatalf("semantic decode failure was not opaque: %#v", result)
+	}
+}
+
+func TestDirectionMisuseIsRejected(t *testing.T) {
+	serverView := InspectServerFrame([]byte(`{"type":"other"}`))
 	if decision := requireOnlyDecision(t, DecideClient(ClientInput{Message: serverView})); decision.Reason() != ReasonInvalidEnvelope {
 		t.Fatalf("decision = %#v", decision)
 	}
-	clientView := InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(`{"type":"other"}`))
+	clientView := InspectClientFrame([]byte(`{"type":"other"}`))
 	if decision := requireOnlyDecision(t, DecideServerMessage(clientView, nil)); decision.Reason() != ReasonInvalidEnvelope {
 		t.Fatalf("decision = %#v", decision)
 	}
@@ -307,7 +341,7 @@ func TestServerFrameEvidence(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			view := InspectServerFrame(FixtureCodexDesktop0150Alpha8, []byte(test.body))
+			view := InspectServerFrame([]byte(test.body))
 			result := DecideServerMessage(view, fixedLookup(test.owner))
 			decision := requireOnlyDecision(t, result)
 			if decision.Action() != test.wantAction || decision.Reason() != test.wantReason || decision.Field() != test.wantField {
@@ -322,7 +356,7 @@ func TestServerFrameEvidence(t *testing.T) {
 		`{"type":"unknown","headers":{"x-codex-turn-state":null}}`,
 	} {
 		result := DecideServerMessage(
-			InspectServerFrame(FixtureCodexDesktop0150Alpha8, []byte(body)),
+			InspectServerFrame([]byte(body)),
 			fixedLookup(OwnerConflict),
 		)
 		if result.Outcome() != ActionForward || len(result.Decisions()) != 0 {
@@ -332,7 +366,13 @@ func TestServerFrameEvidence(t *testing.T) {
 }
 
 func TestServerResponseReferenceEvidence(t *testing.T) {
-	for _, eventType := range []string{eventResponseCreated, eventResponseInProgress, eventResponseCompleted} {
+	for _, eventType := range []string{
+		eventResponseCreated,
+		eventResponseInProgress,
+		eventResponseCompleted,
+		eventResponseIncomplete,
+		eventResponseFailed,
+	} {
 		for _, test := range []struct {
 			name       string
 			body       string
@@ -346,7 +386,15 @@ func TestServerResponseReferenceEvidence(t *testing.T) {
 		} {
 			t.Run(eventType+"/"+test.name, func(t *testing.T) {
 				body := []byte(fmt.Sprintf(test.body, eventType))
-				result := DecideServerMessage(InspectServerFrame(FixtureCodexDesktop0150Alpha8, body), fixedLookup(test.owner))
+				view := InspectServerFrame(body)
+				wantLifecycle := ResponseLifecycleActive
+				if eventType == eventResponseCompleted || eventType == eventResponseIncomplete || eventType == eventResponseFailed {
+					wantLifecycle = ResponseLifecycleTerminal
+				}
+				if !view.Recognized() || view.ResponseLifecycle() != wantLifecycle {
+					t.Fatalf("recognized=%t lifecycle=%d, want %d", view.Recognized(), view.ResponseLifecycle(), wantLifecycle)
+				}
+				result := DecideServerMessage(view, fixedLookup(test.owner))
 				decision := requireOnlyDecision(t, result)
 				if decision.Action() != test.wantAction || decision.Reason() != test.wantReason || decision.Field() != FieldResponseReference {
 					t.Fatalf("decision = %#v", decision)
@@ -372,7 +420,7 @@ func TestServerResponseReferenceEvidence(t *testing.T) {
 		{name: "non-string id", body: `{"type":"response.created","response":{"id":1}}`, reason: ReasonInvalidProjection},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result := DecideServerMessage(InspectServerFrame(FixtureCodexDesktop0150Alpha8, []byte(test.body)), fixedLookup(OwnerCurrent))
+			result := DecideServerMessage(InspectServerFrame([]byte(test.body)), fixedLookup(OwnerCurrent))
 			decision := requireOnlyDecision(t, result)
 			if decision.Action() != ActionReject || decision.Reason() != test.reason || decision.Field() != FieldResponseReference {
 				t.Fatalf("decision = %#v", decision)
@@ -385,7 +433,7 @@ func TestServerResponseReferenceEvidence(t *testing.T) {
 		`{"type":"response.created","response":{}}`,
 		`{"type":"unknown","response":{"id":"opaque"}}`,
 	} {
-		result := DecideServerMessage(InspectServerFrame(FixtureCodexDesktop0150Alpha8, []byte(body)), fixedLookup(OwnerConflict))
+		result := DecideServerMessage(InspectServerFrame([]byte(body)), fixedLookup(OwnerConflict))
 		if result.Outcome() != ActionForward || len(result.Decisions()) != 0 {
 			t.Fatalf("absent or unknown reference was interpreted: %#v", result.Decisions())
 		}
@@ -394,7 +442,7 @@ func TestServerResponseReferenceEvidence(t *testing.T) {
 
 func readVersionFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	path := filepath.Join("testdata", string(FixtureCodexDesktop0150Alpha8), name)
+	path := filepath.Join("testdata", fixtureVersionDirectory, name)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

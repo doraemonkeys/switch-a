@@ -69,6 +69,7 @@ func parseDocument(data []byte) (parsedRing, parsedRing, error) {
 	}
 	aeadRing, err := parseDocumentRing("aead", decoded.AEAD, seenIDs, seenMaterial)
 	if err != nil {
+		clearParsedRing(hmacRing)
 		return parsedRing{}, parsedRing{}, err
 	}
 	return hmacRing, aeadRing, nil
@@ -95,6 +96,12 @@ func parseDocumentRing(
 
 	versions := make([]string, 0, len(document.Keys))
 	keys := make(map[string][keyMaterialBytes]byte, len(document.Keys))
+	valid := false
+	defer func() {
+		if !valid {
+			clearParsedRing(parsedRing{keys: keys})
+		}
+	}()
 	for version, encoded := range document.Keys {
 		if !keyIDPattern.MatchString(version) {
 			return parsedRing{}, invalidDocument(component, "", "key version does not match the required format")
@@ -121,6 +128,7 @@ func parseDocumentRing(
 		copy(key[:], material)
 		clear(material)
 		if firstComponent, exists := seenMaterial[key]; exists {
+			clear(key[:])
 			return parsedRing{}, invalidDocument(
 				component,
 				version,
@@ -134,6 +142,7 @@ func parseDocumentRing(
 		keys[version] = key
 	}
 	sort.Strings(versions)
+	valid = true
 	return parsedRing{current: document.Current, versions: versions, keys: keys}, nil
 }
 

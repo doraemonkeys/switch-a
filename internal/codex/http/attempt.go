@@ -35,7 +35,7 @@ func (o *Operation) PrepareAttempt(
 		return nil, clientError("attempt", errors.New("upstream request is required"))
 	}
 	attempt := &Attempt{operation: o, responseURL: cloneURL(request.URL)}
-	if o.apiType != codexAPIType || (!o.features.Continuity && !o.features.ProviderCookieJar) {
+	if o.apiType != codexAPIType {
 		return attempt, nil
 	}
 	if err := candidate.ValidateApplied(applied); err != nil {
@@ -74,9 +74,6 @@ func (o *Operation) prepareAttemptCookiesLocked(
 	request *http.Request,
 	authority codexidentity.CookieAuthority,
 ) error {
-	if !o.features.ProviderCookieJar {
-		return nil
-	}
 	if o.cookieRequest == nil {
 		return dependencyError("provider_cookie", errors.New("request cookie state is unavailable"))
 	}
@@ -103,7 +100,7 @@ func (o *Operation) prepareRequestContinuityLocked(
 	scope codexidentity.ProtocolScope,
 	routeTargetID string,
 ) error {
-	if !o.features.Continuity || o.requestClaimsPrepared || o.requestClaimsCommitted {
+	if o.requestClaimsPrepared || o.requestClaimsCommitted {
 		return nil
 	}
 	var leases []codexcontinuity.Lease
@@ -184,7 +181,7 @@ func (o *Operation) lockAttestationLocked(authority codexidentity.UpstreamAuthor
 // attempted. A transport error is still disclosure-uncertain and therefore may
 // not release the pending owner.
 func (a *Attempt) MarkDisclosed(ctx context.Context) error {
-	if a == nil || a.operation == nil || !a.operation.features.Continuity {
+	if a == nil || a.operation == nil || a.operation.apiType != codexAPIType {
 		return nil
 	}
 	o := a.operation
@@ -202,7 +199,7 @@ func (a *Attempt) MarkDisclosed(ctx context.Context) error {
 }
 
 func (a *Attempt) ObserveResponse(head *upstreamtransport.ResponseHead) error {
-	if a == nil || a.operation == nil || head == nil || !a.operation.features.ProviderCookieJar {
+	if a == nil || a.operation == nil || a.operation.apiType != codexAPIType || head == nil {
 		return nil
 	}
 	o := a.operation
@@ -239,28 +236,27 @@ func (a *Attempt) PrepareVisible(ctx context.Context, headers http.Header) (*Vis
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if o.features.Continuity {
-		leases, err := o.prepareResponseContinuityLocked(ctx, a.protocolScope, a.routeTargetID, headers)
-		if err != nil {
-			return nil, err
-		}
-		visibility.leases = leases
+	if o.apiType != codexAPIType {
+		return visibility, nil
 	}
-	if o.features.ProviderCookieJar {
-		if o.cookieRequest == nil {
-			return nil, dependencyError("provider_cookie", errors.New("request cookie state is unavailable"))
-		}
-		if _, err := o.cookieRequest.Commit(ctx, a.authority.CookieAuthority()); err != nil {
-			// Response pending owners intentionally remain pending when Cookie merge
-			// fails; releasing them could allow another Authority to claim a value
-			// that the client may observe after an uncertain adapter failure.
-			return nil, dependencyError("provider_cookie_commit", err)
-		}
-		o.cookieClosed = true
-		headers.Del("Set-Cookie")
-		if o.gatewaySetCookie != "" {
-			headers.Add("Set-Cookie", o.gatewaySetCookie)
-		}
+	leases, err := o.prepareResponseContinuityLocked(ctx, a.protocolScope, a.routeTargetID, headers)
+	if err != nil {
+		return nil, err
+	}
+	visibility.leases = leases
+	if o.cookieRequest == nil {
+		return nil, dependencyError("provider_cookie", errors.New("request cookie state is unavailable"))
+	}
+	if _, err := o.cookieRequest.Commit(ctx, a.authority.CookieAuthority()); err != nil {
+		// Response pending owners intentionally remain pending when Cookie merge
+		// fails; releasing them could allow another Authority to claim a value
+		// that the client may observe after an uncertain adapter failure.
+		return nil, dependencyError("provider_cookie_commit", err)
+	}
+	o.cookieClosed = true
+	headers.Del("Set-Cookie")
+	if o.gatewaySetCookie != "" {
+		headers.Add("Set-Cookie", o.gatewaySetCookie)
 	}
 	return visibility, nil
 }

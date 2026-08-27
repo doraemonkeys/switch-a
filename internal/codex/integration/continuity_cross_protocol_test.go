@@ -9,15 +9,12 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
 func TestContinuityCrossesHTTPAndWebSocketWithinOneSecurityScope(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, Continuity: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	base, baseApplied, baseURL := fixtureCandidate(t, candidateSpec{})
 	replacement, replacementApplied, _ := fixtureCandidate(t, candidateSpec{routeTarget: "route-b"})
 
@@ -110,9 +107,7 @@ func TestContinuityCrossesHTTPAndWebSocketWithinOneSecurityScope(t *testing.T) {
 }
 
 func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, Continuity: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	original, originalApplied, originalURL := fixtureCandidate(t, candidateSpec{})
 	replacement, replacementApplied, replacementURL := fixtureCandidate(t, candidateSpec{routeTarget: "route-b"})
 	crossAuthority, crossAuthorityApplied, crossAuthorityURL := fixtureCandidate(t, candidateSpec{
@@ -259,9 +254,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 }
 
 func TestWebSocketResponseReferenceContinuesThroughHTTPPreviousResponse(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, Continuity: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 
 	wsRequest := fixtureRequest(http.MethodGet, "client-alpha", nil)
@@ -313,9 +306,7 @@ func TestWebSocketResponseReferenceContinuesThroughHTTPPreviousResponse(t *testi
 }
 
 func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, Continuity: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 
 	httpRequest := fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"http-sse-scope"}})
@@ -372,27 +363,34 @@ func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !returnWS.NeedsOwnerBootstrap() {
-		t.Fatal("WS previous-response owner did not require bootstrap discovery")
+	if returnWS.NeedsOwnerBootstrap() {
+		t.Fatal("ordinary WS continuation unexpectedly required Probe")
 	}
-	if err := returnWS.InspectBootstrapFrame(context.Background(), true, previous); err != nil {
+	replacement, replacementApplied, _ := fixtureCandidate(t, candidateSpec{routeTarget: "route-b"})
+	if _, err := returnWS.PrepareDial(
+		context.Background(), wsRequest.Header.Clone(), replacement, replacementApplied, websocketURL(t, finalURL),
+	); err != nil {
+		t.Fatal("ordinary WS could not select a same-scope replacement before reading continuation:", err)
+	}
+	frame := returnWS.ClassifyClientFrame(context.Background(), true, previous)
+	if frame.Disposition() != codexws.ClientFrameForward || !frame.ReplayEligible() || frame.CurrentConnectionRequired() {
+		t.Fatalf("WS continuation frame = %#v, err %v", frame.Trace(), frame.Rejection())
+	}
+	framePermit, err := frame.PrepareDelivery(context.Background())
+	if err != nil {
+		t.Fatal("WS did not continue the HTTP-SSE-created response reference:", err)
+	}
+	if err := framePermit.Commit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	required, preferred = returnWS.RequiredAuthority()
 	if required == nil || !required.Equal(candidate.Authority()) || preferred != candidate.RouteTargetID() {
 		t.Fatalf("HTTP SSE owner through WS = %v/%q", required, preferred)
 	}
-	if _, err := returnWS.PrepareDial(
-		context.Background(), wsRequest.Header.Clone(), candidate, applied, websocketURL(t, finalURL),
-	); err != nil {
-		t.Fatal("WS did not continue the HTTP-SSE-created response reference:", err)
-	}
 }
 
 func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, Continuity: true,
-	}})
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	base, baseApplied, baseURL := fixtureCandidate(t, candidateSpec{})
 	seed := fixtureRequest(http.MethodPost, "client-alpha", http.Header{
 		"Thread-Id": {"identity-isolation"},
@@ -489,9 +487,7 @@ func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
 
 func TestConcurrentCrossProtocolClaimsAreAtomic(t *testing.T) {
 	t.Run("same owner converges", func(t *testing.T) {
-		fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-			UpstreamHeaderHygiene: true, Continuity: true,
-		}})
+		fixture := newRuntimeFixture(t, fixtureOptions{})
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		identity := []byte(`{"type":"response.create","client_metadata":{"session_id":"concurrent-shared"}}`)
 		httpOperation, err := fixture.http.Begin(
@@ -556,9 +552,7 @@ func TestConcurrentCrossProtocolClaimsAreAtomic(t *testing.T) {
 	})
 
 	t.Run("competing authorities have one winner", func(t *testing.T) {
-		fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-			UpstreamHeaderHygiene: true, Continuity: true,
-		}})
+		fixture := newRuntimeFixture(t, fixtureOptions{})
 		base, baseApplied, baseURL := fixtureCandidate(t, candidateSpec{})
 		other, otherApplied, otherURL := fixtureCandidate(t, candidateSpec{
 			routeTarget: "route-other", requestURL: "https://other.example.test/v1/responses",
@@ -633,9 +627,7 @@ func TestConcurrentCrossProtocolClaimsAreAtomic(t *testing.T) {
 
 func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing.T) {
 	t.Run("uncertain HTTP visibility retains owner for WebSocket", func(t *testing.T) {
-		fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-			UpstreamHeaderHygiene: true, Continuity: true,
-		}})
+		fixture := newRuntimeFixture(t, fixtureOptions{})
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		operation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"uncertain-http-scope"}}),
@@ -679,7 +671,6 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 
 	t.Run("continuity capacity is shared", func(t *testing.T) {
 		fixture := newRuntimeFixture(t, fixtureOptions{
-			features:      codexstartup.Snapshot{UpstreamHeaderHygiene: true, Continuity: true},
 			continuityMax: 1,
 		})
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
@@ -715,9 +706,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 	})
 
 	t.Run("closed shared store fails both adapters", func(t *testing.T) {
-		fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-			UpstreamHeaderHygiene: true, Continuity: true,
-		}})
+		fixture := newRuntimeFixture(t, fixtureOptions{})
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		seedOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"store-http-scope"}}),
@@ -763,10 +752,8 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 	})
 }
 
-func TestResponseReferencePathsHonorFrozenEvidenceBoundary(t *testing.T) {
-	fixture := newRuntimeFixture(t, fixtureOptions{features: codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true, Continuity: true,
-	}})
+func TestResponseReferenceAndConnectionControlsHonorTheirNativeBoundaries(t *testing.T) {
+	fixture := newRuntimeFixture(t, fixtureOptions{})
 	previous := []byte(`{"type":"response.create","previous_response_id":"unknown-response"}`)
 	_, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
@@ -787,8 +774,43 @@ func TestResponseReferencePathsHonorFrozenEvidenceBoundary(t *testing.T) {
 	}
 	_, err = operation.PrepareClientFrame(context.Background(), true, previous)
 	requireWSFailure(t, err, codexws.FailureIdentity)
-	_, err = operation.PrepareClientFrame(context.Background(), true, []byte(`{"type":"response.inject"}`))
-	requireWSFailure(t, err, codexws.FailureProtocol)
+
+	for _, event := range []string{"response.append", "response.inject"} {
+		payload := []byte(`{"type":"` + event + `","response_id":{"opaque":"upstream-owned"}}`)
+		frame := operation.ClassifyClientFrame(context.Background(), true, payload)
+		if frame.Disposition() != codexws.ClientFrameReject || !frame.CurrentConnectionRequired() ||
+			frame.ReplayEligible() || frame.ReplacementEligible() {
+			t.Fatalf("connection-free %s = %#v, err %v", event, frame.Trace(), frame.Rejection())
+		}
+		requireWSFailure(t, frame.Rejection(), codexws.FailureIdentity)
+	}
+
+	if err := operation.OpenConnection(); err != nil {
+		t.Fatal(err)
+	}
+	defer operation.CloseConnection()
+	for _, event := range []string{"response.append", "response.inject"} {
+		payload := []byte(`{"type":"` + event + `","response_id":{"opaque":"upstream-owned"}}`)
+		wire := append([]byte(nil), payload...)
+		frame := operation.ClassifyClientFrame(context.Background(), true, payload)
+		if frame.Disposition() != codexws.ClientFrameForward || frame.ReplayEligible() ||
+			frame.ReplacementEligible() || !frame.CurrentConnectionRequired() {
+			t.Fatalf("connected %s = %#v, err %v", event, frame.Trace(), frame.Rejection())
+		}
+		delivery, prepareErr := frame.PrepareDelivery(context.Background())
+		if prepareErr != nil {
+			t.Fatal(prepareErr)
+		}
+		if err := delivery.Commit(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(payload, wire) {
+			t.Fatalf("%s wire bytes changed", event)
+		}
+	}
+	if operation.ReplacementAllowed() {
+		t.Fatal("a delivered connection-bound control left provider replacement open")
+	}
 
 	var responseReferenceRows int64
 	if err := fixture.db.Table("codex_continuity_bindings").

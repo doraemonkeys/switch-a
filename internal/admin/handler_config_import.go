@@ -49,6 +49,10 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	if settingErrors := validateImportSettings(req.Settings); len(settingErrors) > 0 {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(settingErrors, "; "))
+		return
+	}
 
 	ctx := r.Context()
 	snapshot, err := h.loadConfigImportSnapshot(ctx)
@@ -81,7 +85,7 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 
 	// If dry_run, return preview
 	if dryRun {
-		h.writeConfigImportPreview(w, ctx, snapshot.settings, staged, ruleRevision)
+		h.writeConfigImportPreview(w, staged, ruleRevision)
 		return
 	}
 
@@ -106,9 +110,6 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	err = h.applyValidatedConfigImport(ctx, staged.changes, &staged.bundle)
 	if err != nil {
 		switch {
-		case isCodexFeatureConfigError(err):
-			h.writeCodexFeatureConfigError(w, err)
-			return
 		case errors.Is(err, store.ErrRoutingPolicyConflict),
 			errors.Is(err, store.ErrRoutingPolicyReferenceConflict):
 			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
@@ -141,15 +142,9 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeConfigImportPreview(
 	w http.ResponseWriter,
-	ctx context.Context,
-	currentSettings map[string]string,
 	staged stagedConfigImport,
 	ruleRevision errorrule.Revision,
 ) {
-	if err := h.validateCodexFeatureCandidate(ctx, currentSettings, staged.bundle.Settings); err != nil {
-		h.writeCodexFeatureConfigError(w, err)
-		return
-	}
 	if staged.previewRejectsWarning && len(staged.warnings) > 0 {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(staged.warnings, "; "))
 		return
@@ -170,22 +165,11 @@ func (h *Handler) applyValidatedConfigImport(
 	changes ImportChanges,
 	bundle *store.ConfigImportBundle,
 ) error {
-	// Config imports share the same validation/persistence boundary as direct
-	// updates so concurrent admin requests cannot create an invalid feature set.
+	// Imports share the direct-update serialization boundary so their durable
+	// result cannot be interleaved with another admin mutation.
 	h.configMutationMu.Lock()
 	defer h.configMutationMu.Unlock()
-	currentSettings, err := h.store.GetAllConfig(ctx)
-	if err != nil {
-		return err
-	}
-	snapshot, err := h.codexFeatureCandidate(ctx, currentSettings, bundle.Settings)
-	if err != nil {
-		return err
-	}
-	if err := h.applyConfigImportAtLifecycleBoundary(ctx, changes, bundle); err != nil {
-		return err
-	}
-	return h.publishCodexFeatures(snapshot)
+	return h.applyConfigImportAtLifecycleBoundary(ctx, changes, bundle)
 }
 
 func newConfigImportResult(changes ImportChanges, revision errorrule.Revision) ImportResult {

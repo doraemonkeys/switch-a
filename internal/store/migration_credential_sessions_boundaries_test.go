@@ -17,11 +17,11 @@ import (
 
 func TestCredentialSessionMigrationRejectsMissingDependencies(t *testing.T) {
 	clock := &credentialMigrationClock{now: time.Date(2026, 8, 27, 5, 0, 0, 0, time.UTC)}
-	if err := migrateCredentialSessions(nil, clock, nil); err == nil {
+	if err := migrateCredentialSessions(nil, clock); err == nil {
 		t.Fatal("migrateCredentialSessions(nil database) succeeded")
 	}
 	db := openCredentialMigrationBoundaryDB(t)
-	if err := migrateCredentialSessions(db, nil, nil); err == nil {
+	if err := migrateCredentialSessions(db, nil); err == nil {
 		t.Fatal("migrateCredentialSessions(nil clock) succeeded")
 	}
 }
@@ -30,7 +30,7 @@ func TestCredentialSessionMigrationBootstrapsDatabaseWithoutLegacyProviderTables
 	db := openCredentialMigrationBoundaryDB(t)
 	clock := &credentialMigrationClock{now: time.Date(2026, 8, 27, 5, 5, 0, 0, time.UTC)}
 
-	if err := migrateCredentialSessions(db, clock, nil); err != nil {
+	if err := migrateCredentialSessions(db, clock); err != nil {
 		t.Fatalf("migrateCredentialSessions(empty database) error = %v", err)
 	}
 	applied, err := credentialMigrationApplied(db)
@@ -40,7 +40,7 @@ func TestCredentialSessionMigrationBootstrapsDatabaseWithoutLegacyProviderTables
 	if err := validateCredentialSessionSchema(db); err != nil {
 		t.Fatalf("validateCredentialSessionSchema() error = %v", err)
 	}
-	if err := migrateCredentialSessions(db, clock, migrationSubjectSigner{version: "h-current"}); err != nil {
+	if err := migrateCredentialSessions(db, clock); err != nil {
 		t.Fatalf("idempotent empty migration error = %v", err)
 	}
 }
@@ -77,7 +77,7 @@ func TestCredentialSessionMigrationFailsClosedOnIncompleteLegacySchema(t *testin
 					t.Fatalf("prepare legacy schema: %v", err)
 				}
 			}
-			err := migrateCredentialSessions(db, clock, nil)
+			err := migrateCredentialSessions(db, clock)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("migrateCredentialSessions() error = %v, want containing %q", err, testCase.want)
 			}
@@ -173,7 +173,7 @@ func TestCredentialSessionMigrationRejectsUnrepresentableLegacyCredentials(t *te
 			if err := testCase.mutate(db); err != nil {
 				t.Fatalf("mutate legacy fixture: %v", err)
 			}
-			err := migrateCredentialSessions(db, clock, migrationSubjectSigner{version: "h-current"})
+			err := migrateCredentialSessions(db, clock)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("migrateCredentialSessions() error = %v, want containing %q", err, testCase.want)
 			}
@@ -197,7 +197,7 @@ func TestCredentialSessionMigrationRejectsUnrepresentableLegacyCredentials(t *te
 func TestCredentialSessionMigrationFinalizationRollsBackSignerFailure(t *testing.T) {
 	db := openLegacyCredentialFixture(t)
 	clock := &credentialMigrationClock{now: time.Date(2026, 8, 27, 5, 20, 0, 0, time.UTC)}
-	if err := migrateCredentialSessions(db, clock, nil); err != nil {
+	if err := migrateCredentialSessions(db, clock); err != nil {
 		t.Fatalf("pending migration error = %v", err)
 	}
 

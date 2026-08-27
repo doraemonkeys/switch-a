@@ -507,6 +507,12 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 				Model:      ModelUnknown,
 				StickyMode: model.StickyModeModel,
 			},
+			configure: func(store *mockStore) {
+				store.routingPolicies = []model.RoutingPolicy{{
+					Enabled: true, APIType: "claude",
+					ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "claude-",
+				}}
+			},
 			probeOn: true,
 			want: webSocketSelectionProbeDecision{
 				outcome: webSocketSelectionProbeOutcomeUnsupported,
@@ -519,6 +525,12 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 				APIType:    "claude",
 				Model:      ModelUnknown,
 				StickyMode: model.StickyModeModel,
+			},
+			configure: func(store *mockStore) {
+				store.routingPolicies = []model.RoutingPolicy{{
+					Enabled: true, APIType: "claude",
+					ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "claude-",
+				}}
 			},
 			newSelectionProbeObserver: func(apiType, initialModel string) WebSocketMessageObserver {
 				if apiType != "claude" {
@@ -533,7 +545,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			},
 		},
 		{
-			name:    "model sticky demand survives routing policy lookup failure",
+			name:    "model sticky does not mask routing policy lookup failure",
 			apiType: APITypeCodex,
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
@@ -545,9 +557,9 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			},
 			probeOn: true,
 			want: webSocketSelectionProbeDecision{
-				outcome:     webSocketSelectionProbeOutcomeCompletedWithoutUsableModel,
-				shouldProbe: true,
+				outcome: webSocketSelectionProbeOutcomeDemandResolutionFailed,
 			},
+			wantErr: "routing policy store unavailable",
 		},
 		{
 			name:    "routing policy model-only rule enables probe",
@@ -600,15 +612,19 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			if tt.configure != nil {
 				tt.configure(store)
 			}
-			orchestrator := newWebSocketSessionOrchestrator(&Handler{
-				store:  store,
-				logger: zap.NewNop(),
-			}, webSocketSessionOrchestratorConfig{
+			config := webSocketSessionOrchestratorConfig{
 				apiType:                   tt.apiType,
 				selectReq:                 tt.req,
 				probeClientModel:          tt.probeOn,
 				newSelectionProbeObserver: tt.newSelectionProbeObserver,
-			})
+			}
+			if tt.apiType == APITypeCodex {
+				config.codexOperation = testCodexOperation(t)
+			}
+			orchestrator := newWebSocketSessionOrchestrator(&Handler{
+				store:  store,
+				logger: zap.NewNop(),
+			}, config)
 
 			got, err := orchestrator.selectionProbeDecision(context.Background())
 			if got != tt.want {
@@ -643,7 +659,9 @@ func TestWebSocketSessionOrchestrator_ProbeClientSelectionContextOutcomes(t *tes
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		t.Cleanup(cancel)
 		conn := connectWSClient(t, ctx, wsURL(idleServer))
-		t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
+		// The peer is intentionally idle; a close handshake would spend the
+		// library's full timeout in cleanup without testing any protocol state.
+		t.Cleanup(func() { conn.CloseNow() })
 		return conn
 	}
 
@@ -1010,4 +1028,15 @@ func TestWebSocketSessionOrchestrator_SwitchAndFallbackPredicates(t *testing.T) 
 	if orchestrator.shouldSwitchProvider(semanticAttempt) {
 		t.Fatal("shouldSwitchProvider() = true, want false without suppressed attempt context")
 	}
+}
+
+func TestNewWebSocketSessionOrchestrator_RejectsCodexWithoutOperation(t *testing.T) {
+	defer func() {
+		panicValue := recover()
+		message, ok := panicValue.(string)
+		if !ok || message != "websocketproxy: Codex operation is required for Codex sessions" {
+			t.Fatalf("panic = %v, want missing Codex operation failure", panicValue)
+		}
+	}()
+	newWebSocketSessionOrchestrator(&Gateway{}, webSocketSessionOrchestratorConfig{apiType: APITypeCodex})
 }

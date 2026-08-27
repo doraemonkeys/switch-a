@@ -145,34 +145,6 @@ type stubLogStore struct {
 	cleanCalled     chan struct{}
 }
 
-type recordingCloser struct {
-	name   string
-	events *[]string
-	err    error
-}
-
-func (c *recordingCloser) Close() error {
-	*c.events = append(*c.events, c.name)
-	return c.err
-}
-
-func TestCloseApplicationStoresClosesAnalyticsBeforeWriterAndJoinsErrors(t *testing.T) {
-	analyticsErr := errors.New("analytics close failed")
-	writerErr := errors.New("writer close failed")
-	events := make([]string, 0, 2)
-	analytics := &recordingCloser{name: "analytics", events: &events, err: analyticsErr}
-	writer := &recordingCloser{name: "writer", events: &events, err: writerErr}
-
-	err := closeApplicationStores(analytics, writer)
-
-	if got, want := strings.Join(events, ","), "analytics,writer"; got != want {
-		t.Fatalf("close order = %q, want %q", got, want)
-	}
-	if !errors.Is(err, analyticsErr) || !errors.Is(err, writerErr) {
-		t.Fatalf("close error = %v, want both resource errors", err)
-	}
-}
-
 func (s *stubLogStore) CleanOldLogs(_ context.Context, beforeDays int) error {
 	s.mu.Lock()
 	s.cleanCalls++

@@ -16,7 +16,7 @@ func TestWebSocketSessionPersistsObservedCacheWriteZero(t *testing.T) {
 		t.Fatal("expected usage")
 	}
 	store := newMockStore()
-	gateway := NewGateway(Config{Store: store, Logger: zap.NewNop()})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zap.NewNop()})
 	gateway.logWebSocketSession(RequestInfo{APIType: "codex", Method: http.MethodGet, Path: "/v1/responses"}, &WebSocketSessionResult{
 		RequestID: "ws-token-usage",
 		FinalResult: &WebSocketResult{

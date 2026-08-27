@@ -89,7 +89,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -208,7 +208,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesExactProviderPolicyBefore
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),

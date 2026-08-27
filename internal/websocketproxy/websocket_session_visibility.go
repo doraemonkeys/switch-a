@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
 	"github.com/coder/websocket"
+	"go.uber.org/zap"
 )
 
 // This module owns the one-way transition from an accepted upstream attempt to
@@ -20,8 +23,9 @@ import (
 // state machine.
 
 type webSocketCodexCloseError struct {
-	code  websocket.StatusCode
-	cause error
+	code   websocket.StatusCode
+	reason string
+	cause  error
 }
 
 func (e *webSocketCodexCloseError) Error() string { return e.cause.Error() }
@@ -31,7 +35,7 @@ func (e *webSocketCodexCloseError) As(target any) bool {
 	if !ok {
 		return false
 	}
-	*closeError = websocket.CloseError{Code: e.code, Reason: "websocket state boundary rejected"}
+	*closeError = websocket.CloseError{Code: e.code, Reason: e.reason}
 	return true
 }
 
@@ -39,7 +43,10 @@ func newWebSocketCodexCloseError(err error) error {
 	if err == nil {
 		err = errors.New("websocket state boundary rejected")
 	}
-	return &webSocketCodexCloseError{code: websocketCloseStatusForCodexFailure(err), cause: err}
+	decision := codexWebSocketRecoveryDecision(err, codexrecovery.PhaseWebSocketAccepted)
+	return &webSocketCodexCloseError{
+		code: decision.WebSocketCloseCode(), reason: string(decision.ErrorCode()), cause: err,
+	}
 }
 
 type webSocketDialCaptureCompletion struct {
@@ -100,9 +107,10 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 		}
 	}()
 
-	if failure := o.bindAcceptedSubprotocol(
+	negotiation, failure := o.prepareAcceptedSubprotocol(
 		provider, dialExchange, attempt, selectionMode, selectionMetadata, attemptStart, injectedCredential,
-	); failure != nil {
+	)
+	if failure != nil {
 		upstreamConn = nil
 		return *failure
 	}
@@ -114,7 +122,7 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 		return *boundaryFailure
 	}
 
-	if err := o.ensureClientAccepted(w, r); err != nil {
+	if err := o.ensureClientAccepted(w, r, negotiation); err != nil {
 		_ = upstreamConn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
 		upstreamConn = nil
 		result := &WebSocketResult{
@@ -209,7 +217,7 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	return attemptResult
 }
 
-func (o *WebSocketSessionOrchestrator) bindAcceptedSubprotocol(
+func (o *WebSocketSessionOrchestrator) prepareAcceptedSubprotocol(
 	provider *model.Provider,
 	dialExchange DialExchange,
 	attempt int,
@@ -217,26 +225,16 @@ func (o *WebSocketSessionOrchestrator) bindAcceptedSubprotocol(
 	selectionMetadata selector.SelectionMetadata,
 	attemptStart time.Time,
 	injectedCredential string,
-) *WebSocketAttemptResult {
-	if err := o.bindUpstreamSubprotocol(dialExchange); err != nil {
-		if o.clientConn != nil {
-			closeWebSocketSubprotocolViolation(o.clientConn)
-			o.clientConn = nil
-		}
+) (websocketprotocol.Negotiation, *WebSocketAttemptResult) {
+	negotiation, err := o.acceptedSubprotocolNegotiation(dialExchange)
+	if err != nil {
 		closeWebSocketSubprotocolViolation(dialExchange.Conn)
-		result := &WebSocketResult{
-			Err: err, TerminalCause: model.TerminalInternalError, CommitSource: model.CommitUnknown,
-		}
-		dialExchange.applyHandshake(result)
-		o.applySessionLifecycleToResult(result)
-		attemptResult := newWebSocketForwardAttemptResult(
-			provider, attempt, selectionMode, selectionMetadata, result, err, time.Since(attemptStart),
+		attemptResult := o.newSubprotocolViolationAttempt(
+			provider, dialExchange, attempt, selectionMode, selectionMetadata, attemptStart, err, injectedCredential,
 		)
-		attemptResult.injectedCredential = injectedCredential
-		o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
-		return &attemptResult
+		return websocketprotocol.Negotiation{}, &attemptResult
 	}
-	return nil
+	return negotiation, nil
 }
 
 func (o *WebSocketSessionOrchestrator) prepareAcceptedCodexHandshake(
@@ -266,12 +264,6 @@ func (o *WebSocketSessionOrchestrator) prepareAcceptedCodexHandshake(
 		}
 		projectWebSocketHandshakeHeaders(w.Header(), projected)
 	}
-	if err := o.codexOperation.CommitCookies(ctx); err != nil {
-		failure := o.newCodexBoundaryAttempt(
-			provider, dialExchange, attempt, selectionMode, selectionMetadata, attemptStart, err, injectedCredential,
-		)
-		return nil, &failure
-	}
 	return permit, nil
 }
 
@@ -292,6 +284,12 @@ func (o *WebSocketSessionOrchestrator) commitAcceptedCodexHandshake(
 		if err := serverHeaderPermit.Commit(ctx); err != nil {
 			_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(err), "websocket state commit failed")
 			return err
+		}
+		if serverHeaderPermit.PinsRouteTarget() {
+			if err := o.codexOperation.CommitVisibility(ctx); err != nil {
+				_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(err), "websocket visibility state failed")
+				return err
+			}
 		}
 	}
 	if o.codexOperation == nil {
@@ -361,21 +359,84 @@ func (o *WebSocketSessionOrchestrator) codexClientPreWrite(
 		return nil
 	}
 	return func(write webSocketPreWriteContext) webSocketPreWriteDecision {
-		permit, err := o.codexOperation.PrepareClientFrame(ctx, write.MessageType == websocket.MessageText, write.Data)
-		if err != nil {
-			return codexRejectedWrite(err)
-		}
-		decision := webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
-		if permit != nil {
-			decision.OnWriteConfirmed = func() error {
-				if err := permit.Commit(ctx); err != nil {
-					return newWebSocketCodexCloseError(err)
-				}
-				return nil
-			}
-		}
+		frame := o.codexOperation.ClassifyClientFrame(ctx, write.MessageType == websocket.MessageText, write.Data)
+		o.logCodexClientFramePermit(frame)
+		return o.codexClientFrameDecision(ctx, frame, true)
+	}
+}
+
+func (o *WebSocketSessionOrchestrator) logCodexClientFramePermit(frame *codexws.ClientFramePermit) {
+	if o == nil || frame == nil || o.handler == nil || o.handler.logger == nil {
+		return
+	}
+	trace := frame.Trace()
+	if trace.Kind == codexws.ClientFrameOpaque {
+		return
+	}
+	fields := []zap.Field{
+		zap.String("request_id", o.requestID),
+		zap.String("session_id", o.requestID),
+		zap.String("operation_id", o.requestID),
+		zap.String("frame_kind", string(trace.Kind)),
+		zap.String("event_type", trace.EventType),
+		zap.String("decision", string(frame.Disposition())),
+		zap.Bool("replay_eligible", frame.ReplayEligible()),
+		zap.Bool("replacement_eligible", frame.ReplacementEligible()),
+		zap.Bool("current_connection_required", frame.CurrentConnectionRequired()),
+	}
+	if frame.Disposition() == codexws.ClientFrameReject {
+		recovery := codexWebSocketRecoveryDecision(frame.Rejection(), codexrecovery.PhaseWebSocketAccepted)
+		fields = append(fields,
+			zap.String("recovery_condition", string(recovery.Condition())),
+			zap.String("error_code", string(recovery.ErrorCode())),
+			zap.Int("close_code", int(recovery.WebSocketCloseCode())),
+		)
+		o.handler.logger.Warn("websocket.codex_client_frame_decision", fields...)
+		return
+	}
+	o.handler.logger.Debug("websocket.codex_client_frame_decision", fields...)
+}
+
+func (o *WebSocketSessionOrchestrator) codexClientFrameDecision(
+	ctx context.Context,
+	frame *codexws.ClientFramePermit,
+	prepareDelivery bool,
+) webSocketPreWriteDecision {
+	if frame == nil {
+		return replayableClientFrameDecision()
+	}
+	if frame.Disposition() == codexws.ClientFrameReject {
+		return codexRejectedWrite(frame.Rejection())
+	}
+	trace := frame.Trace()
+	decision := webSocketPreWriteDecision{
+		Action:              webSocketPreWriteActionForward,
+		ReplayEligible:      frame.ReplayEligible(),
+		ReplacementEligible: frame.ReplacementEligible(),
+		CurrentConnection:   frame.CurrentConnectionRequired(),
+		TraceContext: webSocketClientFrameTrace{
+			Kind: string(trace.Kind), EventType: trace.EventType, Decision: string(trace.Decision),
+		},
+	}
+	decision.PrepareReplay = func() webSocketPreWriteDecision {
+		return o.codexClientFrameDecision(ctx, frame, true)
+	}
+	if !prepareDelivery {
 		return decision
 	}
+	permit, err := frame.PrepareDelivery(ctx)
+	if err != nil {
+		return codexRejectedWrite(err)
+	}
+	if permit != nil {
+		decision.OnWriteConfirmed = func() error {
+			if err := permit.Commit(ctx); err != nil {
+				return newWebSocketCodexCloseError(err)
+			}
+			return nil
+		}
+	}
+	return decision
 }
 
 func (o *WebSocketSessionOrchestrator) composeUpstreamPreWrite(
@@ -395,14 +456,19 @@ func (o *WebSocketSessionOrchestrator) composeUpstreamPreWrite(
 		if err != nil {
 			return codexRejectedWrite(err)
 		}
-		decision := webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
-		if permit != nil {
-			decision.OnWriteConfirmed = func() error {
+		decision := webSocketPreWriteDecision{
+			Action: webSocketPreWriteActionForward, ReplayEligible: true, ReplacementEligible: true,
+		}
+		decision.OnWriteConfirmed = func() error {
+			if permit != nil {
 				if err := permit.Commit(ctx); err != nil {
 					return newWebSocketCodexCloseError(err)
 				}
-				return nil
 			}
+			if err := o.codexOperation.CommitVisibility(ctx); err != nil {
+				return newWebSocketCodexCloseError(err)
+			}
+			return nil
 		}
 		return decision
 	}

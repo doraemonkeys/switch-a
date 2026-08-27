@@ -65,22 +65,17 @@ func (o *WebSocketSessionOrchestrator) replayBufferedMessages(
 			sourceLineage,
 		)
 		o.observeReplayClientMessage(observer, message.MessageType, message.Data)
-		var boundaryConfirmed func() error
-		if captureOptions.PreWriteToUpstream != nil {
-			decision := captureOptions.PreWriteToUpstream(webSocketPreWriteContext{
-				MessageType: message.MessageType, Data: message.Data,
-				ClientAccepted: o.lifecycle.Snapshot().ClientAccepted,
-				ClientVisible:  o.lifecycle.Snapshot().ClientVisible,
-			})
-			if decision.Action == webSocketPreWriteActionReject {
-				disposition := decision.RejectionDisposition
-				if disposition == "" {
-					disposition = requestcapture.MessageDispositionProtocolRejected
-				}
-				captureWebSocketMessageResult(captureOptions, captured, disposition, false, decision.Err)
-				return replayedBytes, true, decision.Err
+		decision := message.Decision
+		if decision.PrepareReplay != nil {
+			decision = decision.PrepareReplay()
+		}
+		if decision.Action == webSocketPreWriteActionReject {
+			disposition := decision.RejectionDisposition
+			if disposition == "" {
+				disposition = requestcapture.MessageDispositionProtocolRejected
 			}
-			boundaryConfirmed = decision.OnWriteConfirmed
+			captureWebSocketMessageResult(captureOptions, captured, disposition, false, decision.Err)
+			return replayedBytes, true, decision.Err
 		}
 		if err := upstreamConn.Write(ctx, message.MessageType, message.Data); err != nil {
 			captureWebSocketMessageResult(
@@ -92,8 +87,11 @@ func (o *WebSocketSessionOrchestrator) replayBufferedMessages(
 			)
 			return replayedBytes, true, err
 		}
-		if boundaryConfirmed != nil {
-			if err := boundaryConfirmed(); err != nil {
+		if !decision.ReplacementEligible && o.replayBuffer != nil {
+			o.replayBuffer.Disable()
+		}
+		if decision.OnWriteConfirmed != nil {
+			if err := decision.OnWriteConfirmed(); err != nil {
 				captureWebSocketMessageResult(
 					captureOptions, captured, requestcapture.MessageDispositionStorageRejected, true, err,
 				)
@@ -158,7 +156,7 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 			requestcapture.MessageDirectionClientToUpstream,
 			observeClient,
 			nil,
-			func(messageType websocket.MessageType, data []byte, captured webSocketCapturedRead) func() {
+			func(messageType websocket.MessageType, data []byte, captured webSocketCapturedRead, decision webSocketPreWriteDecision) func() {
 				if options.PreVisibleReplayBuffer == nil {
 					return nil
 				}
@@ -166,11 +164,15 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 				if options.Observer != nil && options.Observer.ParseDegraded() {
 					options.PreVisibleReplayBuffer.Disable()
 				}
-				bufferedMessageIndex := options.PreVisibleReplayBuffer.RecordWithLineage(
+				if !decision.ReplayEligible {
+					return nil
+				}
+				bufferedMessageIndex := options.PreVisibleReplayBuffer.RecordDecision(
 					messageType,
 					data,
 					lifecycleSnapshot.ClientVisible,
 					captured.Lineage,
+					decision,
 				)
 				return func() {
 					// Replay classification follows the physical upstream write, not
@@ -222,7 +224,7 @@ type webSocketRelayMessageProcessor struct {
 	direction   requestcapture.MessageDirection
 	observe     func(websocket.MessageType, []byte)
 	onForwarded func(websocket.MessageType, []byte)
-	onRead      func(websocket.MessageType, []byte, webSocketCapturedRead) func()
+	onRead      func(websocket.MessageType, []byte, webSocketCapturedRead, webSocketPreWriteDecision) func()
 	preWrite    func(websocket.MessageType, []byte) webSocketPreWriteDecision
 	totalBytes  int64
 }
@@ -240,27 +242,31 @@ func (p *webSocketRelayMessageProcessor) process(
 		requestcapture.MessageLineage{},
 		requestcapture.MessageLineage{},
 	)
+	decision, failurePeer, failureOperation, err := p.prepareWrite(messageType, data, captured)
+	if err != nil {
+		return failurePeer, failureOperation, err
+	}
 	var onWriteConfirmed func()
 	if p.onRead != nil {
-		onWriteConfirmed = p.onRead(messageType, data, captured)
+		onWriteConfirmed = p.onRead(messageType, data, captured, decision)
 	}
 	if p.observe != nil {
 		p.observe(messageType, data)
 	}
-	boundaryConfirmed, failurePeer, failureOperation, err := p.prepareWrite(messageType, data, captured)
-	if err != nil {
-		return failurePeer, failureOperation, err
-	}
 	if err := p.dst.Write(p.ctx, messageType, data); err != nil {
-		captureWebSocketMessageResult(p.options, captured, requestcapture.MessageDispositionWriteFailed, false, err)
-		return p.dstPeer, webSocketRelayFailureOperationWrite, err
+		writeErr := clientFrameWriteError(decision, err)
+		captureWebSocketMessageResult(p.options, captured, requestcapture.MessageDispositionWriteFailed, false, writeErr)
+		return p.dstPeer, webSocketRelayFailureOperationWrite, writeErr
 	}
 	p.totalBytes += int64(len(data))
+	if !decision.ReplacementEligible && p.options.PreVisibleReplayBuffer != nil {
+		p.options.PreVisibleReplayBuffer.Disable()
+	}
 	if onWriteConfirmed != nil {
 		onWriteConfirmed()
 	}
-	if boundaryConfirmed != nil {
-		if err := boundaryConfirmed(); err != nil {
+	if decision.OnWriteConfirmed != nil {
+		if err := decision.OnWriteConfirmed(); err != nil {
 			captureWebSocketMessageResult(p.options, captured, requestcapture.MessageDispositionStorageRejected, true, err)
 			return webSocketPeerUnknown, webSocketRelayFailureOperationUnknown, err
 		}
@@ -276,14 +282,14 @@ func (p *webSocketRelayMessageProcessor) prepareWrite(
 	messageType websocket.MessageType,
 	data []byte,
 	captured webSocketCapturedRead,
-) (func() error, webSocketPeer, webSocketRelayFailureOperation, error) {
+) (webSocketPreWriteDecision, webSocketPeer, webSocketRelayFailureOperation, error) {
 	if p.preWrite == nil {
-		return nil, webSocketPeerUnknown, webSocketRelayFailureOperationUnknown, nil
+		return replayableClientFrameDecision(), webSocketPeerUnknown, webSocketRelayFailureOperationUnknown, nil
 	}
 	decision := p.preWrite(messageType, data)
 	if decision.Action == webSocketPreWriteActionSuppress {
 		captureWebSocketMessageResult(p.options, captured, requestcapture.MessageDispositionSuppressed, false, nil)
-		return nil, p.srcPeer, webSocketRelayFailureOperationUnknown, &webSocketSuppressedUpstreamError{
+		return decision, p.srcPeer, webSocketRelayFailureOperationUnknown, &webSocketSuppressedUpstreamError{
 			upstreamError: decision.SuppressedUpstreamError,
 		}
 	}
@@ -293,9 +299,9 @@ func (p *webSocketRelayMessageProcessor) prepareWrite(
 			disposition = requestcapture.MessageDispositionProtocolRejected
 		}
 		captureWebSocketMessageResult(p.options, captured, disposition, false, decision.Err)
-		return nil, p.srcPeer, webSocketRelayFailureOperationUnknown, decision.Err
+		return decision, p.srcPeer, webSocketRelayFailureOperationUnknown, decision.Err
 	}
-	return decision.OnWriteConfirmed, webSocketPeerUnknown, webSocketRelayFailureOperationUnknown, nil
+	return decision, webSocketPeerUnknown, webSocketRelayFailureOperationUnknown, nil
 }
 
 func relayMessages(
@@ -309,7 +315,7 @@ func relayMessages(
 	direction requestcapture.MessageDirection,
 	observe func(messageType websocket.MessageType, data []byte),
 	onForwarded func(messageType websocket.MessageType, data []byte),
-	onRead func(messageType websocket.MessageType, data []byte, captured webSocketCapturedRead) func(),
+	onRead func(messageType websocket.MessageType, data []byte, captured webSocketCapturedRead, decision webSocketPreWriteDecision) func(),
 	preWrite func(messageType websocket.MessageType, data []byte) webSocketPreWriteDecision,
 ) (int64, webSocketPeer, webSocketRelayFailureOperation, error) {
 	processor := webSocketRelayMessageProcessor{

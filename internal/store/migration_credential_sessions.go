@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -74,12 +75,12 @@ type legacyAuthStateRecord struct {
 
 // migrateCredentialSessions performs the only supported transition from
 // provider-owned credentials to independently referenced sessions. Structural
-// migration and backfill are one SQLite transaction; subject finalization is
-// idempotent so a feature-off deployment may migrate before KR1 is configured.
+// migration and backfill are one SQLite transaction. Static subjects remain
+// pending until bootstrap has inspected every durable key family and selected a
+// complete signer.
 func migrateCredentialSessions(
 	db *gorm.DB,
 	clock internalClock,
-	signer StaticCredentialSubjectSigner,
 ) error {
 	if db == nil || clock == nil {
 		return fmt.Errorf("credential session migration requires database and clock")
@@ -94,7 +95,7 @@ func migrateCredentialSessions(
 			return err
 		}
 		if !migrated {
-			if err := migrateProviderOwnedCredentials(tx, clock, signer); err != nil {
+			if err := migrateProviderOwnedCredentials(tx, clock); err != nil {
 				return err
 			}
 			if err := tx.Create(&credentialSessionMigration{
@@ -108,10 +109,7 @@ func migrateCredentialSessions(
 	}); err != nil {
 		return err
 	}
-	if signer == nil {
-		return nil
-	}
-	return finalizePendingStaticSubjects(db.WithContext(ctx), clock, signer)
+	return nil
 }
 
 // internalClock keeps this migration independent from the broad Store contract.
@@ -182,7 +180,7 @@ func credentialMigrationApplied(tx *gorm.DB) (bool, error) {
 	return count != 0, nil
 }
 
-func migrateProviderOwnedCredentials(tx *gorm.DB, clock internalClock, signer StaticCredentialSubjectSigner) error {
+func migrateProviderOwnedCredentials(tx *gorm.DB, clock internalClock) error {
 	providersExist := tx.Migrator().HasTable("providers")
 	apiTypesExist := tx.Migrator().HasTable("provider_api_types")
 	if !providersExist && !apiTypesExist {
@@ -233,7 +231,7 @@ func migrateProviderOwnedCredentials(tx *gorm.DB, clock internalClock, signer St
 		}
 		switch kind {
 		case credentialsession.KindAPIKey:
-			if err := backfillStaticProviderSessions(tx, repository, provider, apiTypesByProvider[provider.ID], clock, signer); err != nil {
+			if err := backfillStaticProviderSessions(tx, repository, provider, apiTypesByProvider[provider.ID], clock); err != nil {
 				return err
 			}
 		case credentialsession.KindChatGPT:
@@ -257,12 +255,11 @@ func backfillStaticProviderSessions(
 	provider legacyCredentialProvider,
 	apiTypes []legacyCredentialAPIType,
 	clock internalClock,
-	signer StaticCredentialSubjectSigner,
 ) error {
 	defaultSecret := strings.TrimSpace(provider.APIKey)
 	defaultSessionID := ""
 	if defaultSecret != "" {
-		created, err := createMigratedStaticSession(repository, provider, defaultSecret, signer)
+		created, err := createMigratedStaticSession(repository, provider, defaultSecret)
 		if err != nil {
 			return fmt.Errorf("create default static credential session for provider %q: %w", provider.ID, err)
 		}
@@ -275,7 +272,7 @@ func backfillStaticProviderSessions(
 		}
 		sessionID := defaultSessionID
 		if overrideSecret != "" {
-			created, err := createMigratedStaticSession(repository, provider, overrideSecret, signer)
+			created, err := createMigratedStaticSession(repository, provider, overrideSecret)
 			if err != nil {
 				return fmt.Errorf("create static credential override for provider %q API type %q: %w", provider.ID, apiType.APIType, err)
 			}
@@ -292,12 +289,7 @@ func createMigratedStaticSession(
 	repository *credentialsession.Repository,
 	provider legacyCredentialProvider,
 	secret string,
-	signer StaticCredentialSubjectSigner,
 ) (*credentialsession.Session, error) {
-	subject, err := staticSubject(provider.Vendor, secret, signer)
-	if err != nil {
-		return nil, err
-	}
 	session := &credentialsession.Session{
 		ID:         uuid.NewString(),
 		Vendor:     strings.TrimSpace(provider.Vendor),
@@ -310,7 +302,7 @@ func createMigratedStaticSession(
 		CreatedAt: provider.CreatedAt,
 		UpdatedAt: provider.UpdatedAt,
 	}
-	if err := session.SetSubject(subject); err != nil {
+	if err := session.SetSubject(credentialsession.PendingSubject()); err != nil {
 		return nil, err
 	}
 	return repository.Create(context.Background(), session)
@@ -413,7 +405,7 @@ func insertMigrationBinding(tx *gorm.DB, routeTargetID, apiType, sessionID strin
 
 func staticSubject(vendor, secret string, signer StaticCredentialSubjectSigner) (credentialsession.Subject, error) {
 	if signer == nil {
-		return credentialsession.PendingSubject(), nil
+		return credentialsession.Subject{}, fmt.Errorf("static credential subject signer is required")
 	}
 	input, err := credentialsession.StaticSubjectInput(vendor, credentialsession.KindAPIKey, secret)
 	if err != nil {
@@ -517,9 +509,30 @@ func validateCredentialSessionSchema(tx *gorm.DB) error {
 }
 
 func finalizePendingStaticSubjects(db *gorm.DB, clock internalClock, signer StaticCredentialSubjectSigner) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+	if db == nil || clock == nil || signer == nil {
+		return fmt.Errorf("finalize static credential subjects requires database, clock, and signer")
+	}
+	return db.Connection(func(connection *gorm.DB) (resultErr error) {
+		transaction := connection.Session(&gorm.Session{SkipDefaultTransaction: true})
+		rollbackConnection := connection.WithContext(context.Background()).Session(&gorm.Session{SkipDefaultTransaction: true})
+		if err := transaction.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return fmt.Errorf("begin static credential subject finalization: %w", err)
+		}
+		committed := false
+		defer func() {
+			if committed {
+				return
+			}
+			// database/sql considers a Tx finished after Commit is attempted, while
+			// SQLite keeps a deferred-constraint failure active. Owning BEGIN/COMMIT
+			// on this pinned connection preserves the rollback needed in that case.
+			if err := rollbackConnection.Exec("ROLLBACK").Error; err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("rollback static credential subject finalization: %w", err))
+			}
+		}()
+
 		var sessions []credentialsession.Session
-		if err := tx.Where("kind = ? AND subject_kind = ?", credentialsession.KindAPIKey, credentialsession.SubjectPending).
+		if err := transaction.Where("kind = ? AND subject_kind = ?", credentialsession.KindAPIKey, credentialsession.SubjectPending).
 			Order("id ASC").Find(&sessions).Error; err != nil {
 			return fmt.Errorf("list pending static credential subjects: %w", err)
 		}
@@ -528,7 +541,7 @@ func finalizePendingStaticSubjects(db *gorm.DB, clock internalClock, signer Stat
 			if err != nil {
 				return fmt.Errorf("finalize subject for credential session %q: %w", sessions[index].ID, err)
 			}
-			result := tx.Model(&credentialsession.Session{}).
+			result := transaction.Model(&credentialsession.Session{}).
 				Where("id = ? AND subject_kind = ?", sessions[index].ID, credentialsession.SubjectPending).
 				Updates(map[string]any{
 					"subject_kind":        subject.Kind,
@@ -543,6 +556,10 @@ func finalizePendingStaticSubjects(db *gorm.DB, clock internalClock, signer Stat
 				return fmt.Errorf("finalize subject for credential session %q: concurrent state change", sessions[index].ID)
 			}
 		}
+		if err := transaction.Exec("COMMIT").Error; err != nil {
+			return fmt.Errorf("commit static credential subject finalization: %w", err)
+		}
+		committed = true
 		return nil
 	})
 }

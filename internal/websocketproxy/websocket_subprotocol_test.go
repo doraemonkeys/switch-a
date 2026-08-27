@@ -108,12 +108,16 @@ func TestGatewayProbeClosesWithProtocolErrorWhenUpstreamDoesNotSelectFixedProtoc
 	defer upstream.Close()
 
 	store := newMockStore()
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled: true, APIType: APITypeCodex,
+		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-",
+	}}
 	store.providers = []model.Provider{{
 		ID: "probe-mismatch", AuthMode: "bearer", Enabled: true,
 		APITypes:           []model.ProviderAPIType{{ProviderID: "probe-mismatch", APIType: APITypeCodex, BaseURL: upstream.URL}},
 		CredentialSessions: testCredentialSessions("probe-mismatch", APITypeCodex, credentialsession.KindAPIKey, "provider-key"),
 	}}
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{
 		GlobalAuthMode:    "bearer",
 		GlobalMaxAttempts: 1,
@@ -124,9 +128,11 @@ func TestGatewayProbeClosesWithProtocolErrorWhenUpstreamDoesNotSelectFixedProtoc
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client, _, err := websocket.Dial(ctx, wsURL(server)+"/responses", &websocket.DialOptions{
-		Subprotocols: []string{"realtime.v2", "realtime.v1"},
-	})
+	client, _, err := websocket.Dial(
+		ctx,
+		wsURL(server)+"/responses",
+		codexDialOptions("realtime.v2", "realtime.v1"),
+	)
 	if err != nil {
 		t.Fatalf("dial gateway: %v", err)
 	}
@@ -188,12 +194,16 @@ func TestGatewayProbeUsesFixedSubprotocolForUpstream(t *testing.T) {
 	defer upstream.Close()
 
 	store := newMockStore()
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled: true, APIType: APITypeCodex,
+		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-",
+	}}
 	store.providers = []model.Provider{{
 		ID: "probe-match", AuthMode: "bearer", Enabled: true,
 		APITypes:           []model.ProviderAPIType{{ProviderID: "probe-match", APIType: APITypeCodex, BaseURL: upstream.URL}},
 		CredentialSessions: testCredentialSessions("probe-match", APITypeCodex, credentialsession.KindAPIKey, "provider-key"),
 	}}
-	gateway := NewGateway(Config{Store: store, Logger: zaptest.NewLogger(t)})
+	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{
 		GlobalAuthMode:    "bearer",
 		GlobalMaxAttempts: 1,
@@ -204,9 +214,11 @@ func TestGatewayProbeUsesFixedSubprotocolForUpstream(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client, _, err := websocket.Dial(ctx, wsURL(server)+"/responses", &websocket.DialOptions{
-		Subprotocols: []string{subprotocol, "realtime.v1"},
-	})
+	client, _, err := websocket.Dial(
+		ctx,
+		wsURL(server)+"/responses",
+		codexDialOptions(subprotocol, "realtime.v1"),
+	)
 	if err != nil {
 		t.Fatalf("dial gateway: %v", err)
 	}
@@ -269,7 +281,83 @@ func TestRejectedSwitchingProtocolsResponseStillEnforcesFixedSelection(t *testin
 	}
 }
 
-func TestSubprotocolDecisionLogsTypedContextWithoutRawTokens(t *testing.T) {
+func TestOrdinarySubprotocolSelectionCommitsOnlyAfterAcceptedBoundary(t *testing.T) {
+	t.Parallel()
+
+	const (
+		providerASelection = "realtime.v2"
+		providerBSelection = "realtime.v1"
+	)
+	clientOffer := []string{providerASelection, providerBSelection}
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
+	request.Header.Set("Sec-WebSocket-Protocol", strings.Join(clientOffer, ", "))
+	orchestrator := &WebSocketSessionOrchestrator{
+		handler: &Gateway{
+			logger:      zaptest.NewLogger(t),
+			wsForwarder: NewWebSocketForwarder(WebSocketForwarderConfig{Logger: zaptest.NewLogger(t)}),
+		},
+		lifecycle:      newWebSocketLifecycleState(),
+		codexOperation: testCodexOperation(t),
+		requestID:      "ordinary-attempt-local-subprotocol",
+	}
+	if result := orchestrator.initializeSubprotocol(request); result != nil {
+		t.Fatalf("initializeSubprotocol() result = %+v, want nil", result)
+	}
+
+	providerANegotiation, err := orchestrator.acceptedSubprotocolNegotiation(
+		DialExchange{NegotiatedSubprotocol: providerASelection},
+	)
+	if err != nil || providerANegotiation.Selected() != providerASelection {
+		t.Fatalf("provider A negotiation = (%q, %v)", providerANegotiation.Selected(), err)
+	}
+	if _, _, err := orchestrator.codexOperation.PrepareServerHeaders(
+		context.Background(),
+		http.Header{"X-Codex-Turn-State": {"", "invalid-duplicate"}},
+	); err == nil {
+		t.Fatal("provider A invalid Turn State projection was accepted")
+	}
+	if got := orchestrator.subprotocol.DialOffer(); !reflect.DeepEqual(got, clientOffer) {
+		t.Fatalf("provider B dial offer = %#v, want original full offer %#v", got, clientOffer)
+	}
+
+	providerBNegotiation, err := orchestrator.acceptedSubprotocolNegotiation(
+		DialExchange{NegotiatedSubprotocol: providerBSelection},
+	)
+	if err != nil {
+		t.Fatalf("provider B negotiation: %v", err)
+	}
+	selected := make(chan string, 1)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := orchestrator.ensureClientAccepted(w, r, providerBNegotiation); err != nil {
+			t.Errorf("accept provider B selection downstream: %v", err)
+			return
+		}
+		selected <- orchestrator.clientConn.Subprotocol()
+		_ = orchestrator.clientConn.Close(websocket.StatusNormalClosure, "complete")
+	}))
+	defer gateway.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, wsURL(gateway), &websocket.DialOptions{Subprotocols: clientOffer})
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer client.CloseNow()
+	if got := client.Subprotocol(); got != providerBSelection {
+		t.Fatalf("downstream subprotocol = %q, want provider B selection %q", got, providerBSelection)
+	}
+	select {
+	case got := <-selected:
+		if got != providerBSelection {
+			t.Fatalf("committed subprotocol = %q, want %q", got, providerBSelection)
+		}
+	case <-ctx.Done():
+		t.Fatal("downstream acceptance was not observed")
+	}
+}
+
+func TestSubprotocolDecisionLogsExactNegotiationContext(t *testing.T) {
 	const (
 		requestID      = "server-generated-session-id"
 		selectedMarker = "private-client-offer-marker"
@@ -291,20 +379,20 @@ func TestSubprotocolDecisionLogsTypedContextWithoutRawTokens(t *testing.T) {
 	}
 
 	accepted := newOrchestrator()
-	if err := accepted.bindUpstreamSubprotocol(DialExchange{NegotiatedSubprotocol: selectedMarker}); err != nil {
-		t.Fatalf("bind matching upstream selection: %v", err)
+	if _, err := accepted.acceptedSubprotocolNegotiation(DialExchange{NegotiatedSubprotocol: selectedMarker}); err != nil {
+		t.Fatalf("validate matching upstream selection: %v", err)
 	}
 	mismatched := newOrchestrator()
 	mismatched.subprotocol = mismatched.subprotocol.FixForProbe()
-	mismatchErr := mismatched.bindUpstreamSubprotocol(DialExchange{NegotiatedSubprotocol: actualMarker})
+	_, mismatchErr := mismatched.acceptedSubprotocolNegotiation(DialExchange{NegotiatedSubprotocol: actualMarker})
 	if !errors.Is(mismatchErr, websocketprotocol.ErrSubprotocolMismatch) {
-		t.Fatalf("bind mismatched upstream selection = %v, want subprotocol mismatch", mismatchErr)
+		t.Fatalf("validate mismatched upstream selection = %v, want subprotocol mismatch", mismatchErr)
 	}
 	missing := newOrchestrator()
 	missing.subprotocol = missing.subprotocol.FixForProbe()
-	missingErr := missing.bindUpstreamSubprotocol(DialExchange{})
+	_, missingErr := missing.acceptedSubprotocolNegotiation(DialExchange{})
 	if !errors.Is(missingErr, websocketprotocol.ErrSubprotocolMismatch) {
-		t.Fatalf("bind empty upstream selection = %v, want subprotocol mismatch", missingErr)
+		t.Fatalf("validate empty upstream selection = %v, want subprotocol mismatch", missingErr)
 	}
 	mismatched.logSubprotocolDecision(
 		"websocket.subprotocol_mismatch",
@@ -324,8 +412,7 @@ func TestSubprotocolDecisionLogsTypedContextWithoutRawTokens(t *testing.T) {
 	for _, entry := range entries {
 		encoded := fmt.Sprintf("%s %+v", entry.Message, entry.ContextMap())
 		for _, forbidden := range []string{
-			selectedMarker, actualMarker, mismatchErr.Error(), missingErr.Error(),
-			"selected_subprotocol", "actual_subprotocol",
+			mismatchErr.Error(), missingErr.Error(),
 		} {
 			if strings.Contains(encoded, forbidden) {
 				t.Fatalf("subprotocol log contains raw negotiation data %q: %s", forbidden, encoded)
@@ -335,16 +422,18 @@ func TestSubprotocolDecisionLogsTypedContextWithoutRawTokens(t *testing.T) {
 
 	acceptedContext := entries[0].ContextMap()
 	wantAccepted := map[string]any{
-		"request_id":          requestID,
-		"session_id":          requestID,
-		"attempt_index":       int64(0),
-		"negotiation_phase":   string(webSocketSubprotocolPhaseUpstreamSelection),
-		"negotiation_outcome": string(webSocketSubprotocolOutcomeAccepted),
-		"peer":                string(websocketprotocol.PeerUpstream),
-		"client_offer_count":  int64(1),
-		"selection_fixed":     true,
-		"selected_state":      string(webSocketSubprotocolValuePresent),
-		"actual_state":        string(webSocketSubprotocolValuePresent),
+		"request_id":           requestID,
+		"session_id":           requestID,
+		"attempt_index":        int64(0),
+		"negotiation_phase":    string(webSocketSubprotocolPhaseUpstreamSelection),
+		"negotiation_outcome":  string(webSocketSubprotocolOutcomeAccepted),
+		"peer":                 string(websocketprotocol.PeerUpstream),
+		"client_offer_count":   int64(1),
+		"selection_fixed":      true,
+		"selected_state":       string(webSocketSubprotocolValuePresent),
+		"actual_state":         string(webSocketSubprotocolValuePresent),
+		"selected_subprotocol": selectedMarker,
+		"actual_subprotocol":   selectedMarker,
 	}
 	for key, want := range wantAccepted {
 		if got := acceptedContext[key]; got != want {

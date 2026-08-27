@@ -103,6 +103,7 @@ func TestWebSocketSelectionBootstrapKeepsModelDiscoveryBeforeLeaseSelection(t *t
 		}, webSocketSessionOrchestratorConfig{
 			requestID:        "demand-failure",
 			apiType:          APITypeCodex,
+			codexOperation:   testCodexOperation(t),
 			probeClientModel: true,
 			selectReq: &model.SelectRequest{
 				APIType:    APITypeCodex,
@@ -125,13 +126,19 @@ func TestWebSocketSelectionBootstrapKeepsModelDiscoveryBeforeLeaseSelection(t *t
 	})
 
 	t.Run("client upgrade rejection does not enter provider selection", func(t *testing.T) {
+		store := newMockStore()
+		store.routingPolicies = []model.RoutingPolicy{{
+			Enabled: true, APIType: APITypeCodex,
+			ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-",
+		}}
 		orchestrator := newWebSocketSessionOrchestrator(&Gateway{
-			store:       newMockStore(),
+			store:       store,
 			wsForwarder: NewWebSocketForwarder(WebSocketForwarderConfig{Logger: zaptest.NewLogger(t)}),
 			logger:      zaptest.NewLogger(t),
 		}, webSocketSessionOrchestratorConfig{
 			requestID:        "upgrade-rejected",
 			apiType:          APITypeCodex,
+			codexOperation:   testCodexOperation(t),
 			probeClientModel: true,
 			selectReq: &model.SelectRequest{
 				APIType:    APITypeCodex,
@@ -159,12 +166,18 @@ func TestWebSocketSelectionBootstrapKeepsModelDiscoveryBeforeLeaseSelection(t *t
 			Model:      ModelUnknown,
 			StickyMode: model.StickyModeModel,
 		}
+		store := newMockStore()
+		store.routingPolicies = []model.RoutingPolicy{{
+			Enabled: true, APIType: APITypeCodex,
+			ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-",
+		}}
 		orchestrator := newWebSocketSessionOrchestrator(&Gateway{
-			store:  newMockStore(),
+			store:  store,
 			logger: zaptest.NewLogger(t),
 		}, webSocketSessionOrchestratorConfig{
 			requestID:        "model-observed",
 			apiType:          APITypeCodex,
+			codexOperation:   testCodexOperation(t),
 			probeClientModel: true,
 			selectReq:        selectReq,
 			info:             RequestInfo{Model: ModelUnknown},
@@ -235,9 +248,10 @@ func TestWebSocketSelectProviderPreservesFailureSemanticsAfterAttempts(t *testin
 		selector: &routingTestSelector{initialErr: internal.ErrNoProvider},
 		logger:   zaptest.NewLogger(t),
 	}, webSocketSessionOrchestratorConfig{
-		requestID: "selection-exhausted",
-		apiType:   APITypeCodex,
-		selectReq: &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
+		requestID:      "selection-exhausted",
+		apiType:        APITypeCodex,
+		codexOperation: testCodexOperation(t),
+		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
 	})
 	orchestrator.attempts = []WebSocketAttemptResult{{
 		Provider: &provider,
@@ -261,9 +275,10 @@ func TestWebSocketSelectProviderPreservesFailureSemanticsAfterAttempts(t *testin
 		selector: &routingTestSelector{initialErr: selectionErr},
 		logger:   zaptest.NewLogger(t),
 	}, webSocketSessionOrchestratorConfig{
-		requestID: "selection-error",
-		apiType:   APITypeCodex,
-		selectReq: &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
+		requestID:      "selection-error",
+		apiType:        APITypeCodex,
+		codexOperation: testCodexOperation(t),
+		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
 	})
 	selection, mode, session = orchestrator.selectProvider(context.Background(), 0)
 	if selection.Lease != nil || mode != providerSwitchModeInitial || session == nil {

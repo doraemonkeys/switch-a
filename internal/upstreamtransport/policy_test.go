@@ -2,6 +2,7 @@ package upstreamtransport
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,58 +66,150 @@ func TestBuildRequestCookiePoliciesPreserveRequestIdentity(t *testing.T) {
 	}
 }
 
-func TestFetchAlwaysExposesRedirectAsAttemptBoundary(t *testing.T) {
-	for _, status := range []int{http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
-		for _, targetKind := range []string{"cross-host", "same-host-different-port"} {
-			t.Run(http.StatusText(status)+"/"+targetKind, func(t *testing.T) {
-				var targetRequests atomic.Int32
-				target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-					targetRequests.Add(1)
-				}))
-				t.Cleanup(target.Close)
+func TestFetchFollowRedirectsPreservesNetHTTPMethodAndBodySemantics(t *testing.T) {
+	tests := []struct {
+		status     int
+		wantMethod string
+		wantBody   string
+	}{
+		{http.StatusMovedPermanently, http.MethodGet, ""},
+		{http.StatusFound, http.MethodGet, ""},
+		{http.StatusSeeOther, http.MethodGet, ""},
+		{http.StatusTemporaryRedirect, http.MethodPost, "wire"},
+		{http.StatusPermanentRedirect, http.MethodPost, "wire"},
+	}
+	for _, test := range tests {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			var targetRequests atomic.Int32
+			var targetMethod, targetBody string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/start" {
+					w.Header().Set("Location", "/target")
+					w.WriteHeader(test.status)
+					return
+				}
+				targetRequests.Add(1)
+				targetMethod = request.Method
+				payload, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				targetBody = string(payload)
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			t.Cleanup(server.Close)
 
-				location := target.URL + "/credential-sink"
-				if targetKind == "cross-host" {
-					parsed, err := url.Parse(location)
-					if err != nil {
-						t.Fatal(err)
-					}
-					parsed.Host = "localhost:" + parsed.Port()
-					location = parsed.String()
-				}
-				source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Add("Set-Cookie", "provider_session=one; Path=/")
-					w.Header().Set("Location", location)
-					w.WriteHeader(status)
-				}))
-				t.Cleanup(source.Close)
+			original := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/messages", strings.NewReader("wire"))
+			request, err := BuildRequest(context.Background(), http.MethodPost, server.URL+"/start", []byte("wire"), original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport := New(Config{})
+			t.Cleanup(transport.CloseIdleConnections)
+			response, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: FollowRedirects})
+			if err != nil {
+				t.Fatal(err)
+			}
+			head, body, err := response.Take()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, body)
+			_ = body.Close()
+			if head.StatusCode != http.StatusNoContent || targetRequests.Load() != 1 {
+				t.Fatalf("final status/target requests = %d/%d", head.StatusCode, targetRequests.Load())
+			}
+			if targetMethod != test.wantMethod || targetBody != test.wantBody {
+				t.Fatalf("redirected method/body = %q/%q, want %q/%q", targetMethod, targetBody, test.wantMethod, test.wantBody)
+			}
+		})
+	}
+}
 
-				original := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/messages", strings.NewReader("wire"))
-				original.Header.Set("Authorization", "Bearer must-not-follow")
-				original.Header.Set("Cookie", "provider_session=must-not-follow")
-				request, err := BuildRequest(context.Background(), http.MethodPost, source.URL+"/start", []byte("wire"), original)
-				if err != nil {
-					t.Fatal(err)
-				}
-				transport := New(Config{})
-				t.Cleanup(transport.CloseIdleConnections)
-				response, err := transport.Fetch(context.Background(), request)
-				if err != nil {
-					t.Fatal(err)
-				}
-				head, body, err := response.Take()
-				if err != nil {
-					t.Fatal(err)
-				}
-				_, _ = io.Copy(io.Discard, body)
-				_ = body.Close()
-				if head.StatusCode != status || targetRequests.Load() != 0 {
-					t.Fatalf("redirect status/target requests = %d/%d", head.StatusCode, targetRequests.Load())
-				}
-				if got := head.SourceHeader.Values("Set-Cookie"); len(got) != 1 {
-					t.Fatalf("source Set-Cookie = %#v", got)
-				}
-			})
+func TestFetchExposeRedirectsReturnsRawAttemptBoundary(t *testing.T) {
+	for _, status := range []int{
+		http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var targetRequests atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				targetRequests.Add(1)
+			}))
+			t.Cleanup(target.Close)
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Add("Set-Cookie", "provider_session=one; Path=/")
+				w.Header().Set("Location", target.URL+"/target")
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(source.Close)
+
+			original := httptest.NewRequest(http.MethodPost, "http://gateway.test/responses", strings.NewReader("wire"))
+			request, err := BuildRequest(context.Background(), http.MethodPost, source.URL+"/start", []byte("wire"), original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport := New(Config{})
+			t.Cleanup(transport.CloseIdleConnections)
+			response, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: ExposeRedirects})
+			if err != nil {
+				t.Fatal(err)
+			}
+			head, body, err := response.Take()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, body)
+			_ = body.Close()
+			if head.StatusCode != status || targetRequests.Load() != 0 {
+				t.Fatalf("redirect status/target requests = %d/%d", head.StatusCode, targetRequests.Load())
+			}
+			if got := head.SourceHeader.Values("Set-Cookie"); len(got) != 1 {
+				t.Fatalf("source Set-Cookie = %#v", got)
+			}
+		})
+	}
+}
+
+func TestFetchFollowRedirectsReturnsLimitAndPolicyErrors(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Location", "/again")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	original := httptest.NewRequest(http.MethodGet, "http://gateway.test/v1/messages", nil)
+	request, err := BuildRequest(context.Background(), http.MethodGet, server.URL+"/again", nil, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := New(Config{})
+	t.Cleanup(transport.CloseIdleConnections)
+	if _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{}); err == nil {
+		t.Fatal("redirect limit did not return an error")
+	} else {
+		var urlError *url.Error
+		if !errors.As(err, &urlError) || !strings.Contains(err.Error(), "stopped after 10 redirects") {
+			t.Fatalf("redirect limit error = %T %v", err, err)
 		}
+	}
+	if got := requests.Load(); got != 10 {
+		t.Fatalf("redirect requests = %d, want 10", got)
+	}
+
+	request, err = BuildRequest(context.Background(), http.MethodGet, server.URL+"/again", nil, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := requests.Load()
+	if _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: RedirectPolicy(99)}); err == nil {
+		t.Fatal("invalid redirect policy accepted")
+	}
+	if got := requests.Load(); got != before {
+		t.Fatalf("invalid policy contacted upstream: requests = %d, want %d", got, before)
 	}
 }

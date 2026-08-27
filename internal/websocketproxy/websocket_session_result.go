@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
@@ -194,6 +195,7 @@ func (o *WebSocketSessionOrchestrator) finalizeTerminalSession(session *WebSocke
 		session.FinalResult.RecoveryAction = deriveWebSocketSessionRecoveryAction(session)
 	}
 	populateCanonicalWebSocketGatewayMetadata(session)
+	o.closeAcceptedClientOnSubprotocolExhaustion(session)
 	if err := o.emitTerminalGatewayErrorIfNeeded(
 		session.FinalResult,
 		session.GatewayStatusCode,
@@ -203,6 +205,21 @@ func (o *WebSocketSessionOrchestrator) finalizeTerminalSession(session *WebSocke
 		session.FinalErr = err
 	}
 	return session
+}
+
+func (o *WebSocketSessionOrchestrator) closeAcceptedClientOnSubprotocolExhaustion(session *WebSocketSessionResult) {
+	if o == nil || o.clientConn == nil || session == nil || session.FinalResult == nil {
+		return
+	}
+	if !errors.Is(session.FinalResult.Err, websocketprotocol.ErrSubprotocolMismatch) {
+		return
+	}
+	// Probe commits the downstream 101 before selecting a provider. Exhausting
+	// exact-match attempts therefore has only one protocol-correct terminal form:
+	// close the accepted connection instead of falling back to ordinary mode or
+	// fabricating an application error frame under the wrong subprotocol.
+	closeWebSocketSubprotocolViolation(o.clientConn)
+	o.clientConn = nil
 }
 
 func (o *WebSocketSessionOrchestrator) sessionFromSuppressedPayload(_ context.Context) *WebSocketSessionResult {

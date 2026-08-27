@@ -12,7 +12,9 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
@@ -56,6 +58,12 @@ func (o *WebSocketSessionOrchestrator) clearSuppressedAttempt() { o.suppressedAt
 
 func (o *WebSocketSessionOrchestrator) shouldSwitchProvider(attempt WebSocketAttemptResult) bool {
 	if attempt.Result == nil {
+		return false
+	}
+	if o.codexOperation != nil && !o.codexOperation.ReplacementAllowed() {
+		return false
+	}
+	if codexWebSocketRecoveryDecision(attempt.terminalErr(), codexrecovery.PhaseWebSocketAccepted).Condition() == codexrecovery.ConditionReconnectRequired {
 		return false
 	}
 	if attempt.ReplayFailed {
@@ -168,7 +176,53 @@ func (l *fallbackProviderLease) Release() bool {
 type webSocketSelectionProbeDecision struct {
 	outcome     webSocketSelectionProbeOutcome
 	shouldProbe bool
-	ownerDemand bool
+}
+
+type webSocketProbeBudget struct {
+	Duration  time.Duration
+	MaxFrames int
+	MaxBytes  int
+}
+
+func defaultWebSocketProbeBudget() webSocketProbeBudget {
+	return webSocketProbeBudget{
+		Duration:  webSocketSelectionProbeTotalDuration,
+		MaxFrames: preVisibleClientReplayBufferLimitMessages,
+		MaxBytes:  preVisibleClientReplayBufferLimitBytes,
+	}
+}
+
+type webSocketProbeBudgetTracker struct {
+	budget  webSocketProbeBudget
+	started time.Time
+	now     func() time.Time
+	frames  int
+	bytes   int
+}
+
+func newWebSocketProbeBudgetTracker(budget webSocketProbeBudget, now func() time.Time) webSocketProbeBudgetTracker {
+	if now == nil {
+		now = time.Now
+	}
+	return webSocketProbeBudgetTracker{budget: budget, started: now(), now: now}
+}
+
+func (t *webSocketProbeBudgetTracker) Admit(size int) error {
+	if t == nil {
+		return errors.New("websocket probe budget is unavailable")
+	}
+	if t.now().Sub(t.started) > t.budget.Duration {
+		return errors.New("websocket probe duration exceeded")
+	}
+	if t.frames >= t.budget.MaxFrames {
+		return errors.New("websocket probe frame limit exceeded")
+	}
+	if size < 0 || size > t.budget.MaxBytes-t.bytes {
+		return errors.New("websocket probe byte limit exceeded")
+	}
+	t.frames++
+	t.bytes += size
+	return nil
 }
 
 const webSocketProbeDemandResolutionFailureMessage = "Failed to resolve hidden-model demand before provider selection"
@@ -207,7 +261,7 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 	o.logSubprotocolDecision(
 		"websocket.subprotocol_probe_fixed", webSocketSubprotocolPhaseProbeFixed, "", "", nil,
 	)
-	if err := o.ensureClientAccepted(w, r); err != nil {
+	if err := o.ensureClientAccepted(w, r, o.subprotocol); err != nil {
 		result := &WebSocketResult{
 			Err:           err,
 			TerminalCause: model.TerminalClientUpgradeRejected,
@@ -224,7 +278,7 @@ func (o *WebSocketSessionOrchestrator) bootstrapSelectionContext(
 		}
 	}
 
-	result, observedModel, outcome := o.probeClientSelectionContext(ctx, decision.ownerDemand)
+	result, observedModel, outcome := o.probeClientSelectionContext(ctx)
 	o.probeOutcome = outcome
 	o.learnResolvedModel(observedModel)
 	return result
@@ -236,11 +290,10 @@ func (o *WebSocketSessionOrchestrator) selectionProbeDecision(
 	if o == nil || o.selectReq == nil || o.handler == nil {
 		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
-	ownerDemand := o.codexOperation != nil && o.codexOperation.NeedsOwnerBootstrap()
-	if hasUsableWebSocketSelectionModel(o.selectReq.Model) && !ownerDemand {
+	if hasUsableWebSocketSelectionModel(o.selectReq.Model) {
 		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
-	if !o.probeClientModel && !ownerDemand {
+	if !o.probeClientModel {
 		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
 	consumesHiddenModel := false
@@ -256,7 +309,7 @@ func (o *WebSocketSessionOrchestrator) selectionProbeDecision(
 			outcome: webSocketSelectionProbeOutcomeDemandResolutionFailed,
 		}, fmt.Errorf("resolve websocket selection hidden-model demand: %w", err)
 	}
-	if !consumesHiddenModel && !ownerDemand {
+	if !consumesHiddenModel {
 		return webSocketSelectionProbeDecision{outcome: webSocketSelectionProbeOutcomeBypassed}, nil
 	}
 	if !o.supportsReplaySafeSelectionProbe() {
@@ -265,7 +318,6 @@ func (o *WebSocketSessionOrchestrator) selectionProbeDecision(
 	return webSocketSelectionProbeDecision{
 		outcome:     webSocketSelectionProbeOutcomeCompletedWithoutUsableModel,
 		shouldProbe: true,
-		ownerDemand: ownerDemand,
 	}, nil
 }
 
@@ -288,111 +340,132 @@ func (o *WebSocketSessionOrchestrator) selectionProbeObserver(initialModel strin
 
 func (o *WebSocketSessionOrchestrator) probeClientSelectionContext(
 	ctx context.Context,
-	ownerDemands ...bool,
 ) (*WebSocketSessionResult, string, webSocketSelectionProbeOutcome) {
-	ownerDemand := len(ownerDemands) > 0 && ownerDemands[0]
 	if o.clientConn == nil {
 		return nil, "", webSocketSelectionProbeOutcomeCompletedWithoutUsableModel
 	}
+	if err := ctx.Err(); err != nil {
+		return o.bootstrapProbeFailure(err, model.TerminalClientDisconnect), "", webSocketSelectionProbeOutcomeTransportFailed
+	}
 	clientConn := o.clientConn
+	probeBudget := normalizedWebSocketProbeBudget(o.probeBudget)
 	if o.initialClientReadCh == nil {
-		clientConn.SetReadLimit(int64(preVisibleClientReplayBufferLimitBytes))
+		clientConn.SetReadLimit(int64(probeBudget.MaxBytes))
 		defer clientConn.SetReadLimit(wsReadLimit)
-		o.initialClientReadCh = startWebSocketInitialRead(ctx, clientConn)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, probeBudget.Duration)
+	defer cancel()
+	budget := newWebSocketProbeBudgetTracker(probeBudget, o.probeNow)
+	observer := o.selectionProbeObserver(o.info.Model)
+	if observer == nil {
+		return nil, "", webSocketSelectionProbeOutcomeUnsupported
 	}
 
-	timer := time.NewTimer(webSocketPreVisibleClientReadWindow)
-	defer timer.Stop()
-
-	select {
-	case initialClientRead := <-o.initialClientReadCh:
-		o.initialClientReadCh = nil
+	for {
+		initialClientRead, terminalCause, err := o.readSelectionProbeFrame(probeCtx, clientConn)
+		if err != nil {
+			return o.bootstrapProbeFailure(err, terminalCause), "", webSocketSelectionProbeOutcomeTransportFailed
+		}
 		messageType, data, err := initialClientRead.messageType, initialClientRead.data, initialClientRead.err
 		if err != nil {
-			result := &WebSocketResult{
-				HandshakeAccepted: true,
-				Err:               err,
-				TerminalCause:     classifyRelayTerminalCause(err, webSocketPeerClient),
-				CommitSource:      model.CommitUnknown,
-			}
-			o.applySessionLifecycleToResult(result)
-			return &WebSocketSessionResult{
-				RequestID:      o.requestID,
-				FinalResult:    result,
-				FinalErr:       err,
-				Attempts:       append([]WebSocketAttemptResult(nil), o.attempts...),
-				IsSticky:       o.isSticky,
-				ClientAccepted: result.ClientAccepted,
-				ProbeOutcome:   webSocketSelectionProbeOutcomeTransportFailed,
-			}, "", webSocketSelectionProbeOutcomeTransportFailed
+			cause := classifyRelayTerminalCause(err, webSocketPeerClient)
+			return o.bootstrapProbeFailure(err, cause), "", webSocketSelectionProbeOutcomeTransportFailed
 		}
-		if len(data) > preVisibleClientReplayBufferLimitBytes {
-			err := errors.New("websocket bootstrap frame exceeds replay limit")
-			_ = o.clientConn.Close(websocket.StatusMessageTooBig, "bootstrap frame too large")
+		if err := budget.Admit(len(data)); err != nil {
+			_ = o.clientConn.Close(websocket.StatusMessageTooBig, "websocket selection probe budget exceeded")
 			return o.bootstrapProbeFailure(err, model.TerminalClientDisconnect), "", webSocketSelectionProbeOutcomeTransportFailed
 		}
-		if ownerDemand && o.codexOperation != nil {
-			if err := o.codexOperation.InspectBootstrapFrame(ctx, messageType == websocket.MessageText, data); err != nil {
-				_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(err), "websocket bootstrap rejected")
-				return o.bootstrapProbeFailure(err, model.TerminalClientDisconnect), "", webSocketSelectionProbeOutcomeTransportFailed
-			}
-			applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
-		}
 
-		if o.replayBuffer != nil {
-			var lineage requestcapture.MessageLineage
-			if o.captureParticipates {
-				lineage = o.capture.NewMessageID()
-			}
-			index := o.replayBuffer.RecordWithLineage(
-				messageType,
-				data,
-				false,
-				lineage,
-			)
-			if index == invalidWebSocketReplayMessageIndex {
-				err := errors.New("websocket bootstrap frame is not replayable")
-				_ = o.clientConn.Close(websocket.StatusMessageTooBig, "bootstrap frame is not replayable")
-				return o.bootstrapProbeFailure(err, model.TerminalClientDisconnect), "", webSocketSelectionProbeOutcomeTransportFailed
-			}
+		decision, responseCreate := o.selectionProbeFrameDecision(probeCtx, messageType, data)
+		if decision.Action == webSocketPreWriteActionReject {
+			_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(decision.Err), "websocket bootstrap rejected")
+			return o.bootstrapProbeFailure(decision.Err, model.TerminalClientDisconnect), "", webSocketSelectionProbeOutcomeTransportFailed
 		}
-
-		observer := o.selectionProbeObserver(o.info.Model)
-		if observer == nil {
-			return nil, "", webSocketSelectionProbeOutcomeUnsupported
+		if err := o.recordSelectionProbeFrame(messageType, data, decision); err != nil {
+			_ = o.clientConn.Close(websocket.StatusMessageTooBig, "bootstrap frame is not replayable")
+			return o.bootstrapProbeFailure(err, model.TerminalClientDisconnect), "", webSocketSelectionProbeOutcomeTransportFailed
 		}
 
 		observer.ObserveClientMessage(messageType, data)
 		observation := observer.Snapshot()
+		if o.codexOperation == nil && hasUsableWebSocketSelectionModel(observation.Model) {
+			responseCreate = true
+		}
+		if !responseCreate {
+			continue
+		}
 		if observation.Model == "" || observation.Model == ModelUnknown {
 			return nil, "", webSocketSelectionProbeOutcomeCompletedWithoutUsableModel
 		}
 		return nil, observation.Model, webSocketSelectionProbeOutcomeObservedUsableModel
-	case <-timer.C:
-		if ownerDemand {
-			err := errors.New("websocket owner bootstrap timed out")
-			_ = o.clientConn.Close(websocket.StatusPolicyViolation, "owner bootstrap timed out")
-			return o.bootstrapProbeFailure(err, model.TerminalClientDisconnect), "", webSocketSelectionProbeOutcomeTransportFailed
-		}
-		return nil, "", webSocketSelectionProbeOutcomeCompletedWithoutUsableModel
-	case <-ctx.Done():
-		result := &WebSocketResult{
-			HandshakeAccepted: true,
-			Err:               ctx.Err(),
-			TerminalCause:     model.TerminalInternalError,
-			CommitSource:      model.CommitUnknown,
-		}
-		o.applySessionLifecycleToResult(result)
-		return &WebSocketSessionResult{
-			RequestID:      o.requestID,
-			FinalResult:    result,
-			FinalErr:       ctx.Err(),
-			Attempts:       append([]WebSocketAttemptResult(nil), o.attempts...),
-			IsSticky:       o.isSticky,
-			ClientAccepted: result.ClientAccepted,
-			ProbeOutcome:   webSocketSelectionProbeOutcomeTransportFailed,
-		}, "", webSocketSelectionProbeOutcomeTransportFailed
 	}
+}
+
+func normalizedWebSocketProbeBudget(budget webSocketProbeBudget) webSocketProbeBudget {
+	if budget.Duration <= 0 || budget.MaxFrames <= 0 || budget.MaxBytes <= 0 {
+		return defaultWebSocketProbeBudget()
+	}
+	return budget
+}
+
+func (o *WebSocketSessionOrchestrator) readSelectionProbeFrame(
+	ctx context.Context,
+	clientConn *websocket.Conn,
+) (webSocketInitialReadResult, model.TerminalCause, error) {
+	if o.initialClientReadCh == nil {
+		o.initialClientReadCh = startWebSocketInitialRead(ctx, clientConn)
+	}
+	select {
+	case result := <-o.initialClientReadCh:
+		o.initialClientReadCh = nil
+		return result, model.TerminalUnknown, nil
+	case <-ctx.Done():
+		err := ctx.Err()
+		_ = clientConn.Close(websocket.StatusPolicyViolation, "websocket selection probe timed out")
+		return webSocketInitialReadResult{}, model.TerminalClientDisconnect, err
+	}
+}
+
+func (o *WebSocketSessionOrchestrator) selectionProbeFrameDecision(
+	ctx context.Context,
+	messageType websocket.MessageType,
+	data []byte,
+) (webSocketPreWriteDecision, bool) {
+	decision := replayableClientFrameDecision()
+	if o.codexOperation != nil {
+		frame := o.codexOperation.ClassifyClientFrame(ctx, messageType == websocket.MessageText, data)
+		o.logCodexClientFramePermit(frame)
+		decision = o.codexClientFrameDecision(ctx, frame, false)
+		if decision.Action != webSocketPreWriteActionReject {
+			applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
+		}
+		return decision, frame.IsResponseCreate()
+	}
+	if o.apiType == APITypeCodex && messageType == websocket.MessageText {
+		// Production always has a Codex operation. This fallback keeps the bounded
+		// probe independently testable at the same stable event boundary.
+		return decision, codexheaders.InspectClientFrame(data).EventType() == "response.create"
+	}
+	return decision, false
+}
+
+func (o *WebSocketSessionOrchestrator) recordSelectionProbeFrame(
+	messageType websocket.MessageType,
+	data []byte,
+	decision webSocketPreWriteDecision,
+) error {
+	if o.replayBuffer == nil {
+		return nil
+	}
+	var lineage requestcapture.MessageLineage
+	if o.captureParticipates {
+		lineage = o.capture.NewMessageID()
+	}
+	index := o.replayBuffer.RecordDecision(messageType, data, false, lineage, decision)
+	if index == invalidWebSocketReplayMessageIndex {
+		return errors.New("websocket bootstrap frame is not replayable")
+	}
+	return nil
 }
 
 func (o *WebSocketSessionOrchestrator) bootstrapProbeFailure(

@@ -24,13 +24,18 @@ func (headerEchoSemanticDecoder) Decode(_ []byte, values []string, _ int64) ([]b
 	}
 }
 
-func TestDecodeSemanticRequestBodyKeepsContentEncodingOutOfLogs(t *testing.T) {
+func TestDecodeSemanticRequestBodyLogsNormalizedEncodingWithoutSensitiveHeaders(t *testing.T) {
 	t.Parallel()
 	core, observed := observer.New(zap.WarnLevel)
 	handler := &Handler{logger: zap.New(core), requestSemanticDecoder: headerEchoSemanticDecoder{}}
 	request := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader("wire-body"))
-	request.Header.Add("Content-Encoding", "codeql-secret-coding-one")
-	request.Header.Add("Content-Encoding", "codeql-secret-coding-two")
+	request.Header.Add("Content-Encoding", "GZip")
+	request.Header.Add("Content-Encoding", " BR ")
+	request.Header.Set("Authorization", "Bearer codeql-secret-authorization")
+	request.Header.Set("Cookie", "session=codeql-secret-cookie")
+	request.Header.Set("X-Codex-Turn-State", "codeql-secret-turn-state")
+	request.Header.Set("X-Codex-Turn-Metadata", "codeql-secret-turn-metadata")
+	request.Header.Set("X-Oai-Attestation", "codeql-secret-attestation")
 
 	if decoded := handler.decodeSemanticRequestBody("request-safe-id", APITypeCodex, request, []byte("wire-body"), 1024); decoded != nil {
 		t.Fatalf("decoded body = %q, want nil after observational failure", decoded)
@@ -45,17 +50,24 @@ func TestDecodeSemanticRequestBodyKeepsContentEncodingOutOfLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := entries[0].Message + string(encoded)
-	for _, secret := range []string{"codeql-secret-coding-one", "codeql-secret-coding-two"} {
+	for _, secret := range []string{
+		"codeql-secret-authorization",
+		"codeql-secret-cookie",
+		"codeql-secret-turn-state",
+		"codeql-secret-turn-metadata",
+		"codeql-secret-attestation",
+	} {
 		if strings.Contains(logged, secret) {
-			t.Fatalf("log contains raw Content-Encoding token %q: %s", secret, logged)
+			t.Fatalf("log contains sensitive header value %q: %s", secret, logged)
 		}
 	}
-	for _, forbidden := range []string{"content_encoding", "content_coding", "error"} {
+	for _, forbidden := range []string{"content_coding", "error"} {
 		if _, exists := context[forbidden]; exists {
 			t.Fatalf("log contains raw-derived field %q: %#v", forbidden, context)
 		}
 	}
-	if context["request_id"] != "request-safe-id" || context["api_type"] != APITypeCodex ||
+	if context["request_id"] != "request-safe-id" || context["operation_id"] != "request-safe-id" ||
+		context["api_type"] != APITypeCodex || context["content_encoding"] != "gzip,br" ||
 		context["content_encoding_value_count"] != int64(2) ||
 		context["decode_failure"] != string(requestbody.FailureUnsupportedEncoding) {
 		t.Fatalf("diagnostic context = %#v", context)

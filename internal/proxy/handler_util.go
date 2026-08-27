@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 
@@ -19,6 +21,39 @@ import (
 )
 
 func ptr[T any](value T) *T { return &value }
+
+// Diagnostic media values retain interoperable protocol facts while dropping
+// opaque parameters that can contain provider- or client-controlled state.
+func normalizedHTTPMediaTypes(values []string) string {
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		mediaType, _, err := mime.ParseMediaType(value)
+		if err != nil || mediaType == "" {
+			continue
+		}
+		normalized = append(normalized, strings.ToLower(mediaType))
+	}
+	return strings.Join(normalized, ",")
+}
+
+func normalizedHTTPResponseContentType(values []string, inferred string) string {
+	if declared := normalizedHTTPMediaTypes(values); declared != "" {
+		return declared
+	}
+	return normalizedHTTPMediaTypes([]string{inferred})
+}
+
+func normalizedHTTPContentCodings(values []string) string {
+	var normalized []string
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			if coding := strings.ToLower(strings.TrimSpace(part)); coding != "" {
+				normalized = append(normalized, coding)
+			}
+		}
+	}
+	return strings.Join(normalized, ",")
+}
 
 // logInsertTimeout is the maximum time allowed for inserting a request log.
 // This prevents goroutine accumulation if the database is slow or blocked.
@@ -84,18 +119,85 @@ func (h *Handler) writeGatewayError(w http.ResponseWriter, statusCode int, code,
 }
 
 func (h *Handler) handleCodexHTTPBeginError(w http.ResponseWriter, requestID string, err error) {
-	status := http.StatusServiceUnavailable
-	message := "Codex security state is temporarily unavailable"
-	if codexhttp.IsKind(err, codexhttp.ErrorClientInput) {
-		status = http.StatusBadRequest
-		message = "Codex request state could not be validated"
-	}
-	h.logger.Warn("codex_http.request_rejected",
-		zap.String("request_id", requestID),
-		zap.String("decision", "failed_closed"),
-		zap.Error(err),
+	h.writeCodexHTTPRecovery(w, requestID, "codex_http.request_rejected", err)
+}
+
+func (h *Handler) writeCodexHTTPRecovery(
+	w http.ResponseWriter,
+	requestID string,
+	event string,
+	err error,
+) {
+	decision := h.logCodexHTTPRecovery(requestID, event, err)
+	h.writeGatewayError(
+		w,
+		decision.HTTPStatus(),
+		string(decision.ErrorCode()),
+		codexHTTPRecoveryMessage(decision.Condition()),
 	)
-	h.writeGatewayError(w, status, ErrCodeInternalError, message)
+}
+
+func (h *Handler) logCodexHTTPRecovery(
+	requestID string,
+	event string,
+	err error,
+) codexrecovery.Decision {
+	decision := codexHTTPRecoveryDecision(err)
+	stage, kind := codexHTTPErrorContext(err)
+	// The cause can embed opaque state. Stable classification and stage retain
+	// diagnostic value without serializing credentials or continuity payloads.
+	h.logger.Warn(event,
+		zap.String("request_id", requestID),
+		zap.String("operation_id", requestID),
+		zap.String("recovery_condition", string(decision.Condition())),
+		zap.String("recovery_action", string(decision.RecoveryAction())),
+		zap.String("error_code", string(decision.ErrorCode())),
+		zap.String("carrier_phase", string(decision.Phase())),
+		zap.Int("recovery_http_status", decision.HTTPStatus()),
+		zap.String("codex_http_stage", stage),
+		zap.String("codex_http_error_kind", string(kind)),
+	)
+	return decision
+}
+
+// Typed continuity and Cookie causes win first. The coarse HTTP kind is only
+// a fallback for adapter-originated failures that have no lower-layer category.
+func codexHTTPRecoveryDecision(err error) codexrecovery.Decision {
+	fallback := codexrecovery.ConditionInternalFailure
+	switch {
+	case codexhttp.IsKind(err, codexhttp.ErrorClientInput):
+		fallback = codexrecovery.ConditionProtocolInvalid
+	case codexhttp.IsKind(err, codexhttp.ErrorDependencyUnavailable):
+		fallback = codexrecovery.ConditionStateStoreUnavailable
+	case codexhttp.IsKind(err, codexhttp.ErrorIdentityMismatch):
+		fallback = codexrecovery.ConditionStateConflict
+	}
+	return codexrecovery.ClassifyWithFallback(err, codexrecovery.PhaseHTTP, fallback)
+}
+
+func codexHTTPErrorContext(err error) (string, codexhttp.ErrorKind) {
+	var integrationError *codexhttp.Error
+	if !errors.As(err, &integrationError) || integrationError == nil {
+		return "", ""
+	}
+	return integrationError.Stage, integrationError.Kind
+}
+
+func codexHTTPRecoveryMessage(condition codexrecovery.Condition) string {
+	switch condition {
+	case codexrecovery.ConditionStateConflict:
+		return "Codex request state conflicts with the current operation"
+	case codexrecovery.ConditionReconnectRequired:
+		return "Codex request requires a new connection"
+	case codexrecovery.ConditionNewThreadRequired:
+		return "Codex request state is no longer available"
+	case codexrecovery.ConditionStateStoreUnavailable:
+		return "Codex state is temporarily unavailable"
+	case codexrecovery.ConditionProtocolInvalid:
+		return "Codex request state could not be validated"
+	default:
+		return "Codex request processing failed"
+	}
 }
 
 // logRequestInputs bundles the runtime inputs needed to build a request
@@ -172,7 +274,7 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 	}
 
 	// Use timeout to prevent goroutine accumulation if database is slow or blocked
-	ctx, cancel := context.WithTimeout(context.Background(), logInsertTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), h.requestLogInsertTimeout)
 	defer cancel()
 
 	if insertErr := h.store.InsertLog(ctx, log); insertErr != nil { // coverage-ignore -- log insert errors are logged but don't affect response

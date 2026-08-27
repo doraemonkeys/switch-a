@@ -293,7 +293,7 @@ func TestHandler_SuspendProviderUntilEvictsContinuity(t *testing.T) {
 
 	mockSel := &mockSelector{}
 	healthMgr := newMockHealthManager()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    newMockStore(),
 		Selector: mockSel,
 		Health:   healthMgr,
@@ -320,7 +320,7 @@ func TestSelectProviderFallback_NoProviders(t *testing.T) {
 	store.providers = []model.Provider{} // Empty
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -368,7 +368,7 @@ func TestSelectProviderFallback_FiltersByRoutingPolicyAndAuthState(t *testing.T)
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -413,7 +413,7 @@ func TestSelectProviderFallback_ExactProviderRuleFiltersCandidates(t *testing.T)
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -442,7 +442,7 @@ func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})
@@ -479,7 +479,7 @@ func TestSelectProviderFallback_AttemptOffset(t *testing.T) {
 	}
 	logger := zap.NewNop()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: logger,
 	})

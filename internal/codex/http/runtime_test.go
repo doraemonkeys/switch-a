@@ -13,7 +13,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
@@ -84,34 +83,13 @@ func (r *continuityRecorder) AbandonBeforeDisclosure(context.Context, codexconti
 	return nil
 }
 
-func TestRuntimeDisabledIsWireTransparent(t *testing.T) {
-	runtime := New(Config{})
-	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
-	wire := []byte("not-json-and-must-not-be-normalized")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-disabled", wire, wire)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if operation.Features() != (codexstartup.Snapshot{}) || operation.clientDecision.ReplayBytes() != nil {
-		t.Fatalf("disabled operation captured protocol state: %#v", operation)
-	}
-	if required, preferred := operation.RequiredAuthority(); required != nil || preferred != "" {
-		t.Fatalf("disabled required authority = %v/%q", required, preferred)
-	}
-	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.PreserveClientHeaders {
-		t.Fatalf("disabled request policy = %#v", policy)
-	}
-	operation.Discard()
-}
-
 func TestRuntimeResolvesOwnerBeforeSelectionAndValidatesAppliedIdentity(t *testing.T) {
 	clientScope := testClientScope(t, "client")
 	candidate, applied := testCandidate(t, "route-a", "provider.test", "subject-a")
 	continuity := &continuityRecorder{resolveBinding: codexcontinuity.Binding{Owner: codexcontinuity.Owner{
 		ClientScope: clientScope, ProtocolScope: candidate.ProtocolScope(), RouteTargetHint: "route-a",
 	}}}
-	runtime := New(Config{
-		Features:     FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} }),
+	runtime := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
 		Continuity:   continuity,
 	})
@@ -146,8 +124,7 @@ func TestRuntimeClaimsUnknownRequestOnlyAfterAppliedIdentity(t *testing.T) {
 	candidate, applied := testCandidate(t, "route-a", "provider.test", "subject-a")
 	_, wrongApplied := testCandidate(t, "route-b", "provider.test", "subject-b")
 	continuity := &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown}}
-	runtime := New(Config{
-		Features:     FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} }),
+	runtime := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
 		Continuity:   continuity,
 	})
@@ -187,8 +164,7 @@ func TestRuntimeBindsResponseStateOnlyAtVisibleBoundary(t *testing.T) {
 		resolveErr:  &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown},
 		validateErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown},
 	}
-	runtime := New(Config{
-		Features:     FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} }),
+	runtime := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
 		Continuity:   continuity,
 	})
@@ -233,8 +209,7 @@ func TestPendingOwnerRetryFinalizesAtHTTPBoundaries(t *testing.T) {
 			ClientScope: clientScope, ProtocolScope: candidate.ProtocolScope(), RouteTargetHint: "route-a",
 		},
 	}}
-	runtime := New(Config{
-		Features:     FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} }),
+	runtime := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
 		Continuity:   continuity,
 	})
@@ -307,81 +282,35 @@ func TestPendingOwnerRetryFinalizesAtHTTPBoundaries(t *testing.T) {
 }
 
 func TestRuntimeFailClosedInputAndDependencyErrors(t *testing.T) {
-	feature := FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} })
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
-	if _, err := New(Config{Features: feature}).Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorDependencyUnavailable) {
-		t.Fatalf("missing digester error = %v", err)
+	if _, err := New(Config{}); err == nil {
+		t.Fatal("constructor accepted missing mandatory dependencies")
 	}
 	clientScope := testClientScope(t, "client")
-	runtime := New(Config{Features: feature, ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}, Continuity: &continuityRecorder{}})
+	runtime := newAlwaysOnTestRuntime(t, Config{ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}, Continuity: &continuityRecorder{}})
 	request.Header.Set("Authorization", "Bearer one")
 	request.Header.Set("X-Api-Key", "two")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-stateless", nil, nil); err != nil {
-		t.Fatalf("stateless ambiguous credential was consumed: %v", err)
-	}
-	request.Header.Set("Thread-Id", "state-requires-scope")
 	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorClientInput) {
-		t.Fatalf("stateful ambiguous credential error = %v", err)
+		t.Fatalf("always-on ambiguous credential error = %v", err)
 	}
-	request.Header.Del("Thread-Id")
 	request.Header.Del("X-Api-Key")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", []byte("{"), []byte("{")); !IsKind(err, ErrorClientInput) {
-		t.Fatalf("malformed fixed projection error = %v", err)
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "opaque-json", []byte("{"), []byte("{")); err != nil {
+		t.Fatalf("non-JSON request body was not opaque: %v", err)
+	}
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "decode-failure", []byte{0x1f, 0x8b}, nil); err != nil {
+		t.Fatalf("semantic decode failure was not opaque: %v", err)
+	}
+	invalidKnown := []byte(`{"type":"response.create","previous_response_id":null}`)
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "recognized-invalid", invalidKnown, invalidKnown); !IsKind(err, ErrorClientInput) {
+		t.Fatalf("malformed recognized projection error = %v", err)
 	}
 	if !IsKind(identityError("test", errors.New("mismatch")), ErrorIdentityMismatch) || IsKind(nil, ErrorIdentityMismatch) {
 		t.Fatal("typed error classification failed")
 	}
 }
 
-func TestRuntimeConsumesClientCredentialOnlyForStatefulOperations(t *testing.T) {
-	continuity := &continuityRecorder{}
-	statelessRuntime := New(Config{
-		Features:   FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} }),
-		Continuity: continuity,
-	})
-	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
-	operation, err := statelessRuntime.Begin(context.Background(), request, codexAPIType, "stateless-no-key", nil, nil)
-	if err != nil || operation.hasClientScope {
-		t.Fatalf("stateless no-key operation = scope:%t err:%v", operation.hasClientScope, err)
-	}
-	request.Header.Set("Authorization", "Bearer one")
-	request.Header.Set("X-Api-Key", "two")
-	operation, err = statelessRuntime.Begin(context.Background(), request, codexAPIType, "stateless-unconsumed-key", nil, nil)
-	if err != nil || operation.hasClientScope {
-		t.Fatalf("stateless credential was consumed = scope:%t err:%v", operation.hasClientScope, err)
-	}
-
-	scope := testClientScope(t, "stateful-client")
-	statefulRuntime := New(Config{
-		Features:     FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{Continuity: true} }),
-		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
-		Continuity:   continuity,
-	})
-	stateful := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
-	stateful.Header.Set("Thread-Id", "thread-without-client-key")
-	if _, err := statefulRuntime.Begin(context.Background(), stateful, codexAPIType, "stateful-no-key", nil, nil); !IsKind(err, ErrorClientInput) {
-		t.Fatalf("state evidence without client key error = %v", err)
-	}
-	cookieRuntime := New(Config{
-		Features:     FeatureSourceFunc(func() codexstartup.Snapshot { return codexstartup.Snapshot{ProviderCookieJar: true} }),
-		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
-	})
-	if _, err := cookieRuntime.Begin(context.Background(), httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil), codexAPIType, "cookie-no-key", nil, nil); !IsKind(err, ErrorClientInput) {
-		t.Fatalf("Cookie operation without client key error = %v", err)
-	}
-
-	candidate, applied := testCandidate(t, "route-a", "provider.test", "subject-a")
-	attempt, err := operation.PrepareAttempt(context.Background(), httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil), candidate, applied)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := attempt.PrepareVisible(context.Background(), http.Header{"X-Codex-Turn-State": {"late-state"}}); !IsKind(err, ErrorClientInput) {
-		t.Fatalf("late response evidence without ClientScope error = %v", err)
-	}
-}
-
 func TestOperationCookiePolicyIsRequestScoped(t *testing.T) {
-	operation := &Operation{features: codexstartup.Snapshot{ProviderCookieJar: true}}
+	operation := &Operation{apiType: codexAPIType}
 	if policy := operation.RequestPolicy(); policy.Cookies != upstreamtransport.ServerManagedCookies {
 		t.Fatalf("Cookie request policy = %#v", policy)
 	}
@@ -390,40 +319,40 @@ func TestOperationCookiePolicyIsRequestScoped(t *testing.T) {
 	}
 }
 
-func TestHeaderHygieneUsesExplicitFeatureSnapshot(t *testing.T) {
-	features := codexstartup.Snapshot{}
-	runtime := New(Config{Features: FeatureSourceFunc(func() codexstartup.Snapshot { return features })})
-	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "hygiene-off", nil, nil)
-	if err != nil {
-		t.Fatal(err)
+func TestHeaderHygieneIsAlwaysOnOnlyForCodex(t *testing.T) {
+	operation := &Operation{apiType: codexAPIType}
+	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.SanitizeProviderHeaders || policy.Cookies != upstreamtransport.ServerManagedCookies {
+		t.Fatalf("Codex policy = %#v", policy)
 	}
-	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.PreserveClientHeaders {
-		t.Fatalf("hygiene-off policy = %#v", policy)
-	}
-	features.UpstreamHeaderHygiene = true
-	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.PreserveClientHeaders {
-		t.Fatalf("captured hygiene-off policy changed = %#v", policy)
-	}
-	operation, err = runtime.Begin(context.Background(), request, codexAPIType, "hygiene-on", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.SanitizeProviderHeaders {
-		t.Fatalf("hygiene-on policy = %#v", policy)
-	}
-	features.UpstreamHeaderHygiene = false
-	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.SanitizeProviderHeaders {
-		t.Fatalf("captured hygiene-on policy changed = %#v", policy)
-	}
-	features.UpstreamHeaderHygiene = true
-	nonCodex, err := runtime.Begin(context.Background(), request, "claude", "non-codex", nil, nil)
+	nonCodex, err := (*Runtime)(nil).Begin(context.Background(), nil, "claude", "non-codex", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if policy := nonCodex.RequestPolicy(); policy.Headers != upstreamtransport.PreserveClientHeaders {
 		t.Fatalf("non-Codex policy = %#v", policy)
 	}
+}
+
+func newAlwaysOnTestRuntime(t *testing.T, config Config) *Runtime {
+	t.Helper()
+	if config.ClientScopes == nil {
+		scope := testClientScope(t, "default-client")
+		config.ClientScopes = testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}
+	}
+	if config.Continuity == nil {
+		config.Continuity = &continuityRecorder{}
+	}
+	if config.ProviderCookies == nil {
+		config.ProviderCookies = newCookieTestService(t, newCookieTestRepository())
+	}
+	if config.ExternalScheme == nil {
+		config.ExternalScheme = NewTrustedProxySchemeResolver(nil)
+	}
+	runtime, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime
 }
 
 func testClientScope(t *testing.T, label string) codexidentity.ClientScope {

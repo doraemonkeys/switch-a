@@ -265,30 +265,6 @@ func (s *Service) CloseConnection(generation Generation) {
 	s.generations.close(generation)
 }
 
-func (s *Service) ValidateInject(
-	ctx context.Context,
-	request ValidateRequest,
-	generation Generation,
-) (Binding, error) {
-	if request.Evidence.Kind != KindResponseReference {
-		return Binding{}, errorOf(
-			ErrorInvalidInput,
-			request.Evidence.Kind,
-			request.OperationID,
-			"response.inject requires a response reference",
-			nil,
-		)
-	}
-	binding, err := s.Validate(ctx, request)
-	if err != nil {
-		return Binding{}, err
-	}
-	if err := s.generations.validate(generation, binding); err != nil {
-		return Binding{}, err
-	}
-	return binding, nil
-}
-
 func (s *Service) prepareClaim(request ClaimRequest) (StoreClaim, error) {
 	if err := validateEvidence(request.Evidence); err != nil {
 		return StoreClaim{}, err

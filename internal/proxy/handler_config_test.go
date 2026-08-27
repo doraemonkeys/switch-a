@@ -38,7 +38,7 @@ func TestHandlerLoadConfig_StickyModeValidValue(t *testing.T) {
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeAPIType)
 	registry := NewActiveRequestRegistry()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:          store,
 		Logger:         zap.NewNop(),
 		ActiveRegistry: registry,
@@ -57,7 +57,7 @@ func TestHandlerLoadConfig_StickyModeInvalidFallsBack(t *testing.T) {
 	store := newMockStore()
 	store.configs[ConfigKeyStickyMode] = "not-a-mode"
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -75,7 +75,7 @@ func TestHandlerLoadConfig_StickyModeReadErrorFallsBack(t *testing.T) {
 	store := &stickyModeErrorStore{mockStore: newMockStore()}
 	registry := NewActiveRequestRegistry()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:          store,
 		Logger:         zap.NewNop(),
 		ActiveRegistry: registry,
@@ -94,7 +94,7 @@ func TestHandlerLoadConfig_WebSocketProbeClientModelValidValue(t *testing.T) {
 	store := newMockStore()
 	store.configs[ConfigKeyWebSocketProbeClientModel] = "false"
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -112,7 +112,7 @@ func TestHandlerLoadConfig_WebSocketProbeClientModelInvalidFallsBack(t *testing.
 	store := newMockStore()
 	store.configs[ConfigKeyWebSocketProbeClientModel] = "not-a-bool"
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -134,7 +134,7 @@ func TestHandlerLoadConfig_WebSocketProbeClientModelReadErrorFallsBack(t *testin
 	store := &websocketProbeErrorStore{mockStore: newMockStore()}
 	registry := NewActiveRequestRegistry()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:          store,
 		Logger:         zap.NewNop(),
 		ActiveRegistry: registry,

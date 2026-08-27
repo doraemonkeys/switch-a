@@ -16,7 +16,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	codexmaintenance "github.com/doraemonkeys/switch-a/internal/codex/maintenance"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
@@ -47,16 +46,9 @@ func (c *maintenanceCompositionClock) advance(delta time.Duration) {
 }
 
 func TestApplicationCodexLifecycleStartsImmediateSweepAndStops(t *testing.T) {
-	security, err := loadApplicationCodexSecurity(
-		"keyring.json",
-		func(string) ([]byte, error) { return []byte(applicationKeyringDocument()), nil },
-		bytes.NewReader(bytes.Repeat([]byte{9}, 64)),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	security := testApplicationCodexSecurity(t, 9)
 	persistence, err := store.NewSQLiteStore(
-		filepath.Join(t.TempDir(), "maintenance.db"), internal.RealClock{}, nil, security.staticSubjectSigners()...,
+		filepath.Join(t.TempDir(), "maintenance.db"), internal.RealClock{}, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -64,14 +56,20 @@ func TestApplicationCodexLifecycleStartsImmediateSweepAndStops(t *testing.T) {
 	defer persistence.Close()
 	core, observed := observer.New(zapcore.DebugLevel)
 	log := zap.New(core)
-	runtime, err := startApplicationCodexLifecycle(
-		context.Background(), codexstartup.Snapshot{}, persistence, security, internal.RealClock{}, log,
+	if err := persistence.FinalizeStaticCredentialSubjects(context.Background(), security.keyring); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := newApplicationCodexLifecycle(
+		context.Background(), persistence, security, internal.RealClock{}, log,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.HTTP == nil || runtime.WebSocket == nil || runtime.maintenance == nil || runtime.maintenance.owner == nil {
+	if runtime.HTTP == nil || runtime.WebSocket == nil || runtime.maintenance == nil || runtime.maintenance.owner != nil {
 		t.Fatalf("Codex lifecycle = %+v", runtime)
+	}
+	if err := startApplicationCodexLifecycle(context.Background(), runtime); err != nil {
+		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for observed.FilterMessage("codex.maintenance_sweep").Len() == 0 && time.Now().Before(deadline) {
@@ -86,46 +84,23 @@ func TestApplicationCodexLifecycleStartsImmediateSweepAndStops(t *testing.T) {
 	stopApplicationCodexLifecycle(nil, log)
 }
 
-func TestApplicationCodexMaintenancePreservesNoKeyringDisabledMode(t *testing.T) {
-	persistence, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "disabled.db"), internal.RealClock{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer persistence.Close()
-	runtime, err := startApplicationCodexLifecycle(
-		context.Background(), codexstartup.Snapshot{}, persistence, nil, internal.RealClock{}, zap.NewNop(),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.maintenance == nil || runtime.maintenance.owner != nil {
-		t.Fatalf("disabled maintenance = %+v", runtime.maintenance)
-	}
-	if err := runtime.maintenance.Stop(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestApplicationCodexMaintenanceCompositionBoundaries(t *testing.T) {
 	persistence, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "boundaries.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer persistence.Close()
-	valid := func(ctx context.Context, storage *store.SQLiteStore, continuity *codexcontinuity.Service, cookies *providercookie.Service, clock internal.Clock, log *zap.Logger) error {
-		_, err := startApplicationCodexMaintenance(ctx, storage, continuity, cookies, clock, log)
+	valid := func(storage *store.SQLiteStore, continuity *codexcontinuity.Service, cookies *providercookie.Service, clock internal.Clock, log *zap.Logger) error {
+		_, err := newApplicationCodexMaintenance(storage, continuity, cookies, clock, log)
 		return err
 	}
-	if err := valid(context.Background(), persistence, nil, nil, internal.RealClock{}, zap.NewNop()); err != nil {
-		t.Fatalf("disabled composition error = %v", err)
-	}
 	for _, err := range []error{
-		valid(nil, persistence, nil, nil, internal.RealClock{}, zap.NewNop()),
-		valid(context.Background(), nil, nil, nil, internal.RealClock{}, zap.NewNop()),
-		valid(context.Background(), persistence, nil, nil, nil, zap.NewNop()),
-		valid(context.Background(), persistence, nil, nil, internal.RealClock{}, nil),
-		valid(context.Background(), persistence, &codexcontinuity.Service{}, nil, internal.RealClock{}, zap.NewNop()),
-		valid(context.Background(), persistence, nil, &providercookie.Service{}, internal.RealClock{}, zap.NewNop()),
+		valid(nil, nil, nil, internal.RealClock{}, zap.NewNop()),
+		valid(persistence, nil, nil, internal.RealClock{}, zap.NewNop()),
+		valid(persistence, &codexcontinuity.Service{}, nil, internal.RealClock{}, zap.NewNop()),
+		valid(persistence, nil, &providercookie.Service{}, internal.RealClock{}, zap.NewNop()),
+		valid(persistence, &codexcontinuity.Service{}, &providercookie.Service{}, nil, zap.NewNop()),
+		valid(persistence, &codexcontinuity.Service{}, &providercookie.Service{}, internal.RealClock{}, nil),
 	} {
 		if err == nil {
 			t.Fatal("maintenance composition accepted an invalid dependency set")
@@ -133,6 +108,9 @@ func TestApplicationCodexMaintenanceCompositionBoundaries(t *testing.T) {
 	}
 	if err := (*applicationCodexMaintenance)(nil).Stop(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if err := (*applicationCodexMaintenance)(nil).Start(context.Background()); err == nil {
+		t.Fatal("nil maintenance started")
 	}
 }
 
@@ -170,21 +148,17 @@ func TestCodexMaintenanceObserverLogsCountsAndFailures(t *testing.T) {
 func TestApplicationCodexMaintenanceCatalogDrivesOrphanGraceAndReachableRecovery(t *testing.T) {
 	ctx := context.Background()
 	clock := &maintenanceCompositionClock{now: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
-	security, err := loadApplicationCodexSecurity(
-		"keyring.json",
-		func(string) ([]byte, error) { return []byte(applicationKeyringDocument()), nil },
-		bytes.NewReader(bytes.Repeat([]byte{10}, 256)),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	security := testApplicationCodexSecurity(t, 10)
 	persistence, err := store.NewSQLiteStore(
-		filepath.Join(t.TempDir(), "orphan-grace.db"), clock, nil, security.staticSubjectSigners()...,
+		filepath.Join(t.TempDir(), "orphan-grace.db"), clock, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer persistence.Close()
+	if err := persistence.FinalizeStaticCredentialSubjects(ctx, security.keyring); err != nil {
+		t.Fatal(err)
+	}
 	createMaintenanceCompositionSession(t, persistence, clock.Now(), "session-a", "account-a")
 	provider := maintenanceCompositionProvider("route-a", "session-a")
 	if err := persistence.CreateProvider(ctx, &provider); err != nil {

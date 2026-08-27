@@ -19,9 +19,15 @@ func newCredentialSessionStore(t *testing.T) *SQLiteStore {
 		filepath.Join(t.TempDir(), "credential-sessions.db"),
 		&mockClock{now: time.Date(2026, 8, 27, 3, 4, 5, 0, time.UTC)},
 		nil,
-		migrationSubjectSigner{version: "h-current"},
 	)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinalizeStaticCredentialSubjects(
+		context.Background(),
+		migrationSubjectSigner{version: "h-current"},
+	); err != nil {
+		_ = store.Close()
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })

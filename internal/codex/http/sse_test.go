@@ -9,7 +9,6 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 )
 
 func TestSSEGatePreparesResponseReferenceAcrossFragments(t *testing.T) {
@@ -69,10 +68,7 @@ func testSSEGate(t *testing.T) (*SSEGate, *continuityRecorder) {
 		resolveErr:  &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown},
 		validateErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown},
 	}
-	runtime := New(Config{
-		Features: FeatureSourceFunc(func() codexstartup.Snapshot {
-			return codexstartup.Snapshot{Continuity: true}
-		}),
+	runtime := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{
 			current:    clientScope,
 			candidates: []codexidentity.ClientScope{clientScope},

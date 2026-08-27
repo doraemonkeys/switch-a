@@ -112,7 +112,13 @@ func (h *Gateway) webSocketSelectionConsumesHiddenModel(ctx context.Context, req
 	if h == nil || req == nil || hasUsableWebSocketSelectionModel(req.Model) {
 		return false, nil
 	}
-	return selector.ResolveSelectionHiddenModelDemand(ctx, h.store, req)
+	probeRequest := *req
+	// A missing model cannot identify an existing model-sticky owner, so sticky
+	// precision alone is not a reason to consume client data before an ordinary
+	// upstream handshake. Active routing rules are the pre-selection consumer
+	// that can make the provider candidate set depend on payload evidence.
+	probeRequest.StickyMode = model.StickyModeOff
+	return selector.ResolveSelectionHiddenModelDemand(ctx, h.store, &probeRequest)
 }
 
 // buildWebSocketPassthroughHeaders copies client-controlled handshake headers

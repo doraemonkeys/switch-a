@@ -50,10 +50,11 @@ func TestHandlerDecodesZstdSemanticsAndForwardsOriginalWireBody(t *testing.T) {
 			BaseURL:    upstream.URL,
 		}},
 	}, "", "test-key")}
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 	request := httptest.NewRequest(http.MethodPost, RouteCodexResponses, bytes.NewReader(wireBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Content-Encoding", "zstd")
+	authorizeProxyCodexTestRequest(request)
 	response := httptest.NewRecorder()
 
 	handler.ServeHTTP(response, request)

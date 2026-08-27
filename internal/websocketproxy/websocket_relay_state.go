@@ -2,9 +2,9 @@ package websocketproxy
 
 import (
 	"context"
-	"errors"
 	"sync"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
@@ -84,27 +84,6 @@ type webSocketLifecycleSnapshot struct {
 	ClientVisible  bool
 }
 
-type webSocketReplayMessage struct {
-	MessageType websocket.MessageType
-	Data        []byte
-	Lineage     requestcapture.MessageLineage
-	Delivered   bool
-}
-
-type preVisibleClientMessageBuffer struct {
-	mu         sync.Mutex
-	limitBytes int
-	totalBytes int
-	enabled    bool
-	messages   []webSocketReplayMessage
-}
-
-type preVisibleClientMessageBufferSnapshot struct {
-	Enabled    bool
-	TotalBytes int
-	Messages   []webSocketReplayMessage
-}
-
 type webSocketPreWriteContext struct {
 	MessageType    websocket.MessageType
 	Data           []byte
@@ -129,6 +108,27 @@ type webSocketPreWriteDecision struct {
 	Err                     error
 	RejectionDisposition    requestcapture.MessageDisposition
 	OnWriteConfirmed        func() error
+	ReplayEligible          bool
+	ReplacementEligible     bool
+	CurrentConnection       bool
+	TraceContext            webSocketClientFrameTrace
+	PrepareReplay           func() webSocketPreWriteDecision
+}
+
+type webSocketClientFrameTrace struct {
+	Kind      string
+	EventType string
+	Decision  string
+}
+
+func clientFrameWriteError(decision webSocketPreWriteDecision, err error) error {
+	if err == nil || !decision.CurrentConnection {
+		return err
+	}
+	// A connection-bound control that could not reach its current upstream must
+	// return to the client for an explicit reconnect. Provider replacement cannot
+	// silently omit or replay the frame on another physical connection.
+	return newWebSocketCodexCloseError(codexrecovery.Mark(codexrecovery.ConditionReconnectRequired, err))
 }
 
 type webSocketVisibleWriteContext struct {
@@ -481,147 +481,6 @@ func (s *webSocketLifecycleState) Snapshot() webSocketLifecycleSnapshot {
 	}
 }
 
-func newPreVisibleClientMessageBuffer(limitBytes int) *preVisibleClientMessageBuffer {
-	if limitBytes <= 0 {
-		limitBytes = preVisibleClientReplayBufferLimitBytes
-	}
-	return &preVisibleClientMessageBuffer{
-		limitBytes: limitBytes,
-		enabled:    true,
-	}
-}
-
-func (b *preVisibleClientMessageBuffer) Enabled() bool {
-	if b == nil {
-		return false
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.enabled
-}
-
-func (b *preVisibleClientMessageBuffer) Disable() {
-	if b == nil {
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.disableLocked()
-}
-
-const invalidWebSocketReplayMessageIndex = -1
-
-func (b *preVisibleClientMessageBuffer) Record(messageType websocket.MessageType, data []byte, clientVisible bool) int {
-	return b.RecordWithLineage(messageType, data, clientVisible, requestcapture.MessageLineage{})
-}
-
-func (b *preVisibleClientMessageBuffer) RecordWithLineage(
-	messageType websocket.MessageType,
-	data []byte,
-	clientVisible bool,
-	lineage requestcapture.MessageLineage,
-) int {
-	if b == nil {
-		return invalidWebSocketReplayMessageIndex
-	}
-
-	if clientVisible {
-		b.Disable()
-		return invalidWebSocketReplayMessageIndex
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if !b.enabled {
-		return invalidWebSocketReplayMessageIndex
-	}
-	if !isReplayableWebSocketMessageType(messageType) {
-		b.disableLocked()
-		return invalidWebSocketReplayMessageIndex
-	}
-	if len(b.messages) >= preVisibleClientReplayBufferLimitMessages {
-		b.disableLocked()
-		return invalidWebSocketReplayMessageIndex
-	}
-	nextTotalBytes := b.totalBytes + len(data)
-	if nextTotalBytes > b.limitBytes {
-		b.disableLocked()
-		return invalidWebSocketReplayMessageIndex
-	}
-
-	payload := append([]byte(nil), data...)
-	b.messages = append(b.messages, webSocketReplayMessage{
-		MessageType: messageType,
-		Data:        payload,
-		Lineage:     lineage,
-	})
-	b.totalBytes = nextTotalBytes
-	return len(b.messages) - 1
-}
-
-func (b *preVisibleClientMessageBuffer) MarkDelivered(index int, lineage requestcapture.MessageLineage) {
-	if b == nil {
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if index < 0 || index >= len(b.messages) {
-		return
-	}
-	b.messages[index].Delivered = true
-	if lineage.Valid() {
-		b.messages[index].Lineage = lineage
-	}
-}
-
-func (b *preVisibleClientMessageBuffer) Replay(ctx context.Context, upstreamConn *websocket.Conn) error {
-	if b == nil {
-		return nil
-	}
-
-	snapshot := b.Snapshot()
-	if !snapshot.Enabled {
-		return errors.New("pre-visible replay buffer disabled")
-	}
-	for _, message := range snapshot.Messages {
-		if err := upstreamConn.Write(ctx, message.MessageType, message.Data); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (b *preVisibleClientMessageBuffer) Snapshot() preVisibleClientMessageBufferSnapshot {
-	if b == nil {
-		return preVisibleClientMessageBufferSnapshot{}
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	snapshot := preVisibleClientMessageBufferSnapshot{
-		Enabled:    b.enabled,
-		TotalBytes: b.totalBytes,
-		Messages:   make([]webSocketReplayMessage, 0, len(b.messages)),
-	}
-	for _, message := range b.messages {
-		snapshot.Messages = append(snapshot.Messages, webSocketReplayMessage{
-			MessageType: message.MessageType,
-			Data:        append([]byte(nil), message.Data...),
-			Lineage:     message.Lineage,
-			Delivered:   message.Delivered,
-		})
-	}
-	return snapshot
-}
-
-func (b *preVisibleClientMessageBuffer) disableLocked() {
-	b.enabled = false
-	b.totalBytes = 0
-	b.messages = nil
-}
-
 func newAllowlistedProviderScopedSuppressDecision(buffer *preVisibleClientMessageBuffer) func(webSocketPreWriteContext) webSocketPreWriteDecision {
 	return func(ctx webSocketPreWriteContext) webSocketPreWriteDecision {
 		if ctx.Observation.ParseDegraded {
@@ -667,10 +526,6 @@ func canonicalPreWriteUpstreamError(ctx webSocketPreWriteContext) *WebSocketUpst
 		return nil
 	}
 	return upstreamErr.Clone()
-}
-
-func isReplayableWebSocketMessageType(messageType websocket.MessageType) bool {
-	return messageType == websocket.MessageText || messageType == websocket.MessageBinary
 }
 
 func (s *webSocketCommitState) Commit(source model.CommitSource) bool {

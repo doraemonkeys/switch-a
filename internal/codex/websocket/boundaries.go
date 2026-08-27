@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
-	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 )
@@ -33,34 +32,21 @@ func (o *Operation) PrepareDial(
 		return nil, err
 	}
 
-	permit := &Permit{operation: o}
-	var (
-		decision codexheaders.Result
-		owners   map[[sha256.Size]byte]ownerResolution
-	)
-	if o.features.Continuity {
-		var err error
-		decision, owners, err = o.decideClient(ctx, o.headers, codexheaders.MessageView{})
-		if err != nil {
-			return nil, err
-		}
-		for _, name := range decision.HeaderNamesToDrop() {
-			deleteHeaderFold(headers, name)
-		}
+	decision, owners, err := o.decideClient(ctx, o.headers, codexheaders.MessageView{})
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range decision.HeaderNamesToDrop() {
+		deleteHeaderFold(headers, name)
 	}
 
 	stripGatewayHandleCookie(headers)
-	if o.features.ProviderCookieJar {
-		if err := o.selectCookiesForDial(ctx, headers, applied.Authority().CookieAuthority(), finalURL); err != nil {
-			return nil, err
-		}
+	if err := o.selectCookiesForDial(ctx, headers, applied.Authority().CookieAuthority(), finalURL); err != nil {
+		return nil, err
 	}
-	if o.features.Continuity {
-		var err error
-		permit, err = o.prepareClaims(ctx, decision, claimOptions{resolutions: owners})
-		if err != nil {
-			return nil, err
-		}
+	permit, err := o.prepareClaims(ctx, decision, claimOptions{resolutions: owners})
+	if err != nil {
+		return nil, err
 	}
 	return permit, nil
 }
@@ -88,109 +74,102 @@ func (o *Operation) bindPhysicalCandidate(candidate codexidentity.CandidateSnaps
 	return nil
 }
 
-func (o *Operation) selectCookiesForDial(
-	ctx context.Context,
-	headers http.Header,
-	authority codexidentity.CookieAuthority,
-	finalURL *url.URL,
-) error {
-	deleteHeaderFold(headers, "Cookie")
+// CommitVisibility is the one-way boundary for a selected physical attempt.
+// It is intentionally absent from ordinary 101 handling: only projected Turn
+// State or a successfully written upstream application frame reaches it.
+func (o *Operation) CommitVisibility(ctx context.Context) error {
+	if o == nil {
+		return nil
+	}
 	o.mu.Lock()
-	previous := o.lastCookieAuthority
+	if o.visibilityCommitted {
+		o.mu.Unlock()
+		return nil
+	}
 	o.mu.Unlock()
-	if previous != nil && !previous.Equal(authority) {
-		// An overlay belongs to one security authority. A physical replacement may
-		// cross authority only while owner-free, and its abandoned overlay must not
-		// follow the request into the newly selected CookieScope.
-		if err := o.cookieRequest.Discard(*previous); err != nil {
-			return cookieFailure("discard_replaced_cookies", err)
+	if err := o.pinPhysicalCandidate(true, true, true); err != nil {
+		return err
+	}
+	if err := o.CommitCookies(ctx); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	o.visibilityCommitted = true
+	o.mu.Unlock()
+	return nil
+}
+
+func (o *Operation) ClassifyClientFrame(ctx context.Context, text bool, payload []byte) *ClientFramePermit {
+	permit := &ClientFramePermit{
+		operation:           o,
+		disposition:         ClientFrameForward,
+		replayEligible:      true,
+		replacementEligible: true,
+		trace: ClientFrameTrace{
+			Kind: ClientFrameOpaque, Decision: ClientFrameForward,
+		},
+	}
+	if o == nil || !text {
+		return permit
+	}
+	message := codexheaders.InspectClientFrame(payload)
+	switch message.EventType() {
+	case "response.create":
+		permit.trace.Kind = ClientFrameResponseCreate
+		permit.trace.EventType = "response.create"
+	case "response.append":
+		permit.trace.Kind = ClientFrameResponseAppend
+		permit.trace.EventType = "response.append"
+		permit.replayEligible = false
+		permit.replacementEligible = false
+		permit.currentConnectionRequired = true
+	case "response.inject":
+		permit.trace.Kind = ClientFrameResponseInject
+		permit.trace.EventType = "response.inject"
+		permit.replayEligible = false
+		permit.replacementEligible = false
+		permit.currentConnectionRequired = true
+	}
+	decision, owners, err := o.decideClient(ctx, nil, message)
+	if err == nil {
+		err = o.applyRequiredOwners(owners)
+	}
+	if err == nil && permit.currentConnectionRequired {
+		if _, active := o.currentGeneration(); !active {
+			err = reconnectRequiredFailure("client_frame_connection")
 		}
 	}
-	cookieValue, err := o.cookieRequest.Select(ctx, authority, cloneURL(finalURL))
 	if err != nil {
-		return cookieFailure("select_cookies", err)
+		permit.disposition = ClientFrameReject
+		permit.replayEligible = false
+		permit.replacementEligible = false
+		permit.rejection = err
+		permit.trace.Decision = ClientFrameReject
+		return permit
 	}
-	if cookieValue != "" {
-		headers.Set("Cookie", cookieValue)
-	}
-	o.mu.Lock()
-	o.lastCookieAuthority = &authority
-	o.mu.Unlock()
-	return nil
-}
-
-func (o *Operation) ApplyHandshake(finalURL *url.URL, headers http.Header) error {
-	if o == nil || !o.features.ProviderCookieJar {
-		return nil
-	}
-	o.mu.Lock()
-	authority := o.lastCookieAuthority
-	o.mu.Unlock()
-	if authority == nil {
-		return &Failure{Class: FailureStorage, Stage: "handshake_cookies", Cause: errors.New("attempt cookie authority is unavailable")}
-	}
-	_, err := o.cookieRequest.ApplyResponse(*authority, cloneURL(finalURL), headerValues(headers, "Set-Cookie"))
-	if err != nil {
-		return cookieFailure("handshake_cookies", err)
-	}
-	return nil
-}
-
-func (o *Operation) CommitCookies(ctx context.Context) error {
-	if o == nil || !o.features.ProviderCookieJar {
-		return nil
-	}
-	o.mu.Lock()
-	if o.cookieClosed {
-		o.mu.Unlock()
-		return nil
-	}
-	authority := o.lastCookieAuthority
-	o.mu.Unlock()
-	if authority == nil {
-		return &Failure{Class: FailureStorage, Stage: "commit_cookies", Cause: errors.New("final cookie authority is unavailable")}
-	}
-	if _, err := o.cookieRequest.Commit(ctx, *authority); err != nil {
-		return cookieFailure("commit_cookies", err)
-	}
-	o.mu.Lock()
-	o.cookieClosed = true
-	o.mu.Unlock()
-	return nil
-}
-
-func (o *Operation) DiscardCookies() {
-	if o == nil || !o.features.ProviderCookieJar || o.cookieRequest == nil {
-		return
-	}
-	o.mu.Lock()
-	if o.cookieClosed {
-		o.mu.Unlock()
-		return
-	}
-	o.cookieClosed = true
-	o.mu.Unlock()
-	o.cookieRequest.DiscardAll()
+	permit.decision = decision
+	permit.resolutions = owners
+	return permit
 }
 
 func (o *Operation) PrepareClientFrame(ctx context.Context, text bool, payload []byte) (*Permit, error) {
-	if o == nil || !o.features.Continuity {
+	if o == nil || !text {
 		return nil, nil
 	}
-	if !text {
-		return nil, nil
+	frame := o.ClassifyClientFrame(ctx, text, payload)
+	permit, err := frame.PrepareDelivery(ctx)
+	if err != nil || permit != nil {
+		return permit, err
 	}
-	message := codexheaders.InspectClientFrame(codexheaders.FixtureCodexDesktop0150Alpha8, payload)
-	decision, owners, err := o.decideClient(ctx, nil, message)
-	if err != nil {
-		return nil, err
-	}
-	return o.prepareClaims(ctx, decision, claimOptions{resolutions: owners})
+	// Legacy callers use a non-nil permit as the successful text-frame signal.
+	// The state-machine relay consumes ClientFramePermit directly, so this empty
+	// durable permit carries no classification or replay policy.
+	return &Permit{operation: o}, nil
 }
 
 func (o *Operation) PrepareServerHeaders(ctx context.Context, headers http.Header) (*Permit, http.Header, error) {
-	projected := make(http.Header)
-	if o == nil || !o.features.Continuity {
+	projected := projectPassableHandshakeHeaders(headers)
+	if o == nil {
 		return nil, projected, nil
 	}
 	discovery := codexheaders.DecideServerHeaders(headers, func(codexheaders.BindingCandidate) codexheaders.OwnerStatus {
@@ -202,6 +181,9 @@ func (o *Operation) PrepareServerHeaders(ctx context.Context, headers http.Heade
 	}
 	decision := codexheaders.DecideServerHeaders(headers, o.ownerLookupForBoundScope(owners))
 	if decision.Rejected() {
+		if err := resolvedOwnerFailure("server_headers", decision, owners); err != nil {
+			return nil, nil, err
+		}
 		return nil, nil, protocolFailure("server_headers", decision)
 	}
 	for name, values := range headers {
@@ -210,6 +192,11 @@ func (o *Operation) PrepareServerHeaders(ctx context.Context, headers http.Heade
 		}
 	}
 	permit, err := o.prepareClaims(ctx, decision, claimOptions{visible: true, resolutions: owners})
+	if permit != nil && len(headerValues(projected, "X-Codex-Turn-State")) > 0 {
+		permit.pinProtocolScope = true
+		permit.pinAuthority = true
+		permit.pinRouteTarget = true
+	}
 	return permit, projected, err
 }
 
@@ -218,13 +205,7 @@ type responseTransition uint8
 const (
 	responseUnchanged responseTransition = iota
 	responseActivated
-	responseCompleted
-)
-
-const (
-	eventResponseCreated    = "response.created"
-	eventResponseInProgress = "response.in_progress"
-	eventResponseCompleted  = "response.completed"
+	responseTerminal
 )
 
 type claimOptions struct {
@@ -233,25 +214,25 @@ type claimOptions struct {
 	resolutions map[[sha256.Size]byte]ownerResolution
 }
 
-func responseTransitionFor(eventType string) responseTransition {
-	switch eventType {
-	case eventResponseCreated, eventResponseInProgress:
+func responseTransitionFor(lifecycle codexheaders.ResponseLifecycle) responseTransition {
+	switch lifecycle {
+	case codexheaders.ResponseLifecycleActive:
 		return responseActivated
-	case eventResponseCompleted:
-		return responseCompleted
+	case codexheaders.ResponseLifecycleTerminal:
+		return responseTerminal
 	default:
 		return responseUnchanged
 	}
 }
 
 func (o *Operation) PrepareServerFrame(ctx context.Context, text bool, payload []byte) (*Permit, error) {
-	if o == nil || !o.features.Continuity {
+	if o == nil {
 		return nil, nil
 	}
 	if !text {
 		return nil, nil
 	}
-	message := codexheaders.InspectServerFrame(codexheaders.FixtureCodexDesktop0150Alpha8, payload)
+	message := codexheaders.InspectServerFrame(payload)
 	discovery := codexheaders.DecideServerMessage(message, func(codexheaders.BindingCandidate) codexheaders.OwnerStatus {
 		return codexheaders.OwnerUnknown
 	})
@@ -264,11 +245,14 @@ func (o *Operation) PrepareServerFrame(ctx context.Context, text bool, payload [
 	}
 	decision := codexheaders.DecideServerMessage(message, o.ownerLookupForBoundScope(owners))
 	if decision.Rejected() {
+		if err := resolvedOwnerFailure("server_frame", decision, owners); err != nil {
+			return nil, err
+		}
 		return nil, protocolFailure("server_frame", decision)
 	}
 	return o.prepareClaims(ctx, decision, claimOptions{
 		visible:     true,
-		response:    responseTransitionFor(message.EventType()),
+		response:    responseTransitionFor(message.ResponseLifecycle()),
 		resolutions: owners,
 	})
 }
@@ -293,6 +277,9 @@ func (o *Operation) decideClient(
 		AttestationLock: o.attestationStatus(),
 	})
 	if decision.Rejected() {
+		if err := resolvedOwnerFailure("client_frame", decision, owners); err != nil {
+			return decision, nil, err
+		}
 		return decision, nil, protocolFailure("client_frame", decision)
 	}
 	return decision, owners, nil
@@ -336,6 +323,11 @@ func (o *Operation) attestationStatus() codexheaders.OperationLockStatus {
 
 func (o *Operation) prepareClaims(ctx context.Context, result codexheaders.Result, options claimOptions) (*Permit, error) {
 	permit := &Permit{operation: o}
+	if !options.visible {
+		if err := o.applyRequiredOwners(options.resolutions); err != nil {
+			return nil, err
+		}
+	}
 	responseLeases := make(map[[sha256.Size]byte]codexcontinuity.Lease)
 	for _, decision := range result.Claims() {
 		if decision.Claim().Lifetime() == codexheaders.ClaimLifetimeOperation {
@@ -372,23 +364,18 @@ func (o *Operation) prepareClaims(ctx context.Context, result codexheaders.Resul
 		}
 	}
 	attachResponseTransition(permit, result, options.response, responseLeases)
-	if err := o.pinDisclosedEvidence(result, options); err != nil {
-		permit.abandon(ctx)
-		return nil, err
-	}
+	attachCommitPins(permit, result, options)
 	return permit, nil
 }
 
-func (o *Operation) pinDisclosedEvidence(result codexheaders.Result, options claimOptions) error {
-	if err := o.applyRequiredOwners(options.resolutions); err != nil {
-		return err
+func attachCommitPins(permit *Permit, result codexheaders.Result, options claimOptions) {
+	if permit == nil {
+		return
 	}
-	pinProtocolScope := false
-	pinAuthority := false
 	if options.response != responseUnchanged {
 		for _, decision := range result.Decisions() {
 			if decision.Field() == codexheaders.FieldResponseReference {
-				pinProtocolScope = true
+				permit.pinProtocolScope = true
 				break
 			}
 		}
@@ -396,12 +383,11 @@ func (o *Operation) pinDisclosedEvidence(result codexheaders.Result, options cla
 	for _, decision := range result.Claims() {
 		switch decision.Claim().Boundary() {
 		case codexheaders.ClaimBoundaryProtocolScope:
-			pinProtocolScope = true
+			permit.pinProtocolScope = true
 		case codexheaders.ClaimBoundaryAuthority:
-			pinAuthority = true
+			permit.pinAuthority = true
 		}
 	}
-	return o.pinPhysicalCandidate(pinProtocolScope, pinAuthority, false)
 }
 
 func (o *Operation) pinPhysicalCandidate(protocolScope, authority, routeTarget bool) error {
@@ -434,16 +420,6 @@ func (o *Operation) pinPhysicalCandidate(protocolScope, authority, routeTarget b
 		o.preferredRouteTargetID = candidate.RouteTargetID()
 	}
 	return nil
-}
-
-// PinClientVisible fixes the physical RouteTarget only after bytes from that
-// attempt became observable downstream. Probe acceptance can call this before a
-// provider exists; the first upstream frame will establish the actual pin.
-func (o *Operation) PinClientVisible() {
-	if o == nil {
-		return
-	}
-	_ = o.pinPhysicalCandidate(true, true, true)
 }
 
 func (o *Operation) acquireExistingLease(
@@ -525,7 +501,7 @@ func (p *Permit) attachResponseLease(lease codexcontinuity.Lease, transition res
 	switch transition {
 	case responseActivated:
 		p.activate = append(p.activate, lease)
-	case responseCompleted:
+	case responseTerminal:
 		p.deactivate = append(p.deactivate, lease.Binding())
 	}
 }
@@ -540,7 +516,7 @@ func (o *Operation) candidateSnapshot() (codexidentity.CandidateSnapshot, bool) 
 }
 
 func (o *Operation) OpenConnection() error {
-	if o == nil || !o.features.Continuity {
+	if o == nil {
 		return nil
 	}
 	candidate, ok := o.candidateSnapshot()
@@ -563,7 +539,7 @@ func (o *Operation) OpenConnection() error {
 }
 
 func (o *Operation) CloseConnection() {
-	if o == nil || !o.features.Continuity {
+	if o == nil {
 		return
 	}
 	o.mu.Lock()
@@ -592,23 +568,40 @@ func deleteHeaderFold(headers http.Header, wanted string) {
 	}
 }
 
-func stripGatewayHandleCookie(headers http.Header) {
-	values := headerValues(headers, "Cookie")
-	deleteHeaderFold(headers, "Cookie")
-	for _, value := range values {
-		kept := make([]string, 0)
-		for _, pair := range strings.Split(value, ";") {
-			pair = strings.TrimSpace(pair)
-			name, _, hasValue := strings.Cut(pair, "=")
-			if hasValue && name == providercookie.GatewayHandleName {
-				continue
-			}
-			if pair != "" {
-				kept = append(kept, pair)
+func projectPassableHandshakeHeaders(headers http.Header) http.Header {
+	projected := make(http.Header)
+	connectionNominated := make(map[string]struct{})
+	for _, value := range headerValues(headers, "Connection") {
+		for _, name := range strings.Split(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				connectionNominated[http.CanonicalHeaderKey(name)] = struct{}{}
 			}
 		}
-		if len(kept) > 0 {
-			headers.Add("Cookie", strings.Join(kept, "; "))
+	}
+	for name, values := range headers {
+		canonical := http.CanonicalHeaderKey(name)
+		if !passableHandshakeHeader(canonical, connectionNominated) {
+			continue
 		}
+		projected[canonical] = append([]string(nil), values...)
+	}
+	return projected
+}
+
+func passableHandshakeHeader(name string, connectionNominated map[string]struct{}) bool {
+	if _, nominated := connectionNominated[name]; nominated {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(name), "sec-websocket-") {
+		return false
+	}
+	switch name {
+	case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Proxy-Connection",
+		"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Cookie", "Set-Cookie",
+		"Authorization", "X-Api-Key", "X-Codex-Turn-State", "X-Codex-Turn-Metadata", "X-Oai-Attestation",
+		"Thread-Id", "Session-Id", "Conversation_id", "X-Codex-Window-Id":
+		return false
+	default:
+		return true
 	}
 }

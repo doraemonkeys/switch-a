@@ -11,14 +11,26 @@ type Capabilities struct {
 	AEADCurrent  string
 }
 
-// Requirements describes the key generations referenced by enabled features
-// and durable rows. Empty requirements permit a missing keyring, which preserves
-// the ADR's disabled-feature startup behavior.
+// Requirements describes explicit current-key and historical-generation checks.
+// The file lifecycle uses HistoricalVersions and always requires both current
+// capabilities; this lower-level shape remains useful for component preflight.
 type Requirements struct {
 	NeedHMAC     bool
 	NeedAEAD     bool
 	HMACVersions []string
 	AEADVersions []string
+}
+
+// HistoricalVersions is the durable key history discovered before the
+// keyring file is opened. Keeping it separate from capability switches makes
+// the no-history prerequisite for first-run generation explicit.
+type HistoricalVersions struct {
+	HMAC []string
+	AEAD []string
+}
+
+func (versions HistoricalVersions) hasReferences() bool {
+	return len(versions.HMAC) != 0 || len(versions.AEAD) != 0
 }
 
 func (k *Keyring) Capabilities() Capabilities {
@@ -33,8 +45,7 @@ func (k *Keyring) Capabilities() Capabilities {
 	}
 }
 
-// ValidateCapabilities fails closed before listeners start when an enabled
-// feature or persisted row requires unavailable key material.
+// ValidateCapabilities reports unavailable current or historical key material.
 func ValidateCapabilities(keyring *Keyring, required Requirements) error {
 	capabilities := keyring.Capabilities()
 	if required.NeedHMAC && capabilities.HMACCurrent == "" {
@@ -66,4 +77,13 @@ func ValidateCapabilities(keyring *Keyring, required Requirements) error {
 		}
 	}
 	return nil
+}
+
+func validateCompleteCapabilities(keyring *Keyring, historical HistoricalVersions) error {
+	return ValidateCapabilities(keyring, Requirements{
+		NeedHMAC:     true,
+		NeedAEAD:     true,
+		HMACVersions: historical.HMAC,
+		AEADVersions: historical.AEAD,
+	})
 }

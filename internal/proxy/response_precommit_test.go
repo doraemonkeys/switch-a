@@ -15,7 +15,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
 )
 
 type preCommitTestWriter struct {
@@ -285,6 +284,74 @@ func (*preCommitContinuity) AbandonBeforeDisclosure(context.Context, codexcontin
 	return nil
 }
 
+func TestFirstWriteResponseWriter(t *testing.T) {
+	var callCount int
+	recorder := httptest.NewRecorder()
+
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+		onFirstWrite: func() {
+			callCount++
+		},
+	}
+
+	n, err := w.Write([]byte("hello"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("expected 5 bytes written, got %d", n)
+	}
+	if callCount != 1 {
+		t.Errorf("expected callback to be called once, got %d", callCount)
+	}
+
+	n, err = w.Write([]byte("world"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("expected 5 bytes written, got %d", n)
+	}
+	if callCount != 1 {
+		t.Errorf("expected callback to still be 1, got %d", callCount)
+	}
+
+	if recorder.Body.String() != "helloworld" {
+		t.Errorf("expected body 'helloworld', got %q", recorder.Body.String())
+	}
+}
+
+func TestFirstWriteResponseWriter_Flush(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+		onFirstWrite:   func() {},
+	}
+
+	_, _ = w.Write([]byte("data: test\n\n"))
+	w.Flush()
+
+	if !recorder.Flushed {
+		t.Error("expected Flush to be called on underlying ResponseWriter")
+	}
+}
+
+func TestFirstWriteResponseWriter_NilCallback(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	w := &firstWriteResponseWriter{
+		ResponseWriter: recorder,
+	}
+
+	n, err := w.Write([]byte("test"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("expected 4 bytes written, got %d", n)
+	}
+}
+
 type preCommitScopeDigester struct{ scope codexidentity.ClientScope }
 
 func (d preCommitScopeDigester) ClientScope([]byte) (codexidentity.ClientScope, error) {
@@ -329,13 +396,16 @@ func newPreCommitSSEGate(t *testing.T) (*codexhttp.Attempt, *codexhttp.SSEGate, 
 		t.Fatal(err)
 	}
 	continuity := &preCommitContinuity{}
-	runtime := codexhttp.New(codexhttp.Config{
-		Features: codexhttp.FeatureSourceFunc(func() codexstartup.Snapshot {
-			return codexstartup.Snapshot{Continuity: true}
-		}),
-		ClientScopes: preCommitScopeDigester{scope: clientScope},
-		Continuity:   continuity,
+	fixture := newProxyCodexFixture(t)
+	runtime, err := codexhttp.New(codexhttp.Config{
+		ClientScopes:    preCommitScopeDigester{scope: clientScope},
+		Continuity:      continuity,
+		ProviderCookies: fixture.providerCookies,
+		ExternalScheme:  fixture.externalScheme,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Thread-Id", "precommit-request-anchor")

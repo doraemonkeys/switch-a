@@ -21,10 +21,45 @@ import (
 	"go.uber.org/zap"
 )
 
+func dialWebSocketExpectHTTPFailure(
+	t *testing.T,
+	ctx context.Context,
+	url string,
+	options *websocket.DialOptions,
+	wantStatus int,
+) string {
+	t.Helper()
+	if options == nil {
+		options = proxyCodexDialOptions()
+	} else {
+		if options.HTTPHeader == nil {
+			options.HTTPHeader = make(http.Header)
+		}
+		options.HTTPHeader.Set("Authorization", proxyCodexTestAuthorization)
+	}
+	connection, response, err := websocket.Dial(ctx, url, options)
+	if connection != nil {
+		connection.CloseNow()
+		t.Fatal("ordinary pre-upgrade failure unexpectedly committed a downstream 101")
+	}
+	if err == nil || response == nil {
+		t.Fatalf("websocket dial = response:%#v err:%v, want HTTP %d", response, err, wantStatus)
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		t.Fatalf("read HTTP handshake failure: %v", readErr)
+	}
+	if response.StatusCode != wantStatus {
+		t.Fatalf("HTTP handshake status = %d, want %d (body %q)", response.StatusCode, wantStatus, body)
+	}
+	return string(body)
+}
+
 func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {
 	store := newMockStore()
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -35,13 +70,9 @@ func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-	if err != nil {
-		t.Fatalf("dial websocket through proxy: %v", err)
-	}
-	event := readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusServiceUnavailable, ErrCodeProviderUnavailable)
-	if !strings.Contains(event.Error.Message, "No available provider") {
-		t.Fatalf("gateway error message = %q, want no-provider detail", event.Error.Message)
+	body := dialWebSocketExpectHTTPFailure(t, ctx, wsURL(proxyServer)+"/responses", nil, http.StatusServiceUnavailable)
+	if !strings.Contains(body, ErrCodeProviderUnavailable) || !strings.Contains(body, "No available provider") {
+		t.Fatalf("gateway error body = %q, want no-provider contract", body)
 	}
 
 	waitFor(t, func() bool {
@@ -58,8 +89,8 @@ func TestHandler_ServeHTTP_WebSocket_NoProvider(t *testing.T) {
 	if !log.IsWebSocket {
 		t.Error("expected IsWebSocket=true in log")
 	}
-	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
-		t.Errorf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
+	if requestLogClientTransportStatusCode(log) != http.StatusServiceUnavailable {
+		t.Errorf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusServiceUnavailable)
 	}
 	if requestLogTerminationReason(log) != model.TerminationReasonProviderUnavailable {
 		t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonProviderUnavailable)
@@ -77,6 +108,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 		wantStatus   int
 		wantCode     string
 		wantReason   model.TerminationReason
+		withoutAuth  bool
 	}{
 		{
 			name: "missing base url",
@@ -118,6 +150,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 				}},
 			}, "codex", testChatGPTCredentialData(t, "access-token", "refresh-token", "acct-test")),
 			errorSnippet: "credentials",
+			withoutAuth:  true,
 		},
 	}
 
@@ -133,10 +166,16 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			store := newMockStore()
 			store.providers = []model.Provider{tt.provider}
 
-			handler := NewHandler(Config{
+			config := Config{
 				Store:  store,
 				Logger: zap.NewNop(),
-			})
+			}
+			var handler *Handler
+			if tt.withoutAuth {
+				handler = newProxyCodexTestHandlerPreservingAuth(t, config)
+			} else {
+				handler = newProxyCodexTestHandler(t, config)
+			}
 
 			proxyServer := httptest.NewServer(handler)
 			defer proxyServer.Close()
@@ -144,13 +183,9 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-			if err != nil {
-				t.Fatalf("dial websocket through proxy: %v", err)
-			}
-			event := readTerminalGatewayErrorEvent(t, ctx, conn, tt.wantStatus, tt.wantCode)
-			if !strings.Contains(event.Error.Message, tt.errorSnippet) {
-				t.Fatalf("gateway error message = %q, want snippet %q", event.Error.Message, tt.errorSnippet)
+			body := dialWebSocketExpectHTTPFailure(t, ctx, wsURL(proxyServer)+"/responses", nil, tt.wantStatus)
+			if !strings.Contains(body, tt.wantCode) || !strings.Contains(body, tt.errorSnippet) {
+				t.Fatalf("gateway error body = %q, want code %q and snippet %q", body, tt.wantCode, tt.errorSnippet)
 			}
 
 			waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
@@ -159,8 +194,8 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			if log == nil {
 				t.Fatal("expected log entry")
 			}
-			if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
-				t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
+			if requestLogClientTransportStatusCode(log) != tt.wantStatus {
+				t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), tt.wantStatus)
 			}
 			if requestLogTerminationReason(log) != tt.wantReason {
 				t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), tt.wantReason)
@@ -248,7 +283,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -260,7 +295,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeFailureSwitchesProvider(t
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -355,7 +390,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSw
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -367,11 +402,10 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSw
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
-	if err != nil {
-		t.Fatalf("dial websocket through proxy: %v", err)
+	body := dialWebSocketExpectHTTPFailure(t, ctx, wsURL(proxyServer)+"/responses", nil, http.StatusOK)
+	if !strings.Contains(body, ErrCodeWebSocketUpgrade) {
+		t.Fatalf("gateway error body = %q, want code %q", body, ErrCodeWebSocketUpgrade)
 	}
-	readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusOK, ErrCodeWebSocketUpgrade)
 
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	waitFor(t, func() bool { return store.AttemptsLen() > 0 }, testPollTimeout)
@@ -393,8 +427,8 @@ func TestHandler_ServeHTTP_WebSocket_ProviderConfigurationFailureBeforeVisibleSw
 	if log.RetryCount != 1 {
 		t.Fatalf("log.RetryCount = %d, want 1", log.RetryCount)
 	}
-	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
-		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
+	if requestLogClientTransportStatusCode(log) != http.StatusOK {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusOK)
 	}
 
 	attempts := store.LastAttempts(2)
@@ -429,7 +463,7 @@ func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *
 		APITypes: []model.ProviderAPIType{{ProviderID: "ws-http-fallback", APIType: "codex", BaseURL: upstream.URL}},
 	}, "", "key")}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -440,17 +474,13 @@ func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
+	body := dialWebSocketExpectHTTPFailure(t, ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
 		HTTPHeader: http.Header{
 			"OpenAI-Beta": {"responses_websockets=2026-02-06"},
 		},
-	})
-	if err != nil {
-		t.Fatalf("dial websocket through proxy: %v", err)
-	}
-	event := readTerminalGatewayErrorEvent(t, ctx, conn, http.StatusUpgradeRequired, ErrCodeWebSocketUpgrade)
-	if !strings.Contains(event.Error.Message, "fallback to http") {
-		t.Fatalf("gateway error message = %q, want upstream fallback detail", event.Error.Message)
+	}, http.StatusUpgradeRequired)
+	if !strings.Contains(body, ErrCodeWebSocketUpgrade) || !strings.Contains(body, "fallback to http") {
+		t.Fatalf("gateway error body = %q, want upstream fallback contract", body)
 	}
 
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
@@ -459,8 +489,8 @@ func TestHandler_ServeHTTP_WebSocket_UpstreamUpgradeRequiredPropagatesStatus(t *
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
-		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
+	if requestLogClientTransportStatusCode(log) != http.StatusUpgradeRequired {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusUpgradeRequired)
 	}
 	if requestLogTerminationReason(log) != model.TerminationReasonUpstreamHandshakeRejected {
 		t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(log), model.TerminationReasonUpstreamHandshakeRejected)
@@ -584,7 +614,7 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Auth:     authService,
@@ -599,8 +629,9 @@ func TestHandler_ServeHTTP_WebSocket_ChatGPTProviderRefreshesHandshakeUnauthoriz
 
 	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", &websocket.DialOptions{
 		HTTPHeader: http.Header{
-			"OpenAI-Beta": {"responses_websockets=2026-02-06"},
-			"X-Custom":    {"passthrough"},
+			"Authorization": {proxyCodexTestAuthorization},
+			"OpenAI-Beta":   {"responses_websockets=2026-02-06"},
+			"X-Custom":      {"passthrough"},
 		},
 	})
 	if err != nil {
@@ -758,7 +789,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvid
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -770,7 +801,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptHandshakeReplacementSwitchesProvid
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy websocket: %v", err)
 	}
@@ -890,12 +921,12 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvid
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
 	})
-	setWebSocketForwarderForTest(handler, NewWebSocketForwarder(WebSocketForwarderConfig{
+	setWebSocketForwarderForTest(t, handler, NewWebSocketForwarder(WebSocketForwarderConfig{
 		Logger: zap.NewNop(),
 		Dialer: &mockDialer{
 			dialFunc: func(ctx context.Context, url string, opts *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
@@ -913,7 +944,7 @@ func TestHandler_ServeHTTP_WebSocket_PreAcceptTransportReplacementSwitchesProvid
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy websocket: %v", err)
 	}

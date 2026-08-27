@@ -158,13 +158,9 @@ func (o *WebSocketSessionOrchestrator) newSubprotocolViolationAttempt(
 	err error,
 	injectedCredential string,
 ) WebSocketAttemptResult {
-	if o.clientConn != nil {
-		closeWebSocketSubprotocolViolation(o.clientConn)
-		o.clientConn = nil
-	}
 	result := exchange.toWebSocketResult()
 	result.Err = err
-	result.TerminalCause = model.TerminalInternalError
+	result.TerminalCause = model.TerminalUpstreamHandshakeRejected
 	o.applySessionLifecycleToResult(result)
 	attemptResult := newWebSocketForwardAttemptResult(
 		provider,
@@ -176,6 +172,9 @@ func (o *WebSocketSessionOrchestrator) newSubprotocolViolationAttempt(
 		time.Since(attemptStart),
 	)
 	attemptResult.injectedCredential = injectedCredential
+	attemptResult.GatewayStatusCode = http.StatusBadGateway
+	attemptResult.GatewayErrorCode = ErrCodeWebSocketUpgrade
+	attemptResult.GatewayMessage = "Upstream WebSocket subprotocol negotiation failed"
 	o.stampAttemptSelectionContext(&attemptResult, selectionMode, selectionMetadata)
 	return attemptResult
 }
@@ -530,8 +529,7 @@ func (o *WebSocketSessionOrchestrator) prepareCodexPhysicalDial(
 }
 
 func (o *WebSocketSessionOrchestrator) codexUpstreamHeaderHygiene() bool {
-	return o != nil && o.apiType == APITypeCodex && o.codexOperation != nil &&
-		o.codexOperation.Features().UpstreamHeaderHygiene
+	return o != nil && o.codexOperation != nil
 }
 
 func (o *WebSocketSessionOrchestrator) finishCodexPhysicalDial(

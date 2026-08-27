@@ -23,11 +23,13 @@ const (
 
 	// preVisibleClientReplayBufferLimitBytes bounds buffered client application payloads
 	// so semantic replacement never turns an invisible session window into unbounded memory.
-	preVisibleClientReplayBufferLimitBytes = 1 * 1024 * 1024
+	preVisibleClientReplayBufferLimitBytes = 4 * 1024 * 1024
 
 	// preVisibleClientReplayBufferLimitMessages prevents an endless stream of tiny
 	// pre-visible client frames from pinning memory even when the byte budget stays low.
 	preVisibleClientReplayBufferLimitMessages = 128
+
+	webSocketSelectionProbeTotalDuration = 3 * time.Second
 
 	// webSocketCloseReasonByteLimit keeps propagated close reasons within RFC 6455's
 	// 125-byte control-frame limit after reserving two bytes for the close status code.

@@ -201,8 +201,8 @@ func DecideServerHeaders(headers http.Header, owners OwnerLookup) Result {
 	return result
 }
 
-// DecideServerMessage validates only target-fixture server paths. New opaque
-// values request pending response claims; persistence remains transport-owned.
+// DecideServerMessage validates only recognized stable server fields. Unknown
+// content remains decision-free; persistence stays transport-owned.
 func DecideServerMessage(message MessageView, owners OwnerLookup) Result {
 	if !message.present || message.direction != directionServer {
 		return rejectResult(message.wire, FieldEnvelope, CarrierEnvelope, ReasonInvalidEnvelope)

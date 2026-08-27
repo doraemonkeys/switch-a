@@ -8,138 +8,85 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
-	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
-	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
+	continuity "github.com/doraemonkeys/switch-a/internal/codex/continuity"
+	cookie "github.com/doraemonkeys/switch-a/internal/codex/cookie"
+	codexkeyring "github.com/doraemonkeys/switch-a/internal/codex/keyring"
 	"github.com/doraemonkeys/switch-a/internal/store"
 
-	"github.com/glebarez/sqlite"
+	glebarezsqlite "github.com/glebarez/sqlite"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
 )
 
-func TestDefaultContinuityPolicyConfiguresEveryKindWithNamedBounds(t *testing.T) {
+func TestDefaultContinuityPolicyCoversEveryDurableKind(t *testing.T) {
 	policy, err := defaultContinuityPolicy()
 	if err != nil {
-		t.Fatalf("defaultContinuityPolicy() error = %v", err)
+		t.Fatal(err)
 	}
-	want := codexcontinuity.Limits{
-		PendingTTL:   defaultContinuityPendingTTL,
-		CommittedTTL: defaultContinuityCommittedTTL,
-		TombstoneTTL: defaultContinuityTombstoneTTL,
-		MaxBindings:  defaultContinuityMaxPerKind,
+	want := continuity.Limits{
+		PendingTTL: defaultContinuityPendingTTL, CommittedTTL: defaultContinuityCommittedTTL,
+		TombstoneTTL: defaultContinuityTombstoneTTL, MaxBindings: defaultContinuityMaxPerKind,
 	}
-	for _, kind := range []codexcontinuity.Kind{
-		codexcontinuity.KindThreadID,
-		codexcontinuity.KindSessionID,
-		codexcontinuity.KindConversationID,
-		codexcontinuity.KindWindowID,
-		codexcontinuity.KindTurnState,
-		codexcontinuity.KindTurnMetadata,
-		codexcontinuity.KindResponseReference,
+	for _, kind := range []continuity.Kind{
+		continuity.KindThreadID, continuity.KindSessionID, continuity.KindConversationID,
+		continuity.KindWindowID, continuity.KindTurnState, continuity.KindTurnMetadata,
+		continuity.KindResponseReference,
 	} {
 		limits, exists := policy.Limits(kind)
 		if !exists || limits != want {
 			t.Errorf("policy[%s] = %+v, %t; want %+v", kind, limits, exists, want)
 		}
 	}
-	if defaultContinuityPendingTTL != 24*time.Hour ||
-		defaultContinuityCommittedTTL != 30*24*time.Hour ||
-		defaultContinuityTombstoneTTL != 7*24*time.Hour ||
-		defaultContinuityMaxPerKind != 10_000 {
-		t.Fatalf("continuity composition defaults changed without an explicit policy decision")
+	if defaultContinuityPendingTTL != 24*time.Hour || defaultContinuityCommittedTTL != 30*24*time.Hour ||
+		defaultContinuityTombstoneTTL != 7*24*time.Hour || defaultContinuityMaxPerKind != 10_000 {
+		t.Fatal("continuity composition defaults changed without an explicit policy decision")
 	}
 }
 
-func TestNewApplicationCodexRuntimeComposesNarrowHTTPAndWebSocketDependencies(t *testing.T) {
-	security, err := loadApplicationCodexSecurity(
-		"keyring.json",
-		func(string) ([]byte, error) { return []byte(applicationKeyringDocument()), nil },
-		bytes.NewReader(bytes.Repeat([]byte{7}, 64)),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	persistence, err := store.NewSQLiteStore(
-		filepath.Join(t.TempDir(), "runtime.db"),
-		internal.RealClock{},
-		nil,
-		security.staticSubjectSigners()...,
-	)
+func TestNewApplicationCodexRuntimeAlwaysComposesHTTPAndWebSocket(t *testing.T) {
+	security := testApplicationCodexSecurity(t, 7)
+	persistence, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "runtime.db"), internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer persistence.Close()
-	initial := codexstartup.Snapshot{
-		UpstreamHeaderHygiene: true,
-		WebSocketSubprotocol:  true,
-		Continuity:            true,
-		ProviderCookieJar:     true,
+	if err := persistence.FinalizeStaticCredentialSubjects(context.Background(), security.keyring); err != nil {
+		t.Fatal(err)
 	}
 	runtime, err := newApplicationCodexRuntime(
-		context.Background(), initial, persistence, security, internal.RealClock{}, zap.NewNop(),
+		context.Background(), persistence, security, internal.RealClock{}, zap.NewNop(),
 	)
 	if err != nil {
 		t.Fatalf("newApplicationCodexRuntime() error = %v", err)
 	}
-	if runtime.Features == nil || runtime.HTTP == nil || runtime.WebSocket == nil {
+	if runtime.HTTP == nil || runtime.WebSocket == nil || runtime.continuity == nil || runtime.providerCookies == nil {
 		t.Fatalf("runtime = %+v", runtime)
 	}
-	if got := runtime.Features.Snapshot(); got != initial {
-		t.Fatalf("runtime feature snapshot = %+v, want %+v", got, initial)
-	}
-	if _, _, _, err := newApplicationCodexServices(
-		context.Background(), persistence, security, nil, nil, internal.RealClock{}, zap.NewNop(),
-	); err == nil {
-		t.Fatal("Codex service composition accepted a missing Cookie host canonicalizer")
-	}
 }
 
-func TestNewApplicationCodexRuntimeDisabledFeaturesNeedNoKeyring(t *testing.T) {
-	persistence, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "disabled.db"), internal.RealClock{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer persistence.Close()
-	runtime, err := newApplicationCodexRuntime(
-		context.Background(), codexstartup.Snapshot{}, persistence, nil, internal.RealClock{}, zap.NewNop(),
-	)
-	if err != nil {
-		t.Fatalf("disabled newApplicationCodexRuntime() error = %v", err)
-	}
-	if runtime.Features == nil || runtime.HTTP == nil || runtime.WebSocket == nil {
-		t.Fatalf("disabled runtime = %+v", runtime)
-	}
-}
-
-func TestNewApplicationCodexRuntimeRequiresCompositionDependencies(t *testing.T) {
-	if _, err := newApplicationCodexRuntime(context.Background(), codexstartup.Snapshot{}, nil, nil, nil, nil); err == nil {
+func TestNewApplicationCodexRuntimeRequiresEveryDependency(t *testing.T) {
+	if _, err := newApplicationCodexRuntime(context.Background(), nil, nil, nil, nil); err == nil {
 		t.Fatal("runtime composition accepted missing dependencies")
+	}
+	if _, _, _, err := newApplicationCodexServices(context.Background(), nil, nil, nil, nil, nil, nil); err == nil {
+		t.Fatal("service composition accepted missing dependencies")
 	}
 }
 
 func TestNewApplicationCodexRuntimeFailsClosedOnRepositoryComposition(t *testing.T) {
-	security, err := loadApplicationCodexSecurity(
-		"keyring.json",
-		func(string) ([]byte, error) { return []byte(applicationKeyringDocument()), nil },
-		bytes.NewReader(bytes.Repeat([]byte{8}, 64)),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	security := testApplicationCodexSecurity(t, 8)
 	databasePath := filepath.Join(t.TempDir(), "corrupt.db")
-	persistence, err := store.NewSQLiteStore(
-		databasePath, internal.RealClock{}, nil, security.staticSubjectSigners()...,
-	)
+	persistence, err := store.NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer persistence.Close()
-	// The runtime constructor must validate through the repository boundary; it
-	// cannot silently recreate a schema after listener preflight.
-	database, err := gorm.Open(sqlite.Open(databasePath), &gorm.Config{})
+	if err := persistence.FinalizeStaticCredentialSubjects(context.Background(), security.keyring); err != nil {
+		t.Fatal(err)
+	}
+	database, err := gorm.Open(glebarezsqlite.Open(databasePath), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +101,7 @@ func TestNewApplicationCodexRuntimeFailsClosedOnRepositoryComposition(t *testing
 		t.Fatal(err)
 	}
 	if _, err := newApplicationCodexRuntime(
-		context.Background(), codexstartup.Snapshot{}, persistence, security, internal.RealClock{}, zap.NewNop(),
+		context.Background(), persistence, security, internal.RealClock{}, zap.NewNop(),
 	); err == nil {
 		t.Fatal("runtime composition accepted an incomplete provider-Cookie schema")
 	}
@@ -163,14 +110,25 @@ func TestNewApplicationCodexRuntimeFailsClosedOnRepositoryComposition(t *testing
 func TestCodexRuntimeObserversEmitStructuredMilestones(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	log := zap.New(core)
-	continuityLogObserver(log).ObserveContinuity(codexcontinuity.Event{
+	continuityLogObserver(log).ObserveContinuity(continuity.Event{
 		Action: "claim", Outcome: "committed", OperationID: "operation-1",
 	})
-	providerCookieLogTrace(log).RecordProviderCookieTrace(providercookie.TraceEvent{
+	providerCookieLogTrace(log).RecordProviderCookieTrace(cookie.TraceEvent{
 		Milestone: "merge", Decision: "accepted", OperationID: "operation-2",
 	})
 	entries := observed.All()
 	if len(entries) != 2 || entries[0].Message != "codex.continuity_decision" || entries[1].Message != "codex.provider_cookie_decision" {
 		t.Fatalf("observer entries = %+v", entries)
 	}
+}
+
+func testApplicationCodexSecurity(t *testing.T, randomByte byte) *applicationCodexSecurity {
+	t.Helper()
+	keyring, err := codexkeyring.Parse(
+		[]byte(applicationKeyringDocument()), bytes.NewReader(bytes.Repeat([]byte{randomByte}, 256)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &applicationCodexSecurity{keyring: keyring}
 }

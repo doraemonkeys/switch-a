@@ -20,13 +20,20 @@ const (
 	webSocketGatewayErrorType      = "gateway_error"
 )
 
+func proxyCodexDialOptions() *websocket.DialOptions {
+	return &websocket.DialOptions{HTTPHeader: http.Header{
+		"Authorization": {proxyCodexTestAuthorization},
+	}}
+}
+
 type WebSocketForwarderConfig = websocketproxy.WebSocketForwarderConfig
 
 func NewWebSocketForwarder(cfg WebSocketForwarderConfig) *websocketproxy.WebSocketForwarder {
 	return websocketproxy.NewWebSocketForwarder(cfg)
 }
 
-func setWebSocketForwarderForTest(handler *Handler, forwarder *websocketproxy.WebSocketForwarder) {
+func setWebSocketForwarderForTest(t *testing.T, handler *Handler, forwarder *websocketproxy.WebSocketForwarder) {
+	t.Helper()
 	handler.webSocketGateway = websocketproxy.NewGateway(websocketproxy.Config{
 		Store:                      handler.store,
 		Selector:                   newWebSocketSelectorAdapter(handler.selector, handler.httpSelector),
@@ -36,6 +43,7 @@ func setWebSocketForwarderForTest(handler *Handler, forwarder *websocketproxy.We
 		Auth:                       handler.auth,
 		Capture:                    handler.capture,
 		Forwarder:                  forwarder,
+		Codex:                      newProxyCodexFixture(t).webSocketRuntime,
 		Logger:                     handler.logger,
 	})
 }

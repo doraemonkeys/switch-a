@@ -110,13 +110,20 @@ type Config struct {
 }
 
 // NewHandler creates a new proxy handler.
-// Panics if Store or Logger is nil, as the handler cannot function without them.
+// Panics when a mandatory dependency is nil because a partially composed
+// handler would silently change the protocol guarantees of Codex routes.
 func NewHandler(cfg Config) *Handler {
 	if cfg.Store == nil {
 		panic("proxy: Store is required but was nil")
 	}
 	if cfg.Logger == nil {
 		panic("proxy: Logger is required but was nil")
+	}
+	if cfg.CodexHTTP == nil {
+		panic("proxy: CodexHTTP is required but was nil")
+	}
+	if cfg.CodexWebSocket == nil {
+		panic("proxy: CodexWebSocket is required but was nil")
 	}
 	ruleSets := cfg.RuleSetProvider
 	if ruleSets == nil {
@@ -145,10 +152,6 @@ func NewHandler(cfg Config) *Handler {
 	if requestSemanticDecoder == nil {
 		requestSemanticDecoder = requestbody.NewDecoder()
 	}
-	codexHTTP := cfg.CodexHTTP
-	if codexHTTP == nil {
-		codexHTTP = codexhttp.New(codexhttp.Config{})
-	}
 	visibleContinuitySeedStore := cfg.VisibleContinuitySeedStore
 	if visibleContinuitySeedStore == nil {
 		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
@@ -173,7 +176,8 @@ func NewHandler(cfg Config) *Handler {
 		ruleStats:                  cfg.RuleStatistics,
 		backoff:                    backoff,
 		requestSemanticDecoder:     requestSemanticDecoder,
-		codexHTTP:                  codexHTTP,
+		requestLogInsertTimeout:    logInsertTimeout,
+		codexHTTP:                  cfg.CodexHTTP,
 	}
 	handler.webSocketGateway = websocketproxy.NewGateway(websocketproxy.Config{
 		Store: cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,

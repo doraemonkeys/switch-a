@@ -107,7 +107,7 @@ func TestDecideClientIdentityHeaders(t *testing.T) {
 
 func TestDecideClientIdentityProjection(t *testing.T) {
 	t.Run("matching carriers share one lookup", func(t *testing.T) {
-		message := InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(
+		message := InspectClientFrame([]byte(
 			`{"type":"response.create","client_metadata":{"session_id":"same"}}`,
 		))
 		lookups := 0
@@ -151,7 +151,7 @@ func TestDecideClientIdentityProjection(t *testing.T) {
 			lookups := 0
 			result := DecideClient(ClientInput{
 				Headers: test.headers,
-				Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(test.body)),
+				Message: InspectClientFrame([]byte(test.body)),
 				Owners: func(BindingCandidate) OwnerStatus {
 					lookups++
 					return OwnerCurrent
@@ -166,7 +166,7 @@ func TestDecideClientIdentityProjection(t *testing.T) {
 
 	t.Run("body-only unknown identity claims", func(t *testing.T) {
 		result := DecideClient(ClientInput{
-			Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(
+			Message: InspectClientFrame([]byte(
 				`{"type":"response.create","client_metadata":{"x-codex-window-id":"window"}}`,
 			)),
 			Owners: fixedLookup(OwnerUnknown),
@@ -178,7 +178,7 @@ func TestDecideClientIdentityProjection(t *testing.T) {
 	})
 
 	t.Run("body projection cannot be dropped on owner conflict", func(t *testing.T) {
-		message := InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(
+		message := InspectClientFrame([]byte(
 			`{"type":"response.create","client_metadata":{"thread_id":"thread"}}`,
 		))
 		for _, headers := range []http.Header{nil, {"Thread-Id": {"thread"}}} {
@@ -245,7 +245,7 @@ func TestDecideClientContinuityFields(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var message MessageView
 			if test.body != "" {
-				message = InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(test.body))
+				message = InspectClientFrame([]byte(test.body))
 			}
 			result := DecideClient(ClientInput{Headers: test.headers, Message: message, Owners: fixedLookup(test.owner)})
 			decision := requireOnlyDecision(t, result)
@@ -259,7 +259,7 @@ func TestDecideClientContinuityFields(t *testing.T) {
 		lookups := 0
 		result := DecideClient(ClientInput{
 			Headers: http.Header{"X-Codex-Turn-Metadata": {"opaque"}},
-			Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(
+			Message: InspectClientFrame([]byte(
 				`{"type":"response.create","client_metadata":{"x-codex-turn-metadata":"opaque"}}`,
 			)),
 			Owners: func(BindingCandidate) OwnerStatus { lookups++; return OwnerUnknown },
@@ -273,7 +273,7 @@ func TestDecideClientContinuityFields(t *testing.T) {
 	t.Run("metadata carrier mismatch rejects", func(t *testing.T) {
 		result := DecideClient(ClientInput{
 			Headers: http.Header{"X-Codex-Turn-Metadata": {"header"}},
-			Message: InspectClientFrame(FixtureCodexDesktop0150Alpha8, []byte(
+			Message: InspectClientFrame([]byte(
 				`{"type":"response.create","client_metadata":{"x-codex-turn-metadata":"projection"}}`,
 			)),
 			Owners: fixedLookup(OwnerCurrent),

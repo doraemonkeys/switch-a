@@ -53,6 +53,7 @@ type Handler struct {
 	ruleStats                  RuleStatistics
 	backoff                    BackoffWaiter
 	requestSemanticDecoder     RequestSemanticDecoder
+	requestLogInsertTimeout    time.Duration
 	codexHTTP                  *codexhttp.Runtime
 }
 
@@ -72,7 +73,11 @@ type Selector interface {
 
 // HTTPTransport is the forwarding surface consumed by one gateway request.
 type HTTPTransport interface {
-	FetchUpstream(context.Context, *http.Request) (*upstreamtransport.Response, error)
+	FetchUpstream(
+		context.Context,
+		*http.Request,
+		upstreamtransport.ExecutionPolicy,
+	) (*upstreamtransport.Response, error)
 }
 
 type ResponseAnalyzer interface {

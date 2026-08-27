@@ -338,22 +338,9 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 		requestcapture.MessageLineage{},
 		requestcapture.MessageLineage{},
 	)
-	disablePreVisibleReplayBufferIfNeeded(options)
-	bufferedMessageIndex := invalidWebSocketReplayMessageIndex
-	if options.PreVisibleReplayBuffer != nil {
-		bufferedMessageIndex = options.PreVisibleReplayBuffer.RecordWithLineage(
-			messageType,
-			data,
-			false,
-			captured.Lineage,
-		)
-	}
-	if observeClient != nil {
-		observeClient(messageType, data)
-	}
-	var boundaryConfirmed func() error
+	decision := replayableClientFrameDecision()
 	if options.PreWriteToUpstream != nil {
-		decision := options.PreWriteToUpstream(webSocketPreWriteContext{
+		decision = options.PreWriteToUpstream(webSocketPreWriteContext{
 			MessageType: messageType, Data: data,
 			ClientAccepted: lifecycle.Snapshot().ClientAccepted,
 			ClientVisible:  lifecycle.Snapshot().ClientVisible,
@@ -370,12 +357,26 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 			)
 			return progress
 		}
-		boundaryConfirmed = decision.OnWriteConfirmed
+	}
+	disablePreVisibleReplayBufferIfNeeded(options)
+	bufferedMessageIndex := invalidWebSocketReplayMessageIndex
+	if options.PreVisibleReplayBuffer != nil && decision.ReplayEligible {
+		bufferedMessageIndex = options.PreVisibleReplayBuffer.RecordDecision(
+			messageType,
+			data,
+			false,
+			captured.Lineage,
+			decision,
+		)
+	}
+	if observeClient != nil {
+		observeClient(messageType, data)
 	}
 	if err := upstreamConn.Write(ctx, messageType, data); err != nil {
-		captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionWriteFailed, false, err)
+		writeErr := clientFrameWriteError(decision, err)
+		captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionWriteFailed, false, writeErr)
 		progress.Result = newSinglePeerRelaySessionResultForOperation(
-			err,
+			writeErr,
 			webSocketPeerUpstream,
 			webSocketRelayFailureOperationWrite,
 			fallbackCommit,
@@ -386,8 +387,11 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 		return progress
 	}
 	progress.BytesClientToUpstream = int64(len(data))
-	if boundaryConfirmed != nil {
-		if err := boundaryConfirmed(); err != nil {
+	if !decision.ReplacementEligible && options.PreVisibleReplayBuffer != nil {
+		options.PreVisibleReplayBuffer.Disable()
+	}
+	if decision.OnWriteConfirmed != nil {
+		if err := decision.OnWriteConfirmed(); err != nil {
 			captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionStorageRejected, true, err)
 			progress.Result = newSinglePeerRelaySessionResultForOperation(
 				err, webSocketPeerUnknown, webSocketRelayFailureOperationUnknown,

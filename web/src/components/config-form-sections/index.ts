@@ -6,6 +6,5 @@ export { TimeoutSettingsSection } from "./TimeoutSettingsSection";
 export { RequestLimitsSection } from "./RequestLimitsSection";
 export { StickySessionSection } from "./StickySessionSection";
 export { CircuitBreakerSection } from "./CircuitBreakerSection";
-export { CodexFeaturesSection } from "./CodexFeaturesSection";
 export { OtherSettingsSection } from "./OtherSettingsSection";
 export { ConfigFormActions } from "./ConfigFormActions";

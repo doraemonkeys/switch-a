@@ -125,7 +125,7 @@ func TestHandlerRegisterActiveRequestTracksSelectedProvider(t *testing.T) {
 	provider := &model.Provider{ID: "provider-1"}
 
 	t.Run("missing registry skips registration", func(t *testing.T) {
-		handler := NewHandler(Config{
+		handler := newProxyCodexTestHandler(t, Config{
 			Store:  newMockStore(),
 			Logger: zap.NewNop(),
 		})
@@ -143,7 +143,7 @@ func TestHandlerRegisterActiveRequestTracksSelectedProvider(t *testing.T) {
 
 	t.Run("active registry stores the selected provider snapshot", func(t *testing.T) {
 		registry := NewActiveRequestRegistry()
-		handler := NewHandler(Config{
+		handler := newProxyCodexTestHandler(t, Config{
 			Store:          newMockStore(),
 			ActiveRegistry: registry,
 			Logger:         zap.NewNop(),
@@ -179,7 +179,7 @@ func TestHandlerRegisterActiveRequestTracksSelectedProvider(t *testing.T) {
 }
 
 func TestHandlerHandleExhaustedRetriesWritesExpectedGatewayResponses(t *testing.T) {
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  newMockStore(),
 		Logger: zap.NewNop(),
 	})
@@ -237,7 +237,7 @@ func TestHandlerSuspendProviderUntilEvictsContinuityOnlyAfterSuccessfulSuspensio
 	t.Run("successful suspension evicts continuity", func(t *testing.T) {
 		health := newMockHealthManager()
 		selector := &mockSelector{}
-		handler := NewHandler(Config{
+		handler := newProxyCodexTestHandler(t, Config{
 			Store:    newMockStore(),
 			Health:   health,
 			Selector: selector,
@@ -261,7 +261,7 @@ func TestHandlerSuspendProviderUntilEvictsContinuityOnlyAfterSuccessfulSuspensio
 	t.Run("failed suspension skips selector eviction", func(t *testing.T) {
 		health := &failingSuspendHealthManager{err: errors.New("health store unavailable")}
 		selector := &mockSelector{}
-		handler := NewHandler(Config{
+		handler := newProxyCodexTestHandler(t, Config{
 			Store:    newMockStore(),
 			Health:   health,
 			Selector: selector,
@@ -280,7 +280,7 @@ func TestHandlerSuspendProviderUntilEvictsContinuityOnlyAfterSuccessfulSuspensio
 
 	t.Run("missing health manager becomes a no-op", func(t *testing.T) {
 		selector := &mockSelector{}
-		handler := NewHandler(Config{
+		handler := newProxyCodexTestHandler(t, Config{
 			Store:    newMockStore(),
 			Selector: selector,
 			Logger:   zap.NewNop(),

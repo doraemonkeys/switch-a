@@ -40,22 +40,6 @@ func (c *fakeClock) Advance(duration time.Duration) {
 	c.mu.Unlock()
 }
 
-type fixedGenerationIDs struct {
-	mu  sync.Mutex
-	ids []string
-}
-
-func (s *fixedGenerationIDs) NewGenerationID() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.ids) == 0 {
-		return "generation-fallback"
-	}
-	result := s.ids[0]
-	s.ids = s.ids[1:]
-	return result
-}
-
 type testFixture struct {
 	service  *codexcontinuity.Service
 	repo     *continuitysqlite.Repository
@@ -496,82 +480,6 @@ func TestRestartAndHMACRotationUseLegacyCandidates(t *testing.T) {
 	}
 }
 
-func TestResponseInjectRequiresDurableOwnerAndActiveGeneration(t *testing.T) {
-	fixture := newFixtureWithIDs(
-		t,
-		keyringDocument("h1", map[string]byte{"h1": 1}),
-		policyWith(20, time.Hour),
-		&fixedGenerationIDs{ids: []string{"generation-a", "generation-b", "generation-c", "generation-c"}},
-	)
-	defer fixture.close()
-	ctx := context.Background()
-	clients := clientScopes(t, fixture.digester, "client")
-	scope := protocolScope(t, "vendor", "https://api.example.com", "account", "codex")
-	otherScope := protocolScope(t, "vendor", "https://other.example.com", "account", "codex")
-	responseEvidence := evidence(codexcontinuity.KindResponseReference, "response-active")
-	lease := requirePrepare(t, fixture.service, codexcontinuity.ClaimRequest{
-		Evidence:    responseEvidence,
-		Scope:       scopeFor(clients, scope, "route"),
-		OperationID: "response-active",
-	})
-	generationA, err := fixture.service.OpenConnection("session-a", scope)
-	if err != nil {
-		t.Fatalf("open generation A: %v", err)
-	}
-	generationB, err := fixture.service.OpenConnection("session-b", scope)
-	if err != nil {
-		t.Fatalf("open generation B: %v", err)
-	}
-	if err := fixture.service.ActivateResponse(generationA, lease); err != nil {
-		t.Fatalf("activate response: %v", err)
-	}
-	request := codexcontinuity.ValidateRequest{
-		Evidence:              responseEvidence,
-		ClientScopeCandidates: clients,
-		ProtocolScope:         scope,
-		OperationID:           "inject",
-	}
-	if _, err := fixture.service.ValidateInject(ctx, request, generationA); err != nil {
-		t.Fatalf("validate active inject: %v", err)
-	}
-	_, err = fixture.service.ValidateInject(ctx, request, generationB)
-	assertKind(t, err, codexcontinuity.ErrorInactiveGeneration)
-	if err := fixture.service.DeactivateResponse(generationA, lease.Binding()); err != nil {
-		t.Fatalf("deactivate response: %v", err)
-	}
-	_, err = fixture.service.ValidateInject(ctx, request, generationA)
-	assertKind(t, err, codexcontinuity.ErrorInactiveGeneration)
-	if err := fixture.service.ActivateResponse(generationA, lease); err != nil {
-		t.Fatalf("reactivate response: %v", err)
-	}
-	fixture.service.CloseConnection(generationA)
-	_, err = fixture.service.ValidateInject(ctx, request, generationA)
-	assertKind(t, err, codexcontinuity.ErrorInactiveGeneration)
-	if _, err := fixture.service.Validate(ctx, request); err != nil {
-		t.Fatalf("previous_response_id must remain durable after disconnect: %v", err)
-	}
-
-	generationC, err := fixture.service.OpenConnection("session-c", otherScope)
-	if err != nil {
-		t.Fatalf("open generation C: %v", err)
-	}
-	assertKind(t, fixture.service.ActivateResponse(generationC, lease), codexcontinuity.ErrorConflict)
-	_, err = fixture.service.OpenConnection("session-duplicate", otherScope)
-	assertKind(t, err, codexcontinuity.ErrorUnavailable)
-	fixture.service.CloseConnection(generationB)
-	assertKind(t, fixture.service.DeactivateResponse(generationB, lease.Binding()), codexcontinuity.ErrorInactiveGeneration)
-
-	turnState := requirePrepare(t, fixture.service, codexcontinuity.ClaimRequest{
-		Evidence:    evidence(codexcontinuity.KindTurnState, "not-response"),
-		Scope:       scopeFor(clients, scope, "route"),
-		OperationID: "not-response",
-	})
-	assertKind(t, fixture.service.ActivateResponse(generationC, turnState), codexcontinuity.ErrorInvalidInput)
-	request.Evidence = evidence(codexcontinuity.KindTurnState, "not-response")
-	_, err = fixture.service.ValidateInject(ctx, request, generationC)
-	assertKind(t, err, codexcontinuity.ErrorInvalidInput)
-}
-
 func TestUnavailableStoreAndSecretFreeObservability(t *testing.T) {
 	var events []codexcontinuity.Event
 	fixture := newFixtureConfigured(
@@ -579,7 +487,6 @@ func TestUnavailableStoreAndSecretFreeObservability(t *testing.T) {
 		filepath.Join(t.TempDir(), "closed.db"),
 		keyringDocument("h1", map[string]byte{"h1": 1}),
 		policyWith(10, time.Hour),
-		nil,
 		codexcontinuity.ObserverFunc(func(event codexcontinuity.Event) { events = append(events, event) }),
 		true,
 	)
@@ -633,16 +540,6 @@ func newFixture(t *testing.T, document []byte, policy codexcontinuity.Policy) te
 	return newFixtureAt(t, filepath.Join(t.TempDir(), "continuity.db"), document, policy, true)
 }
 
-func newFixtureWithIDs(
-	t *testing.T,
-	document []byte,
-	policy codexcontinuity.Policy,
-	ids codexcontinuity.GenerationIDSource,
-) testFixture {
-	t.Helper()
-	return newFixtureConfigured(t, filepath.Join(t.TempDir(), "continuity.db"), document, policy, ids, nil, true)
-}
-
 func newFixtureAt(
 	t *testing.T,
 	databasePath string,
@@ -651,7 +548,7 @@ func newFixtureAt(
 	migrate bool,
 ) testFixture {
 	t.Helper()
-	return newFixtureConfigured(t, databasePath, document, policy, nil, nil, migrate)
+	return newFixtureConfigured(t, databasePath, document, policy, nil, migrate)
 }
 
 func newFixtureConfigured(
@@ -659,7 +556,6 @@ func newFixtureConfigured(
 	databasePath string,
 	document []byte,
 	policy codexcontinuity.Policy,
-	ids codexcontinuity.GenerationIDSource,
 	observer codexcontinuity.Observer,
 	migrate bool,
 ) testFixture {
@@ -695,7 +591,7 @@ func newFixtureConfigured(
 	}
 	clock := &fakeClock{now: testNow}
 	service, err := codexcontinuity.NewService(codexcontinuity.Config{
-		Store: repo, Digester: digester, Policy: policy, Clock: clock, Observer: observer, GenerationIDs: ids,
+		Store: repo, Digester: digester, Policy: policy, Clock: clock, Observer: observer,
 	})
 	if err != nil {
 		t.Fatal(err)

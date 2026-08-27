@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
@@ -31,8 +32,17 @@ type SQLiteStore struct {
 	clock               internal.Clock
 	credentialMutations *credentialsession.MutationCoordinator
 	credentialSessions  *credentialsession.Repository
-	credentialSigner    StaticCredentialSubjectSigner
+	credentialSigning   *credentialSubjectSigningState
 	ruleRepository      *errorrulesqlite.Repository
+}
+
+// credentialSubjectSigningState makes signer installation and static
+// credential mutations one ordering boundary. Bootstrap takes the write lock,
+// so a subject cannot be persisted as pending between finalization and signer
+// publication.
+type credentialSubjectSigningState struct {
+	mu     sync.RWMutex
+	signer StaticCredentialSubjectSigner
 }
 
 // RequestLogTimestampMigrationObserver keeps storage independent of a logging
@@ -47,15 +57,7 @@ func NewSQLiteStore(
 	dbPath string,
 	clock internal.Clock,
 	observeTimestampMigration RequestLogTimestampMigrationObserver,
-	signers ...StaticCredentialSubjectSigner,
 ) (*SQLiteStore, error) {
-	var signer StaticCredentialSubjectSigner
-	if len(signers) > 1 {
-		return nil, fmt.Errorf("initialize SQLite store: at most one credential subject signer is allowed")
-	}
-	if len(signers) == 1 {
-		signer = signers[0]
-	}
 	// foreign_keys is connection-local in SQLite. Encoding it in the DSN is the
 	// only way to preserve the invariant when database/sql replaces a pooled
 	// connection after startup.
@@ -105,7 +107,7 @@ func NewSQLiteStore(
 	if err := storemigration.MigrateProviderUsageLimitPolicyStorage(db); err != nil { // coverage-ignore -- one-time migration
 		return nil, fmt.Errorf("migrate provider usage-limit policy storage: %w", err)
 	}
-	if err := migrateCredentialSessions(db, clock, signer); err != nil {
+	if err := migrateCredentialSessions(db, clock); err != nil {
 		return nil, fmt.Errorf("migrate credential sessions: %w", err)
 	}
 	if err := continuitysqlite.Migrate(context.Background(), db); err != nil {
@@ -180,7 +182,7 @@ func NewSQLiteStore(
 		clock:               clock,
 		credentialMutations: credentialsession.NewMutationCoordinator(),
 		credentialSessions:  credentialSessions,
-		credentialSigner:    signer,
+		credentialSigning:   &credentialSubjectSigningState{},
 		ruleRepository:      ruleRepository,
 	}
 	initialized = true
@@ -221,14 +223,22 @@ func (s *SQLiteStore) Close() error {
 
 // InitDefaultConfig initializes default runtime configuration values.
 func (s *SQLiteStore) InitDefaultConfig(ctx context.Context) error {
-	for key, value := range GetDefaultConfigs() {
-		err := s.db.WithContext(ctx).Exec(
-			"INSERT OR IGNORE INTO runtime_configs (key, value, updated_at) VALUES (?, ?, ?)",
-			key, value, s.clock.Now(),
-		).Error
-		if err != nil { // coverage-ignore -- INSERT OR IGNORE rarely fails on valid schema
-			return fmt.Errorf("init default config %q: %w", key, err)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Rollout switches described deployment mechanics rather than durable user
+		// intent, so initialization removes the rows instead of preserving hidden
+		// values that could influence a future runtime.
+		if err := deleteLegacyCodexRolloutConfig(tx); err != nil {
+			return err
 		}
-	}
-	return nil
+		for key, value := range GetDefaultConfigs() {
+			err := tx.Exec(
+				"INSERT OR IGNORE INTO runtime_configs (key, value, updated_at) VALUES (?, ?, ?)",
+				key, value, s.clock.Now(),
+			).Error
+			if err != nil { // coverage-ignore -- INSERT OR IGNORE rarely fails on valid schema
+				return fmt.Errorf("init default config %q: %w", key, err)
+			}
+		}
+		return nil
+	})
 }

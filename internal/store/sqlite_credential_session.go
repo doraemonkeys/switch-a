@@ -6,11 +6,12 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
-	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
 )
 
 func (s *SQLiteStore) CreateCredentialSession(ctx context.Context, session *credentialsession.Session) (*credentialsession.Session, error) {
-	if err := s.resolveStaticCredentialSubject(session); err != nil {
+	s.credentialSigning.mu.RLock()
+	defer s.credentialSigning.mu.RUnlock()
+	if err := resolveStaticCredentialSubject(session, s.credentialSigning.signer); err != nil {
 		return nil, fmt.Errorf("create credential session: %w", err)
 	}
 	created, err := s.credentialSessions.Create(ctx, session)
@@ -46,6 +47,8 @@ func (s *SQLiteStore) DeleteCredentialSession(ctx context.Context, sessionID str
 		return err
 	}
 	defer release()
+	s.credentialSigning.mu.RLock()
+	defer s.credentialSigning.mu.RUnlock()
 	return s.credentialSessions.DeleteIfUnreferenced(ownedCtx, sessionID)
 }
 
@@ -67,6 +70,8 @@ func (s *SQLiteStore) UpdateCredentialSessionCAS(
 	if !s.credentialMutations.Owns(ctx, sessionID) {
 		return 0, fmt.Errorf("update credential session %q: mutation lease is required", sessionID)
 	}
+	s.credentialSigning.mu.RLock()
+	defer s.credentialSigning.mu.RUnlock()
 	current, err := s.credentialSessions.Get(ctx, sessionID)
 	if err != nil {
 		return 0, err
@@ -77,7 +82,7 @@ func (s *SQLiteStore) UpdateCredentialSessionCAS(
 		} else {
 			candidate := current.Clone()
 			candidate.SecretData = secretData
-			if err := s.resolveStaticCredentialSubject(candidate); err != nil {
+			if err := resolveStaticCredentialSubject(candidate, s.credentialSigning.signer); err != nil {
 				return 0, err
 			}
 			subject = candidate.Subject()
@@ -86,22 +91,14 @@ func (s *SQLiteStore) UpdateCredentialSessionCAS(
 	return s.credentialSessions.UpdateCredentialCAS(ctx, sessionID, expectedVersion, secretData, subject, authState)
 }
 
-func (s *SQLiteStore) resolveStaticCredentialSubject(session *credentialsession.Session) error {
+func resolveStaticCredentialSubject(session *credentialsession.Session, signer StaticCredentialSubjectSigner) error {
 	if session == nil || session.Kind != credentialsession.KindAPIKey {
 		return nil
 	}
-	if s.credentialSigner == nil {
+	if signer == nil {
 		return session.SetSubject(credentialsession.PendingSubject())
 	}
-	input, err := credentialsession.StaticSubjectInput(session.Vendor, session.Kind, session.SecretData)
-	if err != nil {
-		return err
-	}
-	digest, err := s.credentialSigner.Sign(codexkeyring.HMACCredentialSubject, input)
-	if err != nil {
-		return fmt.Errorf("sign static credential subject: %w", err)
-	}
-	subject, err := credentialsession.KeyedDigestSubject(digest.Version, digest.Sum[:])
+	subject, err := staticSubject(session.Vendor, session.SecretData, signer)
 	if err != nil {
 		return err
 	}
@@ -116,42 +113,14 @@ func (s *SQLiteStore) UpdateCredentialSessionAuthState(
 	if !s.credentialMutations.Owns(ctx, sessionID) {
 		return fmt.Errorf("update credential session auth state %q: mutation lease is required", sessionID)
 	}
+	s.credentialSigning.mu.RLock()
+	defer s.credentialSigning.mu.RUnlock()
 	current, err := s.credentialSessions.Get(ctx, sessionID)
 	if err != nil {
 		return err
 	}
 	_, err = s.credentialSessions.UpdateAuthStateCAS(ctx, sessionID, current.Version, authState)
 	return err
-}
-
-func (s *SQLiteStore) RequiredCredentialSubjectKeyVersions(ctx context.Context) ([]string, error) {
-	var versions []string
-	err := s.db.WithContext(ctx).Table("credential_sessions").
-		Distinct("subject_key_version").
-		Where("subject_kind = ? AND subject_key_version <> ''", credentialsession.SubjectKeyedDigest).
-		Order("subject_key_version ASC").
-		Pluck("subject_key_version", &versions).Error
-	if err != nil {
-		return nil, fmt.Errorf("list credential subject key versions: %w", err)
-	}
-	return versions, nil
-}
-
-func (s *SQLiteStore) CredentialSubjectsResolved(ctx context.Context) (bool, error) {
-	var pending int64
-	err := s.db.WithContext(ctx).Table("credential_sessions AS sessions").
-		Joins("JOIN route_target_credentials AS bindings ON bindings.session_id = sessions.id").
-		Joins("JOIN providers ON providers.id = bindings.route_target_id").
-		Where("providers.enabled = ?", true).
-		Where("sessions.subject_kind = ?", credentialsession.SubjectPending).
-		Where("NOT (sessions.kind = ? AND sessions.auth_status = ?)",
-			credentialsession.KindChatGPT, credentialsession.AuthStatusReauthRequired).
-		Distinct("sessions.id").
-		Count(&pending).Error
-	if err != nil {
-		return false, fmt.Errorf("count unresolved subjects on enabled credential routes: %w", err)
-	}
-	return pending == 0, nil
 }
 
 // CredentialSessionHasEnabledRoute reports whether exporting or refreshing a

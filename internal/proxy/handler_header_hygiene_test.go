@@ -9,8 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/doraemonkeys/switch-a/internal/codex/http"
-	"github.com/doraemonkeys/switch-a/internal/codex/startup"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 
@@ -37,8 +36,8 @@ func TestHandlerHTTPAttemptsStartFromCleanHeadersOnCredentialRefresh(t *testing.
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 	auth := &headerHygieneRefreshAuthenticator{}
-	handler := NewHandler(Config{
-		Store: store, Auth: auth, CodexHTTP: headerHygieneCodexRuntime(true), Logger: zap.NewNop(),
+	handler := newProxyCodexTestHandler(t, Config{
+		Store: store, Auth: auth, CodexHTTP: newProxyCodexFixture(t).runtime, Logger: zap.NewNop(),
 	})
 
 	request := dirtyHeaderHygieneRequest()
@@ -81,10 +80,11 @@ func TestHandlerHTTPAttemptsStartFromCleanHeadersOnSameProviderRetry(t *testing.
 			return &selectResult{Provider: &provider}, nil
 		},
 	}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:     store,
 		Selector:  selector,
-		CodexHTTP: headerHygieneCodexRuntime(true),
+		Auth:      providerauth.NewService(providerauth.Config{}),
+		CodexHTTP: newProxyCodexFixture(t).runtime,
 		Logger:    zap.NewNop(),
 	})
 
@@ -134,10 +134,11 @@ func TestHandlerHTTPAttemptsStartFromCleanHeadersOnProviderSwitch(t *testing.T) 
 			return &fallback, nil
 		},
 	}
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:     store,
 		Selector:  selector,
-		CodexHTTP: headerHygieneCodexRuntime(true),
+		Auth:      providerauth.NewService(providerauth.Config{}),
+		CodexHTTP: newProxyCodexFixture(t).runtime,
 		Logger:    zap.NewNop(),
 	})
 
@@ -155,19 +156,17 @@ func TestHandlerHTTPAttemptsStartFromCleanHeadersOnProviderSwitch(t *testing.T) 
 	assertAttemptHeaders(t, <-fallbackHeaders, "", "fallback-key", "")
 }
 
-func TestHandlerHeaderHygieneRolloutIsCodexScoped(t *testing.T) {
+func TestHandlerHeaderHygieneIsAlwaysOnAndCodexScoped(t *testing.T) {
 	tests := []struct {
 		name        string
 		apiType     string
-		hygiene     bool
 		requestURL  string
 		body        string
 		wantAPIKey  string
 		wantAccount string
 	}{
-		{name: "Codex enabled", apiType: APITypeCodex, hygiene: true, requestURL: "/codex/v1/responses", body: `{"model":"gpt-5"}`},
-		{name: "Codex disabled", apiType: APITypeCodex, requestURL: "/codex/v1/responses", body: `{"model":"gpt-5"}`, wantAPIKey: "client-key", wantAccount: "client-account"},
-		{name: "non-Codex enabled", apiType: "claude", hygiene: true, requestURL: "/v1/messages", body: `{"model":"claude-3"}`, wantAPIKey: "client-key", wantAccount: "client-account"},
+		{name: "Codex sanitized", apiType: APITypeCodex, requestURL: "/codex/v1/responses", body: `{"model":"gpt-5"}`},
+		{name: "non-Codex preserved", apiType: "claude", requestURL: "/v1/messages", body: `{"model":"claude-3"}`, wantAPIKey: "client-key", wantAccount: "client-account"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -181,9 +180,9 @@ func TestHandlerHeaderHygieneRolloutIsCodexScoped(t *testing.T) {
 			provider := headerHygieneTestProviderForAPI("provider", upstream.URL, test.apiType, AuthModeBearer, "provider-key", 0)
 			store := newMockStore()
 			store.providers = []model.Provider{provider}
-			handler := NewHandler(Config{
+			handler := newProxyCodexTestHandler(t, Config{
 				Store: store, Auth: providerauth.NewService(providerauth.Config{}),
-				CodexHTTP: headerHygieneCodexRuntime(test.hygiene), Logger: zap.NewNop(),
+				CodexHTTP: newProxyCodexFixture(t).runtime, Logger: zap.NewNop(),
 			})
 			request := dirtyHeaderHygieneRequestFor(test.requestURL, test.body)
 			handler.ServeHTTP(httptest.NewRecorder(), request)
@@ -225,19 +224,13 @@ func dirtyHeaderHygieneRequestFor(requestURL, body string) *http.Request {
 	)
 	request.Header = http.Header{
 		"Content-Type":        {"application/json"},
-		"authorization":       {"Bearer client-token"},
+		"authorization":       {"Bearer client-key"},
 		"X-API-KEY":           {"client-key"},
 		"chatgpt-account-id":  {"client-account"},
 		"X-Client-Request-Id": {headerHygieneRequestID},
 		"X-Ordinary":          {"preserved"},
 	}
 	return request
-}
-
-func headerHygieneCodexRuntime(enabled bool) *codexhttp.Runtime {
-	return codexhttp.New(codexhttp.Config{Features: codexhttp.FeatureSourceFunc(func() codexstartup.Snapshot {
-		return codexstartup.Snapshot{UpstreamHeaderHygiene: enabled}
-	})})
 }
 
 func assertAttemptHeaders(t *testing.T, headers http.Header, authorization, apiKey, accountID string) {
@@ -264,21 +257,29 @@ type headerHygieneRefreshAuthenticator struct {
 func (a *headerHygieneRefreshAuthenticator) ApplyProviderCredentials(
 	_ context.Context,
 	headers http.Header,
-	_ testAuthCandidate,
+	candidate testAuthCandidate,
 	_, _ string,
 	_ *http.Request,
-	_ *testUpstreamURL,
+	finalURL *testUpstreamURL,
 ) (testAppliedIdentity, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.applyCalls++
+	subject, err := codexidentity.CredentialSubjectFromSession(candidate.Credential().Subject)
+	if err != nil {
+		return testAppliedIdentity{}, err
+	}
+	applied, err := codexidentity.AppliedIdentityFromRequest(candidate.Authority().Vendor(), finalURL, subject)
+	if err != nil {
+		return testAppliedIdentity{}, err
+	}
 	if a.refreshed {
 		headers.Set("X-Api-Key", "fresh-key")
-		return testAppliedIdentity{}, nil
+		return applied, nil
 	}
 	headers.Set("Authorization", "Bearer stale-token")
 	headers.Set("ChatGPT-Account-Id", "actual-account")
-	return testAppliedIdentity{}, nil
+	return applied, nil
 }
 
 func (a *headerHygieneRefreshAuthenticator) RefreshCredentialSession(

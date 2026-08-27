@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const serverCodexTestAuthorization = "Bearer server-test-client"
+
 func TestHandleProxy(t *testing.T) {
 	s := testServer(t)
 
@@ -52,6 +54,7 @@ func TestProxyRouteRegistration_CodexWebSearch(t *testing.T) {
 		t.Run("POST "+path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-5"}`))
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", serverCodexTestAuthorization)
 			w := httptest.NewRecorder()
 
 			s.server.Handler.ServeHTTP(w, req)
@@ -84,6 +87,7 @@ func TestProxyRouteRegistration_CodexResponsesCompact(t *testing.T) {
 		t.Run("POST "+path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-5"}`))
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", serverCodexTestAuthorization)
 			w := httptest.NewRecorder()
 
 			s.server.Handler.ServeHTTP(w, req)
@@ -133,6 +137,9 @@ func TestProxyRouteRegistration_APINamespaces(t *testing.T) {
 		t.Run(test.method+" "+test.path, func(t *testing.T) {
 			req := httptest.NewRequest(test.method, test.path, strings.NewReader(`{"model":"test"}`))
 			req.Header.Set("Content-Type", "application/json")
+			if strings.HasPrefix(test.path, "/codex/") {
+				req.Header.Set("Authorization", serverCodexTestAuthorization)
+			}
 			w := httptest.NewRecorder()
 
 			s.server.Handler.ServeHTTP(w, req)

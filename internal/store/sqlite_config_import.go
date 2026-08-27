@@ -74,7 +74,7 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 			clock:               s.clock,
 			credentialMutations: s.credentialMutations,
 			credentialSessions:  nil,
-			credentialSigner:    s.credentialSigner,
+			credentialSigning:   s.credentialSigning,
 			ruleRepository:      s.ruleRepository,
 		}
 		txStore.credentialSessions, err = s.credentialSessions.WithDB(tx)

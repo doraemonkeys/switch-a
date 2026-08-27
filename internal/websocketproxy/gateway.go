@@ -15,6 +15,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
@@ -194,6 +195,9 @@ func NewGateway(cfg Config) *Gateway {
 	if cfg.Logger == nil {
 		panic("websocketproxy: Logger is required but was nil")
 	}
+	if cfg.Codex == nil {
+		panic("websocketproxy: Codex runtime is required but was nil")
+	}
 	forwarder := cfg.Forwarder
 	if forwarder == nil {
 		forwarder = NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger})
@@ -277,11 +281,11 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		StickyMode:  cfg.StickyMode,
 	}
 	var codexOperation *codexws.Operation
-	if h.codex != nil {
+	if apiType == APITypeCodex {
 		var err error
 		codexOperation, err = h.codex.Begin(ctx, r, apiType, requestID)
 		if err != nil {
-			h.writeCodexWebSocketFailure(w, err)
+			h.writeCodexWebSocketFailureForOperation(w, requestID, err)
 			return
 		}
 		defer codexOperation.DiscardCookies()
@@ -363,26 +367,30 @@ func applyCodexWebSocketRouteConstraint(request *model.SelectRequest, operation 
 }
 
 func (h *Gateway) writeCodexWebSocketFailure(w http.ResponseWriter, err error) {
-	status := http.StatusBadRequest
-	code := ErrCodeWebSocketUpgrade
+	h.writeCodexWebSocketFailureForOperation(w, "", err)
+}
+
+func (h *Gateway) writeCodexWebSocketFailureForOperation(w http.ResponseWriter, operationID string, err error) {
+	decision := codexWebSocketRecoveryDecision(err, codexrecovery.PhaseWebSocketPreUpgrade)
 	message := "WebSocket protocol state was rejected"
-	if codexws.Classify(err) == codexws.FailureStorage {
-		status = http.StatusServiceUnavailable
-		code = ErrCodeInternalError
+	if decision.RecoveryAction() == codexrecovery.RecoveryActionRetry {
 		message = "WebSocket state service is unavailable"
 	}
 	h.logger.Warn("websocket.codex_boundary_rejected",
+		zap.String("operation_id", operationID),
+		zap.String("session_id", operationID),
 		zap.String("failure_class", string(codexws.Classify(err))),
+		zap.String("recovery_condition", string(decision.Condition())),
+		zap.String("error_code", string(decision.ErrorCode())),
+		zap.String("recovery_action", string(decision.RecoveryAction())),
+		zap.Int("http_status", decision.HTTPStatus()),
 		zap.Error(err),
 	)
-	h.writeGatewayError(w, status, code, message)
+	h.writeGatewayError(w, decision.HTTPStatus(), string(decision.ErrorCode()), message)
 }
 
 func websocketCloseStatusForCodexFailure(err error) websocket.StatusCode {
-	if codexws.Classify(err) == codexws.FailureStorage {
-		return websocket.StatusInternalError
-	}
-	return websocket.StatusPolicyViolation
+	return codexWebSocketRecoveryDecision(err, codexrecovery.PhaseWebSocketAccepted).WebSocketCloseCode()
 }
 
 func (h *Gateway) newWebSocketObserverPipeline(

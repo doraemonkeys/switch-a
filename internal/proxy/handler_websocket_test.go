@@ -38,7 +38,7 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 	}
 
 	registry := NewActiveRequestRegistry()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:          store,
 		Logger:         zap.NewNop(),
 		ActiveRegistry: registry,
@@ -52,7 +52,7 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 	defer cancel()
 
 	// Connect to the proxy as a WebSocket client via the /responses route.
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-4o-realtime", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-4o-realtime", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptReplacement(t
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -186,7 +186,7 @@ func TestHandler_ServeHTTP_WebSocket_StickySelectionAllowsPreAcceptReplacement(t
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestHandler_ServeHTTP_WebSocket_ActiveRegistryTracking(t *testing.T) {
 	}
 
 	registry := NewActiveRequestRegistry()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:          store,
 		Logger:         zap.NewNop(),
 		ActiveRegistry: registry,
@@ -270,7 +270,7 @@ func TestHandler_ServeHTTP_WebSocket_ActiveRegistryTracking(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestHandler_ServeHTTP_WebSocket_RegularHTTPNotAffected(t *testing.T) {
 		}, "", "key"),
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:  store,
 		Logger: zap.NewNop(),
 	})
@@ -348,6 +348,7 @@ func TestHandler_ServeHTTP_WebSocket_RegularHTTPNotAffected(t *testing.T) {
 	// Regular POST request — should NOT go through WebSocket path.
 	req := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader(`{"model":"gpt-4"}`))
 	req.Header.Set("Content-Type", "application/json")
+	authorizeProxyCodexTestRequest(req)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -389,7 +390,7 @@ func TestHandler_ServeHTTP_WebSocket_WithSelector(t *testing.T) {
 	}
 
 	registry := NewActiveRequestRegistry()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:          store,
 		Logger:         zap.NewNop(),
 		Selector:       mockSel,
@@ -402,7 +403,7 @@ func TestHandler_ServeHTTP_WebSocket_WithSelector(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-4o-realtime", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses?model=gpt-4o-realtime", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -503,7 +504,7 @@ func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModelDimensions(t *
 				},
 			}
 
-			handler := NewHandler(Config{
+			handler := newProxyCodexTestHandler(t, Config{
 				Store:    store,
 				Logger:   zap.NewNop(),
 				Selector: mockSel,
@@ -520,7 +521,7 @@ func TestHandler_ServeHTTP_WebSocket_StickyUpdateUsesResolvedModelDimensions(t *
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			conn, _, err := websocket.Dial(ctx, wsPath, nil)
+			conn, _, err := websocket.Dial(ctx, wsPath, proxyCodexDialOptions())
 			if err != nil {
 				t.Fatalf("dial proxy: %v", err)
 			}
@@ -649,7 +650,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeCl
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
@@ -661,7 +662,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementSwitchesProviderBeforeCl
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -816,12 +817,12 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 		},
 	}
 
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Selector: mockSel,
 		Logger:   zap.NewNop(),
 	})
-	setWebSocketForwarderForTest(handler, NewWebSocketForwarder(WebSocketForwarderConfig{
+	setWebSocketForwarderForTest(t, handler, NewWebSocketForwarder(WebSocketForwarderConfig{
 		Logger: zap.NewNop(),
 		Dialer: &mockDialer{
 			dialFunc: func(ctx context.Context, url string, opts *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
@@ -839,7 +840,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial websocket through proxy: %v", err)
 	}
@@ -945,14 +946,14 @@ func TestHandler_ServeHTTP_WebSocket_SuccessLogHasNoError(t *testing.T) {
 		}, "", "key"),
 	}
 
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -986,14 +987,14 @@ func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
 		}, "", "key"),
 	}
 
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

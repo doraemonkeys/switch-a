@@ -64,8 +64,21 @@ func TestLoad_DefaultValues(t *testing.T) {
 	if cfg.LogLevel != DefaultLogLevel {
 		t.Errorf("LogLevel = %q, want default %q", cfg.LogLevel, DefaultLogLevel)
 	}
-	if cfg.CodexKeyringFile != "" {
-		t.Errorf("CodexKeyringFile = %q, want empty when no keyring is configured", cfg.CodexKeyringFile)
+	if cfg.CodexKeyringFile != DefaultCodexKeyringFile {
+		t.Errorf("CodexKeyringFile = %q, want default %q", cfg.CodexKeyringFile, DefaultCodexKeyringFile)
+	}
+}
+
+func TestLoad_KeyringDefaultDoesNotFollowDatabaseOverride(t *testing.T) {
+	t.Setenv(EnvAdminToken, "test-token")
+	t.Setenv(EnvDBPath, filepath.Join(t.TempDir(), "custom.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.CodexKeyringFile != DefaultCodexKeyringFile {
+		t.Fatalf("CodexKeyringFile = %q, want process-relative default %q", cfg.CodexKeyringFile, DefaultCodexKeyringFile)
 	}
 }
 

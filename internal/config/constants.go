@@ -65,6 +65,7 @@ const (
 	DefaultPort                                = "28080"
 	DefaultAdminPort                           = "28081"
 	DefaultDBPath                              = "./data.db"
+	DefaultCodexKeyringFile                    = "./codex-keyring.json"
 	DefaultLogPath                             = defaults.LogPath
 	DefaultLogMaxSizeMB                        = defaults.LogMaxSizeMB
 	DefaultLogMaxKeepDays                      = defaults.LogMaxKeepDays

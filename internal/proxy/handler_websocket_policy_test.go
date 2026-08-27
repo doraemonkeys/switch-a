@@ -50,7 +50,7 @@ func TestHandler_ServeHTTP_WebSocket_PreCommitSemanticErrorSkipsStickyAndMarksFa
 		},
 	}
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -62,7 +62,7 @@ func TestHandler_ServeHTTP_WebSocket_PreCommitSemanticErrorSkipsStickyAndMarksFa
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 		},
 	}
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{
+	handler := newProxyCodexTestHandler(t, Config{
 		Store:    store,
 		Logger:   zap.NewNop(),
 		Selector: mockSel,
@@ -169,7 +169,7 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", nil)
+	conn, _, err := websocket.Dial(ctx, wsURL(proxyServer)+"/responses", proxyCodexDialOptions())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -231,11 +231,12 @@ func TestHandler_ServeHTTP_WebSocket_AcceptFailureNoMarkFailure(t *testing.T) {
 	}
 
 	healthMgr := newTrackingHealthManager()
-	handler := NewHandler(Config{Store: store, Logger: zap.NewNop(), Health: healthMgr})
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop(), Health: healthMgr})
 
 	// Send a request with WebSocket upgrade headers but via httptest.NewRecorder,
 	// which doesn't support hijacking — Accept will fail (client-side issue).
 	req := httptest.NewRequest(http.MethodGet, "/responses", nil)
+	authorizeProxyCodexTestRequest(req)
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Sec-WebSocket-Version", "13")
@@ -279,7 +280,7 @@ func TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected(t *testing.T) {
 				}, "", "key"),
 			}
 
-			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 
 			req := httptest.NewRequest(test.method, test.path, nil)
 			req.Header.Set("Upgrade", "websocket")
@@ -314,7 +315,7 @@ func TestHandler_ServeHTTP_NonUpgradeGET_Returns426(t *testing.T) {
 				}, "", "key"),
 			}
 
-			handler := NewHandler(Config{Store: store, Logger: zap.NewNop()})
+			handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
 
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			w := httptest.NewRecorder()

@@ -30,6 +30,8 @@ go.work.sum
 # Root anchoring protects default runtime state without hiding fixtures elsewhere.
 /data.db
 /data.db-*
+/codex-keyring.json
+/.codex-keyring.json.tmp-*
 /logs/
 
 # Editor/IDE

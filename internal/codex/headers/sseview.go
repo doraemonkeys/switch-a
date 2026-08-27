@@ -17,7 +17,7 @@ func (s SSEScan) ConsumedBytes() int      { return s.consumed }
 
 // ScanServerSSE observes every complete event prefix without rewriting its
 // bytes. final permits an unterminated final event only after transport EOF.
-func ScanServerSSE(version FixtureVersion, raw []byte, final bool) SSEScan {
+func ScanServerSSE(raw []byte, final bool) SSEScan {
 	var scan SSEScan
 	for scan.consumed < len(raw) {
 		end, complete := nextSSEEventEnd(raw, scan.consumed)
@@ -28,40 +28,18 @@ func ScanServerSSE(version FixtureVersion, raw []byte, final bool) SSEScan {
 			end = len(raw)
 		}
 		eventWire := raw[scan.consumed:end]
-		scan.messages = append(scan.messages, inspectServerSSEEvent(version, eventWire))
+		scan.messages = append(scan.messages, inspectServerSSEEvent(eventWire))
 		scan.consumed = end
 	}
 	return scan
 }
 
-func inspectServerSSEEvent(version FixtureVersion, wire []byte) MessageView {
+func inspectServerSSEEvent(wire []byte) MessageView {
 	semantic, hasData := serverSSEData(wire)
 	if !hasData {
 		return MessageView{present: true, wire: wire, direction: directionServer}
 	}
-	view := inspectMessage(version, wire, semantic, directionServer)
-	if view.issue != nil || view.eventType != eventResponseMetadata {
-		return view
-	}
-	root, err := decodeObject(semantic)
-	if err != nil {
-		return view
-	}
-	responseID := root.exact("response_id")
-	if responseID.duplicate {
-		view.issue = &parseIssue{reason: ReasonDuplicateSecurityKey, field: FieldResponseReference}
-		return view
-	}
-	if !responseID.present {
-		return view
-	}
-	value, valid := decodeRequiredString(responseID.raw)
-	if !valid {
-		view.issue = &parseIssue{reason: ReasonInvalidProjection, field: FieldResponseReference}
-		return view
-	}
-	view.setValue(FieldResponseReference, value)
-	return view
+	return inspectMessage(wire, semantic, directionServer, true)
 }
 
 func nextSSEEventEnd(raw []byte, start int) (int, bool) {

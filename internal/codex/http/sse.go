@@ -37,7 +37,7 @@ func (g *SSEGate) Consume(consumedBytes int) {
 }
 
 func (a *Attempt) NewSSEGate() *SSEGate {
-	if a == nil || a.operation == nil || !a.operation.features.Continuity {
+	if a == nil || a.operation == nil || a.operation.apiType != codexAPIType {
 		return nil
 	}
 	return &SSEGate{attempt: a}
@@ -49,11 +49,7 @@ func (g *SSEGate) PrepareNext(ctx context.Context, final bool) (SSEEvent, bool, 
 	if g == nil || g.attempt == nil || len(g.buffered) == 0 {
 		return SSEEvent{}, false, nil
 	}
-	scan := codexheaders.ScanServerSSE(
-		codexheaders.FixtureCodexDesktop0150Alpha8,
-		g.buffered,
-		final,
-	)
+	scan := codexheaders.ScanServerSSE(g.buffered, final)
 	messages := scan.Messages()
 	if len(messages) == 0 {
 		return SSEEvent{}, false, nil

@@ -1,5 +1,6 @@
 import { act } from "react";
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -7,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ApiClient, type Provider } from "@/api";
 import { parseAPICatalog } from "@/api/api-catalog";
 import { APICatalogContext, ApiContext } from "@/api/context";
@@ -99,6 +100,11 @@ function createFeatureApi(): ApiClient {
   return api;
 }
 
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
 function renderFeature(api: ApiClient) {
   return render(
     <ApiContext.Provider value={api}>
@@ -139,29 +145,39 @@ describe("V5C Error Detection accessibility acceptance", () => {
       { ...updatedRule, position: 1 },
       { ...initialList.rules[1], position: 2 },
     ];
+    // Explicit completion boundaries preserve one end-to-end revision chain
+    // without making Vitest worker load part of the acceptance contract.
+    const createResult =
+      deferred<RevisionedInternalErrorResource<InternalErrorRuleResponse>>();
+    const updateResult =
+      deferred<RevisionedInternalErrorResource<InternalErrorRuleResponse>>();
+    const reorderResult =
+      deferred<RevisionedInternalErrorResource<typeof initialList>>();
     const deleteResult = deferred<DeletedInternalErrorRule>();
 
-    vi.mocked(api.errorDetection.rules.create).mockResolvedValue(
-      ruleResource("8", createdRule),
+    vi.mocked(api.errorDetection.rules.create).mockReturnValue(
+      createResult.promise,
     );
-    vi.mocked(api.errorDetection.rules.update).mockResolvedValue(
-      ruleResource("9", updatedRule),
+    vi.mocked(api.errorDetection.rules.update).mockReturnValue(
+      updateResult.promise,
     );
-    vi.mocked(api.errorDetection.rules.reorder).mockResolvedValue(
-      listResource("10", reorderedRules),
+    vi.mocked(api.errorDetection.rules.reorder).mockReturnValue(
+      reorderResult.promise,
     );
     vi.mocked(api.errorDetection.rules.delete).mockReturnValue(
       deleteResult.promise,
     );
     renderFeature(api);
 
-    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add rule" }));
     const editor = screen
       .getByRole("heading", { name: "Create detection rule" })
       .closest("section");
     expect(editor).not.toBeNull();
     const editorQueries = within(editor as HTMLElement);
-    await user.type(editorQueries.getByLabelText("Rule name"), "Capacity copy");
+    fireEvent.change(editorQueries.getByLabelText("Rule name"), {
+      target: { value: "Capacity copy" },
+    });
 
     const presetButton = editorQueries.getByRole("button", {
       name: /Codex capacity/i,
@@ -174,9 +190,9 @@ describe("V5C Error Detection accessibility acceptance", () => {
     ).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(presetButton).toHaveFocus());
-    await user.click(presetButton);
-    await user.click(screen.getByRole("button", { name: "Replace draft" }));
+    expect(presetButton).toHaveFocus();
+    fireEvent.click(presetButton);
+    fireEvent.click(screen.getByRole("button", { name: "Replace draft" }));
 
     const waitEstimate = editorQueries.getByRole("region", {
       name: "Current provider wait estimate",
@@ -189,9 +205,7 @@ describe("V5C Error Detection accessibility acceptance", () => {
       "excludes connection time, upstream time to first byte",
     );
 
-    await user.click(
-      editorQueries.getByRole("button", { name: "Create rule" }),
-    );
+    fireEvent.click(editorQueries.getByRole("button", { name: "Create rule" }));
     const expectedCreateSpec = {
       name: "Capacity copy",
       enabled: true,
@@ -213,63 +227,63 @@ describe("V5C Error Detection accessibility acceptance", () => {
         },
       },
     } as const;
-    await waitFor(() =>
-      expect(api.errorDetection.rules.create).toHaveBeenCalledWith(
-        expectedCreateSpec,
-        etag("7"),
-      ),
+    expect(api.errorDetection.rules.create).toHaveBeenCalledWith(
+      expectedCreateSpec,
+      etag("7"),
     );
+    await act(async () => {
+      createResult.resolve(ruleResource("8", createdRule));
+    });
 
-    await user.click(
+    fireEvent.click(
       await screen.findByRole("button", { name: "Edit Capacity copy" }),
     );
     const nameInput = screen.getByLabelText("Rule name");
-    await user.clear(nameInput);
-    await user.type(nameInput, "Capacity copy edited");
-    await user.click(screen.getByRole("button", { name: "Save rule" }));
-    await waitFor(() =>
-      expect(api.errorDetection.rules.update).toHaveBeenCalledWith(
-        createdRule.id,
-        { ...expectedCreateSpec, name: "Capacity copy edited" },
-        etag("8"),
-      ),
+    fireEvent.change(nameInput, {
+      target: { value: "Capacity copy edited" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
+    expect(api.errorDetection.rules.update).toHaveBeenCalledWith(
+      createdRule.id,
+      { ...expectedCreateSpec, name: "Capacity copy edited" },
+      etag("8"),
     );
+    await act(async () => {
+      updateResult.resolve(ruleResource("9", updatedRule));
+    });
 
     const moveButton = await screen.findByRole("button", {
       name: "Move Capacity copy edited up",
     });
     moveButton.focus();
     await user.keyboard("{Enter}");
-    await waitFor(() =>
-      expect(api.errorDetection.rules.reorder).toHaveBeenCalledWith(
-        [initialList.rules[0].id, updatedRule.id, initialList.rules[1].id],
-        etag("9"),
-      ),
+    expect(api.errorDetection.rules.reorder).toHaveBeenCalledWith(
+      [initialList.rules[0].id, updatedRule.id, initialList.rules[1].id],
+      etag("9"),
     );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", {
-          name: "Move Capacity copy edited up",
-        }),
-      ).toHaveFocus(),
-    );
+    await act(async () => {
+      reorderResult.resolve(listResource("10", reorderedRules));
+    });
+    expect(
+      screen.getByRole("button", {
+        name: "Move Capacity copy edited up",
+      }),
+    ).toHaveFocus();
 
-    await user.click(
+    fireEvent.click(
       screen.getByRole("button", { name: "Delete Capacity copy edited" }),
     );
-    await user.click(screen.getByRole("button", { name: "Delete rule" }));
-    const deleteDialog = await screen.findByRole("alertdialog", {
+    fireEvent.click(screen.getByRole("button", { name: "Delete rule" }));
+    const deleteDialog = screen.getByRole("alertdialog", {
       name: "Delete detection rule?",
     });
-    await waitFor(() => {
-      expect(deleteDialog).toHaveAttribute("aria-busy", "true");
-      expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Add rule" })).toBeDisabled();
-      expect(
-        screen.getByRole("button", { name: "Analyze message" }),
-      ).toBeDisabled();
-    });
+    expect(deleteDialog).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add rule" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Analyze message" }),
+    ).toBeDisabled();
     expect(api.errorDetection.rules.delete).toHaveBeenCalledWith(
       updatedRule.id,
       etag("10"),

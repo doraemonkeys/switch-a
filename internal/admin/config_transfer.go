@@ -451,11 +451,11 @@ func validateImportSettings(settings map[string]string) []string {
 	for _, key := range keys {
 		value := normalized[key]
 		if !IsValidConfigKey(key) {
-			warnings = append(warnings, "Unknown config key will be skipped: "+key)
+			warnings = append(warnings, "Unknown config key: "+key)
 			continue
 		}
 		if err := ValidateConfigValue(key, value); err != nil {
-			warnings = append(warnings, "Invalid config value will be skipped for "+key+": "+err.Error())
+			warnings = append(warnings, "Invalid config value for "+key+": "+err.Error())
 		}
 	}
 
