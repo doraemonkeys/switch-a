@@ -751,7 +751,7 @@ func captureTestProviderWithIdentity(id, name, upstreamURL string) model.Provide
 		ID:   id,
 		Name: name,
 
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: id,

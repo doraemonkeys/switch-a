@@ -32,7 +32,7 @@ func TestHandlerHTTPAttemptsStartFromCleanHeadersOnCredentialRefresh(t *testing.
 	}))
 	defer upstream.Close()
 
-	provider := headerHygieneTestProvider("provider", upstream.URL, AuthModeBearer, "unused", 0)
+	provider := headerHygieneTestProvider("provider", upstream.URL, "bearer", "unused", 0)
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 	auth := &headerHygieneRefreshAuthenticator{}
@@ -72,7 +72,7 @@ func TestHandlerHTTPAttemptsStartFromCleanHeadersOnSameProviderRetry(t *testing.
 	}))
 	defer upstream.Close()
 
-	provider := headerHygieneTestProvider("provider", upstream.URL, AuthModeBearer, "provider-key", 1)
+	provider := headerHygieneTestProvider("provider", upstream.URL, "bearer", "provider-key", 1)
 	store := newMockStore()
 	store.providers = []model.Provider{provider}
 	selector := &mockSelector{
@@ -118,8 +118,8 @@ func TestHandlerHTTPAttemptsStartFromCleanHeadersOnProviderSwitch(t *testing.T) 
 	}))
 	defer fallbackServer.Close()
 
-	primary := headerHygieneTestProvider("primary", primaryServer.URL, AuthModeBearer, "primary-key", 0)
-	fallback := headerHygieneTestProvider("fallback", fallbackServer.URL, AuthModeXAPI, "fallback-key", 0)
+	primary := headerHygieneTestProvider("primary", primaryServer.URL, "bearer", "primary-key", 0)
+	fallback := headerHygieneTestProvider("fallback", fallbackServer.URL, "x-api-key", "fallback-key", 0)
 	store := newMockStore()
 	store.configs[ConfigKeyGlobalMaxAttempts] = "2"
 	store.providers = []model.Provider{primary, fallback}
@@ -177,7 +177,7 @@ func TestHandlerHeaderHygieneIsAlwaysOnAndCodexScoped(t *testing.T) {
 			}))
 			defer upstream.Close()
 
-			provider := headerHygieneTestProviderForAPI("provider", upstream.URL, test.apiType, AuthModeBearer, "provider-key", 0)
+			provider := headerHygieneTestProviderForAPI("provider", upstream.URL, test.apiType, "bearer", "provider-key", 0)
 			store := newMockStore()
 			store.providers = []model.Provider{provider}
 			handler := newProxyCodexTestHandler(t, Config{

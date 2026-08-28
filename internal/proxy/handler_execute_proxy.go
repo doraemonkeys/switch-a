@@ -206,7 +206,7 @@ func (h *Handler) refreshUnauthorizedSubexchange(
 	rules *errorrule.CompiledRuleSet,
 	pending *pendingHTTPResponse,
 ) (*pendingHTTPResponse, *forwardResult, bool) {
-	if pending.head.StatusCode != http.StatusUnauthorized || h.auth == nil {
+	if pending.head.StatusCode != http.StatusUnauthorized {
 		return pending, nil, false
 	}
 	refreshed, refreshErr := h.auth.RefreshCredentialSession(ctx, attempt.candidate.Credential())

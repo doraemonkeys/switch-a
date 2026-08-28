@@ -126,7 +126,7 @@ func TestHandlerWebSocketCaptureEndToEndLiveCloseAndExport(t *testing.T) {
 		ID:   providerID,
 		Name: "Capture Live Provider",
 
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: providerID,
@@ -270,7 +270,7 @@ func TestHandlerWebSocketCaptureEndToEndUnselectedSuppressionAndSelectedReplayLi
 		ID:   primaryID,
 		Name: "Capture Primary",
 
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: primaryID, APIType: APITypeCodex, BaseURL: primary.URL}},
 	}, "", "primary-secret")
@@ -278,7 +278,7 @@ func TestHandlerWebSocketCaptureEndToEndUnselectedSuppressionAndSelectedReplayLi
 		ID:   fallbackID,
 		Name: "Capture Fallback",
 
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{ProviderID: fallbackID, APIType: APITypeCodex, BaseURL: fallback.URL}},
 	}, "", "fallback-secret")
@@ -576,7 +576,7 @@ func TestHandlerWebSocketCaptureCredentialRefreshCreatesTwoPhysicalExchanges(t *
 		Name: "Provider",
 
 		Enabled:  true,
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "provider",
 			APIType:    APITypeCodex,
@@ -710,7 +710,7 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 		Name: "Preparation Primary",
 
 		Enabled:  true,
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: primaryID,
 			APIType:    APITypeCodex,
@@ -722,7 +722,7 @@ func TestHandlerWebSocketCapturePreparationFailureIsSanitizedTransition(t *testi
 		Name: "Preparation Fallback",
 
 		Enabled:  true,
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: fallbackID,
 			APIType:    APITypeCodex,

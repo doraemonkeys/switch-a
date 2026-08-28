@@ -13,6 +13,18 @@ import (
 	"go.uber.org/zap"
 )
 
+type authMode string
+
+const (
+	authModeAuto    = "auto"
+	authModeBearer  = "bearer"
+	authModeXAPIKey = "x-api-key"
+
+	headerAuthorization = "Authorization"
+	headerAPIKey        = "X-Api-Key"
+	bearerPrefix        = "Bearer "
+)
+
 // ApplyProviderCredentials is the final authority boundary for one physical
 // attempt. The candidate owns both the exact credential snapshot and expected
 // Authority, preventing a mutable route target from tearing selection and auth.
@@ -83,7 +95,7 @@ func (s *Service) ApplyProviderCredentials(
 			s.logAppliedIdentityMismatch(candidate, err)
 			return codexidentity.AppliedIdentity{}, err
 		}
-		headers.Set("Authorization", "Bearer "+strings.TrimSpace(credential.AccessToken))
+		headers.Set(headerAuthorization, bearerPrefix+strings.TrimSpace(credential.AccessToken))
 		headers.Set("ChatGPT-Account-Id", strings.TrimSpace(credential.AccountID))
 		// Preserve a caller-supplied Originator so Codex variants can retain their
 		// own identity; only default when the proxy is the first component to add it.
@@ -126,27 +138,30 @@ func (s *Service) logAppliedIdentityMismatch(candidate codexidentity.CandidateSn
 }
 
 func applyStaticAuthHeader(headers http.Header, apiKey, providerAuthMode, globalAuthMode string, originalReq *http.Request) {
-	mode := providerAuthMode
-	if mode == "" {
-		mode = globalAuthMode
-	}
-	if mode == authModeAuto {
-		mode = detectAuthMode(originalReq)
-	}
-
-	switch mode {
+	switch resolveAuthMode(providerAuthMode, globalAuthMode, originalReq) {
 	case authModeXAPIKey:
-		headers.Set("x-api-key", apiKey)
+		headers.Set(headerAPIKey, apiKey)
 	default:
-		headers.Set("Authorization", "Bearer "+apiKey)
+		headers.Set(headerAuthorization, bearerPrefix+apiKey)
 	}
 }
 
-func detectAuthMode(r *http.Request) string {
-	if r != nil && r.Header.Get("Authorization") != "" {
+func resolveAuthMode(providerMode, globalMode string, originalReq *http.Request) authMode {
+	mode := authMode(providerMode)
+	if mode == "" {
+		mode = authMode(globalMode)
+	}
+	if mode == authModeAuto {
+		return detectAuthMode(originalReq)
+	}
+	return mode
+}
+
+func detectAuthMode(r *http.Request) authMode {
+	if r != nil && r.Header.Get(headerAuthorization) != "" {
 		return authModeBearer
 	}
-	if r != nil && r.Header.Get("X-Api-Key") != "" {
+	if r != nil && r.Header.Get(headerAPIKey) != "" {
 		return authModeXAPIKey
 	}
 	return authModeBearer

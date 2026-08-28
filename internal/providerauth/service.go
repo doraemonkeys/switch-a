@@ -26,9 +26,6 @@ const (
 	chatGPTVendor            = "openai"
 	chatGPTAPIAudience       = "https://api.openai.com/v1"
 	codexAPIType             = "codex"
-	authModeAuto             = "auto"
-	authModeBearer           = "bearer"
-	authModeXAPIKey          = "x-api-key"
 	loopbackCallbackURLHost  = "localhost"
 	loopbackCallbackPort     = 1455
 	loopbackCallbackPath     = "/auth/callback"

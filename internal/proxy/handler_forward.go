@@ -227,21 +227,15 @@ func (h *Handler) applyForwardCredentials(
 	attempt httpAttemptContext,
 	pctx *proxyContext,
 ) (codexidentity.AppliedIdentity, error) {
-	if h.auth != nil {
-		applied, err := h.auth.ApplyProviderCredentials(
-			ctx,
-			request.Header,
-			attempt.candidate,
-			attempt.provider.AuthMode,
-			pctx.cfg.globalAuthMode,
-			pctx.r,
-			request.URL,
-		)
-		return applied, err
-	}
-	snapshot := attempt.candidate.Credential()
-	SetAuthHeader(request.Header, snapshot.SecretData, attempt.provider.AuthMode, pctx.cfg.globalAuthMode, pctx.r)
-	return codexidentity.AppliedIdentity{}, nil
+	return h.auth.ApplyProviderCredentials(
+		ctx,
+		request.Header,
+		attempt.candidate,
+		attempt.provider.AuthMode,
+		pctx.cfg.globalAuthMode,
+		pctx.r,
+		request.URL,
+	)
 }
 
 func (h *Handler) fetchPendingHTTPResponse(

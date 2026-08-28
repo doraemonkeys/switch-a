@@ -107,7 +107,7 @@ func TestPrepareWebSocketProviderAttemptUsesImmutableLeaseCredential(t *testing.
 	t.Parallel()
 
 	provider := routingTestProvider("immutable")
-	gateway := &Gateway{logger: zaptest.NewLogger(t)}
+	gateway := &Gateway{logger: zaptest.NewLogger(t), auth: providerauth.NewService(providerauth.Config{})}
 	lease := gateway.newFallbackProviderLease(&provider, APITypeCodex)
 	selected, ok := lease.CandidateSnapshot()
 	if !ok {
@@ -457,27 +457,7 @@ func TestGatewayContextAndRequestHelpers(t *testing.T) {
 	}
 }
 
-func TestGatewayAuthAndURLHelpers(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
-	if got := detectAuthMode(request); got != "bearer" {
-		t.Fatalf("default auth mode = %q", got)
-	}
-	request.Header.Set("X-Api-Key", "client-key")
-	if got := detectAuthMode(request); got != authModeXAPI {
-		t.Fatalf("x-api auth mode = %q", got)
-	}
-	destination := make(http.Header)
-	SetAuthHeader(destination, "provider-key", "", authModeAuto, request)
-	if got := destination.Get("x-api-key"); got != "provider-key" {
-		t.Fatalf("auto x-api-key = %q", got)
-	}
-	request.Header.Set("Authorization", "Bearer client")
-	destination = make(http.Header)
-	SetAuthHeader(destination, "provider-key", "", authModeAuto, request)
-	if got := destination.Get("Authorization"); got != "Bearer provider-key" {
-		t.Fatalf("auto bearer = %q", got)
-	}
-
+func TestGatewayURLHelpers(t *testing.T) {
 	gateway := newTestGateway(t, Config{Store: newMockStore(), Logger: zaptest.NewLogger(t)})
 	if got := gateway.buildFullURL("https://provider.example/base/", "/responses", "model=gpt-5"); got != "https://provider.example/base/responses?model=gpt-5" {
 		t.Fatalf("full URL = %q", got)

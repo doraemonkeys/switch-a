@@ -78,7 +78,7 @@ func newRedirectTestHandler(t *testing.T, apiType, baseURL string) *Handler {
 	store := newMockStore()
 	store.configs[ConfigKeyGlobalMaxAttempts] = "1"
 	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
-		ID: "redirect-provider", Name: "Redirect Provider", AuthMode: AuthModeBearer, Enabled: true,
+		ID: "redirect-provider", Name: "Redirect Provider", AuthMode: "bearer", Enabled: true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "redirect-provider", APIType: apiType, BaseURL: baseURL,
 		}},

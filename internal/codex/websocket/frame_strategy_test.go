@@ -75,6 +75,7 @@ func TestPassableWebSocketHandshakeHeaderProjection(t *testing.T) {
 		"X-Codex-Turn-State":     {"state"},
 		"X-Codex-Turn-Metadata":  {"metadata"},
 		"X-Oai-Attestation":      {"attestation"},
+		"session_id":             {"legacy-alias"},
 		"X-Upstream-Trace":       {"passable"},
 	}
 	projected := projectPassableHandshakeHeaders(headers)

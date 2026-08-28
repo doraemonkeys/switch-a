@@ -446,11 +446,13 @@ func passableHandshakeHeader(name string, connectionNominated map[string]struct{
 	if strings.HasPrefix(strings.ToLower(name), "sec-websocket-") {
 		return false
 	}
+	if codexheaders.IsManagedHeader(name) {
+		return false
+	}
 	switch name {
 	case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Proxy-Connection",
 		"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Cookie", "Set-Cookie",
-		"Authorization", "X-Api-Key", "X-Codex-Turn-State", "X-Codex-Turn-Metadata", "X-Oai-Attestation",
-		"Thread-Id", "Session-Id", "Conversation_id", "X-Codex-Window-Id":
+		"Authorization", "X-Api-Key":
 		return false
 	default:
 		return true

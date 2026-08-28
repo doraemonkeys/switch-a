@@ -125,6 +125,9 @@ func NewHandler(cfg Config) *Handler {
 	if cfg.CodexWebSocket == nil {
 		panic("proxy: CodexWebSocket is required but was nil")
 	}
+	if cfg.Auth == nil {
+		panic("proxy: Auth is required but was nil")
+	}
 	ruleSets := cfg.RuleSetProvider
 	if ruleSets == nil {
 		empty, err := errorrule.CompileRuleSet(0, nil)

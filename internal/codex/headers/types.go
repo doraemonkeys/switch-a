@@ -339,18 +339,53 @@ type headerSpec struct {
 	aliases []string
 }
 
-var identityHeaderSpecs = []headerSpec{
+// headerCatalog is the sole inventory of Codex semantic headers. Transport
+// integrations consume IsManagedHeader instead of maintaining parallel string
+// lists, while decision code selects the field groups relevant to each flow.
+var headerCatalog = []headerSpec{
 	{field: FieldThreadID, aliases: []string{"Thread-Id"}},
 	{field: FieldSessionID, aliases: []string{"Session-Id", "session_id"}},
 	{field: FieldConversationID, aliases: []string{"Conversation_id"}},
 	{field: FieldWindowID, aliases: []string{"X-Codex-Window-Id"}},
+	{field: FieldTurnState, aliases: []string{"X-Codex-Turn-State"}},
+	{field: FieldTurnMetadata, aliases: []string{"X-Codex-Turn-Metadata"}},
+	{field: FieldAttestation, aliases: []string{"X-Oai-Attestation"}},
 }
 
 var (
-	turnStateHeader    = headerSpec{field: FieldTurnState, aliases: []string{"X-Codex-Turn-State"}}
-	turnMetadataHeader = headerSpec{field: FieldTurnMetadata, aliases: []string{"X-Codex-Turn-Metadata"}}
-	attestationHeader  = headerSpec{field: FieldAttestation, aliases: []string{"X-Oai-Attestation"}}
+	identityHeaderSpecs = selectHeaderSpecs(FieldThreadID, FieldSessionID, FieldConversationID, FieldWindowID)
+	turnStateHeader     = requireHeaderSpec(FieldTurnState)
+	turnMetadataHeader  = requireHeaderSpec(FieldTurnMetadata)
+	attestationHeader   = requireHeaderSpec(FieldAttestation)
 )
+
+// IsManagedHeader reports whether name carries Codex semantics that must pass
+// through codexheaders policy before a transport can expose it.
+func IsManagedHeader(name string) bool {
+	for _, spec := range headerCatalog {
+		if matchesAlias(name, spec.aliases) {
+			return true
+		}
+	}
+	return false
+}
+
+func selectHeaderSpecs(fields ...Field) []headerSpec {
+	specs := make([]headerSpec, 0, len(fields))
+	for _, field := range fields {
+		specs = append(specs, requireHeaderSpec(field))
+	}
+	return specs
+}
+
+func requireHeaderSpec(field Field) headerSpec {
+	for _, spec := range headerCatalog {
+		if spec.field == field {
+			return spec
+		}
+	}
+	panic(fmt.Sprintf("codexheaders: header field %q is absent from the catalog", field))
+}
 
 type headerObservation struct {
 	present bool

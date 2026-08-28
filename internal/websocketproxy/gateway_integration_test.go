@@ -28,6 +28,19 @@ func TestNewGateway_NilCodexRuntimePanics(t *testing.T) {
 	NewGateway(Config{Store: newMockStore(), Logger: zaptest.NewLogger(t)})
 }
 
+func TestNewGateway_NilAuthPanics(t *testing.T) {
+	defer func() {
+		panicValue := recover()
+		message, ok := panicValue.(string)
+		if !ok || message != "websocketproxy: Auth is required but was nil" {
+			t.Fatalf("panic = %v, want mandatory provider auth failure", panicValue)
+		}
+	}()
+	NewGateway(Config{
+		Store: newMockStore(), Codex: testCodexRuntime(t), Logger: zaptest.NewLogger(t),
+	})
+}
+
 func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 	const (
 		providerID = "gateway-integration-provider"

@@ -470,15 +470,7 @@ func (h *Handler) buildFullURL(baseURL, path, query string) string {
 	return joined
 }
 
-// AuthMode constants define how provider credentials map onto upstream HTTP
-// request headers.
-const (
-	AuthModeAuto   = "auto"
-	AuthModeBearer = "bearer"
-	AuthModeXAPI   = "x-api-key"
-
-	headerUserAgent = "User-Agent"
-)
+const headerUserAgent = "User-Agent"
 
 // EnsureExplicitUserAgentHeader preserves the caller's omission of User-Agent.
 // Go injects its own default when the field is absent, so the proxy must carry
@@ -488,30 +480,4 @@ func EnsureExplicitUserAgentHeader(headers http.Header) {
 		return
 	}
 	headers.Set(headerUserAgent, "")
-}
-
-func DetectAuthMode(r *http.Request) string {
-	if r.Header.Get("Authorization") != "" {
-		return AuthModeBearer
-	}
-	if r.Header.Get("X-Api-Key") != "" {
-		return AuthModeXAPI
-	}
-	return AuthModeBearer
-}
-
-func SetAuthHeader(dst http.Header, apiKey, providerAuthMode, globalAuthMode string, originalReq *http.Request) {
-	mode := providerAuthMode
-	if mode == "" {
-		mode = globalAuthMode
-	}
-	if mode == AuthModeAuto {
-		mode = DetectAuthMode(originalReq)
-	}
-
-	if mode == AuthModeXAPI {
-		dst.Set("x-api-key", apiKey)
-		return
-	}
-	dst.Set("Authorization", "Bearer "+apiKey)
 }

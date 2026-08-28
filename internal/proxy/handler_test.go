@@ -239,12 +239,20 @@ func TestNewHandler_NilCodexRuntimePanics(t *testing.T) {
 			},
 			want: "CodexWebSocket is required",
 		},
+		{
+			name: "provider auth",
+			configure: func(config *Config) {
+				config.Auth = nil
+			},
+			want: "Auth is required",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			config := Config{
 				Store: newMockStore(), Logger: zap.NewNop(),
 				CodexHTTP: fixture.runtime, CodexWebSocket: fixture.webSocketRuntime,
+				Auth: newProxyTestAuthenticator(),
 			}
 			test.configure(&config)
 			defer func() {

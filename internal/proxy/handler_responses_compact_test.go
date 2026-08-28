@@ -45,7 +45,7 @@ func TestHandler_ServeHTTP_CodexResponsesCompactForwardsOpaqueContract(t *testin
 		ID:   "codex-provider",
 		Name: "Codex Provider",
 
-		AuthMode: AuthModeBearer,
+		AuthMode: "bearer",
 		Enabled:  true,
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "codex-provider",

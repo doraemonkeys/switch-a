@@ -82,7 +82,7 @@ func TestBuildWebSocketDialHeaders(t *testing.T) {
 		AuthMode:           "bearer",
 		CredentialSessions: testCredentialSessions("p1", "codex", credentialsession.KindAPIKey, "sk-provider-key"),
 	}
-	headers := buildWebSocketDialHeaders(request, provider, "codex", "auto")
+	headers := prepareTestWebSocketAttemptHeaders(t, request, provider, "codex", "auto")
 
 	if got := headers.Get("Authorization"); got != "Bearer sk-provider-key" {
 		t.Errorf("Authorization = %q, want %q", got, "Bearer sk-provider-key")
@@ -116,7 +116,7 @@ func TestBuildWebSocketDialHeaders_UsesAPITypeKeyOverride(t *testing.T) {
 		CredentialSessions: testCredentialSessions("p1", "codex", credentialsession.KindAPIKey, "codex-key"),
 	}
 
-	headers := buildWebSocketDialHeaders(request, provider, "codex", "auto")
+	headers := prepareTestWebSocketAttemptHeaders(t, request, provider, "codex", "auto")
 	if got := headers.Get("Authorization"); got != "Bearer codex-key" {
 		t.Errorf("Authorization = %q, want %q", got, "Bearer codex-key")
 	}
@@ -154,7 +154,7 @@ func TestBuildWebSocketDialHeaders_FiltersSecWebSocketHeaders(t *testing.T) {
 		AuthMode:           "bearer",
 		CredentialSessions: testCredentialSessions("p1", "codex", credentialsession.KindAPIKey, "sk-key"),
 	}
-	headers := buildWebSocketDialHeaders(r, provider, "codex", "auto")
+	headers := prepareTestWebSocketAttemptHeaders(t, r, provider, "codex", "auto")
 
 	// Business headers should pass through.
 	if got := headers.Get("OpenAI-Beta"); got != "realtime=v1" {

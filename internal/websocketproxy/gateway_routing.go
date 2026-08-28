@@ -130,17 +130,6 @@ func buildWebSocketPassthroughHeaders(r *http.Request, sanitizeProviderHeaders b
 	return upstreamheaders.ForWebSocketTransportAttempt(r.Header)
 }
 
-// buildWebSocketDialHeaders preserves static-auth behavior for tests and
-// fallback paths that do not use the managed provider auth service.
-func buildWebSocketDialHeaders(r *http.Request, provider *model.Provider, apiType, globalAuthMode string) http.Header {
-	headers := buildWebSocketPassthroughHeaders(r, true)
-	credential, ok := provider.CredentialSessionForAPIType(apiType)
-	if ok && credential.Kind == credentialsession.KindAPIKey {
-		SetAuthHeader(headers, credential.SecretData, provider.AuthMode, globalAuthMode, r)
-	}
-	return headers
-}
-
 func injectedCredentialForCapture(credential credentialsession.Snapshot, headers http.Header) string {
 	return capturebridge.InjectedCredentialFromSnapshot(credential, headers)
 }
@@ -180,24 +169,13 @@ func (h *Gateway) prepareWebSocketAttemptHeaders(
 	sanitizeProviderHeaders bool,
 ) (http.Header, codexidentity.AppliedIdentity, error) {
 	headers := buildWebSocketPassthroughHeaders(r, sanitizeProviderHeaders)
-	if h.auth != nil {
-		applied, err := h.auth.ApplyProviderCredentials(ctx, headers, candidate, provider.AuthMode, globalAuthMode, r, finalURL)
-		if err != nil {
-			// The orchestrator retains this partial request only as sanitizer input;
-			// the compatibility wrapper above still returns nil and no dial can occur.
-			return headers, codexidentity.AppliedIdentity{}, err
-		}
-		return headers, applied, nil
+	applied, err := h.auth.ApplyProviderCredentials(ctx, headers, candidate, provider.AuthMode, globalAuthMode, r, finalURL)
+	if err != nil {
+		// The orchestrator retains this partial request only as sanitizer input;
+		// no dial can occur after credential application fails.
+		return headers, codexidentity.AppliedIdentity{}, err
 	}
-
-	credential := candidate.Credential()
-	if credential.Kind != credentialsession.KindAPIKey {
-		return headers, codexidentity.AppliedIdentity{}, fmt.Errorf("provider %q requires managed credentials for websocket", provider.ID)
-	}
-	SetAuthHeader(headers, credential.SecretData, provider.AuthMode, globalAuthMode, r)
-	authority := candidate.Authority()
-	applied, err := codexidentity.NewAppliedIdentity(authority.Vendor(), authority.Origin(), authority.Subject())
-	return headers, applied, err
+	return headers, applied, nil
 }
 
 func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
@@ -455,36 +433,7 @@ func (h *Gateway) selectProviderFallback(ctx context.Context, req *model.SelectR
 	return &provider, nil
 }
 
-const (
-	authModeAuto    = "auto"
-	authModeXAPI    = "x-api-key"
-	headerUserAgent = "User-Agent"
-)
-
-func detectAuthMode(r *http.Request) string {
-	if r.Header.Get("Authorization") != "" {
-		return "bearer"
-	}
-	if r.Header.Get("X-Api-Key") != "" {
-		return authModeXAPI
-	}
-	return "bearer"
-}
-
-func SetAuthHeader(dst http.Header, apiKey, providerMode, globalMode string, original *http.Request) {
-	mode := providerMode
-	if mode == "" {
-		mode = globalMode
-	}
-	if mode == authModeAuto {
-		mode = detectAuthMode(original)
-	}
-	if mode == authModeXAPI {
-		dst.Set("x-api-key", apiKey)
-		return
-	}
-	dst.Set("Authorization", "Bearer "+apiKey)
-}
+const headerUserAgent = "User-Agent"
 
 func EnsureExplicitUserAgentHeader(headers http.Header) {
 	if len(headers.Values(headerUserAgent)) == 0 {

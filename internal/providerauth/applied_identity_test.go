@@ -51,6 +51,42 @@ func TestApplyProviderCredentialsInjectsWithoutOwningHeaderProjection(t *testing
 	}
 }
 
+func TestApplyStaticAuthHeaderResolvesModeAtCredentialBoundary(t *testing.T) {
+	tests := []struct {
+		name              string
+		providerMode      string
+		globalMode        string
+		originalHeaders   http.Header
+		wantAuthorization string
+		wantAPIKey        string
+	}{
+		{name: "provider bearer", providerMode: authModeBearer, globalMode: authModeAuto, wantAuthorization: "Bearer provider-key"},
+		{name: "provider x-api-key", providerMode: authModeXAPIKey, globalMode: authModeBearer, wantAPIKey: "provider-key"},
+		{name: "global x-api-key", globalMode: authModeXAPIKey, wantAPIKey: "provider-key"},
+		{name: "auto bearer", globalMode: authModeAuto, originalHeaders: http.Header{"Authorization": {"Bearer client"}}, wantAuthorization: "Bearer provider-key"},
+		{name: "auto x-api-key", globalMode: authModeAuto, originalHeaders: http.Header{"X-Api-Key": {"client-key"}}, wantAPIKey: "provider-key"},
+		{name: "auto bearer precedence", globalMode: authModeAuto, originalHeaders: http.Header{"Authorization": {"Bearer client"}, "X-Api-Key": {"client-key"}}, wantAuthorization: "Bearer provider-key"},
+		{name: "auto defaults bearer", globalMode: authModeAuto, wantAuthorization: "Bearer provider-key"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var original *http.Request
+			if test.originalHeaders != nil {
+				original = &http.Request{Header: test.originalHeaders}
+			}
+			headers := make(http.Header)
+			applyStaticAuthHeader(headers, "provider-key", test.providerMode, test.globalMode, original)
+			if got := headers.Get(headerAuthorization); got != test.wantAuthorization {
+				t.Fatalf("Authorization = %q, want %q", got, test.wantAuthorization)
+			}
+			if got := headers.Get(headerAPIKey); got != test.wantAPIKey {
+				t.Fatalf("X-Api-Key = %q, want %q", got, test.wantAPIKey)
+			}
+		})
+	}
+}
+
 func TestApplyProviderCredentialsRejectsExpectedAuthorityConflictBeforeInjection(t *testing.T) {
 	t.Parallel()
 	expectedURL := mustAppliedIdentityURL(t, "https://expected.example.test/v1/responses")

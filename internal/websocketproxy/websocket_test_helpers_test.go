@@ -18,6 +18,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
 
@@ -34,6 +35,9 @@ type Handler = Gateway
 
 func newTestGateway(t *testing.T, cfg Config) *Gateway {
 	t.Helper()
+	if cfg.Auth == nil {
+		cfg.Auth = providerauth.NewService(providerauth.Config{})
+	}
 	if cfg.Codex == nil {
 		cfg.Codex = testCodexRuntime(t)
 	}
@@ -103,6 +107,26 @@ func testPreparedProviderAttempt(t *testing.T, provider *model.Provider, apiType
 		candidate:   candidate,
 		credential:  *credential,
 	}
+}
+
+func prepareTestWebSocketAttemptHeaders(
+	t *testing.T,
+	request *http.Request,
+	provider *model.Provider,
+	apiType string,
+	globalAuthMode string,
+) http.Header {
+	t.Helper()
+	prepared := testPreparedProviderAttempt(t, provider, apiType, "https://provider.example.test")
+	gateway := &Gateway{auth: providerauth.NewService(providerauth.Config{})}
+	headers, _, err := gateway.prepareWebSocketAttemptHeaders(
+		request.Context(), request, provider, prepared.candidate, apiType,
+		globalAuthMode, prepared.finalURL, true,
+	)
+	if err != nil {
+		t.Fatalf("prepare WebSocket attempt headers: %v", err)
+	}
+	return headers
 }
 
 func observedTokenCount(value int64) tokenusage.ObservedCount {

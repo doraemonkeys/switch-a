@@ -385,8 +385,7 @@ func webSocketCaptureAttemptMetadata(
 const webSocketCaptureProviderAttemptIndex = 0
 
 func (o *WebSocketSessionOrchestrator) shouldRecoverUnauthorized(attempt WebSocketAttemptResult) bool {
-	return o.handler.auth != nil &&
-		attempt.ForwardErr == nil &&
+	return attempt.ForwardErr == nil &&
 		attempt.Result != nil &&
 		!attempt.Result.HandshakeAccepted &&
 		attempt.Result.HandshakeStatusCode == http.StatusUnauthorized

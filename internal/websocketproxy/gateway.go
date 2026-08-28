@@ -198,6 +198,9 @@ func NewGateway(cfg Config) *Gateway {
 	if cfg.Codex == nil {
 		panic("websocketproxy: Codex runtime is required but was nil")
 	}
+	if cfg.Auth == nil {
+		panic("websocketproxy: Auth is required but was nil")
+	}
 	forwarder := cfg.Forwarder
 	if forwarder == nil {
 		forwarder = NewWebSocketForwarder(WebSocketForwarderConfig{Logger: cfg.Logger})

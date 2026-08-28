@@ -108,7 +108,6 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 		wantStatus   int
 		wantCode     string
 		wantReason   model.TerminationReason
-		withoutAuth  bool
 	}{
 		{
 			name: "missing base url",
@@ -137,21 +136,6 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 			wantCode:     ErrCodeProviderUnavailable,
 			wantReason:   model.TerminationReasonProviderUnavailable,
 		},
-		{
-			name: "chatgpt provider without auth service",
-			provider: withTestChatGPTCredential(model.Provider{
-				ID:      "ws-chatgpt-no-auth",
-				Name:    "ChatGPT Without Auth Service",
-				Enabled: true,
-				APITypes: []model.ProviderAPIType{{
-					ProviderID: "ws-chatgpt-no-auth",
-					APIType:    "codex",
-					BaseURL:    "https://example.invalid",
-				}},
-			}, "codex", testChatGPTCredentialData(t, "access-token", "refresh-token", "acct-test")),
-			errorSnippet: "credentials",
-			withoutAuth:  true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -170,12 +154,7 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 				Store:  store,
 				Logger: zap.NewNop(),
 			}
-			var handler *Handler
-			if tt.withoutAuth {
-				handler = newProxyCodexTestHandlerPreservingAuth(t, config)
-			} else {
-				handler = newProxyCodexTestHandler(t, config)
-			}
+			handler := newProxyCodexTestHandler(t, config)
 
 			proxyServer := httptest.NewServer(handler)
 			defer proxyServer.Close()

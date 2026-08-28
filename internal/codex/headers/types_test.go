@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
@@ -132,6 +133,22 @@ func TestHeaderObservationDoesNotSplitOpaqueCommas(t *testing.T) {
 	}
 	if matchesAlias("X-Other", turnMetadataHeader.aliases) || CarrierHeader.Has(CarrierProjection) || !(CarrierHeader | CarrierProjection).Has(CarrierProjection) {
 		t.Fatal("alias or carrier predicate failed")
+	}
+}
+
+func TestManagedHeaderCatalogRecognizesEveryAlias(t *testing.T) {
+	for _, spec := range headerCatalog {
+		if len(spec.aliases) == 0 {
+			t.Fatalf("field %q has no wire aliases", spec.field)
+		}
+		for _, alias := range spec.aliases {
+			if !IsManagedHeader(alias) || !IsManagedHeader(strings.ToLower(alias)) {
+				t.Fatalf("field %q alias %q is not managed case-insensitively", spec.field, alias)
+			}
+		}
+	}
+	if IsManagedHeader("X-Unrelated") {
+		t.Fatal("unrelated header was classified as Codex-managed")
 	}
 }
 

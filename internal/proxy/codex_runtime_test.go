@@ -1,20 +1,18 @@
 package proxy
 
 import (
-	"context"
 	"crypto/rand"
 	"net/http"
-	"net/url"
 	"testing"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
-	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
+	"github.com/doraemonkeys/switch-a/internal/providerauth"
 )
 
 type proxyCodexFixture struct {
@@ -83,13 +81,8 @@ func newProxyCodexFixture(t *testing.T) proxyCodexFixture {
 func newProxyCodexTestHandler(t *testing.T, config Config) *Handler {
 	t.Helper()
 	if config.Auth == nil {
-		config.Auth = proxyCodexTestAuthenticator{}
+		config.Auth = newProxyTestAuthenticator()
 	}
-	return newProxyCodexTestHandlerPreservingAuth(t, config)
-}
-
-func newProxyCodexTestHandlerPreservingAuth(t *testing.T, config Config) *Handler {
-	t.Helper()
 	if config.CodexHTTP == nil || config.CodexWebSocket == nil {
 		fixture := newProxyCodexFixture(t)
 		if config.CodexHTTP == nil {
@@ -102,33 +95,8 @@ func newProxyCodexTestHandlerPreservingAuth(t *testing.T, config Config) *Handle
 	return NewHandler(config)
 }
 
-type proxyCodexTestAuthenticator struct{}
-
-var _ ProviderAuthenticator = proxyCodexTestAuthenticator{}
-
-func (proxyCodexTestAuthenticator) ApplyProviderCredentials(
-	_ context.Context,
-	headers http.Header,
-	candidate codexidentity.CandidateSnapshot,
-	providerAuthMode string,
-	globalAuthMode string,
-	originalRequest *http.Request,
-	finalURL *url.URL,
-) (codexidentity.AppliedIdentity, error) {
-	credential := candidate.Credential()
-	SetAuthHeader(headers, credential.SecretData, providerAuthMode, globalAuthMode, originalRequest)
-	subject, err := codexidentity.CredentialSubjectFromSession(credential.Subject)
-	if err != nil {
-		return codexidentity.AppliedIdentity{}, err
-	}
-	return codexidentity.AppliedIdentityFromRequest(candidate.Authority().Vendor(), finalURL, subject)
-}
-
-func (proxyCodexTestAuthenticator) RefreshCredentialSession(
-	context.Context,
-	credentialsession.Snapshot,
-) (bool, error) {
-	return false, nil
+func newProxyTestAuthenticator() ProviderAuthenticator {
+	return providerauth.NewService(providerauth.Config{})
 }
 
 func authorizeProxyCodexTestRequest(request *http.Request) {
