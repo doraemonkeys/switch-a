@@ -76,8 +76,11 @@ func TestContinuityFailuresStayTypedAtRequestAndResponseBoundaries(t *testing.T)
 	claimFailure := &continuityRecorder{resolveErr: unknown, claimErr: unavailable}
 	claimOperation := beginContinuityOperation(t, clientScope, claimFailure, http.Header{"Thread-Id": []string{"thread"}})
 	upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
-	if _, err := claimOperation.PrepareAttempt(context.Background(), upstream, candidate, applied); !IsKind(err, ErrorDependencyUnavailable) {
-		t.Fatalf("claim unavailable error = %v", err)
+	if _, err := claimOperation.PrepareAttempt(context.Background(), upstream, candidate, applied); err != nil {
+		t.Fatalf("claim outage should preserve the pinned attempt: %v", err)
+	}
+	if required, _ := claimOperation.RequiredAuthority(); required == nil || !required.Equal(candidate.Authority()) {
+		t.Fatalf("claim outage authority = %v", required)
 	}
 
 	known := codexcontinuity.Binding{Owner: codexcontinuity.Owner{ClientScope: clientScope, ProtocolScope: candidate.ProtocolScope()}}
@@ -95,8 +98,9 @@ func TestContinuityFailuresStayTypedAtRequestAndResponseBoundaries(t *testing.T)
 		t.Fatal(err)
 	}
 	responseHeaders := http.Header{"X-Codex-Turn-State": []string{"turn"}}
-	if _, err := responseAttempt.PrepareVisible(context.Background(), responseHeaders); !IsKind(err, ErrorDependencyUnavailable) {
-		t.Fatalf("response lookup unavailable error = %v", err)
+	visibility, err := responseAttempt.PrepareVisible(context.Background(), responseHeaders)
+	if err != nil || visibility == nil || len(visibility.leases) != 1 {
+		t.Fatalf("response lookup degradation visibility=%#v error=%v", visibility, err)
 	}
 
 	responseConflict := &continuityRecorder{validateErr: conflict}
@@ -117,8 +121,8 @@ func TestContinuityFailuresStayTypedAtRequestAndResponseBoundaries(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepareAttempt.PrepareVisible(context.Background(), http.Header{"X-Codex-Turn-State": []string{"turn"}}); !IsKind(err, ErrorDependencyUnavailable) {
-		t.Fatalf("response prepare unavailable error = %v", err)
+	if _, err = prepareAttempt.PrepareVisible(context.Background(), http.Header{"X-Codex-Turn-State": []string{"turn"}}); !IsKind(err, ErrorDependencyUnavailable) {
+		t.Fatalf("response prepare without provenance error=%v", err)
 	}
 }
 
@@ -137,6 +141,18 @@ func TestContinuityCommitFailuresRemainPending(t *testing.T) {
 	}
 	if err := requestAttempt.MarkDisclosed(context.Background()); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("request commit error = %v", err)
+	}
+	requestOutage := &continuityRecorder{
+		resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown},
+		commitErr:  &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable},
+	}
+	outageOperation := beginContinuityOperation(t, clientScope, requestOutage, http.Header{"Thread-Id": []string{"thread-outage"}})
+	outageAttempt, err := outageOperation.PrepareAttempt(context.Background(), upstream.Clone(context.Background()), candidate, applied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outageAttempt.MarkDisclosed(context.Background()); !IsKind(err, ErrorDependencyUnavailable) {
+		t.Fatalf("request commit without provenance error = %v", err)
 	}
 
 	responseRecorder := &continuityRecorder{

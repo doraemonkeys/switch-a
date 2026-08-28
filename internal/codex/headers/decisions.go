@@ -10,11 +10,13 @@ type ClientInput struct {
 	Message         MessageView
 	Owners          OwnerLookup
 	AttestationLock OperationLockStatus
+	StateAdmission  StateAdmission
 }
 
-// DecideClient validates carrier consistency before consulting ownership. This
-// ordering ensures malformed or contradictory wire input cannot produce an
-// actionable claim.
+// DecideClient reconciles carriers before consulting ownership. Projection is
+// authoritative for auxiliary identity and metadata fields because transports
+// cannot rewrite it; state-chain contradictions remain terminal so unrelated
+// conversation state can never produce an actionable claim.
 func DecideClient(input ClientInput) Result {
 	result := Result{wire: input.Message.wire}
 	if rejection, rejected := rejectInvalidClientMessage(input.Message); rejected {
@@ -34,7 +36,7 @@ func DecideClient(input ClientInput) Result {
 		return result
 	}
 
-	resolveClientFields(&result, fields, input.Owners)
+	resolveClientFields(&result, fields, input.Owners, input.StateAdmission)
 	if attestation.present {
 		result.decisions = append(result.decisions, decideAttestation(attestation, input.AttestationLock))
 	}
@@ -73,9 +75,13 @@ func collectClientIdentityFields(result *Result, input ClientInput) []resolvedFi
 		if header.present && !header.valid {
 			if projected {
 				result.decisions = append(result.decisions, newDecision(
-					ActionReject, spec.field, CarrierHeader|CarrierProjection,
+					ActionDrop, spec.field, CarrierHeader,
 					ReasonMalformedHeader, BindingCandidate{}, header.names, ClaimSpec{},
 				))
+				fields = append(fields, resolvedField{
+					field: spec.field, carriers: CarrierProjection,
+					candidate: BindingCandidate{field: spec.field, value: projection}, policy: policyIdentity,
+				})
 			} else {
 				result.decisions = append(result.decisions, newDecision(
 					ActionDrop, spec.field, CarrierHeader, ReasonMalformedHeader,
@@ -86,9 +92,13 @@ func collectClientIdentityFields(result *Result, input ClientInput) []resolvedFi
 		}
 		if header.present && projected && !header.value.Equal(projection) {
 			result.decisions = append(result.decisions, newDecision(
-				ActionReject, spec.field, CarrierHeader|CarrierProjection,
+				ActionDrop, spec.field, CarrierHeader,
 				ReasonCarrierConflict, BindingCandidate{}, header.names, ClaimSpec{},
 			))
+			fields = append(fields, resolvedField{
+				field: spec.field, carriers: CarrierProjection,
+				candidate: BindingCandidate{field: spec.field, value: projection}, policy: policyIdentity,
+			})
 			continue
 		}
 		value, carriers := mergeCarriers(header, projection, projected)
@@ -119,6 +129,19 @@ func collectClientContinuityFields(result *Result, input ClientInput) []resolved
 			continue
 		}
 		if header.present && !header.valid {
+			if state.policy == policyClaimable {
+				result.decisions = append(result.decisions, newDecision(
+					ActionDrop, state.spec.field, CarrierHeader, ReasonMalformedHeader,
+					BindingCandidate{}, header.names, ClaimSpec{},
+				))
+				if projected {
+					fields = append(fields, resolvedField{
+						field: state.spec.field, carriers: CarrierProjection,
+						candidate: BindingCandidate{field: state.spec.field, value: projection}, policy: state.policy,
+					})
+				}
+				continue
+			}
 			result.decisions = append(result.decisions, newDecision(
 				ActionReject, state.spec.field, CarrierHeader, ReasonMalformedHeader,
 				BindingCandidate{}, header.names, ClaimSpec{},
@@ -126,6 +149,17 @@ func collectClientContinuityFields(result *Result, input ClientInput) []resolved
 			continue
 		}
 		if header.present && projected && !header.value.Equal(projection) {
+			if state.policy == policyClaimable {
+				result.decisions = append(result.decisions, newDecision(
+					ActionDrop, state.spec.field, CarrierHeader, ReasonCarrierConflict,
+					BindingCandidate{}, header.names, ClaimSpec{},
+				))
+				fields = append(fields, resolvedField{
+					field: state.spec.field, carriers: CarrierProjection,
+					candidate: BindingCandidate{field: state.spec.field, value: projection}, policy: state.policy,
+				})
+				continue
+			}
 			result.decisions = append(result.decisions, newDecision(
 				ActionReject, state.spec.field, CarrierHeader|CarrierProjection,
 				ReasonCarrierConflict, BindingCandidate{}, header.names, ClaimSpec{},
@@ -153,14 +187,14 @@ func collectClientContinuityFields(result *Result, input ClientInput) []resolved
 	return fields
 }
 
-func resolveClientFields(result *Result, fields []resolvedField, owners OwnerLookup) {
+func resolveClientFields(result *Result, fields []resolvedField, owners OwnerLookup, admission StateAdmission) {
 	for _, field := range fields {
 		status := OwnerUnavailable
 		if owners != nil {
 			status = owners(field.candidate)
 		}
 		result.decisions = append(result.decisions, decideOwner(
-			field.candidate, field.carriers, field.headerNames, status, field.policy,
+			field.candidate, field.carriers, field.headerNames, status, field.policy, admission,
 		))
 	}
 }
@@ -196,7 +230,7 @@ func DecideServerHeaders(headers http.Header, owners OwnerLookup) Result {
 		status = owners(candidate)
 	}
 	result.decisions = append(result.decisions, decideOwner(
-		candidate, CarrierHeader, state.names, status, policyResponseClaimable,
+		candidate, CarrierHeader, state.names, status, policyResponseClaimable, StateAdmissionAnchored,
 	))
 	return result
 }
@@ -222,7 +256,7 @@ func DecideServerMessage(message MessageView, owners OwnerLookup) Result {
 			status = owners(candidate)
 		}
 		result.decisions = append(result.decisions, decideOwner(
-			candidate, CarrierFrame, nil, status, policyResponseClaimable,
+			candidate, CarrierFrame, nil, status, policyResponseClaimable, StateAdmissionAnchored,
 		))
 	}
 	return result
@@ -243,6 +277,7 @@ func decideOwner(
 	headerNames []string,
 	status OwnerStatus,
 	policy ownerPolicy,
+	admission StateAdmission,
 ) Decision {
 	switch status {
 	case OwnerCurrent:
@@ -259,7 +294,34 @@ func decideOwner(
 				ClaimSpec{lifetime: ClaimLifetimeDurable, boundary: ClaimBoundaryProtocolScope},
 			)
 		}
+		if policy == policyExistingOnly && admission == StateAdmissionAnchored {
+			return newDecision(
+				ActionAdopt,
+				candidate.field,
+				carriers,
+				ReasonOwnerUnknown,
+				candidate,
+				headerNames,
+				ClaimSpec{lifetime: ClaimLifetimeDurable, boundary: ClaimBoundaryProtocolScope},
+			)
+		}
 		return newDecision(ActionReject, candidate.field, carriers, ReasonOwnerUnknown, candidate, headerNames, ClaimSpec{})
+	case OwnerStoreUnavailable:
+		if policy == policyResponseClaimable {
+			return newDecision(
+				ActionClaim,
+				candidate.field,
+				carriers,
+				ReasonOwnerUnavailable,
+				candidate,
+				headerNames,
+				ClaimSpec{lifetime: ClaimLifetimeDurable, boundary: ClaimBoundaryProtocolScope},
+			)
+		}
+		if admission == StateAdmissionAnchored && (policy == policyIdentity || policy == policyClaimable) {
+			return newDecision(ActionForwardDegraded, candidate.field, carriers, ReasonOwnerUnavailable, candidate, headerNames, ClaimSpec{})
+		}
+		return newDecision(ActionReject, candidate.field, carriers, ReasonOwnerUnavailable, candidate, headerNames, ClaimSpec{})
 	case OwnerConflict:
 		if policy == policyIdentity && carriers == CarrierHeader {
 			return newDecision(ActionDrop, candidate.field, carriers, ReasonOwnerConflict, candidate, headerNames, ClaimSpec{})
