@@ -62,7 +62,7 @@ func TestBuildCredentialSessionsFromExport_PreservesPendingSubject(t *testing.T)
 	t.Parallel()
 
 	sessions, warnings := buildCredentialSessionsFromExport([]ExportedCredentialSession{{
-		ID: "session-1", Vendor: "openai", Kind: credentialsession.KindAPIKey,
+		ID: "session-1", Kind: credentialsession.KindAPIKey,
 		TransferMode: CredentialSessionTransferStaticSecret,
 		SecretData:   "secret", Version: 1, Subject: credentialsession.PendingSubject(),
 	}})
@@ -96,7 +96,7 @@ func TestBuildCredentialSessionsFromExport_BlankSecretRejected(t *testing.T) {
 	}
 
 	sessions, warnings := buildCredentialSessionsFromExport([]ExportedCredentialSession{{
-		ID: "session-1", Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: "session-1", Kind: credentialsession.KindChatGPT,
 		TransferMode: CredentialSessionTransferStaticSecret,
 		SecretData:   "   ", Version: 1, Subject: subject,
 	}})
@@ -141,7 +141,7 @@ func TestCredentialSessionTransferValidationMatrix(t *testing.T) {
 			want   string
 		}{
 			{name: "transfer mode", mutate: func(item *ExportedCredentialSession) { item.TransferMode = CredentialSessionTransferStaticSecret }, want: "transfer_mode"},
-			{name: "metadata", mutate: func(item *ExportedCredentialSession) { item.Vendor = "" }, want: "requires id, vendor"},
+			{name: "metadata", mutate: func(item *ExportedCredentialSession) { item.ID = "" }, want: "requires id"},
 			{name: "secret", mutate: func(item *ExportedCredentialSession) { item.SecretData = "attacker" }, want: "cannot carry secret"},
 			{name: "authority", mutate: func(item *ExportedCredentialSession) { item.AuthState.AccountID = "acct" }, want: "canonical recovery"},
 		}
@@ -178,7 +178,7 @@ func TestCredentialSessionTransferValidationMatrix(t *testing.T) {
 func TestStageChatGPTReauthenticationDescriptorBoundaries(t *testing.T) {
 	descriptor := buildExportedCredentialSession(verifiedChatGPTSession(t, "chat", "token", "acct"))
 	existing := map[string]credentialsession.Snapshot{
-		"chat": {SessionID: "chat", Vendor: "openai", Kind: credentialsession.KindAPIKey},
+		"chat": {SessionID: "chat", Kind: credentialsession.KindAPIKey},
 	}
 	staged := stagedConfigImport{}
 	if err := stageChatGPTReauthenticationDescriptor(&staged, descriptor, existing); err == nil || !strings.Contains(err.Error(), "does not match") {

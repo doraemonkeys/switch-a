@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiContext } from "../../api/context";
-import { ApiError, type ApiClient, type ProviderInput } from "../../api";
+import { type ApiClient, type ProviderInput } from "../../api";
 import type { Provider } from "../../api";
 import { ToastContext, type ToastContextValue } from "../../hooks/useToast";
 import { downloadJsonFile } from "../../lib/jsonDownload";
@@ -15,18 +15,47 @@ vi.mock("../../lib/jsonDownload", () => ({
 const providerInput: ProviderInput = {
   id: "new-provider",
   name: "New Provider",
-  api_key: "",
-  api_types: [],
-  credential_type: "chatgpt",
-  credential_login_id: "login-id",
+  api_types: [
+    {
+      api_type: "codex",
+      base_url: "https://chatgpt.com/backend-api/codex",
+      credential_session_id: "credential-gpt",
+    },
+  ],
 };
 
-const pausedGPTProvider = {
+const pausedGPTProvider: Provider = {
   id: "gpt-paused",
   name: "Paused GPT",
+  api_types: [
+    {
+      api_type: "codex",
+      base_url: "https://chatgpt.com/backend-api/codex",
+      credential_session_id: "credential-gpt",
+    },
+  ],
+  auth_mode: "bearer",
+  credential_sessions: [
+    {
+      id: "credential-gpt",
+      kind: "chatgpt",
+      version: 1,
+      subject: { kind: "account", value: "account-123" },
+      auth_state: { status: "active", account_id: "account-123" },
+    },
+  ],
+  group_id: null,
+  weight: 1,
+  priority: 0,
+  concurrency: 0,
+  max_retries: 0,
+  vendor: "",
+  failover_scope: "any",
+  accept_failover: "any",
   enabled: false,
-  credential_type: "chatgpt",
-} as Provider;
+  created_at: "2026-08-28T00:00:00Z",
+  updated_at: "2026-08-28T00:00:00Z",
+};
 
 function createToast(): ToastContextValue {
   return {
@@ -55,17 +84,8 @@ describe("useProviderActions", () => {
     vi.clearAllMocks();
   });
 
-  it("leaves credential binding conflicts to the replacement prompt", async () => {
-    const conflict = new ApiError(
-      "CONFLICT",
-      "account already connected",
-      409,
-      {
-        kind: "credential_binding",
-        account_id: "acct-shared",
-        provider_id: "old-provider",
-      },
-    );
+  it("reports provider save failures and preserves the rejection", async () => {
+    const conflict = new Error("account already connected");
     const api = {
       providers: {
         list: vi.fn().mockResolvedValue([]),
@@ -82,7 +102,7 @@ describe("useProviderActions", () => {
       act(() => result.current.handleSaveProvider(providerInput, null)),
     ).rejects.toBe(conflict);
 
-    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(conflict.message);
   });
 
   it("downloads an auth.json snapshot without changing the provider list", async () => {
@@ -99,6 +119,8 @@ describe("useProviderActions", () => {
     const api = {
       providers: {
         list: vi.fn().mockResolvedValue([pausedGPTProvider]),
+      },
+      credentialSessions: {
         exportCodexAuth: vi.fn().mockResolvedValue(authDocument),
       },
     } as unknown as ApiClient;
@@ -112,7 +134,9 @@ describe("useProviderActions", () => {
       await result.current.handleExportCodexAuth(pausedGPTProvider);
     });
 
-    expect(api.providers.exportCodexAuth).toHaveBeenCalledWith("gpt-paused");
+    expect(api.credentialSessions.exportCodexAuth).toHaveBeenCalledWith(
+      "credential-gpt",
+    );
     expect(downloadJsonFile).toHaveBeenCalledWith("auth.json", authDocument);
     expect(toast.success).toHaveBeenCalledWith(
       'Codex auth.json exported for "Paused GPT". Keep this provider paused while the file is in use.',
@@ -128,6 +152,8 @@ describe("useProviderActions", () => {
     const api = {
       providers: {
         list: vi.fn().mockResolvedValue([pausedGPTProvider]),
+      },
+      credentialSessions: {
         exportCodexAuth: vi.fn().mockRejectedValue(error),
       },
     } as unknown as ApiClient;

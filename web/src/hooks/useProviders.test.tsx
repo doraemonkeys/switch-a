@@ -3,22 +3,28 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useProviders, useProvider } from "./useProviders";
 import { ApiContext } from "../api/context";
-import type { ApiClient, CodexAuthDocument, Provider } from "../api/client";
-import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
+import type { ApiClient, Provider } from "../api/client";
 
 const mockProvider: Provider = {
   id: "1",
   name: "OpenAI",
-  api_key: "sk-xxx",
   api_types: [
     {
-      provider_id: "1",
       api_type: "claude",
       base_url: "https://api.openai.com",
+      credential_session_id: "credential-1",
     },
   ],
   auth_mode: "bearer",
-  credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+  credential_sessions: [
+    {
+      id: "credential-1",
+      kind: "api_key",
+      version: 1,
+      subject: { kind: "keyed_digest", value: "digest" },
+      auth_state: { status: "active" },
+    },
+  ],
   group_id: null,
   weight: 1,
   priority: 1,
@@ -45,18 +51,6 @@ function createMockApiClient() {
       enable: vi.fn().mockResolvedValue(undefined),
       disable: vi.fn().mockResolvedValue(undefined),
       reset: vi.fn().mockResolvedValue(undefined),
-      refreshCredential: vi.fn().mockResolvedValue(undefined),
-      refreshUsage: vi.fn().mockResolvedValue(undefined),
-      exportCodexAuth: vi.fn().mockResolvedValue({
-        auth_mode: "chatgpt",
-        OPENAI_API_KEY: null,
-        tokens: {
-          id_token: "id-token",
-          access_token: "access-token",
-          refresh_token: "refresh-token",
-          account_id: "account-123",
-        },
-      }),
     },
     groups: {
       list: vi.fn(),
@@ -159,8 +153,13 @@ describe("useProviders", () => {
 
     const input = {
       name: "New",
-      api_key: "key",
-      api_types: [{ api_type: "claude", base_url: "https://new.example.com" }],
+      api_types: [
+        {
+          api_type: "claude",
+          base_url: "https://new.example.com",
+          credential_session_id: "credential-1",
+        },
+      ],
     };
     await act(async () => {
       await result.current.createProvider(input);
@@ -181,9 +180,12 @@ describe("useProviders", () => {
 
     const input = {
       name: "Updated",
-      api_key: "key",
       api_types: [
-        { api_type: "claude", base_url: "https://updated.example.com" },
+        {
+          api_type: "claude",
+          base_url: "https://updated.example.com",
+          credential_session_id: "credential-1",
+        },
       ],
     };
     await act(async () => {
@@ -260,98 +262,6 @@ describe("useProviders", () => {
 
     expect(mockApi.providers.reset).toHaveBeenCalledWith("1");
     expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
-  });
-
-  it("should refresh provider credential and refetch", async () => {
-    const { result } = renderHook(() => useProviders(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    await act(async () => {
-      await result.current.refreshCredential("1");
-    });
-
-    expect(mockApi.providers.refreshCredential).toHaveBeenCalledWith("1");
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
-  });
-
-  it("should refresh provider usage and refetch", async () => {
-    const { result } = renderHook(() => useProviders(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    await act(async () => {
-      await result.current.refreshUsage("1");
-    });
-
-    expect(mockApi.providers.refreshUsage).toHaveBeenCalledWith("1");
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
-  });
-
-  it("should export Codex auth without mutating or refetching providers", async () => {
-    const { result } = renderHook(() => useProviders(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    let exportedDocument: CodexAuthDocument | undefined;
-    await act(async () => {
-      exportedDocument = await result.current.exportCodexAuth("1");
-    });
-
-    expect(mockApi.providers.exportCodexAuth).toHaveBeenCalledWith("1");
-    expect(exportedDocument).toEqual(
-      expect.objectContaining({ OPENAI_API_KEY: null }),
-    );
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(1);
-  });
-
-  it("should reconcile provider auth state after a rejected usage refresh", async () => {
-    const rejection = new Error("provider requires reauthentication");
-    const reauthProvider: Provider = {
-      ...mockProvider,
-      credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-      auth: {
-        type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-        status: "reauth_required",
-        reason: "token_invalidated",
-      },
-    };
-    vi.mocked(mockApi.providers.refreshUsage).mockRejectedValue(rejection);
-    vi.mocked(mockApi.providers.list)
-      .mockResolvedValueOnce([mockProvider])
-      .mockResolvedValueOnce([reauthProvider]);
-    const { result } = renderHook(() => useProviders(), {
-      wrapper: createWrapper(mockApi),
-    });
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    let caught: unknown;
-    await act(async () => {
-      try {
-        await result.current.refreshUsage("1");
-      } catch (error) {
-        caught = error;
-      }
-    });
-
-    expect(caught).toBe(rejection);
-    expect(mockApi.providers.list).toHaveBeenCalledTimes(2);
-    expect(result.current.providers).toEqual([reauthProvider]);
   });
 });
 

@@ -68,6 +68,7 @@ func (e *ProviderSelectionEligibility) resolveCandidate(
 		route := credentialsession.RouteSnapshot{
 			RouteTargetID: provider.ID,
 			APIType:       apiType,
+			VendorScope:   provider.Vendor,
 			Credential:    candidate.credential,
 		}
 		finalURL, parseErr := url.Parse(provider.BaseURLForAPIType(apiType))

@@ -10,7 +10,6 @@ import { resolve } from "node:path";
 import type { LogFilter, Provider } from "../api/types";
 import { parseAPICatalog } from "../api/api-catalog";
 import { APICatalogContext } from "../api/context";
-import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 import { LogFilters } from "./LogFilters";
 
 const testAPICatalog = parseAPICatalog(
@@ -46,10 +45,9 @@ function createMockProviders(): Provider[] {
     {
       id: "provider-1",
       name: "Provider One",
-      api_key: "key-1",
       api_types: [],
       auth_mode: "bearer",
-      credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+      credential_sessions: [],
       group_id: null,
       weight: 100,
       priority: 1,

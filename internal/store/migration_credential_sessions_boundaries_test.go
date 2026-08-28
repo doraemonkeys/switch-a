@@ -239,7 +239,7 @@ func TestCredentialSessionMigrationValidationDetectsMissingAndLegacyStorage(t *t
 		t.Fatalf("validateCredentialSessionSchema(legacy) error = %v", err)
 	}
 
-	if _, err := staticSubject("openai", "", migrationSubjectSigner{version: "h-current"}); err == nil {
+	if _, err := staticSubject("", migrationSubjectSigner{version: "h-current"}); err == nil {
 		t.Fatal("staticSubject(blank secret) succeeded")
 	}
 }

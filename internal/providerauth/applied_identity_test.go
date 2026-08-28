@@ -19,8 +19,8 @@ import (
 func TestApplyProviderCredentialsInjectsWithoutOwningHeaderProjection(t *testing.T) {
 	t.Parallel()
 	finalURL := mustAppliedIdentityURL(t, "https://api.example.test/v1/responses")
-	snapshot := staticCredentialSnapshot(t, "static-session", "vendor-a", "current-secret")
-	candidate := mustAppliedIdentityCandidate(t, "route-a", "responses", snapshot, finalURL)
+	snapshot := staticCredentialSnapshot(t, "static-session", "current-secret")
+	candidate := mustAppliedIdentityCandidate(t, "route-a", "responses", "vendor-a", snapshot, finalURL)
 	headers := http.Header{
 		"Authorization":       {"Bearer client-secret"},
 		"X-Api-Key":           {"prior-attempt-secret"},
@@ -91,8 +91,8 @@ func TestApplyProviderCredentialsRejectsExpectedAuthorityConflictBeforeInjection
 	t.Parallel()
 	expectedURL := mustAppliedIdentityURL(t, "https://expected.example.test/v1/responses")
 	actualURL := mustAppliedIdentityURL(t, "https://other.example.test/v1/responses")
-	snapshot := staticCredentialSnapshot(t, "static-session", "vendor-a", "current-secret")
-	candidate := mustAppliedIdentityCandidate(t, "route-a", "responses", snapshot, expectedURL)
+	snapshot := staticCredentialSnapshot(t, "static-session", "current-secret")
+	candidate := mustAppliedIdentityCandidate(t, "route-a", "responses", "vendor-a", snapshot, expectedURL)
 	headers := http.Header{
 		"Authorization":      {"Bearer client-secret"},
 		"X-Api-Key":          {"prior-attempt-secret"},
@@ -121,8 +121,8 @@ func TestApplyProviderCredentialsRejectsExpectedAuthorityConflictBeforeInjection
 func TestApplyProviderCredentialsRejectsIncompleteAttemptEvidence(t *testing.T) {
 	t.Parallel()
 	finalURL := mustAppliedIdentityURL(t, "https://api.example.test/v1/responses")
-	snapshot := staticCredentialSnapshot(t, "static-session", "vendor-a", "current-secret")
-	candidate := mustAppliedIdentityCandidate(t, "route-a", "responses", snapshot, finalURL)
+	snapshot := staticCredentialSnapshot(t, "static-session", "current-secret")
+	candidate := mustAppliedIdentityCandidate(t, "route-a", "responses", "vendor-a", snapshot, finalURL)
 	service := NewService(Config{})
 	if _, err := service.ApplyProviderCredentials(
 		context.Background(), nil, candidate, authModeBearer, authModeBearer, nil, finalURL,
@@ -150,7 +150,7 @@ func TestApplyProviderCredentialsRejectsChatGPTOutsideCodexAPI(t *testing.T) {
 	now := time.Date(2026, time.August, 27, 1, 0, 0, 0, time.UTC)
 	finalURL := mustAppliedIdentityURL(t, "https://chatgpt.com/backend-api/codex/responses")
 	snapshot := chatGPTCredentialSnapshot(t, "login-session", "acct-live", "access-live", now.Add(time.Hour))
-	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", "responses", snapshot, finalURL)
+	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", "responses", "openai", snapshot, finalURL)
 	headers := http.Header{"Authorization": {"Bearer client"}}
 	if _, err := NewService(Config{Clock: fixedClock{now: now}}).ApplyProviderCredentials(
 		context.Background(), headers, candidate, authModeBearer, authModeBearer, nil, finalURL,
@@ -167,7 +167,7 @@ func TestApplyProviderCredentialsUsesActualChatGPTAccount(t *testing.T) {
 	now := time.Date(2026, time.August, 27, 1, 0, 0, 0, time.UTC)
 	finalURL := mustAppliedIdentityURL(t, "wss://chatgpt.com/backend-api/codex/responses")
 	snapshot := chatGPTCredentialSnapshot(t, "login-session", "acct-live", "access-live", now.Add(time.Hour))
-	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, snapshot, finalURL)
+	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, "openai", snapshot, finalURL)
 	headers := http.Header{
 		"X-Api-Key":          {"client-key"},
 		"ChatGPT-Account-Id": {"forged-account"},
@@ -198,7 +198,7 @@ func TestApplyProviderCredentialsRefreshesOnlyAfterIdentityPreflight(t *testing.
 	now := time.Date(2026, time.August, 27, 1, 0, 0, 0, time.UTC)
 	finalURL := mustAppliedIdentityURL(t, "https://chatgpt.com/backend-api/codex/responses")
 	snapshot := chatGPTCredentialSnapshot(t, "login-session", "acct-live", "access-old", now.Add(time.Minute))
-	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, snapshot, finalURL)
+	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, "openai", snapshot, finalURL)
 	store := &appliedIdentityCredentialStore{session: sessionFromAppliedSnapshot(t, snapshot)}
 	service := NewService(Config{
 		Clock: fixedClock{now: now}, CredentialStore: store,
@@ -228,7 +228,7 @@ func TestApplyProviderCredentialsRejectsChatGPTSubjectConflictBeforeInjection(t 
 	finalURL := mustAppliedIdentityURL(t, "https://chatgpt.com/backend-api/codex/responses")
 	snapshot := chatGPTCredentialSnapshot(t, "login-session", "acct-expected", "access-live", now.Add(time.Hour))
 	snapshot.AuthState.AccountID = "acct-actual"
-	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, snapshot, finalURL)
+	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, "openai", snapshot, finalURL)
 	headers := http.Header{"Authorization": {"Bearer client"}, "ChatGPT-Account-Id": {"forged"}}
 	doCalls := 0
 
@@ -259,7 +259,7 @@ func TestApplyProviderCredentialsRejectsOriginConflictBeforeRefreshIO(t *testing
 	expectedURL := mustAppliedIdentityURL(t, "https://chatgpt.com/backend-api/codex/responses")
 	actualURL := mustAppliedIdentityURL(t, "https://unexpected.example.test/backend-api/codex/responses")
 	snapshot := chatGPTCredentialSnapshot(t, "login-session", "acct-live", "access-old", now.Add(time.Minute))
-	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, snapshot, expectedURL)
+	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, "openai", snapshot, expectedURL)
 	doCalls := 0
 	service := NewService(Config{
 		Clock: fixedClock{now: now},
@@ -331,7 +331,7 @@ func TestRefreshCoordinationIsScopedToCredentialSession(t *testing.T) {
 	}
 }
 
-func staticCredentialSnapshot(t *testing.T, sessionID, vendor, secret string) credentialsession.Snapshot {
+func staticCredentialSnapshot(t *testing.T, sessionID, secret string) credentialsession.Snapshot {
 	t.Helper()
 	digest := sha256.Sum256([]byte("subject:" + secret))
 	subject, err := credentialsession.KeyedDigestSubject("test-hmac", digest[:])
@@ -339,7 +339,7 @@ func staticCredentialSnapshot(t *testing.T, sessionID, vendor, secret string) cr
 		t.Fatalf("KeyedDigestSubject() error = %v", err)
 	}
 	return credentialsession.Snapshot{
-		SessionID: sessionID, Vendor: vendor, Kind: credentialsession.KindAPIKey,
+		SessionID: sessionID, Kind: credentialsession.KindAPIKey,
 		SecretData: secret, Version: 1, Subject: subject,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
@@ -358,7 +358,7 @@ func chatGPTCredentialSnapshot(t *testing.T, sessionID, accountID, accessToken s
 		t.Fatalf("AccountSubject() error = %v", err)
 	}
 	return credentialsession.Snapshot{
-		SessionID: sessionID, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		SessionID: sessionID, Kind: credentialsession.KindChatGPT,
 		SecretData: secret, Version: 1, Subject: subject,
 		AuthState: credentialsession.AuthState{
 			Status: credentialsession.AuthStatusActive, AccountID: accountID, ExpiresAt: &expiresAt,
@@ -370,12 +370,13 @@ func mustAppliedIdentityCandidate(
 	t *testing.T,
 	routeTargetID string,
 	apiType string,
+	vendorScope string,
 	snapshot credentialsession.Snapshot,
 	finalURL *url.URL,
 ) codexidentity.CandidateSnapshot {
 	t.Helper()
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
-		RouteTargetID: routeTargetID, APIType: apiType, Credential: snapshot,
+		RouteTargetID: routeTargetID, APIType: apiType, VendorScope: vendorScope, Credential: snapshot,
 	}, apiType, finalURL)
 	if err != nil {
 		t.Fatalf("AuthorityResolver.Resolve() error = %v", err)
@@ -421,7 +422,7 @@ func (*appliedIdentityCredentialStore) UpdateCredentialSessionAuthState(context.
 func sessionFromAppliedSnapshot(t *testing.T, snapshot credentialsession.Snapshot) *credentialsession.Session {
 	t.Helper()
 	session := &credentialsession.Session{
-		ID: snapshot.SessionID, Vendor: snapshot.Vendor, Kind: snapshot.Kind,
+		ID: snapshot.SessionID, Kind: snapshot.Kind,
 		SecretData: snapshot.SecretData, Version: snapshot.Version, AuthState: snapshot.AuthState,
 	}
 	if err := session.SetSubject(snapshot.Subject); err != nil {

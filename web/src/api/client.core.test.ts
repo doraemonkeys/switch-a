@@ -87,7 +87,7 @@ describe("createApiClient", () => {
       mockHttpClient.mockResponse({
         ok: true,
         status: 200,
-        json: () => Promise.resolve([{ id: "1", name: "Test" }]),
+        json: () => Promise.resolve([]),
       });
 
       await api.providers.list();

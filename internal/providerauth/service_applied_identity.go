@@ -52,6 +52,7 @@ func (s *Service) ApplyProviderCredentials(
 		applied codexidentity.AppliedIdentity
 		err     error
 	)
+	vendorScope := candidate.Authority().Vendor()
 	switch snapshot.Kind {
 	case credentialsession.KindChatGPT:
 		if candidate.APIType() != codexAPIType {
@@ -66,7 +67,7 @@ func (s *Service) ApplyProviderCredentials(
 		if subjectErr != nil {
 			return codexidentity.AppliedIdentity{}, subjectErr
 		}
-		applied, err = codexidentity.AppliedIdentityFromRequest(snapshot.Vendor, finalURL, actualSubject)
+		applied, err = codexidentity.AppliedIdentityFromRequest(vendorScope, finalURL, actualSubject)
 		if err != nil {
 			return codexidentity.AppliedIdentity{}, err
 		}
@@ -87,7 +88,7 @@ func (s *Service) ApplyProviderCredentials(
 		if subjectErr != nil {
 			return codexidentity.AppliedIdentity{}, subjectErr
 		}
-		applied, err = codexidentity.AppliedIdentityFromRequest(snapshot.Vendor, finalURL, actualSubject)
+		applied, err = codexidentity.AppliedIdentityFromRequest(vendorScope, finalURL, actualSubject)
 		if err != nil {
 			return codexidentity.AppliedIdentity{}, err
 		}
@@ -107,7 +108,7 @@ func (s *Service) ApplyProviderCredentials(
 		if subjectErr != nil {
 			return codexidentity.AppliedIdentity{}, subjectErr
 		}
-		applied, err = codexidentity.AppliedIdentityFromRequest(snapshot.Vendor, finalURL, actualSubject)
+		applied, err = codexidentity.AppliedIdentityFromRequest(vendorScope, finalURL, actualSubject)
 		if err != nil {
 			return codexidentity.AppliedIdentity{}, err
 		}

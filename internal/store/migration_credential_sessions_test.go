@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
 	"github.com/doraemonkeys/switch-a/internal/store/migrationtest"
 	"gorm.io/gorm"
@@ -81,6 +83,37 @@ func TestCredentialSessionMigrationBackfillsExplicitIndependentSessions(t *testi
 	}
 	if repair.AuthState.Status != credentialsession.AuthStatusReauthRequired || repair.AuthState.StatusReason != "legacy_duplicate_account_binding" {
 		t.Fatalf("reauthentication recovery state was made routable: %+v", repair.AuthState)
+	}
+}
+
+func TestCredentialSessionMigrationPreservesOptionalRouteVendorScope(t *testing.T) {
+	t.Parallel()
+	db := openLegacyCredentialFixture(t)
+	clock := &credentialMigrationClock{now: time.Date(2026, 8, 27, 1, 2, 3, 0, time.UTC)}
+	if err := migrateCredentialSessions(db, clock); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizePendingStaticSubjects(db, clock, migrationSubjectSigner{version: "fixture-h1"}); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := credentialsession.NewRepository(db, clock, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := repository.Resolve(context.Background(), migrationtest.StaticProviderID, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.VendorScope != "" {
+		t.Fatalf("migrated vendor scope = %q, want optional empty scope", route.VendorScope)
+	}
+	target, err := url.Parse("https://static-primary.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := codexidentity.NewAuthorityResolver().Resolve(route, "codex", target)
+	if err != nil || candidate.Authority().Vendor() != "" {
+		t.Fatalf("resolved migrated candidate = (%#v, %v)", candidate, err)
 	}
 }
 

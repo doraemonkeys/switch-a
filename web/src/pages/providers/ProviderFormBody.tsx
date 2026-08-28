@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ProviderAuthView, ProviderInput } from "../../api";
+import type { CredentialSession, ProviderAuthView } from "../../api";
 import { CopyButton } from "../../components";
 import { FormField } from "./FormField";
 import {
@@ -11,7 +11,7 @@ import {
   AuthModeField,
   ApiKeyField,
 } from "./BasicFormFields";
-import { generateClientKey, type TrackedAPITypeEntry } from "./types";
+import { type ProviderCredentialMode, type ProviderFormData } from "./types";
 import { FailoverSection } from "./FailoverFields";
 import { hasFailoverConfig } from "./failoverConfig";
 import { BackoffSection } from "./BackoffFields";
@@ -32,8 +32,8 @@ import {
 import { AUTH_STATUS_BADGE_CLASS } from "../../lib/providerAuth";
 
 export interface FormState {
-  data: ProviderInput;
-  setData: React.Dispatch<React.SetStateAction<ProviderInput>>;
+  data: ProviderFormData;
+  setData: React.Dispatch<React.SetStateAction<ProviderFormData>>;
 }
 
 export interface IdState {
@@ -51,6 +51,9 @@ interface ProviderFormBodyProps {
   submitting: boolean;
   onCancel: () => void;
   groups: Array<{ id: string; name: string }>;
+  credentialSessions: CredentialSession[];
+  credentialSessionsLoading: boolean;
+  credentialSessionsError: string | null;
   authView?: ProviderAuthView | null;
   onStartChatGPTLogin: () => Promise<void>;
   onOpenChatGPTLoginPage: () => void;
@@ -95,8 +98,8 @@ function CredentialTypeField({
   value,
   onChange,
 }: {
-  value: ProviderInput["credential_type"];
-  onChange: (value: ProviderInput["credential_type"]) => void;
+  value: ProviderCredentialMode;
+  onChange: (value: ProviderCredentialMode) => void;
 }) {
   return (
     <FormField label="Credential Type">
@@ -105,11 +108,12 @@ function CredentialTypeField({
           <select
             id={id}
             className="input"
-            value={value || PROVIDER_CREDENTIAL_TYPES.API_KEY}
-            onChange={(e) =>
-              onChange(e.target.value as ProviderInput["credential_type"])
-            }
+            value={value}
+            onChange={(e) => onChange(e.target.value as ProviderCredentialMode)}
           >
+            {value === "mixed" && (
+              <option value="mixed">Mixed route credentials</option>
+            )}
             {PROVIDER_CREDENTIAL_TYPE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -133,8 +137,8 @@ function UsageLimitPolicyField({
   value,
   onChange,
 }: {
-  value: ProviderInput["usage_limit_policy"];
-  onChange: (value: ProviderInput["usage_limit_policy"]) => void;
+  value: ProviderFormData["usage_limit_policy"];
+  onChange: (value: ProviderFormData["usage_limit_policy"]) => void;
 }) {
   return (
     <FormField label="Usage Limit Policy">
@@ -145,7 +149,7 @@ function UsageLimitPolicyField({
             className="input"
             value={value}
             onChange={(e) =>
-              onChange(e.target.value as ProviderInput["usage_limit_policy"])
+              onChange(e.target.value as ProviderFormData["usage_limit_policy"])
             }
           >
             {PROVIDER_USAGE_LIMIT_POLICY_OPTIONS.map((option) => (
@@ -337,6 +341,57 @@ function ChatGPTLoginSection({
   );
 }
 
+function ChatGPTCredentialSessionField({
+  sessions,
+  value,
+  onChange,
+  loading,
+  error,
+}: {
+  sessions: CredentialSession[];
+  value: string;
+  onChange: (sessionID: string) => void;
+  loading: boolean;
+  error: string | null;
+}) {
+  const chatGPTSessions = sessions.filter(
+    (session) => session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+  );
+  return (
+    <FormField label="Credential Session">
+      {(id) => (
+        <>
+          <select
+            id={id}
+            className="input"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+          >
+            <option value="">Create from GPT login below</option>
+            {chatGPTSessions.map((session) => (
+              <option key={session.id} value={session.id}>
+                {session.auth_state.email || session.id} -{" "}
+                {session.auth_state.status}
+              </option>
+            ))}
+          </select>
+          {loading && (
+            <p className="text-xs text-text-muted mt-1">
+              Loading credential sessions...
+            </p>
+          )}
+          {error && <p className="text-xs text-danger mt-1">{error}</p>}
+          {!loading && !error && (
+            <p className="text-xs text-text-muted mt-1">
+              Select a reusable GPT session, or complete a new login below.
+            </p>
+          )}
+        </>
+      )}
+    </FormField>
+  );
+}
+
 export function ProviderFormBody({
   formState,
   idState,
@@ -345,6 +400,9 @@ export function ProviderFormBody({
   submitting,
   onCancel,
   groups,
+  credentialSessions,
+  credentialSessionsLoading,
+  credentialSessionsError,
   authView,
   onStartChatGPTLogin,
   onOpenChatGPTLoginPage,
@@ -369,25 +427,15 @@ export function ProviderFormBody({
     ),
   );
 
-  // Tracked entries carry stable client-side keys so React can reconcile
-  // rows correctly when entries are added/removed from the middle.
-  const [trackedEntries, setTrackedEntries] = useState<TrackedAPITypeEntry[]>(
-    () =>
-      formData.api_types.map((t) => ({
-        clientKey: generateClientKey(),
-        data: t,
-      })),
-  );
-
-  const handleApiTypesChange = (entries: TrackedAPITypeEntry[]) => {
-    setTrackedEntries(entries);
-    setFormData((prev) => ({ ...prev, api_types: entries.map((e) => e.data) }));
-  };
+  const handleApiTypesChange = (entries: ProviderFormData["api_types"]) =>
+    setFormData((prev) => ({ ...prev, api_types: entries }));
   const isChatGPTProvider =
-    formData.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
+    formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
   const effectiveUsageLimitPolicy =
-    formData.usage_limit_policy ||
-    defaultProviderUsageLimitPolicy(formData.credential_type);
+    formData.usage_limit_policy || defaultProviderUsageLimitPolicy();
+  const handleCredentialModeChange = (value: ProviderCredentialMode) => {
+    setFormData((previous) => ({ ...previous, credential_mode: value }));
+  };
 
   return (
     <>
@@ -464,35 +512,48 @@ export function ProviderFormBody({
         </FormField>
       )}
       <CredentialTypeField
-        value={formData.credential_type}
-        onChange={(value) =>
-          setFormData((prev) => ({
-            ...prev,
-            credential_type: value,
-          }))
-        }
+        value={formData.credential_mode}
+        onChange={handleCredentialModeChange}
       />
       {isChatGPTProvider ? (
-        <ChatGPTLoginSection
-          authView={authView}
-          chatGPTLoginState={chatGPTLoginState}
-          onStartChatGPTLogin={onStartChatGPTLogin}
-          onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
-          onImportChatGPTLogin={onImportChatGPTLogin}
-        />
+        <>
+          <ChatGPTCredentialSessionField
+            sessions={credentialSessions}
+            value={formData.chatgpt_credential_session_id}
+            onChange={(credentialSessionID) =>
+              setFormData((prev) => ({
+                ...prev,
+                chatgpt_credential_session_id: credentialSessionID,
+              }))
+            }
+            loading={credentialSessionsLoading}
+            error={credentialSessionsError}
+          />
+          <ChatGPTLoginSection
+            authView={authView}
+            chatGPTLoginState={chatGPTLoginState}
+            onStartChatGPTLogin={onStartChatGPTLogin}
+            onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
+            onImportChatGPTLogin={onImportChatGPTLogin}
+          />
+        </>
       ) : (
         <>
-          <ApiKeyField
-            value={formData.api_key}
-            onChange={(value) =>
-              setFormData((prev) => ({ ...prev, api_key: value }))
-            }
-            showApiKey={showApiKey}
-            onToggleVisibility={() => setShowApiKey(!showApiKey)}
-          />
+          {formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY && (
+            <ApiKeyField
+              value={formData.default_api_key}
+              onChange={(value) =>
+                setFormData((prev) => ({ ...prev, default_api_key: value }))
+              }
+              showApiKey={showApiKey}
+              onToggleVisibility={() => setShowApiKey(!showApiKey)}
+            />
+          )}
           <ApiTypesField
-            entries={trackedEntries}
+            entries={formData.api_types}
             onChange={handleApiTypesChange}
+            credentialSessions={credentialSessions}
+            credentialMode={formData.credential_mode}
           />
           <AuthModeField
             value={formData.auth_mode || "auto"}

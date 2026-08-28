@@ -62,9 +62,6 @@ func cookieAuthorityForRoute(route CatalogRoute) (codexidentity.CookieAuthority,
 	if strings.TrimSpace(route.RouteTargetID) == "" {
 		return codexidentity.CookieAuthority{}, fmt.Errorf("route target ID is empty")
 	}
-	if strings.TrimSpace(route.Vendor) == "" {
-		return codexidentity.CookieAuthority{}, fmt.Errorf("vendor is empty")
-	}
 	target, err := url.Parse(route.FinalURL)
 	if err != nil {
 		return codexidentity.CookieAuthority{}, fmt.Errorf("parse final URL: %w", err)

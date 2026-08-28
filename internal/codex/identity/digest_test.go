@@ -41,7 +41,7 @@ func TestDigesterDomainSeparationAndRotation(t *testing.T) {
 		t.Fatal("raw client key rotation preserved ClientScope")
 	}
 
-	staticSubject, err := rotated.StaticCredentialSubject("openai", credentialsession.KindAPIKey, string(raw))
+	staticSubject, err := rotated.StaticCredentialSubject(credentialsession.KindAPIKey, string(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestDigesterFailsClosedOnSignerFailures(t *testing.T) {
 	if _, err := failing.OpaqueDigestCandidates(OpaqueTurnState, []byte("state")); !IsError(err, ErrorDigestUnavailable) {
 		t.Fatalf("OpaqueDigestCandidates signer error = %v", err)
 	}
-	if _, err := failing.StaticCredentialSubject("openai", credentialsession.KindAPIKey, "key"); !IsError(err, ErrorDigestUnavailable) {
+	if _, err := failing.StaticCredentialSubject(credentialsession.KindAPIKey, "key"); !IsError(err, ErrorDigestUnavailable) {
 		t.Fatalf("StaticCredentialSubject signer error = %v", err)
 	}
 
@@ -165,7 +165,7 @@ func TestDigesterFailsClosedOnSignerFailures(t *testing.T) {
 	if _, err := empty.OpaqueDigestCandidates(OpaqueTurnState, []byte("state")); !IsError(err, ErrorDigestUnavailable) {
 		t.Fatalf("empty OpaqueDigestCandidates error = %v", err)
 	}
-	if _, err := empty.StaticCredentialSubject("openai", credentialsession.KindChatGPT, "key"); !IsError(err, ErrorInvalidInput) {
+	if _, err := empty.StaticCredentialSubject(credentialsession.KindChatGPT, "key"); !IsError(err, ErrorInvalidInput) {
 		t.Fatalf("invalid StaticCredentialSubject error = %v", err)
 	}
 }

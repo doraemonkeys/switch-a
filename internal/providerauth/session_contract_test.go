@@ -279,7 +279,7 @@ func TestReloadChatGPTCredentialSessionRejectsInvalidLifecycleStates(t *testing.
 		t.Fatal(err)
 	}
 	static := credentialsession.Snapshot{
-		SessionID: "static", Vendor: "openai", Kind: credentialsession.KindAPIKey,
+		SessionID: "static", Kind: credentialsession.KindAPIKey,
 		SecretData: "key", Version: 1, Subject: staticSubject,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
@@ -294,7 +294,7 @@ func TestReloadChatGPTCredentialSessionRejectsInvalidLifecycleStates(t *testing.
 		t.Fatal(err)
 	}
 	invalid := credentialsession.Snapshot{
-		SessionID: "invalid", Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		SessionID: "invalid", Kind: credentialsession.KindChatGPT,
 		SecretData: "{", Version: 1, Subject: accountSubject,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "acct"},
 	}

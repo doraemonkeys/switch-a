@@ -132,13 +132,12 @@ func TestCodexMaintenanceCatalogIncludesOnlyCodexFinalOriginsAndOwnsBytes(t *tes
 	}
 }
 
-func TestCodexMaintenanceCatalogRejectsCredentialVendorAndKindCorruption(t *testing.T) {
+func TestCodexMaintenanceCatalogRejectsCredentialKindCorruption(t *testing.T) {
 	tests := []struct {
 		name   string
 		column string
 		value  string
 	}{
-		{name: "vendor mismatch", column: "vendor", value: "other-vendor"},
 		{name: "unknown kind", column: "kind", value: "unknown"},
 		{name: "incompatible kind", column: "kind", value: string(credentialsession.KindAPIKey)},
 	}
@@ -183,7 +182,7 @@ func createMaintenanceSession(t *testing.T, storage *SQLiteStore, id, accountID 
 		t.Fatal(err)
 	}
 	session := &credentialsession.Session{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: id, Kind: credentialsession.KindChatGPT,
 		SecretData: `{"access_token":"test"}`, Version: 1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: accountID},
 		CreatedAt: now, UpdatedAt: now,

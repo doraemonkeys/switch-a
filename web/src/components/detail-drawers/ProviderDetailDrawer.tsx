@@ -9,7 +9,10 @@ import {
   statusLabel,
   type ProviderStatusType,
 } from "../../pages/providers/types";
-import { hasProviderApiKey } from "../../lib/providerApiKey";
+import {
+  formatProviderCredentialType,
+  resolveProviderCredentialSession,
+} from "../../lib/providerAuth";
 import { stringToColor } from "../../lib/utils";
 import { DetailSection, DetailRow } from "./DrawerSection";
 import { AuthSection } from "./ProviderDetailDrawerAuthSection";
@@ -163,7 +166,10 @@ function BasicInfoSection({
           provider.api_types?.length ? (
             <div className="space-y-1.5">
               {provider.api_types.map((apiType) => {
-                const hasOverride = hasProviderApiKey(apiType.api_key);
+                const session = resolveProviderCredentialSession(
+                  provider,
+                  apiType.api_type,
+                );
                 return (
                   <div
                     key={apiType.api_type}
@@ -173,13 +179,10 @@ function BasicInfoSection({
                       {apiType.api_type}
                     </span>
                     <span
-                      className={`px-1.5 py-0.5 text-[10px] font-medium rounded shrink-0 ${
-                        hasOverride
-                          ? "bg-warning-light text-warning-dark"
-                          : "bg-bg-tertiary text-text-muted"
-                      }`}
+                      className="px-1.5 py-0.5 text-[10px] font-medium rounded shrink-0 bg-bg-tertiary text-text-muted"
+                      title={session?.id}
                     >
-                      {hasOverride ? "Custom key" : "Default key"}
+                      {formatProviderCredentialType(session?.kind)}
                     </span>
                     <span
                       className="text-xs font-mono text-text-secondary truncate"
@@ -230,7 +233,7 @@ function BasicInfoSection({
             (option) =>
               option.value ===
               (provider.usage_limit_policy ||
-                defaultProviderUsageLimitPolicy(provider.credential_type)),
+                defaultProviderUsageLimitPolicy()),
           )?.label || "Unknown"
         }
       />

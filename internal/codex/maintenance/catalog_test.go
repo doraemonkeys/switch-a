@@ -44,13 +44,14 @@ func TestCatalogSnapshotDerivesEveryAuthorityDimension(t *testing.T) {
 		{RouteTargetID: "route-b", Vendor: "azure", FinalURL: "https://a.example", Subject: accountA},
 		{RouteTargetID: "route-c", Vendor: "openai", FinalURL: "https://b.example", Subject: accountA},
 		{RouteTargetID: "route-d", Vendor: "openai", FinalURL: "https://a.example", Subject: accountB},
+		{RouteTargetID: "route-e", Vendor: "", FinalURL: "https://a.example", Subject: accountA},
 	})
 	reachable, err := snapshot.ReachableCookieAuthorities()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reachable) != 4 {
-		t.Fatalf("reachable authorities = %d, want 4", len(reachable))
+	if len(reachable) != 5 {
+		t.Fatalf("reachable authorities = %d, want 5", len(reachable))
 	}
 	if empty, err := (CatalogSnapshot{}).ReachableCookieAuthorities(); err != nil || len(empty) != 0 {
 		t.Fatalf("empty snapshot = %#v, %v", empty, err)
@@ -65,7 +66,6 @@ func TestCatalogSnapshotRejectsAnyInvalidRouteWithoutReturningPartialSet(t *test
 		route CatalogRoute
 	}{
 		{name: "route target", route: CatalogRoute{Vendor: "openai", FinalURL: "https://example.test", Subject: account}},
-		{name: "vendor", route: CatalogRoute{RouteTargetID: "route", FinalURL: "https://example.test", Subject: account}},
 		{name: "parse", route: CatalogRoute{RouteTargetID: "route", Vendor: "openai", FinalURL: "://bad", Subject: account}},
 		{name: "origin", route: CatalogRoute{RouteTargetID: "route", Vendor: "openai", FinalURL: "https://user@example.test", Subject: account}},
 		{name: "pending subject", route: CatalogRoute{RouteTargetID: "route", Vendor: "openai", FinalURL: "https://example.test", Subject: credentialsession.PendingSubject()}},

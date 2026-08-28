@@ -71,7 +71,6 @@ export interface ExportedCredentialAuthState {
 
 export interface ExportedCredentialSession {
   id: string;
-  vendor: string;
   kind: CredentialSessionKind;
   transfer_mode: CredentialSessionTransferMode;
   secret_data?: string;

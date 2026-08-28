@@ -134,7 +134,7 @@ func exportedUnprovedChatGPTSession(t *testing.T, id, secret, accountID string) 
 		t.Fatal(err)
 	}
 	return ExportedCredentialSession{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: id, Kind: credentialsession.KindChatGPT,
 		TransferMode: CredentialSessionTransferStaticSecret,
 		SecretData:   secret, Version: 1, Subject: subject,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: accountID},
@@ -148,7 +148,7 @@ func verifiedChatGPTSession(t *testing.T, id, secret, accountID string) *credent
 		t.Fatal(err)
 	}
 	session := &credentialsession.Session{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: id, Kind: credentialsession.KindChatGPT,
 		SecretData: secret, Version: 1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: accountID},
 	}

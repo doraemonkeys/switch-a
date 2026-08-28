@@ -68,7 +68,7 @@ func usageSession(kind credentialsession.Kind, usage *model.ProviderUsageSnapsho
 		status = credentialsession.AuthStatusActive
 	}
 	return &credentialsession.Session{
-		ID: "session-1", Vendor: "openai", Kind: kind, SecretData: "opaque", Version: 1,
+		ID: "session-1", Kind: kind, SecretData: "opaque", Version: 1,
 		AuthState: credentialsession.AuthState{
 			Status: status, PlanType: "plus",
 			UsageSnapshot: credentialSessionUsageSnapshot(usage),

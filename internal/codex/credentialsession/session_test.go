@@ -51,7 +51,7 @@ func TestSubjectAndSessionValidation(t *testing.T) {
 	}
 
 	now := time.Date(2026, 8, 27, 1, 2, 3, 0, time.UTC)
-	session := &Session{ID: "s1", Vendor: "openai", Kind: KindChatGPT, SecretData: "secret", Version: 1,
+	session := &Session{ID: "s1", Kind: KindChatGPT, SecretData: "secret", Version: 1,
 		AuthState: AuthState{Status: AuthStatusActive, LastTransitionAt: &now, UsageSnapshot: &UsageSnapshot{FetchedAt: &now}}}
 	if err := session.SetSubject(account); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestSubjectAndSessionValidation(t *testing.T) {
 		t.Fatalf("Validate(mismatched account) = %v, want ErrInvalidSession", err)
 	}
 	recovery := &Session{
-		ID: "recovery", Vendor: "openai", Kind: KindChatGPT, SecretData: "secret", Version: 1,
+		ID: "recovery", Kind: KindChatGPT, SecretData: "secret", Version: 1,
 		SubjectKind: SubjectPending,
 		AuthState:   AuthState{Status: AuthStatusReauthRequired, AccountID: "diagnostic-only"},
 	}
@@ -131,16 +131,16 @@ func TestAuthenticationNormalizationAndStaticSubjectEncoding(t *testing.T) {
 	if !IsValidKind(KindAPIKey) || IsValidKind("bad") {
 		t.Fatal("kind validation returned invalid result")
 	}
-	one, err := StaticSubjectInput("openai", KindAPIKey, "ab:c")
+	one, err := StaticSubjectInput(KindAPIKey, "ab:c")
 	if err != nil {
 		t.Fatal(err)
 	}
-	two, _ := StaticSubjectInput("openai", KindAPIKey, "ab:c")
-	other, _ := StaticSubjectInput("openai", KindAPIKey, "ab")
+	two, _ := StaticSubjectInput(KindAPIKey, "ab:c")
+	other, _ := StaticSubjectInput(KindAPIKey, "ab")
 	if !bytes.Equal(one, two) || bytes.Equal(one, other) {
 		t.Fatal("StaticSubjectInput is not deterministic and unambiguous")
 	}
-	if _, err := StaticSubjectInput("openai", KindChatGPT, "secret"); !errors.Is(err, ErrInvalidSession) {
+	if _, err := StaticSubjectInput(KindChatGPT, "secret"); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("StaticSubjectInput(chatgpt) error = %v", err)
 	}
 	if (RouteBinding{}).Validate() == nil || (RouteBinding{RouteTargetID: "p", APIType: "codex", SessionID: "s"}).Validate() != nil {
@@ -206,9 +206,9 @@ func newRepositoryTestDB(t *testing.T) (*gorm.DB, *Repository, repositoryTestClo
 	return db, repo, clock
 }
 
-func newRepositoryTestSession(t *testing.T, id, vendor string, subject Subject) *Session {
+func newRepositoryTestSession(t *testing.T, id string, subject Subject) *Session {
 	t.Helper()
-	session := &Session{ID: id, Vendor: vendor, Kind: KindAPIKey, SecretData: "secret", Version: 1, AuthState: AuthState{Status: AuthStatusActive}}
+	session := &Session{ID: id, Kind: KindAPIKey, SecretData: "secret", Version: 1, AuthState: AuthState{Status: AuthStatusActive}}
 	if err := session.SetSubject(subject); err != nil {
 		t.Fatal(err)
 	}
@@ -236,12 +236,12 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 	}
 
 	digest, _ := KeyedDigestSubject("h1", bytes.Repeat([]byte{1}, staticSubjectDigestSize))
-	session := newRepositoryTestSession(t, "", " openai ", digest)
+	session := newRepositoryTestSession(t, "", digest)
 	created, err := repo.Create(context.Background(), session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.ID != "generated-1" || created.Vendor != "openai" || !created.CreatedAt.Equal(clock.now) || created.Version != 1 {
+	if created.ID != "generated-1" || !created.CreatedAt.Equal(clock.now) || created.Version != 1 {
 		t.Fatalf("Create() = %#v", created)
 	}
 	created.SecretData = "caller mutation"
@@ -257,10 +257,10 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 		t.Fatalf("List() = (%#v, %v)", listed, err)
 	}
 
-	if err := db.Exec(`INSERT INTO providers(id,vendor) VALUES ('p1','openai'),('p2','openai'),('wrong','anthropic')`).Error; err != nil {
+	if err := db.Exec(`INSERT INTO providers(id,vendor) VALUES ('p1','openai'),('p2','openai'),('cross-vendor','anthropic'),('blank-vendor','')`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`INSERT INTO provider_api_types(provider_id,api_type) VALUES ('p1','codex'),('p1','responses'),('p2','codex'),('wrong','codex')`).Error; err != nil {
+	if err := db.Exec(`INSERT INTO provider_api_types(provider_id,api_type) VALUES ('p1','codex'),('p1','responses'),('p2','codex'),('cross-vendor','codex'),('blank-vendor','codex')`).Error; err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -273,8 +273,17 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 	if err := repo.Bind(ctx, RouteBinding{RouteTargetID: "p1", APIType: "codex", SessionID: "missing"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Bind(missing session) error = %v", err)
 	}
-	if err := repo.Bind(ctx, RouteBinding{RouteTargetID: "wrong", APIType: "codex", SessionID: created.ID}); !errors.Is(err, ErrInvalidRouteBinding) {
-		t.Fatalf("Bind(vendor mismatch) error = %v", err)
+	for routeTargetID, wantVendorScope := range map[string]string{"cross-vendor": "anthropic", "blank-vendor": ""} {
+		if err := repo.Bind(ctx, RouteBinding{RouteTargetID: routeTargetID, APIType: "codex", SessionID: created.ID}); err != nil {
+			t.Fatalf("Bind(%s) error = %v", routeTargetID, err)
+		}
+		resolvedRoute, err := repo.Resolve(ctx, routeTargetID, "codex")
+		if err != nil || resolvedRoute.VendorScope != wantVendorScope {
+			t.Fatalf("Resolve(%s) = (%#v, %v), want vendor scope %q", routeTargetID, resolvedRoute, err, wantVendorScope)
+		}
+		if err := repo.DeleteRouteBindings(ctx, routeTargetID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, binding := range []RouteBinding{
 		{RouteTargetID: "p1", APIType: "codex", SessionID: created.ID},
@@ -355,7 +364,7 @@ func TestRepositoryRejectsChatGPTAccountMismatchDuringCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := &Session{
-		ID: "chatgpt-session", Vendor: "openai", Kind: KindChatGPT,
+		ID: "chatgpt-session", Kind: KindChatGPT,
 		SecretData: "secret", Version: 1,
 		AuthState: AuthState{Status: AuthStatusActive, AccountID: "account-1"},
 	}
@@ -382,7 +391,7 @@ func TestRepositoryRejectsChatGPTAccountMismatchDuringCAS(t *testing.T) {
 func TestRepositoryRequiresProvenSubjectWhenRecoveryBecomesActive(t *testing.T) {
 	_, repo, _ := newRepositoryTestDB(t)
 	recovery := &Session{
-		ID: "chatgpt-recovery", Vendor: "openai", Kind: KindChatGPT,
+		ID: "chatgpt-recovery", Kind: KindChatGPT,
 		SecretData: "recovery-secret", Version: 1, SubjectKind: SubjectPending,
 		AuthState: AuthState{Status: AuthStatusReauthRequired, AccountID: "diagnostic-only"},
 	}
@@ -415,7 +424,7 @@ func TestRepositoryReplaceBindingsAndPendingResolution(t *testing.T) {
 	if err := db.Exec(`INSERT INTO provider_api_types(provider_id,api_type) VALUES ('p1','codex'),('p1','responses')`).Error; err != nil {
 		t.Fatal(err)
 	}
-	pending := newRepositoryTestSession(t, "pending", "openai", PendingSubject())
+	pending := newRepositoryTestSession(t, "pending", PendingSubject())
 	if _, err := repo.Create(context.Background(), pending); err != nil {
 		t.Fatal(err)
 	}

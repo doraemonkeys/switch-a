@@ -163,6 +163,10 @@ func TestRetryEligibilityFailsClosedOnDependencyAndCredentialLoss(t *testing.T) 
 				provider := store.providers["provider-a"]
 				provider.CredentialSessions[0].Credential.Kind = credentialsession.KindChatGPT
 				provider.CredentialSessions[0].Credential.SecretData = "session"
+				provider.CredentialSessions[0].Credential.Subject, _ = credentialsession.AccountSubject("account-a")
+				provider.CredentialSessions[0].Credential.AuthState = credentialsession.AuthState{
+					Status: credentialsession.AuthStatusActive, AccountID: "account-a",
+				}
 			},
 			mutate: func(store *lifecycleStore) {
 				store.providers["provider-a"].CredentialSessions = nil

@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef, useId } from "react";
 import type { FormEvent } from "react";
-import type { APICatalog, Provider, ProviderInput } from "../../api";
-import {
-  ApiError,
-  findBuiltInAPIType,
-  isValidAPIType,
-  useAPICatalog,
+import type {
+  APICatalog,
+  CreateCredentialSessionInput,
+  CredentialSession,
+  Provider,
+  ProviderInput,
 } from "../../api";
-import { ConfirmModal } from "../../components";
+import { findBuiltInAPIType, isValidAPIType, useAPICatalog } from "../../api";
 import { ProviderFormBody } from "./ProviderFormBody";
 import { useChatGPTLogin } from "./useChatGPTLogin";
+import { useCredentialSessions } from "../../hooks/useCredentialSessions";
 import { isValidId } from "../../lib/utils";
 import { normalizeProviderApiKey } from "../../lib/providerApiKey";
 import { CloseIcon } from "../../components/icons/CloseIcon";
@@ -21,19 +22,27 @@ import {
   PROVIDER_CREDENTIAL_TYPES,
 } from "../../config/constants";
 import {
-  hasProviderCredentialSnapshot,
   resolveProviderAuthView,
+  resolveProviderChatGPTCredentialSession,
+  resolveProviderCredentialKind,
 } from "../../lib/providerAuth";
+import type { ProviderAPITypeDraft, ProviderFormData } from "./types";
+import { generateClientKey } from "./types";
 
 // GPT login is intrinsically a Codex credential flow; catalog membership is
 // still checked at submission time so this requirement cannot become a list.
 const CHATGPT_API_TYPE = "codex";
 
-function createChatGPTAPIType(apiType: string): ProviderInput["api_types"] {
+function createChatGPTAPIType(
+  apiType: string,
+  credentialSessionID = "",
+): ProviderFormData["api_types"] {
   return [
     {
+      client_key: generateClientKey(),
       api_type: apiType,
       base_url: CHATGPT_CODEX_BASE_URL,
+      credential_session_id: credentialSessionID,
       api_key: "",
     },
   ];
@@ -67,15 +76,15 @@ function ModalHeader({
   );
 }
 
-function createDefaultFormData(): ProviderInput {
+function createDefaultFormData(): ProviderFormData {
   return {
     id: "",
     name: "",
-    api_key: "",
+    default_api_key: "",
+    chatgpt_credential_session_id: "",
     api_types: [],
     auth_mode: "auto",
-    credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-    credential_login_id: "",
+    credential_mode: PROVIDER_CREDENTIAL_TYPES.API_KEY,
     group_id: null,
     weight: ADD_PROVIDER_DEFAULTS.WEIGHT,
     priority: ADD_PROVIDER_DEFAULTS.PRIORITY,
@@ -95,24 +104,31 @@ function createDefaultFormData(): ProviderInput {
   };
 }
 
-function deriveFormData(initialData?: Provider): ProviderInput {
+function deriveFormData(initialData?: Provider): ProviderFormData {
   if (!initialData) return createDefaultFormData();
+  const credentialMode = resolveProviderCredentialKind(initialData) ?? "mixed";
+  const chatGPTCredentialSession =
+    resolveProviderChatGPTCredentialSession(initialData);
   return {
     id: initialData.id,
     name: initialData.name,
-    api_key: normalizeProviderApiKey(initialData.api_key),
+    default_api_key: "",
+    chatgpt_credential_session_id: chatGPTCredentialSession?.id ?? "",
     api_types: initialData.api_types.map((t) => ({
+      client_key: generateClientKey(),
       api_type: t.api_type,
       base_url: t.base_url,
-      api_key: normalizeProviderApiKey(t.api_key),
+      credential_session_id:
+        credentialMode === PROVIDER_CREDENTIAL_TYPES.CHATGPT
+          ? ""
+          : t.credential_session_id,
+      api_key: "",
     })),
     auth_mode: initialData.auth_mode || "auto",
-    credential_type:
-      initialData.credential_type || PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    credential_mode: credentialMode,
     usage_limit_policy: initialData.usage_limit_policy_explicit
       ? initialData.usage_limit_policy
       : undefined,
-    credential_login_id: "",
     group_id: initialData.group_id,
     weight: initialData.weight,
     priority: initialData.priority,
@@ -127,26 +143,24 @@ function deriveFormData(initialData?: Provider): ProviderInput {
 }
 
 type ProviderSubmissionPreparation =
-  | { kind: "ok"; payload: ProviderInput }
+  | {
+      kind: "ok";
+      apiTypes: ProviderAPITypeDraft[];
+      isChatGPTProvider: boolean;
+    }
   | { kind: "id-error"; message: string }
   | { kind: "form-error"; message: string };
-
-interface CredentialBindingConflict {
-  payload: ProviderInput;
-  accountId?: string;
-  providerId?: string;
-}
 
 type APITypeSubmissionPreparation =
   | {
       kind: "ok";
-      apiTypes: ProviderInput["api_types"];
+      apiTypes: ProviderAPITypeDraft[];
       isChatGPTProvider: boolean;
     }
   | { kind: "error"; message: string };
 
 function prepareAPITypeSubmission(
-  formData: ProviderInput,
+  formData: ProviderFormData,
   apiCatalog: APICatalog | null,
 ): APITypeSubmissionPreparation {
   if (!apiCatalog) {
@@ -157,7 +171,7 @@ function prepareAPITypeSubmission(
   }
 
   const isChatGPTProvider =
-    formData.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
+    formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
   if (isChatGPTProvider) {
     const chatGPTAPIType = findBuiltInAPIType(apiCatalog, CHATGPT_API_TYPE);
     if (!chatGPTAPIType) {
@@ -168,7 +182,10 @@ function prepareAPITypeSubmission(
     }
     return {
       kind: "ok",
-      apiTypes: createChatGPTAPIType(chatGPTAPIType.api_type),
+      apiTypes: createChatGPTAPIType(
+        chatGPTAPIType.api_type,
+        formData.chatgpt_credential_session_id,
+      ),
       isChatGPTProvider: true,
     };
   }
@@ -194,46 +211,16 @@ function prepareAPITypeSubmission(
   return { kind: "ok", apiTypes, isChatGPTProvider: false };
 }
 
-function getCredentialBindingConflict(
-  error: unknown,
-  payload: ProviderInput,
-): CredentialBindingConflict | null {
-  if (
-    !(error instanceof ApiError) ||
-    error.details?.kind !== "credential_binding"
-  ) {
-    return null;
-  }
-  return {
-    payload,
-    accountId: error.details.account_id,
-    providerId: error.details.provider_id,
-  };
-}
-
-function describeCredentialBindingConflict(
-  conflict: CredentialBindingConflict | null,
-): string {
-  if (!conflict) {
-    return "This GPT account is already connected. Replace the previous credential data with this login? The previous provider will become disconnected.";
-  }
-  const account = conflict.accountId ? ` (${conflict.accountId})` : "";
-  const provider = conflict.providerId
-    ? `provider "${conflict.providerId}"`
-    : "another provider";
-  return `This GPT account${account} is already connected to ${provider}. Replace the previous credential data with this login? The previous provider will become disconnected.`;
-}
-
 function prepareProviderSubmission({
   formData,
   isEditMode,
-  hasPersistedChatGPTProvider,
   apiCatalog,
+  credentialLoginID,
 }: {
-  formData: ProviderInput;
+  formData: ProviderFormData;
   isEditMode: boolean;
-  hasPersistedChatGPTProvider: boolean;
   apiCatalog: APICatalog | null;
+  credentialLoginID: string;
 }): ProviderSubmissionPreparation {
   if (!isEditMode && formData.id && !isValidId(formData.id)) {
     return {
@@ -263,23 +250,29 @@ function prepareProviderSubmission({
     }
   }
 
-  const defaultAPIKey = normalizeProviderApiKey(formData.api_key);
+  const defaultAPIKey =
+    formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY
+      ? normalizeProviderApiKey(formData.default_api_key)
+      : "";
   if (!isChatGPTProvider) {
     const missingKey = validApiTypes.find(
-      (apiType) => !defaultAPIKey && !normalizeProviderApiKey(apiType.api_key),
+      (apiType) =>
+        !apiType.credential_session_id &&
+        !defaultAPIKey &&
+        !normalizeProviderApiKey(apiType.api_key),
     );
     if (missingKey) {
       return {
         kind: "form-error",
-        message: `API key is required for API type "${missingKey.api_type}". Set a default API key or add an override for that API type.`,
+        message: `Credential session is required for API type "${missingKey.api_type}". Select one or provide a new API key.`,
       };
     }
   }
 
   if (
     isChatGPTProvider &&
-    !formData.credential_login_id &&
-    !(isEditMode && hasPersistedChatGPTProvider)
+    !credentialLoginID &&
+    !validApiTypes[0]?.credential_session_id
   ) {
     return {
       kind: "form-error",
@@ -287,17 +280,128 @@ function prepareProviderSubmission({
     };
   }
 
-  const normalizedApiTypes = validApiTypes.map((apiType) => ({
-    ...apiType,
-    api_key: normalizeProviderApiKey(apiType.api_key),
-  }));
   return {
     kind: "ok",
-    payload: {
+    apiTypes: validApiTypes.map((apiType) => ({
+      ...apiType,
+      api_key: normalizeProviderApiKey(apiType.api_key),
+    })),
+    isChatGPTProvider,
+  };
+}
+
+type CreateCredentialSession = (
+  input: CreateCredentialSessionInput,
+) => Promise<CredentialSession>;
+
+function providerInputFromForm(
+  formData: ProviderFormData,
+  apiTypes: ProviderInput["api_types"],
+  isChatGPTProvider: boolean,
+): ProviderInput {
+  return {
+    id: formData.id,
+    name: formData.name,
+    api_types: apiTypes,
+    auth_mode: isChatGPTProvider ? AUTH_MODES.BEARER : formData.auth_mode,
+    usage_limit_policy: formData.usage_limit_policy,
+    group_id: formData.group_id,
+    weight: formData.weight,
+    priority: formData.priority,
+    concurrency: formData.concurrency,
+    max_retries: formData.max_retries,
+    backoff: formData.backoff,
+    vendor: formData.vendor,
+    failover_scope: formData.failover_scope,
+    accept_failover: formData.accept_failover,
+    enabled: formData.enabled,
+  };
+}
+
+async function materializeProviderCredentials({
+  formData,
+  apiTypes,
+  isChatGPTProvider,
+  credentialLoginID,
+  createCredentialSession,
+}: {
+  formData: ProviderFormData;
+  apiTypes: ProviderAPITypeDraft[];
+  isChatGPTProvider: boolean;
+  credentialLoginID: string;
+  createCredentialSession: CreateCredentialSession;
+}): Promise<{ payload: ProviderInput; formData: ProviderFormData }> {
+  if (isChatGPTProvider) {
+    let sessionID = apiTypes[0]?.credential_session_id ?? "";
+    if (credentialLoginID) {
+      const created = await createCredentialSession({
+        kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+        credential_login_id: credentialLoginID,
+      });
+      sessionID = created.id;
+    }
+    const resolved = apiTypes.map((entry) => ({
+      api_type: entry.api_type,
+      base_url: entry.base_url,
+      credential_session_id: sessionID,
+    }));
+    return {
+      payload: providerInputFromForm(formData, resolved, true),
+      formData: {
+        ...formData,
+        chatgpt_credential_session_id: sessionID,
+        api_types: resolved.map((entry) => ({
+          ...entry,
+          client_key: generateClientKey(),
+          api_key: "",
+        })),
+      },
+    };
+  }
+
+  const defaultSecret =
+    formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY
+      ? normalizeProviderApiKey(formData.default_api_key)
+      : "";
+  let defaultSessionID = "";
+  const resolved: ProviderInput["api_types"] = [];
+  for (const entry of apiTypes) {
+    const routeSecret = normalizeProviderApiKey(entry.api_key);
+    let sessionID = entry.credential_session_id;
+    if (routeSecret) {
+      sessionID = (
+        await createCredentialSession({
+          kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+          secret_data: routeSecret,
+        })
+      ).id;
+    } else if (defaultSecret) {
+      if (!defaultSessionID) {
+        defaultSessionID = (
+          await createCredentialSession({
+            kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+            secret_data: defaultSecret,
+          })
+        ).id;
+      }
+      sessionID = defaultSessionID;
+    }
+    resolved.push({
+      api_type: entry.api_type,
+      base_url: entry.base_url,
+      credential_session_id: sessionID,
+    });
+  }
+  return {
+    payload: providerInputFromForm(formData, resolved, false),
+    formData: {
       ...formData,
-      api_key: isChatGPTProvider ? "" : defaultAPIKey,
-      api_types: normalizedApiTypes,
-      auth_mode: isChatGPTProvider ? AUTH_MODES.BEARER : formData.auth_mode,
+      default_api_key: "",
+      api_types: resolved.map((entry) => ({
+        ...entry,
+        client_key: generateClientKey(),
+        api_key: "",
+      })),
     },
   };
 }
@@ -320,14 +424,18 @@ export function ProviderModal({
   const titleId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
   const initialAuthView = resolveProviderAuthView(initialData);
+  const {
+    credentialSessions,
+    loading: credentialSessionsLoading,
+    error: credentialSessionsQueryError,
+    createCredentialSession,
+  } = useCredentialSessions();
 
-  const [formData, setFormData] = useState<ProviderInput>(() =>
+  const [formData, setFormData] = useState<ProviderFormData>(() =>
     deriveFormData(initialData),
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [credentialBindingConflict, setCredentialBindingConflict] =
-    useState<CredentialBindingConflict | null>(null);
   const [idManuallyEdited, setIdManuallyEdited] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
 
@@ -337,12 +445,13 @@ export function ProviderModal({
     startingChatGPTLogin,
     chatGPTLoginAuthURL,
     pendingChatGPTAuth,
+    credentialLoginID,
+    clearCredentialLogin,
     handleStartChatGPTLogin,
     handleOpenChatGPTLoginPage,
     handleImportChatGPTLogin,
   } = useChatGPTLogin({
-    credentialType: formData.credential_type,
-    setFormData,
+    enabled: formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
     initialAuthView,
   });
 
@@ -387,8 +496,8 @@ export function ProviderModal({
     const preparedSubmission = prepareProviderSubmission({
       formData,
       isEditMode,
-      hasPersistedChatGPTProvider: hasProviderCredentialSnapshot(initialData),
       apiCatalog,
+      credentialLoginID,
     });
     if (preparedSubmission.kind === "id-error") {
       setIdError(preparedSubmission.message);
@@ -403,40 +512,25 @@ export function ProviderModal({
     setSubmitting(true);
     setError(null);
     try {
-      await onSubmit(preparedSubmission.payload);
-      onClose();
-    } catch (err) {
-      const conflict = getCredentialBindingConflict(
-        err,
-        preparedSubmission.payload,
-      );
-      if (conflict) {
-        setCredentialBindingConflict(conflict);
-        return;
-      }
-      setError(err instanceof Error ? err.message : "Failed to save provider");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleCredentialBindingReplacement = async () => {
-    if (!credentialBindingConflict) {
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onSubmit({
-        ...credentialBindingConflict.payload,
-        credential_binding_resolution: "replace",
+      const materialized = await materializeProviderCredentials({
+        formData,
+        apiTypes: preparedSubmission.apiTypes,
+        isChatGPTProvider: preparedSubmission.isChatGPTProvider,
+        credentialLoginID,
+        createCredentialSession,
       });
-      setCredentialBindingConflict(null);
+      // A newly created credential session is durable and reusable even if the
+      // provider write fails, so retain its binding in the open form for retry.
+      setFormData(materialized.formData);
+      if (preparedSubmission.isChatGPTProvider && credentialLoginID) {
+        // A completed login is single-use. Once it has materialized a durable
+        // session, retries must reuse that session instead of consuming it again.
+        clearCredentialLogin();
+      }
+      await onSubmit(materialized.payload);
       onClose();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to replace GPT account",
-      );
+      setError(err instanceof Error ? err.message : "Failed to save provider");
     } finally {
       setSubmitting(false);
     }
@@ -477,6 +571,11 @@ export function ProviderModal({
             submitting={submitting}
             onCancel={onClose}
             groups={groups}
+            credentialSessions={credentialSessions}
+            credentialSessionsLoading={credentialSessionsLoading}
+            credentialSessionsError={
+              credentialSessionsQueryError?.message ?? null
+            }
             authView={pendingChatGPTAuth ?? initialAuthView}
             onStartChatGPTLogin={handleStartChatGPTLogin}
             onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
@@ -490,17 +589,6 @@ export function ProviderModal({
           />
         </form>
       </div>
-      <ConfirmModal
-        isOpen={credentialBindingConflict !== null}
-        onClose={() => setCredentialBindingConflict(null)}
-        onConfirm={() => void handleCredentialBindingReplacement()}
-        title="GPT account already connected"
-        message={describeCredentialBindingConflict(credentialBindingConflict)}
-        confirmText="Replace account"
-        cancelText="Keep previous"
-        variant="warning"
-        loading={submitting}
-      />
     </div>
   );
 }

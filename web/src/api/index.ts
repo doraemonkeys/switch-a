@@ -18,6 +18,13 @@ export {
 } from "./api-catalog";
 export type { APICatalog, APICatalogEntry } from "./api-catalog";
 export { parseTokenUsageResponse } from "./token-usage-decoders";
+export {
+  parseCredentialSession,
+  parseCredentialSessions,
+  parseProvider,
+  parseProviders,
+  ProviderContractError,
+} from "./provider-contract";
 export type {
   TokenBreakdownDTO,
   TokenSummaryDTO,
@@ -87,6 +94,14 @@ export type {
   BackoffPolicy,
   Provider,
   ProviderAPIType,
+  ProviderCredentialSession,
+  CredentialSession,
+  CredentialSessionKind,
+  CredentialSessionAuthState,
+  CredentialSubject,
+  CredentialSubjectKind,
+  CreateCredentialSessionInput,
+  UpdateCredentialSessionInput,
   ProviderAuthStatus,
   ProviderAuthView,
   ProviderInput,
@@ -143,7 +158,6 @@ export type {
   ExportedCredentialSubject,
   ExportedCredentialUsageSnapshot,
   ExportedCredentialUsageWindow,
-  CredentialSessionKind,
   CredentialSessionTransferMode,
   ExportedGroup,
   ExportedInternalErrorRule,

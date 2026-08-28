@@ -62,7 +62,7 @@ export function AuthSection({
   const [refreshingCredential, setRefreshingCredential] = useState(false);
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const canSyncChatGPT =
-    provider.credential_type === "chatgpt" && authView?.status === "active";
+    authView?.type === "chatgpt" && authView.status === "active";
 
   const handleRefreshCredential = async () => {
     if (!onRefreshCredential) {
@@ -89,7 +89,7 @@ export function AuthSection({
   };
 
   const renderUsageHint = () => {
-    if (provider.credential_type !== "chatgpt") {
+    if (authView?.type !== "chatgpt") {
       return null;
     }
     if (authView?.status === "not_connected") {
@@ -119,7 +119,7 @@ export function AuthSection({
     <DetailSection
       title="Authentication"
       action={
-        provider.credential_type === "chatgpt" ? (
+        authView?.type === "chatgpt" ? (
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -143,10 +143,7 @@ export function AuthSection({
         ) : undefined
       }
     >
-      <DetailRow
-        label="Type"
-        value={formatProviderCredentialType(provider.credential_type)}
-      />
+      <DetailRow label="Type" value={formatProviderCredentialType(provider)} />
       <DetailRow
         label="Status"
         value={
@@ -195,7 +192,7 @@ export function AuthSection({
           </p>
         </div>
       )}
-      {provider.credential_type === "chatgpt" &&
+      {authView?.type === "chatgpt" &&
         (hasUsage ? (
           <div className="space-y-3 pt-1">
             {usage?.five_hour && (

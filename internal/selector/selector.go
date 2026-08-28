@@ -581,7 +581,28 @@ func (s *Selector) selectionScope(ctx context.Context, req *model.SelectRequest)
 	if err != nil {
 		return nil, err
 	}
-	return newProviderSelectionEligibility(ctx, s.store, s.health, s.resolver, req, providers)
+	scope, err := newProviderSelectionEligibility(ctx, s.store, s.health, s.resolver, req, providers)
+	if err != nil {
+		return nil, err
+	}
+	for _, providerID := range scope.order {
+		candidate := scope.candidates[providerID]
+		if candidate.identityErr == nil {
+			continue
+		}
+		// Selection refuses unresolved identities before a transport attempt, so
+		// this log is the durable explanation when the client only sees that no
+		// provider was available.
+		s.logger.Warn("provider candidate identity unavailable",
+			zap.String("operation_id", reqOperationID(req)),
+			zap.String("provider_id", providerID),
+			zap.String("api_type", reqAPIType(req)),
+			zap.String("credential_session_id", candidate.credential.SessionID),
+			zap.String("vendor_scope", candidate.provider.Vendor),
+			zap.Error(candidate.identityErr),
+		)
+	}
+	return scope, nil
 }
 
 // removeProvider removes a provider from the candidates list by ID.

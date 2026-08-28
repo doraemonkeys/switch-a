@@ -252,7 +252,6 @@ func validateProviderImportUpdate(update *ProviderImportCredentialUpdate, candid
 func sessionFromSnapshot(snapshot credentialsession.Snapshot) (credentialsession.Session, error) {
 	session := credentialsession.Session{
 		ID:         snapshot.SessionID,
-		Vendor:     snapshot.Vendor,
 		Kind:       snapshot.Kind,
 		SecretData: snapshot.SecretData,
 		Version:    snapshot.Version,

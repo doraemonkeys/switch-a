@@ -1,5 +1,5 @@
 import { useApi } from "../api";
-import type { CodexAuthDocument, Provider, ProviderInput } from "../api/client";
+import type { Provider, ProviderInput } from "../api/client";
 import { useQuery } from "./useQuery";
 
 interface UseProvidersResult {
@@ -14,9 +14,6 @@ interface UseProvidersResult {
   enableProvider: (id: string) => Promise<void>;
   disableProvider: (id: string) => Promise<void>;
   resetProvider: (id: string) => Promise<void>;
-  refreshCredential: (id: string) => Promise<void>;
-  refreshUsage: (id: string) => Promise<void>;
-  exportCodexAuth: (id: string) => Promise<CodexAuthDocument>;
 }
 
 export function useProviders(): UseProvidersResult {
@@ -60,24 +57,6 @@ export function useProviders(): UseProvidersResult {
     await query.refetch();
   };
 
-  const refreshCredential = async (id: string): Promise<void> => {
-    await api.providers.refreshCredential(id);
-    await query.refetch();
-  };
-
-  const refreshUsage = async (id: string): Promise<void> => {
-    try {
-      await api.providers.refreshUsage(id);
-    } finally {
-      // A rejected sync may persist an auth lifecycle transition, so the UI
-      // must reconcile provider state even though the action itself failed.
-      await query.refetch();
-    }
-  };
-
-  const exportCodexAuth = (id: string): Promise<CodexAuthDocument> =>
-    api.providers.exportCodexAuth(id);
-
   return {
     providers: query.data ?? [],
     hasSnapshot: query.data !== null,
@@ -90,9 +69,6 @@ export function useProviders(): UseProvidersResult {
     enableProvider,
     disableProvider,
     resetProvider,
-    refreshCredential,
-    refreshUsage,
-    exportCodexAuth,
   };
 }
 

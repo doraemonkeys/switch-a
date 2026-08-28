@@ -65,16 +65,23 @@ function buildProvider(overrides: Partial<Provider> = {}): Provider {
   return {
     id: "provider-1",
     name: "Primary OpenAI",
-    api_key: "sk-test",
     api_types: [
       {
-        provider_id: "provider-1",
         api_type: "codex",
         base_url: "https://provider.example.com",
+        credential_session_id: "credential-1",
       },
     ],
     auth_mode: "auto",
-    credential_type: "api_key",
+    credential_sessions: [
+      {
+        id: "credential-1",
+        kind: "api_key",
+        version: 1,
+        subject: { kind: "keyed_digest", value: "digest" },
+        auth_state: { status: "active" },
+      },
+    ],
     usage_limit_policy: "switch_provider",
     usage_limit_policy_explicit: true,
     group_id: "group-1",

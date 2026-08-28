@@ -1,5 +1,6 @@
 import { useId } from "react";
-import type { ProviderInput, FailoverScope } from "../../api";
+import type { FailoverScope } from "../../api";
+import type { ProviderFormData } from "./types";
 import {
   COMMON_VENDORS,
   FAILOVER_SCOPE_OPTIONS,
@@ -166,8 +167,8 @@ export function FailoverScopeField({
 }
 
 interface FailoverSectionProps {
-  formData: ProviderInput;
-  setFormData: React.Dispatch<React.SetStateAction<ProviderInput>>;
+  formData: ProviderFormData;
+  setFormData: React.Dispatch<React.SetStateAction<ProviderFormData>>;
   expanded: boolean;
   onToggle: () => void;
 }

@@ -2,6 +2,7 @@ package selector
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"net/url"
 	"testing"
@@ -11,12 +12,15 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const authorityTestAPIType = "codex"
 
 func authorityTestProvider(id, origin, subjectID string, priority int) model.Provider {
-	subject, err := credentialsession.AccountSubject(subjectID)
+	digest := sha256.Sum256([]byte(subjectID))
+	subject, err := credentialsession.KeyedDigestSubject("test-hmac", digest[:])
 	if err != nil {
 		panic(err)
 	}
@@ -33,9 +37,9 @@ func authorityTestProvider(id, origin, subjectID string, priority int) model.Pro
 		CredentialSessions: []credentialsession.RouteSnapshot{{
 			RouteTargetID: id,
 			APIType:       authorityTestAPIType,
+			VendorScope:   "openai",
 			Credential: credentialsession.Snapshot{
 				SessionID:  "session-" + id,
-				Vendor:     "openai",
 				Kind:       credentialsession.KindAPIKey,
 				SecretData: "secret-" + id,
 				Version:    1,
@@ -171,20 +175,27 @@ func TestAuthorityResolutionAndSnapshotStorageFailuresFailClosed(t *testing.T) {
 	pending.CredentialSessions[0].Credential.Subject = credentialsession.PendingSubject()
 	store := newMockStore()
 	store.providers = []model.Provider{pending}
-	selector := NewSelector(Config{Store: store})
-	req := &model.SelectRequest{APIType: authorityTestAPIType, RequiredAuthority: &required}
+	logCore, observedLogs := observer.New(zap.WarnLevel)
+	selector := NewSelector(Config{Store: store, Logger: zap.New(logCore)})
+	req := &model.SelectRequest{OperationID: "required-operation", APIType: authorityTestAPIType, RequiredAuthority: &required}
 
 	if _, err := selector.SelectWithMetadata(context.Background(), req); !errors.Is(err, internal.ErrNoProvider) {
 		t.Fatalf("pending subject selection error = %v, want ErrNoProvider", err)
 	}
 
-	stateless, err := selector.SelectWithMetadata(context.Background(), &model.SelectRequest{APIType: authorityTestAPIType})
-	if err != nil {
-		t.Fatalf("stateless pending selection error = %v", err)
+	if _, err := selector.SelectWithMetadata(context.Background(), &model.SelectRequest{OperationID: "stateless-operation", APIType: authorityTestAPIType}); !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("stateless pending selection error = %v, want ErrNoProvider", err)
 	}
-	defer stateless.Lease.Release()
-	if _, resolved := stateless.CandidateSnapshot(); resolved {
-		t.Fatal("pending subject produced a resolved lease identity")
+	loggedStatelessFailure := false
+	for _, entry := range observedLogs.FilterMessage("provider candidate identity unavailable").All() {
+		fields := entry.ContextMap()
+		if fields["operation_id"] == "stateless-operation" && fields["provider_id"] == pending.ID &&
+			fields["credential_session_id"] == "session-"+pending.ID && fields["vendor_scope"] == pending.Vendor {
+			loggedStatelessFailure = true
+		}
+	}
+	if !loggedStatelessFailure {
+		t.Fatalf("identity rejection log fields = %#v", observedLogs.All())
 	}
 
 	storageErr := errors.New("credential snapshot storage unavailable")

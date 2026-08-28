@@ -246,11 +246,11 @@ func TestCodexWebSocketRecoveryAdapterClassifiesRealBoundaryFailures(t *testing.
 	if err != nil {
 		t.Fatalf("credential subject: %v", err)
 	}
-	preparedA.applied, err = codexidentity.AppliedIdentityFromRequest("openai", preparedA.finalURL, subject)
+	preparedA.applied, err = codexidentity.AppliedIdentityFromRequest(preparedA.candidate.Authority().Vendor(), preparedA.finalURL, subject)
 	if err != nil {
 		t.Fatalf("provider A applied identity: %v", err)
 	}
-	preparedB.applied, err = codexidentity.AppliedIdentityFromRequest("openai", preparedB.finalURL, subject)
+	preparedB.applied, err = codexidentity.AppliedIdentityFromRequest(preparedB.candidate.Authority().Vendor(), preparedB.finalURL, subject)
 	if err != nil {
 		t.Fatalf("provider B applied identity: %v", err)
 	}
@@ -958,7 +958,7 @@ func TestCodexWebSocketFailureAndAttemptAdapters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared.applied, err = codexidentity.AppliedIdentityFromRequest("openai", prepared.finalURL, subject)
+	prepared.applied, err = codexidentity.AppliedIdentityFromRequest(prepared.candidate.Authority().Vendor(), prepared.finalURL, subject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1040,7 +1040,7 @@ func TestCodexOrchestratorPinsRouteOnlyAtClientVisibility(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		prepared.applied, err = codexidentity.AppliedIdentityFromRequest("openai", prepared.finalURL, subject)
+		prepared.applied, err = codexidentity.AppliedIdentityFromRequest(prepared.candidate.Authority().Vendor(), prepared.finalURL, subject)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -297,7 +297,7 @@ func providerImportTestCandidate(
 		CandidateID: candidateID,
 		State:       providerauth.ChatGPTProviderImportCandidateStateReady,
 		Credential: credentialsession.Snapshot{
-			Vendor: "openai", Kind: credentialsession.KindChatGPT, SecretData: secret,
+			Kind: credentialsession.KindChatGPT, SecretData: secret,
 			Version: 1, Subject: subject,
 			AuthState: credentialsession.AuthState{
 				Status: credentialsession.AuthStatusActive, AccountID: accountID,
@@ -328,8 +328,9 @@ func providerImportTestProvider(
 		provider.CredentialSessions = append(provider.CredentialSessions, credentialsession.RouteSnapshot{
 			RouteTargetID: providerID,
 			APIType:       apiType,
+			VendorScope:   provider.Vendor,
 			Credential: credentialsession.Snapshot{
-				SessionID: sessionID, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+				SessionID: sessionID, Kind: credentialsession.KindChatGPT,
 				SecretData: `{"access_token":"old"}`, Version: version, Subject: subject,
 				AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: accountID},
 			},

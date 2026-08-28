@@ -15,7 +15,7 @@ func TestConfigImportSnapshotIncludesUnreferencedCredentialSessions(t *testing.T
 	handler, st, _ := testHandler()
 	exported := importedTestSession("orphan-session", "orphan-secret")
 	session := &credentialsession.Session{
-		ID: exported.ID, Vendor: exported.Vendor, Kind: exported.Kind,
+		ID: exported.ID, Kind: exported.Kind,
 		SecretData: exported.SecretData, Version: exported.Version, AuthState: exported.AuthState,
 	}
 	if err := session.SetSubject(exported.Subject); err != nil {

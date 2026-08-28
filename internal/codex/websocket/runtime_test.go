@@ -735,11 +735,11 @@ func testCandidate(t *testing.T, routeTarget, target string) (codexidentity.Cand
 		t.Fatal(err)
 	}
 	credential := credentialsession.Snapshot{
-		SessionID: "credential-" + routeTarget, Vendor: "openai", Kind: credentialsession.KindAPIKey,
+		SessionID: "credential-" + routeTarget, Kind: credentialsession.KindAPIKey,
 		SecretData: "secret", Version: 1, Subject: subject,
 	}
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
-		RouteTargetID: routeTarget, APIType: codexAPIType, Credential: credential,
+		RouteTargetID: routeTarget, APIType: codexAPIType, VendorScope: "openai", Credential: credential,
 	}, codexAPIType, mustURL(t, target))
 	if err != nil {
 		t.Fatal(err)

@@ -50,9 +50,9 @@ func withTestCredential[T testProviderValue](provider T, apiType, secret string,
 		target.CredentialSessions = append(target.CredentialSessions, credentialsession.RouteSnapshot{
 			RouteTargetID: target.ID,
 			APIType:       candidateAPIType,
+			VendorScope:   target.Vendor,
 			Credential: credentialsession.Snapshot{
 				SessionID:  target.ID + "-" + candidateAPIType,
-				Vendor:     "proxy-test",
 				Kind:       kind,
 				SecretData: secret,
 				Version:    1,

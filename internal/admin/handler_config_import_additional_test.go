@@ -225,7 +225,7 @@ func TestApplyImportChanges_TracksAddsUpdatesAndMutatesStore(t *testing.T) {
 
 func importedTestSession(id, secret string) ExportedCredentialSession {
 	return ExportedCredentialSession{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindAPIKey, TransferMode: CredentialSessionTransferStaticSecret,
+		ID: id, Kind: credentialsession.KindAPIKey, TransferMode: CredentialSessionTransferStaticSecret,
 		SecretData: secret, Version: 1, Subject: credentialsession.PendingSubject(),
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}

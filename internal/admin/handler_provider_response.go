@@ -43,7 +43,6 @@ type ProviderAPITypePayload struct {
 
 type ProviderCredentialSessionPayload struct {
 	ID        string                      `json:"id"`
-	Vendor    string                      `json:"vendor"`
 	Kind      credentialsession.Kind      `json:"kind"`
 	Version   int64                       `json:"version"`
 	Subject   credentialsession.Subject   `json:"subject"`
@@ -72,7 +71,7 @@ func (h *Handler) providerPayload(provider *model.Provider) ProviderPayload {
 	for _, route := range provider.CredentialSessions {
 		snapshot := route.Credential
 		sessionsByID[snapshot.SessionID] = ProviderCredentialSessionPayload{
-			ID: snapshot.SessionID, Vendor: snapshot.Vendor, Kind: snapshot.Kind,
+			ID: snapshot.SessionID, Kind: snapshot.Kind,
 			Version: snapshot.Version, Subject: snapshot.Subject.Clone(), AuthState: snapshot.AuthState.Clone(),
 		}
 	}

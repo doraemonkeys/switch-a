@@ -32,11 +32,11 @@ func TestSchemaMigrationValidationAndFutureVersion(t *testing.T) {
 	if err := ValidateSchema(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	if CurrentSchemaVersion != 1 {
+	if CurrentSchemaVersion != 2 {
 		t.Fatalf("schema version = %d", CurrentSchemaVersion)
 	}
 
-	if err := db.Exec("UPDATE "+schemaMetaTable+" SET version = ? WHERE id = ?", 2, schemaRowID).Error; err != nil {
+	if err := db.Exec("UPDATE "+schemaMetaTable+" SET version = ? WHERE id = ?", 3, schemaRowID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(context.Background(), db); err == nil || !strings.Contains(err.Error(), "newer") {
@@ -49,7 +49,7 @@ func TestSchemaMigrationValidationAndFutureVersion(t *testing.T) {
 	if err := db.Exec("PRAGMA ignore_check_constraints=ON").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec("UPDATE "+schemaMetaTable+" SET version = 0 WHERE id = ?", schemaRowID).Error; err != nil {
+	if err := db.Exec("UPDATE "+schemaMetaTable+" SET version = 1 WHERE id = ?", schemaRowID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(context.Background(), db); err == nil || !strings.Contains(err.Error(), "unsupported") {
@@ -89,6 +89,7 @@ func TestSchemaMigrationValidationAndFutureVersion(t *testing.T) {
 func TestCodecRoundTripsAccountKeyedAndTombstone(t *testing.T) {
 	for name, binding := range map[string]codexcontinuity.Binding{
 		"account":   testBinding(t, accountScope(t, "account", "codex"), codexcontinuity.LifecyclePending),
+		"no vendor": testBinding(t, blankVendorScope(t), codexcontinuity.LifecyclePending),
 		"keyed":     testBinding(t, keyedScope(t, 80, "h3"), codexcontinuity.LifecycleCommitted),
 		"tombstone": testBinding(t, accountScope(t, "account", "codex"), codexcontinuity.LifecycleTombstone),
 	} {
@@ -138,7 +139,6 @@ func TestCodecRejectsCorruptRows(t *testing.T) {
 			row.ProtocolSubjectDigest = nil
 		}},
 		{name: "subject kind", mutate: func(row *bindingRow) { row.ProtocolSubjectKind = "future" }},
-		{name: "vendor", mutate: func(row *bindingRow) { row.ProtocolVendor = "" }},
 		{name: "api type", mutate: func(row *bindingRow) { row.ProtocolAPIType = "" }},
 		{name: "lifecycle", mutate: func(row *bindingRow) { row.Lifecycle = "future" }},
 	}
@@ -151,6 +151,27 @@ func TestCodecRejectsCorruptRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func blankVendorScope(t *testing.T) codexidentity.ProtocolScope {
+	t.Helper()
+	origin, err := codexidentity.ParseOrigin("https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := codexidentity.NewAccountCredentialSubject("account-without-vendor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := codexidentity.NewUpstreamAuthority("", origin, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := codexidentity.NewProtocolScope(authority, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scope
 }
 
 func TestReconcileRejectsMalformedTombstoneAndMissingUpdates(t *testing.T) {

@@ -2,6 +2,53 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createApiClient } from "./client";
 import { createMockStorage, createMockHttpClient } from "./test-mocks";
 
+const credentialSession = {
+  id: "session-1",
+  kind: "api_key",
+  version: 1,
+  subject: { kind: "keyed_digest", value: "ZGlnaWVzdA==", key_version: "h1" },
+  auth_state: { status: "active" },
+};
+
+function providerPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "1",
+    name: "OpenAI",
+    api_types: [
+      {
+        api_type: "claude",
+        base_url: "https://test.example.com",
+        credential_session_id: credentialSession.id,
+      },
+    ],
+    auth_mode: "auto",
+    credential_sessions: [credentialSession],
+    usage_limit_policy: "switch_provider",
+    group_id: null,
+    weight: 1,
+    priority: 0,
+    concurrency: 0,
+    max_retries: 0,
+    vendor: "",
+    failover_scope: "any",
+    accept_failover: "any",
+    enabled: true,
+    created_at: "2026-08-28T00:00:00Z",
+    updated_at: "2026-08-28T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function credentialSessionPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    ...credentialSession,
+    referenced_route_target_ids: ["1"],
+    created_at: "2026-08-28T00:00:00Z",
+    updated_at: "2026-08-28T00:00:00Z",
+    ...overrides,
+  };
+}
+
 describe("createApiClient providers API", () => {
   let mockStorage: ReturnType<typeof createMockStorage>;
   let mockHttpClient: ReturnType<typeof createMockHttpClient>;
@@ -18,7 +65,7 @@ describe("createApiClient providers API", () => {
   });
 
   it("should list providers", async () => {
-    const providers = [{ id: "1", name: "OpenAI" }];
+    const providers = [providerPayload()];
     mockHttpClient.mockResponse({
       ok: true,
       status: 200,
@@ -35,7 +82,7 @@ describe("createApiClient providers API", () => {
   });
 
   it("should get provider by id", async () => {
-    const provider = { id: "1", name: "OpenAI" };
+    const provider = providerPayload();
     mockHttpClient.mockResponse({
       ok: true,
       status: 200,
@@ -54,11 +101,16 @@ describe("createApiClient providers API", () => {
   it("should create provider", async () => {
     const input = {
       name: "Test",
-      api_key: "key",
-      api_types: [{ api_type: "claude", base_url: "https://test.example.com" }],
+      api_types: [
+        {
+          api_type: "claude",
+          base_url: "https://test.example.com",
+          credential_session_id: "session-1",
+        },
+      ],
       usage_limit_policy: "switch_provider" as const,
     };
-    const created = { id: "1", ...input };
+    const created = providerPayload({ name: input.name });
     mockHttpClient.mockResponse({
       ok: true,
       status: 201,
@@ -80,14 +132,25 @@ describe("createApiClient providers API", () => {
   it("should update provider", async () => {
     const input = {
       name: "Updated",
-      api_key: "key",
-      api_types: [{ api_type: "claude", base_url: "https://test.example.com" }],
+      api_types: [
+        {
+          api_type: "claude",
+          base_url: "https://test.example.com",
+          credential_session_id: "session-1",
+        },
+      ],
       usage_limit_policy: "suspend" as const,
     };
     mockHttpClient.mockResponse({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({ id: "1", ...input }),
+      json: () =>
+        Promise.resolve(
+          providerPayload({
+            name: input.name,
+            usage_limit_policy: input.usage_limit_policy,
+          }),
+        ),
     });
 
     await api.providers.update("1", input);
@@ -113,7 +176,7 @@ describe("createApiClient providers API", () => {
   });
 
   it("should enable provider", async () => {
-    const mockProvider = { id: "1", name: "Test", enabled: true };
+    const mockProvider = providerPayload({ name: "Test", enabled: true });
     mockHttpClient.mockResponse({
       ok: true,
       status: 200,
@@ -130,7 +193,7 @@ describe("createApiClient providers API", () => {
   });
 
   it("should disable provider", async () => {
-    const mockProvider = { id: "1", name: "Test", enabled: false };
+    const mockProvider = providerPayload({ name: "Test", enabled: false });
     mockHttpClient.mockResponse({
       ok: true,
       status: 200,
@@ -163,24 +226,34 @@ describe("createApiClient providers API", () => {
     expect(result).toEqual(mockHealthState);
   });
 
-  it("should refresh provider credential", async () => {
-    mockHttpClient.mockResponse({ ok: true, status: 204 });
+  it("should refresh a credential session", async () => {
+    const refreshed = credentialSessionPayload();
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(refreshed),
+    });
 
-    await api.providers.refreshCredential("1");
+    await api.credentialSessions.refresh("session/1");
 
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
-      "https://test-api.example.com/providers/1/refresh-credential",
+      "https://test-api.example.com/credential-sessions/session%2F1/refresh",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it("should refresh provider usage", async () => {
-    mockHttpClient.mockResponse({ ok: true, status: 204 });
+  it("should refresh credential-session usage", async () => {
+    const refreshed = credentialSessionPayload();
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(refreshed),
+    });
 
-    await api.providers.refreshUsage("1");
+    await api.credentialSessions.refreshUsage("session/1");
 
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
-      "https://test-api.example.com/providers/1/refresh-usage",
+      "https://test-api.example.com/credential-sessions/session%2F1/refresh-usage",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -203,11 +276,11 @@ describe("createApiClient providers API", () => {
       json: () => Promise.resolve(authDocument),
     });
 
-    const result = await api.providers.exportCodexAuth("gpt/provider");
+    const result = await api.credentialSessions.exportCodexAuth("gpt/session");
 
     expect(result).toEqual(authDocument);
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
-      "https://test-api.example.com/providers/gpt%2Fprovider/codex-auth",
+      "https://test-api.example.com/credential-sessions/gpt%2Fsession/codex-auth",
       expect.any(Object),
     );
   });

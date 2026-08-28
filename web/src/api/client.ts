@@ -14,13 +14,15 @@ import {
 import { parseTokenUsageResponse } from "./token-usage-decoders";
 import { parseAPICatalog } from "./api-catalog";
 import {
+  createCredentialSessionsApi,
+  createProvidersApi,
+} from "./provider-client";
+import {
   createErrorDetectionApi,
   type APIErrorDecoder,
   type AuthenticatedResponseRequest,
 } from "./error-detection";
 import type {
-  Provider,
-  ProviderInput,
   RoutingPolicy,
   RoutingPolicyInput,
   Group,
@@ -30,17 +32,12 @@ import type {
   LogFilter,
   StatsParams,
   TokenUsageParams,
-  BatchProviderRequest,
-  BatchProviderResponse,
   ExportedConfig,
   ImportConfigRequest,
   ImportPreviewResponse,
   ImportResult,
   ConfigResponse,
   ActiveRequestsResponse,
-  ChatGPTLoginStartResponse,
-  ChatGPTLoginStatusResponse,
-  CodexAuthDocument,
   ApiErrorDetails,
 } from "./types";
 import type {
@@ -56,6 +53,12 @@ export type {
   Provider,
   ProviderAuthStatus,
   ProviderAuthView,
+  ProviderCredentialSession,
+  CredentialSession,
+  CredentialSessionKind,
+  CredentialSessionAuthState,
+  CreateCredentialSessionInput,
+  UpdateCredentialSessionInput,
   ProviderInput,
   RoutingPolicy,
   RoutingPolicyInput,
@@ -375,58 +378,6 @@ type AuthenticatedRequestFn = <T>(
 // - Inline definitions: APIs with <5 methods (config, status, logs, stats)
 // =============================================================================
 
-// Create providers API object
-function createProvidersApi(request: AuthenticatedRequestFn) {
-  return {
-    list: () => request<Provider[]>("/providers"),
-    get: (id: string) => request<Provider>(`/providers/${id}`),
-    create: (data: ProviderInput) =>
-      request<Provider>("/providers", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
-    update: (id: string, data: ProviderInput) =>
-      request<Provider>(`/providers/${id}`, {
-        method: "PUT",
-        body: JSON.stringify(data),
-      }),
-    delete: (id: string) =>
-      request<void>(`/providers/${id}`, { method: "DELETE" }),
-    enable: (id: string) =>
-      request<Provider>(`/providers/${id}/enable`, { method: "POST" }),
-    disable: (id: string) =>
-      request<Provider>(`/providers/${id}/disable`, { method: "POST" }),
-    reset: (id: string) =>
-      request<HealthState>(`/providers/${id}/reset`, { method: "POST" }),
-    startChatGPTLogin: () =>
-      request<ChatGPTLoginStartResponse>("/provider-auth/chatgpt/start", {
-        method: "POST",
-      }),
-    getChatGPTLoginStatus: (loginId: string) =>
-      request<ChatGPTLoginStatusResponse>(
-        `/provider-auth/chatgpt/sessions/${encodeURIComponent(loginId)}`,
-      ),
-    importChatGPTLogin: (authData: string) =>
-      request<ChatGPTLoginStatusResponse>("/provider-auth/chatgpt/import", {
-        method: "POST",
-        body: JSON.stringify({ auth_data: authData }),
-      }),
-    refreshCredential: (id: string) =>
-      request<void>(`/providers/${id}/refresh-credential`, { method: "POST" }),
-    refreshUsage: (id: string) =>
-      request<void>(`/providers/${id}/refresh-usage`, { method: "POST" }),
-    exportCodexAuth: (id: string) =>
-      request<CodexAuthDocument>(
-        `/providers/${encodeURIComponent(id)}/codex-auth`,
-      ),
-    batch: (data: BatchProviderRequest) =>
-      request<BatchProviderResponse>("/providers/batch", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
-  };
-}
-
 // Create groups API object
 function createGroupsApi(request: AuthenticatedRequestFn) {
   return {
@@ -506,6 +457,7 @@ export function createApiClient(deps: ApiClientDeps) {
     },
     errorDetection: createErrorDetectionApi(requestResponse),
     providers: createProvidersApi(request),
+    credentialSessions: createCredentialSessionsApi(request),
     providerImports: {
       preview: (sourceJson: string) =>
         request<ProviderImportPreview>("/provider-imports", {

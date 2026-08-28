@@ -1,10 +1,11 @@
-import type { BackoffPolicy, ProviderInput } from "../../api";
+import type { BackoffPolicy } from "../../api";
+import type { ProviderFormData } from "./types";
 import { BackoffPolicyEditor } from "../../components/provider-settings/BackoffPolicyEditor";
 import { PROVIDER_DEFAULTS } from "../../config/constants";
 
 interface BackoffSectionProps {
-  formData: ProviderInput;
-  setFormData: React.Dispatch<React.SetStateAction<ProviderInput>>;
+  formData: ProviderFormData;
+  setFormData: React.Dispatch<React.SetStateAction<ProviderFormData>>;
   expanded: boolean;
   onToggle: () => void;
 }

@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Monitor } from "./Monitor";
 import type { ActiveRequest, Provider, SystemStatus } from "../api/types";
-import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 
 // Mock data
 // eslint-disable-next-line sonarjs/no-hardcoded-ip -- safe for testing
@@ -37,16 +36,23 @@ const mockProviders: Provider[] = [
   {
     id: "provider-1",
     name: "Anthropic",
-    api_key: "key-1",
     api_types: [
       {
-        provider_id: "provider-1",
         api_type: "claude",
         base_url: "https://api.anthropic.com",
+        credential_session_id: "credential-1",
       },
     ],
     auth_mode: "bearer",
-    credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    credential_sessions: [
+      {
+        id: "credential-1",
+        kind: "api_key",
+        version: 1,
+        subject: { kind: "keyed_digest", value: "digest-1" },
+        auth_state: { status: "active" },
+      },
+    ],
     group_id: null,
     weight: 1,
     priority: 1,
@@ -62,16 +68,23 @@ const mockProviders: Provider[] = [
   {
     id: "provider-2",
     name: "OpenAI",
-    api_key: "key-2",
     api_types: [
       {
-        provider_id: "provider-2",
         api_type: "codex",
         base_url: "https://api.openai.com",
+        credential_session_id: "credential-2",
       },
     ],
     auth_mode: "bearer",
-    credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    credential_sessions: [
+      {
+        id: "credential-2",
+        kind: "api_key",
+        version: 1,
+        subject: { kind: "keyed_digest", value: "digest-2" },
+        auth_state: { status: "active" },
+      },
+    ],
     group_id: null,
     weight: 1,
     priority: 1,

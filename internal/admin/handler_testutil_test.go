@@ -64,7 +64,7 @@ func (m *mockStore) ListCredentialSessions(_ context.Context) ([]credentialsessi
 				continue
 			}
 			session := credentialsession.Session{
-				ID: route.Credential.SessionID, Vendor: route.Credential.Vendor, Kind: route.Credential.Kind,
+				ID: route.Credential.SessionID, Kind: route.Credential.Kind,
 				SecretData: route.Credential.SecretData, Version: route.Credential.Version,
 				AuthState: route.Credential.AuthState.Clone(),
 			}

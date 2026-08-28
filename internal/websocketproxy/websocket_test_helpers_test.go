@@ -71,7 +71,6 @@ func testCredentialSessions(routeTargetID, apiType string, kind credentialsessio
 		APIType:       apiType,
 		Credential: credentialsession.Snapshot{
 			SessionID:  routeTargetID + "-" + apiType + "-credential",
-			Vendor:     "openai",
 			Kind:       kind,
 			SecretData: secret,
 			Version:    1,
@@ -96,6 +95,7 @@ func testPreparedProviderAttempt(t *testing.T, provider *model.Provider, apiType
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
 		RouteTargetID: provider.ID,
 		APIType:       apiType,
+		VendorScope:   provider.Vendor,
 		Credential:    *credential,
 	}, apiType, finalURL)
 	if err != nil {

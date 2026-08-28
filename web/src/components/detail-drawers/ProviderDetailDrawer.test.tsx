@@ -30,42 +30,17 @@ const catalog: APICatalog = {
 };
 
 function buildProvider(overrides: Partial<Provider> = {}): Provider {
-  return {
-    id: "provider-gpt",
-    name: "GPT Provider",
-    api_key: "",
-    api_types: [
-      {
-        provider_id: "provider-gpt",
-        api_type: "codex",
-        base_url: "https://chatgpt.com/backend-api/codex",
-        api_key: "",
-      },
-    ],
-    auth_mode: "auto",
-    credential_type: "chatgpt",
-    usage_limit_policy: "suspend",
-    group_id: null,
-    weight: 1,
-    priority: 1,
-    concurrency: 1,
-    rate_limit_rpm: 0,
-    rate_limit_window: 0,
-    max_retries: 0,
-    strategy: "round_robin",
-    vendor: "",
-    failover_scope: "any",
-    accept_failover: "any",
-    enabled: true,
-    created_at: "2026-03-22T12:00:00Z",
-    updated_at: "2026-03-22T12:00:00Z",
-    auth: {
-      type: "chatgpt",
-      status: "active",
+  const credentialSession = {
+    id: "credential-gpt",
+    kind: "chatgpt" as const,
+    version: 1,
+    subject: { kind: "account" as const, value: "acct_test" },
+    auth_state: {
+      status: "active" as const,
       email: "user@example.com",
       account_id: "acct_test",
       plan_type: "team",
-      usage: {
+      usage_snapshot: {
         fetched_at: "2026-03-22T12:05:00Z",
         plan_type: "team",
         five_hour: {
@@ -80,8 +55,33 @@ function buildProvider(overrides: Partial<Provider> = {}): Provider {
         },
       },
     },
+  };
+  return {
+    id: "provider-gpt",
+    name: "GPT Provider",
+    api_types: [
+      {
+        api_type: "codex",
+        base_url: "https://chatgpt.com/backend-api/codex",
+        credential_session_id: credentialSession.id,
+      },
+    ],
+    auth_mode: "auto",
+    credential_sessions: [credentialSession],
+    usage_limit_policy: "suspend",
+    group_id: null,
+    weight: 1,
+    priority: 1,
+    concurrency: 1,
+    max_retries: 0,
+    vendor: "",
+    failover_scope: "any",
+    accept_failover: "any",
+    enabled: true,
+    created_at: "2026-03-22T12:00:00Z",
+    updated_at: "2026-03-22T12:00:00Z",
     ...overrides,
-  } as Provider;
+  };
 }
 
 function buildRule(
@@ -189,14 +189,21 @@ describe("ProviderDetailDrawer", () => {
 
   it("renders reconnect-required auth diagnostics from the explicit auth snapshot", async () => {
     const provider = buildProvider({
-      auth: {
-        type: "chatgpt",
-        status: "reauth_required",
-        reason: "invalid_grant",
-        last_error: "refresh_token_reused",
-        email: "user@example.com",
-      },
-    } as Partial<Provider>);
+      credential_sessions: [
+        {
+          id: "credential-gpt",
+          kind: "chatgpt",
+          version: 1,
+          subject: { kind: "account", value: "acct_test" },
+          auth_state: {
+            status: "reauth_required",
+            status_reason: "invalid_grant",
+            last_error: "refresh_token_reused",
+            email: "user@example.com",
+          },
+        },
+      ],
+    });
 
     renderDrawer({ provider });
     await screen.findByText("No recent requests");
@@ -285,10 +292,9 @@ describe("ProviderDetailDrawer", () => {
       name: "West Provider",
       api_types: [
         {
-          provider_id: "provider & west",
           api_type: "codex",
           base_url: "https://example.test/codex",
-          api_key: "",
+          credential_session_id: "credential-gpt",
         },
       ],
     });
@@ -308,16 +314,14 @@ describe("ProviderDetailDrawer", () => {
     const provider = buildProvider({
       api_types: [
         {
-          provider_id: "provider-gpt",
           api_type: "custom:private",
           base_url: "https://example.test/custom",
-          api_key: "",
+          credential_session_id: "credential-gpt",
         },
         {
-          provider_id: "provider-gpt",
           api_type: "gemini",
           base_url: "https://example.test/gemini",
-          api_key: "",
+          credential_session_id: "credential-gpt",
         },
       ],
     });

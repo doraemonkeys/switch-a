@@ -75,6 +75,7 @@ func newX3ConcreteSelectorAdapter() (*selector.Selector, httpProviderSelector, *
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: x3AdapterProviderID,
 			APIType:    x3AdapterAPIType,
+			BaseURL:    "https://adapter.example.test",
 		}},
 	}, "", "adapter-api-key")}}
 	concrete := selector.NewSelector(selector.Config{

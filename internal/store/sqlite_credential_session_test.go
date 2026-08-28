@@ -34,10 +34,10 @@ func newCredentialSessionStore(t *testing.T) *SQLiteStore {
 	return store
 }
 
-func mustCreateStaticSession(t *testing.T, store *SQLiteStore, id, vendor, secret string) *credentialsession.Session {
+func mustCreateStaticSession(t *testing.T, store *SQLiteStore, id, _ string, secret string) *credentialsession.Session {
 	t.Helper()
 	session := &credentialsession.Session{
-		ID: id, Vendor: vendor, Kind: credentialsession.KindAPIKey,
+		ID: id, Kind: credentialsession.KindAPIKey,
 		SecretData: secret, Version: 1, AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
 	if err := session.SetSubject(credentialsession.PendingSubject()); err != nil {
@@ -57,7 +57,7 @@ func providerWithSessionRefs(id, vendor string, refs map[string]string) *model.P
 			ProviderID: id, APIType: apiType, BaseURL: "https://example.com/" + apiType,
 		})
 		provider.CredentialSessions = append(provider.CredentialSessions, credentialsession.RouteSnapshot{
-			RouteTargetID: id, APIType: apiType,
+			RouteTargetID: id, APIType: apiType, VendorScope: vendor,
 			Credential: credentialsession.Snapshot{SessionID: sessionID},
 		})
 	}
@@ -147,7 +147,7 @@ func TestSQLiteCredentialSessionAllowsSameAccountAcrossIndependentSessions(t *te
 	}
 	for _, id := range []string{"login-a", "login-b"} {
 		session := &credentialsession.Session{
-			ID: id, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+			ID: id, Kind: credentialsession.KindChatGPT,
 			SecretData: `{"access_token":"token","refresh_token":"refresh"}`,
 			Version:    1, AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "account-shared"},
 		}
@@ -162,8 +162,12 @@ func TestSQLiteCredentialSessionAllowsSameAccountAcrossIndependentSessions(t *te
 	if err != nil || len(sessions) != 2 {
 		t.Fatalf("ListCredentialSessions() = (%#v, %v)", sessions, err)
 	}
-	if err := store.CreateProvider(ctx, providerWithSessionRefs("wrong-vendor", "anthropic", map[string]string{"codex": "login-a"})); !errors.Is(err, credentialsession.ErrInvalidRouteBinding) {
-		t.Fatalf("CreateProvider(vendor mismatch) error = %v", err)
+	if err := store.CreateProvider(ctx, providerWithSessionRefs("cross-vendor", "anthropic", map[string]string{"codex": "login-a"})); err != nil {
+		t.Fatalf("CreateProvider(cross vendor) error = %v", err)
+	}
+	resolved, err := store.ResolveCredentialSession(ctx, "cross-vendor", "codex")
+	if err != nil || resolved.VendorScope != "anthropic" {
+		t.Fatalf("ResolveCredentialSession(cross vendor) = (%#v, %v)", resolved, err)
 	}
 }
 

@@ -20,7 +20,6 @@ type codexMaintenanceCatalogRow struct {
 	FinalURL            sql.NullString `gorm:"column:final_url"`
 	BindingSessionID    sql.NullString `gorm:"column:binding_session_id"`
 	CredentialSessionID sql.NullString `gorm:"column:credential_session_id"`
-	CredentialVendor    sql.NullString `gorm:"column:credential_vendor"`
 	CredentialKind      sql.NullString `gorm:"column:credential_kind"`
 	SubjectKind         sql.NullString `gorm:"column:subject_kind"`
 	SubjectValue        []byte         `gorm:"column:subject_value"`
@@ -47,7 +46,6 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 				api_types.base_url AS final_url,
 				bindings.session_id AS binding_session_id,
 				sessions.id AS credential_session_id,
-				sessions.vendor AS credential_vendor,
 				sessions.kind AS credential_kind,
 				sessions.subject_kind AS subject_kind,
 				sessions.subject_value AS subject_value,
@@ -65,16 +63,13 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 	routes := make([]codexmaintenance.CatalogRoute, 0, len(rows))
 	for _, row := range rows {
 		if !row.ProviderID.Valid || !row.Vendor.Valid || !row.FinalURL.Valid ||
-			!row.BindingSessionID.Valid || !row.CredentialSessionID.Valid || !row.CredentialVendor.Valid ||
+			!row.BindingSessionID.Valid || !row.CredentialSessionID.Valid ||
 			!row.CredentialKind.Valid || !row.SubjectKind.Valid ||
 			!row.SubjectKeyVersion.Valid {
 			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q has an incomplete provider, binding, or credential session", row.RouteTargetID)
 		}
 		if row.BindingSessionID.String != row.CredentialSessionID.String {
 			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q resolved a mismatched credential session", row.RouteTargetID)
-		}
-		if row.Vendor.String != row.CredentialVendor.String {
-			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q and credential session vendors do not match", row.RouteTargetID)
 		}
 		kind := credentialsession.Kind(row.CredentialKind.String)
 		subjectKind := credentialsession.SubjectKind(row.SubjectKind.String)

@@ -1,8 +1,8 @@
-import type { ProviderInput } from "../../api";
+import type { ProviderFormData } from "./types";
 import { FAILOVER_SCOPES } from "../../config/constants";
 
 /** Check if failover section has non-default configuration */
-export function hasFailoverConfig(formData: ProviderInput): boolean {
+export function hasFailoverConfig(formData: ProviderFormData): boolean {
   return Boolean(
     formData.vendor ||
     (formData.failover_scope &&

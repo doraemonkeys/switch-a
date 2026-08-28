@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 1
+	CurrentSchemaVersion = 2
 	schemaRowID          = 1
 	schemaMetaTable      = "codex_continuity_schema_meta"
 	bindingsTable        = "codex_continuity_bindings"
@@ -29,7 +29,7 @@ const bindingsDefinition = `(
 	opaque_digest BLOB NOT NULL CHECK (length(opaque_digest) = 32),
 	client_key_version TEXT NOT NULL CHECK (length(client_key_version) BETWEEN 1 AND 32),
 	client_digest BLOB NOT NULL CHECK (length(client_digest) = 32),
-	protocol_vendor TEXT NOT NULL CHECK (length(protocol_vendor) > 0),
+	protocol_vendor TEXT NOT NULL,
 	protocol_origin TEXT NOT NULL CHECK (length(protocol_origin) > 0),
 	protocol_subject_kind TEXT NOT NULL CHECK (protocol_subject_kind IN ('account','keyed-digest')),
 	protocol_subject_account TEXT NULL,

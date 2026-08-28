@@ -65,13 +65,21 @@ export interface ErrorResponse {
 // ProviderAPIType represents the association between Provider and API types.
 // Each entry can override both endpoint and credentials for that API contract.
 export interface ProviderAPIType {
-  provider_id: string;
   api_type: string;
   base_url: string;
-  api_key?: string;
+  credential_session_id: string;
 }
 
 export type ProviderAuthStatus = "not_connected" | "active" | "reauth_required";
+export type CredentialSessionKind = ProviderCredentialType;
+
+export type CredentialSubjectKind = "pending" | "account" | "keyed_digest";
+
+export interface CredentialSubject {
+  kind: CredentialSubjectKind;
+  value?: string;
+  key_version?: string;
+}
 
 export interface ProviderAuthView {
   type: ProviderCredentialType;
@@ -99,13 +107,53 @@ export interface ProviderUsageSnapshot {
   one_week?: ProviderUsageWindow | null;
 }
 
+export interface CredentialSessionAuthState {
+  status: ProviderAuthStatus;
+  status_reason?: string;
+  last_error?: string;
+  last_transition_at?: string;
+  email?: string;
+  account_id?: string;
+  plan_type?: string;
+  expires_at?: string;
+  last_refresh_at?: string;
+  usage_snapshot?: ProviderUsageSnapshot | null;
+  refresh_fail_count?: number;
+  last_refresh_failure_at?: string;
+}
+
+export interface ProviderCredentialSession {
+  id: string;
+  kind: CredentialSessionKind;
+  version: number;
+  subject: CredentialSubject;
+  auth_state: CredentialSessionAuthState;
+}
+
+export interface CredentialSession extends ProviderCredentialSession {
+  referenced_route_target_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateCredentialSessionInput {
+  id?: string;
+  kind: CredentialSessionKind;
+  secret_data?: string;
+  credential_login_id?: string;
+}
+
+export interface UpdateCredentialSessionInput {
+  expected_version: number;
+  secret_data: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
-  api_key: string;
   api_types: ProviderAPIType[];
   auth_mode: AuthMode;
-  credential_type: ProviderCredentialType;
+  credential_sessions: ProviderCredentialSession[];
   usage_limit_policy?: ProviderUsageLimitPolicy;
   usage_limit_policy_explicit?: boolean;
   group_id: string | null;
@@ -125,27 +173,21 @@ export interface Provider {
   created_at: string;
   updated_at: string;
   health?: HealthState | null;
-  auth?: ProviderAuthView | null;
 }
 
 /** API type entry with endpoint/auth overrides, matching backend APITypeInput */
 export interface APITypeInput {
   api_type: string;
   base_url: string;
-  api_key?: string;
+  credential_session_id: string;
 }
 
 export interface ProviderInput {
   id?: string;
   name: string;
-  api_key: string;
   api_types: APITypeInput[];
   auth_mode?: AuthMode;
-  credential_type?: ProviderCredentialType;
   usage_limit_policy?: ProviderUsageLimitPolicy;
-  credential_login_id?: string;
-  /** Explicitly confirmed handling for an account already bound elsewhere. */
-  credential_binding_resolution?: "reject" | "replace";
   group_id?: string | null;
   weight?: number;
   priority?: number;
@@ -709,7 +751,6 @@ export interface StatsResponse {
 export type {
   AppliedCount,
   ChangeCount,
-  CredentialSessionKind,
   CredentialSessionTransferMode,
   ExportedAPIType,
   ExportedConfig,

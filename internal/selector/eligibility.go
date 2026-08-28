@@ -180,8 +180,11 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 	if !credentialSessionUsable(candidate.credential) {
 		return false, errorrule.ReasonAuthUnavailable, nil
 	}
+	if !candidate.identityResolved {
+		return false, errorrule.ReasonAuthUnavailable, nil
+	}
 	if required := reqRequiredAuthority(e.req); required != nil {
-		if !candidate.identityResolved || !candidate.identity.Authority().Equal(*required) {
+		if !candidate.identity.Authority().Equal(*required) {
 			return false, errorrule.ReasonAuthUnavailable, nil
 		}
 	}

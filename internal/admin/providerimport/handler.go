@@ -21,6 +21,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const chatGPTProviderVendor = "openai"
+
 var errProviderImportCatalogUnavailable = errors.New("provider import catalog unavailable")
 
 // PreviewProviderImport handles POST /admin/api/provider-imports. Preview is a
@@ -309,7 +311,7 @@ func buildProviderImportCreate(
 	if err != nil {
 		return store.ProviderImportCreate{}, ProviderImportCommitResultItem{}, err
 	}
-	provider.Vendor = session.Vendor
+	provider.Vendor = chatGPTProviderVendor
 	snapshot, err := session.Snapshot()
 	if err != nil {
 		return store.ProviderImportCreate{}, ProviderImportCommitResultItem{}, err
@@ -317,6 +319,7 @@ func buildProviderImportCreate(
 	provider.CredentialSessions = []credentialsession.RouteSnapshot{{
 		RouteTargetID: provider.ID,
 		APIType:       "codex",
+		VendorScope:   provider.Vendor,
 		Credential:    snapshot,
 	}}
 	return store.ProviderImportCreate{

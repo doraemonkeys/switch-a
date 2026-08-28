@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	credentialSubjectCodec  = "credential-session-subject/v1"
+	credentialSubjectCodec  = "credential-session-subject/v2"
 	staticSubjectDigestSize = 32
 )
 
@@ -191,7 +191,6 @@ func NormalizeAuthState(kind Kind, state AuthState) AuthState {
 // Session is the aggregate root for independently rotating secret material.
 type Session struct {
 	ID                string      `gorm:"column:id;primaryKey;type:text" json:"id"`
-	Vendor            string      `gorm:"column:vendor;type:text;not null;index" json:"vendor"`
 	Kind              Kind        `gorm:"column:kind;type:text;not null;index" json:"kind"`
 	SecretData        string      `gorm:"column:secret_data;type:text;not null" json:"-"`
 	Version           int64       `gorm:"column:version;not null" json:"version"`
@@ -295,7 +294,6 @@ func (s *Session) Clone() *Session {
 // resolution for one route-target/API-type candidate.
 type Snapshot struct {
 	SessionID  string
-	Vendor     string
 	Kind       Kind
 	SecretData string
 	Version    int64
@@ -309,7 +307,6 @@ func (s *Session) Snapshot() (Snapshot, error) {
 	}
 	return Snapshot{
 		SessionID:  s.ID,
-		Vendor:     s.Vendor,
 		Kind:       s.Kind,
 		SecretData: s.SecretData,
 		Version:    s.Version,
@@ -344,19 +341,22 @@ func (b RouteBinding) Validate() error {
 }
 
 type RouteSnapshot struct {
-	RouteTargetID string   `json:"route_target_id"`
-	APIType       string   `json:"api_type"`
-	Credential    Snapshot `json:"credential_session"`
+	RouteTargetID string `json:"route_target_id"`
+	APIType       string `json:"api_type"`
+	// VendorScope is optional route metadata. Credential sessions deliberately
+	// do not own it because one independently rotating credential can be reused
+	// by routes with different failover classifications.
+	VendorScope string   `json:"vendor_scope,omitempty"`
+	Credential  Snapshot `json:"credential_session"`
 }
 
 // StaticSubjectInput is the one canonical byte encoding signed by KR1. Length
 // prefixes keep values unambiguous without assigning delimiter semantics.
-func StaticSubjectInput(vendor string, kind Kind, secret string) ([]byte, error) {
-	vendor = strings.TrimSpace(vendor)
+func StaticSubjectInput(kind Kind, secret string) ([]byte, error) {
 	if kind != KindAPIKey || strings.TrimSpace(secret) == "" {
 		return nil, fmt.Errorf("%w: static subject requires api_key kind and secret", ErrInvalidSession)
 	}
-	parts := [][]byte{[]byte(credentialSubjectCodec), []byte(vendor), []byte(kind), []byte(secret)}
+	parts := [][]byte{[]byte(credentialSubjectCodec), []byte(kind), []byte(secret)}
 	total := 0
 	for _, part := range parts {
 		total += 4 + len(part)

@@ -96,7 +96,6 @@ func TestProviderUsageLimitPolicyDefaultRemainsStableAcrossSessionRebind(t *test
 
 	chatSession := &credentialsession.Session{
 		ID:         "policy-default-chatgpt-session",
-		Vendor:     provider.Vendor,
 		Kind:       credentialsession.KindChatGPT,
 		SecretData: `{"access_token":"token"}`,
 		Version:    1,

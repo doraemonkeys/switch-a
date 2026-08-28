@@ -121,7 +121,6 @@ func createCredentialSessionSchema(tx *gorm.DB) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS credential_sessions (
 			id TEXT PRIMARY KEY,
-			vendor TEXT NOT NULL,
 			kind TEXT NOT NULL,
 			secret_data TEXT NOT NULL,
 			version INTEGER NOT NULL CHECK(version > 0),
@@ -143,7 +142,6 @@ func createCredentialSessionSchema(tx *gorm.DB) error {
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_credential_sessions_vendor ON credential_sessions(vendor)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_sessions_kind ON credential_sessions(kind)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_sessions_subject_kind ON credential_sessions(subject_kind)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_sessions_auth_status ON credential_sessions(auth_status)`,
@@ -292,7 +290,6 @@ func createMigratedStaticSession(
 ) (*credentialsession.Session, error) {
 	session := &credentialsession.Session{
 		ID:         uuid.NewString(),
-		Vendor:     strings.TrimSpace(provider.Vendor),
 		Kind:       credentialsession.KindAPIKey,
 		SecretData: secret,
 		Version:    1,
@@ -357,7 +354,6 @@ func backfillLoginProviderSession(
 	}
 	session := &credentialsession.Session{
 		ID:         uuid.NewString(),
-		Vendor:     strings.TrimSpace(provider.Vendor),
 		Kind:       credentialsession.KindChatGPT,
 		SecretData: credential.SecretData,
 		Version:    max(credential.Version, 1),
@@ -403,11 +399,11 @@ func insertMigrationBinding(tx *gorm.DB, routeTargetID, apiType, sessionID strin
 	return nil
 }
 
-func staticSubject(vendor, secret string, signer StaticCredentialSubjectSigner) (credentialsession.Subject, error) {
+func staticSubject(secret string, signer StaticCredentialSubjectSigner) (credentialsession.Subject, error) {
 	if signer == nil {
 		return credentialsession.Subject{}, fmt.Errorf("static credential subject signer is required")
 	}
-	input, err := credentialsession.StaticSubjectInput(vendor, credentialsession.KindAPIKey, secret)
+	input, err := credentialsession.StaticSubjectInput(credentialsession.KindAPIKey, secret)
 	if err != nil {
 		return credentialsession.Subject{}, err
 	}
@@ -498,6 +494,9 @@ func validateCredentialSessionSchema(tx *gorm.DB) error {
 			return fmt.Errorf("credential session migration missing table %q", table)
 		}
 	}
+	if tx.Migrator().HasColumn("credential_sessions", "vendor") {
+		return fmt.Errorf("credential session schema still contains obsolete vendor ownership")
+	}
 	if tx.Migrator().HasColumn("providers", "api_key") ||
 		tx.Migrator().HasColumn("providers", "credential_type") ||
 		tx.Migrator().HasColumn("provider_api_types", "api_key") ||
@@ -537,7 +536,7 @@ func finalizePendingStaticSubjects(db *gorm.DB, clock internalClock, signer Stat
 			return fmt.Errorf("list pending static credential subjects: %w", err)
 		}
 		for index := range sessions {
-			subject, err := staticSubject(sessions[index].Vendor, sessions[index].SecretData, signer)
+			subject, err := staticSubject(sessions[index].SecretData, signer)
 			if err != nil {
 				return fmt.Errorf("finalize subject for credential session %q: %w", sessions[index].ID, err)
 			}

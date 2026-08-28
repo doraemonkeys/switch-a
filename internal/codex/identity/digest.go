@@ -253,8 +253,8 @@ func opaqueInput(namespace OpaqueNamespace, opaque []byte) ([]byte, error) {
 	return encodeFields(opaqueBindingCodec, []byte(namespace), opaque)
 }
 
-func (d Digester) StaticCredentialSubject(vendor string, kind credentialsession.Kind, secret string) (CredentialSubject, error) {
-	input, err := credentialsession.StaticSubjectInput(vendor, kind, secret)
+func (d Digester) StaticCredentialSubject(kind credentialsession.Kind, secret string) (CredentialSubject, error) {
+	input, err := credentialsession.StaticSubjectInput(kind, secret)
 	if err != nil {
 		return CredentialSubject{}, errorOf(ErrorInvalidInput, "static_credential", "canonical input is invalid", err)
 	}

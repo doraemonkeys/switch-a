@@ -20,9 +20,6 @@ type UpstreamAuthority struct {
 
 func NewUpstreamAuthority(vendor string, origin NormalizedOrigin, subject CredentialSubject) (UpstreamAuthority, error) {
 	vendor = strings.TrimSpace(vendor)
-	if vendor == "" {
-		return UpstreamAuthority{}, errorOf(ErrorInvalidInput, "vendor", "vendor is empty", nil)
-	}
 	if _, err := origin.MarshalBinary(); err != nil {
 		return UpstreamAuthority{}, err
 	}
@@ -46,16 +43,13 @@ func (a UpstreamAuthority) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(a.vendor) == "" {
-		return nil, errorOf(ErrorInvalidInput, "authority", "authority is uninitialized", nil)
-	}
 	return encodeFields(upstreamAuthorityCodec, []byte(a.vendor), origin, subject)
 }
 
 func (a UpstreamAuthority) String() string {
 	return fmt.Sprintf(
 		"upstream-authority(vendor=%s,origin=%s,subject=redacted)",
-		safeLabel(a.vendor),
+		safeOptionalLabel(a.vendor),
 		a.origin.String(),
 	)
 }
@@ -67,7 +61,7 @@ func (a UpstreamAuthority) MarshalJSON() ([]byte, error) {
 		Vendor  string `json:"vendor"`
 		Origin  string `json:"origin"`
 		Subject string `json:"subject"`
-	}{Vendor: safeLabel(a.vendor), Origin: a.origin.String(), Subject: "redacted"})
+	}{Vendor: safeOptionalLabel(a.vendor), Origin: a.origin.String(), Subject: "redacted"})
 }
 
 type ProtocolScope struct {
@@ -158,4 +152,12 @@ func safeLabel(value string) string {
 		}
 	}
 	return value
+}
+
+func safeOptionalLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return safeLabel(value)
 }

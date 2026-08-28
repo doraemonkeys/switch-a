@@ -135,7 +135,7 @@ func stageChatGPTReauthenticationDescriptor(
 			id,
 		)
 	}
-	if current.Kind != credentialsession.KindChatGPT || current.Vendor != strings.TrimSpace(item.Vendor) {
+	if current.Kind != credentialsession.KindChatGPT {
 		return fmt.Errorf(
 			"credential session %q reauthentication descriptor does not match the existing verified ChatGPT session",
 			id,
@@ -147,7 +147,6 @@ func stageChatGPTReauthenticationDescriptor(
 
 func credentialSessionImportEqual(session credentialsession.Session, current credentialsession.Snapshot) bool {
 	return session.ID == current.SessionID &&
-		session.Vendor == current.Vendor &&
 		session.Kind == current.Kind &&
 		session.SecretData == current.SecretData &&
 		session.Version == current.Version &&

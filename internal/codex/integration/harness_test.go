@@ -263,10 +263,10 @@ func fixtureCandidate(t *testing.T, spec candidateSpec) (codexidentity.Candidate
 		t.Fatal(err)
 	}
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
-		RouteTargetID: spec.routeTarget, APIType: spec.apiType,
+		RouteTargetID: spec.routeTarget, APIType: spec.apiType, VendorScope: spec.vendor,
 		Credential: credentialsession.Snapshot{
-			SessionID: "session-" + spec.routeTarget, Vendor: spec.vendor,
-			Kind: credentialsession.KindAPIKey, SecretData: "fixture-provider-secret",
+			SessionID: "session-" + spec.routeTarget,
+			Kind:      credentialsession.KindAPIKey, SecretData: "fixture-provider-secret",
 			Version: 1, Subject: subject,
 		},
 	}, spec.apiType, finalURL)

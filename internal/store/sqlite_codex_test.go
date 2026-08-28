@@ -533,7 +533,7 @@ func (signer *failingStaticSubjectSigner) Sign(_ codexkeyring.HMACPurpose, input
 
 func pendingStaticSession(id string) *credentialsession.Session {
 	session := &credentialsession.Session{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindAPIKey,
+		ID: id, Kind: credentialsession.KindAPIKey,
 		SecretData: "secret", Version: 1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
@@ -544,7 +544,7 @@ func pendingStaticSession(id string) *credentialsession.Session {
 func insertPendingChatGPTReauth(t *testing.T, persistence *SQLiteStore, id string) {
 	t.Helper()
 	session := &credentialsession.Session{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: id, Kind: credentialsession.KindChatGPT,
 		SecretData: `{"access_token":"expired"}`, Version: 1,
 		AuthState: credentialsession.AuthState{
 			Status: credentialsession.AuthStatusReauthRequired, StatusReason: "reauthentication_required",

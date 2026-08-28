@@ -118,6 +118,7 @@ func (h *Gateway) newFallbackProviderLease(provider *model.Provider, apiType str
 				credentialsession.RouteSnapshot{
 					RouteTargetID: provider.ID,
 					APIType:       apiType,
+					VendorScope:   provider.Vendor,
 					Credential:    *credential,
 				},
 				apiType,

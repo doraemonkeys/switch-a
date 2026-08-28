@@ -377,7 +377,7 @@ func BuildCredentialSessionFromChatGPTProviderImportCandidate(
 		snapshot.Version = 1
 	}
 	session := &credentialsession.Session{
-		ID: snapshot.SessionID, Vendor: snapshot.Vendor, Kind: snapshot.Kind,
+		ID: snapshot.SessionID, Kind: snapshot.Kind,
 		SecretData: snapshot.SecretData, Version: snapshot.Version, AuthState: snapshot.AuthState.Clone(),
 	}
 	if err := session.SetSubject(snapshot.Subject); err != nil {

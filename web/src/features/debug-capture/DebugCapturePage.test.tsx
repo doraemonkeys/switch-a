@@ -101,10 +101,9 @@ const sessionBStatus: DebugCaptureStatus = {
 const provider: Provider = {
   id: "provider-a",
   name: "Provider A",
-  api_key: "",
   api_types: [],
   auth_mode: "auto",
-  credential_type: "api_key",
+  credential_sessions: [],
   group_id: null,
   weight: 1,
   priority: 0,

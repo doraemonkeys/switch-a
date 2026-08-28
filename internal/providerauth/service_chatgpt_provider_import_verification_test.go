@@ -153,7 +153,7 @@ func providerImportVerifierCandidate(
 		CandidateID: candidateID,
 		State:       ChatGPTProviderImportCandidateStateReady,
 		Credential: credentialsession.Snapshot{
-			Vendor: chatGPTVendor, Kind: credentialsession.KindChatGPT,
+			Kind:       credentialsession.KindChatGPT,
 			SecretData: string(secret), Version: 1, Subject: subject,
 			AuthState: credentialsession.AuthState{
 				Status: credentialsession.AuthStatusActive, AccountID: accountID,

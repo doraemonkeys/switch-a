@@ -575,8 +575,8 @@ func newStaticCredentialRoute(
 ) (credentialsession.Session, credentialsession.RouteSnapshot) {
 	t.Helper()
 	session := credentialsession.Session{
-		ID:     routeTargetID + "-" + apiType + "-session",
-		Vendor: vendor, Kind: credentialsession.KindAPIKey,
+		ID:         routeTargetID + "-" + apiType + "-session",
+		Kind:       credentialsession.KindAPIKey,
 		SecretData: secret, Version: 1,
 		SubjectKind: credentialsession.SubjectPending,
 		AuthState:   credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
@@ -588,6 +588,7 @@ func newStaticCredentialRoute(
 	return session, credentialsession.RouteSnapshot{
 		RouteTargetID: routeTargetID,
 		APIType:       apiType,
+		VendorScope:   vendor,
 		Credential:    snapshot,
 	}
 }

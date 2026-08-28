@@ -42,6 +42,13 @@ func TestCreateProvider_PersistsOnlySessionReferences(t *testing.T) {
 	if strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), "api_key") {
 		t.Fatalf("provider response leaked credential transport fields: %s", w.Body.String())
 	}
+	if strings.Contains(w.Body.String(), "credential_type") {
+		t.Fatalf("provider response exposed the removed provider-level credential discriminator: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"credential_session_id":"session-1"`) ||
+		!strings.Contains(w.Body.String(), `"credential_sessions"`) {
+		t.Fatalf("provider response omitted the route-to-session contract: %s", w.Body.String())
+	}
 }
 
 func TestUpdateProvider_ReplacesRouteSessionReference(t *testing.T) {

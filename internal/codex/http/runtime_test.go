@@ -505,8 +505,9 @@ func testCandidate(t *testing.T, routeTarget, host, subjectLabel string) (codexi
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
 		RouteTargetID: routeTarget,
 		APIType:       codexAPIType,
+		VendorScope:   "openai",
 		Credential: credentialsession.Snapshot{
-			SessionID: routeTarget + "-session", Vendor: "openai", Kind: credentialsession.KindAPIKey,
+			SessionID: routeTarget + "-session", Kind: credentialsession.KindAPIKey,
 			SecretData: "provider-secret", Version: 1, Subject: subject,
 			AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 		},

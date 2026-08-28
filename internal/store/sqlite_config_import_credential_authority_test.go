@@ -60,7 +60,7 @@ func configImportChatGPTSession(t *testing.T, id, secret, accountID string) *cre
 		t.Fatal(err)
 	}
 	session := &credentialsession.Session{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: id, Kind: credentialsession.KindChatGPT,
 		SecretData: secret, Version: 1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: accountID},
 	}

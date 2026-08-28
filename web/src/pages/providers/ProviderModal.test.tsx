@@ -11,7 +11,12 @@ import { resolve } from "node:path";
 import { ProviderModal } from "./ProviderModal";
 import { APICatalogContext, ApiContext } from "../../api/context";
 import type { ApiClient } from "../../api/client";
-import { ApiError, parseAPICatalog, type Provider } from "../../api";
+import {
+  parseAPICatalog,
+  type CreateCredentialSessionInput,
+  type CredentialSession,
+  type Provider,
+} from "../../api";
 import {
   ADD_PROVIDER_DEFAULTS,
   AUTH_MODES,
@@ -29,18 +34,53 @@ const testAPICatalog = parseAPICatalog(
   ) as unknown,
 );
 
+function credentialSession(
+  input: CreateCredentialSessionInput,
+  id = "credential-created",
+): CredentialSession {
+  return {
+    id,
+    kind: input.kind,
+    version: 1,
+    subject: {
+      kind: input.kind === "chatgpt" ? "account" : "keyed_digest",
+      value: input.kind === "chatgpt" ? "account-created" : "digest-created",
+    },
+    auth_state: { status: "active" },
+    referenced_route_target_ids: [],
+    created_at: "2026-08-28T00:00:00Z",
+    updated_at: "2026-08-28T00:00:00Z",
+  };
+}
+
+function createCredentialSessionsApi() {
+  return {
+    list: vi.fn().mockResolvedValue([]),
+    create: vi
+      .fn()
+      .mockImplementation((input: CreateCredentialSessionInput) =>
+        Promise.resolve(credentialSession(input)),
+      ),
+  };
+}
+
 function render(element: ReactElement) {
+  const api = {
+    credentialSessions: createCredentialSessionsApi(),
+  } as unknown as ApiClient;
   return testingLibraryRender(
-    <APICatalogContext.Provider
-      value={{
-        catalog: testAPICatalog,
-        loading: false,
-        error: null,
-        refetch: () => Promise.resolve(),
-      }}
-    >
-      {element}
-    </APICatalogContext.Provider>,
+    <ApiContext.Provider value={api}>
+      <APICatalogContext.Provider
+        value={{
+          catalog: testAPICatalog,
+          loading: false,
+          error: null,
+          refetch: () => Promise.resolve(),
+        }}
+      >
+        {element}
+      </APICatalogContext.Provider>
+    </ApiContext.Provider>,
   );
 }
 
@@ -50,20 +90,32 @@ afterEach(() => {
 });
 
 function buildPersistedChatGPTProvider(): Provider {
+  const credentialSessionID = "credential-gpt";
   return {
     id: "provider-gpt",
     name: "GPT Provider",
-    api_key: "",
     api_types: [
       {
-        provider_id: "provider-gpt",
         api_type: "codex",
         base_url: CHATGPT_CODEX_BASE_URL,
-        api_key: "",
+        credential_session_id: credentialSessionID,
       },
     ],
     auth_mode: AUTH_MODES.BEARER,
-    credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    credential_sessions: [
+      {
+        id: credentialSessionID,
+        kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+        version: 1,
+        subject: { kind: "account", value: "acct_test" },
+        auth_state: {
+          status: "reauth_required",
+          email: "user@example.com",
+          status_reason: "invalid_grant",
+          last_error: "refresh_token_reused",
+        },
+      },
+    ],
     usage_limit_policy: PROVIDER_USAGE_LIMIT_POLICIES.SUSPEND,
     usage_limit_policy_explicit: true,
     group_id: null,
@@ -77,14 +129,7 @@ function buildPersistedChatGPTProvider(): Provider {
     enabled: true,
     created_at: "2026-03-22T12:00:00Z",
     updated_at: "2026-03-22T12:00:00Z",
-    auth: {
-      type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-      status: "reauth_required",
-      email: "user@example.com",
-      reason: "invalid_grant",
-      last_error: "refresh_token_reused",
-    },
-  } as Provider;
+  };
 }
 
 describe("ProviderModal", () => {
@@ -111,7 +156,10 @@ describe("ProviderModal", () => {
     ).toBeChecked();
 
     await user.type(screen.getByLabelText("Name"), "Retry Defaults");
-    await user.type(screen.getByLabelText("Default API Key"), "default-key");
+    await user.type(
+      screen.getByLabelText("New Default API Key"),
+      "default-key",
+    );
     await user.click(screen.getByRole("button", { name: "claude" }));
     await user.type(
       screen.getByLabelText("Base URL for claude"),
@@ -146,17 +194,23 @@ describe("ProviderModal", () => {
     const initialData: Provider = {
       id: "provider-existing",
       name: "Existing Provider",
-      api_key: "sk-existing",
       api_types: [
         {
-          provider_id: "provider-existing",
           api_type: "claude",
           base_url: "https://api.example.com",
-          api_key: "",
+          credential_session_id: "credential-existing",
         },
       ],
       auth_mode: AUTH_MODES.AUTO,
-      credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+      credential_sessions: [
+        {
+          id: "credential-existing",
+          kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+          version: 1,
+          subject: { kind: "keyed_digest", value: "digest-existing" },
+          auth_state: { status: "active" },
+        },
+      ],
       group_id: null,
       weight: 1,
       priority: 0,
@@ -225,12 +279,11 @@ describe("ProviderModal", () => {
         expect.objectContaining({
           id: expect.stringMatching(/^split-credentials/),
           name: "Split Credentials",
-          api_key: "",
           api_types: [
             {
               api_type: "claude",
               base_url: "https://api.example.com",
-              api_key: "claude-key",
+              credential_session_id: "credential-created",
             },
           ],
         }),
@@ -255,7 +308,9 @@ describe("ProviderModal", () => {
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
     expect(
-      await screen.findByText(/api key is required for api type "claude"/i),
+      await screen.findByText(
+        /credential session is required for api type "claude"/i,
+      ),
     ).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -268,7 +323,7 @@ describe("ProviderModal", () => {
 
     await user.type(screen.getByLabelText("Name"), "Whitespace Override");
     await user.type(
-      screen.getByLabelText("Default API Key"),
+      screen.getByLabelText("New Default API Key"),
       "  default-key  ",
     );
     await user.click(screen.getByRole("button", { name: "claude" }));
@@ -286,11 +341,10 @@ describe("ProviderModal", () => {
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({
-          api_key: "default-key",
           api_types: [
             expect.objectContaining({
               api_type: "claude",
-              api_key: "",
+              credential_session_id: "credential-created",
             }),
           ],
         }),
@@ -346,6 +400,7 @@ describe("ProviderModal GPT login", () => {
             },
           }),
       },
+      credentialSessions: createCredentialSessionsApi(),
     } as unknown as ApiClient;
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
 
@@ -395,15 +450,12 @@ describe("ProviderModal GPT login", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]?.[0];
     expect(submitted).toMatchObject({
-      credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-      credential_login_id: "login-1",
       auth_mode: "bearer",
-      api_key: "",
       api_types: [
         {
           api_type: "codex",
           base_url: CHATGPT_CODEX_BASE_URL,
-          api_key: "",
+          credential_session_id: "credential-created",
         },
       ],
     });
@@ -430,6 +482,7 @@ describe("ProviderModal GPT login", () => {
           },
         }),
       },
+      credentialSessions: createCredentialSessionsApi(),
     } as unknown as ApiClient;
 
     render(
@@ -439,7 +492,10 @@ describe("ProviderModal GPT login", () => {
     );
 
     await user.type(screen.getByLabelText("Name"), "Switch Back");
-    await user.type(screen.getByLabelText("Default API Key"), "default-key");
+    await user.type(
+      screen.getByLabelText("New Default API Key"),
+      "default-key",
+    );
     await user.click(screen.getByRole("button", { name: "claude" }));
     await user.type(
       screen.getByLabelText("Base URL for claude"),
@@ -467,7 +523,9 @@ describe("ProviderModal GPT login", () => {
       PROVIDER_CREDENTIAL_TYPES.API_KEY,
     );
 
-    expect(screen.getByLabelText("Default API Key")).toHaveValue("default-key");
+    expect(screen.getByLabelText("New Default API Key")).toHaveValue(
+      "default-key",
+    );
     expect(screen.getByLabelText("Base URL for claude")).toHaveValue(
       "https://api.example.com",
     );
@@ -480,14 +538,12 @@ describe("ProviderModal GPT login", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]?.[0];
     expect(submitted).toMatchObject({
-      credential_type: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-      api_key: "default-key",
       auth_mode: AUTH_MODES.X_API_KEY,
       api_types: [
         {
           api_type: "claude",
           base_url: "https://api.example.com",
-          api_key: "",
+          credential_session_id: "credential-created",
         },
       ],
     });
@@ -533,6 +589,7 @@ describe("ProviderModal token import", () => {
           },
         }),
       },
+      credentialSessions: createCredentialSessionsApi(),
     } as unknown as ApiClient;
 
     render(
@@ -566,50 +623,38 @@ describe("ProviderModal token import", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]?.[0];
     expect(submitted).toMatchObject({
-      credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-      credential_login_id: "login-import",
       auth_mode: "bearer",
-      api_key: "",
       api_types: [
         {
           api_type: "codex",
           base_url: CHATGPT_CODEX_BASE_URL,
-          api_key: "",
+          credential_session_id: "credential-created",
         },
       ],
     });
   });
 
-  it("asks before replacing an account already bound to another provider", async () => {
+  it("reuses the materialized GPT session when the provider write is retried", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     const onSubmit = vi
       .fn()
-      .mockRejectedValueOnce(
-        new ApiError(
-          "CONFLICT",
-          'GPT account "acct-shared" is already bound to provider "old-provider"',
-          409,
-          {
-            kind: "credential_binding",
-            account_id: "acct-shared",
-            provider_id: "old-provider",
-          },
-        ),
-      )
+      .mockRejectedValueOnce(new Error("provider write failed"))
       .mockResolvedValueOnce(undefined);
+    const credentialSessions = createCredentialSessionsApi();
     const mockApi = {
       providers: {
         importChatGPTLogin: vi.fn().mockResolvedValue({
-          login_id: "login-replace",
+          login_id: "login-retry",
           status: "completed",
           auth: {
             type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
             status: "active",
-            account_id: "acct-shared",
+            account_id: "acct-retry",
           },
         }),
       },
+      credentialSessions,
     } as unknown as ApiClient;
 
     render(
@@ -618,7 +663,7 @@ describe("ProviderModal token import", () => {
       </ApiContext.Provider>,
     );
 
-    await user.type(screen.getByLabelText("Name"), "Replacement GPT");
+    await user.type(screen.getByLabelText("Name"), "Retry GPT");
     await user.selectOptions(
       screen.getByLabelText("Credential Type"),
       PROVIDER_CREDENTIAL_TYPES.CHATGPT,
@@ -632,18 +677,18 @@ describe("ProviderModal token import", () => {
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
     expect(
-      await screen.findByRole("heading", {
-        name: "GPT account already connected",
-      }),
+      await screen.findByText("provider write failed"),
     ).toBeInTheDocument();
-    expect(screen.getByText(/old-provider/)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Replace account" }));
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(credentialSessions.create).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[1]?.[0]).toMatchObject({
-      credential_login_id: "login-replace",
-      credential_binding_resolution: "replace",
+      api_types: [
+        expect.objectContaining({
+          credential_session_id: "credential-created",
+        }),
+      ],
     });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -657,6 +702,7 @@ describe("ProviderModal token import", () => {
           .fn()
           .mockRejectedValue(new Error("auth data is missing a refresh token")),
       },
+      credentialSessions: createCredentialSessionsApi(),
     } as unknown as ApiClient;
 
     render(

@@ -30,7 +30,6 @@ type credentialSessionStore interface {
 
 type CredentialSessionPayload struct {
 	ID                     string                      `json:"id"`
-	Vendor                 string                      `json:"vendor"`
 	Kind                   credentialsession.Kind      `json:"kind"`
 	Version                int64                       `json:"version"`
 	Subject                credentialsession.Subject   `json:"subject"`
@@ -42,7 +41,6 @@ type CredentialSessionPayload struct {
 
 type CreateCredentialSessionRequest struct {
 	ID                string                       `json:"id,omitempty"`
-	Vendor            string                       `json:"vendor"`
 	Kind              credentialsession.Kind       `json:"kind"`
 	SecretData        string                       `json:"secret_data"`
 	AuthState         *credentialsession.AuthState `json:"auth_state,omitempty"`
@@ -176,7 +174,6 @@ func buildCredentialSession(req CreateCredentialSessionRequest) (*credentialsess
 	}
 	session := &credentialsession.Session{
 		ID:         id,
-		Vendor:     strings.TrimSpace(req.Vendor),
 		Kind:       req.Kind,
 		SecretData: req.SecretData,
 		Version:    1,
@@ -339,7 +336,7 @@ func credentialSessionPayload(ctx context.Context, repository credentialSessionS
 		return CredentialSessionPayload{}, err
 	}
 	return CredentialSessionPayload{
-		ID: session.ID, Vendor: session.Vendor, Kind: session.Kind, Version: session.Version,
+		ID: session.ID, Kind: session.Kind, Version: session.Version,
 		Subject: session.Subject(), AuthState: session.AuthState.Clone(),
 		ReferencedRouteTargets: references, CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
 	}, nil

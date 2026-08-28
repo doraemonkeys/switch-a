@@ -1,5 +1,4 @@
 import type { Provider, ProviderAuthView } from "../../api/client";
-import { hasProviderApiKey } from "../../lib/providerApiKey";
 import {
   formatProviderPlanType,
   formatProviderUsageWindowSummary,
@@ -179,10 +178,11 @@ function ActionsCell({
   exportingProviderId: string | null;
 }) {
   const showReset = status === "unhealthy" || status === "pending-recovery";
+  const authView = resolveProviderAuthView(provider);
   const canExportCodexAuth =
-    provider.credential_type === "chatgpt" &&
+    authView?.type === "chatgpt" &&
     !provider.enabled &&
-    resolveProviderAuthView(provider)?.status === "active";
+    authView.status === "active";
   const isExporting = exportingProviderId === provider.id;
 
   return (
@@ -256,24 +256,12 @@ function formatEndpointSummary(provider: Provider): string {
     return apiTypes[0]?.base_url || "No endpoint configured";
   }
 
-  const apiKeyOverrideCount = apiTypes.filter((apiType) =>
-    hasProviderApiKey(apiType.api_key),
-  ).length;
-  const endpointSummary = `${apiTypeCount} endpoints configured`;
-  if (apiKeyOverrideCount === 0) {
-    return endpointSummary;
-  }
-
-  const keySummary =
-    apiKeyOverrideCount === 1
-      ? "1 custom key"
-      : `${apiKeyOverrideCount} custom keys`;
-  return `${endpointSummary}, ${keySummary}`;
+  return `${apiTypeCount} endpoints configured`;
 }
 
 function formatChatGPTUsageSummary(provider: Provider): string | null {
   const authView = resolveProviderAuthView(provider);
-  if (provider.credential_type !== "chatgpt" || authView?.status !== "active") {
+  if (authView?.type !== "chatgpt" || authView.status !== "active") {
     return null;
   }
 

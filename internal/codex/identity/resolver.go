@@ -49,7 +49,7 @@ func (AuthorityResolver) Resolve(
 		return CandidateSnapshot{}, errorOf(ErrorSnapshotConflict, "api_type", "requested API type conflicts with the frozen route snapshot", nil)
 	}
 	credential := route.Credential
-	if strings.TrimSpace(credential.SessionID) == "" || strings.TrimSpace(credential.Vendor) == "" || credential.Version < 1 || !credentialsession.IsValidKind(credential.Kind) {
+	if strings.TrimSpace(credential.SessionID) == "" || credential.Version < 1 || !credentialsession.IsValidKind(credential.Kind) {
 		return CandidateSnapshot{}, errorOf(ErrorInvalidInput, "credential_snapshot", "credential identity fields are invalid", nil)
 	}
 	subject, err := CredentialSubjectFromSession(credential.Subject)
@@ -63,7 +63,7 @@ func (AuthorityResolver) Resolve(
 	if err != nil {
 		return CandidateSnapshot{}, err
 	}
-	authority, err := NewUpstreamAuthority(credential.Vendor, origin, subject)
+	authority, err := NewUpstreamAuthority(route.VendorScope, origin, subject)
 	if err != nil {
 		return CandidateSnapshot{}, err
 	}

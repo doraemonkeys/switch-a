@@ -1,17 +1,13 @@
 import { useState } from "react";
 import { useProviders } from "../../hooks/useProviders";
 import { useToast } from "../../hooks/useToast";
-import { ApiError, type Provider, type ProviderInput } from "../../api/client";
+import { useApi, type Provider, type ProviderInput } from "../../api";
 import { downloadJsonFile } from "../../lib/jsonDownload";
 import { useProviderConfirmations } from "./useProviderConfirmations";
-
-function isCredentialBindingConflict(error: unknown): boolean {
-  return (
-    error instanceof ApiError && error.details?.kind === "credential_binding"
-  );
-}
+import { resolveProviderChatGPTCredentialSession } from "../../lib/providerAuth";
 
 export function useProviderActions() {
+  const api = useApi();
   const {
     providers,
     hasSnapshot,
@@ -24,9 +20,6 @@ export function useProviderActions() {
     enableProvider,
     disableProvider,
     resetProvider,
-    refreshCredential,
-    refreshUsage,
-    exportCodexAuth,
   } = useProviders();
   const toast = useToast();
   const [exportingProviderId, setExportingProviderId] = useState<string | null>(
@@ -68,11 +61,6 @@ export function useProviderActions() {
       }
       return true;
     } catch (err) {
-      // A duplicate GPT account is an expected decision point; the modal owns
-      // the confirmation so an error toast would race the replacement prompt.
-      if (isCredentialBindingConflict(err)) {
-        throw err;
-      }
       toast.error(
         err instanceof Error ? err.message : "Failed to save provider",
       );
@@ -81,8 +69,16 @@ export function useProviderActions() {
   };
 
   const handleRefreshCredential = async (provider: Provider) => {
+    const session = resolveProviderChatGPTCredentialSession(provider);
+    if (!session) {
+      const error = new Error(
+        `Provider "${provider.name}" has no GPT credential session`,
+      );
+      toast.error(error.message);
+      throw error;
+    }
     try {
-      await refreshCredential(provider.id);
+      await api.credentialSessions.refresh(session.id);
       toast.success(`Credential refreshed for "${provider.name}"`);
     } catch (err) {
       toast.error(
@@ -91,25 +87,44 @@ export function useProviderActions() {
           : "Failed to refresh provider credential",
       );
       throw err;
+    } finally {
+      await refetch();
     }
   };
 
   const handleRefreshUsage = async (provider: Provider) => {
+    const session = resolveProviderChatGPTCredentialSession(provider);
+    if (!session) {
+      const error = new Error(
+        `Provider "${provider.name}" has no GPT credential session`,
+      );
+      toast.error(error.message);
+      throw error;
+    }
     try {
-      await refreshUsage(provider.id);
+      await api.credentialSessions.refreshUsage(session.id);
       toast.success(`Usage snapshot refreshed for "${provider.name}"`);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to refresh provider usage",
       );
       throw err;
+    } finally {
+      await refetch();
     }
   };
 
   const handleExportCodexAuth = async (provider: Provider) => {
+    const session = resolveProviderChatGPTCredentialSession(provider);
+    if (!session) {
+      toast.error(`Provider "${provider.name}" has no GPT credential session`);
+      return;
+    }
     setExportingProviderId(provider.id);
     try {
-      const authDocument = await exportCodexAuth(provider.id);
+      const authDocument = await api.credentialSessions.exportCodexAuth(
+        session.id,
+      );
       downloadJsonFile("auth.json", authDocument);
       toast.success(
         `Codex auth.json exported for "${provider.name}". Keep this provider paused while the file is in use.`,

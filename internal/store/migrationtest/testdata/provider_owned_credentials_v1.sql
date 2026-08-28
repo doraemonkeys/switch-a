@@ -95,7 +95,7 @@ INSERT INTO providers (
     id, name, api_key, auth_mode, credential_type, usage_limit_policy,
     vendor, failover_scope, accept_failover, enabled, created_at, updated_at
 ) VALUES
-    ('legacy-static-primary', 'Legacy static primary', 'fixture-static-primary-not-secret', 'bearer', 'api_key', '', 'openai', 'any', 'any', 1, '2026-01-02 03:04:05+00:00', '2026-01-02 03:04:05+00:00'),
+    ('legacy-static-primary', 'Legacy static primary', 'fixture-static-primary-not-secret', 'bearer', 'api_key', '', '', 'any', 'any', 1, '2026-01-02 03:04:05+00:00', '2026-01-02 03:04:05+00:00'),
     ('legacy-static-api-type-override', 'Legacy API-type override', 'fixture-static-fallback-not-secret', 'bearer', 'api_key', '', 'openai', 'any', 'any', 1, '2026-01-02 03:04:05+00:00', '2026-01-02 03:04:05+00:00'),
     -- Equal legacy fields do not prove shared rotation intent. M1 must create
     -- independent sessions before tests establish an explicit shared reference.

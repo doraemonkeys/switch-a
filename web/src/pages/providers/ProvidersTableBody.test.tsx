@@ -5,56 +5,58 @@ import type { Provider } from "../../api/client";
 import { ProvidersTableBody } from "./ProvidersTableBody";
 
 function buildProvider(): Provider {
+  const credentialSessionID = "credential-gpt";
   return {
     id: "provider-gpt",
     name: "GPT Provider",
-    api_key: "",
     api_types: [
       {
-        provider_id: "provider-gpt",
         api_type: "codex",
         base_url: "https://chatgpt.com/backend-api/codex",
-        api_key: "",
+        credential_session_id: credentialSessionID,
       },
     ],
     auth_mode: "auto",
-    credential_type: "chatgpt",
+    credential_sessions: [
+      {
+        id: credentialSessionID,
+        kind: "chatgpt",
+        version: 1,
+        subject: { kind: "account", value: "acct_test" },
+        auth_state: {
+          status: "active",
+          email: "user@example.com",
+          account_id: "acct_test",
+          plan_type: "plus",
+          usage_snapshot: {
+            fetched_at: "2026-03-22T12:05:00Z",
+            plan_type: "plus",
+            five_hour: {
+              used_percent: 18,
+              window_seconds: 18000,
+              reset_at: "2026-03-22T17:00:00Z",
+            },
+            one_week: {
+              used_percent: 42,
+              window_seconds: 604800,
+              reset_at: "2026-03-29T00:00:00Z",
+            },
+          },
+        },
+      },
+    ],
     group_id: null,
     weight: 1,
     priority: 1,
     concurrency: 1,
-    rate_limit_rpm: 0,
-    rate_limit_window: 0,
     max_retries: 0,
-    strategy: "round_robin",
     vendor: "",
     failover_scope: "any",
     accept_failover: "any",
     enabled: true,
     created_at: "2026-03-22T12:00:00Z",
     updated_at: "2026-03-22T12:00:00Z",
-    auth: {
-      type: "chatgpt",
-      status: "active",
-      email: "user@example.com",
-      account_id: "acct_test",
-      plan_type: "plus",
-      usage: {
-        fetched_at: "2026-03-22T12:05:00Z",
-        plan_type: "plus",
-        five_hour: {
-          used_percent: 18,
-          window_seconds: 18000,
-          reset_at: "2026-03-22T17:00:00Z",
-        },
-        one_week: {
-          used_percent: 42,
-          window_seconds: 604800,
-          reset_at: "2026-03-29T00:00:00Z",
-        },
-      },
-    },
-  } as Provider;
+  };
 }
 
 describe("ProvidersTableBody", () => {
@@ -93,14 +95,21 @@ describe("ProvidersTableBody", () => {
   it("shows reconnect-required auth state without relying on usage readiness", () => {
     const provider = {
       ...buildProvider(),
-      auth: {
-        type: "chatgpt",
-        status: "reauth_required",
-        reason: "invalid_grant",
-        last_error: "refresh_token_reused",
-        email: "user@example.com",
-      },
-    } as Provider;
+      credential_sessions: [
+        {
+          id: "credential-gpt",
+          kind: "chatgpt" as const,
+          version: 1,
+          subject: { kind: "account" as const, value: "acct_test" },
+          auth_state: {
+            status: "reauth_required" as const,
+            status_reason: "invalid_grant",
+            last_error: "refresh_token_reused",
+            email: "user@example.com",
+          },
+        },
+      ],
+    };
 
     render(
       <table>

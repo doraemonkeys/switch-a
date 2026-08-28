@@ -1,9 +1,22 @@
-import type { APITypeInput } from "../../api";
+import type {
+  APITypeInput,
+  CredentialSessionKind,
+  ProviderInput,
+} from "../../api";
 
-/** Tracked entry pairs a stable client-side key with the actual input data. */
-export interface TrackedAPITypeEntry {
-  clientKey: string;
-  data: APITypeInput;
+export type ProviderCredentialMode = CredentialSessionKind | "mixed";
+
+export interface ProviderAPITypeDraft extends APITypeInput {
+  client_key: string;
+  /** A write-only replacement secret; it is materialized as a new session. */
+  api_key: string;
+}
+
+export interface ProviderFormData extends Omit<ProviderInput, "api_types"> {
+  api_types: ProviderAPITypeDraft[];
+  credential_mode: ProviderCredentialMode;
+  default_api_key: string;
+  chatgpt_credential_session_id: string;
 }
 
 let nextClientKey = 0;

@@ -187,6 +187,7 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
 			RouteTargetID: p.ID,
 			APIType:       p.APITypes[index].APIType,
+			VendorScope:   p.Vendor,
 			Credential: credentialsession.Snapshot{
 				SessionID: p.APITypes[index].CredentialSessionID,
 			},
@@ -291,7 +292,6 @@ func buildStaticCredentialSessionFromExport(item ExportedCredentialSession) (*cr
 	}
 	session := &credentialsession.Session{
 		ID:         strings.TrimSpace(item.ID),
-		Vendor:     strings.TrimSpace(item.Vendor),
 		Kind:       item.Kind,
 		SecretData: item.SecretData,
 		Version:    item.Version,
@@ -310,8 +310,8 @@ func validateChatGPTReauthenticationDescriptor(item ExportedCredentialSession) e
 	if item.TransferMode != CredentialSessionTransferReauthenticate || item.Kind != credentialsession.KindChatGPT {
 		return fmt.Errorf("chatgpt credentials must use transfer_mode %q", CredentialSessionTransferReauthenticate)
 	}
-	if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Vendor) == "" || item.Version < 1 {
-		return fmt.Errorf("chatgpt reauthentication descriptor requires id, vendor, and a positive version")
+	if strings.TrimSpace(item.ID) == "" || item.Version < 1 {
+		return fmt.Errorf("chatgpt reauthentication descriptor requires id and a positive version")
 	}
 	if item.SecretData != "" || !reflect.DeepEqual(item.Subject, credentialsession.PendingSubject()) {
 		return fmt.Errorf("chatgpt reauthentication descriptor cannot carry secret or resolved subject data")

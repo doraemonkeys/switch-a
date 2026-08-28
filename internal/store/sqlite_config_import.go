@@ -132,22 +132,22 @@ func applyImportedCredentialSessions(
 ) error {
 	for index := range sessions {
 		candidate := sessions[index]
-		if candidate.Kind == credentialsession.KindChatGPT {
-			// ChatGPT subject authority is produced only by the verified login/import
-			// mutation boundary. Keeping this check at persistence makes an admin
-			// staging regression fail closed and roll back the whole config bundle.
-			return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
-		}
 		current, err := txStore.GetCredentialSession(ctx, candidate.ID)
 		switch {
 		case err == nil:
-			if current.Vendor != candidate.Vendor || current.Kind != candidate.Kind {
-				return fmt.Errorf("credential session %q vendor and kind are immutable", candidate.ID)
+			if current.Kind != candidate.Kind {
+				return fmt.Errorf("credential session %q kind is immutable", candidate.ID)
+			}
+			if candidate.Kind == credentialsession.KindChatGPT {
+				// ChatGPT subject authority is produced only by the verified login/import
+				// mutation boundary. Keeping this check at persistence makes an admin
+				// staging regression fail closed and roll back the whole config bundle.
+				return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
 			}
 			if current.Version != candidate.Version {
 				return fmt.Errorf("credential session %q version mismatch: expected %d, current %d", candidate.ID, candidate.Version, current.Version)
 			}
-			if current.Vendor == candidate.Vendor && current.Kind == candidate.Kind &&
+			if current.Kind == candidate.Kind &&
 				current.SecretData == candidate.SecretData &&
 				reflect.DeepEqual(current.Subject(), candidate.Subject()) &&
 				reflect.DeepEqual(current.AuthState, candidate.AuthState) {
@@ -157,6 +157,9 @@ func applyImportedCredentialSessions(
 				return err
 			}
 		case errors.Is(err, credentialsession.ErrNotFound):
+			if candidate.Kind == credentialsession.KindChatGPT {
+				return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
+			}
 			if _, err := txStore.CreateCredentialSession(ctx, &candidate); err != nil {
 				return err
 			}

@@ -90,7 +90,7 @@ func TestCredentialSessionCRUDAndReferenceDeletionContract(t *testing.T) {
 		ID: "route-1", Name: "Route", Vendor: "openai", Enabled: true,
 		APITypes: []model.ProviderAPIType{{ProviderID: "route-1", APIType: "codex", BaseURL: "https://example.com"}},
 		CredentialSessions: []credentialsession.RouteSnapshot{{
-			RouteTargetID: "route-1", APIType: "codex", Credential: credentialsession.Snapshot{SessionID: created.ID},
+			RouteTargetID: "route-1", APIType: "codex", VendorScope: "openai", Credential: credentialsession.Snapshot{SessionID: created.ID},
 		}},
 	}
 	if err := repository.CreateProvider(context.Background(), provider); err != nil {
@@ -149,7 +149,7 @@ func TestCredentialSessionCodexAuthExportUsesSessionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := &credentialsession.Session{
-		ID: "login-session", Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: "login-session", Kind: credentialsession.KindChatGPT,
 		SecretData: secret, Version: 1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "account-1"},
 	}
@@ -182,7 +182,7 @@ func TestCredentialSessionHTTPRejectsSelfAssertedChatGPTAuthority(t *testing.T) 
 		t.Fatal(err)
 	}
 	createBody, err := json.Marshal(map[string]any{
-		"id": "untrusted-login", "vendor": "openai", "kind": credentialsession.KindChatGPT,
+		"id": "untrusted-login", "kind": credentialsession.KindChatGPT,
 		"secret_data": "unverified-secret", "subject": subject,
 		"auth_state": credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "self-asserted"},
 	})
@@ -199,7 +199,7 @@ func TestCredentialSessionHTTPRejectsSelfAssertedChatGPTAuthority(t *testing.T) 
 	}
 
 	verified := &credentialsession.Session{
-		ID: "verified-login", Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: "verified-login", Kind: credentialsession.KindChatGPT,
 		SecretData: "verified-secret", Version: 1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "verified-account"},
 	}

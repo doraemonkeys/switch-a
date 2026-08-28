@@ -146,6 +146,7 @@ func (h *Gateway) prepareWebSocketDialHeaders(ctx context.Context, r *http.Reque
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
 		RouteTargetID: provider.ID,
 		APIType:       apiType,
+		VendorScope:   provider.Vendor,
 		Credential:    *credential,
 	}, apiType, finalURL)
 	if err != nil {

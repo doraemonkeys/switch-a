@@ -309,7 +309,6 @@ func TestCredentialSessionUsableRequiresActiveImmutableSnapshot(t *testing.T) {
 
 	active := credentialsession.Snapshot{
 		SessionID:  "session-a",
-		Vendor:     "vendor-a",
 		Kind:       credentialsession.KindAPIKey,
 		SecretData: "secret",
 		Version:    1,

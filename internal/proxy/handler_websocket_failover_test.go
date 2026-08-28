@@ -119,7 +119,10 @@ func TestHandler_ServeHTTP_WebSocket_ProviderPreflightConfigFailure(t *testing.T
 				Enabled:  true,
 				APITypes: []model.ProviderAPIType{{ProviderID: "ws-missing-base-url", APIType: "codex", BaseURL: ""}},
 			}, "", "key"),
-			errorSnippet: "base_url",
+			errorSnippet: "No available provider",
+			wantStatus:   http.StatusServiceUnavailable,
+			wantCode:     ErrCodeProviderUnavailable,
+			wantReason:   model.TerminationReasonProviderUnavailable,
 		},
 		{
 			name: "missing api key",
@@ -987,7 +990,6 @@ func newWebSocketCredentialStore(t *testing.T, snapshot credentialsession.Snapsh
 	t.Helper()
 	session := &credentialsession.Session{
 		ID:         snapshot.SessionID,
-		Vendor:     snapshot.Vendor,
 		Kind:       snapshot.Kind,
 		SecretData: snapshot.SecretData,
 		Version:    snapshot.Version,

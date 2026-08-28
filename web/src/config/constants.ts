@@ -141,12 +141,7 @@ export const PROVIDER_USAGE_LIMIT_POLICIES = {
 export type ProviderUsageLimitPolicy =
   (typeof PROVIDER_USAGE_LIMIT_POLICIES)[keyof typeof PROVIDER_USAGE_LIMIT_POLICIES];
 
-export function defaultProviderUsageLimitPolicy(
-  credentialType?: ProviderCredentialType,
-): ProviderUsageLimitPolicy {
-  if (credentialType === PROVIDER_CREDENTIAL_TYPES.CHATGPT) {
-    return PROVIDER_USAGE_LIMIT_POLICIES.SUSPEND;
-  }
+export function defaultProviderUsageLimitPolicy(): ProviderUsageLimitPolicy {
   return PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER;
 }
 

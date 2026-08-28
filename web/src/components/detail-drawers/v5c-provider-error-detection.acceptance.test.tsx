@@ -39,37 +39,53 @@ const provider = {
   name: "North Provider",
   api_types: [
     {
-      provider_id: "provider & north",
       api_type: "codex",
       base_url: "https://example.test/codex",
-      api_key: "",
+      credential_session_id: "credential-api-key",
     },
     {
-      provider_id: "provider & north",
       api_type: "claude",
       base_url: "https://example.test/claude",
-      api_key: "",
+      credential_session_id: "credential-api-key",
     },
     {
-      provider_id: "provider & north",
       api_type: "gemini",
       base_url: "https://example.test/gemini",
-      api_key: "",
+      credential_session_id: "credential-api-key",
     },
     {
-      provider_id: "provider & north",
       api_type: "custom:private",
       base_url: "https://example.test/private",
-      api_key: "",
+      credential_session_id: "credential-api-key",
     },
     {
-      provider_id: "provider & north",
       api_type: "codex",
       base_url: "https://duplicate.example.test/codex",
-      api_key: "",
+      credential_session_id: "credential-api-key",
     },
   ],
-} as Provider;
+  auth_mode: "auto",
+  credential_sessions: [
+    {
+      id: "credential-api-key",
+      kind: "api_key",
+      version: 1,
+      subject: { kind: "keyed_digest", value: "digest" },
+      auth_state: { status: "active" },
+    },
+  ],
+  group_id: null,
+  weight: 1,
+  priority: 0,
+  concurrency: 0,
+  max_retries: 0,
+  vendor: "",
+  failover_scope: "any",
+  accept_failover: "any",
+  enabled: true,
+  created_at: "2026-08-04T00:00:00Z",
+  updated_at: "2026-08-04T00:00:00Z",
+} satisfies Provider;
 
 function makeRule(
   id: string,

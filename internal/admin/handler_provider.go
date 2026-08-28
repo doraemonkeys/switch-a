@@ -244,6 +244,7 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 		provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
 			RouteTargetID: req.ID,
 			APIType:       req.APITypes[index].APIType,
+			VendorScope:   req.Vendor,
 			Credential: credentialsession.Snapshot{
 				SessionID: req.APITypes[index].CredentialSessionID,
 			},
@@ -467,6 +468,9 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 	}
 	if req.Vendor != nil {
 		provider.Vendor = *req.Vendor
+	}
+	for index := range provider.CredentialSessions {
+		provider.CredentialSessions[index].VendorScope = provider.Vendor
 	}
 	if req.FailoverScope != nil {
 		provider.FailoverScope = *req.FailoverScope

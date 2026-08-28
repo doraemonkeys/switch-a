@@ -1,9 +1,7 @@
 import { useContext, useEffect, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
-import type { ProviderAuthView, ProviderInput } from "../../api";
+import type { ProviderAuthView } from "../../api";
 import type { ApiClient } from "../../api/client";
 import { ApiContext } from "../../api/context";
-import { PROVIDER_CREDENTIAL_TYPES } from "../../config/constants";
 import { resolveLoginAuthView } from "../../lib/providerAuth";
 
 const CHATGPT_LOGIN_POLL_INTERVAL_MS = 1000;
@@ -110,18 +108,14 @@ function startChatGPTLoginPolling(
 }
 
 interface UseChatGPTLoginArgs {
-  credentialType: ProviderInput["credential_type"];
-  setFormData: Dispatch<SetStateAction<ProviderInput>>;
+  enabled: boolean;
   initialAuthView: ProviderAuthView | null;
 }
 
-// useChatGPTLogin owns the GPT credential acquisition flows (OAuth popup polling
-// and token import) for the provider modal. Both flows converge on a completed
-// login session whose login_id is written to credential_login_id, so the modal's
-// save path stays identical regardless of how the credential was obtained.
+// Both acquisition paths converge on one completed login ID. The provider modal
+// materializes that proof as a credential session only when the user saves.
 export function useChatGPTLogin({
-  credentialType,
-  setFormData,
+  enabled,
   initialAuthView,
 }: UseChatGPTLoginArgs) {
   const api = useContext(ApiContext);
@@ -137,13 +131,10 @@ export function useChatGPTLogin({
     useState<ChatGPTLoginSession | null>(null);
   const [pendingChatGPTAuth, setPendingChatGPTAuth] =
     useState<ProviderAuthView | null>(null);
+  const [credentialLoginID, setCredentialLoginID] = useState("");
 
   useEffect(() => {
-    if (
-      !api ||
-      !chatGPTLoginSession ||
-      credentialType !== PROVIDER_CREDENTIAL_TYPES.CHATGPT
-    ) {
+    if (!api || !chatGPTLoginSession || !enabled) {
       return;
     }
 
@@ -153,11 +144,7 @@ export function useChatGPTLogin({
         setChatGPTLoginError(null);
         setPendingChatGPTAuth(authView);
         setChatGPTStatus(describeConnectedChatGPTAccount(authView));
-        setFormData((prev) => ({
-          ...prev,
-          credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-          credential_login_id: loginID,
-        }));
+        setCredentialLoginID(loginID);
       },
       onExpired: () => {
         setChatGPTLoginSession(null);
@@ -167,7 +154,7 @@ export function useChatGPTLogin({
       },
       onError: setChatGPTLoginError,
     });
-  }, [api, chatGPTLoginSession, credentialType, setFormData]);
+  }, [api, chatGPTLoginSession, enabled]);
 
   const handleStartChatGPTLogin = async () => {
     setStartingChatGPTLogin(true);
@@ -177,7 +164,7 @@ export function useChatGPTLogin({
         throw new Error("API client is unavailable for GPT login");
       }
       setPendingChatGPTAuth(null);
-      setFormData((prev) => ({ ...prev, credential_login_id: "" }));
+      setCredentialLoginID("");
       const start = await api.providers.startChatGPTLogin();
       setChatGPTLoginSession({
         loginId: start.login_id,
@@ -232,11 +219,7 @@ export function useChatGPTLogin({
       setChatGPTLoginSession(null);
       setPendingChatGPTAuth(authView);
       setChatGPTStatus(describeConnectedChatGPTAccount(authView));
-      setFormData((prev) => ({
-        ...prev,
-        credential_type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-        credential_login_id: result.login_id,
-      }));
+      setCredentialLoginID(result.login_id);
       return true;
     } catch (err) {
       setChatGPTLoginError(
@@ -246,12 +229,18 @@ export function useChatGPTLogin({
     }
   };
 
+  const clearCredentialLogin = () => {
+    setCredentialLoginID("");
+  };
+
   return {
     chatGPTStatus,
     chatGPTLoginError,
     startingChatGPTLogin,
     chatGPTLoginAuthURL: chatGPTLoginSession?.authURL ?? null,
     pendingChatGPTAuth,
+    credentialLoginID,
+    clearCredentialLogin,
     handleStartChatGPTLogin,
     handleOpenChatGPTLoginPage,
     handleImportChatGPTLogin,

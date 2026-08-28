@@ -230,7 +230,7 @@ func maintenanceCompositionProvider(id, sessionID string) model.Provider {
 		ID: id, Name: id, Vendor: "openai", Enabled: true,
 		APITypes: []model.ProviderAPIType{{APIType: "codex", BaseURL: "https://cookie.example/v1"}},
 		CredentialSessions: []credentialsession.RouteSnapshot{{
-			APIType: "codex", Credential: credentialsession.Snapshot{SessionID: sessionID},
+			APIType: "codex", VendorScope: "openai", Credential: credentialsession.Snapshot{SessionID: sessionID},
 		}},
 	}
 }
@@ -239,7 +239,7 @@ func createMaintenanceCompositionSession(t *testing.T, persistence *store.SQLite
 	t.Helper()
 	subject, _ := credentialsession.AccountSubject(account)
 	session := &credentialsession.Session{
-		ID: id, Vendor: "openai", Kind: credentialsession.KindChatGPT, SecretData: `{"access_token":"test"}`, Version: 1,
+		ID: id, Kind: credentialsession.KindChatGPT, SecretData: `{"access_token":"test"}`, Version: 1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: account}, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := session.SetSubject(subject); err != nil {

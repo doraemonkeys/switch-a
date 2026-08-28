@@ -117,8 +117,9 @@ func TestAuthorityAndScopeIsolationMatrix(t *testing.T) {
 			t.Fatalf("MarshalBinary() = %x, %v", encoded, encodeErr)
 		}
 	}
-	if _, err := NewUpstreamAuthority(" ", origin, subject); !IsError(err, ErrorInvalidInput) {
-		t.Fatalf("blank vendor error = %v", err)
+	blankVendor, err := NewUpstreamAuthority(" ", origin, subject)
+	if err != nil || blankVendor.Vendor() != "" {
+		t.Fatalf("blank vendor authority = (%#v, %v)", blankVendor, err)
 	}
 	if _, err := NewUpstreamAuthority("openai", NormalizedOrigin{}, subject); !IsError(err, ErrorInvalidOrigin) {
 		t.Fatalf("zero origin error = %v", err)
@@ -158,9 +159,9 @@ func TestAuthorityResolverUsesOneFrozenCredentialSnapshot(t *testing.T) {
 	route := credentialsession.RouteSnapshot{
 		RouteTargetID: "route-a",
 		APIType:       "codex",
+		VendorScope:   "openai",
 		Credential: credentialsession.Snapshot{
 			SessionID:  "session-a",
-			Vendor:     "openai",
 			Kind:       credentialsession.KindAPIKey,
 			SecretData: "credential-secret-never-log",
 			Version:    7,
@@ -228,9 +229,9 @@ func TestAuthorityResolverFailsClosed(t *testing.T) {
 	valid := credentialsession.RouteSnapshot{
 		RouteTargetID: "route",
 		APIType:       "codex",
+		VendorScope:   "openai",
 		Credential: credentialsession.Snapshot{
 			SessionID: "session",
-			Vendor:    "openai",
 			Kind:      credentialsession.KindChatGPT,
 			Version:   1,
 			Subject:   account,
@@ -255,7 +256,6 @@ func TestAuthorityResolverFailsClosed(t *testing.T) {
 		{name: "snapshot API blank", edit: func(r *credentialsession.RouteSnapshot) { r.APIType = " " }, apiType: "codex", want: ErrorInvalidInput},
 		{name: "API conflict", edit: func(*credentialsession.RouteSnapshot) {}, apiType: "responses", want: ErrorSnapshotConflict},
 		{name: "session blank", edit: func(r *credentialsession.RouteSnapshot) { r.Credential.SessionID = "" }, apiType: "codex", want: ErrorInvalidInput},
-		{name: "vendor blank", edit: func(r *credentialsession.RouteSnapshot) { r.Credential.Vendor = "" }, apiType: "codex", want: ErrorInvalidInput},
 		{name: "version invalid", edit: func(r *credentialsession.RouteSnapshot) { r.Credential.Version = 0 }, apiType: "codex", want: ErrorInvalidInput},
 		{name: "kind invalid", edit: func(r *credentialsession.RouteSnapshot) { r.Credential.Kind = "future" }, apiType: "codex", want: ErrorInvalidInput},
 		{name: "pending subject", edit: func(r *credentialsession.RouteSnapshot) { r.Credential.Subject = credentialsession.PendingSubject() }, apiType: "codex", want: ErrorSubjectPending},
@@ -266,6 +266,12 @@ func TestAuthorityResolverFailsClosed(t *testing.T) {
 			digest := bytes.Repeat([]byte{1}, DigestSize)
 			r.Credential.Subject, _ = credentialsession.KeyedDigestSubject("h1", digest)
 		}, apiType: "codex", want: ErrorSnapshotConflict},
+	}
+	withoutVendorScope := valid
+	withoutVendorScope.VendorScope = ""
+	resolvedWithoutVendor, err := (AuthorityResolver{}).Resolve(withoutVendorScope, "codex", target)
+	if err != nil || resolvedWithoutVendor.Authority().Vendor() != "" {
+		t.Fatalf("Resolve(blank vendor scope) = (%#v, %v)", resolvedWithoutVendor, err)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

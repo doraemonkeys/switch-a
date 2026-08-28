@@ -59,7 +59,6 @@ type ExportedProvider struct {
 
 type ExportedCredentialSession struct {
 	ID           string                        `json:"id"`
-	Vendor       string                        `json:"vendor"`
 	Kind         credentialsession.Kind        `json:"kind"`
 	TransferMode CredentialSessionTransferMode `json:"transfer_mode"`
 	SecretData   string                        `json:"secret_data,omitempty"`
@@ -213,7 +212,6 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 func buildExportedCredentialSession(session *credentialsession.Session) ExportedCredentialSession {
 	exported := ExportedCredentialSession{
 		ID:      session.ID,
-		Vendor:  session.Vendor,
 		Kind:    session.Kind,
 		Version: session.Version,
 	}

@@ -165,7 +165,7 @@ func (s *Service) BuildCredentialSessionFromChatGPTLogin(loginID, sessionID stri
 		return nil, err
 	}
 	session := &credentialsession.Session{
-		ID: snapshot.SessionID, Vendor: snapshot.Vendor, Kind: snapshot.Kind,
+		ID: snapshot.SessionID, Kind: snapshot.Kind,
 		SecretData: snapshot.SecretData, Version: snapshot.Version, AuthState: snapshot.AuthState,
 	}
 	if err := session.SetSubject(snapshot.Subject); err != nil {
@@ -193,7 +193,7 @@ func chatGPTCredentialSessionSnapshot(
 		return credentialsession.Snapshot{}, err
 	}
 	return credentialsession.Snapshot{
-		SessionID: sessionID, Vendor: chatGPTVendor, Kind: credentialsession.KindChatGPT,
+		SessionID: sessionID, Kind: credentialsession.KindChatGPT,
 		SecretData: secretData, Version: 1,
 		Subject: subject,
 		AuthState: credentialsession.AuthState{

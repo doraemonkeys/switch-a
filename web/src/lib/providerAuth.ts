@@ -1,15 +1,12 @@
 import type {
   ChatGPTLoginStatusResponse,
+  CredentialSessionKind,
   Provider,
-  ProviderCredentialType,
+  ProviderCredentialSession,
   ProviderAuthStatus,
   ProviderAuthView,
 } from "../api/types";
 import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
-
-type AuthCarrier = {
-  auth?: ProviderAuthView | null;
-};
 
 export const AUTH_STATUS_BADGE_CLASS: Record<ProviderAuthStatus, string> = {
   not_connected: "bg-bg-tertiary text-text-secondary border border-border/60",
@@ -18,12 +15,24 @@ export const AUTH_STATUS_BADGE_CLASS: Record<ProviderAuthStatus, string> = {
 };
 
 export function resolveProviderAuthView(
-  source?: AuthCarrier | null,
+  provider?: Provider | null,
 ): ProviderAuthView | null {
-  if (!source) {
+  const session = resolveProviderPrimaryCredentialSession(provider);
+  if (!session) {
     return null;
   }
-  return source.auth ?? null;
+  return {
+    type: session.kind,
+    status: session.auth_state.status,
+    reason: session.auth_state.status_reason,
+    email: session.auth_state.email,
+    account_id: session.auth_state.account_id,
+    plan_type: session.auth_state.plan_type,
+    usage: session.auth_state.usage_snapshot,
+    expires_at: session.auth_state.expires_at,
+    last_refresh_at: session.auth_state.last_refresh_at,
+    last_error: session.auth_state.last_error,
+  };
 }
 
 export function resolveLoginAuthView(
@@ -36,18 +45,104 @@ export function resolveLoginAuthView(
 }
 
 export function formatProviderCredentialType(
-  credentialType?: ProviderCredentialType,
+  source?: Provider | CredentialSessionKind | null,
 ): string {
-  if (credentialType === PROVIDER_CREDENTIAL_TYPES.CHATGPT) {
+  const kind =
+    typeof source === "string" ? source : resolveProviderCredentialKind(source);
+  if (kind === "mixed") {
+    return "Mixed";
+  }
+  if (kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT) {
     return "GPT Login";
   }
-  return "API Key";
+  if (kind === PROVIDER_CREDENTIAL_TYPES.API_KEY) {
+    return "API Key";
+  }
+  return "Not configured";
+}
+
+export function resolveProviderCredentialSession(
+  provider: Provider | null | undefined,
+  apiType: string,
+): ProviderCredentialSession | null {
+  if (!provider) {
+    return null;
+  }
+  const sessionID = provider.api_types.find(
+    (entry) => entry.api_type === apiType,
+  )?.credential_session_id;
+  if (!sessionID) {
+    return null;
+  }
+  return (
+    provider.credential_sessions.find((session) => session.id === sessionID) ??
+    null
+  );
+}
+
+export function resolveProviderCredentialKind(
+  provider?: Provider | null,
+): CredentialSessionKind | "mixed" | null {
+  if (!provider) {
+    return null;
+  }
+  const kinds = new Set(
+    provider.api_types
+      .map((entry) =>
+        provider.credential_sessions.find(
+          (session) => session.id === entry.credential_session_id,
+        ),
+      )
+      .filter((session): session is ProviderCredentialSession =>
+        Boolean(session),
+      )
+      .map((session) => session.kind),
+  );
+  if (kinds.size === 0) {
+    return null;
+  }
+  if (kinds.size > 1) {
+    return "mixed";
+  }
+  return [...kinds][0] ?? null;
+}
+
+export function resolveProviderPrimaryCredentialSession(
+  provider?: Provider | null,
+): ProviderCredentialSession | null {
+  if (!provider) {
+    return null;
+  }
+  const codexSession = resolveProviderCredentialSession(provider, "codex");
+  if (codexSession?.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT) {
+    return codexSession;
+  }
+  const firstRoute = provider.api_types[0];
+  if (!firstRoute) {
+    return null;
+  }
+  return resolveProviderCredentialSession(provider, firstRoute.api_type);
+}
+
+export function resolveProviderChatGPTCredentialSession(
+  provider?: Provider | null,
+): ProviderCredentialSession | null {
+  if (!provider) {
+    return null;
+  }
+  const codexSession = resolveProviderCredentialSession(provider, "codex");
+  if (codexSession?.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT) {
+    return codexSession;
+  }
+  return (
+    provider.credential_sessions.find(
+      (session) => session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    ) ?? null
+  );
 }
 
 export function hasProviderCredentialSnapshot(
   provider?: Provider | null,
 ): boolean {
-  return Boolean(
-    provider && provider.credential_type === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-  );
+  return resolveProviderChatGPTCredentialSession(provider) !== null;
 }

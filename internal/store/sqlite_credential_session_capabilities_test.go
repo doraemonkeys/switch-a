@@ -126,7 +126,7 @@ func TestSQLiteCredentialSessionCapabilitiesAllowExplicitReauthRecovery(t *testi
 	store := newCredentialSessionStore(t)
 	ctx := context.Background()
 	recovery := &credentialsession.Session{
-		ID: "login-recovery", Vendor: "openai", Kind: credentialsession.KindChatGPT,
+		ID: "login-recovery", Kind: credentialsession.KindChatGPT,
 		SecretData: `{"access_token":"expired","refresh_token":"invalid"}`,
 		Version:    1,
 		AuthState: credentialsession.AuthState{
@@ -272,7 +272,6 @@ func TestSQLiteCredentialSessionCapabilitiesPropagateContextCancellation(t *test
 	}
 	if _, err := store.CreateCredentialSession(ctx, &credentialsession.Session{
 		ID:         "canceled",
-		Vendor:     "openai",
 		Kind:       credentialsession.KindAPIKey,
 		SecretData: "secret",
 		Version:    1,
@@ -326,11 +325,11 @@ func TestApplyConfigImportCredentialSessionCASAndRollback(t *testing.T) {
 		match  string
 	}{
 		{
-			name: "immutable vendor",
+			name: "immutable kind",
 			mutate: func(candidate *credentialsession.Session) {
-				candidate.Vendor = "anthropic"
+				candidate.Kind = credentialsession.KindChatGPT
 			},
-			match: "vendor and kind are immutable",
+			match: "kind is immutable",
 		},
 		{
 			name: "version mismatch",
@@ -357,7 +356,7 @@ func TestApplyConfigImportCredentialSessionCASAndRollback(t *testing.T) {
 			}
 			current, getErr := store.GetCredentialSession(ctx, created.ID)
 			if getErr != nil || current.Version != created.Version ||
-				current.SecretData != created.SecretData || current.Vendor != created.Vendor {
+				current.SecretData != created.SecretData || current.Kind != created.Kind {
 				t.Fatalf("failed import mutated session: current=%#v err=%v", current, getErr)
 			}
 		})

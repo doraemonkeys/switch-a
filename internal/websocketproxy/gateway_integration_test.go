@@ -286,7 +286,6 @@ func TestGateway_ReplacesProviderConfigurationFailureBeforeUpgrade(t *testing.T)
 	}
 	_, _, _ = connection.Read(ctx)
 	_ = connection.CloseNow()
-	waitFor(t, func() bool { return len(store.LastAttempts(2)) == 2 }, testPollTimeout)
 }
 
 type rotatingGatewayAuthenticator struct {

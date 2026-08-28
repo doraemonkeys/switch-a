@@ -58,7 +58,6 @@ func (r *Repository) Create(ctx context.Context, session *Session) (*Session, er
 	if strings.TrimSpace(candidate.ID) == "" {
 		candidate.ID = r.ids.NewID()
 	}
-	candidate.Vendor = strings.TrimSpace(candidate.Vendor)
 	if candidate.Version < 1 {
 		candidate.Version = 1
 	}
@@ -158,12 +157,14 @@ func (r *Repository) Resolve(ctx context.Context, routeTargetID, apiType string)
 	var row struct {
 		RouteTargetID string
 		APIType       string
+		VendorScope   string
 		Session       Session `gorm:"embedded"`
 	}
 	err := r.db.WithContext(ctx).
 		Table("route_target_credentials AS bindings").
-		Select("bindings.route_target_id, bindings.api_type, sessions.*").
+		Select("bindings.route_target_id, bindings.api_type, providers.vendor AS vendor_scope, sessions.*").
 		Joins("JOIN credential_sessions AS sessions ON sessions.id = bindings.session_id").
+		Joins("JOIN providers ON providers.id = bindings.route_target_id").
 		Where("bindings.route_target_id = ? AND bindings.api_type = ?", strings.TrimSpace(routeTargetID), strings.TrimSpace(apiType)).
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -177,7 +178,7 @@ func (r *Repository) Resolve(ctx context.Context, routeTargetID, apiType string)
 	if err != nil {
 		return RouteSnapshot{}, fmt.Errorf("resolve route credential for %q/%q: %w", routeTargetID, apiType, err)
 	}
-	return RouteSnapshot{RouteTargetID: row.RouteTargetID, APIType: row.APIType, Credential: snapshot}, nil
+	return RouteSnapshot{RouteTargetID: row.RouteTargetID, APIType: row.APIType, VendorScope: row.VendorScope, Credential: snapshot}, nil
 }
 
 func (r *Repository) ListRouteSnapshots(ctx context.Context, routeTargetIDs []string) (map[string][]RouteSnapshot, error) {
@@ -188,13 +189,15 @@ func (r *Repository) ListRouteSnapshots(ctx context.Context, routeTargetIDs []st
 	type joined struct {
 		RouteTargetID string
 		APIType       string
+		VendorScope   string
 		Session       Session `gorm:"embedded"`
 	}
 	var rows []joined
 	if err := r.db.WithContext(ctx).
 		Table("route_target_credentials AS bindings").
-		Select("bindings.route_target_id, bindings.api_type, sessions.*").
+		Select("bindings.route_target_id, bindings.api_type, providers.vendor AS vendor_scope, sessions.*").
 		Joins("JOIN credential_sessions AS sessions ON sessions.id = bindings.session_id").
+		Joins("JOIN providers ON providers.id = bindings.route_target_id").
 		Where("bindings.route_target_id IN ?", routeTargetIDs).
 		Order("bindings.route_target_id ASC, bindings.api_type ASC").
 		Scan(&rows).Error; err != nil {
@@ -209,6 +212,7 @@ func (r *Repository) ListRouteSnapshots(ctx context.Context, routeTargetIDs []st
 		result[rows[index].RouteTargetID] = append(result[rows[index].RouteTargetID], RouteSnapshot{
 			RouteTargetID: rows[index].RouteTargetID,
 			APIType:       rows[index].APIType,
+			VendorScope:   rows[index].VendorScope,
 			Credential:    snapshot,
 		})
 	}
@@ -396,25 +400,21 @@ func (r *Repository) ResolvePendingSubject(ctx context.Context, sessionID string
 
 func validateBindingTargets(ctx context.Context, db *gorm.DB, binding RouteBinding) error {
 	var session Session
-	if err := db.WithContext(ctx).Select("id", "vendor").First(&session, "id = ?", binding.SessionID).Error; err != nil {
+	if err := db.WithContext(ctx).Select("id").First(&session, "id = ?", binding.SessionID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("validate credential session %q: %w", binding.SessionID, err)
 	}
-	var route struct{ Vendor string }
+	var route struct{ ProviderID string }
 	if err := db.WithContext(ctx).Table("provider_api_types AS api_types").
-		Select("providers.vendor").
-		Joins("JOIN providers ON providers.id = api_types.provider_id").
+		Select("api_types.provider_id").
 		Where("api_types.provider_id = ? AND api_types.api_type = ?", binding.RouteTargetID, binding.APIType).
 		Take(&route).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrInvalidRouteBinding
 		}
 		return fmt.Errorf("validate route target %q API type %q: %w", binding.RouteTargetID, binding.APIType, err)
-	}
-	if strings.TrimSpace(route.Vendor) != strings.TrimSpace(session.Vendor) {
-		return fmt.Errorf("%w: route target vendor %q does not match credential session vendor %q", ErrInvalidRouteBinding, route.Vendor, session.Vendor)
 	}
 	return nil
 }

@@ -98,7 +98,7 @@ func resolveStaticCredentialSubject(session *credentialsession.Session, signer S
 	if signer == nil {
 		return session.SetSubject(credentialsession.PendingSubject())
 	}
-	subject, err := staticSubject(session.Vendor, session.SecretData, signer)
+	subject, err := staticSubject(session.SecretData, signer)
 	if err != nil {
 		return err
 	}

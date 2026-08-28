@@ -43,9 +43,9 @@ func chatGPTUsageAttempt(t *testing.T, providerID, sessionID string) httpAttempt
 		t.Fatal(err)
 	}
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
-		RouteTargetID: providerID, APIType: "codex",
+		RouteTargetID: providerID, APIType: "codex", VendorScope: "openai",
 		Credential: credentialsession.Snapshot{
-			SessionID: sessionID, Vendor: "openai", Kind: credentialsession.KindChatGPT,
+			SessionID: sessionID, Kind: credentialsession.KindChatGPT,
 			SecretData: "opaque", Version: 1, Subject: subject,
 			AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 		},

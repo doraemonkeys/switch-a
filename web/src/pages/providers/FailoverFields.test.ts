@@ -1,15 +1,17 @@
 import { createElement } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import type { ProviderInput } from "../../api";
 import { FAILOVER_SCOPES } from "../../config/constants";
 import { FailoverScopeField } from "./FailoverFields";
 import { hasFailoverConfig } from "./failoverConfig";
+import type { ProviderFormData } from "./types";
 
-const BASE_INPUT: ProviderInput = {
+const BASE_INPUT: ProviderFormData = {
   id: "test",
   name: "Test",
-  api_key: "key",
+  credential_mode: "api_key",
+  default_api_key: "key",
+  chatgpt_credential_session_id: "",
   api_types: [],
   vendor: "",
   failover_scope: FAILOVER_SCOPES.ANY,

@@ -2,6 +2,7 @@ package selector
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"sync"
 	"testing"
@@ -150,7 +151,8 @@ func cloneTestProvider(provider *model.Provider) *model.Provider {
 }
 
 func retryTestProvider(id string) model.Provider {
-	subject, _ := credentialsession.AccountSubject("test-subject-" + id)
+	digest := sha256.Sum256([]byte("test-subject-" + id))
+	subject, _ := credentialsession.KeyedDigestSubject("test-hmac", digest[:])
 	return model.Provider{
 		ID:          id,
 		Enabled:     true,
@@ -163,9 +165,9 @@ func retryTestProvider(id string) model.Provider {
 		CredentialSessions: []credentialsession.RouteSnapshot{{
 			RouteTargetID: id,
 			APIType:       "claude",
+			VendorScope:   "test-vendor",
 			Credential: credentialsession.Snapshot{
 				SessionID:  "test-session-" + id,
-				Vendor:     "test-vendor",
 				Kind:       credentialsession.KindAPIKey,
 				SecretData: "test-key",
 				Version:    1,

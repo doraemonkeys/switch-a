@@ -2,6 +2,7 @@ package selector
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
@@ -103,21 +104,18 @@ func (m *mockStore) credentialSessionProvider(provider model.Provider, apiType s
 	}
 	kind := credentialsession.KindAPIKey
 	secret := "test-secret"
-	vendor := provider.Vendor
-	if vendor == "" {
-		vendor = "test-vendor"
-	}
 	status := credentialsession.DefaultAuthStatus(kind)
 	if authState := m.authStates[provider.ID]; authState != nil {
 		status = authState.Status
 	}
-	subject, _ := credentialsession.AccountSubject("test-subject-" + provider.ID)
+	digest := sha256.Sum256([]byte("test-subject-" + provider.ID))
+	subject, _ := credentialsession.KeyedDigestSubject("test-hmac", digest[:])
 	provider.CredentialSessions = append(provider.CredentialSessions, credentialsession.RouteSnapshot{
 		RouteTargetID: provider.ID,
 		APIType:       apiType,
+		VendorScope:   provider.Vendor,
 		Credential: credentialsession.Snapshot{
 			SessionID:  "test-session-" + provider.ID + "-" + apiType,
-			Vendor:     vendor,
 			Kind:       kind,
 			SecretData: secret,
 			Version:    1,

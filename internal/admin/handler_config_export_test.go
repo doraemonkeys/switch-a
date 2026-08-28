@@ -187,17 +187,17 @@ func testConfigCredentialRoute(providerID, apiType, sessionID, secret string) cr
 		RouteTargetID: providerID,
 		APIType:       apiType,
 		Credential: credentialsession.Snapshot{
-			SessionID: sessionID, Vendor: "openai", Kind: credentialsession.KindAPIKey,
+			SessionID: sessionID, Kind: credentialsession.KindAPIKey,
 			SecretData: secret, Version: 1, Subject: credentialsession.PendingSubject(),
 			AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 		},
 	}
 }
 
-func testConfigCredentialSession(t *testing.T, sessionID, vendor, secret string) credentialsession.Session {
+func testConfigCredentialSession(t *testing.T, sessionID, _ string, secret string) credentialsession.Session {
 	t.Helper()
 	session := credentialsession.Session{
-		ID: sessionID, Vendor: vendor, Kind: credentialsession.KindAPIKey,
+		ID: sessionID, Kind: credentialsession.KindAPIKey,
 		SecretData: secret, Version: 1, AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
 	if err := session.SetSubject(credentialsession.PendingSubject()); err != nil {

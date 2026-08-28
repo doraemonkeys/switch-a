@@ -18,7 +18,7 @@ func credentialBackedTestProvider(t *testing.T, store *SQLiteStore, provider *mo
 		secret := "test-secret-" + provider.ID + "-" + apiType.APIType
 		sessionID := provider.ID + "-" + apiType.APIType + "-session"
 		session := &credentialsession.Session{
-			ID: sessionID, Vendor: provider.Vendor, Kind: credentialsession.KindAPIKey,
+			ID: sessionID, Kind: credentialsession.KindAPIKey,
 			SecretData: secret, Version: 1, AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 		}
 		if err := session.SetSubject(credentialsession.PendingSubject()); err != nil {
@@ -28,16 +28,16 @@ func credentialBackedTestProvider(t *testing.T, store *SQLiteStore, provider *mo
 			t.Fatalf("CreateCredentialSession(%q) error = %v", sessionID, err)
 		}
 		provider.CredentialSessions = append(provider.CredentialSessions, credentialsession.RouteSnapshot{
-			RouteTargetID: provider.ID, APIType: apiType.APIType,
+			RouteTargetID: provider.ID, APIType: apiType.APIType, VendorScope: provider.Vendor,
 			Credential: credentialsession.Snapshot{SessionID: sessionID},
 		})
 	}
 	return provider
 }
 
-func testStaticCredentialSession(id, vendor, secret string) credentialsession.Session {
+func testStaticCredentialSession(id, _ string, secret string) credentialsession.Session {
 	session := credentialsession.Session{
-		ID: id, Vendor: vendor, Kind: credentialsession.KindAPIKey,
+		ID: id, Kind: credentialsession.KindAPIKey,
 		SecretData: secret, Version: 1, AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 	}
 	_ = session.SetSubject(credentialsession.PendingSubject())
@@ -77,6 +77,7 @@ func importTestProvider(t *testing.T, providerID, accountID string, groupID *str
 		CredentialSessions: []credentialsession.RouteSnapshot{{
 			RouteTargetID: providerID,
 			APIType:       "codex",
+			VendorScope:   "openai",
 			Credential: credentialsession.Snapshot{
 				SessionID:  providerID + "-session",
 				Kind:       credentialsession.KindChatGPT,

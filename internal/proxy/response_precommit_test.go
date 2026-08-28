@@ -382,8 +382,9 @@ func newPreCommitSSEGate(t *testing.T) (*codexhttp.Attempt, *codexhttp.SSEGate, 
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
 		RouteTargetID: "route-sse",
 		APIType:       APITypeCodex,
+		VendorScope:   "openai",
 		Credential: credentialsession.Snapshot{
-			SessionID: "session-sse", Vendor: "openai", Kind: credentialsession.KindAPIKey,
+			SessionID: "session-sse", Kind: credentialsession.KindAPIKey,
 			SecretData: "provider-secret", Version: 1, Subject: credentialSubject,
 			AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
 		},
