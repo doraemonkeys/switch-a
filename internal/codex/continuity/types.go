@@ -137,7 +137,15 @@ func (b Binding) GoString() string { return b.String() }
 type Lease struct {
 	binding Binding
 	created bool
+	origin  leaseOrigin
 }
+
+type leaseOrigin uint8
+
+const (
+	leaseOriginDurable leaseOrigin = iota
+	leaseOriginProvenance
+)
 
 func (l Lease) Binding() Binding   { return l.binding }
 func (l Lease) NewlyClaimed() bool { return l.created }

@@ -104,60 +104,111 @@ func (o *Operation) prepareRequestContinuityLocked(
 		return nil
 	}
 	var leases []codexcontinuity.Lease
+	pinProtocolScope := false
 	for _, decision := range o.clientDecision.Decisions() {
 		candidate := decision.Candidate()
 		if _, persistent := candidate.PersistentNamespace(); !persistent {
 			continue
 		}
-		var (
-			lease codexcontinuity.Lease
-			err   error
-			stage = "continuity_claim"
-		)
-		switch decision.Action() {
-		case codexheaders.ActionForward:
-			stage = "continuity_validate"
-			lease, err = o.runtime.continuity.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
-				Evidence: evidence(candidate), ClientScopeCandidates: o.clientScopes,
-				ProtocolScope: scope, OperationID: o.operationID,
-			})
-		case codexheaders.ActionClaim:
-			if decision.Claim().Lifetime() != codexheaders.ClaimLifetimeDurable {
-				continue
-			}
-			lease, err = o.runtime.continuity.Claim(ctx, codexcontinuity.ClaimRequest{
-				Evidence: evidence(candidate),
-				Scope: codexcontinuity.Scope{
-					CurrentClientScope: o.currentClientScope, ClientScopeCandidates: o.clientScopes,
-					ProtocolScope: scope, RouteTargetHint: routeTargetID,
-				},
-				OperationID: o.operationID,
-			})
-		default:
-			continue
-		}
+		pinProtocolScope = pinProtocolScope || decisionPinsProtocolScope(decision)
+		lease, prepared, err := o.prepareRequestLease(ctx, decision, scope, routeTargetID)
 		if err != nil {
-			for _, claimed := range leases {
-				if claimed.NewlyClaimed() {
-					_ = o.runtime.continuity.AbandonBeforeDisclosure(ctx, claimed)
-				}
-			}
-			if codexcontinuity.IsError(err, codexcontinuity.ErrorUnavailable) {
-				return dependencyError(stage, err)
-			}
-			return clientError(stage, err)
+			o.abandonRequestLeases(ctx, leases)
+			return err
+		}
+		if !prepared {
+			continue
 		}
 		leases = append(leases, lease)
 	}
 	o.requestClaimLeases = leases
 	o.requestClaimsPrepared = true
-	if len(leases) > 0 {
+	if pinProtocolScope {
 		copyScope := scope
 		o.requiredProtocolScope = &copyScope
 		authority := scope.Authority()
 		o.requiredAuthority = &authority
 	}
 	return nil
+}
+
+func (o *Operation) prepareRequestLease(
+	ctx context.Context,
+	decision codexheaders.Decision,
+	scope codexidentity.ProtocolScope,
+	routeTargetID string,
+) (codexcontinuity.Lease, bool, error) {
+	candidate := decision.Candidate()
+	var (
+		lease codexcontinuity.Lease
+		err   error
+		stage = "continuity_claim"
+	)
+	switch decision.Action() {
+	case codexheaders.ActionForward:
+		stage = "continuity_validate"
+		lease, err = o.runtime.continuity.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
+			Evidence: evidence(candidate), ClientScopeCandidates: o.clientScopes,
+			ProtocolScope: scope, OperationID: o.operationID,
+		})
+	case codexheaders.ActionClaim:
+		if decision.Claim().Lifetime() != codexheaders.ClaimLifetimeDurable {
+			return codexcontinuity.Lease{}, false, nil
+		}
+		lease, err = o.runtime.continuity.Claim(ctx, o.requestClaim(candidate, scope, routeTargetID))
+	case codexheaders.ActionAdopt:
+		stage = "continuity_adopt"
+		lease, err = o.runtime.continuity.Adopt(ctx, o.requestClaim(candidate, scope, routeTargetID))
+	default:
+		return codexcontinuity.Lease{}, false, nil
+	}
+	if err == nil {
+		return lease, true, nil
+	}
+	if continuityPersistenceUnavailable(err) &&
+		(decision.Action() == codexheaders.ActionForward || decision.Action() == codexheaders.ActionClaim) {
+		// The selected ProtocolScope is pinned even without a durable lease, so
+		// auxiliary identity/metadata cannot widen failover authority. Existing
+		// state adoption still requires an atomic ownership reservation.
+		return codexcontinuity.Lease{}, false, nil
+	}
+	if continuityPersistenceUnavailable(err) {
+		return codexcontinuity.Lease{}, false, dependencyError(stage, err)
+	}
+	return codexcontinuity.Lease{}, false, clientError(stage, err)
+}
+
+func decisionPinsProtocolScope(decision codexheaders.Decision) bool {
+	switch decision.Action() {
+	case codexheaders.ActionForward, codexheaders.ActionForwardDegraded,
+		codexheaders.ActionClaim, codexheaders.ActionAdopt:
+		return true
+	default:
+		return false
+	}
+}
+
+func (o *Operation) requestClaim(
+	candidate codexheaders.BindingCandidate,
+	scope codexidentity.ProtocolScope,
+	routeTargetID string,
+) codexcontinuity.ClaimRequest {
+	return codexcontinuity.ClaimRequest{
+		Evidence: evidence(candidate),
+		Scope: codexcontinuity.Scope{
+			CurrentClientScope: o.currentClientScope, ClientScopeCandidates: o.clientScopes,
+			ProtocolScope: scope, RouteTargetHint: routeTargetID,
+		},
+		OperationID: o.operationID,
+	}
+}
+
+func (o *Operation) abandonRequestLeases(ctx context.Context, leases []codexcontinuity.Lease) {
+	for _, lease := range leases {
+		if lease.NewlyClaimed() {
+			_ = o.runtime.continuity.AbandonBeforeDisclosure(ctx, lease)
+		}
+	}
 }
 
 func (o *Operation) lockAttestationLocked(authority codexidentity.UpstreamAuthority) error {
@@ -334,6 +385,9 @@ func (o *Operation) prepareServerDecisionLocked(
 		case codexcontinuity.IsError(err, codexcontinuity.ErrorConflict),
 			codexcontinuity.IsError(err, codexcontinuity.ErrorExpired):
 			statuses[candidateKey(candidate)] = codexheaders.OwnerConflict
+		case continuityPersistenceUnavailable(err):
+			statuses[candidateKey(candidate)] = codexheaders.OwnerStoreUnavailable
+			lookupErrors[candidateKey(candidate)] = err
 		default:
 			statuses[candidateKey(candidate)] = codexheaders.OwnerUnavailable
 			lookupErrors[candidateKey(candidate)] = err

@@ -166,8 +166,12 @@ func TestFrameClaimsValidationAndConnectionGeneration(t *testing.T) {
 	if permit, err := op.PrepareClientFrame(context.Background(), true, []byte(`{"type":"response.inject"}`)); err != nil || permit == nil || len(permit.leases) != 0 {
 		t.Fatalf("opaque inject permit=%#v err=%v", permit, err)
 	}
-	if _, err := op.PrepareClientFrame(context.Background(), true, []byte(`{"type":"response.create","previous_response_id":"unknown"}`)); Classify(err) != FailureIdentity {
-		t.Fatalf("unknown previous class=%q err=%v", Classify(err), err)
+	previousPermit, err := op.PrepareClientFrame(context.Background(), true, []byte(`{"type":"response.create","previous_response_id":"unknown"}`))
+	if err != nil || previousPermit == nil || len(previousPermit.leases) != 1 {
+		t.Fatalf("anchored previous permit=%#v err=%v", previousPermit, err)
+	}
+	if err := previousPermit.Commit(context.Background()); err != nil {
+		t.Fatal("adopt previous response:", err)
 	}
 	if permit, err := op.PrepareClientFrame(context.Background(), false, []byte("opaque")); err != nil || permit != nil {
 		t.Fatalf("binary frame permit=%#v err=%v", permit, err)
@@ -466,8 +470,8 @@ func TestBoundaryFailuresRemainTypedAndLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	continuityStore.commitErr = errors.New("commit unavailable")
-	if err := permit.Commit(context.Background()); Classify(err) != FailureStorage {
-		t.Fatalf("commit failure class=%q err=%v", Classify(err), err)
+	if err := permit.Commit(context.Background()); err != nil {
+		t.Fatalf("commit provenance fallback = %v", err)
 	}
 
 	var nilOperation *Operation

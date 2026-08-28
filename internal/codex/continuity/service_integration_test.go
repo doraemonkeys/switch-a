@@ -111,6 +111,20 @@ func TestLifecycleScopeAndUnknownClaimRules(t *testing.T) {
 		Evidence: turnState, ClientScopeCandidates: clientA, ProtocolScope: scopeA, OperationID: "unknown-state",
 	})
 	assertKind(t, err, codexcontinuity.ErrorUnknown)
+	adopted, err := fixture.service.Adopt(ctx, codexcontinuity.ClaimRequest{
+		Evidence: turnState, Scope: scopeFor(clientA, scopeA, "route-a"), OperationID: "adopt-state",
+	})
+	if err != nil || !adopted.NewlyClaimed() {
+		t.Fatalf("adopt turn state = %#v, %v", adopted, err)
+	}
+	if _, err := fixture.service.Commit(ctx, adopted); err != nil {
+		t.Fatal("commit adopted turn state:", err)
+	}
+	if _, err := fixture.service.Validate(ctx, codexcontinuity.ValidateRequest{
+		Evidence: turnState, ClientScopeCandidates: clientA, ProtocolScope: scopeA, OperationID: "adopted-state",
+	}); err != nil {
+		t.Fatal("validate adopted turn state:", err)
+	}
 
 	response := evidence(codexcontinuity.KindResponseReference, "response-unknown")
 	_, err = fixture.service.Claim(ctx, codexcontinuity.ClaimRequest{
@@ -119,6 +133,10 @@ func TestLifecycleScopeAndUnknownClaimRules(t *testing.T) {
 	assertKind(t, err, codexcontinuity.ErrorInvalidTransition)
 	_, err = fixture.service.PrepareVisible(ctx, codexcontinuity.ClaimRequest{
 		Evidence: metadata, Scope: scopeFor(clientA, scopeA, "route-a"), OperationID: "prepare-metadata",
+	})
+	assertKind(t, err, codexcontinuity.ErrorInvalidTransition)
+	_, err = fixture.service.Adopt(ctx, codexcontinuity.ClaimRequest{
+		Evidence: metadata, Scope: scopeFor(clientA, scopeA, "route-a"), OperationID: "adopt-metadata",
 	})
 	assertKind(t, err, codexcontinuity.ErrorInvalidTransition)
 }
@@ -522,12 +540,14 @@ func TestUnavailableStoreAndSecretFreeObservability(t *testing.T) {
 	if err := sqlDB.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, err = fixture.service.ResolveOwner(context.Background(), codexcontinuity.ResolveRequest{
+	recovered, err := fixture.service.ResolveOwner(context.Background(), codexcontinuity.ResolveRequest{
 		Evidence:              evidence(codexcontinuity.KindConversationID, "opaque-secret"),
 		ClientScopeCandidates: clients,
 		OperationID:           "store-closed",
 	})
-	assertKind(t, err, codexcontinuity.ErrorUnavailable)
+	if err != nil || !recovered.Owner.ProtocolScope.Equal(scope) {
+		t.Fatalf("process-local provenance recovery = %#v, %v", recovered, err)
+	}
 	_, err = fixture.service.Cleanup(context.Background())
 	assertKind(t, err, codexcontinuity.ErrorUnavailable)
 	_, err = fixture.service.RequiredHMACVersions(context.Background())

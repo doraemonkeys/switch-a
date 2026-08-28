@@ -133,33 +133,43 @@ func TestDecideClientIdentityProjection(t *testing.T) {
 		headers http.Header
 		body    string
 		reason  Reason
+		value   string
 	}{
 		{
 			name:    "different values",
 			headers: http.Header{"Thread-Id": {"header"}},
 			body:    `{"type":"response.create","client_metadata":{"thread_id":"body"}}`,
 			reason:  ReasonCarrierConflict,
+			value:   "body",
 		},
 		{
 			name:    "ambiguous aliases with projection",
 			headers: http.Header{"Session-Id": {"one"}, "session_id": {"two"}},
 			body:    `{"type":"response.create","client_metadata":{"session_id":"one"}}`,
 			reason:  ReasonMalformedHeader,
+			value:   "one",
 		},
 	} {
-		t.Run(test.name+" rejects before lookup", func(t *testing.T) {
+		t.Run(test.name+" prefers the immutable projection", func(t *testing.T) {
 			lookups := 0
 			result := DecideClient(ClientInput{
 				Headers: test.headers,
 				Message: InspectClientFrame([]byte(test.body)),
-				Owners: func(BindingCandidate) OwnerStatus {
+				Owners: func(candidate BindingCandidate) OwnerStatus {
 					lookups++
+					if !bytes.Equal(candidate.Value().Bytes(), []byte(test.value)) {
+						t.Fatalf("projection candidate = %#v", candidate)
+					}
 					return OwnerCurrent
 				},
 			})
-			decision := requireOnlyDecision(t, result)
-			if !result.Rejected() || decision.Reason() != test.reason || lookups != 0 {
-				t.Fatalf("decision=%#v lookups=%d", decision, lookups)
+			decisions := result.Decisions()
+			if result.Rejected() || len(decisions) != 2 || decisions[0].Action() != ActionDrop ||
+				decisions[0].Reason() != test.reason || decisions[1].Action() != ActionForward || lookups != 1 {
+				t.Fatalf("decisions=%#v lookups=%d", decisions, lookups)
+			}
+			if len(result.HeaderNamesToDrop()) == 0 {
+				t.Fatal("conflicting Header category was not removed")
 			}
 		})
 	}
@@ -270,7 +280,7 @@ func TestDecideClientContinuityFields(t *testing.T) {
 		}
 	})
 
-	t.Run("metadata carrier mismatch rejects", func(t *testing.T) {
+	t.Run("metadata carrier mismatch prefers projection", func(t *testing.T) {
 		result := DecideClient(ClientInput{
 			Headers: http.Header{"X-Codex-Turn-Metadata": {"header"}},
 			Message: InspectClientFrame([]byte(
@@ -278,16 +288,17 @@ func TestDecideClientContinuityFields(t *testing.T) {
 			)),
 			Owners: fixedLookup(OwnerCurrent),
 		})
-		decision := requireOnlyDecision(t, result)
-		if decision.Action() != ActionReject || decision.Reason() != ReasonCarrierConflict {
-			t.Fatalf("decision = %#v", decision)
+		decisions := result.Decisions()
+		if result.Rejected() || len(decisions) != 2 || decisions[0].Action() != ActionDrop ||
+			decisions[0].Reason() != ReasonCarrierConflict || decisions[1].Action() != ActionForward ||
+			!reflect.DeepEqual(result.HeaderNamesToDrop(), []string{"X-Codex-Turn-Metadata"}) {
+			t.Fatalf("decisions = %#v", decisions)
 		}
 	})
 
 	for _, header := range []http.Header{
 		{"X-Codex-Turn-State": {""}},
 		{"X-Codex-Turn-State": {"one", "two"}},
-		{"X-Codex-Turn-Metadata": nil},
 	} {
 		result := DecideClient(ClientInput{Headers: header, Owners: fixedLookup(OwnerCurrent)})
 		decision := requireOnlyDecision(t, result)
@@ -295,6 +306,70 @@ func TestDecideClientContinuityFields(t *testing.T) {
 			t.Fatalf("decision = %#v", decision)
 		}
 	}
+
+	t.Run("malformed metadata Header is auxiliary", func(t *testing.T) {
+		result := DecideClient(ClientInput{Headers: http.Header{"X-Codex-Turn-Metadata": nil}, Owners: fixedLookup(OwnerCurrent)})
+		decision := requireOnlyDecision(t, result)
+		if decision.Action() != ActionDrop || decision.Reason() != ReasonMalformedHeader {
+			t.Fatalf("decision = %#v", decision)
+		}
+	})
+
+	for _, test := range []struct {
+		name    string
+		headers http.Header
+		body    string
+	}{
+		{name: "turn state", headers: http.Header{"X-Codex-Turn-State": {"state"}}},
+		{name: "previous response", body: `{"type":"response.create","previous_response_id":"response"}`},
+	} {
+		t.Run("anchored unknown "+test.name+" adopts", func(t *testing.T) {
+			var message MessageView
+			if test.body != "" {
+				message = InspectClientFrame([]byte(test.body))
+			}
+			result := DecideClient(ClientInput{
+				Headers: test.headers, Message: message, Owners: fixedLookup(OwnerUnknown),
+				StateAdmission: StateAdmissionAnchored,
+			})
+			decision := requireOnlyDecision(t, result)
+			if decision.Action() != ActionAdopt || len(result.Adoptions()) != 1 ||
+				decision.Claim().Boundary() != ClaimBoundaryProtocolScope {
+				t.Fatalf("decision = %#v", decision)
+			}
+		})
+	}
+
+	t.Run("anchored store outage forwards only auxiliary fields", func(t *testing.T) {
+		result := DecideClient(ClientInput{
+			Headers: http.Header{
+				"Thread-Id":             {"thread"},
+				"X-Codex-Turn-Metadata": {"metadata"},
+			},
+			Owners: fixedLookup(OwnerStoreUnavailable), StateAdmission: StateAdmissionAnchored,
+		})
+		if result.Outcome() != ActionForwardDegraded || len(result.Decisions()) != 2 {
+			t.Fatalf("decisions = %#v", result.Decisions())
+		}
+		for _, decision := range result.Decisions() {
+			if decision.Action() != ActionForwardDegraded {
+				t.Fatalf("decision = %#v", decision)
+			}
+		}
+		state := DecideClient(ClientInput{
+			Headers: http.Header{"X-Codex-Turn-State": {"state"}},
+			Owners:  fixedLookup(OwnerStoreUnavailable), StateAdmission: StateAdmissionAnchored,
+		})
+		if decision := requireOnlyDecision(t, state); decision.Action() != ActionReject {
+			t.Fatalf("state decision = %#v", decision)
+		}
+		strict := DecideClient(ClientInput{
+			Headers: http.Header{"X-Codex-Turn-State": {"state"}}, Owners: fixedLookup(OwnerStoreUnavailable),
+		})
+		if decision := requireOnlyDecision(t, strict); decision.Action() != ActionReject {
+			t.Fatalf("strict decision = %#v", decision)
+		}
+	})
 
 	t.Run("missing owner capability fails closed", func(t *testing.T) {
 		result := DecideClient(ClientInput{Headers: http.Header{"Thread-Id": {"thread"}}})
@@ -376,6 +451,7 @@ func TestDecideServerHeaders(t *testing.T) {
 	}{
 		{name: "new state", value: []string{"state"}, owner: OwnerUnknown, wantAction: ActionClaim, wantReason: ReasonOwnerUnknown},
 		{name: "known state", value: []string{"state", "state"}, owner: OwnerCurrent, wantAction: ActionForward, wantReason: ReasonOwnerMatch},
+		{name: "store unavailable", value: []string{"state"}, owner: OwnerStoreUnavailable, wantAction: ActionClaim, wantReason: ReasonOwnerUnavailable},
 		{name: "conflicting state", value: []string{"state"}, owner: OwnerConflict, wantAction: ActionReject, wantReason: ReasonOwnerConflict},
 		{name: "malformed state", value: []string{"one", "two"}, owner: OwnerCurrent, wantAction: ActionReject, wantReason: ReasonMalformedHeader},
 	} {

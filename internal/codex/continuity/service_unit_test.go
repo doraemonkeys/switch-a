@@ -301,12 +301,27 @@ func TestStoreDecisionsCommitAndAbandonFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.commit = func(StoreCommit) (StoreResult, error) { return StoreResult{}, errors.New("commit failed") }
-	if _, err := service.Commit(context.Background(), lease); !IsError(err, ErrorUnavailable) {
-		t.Fatalf("commit unavailable = %v", err)
+	committed, err := service.Commit(context.Background(), lease)
+	if err != nil || committed.Lifecycle != LifecycleCommitted {
+		t.Fatalf("commit provenance fallback = %#v, %v", committed, err)
 	}
 	store.commit = func(StoreCommit) (StoreResult, error) { return StoreResult{Decision: StoreExpired}, nil }
 	if _, err := service.Commit(context.Background(), lease); !IsError(err, ErrorExpired) {
 		t.Fatalf("commit expired = %v", err)
+	}
+	missingStore := &stubStore{commit: func(StoreCommit) (StoreResult, error) {
+		return StoreResult{Decision: StoreUnknown}, nil
+	}}
+	missingService, err := NewService(Config{Store: missingStore, Digester: digester, Policy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingLease, err := missingService.Claim(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed, err := missingService.Commit(context.Background(), missingLease); err != nil || committed.Lifecycle != LifecycleCommitted {
+		t.Fatalf("commit missing durable row = %#v, %v", committed, err)
 	}
 	store.abandon = func(StoreAbandon) (StoreResult, error) { return StoreResult{}, errors.New("abandon failed") }
 	if err := service.AbandonBeforeDisclosure(context.Background(), lease); !IsError(err, ErrorUnavailable) {
@@ -325,6 +340,129 @@ func TestStoreDecisionsCommitAndAbandonFailures(t *testing.T) {
 	}
 	if err := service.ActivateResponse("generation", Lease{}); !IsError(err, ErrorInvalidInput) {
 		t.Fatalf("zero lease activation = %v", err)
+	}
+}
+
+func TestResponseProvenanceIsAtomicAcrossAuthoritiesDuringStoreOutage(t *testing.T) {
+	digest := testOpaqueDigest(t, KindTurnState, 11, "h1")
+	client := testClientScope(t, 12, "h1")
+	scopeA := testScope(t, "account-a", "codex")
+	scopeB := testScope(t, "account-b", "codex")
+	storeFailure := errors.New("database unavailable")
+	store := &stubStore{
+		claim:  func(StoreClaim) (StoreResult, error) { return StoreResult{}, storeFailure },
+		lookup: func(StoreLookup) (StoreResult, error) { return StoreResult{}, storeFailure },
+		commit: func(StoreCommit) (StoreResult, error) { return StoreResult{}, storeFailure },
+	}
+	service, err := NewService(Config{
+		Store: store,
+		Digester: stubDigester{
+			current: digest, candidates: []codexidentity.OpaqueDigest{digest},
+		},
+		Policy: mustPolicy(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ClaimRequest{
+		Evidence: Evidence{Kind: KindTurnState, DigestInput: []byte("state")},
+		Scope: Scope{
+			CurrentClientScope: client, ClientScopeCandidates: []codexidentity.ClientScope{client},
+			ProtocolScope: scopeA,
+		},
+		OperationID: "response-a",
+	}
+	lease, err := service.PrepareVisible(context.Background(), request)
+	if err != nil || lease.origin != leaseOriginProvenance {
+		t.Fatalf("provenance lease = %#v, %v", lease, err)
+	}
+	conflict := request
+	conflict.Scope.ProtocolScope = scopeB
+	conflict.OperationID = "response-b"
+	if _, err := service.PrepareVisible(context.Background(), conflict); !IsError(err, ErrorConflict) {
+		t.Fatalf("cross-authority response claim = %v", err)
+	}
+	if _, err := service.Commit(context.Background(), lease); err != nil {
+		t.Fatal("commit provenance lease:", err)
+	}
+	recovered, err := service.ResolveOwner(context.Background(), ResolveRequest{
+		Evidence: request.Evidence, ClientScopeCandidates: []codexidentity.ClientScope{client}, OperationID: "next-turn",
+	})
+	if err != nil || !recovered.Owner.ProtocolScope.Equal(scopeA) {
+		t.Fatalf("recovered owner = %#v, %v", recovered, err)
+	}
+	if _, err := service.AcquireExisting(context.Background(), ValidateRequest{
+		Evidence: request.Evidence, ClientScopeCandidates: []codexidentity.ClientScope{client},
+		ProtocolScope: scopeB, OperationID: "wrong-authority",
+	}); !IsError(err, ErrorConflict) {
+		t.Fatalf("cross-authority acquire = %v", err)
+	}
+}
+
+func TestProvenanceLookupRepairsRecoveredDurableStore(t *testing.T) {
+	digest := testOpaqueDigest(t, KindResponseReference, 13, "h1")
+	client := testClientScope(t, 14, "h1")
+	scope := testScope(t, "account", "codex")
+	outage := true
+	var durable Binding
+	store := &stubStore{}
+	store.claim = func(command StoreClaim) (StoreResult, error) {
+		if outage {
+			return StoreResult{}, errors.New("database unavailable")
+		}
+		if durable.Kind == "" {
+			durable = bindingFromClaim(command)
+			return StoreResult{Decision: StoreClaimed, Binding: durable}, nil
+		}
+		return StoreResult{Decision: StoreOwned, Binding: durable}, nil
+	}
+	store.lookup = func(StoreLookup) (StoreResult, error) {
+		if outage {
+			return StoreResult{}, errors.New("database unavailable")
+		}
+		if durable.Kind == "" {
+			return StoreResult{Decision: StoreUnknown}, nil
+		}
+		return StoreResult{Decision: StoreOwned, Binding: durable}, nil
+	}
+	digester := stubDigester{current: digest, candidates: []codexidentity.OpaqueDigest{digest}}
+	service, err := NewService(Config{Store: store, Digester: digester, Policy: mustPolicy(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ClaimRequest{
+		Evidence: Evidence{Kind: KindResponseReference, DigestInput: []byte("response")},
+		Scope: Scope{
+			CurrentClientScope: client, ClientScopeCandidates: []codexidentity.ClientScope{client},
+			ProtocolScope: scope,
+		},
+		OperationID: "response",
+	}
+	lease, err := service.PrepareVisible(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Commit(context.Background(), lease); err != nil {
+		t.Fatal(err)
+	}
+
+	outage = false
+	resolved, err := service.ResolveOwner(context.Background(), ResolveRequest{
+		Evidence: request.Evidence, ClientScopeCandidates: []codexidentity.ClientScope{client}, OperationID: "repair",
+	})
+	if err != nil || durable.Kind == "" || !resolved.Owner.ProtocolScope.Equal(scope) {
+		t.Fatalf("repair result=%#v durable=%#v err=%v", resolved, durable, err)
+	}
+
+	restarted, err := NewService(Config{Store: store, Digester: digester, Policy: mustPolicy(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = restarted.ResolveOwner(context.Background(), ResolveRequest{
+		Evidence: request.Evidence, ClientScopeCandidates: []codexidentity.ClientScope{client}, OperationID: "after-restart",
+	})
+	if err != nil || !resolved.Owner.ProtocolScope.Equal(scope) {
+		t.Fatalf("durable recovery result=%#v err=%v", resolved, err)
 	}
 }
 
