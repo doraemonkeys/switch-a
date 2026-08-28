@@ -37,11 +37,13 @@ type continuityRecorder struct {
 	resolveErr     error
 	validateErr    error
 	claimErr       error
+	adoptErr       error
 	prepareErr     error
 	commitErr      error
 	resolveCalls   []codexcontinuity.ResolveRequest
 	acquireCalls   []codexcontinuity.ValidateRequest
 	claimCalls     []codexcontinuity.ClaimRequest
+	adoptCalls     []codexcontinuity.ClaimRequest
 	prepareCalls   []codexcontinuity.ClaimRequest
 	commitCalls    int
 	abandonCalls   int
@@ -66,6 +68,11 @@ func (r *continuityRecorder) AcquireExisting(_ context.Context, request codexcon
 func (r *continuityRecorder) Claim(_ context.Context, request codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error) {
 	r.claimCalls = append(r.claimCalls, request)
 	return codexcontinuity.Lease{}, r.claimErr
+}
+
+func (r *continuityRecorder) Adopt(_ context.Context, request codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error) {
+	r.adoptCalls = append(r.adoptCalls, request)
+	return codexcontinuity.Lease{}, r.adoptErr
 }
 
 func (r *continuityRecorder) PrepareVisible(_ context.Context, request codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error) {
@@ -155,6 +162,128 @@ func TestRuntimeClaimsUnknownRequestOnlyAfterAppliedIdentity(t *testing.T) {
 	if continuity.commitCalls != 1 {
 		t.Fatalf("commits after disclosure = %d", continuity.commitCalls)
 	}
+}
+
+func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T) {
+	clientScope := testClientScope(t, "client")
+	candidate, applied := testCandidate(t, "route-a", "provider.test", "subject-a")
+	crossCandidate, crossApplied := testCandidate(t, "route-b", "other.test", "subject-b")
+	known := codexcontinuity.Binding{Owner: codexcontinuity.Owner{
+		ClientScope: clientScope, ProtocolScope: candidate.ProtocolScope(), RouteTargetHint: "route-a",
+	}}
+
+	for _, test := range []struct {
+		name            string
+		adoptErr        error
+		wantUnavailable bool
+	}{
+		{name: "durable adoption"},
+		{name: "store outage requires provenance", adoptErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}, wantUnavailable: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			continuity := &continuityRecorder{adoptErr: test.adoptErr}
+			continuity.resolve = func(request codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error) {
+				if request.Evidence.Kind == codexcontinuity.KindThreadID {
+					return known, nil
+				}
+				return codexcontinuity.Binding{}, &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown}
+			}
+			runtime := newAlwaysOnTestRuntime(t, Config{
+				ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+				Continuity:   continuity,
+			})
+			request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
+			request.Header.Set("Authorization", "Bearer client-secret")
+			request.Header.Set("Thread-Id", "thread-known")
+			request.Header.Set("X-Codex-Turn-State", "turn-imported")
+			operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-adopt", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if required, _ := operation.RequiredAuthority(); required == nil || !required.Equal(candidate.Authority()) {
+				t.Fatalf("adoption authority = %v", required)
+			}
+			upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
+			_, err = operation.PrepareAttempt(context.Background(), upstream, candidate, applied)
+			if test.wantUnavailable {
+				if !IsKind(err, ErrorDependencyUnavailable) {
+					t.Fatalf("adoption outage error = %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if len(continuity.adoptCalls) != 1 || len(continuity.acquireCalls) != 1 {
+				t.Fatalf("adopt/acquire calls = %d/%d", len(continuity.adoptCalls), len(continuity.acquireCalls))
+			}
+			if test.wantUnavailable {
+				return
+			}
+			if _, err := operation.PrepareAttempt(context.Background(), upstream.Clone(context.Background()), crossCandidate, crossApplied); !IsKind(err, ErrorIdentityMismatch) {
+				t.Fatalf("cross-authority adoption error = %v", err)
+			}
+		})
+	}
+
+	t.Run("anchored identity lookup outage degrades", func(t *testing.T) {
+		continuity := &continuityRecorder{}
+		continuity.resolve = func(request codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error) {
+			if request.Evidence.Kind == codexcontinuity.KindThreadID {
+				return known, nil
+			}
+			return codexcontinuity.Binding{}, &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}
+		}
+		continuity.acquire = func(codexcontinuity.ValidateRequest) (codexcontinuity.Lease, error) {
+			return codexcontinuity.Lease{}, &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}
+		}
+		runtime := newAlwaysOnTestRuntime(t, Config{
+			ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+			Continuity:   continuity,
+		})
+		request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
+		request.Header.Set("Authorization", "Bearer client-secret")
+		request.Header.Set("Thread-Id", "thread-known")
+		request.Header.Set("Session-Id", "session-during-outage")
+		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-identity-degraded", nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
+		if _, err := operation.PrepareAttempt(context.Background(), upstream, candidate, applied); err != nil {
+			t.Fatal(err)
+		}
+		if len(continuity.acquireCalls) != 1 || len(continuity.claimCalls) != 0 {
+			t.Fatalf("acquire/claim calls = %d/%d", len(continuity.acquireCalls), len(continuity.claimCalls))
+		}
+	})
+
+	t.Run("known state validation outage degrades", func(t *testing.T) {
+		continuity := &continuityRecorder{resolveBinding: known}
+		continuity.acquire = func(request codexcontinuity.ValidateRequest) (codexcontinuity.Lease, error) {
+			if request.Evidence.Kind == codexcontinuity.KindTurnState {
+				return codexcontinuity.Lease{}, &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}
+			}
+			return codexcontinuity.Lease{}, nil
+		}
+		runtime := newAlwaysOnTestRuntime(t, Config{
+			ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+			Continuity:   continuity,
+		})
+		request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
+		request.Header.Set("Authorization", "Bearer client-secret")
+		request.Header.Set("Thread-Id", "thread-known")
+		request.Header.Set("X-Codex-Turn-State", "turn-known")
+		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known-degraded", nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
+		if _, err := operation.PrepareAttempt(context.Background(), upstream, candidate, applied); err != nil {
+			t.Fatal(err)
+		}
+		if len(continuity.acquireCalls) != 2 {
+			t.Fatalf("acquire calls = %d", len(continuity.acquireCalls))
+		}
+	})
 }
 
 func TestRuntimeBindsResponseStateOnlyAtVisibleBoundary(t *testing.T) {

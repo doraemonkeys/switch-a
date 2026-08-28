@@ -30,6 +30,7 @@ type Continuity interface {
 	ResolveOwner(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error)
 	AcquireExisting(context.Context, codexcontinuity.ValidateRequest) (codexcontinuity.Lease, error)
 	Claim(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
+	Adopt(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
 	PrepareVisible(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
 	Commit(context.Context, codexcontinuity.Lease) (codexcontinuity.Binding, error)
 	AbandonBeforeDisclosure(context.Context, codexcontinuity.Lease) error
@@ -249,15 +250,23 @@ func (o *Operation) resolveClientDecision(
 	discovery codexheaders.Result,
 ) error {
 	o.resolveClientOwners(ctx, discovery)
+	if err := o.applyResolvedOwnerConstraints(); err != nil {
+		return err
+	}
+	admission := codexheaders.StateAdmissionStrict
+	if o.requiredProtocolScope != nil {
+		admission = codexheaders.StateAdmissionAnchored
+	}
 	o.clientDecision = codexheaders.DecideClient(codexheaders.ClientInput{
 		Headers: headers, Message: message,
 		Owners:          o.resolvedOwnerStatus,
 		AttestationLock: codexheaders.OperationUnlocked,
+		StateAdmission:  admission,
 	})
 	if err := o.clientDecisionError(); err != nil {
 		return err
 	}
-	return o.applyResolvedOwnerConstraints()
+	return nil
 }
 
 func (o *Operation) resolveClientOwners(ctx context.Context, discovery codexheaders.Result) {
@@ -289,10 +298,17 @@ func classifyOwnerResolution(binding codexcontinuity.Binding, err error) ownerRe
 	case codexcontinuity.IsError(err, codexcontinuity.ErrorConflict),
 		codexcontinuity.IsError(err, codexcontinuity.ErrorExpired):
 		resolution.status = codexheaders.OwnerConflict
+	case continuityPersistenceUnavailable(err):
+		resolution.status = codexheaders.OwnerStoreUnavailable
 	default:
 		resolution.status = codexheaders.OwnerUnavailable
 	}
 	return resolution
+}
+
+func continuityPersistenceUnavailable(err error) bool {
+	return codexcontinuity.IsError(err, codexcontinuity.ErrorUnavailable) ||
+		codexcontinuity.IsError(err, codexcontinuity.ErrorCapacity)
 }
 
 func (o *Operation) resolvedOwnerStatus(candidate codexheaders.BindingCandidate) codexheaders.OwnerStatus {

@@ -26,6 +26,7 @@ type Continuity interface {
 	ResolveOwner(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error)
 	AcquireExisting(context.Context, codexcontinuity.ValidateRequest) (codexcontinuity.Lease, error)
 	Claim(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
+	Adopt(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
 	PrepareVisible(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
 	Commit(context.Context, codexcontinuity.Lease) (codexcontinuity.Binding, error)
 	AbandonBeforeDisclosure(context.Context, codexcontinuity.Lease) error
@@ -236,19 +237,23 @@ func (o *Operation) inspectClientInput(
 	if err != nil {
 		return err
 	}
+	if err := o.applyRequiredOwners(owners); err != nil {
+		return err
+	}
+	if err := o.anchorUnresolvedEvidenceToPhysicalCandidate(discovery, owners); err != nil {
+		return err
+	}
 	decision := codexheaders.DecideClient(codexheaders.ClientInput{
 		Headers: headers, Message: message,
 		Owners:          ownerLookup(owners),
 		AttestationLock: codexheaders.OperationUnlocked,
+		StateAdmission:  o.stateAdmission(),
 	})
 	if decision.Rejected() {
 		if err := resolvedOwnerFailure("client_input", decision, owners); err != nil {
 			return err
 		}
 		return protocolFailure("client_input", decision)
-	}
-	if err := o.applyRequiredOwners(owners); err != nil {
-		return err
 	}
 	if requireScope && o.requiredProtocolScope == nil && len(decision.Decisions()) > 0 {
 		// Unknown claimable metadata is useful only after a provider establishes
@@ -281,12 +286,58 @@ func (o *Operation) resolveOwners(ctx context.Context, result codexheaders.Resul
 		case codexcontinuity.IsError(err, codexcontinuity.ErrorConflict),
 			codexcontinuity.IsError(err, codexcontinuity.ErrorExpired):
 			resolution.status = codexheaders.OwnerConflict
+		case continuityPersistenceUnavailable(err):
+			resolution.status = codexheaders.OwnerStoreUnavailable
 		default:
-			return nil, continuityFailure("resolve_owner", err)
+			resolution.status = codexheaders.OwnerUnavailable
 		}
 		owners[key] = resolution
 	}
 	return owners, nil
+}
+
+func continuityPersistenceUnavailable(err error) bool {
+	return codexcontinuity.IsError(err, codexcontinuity.ErrorUnavailable) ||
+		codexcontinuity.IsError(err, codexcontinuity.ErrorCapacity)
+}
+
+func (o *Operation) stateAdmission() codexheaders.StateAdmission {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.requiredProtocolScope != nil {
+		return codexheaders.StateAdmissionAnchored
+	}
+	return codexheaders.StateAdmissionStrict
+}
+
+func (o *Operation) anchorUnresolvedEvidenceToPhysicalCandidate(
+	result codexheaders.Result,
+	owners map[[sha256.Size]byte]ownerResolution,
+) error {
+	needsAnchor := false
+	for _, decision := range result.Decisions() {
+		resolution, exists := owners[candidateKey(decision.Candidate())]
+		if !exists {
+			continue
+		}
+		isUnknownExistingState := resolution.status == codexheaders.OwnerUnknown &&
+			(decision.Field() == codexheaders.FieldTurnState || decision.Field() == codexheaders.FieldResponseReference)
+		isAuxiliaryStoreOutage := resolution.status == codexheaders.OwnerStoreUnavailable &&
+			decision.Field() != codexheaders.FieldTurnState && decision.Field() != codexheaders.FieldResponseReference
+		if isAuxiliaryStoreOutage || isUnknownExistingState {
+			needsAnchor = true
+			break
+		}
+	}
+	if !needsAnchor {
+		return nil
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.requiredProtocolScope != nil || o.physicalCandidate == nil || o.generation == nil {
+		return nil
+	}
+	return o.pinProtocolScopeLocked(o.physicalCandidate.ProtocolScope(), "state_adoption")
 }
 
 func (o *Operation) applyRequiredOwners(owners map[[sha256.Size]byte]ownerResolution) error {

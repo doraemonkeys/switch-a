@@ -131,9 +131,6 @@ func (o *Operation) ClassifyClientFrame(ctx context.Context, text bool, payload 
 		permit.currentConnectionRequired = true
 	}
 	decision, owners, err := o.decideClient(ctx, nil, message)
-	if err == nil {
-		err = o.applyRequiredOwners(owners)
-	}
 	if err == nil && permit.currentConnectionRequired {
 		if _, active := o.currentGeneration(); !active {
 			err = reconnectRequiredFailure("client_frame_connection")
@@ -271,10 +268,17 @@ func (o *Operation) decideClient(
 	if err != nil {
 		return codexheaders.Result{}, nil, err
 	}
+	if err := o.applyRequiredOwners(owners); err != nil {
+		return codexheaders.Result{}, nil, err
+	}
+	if err := o.anchorUnresolvedEvidenceToPhysicalCandidate(discovery, owners); err != nil {
+		return codexheaders.Result{}, nil, err
+	}
 	decision := codexheaders.DecideClient(codexheaders.ClientInput{
 		Headers: headers, Message: message,
 		Owners:          o.ownerLookupForBoundScope(owners),
 		AttestationLock: o.attestationStatus(),
+		StateAdmission:  o.stateAdmission(),
 	})
 	if decision.Rejected() {
 		if err := resolvedOwnerFailure("client_frame", decision, owners); err != nil {
@@ -321,75 +325,6 @@ func (o *Operation) attestationStatus() codexheaders.OperationLockStatus {
 	return codexheaders.OperationAuthorityConflict
 }
 
-func (o *Operation) prepareClaims(ctx context.Context, result codexheaders.Result, options claimOptions) (*Permit, error) {
-	permit := &Permit{operation: o}
-	if !options.visible {
-		if err := o.applyRequiredOwners(options.resolutions); err != nil {
-			return nil, err
-		}
-	}
-	responseLeases := make(map[[sha256.Size]byte]codexcontinuity.Lease)
-	for _, decision := range result.Claims() {
-		if decision.Claim().Lifetime() == codexheaders.ClaimLifetimeOperation {
-			continue
-		}
-		lease, err := o.prepareClaimLease(ctx, decision, options.visible)
-		if err != nil {
-			permit.abandon(ctx)
-			return nil, err
-		}
-		permit.leases = append(permit.leases, lease)
-		if decision.Field() == codexheaders.FieldResponseReference {
-			responseLeases[candidateKey(decision.Candidate())] = lease
-		}
-	}
-	for _, decision := range result.Decisions() {
-		if decision.Action() != codexheaders.ActionForward {
-			continue
-		}
-		resolution, exists := options.resolutions[candidateKey(decision.Candidate())]
-		if !exists || resolution.status != codexheaders.OwnerCurrent {
-			continue
-		}
-		lease, err := o.acquireExistingLease(ctx, decision)
-		if err != nil {
-			permit.abandon(ctx)
-			return nil, err
-		}
-		if !containsLease(permit.leases, lease) {
-			permit.leases = append(permit.leases, lease)
-		}
-		if decision.Field() == codexheaders.FieldResponseReference {
-			responseLeases[candidateKey(decision.Candidate())] = lease
-		}
-	}
-	attachResponseTransition(permit, result, options.response, responseLeases)
-	attachCommitPins(permit, result, options)
-	return permit, nil
-}
-
-func attachCommitPins(permit *Permit, result codexheaders.Result, options claimOptions) {
-	if permit == nil {
-		return
-	}
-	if options.response != responseUnchanged {
-		for _, decision := range result.Decisions() {
-			if decision.Field() == codexheaders.FieldResponseReference {
-				permit.pinProtocolScope = true
-				break
-			}
-		}
-	}
-	for _, decision := range result.Claims() {
-		switch decision.Claim().Boundary() {
-		case codexheaders.ClaimBoundaryProtocolScope:
-			permit.pinProtocolScope = true
-		case codexheaders.ClaimBoundaryAuthority:
-			permit.pinAuthority = true
-		}
-	}
-}
-
 func (o *Operation) pinPhysicalCandidate(protocolScope, authority, routeTarget bool) error {
 	if !protocolScope && !authority && !routeTarget {
 		return nil
@@ -420,90 +355,6 @@ func (o *Operation) pinPhysicalCandidate(protocolScope, authority, routeTarget b
 		o.preferredRouteTargetID = candidate.RouteTargetID()
 	}
 	return nil
-}
-
-func (o *Operation) acquireExistingLease(
-	ctx context.Context,
-	decision codexheaders.Decision,
-) (codexcontinuity.Lease, error) {
-	candidate, ok := o.candidateSnapshot()
-	if !ok {
-		return codexcontinuity.Lease{}, &Failure{Class: FailureIdentity, Stage: "acquire_existing", Cause: errors.New("provider identity is not bound")}
-	}
-	lease, err := o.runtime.continuity.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
-		Evidence:              evidence(decision.Candidate()),
-		ClientScopeCandidates: append([]codexidentity.ClientScope(nil), o.clientScopes...),
-		ProtocolScope:         candidate.ProtocolScope(),
-		OperationID:           o.operationID,
-	})
-	if err != nil {
-		return codexcontinuity.Lease{}, continuityFailure("acquire_existing", err)
-	}
-	return lease, nil
-}
-
-func (o *Operation) prepareClaimLease(
-	ctx context.Context,
-	decision codexheaders.Decision,
-	visible bool,
-) (codexcontinuity.Lease, error) {
-	candidate, ok := o.candidateSnapshot()
-	if !ok {
-		return codexcontinuity.Lease{}, &Failure{Class: FailureIdentity, Stage: "claim", Cause: errors.New("provider identity is not bound")}
-	}
-	request := codexcontinuity.ClaimRequest{
-		Evidence: evidence(decision.Candidate()),
-		Scope: codexcontinuity.Scope{
-			CurrentClientScope:    o.currentClientScope,
-			ClientScopeCandidates: append([]codexidentity.ClientScope(nil), o.clientScopes...),
-			ProtocolScope:         candidate.ProtocolScope(),
-			RouteTargetHint:       candidate.RouteTargetID(),
-		},
-		OperationID: o.operationID,
-	}
-	var (
-		lease codexcontinuity.Lease
-		err   error
-	)
-	if visible {
-		lease, err = o.runtime.continuity.PrepareVisible(ctx, request)
-	} else {
-		lease, err = o.runtime.continuity.Claim(ctx, request)
-	}
-	if err != nil {
-		return codexcontinuity.Lease{}, continuityFailure("claim", err)
-	}
-	return lease, nil
-}
-
-func attachResponseTransition(
-	permit *Permit,
-	result codexheaders.Result,
-	transition responseTransition,
-	responseLeases map[[sha256.Size]byte]codexcontinuity.Lease,
-) {
-	if transition == responseUnchanged {
-		return
-	}
-	for _, decision := range result.Decisions() {
-		if decision.Field() != codexheaders.FieldResponseReference {
-			continue
-		}
-		key := candidateKey(decision.Candidate())
-		lease, claimed := responseLeases[key]
-		if claimed {
-			permit.attachResponseLease(lease, transition)
-		}
-	}
-}
-
-func (p *Permit) attachResponseLease(lease codexcontinuity.Lease, transition responseTransition) {
-	switch transition {
-	case responseActivated:
-		p.activate = append(p.activate, lease)
-	case responseTerminal:
-		p.deactivate = append(p.deactivate, lease.Binding())
-	}
 }
 
 func (o *Operation) candidateSnapshot() (codexidentity.CandidateSnapshot, bool) {

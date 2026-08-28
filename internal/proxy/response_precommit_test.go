@@ -270,6 +270,10 @@ func (*preCommitContinuity) Claim(context.Context, codexcontinuity.ClaimRequest)
 	return codexcontinuity.Lease{}, nil
 }
 
+func (*preCommitContinuity) Adopt(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error) {
+	return codexcontinuity.Lease{}, nil
+}
+
 func (c *preCommitContinuity) PrepareVisible(_ context.Context, request codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error) {
 	c.prepareCalls = append(c.prepareCalls, request)
 	return codexcontinuity.Lease{}, nil

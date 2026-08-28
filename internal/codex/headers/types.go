@@ -49,15 +49,18 @@ const (
 func (c Carrier) Has(want Carrier) bool { return c&want != 0 }
 
 // Action is the complete vocabulary understood by transport integrations.
-// A claim means "atomically establish this owner, then forward"; it never
-// means the codexheaders package mutated persistence itself.
+// Claim establishes new response-owned state, while Adopt binds existing state
+// only after the transport independently anchors its ProtocolScope. Neither
+// action means the codexheaders package mutated persistence itself.
 type Action string
 
 const (
-	ActionForward Action = "forward"
-	ActionDrop    Action = "drop"
-	ActionReject  Action = "reject"
-	ActionClaim   Action = "claim"
+	ActionForward         Action = "forward"
+	ActionForwardDegraded Action = "forward_degraded"
+	ActionDrop            Action = "drop"
+	ActionReject          Action = "reject"
+	ActionClaim           Action = "claim"
+	ActionAdopt           Action = "adopt"
 )
 
 // Reason is stable, non-secret decision context suitable for structured logs.
@@ -98,6 +101,7 @@ type OwnerStatus uint8
 
 const (
 	OwnerUnavailable OwnerStatus = iota
+	OwnerStoreUnavailable
 	OwnerUnknown
 	OwnerCurrent
 	OwnerConflict
@@ -106,6 +110,16 @@ const (
 // OwnerLookup is a read-only capability. Atomic claim remains the caller's
 // responsibility and is requested through an ActionClaim decision.
 type OwnerLookup func(BindingCandidate) OwnerStatus
+
+// StateAdmission describes whether the transport already has an independent,
+// unambiguous ProtocolScope anchor. Existing state may be adopted only inside
+// that scope; ordinary provider selection is not ownership evidence.
+type StateAdmission uint8
+
+const (
+	StateAdmissionStrict StateAdmission = iota
+	StateAdmissionAnchored
+)
 
 // OperationLockStatus describes whether the current logical operation is
 // already constrained to the candidate Authority. Attestation never enters the
@@ -248,8 +262,16 @@ func (r Result) Outcome() Action {
 		switch decision.action {
 		case ActionReject:
 			return ActionReject
+		case ActionAdopt:
+			outcome = ActionAdopt
 		case ActionClaim:
-			outcome = ActionClaim
+			if outcome != ActionAdopt {
+				outcome = ActionClaim
+			}
+		case ActionForwardDegraded:
+			if outcome == ActionForward || outcome == ActionDrop {
+				outcome = ActionForwardDegraded
+			}
 		case ActionDrop:
 			if outcome == ActionForward {
 				outcome = ActionDrop
@@ -271,6 +293,13 @@ func (r Result) Claims() []Decision {
 		return nil
 	}
 	return decisionsByAction(r.decisions, ActionClaim)
+}
+
+func (r Result) Adoptions() []Decision {
+	if r.Rejected() {
+		return nil
+	}
+	return decisionsByAction(r.decisions, ActionAdopt)
 }
 
 func (r Result) HeaderNamesToDrop() []string {

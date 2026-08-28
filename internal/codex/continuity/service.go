@@ -24,6 +24,7 @@ type Service struct {
 	clock       Clock
 	observer    Observer
 	generations *generationRegistry
+	provenance  *provenanceStore
 }
 
 func NewService(config Config) (*Service, error) {
@@ -44,6 +45,7 @@ func NewService(config Config) (*Service, error) {
 		observer: config.Observer,
 	}
 	service.generations = newGenerationRegistry(config.GenerationIDs, config.Clock, config.Observer)
+	service.provenance = newProvenanceStore()
 	return service, nil
 }
 
@@ -70,7 +72,24 @@ func (s *Service) Claim(ctx context.Context, request ClaimRequest) (Lease, error
 			nil,
 		)
 	}
-	return s.claim(ctx, request)
+	return s.claim(ctx, request, false)
+}
+
+// Adopt reserves previously issued state only after the transport has derived
+// an independent ProtocolScope anchor. Keeping adoption distinct from Claim
+// prevents ordinary first-provider selection from legitimizing arbitrary
+// client-supplied state.
+func (s *Service) Adopt(ctx context.Context, request ClaimRequest) (Lease, error) {
+	if request.Evidence.Kind != KindTurnState && request.Evidence.Kind != KindResponseReference {
+		return Lease{}, errorOf(
+			ErrorInvalidTransition,
+			request.Evidence.Kind,
+			request.OperationID,
+			"only existing turn state and response references can be adopted",
+			nil,
+		)
+	}
+	return s.claim(ctx, request, false)
 }
 
 func (s *Service) PrepareVisible(ctx context.Context, request ClaimRequest) (Lease, error) {
@@ -83,10 +102,10 @@ func (s *Service) PrepareVisible(ctx context.Context, request ClaimRequest) (Lea
 			nil,
 		)
 	}
-	return s.claim(ctx, request)
+	return s.claim(ctx, request, true)
 }
 
-func (s *Service) claim(ctx context.Context, request ClaimRequest) (Lease, error) {
+func (s *Service) claim(ctx context.Context, request ClaimRequest, allowProvenanceFallback bool) (Lease, error) {
 	prepared, err := s.prepareClaim(request)
 	if err != nil {
 		return Lease{}, err
@@ -94,14 +113,51 @@ func (s *Service) claim(ctx context.Context, request ClaimRequest) (Lease, error
 	result, err := s.store.Claim(ctx, prepared)
 	if err != nil {
 		s.emit("claim", "unavailable", request.OperationID, Binding{})
+		if allowProvenanceFallback {
+			return s.claimProvenance(ctx, prepared, "durable_unavailable")
+		}
 		return Lease{}, unavailable(request.Evidence.Kind, request.OperationID, "claim", err)
+	}
+	if result.Decision == StoreCapacity && allowProvenanceFallback {
+		s.emit("claim", string(result.Decision), request.OperationID, result.Binding)
+		return s.claimProvenance(ctx, prepared, "durable_capacity")
 	}
 	if result.Decision != StoreClaimed && result.Decision != StoreOwned {
 		s.emit("claim", string(result.Decision), request.OperationID, result.Binding)
 		return Lease{}, decisionError(result.Decision, request.Evidence.Kind, request.OperationID)
 	}
+	if err := s.rememberProvenance(prepared, result.Binding, request.OperationID); err != nil {
+		return Lease{}, err
+	}
 	s.emit("claim", string(result.Decision), request.OperationID, result.Binding)
-	return Lease{binding: result.Binding, created: result.Decision == StoreClaimed}, nil
+	return Lease{binding: result.Binding, created: result.Decision == StoreClaimed, origin: leaseOriginDurable}, nil
+}
+
+func (s *Service) claimProvenance(ctx context.Context, prepared StoreClaim, cause string) (Lease, error) {
+	result, _ := s.provenance.Claim(ctx, prepared)
+	if result.Decision != StoreClaimed && result.Decision != StoreOwned {
+		s.emit("provenance_claim", string(result.Decision), prepared.OperationID, result.Binding)
+		return Lease{}, decisionError(result.Decision, prepared.Kind, prepared.OperationID)
+	}
+	s.emit("provenance_claim", cause, prepared.OperationID, result.Binding)
+	return Lease{binding: result.Binding, created: result.Decision == StoreClaimed, origin: leaseOriginProvenance}, nil
+}
+
+func (s *Service) rememberProvenance(command StoreClaim, binding Binding, operationID string) error {
+	result := s.provenance.remember(command, binding)
+	switch result.Decision {
+	case StoreOwned:
+		s.emit("provenance_remember", "owned", operationID, result.Binding)
+		return nil
+	case StoreCapacity:
+		// Durable ownership remains authoritative; cache pressure only reduces
+		// the scope of outage recovery and must not replace a valid request.
+		s.emit("provenance_remember", "capacity", operationID, binding)
+		return nil
+	default:
+		s.emit("provenance_remember", string(result.Decision), operationID, result.Binding)
+		return decisionError(result.Decision, binding.Kind, operationID)
+	}
 }
 
 func (s *Service) ResolveOwner(ctx context.Context, request ResolveRequest) (Binding, error) {
@@ -114,7 +170,8 @@ func (s *Service) ResolveOwner(ctx context.Context, request ResolveRequest) (Bin
 	if err != nil {
 		return Binding{}, err
 	}
-	return s.lookup(ctx, "resolve", lookup)
+	resolved, err := s.lookup(ctx, "resolve", lookup)
+	return resolved.binding, err
 }
 
 func (s *Service) Validate(ctx context.Context, request ValidateRequest) (Binding, error) {
@@ -146,25 +203,98 @@ func (s *Service) acquireExisting(ctx context.Context, action string, request Va
 	if err != nil {
 		return Lease{}, err
 	}
-	binding, err := s.lookup(ctx, action, lookup)
+	resolved, err := s.lookup(ctx, action, lookup)
 	if err != nil {
 		return Lease{}, err
 	}
-	return Lease{binding: binding}, nil
+	return Lease{binding: resolved.binding, origin: resolved.origin}, nil
 }
 
-func (s *Service) lookup(ctx context.Context, action string, lookup StoreLookup) (Binding, error) {
+type resolvedBinding struct {
+	binding Binding
+	origin  leaseOrigin
+}
+
+func (s *Service) lookup(ctx context.Context, action string, lookup StoreLookup) (resolvedBinding, error) {
 	result, err := s.store.Lookup(ctx, lookup)
 	if err != nil {
 		s.emit(action, "unavailable", lookup.OperationID, Binding{})
-		return Binding{}, unavailable(lookup.Kind, lookup.OperationID, action, err)
+		return s.lookupProvenance(ctx, action, lookup, false, unavailable(lookup.Kind, lookup.OperationID, action, err))
+	}
+	if result.Decision == StoreUnknown {
+		s.emit(action, string(result.Decision), lookup.OperationID, result.Binding)
+		return s.lookupProvenance(ctx, action, lookup, true, decisionError(result.Decision, lookup.Kind, lookup.OperationID))
 	}
 	if result.Decision != StoreOwned {
 		s.emit(action, string(result.Decision), lookup.OperationID, result.Binding)
-		return Binding{}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
+		return resolvedBinding{}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
+	}
+	mirror := StoreClaim{
+		Kind: lookup.Kind, CurrentDigest: result.Binding.Digest,
+		DigestCandidates: lookup.DigestCandidates, Owner: result.Binding.Owner,
+		ClientScopeCandidates: lookup.ClientScopeCandidates, OperationID: lookup.OperationID,
+		Now: lookup.Now, Limits: lookup.Limits,
+	}
+	if err := s.rememberProvenance(mirror, result.Binding, lookup.OperationID); err != nil {
+		return resolvedBinding{}, err
 	}
 	s.emit(action, "owned", lookup.OperationID, result.Binding)
-	return result.Binding, nil
+	return resolvedBinding{binding: result.Binding, origin: leaseOriginDurable}, nil
+}
+
+func (s *Service) lookupProvenance(
+	ctx context.Context,
+	action string,
+	lookup StoreLookup,
+	durableUnknown bool,
+	durableErr error,
+) (resolvedBinding, error) {
+	result, _ := s.provenance.Lookup(ctx, lookup)
+	if result.Decision == StoreUnknown {
+		s.emit("provenance_lookup", "unknown", lookup.OperationID, Binding{})
+		return resolvedBinding{}, durableErr
+	}
+	if result.Decision != StoreOwned {
+		s.emit("provenance_lookup", string(result.Decision), lookup.OperationID, result.Binding)
+		return resolvedBinding{}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
+	}
+	if durableUnknown {
+		return s.restoreDurableProvenance(ctx, action, lookup, result.Binding)
+	}
+	s.emit("provenance_lookup", action+"_owned", lookup.OperationID, result.Binding)
+	return resolvedBinding{binding: result.Binding, origin: leaseOriginProvenance}, nil
+}
+
+func (s *Service) restoreDurableProvenance(
+	ctx context.Context,
+	action string,
+	lookup StoreLookup,
+	binding Binding,
+) (resolvedBinding, error) {
+	command := StoreClaim{
+		Kind: binding.Kind, CurrentDigest: binding.Digest,
+		DigestCandidates: lookup.DigestCandidates, Owner: binding.Owner,
+		ClientScopeCandidates: lookup.ClientScopeCandidates,
+		OperationID:           binding.ClaimOperationID, Now: lookup.Now, Limits: lookup.Limits,
+	}
+	result, err := s.store.Claim(ctx, command)
+	if err != nil {
+		s.emit("provenance_restore", "unavailable", lookup.OperationID, binding)
+		return resolvedBinding{binding: binding, origin: leaseOriginProvenance}, nil
+	}
+	if result.Decision == StoreCapacity {
+		s.emit("provenance_restore", "capacity", lookup.OperationID, binding)
+		return resolvedBinding{binding: binding, origin: leaseOriginProvenance}, nil
+	}
+	if result.Decision != StoreClaimed && result.Decision != StoreOwned {
+		s.emit("provenance_restore", string(result.Decision), lookup.OperationID, result.Binding)
+		return resolvedBinding{}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
+	}
+	if err := s.rememberProvenance(command, result.Binding, lookup.OperationID); err != nil {
+		return resolvedBinding{}, err
+	}
+	s.emit("provenance_restore", action+"_"+string(result.Decision), lookup.OperationID, result.Binding)
+	return resolvedBinding{binding: result.Binding, origin: leaseOriginDurable}, nil
 }
 
 func (s *Service) Commit(ctx context.Context, lease Lease) (Binding, error) {
@@ -172,20 +302,61 @@ func (s *Service) Commit(ctx context.Context, lease Lease) (Binding, error) {
 		return Binding{}, err
 	}
 	limits, _ := s.policy.Limits(lease.binding.Kind)
-	result, err := s.store.Commit(ctx, StoreCommit{
+	command := StoreCommit{
 		Binding: lease.binding,
 		Now:     s.clock.Now().UTC(),
 		Limits:  limits,
-	})
+	}
+	if lease.origin == leaseOriginProvenance {
+		return s.commitProvenance(ctx, command, "provenance")
+	}
+	result, err := s.store.Commit(ctx, command)
 	if err != nil {
 		s.emit("commit", "unavailable", lease.binding.ClaimOperationID, lease.binding)
-		return Binding{}, unavailable(lease.binding.Kind, lease.binding.ClaimOperationID, "commit", err)
+		durableErr := unavailable(lease.binding.Kind, lease.binding.ClaimOperationID, "commit", err)
+		binding, provenanceErr := s.commitProvenance(ctx, command, "durable_unavailable")
+		if provenanceErr == nil {
+			return binding, nil
+		}
+		if IsError(provenanceErr, ErrorUnknown) {
+			return Binding{}, durableErr
+		}
+		return Binding{}, provenanceErr
+	}
+	if result.Decision == StoreUnknown {
+		return s.commitMissingDurableBinding(ctx, command)
 	}
 	if result.Decision != StoreCommitted {
 		s.emit("commit", string(result.Decision), lease.binding.ClaimOperationID, result.Binding)
 		return Binding{}, decisionError(result.Decision, lease.binding.Kind, lease.binding.ClaimOperationID)
 	}
+	if _, provenanceErr := s.commitProvenance(ctx, command, "durable_committed"); provenanceErr != nil &&
+		!IsError(provenanceErr, ErrorUnknown) && !IsError(provenanceErr, ErrorCapacity) {
+		return Binding{}, provenanceErr
+	}
 	s.emit("commit", "committed", lease.binding.ClaimOperationID, result.Binding)
+	return result.Binding, nil
+}
+
+func (s *Service) commitMissingDurableBinding(ctx context.Context, command StoreCommit) (Binding, error) {
+	s.emit("commit", "unknown", command.Binding.ClaimOperationID, command.Binding)
+	binding, err := s.commitProvenance(ctx, command, "durable_unknown")
+	if err == nil {
+		return binding, nil
+	}
+	if !IsError(err, ErrorUnknown) {
+		return Binding{}, err
+	}
+	return Binding{}, decisionError(StoreUnknown, command.Binding.Kind, command.Binding.ClaimOperationID)
+}
+
+func (s *Service) commitProvenance(ctx context.Context, command StoreCommit, outcome string) (Binding, error) {
+	result, _ := s.provenance.Commit(ctx, command)
+	if result.Decision != StoreCommitted {
+		s.emit("provenance_commit", string(result.Decision), command.Binding.ClaimOperationID, result.Binding)
+		return Binding{}, decisionError(result.Decision, command.Binding.Kind, command.Binding.ClaimOperationID)
+	}
+	s.emit("provenance_commit", outcome, command.Binding.ClaimOperationID, result.Binding)
 	return result.Binding, nil
 }
 
@@ -206,18 +377,34 @@ func (s *Service) AbandonBeforeDisclosure(ctx context.Context, lease Lease) erro
 		)
 	}
 	limits, _ := s.policy.Limits(lease.binding.Kind)
-	result, err := s.store.Abandon(ctx, StoreAbandon{
+	command := StoreAbandon{
 		Binding: lease.binding,
 		Now:     s.clock.Now().UTC(),
 		Limits:  limits,
-	})
+	}
+	if lease.origin == leaseOriginProvenance {
+		return s.abandonProvenance(ctx, command)
+	}
+	result, err := s.store.Abandon(ctx, command)
 	if err != nil {
 		return unavailable(lease.binding.Kind, lease.binding.ClaimOperationID, "abandon", err)
 	}
 	if result.Decision != StoreAbandoned {
 		return decisionError(result.Decision, lease.binding.Kind, lease.binding.ClaimOperationID)
 	}
+	if err := s.abandonProvenance(ctx, command); err != nil && !IsError(err, ErrorUnknown) {
+		return err
+	}
 	s.emit("abandon", "abandoned", lease.binding.ClaimOperationID, lease.binding)
+	return nil
+}
+
+func (s *Service) abandonProvenance(ctx context.Context, command StoreAbandon) error {
+	result, _ := s.provenance.Abandon(ctx, command)
+	if result.Decision != StoreAbandoned {
+		return decisionError(result.Decision, command.Binding.Kind, command.Binding.ClaimOperationID)
+	}
+	s.emit("provenance_abandon", "abandoned", command.Binding.ClaimOperationID, command.Binding)
 	return nil
 }
 
@@ -400,6 +587,9 @@ func validateLease(lease Lease) error {
 	if lease.binding.ClaimOperationID == "" ||
 		(lease.binding.Lifecycle != LifecyclePending && lease.binding.Lifecycle != LifecycleCommitted) {
 		return errorOf(ErrorInvalidTransition, lease.binding.Kind, lease.binding.ClaimOperationID, "lease is not active", nil)
+	}
+	if lease.origin != leaseOriginDurable && lease.origin != leaseOriginProvenance {
+		return errorOf(ErrorInvalidTransition, lease.binding.Kind, lease.binding.ClaimOperationID, "lease origin is invalid", nil)
 	}
 	return nil
 }
