@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useId } from "react";
+import { useState, useEffect, useEffectEvent, useRef, useId } from "react";
 import type { FormEvent } from "react";
 import type {
   APICatalog,
@@ -423,6 +423,9 @@ export interface ProviderModalProps {
   initialData?: Provider;
   onClose: () => void;
   onSubmit: (data: ProviderInput) => Promise<void>;
+  onCredentialSessionReauthenticated?: (
+    session: CredentialSession,
+  ) => void | Promise<void>;
   groups: Array<{ id: string; name: string }>;
 }
 
@@ -430,6 +433,7 @@ export function ProviderModal({
   initialData,
   onClose,
   onSubmit,
+  onCredentialSessionReauthenticated,
   groups,
 }: ProviderModalProps) {
   const { catalog: apiCatalog } = useAPICatalog();
@@ -458,8 +462,10 @@ export function ProviderModal({
     chatGPTStatus,
     chatGPTLoginError,
     startingChatGPTLogin,
+    applyingChatGPTLogin,
     chatGPTLoginAuthURL,
     pendingChatGPTAuth,
+    lastReauthenticatedSession,
     credential: chatGPTCredential,
     selectCredentialSession,
     adoptMaterializedCredentialSession,
@@ -467,9 +473,13 @@ export function ProviderModal({
     handleOpenChatGPTLoginPage,
     handleImportChatGPTLogin,
   } = useChatGPTLogin({
-    enabled: formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    enabled:
+      formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT ||
+      (formData.credential_mode === "mixed" &&
+        initialChatGPTCredentialSession !== null),
     initialAuthView,
     initialCredentialSessionID: initialChatGPTCredentialSession?.id ?? "",
+    initialCredentialSessionVersion: initialChatGPTCredentialSession?.version,
   });
 
   let selectedChatGPTCredentialSession: ProviderCredentialSession | null = null;
@@ -491,6 +501,26 @@ export function ProviderModal({
   const selectedChatGPTAuthView = resolveCredentialSessionAuthView(
     selectedChatGPTCredentialSession,
   );
+  const notifyCredentialSessionReauthenticated = useEffectEvent(
+    (session: CredentialSession) =>
+      onCredentialSessionReauthenticated?.(session),
+  );
+  useEffect(() => {
+    if (lastReauthenticatedSession) {
+      void notifyCredentialSessionReauthenticated(lastReauthenticatedSession);
+    }
+  }, [lastReauthenticatedSession]);
+  const handleChatGPTCredentialSessionChange = (sessionID: string) => {
+    const selected = credentialSessions.find(
+      (session) =>
+        session.id === sessionID &&
+        session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    );
+    selectCredentialSession(
+      selected?.id ?? "",
+      isEditMode ? selected?.version : undefined,
+    );
+  };
 
   // Auto-focus first focusable element when modal opens
   useEffect(() => {
@@ -618,7 +648,9 @@ export function ProviderModal({
                 ? chatGPTCredential.credentialSessionID
                 : ""
             }
-            onChatGPTCredentialSessionChange={selectCredentialSession}
+            onChatGPTCredentialSessionChange={
+              handleChatGPTCredentialSessionChange
+            }
             authView={pendingChatGPTAuth ?? selectedChatGPTAuthView}
             onStartChatGPTLogin={handleStartChatGPTLogin}
             onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
@@ -626,7 +658,7 @@ export function ProviderModal({
             chatGPTLoginState={{
               status: chatGPTStatus,
               error: chatGPTLoginError,
-              loading: startingChatGPTLogin,
+              loading: startingChatGPTLogin || applyingChatGPTLogin,
               authURL: chatGPTLoginAuthURL,
             }}
           />

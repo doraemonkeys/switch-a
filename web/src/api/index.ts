@@ -101,6 +101,7 @@ export type {
   CredentialSubject,
   CredentialSubjectKind,
   CreateCredentialSessionInput,
+  ReauthenticateCredentialSessionInput,
   UpdateCredentialSessionInput,
   ProviderAuthStatus,
   ProviderAuthView,

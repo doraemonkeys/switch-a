@@ -15,7 +15,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const credentialSessionAuthStateDetailKind = "credential_session_auth_state"
+const (
+	credentialSessionAuthStateDetailKind       = "credential_session_auth_state"
+	credentialSessionSubjectMismatchDetailKind = "credential_session_subject_mismatch"
+	credentialSessionReauthenticationOperation = "credential_session_reauthentication"
+)
 
 type credentialSessionStore interface {
 	CreateCredentialSession(context.Context, *credentialsession.Session) (*credentialsession.Session, error)
@@ -52,6 +56,11 @@ type UpdateCredentialSessionRequest struct {
 	ExpectedVersion int64                        `json:"expected_version"`
 	SecretData      string                       `json:"secret_data"`
 	AuthState       *credentialsession.AuthState `json:"auth_state,omitempty"`
+}
+
+type ReauthenticateCredentialSessionRequest struct {
+	ExpectedVersion   int64  `json:"expected_version"`
+	CredentialLoginID string `json:"credential_login_id"`
 }
 
 type credentialSessionAuthService interface {
@@ -245,6 +254,136 @@ func (h *Handler) UpdateCredentialSession(w http.ResponseWriter, r *http.Request
 		h.writeCredentialSessionError(w, "update", id, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// ReauthenticateCredentialSession rotates a verified ChatGPT login in place.
+// A resolved subject cannot change because one session may be shared by several
+// routes; choosing another account is a route-rebinding operation, not rotation.
+func (h *Handler) ReauthenticateCredentialSession(w http.ResponseWriter, r *http.Request) {
+	repository := h.credentialStore()
+	if repository == nil {
+		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
+		return
+	}
+	builder, ok := h.auth.(chatGPTLoginSessionBuilder)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "GPT login is unavailable in this build")
+		return
+	}
+
+	limitRequestBody(w, r)
+	var req ReauthenticateCredentialSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
+		return
+	}
+	sessionID := strings.TrimSpace(r.PathValue("id"))
+	loginID := strings.TrimSpace(req.CredentialLoginID)
+	if sessionID == "" || loginID == "" || req.ExpectedVersion < 1 {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "id, expected_version, and credential_login_id are required")
+		return
+	}
+
+	h.logger.Info("credential session reauthentication started",
+		zap.String("operation", credentialSessionReauthenticationOperation),
+		zap.String("session_id", sessionID),
+		zap.String("login_id", loginID),
+		zap.Int64("expected_version", req.ExpectedVersion),
+	)
+	candidate, err := builder.BuildCredentialSessionFromChatGPTLogin(loginID, sessionID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
+		return
+	}
+	if candidate == nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "completed GPT login did not produce a credential session")
+		return
+	}
+	if err := candidate.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
+		return
+	}
+	candidateSubject := candidate.Subject()
+	if candidate.Kind != credentialsession.KindChatGPT ||
+		candidate.AuthState.Status != credentialsession.AuthStatusActive ||
+		!candidateSubject.Resolved() {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "completed GPT login must resolve an active ChatGPT account")
+		return
+	}
+
+	ownedCtx, release, err := repository.WithCredentialSessionMutations(r.Context(), []string{sessionID})
+	if err != nil {
+		h.writeCredentialSessionError(w, "reauthenticate", sessionID, err)
+		return
+	}
+	defer release()
+
+	current, err := repository.GetCredentialSession(ownedCtx, sessionID)
+	if err != nil {
+		h.writeCredentialSessionError(w, "reauthenticate", sessionID, err)
+		return
+	}
+	if current.Kind != credentialsession.KindChatGPT {
+		writeError(w, http.StatusConflict, ErrCodeConflict, "reauthentication is only supported for chatgpt credential sessions")
+		return
+	}
+	currentSubject := current.Subject()
+	if currentSubject.Kind != credentialsession.SubjectPending && !currentSubject.Equal(candidateSubject) {
+		h.logger.Warn("credential session reauthentication rejected a different account",
+			zap.String("operation", credentialSessionReauthenticationOperation),
+			zap.String("session_id", sessionID),
+			zap.String("current_account_id", string(currentSubject.Value)),
+			zap.String("authenticated_account_id", string(candidateSubject.Value)),
+		)
+		writeErrorWithDetails(w, http.StatusConflict, ErrCodeConflict,
+			"The authenticated GPT account differs from this credential session. Select another session for the route instead.",
+			map[string]string{
+				"kind":                     credentialSessionSubjectMismatchDetailKind,
+				"session_id":               sessionID,
+				"current_account_id":       string(currentSubject.Value),
+				"authenticated_account_id": string(candidateSubject.Value),
+			},
+		)
+		return
+	}
+
+	nextVersion, err := repository.UpdateCredentialSessionCAS(
+		ownedCtx,
+		sessionID,
+		req.ExpectedVersion,
+		candidate.SecretData,
+		candidateSubject,
+		candidate.AuthState,
+	)
+	if err != nil {
+		h.writeCredentialSessionError(w, "reauthenticate", sessionID, err)
+		return
+	}
+	if err := builder.FinalizeChatGPTLogin(loginID); err != nil {
+		h.logger.Warn("failed to finalize chatgpt login after credential session reauthentication",
+			zap.String("operation", credentialSessionReauthenticationOperation),
+			zap.String("login_id", loginID),
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+	}
+	updated, err := repository.GetCredentialSession(ownedCtx, sessionID)
+	if err != nil {
+		h.writeCredentialSessionError(w, "reauthenticate", sessionID, err)
+		return
+	}
+	payload, err := credentialSessionPayload(ownedCtx, repository, updated)
+	if err != nil {
+		h.writeCredentialSessionError(w, "reauthenticate", sessionID, err)
+		return
+	}
+	h.logger.Info("credential session reauthentication completed",
+		zap.String("operation", credentialSessionReauthenticationOperation),
+		zap.String("session_id", sessionID),
+		zap.Int64("version", nextVersion),
+		zap.Int("referenced_route_target_count", len(payload.ReferencedRouteTargets)),
+	)
 	writeJSON(w, http.StatusOK, payload)
 }
 

@@ -73,12 +73,16 @@ interface ChatGPTLoginState {
 function getChatGPTLoginButtonLabel(
   chatGPTLoginState: ChatGPTLoginState,
   authView?: ProviderAuthView | null,
+  reauthenticatesExistingSession = false,
 ): string {
   if (chatGPTLoginState.loading) {
     return "Preparing...";
   }
   if (chatGPTLoginState.authURL) {
     return "Restart Sign-In";
+  }
+  if (reauthenticatesExistingSession) {
+    return "Reconnect GPT";
   }
   if (authView?.status === "active" || authView?.status === "reauth_required") {
     return "Reconnect GPT";
@@ -99,35 +103,48 @@ function AuthStatusBadge({ status }: { status: ProviderAuthView["status"] }) {
 function CredentialTypeField({
   value,
   onChange,
+  locked = false,
 }: {
   value: ProviderCredentialMode;
   onChange: (value: ProviderCredentialMode) => void;
+  locked?: boolean;
 }) {
   return (
     <FormField label="Credential Type">
       {(id) => (
         <>
-          <select
-            id={id}
-            className="input"
-            value={value}
-            onChange={(e) => onChange(e.target.value as ProviderCredentialMode)}
-          >
-            {value === "mixed" && (
-              <option value="mixed">Mixed route credentials</option>
-            )}
-            {PROVIDER_CREDENTIAL_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          {locked ? (
+            <input
+              id={id}
+              className="input"
+              readOnly
+              value="Mixed route credentials"
+            />
+          ) : (
+            <select
+              id={id}
+              className="input"
+              value={value}
+              onChange={(e) =>
+                onChange(e.target.value as ProviderCredentialMode)
+              }
+            >
+              {value === "mixed" && (
+                <option value="mixed">Mixed route credentials</option>
+              )}
+              {PROVIDER_CREDENTIAL_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )}
           <p className="text-xs text-text-muted mt-1">
-            {
-              PROVIDER_CREDENTIAL_TYPE_OPTIONS.find(
-                (option) => option.value === value,
-              )?.description
-            }
+            {locked
+              ? "Mixed credentials are edited per route so changing one session cannot remove unrelated routes."
+              : PROVIDER_CREDENTIAL_TYPE_OPTIONS.find(
+                  (option) => option.value === value,
+                )?.description}
           </p>
         </>
       )}
@@ -240,12 +257,14 @@ function ChatGPTLoginSection({
   onStartChatGPTLogin,
   onOpenChatGPTLoginPage,
   onImportChatGPTLogin,
+  reauthenticatesExistingSession = false,
 }: {
   authView?: ProviderAuthView | null;
   chatGPTLoginState: ChatGPTLoginState;
   onStartChatGPTLogin: () => Promise<void>;
   onOpenChatGPTLoginPage: () => void;
   onImportChatGPTLogin: (authData: string) => Promise<boolean>;
+  reauthenticatesExistingSession?: boolean;
 }) {
   const authPlanType = resolveProviderPlanType(authView);
   const authUsage = resolveProviderUsage(authView);
@@ -256,9 +275,9 @@ function ChatGPTLoginSection({
         <div>
           <h4 className="text-sm font-semibold text-text-primary">GPT Login</h4>
           <p className="text-xs text-text-muted mt-1">
-            Switch-A will create a Codex-only provider backed by a local ChatGPT
-            OAuth session. The sign-in link can be completed in any browser on
-            this machine.
+            {reauthenticatesExistingSession
+              ? "Reconnect this credential session in place. Every route sharing it recovers together, while provider route bindings stay unchanged. A different GPT account is rejected."
+              : "Switch-A will create a Codex-only provider backed by a local ChatGPT OAuth session. The sign-in link can be completed in any browser on this machine."}
           </p>
         </div>
         <button
@@ -267,7 +286,11 @@ function ChatGPTLoginSection({
           disabled={chatGPTLoginState.loading}
           className={`btn btn-secondary ${chatGPTLoginState.loading ? "opacity-60 cursor-wait" : ""}`}
         >
-          {getChatGPTLoginButtonLabel(chatGPTLoginState, authView)}
+          {getChatGPTLoginButtonLabel(
+            chatGPTLoginState,
+            authView,
+            reauthenticatesExistingSession,
+          )}
         </button>
       </div>
       <ChatGPTTokenImport
@@ -398,6 +421,132 @@ function hasUnboundCredentialRoute(formData: ProviderFormData): boolean {
   return formData.api_types.some((entry) => !entry.credential_session_id);
 }
 
+type ProviderCredentialFieldsProps = Pick<
+  ProviderFormBodyProps,
+  | "isEditMode"
+  | "credentialSessions"
+  | "credentialSessionsLoading"
+  | "credentialSessionsError"
+  | "chatGPTCredentialSessionID"
+  | "onChatGPTCredentialSessionChange"
+  | "authView"
+  | "onStartChatGPTLogin"
+  | "onOpenChatGPTLoginPage"
+  | "onImportChatGPTLogin"
+  | "chatGPTLoginState"
+> & { formState: FormState };
+
+function ProviderCredentialFields({
+  formState,
+  isEditMode,
+  credentialSessions,
+  credentialSessionsLoading,
+  credentialSessionsError,
+  chatGPTCredentialSessionID,
+  onChatGPTCredentialSessionChange,
+  authView,
+  onStartChatGPTLogin,
+  onOpenChatGPTLoginPage,
+  onImportChatGPTLogin,
+  chatGPTLoginState,
+}: ProviderCredentialFieldsProps) {
+  const { data: formData, setData: setFormData } = formState;
+  const [showApiKey, setShowApiKey] = useState(false);
+  const isChatGPTProvider =
+    formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
+  const isMixedCredentialProvider = formData.credential_mode === "mixed";
+  const reauthenticatesExistingSession =
+    isEditMode && Boolean(chatGPTCredentialSessionID);
+
+  const handleApiTypesChange = (entries: ProviderFormData["api_types"]) => {
+    if (isMixedCredentialProvider) {
+      const previousSessionID =
+        formData.api_types.find((entry) => entry.api_type === "codex")
+          ?.credential_session_id ?? "";
+      const nextSessionID =
+        entries.find((entry) => entry.api_type === "codex")
+          ?.credential_session_id ?? "";
+      if (nextSessionID !== previousSessionID) {
+        onChatGPTCredentialSessionChange(nextSessionID);
+      }
+    }
+    setFormData((previous) => ({ ...previous, api_types: entries }));
+  };
+
+  return (
+    <>
+      <CredentialTypeField
+        value={formData.credential_mode}
+        onChange={(credentialMode) =>
+          setFormData((previous) => ({
+            ...previous,
+            credential_mode: credentialMode,
+          }))
+        }
+        locked={isEditMode && isMixedCredentialProvider}
+      />
+      {isChatGPTProvider ? (
+        <>
+          <ChatGPTCredentialSessionField
+            sessions={credentialSessions}
+            value={chatGPTCredentialSessionID}
+            onChange={onChatGPTCredentialSessionChange}
+            loading={credentialSessionsLoading}
+            error={credentialSessionsError}
+          />
+          <ChatGPTLoginSection
+            authView={authView}
+            chatGPTLoginState={chatGPTLoginState}
+            onStartChatGPTLogin={onStartChatGPTLogin}
+            onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
+            onImportChatGPTLogin={onImportChatGPTLogin}
+            reauthenticatesExistingSession={reauthenticatesExistingSession}
+          />
+        </>
+      ) : (
+        <>
+          {isMixedCredentialProvider && chatGPTCredentialSessionID && (
+            <ChatGPTLoginSection
+              authView={authView}
+              chatGPTLoginState={chatGPTLoginState}
+              onStartChatGPTLogin={onStartChatGPTLogin}
+              onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
+              onImportChatGPTLogin={onImportChatGPTLogin}
+              reauthenticatesExistingSession
+            />
+          )}
+          {formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY &&
+            (!isEditMode || hasUnboundCredentialRoute(formData)) && (
+              <ApiKeyField
+                value={formData.new_shared_api_key}
+                onChange={(value) =>
+                  setFormData((previous) => ({
+                    ...previous,
+                    new_shared_api_key: value,
+                  }))
+                }
+                showApiKey={showApiKey}
+                onToggleVisibility={() => setShowApiKey(!showApiKey)}
+              />
+            )}
+          <ApiTypesField
+            entries={formData.api_types}
+            onChange={handleApiTypesChange}
+            credentialSessions={credentialSessions}
+            credentialMode={formData.credential_mode}
+          />
+          <AuthModeField
+            value={formData.auth_mode || "auto"}
+            onChange={(value) =>
+              setFormData((previous) => ({ ...previous, auth_mode: value }))
+            }
+          />
+        </>
+      )}
+    </>
+  );
+}
+
 export function ProviderFormBody({
   formState,
   idState,
@@ -424,7 +573,6 @@ export function ProviderFormBody({
     error: idError,
     setError: setIdError,
   } = idState;
-  const [showApiKey, setShowApiKey] = useState(false);
   const [failoverExpanded, setFailoverExpanded] = useState(
     hasFailoverConfig(formData),
   );
@@ -435,16 +583,8 @@ export function ProviderFormBody({
     ),
   );
 
-  const handleApiTypesChange = (entries: ProviderFormData["api_types"]) =>
-    setFormData((prev) => ({ ...prev, api_types: entries }));
-  const isChatGPTProvider =
-    formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
-  const hasUnboundRoute = hasUnboundCredentialRoute(formData);
   const effectiveUsageLimitPolicy =
     formData.usage_limit_policy || defaultProviderUsageLimitPolicy();
-  const handleCredentialModeChange = (value: ProviderCredentialMode) => {
-    setFormData((previous) => ({ ...previous, credential_mode: value }));
-  };
 
   return (
     <>
@@ -520,57 +660,20 @@ export function ProviderFormBody({
           )}
         </FormField>
       )}
-      <CredentialTypeField
-        value={formData.credential_mode}
-        onChange={handleCredentialModeChange}
+      <ProviderCredentialFields
+        formState={formState}
+        isEditMode={isEditMode}
+        credentialSessions={credentialSessions}
+        credentialSessionsLoading={credentialSessionsLoading}
+        credentialSessionsError={credentialSessionsError}
+        chatGPTCredentialSessionID={chatGPTCredentialSessionID}
+        onChatGPTCredentialSessionChange={onChatGPTCredentialSessionChange}
+        authView={authView}
+        onStartChatGPTLogin={onStartChatGPTLogin}
+        onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
+        onImportChatGPTLogin={onImportChatGPTLogin}
+        chatGPTLoginState={chatGPTLoginState}
       />
-      {isChatGPTProvider ? (
-        <>
-          <ChatGPTCredentialSessionField
-            sessions={credentialSessions}
-            value={chatGPTCredentialSessionID}
-            onChange={onChatGPTCredentialSessionChange}
-            loading={credentialSessionsLoading}
-            error={credentialSessionsError}
-          />
-          <ChatGPTLoginSection
-            authView={authView}
-            chatGPTLoginState={chatGPTLoginState}
-            onStartChatGPTLogin={onStartChatGPTLogin}
-            onOpenChatGPTLoginPage={onOpenChatGPTLoginPage}
-            onImportChatGPTLogin={onImportChatGPTLogin}
-          />
-        </>
-      ) : (
-        <>
-          {formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY &&
-            (!isEditMode || hasUnboundRoute) && (
-              <ApiKeyField
-                value={formData.new_shared_api_key}
-                onChange={(value) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    new_shared_api_key: value,
-                  }))
-                }
-                showApiKey={showApiKey}
-                onToggleVisibility={() => setShowApiKey(!showApiKey)}
-              />
-            )}
-          <ApiTypesField
-            entries={formData.api_types}
-            onChange={handleApiTypesChange}
-            credentialSessions={credentialSessions}
-            credentialMode={formData.credential_mode}
-          />
-          <AuthModeField
-            value={formData.auth_mode || "auto"}
-            onChange={(value) =>
-              setFormData((prev) => ({ ...prev, auth_mode: value }))
-            }
-          />
-        </>
-      )}
       <UsageLimitPolicyField
         value={effectiveUsageLimitPolicy}
         onChange={(value) =>

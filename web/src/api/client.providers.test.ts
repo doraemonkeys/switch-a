@@ -243,6 +243,36 @@ describe("createApiClient providers API", () => {
     );
   });
 
+  it("should reauthenticate a credential session from a verified login", async () => {
+    const reauthenticated = credentialSessionPayload({
+      kind: "chatgpt",
+      version: 2,
+      secret_data: undefined,
+    });
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(reauthenticated),
+    });
+
+    const result = await api.credentialSessions.reauthenticate("session/1", {
+      expected_version: 1,
+      credential_login_id: "login-1",
+    });
+
+    expect(result).toEqual(reauthenticated);
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/credential-sessions/session%2F1/reauthenticate",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          expected_version: 1,
+          credential_login_id: "login-1",
+        }),
+      }),
+    );
+  });
+
   it("should expose API-key credential values returned by the admin resource", async () => {
     const session = credentialSessionPayload();
     mockHttpClient.mockResponse({

@@ -58,6 +58,7 @@ export type {
   CredentialSessionKind,
   CredentialSessionAuthState,
   CreateCredentialSessionInput,
+  ReauthenticateCredentialSessionInput,
   UpdateCredentialSessionInput,
   ProviderInput,
   RoutingPolicy,

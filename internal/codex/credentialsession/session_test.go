@@ -22,6 +22,9 @@ func TestSubjectAndSessionValidation(t *testing.T) {
 	if _, err := AccountSubject(" "); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("AccountSubject(blank) error = %v", err)
 	}
+	if !account.Equal(account.Clone()) || account.Equal(Subject{Kind: SubjectAccount, Value: []byte("account-2")}) {
+		t.Fatal("account subject equality did not preserve the stable identity boundary")
+	}
 	digest := bytes.Repeat([]byte{7}, staticSubjectDigestSize)
 	keyed, err := KeyedDigestSubject(" h1 ", digest)
 	if err != nil || keyed.KeyVersion != "h1" || !keyed.Resolved() {
@@ -30,6 +33,11 @@ func TestSubjectAndSessionValidation(t *testing.T) {
 	digest[0] = 9
 	if keyed.Value[0] != 7 {
 		t.Fatal("KeyedDigestSubject retained caller-owned bytes")
+	}
+	changedKeyVersion := keyed.Clone()
+	changedKeyVersion.KeyVersion = "h2"
+	if keyed.Equal(changedKeyVersion) {
+		t.Fatal("keyed subjects with different key versions compared equal")
 	}
 	for _, subject := range []Subject{
 		{Kind: SubjectPending, Value: []byte("x")},

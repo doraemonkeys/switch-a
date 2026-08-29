@@ -13,6 +13,7 @@ import type {
   CreateCredentialSessionInput,
   HealthState,
   ProviderInput,
+  ReauthenticateCredentialSessionInput,
   UpdateCredentialSessionInput,
 } from "./types";
 
@@ -96,6 +97,19 @@ export function createCredentialSessionsApi(request: AuthenticatedRequest) {
           `/credential-sessions/${encodeURIComponent(id)}`,
           {
             method: "PUT",
+            body: JSON.stringify(data),
+          },
+        ),
+      ),
+    reauthenticate: async (
+      id: string,
+      data: ReauthenticateCredentialSessionInput,
+    ) =>
+      parseCredentialSession(
+        await request<unknown>(
+          `/credential-sessions/${encodeURIComponent(id)}/reauthenticate`,
+          {
+            method: "POST",
             body: JSON.stringify(data),
           },
         ),

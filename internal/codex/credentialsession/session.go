@@ -3,6 +3,7 @@
 package credentialsession
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -103,6 +104,15 @@ func (s Subject) Clone() Subject {
 	clone := s
 	clone.Value = append([]byte(nil), s.Value...)
 	return clone
+}
+
+// Equal compares the stable identity represented by two subjects. Keeping this
+// rule on Subject prevents credential-rotation workflows from accidentally
+// treating diagnostic account fields as identity authority.
+func (s Subject) Equal(other Subject) bool {
+	return s.Kind == other.Kind &&
+		s.KeyVersion == other.KeyVersion &&
+		bytes.Equal(s.Value, other.Value)
 }
 
 // AuthStatus is session lifecycle state, not route-target health.

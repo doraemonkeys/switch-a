@@ -212,6 +212,7 @@ export function Providers() {
           initialData={editingProvider || undefined}
           onClose={() => setDialog(null)}
           onSubmit={onSaveProvider}
+          onCredentialSessionReauthenticated={() => refetch()}
           groups={groups}
         />
       )}

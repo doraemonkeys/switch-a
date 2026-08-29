@@ -22,8 +22,10 @@ import (
 )
 
 type provenLoginAuth struct {
-	session   *credentialsession.Session
-	finalized string
+	session     *credentialsession.Session
+	buildErr    error
+	finalizeErr error
+	finalized   string
 }
 
 func (*provenLoginAuth) StartChatGPTLogin() (*providerauth.ChatGPTLoginStartResponse, error) {
@@ -39,6 +41,12 @@ func (*provenLoginAuth) ImportChatGPTLogin(context.Context, string) (*providerau
 }
 
 func (a *provenLoginAuth) BuildCredentialSessionFromChatGPTLogin(_ string, sessionID string) (*credentialsession.Session, error) {
+	if a.buildErr != nil {
+		return nil, a.buildErr
+	}
+	if a.session == nil {
+		return nil, nil
+	}
 	session := a.session.Clone()
 	session.ID = sessionID
 	return session, nil
@@ -46,7 +54,7 @@ func (a *provenLoginAuth) BuildCredentialSessionFromChatGPTLogin(_ string, sessi
 
 func (a *provenLoginAuth) FinalizeChatGPTLogin(loginID string) error {
 	a.finalized = loginID
-	return nil
+	return a.finalizeErr
 }
 
 type adminCredentialSigner struct{}
@@ -335,5 +343,319 @@ func TestCredentialSessionHTTPRejectsSelfAssertedChatGPTAuthority(t *testing.T) 
 	stored, err := repository.GetCredentialSession(context.Background(), "verified-login")
 	if err != nil || stored.SecretData != "verified-secret" || string(stored.SubjectValue) != "verified-account" || stored.Version != 1 {
 		t.Fatalf("rejected update mutated verified authority: session=%#v err=%v", stored, err)
+	}
+}
+
+func TestCredentialSessionReauthenticationRotatesSharedSessionWithoutRebindingRoutes(t *testing.T) {
+	_, repository := newCredentialSessionHandler(t)
+	subject, err := credentialsession.AccountSubject("account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := &credentialsession.Session{
+		ID: "shared-login", Kind: credentialsession.KindChatGPT,
+		SecretData: "expired-secret", Version: 1,
+		AuthState: credentialsession.AuthState{
+			Status: credentialsession.AuthStatusReauthRequired, AccountID: "account-1",
+		},
+	}
+	if err := current.SetSubject(subject); err != nil {
+		t.Fatal(err)
+	}
+	created, err := repository.CreateCredentialSession(context.Background(), current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	static := &credentialsession.Session{
+		ID: "static-login", Kind: credentialsession.KindAPIKey,
+		SecretData: "api-secret", Version: 1,
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
+	}
+	if err := static.SetSubject(credentialsession.PendingSubject()); err != nil {
+		t.Fatal(err)
+	}
+	createdStatic, err := repository.CreateCredentialSession(context.Background(), static)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatGPTSnapshot, err := created.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staticSnapshot, err := createdStatic.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := []*model.Provider{
+		{
+			ID: "mixed-route", Name: "Mixed Route", Enabled: true,
+			APITypes: []model.ProviderAPIType{
+				{ProviderID: "mixed-route", APIType: "codex", BaseURL: "https://codex.example.com"},
+				{ProviderID: "mixed-route", APIType: "claude", BaseURL: "https://claude.example.com"},
+			},
+			CredentialSessions: []credentialsession.RouteSnapshot{
+				{RouteTargetID: "mixed-route", APIType: "codex", Credential: chatGPTSnapshot},
+				{RouteTargetID: "mixed-route", APIType: "claude", Credential: staticSnapshot},
+			},
+		},
+		{
+			ID: "shared-route", Name: "Shared Route", Enabled: true,
+			APITypes: []model.ProviderAPIType{
+				{ProviderID: "shared-route", APIType: "codex", BaseURL: "https://shared.example.com"},
+			},
+			CredentialSessions: []credentialsession.RouteSnapshot{
+				{RouteTargetID: "shared-route", APIType: "codex", Credential: chatGPTSnapshot},
+			},
+		},
+	}
+	for _, provider := range providers {
+		if err := repository.CreateProvider(context.Background(), provider); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reauthenticated := current.Clone()
+	reauthenticated.SecretData = "rotated-secret"
+	reauthenticated.AuthState = credentialsession.AuthState{
+		Status: credentialsession.AuthStatusActive, AccountID: "account-1", Email: "user@example.com",
+	}
+	loginAuth := &provenLoginAuth{session: reauthenticated, finalizeErr: errors.New("completed login cleanup failed")}
+	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/shared-login/reauthenticate", strings.NewReader(`{
+		"expected_version":1,"credential_login_id":"login-proof"
+	}`))
+	request.SetPathValue("id", current.ID)
+	response := httptest.NewRecorder()
+	handler.ReauthenticateCredentialSession(response, request)
+	if response.Code != http.StatusOK || loginAuth.finalized != "login-proof" {
+		t.Fatalf("reauthenticate response = %d %s finalized=%q", response.Code, response.Body.String(), loginAuth.finalized)
+	}
+	var payload CredentialSessionPayload
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Version != 2 || payload.AuthState.Status != credentialsession.AuthStatusActive ||
+		!reflect.DeepEqual(payload.ReferencedRouteTargets, []string{"mixed-route", "shared-route"}) {
+		t.Fatalf("reauthenticated payload = %#v", payload)
+	}
+	stored, err := repository.GetCredentialSession(context.Background(), current.ID)
+	if err != nil || stored.SecretData != "rotated-secret" || stored.Version != 2 {
+		t.Fatalf("stored session = %#v err=%v", stored, err)
+	}
+	mixed, err := repository.GetProvider(context.Background(), "mixed-route")
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexCredential, hasCodexCredential := mixed.CredentialSessionForAPIType("codex")
+	claudeCredential, hasClaudeCredential := mixed.CredentialSessionForAPIType("claude")
+	if len(mixed.APITypes) != 2 || !hasCodexCredential || !hasClaudeCredential ||
+		codexCredential.SessionID != current.ID || claudeCredential.SessionID != static.ID {
+		t.Fatalf("mixed provider bindings changed during reauthentication: %#v", mixed)
+	}
+}
+
+func TestCredentialSessionReauthenticationRejectsDifferentResolvedSubject(t *testing.T) {
+	_, repository := newCredentialSessionHandler(t)
+	currentSubject, err := credentialsession.AccountSubject("account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := &credentialsession.Session{
+		ID: "login-session", Kind: credentialsession.KindChatGPT,
+		SecretData: "expired-secret", Version: 1,
+		AuthState: credentialsession.AuthState{
+			Status: credentialsession.AuthStatusReauthRequired, AccountID: "account-1",
+		},
+	}
+	if err := current.SetSubject(currentSubject); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateCredentialSession(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	differentSubject, err := credentialsession.AccountSubject("account-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := current.Clone()
+	candidate.SecretData = "different-secret"
+	candidate.AuthState = credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "account-2"}
+	if err := candidate.SetSubject(differentSubject); err != nil {
+		t.Fatal(err)
+	}
+	loginAuth := &provenLoginAuth{session: candidate}
+	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/login-session/reauthenticate", strings.NewReader(`{
+		"expected_version":1,"credential_login_id":"login-other-account"
+	}`))
+	request.SetPathValue("id", current.ID)
+	response := httptest.NewRecorder()
+	handler.ReauthenticateCredentialSession(response, request)
+	if response.Code != http.StatusConflict || loginAuth.finalized != "" ||
+		!strings.Contains(response.Body.String(), credentialSessionSubjectMismatchDetailKind) {
+		t.Fatalf("subject mismatch response = %d %s finalized=%q", response.Code, response.Body.String(), loginAuth.finalized)
+	}
+	stored, err := repository.GetCredentialSession(context.Background(), current.ID)
+	if err != nil || stored.SecretData != "expired-secret" || stored.Version != 1 || !stored.Subject().Equal(currentSubject) {
+		t.Fatalf("subject mismatch mutated session: %#v err=%v", stored, err)
+	}
+}
+
+func TestCredentialSessionReauthenticationResolvesRecoveryPendingSubject(t *testing.T) {
+	_, repository := newCredentialSessionHandler(t)
+	current := &credentialsession.Session{
+		ID: "recovery-session", Kind: credentialsession.KindChatGPT,
+		SecretData: "legacy-secret", Version: 1,
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusReauthRequired},
+	}
+	if err := current.SetSubject(credentialsession.PendingSubject()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateCredentialSession(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := credentialsession.AccountSubject("recovered-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := current.Clone()
+	candidate.SecretData = "recovered-secret"
+	candidate.AuthState = credentialsession.AuthState{
+		Status: credentialsession.AuthStatusActive, AccountID: "recovered-account",
+	}
+	if err := candidate.SetSubject(resolved); err != nil {
+		t.Fatal(err)
+	}
+	loginAuth := &provenLoginAuth{session: candidate}
+	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/recovery-session/reauthenticate", strings.NewReader(`{
+		"expected_version":1,"credential_login_id":"login-recovery"
+	}`))
+	request.SetPathValue("id", current.ID)
+	response := httptest.NewRecorder()
+	handler.ReauthenticateCredentialSession(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("pending-subject reauthentication response = %d %s", response.Code, response.Body.String())
+	}
+	stored, err := repository.GetCredentialSession(context.Background(), current.ID)
+	if err != nil || !stored.Subject().Equal(resolved) || stored.AuthState.Status != credentialsession.AuthStatusActive {
+		t.Fatalf("recovered session = %#v err=%v", stored, err)
+	}
+}
+
+func TestCredentialSessionReauthenticationRejectsInvalidInputsAndUnverifiedCandidates(t *testing.T) {
+	_, repository := newCredentialSessionHandler(t)
+	validCandidate := &credentialsession.Session{
+		ID: "candidate", Kind: credentialsession.KindChatGPT,
+		SecretData: "verified-secret", Version: 1,
+		AuthState: credentialsession.AuthState{
+			Status: credentialsession.AuthStatusActive, AccountID: "account-1",
+		},
+	}
+	subject, err := credentialsession.AccountSubject("account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validCandidate.SetSubject(subject); err != nil {
+		t.Fatal(err)
+	}
+	validBody := `{"expected_version":1,"credential_login_id":"login-proof"}`
+
+	tests := []struct {
+		name string
+		auth ProviderAuthService
+		body string
+		want int
+	}{
+		{name: "auth service lacks verified login builder", auth: nil, body: validBody, want: http.StatusNotImplemented},
+		{name: "invalid JSON", auth: &provenLoginAuth{session: validCandidate}, body: `{`, want: http.StatusBadRequest},
+		{name: "missing required fields", auth: &provenLoginAuth{session: validCandidate}, body: `{}`, want: http.StatusBadRequest},
+		{name: "completed login lookup fails", auth: &provenLoginAuth{buildErr: errors.New("login expired")}, body: validBody, want: http.StatusBadRequest},
+		{name: "completed login returns no session", auth: &provenLoginAuth{}, body: validBody, want: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := NewHandler(Config{Store: repository, Auth: test.auth, Logger: zap.NewNop()})
+			request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/missing/reauthenticate", strings.NewReader(test.body))
+			request.SetPathValue("id", "missing")
+			response := httptest.NewRecorder()
+			handler.ReauthenticateCredentialSession(response, request)
+			if response.Code != test.want {
+				t.Fatalf("response = %d %s, want %d", response.Code, response.Body.String(), test.want)
+			}
+		})
+	}
+
+	staticCandidate := &credentialsession.Session{
+		ID: "static-candidate", Kind: credentialsession.KindAPIKey,
+		SecretData: "static-secret", Version: 1,
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
+	}
+	if err := staticCandidate.SetSubject(credentialsession.PendingSubject()); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(Config{Store: repository, Auth: &provenLoginAuth{session: staticCandidate}, Logger: zap.NewNop()})
+	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/missing/reauthenticate", strings.NewReader(validBody))
+	request.SetPathValue("id", "missing")
+	response := httptest.NewRecorder()
+	handler.ReauthenticateCredentialSession(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("non-ChatGPT candidate response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCredentialSessionReauthenticationRejectsStaticTargetsAndVersionConflicts(t *testing.T) {
+	_, repository := newCredentialSessionHandler(t)
+	static := &credentialsession.Session{
+		ID: "static-session", Kind: credentialsession.KindAPIKey,
+		SecretData: "static-secret", Version: 1,
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
+	}
+	if err := static.SetSubject(credentialsession.PendingSubject()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateCredentialSession(context.Background(), static); err != nil {
+		t.Fatal(err)
+	}
+	subject, err := credentialsession.AccountSubject("account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := &credentialsession.Session{
+		ID: "candidate", Kind: credentialsession.KindChatGPT,
+		SecretData: "verified-secret", Version: 1,
+		AuthState: credentialsession.AuthState{
+			Status: credentialsession.AuthStatusActive, AccountID: "account-1",
+		},
+	}
+	if err := candidate.SetSubject(subject); err != nil {
+		t.Fatal(err)
+	}
+	loginAuth := &provenLoginAuth{session: candidate}
+	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/static-session/reauthenticate", strings.NewReader(`{
+		"expected_version":1,"credential_login_id":"login-proof"
+	}`))
+	request.SetPathValue("id", static.ID)
+	response := httptest.NewRecorder()
+	handler.ReauthenticateCredentialSession(response, request)
+	if response.Code != http.StatusConflict || loginAuth.finalized != "" {
+		t.Fatalf("static target response = %d %s finalized=%q", response.Code, response.Body.String(), loginAuth.finalized)
+	}
+
+	chatGPT := candidate.Clone()
+	chatGPT.ID = "chatgpt-session"
+	chatGPT.AuthState.Status = credentialsession.AuthStatusReauthRequired
+	if _, err := repository.CreateCredentialSession(context.Background(), chatGPT); err != nil {
+		t.Fatal(err)
+	}
+	versionRequest := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/chatgpt-session/reauthenticate", strings.NewReader(`{
+		"expected_version":2,"credential_login_id":"login-proof"
+	}`))
+	versionRequest.SetPathValue("id", chatGPT.ID)
+	versionResponse := httptest.NewRecorder()
+	handler.ReauthenticateCredentialSession(versionResponse, versionRequest)
+	if versionResponse.Code != http.StatusConflict || loginAuth.finalized != "" {
+		t.Fatalf("version conflict response = %d %s finalized=%q", versionResponse.Code, versionResponse.Body.String(), loginAuth.finalized)
 	}
 }

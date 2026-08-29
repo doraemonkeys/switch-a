@@ -38,16 +38,24 @@ function apiKeySession(id: string): CredentialSession {
   };
 }
 
-function chatGPTSession(id: string, email: string): CredentialSession {
+function chatGPTSession(
+  id: string,
+  email: string,
+  status: CredentialSession["auth_state"]["status"] = "active",
+): CredentialSession {
   return {
-    ...apiKeySession(id),
+    id,
     kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    version: 1,
     subject: { kind: "account", value: `account-${id}` },
     auth_state: {
-      status: "active",
+      status,
       email,
       account_id: `account-${id}`,
     },
+    referenced_route_target_ids: [],
+    created_at: "2026-08-28T00:00:00Z",
+    updated_at: "2026-08-28T00:00:00Z",
   };
 }
 
@@ -60,6 +68,21 @@ function createCredentialSessionsApi(sessions: CredentialSession[]) {
         kind: input.kind,
       }),
     ),
+    reauthenticate: vi
+      .fn()
+      .mockImplementation((id: string): Promise<CredentialSession> => {
+        const current = sessions.find((session) => session.id === id);
+        if (!current) {
+          return Promise.reject(
+            new Error(`Credential session not found: ${id}`),
+          );
+        }
+        return Promise.resolve({
+          ...current,
+          version: current.version + 1,
+          auth_state: { ...current.auth_state, status: "active" },
+        });
+      }),
   };
 }
 
@@ -112,6 +135,58 @@ function persistedSplitProvider(): Provider {
     enabled: true,
     created_at: "2026-03-22T12:00:00Z",
     updated_at: "2026-03-22T12:00:00Z",
+  };
+}
+
+function persistedMixedProvider(): Provider {
+  const apiKey = apiKeySession("credential-api-key");
+  const chatGPT = chatGPTSession(
+    "credential-gpt",
+    "mixed@example.com",
+    "reauth_required",
+  );
+  return {
+    id: "provider-mixed",
+    name: "Mixed Credentials",
+    api_types: [
+      {
+        api_type: "claude",
+        base_url: "https://claude.example.com",
+        credential_session_id: apiKey.id,
+      },
+      {
+        api_type: "codex",
+        base_url: "https://codex.example.com",
+        credential_session_id: chatGPT.id,
+      },
+    ],
+    auth_mode: AUTH_MODES.AUTO,
+    credential_sessions: [apiKey, chatGPT],
+    group_id: null,
+    weight: 1,
+    priority: 0,
+    concurrency: 10,
+    max_retries: 1,
+    vendor: "",
+    failover_scope: "any",
+    accept_failover: "any",
+    enabled: true,
+    created_at: "2026-03-22T12:00:00Z",
+    updated_at: "2026-03-22T12:00:00Z",
+  };
+}
+
+function persistedGPTProvider(): Provider {
+  const mixed = persistedMixedProvider();
+  return {
+    ...mixed,
+    id: "provider-gpt",
+    name: "GPT Credentials",
+    auth_mode: AUTH_MODES.BEARER,
+    api_types: mixed.api_types.filter((entry) => entry.api_type === "codex"),
+    credential_sessions: mixed.credential_sessions.filter(
+      (session) => session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    ),
   };
 }
 
@@ -393,5 +468,184 @@ describe("ProviderModal GPT credential precedence", () => {
         }),
       ],
     });
+  });
+
+  it("reauthenticates an existing pure GPT provider without requiring a provider save", async () => {
+    const user = userEvent.setup();
+    const provider = persistedGPTProvider();
+    const sessions = createCredentialSessionsApi(
+      provider.credential_sessions as CredentialSession[],
+    );
+    const api = {
+      providers: {
+        importChatGPTLogin: vi.fn().mockResolvedValue({
+          login_id: "login-pure-reconnect",
+          status: "completed",
+          auth: {
+            type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+            status: "active",
+            email: "mixed@example.com",
+            account_id: "account-credential-gpt",
+          },
+        }),
+      },
+      credentialSessions: sessions,
+    } as unknown as ApiClient;
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    renderModal(
+      <ProviderModal
+        initialData={provider}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        groups={[]}
+      />,
+      api,
+    );
+
+    await user.click(screen.getByLabelText("Import via token"));
+    await user.paste(tokenBlob);
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+
+    expect(
+      await screen.findByText(
+        "Reconnected as mixed@example.com. Provider routes were not changed.",
+      ),
+    ).toBeInTheDocument();
+    expect(sessions.reauthenticate).toHaveBeenCalledWith("credential-gpt", {
+      expected_version: 1,
+      credential_login_id: "login-pure-reconnect",
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("reauthenticates the GPT session of a mixed provider without rewriting routes", async () => {
+    const user = userEvent.setup();
+    const provider = persistedMixedProvider();
+    const sessions = createCredentialSessionsApi(
+      provider.credential_sessions as CredentialSession[],
+    );
+    const api = {
+      providers: {
+        importChatGPTLogin: vi.fn().mockResolvedValue({
+          login_id: "login-mixed-reconnect",
+          status: "completed",
+          auth: {
+            type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+            status: "active",
+            email: "mixed@example.com",
+            account_id: "account-credential-gpt",
+          },
+        }),
+      },
+      credentialSessions: sessions,
+    } as unknown as ApiClient;
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onReauthenticated = vi.fn().mockResolvedValue(undefined);
+    renderModal(
+      <ProviderModal
+        initialData={provider}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        onCredentialSessionReauthenticated={onReauthenticated}
+        groups={[]}
+      />,
+      api,
+    );
+
+    const credentialType = screen.getByLabelText("Credential Type");
+    expect(credentialType).toHaveValue("Mixed route credentials");
+    expect(credentialType).toHaveAttribute("readonly");
+    expect(
+      screen.getByText(/every route sharing it recovers together/i),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Import via token"));
+    await user.paste(tokenBlob);
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+
+    await waitFor(() =>
+      expect(sessions.reauthenticate).toHaveBeenCalledWith("credential-gpt", {
+        expected_version: 1,
+        credential_login_id: "login-mixed-reconnect",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "Reconnected as mixed@example.com. Provider routes were not changed.",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(onReauthenticated).toHaveBeenCalledTimes(1));
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      api_types: [
+        {
+          api_type: "claude",
+          base_url: "https://claude.example.com",
+          credential_session_id: "credential-api-key",
+        },
+        {
+          api_type: "codex",
+          base_url: "https://codex.example.com",
+          credential_session_id: "credential-gpt",
+        },
+      ],
+    });
+    expect(sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps mixed-provider routes editable when reauthentication uses a different account", async () => {
+    const user = userEvent.setup();
+    const provider = persistedMixedProvider();
+    const sessions = createCredentialSessionsApi(
+      provider.credential_sessions as CredentialSession[],
+    );
+    sessions.reauthenticate.mockRejectedValueOnce(
+      new Error(
+        "The authenticated GPT account differs from this credential session. Select another session for the route instead.",
+      ),
+    );
+    const api = {
+      providers: {
+        importChatGPTLogin: vi.fn().mockResolvedValue({
+          login_id: "login-other-account",
+          status: "completed",
+          auth: {
+            type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+            status: "active",
+            email: "other@example.com",
+            account_id: "other-account",
+          },
+        }),
+      },
+      credentialSessions: sessions,
+    } as unknown as ApiClient;
+    renderModal(
+      <ProviderModal
+        initialData={provider}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+        groups={[]}
+      />,
+      api,
+    );
+
+    const tokenInput = screen.getByLabelText("Import via token");
+    await user.click(tokenInput);
+    await user.paste(tokenBlob);
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+
+    expect(
+      await screen.findByText(/authenticated GPT account differs/i),
+    ).toBeInTheDocument();
+    expect(tokenInput).toHaveValue(tokenBlob);
+    expect(screen.getByLabelText("Base URL for claude")).toHaveValue(
+      "https://claude.example.com",
+    );
+    expect(screen.getByLabelText("Base URL for codex")).toHaveValue(
+      "https://codex.example.com",
+    );
   });
 });

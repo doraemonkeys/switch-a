@@ -61,6 +61,7 @@ function createCredentialSessionsApi() {
       .mockImplementation((input: CreateCredentialSessionInput) =>
         Promise.resolve(credentialSession(input)),
       ),
+    reauthenticate: vi.fn(),
   };
 }
 

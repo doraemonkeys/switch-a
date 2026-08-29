@@ -152,6 +152,11 @@ export interface UpdateCredentialSessionInput {
   secret_data: string;
 }
 
+export interface ReauthenticateCredentialSessionInput {
+  expected_version: number;
+  credential_login_id: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
