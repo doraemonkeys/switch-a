@@ -217,6 +217,19 @@ func TestAttestationAuthorityLifetimeAndResponseProjectionConformAcrossCarriers(
 		if _, err := operation.PrepareAttempt(context.Background(), retry, replacement, replacementApplied); err != nil {
 			t.Fatal("HTTP attestation rejected same-authority replacement:", err)
 		}
+		undisclosedCross := buildCarrierRequest(t, request, operation.RequestPolicy(), crossURL.String())
+		undisclosedCrossAttempt, err := operation.PrepareAttempt(
+			context.Background(), undisclosedCross, crossAuthority, crossApplied,
+		)
+		if err != nil {
+			t.Fatal("HTTP attestation rejected cross-authority replacement before disclosure:", err)
+		}
+		if err := undisclosedCrossAttempt.AbandonBeforeDisclosure(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := attempt.MarkDisclosed(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		cross := buildCarrierRequest(t, request, operation.RequestPolicy(), crossURL.String())
 		_, err = operation.PrepareAttempt(context.Background(), cross, crossAuthority, crossApplied)
 		requireHTTPError(t, err, codexhttp.ErrorIdentityMismatch)

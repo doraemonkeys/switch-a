@@ -43,7 +43,7 @@ func TestAttemptGuardAndAuthorityFailures(t *testing.T) {
 	}
 }
 
-func TestAttestationLocksLogicalOperationAuthority(t *testing.T) {
+func TestAttestationPinsLogicalOperationAuthorityOnlyAfterDisclosure(t *testing.T) {
 	clientScope := testClientScope(t, "attestation-client")
 	continuity := &continuityRecorder{}
 	runtime := newContinuityTestRuntime(t, clientScope, continuity)
@@ -56,13 +56,27 @@ func TestAttestationLocksLogicalOperationAuthority(t *testing.T) {
 	}
 	candidateA, appliedA := testCandidate(t, "route-a", "provider-a.test", "subject-a")
 	requestA := httptest.NewRequest(http.MethodPost, "https://provider-a.test/v1/responses", nil)
-	if _, err := operation.PrepareAttempt(context.Background(), requestA, candidateA, appliedA); err != nil {
+	attemptA, err := operation.PrepareAttempt(context.Background(), requestA, candidateA, appliedA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if required, _ := operation.RequiredAuthority(); required != nil {
+		t.Fatal("attestation pinned authority before disclosure")
+	}
+	if err := attemptA.AbandonBeforeDisclosure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	candidateB, appliedB := testCandidate(t, "route-b", "provider-b.test", "subject-b")
 	requestB := httptest.NewRequest(http.MethodPost, "https://provider-b.test/v1/responses", nil)
-	if _, err := operation.PrepareAttempt(context.Background(), requestB, candidateB, appliedB); !IsKind(err, ErrorIdentityMismatch) {
-		t.Fatalf("cross-authority attestation error = %v", err)
+	attemptB, err := operation.PrepareAttempt(context.Background(), requestB, candidateB, appliedB)
+	if err != nil {
+		t.Fatal("undisclosed attestation prevented replacement:", err)
+	}
+	if err := attemptB.MarkDisclosed(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operation.PrepareAttempt(context.Background(), requestA.Clone(context.Background()), candidateA, appliedA); !IsKind(err, ErrorIdentityMismatch) {
+		t.Fatalf("disclosed attestation cross-authority error = %v", err)
 	}
 }
 
@@ -76,11 +90,18 @@ func TestContinuityFailuresStayTypedAtRequestAndResponseBoundaries(t *testing.T)
 	claimFailure := &continuityRecorder{resolveErr: unknown, claimErr: unavailable}
 	claimOperation := beginContinuityOperation(t, clientScope, claimFailure, http.Header{"Thread-Id": []string{"thread"}})
 	upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
-	if _, err := claimOperation.PrepareAttempt(context.Background(), upstream, candidate, applied); err != nil {
+	claimAttempt, err := claimOperation.PrepareAttempt(context.Background(), upstream, candidate, applied)
+	if err != nil {
 		t.Fatalf("claim outage should preserve the pinned attempt: %v", err)
 	}
+	if required, _ := claimOperation.RequiredAuthority(); required != nil {
+		t.Fatalf("claim outage pinned authority before disclosure = %v", required)
+	}
+	if err := claimAttempt.MarkDisclosed(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if required, _ := claimOperation.RequiredAuthority(); required == nil || !required.Equal(candidate.Authority()) {
-		t.Fatalf("claim outage authority = %v", required)
+		t.Fatalf("disclosed claim outage authority = %v", required)
 	}
 
 	known := codexcontinuity.Binding{Owner: codexcontinuity.Owner{ClientScope: clientScope, ProtocolScope: candidate.ProtocolScope()}}

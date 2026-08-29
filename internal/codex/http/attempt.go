@@ -20,7 +20,21 @@ type Attempt struct {
 	authority     codexidentity.UpstreamAuthority
 	routeTargetID string
 	responseURL   *url.URL
+
+	requestClaimLeases []codexcontinuity.Lease
+	pinProtocolScope   bool
+	pinAuthority       bool
+	settlement         attemptSettlement
 }
+
+type attemptSettlement uint8
+
+const (
+	attemptUnsettled attemptSettlement = iota
+	attemptDisclosureStarted
+	attemptDisclosed
+	attemptAbandoned
+)
 
 func (o *Operation) PrepareAttempt(
 	ctx context.Context,
@@ -60,11 +74,14 @@ func (o *Operation) PrepareAttempt(
 	if err := o.prepareAttemptCookiesLocked(ctx, request, attempt.authority.CookieAuthority()); err != nil {
 		return nil, err
 	}
-	if err := o.prepareRequestContinuityLocked(ctx, attempt.protocolScope, attempt.routeTargetID); err != nil {
+	if err := o.prepareRequestContinuityLocked(ctx, attempt); err != nil {
 		return nil, err
 	}
-	if err := o.lockAttestationLocked(attempt.authority); err != nil {
-		return nil, err
+	for _, decision := range o.clientDecision.Decisions() {
+		if decision.Field() == codexheaders.FieldAttestation {
+			attempt.pinAuthority = true
+			break
+		}
 	}
 	return attempt, nil
 }
@@ -97,10 +114,9 @@ func (o *Operation) prepareAttemptCookiesLocked(
 
 func (o *Operation) prepareRequestContinuityLocked(
 	ctx context.Context,
-	scope codexidentity.ProtocolScope,
-	routeTargetID string,
+	attempt *Attempt,
 ) error {
-	if o.requestClaimsPrepared || o.requestClaimsCommitted {
+	if o.requestClaimsCommitted {
 		return nil
 	}
 	var leases []codexcontinuity.Lease
@@ -111,7 +127,9 @@ func (o *Operation) prepareRequestContinuityLocked(
 			continue
 		}
 		pinProtocolScope = pinProtocolScope || decisionPinsProtocolScope(decision)
-		lease, prepared, err := o.prepareRequestLease(ctx, decision, scope, routeTargetID)
+		lease, prepared, err := o.prepareRequestLease(
+			ctx, decision, attempt.protocolScope, attempt.routeTargetID,
+		)
 		if err != nil {
 			o.abandonRequestLeases(ctx, leases)
 			return err
@@ -121,14 +139,9 @@ func (o *Operation) prepareRequestContinuityLocked(
 		}
 		leases = append(leases, lease)
 	}
-	o.requestClaimLeases = leases
-	o.requestClaimsPrepared = true
-	if pinProtocolScope {
-		copyScope := scope
-		o.requiredProtocolScope = &copyScope
-		authority := scope.Authority()
-		o.requiredAuthority = &authority
-	}
+	attempt.requestClaimLeases = leases
+	attempt.pinProtocolScope = pinProtocolScope
+	attempt.pinAuthority = pinProtocolScope
 	return nil
 }
 
@@ -167,9 +180,9 @@ func (o *Operation) prepareRequestLease(
 	}
 	if continuityPersistenceUnavailable(err) &&
 		(decision.Action() == codexheaders.ActionForward || decision.Action() == codexheaders.ActionClaim) {
-		// The selected ProtocolScope is pinned even without a durable lease, so
-		// auxiliary identity/metadata cannot widen failover authority. Existing
-		// state adoption still requires an atomic ownership reservation.
+		// The attempt retains a provisional ProtocolScope even without a durable
+		// lease. Disclosure promotes it, while a proven pre-write failure may
+		// replace it; existing-state adoption still needs an atomic reservation.
 		return codexcontinuity.Lease{}, false, nil
 	}
 	if continuityPersistenceUnavailable(err) {
@@ -204,33 +217,16 @@ func (o *Operation) requestClaim(
 }
 
 func (o *Operation) abandonRequestLeases(ctx context.Context, leases []codexcontinuity.Lease) {
+	abandonContext := context.WithoutCancel(ctx)
 	for _, lease := range leases {
 		if lease.NewlyClaimed() {
-			_ = o.runtime.continuity.AbandonBeforeDisclosure(ctx, lease)
+			_ = o.runtime.continuity.AbandonBeforeDisclosure(abandonContext, lease)
 		}
 	}
 }
 
-func (o *Operation) lockAttestationLocked(authority codexidentity.UpstreamAuthority) error {
-	for _, decision := range o.clientDecision.Decisions() {
-		if decision.Field() != codexheaders.FieldAttestation {
-			continue
-		}
-		if o.attestationAuthority != nil && !o.attestationAuthority.Equal(authority) {
-			return identityError("attestation", errors.New("attestation cannot cross authority within one operation"))
-		}
-		copyAuthority := authority
-		o.attestationAuthority = &copyAuthority
-		if o.requiredAuthority == nil {
-			o.requiredAuthority = &copyAuthority
-		}
-	}
-	return nil
-}
-
-// MarkDisclosed advances request-side claims only after a physical exchange was
-// attempted. A transport error is still disclosure-uncertain and therefore may
-// not release the pending owner.
+// MarkDisclosed promotes attempt-local constraints only after the transport
+// reports that request data may have crossed the physical boundary.
 func (a *Attempt) MarkDisclosed(ctx context.Context) error {
 	if a == nil || a.operation == nil || a.operation.apiType != codexAPIType {
 		return nil
@@ -238,14 +234,82 @@ func (a *Attempt) MarkDisclosed(ctx context.Context) error {
 	o := a.operation
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if a.settlement == attemptAbandoned {
+		return identityError("continuity_disclosure", errors.New("abandoned attempt cannot be disclosed"))
+	}
+	if a.settlement == attemptDisclosed {
+		return nil
+	}
+	if err := o.pinAttemptLocked(a); err != nil {
+		return err
+	}
+	a.settlement = attemptDisclosureStarted
 	commitContext := context.WithoutCancel(ctx)
-	for len(o.requestClaimLeases) > 0 {
-		if _, err := o.runtime.continuity.Commit(commitContext, o.requestClaimLeases[0]); err != nil {
+	for len(a.requestClaimLeases) > 0 {
+		if _, err := o.runtime.continuity.Commit(commitContext, a.requestClaimLeases[0]); err != nil {
 			return dependencyError("continuity_disclosure", err)
 		}
-		o.requestClaimLeases = o.requestClaimLeases[1:]
+		a.requestClaimLeases = a.requestClaimLeases[1:]
 	}
 	o.requestClaimsCommitted = true
+	a.settlement = attemptDisclosed
+	return nil
+}
+
+// AbandonBeforeDisclosure releases only attempt-created pending claims. If the
+// persistence layer cannot prove the release, the attempt authority is promoted
+// conservatively so a later retry cannot create a conflicting owner elsewhere.
+func (a *Attempt) AbandonBeforeDisclosure(ctx context.Context) error {
+	if a == nil || a.operation == nil || a.operation.apiType != codexAPIType {
+		return nil
+	}
+	o := a.operation
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	switch a.settlement {
+	case attemptAbandoned:
+		return nil
+	case attemptDisclosureStarted, attemptDisclosed:
+		return identityError("continuity_abandon", errors.New("disclosed attempt cannot be abandoned"))
+	}
+
+	abandonContext := context.WithoutCancel(ctx)
+	var firstErr error
+	for _, lease := range a.requestClaimLeases {
+		if !lease.NewlyClaimed() {
+			continue
+		}
+		if err := o.runtime.continuity.AbandonBeforeDisclosure(abandonContext, lease); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	a.requestClaimLeases = nil
+	if firstErr != nil {
+		if err := o.pinAttemptLocked(a); err != nil {
+			return err
+		}
+		a.settlement = attemptAbandoned
+		return dependencyError("continuity_abandon", firstErr)
+	}
+	a.settlement = attemptAbandoned
+	return nil
+}
+
+func (o *Operation) pinAttemptLocked(attempt *Attempt) error {
+	if attempt.pinProtocolScope {
+		if o.requiredProtocolScope != nil && !o.requiredProtocolScope.Equal(attempt.protocolScope) {
+			return identityError("required_protocol_scope", errors.New("disclosed attempt crosses the required protocol scope"))
+		}
+		copyScope := attempt.protocolScope
+		o.requiredProtocolScope = &copyScope
+	}
+	if attempt.pinAuthority {
+		if o.requiredAuthority != nil && !o.requiredAuthority.Equal(attempt.authority) {
+			return identityError("required_authority", errors.New("disclosed attempt crosses the required authority"))
+		}
+		copyAuthority := attempt.authority
+		o.requiredAuthority = &copyAuthority
+	}
 	return nil
 }
 

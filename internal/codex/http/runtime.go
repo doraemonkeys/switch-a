@@ -90,10 +90,7 @@ type Operation struct {
 	requiredProtocolScope  *codexidentity.ProtocolScope
 	requiredAuthority      *codexidentity.UpstreamAuthority
 	preferredRouteTargetID string
-	attestationAuthority   *codexidentity.UpstreamAuthority
-	requestClaimsPrepared  bool
 	requestClaimsCommitted bool
-	requestClaimLeases     []codexcontinuity.Lease
 
 	cookieRequest       *providercookie.Request
 	lastCookieAuthority *codexidentity.CookieAuthority

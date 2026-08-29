@@ -193,12 +193,19 @@ func (h *Handler) prepareForwardRequest(
 		)
 		return nil, err
 	}
+	h.syncCodexSelectionConstraints(pctx)
+	request = request.WithContext(context.WithValue(request.Context(), codexAttemptContextKey{}, codexAttempt))
+	return request, nil
+}
+
+func (h *Handler) syncCodexSelectionConstraints(pctx *proxyContext) {
+	if pctx == nil || pctx.codex == nil || pctx.selectReq == nil {
+		return
+	}
 	if required, preferred := pctx.codex.RequiredAuthority(); required != nil {
 		pctx.selectReq.RequiredAuthority = required
 		pctx.selectReq.PreferredRouteTargetID = preferred
 	}
-	request = request.WithContext(context.WithValue(request.Context(), codexAttemptContextKey{}, codexAttempt))
-	return request, nil
 }
 
 type codexAttemptContextKey struct{}
@@ -252,20 +259,18 @@ func (h *Handler) fetchPendingHTTPResponse(
 		pctx.liveBytes.BytesSent.Add(int64(len(pctx.body)))
 		pctx.liveBytes.LastActivityAt.Store(time.Now().UnixMilli())
 	}
-	response, err := pctx.transport.FetchUpstream(
+	response, disclosure, err := pctx.transport.FetchUpstream(
 		ctx,
 		request,
 		redirectExecutionPolicy(pctx.apiType, pctx.codex.RequestPolicy()),
 	)
+	if response != nil {
+		disclosure = upstreamtransport.RequestDisclosureConfirmed
+	}
 	codexAttempt := codexAttemptFromRequest(request)
-	if disclosureErr := codexAttempt.MarkDisclosed(ctx); disclosureErr != nil {
-		if response != nil {
-			if body, takeErr := response.TakeBody(); takeErr == nil {
-				_ = body.Close()
-			}
-		}
-		finishHTTPFetchFailure(ctx, pctx, exchange, disclosureErr)
-		return nil, disclosureErr
+	if settlementErr := h.settleCodexHTTPAttempt(ctx, pctx, attempt, codexAttempt, response, disclosure); settlementErr != nil {
+		finishHTTPFetchFailure(ctx, pctx, exchange, settlementErr)
+		return nil, settlementErr
 	}
 	if err != nil {
 		finishHTTPFetchFailure(ctx, pctx, exchange, err)
@@ -353,6 +358,61 @@ func (h *Handler) fetchPendingHTTPResponse(
 		injectedCredential: injectedCredential,
 		codexAttempt:       codexAttempt,
 	}, nil
+}
+
+func (h *Handler) settleCodexHTTPAttempt(
+	ctx context.Context,
+	pctx *proxyContext,
+	attempt httpAttemptContext,
+	codexAttempt *codexhttp.Attempt,
+	response *upstreamtransport.Response,
+	disclosure upstreamtransport.RequestDisclosure,
+) error {
+	if disclosure.DefinitelyNotDisclosed() {
+		return h.abandonUndisclosedCodexHTTPAttempt(ctx, pctx, attempt, codexAttempt, disclosure)
+	}
+	if err := codexAttempt.MarkDisclosed(ctx); err != nil {
+		closeUpstreamResponse(response)
+		return err
+	}
+	h.syncCodexSelectionConstraints(pctx)
+	return nil
+}
+
+func (h *Handler) abandonUndisclosedCodexHTTPAttempt(
+	ctx context.Context,
+	pctx *proxyContext,
+	attempt httpAttemptContext,
+	codexAttempt *codexhttp.Attempt,
+	disclosure upstreamtransport.RequestDisclosure,
+) error {
+	if err := codexAttempt.AbandonBeforeDisclosure(ctx); err != nil {
+		h.logger.Warn("proxy.codex_http_attempt_abandon_failed",
+			zap.String("request_id", pctx.requestID),
+			zap.String("provider_id", attempt.provider.ID),
+			zap.String("disclosure", disclosure.String()),
+			zap.Error(err),
+		)
+		return err
+	}
+	if pctx.apiType == APITypeCodex {
+		h.logger.Debug("proxy.codex_http_attempt_abandoned_before_disclosure",
+			zap.String("request_id", pctx.requestID),
+			zap.String("provider_id", attempt.provider.ID),
+			zap.String("disclosure", disclosure.String()),
+		)
+	}
+	return nil
+}
+
+func closeUpstreamResponse(response *upstreamtransport.Response) {
+	if response == nil {
+		return
+	}
+	body, err := response.TakeBody()
+	if err == nil {
+		_ = body.Close()
+	}
 }
 
 type httpResponseMediaLogContext struct {

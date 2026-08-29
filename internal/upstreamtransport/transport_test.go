@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -467,9 +468,12 @@ func TestFetchReturnsNormalizedHeadAndLiveTrailer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	response, err := transport.Fetch(ctx, request, ExecutionPolicy{})
+	response, disclosure, err := transport.Fetch(ctx, request, ExecutionPolicy{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
+	}
+	if disclosure != RequestDisclosureConfirmed {
+		t.Fatalf("request disclosure = %s, want confirmed", disclosure)
 	}
 	if seenContextValue != "op-17" {
 		t.Fatalf("round trip context value = %#v", seenContextValue)
@@ -515,9 +519,12 @@ func TestFetchPreservesCompressedWireIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	response, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
+	response, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
+	}
+	if disclosure != RequestDisclosureConfirmed {
+		t.Fatalf("request disclosure = %s, want confirmed", disclosure)
 	}
 	head, body, err := response.Take()
 	if err != nil {
@@ -555,10 +562,10 @@ func TestFetchRejectsInvalidStateAndPropagatesRoundTripFailure(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	var nilTransport *Transport
-	if _, err := nilTransport.Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
+	if _, _, err := nilTransport.Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
 		t.Fatal("nil Transport.Fetch succeeded")
 	}
-	if _, err := (&Transport{}).Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
+	if _, _, err := (&Transport{}).Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
 		t.Fatal("uninitialized Transport.Fetch succeeded")
 	}
 
@@ -567,15 +574,63 @@ func TestFetchRejectsInvalidStateAndPropagatesRoundTripFailure(t *testing.T) {
 		return nil, wantErr
 	})}
 	transport := &Transport{followClient: client, rawClient: client}
-	if _, err := transport.Fetch(t.Context(), request, ExecutionPolicy{}); !errors.Is(err, wantErr) {
+	if _, disclosure, err := transport.Fetch(t.Context(), request, ExecutionPolicy{}); !errors.Is(err, wantErr) {
 		t.Fatalf("Fetch error = %v, want %v", err, wantErr)
+	} else if disclosure != RequestDisclosureUnknown {
+		t.Fatalf("custom transport disclosure = %s, want unknown", disclosure)
 	}
-	if _, err := transport.Fetch(t.Context(), nil, ExecutionPolicy{}); err == nil {
+	if _, _, err := transport.Fetch(t.Context(), nil, ExecutionPolicy{}); err == nil {
 		t.Fatal("Fetch accepted nil request")
 	}
-	if _, err := transport.Fetch(nil, request, ExecutionPolicy{}); err == nil {
+	if _, _, err := transport.Fetch(nil, request, ExecutionPolicy{}); err == nil {
 		t.Fatal("Fetch accepted nil context")
 	}
+}
+
+func TestFetchProvesConnectionEstablishmentFailuresWereNotDisclosed(t *testing.T) {
+	t.Run("TCP connect", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		address := listener.Addr().String()
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+address+"/responses", strings.NewReader("state"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
+		if err == nil {
+			t.Fatal("connection-refused request unexpectedly succeeded")
+		}
+		if disclosure != RequestDisclosureNone {
+			t.Fatalf("connection-refused disclosure = %s, want none", disclosure)
+		}
+	})
+
+	t.Run("TLS handshake", func(t *testing.T) {
+		plainServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("TLS handshake failure reached the HTTP handler")
+		}))
+		t.Cleanup(plainServer.Close)
+		request, err := http.NewRequestWithContext(
+			t.Context(), http.MethodPost,
+			strings.Replace(plainServer.URL, "http://", "https://", 1)+"/responses",
+			strings.NewReader("state"),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
+		if err == nil {
+			t.Fatal("TLS handshake request unexpectedly succeeded")
+		}
+		if disclosure != RequestDisclosureNone {
+			t.Fatalf("TLS handshake disclosure = %s, want none", disclosure)
+		}
+	})
 }
 
 func TestHeaderHelpersCoverCaseAndEmptyInputs(t *testing.T) {

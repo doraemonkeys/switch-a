@@ -106,7 +106,7 @@ func TestFetchFollowRedirectsPreservesNetHTTPMethodAndBodySemantics(t *testing.T
 			}
 			transport := New(Config{})
 			t.Cleanup(transport.CloseIdleConnections)
-			response, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: FollowRedirects})
+			response, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: FollowRedirects})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,7 +154,7 @@ func TestFetchExposeRedirectsReturnsRawAttemptBoundary(t *testing.T) {
 			}
 			transport := New(Config{})
 			t.Cleanup(transport.CloseIdleConnections)
-			response, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: ExposeRedirects})
+			response, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: ExposeRedirects})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -189,7 +189,7 @@ func TestFetchFollowRedirectsReturnsLimitAndPolicyErrors(t *testing.T) {
 	}
 	transport := New(Config{})
 	t.Cleanup(transport.CloseIdleConnections)
-	if _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{}); err == nil {
+	if _, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{}); err == nil {
 		t.Fatal("redirect limit did not return an error")
 	} else {
 		var urlError *url.Error
@@ -206,7 +206,7 @@ func TestFetchFollowRedirectsReturnsLimitAndPolicyErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := requests.Load()
-	if _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: RedirectPolicy(99)}); err == nil {
+	if _, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: RedirectPolicy(99)}); err == nil {
 		t.Fatal("invalid redirect policy accepted")
 	}
 	if got := requests.Load(); got != before {

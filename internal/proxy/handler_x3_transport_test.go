@@ -19,6 +19,7 @@ type x3TransportStep struct {
 	header     http.Header
 	body       io.ReadCloser
 	wireBytes  int
+	disclosure upstreamtransport.RequestDisclosure
 	err        error
 	onFetch    func()
 }
@@ -39,6 +40,7 @@ func x3HTTPResponseStep(
 	}
 	return x3TransportStep{
 		statusCode: statusCode, header: header, body: body, wireBytes: wireBytes,
+		disclosure: upstreamtransport.RequestDisclosureConfirmed,
 	}
 }
 
@@ -53,14 +55,14 @@ func (t *x3ScriptedTransport) FetchUpstream(
 	ctx context.Context,
 	request *http.Request,
 	_ upstreamtransport.ExecutionPolicy,
-) (*upstreamtransport.Response, error) {
+) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, upstreamtransport.RequestDisclosureNone, err
 	}
 	t.mu.Lock()
 	if t.next >= len(t.steps) {
 		t.mu.Unlock()
-		return nil, errors.New("unexpected upstream fetch")
+		return nil, upstreamtransport.RequestDisclosureUnknown, errors.New("unexpected upstream fetch")
 	}
 	step := t.steps[t.next]
 	t.next++
@@ -70,13 +72,14 @@ func (t *x3ScriptedTransport) FetchUpstream(
 		step.onFetch()
 	}
 	if step.err != nil {
-		return nil, step.err
+		return nil, step.disclosure, step.err
 	}
 	header := step.header.Clone()
-	return upstreamtransport.NewResponse(upstreamtransport.ResponseHead{
+	response, err := upstreamtransport.NewResponse(upstreamtransport.ResponseHead{
 		StatusCode: step.statusCode, Protocol: "HTTP/1.1", SourceHeader: header.Clone(), Header: header,
 		ContentLength: int64(step.wireBytes),
 	}, step.body)
+	return response, step.disclosure, err
 }
 
 func (t *x3ScriptedTransport) Count() int {

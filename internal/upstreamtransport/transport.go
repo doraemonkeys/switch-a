@@ -10,10 +10,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
@@ -66,9 +68,70 @@ type ExecutionPolicy struct {
 	Redirects RedirectPolicy
 }
 
+// RequestDisclosure describes whether request-owned identity or continuity
+// data may have crossed the upstream transport boundary. Only None is safe for
+// selecting a different authority; every other state deliberately preserves the
+// current authority because a partial write cannot be disproved.
+type RequestDisclosure uint8
+
+const (
+	RequestDisclosureUnknown RequestDisclosure = iota
+	RequestDisclosureNone
+	RequestDisclosurePossible
+	RequestDisclosureConfirmed
+)
+
+func (d RequestDisclosure) DefinitelyNotDisclosed() bool {
+	return d == RequestDisclosureNone
+}
+
+func (d RequestDisclosure) String() string {
+	switch d {
+	case RequestDisclosureNone:
+		return "none"
+	case RequestDisclosurePossible:
+		return "possible"
+	case RequestDisclosureConfirmed:
+		return "confirmed"
+	default:
+		return "unknown"
+	}
+}
+
+type requestDisclosureTracker struct {
+	state atomic.Uint32
+}
+
+func newRequestDisclosureTracker(initial RequestDisclosure) *requestDisclosureTracker {
+	tracker := &requestDisclosureTracker{}
+	tracker.state.Store(uint32(initial))
+	return tracker
+}
+
+func (t *requestDisclosureTracker) trace() *httptrace.ClientTrace {
+	markPossible := func() { t.state.Store(uint32(RequestDisclosurePossible)) }
+	return &httptrace.ClientTrace{
+		// A failed header write may have exposed only a prefix. Marking the first
+		// field is intentionally earlier than WroteHeaders/WroteRequest.
+		WroteHeaderField: func(string, []string) { markPossible() },
+		WroteHeaders:     markPossible,
+		WroteRequest:     func(httptrace.WroteRequestInfo) { markPossible() },
+	}
+}
+
+func (t *requestDisclosureTracker) disclosure(responseReceived bool) RequestDisclosure {
+	if responseReceived {
+		return RequestDisclosureConfirmed
+	}
+	return RequestDisclosure(t.state.Load())
+}
+
 type Transport struct {
 	followClient *http.Client
 	rawClient    *http.Client
+	// Injected RoundTrippers are disclosure-unknown unless they implement their
+	// own outer transport contract; only New installs the traced net/http path.
+	tracksRequestDisclosure bool
 }
 
 func New(config Config) *Transport {
@@ -88,7 +151,8 @@ func New(config Config) *Transport {
 		DisableCompression: true,
 	}
 	return &Transport{
-		followClient: &http.Client{Transport: roundTripper},
+		followClient:            &http.Client{Transport: roundTripper},
+		tracksRequestDisclosure: true,
 		rawClient: &http.Client{
 			Transport: roundTripper,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -188,27 +252,33 @@ func (t *Transport) Fetch(
 	ctx context.Context,
 	request *http.Request,
 	policy ExecutionPolicy,
-) (*Response, error) {
+) (*Response, RequestDisclosure, error) {
 	if t == nil || t.followClient == nil || t.rawClient == nil {
-		return nil, errors.New("upstream transport is not initialized")
+		return nil, RequestDisclosureNone, errors.New("upstream transport is not initialized")
 	}
 	if request == nil {
-		return nil, errors.New("upstream request is required")
+		return nil, RequestDisclosureNone, errors.New("upstream request is required")
 	}
 	if ctx == nil {
-		return nil, errors.New("upstream request context is required")
+		return nil, RequestDisclosureNone, errors.New("upstream request context is required")
 	}
 	client, err := t.clientFor(policy)
 	if err != nil {
-		return nil, err
+		return nil, RequestDisclosureNone, err
 	}
-	response, err := client.Do(request.WithContext(ctx)) //nolint:bodyclose // ownership moves through Response.TakeBody
+	initialDisclosure := RequestDisclosureUnknown
+	if t.tracksRequestDisclosure {
+		initialDisclosure = RequestDisclosureNone
+	}
+	disclosure := newRequestDisclosureTracker(initialDisclosure)
+	traceContext := httptrace.WithClientTrace(ctx, disclosure.trace())
+	response, err := client.Do(request.WithContext(traceContext)) //nolint:bodyclose // ownership moves through Response.TakeBody
 	if err != nil {
-		return nil, err
+		return nil, disclosure.disclosure(response != nil), err
 	}
 	sourceHeader := response.Header.Clone()
 	clientHeader := downstreamHeader(response)
-	return NewResponse(ResponseHead{
+	wrapped, wrapErr := NewResponse(ResponseHead{
 		StatusCode:    response.StatusCode,
 		Protocol:      response.Proto,
 		SourceHeader:  sourceHeader,
@@ -216,6 +286,7 @@ func (t *Transport) Fetch(
 		Trailer:       response.Trailer,
 		ContentLength: response.ContentLength,
 	}, response.Body)
+	return wrapped, disclosure.disclosure(true), wrapErr
 }
 
 func (t *Transport) clientFor(policy ExecutionPolicy) (*http.Client, error) {

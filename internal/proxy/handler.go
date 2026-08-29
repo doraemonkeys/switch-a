@@ -77,7 +77,7 @@ type HTTPTransport interface {
 		context.Context,
 		*http.Request,
 		upstreamtransport.ExecutionPolicy,
-	) (*upstreamtransport.Response, error)
+	) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error)
 }
 
 type ResponseAnalyzer interface {

@@ -41,7 +41,7 @@ func (t *Transport) FetchUpstream(
 	ctx context.Context,
 	request *http.Request,
 	policy upstreamtransport.ExecutionPolicy,
-) (*upstreamtransport.Response, error) {
+) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error) {
 	return t.upstream.Fetch(ctx, request, policy)
 }
 

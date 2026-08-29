@@ -533,6 +533,7 @@ type x3ExecutionConfig struct {
 	providers         []*model.Provider
 	selector          *x3Selector
 	transport         HTTPTransport
+	requestHeaders    http.Header
 	rules             *x3RuleProvider
 	analyzer          *x3AnalyzerSpy
 	health            *x3Health
@@ -565,6 +566,9 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 	requestBody := []byte(`{"model":"x3-model"}`)
 	request := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(requestBody))
 	authorizeProxyCodexTestRequest(request)
+	for name, values := range config.requestHeaders {
+		request.Header[name] = append([]string(nil), values...)
+	}
 	codexOperation, err := handler.codexHTTP.Begin(
 		request.Context(), request, APITypeCodex, x3TestRequestID, requestBody, requestBody,
 	)
@@ -901,6 +905,7 @@ type x3Selector struct {
 	events              *x3EventLog
 	permit              *x3Permit
 	reservation         *x3Reservation
+	alternateRequests   []*model.SelectRequest
 	sameReserves        int
 	dispatchReserveErr  error
 	dispatchActivateErr error
@@ -976,6 +981,9 @@ func (s *x3Selector) ReserveAlternate(
 		return nil, err
 	}
 	s.events.Add("alternate:reserve")
+	s.mu.Lock()
+	s.alternateRequests = append(s.alternateRequests, cloneHTTPSelectRequest(request))
+	s.mu.Unlock()
 	if s.alternate == nil {
 		return nil, internal.ErrNoProvider
 	}
@@ -999,6 +1007,15 @@ func (s *x3Selector) Reservation() *x3Reservation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.reservation
+}
+
+func (s *x3Selector) LastAlternateRequest() *model.SelectRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.alternateRequests) == 0 {
+		return nil
+	}
+	return cloneHTTPSelectRequest(s.alternateRequests[len(s.alternateRequests)-1])
 }
 
 func (s *x3Selector) SameRetryReservations() int {
