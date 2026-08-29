@@ -26,8 +26,9 @@ const (
 )
 
 // ApplyProviderCredentials is the final authority boundary for one physical
-// attempt. The candidate owns both the exact credential snapshot and expected
-// Authority, preventing a mutable route target from tearing selection and auth.
+// attempt. The candidate freezes the session identity and expected Authority;
+// the service reloads current credential material and proves that authority
+// before any provider secret is injected.
 func (s *Service) ApplyProviderCredentials(
 	ctx context.Context,
 	headers http.Header,
@@ -40,9 +41,9 @@ func (s *Service) ApplyProviderCredentials(
 	if headers == nil {
 		return codexidentity.AppliedIdentity{}, fmt.Errorf("upstream headers are required")
 	}
-	snapshot := candidate.Credential()
-	if strings.TrimSpace(snapshot.SessionID) == "" {
-		return codexidentity.AppliedIdentity{}, fmt.Errorf("credential candidate is required")
+	snapshot, snapshotErr := s.authoritativeCredentialSnapshot(ctx, candidate)
+	if snapshotErr != nil {
+		return codexidentity.AppliedIdentity{}, snapshotErr
 	}
 	if err := snapshot.RequireResolvedSubject(); err != nil {
 		return codexidentity.AppliedIdentity{}, err
@@ -123,10 +124,59 @@ func (s *Service) ApplyProviderCredentials(
 	s.logger.Debug("provider credential applied",
 		zap.String("route_target_id", candidate.RouteTargetID()),
 		zap.String("credential_session_id", snapshot.SessionID),
-		zap.Int64("credential_version", snapshot.Version),
+		zap.Int64("selected_credential_version", candidate.CredentialVersion()),
+		zap.Int64("applied_credential_version", snapshot.Version),
+		zap.Bool("credential_revision_advanced", snapshot.Version > candidate.CredentialVersion()),
 		zap.String("credential_kind", string(snapshot.Kind)),
 	)
 	return applied, nil
+}
+
+type credentialSessionReader interface {
+	GetCredentialSession(context.Context, string) (*credentialsession.Session, error)
+}
+
+func (s *Service) authoritativeCredentialSnapshot(
+	ctx context.Context,
+	candidate codexidentity.CandidateSnapshot,
+) (credentialsession.Snapshot, error) {
+	selected := candidate.Credential()
+	if strings.TrimSpace(selected.SessionID) == "" {
+		return credentialsession.Snapshot{}, fmt.Errorf("credential candidate is required")
+	}
+	reader, available := s.credentialStore.(credentialSessionReader)
+	if !available {
+		// A service without persistence cannot observe a newer revision; the
+		// immutable selection snapshot is authoritative in that reduced mode.
+		return selected, nil
+	}
+	session, err := reader.GetCredentialSession(ctx, candidate.CredentialSessionID())
+	if err != nil {
+		return credentialsession.Snapshot{}, fmt.Errorf(
+			"load credential session %q for dispatch: %w",
+			candidate.CredentialSessionID(), err,
+		)
+	}
+	if session == nil || strings.TrimSpace(session.ID) != candidate.CredentialSessionID() {
+		return credentialsession.Snapshot{}, fmt.Errorf(
+			"credential session %q is unavailable for dispatch",
+			candidate.CredentialSessionID(),
+		)
+	}
+	live, err := session.Snapshot()
+	if err != nil {
+		return credentialsession.Snapshot{}, fmt.Errorf(
+			"snapshot credential session %q for dispatch: %w",
+			candidate.CredentialSessionID(), err,
+		)
+	}
+	if live.Version < candidate.CredentialVersion() {
+		return credentialsession.Snapshot{}, fmt.Errorf(
+			"credential session %q revision regressed from %d to %d",
+			candidate.CredentialSessionID(), candidate.CredentialVersion(), live.Version,
+		)
+	}
+	return live, nil
 }
 
 func (s *Service) logAppliedIdentityMismatch(candidate codexidentity.CandidateSnapshot, err error) {

@@ -193,6 +193,34 @@ func TestApplyProviderCredentialsUsesActualChatGPTAccount(t *testing.T) {
 	}
 }
 
+func TestApplyProviderCredentialsUsesLatestSameAuthorityRevision(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 27, 1, 0, 0, 0, time.UTC)
+	finalURL := mustAppliedIdentityURL(t, "https://chatgpt.com/backend-api/codex/responses")
+	selected := chatGPTCredentialSnapshot(t, "login-session", "acct-live", "access-old", now.Add(time.Hour))
+	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, "openai", selected, finalURL)
+	live := chatGPTCredentialSnapshot(t, "login-session", "acct-live", "access-new", now.Add(2*time.Hour))
+	live.Version = selected.Version + 1
+	store := &appliedIdentityCredentialStore{session: sessionFromAppliedSnapshot(t, live)}
+	headers := make(http.Header)
+
+	applied, err := NewService(Config{Clock: fixedClock{now: now}, CredentialStore: store}).ApplyProviderCredentials(
+		context.Background(), headers, candidate, authModeBearer, authModeBearer, nil, finalURL,
+	)
+	if err != nil {
+		t.Fatalf("ApplyProviderCredentials() error = %v", err)
+	}
+	if !applied.Matches(candidate.Authority()) {
+		t.Fatal("applied identity did not preserve the selected authority")
+	}
+	if got := headers.Get("Authorization"); got != "Bearer access-new" {
+		t.Fatalf("Authorization = %q, want latest credential revision", got)
+	}
+	if got := headers.Get("ChatGPT-Account-Id"); got != "acct-live" {
+		t.Fatalf("ChatGPT-Account-Id = %q, want frozen account authority", got)
+	}
+}
+
 func TestApplyProviderCredentialsRefreshesOnlyAfterIdentityPreflight(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, time.August, 27, 1, 0, 0, 0, time.UTC)

@@ -22,6 +22,7 @@ type x3TransportStep struct {
 	disclosure upstreamtransport.RequestDisclosure
 	err        error
 	onFetch    func()
+	onRequest  func(*http.Request)
 }
 
 func x3HTTPResponseStep(
@@ -68,6 +69,9 @@ func (t *x3ScriptedTransport) FetchUpstream(
 	t.next++
 	t.mu.Unlock()
 	t.events.Add("fetch:" + request.URL.Host)
+	if step.onRequest != nil {
+		step.onRequest(request)
+	}
 	if step.onFetch != nil {
 		step.onFetch()
 	}

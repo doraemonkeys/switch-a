@@ -25,10 +25,9 @@ type groupSource interface {
 	GetGroup(ctx context.Context, id string) (*model.Group, error)
 }
 
-// providerCandidateSnapshot binds route facts, the API-scoped credential
-// session, and its resolved security identity at one selection boundary.
-// Revalidation builds a new boundary rather than mixing live Provider fields
-// with the credential used by the original lease.
+// providerCandidateSnapshot binds route facts, the selected credential revision,
+// and its resolved security identity at one selection boundary. Revalidation
+// may adopt a newer revision only while the session and authority remain equal.
 type providerCandidateSnapshot struct {
 	provider         *model.Provider
 	credential       credentialsession.Snapshot

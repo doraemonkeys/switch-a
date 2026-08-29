@@ -111,9 +111,9 @@ func (l *ProviderLease) Provider() *model.Provider {
 	return l.state.provider.Load()
 }
 
-// CandidateSnapshot returns the immutable route/session identity resolved at
-// selection time. Authentication consumers must use this snapshot instead of
-// re-reading Provider credential projections.
+// CandidateSnapshot returns the immutable route/session identity and selected
+// credential revision. Repository-backed authentication may adopt a newer
+// revision only after validating it against this frozen authority.
 func (l *ProviderLease) CandidateSnapshot() (codexidentity.CandidateSnapshot, bool) {
 	if l == nil || l.state == nil || !l.state.candidateResolved {
 		return codexidentity.CandidateSnapshot{}, false

@@ -100,7 +100,7 @@ func (s *Selector) revalidateProvider(
 	}
 	liveCandidate, liveResolved := scope.CandidateSnapshot(provider.ID)
 	leaseCandidate, leaseResolved := lease.CandidateSnapshot()
-	if leaseResolved && (!liveResolved || !sameCandidateIdentity(leaseCandidate, liveCandidate)) {
+	if leaseResolved && (!liveResolved || !sameCandidateDispatchIdentity(leaseCandidate, liveCandidate)) {
 		return nil, rejectProvider(errorrule.ReasonAuthUnavailable, nil)
 	}
 	provider = scope.Provider(provider.ID)
@@ -148,10 +148,14 @@ func providerLookupFailure(err error, notFoundReason errorrule.DecisionReason) e
 	return rejectProvider(errorrule.ReasonProviderLookupError, err)
 }
 
-func sameCandidateIdentity(left, right codexidentity.CandidateSnapshot) bool {
+// Credential versions are mutable revisions of one credential session, not a
+// routing identity dimension. OAuth refresh deliberately advances the revision
+// while preserving the session subject and upstream authority. Authentication
+// reloads the authoritative revision before every dispatch and validates it
+// against this frozen identity boundary.
+func sameCandidateDispatchIdentity(left, right codexidentity.CandidateSnapshot) bool {
 	return left.RouteTargetID() == right.RouteTargetID() &&
 		left.CredentialSessionID() == right.CredentialSessionID() &&
-		left.CredentialVersion() == right.CredentialVersion() &&
 		left.APIType() == right.APIType() &&
 		left.Authority().Equal(right.Authority())
 }

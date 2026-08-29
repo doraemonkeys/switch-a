@@ -530,6 +530,30 @@ func TestSameProviderRetryStableRejectionReasons(t *testing.T) {
 	}
 }
 
+func TestSameProviderDispatchAcceptsCredentialRevisionWithinFrozenAuthority(t *testing.T) {
+	store := newLifecycleStore(retryTestProvider("provider-a"))
+	selector, _ := newRetryTestSelector(store, nil)
+	current := selectRetryCurrent(t, selector)
+	store.mutate(func(store *lifecycleStore) {
+		credential := &store.providers["provider-a"].CredentialSessions[0].Credential
+		credential.Version++
+		credential.SecretData = "rotated-secret-for-the-same-subject"
+	})
+
+	permit, err := selector.ReserveSameProviderDispatch(context.Background(), SameProviderDispatchRequest{
+		Current: current.Lease,
+		Request: &model.SelectRequest{OperationID: "credential-refresh", APIType: "claude"},
+	})
+	if err != nil {
+		t.Fatalf("ReserveSameProviderDispatch() error = %v", err)
+	}
+	if permit == nil {
+		t.Fatal("ReserveSameProviderDispatch() returned no permit")
+	}
+	permit.Release()
+	current.Lease.Release()
+}
+
 func TestSameProviderRetryRevalidationRacesObserveLiveMutation(t *testing.T) {
 	tests := []struct {
 		name   string

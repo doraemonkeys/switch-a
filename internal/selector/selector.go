@@ -84,8 +84,9 @@ func (r *SelectResult) Provider() *model.Provider {
 	return r.Lease.Provider()
 }
 
-// CandidateSnapshot exposes the exact selection-time identity snapshot carried
-// by the lease so authentication does not independently resolve mutable state.
+// CandidateSnapshot exposes the selection-time identity boundary carried by the
+// lease. Authentication may reload credential material, but must validate it
+// against this authority before dispatch.
 func (r *SelectResult) CandidateSnapshot() (codexidentity.CandidateSnapshot, bool) {
 	if r == nil || r.Lease == nil {
 		return codexidentity.CandidateSnapshot{}, false

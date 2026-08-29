@@ -41,7 +41,7 @@ func (s *Selector) SelectActive(
 	}
 	candidate, resolved := scope.CandidateSnapshot(provider.ID)
 	activeCandidate, activeResolved := active.CandidateSnapshot()
-	if activeResolved && (!resolved || !sameCandidateIdentity(activeCandidate, candidate)) {
+	if activeResolved && (!resolved || !sameCandidateDispatchIdentity(activeCandidate, candidate)) {
 		return nil, internal.ErrNoProvider
 	}
 

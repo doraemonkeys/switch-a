@@ -20,9 +20,10 @@ type AuthorityResolver struct{}
 // prefer explicit capability wiring.
 func NewAuthorityResolver() AuthorityResolver { return AuthorityResolver{} }
 
-// CandidateSnapshot is the complete, immutable selection-time security
-// projection. SecretData and mutable AuthState diagnostics are intentionally
-// discarded during resolution.
+// CandidateSnapshot freezes the route, credential-session identity, selected
+// revision, and protocol authority at selection time. Credential revisions may
+// advance later, but dispatch must continue to prove the same session subject
+// and authority.
 type CandidateSnapshot struct {
 	routeTargetID       string
 	credentialSessionID string
@@ -84,9 +85,10 @@ func (s CandidateSnapshot) RouteTargetID() string       { return s.routeTargetID
 func (s CandidateSnapshot) CredentialSessionID() string { return s.credentialSessionID }
 func (s CandidateSnapshot) CredentialVersion() int64    { return s.credentialVersion }
 
-// Credential returns a defensive clone of the exact session snapshot used to
-// derive Authority. Authentication must use this value rather than re-reading
-// mutable provider/session state and creating a torn selection lease.
+// Credential returns a defensive clone of the selection-time session revision.
+// It supports capture and reduced runtimes without a credential repository;
+// repository-backed authentication reloads the current revision and validates
+// it against Authority before injection.
 func (s CandidateSnapshot) Credential() credentialsession.Snapshot {
 	return cloneCredentialSnapshot(s.credential)
 }
