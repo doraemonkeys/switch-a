@@ -3,6 +3,7 @@ import { PROVIDER_CREDENTIAL_TYPES } from "../config/constants";
 import type { Provider } from "../api";
 import {
   formatProviderCredentialType,
+  resolveCodexAuthExportAvailability,
   resolveLoginAuthView,
   resolveProviderAuthView,
 } from "./providerAuth";
@@ -89,5 +90,41 @@ describe("providerAuth", () => {
       status: "active",
       email: "user@example.com",
     });
+  });
+
+  it("derives Codex auth export blockers from every route sharing the session", () => {
+    const pausedRoute = {
+      ...providerWithAuthState({ status: "active" }),
+      enabled: false,
+    };
+    const liveRoute = {
+      ...providerWithAuthState({ status: "active" }),
+      id: "provider-live",
+      name: "Live Provider",
+      enabled: true,
+    };
+
+    const blocked = resolveCodexAuthExportAvailability(pausedRoute, [
+      pausedRoute,
+      liveRoute,
+    ]);
+
+    expect(blocked.kind).toBe("blocked");
+    if (blocked.kind === "blocked") {
+      expect(blocked.session.id).toBe("credential-1");
+      expect(blocked.referencingRouteTargets.map(({ id }) => id)).toEqual([
+        "provider-1",
+        "provider-live",
+      ]);
+      expect(blocked.blockingRouteTargets.map(({ id }) => id)).toEqual([
+        "provider-live",
+      ]);
+    }
+
+    const available = resolveCodexAuthExportAvailability(pausedRoute, [
+      pausedRoute,
+      { ...liveRoute, enabled: false },
+    ]);
+    expect(available.kind).toBe("available");
   });
 });

@@ -148,6 +148,78 @@ export function resolveProviderChatGPTCredentialSession(
   );
 }
 
+interface CodexAuthExportAvailabilityBase {
+  session: ProviderCredentialSession;
+  referencingRouteTargets: Provider[];
+}
+
+export type CodexAuthExportAvailability =
+  | {
+      kind: "unavailable";
+      reason: "missing_chatgpt_session" | "credential_inactive";
+      session: ProviderCredentialSession | null;
+      referencingRouteTargets: Provider[];
+    }
+  | (CodexAuthExportAvailabilityBase & {
+      kind: "blocked";
+      blockingRouteTargets: Provider[];
+    })
+  | (CodexAuthExportAvailabilityBase & {
+      kind: "available";
+      blockingRouteTargets: [];
+    });
+
+export function resolveCodexAuthExportAvailability(
+  provider: Provider,
+  providers: Provider[],
+): CodexAuthExportAvailability {
+  const session = resolveProviderChatGPTCredentialSession(provider);
+  if (!session) {
+    return {
+      kind: "unavailable",
+      reason: "missing_chatgpt_session",
+      session: null,
+      referencingRouteTargets: [],
+    };
+  }
+  if (session.auth_state.status !== "active") {
+    return {
+      kind: "unavailable",
+      reason: "credential_inactive",
+      session,
+      referencingRouteTargets: [],
+    };
+  }
+
+  const routeTargets = providers.some(
+    (candidate) => candidate.id === provider.id,
+  )
+    ? providers
+    : [...providers, provider];
+  const referencingRouteTargets = routeTargets.filter((candidate) =>
+    candidate.api_types.some(
+      (entry) => entry.credential_session_id === session.id,
+    ),
+  );
+  const blockingRouteTargets = referencingRouteTargets.filter(
+    (candidate) => candidate.enabled,
+  );
+  if (blockingRouteTargets.length > 0) {
+    return {
+      kind: "blocked",
+      session,
+      referencingRouteTargets,
+      blockingRouteTargets,
+    };
+  }
+  return {
+    kind: "available",
+    session,
+    referencingRouteTargets,
+    blockingRouteTargets: [],
+  };
+}
+
 export function hasProviderCredentialSnapshot(
   provider?: Provider | null,
 ): boolean {

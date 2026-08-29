@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 )
@@ -123,16 +122,8 @@ func (s *SQLiteStore) UpdateCredentialSessionAuthState(
 	return err
 }
 
-// CredentialSessionHasEnabledRoute reports whether exporting or refreshing a
-// shared login session would affect at least one live route target.
-func (s *SQLiteStore) CredentialSessionHasEnabledRoute(ctx context.Context, sessionID string) (bool, error) {
-	var count int64
-	err := s.db.WithContext(ctx).Table("route_target_credentials AS bindings").
-		Joins("JOIN providers ON providers.id = bindings.route_target_id").
-		Where("bindings.session_id = ? AND providers.enabled = ?", strings.TrimSpace(sessionID), true).
-		Count(&count).Error
-	if err != nil {
-		return false, fmt.Errorf("count enabled routes for credential session %q: %w", sessionID, err)
-	}
-	return count != 0, nil
+// CredentialSessionEnabledRouteTargetIDs identifies the live owners that must
+// pause before a refresh-capable credential can leave switch-a.
+func (s *SQLiteStore) CredentialSessionEnabledRouteTargetIDs(ctx context.Context, sessionID string) ([]string, error) {
+	return s.credentialSessions.ListEnabledRouteTargetIDs(ctx, sessionID)
 }

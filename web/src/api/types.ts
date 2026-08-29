@@ -48,6 +48,8 @@ export interface ApiErrorDetails {
   conflicts?: ProviderImportConflictDetail[];
   account_id?: string;
   provider_id?: string;
+  credential_session_id?: string;
+  blocking_route_target_ids?: string[];
   auth_status?: ProviderAuthStatus;
   auth_reason?: string;
 }

@@ -13,6 +13,14 @@ import (
 
 const codexAuthExportFilename = "auth.json"
 
+const codexAuthExportBlockedDetailKind = "credential_session_export_blocked"
+
+type codexAuthExportBlockedDetails struct {
+	Kind                   string   `json:"kind"`
+	CredentialSessionID    string   `json:"credential_session_id"`
+	BlockingRouteTargetIDs []string `json:"blocking_route_target_ids"`
+}
+
 // StartChatGPTProviderLogin starts a temporary login that can be consumed only
 // by credential-session creation; route targets never own the resulting secret.
 func (h *Handler) StartChatGPTProviderLogin(w http.ResponseWriter, _ *http.Request) {
@@ -87,7 +95,7 @@ func (h *Handler) ExportCredentialSessionCodexAuth(w http.ResponseWriter, r *htt
 		h.writeCredentialSessionError(w, "export", id, err)
 		return
 	}
-	hasEnabledRoute, err := repository.CredentialSessionHasEnabledRoute(r.Context(), id)
+	blockingRouteTargetIDs, err := repository.CredentialSessionEnabledRouteTargetIDs(r.Context(), id)
 	if err != nil {
 		h.writeCredentialSessionError(w, "export", id, err)
 		return
@@ -97,13 +105,25 @@ func (h *Handler) ExportCredentialSessionCodexAuth(w http.ResponseWriter, r *htt
 		h.writeCredentialSessionError(w, "export", id, err)
 		return
 	}
-	document, err := providerauth.BuildCodexAuthDocument(&snapshot, hasEnabledRoute)
+	document, err := providerauth.BuildCodexAuthDocument(&snapshot, len(blockingRouteTargetIDs) != 0)
 	if err != nil {
 		switch {
 		case errors.Is(err, providerauth.ErrCodexAuthExportRequiresChatGPT):
 			writeError(w, http.StatusConflict, ErrCodeConflict, "Codex auth export is only supported for GPT credential sessions")
 		case errors.Is(err, providerauth.ErrCodexAuthExportRequiresPaused):
-			writeError(w, http.StatusConflict, ErrCodeConflict, "Disable every referencing provider before exporting Codex auth.json")
+			writeJSON(w, http.StatusConflict, struct {
+				Code    string                        `json:"code"`
+				Message string                        `json:"message"`
+				Details codexAuthExportBlockedDetails `json:"details"`
+			}{
+				Code:    ErrCodeConflict,
+				Message: "Disable every referencing route target before exporting Codex auth.json",
+				Details: codexAuthExportBlockedDetails{
+					Kind:                   codexAuthExportBlockedDetailKind,
+					CredentialSessionID:    id,
+					BlockingRouteTargetIDs: blockingRouteTargetIDs,
+				},
+			})
 		default:
 			h.logger.Warn("credential session unavailable for Codex auth export", zap.String("session_id", id), zap.Error(err))
 			writeError(w, http.StatusConflict, ErrCodeConflict, "Credential session does not have active GPT credentials to export")

@@ -7,7 +7,9 @@ import {
 } from "../../lib/providerUsage";
 import {
   AUTH_STATUS_BADGE_CLASS,
+  resolveCodexAuthExportAvailability,
   resolveProviderAuthView,
+  type CodexAuthExportAvailability,
 } from "../../lib/providerAuth";
 import { stringToColor } from "../../lib/utils";
 import { RecoveryTimer } from "../../components/detail-drawers/RecoveryTimer";
@@ -45,7 +47,7 @@ export interface ProvidersTableBodyProps {
   onDelete: (provider: Provider) => void;
   onReset: (provider: Provider) => void;
   onExportCodexAuth: (provider: Provider) => void;
-  exportingProviderId: string | null;
+  exportingCredentialSessionId: string | null;
   onAddClick: () => void;
   onImportClick: () => void;
   onGroupClick?: (groupId: string) => void;
@@ -155,9 +157,28 @@ function RecoveryCell({
   return <span className="text-text-muted/50 text-sm">—</span>;
 }
 
+function describeCodexAuthExportTitle(
+  availability: CodexAuthExportAvailability,
+): string | undefined {
+  if (availability.kind === "unavailable") {
+    return undefined;
+  }
+  const referencingProviderNames = availability.referencingRouteTargets
+    .map(({ name }) => name)
+    .join(", ");
+  if (availability.kind === "blocked") {
+    const blockingProviderNames = availability.blockingRouteTargets
+      .map(({ name }) => name)
+      .join(", ");
+    return `Cannot export credential session ${availability.session.id}. Referencing providers: ${referencingProviderNames}. Pause enabled providers: ${blockingProviderNames}`;
+  }
+  return `Export Codex auth.json for credential session ${availability.session.id}. Referencing providers: ${referencingProviderNames}. Keep every referencing provider paused while the file is in use`;
+}
+
 // Action buttons cell
 function ActionsCell({
   provider,
+  providers,
   status,
   onViewDetail,
   onReset,
@@ -165,9 +186,10 @@ function ActionsCell({
   onEdit,
   onDelete,
   onExportCodexAuth,
-  exportingProviderId,
+  exportingCredentialSessionId,
 }: {
   provider: Provider;
+  providers: Provider[];
   status: string;
   onViewDetail?: (provider: Provider) => void;
   onReset: (provider: Provider) => void;
@@ -175,15 +197,18 @@ function ActionsCell({
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onExportCodexAuth: (provider: Provider) => void;
-  exportingProviderId: string | null;
+  exportingCredentialSessionId: string | null;
 }) {
   const showReset = status === "unhealthy" || status === "pending-recovery";
-  const authView = resolveProviderAuthView(provider);
-  const canExportCodexAuth =
-    authView?.type === "chatgpt" &&
-    !provider.enabled &&
-    authView.status === "active";
-  const isExporting = exportingProviderId === provider.id;
+  const exportAvailability = resolveCodexAuthExportAvailability(
+    provider,
+    providers,
+  );
+  const showExportCodexAuth = exportAvailability.kind !== "unavailable";
+  const isExportBlocked = exportAvailability.kind === "blocked";
+  const isExporting =
+    exportAvailability.session?.id === exportingCredentialSessionId;
+  const exportTitle = describeCodexAuthExportTitle(exportAvailability);
 
   return (
     <div className="flex items-center justify-end gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity">
@@ -214,14 +239,14 @@ function ActionsCell({
           <Play className="w-4 h-4" />
         )}
       </button>
-      {canExportCodexAuth && (
+      {showExportCodexAuth && (
         <button
           type="button"
           onClick={() => onExportCodexAuth(provider)}
-          disabled={isExporting}
-          className="p-1.5 text-text-muted hover:text-primary hover:bg-primary-light rounded-md transition-colors disabled:cursor-wait disabled:opacity-50"
-          title="Export Codex auth.json; keep this provider paused while the file is in use"
-          aria-label={`Export Codex auth.json for ${provider.name}`}
+          disabled={isExporting || isExportBlocked}
+          className={`p-1.5 text-text-muted hover:text-primary hover:bg-primary-light rounded-md transition-colors disabled:opacity-50 ${isExporting ? "disabled:cursor-wait" : "disabled:cursor-not-allowed"}`}
+          title={exportTitle}
+          aria-label={exportTitle}
         >
           <Download
             className={`w-4 h-4 ${isExporting ? "animate-pulse" : ""}`}
@@ -370,24 +395,26 @@ function FailCountCell({ failCount }: { failCount: number }) {
 // Provider row component
 function ProviderRow({
   provider,
+  providers,
   onToggle,
   onEdit,
   onDelete,
   onReset,
   onExportCodexAuth,
-  exportingProviderId,
+  exportingCredentialSessionId,
   onGroupClick,
   onViewDetail,
   getGroupName,
   getGroupEnabled,
 }: {
   provider: Provider;
+  providers: Provider[];
   onToggle: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onReset: (provider: Provider) => void;
   onExportCodexAuth: (provider: Provider) => void;
-  exportingProviderId: string | null;
+  exportingCredentialSessionId: string | null;
   onGroupClick?: (groupId: string) => void;
   onViewDetail?: (provider: Provider) => void;
   getGroupName: (groupId: string | null) => string;
@@ -483,6 +510,7 @@ function ProviderRow({
       <td className="px-4 py-3 align-middle text-right whitespace-nowrap">
         <ActionsCell
           provider={provider}
+          providers={providers}
           status={status}
           onViewDetail={onViewDetail}
           onReset={onReset}
@@ -490,7 +518,7 @@ function ProviderRow({
           onEdit={onEdit}
           onDelete={onDelete}
           onExportCodexAuth={onExportCodexAuth}
-          exportingProviderId={exportingProviderId}
+          exportingCredentialSessionId={exportingCredentialSessionId}
         />
       </td>
     </tr>
@@ -506,7 +534,7 @@ export function ProvidersTableBody({
   onDelete,
   onReset,
   onExportCodexAuth,
-  exportingProviderId,
+  exportingCredentialSessionId,
   onAddClick,
   onImportClick,
   onGroupClick,
@@ -578,12 +606,13 @@ export function ProvidersTableBody({
         <ProviderRow
           key={provider.id}
           provider={provider}
+          providers={providers}
           onToggle={onToggle}
           onEdit={onEdit}
           onDelete={onDelete}
           onReset={onReset}
           onExportCodexAuth={onExportCodexAuth}
-          exportingProviderId={exportingProviderId}
+          exportingCredentialSessionId={exportingCredentialSessionId}
           onGroupClick={onGroupClick}
           onViewDetail={onViewDetail}
           getGroupName={getGroupName}

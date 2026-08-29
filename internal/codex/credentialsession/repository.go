@@ -231,6 +231,20 @@ func (r *Repository) ListRouteTargetIDs(ctx context.Context, sessionID string) (
 	return ids, nil
 }
 
+func (r *Repository) ListEnabledRouteTargetIDs(ctx context.Context, sessionID string) ([]string, error) {
+	var ids []string
+	if err := r.db.WithContext(ctx).
+		Table("route_target_credentials AS bindings").
+		Distinct("bindings.route_target_id").
+		Joins("JOIN providers ON providers.id = bindings.route_target_id").
+		Where("bindings.session_id = ? AND providers.enabled = ?", strings.TrimSpace(sessionID), true).
+		Order("bindings.route_target_id ASC").
+		Pluck("bindings.route_target_id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("list enabled route targets for credential session %q: %w", sessionID, err)
+	}
+	return ids, nil
+}
+
 func (r *Repository) DeleteRouteBindings(ctx context.Context, routeTargetID string) error {
 	if err := r.db.WithContext(ctx).Where("route_target_id = ?", strings.TrimSpace(routeTargetID)).Delete(&RouteBinding{}).Error; err != nil {
 		return fmt.Errorf("delete route credential bindings for %q: %w", routeTargetID, err)

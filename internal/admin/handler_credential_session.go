@@ -25,7 +25,7 @@ type credentialSessionStore interface {
 	DeleteCredentialSession(context.Context, string) error
 	WithCredentialSessionMutations(context.Context, []string) (context.Context, func(), error)
 	UpdateCredentialSessionCAS(context.Context, string, int64, string, credentialsession.Subject, credentialsession.AuthState) (int64, error)
-	CredentialSessionHasEnabledRoute(context.Context, string) (bool, error)
+	CredentialSessionEnabledRouteTargetIDs(context.Context, string) ([]string, error)
 }
 
 type CredentialSessionPayload struct {

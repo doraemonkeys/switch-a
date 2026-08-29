@@ -51,9 +51,9 @@ func TestSQLiteCredentialSessionCapabilitiesTrackSubjectsAndLiveRoutes(t *testin
 	if err := store.UpdateProvider(ctx, provider); err != nil {
 		t.Fatalf("UpdateProvider(disabled) error = %v", err)
 	}
-	hasEnabledRoute, err := store.CredentialSessionHasEnabledRoute(ctx, " "+oldSession.ID+" ")
-	if err != nil || hasEnabledRoute {
-		t.Fatalf("CredentialSessionHasEnabledRoute(disabled) = (%t, %v)", hasEnabledRoute, err)
+	enabledRouteTargetIDs, err := store.CredentialSessionEnabledRouteTargetIDs(ctx, " "+oldSession.ID+" ")
+	if err != nil || len(enabledRouteTargetIDs) != 0 {
+		t.Fatalf("CredentialSessionEnabledRouteTargetIDs(disabled) = (%#v, %v)", enabledRouteTargetIDs, err)
 	}
 	if err := store.BindCredentialSession(ctx, credentialsession.RouteBinding{
 		RouteTargetID: provider.ID, APIType: "codex", SessionID: pendingSession.ID,
@@ -74,9 +74,9 @@ func TestSQLiteCredentialSessionCapabilitiesTrackSubjectsAndLiveRoutes(t *testin
 	if err := store.UpdateProvider(ctx, provider); err != nil {
 		t.Fatalf("UpdateProvider(enabled) error = %v", err)
 	}
-	hasEnabledRoute, err = store.CredentialSessionHasEnabledRoute(ctx, oldSession.ID)
-	if err != nil || !hasEnabledRoute {
-		t.Fatalf("CredentialSessionHasEnabledRoute(enabled) = (%t, %v)", hasEnabledRoute, err)
+	enabledRouteTargetIDs, err = store.CredentialSessionEnabledRouteTargetIDs(ctx, oldSession.ID)
+	if err != nil || !reflect.DeepEqual(enabledRouteTargetIDs, []string{provider.ID}) {
+		t.Fatalf("CredentialSessionEnabledRouteTargetIDs(enabled) = (%#v, %v)", enabledRouteTargetIDs, err)
 	}
 	if err := store.BindCredentialSession(ctx, credentialsession.RouteBinding{
 		RouteTargetID: provider.ID,
@@ -267,8 +267,8 @@ func TestSQLiteCredentialSessionCapabilitiesPropagateContextCancellation(t *test
 	if _, err := store.InspectCodexPersistence(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("InspectCodexPersistence(canceled) error = %v", err)
 	}
-	if _, err := store.CredentialSessionHasEnabledRoute(ctx, "session"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("CredentialSessionHasEnabledRoute(canceled) error = %v", err)
+	if _, err := store.CredentialSessionEnabledRouteTargetIDs(ctx, "session"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CredentialSessionEnabledRouteTargetIDs(canceled) error = %v", err)
 	}
 	if _, err := store.CreateCredentialSession(ctx, &credentialsession.Session{
 		ID:         "canceled",

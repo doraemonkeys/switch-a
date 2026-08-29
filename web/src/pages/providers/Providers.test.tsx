@@ -39,7 +39,7 @@ function createProviderActions() {
     handleRefreshCredential: vi.fn(),
     handleRefreshUsage: vi.fn(),
     handleExportCodexAuth: vi.fn(),
-    exportingProviderId: null,
+    exportingCredentialSessionId: null,
   };
 }
 

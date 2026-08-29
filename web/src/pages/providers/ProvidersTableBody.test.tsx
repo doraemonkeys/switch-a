@@ -75,7 +75,7 @@ describe("ProvidersTableBody", () => {
             onDelete={vi.fn()}
             onReset={vi.fn()}
             onExportCodexAuth={vi.fn()}
-            exportingProviderId={null}
+            exportingCredentialSessionId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
@@ -123,7 +123,7 @@ describe("ProvidersTableBody", () => {
             onDelete={vi.fn()}
             onReset={vi.fn()}
             onExportCodexAuth={vi.fn()}
-            exportingProviderId={null}
+            exportingCredentialSessionId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
@@ -157,7 +157,7 @@ describe("ProvidersTableBody", () => {
             onDelete={vi.fn()}
             onReset={vi.fn()}
             onExportCodexAuth={vi.fn()}
-            exportingProviderId={null}
+            exportingCredentialSessionId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "GPT Account"}
@@ -174,9 +174,15 @@ describe("ProvidersTableBody", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers Codex auth export only for a paused GPT provider with active auth", async () => {
+  it("offers Codex auth export when every route sharing the session is paused", async () => {
     const user = userEvent.setup();
     const pausedProvider = { ...buildProvider(), enabled: false };
+    const otherPausedProvider = {
+      ...buildProvider(),
+      id: "provider-gpt-secondary",
+      name: "Secondary GPT Provider",
+      enabled: false,
+    };
     const onExportCodexAuth = vi.fn();
 
     render(
@@ -184,14 +190,14 @@ describe("ProvidersTableBody", () => {
         <tbody>
           <ProvidersTableBody
             loading={false}
-            providers={[pausedProvider]}
+            providers={[pausedProvider, otherPausedProvider]}
             filteredProviders={[pausedProvider]}
             onToggle={vi.fn()}
             onEdit={vi.fn()}
             onDelete={vi.fn()}
             onReset={vi.fn()}
             onExportCodexAuth={onExportCodexAuth}
-            exportingProviderId={null}
+            exportingCredentialSessionId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
@@ -203,28 +209,35 @@ describe("ProvidersTableBody", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "Export Codex auth.json for GPT Provider",
+        name: "Export Codex auth.json for credential session credential-gpt. Referencing providers: GPT Provider, Secondary GPT Provider. Keep every referencing provider paused while the file is in use",
       }),
     );
     expect(onExportCodexAuth).toHaveBeenCalledWith(pausedProvider);
   });
 
-  it("hides Codex auth export until the GPT provider is paused", () => {
-    const provider = buildProvider();
+  it("disables export and names every live route sharing the session", () => {
+    const pausedProvider = { ...buildProvider(), enabled: false };
+    const liveProvider = {
+      ...buildProvider(),
+      id: "provider-gpt-live",
+      name: "Live GPT Provider",
+      enabled: true,
+    };
+    const onExportCodexAuth = vi.fn();
 
     render(
       <table>
         <tbody>
           <ProvidersTableBody
             loading={false}
-            providers={[provider]}
-            filteredProviders={[provider]}
+            providers={[pausedProvider, liveProvider]}
+            filteredProviders={[pausedProvider]}
             onToggle={vi.fn()}
             onEdit={vi.fn()}
             onDelete={vi.fn()}
             onReset={vi.fn()}
-            onExportCodexAuth={vi.fn()}
-            exportingProviderId={null}
+            onExportCodexAuth={onExportCodexAuth}
+            exportingCredentialSessionId={null}
             onAddClick={vi.fn()}
             onImportClick={vi.fn()}
             getGroupName={() => "Ungrouped"}
@@ -234,8 +247,14 @@ describe("ProvidersTableBody", () => {
       </table>,
     );
 
-    expect(
-      screen.queryByRole("button", { name: /Export Codex auth\.json/ }),
-    ).not.toBeInTheDocument();
+    const exportButton = screen.getByRole("button", {
+      name: "Cannot export credential session credential-gpt. Referencing providers: GPT Provider, Live GPT Provider. Pause enabled providers: Live GPT Provider",
+    });
+    expect(exportButton).toBeDisabled();
+    expect(exportButton).toHaveAttribute(
+      "title",
+      "Cannot export credential session credential-gpt. Referencing providers: GPT Provider, Live GPT Provider. Pause enabled providers: Live GPT Provider",
+    );
+    expect(onExportCodexAuth).not.toHaveBeenCalled();
   });
 });

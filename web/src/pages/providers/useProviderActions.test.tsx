@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiContext } from "../../api/context";
-import { type ApiClient, type ProviderInput } from "../../api";
+import { ApiError, type ApiClient, type ProviderInput } from "../../api";
 import type { Provider } from "../../api";
 import { ToastContext, type ToastContextValue } from "../../hooks/useToast";
 import { downloadJsonFile } from "../../lib/jsonDownload";
@@ -139,10 +139,10 @@ describe("useProviderActions", () => {
     );
     expect(downloadJsonFile).toHaveBeenCalledWith("auth.json", authDocument);
     expect(toast.success).toHaveBeenCalledWith(
-      'Codex auth.json exported for "Paused GPT". Keep this provider paused while the file is in use.',
+      'Codex auth.json exported for credential session "credential-gpt". Keep every referencing provider paused while the file is in use.',
     );
     expect(api.providers.list).toHaveBeenCalledTimes(1);
-    expect(result.current.exportingProviderId).toBeNull();
+    expect(result.current.exportingCredentialSessionId).toBeNull();
   });
 
   it("reports export failures without creating a credential file", async () => {
@@ -169,6 +169,78 @@ describe("useProviderActions", () => {
 
     expect(downloadJsonFile).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(error.message);
-    expect(result.current.exportingProviderId).toBeNull();
+    expect(result.current.exportingCredentialSessionId).toBeNull();
+  });
+
+  it("rejects export locally when another route sharing the session is live", async () => {
+    const liveProvider = {
+      ...pausedGPTProvider,
+      id: "gpt-live",
+      name: "Live GPT",
+      enabled: true,
+    };
+    const api = {
+      providers: {
+        list: vi.fn().mockResolvedValue([pausedGPTProvider, liveProvider]),
+      },
+      credentialSessions: {
+        exportCodexAuth: vi.fn(),
+      },
+    } as unknown as ApiClient;
+    const toast = createToast();
+    const { result } = renderHook(() => useProviderActions(), {
+      wrapper: createWrapper(api, toast),
+    });
+    await waitFor(() => expect(result.current.providers).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.handleExportCodexAuth(pausedGPTProvider);
+    });
+
+    expect(api.credentialSessions.exportCodexAuth).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      'Pause every provider using credential session "credential-gpt" before exporting: "Live GPT" (gpt-live).',
+    );
+  });
+
+  it("uses structured backend blockers when route state changes during export", async () => {
+    const stalePausedProvider = {
+      ...pausedGPTProvider,
+      id: "gpt-race",
+      name: "Race GPT",
+    };
+    const conflict = new ApiError(
+      "CONFLICT",
+      "Disable every referencing route target before exporting Codex auth.json",
+      409,
+      {
+        credential_session_id: "credential-gpt",
+        blocking_route_target_ids: ["gpt-race"],
+      },
+    );
+    const api = {
+      providers: {
+        list: vi
+          .fn()
+          .mockResolvedValue([pausedGPTProvider, stalePausedProvider]),
+      },
+      credentialSessions: {
+        exportCodexAuth: vi.fn().mockRejectedValue(conflict),
+      },
+    } as unknown as ApiClient;
+    const toast = createToast();
+    const { result } = renderHook(() => useProviderActions(), {
+      wrapper: createWrapper(api, toast),
+    });
+    await waitFor(() => expect(result.current.providers).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.handleExportCodexAuth(pausedGPTProvider);
+    });
+
+    expect(downloadJsonFile).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      'Pause every provider using credential session "credential-gpt" before exporting: "Race GPT" (gpt-race).',
+    );
   });
 });

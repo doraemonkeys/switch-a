@@ -1,10 +1,9 @@
-import { useState } from "react";
 import { useProviders } from "../../hooks/useProviders";
 import { useToast } from "../../hooks/useToast";
 import { useApi, type Provider, type ProviderInput } from "../../api";
-import { downloadJsonFile } from "../../lib/jsonDownload";
 import { useProviderConfirmations } from "./useProviderConfirmations";
 import { resolveProviderChatGPTCredentialSession } from "../../lib/providerAuth";
+import { useCodexAuthExport } from "./useCodexAuthExport";
 
 export function useProviderActions() {
   const api = useApi();
@@ -22,9 +21,8 @@ export function useProviderActions() {
     resetProvider,
   } = useProviders();
   const toast = useToast();
-  const [exportingProviderId, setExportingProviderId] = useState<string | null>(
-    null,
-  );
+  const { handleExportCodexAuth, exportingCredentialSessionId } =
+    useCodexAuthExport(providers);
   const confirmations = useProviderConfirmations({
     deleteProvider,
     resetProvider,
@@ -114,30 +112,6 @@ export function useProviderActions() {
     }
   };
 
-  const handleExportCodexAuth = async (provider: Provider) => {
-    const session = resolveProviderChatGPTCredentialSession(provider);
-    if (!session) {
-      toast.error(`Provider "${provider.name}" has no GPT credential session`);
-      return;
-    }
-    setExportingProviderId(provider.id);
-    try {
-      const authDocument = await api.credentialSessions.exportCodexAuth(
-        session.id,
-      );
-      downloadJsonFile("auth.json", authDocument);
-      toast.success(
-        `Codex auth.json exported for "${provider.name}". Keep this provider paused while the file is in use.`,
-      );
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to export Codex auth.json",
-      );
-    } finally {
-      setExportingProviderId(null);
-    }
-  };
-
   return {
     providers,
     hasSnapshot,
@@ -150,6 +124,6 @@ export function useProviderActions() {
     handleRefreshCredential,
     handleRefreshUsage,
     handleExportCodexAuth,
-    exportingProviderId,
+    exportingCredentialSessionId,
   };
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -172,6 +173,65 @@ func TestCredentialSessionCodexAuthExportUsesSessionLifecycle(t *testing.T) {
 	}
 	if document.Tokens.AccountID != "account-1" || document.Tokens.RefreshToken != "refresh" {
 		t.Fatalf("auth document = %#v", document)
+	}
+
+	credentialSnapshot, err := session.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := []*model.Provider{
+		{
+			ID: "route-paused", Name: "Paused Route", Vendor: "openai", Enabled: true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "route-paused", APIType: "codex", BaseURL: "https://paused.example.com"}},
+			CredentialSessions: []credentialsession.RouteSnapshot{{
+				RouteTargetID: "route-paused", APIType: "codex", VendorScope: "openai", Credential: credentialSnapshot,
+			}},
+		},
+		{
+			ID: "route-live", Name: "Live Route", Vendor: "openai", Enabled: true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "route-live", APIType: "codex", BaseURL: "https://live.example.com"}},
+			CredentialSessions: []credentialsession.RouteSnapshot{{
+				RouteTargetID: "route-live", APIType: "codex", VendorScope: "openai", Credential: credentialSnapshot,
+			}},
+		},
+	}
+	for _, provider := range providers {
+		if err := repository.CreateProvider(context.Background(), provider); err != nil {
+			t.Fatal(err)
+		}
+	}
+	providers[0].Enabled = false
+	if err := repository.UpdateProvider(context.Background(), providers[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	blockedResponse := httptest.NewRecorder()
+	handler.ExportCredentialSessionCodexAuth(blockedResponse, exportRequest)
+	if blockedResponse.Code != http.StatusConflict {
+		t.Fatalf("blocked export response = %d %s", blockedResponse.Code, blockedResponse.Body.String())
+	}
+	var blocked struct {
+		Code    string                        `json:"code"`
+		Message string                        `json:"message"`
+		Details codexAuthExportBlockedDetails `json:"details"`
+	}
+	if err := json.NewDecoder(blockedResponse.Body).Decode(&blocked); err != nil {
+		t.Fatal(err)
+	}
+	if blocked.Code != ErrCodeConflict || blocked.Details.Kind != codexAuthExportBlockedDetailKind ||
+		blocked.Details.CredentialSessionID != session.ID ||
+		!reflect.DeepEqual(blocked.Details.BlockingRouteTargetIDs, []string{"route-live"}) {
+		t.Fatalf("blocked export payload = %#v", blocked)
+	}
+
+	providers[1].Enabled = false
+	if err := repository.UpdateProvider(context.Background(), providers[1]); err != nil {
+		t.Fatal(err)
+	}
+	allPausedResponse := httptest.NewRecorder()
+	handler.ExportCredentialSessionCodexAuth(allPausedResponse, exportRequest)
+	if allPausedResponse.Code != http.StatusOK {
+		t.Fatalf("all-paused export response = %d %s", allPausedResponse.Code, allPausedResponse.Body.String())
 	}
 }
 
