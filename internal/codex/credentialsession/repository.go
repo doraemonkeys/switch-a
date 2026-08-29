@@ -70,7 +70,9 @@ func (r *Repository) Create(ctx context.Context, session *Session) (*Session, er
 	if candidate.CreatedAt.IsZero() {
 		candidate.CreatedAt = now
 	}
-	candidate.UpdatedAt = now
+	if candidate.UpdatedAt.IsZero() {
+		candidate.UpdatedAt = now
+	}
 	if err := candidate.Validate(); err != nil {
 		return nil, err
 	}

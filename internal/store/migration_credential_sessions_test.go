@@ -58,6 +58,10 @@ func TestCredentialSessionMigrationBackfillsExplicitIndependentSessions(t *testi
 	if primary.Name != "Legacy static primary" || primary.Kind != credentialsession.KindAPIKey || primary.SecretData != "fixture-static-primary-not-secret" || primary.SubjectKind != credentialsession.SubjectPending {
 		t.Fatalf("primary static session = %+v", primary)
 	}
+	legacyTimestamp := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if !primary.CreatedAt.Equal(legacyTimestamp) || !primary.UpdatedAt.Equal(legacyTimestamp) {
+		t.Fatalf("primary static timestamps = (%v, %v), want legacy timestamp %v", primary.CreatedAt, primary.UpdatedAt, legacyTimestamp)
+	}
 	claude := sessionForRoute(t, sessions, bindings, migrationtest.APITypeOverrideProviderID, "claude")
 	codex := sessionForRoute(t, sessions, bindings, migrationtest.APITypeOverrideProviderID, "codex")
 	if claude.ID == codex.ID ||
@@ -125,7 +129,7 @@ func TestCredentialSessionMigrationPreservesOptionalRouteVendorScope(t *testing.
 	if err := migrateCredentialSessions(db, clock); err != nil {
 		t.Fatal(err)
 	}
-	if err := finalizePendingStaticSubjects(db, clock, migrationSubjectSigner{version: "fixture-h1"}); err != nil {
+	if err := finalizePendingStaticSubjects(db, migrationSubjectSigner{version: "fixture-h1"}); err != nil {
 		t.Fatal(err)
 	}
 	repository, err := credentialsession.NewRepository(db, clock, nil)
@@ -180,7 +184,8 @@ func TestCredentialSessionMigrationIsIdempotentAndLeavesFinalizationToBootstrap(
 	if pending != 7 {
 		t.Fatalf("pending subjects after migration rerun = %d, want all subjects unchanged", pending)
 	}
-	if err := finalizePendingStaticSubjects(db, clock, migrationSubjectSigner{version: "fixture-h2"}); err != nil {
+	beforeFinalization := loadMigratedCredentialSessions(t, db)
+	if err := finalizePendingStaticSubjects(db, migrationSubjectSigner{version: "fixture-h2"}); err != nil {
 		t.Fatalf("finalize pending static subjects: %v", err)
 	}
 	if err := db.Model(&credentialsession.Session{}).Where("subject_kind = ?", credentialsession.SubjectPending).Count(&pending).Error; err != nil {
@@ -196,6 +201,13 @@ func TestCredentialSessionMigrationIsIdempotentAndLeavesFinalizationToBootstrap(
 	if !reflect.DeepEqual(versions, []string{"fixture-h2"}) {
 		t.Fatalf("static subject versions = %v", versions)
 	}
+	afterFinalization := loadMigratedCredentialSessions(t, db)
+	for id, before := range beforeFinalization {
+		after := afterFinalization[id]
+		if !after.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Fatalf("subject finalization changed session %q updated time: before=%v after=%v", id, before.UpdatedAt, after.UpdatedAt)
+		}
+	}
 }
 
 func TestCredentialSessionFinalizationFailureDoesNotUndoSignerFreeMigration(t *testing.T) {
@@ -207,7 +219,7 @@ func TestCredentialSessionFinalizationFailureDoesNotUndoSignerFreeMigration(t *t
 	if err := migrateCredentialSessions(db, clock); err != nil {
 		t.Fatalf("signer-free migration: %v", err)
 	}
-	err := finalizePendingStaticSubjects(db, clock, migrationSubjectSigner{err: wantErr})
+	err := finalizePendingStaticSubjects(db, migrationSubjectSigner{err: wantErr})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("migration error = %v, want signer error", err)
 	}
@@ -234,7 +246,7 @@ func TestCredentialSessionRepositoryPreservesSharedReferencesOnRouteDeletion(t *
 	if err := migrateCredentialSessions(db, clock); err != nil {
 		t.Fatalf("migration error = %v", err)
 	}
-	if err := finalizePendingStaticSubjects(db, clock, migrationSubjectSigner{version: "fixture-h1"}); err != nil {
+	if err := finalizePendingStaticSubjects(db, migrationSubjectSigner{version: "fixture-h1"}); err != nil {
 		t.Fatalf("finalize static subjects: %v", err)
 	}
 	repository, err := credentialsession.NewRepository(db, clock, nil)

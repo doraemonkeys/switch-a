@@ -249,7 +249,10 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.ID != "generated-1" || !created.CreatedAt.Equal(clock.now) || created.Version != 1 {
+	if created.ID != "generated-1" ||
+		!created.CreatedAt.Equal(clock.now) ||
+		!created.UpdatedAt.Equal(clock.now) ||
+		created.Version != 1 {
 		t.Fatalf("Create() = %#v", created)
 	}
 	created.SecretData = "caller mutation"
@@ -362,6 +365,25 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 	}
 	if err := repo.DeleteIfUnreferenced(ctx, created.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("DeleteIfUnreferenced(missing) error = %v", err)
+	}
+}
+
+func TestRepositoryCreatePreservesProvidedTimestamps(t *testing.T) {
+	_, repo, clock := newRepositoryTestDB(t)
+	digest, err := KeyedDigestSubject("h1", bytes.Repeat([]byte{1}, staticSubjectDigestSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newRepositoryTestSession(t, "imported", digest)
+	session.CreatedAt = clock.now.Add(-2 * time.Hour)
+	session.UpdatedAt = clock.now.Add(-time.Hour)
+
+	created, err := repo.Create(context.Background(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.CreatedAt.Equal(session.CreatedAt) || !created.UpdatedAt.Equal(session.UpdatedAt) {
+		t.Fatalf("Create() timestamps = (%v, %v), want (%v, %v)", created.CreatedAt, created.UpdatedAt, session.CreatedAt, session.UpdatedAt)
 	}
 }
 

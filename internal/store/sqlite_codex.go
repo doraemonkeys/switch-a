@@ -147,7 +147,7 @@ func (s *SQLiteStore) FinalizeStaticCredentialSubjects(ctx context.Context, sign
 	if _, err := s.InspectCodexPersistence(ctx); err != nil {
 		return fmt.Errorf("finalize static credential subjects preflight: %w", err)
 	}
-	if err := finalizePendingStaticSubjects(s.db.WithContext(ctx), s.clock, signer); err != nil {
+	if err := finalizePendingStaticSubjects(s.db.WithContext(ctx), signer); err != nil {
 		return fmt.Errorf("finalize static credential subjects: %w", err)
 	}
 	inventory, err := s.InspectCodexPersistence(ctx)

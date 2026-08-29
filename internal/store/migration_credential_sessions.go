@@ -583,9 +583,9 @@ func validateCredentialSessionSchema(tx *gorm.DB) error {
 	return nil
 }
 
-func finalizePendingStaticSubjects(db *gorm.DB, clock internalClock, signer StaticCredentialSubjectSigner) error {
-	if db == nil || clock == nil || signer == nil {
-		return fmt.Errorf("finalize static credential subjects requires database, clock, and signer")
+func finalizePendingStaticSubjects(db *gorm.DB, signer StaticCredentialSubjectSigner) error {
+	if db == nil || signer == nil {
+		return fmt.Errorf("finalize static credential subjects requires database and signer")
 	}
 	return db.Connection(func(connection *gorm.DB) (resultErr error) {
 		transaction := connection.Session(&gorm.Session{SkipDefaultTransaction: true})
@@ -616,13 +616,14 @@ func finalizePendingStaticSubjects(db *gorm.DB, clock internalClock, signer Stat
 			if err != nil {
 				return fmt.Errorf("finalize subject for credential session %q: %w", sessions[index].ID, err)
 			}
+			// Subject finalization completes migration-owned identity metadata; it
+			// must not make an unchanged credential appear freshly edited.
 			result := transaction.Model(&credentialsession.Session{}).
 				Where("id = ? AND subject_kind = ?", sessions[index].ID, credentialsession.SubjectPending).
-				Updates(map[string]any{
+				UpdateColumns(map[string]any{
 					"subject_kind":        subject.Kind,
 					"subject_value":       append([]byte(nil), subject.Value...),
 					"subject_key_version": subject.KeyVersion,
-					"updated_at":          clock.Now().UTC(),
 				})
 			if result.Error != nil {
 				return fmt.Errorf("finalize subject for credential session %q: %w", sessions[index].ID, result.Error)

@@ -208,7 +208,7 @@ func TestCredentialSessionMigrationFinalizationRollsBackSignerFailure(t *testing
 		t.Fatal(err)
 	}
 	signErr := errors.New("keyring unavailable")
-	err := finalizePendingStaticSubjects(db, clock, migrationSubjectSigner{err: signErr})
+	err := finalizePendingStaticSubjects(db, migrationSubjectSigner{err: signErr})
 	if !errors.Is(err, signErr) {
 		t.Fatalf("finalizePendingStaticSubjects() error = %v, want %v", err, signErr)
 	}
@@ -289,7 +289,8 @@ func TestBackfillLoginProviderSessionUsesBindingSubjectAndTimestampFallbacks(t *
 		session.SubjectKind != credentialsession.SubjectAccount ||
 		string(session.SubjectValue) != accountID ||
 		session.AuthState.AccountID != "" ||
-		!session.CreatedAt.Equal(providerCreatedAt) {
+		!session.CreatedAt.Equal(providerCreatedAt) ||
+		!session.UpdatedAt.Equal(providerUpdatedAt) {
 		t.Fatalf("fallback login session = %#v", session)
 	}
 
@@ -320,7 +321,6 @@ func TestBackfillLoginProviderSessionUsesBindingSubjectAndTimestampFallbacks(t *
 func TestCredentialSessionMigrationHelpersPropagateCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	clock := &credentialMigrationClock{now: time.Date(2026, 8, 27, 5, 30, 0, 0, time.UTC)}
 
 	empty := openCredentialMigrationBoundaryDB(t).WithContext(ctx)
 	if err := createCredentialSessionSchema(empty); !errors.Is(err, context.Canceled) {
@@ -335,7 +335,6 @@ func TestCredentialSessionMigrationHelpersPropagateCanceledContext(t *testing.T)
 	}
 	if err := finalizePendingStaticSubjects(
 		legacy,
-		clock,
 		migrationSubjectSigner{version: "h-current"},
 	); !errors.Is(err, context.Canceled) {
 		t.Fatalf("finalizePendingStaticSubjects(canceled) error = %v", err)
