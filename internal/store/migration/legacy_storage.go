@@ -21,7 +21,6 @@ const (
 	routingPolicyEnabledColumn        = "enabled"
 	routingPolicyTargetProviderColumn = "target_provider_id"
 	usageLimitPolicyColumnName        = "usage_limit_policy"
-	legacyProviderCredentialAPIKey    = "api_key"
 	legacyProviderCredentialChatGPT   = "chatgpt"
 )
 
@@ -193,10 +192,8 @@ func MigrateRoutingPolicyLifecycleStorage(db *gorm.DB) error {
 	})
 }
 
-// MigrateProviderUsageLimitPolicyStorage rewrites rows that accidentally
-// persisted a credential-derived default back to the empty "inherit default"
-// representation before M1 removes credential_type. Explicit overrides survive
-// the transition to the route-target-independent default.
+// MigrateProviderUsageLimitPolicyStorage preserves the effective policy of
+// legacy ChatGPT routes before M1 removes the credential type that defined it.
 func MigrateProviderUsageLimitPolicyStorage(db *gorm.DB) error {
 	present, err := tableColumnExists(db, providersTableName, usageLimitPolicyColumnName)
 	if err != nil {
@@ -213,22 +210,17 @@ func MigrateProviderUsageLimitPolicyStorage(db *gorm.DB) error {
 		return nil
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
+		// Empty encoded a credential-derived effective policy rather than today's
+		// route-target default. Once credential ownership moves to sessions, only an
+		// explicit value can preserve legacy ChatGPT suspension at that boundary.
 		return tx.Exec(`
 			UPDATE providers
-			SET usage_limit_policy = ''
-			WHERE TRIM(COALESCE(usage_limit_policy, '')) != ''
-			  AND (
-				(COALESCE(NULLIF(TRIM(credential_type), ''), ?) = ? AND TRIM(usage_limit_policy) = ?)
-				OR
-				(COALESCE(NULLIF(TRIM(credential_type), ''), ?) != ? AND TRIM(usage_limit_policy) = ?)
-			  )
+			SET usage_limit_policy = ?
+			WHERE TRIM(COALESCE(usage_limit_policy, '')) = ''
+			  AND TRIM(COALESCE(credential_type, '')) = ?
 		`,
-			legacyProviderCredentialAPIKey,
-			legacyProviderCredentialChatGPT,
 			string(model.ProviderUsageLimitPolicySuspend),
-			legacyProviderCredentialAPIKey,
 			legacyProviderCredentialChatGPT,
-			string(model.ProviderUsageLimitPolicySwitchProvider),
 		).Error
 	})
 }
