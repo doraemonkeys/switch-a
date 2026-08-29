@@ -40,6 +40,7 @@ function credentialSession(
 ): CredentialSession {
   return {
     id,
+    name: input.name,
     kind: input.kind,
     version: 1,
     subject: {
@@ -48,6 +49,7 @@ function credentialSession(
     },
     auth_state: { status: "active" },
     referenced_route_target_ids: [],
+    route_references: [],
     created_at: "2026-08-28T00:00:00Z",
     updated_at: "2026-08-28T00:00:00Z",
   };
@@ -106,6 +108,7 @@ function buildPersistedChatGPTProvider(): Provider {
     credential_sessions: [
       {
         id: credentialSessionID,
+        name: "GPT credential",
         kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
         version: 1,
         subject: { kind: "account", value: "acct_test" },
@@ -203,6 +206,7 @@ describe("ProviderModal", () => {
       credential_sessions: [
         {
           id: "credential-existing",
+          name: "Existing credential",
           kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
           version: 1,
           subject: { kind: "keyed_digest", value: "digest-existing" },
@@ -272,20 +276,26 @@ describe("ProviderModal", () => {
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
-    await waitFor(() =>
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: expect.stringMatching(/^split-credentials/),
-          name: "Split Credentials",
-          api_types: [
-            {
-              api_type: "claude",
-              base_url: "https://api.example.com",
-              credential_session_id: "credential-created",
-            },
-          ],
-        }),
-      ),
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    const createdSession = submitted.new_credential_sessions?.[0];
+    expect(createdSession).toMatchObject({
+      name: "Split Credentials · claude",
+      secret_data: "claude-key",
+    });
+    expect(submitted).toEqual(
+      expect.objectContaining({
+        id: expect.stringMatching(/^split-credentials/),
+        name: "Split Credentials",
+        api_types: [
+          {
+            api_type: "claude",
+            base_url: "https://api.example.com",
+            credential_session_id: createdSession?.id,
+          },
+        ],
+        new_credential_sessions: [createdSession],
+      }),
     );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
@@ -336,17 +346,23 @@ describe("ProviderModal", () => {
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
-    await waitFor(() =>
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          api_types: [
-            expect.objectContaining({
-              api_type: "claude",
-              credential_session_id: "credential-created",
-            }),
-          ],
-        }),
-      ),
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    const createdSession = submitted.new_credential_sessions?.[0];
+    expect(createdSession).toMatchObject({
+      name: "Whitespace Override",
+      secret_data: "default-key",
+    });
+    expect(submitted).toEqual(
+      expect.objectContaining({
+        api_types: [
+          expect.objectContaining({
+            api_type: "claude",
+            credential_session_id: createdSession?.id,
+          }),
+        ],
+        new_credential_sessions: [createdSession],
+      }),
     );
   });
 
@@ -532,15 +548,17 @@ describe("ProviderModal GPT login", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0]?.[0];
+    const createdSession = submitted.new_credential_sessions?.[0];
     expect(submitted).toMatchObject({
       auth_mode: AUTH_MODES.X_API_KEY,
       api_types: [
         {
           api_type: "claude",
           base_url: "https://api.example.com",
-          credential_session_id: "credential-created",
+          credential_session_id: createdSession?.id,
         },
       ],
+      new_credential_sessions: [createdSession],
     });
     expect(submitted?.usage_limit_policy).toBeUndefined();
   });

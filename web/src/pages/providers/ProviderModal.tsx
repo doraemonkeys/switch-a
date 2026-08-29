@@ -4,6 +4,7 @@ import type {
   APICatalog,
   CreateCredentialSessionInput,
   CredentialSession,
+  NewProviderCredentialSessionInput,
   Provider,
   ProviderCredentialSession,
   ProviderInput,
@@ -28,12 +29,21 @@ import {
   resolveProviderChatGPTCredentialSession,
   resolveProviderCredentialKind,
 } from "../../lib/providerAuth";
+import { generateClientKey } from "./types";
 import type {
   ChatGPTCredentialDraft,
   ProviderAPITypeDraft,
   ProviderFormData,
 } from "./types";
-import { generateClientKey } from "./types";
+
+const CREDENTIAL_SESSION_NAME_MAX_LENGTH = 120;
+
+function credentialSessionName(providerName: string, apiType?: string): string {
+  const suffix = apiType ? ` · ${apiType}` : "";
+  return Array.from(`${providerName.trim()}${suffix}`)
+    .slice(0, CREDENTIAL_SESSION_NAME_MAX_LENGTH)
+    .join("");
+}
 
 // GPT login is intrinsically a Codex credential flow; catalog membership is
 // still checked at submission time so this requirement cannot become a list.
@@ -344,6 +354,7 @@ async function materializeProviderCredentials({
     let sessionID: string;
     if (chatGPTCredential.kind === "credential_login") {
       const created = await createCredentialSession({
+        name: credentialSessionName(formData.name),
         kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
         credential_login_id: chatGPTCredential.credentialLoginID,
       });
@@ -377,25 +388,28 @@ async function materializeProviderCredentials({
       ? normalizeProviderApiKey(formData.new_shared_api_key)
       : "";
   let sharedSessionID = "";
+  const newCredentialSessions: NewProviderCredentialSessionInput[] = [];
   const resolved: ProviderInput["api_types"] = [];
   for (const entry of apiTypes) {
     const routeSecret = normalizeProviderApiKey(entry.api_key);
     let sessionID = entry.credential_session_id;
     if (routeSecret) {
-      sessionID = (
-        await createCredentialSession({
-          kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-          secret_data: routeSecret,
-        })
-      ).id;
+      sessionID = crypto.randomUUID();
+      newCredentialSessions.push({
+        id: sessionID,
+        name: credentialSessionName(formData.name, entry.api_type),
+        kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+        secret_data: routeSecret,
+      });
     } else if (!sessionID && sharedSecret) {
       if (!sharedSessionID) {
-        sharedSessionID = (
-          await createCredentialSession({
-            kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-            secret_data: sharedSecret,
-          })
-        ).id;
+        sharedSessionID = crypto.randomUUID();
+        newCredentialSessions.push({
+          id: sharedSessionID,
+          name: credentialSessionName(formData.name),
+          kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+          secret_data: sharedSecret,
+        });
       }
       sessionID = sharedSessionID;
     }
@@ -406,7 +420,10 @@ async function materializeProviderCredentials({
     });
   }
   return {
-    payload: providerInputFromForm(formData, resolved, false),
+    payload: {
+      ...providerInputFromForm(formData, resolved, false),
+      new_credential_sessions: newCredentialSessions,
+    },
     formData: {
       ...formData,
       new_shared_api_key: "",
@@ -586,10 +603,11 @@ export function ProviderModal({
         chatGPTCredential,
         createCredentialSession,
       });
-      // The resolved binding is durable even if the provider write fails, so the
-      // draft must retain it instead of attempting to consume a login twice.
-      setFormData(materialized.formData);
       if (materialized.chatGPTCredentialSessionID) {
+        // ChatGPT login is completed before the provider write and cannot be
+        // replayed. Static credentials are transactional, so their draft secret
+        // must instead survive a failed write for the next submission attempt.
+        setFormData(materialized.formData);
         adoptMaterializedCredentialSession(
           materialized.chatGPTCredentialSessionID,
         );

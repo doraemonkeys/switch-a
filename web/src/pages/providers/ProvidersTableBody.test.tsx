@@ -20,6 +20,7 @@ function buildProvider(): Provider {
     credential_sessions: [
       {
         id: credentialSessionID,
+        name: "GPT credential",
         kind: "chatgpt",
         version: 1,
         subject: { kind: "account", value: "acct_test" },
@@ -98,6 +99,7 @@ describe("ProvidersTableBody", () => {
       credential_sessions: [
         {
           id: "credential-gpt",
+          name: "GPT credential",
           kind: "chatgpt" as const,
           version: 1,
           subject: { kind: "account" as const, value: "acct_test" },

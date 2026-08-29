@@ -95,6 +95,32 @@ func (s *SQLiteStore) CreateProvider(ctx context.Context, provider *model.Provid
 	return nil
 }
 
+// CreateProviderWithCredentialSessions makes automatically materialized static
+// credentials durable only when their first route bindings also commit.
+func (s *SQLiteStore) CreateProviderWithCredentialSessions(
+	ctx context.Context,
+	provider *model.Provider,
+	newSessions []*credentialsession.Session,
+) error {
+	if provider == nil {
+		return fmt.Errorf("create provider: provider is nil")
+	}
+	if err := validateNewProviderCredentialSessions(provider, newSessions); err != nil {
+		return fmt.Errorf("create provider %q: %w", provider.ID, err)
+	}
+	s.credentialSigning.mu.RLock()
+	defer s.credentialSigning.mu.RUnlock()
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.createCredentialSessionsInTransaction(ctx, tx, newSessions); err != nil {
+			return err
+		}
+		return s.createProviderInTransaction(ctx, tx, provider)
+	}); err != nil {
+		return fmt.Errorf("create provider %q with credential sessions: %w", provider.ID, err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) createProviderInTransaction(ctx context.Context, tx *gorm.DB, provider *model.Provider) error {
 	bindings, err := credentialBindingsForProvider(provider)
 	if err != nil {
@@ -138,6 +164,76 @@ func (s *SQLiteStore) UpdateProvider(ctx context.Context, provider *model.Provid
 		return s.updateProviderInTransaction(ctx, tx, provider)
 	}); err != nil {
 		return fmt.Errorf("update provider %q: %w", provider.ID, err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) UpdateProviderWithCredentialSessions(
+	ctx context.Context,
+	provider *model.Provider,
+	newSessions []*credentialsession.Session,
+) error {
+	if provider == nil {
+		return fmt.Errorf("update provider: provider is nil")
+	}
+	if err := validateNewProviderCredentialSessions(provider, newSessions); err != nil {
+		return fmt.Errorf("update provider %q: %w", provider.ID, err)
+	}
+	s.credentialSigning.mu.RLock()
+	defer s.credentialSigning.mu.RUnlock()
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.createCredentialSessionsInTransaction(ctx, tx, newSessions); err != nil {
+			return err
+		}
+		return s.updateProviderInTransaction(ctx, tx, provider)
+	}); err != nil {
+		return fmt.Errorf("update provider %q with credential sessions: %w", provider.ID, err)
+	}
+	return nil
+}
+
+func validateNewProviderCredentialSessions(provider *model.Provider, sessions []*credentialsession.Session) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	referenced := make(map[string]struct{}, len(provider.CredentialSessions))
+	for _, route := range provider.CredentialSessions {
+		referenced[strings.TrimSpace(route.Credential.SessionID)] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(sessions))
+	for _, session := range sessions {
+		if session == nil {
+			return fmt.Errorf("new credential session is nil")
+		}
+		id := strings.TrimSpace(session.ID)
+		if _, duplicate := seen[id]; duplicate {
+			return fmt.Errorf("duplicate new credential session %q", id)
+		}
+		seen[id] = struct{}{}
+		if _, used := referenced[id]; !used {
+			return fmt.Errorf("new credential session %q has no route binding", id)
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteStore) createCredentialSessionsInTransaction(
+	ctx context.Context,
+	tx *gorm.DB,
+	sessions []*credentialsession.Session,
+) error {
+	repository, err := s.credentialSessions.WithDB(tx)
+	if err != nil {
+		return err
+	}
+	for _, source := range sessions {
+		session := source.Clone()
+		if err := resolveStaticCredentialSubject(session, s.credentialSigning.signer); err != nil {
+			return err
+		}
+		if _, err := repository.Create(ctx, session); err != nil {
+			return err
+		}
 	}
 	return nil
 }

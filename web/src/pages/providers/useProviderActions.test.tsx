@@ -38,6 +38,7 @@ const pausedGPTProvider: Provider = {
   credential_sessions: [
     {
       id: "credential-gpt",
+      name: "GPT credential",
       kind: "chatgpt",
       version: 1,
       subject: { kind: "account", value: "account-123" },

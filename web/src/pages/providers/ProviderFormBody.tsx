@@ -395,8 +395,9 @@ function ChatGPTCredentialSessionField({
             <option value="">Create from GPT login below</option>
             {chatGPTSessions.map((session) => (
               <option key={session.id} value={session.id}>
-                {session.auth_state.email || session.id} -{" "}
-                {session.auth_state.status}
+                {session.name} · {session.auth_state.status} ·{" "}
+                {session.route_references.length} route
+                {session.route_references.length === 1 ? "" : "s"}
               </option>
             ))}
           </select>

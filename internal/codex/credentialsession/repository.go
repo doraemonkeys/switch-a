@@ -58,6 +58,10 @@ func (r *Repository) Create(ctx context.Context, session *Session) (*Session, er
 	if strings.TrimSpace(candidate.ID) == "" {
 		candidate.ID = r.ids.NewID()
 	}
+	candidate.Name = strings.TrimSpace(candidate.Name)
+	if candidate.Name == "" {
+		candidate.Name = DefaultName(candidate.Kind, candidate.ID)
+	}
 	if candidate.Version < 1 {
 		candidate.Version = 1
 	}
@@ -91,13 +95,36 @@ func (r *Repository) Get(ctx context.Context, sessionID string) (*Session, error
 
 func (r *Repository) List(ctx context.Context) ([]Session, error) {
 	var sessions []Session
-	if err := r.db.WithContext(ctx).Order("id ASC").Find(&sessions).Error; err != nil {
+	if err := r.db.WithContext(ctx).Order("name COLLATE NOCASE ASC, id ASC").Find(&sessions).Error; err != nil {
 		return nil, fmt.Errorf("list credential sessions: %w", err)
 	}
 	for index := range sessions {
 		sessions[index].AuthState = NormalizeAuthState(sessions[index].Kind, sessions[index].AuthState)
 	}
 	return sessions, nil
+}
+
+// RouteReference is the operator-facing identity of one route that consumes a
+// credential. Provider names are resolved at read time so renaming a provider
+// never duplicates or stales credential metadata.
+type RouteReference struct {
+	ProviderID   string `json:"provider_id"`
+	ProviderName string `json:"provider_name"`
+	APIType      string `json:"api_type"`
+}
+
+func (r *Repository) ListRouteReferences(ctx context.Context, sessionID string) ([]RouteReference, error) {
+	var references []RouteReference
+	if err := r.db.WithContext(ctx).
+		Table("route_target_credentials AS bindings").
+		Select("bindings.route_target_id AS provider_id, providers.name AS provider_name, bindings.api_type").
+		Joins("JOIN providers ON providers.id = bindings.route_target_id").
+		Where("bindings.session_id = ?", strings.TrimSpace(sessionID)).
+		Order("providers.name COLLATE NOCASE ASC, bindings.api_type ASC, bindings.route_target_id ASC").
+		Scan(&references).Error; err != nil {
+		return nil, fmt.Errorf("list route references for credential session %q: %w", sessionID, err)
+	}
+	return references, nil
 }
 
 func (r *Repository) Bind(ctx context.Context, binding RouteBinding) error {
@@ -270,6 +297,31 @@ func (r *Repository) DeleteIfUnreferenced(ctx context.Context, sessionID string)
 		}
 		return nil
 	})
+}
+
+func (r *Repository) RenameCAS(ctx context.Context, sessionID string, expectedVersion int64, name string) (int64, error) {
+	name = strings.TrimSpace(name)
+	if expectedVersion < 1 || name == "" || len([]rune(name)) > MaxNameLength {
+		return 0, fmt.Errorf("%w: name is required and must not exceed %d characters", ErrInvalidSession, MaxNameLength)
+	}
+	nextVersion := expectedVersion + 1
+	result := r.db.WithContext(ctx).Model(&Session{}).
+		Where("id = ? AND version = ?", strings.TrimSpace(sessionID), expectedVersion).
+		Updates(map[string]any{
+			"name":       name,
+			"version":    nextVersion,
+			"updated_at": r.clock.Now().UTC(),
+		})
+	if result.Error != nil {
+		return 0, fmt.Errorf("rename credential session %q: %w", sessionID, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		if _, err := r.Get(ctx, sessionID); errors.Is(err, ErrNotFound) {
+			return 0, ErrNotFound
+		}
+		return 0, ErrVersionConflict
+	}
+	return nextVersion, nil
 }
 
 // UpdateCredentialCAS atomically rotates secret/subject/auth state and returns

@@ -12,6 +12,7 @@ const navItems: Array<{
   { to: "/", label: "Dashboard", icon: "📊" },
   { to: "/monitor", label: "Monitor", icon: "📡" },
   { to: "/providers", label: "Providers", icon: "🔌" },
+  { to: "/credentials", label: "Credentials", icon: "🔑" },
   { to: "/groups", label: "Groups", icon: "📁" },
   { to: "/routing", label: "Routing", icon: "🧭" },
   { to: "/error-detection", label: "Error Detection", icon: "🛡️" },

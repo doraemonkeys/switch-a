@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 
@@ -82,21 +83,22 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 
 // CreateProviderRequest represents the request to create a provider.
 type CreateProviderRequest struct {
-	ID               string                         `json:"id"`
-	Name             string                         `json:"name"`
-	APITypes         []APITypeInput                 `json:"api_types"`
-	AuthMode         string                         `json:"auth_mode"`
-	UsageLimitPolicy model.ProviderUsageLimitPolicy `json:"usage_limit_policy"`
-	GroupID          *string                        `json:"group_id"`
-	Weight           int                            `json:"weight"`
-	Priority         int                            `json:"priority"`
-	Concurrency      int                            `json:"concurrency"`
-	MaxRetries       *int                           `json:"max_retries"`
-	Backoff          *model.BackoffPolicy           `json:"backoff"`
-	Vendor           string                         `json:"vendor"`
-	FailoverScope    *model.Scope                   `json:"failover_scope"`
-	AcceptFailover   *model.Scope                   `json:"accept_failover"`
-	Enabled          *bool                          `json:"enabled"`
+	ID                    string                              `json:"id"`
+	Name                  string                              `json:"name"`
+	APITypes              []APITypeInput                      `json:"api_types"`
+	NewCredentialSessions []NewProviderCredentialSessionInput `json:"new_credential_sessions,omitempty"`
+	AuthMode              string                              `json:"auth_mode"`
+	UsageLimitPolicy      model.ProviderUsageLimitPolicy      `json:"usage_limit_policy"`
+	GroupID               *string                             `json:"group_id"`
+	Weight                int                                 `json:"weight"`
+	Priority              int                                 `json:"priority"`
+	Concurrency           int                                 `json:"concurrency"`
+	MaxRetries            *int                                `json:"max_retries"`
+	Backoff               *model.BackoffPolicy                `json:"backoff"`
+	Vendor                string                              `json:"vendor"`
+	FailoverScope         *model.Scope                        `json:"failover_scope"`
+	AcceptFailover        *model.Scope                        `json:"accept_failover"`
+	Enabled               *bool                               `json:"enabled"`
 }
 
 // APITypeInput represents an API type entry with endpoint details.
@@ -186,6 +188,9 @@ func (req *CreateProviderRequest) validate() string {
 		return "Provider name is required"
 	}
 	if errMsg := validateAPITypeInputs(req.APITypes); errMsg != "" {
+		return errMsg
+	}
+	if errMsg := validateNewProviderCredentialSessions(req.APITypes, req.NewCredentialSessions); errMsg != "" {
 		return errMsg
 	}
 	if req.MaxRetries != nil && *req.MaxRetries < 0 {
@@ -320,6 +325,11 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	provider := req.toProvider()
+	newSessions, err := buildNewProviderCredentialSessions(req.NewCredentialSessions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
+		return
+	}
 	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
 		return
@@ -341,12 +351,31 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 			zap.String("id", req.ID),
 			zap.String("warning", warning))
 	}
+	if len(newSessions) > 0 {
+		h.logger.Info("provider credential materialization started",
+			zap.String("operation", providerCredentialMaterializationOperation),
+			zap.String("provider_id", req.ID),
+			zap.Strings("credential_session_ids", providerCredentialSessionIDs(newSessions)))
+	}
 
 	if err := h.mutateProviderGeneration(req.ID, func() error {
-		return h.store.CreateProvider(r.Context(), provider)
+		if len(newSessions) == 0 {
+			return h.store.CreateProvider(r.Context(), provider)
+		}
+		writer, ok := h.store.(providerCredentialSessionWriter)
+		if !ok {
+			return fmt.Errorf("atomic provider credential writes are unavailable")
+		}
+		return writer.CreateProviderWithCredentialSessions(r.Context(), provider, newSessions)
 	}); err != nil {
 		h.handleProviderPersistenceError(w, req.ID, "create", err)
 		return
+	}
+	if len(newSessions) > 0 {
+		h.logger.Info("provider credential materialization completed",
+			zap.String("operation", providerCredentialMaterializationOperation),
+			zap.String("provider_id", req.ID),
+			zap.Strings("credential_session_ids", providerCredentialSessionIDs(newSessions)))
 	}
 	persisted, err := h.store.GetProvider(r.Context(), req.ID)
 	if err != nil {
@@ -363,20 +392,21 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProviderRequest represents the request to update a provider.
 type UpdateProviderRequest struct {
-	Name             *string                         `json:"name"`
-	APITypes         []APITypeInput                  `json:"api_types"`
-	AuthMode         *string                         `json:"auth_mode"`
-	UsageLimitPolicy *model.ProviderUsageLimitPolicy `json:"usage_limit_policy"`
-	GroupID          *string                         `json:"group_id"`
-	Weight           *int                            `json:"weight"`
-	Priority         *int                            `json:"priority"`
-	Concurrency      *int                            `json:"concurrency"`
-	MaxRetries       *int                            `json:"max_retries"`
-	Backoff          *model.BackoffPolicy            `json:"backoff"`
-	Vendor           *string                         `json:"vendor"`
-	FailoverScope    *model.Scope                    `json:"failover_scope"`
-	AcceptFailover   *model.Scope                    `json:"accept_failover"`
-	Enabled          *bool                           `json:"enabled"`
+	Name                  *string                             `json:"name"`
+	APITypes              []APITypeInput                      `json:"api_types"`
+	NewCredentialSessions []NewProviderCredentialSessionInput `json:"new_credential_sessions,omitempty"`
+	AuthMode              *string                             `json:"auth_mode"`
+	UsageLimitPolicy      *model.ProviderUsageLimitPolicy     `json:"usage_limit_policy"`
+	GroupID               *string                             `json:"group_id"`
+	Weight                *int                                `json:"weight"`
+	Priority              *int                                `json:"priority"`
+	Concurrency           *int                                `json:"concurrency"`
+	MaxRetries            *int                                `json:"max_retries"`
+	Backoff               *model.BackoffPolicy                `json:"backoff"`
+	Vendor                *string                             `json:"vendor"`
+	FailoverScope         *model.Scope                        `json:"failover_scope"`
+	AcceptFailover        *model.Scope                        `json:"accept_failover"`
+	Enabled               *bool                               `json:"enabled"`
 }
 
 // validate checks that all provided fields have valid values.
@@ -398,6 +428,11 @@ func (req *UpdateProviderRequest) validate() string {
 		if errMsg := validateAPITypeInputs(req.APITypes); errMsg != "" {
 			return errMsg
 		}
+		if errMsg := validateNewProviderCredentialSessions(req.APITypes, req.NewCredentialSessions); errMsg != "" {
+			return errMsg
+		}
+	} else if len(req.NewCredentialSessions) != 0 {
+		return "new credential sessions require api_types"
 	}
 	if req.UsageLimitPolicy != nil && !model.IsValidProviderUsageLimitPolicy(*req.UsageLimitPolicy) {
 		return "Invalid usage_limit_policy: must be 'switch_provider' or 'suspend'"
@@ -517,6 +552,11 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	originalEnabled := provider.Enabled
 
 	req.applyTo(provider)
+	newSessions, err := buildNewProviderCredentialSessions(req.NewCredentialSessions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
+		return
+	}
 	if errMsg := validateProviderConfiguration(provider); errMsg != "" {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, errMsg)
 		return
@@ -538,12 +578,31 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 			zap.String("id", id),
 			zap.String("warning", warning))
 	}
+	if len(newSessions) > 0 {
+		h.logger.Info("provider credential materialization started",
+			zap.String("operation", providerCredentialMaterializationOperation),
+			zap.String("provider_id", id),
+			zap.Strings("credential_session_ids", providerCredentialSessionIDs(newSessions)))
+	}
 
 	if err := h.mutateProviderGeneration(id, func() error {
-		return h.store.UpdateProvider(r.Context(), provider)
+		if len(newSessions) == 0 {
+			return h.store.UpdateProvider(r.Context(), provider)
+		}
+		writer, ok := h.store.(providerCredentialSessionWriter)
+		if !ok {
+			return fmt.Errorf("atomic provider credential writes are unavailable")
+		}
+		return writer.UpdateProviderWithCredentialSessions(r.Context(), provider, newSessions)
 	}); err != nil {
 		h.handleProviderPersistenceError(w, id, "update", err)
 		return
+	}
+	if len(newSessions) > 0 {
+		h.logger.Info("provider credential materialization completed",
+			zap.String("operation", providerCredentialMaterializationOperation),
+			zap.String("provider_id", id),
+			zap.Strings("credential_session_ids", providerCredentialSessionIDs(newSessions)))
 	}
 
 	if provider.Enabled != originalEnabled {

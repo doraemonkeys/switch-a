@@ -14,6 +14,7 @@ import type {
   HealthState,
   ProviderInput,
   ReauthenticateCredentialSessionInput,
+  RenameCredentialSessionInput,
   UpdateCredentialSessionInput,
 } from "./types";
 
@@ -97,6 +98,16 @@ export function createCredentialSessionsApi(request: AuthenticatedRequest) {
           `/credential-sessions/${encodeURIComponent(id)}`,
           {
             method: "PUT",
+            body: JSON.stringify(data),
+          },
+        ),
+      ),
+    rename: async (id: string, data: RenameCredentialSessionInput) =>
+      parseCredentialSession(
+        await request<unknown>(
+          `/credential-sessions/${encodeURIComponent(id)}/name`,
+          {
+            method: "PATCH",
             body: JSON.stringify(data),
           },
         ),

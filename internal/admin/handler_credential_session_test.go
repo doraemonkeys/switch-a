@@ -80,7 +80,7 @@ func newCredentialSessionHandler(t *testing.T) (*Handler, *store.SQLiteStore) {
 func TestCredentialSessionCRUDAndReferenceDeletionContract(t *testing.T) {
 	handler, repository := newCredentialSessionHandler(t)
 	createRequest := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions", strings.NewReader(`{
-		"id":"static-session","vendor":"openai","kind":"api_key","secret_data":"secret-1"
+		"id":"static-session","name":"Route key","vendor":"openai","kind":"api_key","secret_data":"secret-1"
 	}`))
 	createResponse := httptest.NewRecorder()
 	handler.CreateCredentialSession(createResponse, createRequest)
@@ -129,10 +129,22 @@ func TestCredentialSessionCRUDAndReferenceDeletionContract(t *testing.T) {
 	if updated.Version != 2 || string(updated.Subject.Value) == string(created.Subject.Value) {
 		t.Fatalf("updated payload = %#v", updated)
 	}
+	renameRequest := httptest.NewRequest(http.MethodPatch, "/admin/api/credential-sessions/static-session/name", strings.NewReader(`{
+		"expected_version":2,"name":"Renamed route key"
+	}`))
+	renameRequest.SetPathValue("id", created.ID)
+	renameResponse := httptest.NewRecorder()
+	handler.RenameCredentialSession(renameResponse, renameRequest)
+	if renameResponse.Code != http.StatusOK || !strings.Contains(renameResponse.Body.String(), `"name":"Renamed route key"`) {
+		t.Fatalf("rename response = %d %s", renameResponse.Code, renameResponse.Body.String())
+	}
 
 	listResponse := httptest.NewRecorder()
 	handler.ListCredentialSessions(listResponse, httptest.NewRequest(http.MethodGet, "/admin/api/credential-sessions", nil))
-	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"route-1"`) || !strings.Contains(listResponse.Body.String(), `"secret_data":"secret-2"`) {
+	if listResponse.Code != http.StatusOK ||
+		!strings.Contains(listResponse.Body.String(), `"provider_name":"Route"`) ||
+		!strings.Contains(listResponse.Body.String(), `"api_type":"codex"`) ||
+		!strings.Contains(listResponse.Body.String(), `"secret_data":"secret-2"`) {
 		t.Fatalf("list response = %d %s", listResponse.Code, listResponse.Body.String())
 	}
 	getRequest := httptest.NewRequest(http.MethodGet, "/admin/api/credential-sessions/static-session", nil)

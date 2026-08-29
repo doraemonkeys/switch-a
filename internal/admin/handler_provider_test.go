@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -48,6 +49,28 @@ func TestCreateProvider_PersistsOnlySessionReferences(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"credential_session_id":"session-1"`) ||
 		!strings.Contains(w.Body.String(), `"credential_sessions"`) {
 		t.Fatalf("provider response omitted the route-to-session contract: %s", w.Body.String())
+	}
+}
+
+func TestCreateProvider_MaterializesNamedCredentialAtomically(t *testing.T) {
+	handler, repository := newCredentialSessionHandler(t)
+	w := performProviderRequest(t, handler.CreateProvider, http.MethodPost, "/admin/api/providers", CreateProviderRequest{
+		ID: "provider-atomic", Name: "Atomic Provider", AuthMode: "bearer", Vendor: "openai",
+		APITypes: []APITypeInput{{APIType: "claude", BaseURL: "https://api.example.com", CredentialSessionID: "session-atomic"}},
+		NewCredentialSessions: []NewProviderCredentialSessionInput{{
+			ID: "session-atomic", Name: "Atomic Provider", Kind: credentialsession.KindAPIKey, SecretData: "atomic-secret",
+		}},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+	session, err := repository.GetCredentialSession(context.Background(), "session-atomic")
+	if err != nil || session.Name != "Atomic Provider" || session.SecretData != "atomic-secret" {
+		t.Fatalf("credential session = (%+v, %v)", session, err)
+	}
+	references, err := repository.CredentialSessionRouteReferences(context.Background(), session.ID)
+	if err != nil || len(references) != 1 || references[0].ProviderName != "Atomic Provider" || references[0].APIType != "claude" {
+		t.Fatalf("route references = (%+v, %v)", references, err)
 	}
 }
 

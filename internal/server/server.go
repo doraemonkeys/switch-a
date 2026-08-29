@@ -307,6 +307,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("POST /admin/api/credential-sessions", auth.WrapFunc(adminHandler.CreateCredentialSession))
 	mux.Handle("GET /admin/api/credential-sessions/{id}", auth.WrapFunc(adminHandler.GetCredentialSession))
 	mux.Handle("PUT /admin/api/credential-sessions/{id}", auth.WrapFunc(adminHandler.UpdateCredentialSession))
+	mux.Handle("PATCH /admin/api/credential-sessions/{id}/name", auth.WrapFunc(adminHandler.RenameCredentialSession))
 	mux.Handle("DELETE /admin/api/credential-sessions/{id}", auth.WrapFunc(adminHandler.DeleteCredentialSession))
 	mux.Handle("POST /admin/api/credential-sessions/{id}/reauthenticate", auth.WrapFunc(adminHandler.ReauthenticateCredentialSession))
 	mux.Handle("POST /admin/api/credential-sessions/{id}/refresh", auth.WrapFunc(adminHandler.RefreshCredentialSession))

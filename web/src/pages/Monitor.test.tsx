@@ -47,6 +47,7 @@ const mockProviders: Provider[] = [
     credential_sessions: [
       {
         id: "credential-1",
+        name: "Anthropic credential",
         kind: "api_key",
         version: 1,
         subject: { kind: "keyed_digest", value: "digest-1" },
@@ -79,6 +80,7 @@ const mockProviders: Provider[] = [
     credential_sessions: [
       {
         id: "credential-2",
+        name: "OpenAI credential",
         kind: "api_key",
         version: 1,
         subject: { kind: "keyed_digest", value: "digest-2" },

@@ -4,10 +4,24 @@ import { createMockStorage, createMockHttpClient } from "./test-mocks";
 
 const credentialSession = {
   id: "session-1",
+  name: "Test key",
   kind: "api_key",
   version: 1,
   subject: { kind: "keyed_digest", value: "ZGlnaWVzdA==", key_version: "h1" },
-  auth_state: { status: "active" },
+  auth_state: {
+    status: "active",
+    status_reason: undefined,
+    last_error: undefined,
+    last_transition_at: undefined,
+    email: undefined,
+    account_id: undefined,
+    plan_type: undefined,
+    expires_at: undefined,
+    last_refresh_at: undefined,
+    usage_snapshot: undefined,
+    refresh_fail_count: undefined,
+    last_refresh_failure_at: undefined,
+  },
 };
 
 function providerPayload(overrides: Record<string, unknown> = {}) {
@@ -29,10 +43,13 @@ function providerPayload(overrides: Record<string, unknown> = {}) {
     priority: 0,
     concurrency: 0,
     max_retries: 0,
+    backoff: undefined,
     vendor: "",
     failover_scope: "any",
     accept_failover: "any",
     enabled: true,
+    health: undefined,
+    usage_limit_policy_explicit: undefined,
     created_at: "2026-08-28T00:00:00Z",
     updated_at: "2026-08-28T00:00:00Z",
     ...overrides,
@@ -44,6 +61,9 @@ function credentialSessionPayload(overrides: Record<string, unknown> = {}) {
     ...credentialSession,
     secret_data: "sk-current",
     referenced_route_target_ids: ["1"],
+    route_references: [
+      { provider_id: "1", provider_name: "OpenAI", api_type: "claude" },
+    ],
     created_at: "2026-08-28T00:00:00Z",
     updated_at: "2026-08-28T00:00:00Z",
     ...overrides,
@@ -287,6 +307,32 @@ describe("createApiClient providers API", () => {
     expect(result[0].secret_data).toBe("sk-current");
   });
 
+  it("should rename a credential session", async () => {
+    const renamed = credentialSessionPayload({
+      name: "Renamed key",
+      version: 2,
+    });
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(renamed),
+    });
+
+    const result = await api.credentialSessions.rename("session/1", {
+      expected_version: 1,
+      name: "Renamed key",
+    });
+
+    expect(result.name).toBe("Renamed key");
+    expect(mockHttpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/credential-sessions/session%2F1/name",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ expected_version: 1, name: "Renamed key" }),
+      }),
+    );
+  });
+
   it("should refresh credential-session usage", async () => {
     const refreshed = credentialSessionPayload();
     mockHttpClient.mockResponse({
@@ -301,6 +347,22 @@ describe("createApiClient providers API", () => {
       "https://test-api.example.com/credential-sessions/session%2F1/refresh-usage",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+});
+
+describe("createApiClient provider export and batch API", () => {
+  let mockStorage: ReturnType<typeof createMockStorage>;
+  let mockHttpClient: ReturnType<typeof createMockHttpClient>;
+  let api: ReturnType<typeof createApiClient>;
+
+  beforeEach(() => {
+    mockStorage = createMockStorage();
+    mockHttpClient = createMockHttpClient();
+    api = createApiClient({
+      storage: mockStorage,
+      httpClient: mockHttpClient,
+      baseUrl: "https://test-api.example.com",
+    });
   });
 
   it("should export one provider as Codex auth.json", async () => {

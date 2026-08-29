@@ -16,6 +16,7 @@ function providerPayload() {
     credential_sessions: [
       {
         id: "credential-gpt",
+        name: "GPT Provider login",
         kind: "chatgpt",
         version: 2,
         subject: { kind: "account", value: "account-1" },
@@ -47,6 +48,7 @@ describe("provider response contract", () => {
     expect(provider.api_types[0]?.credential_session_id).toBe("credential-gpt");
     expect(provider.credential_sessions[0]).toMatchObject({
       id: "credential-gpt",
+      name: "GPT Provider login",
       kind: "chatgpt",
       auth_state: { status: "active", email: "user@example.com" },
     });

@@ -134,6 +134,7 @@ function parseProviderCredentialSession(
   const source = record(value, label);
   return {
     id: stringValue(source.id, `${label}.id`),
+    name: stringValue(source.name, `${label}.name`),
     kind: enumValue(source.kind, CREDENTIAL_KINDS, `${label}.kind`),
     version: numberValue(source.version, `${label}.version`),
     subject: parseSubject(source.subject, `${label}.subject`),
@@ -146,6 +147,10 @@ export function parseCredentialSession(value: unknown): CredentialSession {
   const base = parseProviderCredentialSession(source, "credential_session");
   if (!Array.isArray(source.referenced_route_target_ids)) {
     fail("credential_session.referenced_route_target_ids must be an array");
+  }
+  const routeReferences = source.route_references ?? [];
+  if (!Array.isArray(routeReferences)) {
+    fail("credential_session.route_references must be an array");
   }
   return {
     ...base,
@@ -160,6 +165,26 @@ export function parseCredentialSession(value: unknown): CredentialSession {
           `credential_session.referenced_route_target_ids[${index}]`,
         ),
     ),
+    route_references: routeReferences.map((reference, index) => {
+      const item = record(
+        reference,
+        `credential_session.route_references[${index}]`,
+      );
+      return {
+        provider_id: stringValue(
+          item.provider_id,
+          `credential_session.route_references[${index}].provider_id`,
+        ),
+        provider_name: stringValue(
+          item.provider_name,
+          `credential_session.route_references[${index}].provider_name`,
+        ),
+        api_type: stringValue(
+          item.api_type,
+          `credential_session.route_references[${index}].api_type`,
+        ),
+      };
+    }),
     created_at: stringValue(source.created_at, "credential_session.created_at"),
     updated_at: stringValue(source.updated_at, "credential_session.updated_at"),
   };

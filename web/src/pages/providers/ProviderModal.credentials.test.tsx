@@ -27,12 +27,14 @@ const testAPICatalog = parseAPICatalog(
 function apiKeySession(id: string): CredentialSession {
   return {
     id,
+    name: id,
     kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
     secret_data: `secret-${id}`,
     version: 1,
     subject: { kind: "keyed_digest", value: `digest-${id}` },
     auth_state: { status: "active" },
     referenced_route_target_ids: [],
+    route_references: [],
     created_at: "2026-08-28T00:00:00Z",
     updated_at: "2026-08-28T00:00:00Z",
   };
@@ -45,6 +47,7 @@ function chatGPTSession(
 ): CredentialSession {
   return {
     id,
+    name: email,
     kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
     version: 1,
     subject: { kind: "account", value: `account-${id}` },
@@ -54,6 +57,7 @@ function chatGPTSession(
       account_id: `account-${id}`,
     },
     referenced_route_target_ids: [],
+    route_references: [],
     created_at: "2026-08-28T00:00:00Z",
     updated_at: "2026-08-28T00:00:00Z",
   };
@@ -263,34 +267,37 @@ describe("ProviderModal credential binding precedence", () => {
     );
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
-    await waitFor(() =>
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          api_types: [
-            {
-              api_type: "claude",
-              base_url: "https://claude.example.com",
-              credential_session_id: "credential-override",
-            },
-            {
-              api_type: "codex",
-              base_url: "https://codex.example.com",
-              credential_session_id: "credential-default",
-            },
-            {
-              api_type: "gemini",
-              base_url: "https://gemini.example.com",
-              credential_session_id: "credential-created",
-            },
-          ],
-        }),
-      ),
-    );
-    expect(credentialSessions.create).toHaveBeenCalledTimes(1);
-    expect(credentialSessions.create).toHaveBeenCalledWith({
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    const createdSession = submitted.new_credential_sessions?.[0];
+    expect(createdSession).toMatchObject({
+      name: "Split Credentials",
       kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
       secret_data: "shared-key",
     });
+    expect(submitted).toEqual(
+      expect.objectContaining({
+        api_types: [
+          {
+            api_type: "claude",
+            base_url: "https://claude.example.com",
+            credential_session_id: "credential-override",
+          },
+          {
+            api_type: "codex",
+            base_url: "https://codex.example.com",
+            credential_session_id: "credential-default",
+          },
+          {
+            api_type: "gemini",
+            base_url: "https://gemini.example.com",
+            credential_session_id: createdSession?.id,
+          },
+        ],
+        new_credential_sessions: [createdSession],
+      }),
+    );
+    expect(credentialSessions.create).not.toHaveBeenCalled();
   });
 
   it("uses a shared key only for new routes without a selected session", async () => {
@@ -324,29 +331,77 @@ describe("ProviderModal credential binding precedence", () => {
     );
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
-    await waitFor(() =>
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          api_types: [
-            {
-              api_type: "claude",
-              base_url: "https://claude.example.com",
-              credential_session_id: "credential-selected",
-            },
-            {
-              api_type: "codex",
-              base_url: "https://codex.example.com",
-              credential_session_id: "credential-created",
-            },
-          ],
-        }),
-      ),
-    );
-    expect(credentialSessions.create).toHaveBeenCalledTimes(1);
-    expect(credentialSessions.create).toHaveBeenCalledWith({
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    const createdSession = submitted.new_credential_sessions?.[0];
+    expect(createdSession).toMatchObject({
+      name: "Mixed Bindings",
       kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
       secret_data: "shared-key",
     });
+    expect(submitted).toEqual(
+      expect.objectContaining({
+        api_types: [
+          {
+            api_type: "claude",
+            base_url: "https://claude.example.com",
+            credential_session_id: "credential-selected",
+          },
+          {
+            api_type: "codex",
+            base_url: "https://codex.example.com",
+            credential_session_id: createdSession?.id,
+          },
+        ],
+        new_credential_sessions: [createdSession],
+      }),
+    );
+    expect(credentialSessions.create).not.toHaveBeenCalled();
+  });
+
+  it("retains a transactional API key draft when the provider write fails", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("provider write failed"))
+      .mockResolvedValueOnce(undefined);
+    const credentialSessions = createCredentialSessionsApi([]);
+    const api = { credentialSessions } as unknown as ApiClient;
+
+    renderModal(
+      <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />,
+      api,
+    );
+
+    await user.type(screen.getByLabelText("Name"), "Retry Provider");
+    await user.type(screen.getByLabelText("New Shared API Key"), "retry-key");
+    await user.click(screen.getByRole("button", { name: "claude" }));
+    await user.type(
+      screen.getByLabelText("Base URL for claude"),
+      "https://claude.example.com",
+    );
+
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+    await screen.findByText("provider write failed");
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+
+    const first = onSubmit.mock.calls[0]?.[0];
+    const second = onSubmit.mock.calls[1]?.[0];
+    const firstSession = first.new_credential_sessions?.[0];
+    const secondSession = second.new_credential_sessions?.[0];
+    expect(firstSession).toMatchObject({
+      name: "Retry Provider",
+      secret_data: "retry-key",
+    });
+    expect(secondSession).toMatchObject({
+      name: "Retry Provider",
+      secret_data: "retry-key",
+    });
+    expect(secondSession?.id).not.toBe(firstSession?.id);
+    expect(first.api_types[0]?.credential_session_id).toBe(firstSession?.id);
+    expect(second.api_types[0]?.credential_session_id).toBe(secondSession?.id);
+    expect(credentialSessions.create).not.toHaveBeenCalled();
   });
 });
 
@@ -380,7 +435,7 @@ describe("ProviderModal GPT credential precedence", () => {
       PROVIDER_CREDENTIAL_TYPES.CHATGPT,
     );
     await screen.findByRole("option", {
-      name: "existing@example.com - active",
+      name: /existing@example\.com · active/,
     });
   }
 
@@ -458,6 +513,7 @@ describe("ProviderModal GPT credential precedence", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(credentialSessions.create).toHaveBeenCalledWith({
+      name: "GPT Credential Choice",
       kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
       credential_login_id: "login-new-account",
     });

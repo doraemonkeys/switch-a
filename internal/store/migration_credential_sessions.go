@@ -33,6 +33,7 @@ func (credentialSessionMigration) TableName() string { return "credential_sessio
 
 type legacyCredentialProvider struct {
 	ID             string
+	Name           string
 	Vendor         string
 	APIKey         string
 	CredentialType string
@@ -105,6 +106,9 @@ func migrateCredentialSessions(
 				return fmt.Errorf("record credential session migration: %w", err)
 			}
 		}
+		if err := ensureCredentialSessionNames(tx); err != nil {
+			return err
+		}
 		return validateCredentialSessionSchema(tx)
 	}); err != nil {
 		return err
@@ -121,6 +125,7 @@ func createCredentialSessionSchema(tx *gorm.DB) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS credential_sessions (
 			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
 			kind TEXT NOT NULL,
 			secret_data TEXT NOT NULL,
 			version INTEGER NOT NULL CHECK(version > 0),
@@ -198,7 +203,7 @@ func migrateProviderOwnedCredentials(tx *gorm.DB, clock internalClock) error {
 	}
 
 	var providers []legacyCredentialProvider
-	if err := tx.Table("providers").Select("id, vendor, api_key, credential_type, created_at, updated_at").Order("id ASC").Scan(&providers).Error; err != nil {
+	if err := tx.Table("providers").Select("id, name, vendor, api_key, credential_type, created_at, updated_at").Order("id ASC").Scan(&providers).Error; err != nil {
 		return fmt.Errorf("list legacy credential providers: %w", err)
 	}
 	var apiTypes []legacyCredentialAPIType
@@ -257,7 +262,7 @@ func backfillStaticProviderSessions(
 	defaultSecret := strings.TrimSpace(provider.APIKey)
 	defaultSessionID := ""
 	if defaultSecret != "" {
-		created, err := createMigratedStaticSession(repository, provider, defaultSecret)
+		created, err := createMigratedStaticSession(repository, provider, migratedCredentialName(provider.Name, ""), defaultSecret)
 		if err != nil {
 			return fmt.Errorf("create default static credential session for provider %q: %w", provider.ID, err)
 		}
@@ -270,7 +275,7 @@ func backfillStaticProviderSessions(
 		}
 		sessionID := defaultSessionID
 		if overrideSecret != "" {
-			created, err := createMigratedStaticSession(repository, provider, overrideSecret)
+			created, err := createMigratedStaticSession(repository, provider, migratedCredentialName(provider.Name, apiType.APIType), overrideSecret)
 			if err != nil {
 				return fmt.Errorf("create static credential override for provider %q API type %q: %w", provider.ID, apiType.APIType, err)
 			}
@@ -286,10 +291,12 @@ func backfillStaticProviderSessions(
 func createMigratedStaticSession(
 	repository *credentialsession.Repository,
 	provider legacyCredentialProvider,
+	name string,
 	secret string,
 ) (*credentialsession.Session, error) {
 	session := &credentialsession.Session{
 		ID:         uuid.NewString(),
+		Name:       name,
 		Kind:       credentialsession.KindAPIKey,
 		SecretData: secret,
 		Version:    1,
@@ -354,6 +361,7 @@ func backfillLoginProviderSession(
 	}
 	session := &credentialsession.Session{
 		ID:         uuid.NewString(),
+		Name:       migratedCredentialName(provider.Name, ""),
 		Kind:       credentialsession.KindChatGPT,
 		SecretData: credential.SecretData,
 		Version:    max(credential.Version, 1),
@@ -371,6 +379,64 @@ func backfillLoginProviderSession(
 	for _, apiType := range apiTypes {
 		if err := insertMigrationBinding(tx, provider.ID, apiType.APIType, created.ID, provider.CreatedAt, provider.UpdatedAt, clock.Now()); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func migratedCredentialName(providerName, apiType string) string {
+	name := strings.TrimSpace(providerName)
+	if name == "" {
+		name = "Credential"
+	}
+	if apiType = strings.TrimSpace(apiType); apiType != "" {
+		name += " · " + apiType
+	}
+	return truncateMigratedCredentialName(name)
+}
+
+func truncateMigratedCredentialName(name string) string {
+	runes := []rune(strings.TrimSpace(name))
+	if len(runes) > credentialsession.MaxNameLength {
+		runes = runes[:credentialsession.MaxNameLength]
+	}
+	return string(runes)
+}
+
+func ensureCredentialSessionNames(tx *gorm.DB) error {
+	if !tx.Migrator().HasColumn("credential_sessions", "name") {
+		if err := tx.Exec(`ALTER TABLE credential_sessions ADD COLUMN name TEXT NOT NULL DEFAULT ''`).Error; err != nil {
+			return fmt.Errorf("add credential session names: %w", err)
+		}
+	}
+	var sessions []credentialsession.Session
+	if err := tx.Where("TRIM(name) = ''").Order("id ASC").Find(&sessions).Error; err != nil {
+		return fmt.Errorf("list unnamed credential sessions: %w", err)
+	}
+	for index := range sessions {
+		name := strings.TrimSpace(sessions[index].AuthState.Email)
+		if name == "" {
+			var reference struct {
+				ProviderName string
+				APIType      string
+			}
+			err := tx.Table("route_target_credentials AS bindings").
+				Select("providers.name AS provider_name, bindings.api_type").
+				Joins("JOIN providers ON providers.id = bindings.route_target_id").
+				Where("bindings.session_id = ?", sessions[index].ID).
+				Order("providers.name COLLATE NOCASE ASC, bindings.api_type ASC").
+				Take(&reference).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("resolve name for credential session %q: %w", sessions[index].ID, err)
+			}
+			name = strings.TrimSpace(reference.ProviderName)
+		}
+		if name == "" {
+			name = credentialsession.DefaultName(sessions[index].Kind, sessions[index].ID)
+		}
+		name = truncateMigratedCredentialName(name)
+		if err := tx.Model(&credentialsession.Session{}).Where("id = ?", sessions[index].ID).Update("name", name).Error; err != nil {
+			return fmt.Errorf("name credential session %q: %w", sessions[index].ID, err)
 		}
 	}
 	return nil
@@ -496,6 +562,16 @@ func validateCredentialSessionSchema(tx *gorm.DB) error {
 	}
 	if tx.Migrator().HasColumn("credential_sessions", "vendor") {
 		return fmt.Errorf("credential session schema still contains obsolete vendor ownership")
+	}
+	if !tx.Migrator().HasColumn("credential_sessions", "name") {
+		return fmt.Errorf("credential session schema is missing operator-facing names")
+	}
+	var unnamed int64
+	if err := tx.Model(&credentialsession.Session{}).Where("TRIM(name) = ''").Count(&unnamed).Error; err != nil {
+		return fmt.Errorf("validate credential session names: %w", err)
+	}
+	if unnamed != 0 {
+		return fmt.Errorf("credential session schema contains %d unnamed sessions", unnamed)
 	}
 	if tx.Migrator().HasColumn("providers", "api_key") ||
 		tx.Migrator().HasColumn("providers", "credential_type") ||

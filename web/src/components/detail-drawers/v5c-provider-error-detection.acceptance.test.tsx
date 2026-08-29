@@ -68,6 +68,7 @@ const provider = {
   credential_sessions: [
     {
       id: "credential-api-key",
+      name: "API key credential",
       kind: "api_key",
       version: 1,
       subject: { kind: "keyed_digest", value: "digest" },

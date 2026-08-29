@@ -40,6 +40,10 @@ func (s *SQLiteStore) CredentialSessionRouteTargetIDs(ctx context.Context, sessi
 	return s.credentialSessions.ListRouteTargetIDs(ctx, sessionID)
 }
 
+func (s *SQLiteStore) CredentialSessionRouteReferences(ctx context.Context, sessionID string) ([]credentialsession.RouteReference, error) {
+	return s.credentialSessions.ListRouteReferences(ctx, sessionID)
+}
+
 func (s *SQLiteStore) DeleteCredentialSession(ctx context.Context, sessionID string) error {
 	ownedCtx, release, err := s.credentialMutations.With(ctx, []string{sessionID})
 	if err != nil {
@@ -49,6 +53,15 @@ func (s *SQLiteStore) DeleteCredentialSession(ctx context.Context, sessionID str
 	s.credentialSigning.mu.RLock()
 	defer s.credentialSigning.mu.RUnlock()
 	return s.credentialSessions.DeleteIfUnreferenced(ownedCtx, sessionID)
+}
+
+func (s *SQLiteStore) RenameCredentialSessionCAS(ctx context.Context, sessionID string, expectedVersion int64, name string) (int64, error) {
+	ownedCtx, release, err := s.credentialMutations.With(ctx, []string{sessionID})
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	return s.credentialSessions.RenameCAS(ownedCtx, sessionID, expectedVersion, name)
 }
 
 func (s *SQLiteStore) WithCredentialSessionMutations(

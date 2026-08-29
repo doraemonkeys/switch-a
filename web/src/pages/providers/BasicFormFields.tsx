@@ -207,8 +207,10 @@ function ApiTypeRouteRow({
             <option value="">Create or select a credential</option>
             {availableSessions.map((session) => (
               <option key={session.id} value={session.id}>
-                {session.kind === "chatgpt" ? "GPT Login" : "API Key"} -{" "}
-                {session.auth_state.email || session.id}
+                {session.name} ·{" "}
+                {session.kind === "chatgpt" ? "GPT Login" : "API Key"} ·{" "}
+                {session.route_references.length} route
+                {session.route_references.length === 1 ? "" : "s"}
               </option>
             ))}
           </select>

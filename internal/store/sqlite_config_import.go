@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
@@ -135,25 +136,7 @@ func applyImportedCredentialSessions(
 		current, err := txStore.GetCredentialSession(ctx, candidate.ID)
 		switch {
 		case err == nil:
-			if current.Kind != candidate.Kind {
-				return fmt.Errorf("credential session %q kind is immutable", candidate.ID)
-			}
-			if candidate.Kind == credentialsession.KindChatGPT {
-				// ChatGPT subject authority is produced only by the verified login/import
-				// mutation boundary. Keeping this check at persistence makes an admin
-				// staging regression fail closed and roll back the whole config bundle.
-				return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
-			}
-			if current.Version != candidate.Version {
-				return fmt.Errorf("credential session %q version mismatch: expected %d, current %d", candidate.ID, candidate.Version, current.Version)
-			}
-			if current.Kind == candidate.Kind &&
-				current.SecretData == candidate.SecretData &&
-				reflect.DeepEqual(current.Subject(), candidate.Subject()) &&
-				reflect.DeepEqual(current.AuthState, candidate.AuthState) {
-				continue
-			}
-			if _, err := txStore.UpdateCredentialSessionCAS(ctx, candidate.ID, current.Version, candidate.SecretData, candidate.Subject(), candidate.AuthState); err != nil {
+			if err := applyExistingImportedCredentialSession(ctx, txStore, current, candidate); err != nil {
 				return err
 			}
 		case errors.Is(err, credentialsession.ErrNotFound):
@@ -168,6 +151,49 @@ func applyImportedCredentialSessions(
 		}
 	}
 	return nil
+}
+
+func applyExistingImportedCredentialSession(
+	ctx context.Context,
+	txStore *SQLiteStore,
+	current *credentialsession.Session,
+	candidate credentialsession.Session,
+) error {
+	if current.Kind != candidate.Kind {
+		return fmt.Errorf("credential session %q kind is immutable", candidate.ID)
+	}
+	if candidate.Kind == credentialsession.KindChatGPT {
+		// ChatGPT subject authority is produced only by the verified login/import
+		// mutation boundary. Keeping this check at persistence makes an admin
+		// staging regression fail closed and roll back the whole config bundle.
+		return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
+	}
+	if current.Version != candidate.Version {
+		return fmt.Errorf("credential session %q version mismatch: expected %d, current %d", candidate.ID, candidate.Version, current.Version)
+	}
+	if strings.TrimSpace(candidate.Name) == "" {
+		candidate.Name = current.Name
+	}
+	materialChanged := current.SecretData != candidate.SecretData ||
+		!reflect.DeepEqual(current.Subject(), candidate.Subject()) ||
+		!reflect.DeepEqual(current.AuthState, candidate.AuthState)
+	nameChanged := current.Name != candidate.Name
+	if !materialChanged && !nameChanged {
+		return nil
+	}
+	nextVersion := current.Version
+	var err error
+	if materialChanged {
+		nextVersion, err = txStore.UpdateCredentialSessionCAS(ctx, candidate.ID, nextVersion, candidate.SecretData, candidate.Subject(), candidate.AuthState)
+		if err != nil {
+			return err
+		}
+	}
+	if !nameChanged {
+		return nil
+	}
+	_, err = txStore.RenameCredentialSessionCAS(ctx, candidate.ID, nextVersion, candidate.Name)
+	return err
 }
 
 func applyImportedGroups(

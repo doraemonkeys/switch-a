@@ -292,6 +292,7 @@ func buildStaticCredentialSessionFromExport(item ExportedCredentialSession) (*cr
 	}
 	session := &credentialsession.Session{
 		ID:         strings.TrimSpace(item.ID),
+		Name:       strings.TrimSpace(item.Name),
 		Kind:       item.Kind,
 		SecretData: item.SecretData,
 		Version:    item.Version,

@@ -103,6 +103,63 @@ func TestSQLiteCredentialSessionSharedReferencesAndProviderDeletion(t *testing.T
 	}
 }
 
+func TestSQLiteProviderCredentialMaterializationIsAtomicAndInspectable(t *testing.T) {
+	store := newCredentialSessionStore(t)
+	ctx := context.Background()
+	newSession := &credentialsession.Session{
+		ID: "atomic-session", Name: "Atomic provider key", Kind: credentialsession.KindAPIKey,
+		SecretData: "atomic-secret", Version: 1,
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive},
+	}
+	if err := newSession.SetSubject(credentialsession.PendingSubject()); err != nil {
+		t.Fatal(err)
+	}
+	provider := providerWithSessionRefs("atomic-provider", "openai", map[string]string{"codex": newSession.ID})
+	provider.Name = "Atomic Provider"
+	if err := store.CreateProviderWithCredentialSessions(ctx, provider, []*credentialsession.Session{newSession}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.GetCredentialSession(ctx, newSession.ID)
+	if err != nil || created.Name != newSession.Name || created.SecretData != newSession.SecretData {
+		t.Fatalf("created session = (%+v, %v)", created, err)
+	}
+	references, err := store.CredentialSessionRouteReferences(ctx, newSession.ID)
+	if err != nil || len(references) != 1 || references[0].ProviderName != provider.Name || references[0].APIType != "codex" {
+		t.Fatalf("route references = (%+v, %v)", references, err)
+	}
+	if _, err := store.RenameCredentialSessionCAS(ctx, newSession.ID, created.Version, "Renamed key"); err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := store.GetCredentialSession(ctx, newSession.ID)
+	if err != nil || renamed.Name != "Renamed key" || renamed.Version != created.Version+1 {
+		t.Fatalf("renamed session = (%+v, %v)", renamed, err)
+	}
+	replacement := newSession.Clone()
+	replacement.ID = "replacement-session"
+	replacement.Name = "Replacement key"
+	replacement.SecretData = "replacement-secret"
+	updatedProvider := providerWithSessionRefs(provider.ID, provider.Vendor, map[string]string{"codex": replacement.ID})
+	updatedProvider.Name = provider.Name
+	if err := store.UpdateProviderWithCredentialSessions(ctx, updatedProvider, []*credentialsession.Session{replacement}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := store.ResolveCredentialSession(ctx, provider.ID, "codex")
+	if err != nil || resolved.Credential.SessionID != replacement.ID || resolved.Credential.SecretData != replacement.SecretData {
+		t.Fatalf("updated route credential = (%+v, %v)", resolved, err)
+	}
+
+	rolledBack := newSession.Clone()
+	rolledBack.ID = "rolled-back-session"
+	rolledBack.Name = "Must roll back"
+	duplicate := providerWithSessionRefs(provider.ID, provider.Vendor, map[string]string{"codex": rolledBack.ID})
+	if err := store.CreateProviderWithCredentialSessions(ctx, duplicate, []*credentialsession.Session{rolledBack}); err == nil {
+		t.Fatal("duplicate provider creation succeeded")
+	}
+	if _, err := store.GetCredentialSession(ctx, rolledBack.ID); !errors.Is(err, credentialsession.ErrNotFound) {
+		t.Fatalf("rolled-back session lookup error = %v", err)
+	}
+}
+
 func TestSQLiteCredentialSessionMutationLeaseCASAndSubjectRotation(t *testing.T) {
 	store := newCredentialSessionStore(t)
 	ctx := context.Background()

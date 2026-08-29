@@ -55,12 +55,16 @@ func TestCredentialSessionMigrationBackfillsExplicitIndependentSessions(t *testi
 	}
 
 	primary := sessionForRoute(t, sessions, bindings, migrationtest.StaticProviderID, "codex")
-	if primary.Kind != credentialsession.KindAPIKey || primary.SecretData != "fixture-static-primary-not-secret" || primary.SubjectKind != credentialsession.SubjectPending {
+	if primary.Name != "Legacy static primary" || primary.Kind != credentialsession.KindAPIKey || primary.SecretData != "fixture-static-primary-not-secret" || primary.SubjectKind != credentialsession.SubjectPending {
 		t.Fatalf("primary static session = %+v", primary)
 	}
 	claude := sessionForRoute(t, sessions, bindings, migrationtest.APITypeOverrideProviderID, "claude")
 	codex := sessionForRoute(t, sessions, bindings, migrationtest.APITypeOverrideProviderID, "codex")
-	if claude.ID == codex.ID || claude.SecretData != "fixture-static-fallback-not-secret" || codex.SecretData != "fixture-static-override-not-secret" {
+	if claude.ID == codex.ID ||
+		claude.Name != "Legacy API-type override" ||
+		codex.Name != "Legacy API-type override · codex" ||
+		claude.SecretData != "fixture-static-fallback-not-secret" ||
+		codex.SecretData != "fixture-static-override-not-secret" {
 		t.Fatalf("per-API sessions = claude %+v, codex %+v", claude, codex)
 	}
 
@@ -83,6 +87,34 @@ func TestCredentialSessionMigrationBackfillsExplicitIndependentSessions(t *testi
 	}
 	if repair.AuthState.Status != credentialsession.AuthStatusReauthRequired || repair.AuthState.StatusReason != "legacy_duplicate_account_binding" {
 		t.Fatalf("reauthentication recovery state was made routable: %+v", repair.AuthState)
+	}
+}
+
+func TestCredentialSessionMigrationBackfillsNamesForIntermediateSchema(t *testing.T) {
+	t.Parallel()
+	db := openLegacyCredentialFixture(t)
+	clock := &credentialMigrationClock{now: time.Date(2026, 8, 27, 1, 2, 3, 0, time.UTC)}
+	if err := migrateCredentialSessions(db, clock); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE credential_sessions DROP COLUMN name`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateCredentialSessions(db, clock); err != nil {
+		t.Fatalf("migrate intermediate schema: %v", err)
+	}
+	var unnamed int64
+	if err := db.Model(&credentialsession.Session{}).Where("TRIM(name) = ''").Count(&unnamed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if unnamed != 0 {
+		t.Fatalf("unnamed credential sessions = %d", unnamed)
+	}
+	bindings := loadMigratedBindings(t, db)
+	sessions := loadMigratedCredentialSessions(t, db)
+	primary := sessionForRoute(t, sessions, bindings, migrationtest.StaticProviderID, "codex")
+	if primary.Name != "Legacy static primary" {
+		t.Fatalf("backfilled name = %q", primary.Name)
 	}
 }
 

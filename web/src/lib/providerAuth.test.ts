@@ -25,6 +25,7 @@ function providerWithAuthState(
     credential_sessions: [
       {
         id: "credential-1",
+        name: "GPT credential",
         kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
         version: 1,
         subject: { kind: "account", value: "account-1" },

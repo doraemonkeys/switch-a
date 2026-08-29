@@ -198,9 +198,27 @@ func NormalizeAuthState(kind Kind, state AuthState) AuthState {
 	return state
 }
 
+const MaxNameLength = 120
+
+func DefaultName(kind Kind, sessionID string) string {
+	prefix := "API Key"
+	if kind == KindChatGPT {
+		prefix = "GPT Login"
+	}
+	identifier := strings.TrimSpace(sessionID)
+	if len(identifier) > 8 {
+		identifier = identifier[:8]
+	}
+	if identifier == "" {
+		return prefix
+	}
+	return prefix + " · " + identifier
+}
+
 // Session is the aggregate root for independently rotating secret material.
 type Session struct {
 	ID                string      `gorm:"column:id;primaryKey;type:text" json:"id"`
+	Name              string      `gorm:"column:name;type:text;not null" json:"name"`
 	Kind              Kind        `gorm:"column:kind;type:text;not null;index" json:"kind"`
 	SecretData        string      `gorm:"column:secret_data;type:text;not null" json:"-"`
 	Version           int64       `gorm:"column:version;not null" json:"version"`
@@ -240,6 +258,12 @@ func (s *Session) Validate() error {
 	}
 	if strings.TrimSpace(s.ID) == "" || !IsValidKind(s.Kind) {
 		return fmt.Errorf("%w: id and kind are required", ErrInvalidSession)
+	}
+	s.Name = strings.TrimSpace(s.Name)
+	// Repository creation supplies a deterministic fallback for trusted internal
+	// imports; operator-facing APIs require an explicit name before reaching it.
+	if len([]rune(s.Name)) > MaxNameLength {
+		return fmt.Errorf("%w: name must not exceed %d characters", ErrInvalidSession, MaxNameLength)
 	}
 	if strings.TrimSpace(s.SecretData) == "" {
 		return fmt.Errorf("%w: secret data is blank", ErrInvalidSession)
@@ -304,6 +328,7 @@ func (s *Session) Clone() *Session {
 // resolution for one route-target/API-type candidate.
 type Snapshot struct {
 	SessionID  string
+	Name       string
 	Kind       Kind
 	SecretData string
 	Version    int64
@@ -317,6 +342,7 @@ func (s *Session) Snapshot() (Snapshot, error) {
 	}
 	return Snapshot{
 		SessionID:  s.ID,
+		Name:       s.Name,
 		Kind:       s.Kind,
 		SecretData: s.SecretData,
 		Version:    s.Version,

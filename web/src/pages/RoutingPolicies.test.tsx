@@ -76,6 +76,7 @@ function buildProvider(overrides: Partial<Provider> = {}): Provider {
     credential_sessions: [
       {
         id: "credential-1",
+        name: "Provider credential",
         kind: "api_key",
         version: 1,
         subject: { kind: "keyed_digest", value: "digest" },

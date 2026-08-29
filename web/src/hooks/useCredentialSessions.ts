@@ -1,4 +1,9 @@
-import type { CreateCredentialSessionInput, CredentialSession } from "../api";
+import type {
+  CreateCredentialSessionInput,
+  CredentialSession,
+  RenameCredentialSessionInput,
+  UpdateCredentialSessionInput,
+} from "../api";
 import { useApi } from "../api";
 import { useQuery } from "./useQuery";
 
@@ -16,6 +21,29 @@ export function useCredentialSessions() {
     return created;
   };
 
+  const renameCredentialSession = async (
+    id: string,
+    input: RenameCredentialSessionInput,
+  ): Promise<CredentialSession> => {
+    const updated = await api.credentialSessions.rename(id, input);
+    await query.refetch();
+    return updated;
+  };
+
+  const updateCredentialSession = async (
+    id: string,
+    input: UpdateCredentialSessionInput,
+  ): Promise<CredentialSession> => {
+    const updated = await api.credentialSessions.update(id, input);
+    await query.refetch();
+    return updated;
+  };
+
+  const deleteCredentialSession = async (id: string): Promise<void> => {
+    await api.credentialSessions.delete(id);
+    await query.refetch();
+  };
+
   return {
     credentialSessions: query.data ?? [],
     hasSnapshot: query.data !== null,
@@ -23,5 +51,8 @@ export function useCredentialSessions() {
     error: query.error,
     refetch: query.refetch,
     createCredentialSession,
+    renameCredentialSession,
+    updateCredentialSession,
+    deleteCredentialSession,
   };
 }

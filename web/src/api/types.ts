@@ -14,6 +14,16 @@ import type {
 import type { ProviderImportConflictDetail } from "./provider-import-types";
 import type { BackoffPolicy } from "./retry-policy-types";
 import type { RoutingPolicyModelMatchType } from "./routing-policy-types";
+import type {
+  CredentialRouteReference,
+  NewProviderCredentialSessionInput,
+} from "./credential-write-types";
+
+export type {
+  CredentialRouteReference,
+  NewProviderCredentialSessionInput,
+  RenameCredentialSessionInput,
+} from "./credential-write-types";
 
 export type {
   Strategy,
@@ -126,6 +136,7 @@ export interface CredentialSessionAuthState {
 
 export interface ProviderCredentialSession {
   id: string;
+  name: string;
   kind: CredentialSessionKind;
   version: number;
   subject: CredentialSubject;
@@ -133,15 +144,18 @@ export interface ProviderCredentialSession {
 }
 
 export interface CredentialSession extends ProviderCredentialSession {
+  name: string;
   /** Present for operator-managed API-key sessions; ChatGPT tokens use the dedicated export flow. */
   secret_data?: string;
   referenced_route_target_ids: string[];
+  route_references: CredentialRouteReference[];
   created_at: string;
   updated_at: string;
 }
 
 export interface CreateCredentialSessionInput {
   id?: string;
+  name: string;
   kind: CredentialSessionKind;
   secret_data?: string;
   credential_login_id?: string;
@@ -195,6 +209,7 @@ export interface ProviderInput {
   id?: string;
   name: string;
   api_types: APITypeInput[];
+  new_credential_sessions?: NewProviderCredentialSessionInput[];
   auth_mode?: AuthMode;
   usage_limit_policy?: ProviderUsageLimitPolicy;
   group_id?: string | null;

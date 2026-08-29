@@ -10,6 +10,7 @@ import { Logs } from "@/pages/Logs";
 import { Monitor } from "@/pages/Monitor";
 import { TokenUsage } from "@/pages/TokenUsage";
 import { Providers } from "@/pages/providers";
+import { CredentialSessions } from "@/pages/credentials";
 import { RoutingPolicies } from "@/pages/RoutingPolicies";
 import { APICatalogProvider } from "@/api";
 import {
@@ -37,6 +38,7 @@ export function AppRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="monitor" element={<Monitor />} />
         <Route path="providers" element={<Providers />} />
+        <Route path="credentials" element={<CredentialSessions />} />
         <Route path="groups" element={<Groups />} />
         <Route path="routing" element={<RoutingPolicies />} />
         <Route path="error-detection" element={<ErrorDetection />} />

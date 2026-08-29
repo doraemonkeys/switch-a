@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -33,19 +34,22 @@ type credentialSessionStore interface {
 }
 
 type CredentialSessionPayload struct {
-	ID                     string                      `json:"id"`
-	Kind                   credentialsession.Kind      `json:"kind"`
-	SecretData             string                      `json:"secret_data,omitempty"`
-	Version                int64                       `json:"version"`
-	Subject                credentialsession.Subject   `json:"subject"`
-	AuthState              credentialsession.AuthState `json:"auth_state"`
-	ReferencedRouteTargets []string                    `json:"referenced_route_target_ids"`
-	CreatedAt              time.Time                   `json:"created_at"`
-	UpdatedAt              time.Time                   `json:"updated_at"`
+	ID                     string                             `json:"id"`
+	Name                   string                             `json:"name"`
+	Kind                   credentialsession.Kind             `json:"kind"`
+	SecretData             string                             `json:"secret_data,omitempty"`
+	Version                int64                              `json:"version"`
+	Subject                credentialsession.Subject          `json:"subject"`
+	AuthState              credentialsession.AuthState        `json:"auth_state"`
+	ReferencedRouteTargets []string                           `json:"referenced_route_target_ids"`
+	RouteReferences        []credentialsession.RouteReference `json:"route_references"`
+	CreatedAt              time.Time                          `json:"created_at"`
+	UpdatedAt              time.Time                          `json:"updated_at"`
 }
 
 type CreateCredentialSessionRequest struct {
 	ID                string                       `json:"id,omitempty"`
+	Name              string                       `json:"name"`
 	Kind              credentialsession.Kind       `json:"kind"`
 	SecretData        string                       `json:"secret_data"`
 	AuthState         *credentialsession.AuthState `json:"auth_state,omitempty"`
@@ -61,6 +65,19 @@ type UpdateCredentialSessionRequest struct {
 type ReauthenticateCredentialSessionRequest struct {
 	ExpectedVersion   int64  `json:"expected_version"`
 	CredentialLoginID string `json:"credential_login_id"`
+}
+
+type RenameCredentialSessionRequest struct {
+	ExpectedVersion int64  `json:"expected_version"`
+	Name            string `json:"name"`
+}
+
+type credentialSessionReferenceStore interface {
+	CredentialSessionRouteReferences(context.Context, string) ([]credentialsession.RouteReference, error)
+}
+
+type credentialSessionRenamer interface {
+	RenameCredentialSessionCAS(context.Context, string, int64, string) (int64, error)
 }
 
 type credentialSessionAuthService interface {
@@ -136,17 +153,14 @@ func (h *Handler) CreateCredentialSession(w http.ResponseWriter, r *http.Request
 	}
 	var session *credentialsession.Session
 	var err error
-	if loginID := strings.TrimSpace(req.CredentialLoginID); loginID != "" {
+	loginID := strings.TrimSpace(req.CredentialLoginID)
+	if loginID != "" {
 		builder, ok := h.auth.(chatGPTLoginSessionBuilder)
 		if !ok {
 			writeError(w, http.StatusNotImplemented, ErrCodeInternal, "GPT login is unavailable in this build")
 			return
 		}
-		id := strings.TrimSpace(req.ID)
-		if id == "" {
-			id = uuid.NewString()
-		}
-		session, err = builder.BuildCredentialSessionFromChatGPTLogin(loginID, id)
+		session, err = buildChatGPTCredentialSession(builder, req, loginID)
 	} else {
 		session, err = buildCredentialSession(req)
 	}
@@ -159,19 +173,49 @@ func (h *Handler) CreateCredentialSession(w http.ResponseWriter, r *http.Request
 		h.writeCredentialSessionError(w, "create", session.ID, err)
 		return
 	}
-	if loginID := strings.TrimSpace(req.CredentialLoginID); loginID != "" {
-		if builder, ok := h.auth.(chatGPTLoginSessionBuilder); ok {
-			if err := builder.FinalizeChatGPTLogin(loginID); err != nil {
-				h.logger.Warn("failed to finalize chatgpt login after credential session creation", zap.String("login_id", loginID), zap.String("session_id", created.ID), zap.Error(err))
-			}
-		}
-	}
+	h.finalizeChatGPTCredentialLogin(loginID, created.ID)
 	payload, err := credentialSessionPayload(r.Context(), repository, created)
 	if err != nil {
 		h.writeCredentialSessionError(w, "create", created.ID, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, payload)
+}
+
+func buildChatGPTCredentialSession(
+	builder chatGPTLoginSessionBuilder,
+	req CreateCredentialSessionRequest,
+	loginID string,
+) (*credentialsession.Session, error) {
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		id = uuid.NewString()
+	}
+	session, err := builder.BuildCredentialSessionFromChatGPTLogin(loginID, id)
+	if err != nil || session == nil {
+		return session, err
+	}
+	session.Name = strings.TrimSpace(req.Name)
+	if session.Name == "" {
+		session.Name = strings.TrimSpace(session.AuthState.Email)
+	}
+	if session.Name == "" {
+		session.Name = credentialsession.DefaultName(session.Kind, session.ID)
+	}
+	return session, nil
+}
+
+func (h *Handler) finalizeChatGPTCredentialLogin(loginID, sessionID string) {
+	if loginID == "" {
+		return
+	}
+	builder, ok := h.auth.(chatGPTLoginSessionBuilder)
+	if !ok {
+		return
+	}
+	if err := builder.FinalizeChatGPTLogin(loginID); err != nil {
+		h.logger.Warn("failed to finalize chatgpt login after credential session creation", zap.String("login_id", loginID), zap.String("session_id", sessionID), zap.Error(err))
+	}
 }
 
 func buildCredentialSession(req CreateCredentialSessionRequest) (*credentialsession.Session, error) {
@@ -182,8 +226,12 @@ func buildCredentialSession(req CreateCredentialSessionRequest) (*credentialsess
 	if id == "" {
 		id = uuid.NewString()
 	}
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, fmt.Errorf("credential session name is required")
+	}
 	session := &credentialsession.Session{
 		ID:         id,
+		Name:       req.Name,
 		Kind:       req.Kind,
 		SecretData: req.SecretData,
 		Version:    1,
@@ -201,6 +249,42 @@ func buildCredentialSession(req CreateCredentialSessionRequest) (*credentialsess
 		return nil, err
 	}
 	return session, nil
+}
+
+func (h *Handler) RenameCredentialSession(w http.ResponseWriter, r *http.Request) {
+	repository, ok := h.store.(credentialSessionRenamer)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential session renaming is unavailable in this build")
+		return
+	}
+	limitRequestBody(w, r)
+	var req RenameCredentialSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	name := strings.TrimSpace(req.Name)
+	if id == "" || req.ExpectedVersion < 1 || name == "" || len([]rune(name)) > credentialsession.MaxNameLength {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "id, expected_version, and a valid name are required")
+		return
+	}
+	if _, err := repository.RenameCredentialSessionCAS(r.Context(), id, req.ExpectedVersion, name); err != nil {
+		h.writeCredentialSessionError(w, "rename", id, err)
+		return
+	}
+	store := h.credentialStore()
+	updated, err := store.GetCredentialSession(r.Context(), id)
+	if err != nil {
+		h.writeCredentialSessionError(w, "rename", id, err)
+		return
+	}
+	payload, err := credentialSessionPayload(r.Context(), store, updated)
+	if err != nil {
+		h.writeCredentialSessionError(w, "rename", id, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (h *Handler) UpdateCredentialSession(w http.ResponseWriter, r *http.Request) {
@@ -475,7 +559,18 @@ func credentialSessionPayload(ctx context.Context, repository credentialSessionS
 	if err != nil {
 		return CredentialSessionPayload{}, err
 	}
+	routeReferences := make([]credentialsession.RouteReference, 0)
+	if referenceStore, ok := any(repository).(credentialSessionReferenceStore); ok {
+		routeReferences, err = referenceStore.CredentialSessionRouteReferences(ctx, session.ID)
+		if err != nil {
+			return CredentialSessionPayload{}, err
+		}
+	}
 	secretData := ""
+	name := strings.TrimSpace(session.Name)
+	if name == "" {
+		name = credentialsession.DefaultName(session.Kind, session.ID)
+	}
 	if session.Kind == credentialsession.KindAPIKey {
 		// Static API keys are operator-managed values, so the admin resource must
 		// remain readable as well as writable. ChatGPT's structured token bundle
@@ -483,10 +578,11 @@ func credentialSessionPayload(ctx context.Context, repository credentialSessionS
 		secretData = session.SecretData
 	}
 	return CredentialSessionPayload{
-		ID: session.ID, Kind: session.Kind, Version: session.Version,
+		ID: session.ID, Name: name, Kind: session.Kind, Version: session.Version,
 		SecretData: secretData,
 		Subject:    session.Subject(), AuthState: session.AuthState.Clone(),
-		ReferencedRouteTargets: references, CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
+		ReferencedRouteTargets: references, RouteReferences: routeReferences,
+		CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
 	}, nil
 }
 
