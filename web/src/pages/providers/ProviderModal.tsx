@@ -80,7 +80,7 @@ function createDefaultFormData(): ProviderFormData {
   return {
     id: "",
     name: "",
-    default_api_key: "",
+    new_shared_api_key: "",
     chatgpt_credential_session_id: "",
     api_types: [],
     auth_mode: "auto",
@@ -112,7 +112,7 @@ function deriveFormData(initialData?: Provider): ProviderFormData {
   return {
     id: initialData.id,
     name: initialData.name,
-    default_api_key: "",
+    new_shared_api_key: "",
     chatgpt_credential_session_id: chatGPTCredentialSession?.id ?? "",
     api_types: initialData.api_types.map((t) => ({
       client_key: generateClientKey(),
@@ -250,15 +250,15 @@ function prepareProviderSubmission({
     }
   }
 
-  const defaultAPIKey =
+  const sharedAPIKey =
     formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY
-      ? normalizeProviderApiKey(formData.default_api_key)
+      ? normalizeProviderApiKey(formData.new_shared_api_key)
       : "";
   if (!isChatGPTProvider) {
     const missingKey = validApiTypes.find(
       (apiType) =>
         !apiType.credential_session_id &&
-        !defaultAPIKey &&
+        !sharedAPIKey &&
         !normalizeProviderApiKey(apiType.api_key),
     );
     if (missingKey) {
@@ -359,11 +359,11 @@ async function materializeProviderCredentials({
     };
   }
 
-  const defaultSecret =
+  const sharedSecret =
     formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY
-      ? normalizeProviderApiKey(formData.default_api_key)
+      ? normalizeProviderApiKey(formData.new_shared_api_key)
       : "";
-  let defaultSessionID = "";
+  let sharedSessionID = "";
   const resolved: ProviderInput["api_types"] = [];
   for (const entry of apiTypes) {
     const routeSecret = normalizeProviderApiKey(entry.api_key);
@@ -375,16 +375,16 @@ async function materializeProviderCredentials({
           secret_data: routeSecret,
         })
       ).id;
-    } else if (defaultSecret) {
-      if (!defaultSessionID) {
-        defaultSessionID = (
+    } else if (!sessionID && sharedSecret) {
+      if (!sharedSessionID) {
+        sharedSessionID = (
           await createCredentialSession({
             kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-            secret_data: defaultSecret,
+            secret_data: sharedSecret,
           })
         ).id;
       }
-      sessionID = defaultSessionID;
+      sessionID = sharedSessionID;
     }
     resolved.push({
       api_type: entry.api_type,
@@ -396,7 +396,7 @@ async function materializeProviderCredentials({
     payload: providerInputFromForm(formData, resolved, false),
     formData: {
       ...formData,
-      default_api_key: "",
+      new_shared_api_key: "",
       api_types: resolved.map((entry) => ({
         ...entry,
         client_key: generateClientKey(),

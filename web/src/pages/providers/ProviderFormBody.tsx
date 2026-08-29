@@ -392,6 +392,10 @@ function ChatGPTCredentialSessionField({
   );
 }
 
+function hasUnboundCredentialRoute(formData: ProviderFormData): boolean {
+  return formData.api_types.some((entry) => !entry.credential_session_id);
+}
+
 export function ProviderFormBody({
   formState,
   idState,
@@ -431,6 +435,7 @@ export function ProviderFormBody({
     setFormData((prev) => ({ ...prev, api_types: entries }));
   const isChatGPTProvider =
     formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
+  const hasUnboundRoute = hasUnboundCredentialRoute(formData);
   const effectiveUsageLimitPolicy =
     formData.usage_limit_policy || defaultProviderUsageLimitPolicy();
   const handleCredentialModeChange = (value: ProviderCredentialMode) => {
@@ -539,16 +544,20 @@ export function ProviderFormBody({
         </>
       ) : (
         <>
-          {formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY && (
-            <ApiKeyField
-              value={formData.default_api_key}
-              onChange={(value) =>
-                setFormData((prev) => ({ ...prev, default_api_key: value }))
-              }
-              showApiKey={showApiKey}
-              onToggleVisibility={() => setShowApiKey(!showApiKey)}
-            />
-          )}
+          {formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.API_KEY &&
+            (!isEditMode || hasUnboundRoute) && (
+              <ApiKeyField
+                value={formData.new_shared_api_key}
+                onChange={(value) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    new_shared_api_key: value,
+                  }))
+                }
+                showApiKey={showApiKey}
+                onToggleVisibility={() => setShowApiKey(!showApiKey)}
+              />
+            )}
           <ApiTypesField
             entries={formData.api_types}
             onChange={handleApiTypesChange}

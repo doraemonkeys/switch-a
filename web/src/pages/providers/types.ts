@@ -15,7 +15,8 @@ export interface ProviderAPITypeDraft extends APITypeInput {
 export interface ProviderFormData extends Omit<ProviderInput, "api_types"> {
   api_types: ProviderAPITypeDraft[];
   credential_mode: ProviderCredentialMode;
-  default_api_key: string;
+  /** Explicit bindings stay authoritative; this write-only secret only fills unbound routes. */
+  new_shared_api_key: string;
   chatgpt_credential_session_id: string;
 }
 

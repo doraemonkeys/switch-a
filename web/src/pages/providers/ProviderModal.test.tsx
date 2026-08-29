@@ -156,10 +156,7 @@ describe("ProviderModal", () => {
     ).toBeChecked();
 
     await user.type(screen.getByLabelText("Name"), "Retry Defaults");
-    await user.type(
-      screen.getByLabelText("New Default API Key"),
-      "default-key",
-    );
+    await user.type(screen.getByLabelText("New Shared API Key"), "default-key");
     await user.click(screen.getByRole("button", { name: "claude" }));
     await user.type(
       screen.getByLabelText("Base URL for claude"),
@@ -292,7 +289,7 @@ describe("ProviderModal", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it("shows an error when neither the default key nor an override is provided", async () => {
+  it("shows an error when neither a shared key nor an override is provided", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
 
@@ -323,7 +320,7 @@ describe("ProviderModal", () => {
 
     await user.type(screen.getByLabelText("Name"), "Whitespace Override");
     await user.type(
-      screen.getByLabelText("New Default API Key"),
+      screen.getByLabelText("New Shared API Key"),
       "  default-key  ",
     );
     await user.click(screen.getByRole("button", { name: "claude" }));
@@ -492,10 +489,7 @@ describe("ProviderModal GPT login", () => {
     );
 
     await user.type(screen.getByLabelText("Name"), "Switch Back");
-    await user.type(
-      screen.getByLabelText("New Default API Key"),
-      "default-key",
-    );
+    await user.type(screen.getByLabelText("New Shared API Key"), "default-key");
     await user.click(screen.getByRole("button", { name: "claude" }));
     await user.type(
       screen.getByLabelText("Base URL for claude"),
@@ -523,7 +517,7 @@ describe("ProviderModal GPT login", () => {
       PROVIDER_CREDENTIAL_TYPES.API_KEY,
     );
 
-    expect(screen.getByLabelText("New Default API Key")).toHaveValue(
+    expect(screen.getByLabelText("New Shared API Key")).toHaveValue(
       "default-key",
     );
     expect(screen.getByLabelText("Base URL for claude")).toHaveValue(

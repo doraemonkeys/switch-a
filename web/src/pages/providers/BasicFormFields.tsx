@@ -498,7 +498,7 @@ export function ApiKeyField({
   onToggleVisibility,
 }: ApiKeyFieldProps) {
   return (
-    <FormField label="New Default API Key">
+    <FormField label="New Shared API Key">
       {(id) => (
         <div className="space-y-1.5">
           <div className="relative">
@@ -555,9 +555,9 @@ export function ApiKeyField({
             </button>
           </div>
           <p className="text-xs text-text-muted">
-            When set, saving creates one reusable credential session for routes
-            without a route-specific key. Leave blank to preserve selected
-            sessions while editing.
+            Saving creates one reusable credential session for routes without a
+            selected session or new route-specific key. Existing route bindings
+            are always preserved.
           </p>
         </div>
       )}

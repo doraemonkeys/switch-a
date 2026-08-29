@@ -10,7 +10,7 @@ const BASE_INPUT: ProviderFormData = {
   id: "test",
   name: "Test",
   credential_mode: "api_key",
-  default_api_key: "key",
+  new_shared_api_key: "key",
   chatgpt_credential_session_id: "",
   api_types: [],
   vendor: "",
