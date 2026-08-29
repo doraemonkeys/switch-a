@@ -28,6 +28,8 @@ func TestProviderCookieSchemaRejectsEveryManifestDamageWithoutRepair(t *testing.
 			"CHECK (idle_expires_at_ms <= absolute_expires_at_ms)", "CHECK (idle_expires_at_ms > 0)")},
 		{name: "without rowid", target: handlesTable, mutate: replaceSchema(" WITHOUT ROWID", "")},
 		{name: "unique jar", target: handlesTable, mutate: replaceSchema("jar_id BLOB NOT NULL UNIQUE", "jar_id BLOB NOT NULL")},
+		{name: "unique client scope", target: handlesTable, mutate: replaceSchema(
+			"UNIQUE (client_scope_key_version, client_scope_digest)", "CHECK (client_scope_key_version <> '')")},
 		{name: "foreign key", target: authoritiesTable, mutate: replaceSchema(
 			"FOREIGN KEY (jar_id) REFERENCES codex_provider_cookie_handles(jar_id) ON DELETE CASCADE",
 			"CHECK (jar_id IS NOT NULL)")},

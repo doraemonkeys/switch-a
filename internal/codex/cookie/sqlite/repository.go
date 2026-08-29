@@ -135,56 +135,6 @@ func (r *Repository) UseBinding(ctx context.Context, lookup providercookie.Bindi
 	return result, err
 }
 
-func (r *Repository) CreateBinding(ctx context.Context, record providercookie.BindingRecord, policy providercookie.Policy) error {
-	if ctx == nil {
-		return &providercookie.ConfigurationError{Field: "context", Reason: "must be provided"}
-	}
-	if err := policy.Validate(); err != nil {
-		return err
-	}
-	if err := validateBinding(record); err != nil {
-		return err
-	}
-	return withImmediateTransaction(ctx, r.database, r.busyTimeout, func(connection *sql.Conn) error {
-		if _, err := cleanupStale(ctx, connection, record.CreatedAt, policy.OrphanAuthorityGrace); err != nil {
-			return err
-		}
-		var count int
-		if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+handlesTable).Scan(&count); err != nil {
-			return classifyDatabaseError("count_bindings", err)
-		}
-		if count >= policy.MaxHandleBindingsGlobal {
-			return &providercookie.LimitError{
-				Limit:  providercookie.LimitHandleBindingsGlobal,
-				Max:    policy.MaxHandleBindingsGlobal,
-				Actual: count + 1,
-			}
-		}
-		clientDigest := record.ClientScope.Digest()
-		_, err := connection.ExecContext(ctx, "INSERT INTO "+handlesTable+` (
-			handle_key_version, handle_digest, jar_id, client_scope_key_version, client_scope_digest,
-			created_at_ms, last_access_at_ms, idle_expires_at_ms, absolute_expires_at_ms
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			record.HandleDigest.Version,
-			record.HandleDigest.Sum[:],
-			record.JarID.Bytes(),
-			record.ClientScope.KeyVersion(),
-			clientDigest[:],
-			toMillis(record.CreatedAt),
-			toMillis(record.LastAccessAt),
-			toMillis(record.IdleExpiresAt),
-			toMillis(record.AbsoluteExpiresAt),
-		)
-		if err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") {
-				return providercookie.ErrIdentifierClash
-			}
-			return classifyDatabaseError("create_binding", err)
-		}
-		return nil
-	})
-}
-
 func (r *Repository) Load(ctx context.Context, scope providercookie.CookieScope, at time.Time) (providercookie.Snapshot, error) {
 	if ctx == nil {
 		return providercookie.Snapshot{}, &providercookie.ConfigurationError{Field: "context", Reason: "must be provided"}
@@ -360,6 +310,9 @@ func validateBinding(record providercookie.BindingRecord) error {
 	return nil
 }
 
+const bindingColumns = `handle_key_version, handle_digest, jar_id, client_scope_key_version, client_scope_digest,
+	created_at_ms, last_access_at_ms, idle_expires_at_ms, absolute_expires_at_ms`
+
 func findBindings(ctx context.Context, connection *sql.Conn, digests []codexkeyring.Digest) ([]providercookie.BindingRecord, error) {
 	predicates := make([]string, 0, len(digests))
 	arguments := make([]any, 0, len(digests)*2)
@@ -367,7 +320,16 @@ func findBindings(ctx context.Context, connection *sql.Conn, digests []codexkeyr
 		predicates = append(predicates, "(handle_key_version = ? AND handle_digest = ?)")
 		arguments = append(arguments, digest.Version, digest.Sum[:])
 	}
-	rows, err := connection.QueryContext(ctx, "SELECT handle_key_version, handle_digest, jar_id, client_scope_key_version, client_scope_digest, created_at_ms, last_access_at_ms, idle_expires_at_ms, absolute_expires_at_ms FROM "+handlesTable+" WHERE "+strings.Join(predicates, " OR "), arguments...)
+	return queryBindings(ctx, connection, strings.Join(predicates, " OR "), arguments)
+}
+
+func queryBindings(
+	ctx context.Context,
+	connection *sql.Conn,
+	predicate string,
+	arguments []any,
+) ([]providercookie.BindingRecord, error) {
+	rows, err := connection.QueryContext(ctx, "SELECT "+bindingColumns+" FROM "+handlesTable+" WHERE "+predicate, arguments...)
 	if err != nil {
 		return nil, classifyDatabaseError("lookup_binding", err)
 	}

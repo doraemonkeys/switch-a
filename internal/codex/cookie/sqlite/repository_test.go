@@ -369,6 +369,91 @@ func TestPersistenceSurvivesRepositoryRestart(t *testing.T) {
 	if err != nil || use.Disposition != providercookie.BindingValid || use.Record.JarID != record.JarID {
 		t.Fatalf("restart binding = %#v, %v", use, err)
 	}
+	replacement := testBinding(t, keyring, "restart-replacement", record.ClientScope, now.Add(2*time.Minute))
+	rebound, err := restarted.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
+		CurrentClientScope:    record.ClientScope,
+		ClientScopeCandidates: []codexidentity.ClientScope{record.ClientScope},
+		ProposedBinding:       replacement,
+		At:                    replacement.CreatedAt,
+		Policy:                policy,
+	})
+	if err != nil || rebound.Created || rebound.Record.JarID != record.JarID {
+		t.Fatalf("restart ClientScope binding = %#v, %v", rebound, err)
+	}
+	var bindingCount int64
+	if err := restartedDB.Table(handlesTable).Count(&bindingCount).Error; err != nil || bindingCount != 1 {
+		t.Fatalf("restart binding count = %d, %v", bindingCount, err)
+	}
+}
+
+func TestBindClientJarSerializesConcurrentRequestsWithoutHandleGrowth(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDatabase(t, filepath.Join(t.TempDir(), "concurrent-bind.db"))
+	keyring := testKeyring(t, "a1")
+	repository := migrateAndOpen(t, db, keyring, 5*time.Second)
+	now := time.Date(2026, 8, 27, 5, 45, 0, 0, time.UTC)
+	owner := testOwner(t, keyring, "concurrent-bind")
+	policy := providercookie.DefaultPolicy()
+	policy.MaxHandleBindingsGlobal = 1
+
+	const workers = 24
+	proposals := make([]providercookie.BindingRecord, workers)
+	for index := range proposals {
+		proposals[index] = testBinding(t, keyring, fmt.Sprintf("concurrent-bind-%02d", index), owner, now)
+	}
+	results := make([]providercookie.ClientJarBindingResult, workers)
+	errorsFound := make([]error, workers)
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	for index := range proposals {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			<-start
+			results[index], errorsFound[index] = repository.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
+				CurrentClientScope:    owner,
+				ClientScopeCandidates: []codexidentity.ClientScope{owner},
+				ProposedBinding:       proposals[index],
+				At:                    now,
+				Policy:                policy,
+			})
+		}(index)
+	}
+	close(start)
+	group.Wait()
+
+	created := 0
+	jarID := results[0].Record.JarID
+	for index, err := range errorsFound {
+		if err != nil {
+			t.Fatalf("worker %d: %v", index, err)
+		}
+		if results[index].Created {
+			created++
+		}
+		if results[index].Record.JarID != jarID {
+			t.Fatalf("worker %d JarID = %v, want %v", index, results[index].Record.JarID, jarID)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created bindings = %d, want 1", created)
+	}
+	var count int64
+	if err := db.Table(handlesTable).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("binding count = %d, %v", count, err)
+	}
+
+	otherOwner := testOwner(t, keyring, "concurrent-bind-other")
+	otherProposal := testBinding(t, keyring, "concurrent-bind-capacity", otherOwner, now)
+	if _, err := repository.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
+		CurrentClientScope:    otherOwner,
+		ClientScopeCandidates: []codexidentity.ClientScope{otherOwner},
+		ProposedBinding:       otherProposal,
+		At:                    now,
+		Policy:                policy,
+	}); !errors.Is(err, providercookie.ErrLimitExceeded) {
+		t.Fatalf("second ClientScope capacity = %v", err)
+	}
 }
 
 type failingCipher struct {
@@ -569,7 +654,8 @@ func TestAccessTimesRemainMonotonicAtSQLCommitBoundaries(t *testing.T) {
 			fromMillis(bindingTimes.LastAccessAtMS), fromMillis(bindingTimes.IdleExpiresAtMS), concurrentBindingLater, wantIdle)
 	}
 
-	capBinding := testBinding(t, keyring, "absolute-cap", owner, created)
+	capOwner := testOwner(t, keyring, "absolute-cap-owner")
+	capBinding := testBinding(t, keyring, "absolute-cap", capOwner, created)
 	capBinding.AbsoluteExpiresAt = created.Add(6 * 24 * time.Hour)
 	if err := repository.CreateBinding(ctx, capBinding, policy); err != nil {
 		t.Fatal(err)
@@ -577,7 +663,7 @@ func TestAccessTimesRemainMonotonicAtSQLCommitBoundaries(t *testing.T) {
 	nearAbsolute := created.Add(4 * 24 * time.Hour)
 	used, err := repository.UseBinding(ctx, providercookie.BindingLookup{
 		HandleDigests: []codexkeyring.Digest{capBinding.HandleDigest},
-		ClientScopes:  []codexidentity.ClientScope{owner},
+		ClientScopes:  []codexidentity.ClientScope{capOwner},
 		At:            nearAbsolute,
 		Policy:        policy,
 	})
@@ -723,7 +809,7 @@ func TestCleanupReachabilityTouchAndDeterministicCapacity(t *testing.T) {
 	globalPolicy := evictionPolicy
 	globalPolicy.MaxCookiesPerJar = 1
 	globalPolicy.MaxCookieEntriesGlobal = 1
-	otherRecord := testBinding(t, keyring, "other", owner, now.Add(5*time.Hour))
+	otherRecord := testBinding(t, keyring, "other", testOwner(t, keyring, "other-owner"), now.Add(5*time.Hour))
 	if err := repository.CreateBinding(context.Background(), otherRecord, globalPolicy); err != nil {
 		t.Fatal(err)
 	}

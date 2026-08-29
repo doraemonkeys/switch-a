@@ -116,25 +116,26 @@ func TestProviderCookieScopeIgnoresAPITypeButSeparatesJarAndAuthority(t *testing
 	}
 
 	for index, test := range []struct {
-		name   string
-		client string
-		handle string
+		name       string
+		client     string
+		handle     string
+		wantCookie string
 	}{
-		{name: "client key rotation", client: "client-beta", handle: handle},
-		{name: "malformed handle", client: "client-alpha", handle: "malformed"},
-		{name: "missing handle creates another JarID", client: "client-alpha", handle: ""},
+		{name: "different client", client: "client-beta", handle: handle},
+		{name: "malformed handle falls back to ClientScope", client: "client-alpha", handle: "malformed", wantCookie: "scope_cookie=base"},
+		{name: "missing handle falls back to ClientScope", client: "client-alpha", handle: "", wantCookie: "scope_cookie=base"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			operation, isolatedHeaders := prepareWSCookieAttempt(
 				t, fixture, test.client, test.handle, base, baseApplied,
 				websocketURL(t, baseURL), operationID("ws-jar", index+1),
 			)
-			if got := isolatedHeaders.Get("Cookie"); got != "" {
-				t.Fatalf("isolated Jar received %q", got)
+			if got := isolatedHeaders.Get("Cookie"); got != test.wantCookie {
+				t.Fatalf("upstream Cookie = %q, want %q", got, test.wantCookie)
 			}
 			issued := gatewayHandle(t, operation.GatewaySetCookie())
 			if issued == handle {
-				t.Fatal("invalid ownership state reused the original handle")
+				t.Fatal("fallback did not rotate the gateway handle")
 			}
 		})
 	}
@@ -216,9 +217,15 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := fixture.ws.Begin(
+			context.Background(), fixtureRequest(http.MethodGet, "client-alpha", nil),
+			testAPIType, operationID("ws-cookie-capacity", 1),
+		); err != nil {
+			t.Fatalf("same ClientScope without a handle consumed capacity: %v", err)
+		}
 		_, err := fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "client-beta", nil),
-			testAPIType, operationID("ws-cookie-capacity", 1),
+			testAPIType, operationID("ws-cookie-capacity", 2),
 		)
 		requireWSFailure(t, err, codexws.FailureStorage)
 	})

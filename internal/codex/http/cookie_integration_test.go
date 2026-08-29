@@ -70,6 +70,23 @@ func (r *cookieTestRepository) CreateBinding(_ context.Context, record providerc
 	return nil
 }
 
+func (r *cookieTestRepository) BindClientJar(_ context.Context, request providercookie.ClientJarBindingRequest) (providercookie.ClientJarBindingResult, error) {
+	for digest, record := range r.bindings {
+		for _, candidate := range request.ClientScopeCandidates {
+			if !candidate.Equal(record.ClientScope) {
+				continue
+			}
+			delete(r.bindings, digest)
+			record.HandleDigest = request.ProposedBinding.HandleDigest
+			record.ClientScope = request.CurrentClientScope
+			r.bindings[record.HandleDigest] = record
+			return providercookie.ClientJarBindingResult{Record: record}, nil
+		}
+	}
+	r.bindings[request.ProposedBinding.HandleDigest] = request.ProposedBinding
+	return providercookie.ClientJarBindingResult{Record: request.ProposedBinding, Created: true}, nil
+}
+
 func (r *cookieTestRepository) Load(_ context.Context, scope providercookie.CookieScope, _ time.Time) (providercookie.Snapshot, error) {
 	values := r.cookies[scope]
 	cookies := make([]providercookie.StoredCookie, 0, len(values))
@@ -164,10 +181,15 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 
 	secondClientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	secondClientRequest.Header.Set("Authorization", "Bearer client-a")
-	secondClientRequest.AddCookie(&http.Cookie{Name: providercookie.GatewayHandleName, Value: handle})
 	secondOperation, err := runtime.Begin(context.Background(), secondClientRequest, codexAPIType, "cookie-operation-two", nil, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if secondOperation.gatewaySetCookie == "" {
+		t.Fatal("missing gateway handle did not issue a replacement alias")
+	}
+	if replacement := gatewayCookieValue(t, secondOperation.gatewaySetCookie); replacement == handle {
+		t.Fatal("missing gateway handle reused its previous alias")
 	}
 	persistedRequest := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
 	if _, err := secondOperation.PrepareAttempt(context.Background(), persistedRequest, candidate, applied); err != nil {

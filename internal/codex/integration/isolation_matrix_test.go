@@ -324,8 +324,13 @@ func assertIsolationCellRejectsOtherClient(t *testing.T, fixture *runtimeFixture
 	); err != nil {
 		t.Fatal(err)
 	}
-	if got := forwarded.Get("Cookie"); got != "" {
-		t.Fatalf("different ClientScope reused Provider Cookie %q", got)
+	wantCookie := fmt.Sprintf(
+		"cookie_c%d-p%d-a%d=value-c%d-p%d-a%d",
+		1-cell.clientIndex, cell.providerIndex, cell.accountIndex,
+		1-cell.clientIndex, cell.providerIndex, cell.accountIndex,
+	)
+	if got := forwarded.Get("Cookie"); got != wantCookie {
+		t.Fatalf("different ClientScope Cookie = %q, want its own %q", got, wantCookie)
 	}
 }
 

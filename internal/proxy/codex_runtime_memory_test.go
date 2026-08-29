@@ -287,6 +287,30 @@ func (r *proxyCodexTestCookieRepository) CreateBinding(
 	return nil
 }
 
+func (r *proxyCodexTestCookieRepository) BindClientJar(
+	_ context.Context,
+	request providercookie.ClientJarBindingRequest,
+) (providercookie.ClientJarBindingResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for digest, record := range r.bindings {
+		for _, candidate := range request.ClientScopeCandidates {
+			if !candidate.Equal(record.ClientScope) {
+				continue
+			}
+			delete(r.bindings, digest)
+			record.HandleDigest = request.ProposedBinding.HandleDigest
+			record.ClientScope = request.CurrentClientScope
+			record.LastAccessAt = request.At
+			r.bindings[record.HandleDigest] = record
+			return providercookie.ClientJarBindingResult{Record: record}, nil
+		}
+	}
+	r.bindings[request.ProposedBinding.HandleDigest] = request.ProposedBinding
+	return providercookie.ClientJarBindingResult{Record: request.ProposedBinding, Created: true}, nil
+}
+
 func (r *proxyCodexTestCookieRepository) Load(
 	_ context.Context,
 	scope providercookie.CookieScope,
