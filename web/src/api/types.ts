@@ -133,6 +133,8 @@ export interface ProviderCredentialSession {
 }
 
 export interface CredentialSession extends ProviderCredentialSession {
+  /** Present for operator-managed API-key sessions; ChatGPT tokens use the dedicated export flow. */
+  secret_data?: string;
   referenced_route_target_ids: string[];
   created_at: string;
   updated_at: string;

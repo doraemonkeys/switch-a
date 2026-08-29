@@ -31,6 +31,7 @@ type credentialSessionStore interface {
 type CredentialSessionPayload struct {
 	ID                     string                      `json:"id"`
 	Kind                   credentialsession.Kind      `json:"kind"`
+	SecretData             string                      `json:"secret_data,omitempty"`
 	Version                int64                       `json:"version"`
 	Subject                credentialsession.Subject   `json:"subject"`
 	AuthState              credentialsession.AuthState `json:"auth_state"`
@@ -335,9 +336,17 @@ func credentialSessionPayload(ctx context.Context, repository credentialSessionS
 	if err != nil {
 		return CredentialSessionPayload{}, err
 	}
+	secretData := ""
+	if session.Kind == credentialsession.KindAPIKey {
+		// Static API keys are operator-managed values, so the admin resource must
+		// remain readable as well as writable. ChatGPT's structured token bundle
+		// has its own explicit export flow and is intentionally not projected here.
+		secretData = session.SecretData
+	}
 	return CredentialSessionPayload{
 		ID: session.ID, Kind: session.Kind, Version: session.Version,
-		Subject: session.Subject(), AuthState: session.AuthState.Clone(),
+		SecretData: secretData,
+		Subject:    session.Subject(), AuthState: session.AuthState.Clone(),
 		ReferencedRouteTargets: references, CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
 	}, nil
 }

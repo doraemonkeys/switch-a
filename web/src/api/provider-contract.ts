@@ -149,6 +149,10 @@ export function parseCredentialSession(value: unknown): CredentialSession {
   }
   return {
     ...base,
+    secret_data:
+      base.kind === "api_key"
+        ? stringValue(source.secret_data, "credential_session.secret_data")
+        : undefined,
     referenced_route_target_ids: source.referenced_route_target_ids.map(
       (id, index) =>
         stringValue(

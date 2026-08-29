@@ -76,7 +76,7 @@ func TestCredentialSessionCRUDAndReferenceDeletionContract(t *testing.T) {
 	}`))
 	createResponse := httptest.NewRecorder()
 	handler.CreateCredentialSession(createResponse, createRequest)
-	if createResponse.Code != http.StatusCreated || strings.Contains(createResponse.Body.String(), "secret-1") {
+	if createResponse.Code != http.StatusCreated || !strings.Contains(createResponse.Body.String(), `"secret_data":"secret-1"`) {
 		t.Fatalf("create response = %d %s", createResponse.Code, createResponse.Body.String())
 	}
 	var created CredentialSessionPayload
@@ -111,7 +111,7 @@ func TestCredentialSessionCRUDAndReferenceDeletionContract(t *testing.T) {
 	updateRequest.SetPathValue("id", created.ID)
 	updateResponse := httptest.NewRecorder()
 	handler.UpdateCredentialSession(updateResponse, updateRequest)
-	if updateResponse.Code != http.StatusOK || strings.Contains(updateResponse.Body.String(), "secret-2") {
+	if updateResponse.Code != http.StatusOK || !strings.Contains(updateResponse.Body.String(), `"secret_data":"secret-2"`) {
 		t.Fatalf("update response = %d %s", updateResponse.Code, updateResponse.Body.String())
 	}
 	var updated CredentialSessionPayload
@@ -124,8 +124,15 @@ func TestCredentialSessionCRUDAndReferenceDeletionContract(t *testing.T) {
 
 	listResponse := httptest.NewRecorder()
 	handler.ListCredentialSessions(listResponse, httptest.NewRequest(http.MethodGet, "/admin/api/credential-sessions", nil))
-	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"route-1"`) || strings.Contains(listResponse.Body.String(), "secret-2") {
+	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"route-1"`) || !strings.Contains(listResponse.Body.String(), `"secret_data":"secret-2"`) {
 		t.Fatalf("list response = %d %s", listResponse.Code, listResponse.Body.String())
+	}
+	getRequest := httptest.NewRequest(http.MethodGet, "/admin/api/credential-sessions/static-session", nil)
+	getRequest.SetPathValue("id", created.ID)
+	getResponse := httptest.NewRecorder()
+	handler.GetCredentialSession(getResponse, getRequest)
+	if getResponse.Code != http.StatusOK || !strings.Contains(getResponse.Body.String(), `"secret_data":"secret-2"`) {
+		t.Fatalf("get response = %d %s", getResponse.Code, getResponse.Body.String())
 	}
 	if err := repository.DeleteProvider(context.Background(), provider.ID); err != nil {
 		t.Fatal(err)
@@ -232,6 +239,40 @@ func TestCredentialSessionCodexAuthExportUsesSessionLifecycle(t *testing.T) {
 	handler.ExportCredentialSessionCodexAuth(allPausedResponse, exportRequest)
 	if allPausedResponse.Code != http.StatusOK {
 		t.Fatalf("all-paused export response = %d %s", allPausedResponse.Code, allPausedResponse.Body.String())
+	}
+}
+
+func TestCredentialSessionPayloadDoesNotProjectChatGPTTokenBundle(t *testing.T) {
+	_, repository := newCredentialSessionHandler(t)
+	secret, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
+		AccessToken: "access", RefreshToken: "refresh", IDToken: "id",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := credentialsession.AccountSubject("account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &credentialsession.Session{
+		ID: "login-session", Kind: credentialsession.KindChatGPT,
+		SecretData: secret, Version: 1,
+		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "account-1"},
+	}
+	if err := session.SetSubject(subject); err != nil {
+		t.Fatal(err)
+	}
+	created, err := repository.CreateCredentialSession(context.Background(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := credentialSessionPayload(context.Background(), repository, created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.SecretData != "" {
+		t.Fatalf("chatgpt secret data was projected: %q", payload.SecretData)
 	}
 }
 

@@ -3,6 +3,7 @@ import type { AuthMode, CredentialSession } from "../../api";
 import { useAPICatalog } from "../../api/useApi";
 import { AUTH_MODE_OPTIONS } from "../../config/constants";
 import { hasProviderApiKey } from "../../lib/providerApiKey";
+import { CopyButton } from "../../components";
 import { FormField } from "./FormField";
 import {
   generateClientKey,
@@ -85,6 +86,49 @@ function CredentialVisibilityIcon({ visible }: { visible: boolean }) {
   );
 }
 
+function CurrentApiKeyField({
+  apiKey,
+  entryLabel,
+}: {
+  apiKey: string;
+  entryLabel: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  const visibilityAction = visible ? "Hide" : "Show";
+
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
+        Current API Key
+      </p>
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <input
+            type={visible ? "text" : "password"}
+            className="input pr-10 font-mono"
+            value={apiKey}
+            readOnly
+            aria-label={`Current API key for ${entryLabel}`}
+          />
+          <button
+            type="button"
+            onClick={() => setVisible((current) => !current)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors p-1"
+            aria-label={`${visibilityAction} current API key for ${entryLabel}`}
+            title={`${visibilityAction} current API key`}
+          >
+            <CredentialVisibilityIcon visible={visible} />
+          </button>
+        </div>
+        <CopyButton
+          text={apiKey}
+          className="h-10 shrink-0 rounded-lg border border-border px-3 hover:border-primary"
+        />
+      </div>
+    </div>
+  );
+}
+
 function ApiTypeRouteRow({
   entry,
   index,
@@ -102,6 +146,13 @@ function ApiTypeRouteRow({
       session.kind === "api_key" ||
       (credentialMode === "mixed" && entry.api_type === "codex"),
   );
+  const selectedSession = credentialSessions.find(
+    (session) => session.id === entry.credential_session_id,
+  );
+  const currentApiKey =
+    selectedSession?.kind === "api_key"
+      ? selectedSession.secret_data
+      : undefined;
   const visibilityAction = overrideVisible ? "Hide" : "Show";
 
   return (
@@ -162,6 +213,9 @@ function ApiTypeRouteRow({
             ))}
           </select>
         </div>
+        {currentApiKey && (
+          <CurrentApiKeyField apiKey={currentApiKey} entryLabel={entryLabel} />
+        )}
         {allowApiKeyDrafts && (
           <div className="space-y-1">
             <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">

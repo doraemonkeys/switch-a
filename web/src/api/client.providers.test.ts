@@ -42,6 +42,7 @@ function providerPayload(overrides: Record<string, unknown> = {}) {
 function credentialSessionPayload(overrides: Record<string, unknown> = {}) {
   return {
     ...credentialSession,
+    secret_data: "sk-current",
     referenced_route_target_ids: ["1"],
     created_at: "2026-08-28T00:00:00Z",
     updated_at: "2026-08-28T00:00:00Z",
@@ -240,6 +241,20 @@ describe("createApiClient providers API", () => {
       "https://test-api.example.com/credential-sessions/session%2F1/refresh",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("should expose API-key credential values returned by the admin resource", async () => {
+    const session = credentialSessionPayload();
+    mockHttpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([session]),
+    });
+
+    const result = await api.credentialSessions.list();
+
+    expect(result).toEqual([session]);
+    expect(result[0].secret_data).toBe("sk-current");
   });
 
   it("should refresh credential-session usage", async () => {

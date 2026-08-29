@@ -28,6 +28,7 @@ function apiKeySession(id: string): CredentialSession {
   return {
     id,
     kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
+    secret_data: `secret-${id}`,
     version: 1,
     subject: { kind: "keyed_digest", value: `digest-${id}` },
     auth_state: { status: "active" },
@@ -115,6 +116,47 @@ function persistedSplitProvider(): Provider {
 }
 
 describe("ProviderModal credential binding precedence", () => {
+  it("reveals and copies the current API key without creating a replacement", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const credentialSessions = createCredentialSessionsApi([
+      apiKeySession("credential-override"),
+      apiKeySession("credential-default"),
+    ]);
+    const api = { credentialSessions } as unknown as ApiClient;
+
+    renderModal(
+      <ProviderModal
+        initialData={persistedSplitProvider()}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        groups={[]}
+      />,
+      api,
+    );
+
+    const currentKey = await screen.findByLabelText(
+      "Current API key for claude",
+    );
+    expect(currentKey).toHaveAttribute("type", "password");
+    expect(currentKey).toHaveValue("secret-credential-override");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Show current API key for claude",
+      }),
+    );
+    expect(currentKey).toHaveAttribute("type", "text");
+    await user.click(screen.getAllByRole("button", { name: "Copy" })[0]);
+    expect(await navigator.clipboard.readText()).toBe(
+      "secret-credential-override",
+    );
+
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(credentialSessions.create).not.toHaveBeenCalled();
+  });
+
   it("preserves existing bindings when a shared key credentials a new route", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
