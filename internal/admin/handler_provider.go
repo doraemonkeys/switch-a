@@ -362,8 +362,8 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		if len(newSessions) == 0 {
 			return h.store.CreateProvider(r.Context(), provider)
 		}
-		writer, ok := h.store.(providerCredentialSessionWriter)
-		if !ok {
+		writer := h.providerCredentials
+		if writer == nil {
 			return fmt.Errorf("atomic provider credential writes are unavailable")
 		}
 		return writer.CreateProviderWithCredentialSessions(r.Context(), provider, newSessions)
@@ -589,8 +589,8 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		if len(newSessions) == 0 {
 			return h.store.UpdateProvider(r.Context(), provider)
 		}
-		writer, ok := h.store.(providerCredentialSessionWriter)
-		if !ok {
+		writer := h.providerCredentials
+		if writer == nil {
 			return fmt.Errorf("atomic provider credential writes are unavailable")
 		}
 		return writer.UpdateProviderWithCredentialSessions(r.Context(), provider, newSessions)

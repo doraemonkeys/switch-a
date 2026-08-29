@@ -22,14 +22,19 @@ const (
 	credentialSessionReauthenticationOperation = "credential_session_reauthentication"
 )
 
-type credentialSessionStore interface {
+// CredentialSessionStore is the complete persistence boundary for the admin
+// credential-session resource. Keeping it explicit prevents infrastructure
+// decorators from silently erasing required capabilities at runtime.
+type CredentialSessionStore interface {
 	CreateCredentialSession(context.Context, *credentialsession.Session) (*credentialsession.Session, error)
 	GetCredentialSession(context.Context, string) (*credentialsession.Session, error)
 	ListCredentialSessions(context.Context) ([]credentialsession.Session, error)
 	CredentialSessionRouteTargetIDs(context.Context, string) ([]string, error)
+	CredentialSessionRouteReferences(context.Context, string) ([]credentialsession.RouteReference, error)
 	DeleteCredentialSession(context.Context, string) error
 	WithCredentialSessionMutations(context.Context, []string) (context.Context, func(), error)
 	UpdateCredentialSessionCAS(context.Context, string, int64, string, credentialsession.Subject, credentialsession.AuthState) (int64, error)
+	RenameCredentialSessionCAS(context.Context, string, int64, string) (int64, error)
 	CredentialSessionEnabledRouteTargetIDs(context.Context, string) ([]string, error)
 }
 
@@ -72,14 +77,6 @@ type RenameCredentialSessionRequest struct {
 	Name            string `json:"name"`
 }
 
-type credentialSessionReferenceStore interface {
-	CredentialSessionRouteReferences(context.Context, string) ([]credentialsession.RouteReference, error)
-}
-
-type credentialSessionRenamer interface {
-	RenameCredentialSessionCAS(context.Context, string, int64, string) (int64, error)
-}
-
 type credentialSessionAuthService interface {
 	RefreshCredentialSession(context.Context, credentialsession.Snapshot) (bool, error)
 	RefreshCredentialSessionUsage(context.Context, credentialsession.Snapshot) (bool, error)
@@ -90,13 +87,8 @@ type chatGPTLoginSessionBuilder interface {
 	FinalizeChatGPTLogin(loginID string) error
 }
 
-func (h *Handler) credentialStore() credentialSessionStore {
-	value, _ := h.store.(credentialSessionStore)
-	return value
-}
-
 func (h *Handler) ListCredentialSessions(w http.ResponseWriter, r *http.Request) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
 		return
@@ -121,7 +113,7 @@ func (h *Handler) ListCredentialSessions(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) GetCredentialSession(w http.ResponseWriter, r *http.Request) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
 		return
@@ -140,7 +132,7 @@ func (h *Handler) GetCredentialSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateCredentialSession(w http.ResponseWriter, r *http.Request) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
 		return
@@ -252,8 +244,8 @@ func buildCredentialSession(req CreateCredentialSessionRequest) (*credentialsess
 }
 
 func (h *Handler) RenameCredentialSession(w http.ResponseWriter, r *http.Request) {
-	repository, ok := h.store.(credentialSessionRenamer)
-	if !ok {
+	repository := h.credentialSessions
+	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential session renaming is unavailable in this build")
 		return
 	}
@@ -273,13 +265,12 @@ func (h *Handler) RenameCredentialSession(w http.ResponseWriter, r *http.Request
 		h.writeCredentialSessionError(w, "rename", id, err)
 		return
 	}
-	store := h.credentialStore()
-	updated, err := store.GetCredentialSession(r.Context(), id)
+	updated, err := repository.GetCredentialSession(r.Context(), id)
 	if err != nil {
 		h.writeCredentialSessionError(w, "rename", id, err)
 		return
 	}
-	payload, err := credentialSessionPayload(r.Context(), store, updated)
+	payload, err := credentialSessionPayload(r.Context(), repository, updated)
 	if err != nil {
 		h.writeCredentialSessionError(w, "rename", id, err)
 		return
@@ -288,7 +279,7 @@ func (h *Handler) RenameCredentialSession(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) UpdateCredentialSession(w http.ResponseWriter, r *http.Request) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
 		return
@@ -345,7 +336,7 @@ func (h *Handler) UpdateCredentialSession(w http.ResponseWriter, r *http.Request
 // A resolved subject cannot change because one session may be shared by several
 // routes; choosing another account is a route-rebinding operation, not rotation.
 func (h *Handler) ReauthenticateCredentialSession(w http.ResponseWriter, r *http.Request) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
 		return
@@ -472,7 +463,7 @@ func (h *Handler) ReauthenticateCredentialSession(w http.ResponseWriter, r *http
 }
 
 func (h *Handler) DeleteCredentialSession(w http.ResponseWriter, r *http.Request) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
 		return
@@ -507,7 +498,7 @@ func (h *Handler) runCredentialSessionAuthAction(
 	action string,
 	run func(context.Context, credentialSessionAuthService, credentialsession.Snapshot) (bool, error),
 ) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	service, ok := h.auth.(credentialSessionAuthService)
 	if repository == nil || !ok {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential session authentication is unavailable in this build")
@@ -554,17 +545,14 @@ func (h *Handler) runCredentialSessionAuthAction(
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func credentialSessionPayload(ctx context.Context, repository credentialSessionStore, session *credentialsession.Session) (CredentialSessionPayload, error) {
+func credentialSessionPayload(ctx context.Context, repository CredentialSessionStore, session *credentialsession.Session) (CredentialSessionPayload, error) {
 	references, err := repository.CredentialSessionRouteTargetIDs(ctx, session.ID)
 	if err != nil {
 		return CredentialSessionPayload{}, err
 	}
-	routeReferences := make([]credentialsession.RouteReference, 0)
-	if referenceStore, ok := any(repository).(credentialSessionReferenceStore); ok {
-		routeReferences, err = referenceStore.CredentialSessionRouteReferences(ctx, session.ID)
-		if err != nil {
-			return CredentialSessionPayload{}, err
-		}
+	routeReferences, err := repository.CredentialSessionRouteReferences(ctx, session.ID)
+	if err != nil {
+		return CredentialSessionPayload{}, err
 	}
 	secretData := ""
 	name := strings.TrimSpace(session.Name)

@@ -74,7 +74,9 @@ func newCredentialSessionHandler(t *testing.T) (*Handler, *store.SQLiteStore) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repository.Close() })
-	return NewHandler(Config{Store: repository, Logger: zap.NewNop()}), repository
+	return NewHandler(Config{
+		Store: repository, CredentialSessions: repository, ProviderCredentials: repository, Logger: zap.NewNop(),
+	}), repository
 }
 
 func TestCredentialSessionCRUDAndReferenceDeletionContract(t *testing.T) {
@@ -332,7 +334,7 @@ func TestCredentialSessionHTTPRejectsSelfAssertedChatGPTAuthority(t *testing.T) 
 		t.Fatal(err)
 	}
 	loginAuth := &provenLoginAuth{session: verified}
-	verifiedHandler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	verifiedHandler := NewHandler(Config{Store: repository, CredentialSessions: repository, Auth: loginAuth, Logger: zap.NewNop()})
 	loginResponse := httptest.NewRecorder()
 	verifiedHandler.CreateCredentialSession(loginResponse, httptest.NewRequest(
 		http.MethodPost,
@@ -432,7 +434,7 @@ func TestCredentialSessionReauthenticationRotatesSharedSessionWithoutRebindingRo
 		Status: credentialsession.AuthStatusActive, AccountID: "account-1", Email: "user@example.com",
 	}
 	loginAuth := &provenLoginAuth{session: reauthenticated, finalizeErr: errors.New("completed login cleanup failed")}
-	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	handler := NewHandler(Config{Store: repository, CredentialSessions: repository, Auth: loginAuth, Logger: zap.NewNop()})
 	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/shared-login/reauthenticate", strings.NewReader(`{
 		"expected_version":1,"credential_login_id":"login-proof"
 	}`))
@@ -496,7 +498,7 @@ func TestCredentialSessionReauthenticationRejectsDifferentResolvedSubject(t *tes
 		t.Fatal(err)
 	}
 	loginAuth := &provenLoginAuth{session: candidate}
-	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	handler := NewHandler(Config{Store: repository, CredentialSessions: repository, Auth: loginAuth, Logger: zap.NewNop()})
 	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/login-session/reauthenticate", strings.NewReader(`{
 		"expected_version":1,"credential_login_id":"login-other-account"
 	}`))
@@ -539,7 +541,7 @@ func TestCredentialSessionReauthenticationResolvesRecoveryPendingSubject(t *test
 		t.Fatal(err)
 	}
 	loginAuth := &provenLoginAuth{session: candidate}
-	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	handler := NewHandler(Config{Store: repository, CredentialSessions: repository, Auth: loginAuth, Logger: zap.NewNop()})
 	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/recovery-session/reauthenticate", strings.NewReader(`{
 		"expected_version":1,"credential_login_id":"login-recovery"
 	}`))
@@ -587,7 +589,7 @@ func TestCredentialSessionReauthenticationRejectsInvalidInputsAndUnverifiedCandi
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			handler := NewHandler(Config{Store: repository, Auth: test.auth, Logger: zap.NewNop()})
+			handler := NewHandler(Config{Store: repository, CredentialSessions: repository, Auth: test.auth, Logger: zap.NewNop()})
 			request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/missing/reauthenticate", strings.NewReader(test.body))
 			request.SetPathValue("id", "missing")
 			response := httptest.NewRecorder()
@@ -606,7 +608,7 @@ func TestCredentialSessionReauthenticationRejectsInvalidInputsAndUnverifiedCandi
 	if err := staticCandidate.SetSubject(credentialsession.PendingSubject()); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHandler(Config{Store: repository, Auth: &provenLoginAuth{session: staticCandidate}, Logger: zap.NewNop()})
+	handler := NewHandler(Config{Store: repository, CredentialSessions: repository, Auth: &provenLoginAuth{session: staticCandidate}, Logger: zap.NewNop()})
 	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/missing/reauthenticate", strings.NewReader(validBody))
 	request.SetPathValue("id", "missing")
 	response := httptest.NewRecorder()
@@ -644,7 +646,7 @@ func TestCredentialSessionReauthenticationRejectsStaticTargetsAndVersionConflict
 		t.Fatal(err)
 	}
 	loginAuth := &provenLoginAuth{session: candidate}
-	handler := NewHandler(Config{Store: repository, Auth: loginAuth, Logger: zap.NewNop()})
+	handler := NewHandler(Config{Store: repository, CredentialSessions: repository, Auth: loginAuth, Logger: zap.NewNop()})
 	request := httptest.NewRequest(http.MethodPost, "/admin/api/credential-sessions/static-session/reauthenticate", strings.NewReader(`{
 		"expected_version":1,"credential_login_id":"login-proof"
 	}`))

@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"context"
 	"net/http"
 	"sort"
 	"strings"
@@ -66,10 +65,6 @@ type ExportedCredentialSession struct {
 	Version      int64                         `json:"version"`
 	Subject      credentialsession.Subject     `json:"subject"`
 	AuthState    credentialsession.AuthState   `json:"auth_state"`
-}
-
-type credentialSessionLister interface {
-	ListCredentialSessions(context.Context) ([]credentialsession.Session, error)
 }
 
 // ExportedBackoff represents backoff settings in the export format.
@@ -152,13 +147,7 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionRepository, ok := h.store.(credentialSessionLister)
-	if !ok {
-		h.logger.Error("credential session repository is unavailable for config export")
-		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to export config")
-		return
-	}
-	sessions, err := sessionRepository.ListCredentialSessions(ctx)
+	sessions, err := h.store.ListCredentialSessions(ctx)
 	if err != nil {
 		h.logger.Error("failed to list credential sessions for export", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to export config")

@@ -228,11 +228,7 @@ func (h *Handler) loadConfigImportSnapshot(ctx context.Context) (configImportSna
 	if err != nil {
 		return configImportSnapshot{}, fmt.Errorf("list providers: %w", err)
 	}
-	credentialRepository, ok := h.store.(credentialSessionLister)
-	if !ok {
-		return configImportSnapshot{}, fmt.Errorf("credential sessions are unavailable")
-	}
-	credentialSessions, err := credentialRepository.ListCredentialSessions(ctx)
+	credentialSessions, err := h.store.ListCredentialSessions(ctx)
 	if err != nil {
 		return configImportSnapshot{}, fmt.Errorf("list credential sessions: %w", err)
 	}

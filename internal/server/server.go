@@ -140,7 +140,9 @@ type AdminConfig struct {
 	Port                string
 	AdminToken          string
 	Logger              *zap.Logger
-	Store               store
+	Store               admin.Store
+	CredentialSessions  admin.CredentialSessionStore
+	ProviderCredentials admin.ProviderCredentialStore
 	Health              internal.HealthManager
 	Selector            Selector
 	ProviderLifecycles  admin.ProviderLifecycleCoordinator
@@ -261,6 +263,8 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// in-flight permit cannot activate from the pre-mutation snapshot.
 	adminHandler := admin.NewHandler(admin.Config{
 		Store:               cfg.Store,
+		CredentialSessions:  cfg.CredentialSessions,
+		ProviderCredentials: cfg.ProviderCredentials,
 		Health:              cfg.Health,
 		Concurrency:         cfg.Concurrency,
 		ProviderLifecycles:  cfg.ProviderLifecycles,

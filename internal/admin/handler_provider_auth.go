@@ -84,7 +84,7 @@ func (h *Handler) ImportChatGPTProviderCredential(w http.ResponseWriter, r *http
 }
 
 func (h *Handler) ExportCredentialSessionCodexAuth(w http.ResponseWriter, r *http.Request) {
-	repository := h.credentialStore()
+	repository := h.credentialSessions
 	if repository == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "Credential sessions are unavailable in this build")
 		return

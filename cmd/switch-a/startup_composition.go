@@ -218,6 +218,8 @@ func composeApplicationRuntime(
 		AdminToken:          cfg.AdminToken,
 		Logger:              log,
 		Store:               st,
+		CredentialSessions:  sqlStore,
+		ProviderCredentials: sqlStore,
 		Health:              healthManager,
 		Selector:            providerSelector,
 		ProviderLifecycles:  providerSelector,

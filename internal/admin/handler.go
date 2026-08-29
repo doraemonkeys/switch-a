@@ -13,6 +13,7 @@ import (
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
 	adminproviderimport "github.com/doraemonkeys/switch-a/internal/admin/providerimport"
 	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
@@ -32,6 +33,7 @@ type Store interface {
 	CreateProvider(ctx context.Context, p *model.Provider) error
 	UpdateProvider(ctx context.Context, p *model.Provider) error
 	DeleteProvider(ctx context.Context, id string) error
+	ListCredentialSessions(ctx context.Context) ([]credentialsession.Session, error)
 
 	// Routing policy operations
 	ListRoutingPolicies(ctx context.Context) ([]model.RoutingPolicy, error)
@@ -102,6 +104,8 @@ type ProviderImportStore = adminproviderimport.Store
 // Handler handles admin API requests.
 type Handler struct {
 	store                 Store
+	credentialSessions    CredentialSessionStore
+	providerCredentials   ProviderCredentialStore
 	health                internal.HealthManager
 	concurrency           ConcurrencyTracker
 	providerLifecycles    ProviderLifecycleCoordinator
@@ -117,6 +121,8 @@ type Handler struct {
 // Config holds admin handler configuration.
 type Config struct {
 	Store               Store
+	CredentialSessions  CredentialSessionStore
+	ProviderCredentials ProviderCredentialStore
 	Health              internal.HealthManager
 	Concurrency         ConcurrencyTracker
 	ProviderLifecycles  ProviderLifecycleCoordinator
@@ -137,6 +143,8 @@ func NewHandler(cfg Config) *Handler {
 	}
 	handler := &Handler{
 		store:               cfg.Store,
+		credentialSessions:  cfg.CredentialSessions,
+		providerCredentials: cfg.ProviderCredentials,
 		health:              cfg.Health,
 		concurrency:         cfg.Concurrency,
 		providerLifecycles:  cfg.ProviderLifecycles,

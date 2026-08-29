@@ -18,7 +18,9 @@ type NewProviderCredentialSessionInput struct {
 	SecretData string                 `json:"secret_data"`
 }
 
-type providerCredentialSessionWriter interface {
+// ProviderCredentialStore owns the transaction that creates route targets and
+// their newly materialized credentials together.
+type ProviderCredentialStore interface {
 	CreateProviderWithCredentialSessions(context.Context, *model.Provider, []*credentialsession.Session) error
 	UpdateProviderWithCredentialSessions(context.Context, *model.Provider, []*credentialsession.Session) error
 }

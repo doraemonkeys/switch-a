@@ -17,6 +17,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
+	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
@@ -29,6 +30,10 @@ import (
 
 // mockStore implements the store interface for testing.
 type mockStore struct{}
+
+func (*mockStore) ListCredentialSessions(context.Context) ([]credentialsession.Session, error) {
+	return nil, nil
+}
 
 func testCodexRuntimes(t *testing.T) (*codexhttp.Runtime, *codexws.Runtime) {
 	t.Helper()
