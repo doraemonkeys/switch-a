@@ -157,6 +157,10 @@ func TestCredentialSessionTransferValidationMatrix(t *testing.T) {
 		if err := validateChatGPTReauthenticationDescriptor(validChatGPT); err != nil {
 			t.Fatalf("valid descriptor error = %v", err)
 		}
+		placeholder, err := buildChatGPTReauthenticationPlaceholder(validChatGPT)
+		if err != nil || !placeholder.IsReauthenticationPlaceholder() || placeholder.ID != validChatGPT.ID {
+			t.Fatalf("valid placeholder = (%#v, %v)", placeholder, err)
+		}
 	})
 
 	t.Run("batch", func(t *testing.T) {
@@ -169,7 +173,7 @@ func TestCredentialSessionTransferValidationMatrix(t *testing.T) {
 			validChatGPT,
 			invalidStatic,
 		})
-		if len(sessions) != 1 || len(warnings) != 3 {
+		if len(sessions) != 2 || len(warnings) != 2 {
 			t.Fatalf("batch result = (%#v, %#v)", sessions, warnings)
 		}
 	})
@@ -185,11 +189,13 @@ func TestStageChatGPTReauthenticationDescriptorBoundaries(t *testing.T) {
 		t.Fatalf("mismatched existing error = %v", err)
 	}
 	delete(existing, "chat")
-	if err := stageChatGPTReauthenticationDescriptor(&staged, descriptor, existing); err == nil || !strings.Contains(err.Error(), "requires verified") {
-		t.Fatalf("missing existing error = %v", err)
+	if err := stageChatGPTReauthenticationDescriptor(&staged, descriptor, existing); err != nil ||
+		staged.changes.CredentialSessions.Add != 1 || len(staged.bundle.CredentialSessions) != 1 ||
+		!staged.bundle.CredentialSessions[0].IsReauthenticationPlaceholder() {
+		t.Fatalf("missing existing staging = %#v, error %v", staged, err)
 	}
 	descriptor.SecretData = "attacker"
-	if err := stageChatGPTReauthenticationDescriptor(&staged, descriptor, existing); err == nil || !strings.Contains(err.Error(), "cannot import ChatGPT") {
+	if err := stageChatGPTReauthenticationDescriptor(&staged, descriptor, existing); err == nil || !strings.Contains(err.Error(), "cannot import a ChatGPT") {
 		t.Fatalf("invalid descriptor error = %v", err)
 	}
 }

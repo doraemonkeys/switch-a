@@ -14,6 +14,7 @@ import (
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
+	"github.com/google/uuid"
 
 	"go.uber.org/zap"
 )
@@ -21,6 +22,7 @@ import (
 // ImportConfig handles POST /admin/api/config/import.
 func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	limitRequestBody(w, r)
+	operationID := uuid.NewString()
 
 	// Check for dry_run query parameter
 	dryRun := r.URL.Query().Get("dry_run") == "true"
@@ -57,7 +59,11 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	snapshot, err := h.loadConfigImportSnapshot(ctx)
 	if err != nil {
-		h.logger.Error("failed to load config import snapshot", zap.Error(err))
+		h.logger.Error(
+			"failed to load config import snapshot",
+			zap.String("operation_id", operationID),
+			zap.Error(err),
+		)
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config")
 		return
 	}
@@ -70,6 +76,16 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		snapshot.routingPolicies,
 		snapshot.settings,
 		snapshot.rules,
+	)
+	h.logger.Info(
+		"config import staged",
+		zap.String("operation_id", operationID),
+		zap.String("mode", string(staged.mode)),
+		zap.Bool("dry_run", dryRun),
+		zap.Int("warning_count", len(staged.warnings)),
+		zap.Int("credential_reauthentication_requirement_count", len(staged.reauthenticationRequirements)),
+		zap.Int("provider_add_count", staged.changes.Providers.Add),
+		zap.Int("credential_session_add_count", staged.changes.CredentialSessions.Add),
 	)
 	ruleRepository := snapshot.ruleRepository
 	ruleRevision := snapshot.ruleRevision
@@ -127,7 +143,12 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return
 		}
-		h.logger.Error("failed to apply import changes", zap.Error(err))
+		h.logger.Error(
+			"failed to apply import changes",
+			zap.String("operation_id", operationID),
+			zap.String("mode", string(staged.mode)),
+			zap.Error(err),
+		)
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to import config: "+err.Error())
 		return
 	}
@@ -135,7 +156,13 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	if ruleRepository != nil {
 		ruleRevision, _ = ruleRepository.ListRules()
 	}
-	resp := newConfigImportResult(staged.changes, ruleRevision)
+	resp := newConfigImportResult(staged.changes, staged.reauthenticationRequirements, ruleRevision)
+	h.logger.Info(
+		"config import applied",
+		zap.String("operation_id", operationID),
+		zap.String("mode", string(staged.mode)),
+		zap.Int("credential_reauthentication_requirement_count", len(staged.reauthenticationRequirements)),
+	)
 	w.Header().Set("ETag", resp.RuleSetETag)
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -150,11 +177,12 @@ func (h *Handler) writeConfigImportPreview(
 		return
 	}
 	resp := ImportPreviewResponse{
-		DryRun:          true,
-		Changes:         staged.changes,
-		Warnings:        append([]string{}, staged.warnings...),
-		RuleSetRevision: ruleRevision.String(),
-		RuleSetETag:     formatInternalErrorRuleETag(ruleRevision),
+		DryRun:                       true,
+		Changes:                      staged.changes,
+		Warnings:                     append([]string{}, staged.warnings...),
+		ReauthenticationRequirements: append([]CredentialReauthenticationRequirement{}, staged.reauthenticationRequirements...),
+		RuleSetRevision:              ruleRevision.String(),
+		RuleSetETag:                  formatInternalErrorRuleETag(ruleRevision),
 	}
 	w.Header().Set("ETag", resp.RuleSetETag)
 	writeJSON(w, http.StatusOK, resp)
@@ -172,11 +200,16 @@ func (h *Handler) applyValidatedConfigImport(
 	return h.applyConfigImportAtLifecycleBoundary(ctx, changes, bundle)
 }
 
-func newConfigImportResult(changes ImportChanges, revision errorrule.Revision) ImportResult {
+func newConfigImportResult(
+	changes ImportChanges,
+	reauthenticationRequirements []CredentialReauthenticationRequirement,
+	revision errorrule.Revision,
+) ImportResult {
 	return ImportResult{
-		Success:         true,
-		RuleSetRevision: revision.String(),
-		RuleSetETag:     formatInternalErrorRuleETag(revision),
+		Success:                      true,
+		ReauthenticationRequirements: append([]CredentialReauthenticationRequirement{}, reauthenticationRequirements...),
+		RuleSetRevision:              revision.String(),
+		RuleSetETag:                  formatInternalErrorRuleETag(revision),
 		Applied: ImportedCounts{
 			Providers: AppliedCount{
 				Added:   changes.Providers.Add,

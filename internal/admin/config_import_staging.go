@@ -15,11 +15,13 @@ import (
 )
 
 type stagedConfigImport struct {
-	bundle                store.ConfigImportBundle
-	changes               ImportChanges
-	warnings              []string
-	previewRejectsWarning bool
-	ruleError             error
+	bundle                       store.ConfigImportBundle
+	mode                         ConfigImportMode
+	changes                      ImportChanges
+	warnings                     []string
+	reauthenticationRequirements []CredentialReauthenticationRequirement
+	previewRejectsWarning        bool
+	ruleError                    error
 }
 
 func stageConfigImport(
@@ -34,6 +36,7 @@ func stageConfigImport(
 	resolved, scopeWarnings := resolveImportConfigRequest(req)
 	staged := stagedConfigImport{
 		warnings:              append([]string{}, scopeWarnings...),
+		mode:                  resolved.Scope.Mode,
 		previewRejectsWarning: !resolved.CanStage || resolved.Scope.Mode != ConfigImportModeFull,
 	}
 	if !resolved.CanStage {
@@ -121,28 +124,50 @@ func stageChatGPTReauthenticationDescriptor(
 	existing map[string]credentialsession.Snapshot,
 ) error {
 	id := strings.TrimSpace(item.ID)
-	if err := validateChatGPTReauthenticationDescriptor(item); err != nil {
+	placeholder, err := buildChatGPTReauthenticationPlaceholder(item)
+	if err != nil {
 		return fmt.Errorf(
-			"credential session %q cannot import ChatGPT credential material; restore it through verified login/provider-import: %w",
+			"credential session %q cannot import a ChatGPT reauthentication descriptor: %w",
 			id,
 			err,
 		)
 	}
 	current, found := existing[id]
 	if !found {
-		return fmt.Errorf(
-			"credential session %q requires verified ChatGPT reauthentication before import; create it with the same ID through login/provider-import and retry",
-			id,
-		)
+		staged.changes.CredentialSessions.Add++
+		staged.bundle.CredentialSessions = append(staged.bundle.CredentialSessions, *placeholder)
+		recordCredentialReauthenticationRequirement(staged, placeholder.ID, placeholder.Name)
+		return nil
 	}
 	if current.Kind != credentialsession.KindChatGPT {
 		return fmt.Errorf(
-			"credential session %q reauthentication descriptor does not match the existing verified ChatGPT session",
+			"credential session %q reauthentication descriptor does not match the existing ChatGPT session",
 			id,
 		)
 	}
-	staged.changes.CredentialSessions.Unchanged++
+	nameDiffers := placeholder.Name != "" && placeholder.Name != current.Name
+	if recordStagedUpsert(&staged.changes.CredentialSessions, true, nameDiffers) {
+		staged.bundle.CredentialSessions = append(staged.bundle.CredentialSessions, *placeholder)
+	}
+	if current.AuthState.Status != credentialsession.AuthStatusActive ||
+		!current.Subject.Resolved() || !current.HasCredentialMaterial() {
+		requirementName := current.Name
+		if placeholder.Name != "" {
+			requirementName = placeholder.Name
+		}
+		recordCredentialReauthenticationRequirement(staged, id, requirementName)
+	}
 	return nil
+}
+
+func recordCredentialReauthenticationRequirement(staged *stagedConfigImport, sessionID, name string) {
+	staged.reauthenticationRequirements = append(
+		staged.reauthenticationRequirements,
+		CredentialReauthenticationRequirement{
+			CredentialSessionID: sessionID,
+			Name:                name,
+		},
+	)
 }
 
 func credentialSessionImportEqual(session credentialsession.Session, current credentialsession.Snapshot) bool {

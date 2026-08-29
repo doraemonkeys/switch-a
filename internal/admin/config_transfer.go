@@ -108,19 +108,26 @@ type ChangeCount struct {
 
 // ImportPreviewResponse is the response for dry_run=true.
 type ImportPreviewResponse struct {
-	DryRun          bool          `json:"dry_run"`
-	Changes         ImportChanges `json:"changes"`
-	Warnings        []string      `json:"warnings"`
-	RuleSetRevision string        `json:"rule_set_revision"`
-	RuleSetETag     string        `json:"rule_set_etag"`
+	DryRun                       bool                                    `json:"dry_run"`
+	Changes                      ImportChanges                           `json:"changes"`
+	Warnings                     []string                                `json:"warnings"`
+	ReauthenticationRequirements []CredentialReauthenticationRequirement `json:"credential_reauthentication_requirements"`
+	RuleSetRevision              string                                  `json:"rule_set_revision"`
+	RuleSetETag                  string                                  `json:"rule_set_etag"`
+}
+
+type CredentialReauthenticationRequirement struct {
+	CredentialSessionID string `json:"credential_session_id"`
+	Name                string `json:"name"`
 }
 
 // ImportResult represents the result of an actual import.
 type ImportResult struct {
-	Success         bool           `json:"success"`
-	Applied         ImportedCounts `json:"applied"`
-	RuleSetRevision string         `json:"rule_set_revision"`
-	RuleSetETag     string         `json:"rule_set_etag"`
+	Success                      bool                                    `json:"success"`
+	Applied                      ImportedCounts                          `json:"applied"`
+	ReauthenticationRequirements []CredentialReauthenticationRequirement `json:"credential_reauthentication_requirements"`
+	RuleSetRevision              string                                  `json:"rule_set_revision"`
+	RuleSetETag                  string                                  `json:"rule_set_etag"`
 }
 
 // ImportedCounts represents the counts of successfully imported items.
@@ -270,7 +277,12 @@ func buildCredentialSessionsFromExport(exported []ExportedCredentialSession) ([]
 		}
 		seen[id] = struct{}{}
 		if item.Kind == credentialsession.KindChatGPT {
-			warnings = append(warnings, chatGPTConfigImportMutationWarning(id))
+			session, err := buildChatGPTReauthenticationPlaceholder(item)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("Invalid credential session %q: %v", item.ID, err))
+				continue
+			}
+			sessions = append(sessions, *session)
 			continue
 		}
 		session, err := buildStaticCredentialSessionFromExport(item)
@@ -327,11 +339,24 @@ func validateChatGPTReauthenticationDescriptor(item ExportedCredentialSession) e
 	return nil
 }
 
-func chatGPTConfigImportMutationWarning(id string) string {
-	return fmt.Sprintf(
-		"Credential session %q cannot import ChatGPT credential material; restore it through verified login/provider-import",
-		id,
-	)
+func buildChatGPTReauthenticationPlaceholder(item ExportedCredentialSession) (*credentialsession.Session, error) {
+	if err := validateChatGPTReauthenticationDescriptor(item); err != nil {
+		return nil, err
+	}
+	session := &credentialsession.Session{
+		ID:        strings.TrimSpace(item.ID),
+		Name:      strings.TrimSpace(item.Name),
+		Kind:      credentialsession.KindChatGPT,
+		Version:   item.Version,
+		AuthState: item.AuthState.Clone(),
+	}
+	if err := session.SetSubject(credentialsession.PendingSubject()); err != nil {
+		return nil, err
+	}
+	if err := session.Validate(); err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 // buildGroupFromExport applies the same normalization that Create/Update paths use

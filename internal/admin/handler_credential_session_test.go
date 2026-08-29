@@ -519,7 +519,7 @@ func TestCredentialSessionReauthenticationResolvesRecoveryPendingSubject(t *test
 	_, repository := newCredentialSessionHandler(t)
 	current := &credentialsession.Session{
 		ID: "recovery-session", Kind: credentialsession.KindChatGPT,
-		SecretData: "legacy-secret", Version: 1,
+		Version:   1,
 		AuthState: credentialsession.AuthState{Status: credentialsession.AuthStatusReauthRequired},
 	}
 	if err := current.SetSubject(credentialsession.PendingSubject()); err != nil {

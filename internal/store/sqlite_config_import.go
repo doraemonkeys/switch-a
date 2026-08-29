@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrConfigImportChatGPTCredentialMutation = errors.New("generic config import cannot mutate ChatGPT credentials")
+var ErrConfigImportChatGPTCredentialMaterialMutation = errors.New("config import cannot write ChatGPT credential material")
 
 // ConfigImportRoutingPolicyMode makes routing-policy scope explicit at the store
 // boundary so callers never rely on empty slices to mean two different things.
@@ -140,8 +140,8 @@ func applyImportedCredentialSessions(
 				return err
 			}
 		case errors.Is(err, credentialsession.ErrNotFound):
-			if candidate.Kind == credentialsession.KindChatGPT {
-				return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
+			if candidate.Kind == credentialsession.KindChatGPT && !candidate.IsReauthenticationPlaceholder() {
+				return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMaterialMutation, candidate.ID)
 			}
 			if _, err := txStore.CreateCredentialSession(ctx, &candidate); err != nil {
 				return err
@@ -163,10 +163,16 @@ func applyExistingImportedCredentialSession(
 		return fmt.Errorf("credential session %q kind is immutable", candidate.ID)
 	}
 	if candidate.Kind == credentialsession.KindChatGPT {
-		// ChatGPT subject authority is produced only by the verified login/import
-		// mutation boundary. Keeping this check at persistence makes an admin
-		// staging regression fail closed and roll back the whole config bundle.
-		return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMutation, candidate.ID)
+		if !candidate.IsReauthenticationPlaceholder() {
+			// Config restore owns names and route topology, while verified login owns
+			// every byte that can authenticate or establish account identity.
+			return fmt.Errorf("%w: session %q", ErrConfigImportChatGPTCredentialMaterialMutation, candidate.ID)
+		}
+		if strings.TrimSpace(candidate.Name) == "" || candidate.Name == current.Name {
+			return nil
+		}
+		_, err := txStore.RenameCredentialSessionCAS(ctx, candidate.ID, current.Version, candidate.Name)
+		return err
 	}
 	if current.Version != candidate.Version {
 		return fmt.Errorf("credential session %q version mismatch: expected %d, current %d", candidate.ID, candidate.Version, current.Version)

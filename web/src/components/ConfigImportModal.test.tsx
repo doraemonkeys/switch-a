@@ -172,6 +172,7 @@ function createPreviewResponse(
       },
     },
     warnings: [],
+    credential_reauthentication_requirements: [],
     rule_set_revision: "0",
     rule_set_etag: '"internal-error-rules/0"',
   };
@@ -191,6 +192,7 @@ function createImportResult(
       internal_error_rules: { added: 0, updated: 0, deleted: 0 },
       ...applied,
     },
+    credential_reauthentication_requirements: [],
     rule_set_revision: "0",
     rule_set_etag: '"internal-error-rules/0"',
   };
@@ -564,7 +566,7 @@ describe("ConfigImportModal", () => {
 
     expect(
       screen.getByText(
-        /选中的 Group 会同时导入其 Providers、Static Credential Sessions 和对应 Internal Error Rules；ChatGPT 描述符必须先通过已验证路径恢复/,
+        /选中的 Group 会同时导入其 Providers、Credential Sessions 和对应 Internal Error Rules；ChatGPT Provider 会恢复为待重新认证状态/,
       ),
     ).toBeInTheDocument();
 

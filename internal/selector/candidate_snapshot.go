@@ -148,7 +148,7 @@ func (e *ProviderSelectionEligibility) Group(providerID string) (*model.Group, b
 
 func credentialSessionUsable(snapshot credentialsession.Snapshot) bool {
 	if strings.TrimSpace(snapshot.SessionID) == "" ||
-		strings.TrimSpace(snapshot.SecretData) == "" ||
+		!snapshot.HasCredentialMaterial() ||
 		snapshot.Version < 1 ||
 		!credentialsession.IsValidKind(snapshot.Kind) {
 		return false

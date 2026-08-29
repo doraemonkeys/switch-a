@@ -14,16 +14,17 @@ import (
 const codexMaintenanceAPIType = "codex"
 
 type codexMaintenanceCatalogRow struct {
-	RouteTargetID       string         `gorm:"column:route_target_id"`
-	ProviderID          sql.NullString `gorm:"column:provider_id"`
-	Vendor              sql.NullString `gorm:"column:vendor"`
-	FinalURL            sql.NullString `gorm:"column:final_url"`
-	BindingSessionID    sql.NullString `gorm:"column:binding_session_id"`
-	CredentialSessionID sql.NullString `gorm:"column:credential_session_id"`
-	CredentialKind      sql.NullString `gorm:"column:credential_kind"`
-	SubjectKind         sql.NullString `gorm:"column:subject_kind"`
-	SubjectValue        []byte         `gorm:"column:subject_value"`
-	SubjectKeyVersion   sql.NullString `gorm:"column:subject_key_version"`
+	RouteTargetID        string         `gorm:"column:route_target_id"`
+	ProviderID           sql.NullString `gorm:"column:provider_id"`
+	Vendor               sql.NullString `gorm:"column:vendor"`
+	FinalURL             sql.NullString `gorm:"column:final_url"`
+	BindingSessionID     sql.NullString `gorm:"column:binding_session_id"`
+	CredentialSessionID  sql.NullString `gorm:"column:credential_session_id"`
+	CredentialKind       sql.NullString `gorm:"column:credential_kind"`
+	CredentialAuthStatus sql.NullString `gorm:"column:credential_auth_status"`
+	SubjectKind          sql.NullString `gorm:"column:subject_kind"`
+	SubjectValue         []byte         `gorm:"column:subject_value"`
+	SubjectKeyVersion    sql.NullString `gorm:"column:subject_key_version"`
 }
 
 // LoadCodexMaintenanceCatalog reads every Codex route, credential subject, and
@@ -47,6 +48,7 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 				bindings.session_id AS binding_session_id,
 				sessions.id AS credential_session_id,
 				sessions.kind AS credential_kind,
+				sessions.auth_status AS credential_auth_status,
 				sessions.subject_kind AS subject_kind,
 				sessions.subject_value AS subject_value,
 				sessions.subject_key_version AS subject_key_version`).
@@ -64,7 +66,7 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 	for _, row := range rows {
 		if !row.ProviderID.Valid || !row.Vendor.Valid || !row.FinalURL.Valid ||
 			!row.BindingSessionID.Valid || !row.CredentialSessionID.Valid ||
-			!row.CredentialKind.Valid || !row.SubjectKind.Valid ||
+			!row.CredentialKind.Valid || !row.CredentialAuthStatus.Valid || !row.SubjectKind.Valid ||
 			!row.SubjectKeyVersion.Valid {
 			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q has an incomplete provider, binding, or credential session", row.RouteTargetID)
 		}
@@ -72,11 +74,20 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q resolved a mismatched credential session", row.RouteTargetID)
 		}
 		kind := credentialsession.Kind(row.CredentialKind.String)
+		authStatus := credentialsession.AuthStatus(row.CredentialAuthStatus.String)
 		subjectKind := credentialsession.SubjectKind(row.SubjectKind.String)
-		if (kind != credentialsession.KindAPIKey && kind != credentialsession.KindChatGPT) ||
+		if !credentialsession.IsValidAuthStatus(authStatus) ||
+			(kind != credentialsession.KindAPIKey && kind != credentialsession.KindChatGPT) ||
 			(kind == credentialsession.KindAPIKey && subjectKind != credentialsession.SubjectKeyedDigest && subjectKind != credentialsession.SubjectPending) ||
 			(kind == credentialsession.KindChatGPT && subjectKind != credentialsession.SubjectAccount && subjectKind != credentialsession.SubjectPending) {
 			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q has an incompatible credential kind and subject", row.RouteTargetID)
+		}
+		if kind == credentialsession.KindChatGPT &&
+			subjectKind == credentialsession.SubjectPending &&
+			authStatus == credentialsession.AuthStatusReauthRequired {
+			// A restore placeholder has no stable Authority yet. Excluding it keeps
+			// unrelated Cookie cleanup healthy until the operator reconnects it.
+			continue
 		}
 		routes = append(routes, codexmaintenance.CatalogRoute{
 			RouteTargetID: row.RouteTargetID,

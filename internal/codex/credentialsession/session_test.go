@@ -73,12 +73,15 @@ func TestSubjectAndSessionValidation(t *testing.T) {
 		t.Fatalf("Validate(mismatched account) = %v, want ErrInvalidSession", err)
 	}
 	recovery := &Session{
-		ID: "recovery", Kind: KindChatGPT, SecretData: "secret", Version: 1,
+		ID: "recovery", Kind: KindChatGPT, Version: 1,
 		SubjectKind: SubjectPending,
 		AuthState:   AuthState{Status: AuthStatusReauthRequired, AccountID: "diagnostic-only"},
 	}
 	if err := recovery.Validate(); err != nil {
 		t.Fatalf("Validate(recovery pending) = %v", err)
+	}
+	if recovery.HasCredentialMaterial() || !recovery.IsReauthenticationPlaceholder() {
+		t.Fatalf("recovery material/placeholder = %t/%t", recovery.HasCredentialMaterial(), recovery.IsReauthenticationPlaceholder())
 	}
 	if snapshot, err := recovery.Snapshot(); err != nil || !errors.Is(snapshot.RequireResolvedSubject(), ErrSubjectPending) {
 		t.Fatalf("Snapshot(recovery pending) = (%#v, %v)", snapshot, err)
@@ -111,6 +114,7 @@ func TestSubjectAndSessionValidation(t *testing.T) {
 		{ID: "s", Kind: KindAPIKey, SecretData: "secret", Version: 0, SubjectKind: SubjectPending},
 		{ID: "s", Kind: KindAPIKey, SecretData: "secret", Version: 1, SubjectKind: "bad"},
 		{ID: "s", Kind: KindAPIKey, SecretData: "secret", Version: 1, SubjectKind: SubjectAccount, SubjectValue: []byte("account-1")},
+		{ID: "s", Kind: KindChatGPT, SecretData: "", Version: 1, SubjectKind: SubjectAccount, SubjectValue: []byte("account-1"), AuthState: AuthState{Status: AuthStatusActive}},
 		{ID: "s", Kind: KindChatGPT, SecretData: "secret", Version: 1, SubjectKind: SubjectKeyedDigest, SubjectValue: keyed.Value, SubjectKeyVersion: keyed.KeyVersion},
 	} {
 		if !errors.Is(invalid.Validate(), ErrInvalidSession) {

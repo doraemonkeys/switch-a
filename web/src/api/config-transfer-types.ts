@@ -180,8 +180,14 @@ export interface ImportPreviewResponse {
   dry_run: boolean;
   changes: ImportChanges;
   warnings: string[];
+  credential_reauthentication_requirements: CredentialReauthenticationRequirement[];
   rule_set_revision: string;
   rule_set_etag: string;
+}
+
+export interface CredentialReauthenticationRequirement {
+  credential_session_id: string;
+  name: string;
 }
 
 export interface AppliedCount {
@@ -202,6 +208,7 @@ export interface ImportedCounts {
 export interface ImportResult {
   success: boolean;
   applied: ImportedCounts;
+  credential_reauthentication_requirements: CredentialReauthenticationRequirement[];
   rule_set_revision: string;
   rule_set_etag: string;
 }

@@ -499,6 +499,8 @@ export function createApiClient(deps: ApiClientDeps) {
         return {
           ...preview,
           warnings: preview.warnings ?? [],
+          credential_reauthentication_requirements:
+            preview.credential_reauthentication_requirements ?? [],
         };
       },
       import: (
@@ -513,7 +515,11 @@ export function createApiClient(deps: ApiClientDeps) {
           method: "POST",
           ...(headers ? { headers } : {}),
           body: JSON.stringify(data),
-        });
+        }).then((result) => ({
+          ...result,
+          credential_reauthentication_requirements:
+            result.credential_reauthentication_requirements ?? [],
+        }));
       },
     },
     status: {

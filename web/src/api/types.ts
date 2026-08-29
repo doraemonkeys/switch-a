@@ -775,6 +775,7 @@ export interface StatsResponse {
 export type {
   AppliedCount,
   ChangeCount,
+  CredentialReauthenticationRequirement,
   CredentialSessionTransferMode,
   ExportedAPIType,
   ExportedConfig,

@@ -2,6 +2,7 @@ import type { ImportMode, ImportPreviewResponse } from "../../api/types";
 import { IMPORT_SUMMARY_SECTIONS } from "./constants";
 import { FileCard } from "./common";
 import { getVisibleSummaryKeys } from "./helpers";
+import { ReauthenticationNotice } from "./ReauthenticationNotice";
 const WarningIcon = () => (
   <svg
     className="w-4 h-4 text-warning shrink-0"
@@ -150,6 +151,10 @@ export function PreviewStep({
           </div>
         </div>
       )}
+
+      <ReauthenticationNotice
+        requirements={preview.credential_reauthentication_requirements ?? []}
+      />
 
       {!hasAnyChanges && (
         <div className="bg-bg-tertiary border border-border-light rounded-lg p-4 text-center">

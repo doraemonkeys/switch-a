@@ -161,6 +161,7 @@ export type {
   ExportedCredentialSubject,
   ExportedCredentialUsageSnapshot,
   ExportedCredentialUsageWindow,
+  CredentialReauthenticationRequirement,
   CredentialSessionTransferMode,
   ExportedGroup,
   ExportedInternalErrorRule,

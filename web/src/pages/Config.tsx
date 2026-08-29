@@ -95,7 +95,7 @@ export function Config() {
             onClick={handleExport}
             disabled={exporting}
             className="btn btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            title="导出所有配置（包括 Providers、Groups 和 Settings）"
+            title="导出所有配置；ChatGPT 登录信息不会导出，恢复后需重新认证"
           >
             {exporting ? (
               <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />

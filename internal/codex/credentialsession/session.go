@@ -252,6 +252,22 @@ func (s *Session) SetSubject(subject Subject) error {
 	return nil
 }
 
+func (s *Session) HasCredentialMaterial() bool {
+	return s != nil && strings.TrimSpace(s.SecretData) != ""
+}
+
+// IsReauthenticationPlaceholder identifies a durable route binding whose GPT
+// identity is intentionally unresolved until an operator completes login. The
+// placeholder preserves configuration topology without pretending it can
+// authenticate upstream requests.
+func (s *Session) IsReauthenticationPlaceholder() bool {
+	return s != nil &&
+		s.Kind == KindChatGPT &&
+		!s.HasCredentialMaterial() &&
+		s.Subject().Kind == SubjectPending &&
+		s.AuthState.Status == AuthStatusReauthRequired
+}
+
 func (s *Session) Validate() error {
 	if s == nil {
 		return fmt.Errorf("%w: session is nil", ErrInvalidSession)
@@ -265,7 +281,7 @@ func (s *Session) Validate() error {
 	if len([]rune(s.Name)) > MaxNameLength {
 		return fmt.Errorf("%w: name must not exceed %d characters", ErrInvalidSession, MaxNameLength)
 	}
-	if strings.TrimSpace(s.SecretData) == "" {
+	if !s.HasCredentialMaterial() && !s.IsReauthenticationPlaceholder() {
 		return fmt.Errorf("%w: secret data is blank", ErrInvalidSession)
 	}
 	if s.Version < 1 {
@@ -334,6 +350,10 @@ type Snapshot struct {
 	Version    int64
 	Subject    Subject
 	AuthState  AuthState
+}
+
+func (s Snapshot) HasCredentialMaterial() bool {
+	return strings.TrimSpace(s.SecretData) != ""
 }
 
 func (s *Session) Snapshot() (Snapshot, error) {

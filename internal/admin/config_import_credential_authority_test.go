@@ -25,7 +25,7 @@ func TestConfigImportRejectsUnprovedChatGPTCredentialCreateAndUpdate(t *testing.
 		}
 
 		preview := performConfigImport(t, handler, request, true)
-		if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), "cannot import ChatGPT credential material") {
+		if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), "cannot import a ChatGPT reauthentication descriptor") {
 			t.Fatalf("preview = %d %s", preview.Code, preview.Body.String())
 		}
 		if len(storage.credentialSessions) != 0 || len(storage.groups) != 0 {
@@ -33,7 +33,7 @@ func TestConfigImportRejectsUnprovedChatGPTCredentialCreateAndUpdate(t *testing.
 		}
 
 		applied := performConfigImport(t, handler, request, false)
-		if applied.Code != http.StatusBadRequest || !strings.Contains(applied.Body.String(), "verified login/provider-import") {
+		if applied.Code != http.StatusBadRequest || !strings.Contains(applied.Body.String(), "cannot import a ChatGPT reauthentication descriptor") {
 			t.Fatalf("apply = %d %s", applied.Code, applied.Body.String())
 		}
 		if len(storage.credentialSessions) != 0 || len(storage.groups) != 0 {
@@ -63,9 +63,10 @@ func TestConfigImportRejectsUnprovedChatGPTCredentialCreateAndUpdate(t *testing.
 	})
 }
 
-func TestConfigExportChatGPTRoundTripUsesReauthenticationDescriptor(t *testing.T) {
+func TestConfigExportChatGPTRoundTripRestoresReauthenticationPlaceholder(t *testing.T) {
 	handler, storage, _ := testHandler()
 	session := verifiedChatGPTSession(t, "login-session", "opaque-token-a", "acct-a")
+	session.Name = "Account A"
 	snapshot, err := session.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -118,12 +119,81 @@ func TestConfigExportChatGPTRoundTripUsesReauthenticationDescriptor(t *testing.T
 
 	restoreHandler, restoreStorage, _ := testHandler()
 	restorePreview := performConfigImport(t, restoreHandler, roundTrip, true)
-	if restorePreview.Code != http.StatusOK || !strings.Contains(restorePreview.Body.String(), "create it with the same ID through login/provider-import and retry") {
+	var restorePlan ImportPreviewResponse
+	if restorePreview.Code != http.StatusOK || json.Unmarshal(restorePreview.Body.Bytes(), &restorePlan) != nil ||
+		len(restorePlan.Warnings) != 0 || restorePlan.Changes.CredentialSessions.Add != 1 || restorePlan.Changes.Providers.Add != 1 ||
+		len(restorePlan.ReauthenticationRequirements) != 1 || restorePlan.ReauthenticationRequirements[0].CredentialSessionID != session.ID ||
+		!strings.Contains(restorePreview.Body.String(), `"credential_reauthentication_requirements":[`) {
 		t.Fatalf("new-store preview = %d %s", restorePreview.Code, restorePreview.Body.String())
 	}
 	restoreApply := performConfigImport(t, restoreHandler, roundTrip, false)
-	if restoreApply.Code != http.StatusBadRequest || len(restoreStorage.credentialSessions) != 0 || len(restoreStorage.providers) != 0 {
+	var restoreResult ImportResult
+	if restoreApply.Code != http.StatusOK || json.Unmarshal(restoreApply.Body.Bytes(), &restoreResult) != nil ||
+		len(restoreResult.ReauthenticationRequirements) != 1 || len(restoreStorage.credentialSessions) != 1 || len(restoreStorage.providers) != 1 {
 		t.Fatalf("new-store apply = %d %s storage=%#v/%#v", restoreApply.Code, restoreApply.Body.String(), restoreStorage.credentialSessions, restoreStorage.providers)
+	}
+	restored := restoreStorage.credentialSessions[session.ID]
+	if restored == nil || !restored.IsReauthenticationPlaceholder() || restored.Name != session.Name {
+		t.Fatalf("restored ChatGPT placeholder = %#v", restored)
+	}
+	restoredProvider := restoreStorage.providers["chat-provider"]
+	if restoredProvider == nil || len(restoredProvider.CredentialSessions) != 1 ||
+		restoredProvider.CredentialSessions[0].Credential.SessionID != session.ID {
+		t.Fatalf("restored provider binding = %#v", restoredProvider)
+	}
+}
+
+func TestConfigImportSelectionRestoresOnlySelectedChatGPTProvider(t *testing.T) {
+	handler, storage, _ := testHandler()
+	request := ImportConfigRequest{
+		Version:     ConfigExportVersion,
+		ImportScope: selectionConfigImportScope(nil, []string{"provider-a"}),
+		CredentialSessions: []ExportedCredentialSession{
+			chatGPTReauthenticationDescriptor("session-a", "Account A"),
+			chatGPTReauthenticationDescriptor("session-b", "Account B"),
+		},
+		Providers: []ExportedProvider{
+			{
+				ID: "provider-a", Name: "Provider A", Vendor: "openai", AuthMode: DefaultAuthMode, Weight: DefaultWeight, Enabled: true,
+				APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://chatgpt.com/backend-api/codex", CredentialSessionID: "session-a"}},
+			},
+			{
+				ID: "provider-b", Name: "Provider B", Vendor: "openai", AuthMode: DefaultAuthMode, Weight: DefaultWeight, Enabled: true,
+				APITypes: []ExportedAPIType{{APIType: "codex", BaseURL: "https://chatgpt.com/backend-api/codex", CredentialSessionID: "session-b"}},
+			},
+		},
+	}
+
+	preview := performConfigImport(t, handler, request, true)
+	var plan ImportPreviewResponse
+	if preview.Code != http.StatusOK || json.Unmarshal(preview.Body.Bytes(), &plan) != nil || len(plan.Warnings) != 0 ||
+		plan.Changes.CredentialSessions.Add != 1 || plan.Changes.Providers.Add != 1 ||
+		len(plan.ReauthenticationRequirements) != 1 || plan.ReauthenticationRequirements[0].CredentialSessionID != "session-a" {
+		t.Fatalf("selection preview = %d %s", preview.Code, preview.Body.String())
+	}
+	applied := performConfigImport(t, handler, request, false)
+	if applied.Code != http.StatusOK {
+		t.Fatalf("selection apply = %d %s", applied.Code, applied.Body.String())
+	}
+	if len(storage.providers) != 1 || storage.providers["provider-a"] == nil || storage.providers["provider-b"] != nil {
+		t.Fatalf("selected providers = %#v", storage.providers)
+	}
+	if len(storage.credentialSessions) != 1 || storage.credentialSessions["session-a"] == nil ||
+		!storage.credentialSessions["session-a"].IsReauthenticationPlaceholder() || storage.credentialSessions["session-b"] != nil {
+		t.Fatalf("selected credential sessions = %#v", storage.credentialSessions)
+	}
+}
+
+func chatGPTReauthenticationDescriptor(id, name string) ExportedCredentialSession {
+	return ExportedCredentialSession{
+		ID: id, Name: name, Kind: credentialsession.KindChatGPT,
+		TransferMode: CredentialSessionTransferReauthenticate,
+		Version:      1,
+		Subject:      credentialsession.PendingSubject(),
+		AuthState: credentialsession.AuthState{
+			Status:       credentialsession.AuthStatusReauthRequired,
+			StatusReason: configRestoreReauthenticationReason,
+		},
 	}
 }
 

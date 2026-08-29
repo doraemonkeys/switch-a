@@ -1,6 +1,7 @@
 import type { ImportMode, ImportResult } from "../../api/types";
 import { IMPORT_SUMMARY_SECTIONS } from "./constants";
 import { getVisibleSummaryKeys } from "./helpers";
+import { ReauthenticationNotice } from "./ReauthenticationNotice";
 const CheckCircleIcon = () => (
   <svg className="w-16 h-16 text-success" fill="none" viewBox="0 0 24 24">
     <path
@@ -52,6 +53,8 @@ export function ResultStep({
   mode: ImportMode;
 }) {
   const visibleSummaryKeys = getVisibleSummaryKeys(mode);
+  const reauthenticationRequirements =
+    result.credential_reauthentication_requirements ?? [];
 
   return (
     <div className="space-y-6">
@@ -60,7 +63,9 @@ export function ResultStep({
         <div className="text-center">
           <h3 className="text-lg font-medium text-text-primary">导入成功</h3>
           <p className="text-sm text-text-secondary mt-1">
-            配置已更新，变更立即生效
+            {reauthenticationRequirements.length > 0
+              ? "配置已更新；需重新认证的 ChatGPT Provider 将在连接后生效"
+              : "配置已更新，变更立即生效"}
           </p>
         </div>
       </div>
@@ -79,6 +84,11 @@ export function ResultStep({
           );
         })}
       </div>
+
+      <ReauthenticationNotice
+        requirements={reauthenticationRequirements}
+        imported
+      />
     </div>
   );
 }

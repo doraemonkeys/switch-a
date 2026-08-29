@@ -233,7 +233,10 @@ describe("createApiClient config API import operations", () => {
 
     const result = await api.config.importPreview(importRequest);
 
-    expect(result).toEqual(previewResponse);
+    expect(result).toEqual({
+      ...previewResponse,
+      credential_reauthentication_requirements: [],
+    });
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config/import?dry_run=true",
       expect.objectContaining({
@@ -313,7 +316,10 @@ describe("createApiClient config API import operations", () => {
     const previewRuleSetETag = '"internal-error-rules/41"';
     const result = await api.config.import(importRequest, previewRuleSetETag);
 
-    expect(result).toEqual(importResult);
+    expect(result).toEqual({
+      ...importResult,
+      credential_reauthentication_requirements: [],
+    });
     expect(mockHttpClient.fetch).toHaveBeenCalledWith(
       "https://test-api.example.com/config/import",
       expect.objectContaining({

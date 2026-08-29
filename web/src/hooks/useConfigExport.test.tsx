@@ -71,6 +71,7 @@ const mockPreviewResponse: ImportPreviewResponse = {
     internal_error_rules: { add: 0, update: 0, delete: 0, unchanged: 0 },
   },
   warnings: ["Provider API key will be overwritten"],
+  credential_reauthentication_requirements: [],
   rule_set_revision: "0",
   rule_set_etag: '"internal-error-rules/0"',
 };
@@ -85,6 +86,7 @@ const mockImportResult: ImportResult = {
     settings: { added: 0, updated: 2, deleted: 0 },
     internal_error_rules: { added: 0, updated: 0, deleted: 0 },
   },
+  credential_reauthentication_requirements: [],
   rule_set_revision: "0",
   rule_set_etag: '"internal-error-rules/0"',
 };

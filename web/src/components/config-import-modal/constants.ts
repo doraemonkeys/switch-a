@@ -57,7 +57,7 @@ export const IMPORT_MODE_OPTIONS: Array<{
     mode: "full",
     title: "全量导入",
     description:
-      "导入 Providers、Static Credential Sessions、Groups、Routing Policies、Settings 和 Internal Error Rules；ChatGPT 描述符必须先通过登录或 Provider Import 恢复。",
+      "导入 Providers、Credential Sessions、Groups、Routing Policies、Settings 和 Internal Error Rules；ChatGPT Provider 会恢复为待重新认证状态，登录凭据不会导入。",
   },
   {
     mode: "settings_only",
@@ -69,7 +69,7 @@ export const IMPORT_MODE_OPTIONS: Array<{
     mode: "selection",
     title: "按 Group / Provider 选择",
     description:
-      "选中的 Group 会同时导入其 Providers、Static Credential Sessions 和对应 Internal Error Rules；ChatGPT 描述符必须先通过已验证路径恢复。Routing Policies 与 Settings 不会导入。",
+      "选中的 Group 会同时导入其 Providers、Credential Sessions 和对应 Internal Error Rules；ChatGPT Provider 会恢复为待重新认证状态。Routing Policies 与 Settings 不会导入。",
   },
 ];
 

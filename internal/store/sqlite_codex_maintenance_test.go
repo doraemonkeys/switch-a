@@ -132,6 +132,49 @@ func TestCodexMaintenanceCatalogIncludesOnlyCodexFinalOriginsAndOwnsBytes(t *tes
 	}
 }
 
+func TestCodexMaintenanceCatalogSkipsReauthenticationPlaceholdersUntilResolved(t *testing.T) {
+	ctx := context.Background()
+	storage, err := NewSQLiteStore(filepath.Join(t.TempDir(), "maintenance-recovery.db"), internal.RealClock{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	placeholder := &credentialsession.Session{
+		ID: "session-recovery", Name: "Recovery", Kind: credentialsession.KindChatGPT, Version: 1,
+		SubjectKind: credentialsession.SubjectPending,
+		AuthState:   credentialsession.AuthState{Status: credentialsession.AuthStatusReauthRequired},
+	}
+	if _, err := storage.CreateCredentialSession(ctx, placeholder); err != nil {
+		t.Fatal(err)
+	}
+	provider := maintenanceProvider("route-recovery", placeholder.ID, "https://codex.example")
+	if err := storage.CreateProvider(ctx, &provider); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := storage.LoadCodexMaintenanceCatalog(ctx)
+	if err != nil || len(snapshot.Routes()) != 0 {
+		t.Fatalf("placeholder catalog = (%+v, %v)", snapshot.Routes(), err)
+	}
+	account, err := credentialsession.AccountSubject("account-restored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedCtx, release, err := storage.WithCredentialSessionMutations(ctx, []string{placeholder.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, updateErr := storage.UpdateCredentialSessionCAS(
+		ownedCtx, placeholder.ID, placeholder.Version, `{"access_token":"restored"}`, account,
+		credentialsession.AuthState{Status: credentialsession.AuthStatusActive, AccountID: "account-restored"},
+	)
+	release()
+	if updateErr != nil {
+		t.Fatal(updateErr)
+	}
+	assertMaintenanceAuthority(t, storage, "account-restored", "https://codex.example")
+}
+
 func TestCodexMaintenanceCatalogRejectsCredentialKindCorruption(t *testing.T) {
 	tests := []struct {
 		name   string
