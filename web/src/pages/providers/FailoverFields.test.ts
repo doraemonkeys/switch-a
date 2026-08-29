@@ -11,7 +11,6 @@ const BASE_INPUT: ProviderFormData = {
   name: "Test",
   credential_mode: "api_key",
   new_shared_api_key: "key",
-  chatgpt_credential_session_id: "",
   api_types: [],
   vendor: "",
   failover_scope: FAILOVER_SCOPES.ANY,

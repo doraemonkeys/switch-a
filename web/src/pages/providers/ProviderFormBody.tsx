@@ -54,6 +54,8 @@ interface ProviderFormBodyProps {
   credentialSessions: CredentialSession[];
   credentialSessionsLoading: boolean;
   credentialSessionsError: string | null;
+  chatGPTCredentialSessionID: string;
+  onChatGPTCredentialSessionChange: (sessionID: string) => void;
   authView?: ProviderAuthView | null;
   onStartChatGPTLogin: () => Promise<void>;
   onOpenChatGPTLoginPage: () => void;
@@ -407,6 +409,8 @@ export function ProviderFormBody({
   credentialSessions,
   credentialSessionsLoading,
   credentialSessionsError,
+  chatGPTCredentialSessionID,
+  onChatGPTCredentialSessionChange,
   authView,
   onStartChatGPTLogin,
   onOpenChatGPTLoginPage,
@@ -524,13 +528,8 @@ export function ProviderFormBody({
         <>
           <ChatGPTCredentialSessionField
             sessions={credentialSessions}
-            value={formData.chatgpt_credential_session_id}
-            onChange={(credentialSessionID) =>
-              setFormData((prev) => ({
-                ...prev,
-                chatgpt_credential_session_id: credentialSessionID,
-              }))
-            }
+            value={chatGPTCredentialSessionID}
+            onChange={onChatGPTCredentialSessionChange}
             loading={credentialSessionsLoading}
             error={credentialSessionsError}
           />

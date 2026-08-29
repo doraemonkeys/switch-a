@@ -6,6 +6,11 @@ import type {
 
 export type ProviderCredentialMode = CredentialSessionKind | "mixed";
 
+export type ChatGPTCredentialDraft =
+  | { kind: "none" }
+  | { kind: "credential_session"; credentialSessionID: string }
+  | { kind: "credential_login"; credentialLoginID: string };
+
 export interface ProviderAPITypeDraft extends APITypeInput {
   client_key: string;
   /** A write-only replacement secret; it is materialized as a new session. */
@@ -17,7 +22,6 @@ export interface ProviderFormData extends Omit<ProviderInput, "api_types"> {
   credential_mode: ProviderCredentialMode;
   /** Explicit bindings stay authoritative; this write-only secret only fills unbound routes. */
   new_shared_api_key: string;
-  chatgpt_credential_session_id: string;
 }
 
 let nextClientKey = 0;

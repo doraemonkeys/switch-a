@@ -5,6 +5,7 @@ import type {
   CreateCredentialSessionInput,
   CredentialSession,
   Provider,
+  ProviderCredentialSession,
   ProviderInput,
 } from "../../api";
 import { findBuiltInAPIType, isValidAPIType, useAPICatalog } from "../../api";
@@ -22,11 +23,16 @@ import {
   PROVIDER_CREDENTIAL_TYPES,
 } from "../../config/constants";
 import {
+  resolveCredentialSessionAuthView,
   resolveProviderAuthView,
   resolveProviderChatGPTCredentialSession,
   resolveProviderCredentialKind,
 } from "../../lib/providerAuth";
-import type { ProviderAPITypeDraft, ProviderFormData } from "./types";
+import type {
+  ChatGPTCredentialDraft,
+  ProviderAPITypeDraft,
+  ProviderFormData,
+} from "./types";
 import { generateClientKey } from "./types";
 
 // GPT login is intrinsically a Codex credential flow; catalog membership is
@@ -81,7 +87,6 @@ function createDefaultFormData(): ProviderFormData {
     id: "",
     name: "",
     new_shared_api_key: "",
-    chatgpt_credential_session_id: "",
     api_types: [],
     auth_mode: "auto",
     credential_mode: PROVIDER_CREDENTIAL_TYPES.API_KEY,
@@ -107,13 +112,10 @@ function createDefaultFormData(): ProviderFormData {
 function deriveFormData(initialData?: Provider): ProviderFormData {
   if (!initialData) return createDefaultFormData();
   const credentialMode = resolveProviderCredentialKind(initialData) ?? "mixed";
-  const chatGPTCredentialSession =
-    resolveProviderChatGPTCredentialSession(initialData);
   return {
     id: initialData.id,
     name: initialData.name,
     new_shared_api_key: "",
-    chatgpt_credential_session_id: chatGPTCredentialSession?.id ?? "",
     api_types: initialData.api_types.map((t) => ({
       client_key: generateClientKey(),
       api_type: t.api_type,
@@ -162,6 +164,7 @@ type APITypeSubmissionPreparation =
 function prepareAPITypeSubmission(
   formData: ProviderFormData,
   apiCatalog: APICatalog | null,
+  chatGPTCredential: ChatGPTCredentialDraft,
 ): APITypeSubmissionPreparation {
   if (!apiCatalog) {
     return {
@@ -184,7 +187,9 @@ function prepareAPITypeSubmission(
       kind: "ok",
       apiTypes: createChatGPTAPIType(
         chatGPTAPIType.api_type,
-        formData.chatgpt_credential_session_id,
+        chatGPTCredential.kind === "credential_session"
+          ? chatGPTCredential.credentialSessionID
+          : "",
       ),
       isChatGPTProvider: true,
     };
@@ -215,12 +220,12 @@ function prepareProviderSubmission({
   formData,
   isEditMode,
   apiCatalog,
-  credentialLoginID,
+  chatGPTCredential,
 }: {
   formData: ProviderFormData;
   isEditMode: boolean;
   apiCatalog: APICatalog | null;
-  credentialLoginID: string;
+  chatGPTCredential: ChatGPTCredentialDraft;
 }): ProviderSubmissionPreparation {
   if (!isEditMode && formData.id && !isValidId(formData.id)) {
     return {
@@ -229,7 +234,11 @@ function prepareProviderSubmission({
     };
   }
 
-  const apiTypePreparation = prepareAPITypeSubmission(formData, apiCatalog);
+  const apiTypePreparation = prepareAPITypeSubmission(
+    formData,
+    apiCatalog,
+    chatGPTCredential,
+  );
   if (apiTypePreparation.kind === "error") {
     return {
       kind: "form-error",
@@ -269,11 +278,7 @@ function prepareProviderSubmission({
     }
   }
 
-  if (
-    isChatGPTProvider &&
-    !credentialLoginID &&
-    !validApiTypes[0]?.credential_session_id
-  ) {
+  if (isChatGPTProvider && chatGPTCredential.kind === "none") {
     return {
       kind: "form-error",
       message: "Complete GPT login before saving this provider.",
@@ -322,23 +327,31 @@ async function materializeProviderCredentials({
   formData,
   apiTypes,
   isChatGPTProvider,
-  credentialLoginID,
+  chatGPTCredential,
   createCredentialSession,
 }: {
   formData: ProviderFormData;
   apiTypes: ProviderAPITypeDraft[];
   isChatGPTProvider: boolean;
-  credentialLoginID: string;
+  chatGPTCredential: ChatGPTCredentialDraft;
   createCredentialSession: CreateCredentialSession;
-}): Promise<{ payload: ProviderInput; formData: ProviderFormData }> {
+}): Promise<{
+  payload: ProviderInput;
+  formData: ProviderFormData;
+  chatGPTCredentialSessionID?: string;
+}> {
   if (isChatGPTProvider) {
-    let sessionID = apiTypes[0]?.credential_session_id ?? "";
-    if (credentialLoginID) {
+    let sessionID: string;
+    if (chatGPTCredential.kind === "credential_login") {
       const created = await createCredentialSession({
         kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-        credential_login_id: credentialLoginID,
+        credential_login_id: chatGPTCredential.credentialLoginID,
       });
       sessionID = created.id;
+    } else if (chatGPTCredential.kind === "credential_session") {
+      sessionID = chatGPTCredential.credentialSessionID;
+    } else {
+      throw new Error("GPT credential is required before materialization");
     }
     const resolved = apiTypes.map((entry) => ({
       api_type: entry.api_type,
@@ -349,13 +362,13 @@ async function materializeProviderCredentials({
       payload: providerInputFromForm(formData, resolved, true),
       formData: {
         ...formData,
-        chatgpt_credential_session_id: sessionID,
         api_types: resolved.map((entry) => ({
           ...entry,
           client_key: generateClientKey(),
           api_key: "",
         })),
       },
+      chatGPTCredentialSessionID: sessionID,
     };
   }
 
@@ -424,6 +437,8 @@ export function ProviderModal({
   const titleId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
   const initialAuthView = resolveProviderAuthView(initialData);
+  const initialChatGPTCredentialSession =
+    resolveProviderChatGPTCredentialSession(initialData);
   const {
     credentialSessions,
     loading: credentialSessionsLoading,
@@ -445,15 +460,37 @@ export function ProviderModal({
     startingChatGPTLogin,
     chatGPTLoginAuthURL,
     pendingChatGPTAuth,
-    credentialLoginID,
-    clearCredentialLogin,
+    credential: chatGPTCredential,
+    selectCredentialSession,
+    adoptMaterializedCredentialSession,
     handleStartChatGPTLogin,
     handleOpenChatGPTLoginPage,
     handleImportChatGPTLogin,
   } = useChatGPTLogin({
     enabled: formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
     initialAuthView,
+    initialCredentialSessionID: initialChatGPTCredentialSession?.id ?? "",
   });
+
+  let selectedChatGPTCredentialSession: ProviderCredentialSession | null = null;
+  if (chatGPTCredential.kind === "credential_session") {
+    selectedChatGPTCredentialSession =
+      credentialSessions.find(
+        (session) =>
+          session.id === chatGPTCredential.credentialSessionID &&
+          session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+      ) ?? null;
+    if (
+      !selectedChatGPTCredentialSession &&
+      initialChatGPTCredentialSession?.id ===
+        chatGPTCredential.credentialSessionID
+    ) {
+      selectedChatGPTCredentialSession = initialChatGPTCredentialSession;
+    }
+  }
+  const selectedChatGPTAuthView = resolveCredentialSessionAuthView(
+    selectedChatGPTCredentialSession,
+  );
 
   // Auto-focus first focusable element when modal opens
   useEffect(() => {
@@ -497,7 +534,7 @@ export function ProviderModal({
       formData,
       isEditMode,
       apiCatalog,
-      credentialLoginID,
+      chatGPTCredential,
     });
     if (preparedSubmission.kind === "id-error") {
       setIdError(preparedSubmission.message);
@@ -516,16 +553,16 @@ export function ProviderModal({
         formData,
         apiTypes: preparedSubmission.apiTypes,
         isChatGPTProvider: preparedSubmission.isChatGPTProvider,
-        credentialLoginID,
+        chatGPTCredential,
         createCredentialSession,
       });
-      // A newly created credential session is durable and reusable even if the
-      // provider write fails, so retain its binding in the open form for retry.
+      // The resolved binding is durable even if the provider write fails, so the
+      // draft must retain it instead of attempting to consume a login twice.
       setFormData(materialized.formData);
-      if (preparedSubmission.isChatGPTProvider && credentialLoginID) {
-        // A completed login is single-use. Once it has materialized a durable
-        // session, retries must reuse that session instead of consuming it again.
-        clearCredentialLogin();
+      if (materialized.chatGPTCredentialSessionID) {
+        adoptMaterializedCredentialSession(
+          materialized.chatGPTCredentialSessionID,
+        );
       }
       await onSubmit(materialized.payload);
       onClose();
@@ -576,7 +613,13 @@ export function ProviderModal({
             credentialSessionsError={
               credentialSessionsQueryError?.message ?? null
             }
-            authView={pendingChatGPTAuth ?? initialAuthView}
+            chatGPTCredentialSessionID={
+              chatGPTCredential.kind === "credential_session"
+                ? chatGPTCredential.credentialSessionID
+                : ""
+            }
+            onChatGPTCredentialSessionChange={selectCredentialSession}
+            authView={pendingChatGPTAuth ?? selectedChatGPTAuthView}
             onStartChatGPTLogin={handleStartChatGPTLogin}
             onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
             onImportChatGPTLogin={handleImportChatGPTLogin}

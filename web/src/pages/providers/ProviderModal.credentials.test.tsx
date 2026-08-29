@@ -37,6 +37,19 @@ function apiKeySession(id: string): CredentialSession {
   };
 }
 
+function chatGPTSession(id: string, email: string): CredentialSession {
+  return {
+    ...apiKeySession(id),
+    kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    subject: { kind: "account", value: `account-${id}` },
+    auth_state: {
+      status: "active",
+      email,
+      account_id: `account-${id}`,
+    },
+  };
+}
+
 function createCredentialSessionsApi(sessions: CredentialSession[]) {
   return {
     list: vi.fn().mockResolvedValue(sessions),
@@ -216,6 +229,127 @@ describe("ProviderModal credential binding precedence", () => {
     expect(credentialSessions.create).toHaveBeenCalledWith({
       kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
       secret_data: "shared-key",
+    });
+  });
+});
+
+describe("ProviderModal GPT credential precedence", () => {
+  const tokenBlob = '{"tokens":{"access_token":"acc","refresh_token":"ref"}}';
+
+  function gptCredentialAPI(existingSession: CredentialSession) {
+    const credentialSessions = createCredentialSessionsApi([existingSession]);
+    const api = {
+      providers: {
+        importChatGPTLogin: vi.fn().mockResolvedValue({
+          login_id: "login-new-account",
+          status: "completed",
+          auth: {
+            type: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+            status: "active",
+            email: "new@example.com",
+            account_id: "account-new",
+          },
+        }),
+      },
+      credentialSessions,
+    } as unknown as ApiClient;
+    return { api, credentialSessions };
+  }
+
+  async function openGPTForm(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByLabelText("Name"), "GPT Credential Choice");
+    await user.selectOptions(
+      screen.getByLabelText("Credential Type"),
+      PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+    );
+    await screen.findByRole("option", {
+      name: "existing@example.com - active",
+    });
+  }
+
+  async function importGPTCredential(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByLabelText("Import via token"));
+    await user.paste(tokenBlob);
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+    await screen.findByText(
+      "Connected as new@example.com. Save the provider to persist it.",
+    );
+  }
+
+  it("uses an existing session selected after a completed import", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const existingSession = chatGPTSession(
+      "credential-existing-gpt",
+      "existing@example.com",
+    );
+    const { api, credentialSessions } = gptCredentialAPI(existingSession);
+    renderModal(
+      <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />,
+      api,
+    );
+    await openGPTForm(user);
+    await importGPTCredential(user);
+
+    await user.selectOptions(
+      screen.getByLabelText("Credential Session"),
+      existingSession.id,
+    );
+
+    expect(
+      screen.queryByText(
+        "Connected as new@example.com. Save the provider to persist it.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Account: existing@example.com"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(credentialSessions.create).not.toHaveBeenCalled();
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      api_types: [
+        expect.objectContaining({
+          credential_session_id: existingSession.id,
+        }),
+      ],
+    });
+  });
+
+  it("uses a completed import selected after an existing session", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const existingSession = chatGPTSession(
+      "credential-existing-gpt",
+      "existing@example.com",
+    );
+    const { api, credentialSessions } = gptCredentialAPI(existingSession);
+    renderModal(
+      <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />,
+      api,
+    );
+    await openGPTForm(user);
+    await user.selectOptions(
+      screen.getByLabelText("Credential Session"),
+      existingSession.id,
+    );
+    await importGPTCredential(user);
+
+    expect(screen.getByLabelText("Credential Session")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(credentialSessions.create).toHaveBeenCalledWith({
+      kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
+      credential_login_id: "login-new-account",
+    });
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      api_types: [
+        expect.objectContaining({
+          credential_session_id: "credential-created",
+        }),
+      ],
     });
   });
 });

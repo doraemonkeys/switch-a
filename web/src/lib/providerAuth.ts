@@ -17,7 +17,14 @@ export const AUTH_STATUS_BADGE_CLASS: Record<ProviderAuthStatus, string> = {
 export function resolveProviderAuthView(
   provider?: Provider | null,
 ): ProviderAuthView | null {
-  const session = resolveProviderPrimaryCredentialSession(provider);
+  return resolveCredentialSessionAuthView(
+    resolveProviderPrimaryCredentialSession(provider),
+  );
+}
+
+export function resolveCredentialSessionAuthView(
+  session?: ProviderCredentialSession | null,
+): ProviderAuthView | null {
   if (!session) {
     return null;
   }
