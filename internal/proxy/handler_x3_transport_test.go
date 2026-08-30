@@ -7,12 +7,58 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
+
+func TestX3CompressedCodexSSEUsesOneDecodedDownstreamRepresentation(t *testing.T) {
+	decoded := []byte(
+		"event: response.created\ndata: {\"type\":\"response.created\"}\n\n" +
+			"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+	)
+	wire := x3Gzip(t, decoded)
+	events := &x3EventLog{}
+	provider := x3Provider("p1")
+	lease := x3NewLease(provider, events)
+	selection := &x3Selector{initial: provider, initialLease: lease, events: events}
+	body := x3NewTrackedBody(wire, "close:gzip-sse", events)
+	step := x3HTTPResponseStep(http.StatusOK, "text/event-stream", "gzip", body, len(wire))
+	step.header.Set("Content-Length", strconv.Itoa(len(wire)))
+	step.header.Set("ETag", "encoded-validator")
+	step.header.Set("Digest", "sha-256=encoded")
+	step.onRequest = func(request *http.Request) {
+		if got := request.Header.Get("Accept-Encoding"); got != "identity" {
+			t.Errorf("upstream Accept-Encoding = %q, want identity", got)
+		}
+	}
+	transport := &x3ScriptedTransport{events: events, steps: []x3TransportStep{step}}
+	rules := x3CompiledRuleSet(t, 45, x3RetryThenSwitchAction(t, 0), "never-match")
+	recorder, _ := x3Execute(t, x3ExecutionConfig{
+		providers: []*model.Provider{provider}, selector: selection, transport: transport,
+		rules: &x3RuleProvider{current: rules}, analyzer: x3AnalyzerSpyForTest(t), health: newX3Health(),
+		stats: &x3RuleStats{}, globalMaxAttempts: 1,
+	})
+
+	if recorder.Code != http.StatusOK || !bytes.Equal(recorder.Body.Bytes(), decoded) {
+		t.Fatalf("status=%d body=%q want=%q", recorder.Code, recorder.Body.Bytes(), decoded)
+	}
+	for _, name := range []string{"Content-Encoding", "Content-Length", "ETag", "Digest"} {
+		if got := recorder.Header().Get(name); got != "" {
+			t.Errorf("downstream %s = %q, want absent", name, got)
+		}
+	}
+	if recorder.Header().Get("Content-Type") != "text/event-stream" || !recorder.Flushed {
+		t.Fatalf("downstream header=%#v flushed=%v", recorder.Header(), recorder.Flushed)
+	}
+	if body.CloseCount() != 1 || lease.ReleaseCount() != 1 {
+		t.Fatalf("body closes=%d lease releases=%d", body.CloseCount(), lease.ReleaseCount())
+	}
+}
 
 type x3TransportStep struct {
 	statusCode int

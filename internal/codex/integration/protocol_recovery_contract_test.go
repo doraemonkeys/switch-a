@@ -67,7 +67,7 @@ func TestCreateAcceptanceAcrossHTTPJSONSSEAndWebSocket(t *testing.T) {
 		if err := attempt.MarkDisclosed(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		gate := attempt.NewSSEGate()
+		gate := attempt.NewSSEGate(testSSEEventLimit)
 		gate.Append(createdSSE)
 		event, ready, err := gate.PrepareNext(context.Background(), false)
 		if err != nil || !ready {
@@ -276,7 +276,7 @@ func TestCompactionAndFutureContentRemainOpaqueAcrossCarriers(t *testing.T) {
 		t.Fatal(err)
 	}
 	sse := []byte("event: response.compaction\r\ndata: future non-json wire\r\n\r\n")
-	gate := attempt.NewSSEGate()
+	gate := attempt.NewSSEGate(testSSEEventLimit)
 	gate.Append(sse)
 	event, ready, err := gate.PrepareNext(context.Background(), false)
 	if err != nil || !ready || !bytes.Equal(event.ReplayBytes(), sse) {

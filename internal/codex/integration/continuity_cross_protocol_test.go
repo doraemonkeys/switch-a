@@ -325,7 +325,7 @@ func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) 
 	if err := attempt.MarkDisclosed(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	gate := attempt.NewSSEGate()
+	gate := attempt.NewSSEGate(testSSEEventLimit)
 	if gate == nil {
 		t.Fatal("continuity-enabled HTTP attempt did not create an SSE gate")
 	}

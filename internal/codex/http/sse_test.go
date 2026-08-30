@@ -3,6 +3,7 @@ package codexhttp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,11 +12,15 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 )
 
+const testSSEEventLimit = 256 * 1024
+
 func TestSSEGatePreparesResponseReferenceAcrossFragments(t *testing.T) {
 	gate, continuity := testSSEGate(t)
 	raw := []byte("event: response.created\r\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"response-ref\"}}\r\n\r\n")
 	split := len(raw) - 3
-	gate.Append(raw[:split])
+	if err := gate.Append(raw[:split]); err != nil {
+		t.Fatal(err)
+	}
 	if event, ready, err := gate.PrepareNext(context.Background(), false); err != nil || ready {
 		t.Fatalf("incomplete event = (%#v, %t, %v)", event, ready, err)
 	}
@@ -23,7 +28,9 @@ func TestSSEGatePreparesResponseReferenceAcrossFragments(t *testing.T) {
 		t.Fatalf("incomplete prepare/commit = %d/%d", len(continuity.prepareCalls), continuity.commitCalls)
 	}
 
-	gate.Append(raw[split:])
+	if err := gate.Append(raw[split:]); err != nil {
+		t.Fatal(err)
+	}
 	event, ready, err := gate.PrepareNext(context.Background(), false)
 	if err != nil || !ready {
 		t.Fatalf("complete event = (%#v, %t, %v)", event, ready, err)
@@ -49,7 +56,9 @@ func TestSSEGatePreparesResponseReferenceAcrossFragments(t *testing.T) {
 func TestSSEGateDiscardDoesNotBindResponseReference(t *testing.T) {
 	gate, continuity := testSSEGate(t)
 	raw := []byte("data: {\"type\":\"response.metadata\",\"response_id\":\"metadata-ref\"}\n\n")
-	gate.Append(raw)
+	if err := gate.Append(raw); err != nil {
+		t.Fatal(err)
+	}
 	event, ready, err := gate.PrepareNext(context.Background(), false)
 	if err != nil || !ready || event.Visibility() == nil {
 		t.Fatalf("prepared event = (%#v, %t, %v)", event, ready, err)
@@ -57,6 +66,21 @@ func TestSSEGateDiscardDoesNotBindResponseReference(t *testing.T) {
 	gate.Discard()
 	if continuity.commitCalls != 0 {
 		t.Fatalf("discard committed response reference %d times", continuity.commitCalls)
+	}
+}
+
+func TestSSEGateRejectsAnUnboundedIncompleteEvent(t *testing.T) {
+	gate, _ := testSSEGate(t)
+	gate.maxEventBytes = 8
+	if err := gate.Append([]byte("data: 12")); err != nil {
+		t.Fatal(err)
+	}
+	err := gate.Append([]byte("3"))
+	if !errors.Is(err, ErrSSEEventTooLarge) {
+		t.Fatalf("append error = %v, want %v", err, ErrSSEEventTooLarge)
+	}
+	if gate.BufferedBytes() != 8 {
+		t.Fatalf("buffered bytes = %d, want 8", gate.BufferedBytes())
 	}
 }
 
@@ -83,13 +107,17 @@ func testSSEGate(t *testing.T) (*SSEGate, *continuityRecorder) {
 		t.Fatal(err)
 	}
 	upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
+	upstream.Header.Set("Accept-Encoding", "gzip, br, zstd")
 	attempt, err := operation.PrepareAttempt(context.Background(), upstream, candidate, applied)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate := attempt.NewSSEGate()
+	gate := attempt.NewSSEGate(testSSEEventLimit)
 	if gate == nil {
 		t.Fatal("continuity-enabled attempt did not create an SSE gate")
+	}
+	if got := upstream.Header.Get("Accept-Encoding"); got != identityContentCoding {
+		t.Fatalf("upstream Accept-Encoding = %q, want %q", got, identityContentCoding)
 	}
 	return gate, continuity
 }

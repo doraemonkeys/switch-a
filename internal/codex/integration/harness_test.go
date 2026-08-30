@@ -30,6 +30,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+const testSSEEventLimit = 256 * 1024
+
 const (
 	testAPIType         = "codex"
 	testGatewayURL      = "https://gateway.example.test/codex/v1/responses"

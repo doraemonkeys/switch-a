@@ -10,11 +10,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
 type preCommitTestWriter struct {
@@ -253,6 +256,46 @@ func TestFirstWriteResponseWriterSSEDiscardKeepsIncompleteReferenceLocal(t *test
 	}
 }
 
+func TestFirstWriteResponseWriterRejectsOversizedIncompleteSSEEvent(t *testing.T) {
+	_, gate, _ := newPreCommitSSEGate(t)
+	underlying := &preCommitTestWriter{writeN: -1}
+	writer := &firstWriteResponseWriter{ResponseWriter: underlying, sseGate: gate}
+	payload := bytes.Repeat([]byte("x"), responseanalysis.MaxDecodedEventBytes+1)
+	n, err := writer.Write(payload)
+	if n != 0 || !errors.Is(err, codexhttp.ErrSSEEventTooLarge) {
+		t.Fatalf("Write = (%d, %v), want (0, event too large)", n, err)
+	}
+	if len(underlying.writtenBytes) != 0 || gate.BufferedBytes() != 0 {
+		t.Fatalf("oversized event leaked: physical=%d buffered=%d", len(underlying.writtenBytes), gate.BufferedBytes())
+	}
+}
+
+func TestSSESettlementUsesPhysicalWriterVisibility(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/responses", nil)
+	pending := &pendingHTTPResponse{
+		head:              upstreamtransport.ResponseHead{StatusCode: http.StatusOK},
+		media:             responseanalysis.ResolveResponseMedia("text/event-stream", nil),
+		writer:            &firstWriteResponseWriter{sseGate: &codexhttp.SSEGate{}},
+		pctx:              &proxyContext{r: request, startTime: time.Now()},
+		analysisStartedAt: time.Now(),
+	}
+	completion := responseanalysis.Completion{
+		HeadersCommitted: true, ClientBodyBytesWritten: 4096, UpstreamBytesRead: 8192,
+		Termination: responseanalysis.TerminationUpstreamReadFailure,
+	}
+	result := pending.resultFromCompletion(completion)
+	if result.headersWritten || result.responseCommitted || result.firstByteVisible || result.responseBytes != 0 || result.upstreamBytes != 8192 {
+		t.Fatalf("logical commit escaped the SSE gate: %#v", result)
+	}
+
+	pending.wireBytesRead = func() int64 { return 1024 }
+	pending.writer.committed = true
+	result = pending.resultFromCompletion(completion)
+	if !result.headersWritten || !result.responseCommitted || result.upstreamBytes != 1024 {
+		t.Fatalf("physical commit was lost: %#v", result)
+	}
+}
+
 type preCommitContinuity struct {
 	prepareCalls []codexcontinuity.ClaimRequest
 	commitCalls  int
@@ -423,7 +466,7 @@ func newPreCommitSSEGate(t *testing.T) (*codexhttp.Attempt, *codexhttp.SSEGate, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate := attempt.NewSSEGate()
+	gate := attempt.NewSSEGate(responseanalysis.MaxDecodedEventBytes)
 	if gate == nil {
 		t.Fatal("expected SSE gate")
 	}

@@ -302,6 +302,42 @@ func (h *Handler) fetchPendingHTTPResponse(
 	snippet := &boundedSnippet{}
 	requestAccept := request.Header.Values("Accept")
 	media := resolveHTTPResponseMedia(&head, requestAccept)
+	var wireBytesRead func() int64
+	operationID := fmt.Sprintf(
+		responseAnalysisOperationIDFormat,
+		pctx.requestID,
+		attempt.logicalAttemptIndex,
+		attempt.provider.ID,
+		attempt.providerAttemptIndex,
+		phase,
+	)
+	if pctx.apiType == APITypeCodex && media.IsEventStream() {
+		normalized, normalizeErr := upstreamtransport.NormalizeEventStream(head, body)
+		if normalizeErr != nil {
+			_ = body.Close()
+			finishHTTPFetchFailure(ctx, pctx, exchange, normalizeErr)
+			h.logger.Warn("proxy.codex_sse_response_normalization_failed",
+				zap.String("request_id", pctx.requestID),
+				zap.String("operation_id", operationID),
+				zap.String("provider_id", attempt.provider.ID),
+				zap.String("response_content_encoding", normalizedHTTPContentCodings(head.SourceHeader.Values("Content-Encoding"))),
+				zap.Error(normalizeErr),
+			)
+			return nil, normalizeErr
+		}
+		body = normalized.Body
+		head = normalized.Head
+		if normalized.Transformed {
+			wireBytesRead = normalized.WireBytesRead
+			h.logger.Debug("proxy.codex_sse_response_normalized",
+				zap.String("request_id", pctx.requestID),
+				zap.String("operation_id", operationID),
+				zap.String("provider_id", attempt.provider.ID),
+				zap.String("source_content_encoding", normalized.SourceEncoding),
+				zap.String("downstream_content_encoding", "identity"),
+			)
+		}
+	}
 	writer := h.newAttemptResponseWriter(
 		pctx,
 		&exchange,
@@ -316,14 +352,6 @@ func (h *Handler) fetchPendingHTTPResponse(
 			h.activeRegistry.UpdateSSE(pctx.requestID, true)
 		}
 	}
-	operationID := fmt.Sprintf(
-		responseAnalysisOperationIDFormat,
-		pctx.requestID,
-		attempt.logicalAttemptIndex,
-		attempt.provider.ID,
-		attempt.providerAttemptIndex,
-		phase,
-	)
 	h.captureProviderUsageObservation(pctx, attempt, head.SourceHeader, time.Now(), operationID)
 	h.logHTTPResponseMediaDecision(media, httpResponseMediaLogContext{
 		requestID: pctx.requestID, operationID: operationID, providerID: attempt.provider.ID, apiType: pctx.apiType,
@@ -339,7 +367,7 @@ func (h *Handler) fetchPendingHTTPResponse(
 		Mode:            mode,
 		APIType:         pctx.apiType,
 		ContentType:     media.ContentType(),
-		ContentEncoding: head.SourceHeader.Get("Content-Encoding"),
+		ContentEncoding: head.Header.Get("Content-Encoding"),
 		StatusCode:      head.StatusCode,
 		Header:          head.Header,
 		Trailer:         head.Trailer,
@@ -357,6 +385,7 @@ func (h *Handler) fetchPendingHTTPResponse(
 		credentialPhase: evidenceCredentialPhase(phase), analysisStartedAt: analysisStartedAt,
 		injectedCredential: injectedCredential,
 		codexAttempt:       codexAttempt,
+		wireBytesRead:      wireBytesRead,
 	}, nil
 }
 
@@ -549,7 +578,7 @@ func (h *Handler) newAttemptResponseWriter(
 		onPayload: snippet.Observe,
 	}
 	if scanServerSSE {
-		writer.sseGate = codexAttempt.NewSSEGate()
+		writer.sseGate = codexAttempt.NewSSEGate(responseanalysis.MaxDecodedEventBytes)
 		writer.sseContext = pctx.r.Context()
 	}
 	return writer

@@ -37,6 +37,7 @@ type pendingHTTPResponse struct {
 	analysisStartedAt  time.Time
 	injectedCredential string
 	codexAttempt       *codexhttp.Attempt
+	wireBytesRead      func() int64
 }
 
 type boundedSnippet struct {
@@ -157,7 +158,7 @@ func (p *pendingHTTPResponse) discard(
 	receipt, err := p.pending.Discard(cause)
 	result := forwardResult{
 		statusCode: p.head.StatusCode, isSSE: p.media.IsEventStream(),
-		upstreamBytes: receipt.UpstreamBytesRead, decodedBytes: receipt.DecodedBytesAnalyzed,
+		upstreamBytes: p.sourceBytesRead(receipt.UpstreamBytesRead), decodedBytes: receipt.DecodedBytesAnalyzed,
 		responseBytes:    receipt.ClientBodyBytesWritten,
 		peakRequestBytes: receipt.PeakRequestBytes, peakProcessBytes: receipt.PeakProcessBytes,
 		headersWritten: receipt.HeadersCommitted, responseCommitted: receipt.HeadersCommitted,
@@ -188,7 +189,7 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 		headersWritten: completion.HeadersCommitted, responseCommitted: completion.HeadersCommitted,
 		firstByteVisible: completion.ClientBodyBytesWritten > 0,
 		statusCode:       p.head.StatusCode, isSSE: p.media.IsEventStream(),
-		responseBytes: completion.ClientBodyBytesWritten, upstreamBytes: completion.UpstreamBytesRead,
+		responseBytes: completion.ClientBodyBytesWritten, upstreamBytes: p.sourceBytesRead(completion.UpstreamBytesRead),
 		decodedBytes:     completion.DecodedBytesAnalyzed,
 		peakRequestBytes: completion.PeakRequestBytes, peakProcessBytes: completion.PeakProcessBytes,
 		elapsedMs: time.Since(p.analysisStartedAt).Milliseconds(), boundaryReason: completion.BoundaryReason,
@@ -201,6 +202,11 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 		result.firstTokenMs = &value
 	}
 	if p.media.IsEventStream() && p.writer.sseGate != nil {
+		// The response coordinator commits its forwarding decision before the SSE
+		// gate may expose a complete event. Retry and fallback policy must follow
+		// the physical client boundary, not that earlier logical transition.
+		result.headersWritten = p.writer.committed
+		result.responseCommitted = p.writer.committed
 		result.responseBytes = p.writer.bytesWritten
 		result.firstByteVisible = p.writer.written
 	}
@@ -255,6 +261,13 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 		result.isClientWriteError = true
 	}
 	return result
+}
+
+func (p *pendingHTTPResponse) sourceBytesRead(fallback int64) int64 {
+	if p == nil || p.wireBytesRead == nil {
+		return fallback
+	}
+	return p.wireBytesRead()
 }
 
 func (p *pendingHTTPResponse) semanticFacts(
