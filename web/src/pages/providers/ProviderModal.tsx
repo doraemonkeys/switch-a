@@ -14,6 +14,7 @@ import { ProviderFormBody } from "./ProviderFormBody";
 import { useChatGPTLogin } from "./useChatGPTLogin";
 import { useCredentialSessions } from "../../hooks/useCredentialSessions";
 import { isValidId } from "../../lib/utils";
+import { generateUUIDv4 } from "../../lib/uuid";
 import { normalizeProviderApiKey } from "../../lib/providerApiKey";
 import { CloseIcon } from "../../components/icons/CloseIcon";
 import {
@@ -394,7 +395,7 @@ async function materializeProviderCredentials({
     const routeSecret = normalizeProviderApiKey(entry.api_key);
     let sessionID = entry.credential_session_id;
     if (routeSecret) {
-      sessionID = crypto.randomUUID();
+      sessionID = generateUUIDv4();
       newCredentialSessions.push({
         id: sessionID,
         name: credentialSessionName(formData.name, entry.api_type),
@@ -403,7 +404,7 @@ async function materializeProviderCredentials({
       });
     } else if (!sessionID && sharedSecret) {
       if (!sharedSessionID) {
-        sharedSessionID = crypto.randomUUID();
+        sharedSessionID = generateUUIDv4();
         newCredentialSessions.push({
           id: sharedSessionID,
           name: credentialSessionName(formData.name),
