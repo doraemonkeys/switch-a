@@ -84,7 +84,10 @@ func TestProvenanceStoreCommitAndAbandonRequireExactLease(t *testing.T) {
 	if committed.Decision != StoreCommitted || committed.Binding.Lifecycle != LifecycleCommitted || committed.Binding.CommittedAt == nil {
 		t.Fatalf("commit = %#v", committed)
 	}
-	if result, _ := store.Commit(context.Background(), commit); result.Decision != StoreCommitted {
+	renew := commit
+	renew.Now = now.Add(2 * time.Second)
+	if result, _ := store.Commit(context.Background(), renew); result.Decision != StoreCommitted ||
+		!result.Binding.ExpiresAt.Equal(renew.Now.Add(command.Limits.CommittedIdleTTL)) {
 		t.Fatalf("idempotent commit = %#v", result)
 	}
 	if result, _ := store.Abandon(context.Background(), StoreAbandon{Binding: claimed.Binding, Now: now, Limits: command.Limits}); result.Decision != StoreConflict {
@@ -162,7 +165,7 @@ func TestProvenanceRememberDoesNotDowngradeCommittedProof(t *testing.T) {
 	committedAt := now
 	binding.Lifecycle = LifecycleCommitted
 	binding.CommittedAt = &committedAt
-	binding.ExpiresAt = now.Add(command.Limits.CommittedTTL)
+	binding.ExpiresAt = now.Add(command.Limits.CommittedIdleTTL)
 	if result := store.remember(command, binding); result.Decision != StoreOwned {
 		t.Fatalf("remember committed = %#v", result)
 	}

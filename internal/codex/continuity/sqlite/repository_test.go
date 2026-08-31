@@ -29,7 +29,7 @@ func TestRepositoryLifecycleOwnershipCapacityAndVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Minute, CommittedTTL: 2 * time.Minute, TombstoneTTL: time.Minute, MaxBindings: 2,
+		PendingTTL: time.Minute, CommittedIdleTTL: 2 * time.Minute, TombstoneTTL: time.Minute, MaxBindings: 2,
 	}
 	ownerA := testOwner(t, 1, "h2", accountScope(t, "account-a", "codex"), "route-a")
 	ownerRouteB := ownerA
@@ -101,6 +101,10 @@ func TestRepositoryLifecycleOwnershipCapacityAndVersions(t *testing.T) {
 	if err != nil || result.Decision != codexcontinuity.StoreCommitted {
 		t.Fatalf("idempotent commit = %#v, %v", result, err)
 	}
+	if want := repositoryNow.Add(20*time.Second + limits.CommittedIdleTTL); !result.Binding.ExpiresAt.Equal(want) {
+		t.Fatalf("renewed expiry = %v, want %v", result.Binding.ExpiresAt, want)
+	}
+	committed = result.Binding
 	wrongClaim := binding
 	wrongClaim.ClaimOperationID = "other-operation"
 	result, err = repository.Commit(context.Background(), codexcontinuity.StoreCommit{
@@ -189,7 +193,7 @@ func TestCleanupTransitionsAndDeletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Minute, CommittedTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 20,
+		PendingTTL: time.Minute, CommittedIdleTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 20,
 	}
 	owner := testOwner(t, 1, "h1", accountScope(t, "account", "codex"), "route")
 	for index, kind := range []codexcontinuity.Kind{codexcontinuity.KindThreadID, codexcontinuity.KindSessionID} {
@@ -243,7 +247,7 @@ func TestMultipleDigestGenerationsFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Hour, CommittedTTL: time.Hour, TombstoneTTL: time.Hour, MaxBindings: 10,
+		PendingTTL: time.Hour, CommittedIdleTTL: time.Hour, TombstoneTTL: time.Hour, MaxBindings: 10,
 	}
 	owner := testOwner(t, 1, "h1", accountScope(t, "account", "codex"), "route")
 	digestOne := testDigest(t, codexcontinuity.KindTurnState, 60, "h1")
@@ -294,7 +298,7 @@ func TestRepositoryUnavailableAfterClose(t *testing.T) {
 	closeDB()
 	owner := testOwner(t, 1, "h1", accountScope(t, "account", "codex"), "route")
 	digest := testDigest(t, codexcontinuity.KindTurnMetadata, 70, "h1")
-	limits := codexcontinuity.Limits{PendingTTL: time.Hour, CommittedTTL: time.Hour, TombstoneTTL: time.Hour, MaxBindings: 1}
+	limits := codexcontinuity.Limits{PendingTTL: time.Hour, CommittedIdleTTL: time.Hour, TombstoneTTL: time.Hour, MaxBindings: 1}
 	if _, err := repository.Claim(context.Background(), storeClaim(
 		codexcontinuity.KindTurnMetadata, digest, owner, "closed", repositoryNow, limits,
 	)); err == nil {
@@ -313,7 +317,7 @@ func TestMissingExpiredAndFullyElapsedMutationDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Minute, CommittedTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 10,
+		PendingTTL: time.Minute, CommittedIdleTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 10,
 	}
 	owner := testOwner(t, 1, "h1", accountScope(t, "account", "codex"), "route")
 	digest := testDigest(t, codexcontinuity.KindWindowID, 75, "h1")
@@ -382,7 +386,7 @@ func TestRepositoryRejectsMalformedDirectCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Hour, CommittedTTL: time.Hour, TombstoneTTL: time.Hour, MaxBindings: 10,
+		PendingTTL: time.Hour, CommittedIdleTTL: time.Hour, TombstoneTTL: time.Hour, MaxBindings: 10,
 	}
 	owner := testOwner(t, 1, "h1", accountScope(t, "account", "codex"), "route")
 	digest := testDigest(t, codexcontinuity.KindTurnMetadata, 77, "h1")

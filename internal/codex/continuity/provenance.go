@@ -90,13 +90,18 @@ func (s *provenanceStore) Commit(_ context.Context, command StoreCommit) (StoreR
 		return StoreResult{Decision: StoreConflict, Binding: binding}, nil
 	}
 	if binding.Lifecycle == LifecycleCommitted {
+		refreshed, changed := RefreshCommittedIdleDeadline(binding, command.Now, command.Limits.CommittedIdleTTL)
+		if changed {
+			s.entries[key] = refreshed
+			binding = refreshed
+		}
 		return StoreResult{Decision: StoreCommitted, Binding: binding}, nil
 	}
 	committedAt := command.Now
 	binding.Lifecycle = LifecycleCommitted
 	binding.UpdatedAt = command.Now
 	binding.CommittedAt = &committedAt
-	binding.ExpiresAt = command.Now.Add(command.Limits.CommittedTTL)
+	binding.ExpiresAt = command.Now.Add(command.Limits.CommittedIdleTTL)
 	s.entries[key] = binding
 	return StoreResult{Decision: StoreCommitted, Binding: binding}, nil
 }

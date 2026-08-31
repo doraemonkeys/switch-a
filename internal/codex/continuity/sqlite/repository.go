@@ -133,6 +133,18 @@ func (r *Repository) Commit(
 			return nil
 		}
 		if binding.Lifecycle == codexcontinuity.LifecycleCommitted {
+			refreshed, changed := codexcontinuity.RefreshCommittedIdleDeadline(
+				binding,
+				command.Now,
+				command.Limits.CommittedIdleTTL,
+			)
+			if changed {
+				if err := updateLifecycle(tx, refreshed); err != nil {
+					return err
+				}
+				binding = refreshed
+			}
+			result.Binding = binding
 			result.Decision = codexcontinuity.StoreCommitted
 			return nil
 		}
@@ -140,7 +152,7 @@ func (r *Repository) Commit(
 		binding.Lifecycle = codexcontinuity.LifecycleCommitted
 		binding.UpdatedAt = command.Now
 		binding.CommittedAt = &committedAt
-		binding.ExpiresAt = command.Now.Add(command.Limits.CommittedTTL)
+		binding.ExpiresAt = command.Now.Add(command.Limits.CommittedIdleTTL)
 		if err := updateLifecycle(tx, binding); err != nil {
 			return err
 		}

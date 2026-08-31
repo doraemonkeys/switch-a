@@ -324,6 +324,63 @@ func TestAcquireExistingFinalizesPendingWithoutReclaiming(t *testing.T) {
 	}
 }
 
+func TestCommittedBindingsRenewOnlyAfterSettledUse(t *testing.T) {
+	fixture := newFixture(t, keyringDocument("h1", map[string]byte{"h1": 1}), lifecyclePolicy(100))
+	defer fixture.close()
+	ctx := context.Background()
+	clients := clientScopes(t, fixture.digester, "active-client")
+	otherClients := clientScopes(t, fixture.digester, "conflicting-client")
+	scope := protocolScope(t, "vendor", "https://api.example.com", "account", "codex")
+	item := evidence(codexcontinuity.KindThreadID, "long-lived-thread")
+
+	lease := requireClaim(t, fixture.service, codexcontinuity.ClaimRequest{
+		Evidence: item, Scope: scopeFor(clients, scope, "route"), OperationID: "initial-use",
+	})
+	binding, err := fixture.service.Commit(ctx, lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialExpiry := binding.ExpiresAt
+
+	for index := range 3 {
+		fixture.clock.Advance(90 * time.Minute)
+		acquired, acquireErr := fixture.service.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
+			Evidence: item, ClientScopeCandidates: clients, ProtocolScope: scope,
+			OperationID: fmt.Sprintf("active-use-%d", index),
+		})
+		if acquireErr != nil {
+			t.Fatal(acquireErr)
+		}
+		binding, err = fixture.service.Commit(ctx, acquired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := fixture.clock.Now().Add(2 * time.Hour); !binding.ExpiresAt.Equal(want) {
+			t.Fatalf("renewed expiry = %v, want %v", binding.ExpiresAt, want)
+		}
+	}
+	if !binding.ExpiresAt.After(initialExpiry) || !fixture.clock.Now().After(initialExpiry) {
+		t.Fatalf("active binding did not survive its original deadline: now=%v initial=%v renewed=%v", fixture.clock.Now(), initialExpiry, binding.ExpiresAt)
+	}
+
+	fixture.clock.Advance(30 * time.Minute)
+	if _, err = fixture.service.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
+		Evidence: item, ClientScopeCandidates: clients, ProtocolScope: scope, OperationID: "unsettled-use",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fixture.service.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
+		Evidence: item, ClientScopeCandidates: otherClients, ProtocolScope: scope, OperationID: "conflicting-use",
+	})
+	assertKind(t, err, codexcontinuity.ErrorConflict)
+
+	fixture.clock.Advance(binding.ExpiresAt.Sub(fixture.clock.Now()))
+	_, err = fixture.service.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
+		Evidence: item, ClientScopeCandidates: clients, ProtocolScope: scope, OperationID: "idle-expiry",
+	})
+	assertKind(t, err, codexcontinuity.ErrorExpired)
+}
+
 func TestCapacityCleanupAndImmediateReclaimAfterFullRetention(t *testing.T) {
 	policy := policyWith(1, 10*time.Minute)
 	fixture := newFixture(t, keyringDocument("h1", map[string]byte{"h1": 1}), policy)
@@ -669,7 +726,7 @@ func policyWith(capacity int64, ttl time.Duration) codexcontinuity.Policy {
 		codexcontinuity.KindResponseReference,
 	} {
 		configured[kind] = codexcontinuity.Limits{
-			PendingTTL: ttl, CommittedTTL: ttl, TombstoneTTL: ttl, MaxBindings: capacity,
+			PendingTTL: ttl, CommittedIdleTTL: ttl, TombstoneTTL: ttl, MaxBindings: capacity,
 		}
 	}
 	policy, err := codexcontinuity.NewPolicy(configured)
@@ -691,7 +748,7 @@ func lifecyclePolicy(capacity int64) codexcontinuity.Policy {
 		codexcontinuity.KindResponseReference,
 	} {
 		configured[kind] = codexcontinuity.Limits{
-			PendingTTL: 5 * time.Minute, CommittedTTL: 2 * time.Hour,
+			PendingTTL: 5 * time.Minute, CommittedIdleTTL: 2 * time.Hour,
 			TombstoneTTL: time.Hour, MaxBindings: capacity,
 		}
 	}

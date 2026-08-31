@@ -6,19 +6,19 @@ import (
 )
 
 type Limits struct {
-	PendingTTL   time.Duration
-	CommittedTTL time.Duration
-	TombstoneTTL time.Duration
-	MaxBindings  int64
+	PendingTTL       time.Duration
+	CommittedIdleTTL time.Duration
+	TombstoneTTL     time.Duration
+	MaxBindings      int64
 }
 
 func (l Limits) validate(kind Kind) error {
-	if l.PendingTTL <= 0 || l.CommittedTTL <= 0 || l.TombstoneTTL <= 0 || l.MaxBindings <= 0 {
+	if l.PendingTTL <= 0 || l.CommittedIdleTTL <= 0 || l.TombstoneTTL <= 0 || l.MaxBindings <= 0 {
 		return errorOf(
 			ErrorInvalidInput,
 			kind,
 			"",
-			"pending, committed, and tombstone TTLs plus capacity must be positive",
+			"pending, committed idle, and tombstone TTLs plus capacity must be positive",
 			nil,
 		)
 	}

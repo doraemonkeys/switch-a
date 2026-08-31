@@ -178,7 +178,7 @@ func TestReconcileRejectsMalformedTombstoneAndMissingUpdates(t *testing.T) {
 	db, closeDB := openMigratedDB(t)
 	defer closeDB()
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Minute, CommittedTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 1,
+		PendingTTL: time.Minute, CommittedIdleTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 1,
 	}
 	binding := testBinding(t, accountScope(t, "account", "codex"), codexcontinuity.LifecycleTombstone)
 	row, err := encodeBinding(binding)

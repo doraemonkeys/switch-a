@@ -191,7 +191,7 @@ func (f *runtimeFixture) restart(t *testing.T, hmacCurrent, aeadCurrent string) 
 func fixtureContinuityPolicy(t *testing.T, max int64) codexcontinuity.Policy {
 	t.Helper()
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Hour, CommittedTTL: 30 * 24 * time.Hour,
+		PendingTTL: time.Hour, CommittedIdleTTL: 30 * 24 * time.Hour,
 		TombstoneTTL: 24 * time.Hour, MaxBindings: max,
 	}
 	policy, err := codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{

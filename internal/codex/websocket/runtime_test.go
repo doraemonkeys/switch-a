@@ -877,7 +877,7 @@ func (s *testContinuityStore) Commit(_ context.Context, commit codexcontinuity.S
 	binding.Lifecycle = codexcontinuity.LifecycleCommitted
 	binding.UpdatedAt = commit.Now
 	binding.CommittedAt = &commit.Now
-	binding.ExpiresAt = commit.Now.Add(commit.Limits.CommittedTTL)
+	binding.ExpiresAt = commit.Now.Add(commit.Limits.CommittedIdleTTL)
 	s.bindings[commit.Binding.Digest] = binding
 	return codexcontinuity.StoreResult{Decision: codexcontinuity.StoreCommitted, Binding: binding}, nil
 }
@@ -905,7 +905,7 @@ func newTestContinuity(t *testing.T) *codexcontinuity.Service {
 func newTestContinuityFixture(t *testing.T) (*codexcontinuity.Service, *testContinuityStore) {
 	t.Helper()
 	limits := codexcontinuity.Limits{
-		PendingTTL: time.Minute, CommittedTTL: time.Hour, TombstoneTTL: time.Minute, MaxBindings: 100,
+		PendingTTL: time.Minute, CommittedIdleTTL: time.Hour, TombstoneTTL: time.Minute, MaxBindings: 100,
 	}
 	policy, err := codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{
 		codexcontinuity.KindThreadID: limits, codexcontinuity.KindSessionID: limits,

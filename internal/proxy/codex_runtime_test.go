@@ -32,7 +32,7 @@ func newProxyCodexFixture(t *testing.T) proxyCodexFixture {
 		t.Fatal(err)
 	}
 	limits := codexcontinuity.Limits{
-		PendingTTL: 24 * time.Hour, CommittedTTL: 30 * 24 * time.Hour,
+		PendingTTL: 24 * time.Hour, CommittedIdleTTL: 30 * 24 * time.Hour,
 		TombstoneTTL: 7 * 24 * time.Hour, MaxBindings: 100,
 	}
 	policy, err := codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{

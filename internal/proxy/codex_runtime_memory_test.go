@@ -124,7 +124,7 @@ func (s *proxyCodexTestContinuityStore) Commit(
 		binding.Lifecycle = codexcontinuity.LifecycleCommitted
 		binding.UpdatedAt = command.Now
 		binding.CommittedAt = &committedAt
-		binding.ExpiresAt = command.Now.Add(command.Limits.CommittedTTL)
+		binding.ExpiresAt = command.Now.Add(command.Limits.CommittedIdleTTL)
 		s.bindings[binding.Digest] = binding
 	}
 	return codexcontinuity.StoreResult{

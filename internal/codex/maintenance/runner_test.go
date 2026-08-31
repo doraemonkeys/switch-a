@@ -454,7 +454,7 @@ func TestPeriodicSweepRetiresQuietContinuityLegacyKeyReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock := &fakeMaintenanceClock{now: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
-	limits := codexcontinuity.Limits{PendingTTL: time.Minute, CommittedTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 10}
+	limits := codexcontinuity.Limits{PendingTTL: time.Minute, CommittedIdleTTL: time.Minute, TombstoneTTL: time.Minute, MaxBindings: 10}
 	policy, err := codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{
 		codexcontinuity.KindThreadID: limits, codexcontinuity.KindSessionID: limits,
 		codexcontinuity.KindConversationID: limits, codexcontinuity.KindWindowID: limits,

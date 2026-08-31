@@ -26,7 +26,7 @@ func TestDefaultContinuityPolicyCoversEveryDurableKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := continuity.Limits{
-		PendingTTL: defaultContinuityPendingTTL, CommittedTTL: defaultContinuityCommittedTTL,
+		PendingTTL: defaultContinuityPendingTTL, CommittedIdleTTL: defaultContinuityCommittedIdleTTL,
 		TombstoneTTL: defaultContinuityTombstoneTTL, MaxBindings: defaultContinuityMaxPerKind,
 	}
 	for _, kind := range []continuity.Kind{
@@ -39,7 +39,7 @@ func TestDefaultContinuityPolicyCoversEveryDurableKind(t *testing.T) {
 			t.Errorf("policy[%s] = %+v, %t; want %+v", kind, limits, exists, want)
 		}
 	}
-	if defaultContinuityPendingTTL != 24*time.Hour || defaultContinuityCommittedTTL != 30*24*time.Hour ||
+	if defaultContinuityPendingTTL != 24*time.Hour || defaultContinuityCommittedIdleTTL != 30*24*time.Hour ||
 		defaultContinuityTombstoneTTL != 7*24*time.Hour || defaultContinuityMaxPerKind != 10_000 {
 		t.Fatal("continuity composition defaults changed without an explicit policy decision")
 	}

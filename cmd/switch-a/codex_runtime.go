@@ -24,9 +24,9 @@ const (
 	defaultContinuityPendingTTL = 24 * time.Hour
 	// Committed state follows the same operational inactivity horizon as the
 	// provider-Cookie handle rather than becoming an unbounded identity ledger.
-	defaultContinuityCommittedTTL = 30 * 24 * time.Hour
-	defaultContinuityTombstoneTTL = 7 * 24 * time.Hour
-	defaultContinuityMaxPerKind   = int64(10_000)
+	defaultContinuityCommittedIdleTTL = 30 * 24 * time.Hour
+	defaultContinuityTombstoneTTL     = 7 * 24 * time.Hour
+	defaultContinuityMaxPerKind       = int64(10_000)
 )
 
 type applicationCodexRuntime struct {
@@ -135,7 +135,7 @@ func newApplicationCodexServices(
 
 func defaultContinuityPolicy() (codexcontinuity.Policy, error) {
 	limits := codexcontinuity.Limits{
-		PendingTTL: defaultContinuityPendingTTL, CommittedTTL: defaultContinuityCommittedTTL,
+		PendingTTL: defaultContinuityPendingTTL, CommittedIdleTTL: defaultContinuityCommittedIdleTTL,
 		TombstoneTTL: defaultContinuityTombstoneTTL, MaxBindings: defaultContinuityMaxPerKind,
 	}
 	return codexcontinuity.NewPolicy(map[codexcontinuity.Kind]codexcontinuity.Limits{

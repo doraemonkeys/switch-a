@@ -535,7 +535,7 @@ func validPolicyConfig() map[Kind]Limits {
 }
 
 func testLimits() Limits {
-	return Limits{PendingTTL: time.Minute, CommittedTTL: time.Hour, TombstoneTTL: time.Minute, MaxBindings: 10}
+	return Limits{PendingTTL: time.Minute, CommittedIdleTTL: time.Hour, TombstoneTTL: time.Minute, MaxBindings: 10}
 }
 
 func mustPolicy(t *testing.T) Policy {

@@ -330,11 +330,15 @@ func (s *Service) Commit(ctx context.Context, lease Lease) (Binding, error) {
 		s.emit("commit", string(result.Decision), lease.binding.ClaimOperationID, result.Binding)
 		return Binding{}, decisionError(result.Decision, lease.binding.Kind, lease.binding.ClaimOperationID)
 	}
-	if _, provenanceErr := s.commitProvenance(ctx, command, "durable_committed"); provenanceErr != nil &&
+	outcome := "committed"
+	if lease.binding.Lifecycle == LifecycleCommitted && result.Binding.ExpiresAt.After(lease.binding.ExpiresAt) {
+		outcome = "renewed"
+	}
+	if _, provenanceErr := s.commitProvenance(ctx, command, "durable_"+outcome); provenanceErr != nil &&
 		!IsError(provenanceErr, ErrorUnknown) && !IsError(provenanceErr, ErrorCapacity) {
 		return Binding{}, provenanceErr
 	}
-	s.emit("commit", "committed", lease.binding.ClaimOperationID, result.Binding)
+	s.emit("commit", outcome, lease.binding.ClaimOperationID, result.Binding)
 	return result.Binding, nil
 }
 
