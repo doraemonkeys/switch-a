@@ -578,7 +578,7 @@ func (h *Handler) newAttemptResponseWriter(
 		onPayload: snippet.Observe,
 	}
 	if scanServerSSE {
-		writer.sseGate = codexAttempt.NewSSEGate(responseanalysis.MaxDecodedEventBytes)
+		writer.sseGate = codexAttempt.NewSSEGate()
 		writer.sseContext = pctx.r.Context()
 	}
 	return writer

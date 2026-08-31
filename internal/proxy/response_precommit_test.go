@@ -256,17 +256,42 @@ func TestFirstWriteResponseWriterSSEDiscardKeepsIncompleteReferenceLocal(t *test
 	}
 }
 
-func TestFirstWriteResponseWriterRejectsOversizedIncompleteSSEEvent(t *testing.T) {
-	_, gate, _ := newPreCommitSSEGate(t)
+func TestFirstWriteResponseWriterForwardsLargeSSEEventAfterContinuityDecision(t *testing.T) {
+	attempt, gate, continuity := newPreCommitSSEGate(t)
 	underlying := &preCommitTestWriter{writeN: -1}
-	writer := &firstWriteResponseWriter{ResponseWriter: underlying, sseGate: gate}
-	payload := bytes.Repeat([]byte("x"), responseanalysis.MaxDecodedEventBytes+1)
-	n, err := writer.Write(payload)
-	if n != 0 || !errors.Is(err, codexhttp.ErrSSEEventTooLarge) {
-		t.Fatalf("Write = (%d, %v), want (0, event too large)", n, err)
+	writer := &firstWriteResponseWriter{
+		ResponseWriter: underlying,
+		prepareVisible: func(header http.Header) (*codexhttp.Visibility, error) {
+			return attempt.PrepareVisible(context.Background(), header)
+		},
+		commitVisible: func(visibility *codexhttp.Visibility) error {
+			return visibility.Commit(context.Background())
+		},
+		sseGate: gate,
 	}
-	if len(underlying.writtenBytes) != 0 || gate.BufferedBytes() != 0 {
-		t.Fatalf("oversized event leaked: physical=%d buffered=%d", len(underlying.writtenBytes), gate.BufferedBytes())
+	prefix := []byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"large-response\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"")
+	suffix := []byte("\"}]}]}}\n\n")
+	raw := make([]byte, 0, len(prefix)+responseanalysis.MaxDecodedEventBytes+1+len(suffix))
+	raw = append(raw, prefix...)
+	raw = append(raw, bytes.Repeat([]byte("x"), responseanalysis.MaxDecodedEventBytes+1)...)
+	raw = append(raw, suffix...)
+	split := len(raw) - len(suffix)
+
+	writer.WriteHeader(http.StatusOK)
+	if n, err := writer.Write(raw[:split]); err != nil || n != split {
+		t.Fatalf("large event prefix = (%d, %v), want (%d, nil)", n, err, split)
+	}
+	if len(underlying.writtenBytes) != 0 || len(continuity.prepareCalls) != 0 {
+		t.Fatalf("incomplete large event became visible: bytes=%d prepares=%d", len(underlying.writtenBytes), len(continuity.prepareCalls))
+	}
+	if n, err := writer.Write(raw[split:]); err != nil || n != len(raw)-split {
+		t.Fatalf("large event suffix = (%d, %v)", n, err)
+	}
+	if underlying.status != http.StatusOK || !bytes.Equal(underlying.writtenBytes, raw) {
+		t.Fatalf("large event wire = status %d body_bytes %d, want status %d body_bytes %d", underlying.status, len(underlying.writtenBytes), http.StatusOK, len(raw))
+	}
+	if len(continuity.prepareCalls) != 1 || continuity.commitCalls != 1 || gate.BufferedBytes() != 0 {
+		t.Fatalf("large event continuity prepare/commit/buffer = %d/%d/%d, want 1/1/0", len(continuity.prepareCalls), continuity.commitCalls, gate.BufferedBytes())
 	}
 }
 
@@ -466,7 +491,7 @@ func newPreCommitSSEGate(t *testing.T) (*codexhttp.Attempt, *codexhttp.SSEGate, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate := attempt.NewSSEGate(responseanalysis.MaxDecodedEventBytes)
+	gate := attempt.NewSSEGate()
 	if gate == nil {
 		t.Fatal("expected SSE gate")
 	}

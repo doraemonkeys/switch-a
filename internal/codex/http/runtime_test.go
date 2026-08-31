@@ -396,7 +396,7 @@ func TestPendingOwnerRetryFinalizesAtHTTPBoundaries(t *testing.T) {
 
 	continuity.acquireCalls = nil
 	continuity.commitCalls = 0
-	gate := attempt.NewSSEGate(testSSEEventLimit)
+	gate := attempt.NewSSEGate()
 	gate.Append([]byte("data: {\"type\":\"response.metadata\",\"response_id\":\"response-pending\"}\n\n"))
 	event, ready, err := gate.PrepareNext(context.Background(), false)
 	if err != nil || !ready {

@@ -76,10 +76,7 @@ func (w *firstWriteResponseWriter) writePhysical(p []byte, eventVisibility *code
 
 func (w *firstWriteResponseWriter) writeSSE(payload []byte) (int, error) {
 	bufferedBefore := w.sseGate.BufferedBytes()
-	if err := w.sseGate.Append(payload); err != nil {
-		w.failSSEGate(err)
-		return 0, err
-	}
+	w.sseGate.Append(payload)
 	physicalWritten := 0
 	for {
 		event, ready, err := w.sseGate.PrepareNext(w.responseContext(), false)

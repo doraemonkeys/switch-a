@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
@@ -57,6 +58,64 @@ func TestX3CompressedCodexSSEUsesOneDecodedDownstreamRepresentation(t *testing.T
 	}
 	if body.CloseCount() != 1 || lease.ReleaseCount() != 1 {
 		t.Fatalf("body closes=%d lease releases=%d", body.CloseCount(), lease.ReleaseCount())
+	}
+}
+
+func TestX3CodexSSEPreservesLargeResponsesEvents(t *testing.T) {
+	created := []byte("event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"large-response\"}}\n\n")
+	completedPrefix := []byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"large-response\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"")
+	completedSuffix := []byte("\"}]}]}}\n\n")
+	completed := make([]byte, 0, len(completedPrefix)+responseanalysis.MaxDecodedEventBytes+1+len(completedSuffix))
+	completed = append(completed, completedPrefix...)
+	completed = append(completed, bytes.Repeat([]byte("x"), responseanalysis.MaxDecodedEventBytes+1)...)
+	completed = append(completed, completedSuffix...)
+
+	streams := []struct {
+		name    string
+		decoded []byte
+	}{
+		{name: "large first event", decoded: append([]byte(nil), completed...)},
+		{name: "large tail after commit", decoded: append(append([]byte(nil), created...), completed...)},
+	}
+	encodings := []struct {
+		name            string
+		contentEncoding string
+		wire            func(*testing.T, []byte) []byte
+	}{
+		{name: "identity", wire: func(_ *testing.T, decoded []byte) []byte { return append([]byte(nil), decoded...) }},
+		{name: "gzip", contentEncoding: "gzip", wire: x3Gzip},
+	}
+
+	for _, stream := range streams {
+		for _, encoding := range encodings {
+			t.Run(stream.name+"/"+encoding.name, func(t *testing.T) {
+				events := &x3EventLog{}
+				provider := x3Provider("p1")
+				lease := x3NewLease(provider, events)
+				selection := &x3Selector{initial: provider, initialLease: lease, events: events}
+				wire := encoding.wire(t, stream.decoded)
+				body := x3NewTrackedBody(wire, "close:large-sse", events)
+				step := x3HTTPResponseStep(http.StatusOK, "text/event-stream", encoding.contentEncoding, body, len(wire))
+				transport := &x3ScriptedTransport{events: events, steps: []x3TransportStep{step}}
+				rules := x3CompiledRuleSet(t, 46, x3RetryThenSwitchAction(t, 0), "never-match")
+
+				recorder, _ := x3Execute(t, x3ExecutionConfig{
+					providers: []*model.Provider{provider}, selector: selection, transport: transport,
+					rules: &x3RuleProvider{current: rules}, analyzer: x3AnalyzerSpyForTest(t), health: newX3Health(),
+					stats: &x3RuleStats{}, globalMaxAttempts: 1,
+				})
+
+				if recorder.Code != http.StatusOK || !bytes.Equal(recorder.Body.Bytes(), stream.decoded) {
+					t.Fatalf("status=%d body_bytes=%d want_status=%d want_body_bytes=%d", recorder.Code, recorder.Body.Len(), http.StatusOK, len(stream.decoded))
+				}
+				if recorder.Header().Get("Content-Encoding") != "" || !recorder.Flushed {
+					t.Fatalf("downstream content_encoding=%q flushed=%t", recorder.Header().Get("Content-Encoding"), recorder.Flushed)
+				}
+				if body.CloseCount() != 1 || lease.ReleaseCount() != 1 || transport.Count() != 1 {
+					t.Fatalf("body_closes=%d lease_releases=%d fetches=%d", body.CloseCount(), lease.ReleaseCount(), transport.Count())
+				}
+			})
+		}
 	}
 }
 
