@@ -4,6 +4,7 @@ import type { CredentialSession } from "../../api";
 import { ConfirmModal, CopyButton } from "../../components";
 import { useCredentialSessions } from "../../hooks/useCredentialSessions";
 import { useToast } from "../../hooks/useToast";
+import { CredentialSessionReauthenticationModal } from "./CredentialSessionReauthenticationModal";
 
 type EditorState =
   | { kind: "rename"; session: CredentialSession; value: string }
@@ -25,6 +26,8 @@ export function CredentialSessions() {
   const [deleteTarget, setDeleteTarget] = useState<CredentialSession | null>(
     null,
   );
+  const [reauthenticationTarget, setReauthenticationTarget] =
+    useState<CredentialSession | null>(null);
   const [busy, setBusy] = useState(false);
 
   const saveEditor = async () => {
@@ -68,6 +71,12 @@ export function CredentialSessions() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const completeReauthentication = async (session: CredentialSession) => {
+    await refetch();
+    toast.success(`Credential "${session.name}" reconnected`);
+    setReauthenticationTarget(null);
   };
 
   return (
@@ -119,6 +128,7 @@ export function CredentialSessions() {
                   key={session.id}
                   session={session}
                   disabled={busy}
+                  onReconnect={() => setReauthenticationTarget(session)}
                   onRename={() =>
                     setEditor({ kind: "rename", session, value: session.name })
                   }
@@ -153,6 +163,16 @@ export function CredentialSessions() {
         />
       )}
 
+      {reauthenticationTarget && (
+        <CredentialSessionReauthenticationModal
+          session={reauthenticationTarget}
+          onClose={() => setReauthenticationTarget(null)}
+          onReauthenticated={(session) =>
+            void completeReauthentication(session)
+          }
+        />
+      )}
+
       <ConfirmModal
         isOpen={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}
@@ -170,12 +190,14 @@ export function CredentialSessions() {
 function CredentialSessionRow({
   session,
   disabled,
+  onReconnect,
   onRename,
   onRotate,
   onDelete,
 }: {
   session: CredentialSession;
   disabled: boolean;
+  onReconnect: () => void;
   onRename: () => void;
   onRotate: () => void;
   onDelete: () => void;
@@ -239,6 +261,18 @@ function CredentialSessionRow({
       </td>
       <td className="px-4 py-4 align-top">
         <div className="flex justify-end gap-2">
+          {session.kind === "chatgpt" && (
+            <button
+              type="button"
+              className="btn btn-secondary h-9 px-3"
+              disabled={disabled}
+              onClick={onReconnect}
+              title="Reconnect this GPT credential for every referenced route"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Reconnect
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-secondary h-9 px-3"

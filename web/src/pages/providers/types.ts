@@ -6,11 +6,6 @@ import type {
 
 export type ProviderCredentialMode = CredentialSessionKind | "mixed";
 
-export type ChatGPTCredentialDraft =
-  | { kind: "none" }
-  | { kind: "credential_session"; credentialSessionID: string }
-  | { kind: "credential_login"; credentialLoginID: string };
-
 export interface ProviderAPITypeDraft extends APITypeInput {
   client_key: string;
   /** A write-only replacement secret; it is materialized as a new session. */

@@ -428,14 +428,17 @@ describe("ProviderModal GPT credential precedence", () => {
     return { api, credentialSessions };
   }
 
-  async function openGPTForm(user: ReturnType<typeof userEvent.setup>) {
+  async function openGPTForm(
+    user: ReturnType<typeof userEvent.setup>,
+    status = "active",
+  ) {
     await user.type(screen.getByLabelText("Name"), "GPT Credential Choice");
     await user.selectOptions(
       screen.getByLabelText("Credential Type"),
       PROVIDER_CREDENTIAL_TYPES.CHATGPT,
     );
     await screen.findByRole("option", {
-      name: /existing@example\.com · active/,
+      name: new RegExp(`existing@example\\.com · ${status}`),
     });
   }
 
@@ -489,7 +492,7 @@ describe("ProviderModal GPT credential precedence", () => {
     });
   });
 
-  it("uses a completed import selected after an existing session", async () => {
+  it("creates a new session only after switching back to new GPT login", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const existingSession = chatGPTSession(
@@ -506,6 +509,7 @@ describe("ProviderModal GPT credential precedence", () => {
       screen.getByLabelText("Credential Session"),
       existingSession.id,
     );
+    await user.selectOptions(screen.getByLabelText("Credential Session"), "");
     await importGPTCredential(user);
 
     expect(screen.getByLabelText("Credential Session")).toHaveValue("");
@@ -521,6 +525,62 @@ describe("ProviderModal GPT credential precedence", () => {
       api_types: [
         expect.objectContaining({
           credential_session_id: "credential-created",
+        }),
+      ],
+    });
+  });
+
+  it("reauthenticates a session selected while adding a provider", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const existingSession = {
+      ...chatGPTSession(
+        "credential-reconnect-gpt",
+        "existing@example.com",
+        "reauth_required",
+      ),
+      version: 9,
+    };
+    const { api, credentialSessions } = gptCredentialAPI(existingSession);
+    renderModal(
+      <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />,
+      api,
+    );
+    await openGPTForm(user, "reauth_required");
+
+    await user.selectOptions(
+      screen.getByLabelText("Credential Session"),
+      existingSession.id,
+    );
+
+    expect(
+      screen.getByText(/Reconnect this credential session in place/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /reconnect gpt/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Import via token"));
+    await user.paste(tokenBlob);
+    await user.click(screen.getByRole("button", { name: /import token/i }));
+    await screen.findByText(
+      "Reconnected as existing@example.com. Provider routes were not changed.",
+    );
+
+    expect(credentialSessions.reauthenticate).toHaveBeenCalledWith(
+      existingSession.id,
+      {
+        expected_version: 9,
+        credential_login_id: "login-new-account",
+      },
+    );
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(credentialSessions.create).not.toHaveBeenCalled();
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      api_types: [
+        expect.objectContaining({
+          credential_session_id: existingSession.id,
         }),
       ],
     });

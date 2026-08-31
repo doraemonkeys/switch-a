@@ -3,14 +3,23 @@ import type {
   CredentialSession,
   ProviderAuthView,
   ProviderCredentialSession,
-} from "../../api";
-import type { ApiClient } from "../../api/client";
-import { ApiContext } from "../../api/context";
+} from "../api";
+import type { ApiClient } from "../api/client";
+import { ApiContext } from "../api/context";
 import {
   resolveCredentialSessionAuthView,
   resolveLoginAuthView,
-} from "../../lib/providerAuth";
-import type { ChatGPTCredentialDraft } from "./types";
+} from "../lib/providerAuth";
+
+export type ChatGPTCredentialDraft =
+  | { kind: "none" }
+  | { kind: "credential_session"; credentialSessionID: string }
+  | { kind: "credential_login"; credentialLoginID: string };
+
+export interface ChatGPTCredentialSessionTarget {
+  sessionID: string;
+  expectedVersion: number;
+}
 
 const CHATGPT_LOGIN_POLL_INTERVAL_MS = 1000;
 const CHATGPT_LOGIN_WINDOW_TARGET = "_blank";
@@ -133,16 +142,10 @@ function startChatGPTLoginPolling(
   };
 }
 
-interface UseChatGPTLoginArgs {
+interface UseChatGPTCredentialLoginArgs {
   enabled: boolean;
   initialAuthView: ProviderAuthView | null;
-  initialCredentialSessionID: string;
-  initialCredentialSessionVersion?: number;
-}
-
-interface ReauthenticationTarget {
-  sessionID: string;
-  expectedVersion: number;
+  initialCredentialSession: ChatGPTCredentialSessionTarget | null;
 }
 
 type CompletedLoginPersistence =
@@ -153,7 +156,7 @@ async function persistCompletedChatGPTLogin(
   api: ApiClient,
   loginID: string,
   authView: ProviderAuthView | null,
-  target: ReauthenticationTarget | null,
+  target: ChatGPTCredentialSessionTarget | null,
 ): Promise<CompletedLoginPersistence> {
   if (!target) {
     return { kind: "provider_draft", authView };
@@ -191,7 +194,7 @@ interface ChatGPTLoginControllerState {
   pendingAuth: ProviderAuthView | null;
   lastReauthenticatedSession: CredentialSession | null;
   credential: ChatGPTCredentialDraft;
-  reauthenticationTarget: ReauthenticationTarget | null;
+  reauthenticationTarget: ChatGPTCredentialSessionTarget | null;
 }
 
 type ChatGPTLoginAction =
@@ -207,21 +210,16 @@ type ChatGPTLoginAction =
   | { type: "completion_failed"; message: string }
   | { type: "login_expired" }
   | { type: "poll_failed"; message: string }
-  | { type: "session_selected"; sessionID: string; version?: number }
-  | { type: "session_adopted"; sessionID: string; version?: number };
-
-function reauthenticationTarget(
-  sessionID: string,
-  version?: number,
-): ReauthenticationTarget | null {
-  return sessionID && version ? { sessionID, expectedVersion: version } : null;
-}
+  | {
+      type: "session_selected";
+      target: ChatGPTCredentialSessionTarget | null;
+    }
+  | { type: "session_adopted"; sessionID: string };
 
 function initialChatGPTLoginState({
   initialAuthView,
-  initialCredentialSessionID,
-  initialCredentialSessionVersion,
-}: UseChatGPTLoginArgs): ChatGPTLoginControllerState {
+  initialCredentialSession,
+}: UseChatGPTCredentialLoginArgs): ChatGPTLoginControllerState {
   return {
     status: describePersistedChatGPTAccount(initialAuthView),
     error: null,
@@ -230,11 +228,10 @@ function initialChatGPTLoginState({
     loginSession: null,
     pendingAuth: null,
     lastReauthenticatedSession: null,
-    credential: credentialSessionDraft(initialCredentialSessionID),
-    reauthenticationTarget: reauthenticationTarget(
-      initialCredentialSessionID,
-      initialCredentialSessionVersion,
+    credential: credentialSessionDraft(
+      initialCredentialSession?.sessionID ?? "",
     ),
+    reauthenticationTarget: initialCredentialSession,
   };
 }
 
@@ -281,10 +278,10 @@ function chatGPTLoginReducer(
           pendingAuth: resolveCredentialSessionAuthView(action.result.session),
           status: describeReauthenticatedChatGPTAccount(action.result.session),
           credential: credentialSessionDraft(action.result.session.id),
-          reauthenticationTarget: reauthenticationTarget(
-            action.result.session.id,
-            action.result.session.version,
-          ),
+          reauthenticationTarget: {
+            sessionID: action.result.session.id,
+            expectedVersion: action.result.session.version,
+          },
           lastReauthenticatedSession: action.result.session,
         };
       }
@@ -325,20 +322,14 @@ function chatGPTLoginReducer(
         error: null,
         starting: false,
         applying: false,
-        credential: credentialSessionDraft(action.sessionID),
-        reauthenticationTarget: reauthenticationTarget(
-          action.sessionID,
-          action.version,
-        ),
+        credential: credentialSessionDraft(action.target?.sessionID ?? ""),
+        reauthenticationTarget: action.target,
       };
     case "session_adopted":
       return {
         ...state,
         credential: credentialSessionDraft(action.sessionID),
-        reauthenticationTarget: reauthenticationTarget(
-          action.sessionID,
-          action.version,
-        ),
+        reauthenticationTarget: null,
       };
   }
 }
@@ -347,7 +338,7 @@ interface LoginCompletionContext {
   api: ApiClient;
   loginID: string;
   authView: ProviderAuthView | null;
-  target: ReauthenticationTarget | null;
+  target: ChatGPTCredentialSessionTarget | null;
   generation: number;
   loginGeneration: { current: number };
   dispatch: (action: ChatGPTLoginAction) => void;
@@ -527,14 +518,14 @@ function useChatGPTLoginActions(
     }
   };
 
-  const selectCredentialSession = (sessionID: string, version?: number) => {
+  const selectCredentialSession = (
+    target: ChatGPTCredentialSessionTarget | null,
+  ) => {
     ++loginGeneration.current;
-    dispatch({ type: "session_selected", sessionID, version });
+    dispatch({ type: "session_selected", target });
   };
-  const adoptMaterializedCredentialSession = (
-    sessionID: string,
-    version?: number,
-  ) => dispatch({ type: "session_adopted", sessionID, version });
+  const adoptMaterializedCredentialSession = (sessionID: string) =>
+    dispatch({ type: "session_adopted", sessionID });
 
   return {
     handleStartChatGPTLogin,
@@ -547,7 +538,7 @@ function useChatGPTLoginActions(
 
 // Credential selection and login acquisition share one reducer so a stale login
 // cannot silently override the account most recently selected by the user.
-export function useChatGPTLogin(args: UseChatGPTLoginArgs) {
+export function useChatGPTCredentialLogin(args: UseChatGPTCredentialLoginArgs) {
   const api = useContext(ApiContext);
   const loginGeneration = useRef(0);
   const [state, dispatch] = useReducer(

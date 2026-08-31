@@ -11,7 +11,10 @@ import type {
 } from "../../api";
 import { findBuiltInAPIType, isValidAPIType, useAPICatalog } from "../../api";
 import { ProviderFormBody } from "./ProviderFormBody";
-import { useChatGPTLogin } from "./useChatGPTLogin";
+import {
+  type ChatGPTCredentialDraft,
+  useChatGPTCredentialLogin,
+} from "../../hooks/useChatGPTCredentialLogin";
 import { useCredentialSessions } from "../../hooks/useCredentialSessions";
 import { isValidId } from "../../lib/utils";
 import { generateUUIDv4 } from "../../lib/uuid";
@@ -31,11 +34,7 @@ import {
   resolveProviderCredentialKind,
 } from "../../lib/providerAuth";
 import { generateClientKey } from "./types";
-import type {
-  ChatGPTCredentialDraft,
-  ProviderAPITypeDraft,
-  ProviderFormData,
-} from "./types";
+import type { ProviderAPITypeDraft, ProviderFormData } from "./types";
 
 const CREDENTIAL_SESSION_NAME_MAX_LENGTH = 120;
 
@@ -490,14 +489,18 @@ export function ProviderModal({
     handleStartChatGPTLogin,
     handleOpenChatGPTLoginPage,
     handleImportChatGPTLogin,
-  } = useChatGPTLogin({
+  } = useChatGPTCredentialLogin({
     enabled:
       formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT ||
       (formData.credential_mode === "mixed" &&
         initialChatGPTCredentialSession !== null),
     initialAuthView,
-    initialCredentialSessionID: initialChatGPTCredentialSession?.id ?? "",
-    initialCredentialSessionVersion: initialChatGPTCredentialSession?.version,
+    initialCredentialSession: initialChatGPTCredentialSession
+      ? {
+          sessionID: initialChatGPTCredentialSession.id,
+          expectedVersion: initialChatGPTCredentialSession.version,
+        }
+      : null,
   });
 
   let selectedChatGPTCredentialSession: ProviderCredentialSession | null = null;
@@ -535,8 +538,9 @@ export function ProviderModal({
         session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
     );
     selectCredentialSession(
-      selected?.id ?? "",
-      isEditMode ? selected?.version : undefined,
+      selected
+        ? { sessionID: selected.id, expectedVersion: selected.version }
+        : null,
     );
   };
 

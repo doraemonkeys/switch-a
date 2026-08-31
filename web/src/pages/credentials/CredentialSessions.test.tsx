@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  startLogin: vi.fn(),
+  importLogin: vi.fn(),
+  credentialLoginHook: vi.fn(),
   sessions: [] as CredentialSession[],
 }));
 
@@ -28,6 +31,23 @@ vi.mock("../../hooks/useCredentialSessions", () => ({
 
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({ success: mocks.success, error: mocks.error }),
+}));
+
+vi.mock("../../hooks/useChatGPTCredentialLogin", () => ({
+  useChatGPTCredentialLogin: (args: unknown) => {
+    mocks.credentialLoginHook(args);
+    return {
+      chatGPTStatus: null,
+      chatGPTLoginError: null,
+      startingChatGPTLogin: false,
+      applyingChatGPTLogin: false,
+      chatGPTLoginAuthURL: null,
+      lastReauthenticatedSession: null,
+      handleStartChatGPTLogin: mocks.startLogin,
+      handleOpenChatGPTLoginPage: vi.fn(),
+      handleImportChatGPTLogin: mocks.importLogin,
+    };
+  },
 }));
 
 function credential(
@@ -51,12 +71,36 @@ function credential(
   };
 }
 
+function chatGPTCredential(): CredentialSession {
+  return {
+    ...credential("gpt-session", [
+      {
+        provider_id: "provider-gpt",
+        provider_name: "GPT Production",
+        api_type: "codex",
+      },
+    ]),
+    name: "GPT Team Login",
+    kind: "chatgpt",
+    secret_data: undefined,
+    version: 7,
+    subject: { kind: "account", value: "account-gpt" },
+    auth_state: {
+      status: "reauth_required",
+      email: "team@example.com",
+      account_id: "account-gpt",
+    },
+  };
+}
+
 describe("CredentialSessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.rename.mockResolvedValue(undefined);
     mocks.update.mockResolvedValue(undefined);
     mocks.remove.mockResolvedValue(undefined);
+    mocks.startLogin.mockResolvedValue(undefined);
+    mocks.importLogin.mockResolvedValue(true);
     mocks.sessions = [
       credential("shared", [
         {
@@ -122,5 +166,32 @@ describe("CredentialSessions", () => {
     const deleteButtons = screen.getAllByRole("button", { name: "Delete" });
     await user.click(deleteButtons[deleteButtons.length - 1]);
     expect(mocks.remove).toHaveBeenCalledWith("unused");
+  });
+
+  it("opens an in-place reconnect flow for GPT credentials", async () => {
+    const user = userEvent.setup();
+    mocks.sessions = [chatGPTCredential()];
+    render(<CredentialSessions />);
+
+    await user.click(screen.getByRole("button", { name: "Reconnect" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Reconnect GPT Credential" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Every referenced route recovers together/),
+    ).toBeInTheDocument();
+    expect(mocks.credentialLoginHook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialCredentialSession: {
+          sessionID: "gpt-session",
+          expectedVersion: 7,
+        },
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Reconnect with GPT Sign-In" }),
+    );
+    expect(mocks.startLogin).toHaveBeenCalledTimes(1);
   });
 });

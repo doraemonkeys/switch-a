@@ -456,8 +456,7 @@ function ProviderCredentialFields({
   const isChatGPTProvider =
     formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
   const isMixedCredentialProvider = formData.credential_mode === "mixed";
-  const reauthenticatesExistingSession =
-    isEditMode && Boolean(chatGPTCredentialSessionID);
+  const reauthenticatesExistingSession = Boolean(chatGPTCredentialSessionID);
 
   const handleApiTypesChange = (entries: ProviderFormData["api_types"]) => {
     if (isMixedCredentialProvider) {
