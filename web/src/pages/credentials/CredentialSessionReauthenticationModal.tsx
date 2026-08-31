@@ -22,6 +22,7 @@ export function CredentialSessionReauthenticationModal({
     chatGPTLoginError,
     startingChatGPTLogin,
     applyingChatGPTLogin,
+    committingChatGPTReauthentication,
     chatGPTLoginAuthURL,
     lastReauthenticatedSession,
     handleStartChatGPTLogin,
@@ -167,7 +168,7 @@ export function CredentialSessionReauthenticationModal({
           <button
             type="button"
             className="btn btn-secondary"
-            disabled={applyingChatGPTLogin}
+            disabled={committingChatGPTReauthentication}
             onClick={onClose}
           >
             Close

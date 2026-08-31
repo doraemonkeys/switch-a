@@ -649,12 +649,14 @@ export function EnabledCheckbox({ checked, onChange }: EnabledCheckboxProps) {
 interface FormActionsProps {
   isEditMode: boolean;
   submitting: boolean;
+  submissionBlocked: boolean;
   onCancel: () => void;
 }
 
 export function FormActions({
   isEditMode,
   submitting,
+  submissionBlocked,
   onCancel,
 }: FormActionsProps) {
   return (
@@ -667,7 +669,11 @@ export function FormActions({
       >
         Cancel
       </button>
-      <button type="submit" className="btn btn-primary" disabled={submitting}>
+      <button
+        type="submit"
+        className="btn btn-primary"
+        disabled={submitting || submissionBlocked}
+      >
         {submitting ? (
           <>
             <span className="animate-spin">⏳</span>

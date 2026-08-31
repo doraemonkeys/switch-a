@@ -67,10 +67,12 @@ function createChatGPTAPIType(
 function ModalHeader({
   title,
   titleId,
+  closeDisabled,
   onClose,
 }: {
   title: string;
   titleId: string;
+  closeDisabled: boolean;
   onClose: () => void;
 }) {
   return (
@@ -82,7 +84,12 @@ function ModalHeader({
         <button
           type="button"
           onClick={onClose}
-          className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+          disabled={closeDisabled}
+          className={`text-text-muted transition-colors ${
+            closeDisabled
+              ? "cursor-not-allowed opacity-60"
+              : "cursor-pointer hover:text-text-primary"
+          }`}
           aria-label="Close"
         >
           <CloseIcon />
@@ -480,6 +487,7 @@ export function ProviderModal({
     chatGPTLoginError,
     startingChatGPTLogin,
     applyingChatGPTLogin,
+    committingChatGPTReauthentication,
     chatGPTLoginAuthURL,
     pendingChatGPTAuth,
     lastReauthenticatedSession,
@@ -502,6 +510,9 @@ export function ProviderModal({
         }
       : null,
   });
+  const providerSubmissionBlocked =
+    startingChatGPTLogin || applyingChatGPTLogin;
+  const providerCloseBlocked = submitting || committingChatGPTReauthentication;
 
   let selectedChatGPTCredentialSession: ProviderCredentialSession | null = null;
   if (chatGPTCredential.kind === "credential_session") {
@@ -554,7 +565,7 @@ export function ProviderModal({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !submitting) {
+      if (e.key === "Escape" && !providerCloseBlocked) {
         onClose();
         return;
       }
@@ -578,10 +589,13 @@ export function ProviderModal({
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, submitting]);
+  }, [onClose, providerCloseBlocked]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (providerSubmissionBlocked) {
+      return;
+    }
     const preparedSubmission = prepareProviderSubmission({
       formData,
       isEditMode,
@@ -638,6 +652,7 @@ export function ProviderModal({
         <ModalHeader
           title={isEditMode ? "Edit Provider" : "Add Provider"}
           titleId={titleId}
+          closeDisabled={providerCloseBlocked}
           onClose={onClose}
         />
         <form
@@ -645,46 +660,52 @@ export function ProviderModal({
           className="p-6 space-y-4"
           autoComplete="off"
         >
-          <ProviderFormBody
-            formState={{
-              data: formData,
-              setData: setFormData,
-            }}
-            idState={{
-              manuallyEdited: idManuallyEdited,
-              setManuallyEdited: setIdManuallyEdited,
-              error: idError,
-              setError: setIdError,
-            }}
-            error={error}
-            isEditMode={isEditMode}
-            submitting={submitting}
-            onCancel={onClose}
-            groups={groups}
-            credentialSessions={credentialSessions}
-            credentialSessionsLoading={credentialSessionsLoading}
-            credentialSessionsError={
-              credentialSessionsQueryError?.message ?? null
-            }
-            chatGPTCredentialSessionID={
-              chatGPTCredential.kind === "credential_session"
-                ? chatGPTCredential.credentialSessionID
-                : ""
-            }
-            onChatGPTCredentialSessionChange={
-              handleChatGPTCredentialSessionChange
-            }
-            authView={pendingChatGPTAuth ?? selectedChatGPTAuthView}
-            onStartChatGPTLogin={handleStartChatGPTLogin}
-            onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
-            onImportChatGPTLogin={handleImportChatGPTLogin}
-            chatGPTLoginState={{
-              status: chatGPTStatus,
-              error: chatGPTLoginError,
-              loading: startingChatGPTLogin || applyingChatGPTLogin,
-              authURL: chatGPTLoginAuthURL,
-            }}
-          />
+          <fieldset
+            className="contents"
+            disabled={committingChatGPTReauthentication}
+          >
+            <ProviderFormBody
+              formState={{
+                data: formData,
+                setData: setFormData,
+              }}
+              idState={{
+                manuallyEdited: idManuallyEdited,
+                setManuallyEdited: setIdManuallyEdited,
+                error: idError,
+                setError: setIdError,
+              }}
+              error={error}
+              isEditMode={isEditMode}
+              submitting={submitting}
+              submissionBlocked={providerSubmissionBlocked}
+              onCancel={onClose}
+              groups={groups}
+              credentialSessions={credentialSessions}
+              credentialSessionsLoading={credentialSessionsLoading}
+              credentialSessionsError={
+                credentialSessionsQueryError?.message ?? null
+              }
+              chatGPTCredentialSessionID={
+                chatGPTCredential.kind === "credential_session"
+                  ? chatGPTCredential.credentialSessionID
+                  : ""
+              }
+              onChatGPTCredentialSessionChange={
+                handleChatGPTCredentialSessionChange
+              }
+              authView={pendingChatGPTAuth ?? selectedChatGPTAuthView}
+              onStartChatGPTLogin={handleStartChatGPTLogin}
+              onOpenChatGPTLoginPage={handleOpenChatGPTLoginPage}
+              onImportChatGPTLogin={handleImportChatGPTLogin}
+              chatGPTLoginState={{
+                status: chatGPTStatus,
+                error: chatGPTLoginError,
+                loading: startingChatGPTLogin || applyingChatGPTLogin,
+                authURL: chatGPTLoginAuthURL,
+              }}
+            />
+          </fieldset>
         </form>
       </div>
     </div>

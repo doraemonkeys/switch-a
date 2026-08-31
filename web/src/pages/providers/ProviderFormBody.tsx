@@ -49,6 +49,7 @@ interface ProviderFormBodyProps {
   error: string | null;
   isEditMode: boolean;
   submitting: boolean;
+  submissionBlocked: boolean;
   onCancel: () => void;
   groups: Array<{ id: string; name: string }>;
   credentialSessions: CredentialSession[];
@@ -553,6 +554,7 @@ export function ProviderFormBody({
   error,
   isEditMode,
   submitting,
+  submissionBlocked,
   onCancel,
   groups,
   credentialSessions,
@@ -748,6 +750,7 @@ export function ProviderFormBody({
       <FormActions
         isEditMode={isEditMode}
         submitting={submitting}
+        submissionBlocked={submissionBlocked}
         onCancel={onCancel}
       />
     </>
