@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -27,6 +28,18 @@ func TestAssessNonWebSocketRequest_UsesRuntimeFacts(t *testing.T) {
 			wantOutcome:    model.ServiceOutcomeNeverStarted,
 			wantCompletion: model.CompletionStateIncomplete,
 			wantReason:     model.TerminationReasonProviderUnavailable,
+		},
+		{
+			name: "continuity routing conflict is gateway configuration failure",
+			facts: nonWebSocketRuntimeFacts{
+				ClientTransportStatusCode: http.StatusConflict,
+				TerminalErr: &internal.ProviderSelectionError{
+					Reason: internal.ProviderSelectionFailureContinuityRoutingConflict,
+				},
+			},
+			wantOutcome:    model.ServiceOutcomeNeverStarted,
+			wantCompletion: model.CompletionStateIncomplete,
+			wantReason:     model.TerminationReasonProviderConfigurationError,
 		},
 		{
 			name: "mid flight transport loss stays unknown",

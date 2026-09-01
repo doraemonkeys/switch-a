@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/coder/websocket"
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
@@ -22,11 +23,30 @@ type expectedContract struct {
 
 var frozenContracts = []expectedContract{
 	{codexrecovery.ConditionStateConflict, http.StatusConflict, codexrecovery.ErrorCodeStateConflict, websocket.StatusPolicyViolation, codexrecovery.RecoveryActionNewThread},
+	{codexrecovery.ConditionContinuityRoutingConflict, http.StatusConflict, codexrecovery.ErrorCodeContinuityRoutingConflict, websocket.StatusPolicyViolation, codexrecovery.RecoveryActionNewThread},
 	{codexrecovery.ConditionReconnectRequired, http.StatusConflict, codexrecovery.ErrorCodeReconnectRequired, websocket.StatusServiceRestart, codexrecovery.RecoveryActionReconnect},
 	{codexrecovery.ConditionNewThreadRequired, http.StatusGone, codexrecovery.ErrorCodeNewThreadRequired, websocket.StatusPolicyViolation, codexrecovery.RecoveryActionNewThread},
 	{codexrecovery.ConditionStateStoreUnavailable, http.StatusServiceUnavailable, codexrecovery.ErrorCodeStateStoreUnavailable, websocket.StatusTryAgainLater, codexrecovery.RecoveryActionRetry},
 	{codexrecovery.ConditionProtocolInvalid, http.StatusBadRequest, codexrecovery.ErrorCodeProtocolInvalid, websocket.StatusPolicyViolation, codexrecovery.RecoveryActionCorrectRequest},
 	{codexrecovery.ConditionInternalFailure, http.StatusInternalServerError, codexrecovery.ErrorCodeInternal, websocket.StatusInternalError, codexrecovery.RecoveryActionRetry},
+}
+
+func TestProviderSelectionConflictUsesCodexRecoveryContract(t *testing.T) {
+	root := fmt.Errorf("selector adapter: %w", &internal.ProviderSelectionError{
+		Reason: internal.ProviderSelectionFailureContinuityRoutingConflict,
+	})
+	want := contractByCondition(t, codexrecovery.ConditionContinuityRoutingConflict)
+	for _, phase := range carrierPhases {
+		assertDecision(t, codexrecovery.Classify(root, phase), phase, want)
+	}
+
+	message := codexrecovery.ClientMessage(codexrecovery.ConditionContinuityRoutingConflict)
+	if message == "" {
+		t.Fatal("continuity routing conflict must provide actionable client guidance")
+	}
+	if got := codexrecovery.ClientMessage(codexrecovery.ConditionStateConflict); got != "" {
+		t.Fatalf("carrier-specific condition message = %q, want empty", got)
+	}
 }
 
 var carrierPhases = []codexrecovery.CarrierPhase{

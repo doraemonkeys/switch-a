@@ -168,7 +168,7 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 	// Routing policy defines the candidate boundary itself. Every entry point,
 	// including sticky reuse, must re-check it so cached providers cannot outlive
 	// a stricter policy match.
-	if !e.routing.allowsProvider(provider) {
+	if mode.checkRouting && !e.routing.allowsProvider(provider) {
 		return false, errorrule.ReasonRoutingChanged, nil
 	}
 	if candidate.groupErr != nil {
@@ -183,7 +183,7 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 	if !candidate.identityResolved {
 		return false, errorrule.ReasonAuthUnavailable, nil
 	}
-	if required := reqRequiredAuthority(e.req); required != nil {
+	if required := reqRequiredAuthority(e.req); mode.checkAuthority && required != nil {
 		if !candidate.identity.Authority().Equal(*required) {
 			return false, errorrule.ReasonAuthUnavailable, nil
 		}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/coder/websocket"
+	coreinternal "github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 )
@@ -25,23 +26,25 @@ const (
 type Condition string
 
 const (
-	ConditionStateConflict         Condition = "state_conflict"
-	ConditionReconnectRequired     Condition = "reconnect_required"
-	ConditionNewThreadRequired     Condition = "new_thread_required"
-	ConditionStateStoreUnavailable Condition = "state_store_unavailable"
-	ConditionProtocolInvalid       Condition = "protocol_invalid"
-	ConditionInternalFailure       Condition = "internal_failure"
+	ConditionStateConflict             Condition = "state_conflict"
+	ConditionContinuityRoutingConflict Condition = "continuity_routing_conflict"
+	ConditionReconnectRequired         Condition = "reconnect_required"
+	ConditionNewThreadRequired         Condition = "new_thread_required"
+	ConditionStateStoreUnavailable     Condition = "state_store_unavailable"
+	ConditionProtocolInvalid           Condition = "protocol_invalid"
+	ConditionInternalFailure           Condition = "internal_failure"
 )
 
 type ErrorCode string
 
 const (
-	ErrorCodeStateConflict         ErrorCode = "CODEX_STATE_CONFLICT"
-	ErrorCodeReconnectRequired     ErrorCode = "CODEX_RECONNECT_REQUIRED"
-	ErrorCodeNewThreadRequired     ErrorCode = "CODEX_NEW_THREAD_REQUIRED"
-	ErrorCodeStateStoreUnavailable ErrorCode = "CODEX_STATE_STORE_UNAVAILABLE"
-	ErrorCodeProtocolInvalid       ErrorCode = "CODEX_PROTOCOL_INVALID"
-	ErrorCodeInternal              ErrorCode = "INTERNAL_ERROR"
+	ErrorCodeStateConflict             ErrorCode = "CODEX_STATE_CONFLICT"
+	ErrorCodeContinuityRoutingConflict ErrorCode = "CODEX_CONTINUITY_ROUTING_CONFLICT"
+	ErrorCodeReconnectRequired         ErrorCode = "CODEX_RECONNECT_REQUIRED"
+	ErrorCodeNewThreadRequired         ErrorCode = "CODEX_NEW_THREAD_REQUIRED"
+	ErrorCodeStateStoreUnavailable     ErrorCode = "CODEX_STATE_STORE_UNAVAILABLE"
+	ErrorCodeProtocolInvalid           ErrorCode = "CODEX_PROTOCOL_INVALID"
+	ErrorCodeInternal                  ErrorCode = "INTERNAL_ERROR"
 )
 
 type RecoveryAction string
@@ -52,6 +55,18 @@ const (
 	RecoveryActionRetry          RecoveryAction = "retry"
 	RecoveryActionCorrectRequest RecoveryAction = "correct_request"
 )
+
+const continuityRoutingConflictClientMessage = "Codex conversation is bound to an upstream account excluded by the active routing policy; allow that account or start a new conversation"
+
+// ClientMessage returns carrier-independent guidance for conditions whose
+// recovery is the same over HTTP and WebSocket. Empty means the adapter owns
+// carrier-specific wording.
+func ClientMessage(condition Condition) string {
+	if condition == ConditionContinuityRoutingConflict {
+		return continuityRoutingConflictClientMessage
+	}
+	return ""
+}
 
 // Error lets an adapter attach a precise semantic condition when no lower
 // layer owns one, while Unwrap keeps the original diagnostic and retry cause.
@@ -161,6 +176,12 @@ func classifyCondition(root error) (Condition, bool) {
 	if errors.As(root, &marked) && marked != nil {
 		return normalizedCondition(marked.condition), true
 	}
+	if coreinternal.IsProviderSelectionFailure(
+		root,
+		coreinternal.ProviderSelectionFailureContinuityRoutingConflict,
+	) {
+		return ConditionContinuityRoutingConflict, true
+	}
 
 	var continuityError *codexcontinuity.Error
 	if errors.As(root, &continuityError) && continuityError != nil {
@@ -207,6 +228,7 @@ func classifyCondition(root error) (Condition, bool) {
 func normalizedCondition(condition Condition) Condition {
 	switch condition {
 	case ConditionStateConflict,
+		ConditionContinuityRoutingConflict,
 		ConditionReconnectRequired,
 		ConditionNewThreadRequired,
 		ConditionStateStoreUnavailable,
@@ -225,6 +247,14 @@ func contractFor(condition Condition) contract {
 			condition:          condition,
 			httpStatus:         http.StatusConflict,
 			errorCode:          ErrorCodeStateConflict,
+			webSocketCloseCode: websocket.StatusPolicyViolation,
+			recoveryAction:     RecoveryActionNewThread,
+		}
+	case ConditionContinuityRoutingConflict:
+		return contract{
+			condition:          condition,
+			httpStatus:         http.StatusConflict,
+			errorCode:          ErrorCodeContinuityRoutingConflict,
 			webSocketCloseCode: websocket.StatusPolicyViolation,
 			recoveryAction:     RecoveryActionNewThread,
 		}

@@ -135,6 +135,127 @@ func TestPreferredRouteTargetAppliesOnlyInsideRequiredAuthority(t *testing.T) {
 	}
 }
 
+func TestSelectionReportsContinuityRoutingConflict(t *testing.T) {
+	owner := authorityTestProvider("owner-route", "https://api.example.test", "account-a", 1)
+	routed := authorityTestProvider("policy-route", "https://api.example.test", "account-b", 2)
+	required := authorityForProvider(t, owner)
+	targetProviderID := routed.ID
+	store := newMockStore()
+	store.providers = []model.Provider{owner, routed}
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled:          true,
+		APIType:          authorityTestAPIType,
+		TargetProviderID: &targetProviderID,
+	}}
+	logCore, observedLogs := observer.New(zap.WarnLevel)
+	selector := NewSelector(Config{Store: store, Logger: zap.New(logCore)})
+
+	_, err := selector.SelectWithMetadata(context.Background(), &model.SelectRequest{
+		OperationID:            "continuity-routing-conflict",
+		APIType:                authorityTestAPIType,
+		RequiredAuthority:      &required,
+		PreferredRouteTargetID: owner.ID,
+	})
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("SelectWithMetadata() error = %v, want ErrNoProvider compatibility", err)
+	}
+	if !internal.IsProviderSelectionFailure(
+		err,
+		internal.ProviderSelectionFailureContinuityRoutingConflict,
+	) {
+		t.Fatalf("SelectWithMetadata() error = %v, want continuity routing conflict", err)
+	}
+	var selectionErr *internal.ProviderSelectionError
+	if !errors.As(err, &selectionErr) {
+		t.Fatalf("SelectWithMetadata() error type = %T, want ProviderSelectionError", err)
+	}
+	if selectionErr.PreferredRouteTargetID != owner.ID ||
+		selectionErr.RoutingPolicyTargetProviderID != routed.ID ||
+		selectionErr.RoutingPolicyConstraint != routingPolicyConstraintExactProvider {
+		t.Fatalf("selection diagnostics = %#v", selectionErr)
+	}
+
+	entries := observedLogs.FilterMessage(selectionFailureEvent).All()
+	if len(entries) != 1 {
+		t.Fatalf("selection failure logs = %d, want 1", len(entries))
+	}
+	context := entries[0].ContextMap()
+	if context["operation_id"] != "continuity-routing-conflict" ||
+		context["failure_reason"] != string(internal.ProviderSelectionFailureContinuityRoutingConflict) ||
+		context["preferred_route_target_id"] != owner.ID ||
+		context["routing_policy_target_provider_id"] != routed.ID {
+		t.Fatalf("selection failure diagnostics = %#v", context)
+	}
+}
+
+func TestSelectionDoesNotMisreportUnavailablePolicyTargetAsConstraintConflict(t *testing.T) {
+	owner := authorityTestProvider("owner-route", "https://api.example.test", "account-a", 1)
+	routed := authorityTestProvider("disabled-policy-route", "https://api.example.test", "account-b", 2)
+	routed.Enabled = false
+	required := authorityForProvider(t, owner)
+	targetProviderID := routed.ID
+	store := newMockStore()
+	store.providers = []model.Provider{owner, routed}
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled:          true,
+		APIType:          authorityTestAPIType,
+		TargetProviderID: &targetProviderID,
+	}}
+	selector := NewSelector(Config{Store: store})
+
+	_, err := selector.SelectWithMetadata(context.Background(), &model.SelectRequest{
+		APIType:                authorityTestAPIType,
+		RequiredAuthority:      &required,
+		PreferredRouteTargetID: owner.ID,
+	})
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("SelectWithMetadata() error = %v, want ErrNoProvider", err)
+	}
+	if internal.IsProviderSelectionFailure(
+		err,
+		internal.ProviderSelectionFailureContinuityRoutingConflict,
+	) {
+		t.Fatalf("disabled policy target was misclassified as continuity conflict: %v", err)
+	}
+}
+
+func TestSelectionDoesNotMisreportExhaustedOwnerCapacityAsConstraintConflict(t *testing.T) {
+	owner := authorityTestProvider("owner-route", "https://api.example.test", "account-a", 1)
+	owner.Concurrency = 1
+	routed := authorityTestProvider("policy-route", "https://api.example.test", "account-b", 2)
+	required := authorityForProvider(t, owner)
+	targetProviderID := routed.ID
+	store := newMockStore()
+	store.providers = []model.Provider{owner, routed}
+	store.routingPolicies = []model.RoutingPolicy{{
+		Enabled:          true,
+		APIType:          authorityTestAPIType,
+		TargetProviderID: &targetProviderID,
+	}}
+	limiter := NewConcurrencyLimiter()
+	held, acquired := limiter.Acquire(owner.ID, owner.Concurrency)
+	if !acquired {
+		t.Fatal("failed to exhaust owner provider capacity")
+	}
+	defer held.Release()
+	selector := NewSelector(Config{Store: store, Limiter: limiter})
+
+	_, err := selector.SelectWithMetadata(context.Background(), &model.SelectRequest{
+		APIType:                authorityTestAPIType,
+		RequiredAuthority:      &required,
+		PreferredRouteTargetID: owner.ID,
+	})
+	if !errors.Is(err, internal.ErrNoProvider) {
+		t.Fatalf("SelectWithMetadata() error = %v, want ErrNoProvider", err)
+	}
+	if internal.IsProviderSelectionFailure(
+		err,
+		internal.ProviderSelectionFailureContinuityRoutingConflict,
+	) {
+		t.Fatalf("exhausted owner capacity was misclassified as continuity conflict: %v", err)
+	}
+}
+
 func TestAuthorityConstraintAllowsReplacementButRejectsCrossAuthority(t *testing.T) {
 	current := authorityTestProvider("current", "https://api.example.test", "account-a", 1)
 	replacement := authorityTestProvider("replacement", "https://api.example.test", "account-a", 2)

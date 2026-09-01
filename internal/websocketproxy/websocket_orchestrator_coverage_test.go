@@ -13,6 +13,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -286,6 +287,31 @@ func TestWebSocketSelectProviderPreservesFailureSemanticsAfterAttempts(t *testin
 	}
 	if session.GatewayStatusCode != http.StatusInternalServerError || !errors.Is(session.FinalErr, selectionErr) {
 		t.Fatalf("selection error session = %#v", session)
+	}
+
+	conflictErr := &internal.ProviderSelectionError{
+		Reason: internal.ProviderSelectionFailureContinuityRoutingConflict,
+	}
+	orchestrator = newWebSocketSessionOrchestrator(&Gateway{
+		selector: &routingTestSelector{initialErr: conflictErr},
+		logger:   zaptest.NewLogger(t),
+	}, webSocketSessionOrchestratorConfig{
+		requestID:      "selection-constraint-conflict",
+		apiType:        APITypeCodex,
+		codexOperation: testCodexOperation(t),
+		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
+	})
+	selection, mode, session = orchestrator.selectProvider(context.Background(), 0)
+	if selection.Lease != nil || mode != providerSwitchModeInitial || session == nil {
+		t.Fatalf("conflicting selection = (%#v, %q, %#v)", selection, mode, session)
+	}
+	if session.GatewayStatusCode != http.StatusConflict ||
+		session.GatewayErrorCode != string(codexrecovery.ErrorCodeContinuityRoutingConflict) ||
+		session.GatewayMessage != codexrecovery.ClientMessage(codexrecovery.ConditionContinuityRoutingConflict) ||
+		session.FinalResult == nil ||
+		session.FinalResult.TerminalCause != model.TerminalProviderConfigurationError ||
+		!errors.Is(session.FinalErr, conflictErr) {
+		t.Fatalf("constraint conflict session = %#v", session)
 	}
 }
 

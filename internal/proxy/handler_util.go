@@ -57,16 +57,46 @@ func normalizedHTTPContentCodings(values []string) string {
 
 // logInsertTimeout is the maximum time allowed for inserting a request log.
 // This prevents goroutine accumulation if the database is slow or blocked.
-const logInsertTimeout = 2 * time.Second
+const (
+	logInsertTimeout            = 2 * time.Second
+	codexSelectionRejectedEvent = "codex_http.selection_rejected"
+)
 
 // handleNoProvider handles the case when no provider is available.
-func (h *Handler) handleNoProvider(pctx *proxyContext) {
+func (h *Handler) handleNoProvider(pctx *proxyContext, selectionErr error) {
+	if selectionErr == nil {
+		selectionErr = internal.ErrNoProvider
+	}
+	if internal.IsProviderSelectionFailure(
+		selectionErr,
+		internal.ProviderSelectionFailureContinuityRoutingConflict,
+	) {
+		decision := h.logCodexHTTPRecovery(
+			pctx.requestID,
+			codexSelectionRejectedEvent,
+			selectionErr,
+		)
+		h.writeGatewayError(
+			pctx.w,
+			decision.HTTPStatus(),
+			string(decision.ErrorCode()),
+			codexHTTPRecoveryMessage(decision.Condition()),
+		)
+		go h.logRequest(pctx, logRequestInputs{
+			Facts: nonWebSocketRuntimeFacts{
+				ClientTransportStatusCode: decision.HTTPStatus(),
+				TerminalErr:               selectionErr,
+			},
+			Latency: time.Since(pctx.startTime),
+		})
+		return
+	}
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
 	go h.logRequest(pctx, logRequestInputs{
 		Facts: nonWebSocketRuntimeFacts{
 			ClientTransportStatusCode: http.StatusServiceUnavailable,
-			TerminalErr:               internal.ErrNoProvider,
+			TerminalErr:               selectionErr,
 		},
 		Latency: time.Since(pctx.startTime),
 	})
@@ -187,6 +217,8 @@ func codexHTTPRecoveryMessage(condition codexrecovery.Condition) string {
 	switch condition {
 	case codexrecovery.ConditionStateConflict:
 		return "Codex request state conflicts with the current operation"
+	case codexrecovery.ConditionContinuityRoutingConflict:
+		return codexrecovery.ClientMessage(condition)
 	case codexrecovery.ConditionReconnectRequired:
 		return "Codex request requires a new connection"
 	case codexrecovery.ConditionNewThreadRequired:
@@ -389,6 +421,11 @@ func deriveNonWebSocketTermination(
 		return ptr(model.TerminationActorUpstream), ptr(model.TerminationReasonUpstreamSemanticError)
 	case facts.ClientTransportStatusCode == StatusCodeNoResponse:
 		return ptr(model.TerminationActorUnknown), ptr(model.TerminationReasonUnknown)
+	case !facts.ResponseCommitted && internal.IsProviderSelectionFailure(
+		facts.TerminalErr,
+		internal.ProviderSelectionFailureContinuityRoutingConflict,
+	):
+		return ptr(model.TerminationActorGateway), ptr(model.TerminationReasonProviderConfigurationError)
 	case !facts.ResponseCommitted && errors.Is(facts.TerminalErr, internal.ErrNoProvider):
 		return ptr(model.TerminationActorGateway), ptr(model.TerminationReasonProviderUnavailable)
 	case facts.ClientTransportStatusCode >= http.StatusBadRequest && facts.ClientTransportStatusCode < http.StatusInternalServerError:

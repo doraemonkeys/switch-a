@@ -5,14 +5,25 @@ import "github.com/doraemonkeys/switch-a/internal/model"
 type providerEligibilityMode struct {
 	checkHealth          bool
 	checkRouteTransition bool
+	checkRouting         bool
+	checkAuthority       bool
 }
 
 func selectionEligibilityMode() providerEligibilityMode {
-	return providerEligibilityMode{checkHealth: true, checkRouteTransition: true}
+	return providerEligibilityMode{
+		checkHealth:          true,
+		checkRouteTransition: true,
+		checkRouting:         true,
+		checkAuthority:       true,
+	}
 }
 
 func existingRouteEligibilityMode(checkHealth bool) providerEligibilityMode {
-	return providerEligibilityMode{checkHealth: checkHealth}
+	return providerEligibilityMode{
+		checkHealth:    checkHealth,
+		checkRouting:   true,
+		checkAuthority: true,
+	}
 }
 
 // routeTransitionAllowsProvider applies only constraints that govern moving to

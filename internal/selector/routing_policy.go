@@ -12,6 +12,11 @@ const (
 	routingPolicyRankAPIType = 1
 	routingPolicyRankPrefix  = 2
 	routingPolicyRankExact   = 3
+
+	routingPolicyConstraintExactProvider = "exact_provider"
+	routingPolicyConstraintGroups        = "groups"
+	routingPolicyConstraintVendors       = "vendors"
+	routingPolicyConstraintGroupVendors  = "groups_and_vendors"
 )
 
 type routingPolicySource interface {
@@ -24,6 +29,21 @@ type routingPolicyResolution struct {
 	targetProviderID string
 	groupIDs         map[string]struct{}
 	vendors          map[string]struct{}
+}
+
+func (r routingPolicyResolution) constraintKind() string {
+	switch {
+	case r.targetProviderID != "":
+		return routingPolicyConstraintExactProvider
+	case len(r.groupIDs) > 0 && len(r.vendors) > 0:
+		return routingPolicyConstraintGroupVendors
+	case len(r.groupIDs) > 0:
+		return routingPolicyConstraintGroups
+	case len(r.vendors) > 0:
+		return routingPolicyConstraintVendors
+	default:
+		return ""
+	}
 }
 
 // ResolveSelectionHiddenModelDemand reports whether initial provider selection

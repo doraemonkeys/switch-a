@@ -310,7 +310,7 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderS
 	providers := scope.Providers()
 
 	if len(providers) == 0 {
-		return nil, internal.ErrNoProvider
+		return nil, s.noProviderError(ctx, scope, excludeIDs)
 	}
 
 	// Get inter-group strategy from config
@@ -344,7 +344,7 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderS
 	}
 
 	if len(groupCandidates) == 0 {
-		return nil, internal.ErrNoProvider
+		return nil, s.noProviderError(ctx, scope, excludeIDs)
 	}
 
 	// Try groups in order until we find an available provider
@@ -368,7 +368,7 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderS
 		}
 	}
 
-	return nil, internal.ErrNoProvider
+	return nil, s.noProviderError(ctx, scope, excludeIDs)
 }
 
 // isStickyEnabled returns true only for recognized non-off sticky modes.

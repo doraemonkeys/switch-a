@@ -113,7 +113,7 @@ func (h *Handler) startInitialSelection(ctx context.Context, pctx *proxyContext,
 	if err != nil {
 		state.lastErr = err
 		if errors.Is(err, internal.ErrNoProvider) {
-			h.handleNoProvider(pctx)
+			h.handleNoProvider(pctx, err)
 		}
 		return false
 	}

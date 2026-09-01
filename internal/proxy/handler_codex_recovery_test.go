@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
@@ -183,6 +185,63 @@ func TestCodexHTTPUnknownPreviousResponseMapsToNewThreadBeforeUpstream(t *testin
 	}
 	if got := upstreamRequests.Load(); got != 0 {
 		t.Fatalf("upstream requests = %d, want zero", got)
+	}
+}
+
+func TestHandleNoProviderReportsContinuityRoutingConflict(t *testing.T) {
+	store := newMockStore()
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
+	response := httptest.NewRecorder()
+	selectionErr := &internal.ProviderSelectionError{
+		Reason:                        internal.ProviderSelectionFailureContinuityRoutingConflict,
+		APIType:                       APITypeCodex,
+		PreferredRouteTargetID:        "owner-route-sensitive",
+		RoutingPolicyConstraint:       "exact_provider",
+		RoutingPolicyTargetProviderID: "policy-route-sensitive",
+	}
+	pctx := &proxyContext{
+		w:         response,
+		apiType:   APITypeCodex,
+		requestID: "continuity-routing-conflict",
+		startTime: time.Now(),
+		info: RequestInfo{
+			APIType: APITypeCodex,
+			Path:    RouteCodexResponses,
+			Method:  http.MethodPost,
+		},
+	}
+
+	handler.handleNoProvider(pctx, selectionErr)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("HTTP status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	var envelope model.GatewayError
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Error.Code != string(codexrecovery.ErrorCodeContinuityRoutingConflict) {
+		t.Fatalf("error code = %q, want %q", envelope.Error.Code, codexrecovery.ErrorCodeContinuityRoutingConflict)
+	}
+	wantMessage := codexrecovery.ClientMessage(codexrecovery.ConditionContinuityRoutingConflict)
+	if envelope.Error.Message != wantMessage {
+		t.Fatalf("error message = %q, want %q", envelope.Error.Message, wantMessage)
+	}
+	if strings.Contains(response.Body.String(), "owner-route-sensitive") ||
+		strings.Contains(response.Body.String(), "policy-route-sensitive") {
+		t.Fatalf("client response leaked route identifiers: %s", response.Body.String())
+	}
+
+	waitFor(t, func() bool { return store.LogsLen() == 1 }, testPollTimeout)
+	requestLog := store.LastLog()
+	if requestLogClientTransportStatusCode(requestLog) != http.StatusConflict {
+		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(requestLog), http.StatusConflict)
+	}
+	if requestLogTerminationReason(requestLog) != model.TerminationReasonProviderConfigurationError {
+		t.Fatalf("TerminationReason = %q, want %q", requestLogTerminationReason(requestLog), model.TerminationReasonProviderConfigurationError)
+	}
+	if requestLog.TerminationActor == nil || *requestLog.TerminationActor != model.TerminationActorGateway {
+		t.Fatalf("TerminationActor = %v, want %q", requestLog.TerminationActor, model.TerminationActorGateway)
 	}
 }
 

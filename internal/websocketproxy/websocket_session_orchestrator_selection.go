@@ -540,6 +540,32 @@ func (o *WebSocketSessionOrchestrator) selectProvider(
 		return selection, selectionMode, nil
 	}
 
+	if internal.IsProviderSelectionFailure(
+		err,
+		internal.ProviderSelectionFailureContinuityRoutingConflict,
+	) {
+		decision := codexrecovery.Classify(err, codexrecovery.PhaseWebSocketAccepted)
+		o.handler.logger.Warn("websocket.provider_selection_rejected",
+			zap.String("operation_id", o.requestID),
+			zap.String("session_id", o.requestID),
+			zap.String("api_type", o.apiType),
+			zap.String("recovery_condition", string(decision.Condition())),
+			zap.String("recovery_action", string(decision.RecoveryAction())),
+			zap.String("error_code", string(decision.ErrorCode())),
+			zap.Int("recovery_http_status", decision.HTTPStatus()),
+		)
+		return ProviderSelection{}, providerSwitchModeInitial, newWebSocketSelectionFailureSession(
+			o.requestID,
+			o.isSticky,
+			o.attempts,
+			decision.HTTPStatus(),
+			model.TerminalProviderConfigurationError,
+			string(decision.ErrorCode()),
+			codexrecovery.ClientMessage(decision.Condition()),
+			err,
+		)
+	}
+
 	if errors.Is(err, internal.ErrNoProvider) {
 		if len(o.attempts) > 0 {
 			return ProviderSelection{}, providerSwitchModeInitial, o.finalSessionFromLastAttempt(ctx)
