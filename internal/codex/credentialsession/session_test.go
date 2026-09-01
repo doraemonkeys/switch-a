@@ -372,6 +372,57 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 	}
 }
 
+func TestRepositoryCASPersistsUsageSnapshot(t *testing.T) {
+	_, repo, _ := newRepositoryTestDB(t)
+	ctx := context.Background()
+	subject, err := AccountSubject("account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &Session{
+		ID: "chatgpt-usage", Kind: KindChatGPT, SecretData: "secret", Version: 1,
+		AuthState: AuthState{Status: AuthStatusActive, AccountID: "account-1"},
+	}
+	if err := session.SetSubject(subject); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Create(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+
+	firstFetchedAt := time.Date(2026, 8, 27, 3, 4, 5, 0, time.UTC)
+	firstState := AuthState{
+		Status: AuthStatusActive, AccountID: "account-1", PlanType: "pro",
+		UsageSnapshot: &UsageSnapshot{
+			FetchedAt: &firstFetchedAt, PlanType: "pro",
+			FiveHour: &UsageWindow{UsedPercent: 12.5, WindowSeconds: 18_000},
+		},
+	}
+	version, err := repo.UpdateAuthStateCAS(ctx, session.ID, 1, firstState)
+	if err != nil || version != 2 {
+		t.Fatalf("UpdateAuthStateCAS() = (%d, %v)", version, err)
+	}
+	stored, err := repo.Get(ctx, session.ID)
+	if err != nil || !reflect.DeepEqual(stored.AuthState.UsageSnapshot, firstState.UsageSnapshot) {
+		t.Fatalf("usage after UpdateAuthStateCAS = (%#v, %v), want %#v", stored, err, firstState.UsageSnapshot)
+	}
+
+	secondFetchedAt := firstFetchedAt.Add(time.Hour)
+	secondState := firstState.Clone()
+	secondState.UsageSnapshot = &UsageSnapshot{
+		FetchedAt: &secondFetchedAt, PlanType: "pro",
+		OneWeek: &UsageWindow{UsedPercent: 37.5, WindowSeconds: 604_800},
+	}
+	version, err = repo.UpdateCredentialCAS(ctx, session.ID, 2, "rotated", subject, secondState)
+	if err != nil || version != 3 {
+		t.Fatalf("UpdateCredentialCAS() = (%d, %v)", version, err)
+	}
+	stored, err = repo.Get(ctx, session.ID)
+	if err != nil || stored.SecretData != "rotated" || !reflect.DeepEqual(stored.AuthState.UsageSnapshot, secondState.UsageSnapshot) {
+		t.Fatalf("session after UpdateCredentialCAS = (%#v, %v), want usage %#v", stored, err, secondState.UsageSnapshot)
+	}
+}
+
 func TestRepositoryCreatePreservesProvidedTimestamps(t *testing.T) {
 	_, repo, clock := newRepositoryTestDB(t)
 	digest, err := KeyedDigestSubject("h1", bytes.Repeat([]byte{1}, staticSubjectDigestSize))

@@ -2,6 +2,7 @@ package credentialsession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -354,26 +355,21 @@ func (r *Repository) UpdateCredentialCAS(
 	if err := validateAuthStateForSubject(current.Kind, subject, authState); err != nil {
 		return 0, err
 	}
+	authStateUpdates, err := authStateColumnUpdates(authState)
+	if err != nil {
+		return 0, fmt.Errorf("encode auth state for credential session %q: %w", sessionID, err)
+	}
 	nextVersion := expectedVersion + 1
 	updates := map[string]any{
-		"secret_data":                  secretData,
-		"version":                      nextVersion,
-		"subject_kind":                 subject.Kind,
-		"subject_value":                append([]byte(nil), subject.Value...),
-		"subject_key_version":          subject.KeyVersion,
-		"auth_status":                  authState.Status,
-		"auth_status_reason":           authState.StatusReason,
-		"auth_last_error":              authState.LastError,
-		"auth_last_transition_at":      authState.LastTransitionAt,
-		"auth_email":                   authState.Email,
-		"auth_account_id":              authState.AccountID,
-		"auth_plan_type":               authState.PlanType,
-		"auth_expires_at":              authState.ExpiresAt,
-		"auth_last_refresh_at":         authState.LastRefreshAt,
-		"auth_usage_snapshot":          authState.UsageSnapshot,
-		"auth_refresh_fail_count":      authState.RefreshFailCount,
-		"auth_last_refresh_failure_at": authState.LastRefreshFailureAt,
-		"updated_at":                   r.clock.Now().UTC(),
+		"secret_data":         secretData,
+		"version":             nextVersion,
+		"subject_kind":        subject.Kind,
+		"subject_value":       append([]byte(nil), subject.Value...),
+		"subject_key_version": subject.KeyVersion,
+		"updated_at":          r.clock.Now().UTC(),
+	}
+	for column, value := range authStateUpdates {
+		updates[column] = value
 	}
 	result := r.db.WithContext(ctx).Model(&Session{}).
 		Where("id = ? AND version = ?", strings.TrimSpace(sessionID), expectedVersion).
@@ -402,9 +398,29 @@ func (r *Repository) UpdateAuthStateCAS(ctx context.Context, sessionID string, e
 	if err := validateAuthStateForSubject(session.Kind, session.Subject(), authState); err != nil {
 		return 0, err
 	}
+	updates, err := authStateColumnUpdates(authState)
+	if err != nil {
+		return 0, fmt.Errorf("encode auth state for credential session %q: %w", sessionID, err)
+	}
 	nextVersion := expectedVersion + 1
-	result := r.db.WithContext(ctx).Model(&Session{}).Where("id = ? AND version = ?", session.ID, expectedVersion).Updates(map[string]any{
-		"version":                      nextVersion,
+	updates["version"] = nextVersion
+	updates["updated_at"] = r.clock.Now().UTC()
+	result := r.db.WithContext(ctx).Model(&Session{}).Where("id = ? AND version = ?", session.ID, expectedVersion).Updates(updates)
+	if result.Error != nil {
+		return 0, fmt.Errorf("update auth state for credential session %q: %w", sessionID, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return 0, ErrVersionConflict
+	}
+	return nextVersion, nil
+}
+
+func authStateColumnUpdates(authState AuthState) (map[string]any, error) {
+	usageSnapshot, err := encodeUsageSnapshot(authState.UsageSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
 		"auth_status":                  authState.Status,
 		"auth_status_reason":           authState.StatusReason,
 		"auth_last_error":              authState.LastError,
@@ -414,18 +430,23 @@ func (r *Repository) UpdateAuthStateCAS(ctx context.Context, sessionID string, e
 		"auth_plan_type":               authState.PlanType,
 		"auth_expires_at":              authState.ExpiresAt,
 		"auth_last_refresh_at":         authState.LastRefreshAt,
-		"auth_usage_snapshot":          authState.UsageSnapshot,
+		"auth_usage_snapshot":          usageSnapshot,
 		"auth_refresh_fail_count":      authState.RefreshFailCount,
 		"auth_last_refresh_failure_at": authState.LastRefreshFailureAt,
-		"updated_at":                   r.clock.Now().UTC(),
-	})
-	if result.Error != nil {
-		return 0, fmt.Errorf("update auth state for credential session %q: %w", sessionID, result.Error)
+	}, nil
+}
+
+func encodeUsageSnapshot(snapshot *UsageSnapshot) (any, error) {
+	if snapshot == nil {
+		return nil, nil
 	}
-	if result.RowsAffected == 0 {
-		return 0, ErrVersionConflict
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("encode usage snapshot: %w", err)
 	}
-	return nextVersion, nil
+	// Map-based GORM updates bypass the model field's serializer, so the
+	// repository must hand database/sql an already encoded scalar value.
+	return string(encoded), nil
 }
 
 func (r *Repository) ResolvePendingSubject(ctx context.Context, sessionID string, subject Subject) error {
