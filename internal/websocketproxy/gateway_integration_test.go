@@ -139,10 +139,10 @@ func TestGateway_NoProviderReturnsCanonicalGatewayFailure(t *testing.T) {
 	}
 }
 
-func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
+func TestGateway_ReplacesProviderAfterChatGPTAccountModelCapabilityMismatch(t *testing.T) {
 	const (
-		clientData   = `{"type":"response.create","response":{"model":"gpt-5"}}`
-		semanticData = `{"type":"error","status":403,"error":{"type":"auth_error","code":"model_not_allowed","message":"model access denied"}}`
+		clientData   = `{"type":"response.create","response":{"model":"gpt-5.6-sol"}}`
+		semanticData = `{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}}`
 		fallbackData = `{"type":"response.created","provider":"fallback"}`
 		subprotocol  = "realtime.v1"
 	)
@@ -198,7 +198,8 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 		{ID: "primary", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL}}, CredentialSessions: testCredentialSessions("primary", APITypeCodex, credentialsession.KindAPIKey, "primary-key")},
 		{ID: "fallback", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL}}, CredentialSessions: testCredentialSessions("fallback", APITypeCodex, credentialsession.KindAPIKey, "fallback-key")},
 	}
-	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
+	health := newTrackingHealthManager()
+	gateway := newTestGateway(t, Config{Store: store, Health: health, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 3}, "semantic-replacement")
 	defer server.Close()
 
@@ -206,7 +207,7 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 	defer cancel()
 	connection, _, err := websocket.Dial(
 		ctx,
-		wsURL(server)+"/responses?model=gpt-5",
+		wsURL(server)+"/responses?model=gpt-5.6-sol",
 		codexDialOptions("realtime.v2", subprotocol),
 	)
 	if err != nil {
@@ -238,6 +239,15 @@ func TestGateway_ReplacesProviderAfterPreVisibleSemanticFailure(t *testing.T) {
 	attempts := store.LastAttempts(2)
 	if attempts[0].ProviderID != "primary" || attempts[1].ProviderID != "fallback" {
 		t.Fatalf("attempt providers = [%s %s], want [primary fallback]", attempts[0].ProviderID, attempts[1].ProviderID)
+	}
+	if attempts[0].SwitchReason != model.RequestAttemptSwitchReasonModelCapabilityMismatch {
+		t.Fatalf("primary switch reason = %q, want %q", attempts[0].SwitchReason, model.RequestAttemptSwitchReasonModelCapabilityMismatch)
+	}
+	if attempts[0].ResultVisibleToClient == nil || *attempts[0].ResultVisibleToClient {
+		t.Fatalf("primary result visibility = %v, want false", attempts[0].ResultVisibleToClient)
+	}
+	if failures := health.getMarkFailureCalls(); len(failures) != 0 {
+		t.Fatalf("provider health failures = %#v, want none for credential/model capability mismatch", failures)
 	}
 }
 

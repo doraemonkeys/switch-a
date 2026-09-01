@@ -28,6 +28,12 @@ func classifyWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError) webSock
 	if upstreamErr == nil {
 		return webSocketSemanticClassificationUnknown
 	}
+	if isChatGPTAccountModelCapabilityMismatch(upstreamErr) {
+		// The provider used a generic 400 envelope for an account/model capability
+		// rejection. It is safe to suppress only because this exact contract says a
+		// different credential may satisfy the unchanged client request.
+		return webSocketSemanticClassificationProviderScopedAllowlisted
+	}
 	identifierClassification, identifierMatched := classifyWebSocketUpstreamErrorIdentifiers(upstreamErr)
 	statusClassification, statusMatched := classifyWebSocketUpstreamErrorStatus(upstreamErr.StatusCode)
 	if identifierMatched && statusMatched &&

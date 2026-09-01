@@ -13,6 +13,9 @@ import (
 
 const (
 	codexUsageLimitErrorType            = "usage_limit_reached"
+	codexInvalidRequestErrorType        = "invalid_request_error"
+	chatGPTModelRejectionMessagePrefix  = "the '"
+	chatGPTModelRejectionMessageSuffix  = "' model is not supported when using codex with a chatgpt account"
 	usageLimitAutoDisableReason         = "usage limit reached"
 	headerCodexPrimaryUsedPercent       = codexquota.HeaderPrimaryUsedPercent
 	headerCodexSecondaryUsedPercent     = codexquota.HeaderSecondaryUsedPercent
@@ -31,10 +34,11 @@ const (
 )
 
 type providerFailureDisposition struct {
-	switchReason      string
-	autoDisableUntil  *time.Time
-	autoDisableReason string
-	scope             providerFailureScope
+	switchReason            string
+	autoDisableUntil        *time.Time
+	autoDisableReason       string
+	scope                   providerFailureScope
+	modelCapabilityMismatch bool
 }
 
 func (d providerFailureDisposition) forcesProviderSwitch() bool {
@@ -43,6 +47,10 @@ func (d providerFailureDisposition) forcesProviderSwitch() bool {
 
 func (d providerFailureDisposition) isProviderScoped() bool {
 	return d.scope == providerFailureScopeProvider
+}
+
+func (d providerFailureDisposition) affectsProviderHealth() bool {
+	return d.isProviderScoped() && !d.modelCapabilityMismatch
 }
 
 type codexUsageLimitPayload struct {
@@ -102,7 +110,8 @@ func classifyWebSocketUpstreamFailureForProvider(
 	if !disposition.isProviderScoped() {
 		return disposition
 	}
-	if disposition.switchReason == SwitchReasonUsageLimitReached {
+	if disposition.switchReason == SwitchReasonUsageLimitReached ||
+		disposition.switchReason == model.RequestAttemptSwitchReasonModelCapabilityMismatch {
 		return disposition
 	}
 	disposition.switchReason = model.RequestAttemptSwitchReasonProviderScopedSemanticError
@@ -110,10 +119,11 @@ func classifyWebSocketUpstreamFailureForProvider(
 }
 
 type providerFailureEvidence struct {
-	observedAt      time.Time
-	statusCode      int
-	errorKeys       []string
-	resetCandidates []time.Time
+	observedAt              time.Time
+	statusCode              int
+	errorKeys               []string
+	resetCandidates         []time.Time
+	modelCapabilityMismatch bool
 }
 
 func providerFailureEvidenceFromHTTP(
@@ -148,8 +158,9 @@ func providerFailureEvidenceFromWebSocketUpstreamError(upstreamErr *WebSocketUps
 		return providerFailureEvidence{}
 	}
 	evidence := providerFailureEvidence{
-		observedAt: normalizeObservedAt(upstreamErr.ObservedAt),
-		statusCode: upstreamErr.StatusCode,
+		observedAt:              normalizeObservedAt(upstreamErr.ObservedAt),
+		statusCode:              upstreamErr.StatusCode,
+		modelCapabilityMismatch: isChatGPTAccountModelCapabilityMismatch(upstreamErr),
 		errorKeys: []string{
 			normalizeWebSocketSemanticErrorKey(upstreamErr.SemanticErrorKey()),
 			normalizeWebSocketSemanticErrorKey(upstreamErr.Code),
@@ -165,6 +176,13 @@ func classifyProviderFailureEvidence(
 	usageLimitPolicy model.ProviderUsageLimitPolicy,
 	evidence providerFailureEvidence,
 ) providerFailureDisposition {
+	if evidence.modelCapabilityMismatch {
+		return providerFailureDisposition{
+			switchReason:            model.RequestAttemptSwitchReasonModelCapabilityMismatch,
+			scope:                   providerFailureScopeProvider,
+			modelCapabilityMismatch: true,
+		}
+	}
 	if hasNormalizedWebSocketErrorKey(evidence.errorKeys, webSocketConnectionLimitErrorType) {
 		// Connection-limit exhaustion is terminal evidence for the current socket, not
 		// a provider health fault that should trigger failover or suspension.
@@ -204,6 +222,28 @@ func classifyProviderFailureEvidence(
 		return providerFailureDisposition{scope: statusScope}
 	}
 	return providerFailureDisposition{}
+}
+
+func isChatGPTAccountModelCapabilityMismatch(upstreamErr *WebSocketUpstreamError) bool {
+	if upstreamErr == nil ||
+		upstreamErr.StatusCode != http.StatusBadRequest ||
+		normalizeWebSocketSemanticErrorKey(upstreamErr.SemanticErrorKey()) != codexInvalidRequestErrorType {
+		return false
+	}
+
+	message := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(upstreamErr.Message)), ".")
+	if !strings.HasPrefix(message, chatGPTModelRejectionMessagePrefix) ||
+		!strings.HasSuffix(message, chatGPTModelRejectionMessageSuffix) {
+		return false
+	}
+
+	modelName := strings.TrimSuffix(
+		strings.TrimPrefix(message, chatGPTModelRejectionMessagePrefix),
+		chatGPTModelRejectionMessageSuffix,
+	)
+	// The quoted model slot makes this recognition specific to the upstream
+	// capability contract rather than to arbitrary invalid-request prose.
+	return strings.TrimSpace(modelName) != "" && !strings.Contains(modelName, "'")
 }
 
 func usageLimitResetCandidatesFromHeaders(header http.Header, observedAt time.Time) ([]time.Time, bool) {

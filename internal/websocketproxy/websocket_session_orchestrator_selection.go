@@ -83,6 +83,46 @@ func (o *WebSocketSessionOrchestrator) shouldSwitchProvider(attempt WebSocketAtt
 	return false
 }
 
+func (o *WebSocketSessionOrchestrator) logProviderSwitch(
+	attempt WebSocketAttemptResult,
+	switchReason string,
+	nextSelectionMode providerSwitchMode,
+) {
+	if o == nil || o.handler == nil || o.handler.logger == nil {
+		return
+	}
+
+	fields := []zap.Field{
+		zap.String("request_id", o.requestID),
+		zap.String("session_id", o.requestID),
+		zap.Int("attempt_index", attempt.Attempt),
+		zap.Int("provider_attempt", attempt.ProviderAttempt),
+		zap.Int("provider_switch_count", attempt.ProviderSwitchCount),
+		zap.String("attempt_selection_mode", string(attempt.SelectionMode)),
+		zap.String("next_selection_mode", string(nextSelectionMode)),
+		zap.String("switch_reason", switchReason),
+		zap.String("model", o.info.Model),
+	}
+	if attempt.Provider != nil {
+		fields = append(fields, zap.String("provider_id", attempt.Provider.ID))
+	}
+	if attempt.Result != nil {
+		fields = append(fields,
+			zap.Bool("client_visible", attempt.Result.ClientVisible),
+			zap.Bool("session_committed", attempt.Result.SessionCommitted),
+			zap.String("terminal_cause", string(attempt.Result.TerminalCause)),
+		)
+		if attempt.Result.UpstreamError != nil {
+			fields = append(fields,
+				zap.String("provider_error_type", attempt.Result.UpstreamError.ProviderErrorType),
+				zap.String("provider_error_code", attempt.Result.UpstreamError.Code),
+				zap.Int("provider_status_code", attempt.Result.UpstreamError.StatusCode),
+			)
+		}
+	}
+	o.handler.logger.Info("websocket.provider_switch", fields...)
+}
+
 func (o *WebSocketSessionOrchestrator) shouldFallbackToSuppressedPayload(attempt WebSocketAttemptResult) bool {
 	if o.suppressedAttempt == nil || attempt.Result == nil || attempt.Result.ClientVisible {
 		return false

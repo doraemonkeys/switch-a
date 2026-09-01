@@ -72,6 +72,35 @@ func TestClassifyWebSocketUpstreamFailure_UsesStatusCodeFieldAndLatestResetEvide
 	}
 }
 
+func TestClassifyWebSocketUpstreamFailure_AccountModelCapabilityMismatchIsSwitchableAndHealthNeutral(t *testing.T) {
+	upstreamErr := &WebSocketUpstreamError{
+		ProviderErrorType: codexInvalidRequestErrorType,
+		StatusCode:        http.StatusBadRequest,
+		Message:           "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+	}
+
+	disposition := classifyWebSocketUpstreamFailure(upstreamErr)
+	if disposition.switchReason != model.RequestAttemptSwitchReasonModelCapabilityMismatch {
+		t.Fatalf("switchReason = %q, want %q", disposition.switchReason, model.RequestAttemptSwitchReasonModelCapabilityMismatch)
+	}
+	if !disposition.isProviderScoped() {
+		t.Fatal("model capability mismatch must be switchable across providers")
+	}
+	if disposition.affectsProviderHealth() {
+		t.Fatal("credential/model capability mismatch must not degrade whole-provider health")
+	}
+
+	health := assessWebSocketHealth(&model.Provider{ID: "free-account"}, &WebSocketResult{
+		HandshakeAccepted: true,
+		ClientAccepted:    true,
+		TerminalCause:     model.TerminalUpstreamSemanticError,
+		UpstreamError:     upstreamErr,
+	})
+	if health.markFailure || health.markSuccess || health.suspendUntil != nil {
+		t.Fatalf("health assessment = %#v, want neutral", health)
+	}
+}
+
 func TestWebSocketProviderConfigErrorErrorAndUnwrap(t *testing.T) {
 	var nilErr *webSocketProviderConfigError
 	if got := nilErr.Error(); got != "" {

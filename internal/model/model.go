@@ -433,10 +433,12 @@ const (
 )
 
 // RequestAttempt switch reasons stay free-form because most retries reuse shared
-// transport/lifecycle causes, but semantic failover needs a stable persisted label
-// that distinguishes "provider-scoped error was suppressed" from generic terminal
-// causes shown elsewhere in the UI.
-const RequestAttemptSwitchReasonProviderScopedSemanticError = "provider_scoped_semantic_error"
+// transport/lifecycle causes, but semantic replacement needs stable persisted labels
+// for decisions that cannot be reconstructed from transport status alone.
+const (
+	RequestAttemptSwitchReasonProviderScopedSemanticError = "provider_scoped_semantic_error"
+	RequestAttemptSwitchReasonModelCapabilityMismatch     = "model_capability_mismatch"
+)
 
 // RequestAttempt represents a single provider attempt within a request.
 type RequestAttempt struct {

@@ -1,6 +1,7 @@
 package websocketproxy
 
 import (
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -199,6 +200,15 @@ func TestClassifyWebSocketUpstreamError_StatusAndIdentifierSignals(t *testing.T)
 			want: webSocketSemanticClassificationClientScoped,
 		},
 		{
+			name: "account model capability mismatch overrides generic request envelope",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: "invalid_request_error",
+				StatusCode:        http.StatusBadRequest,
+				Message:           "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+			},
+			want: webSocketSemanticClassificationProviderScopedAllowlisted,
+		},
+		{
 			name: "conflicting status and identifier downgrade to unknown",
 			err: &WebSocketUpstreamError{
 				EventType:  "invalid_api_key",
@@ -232,6 +242,7 @@ func TestDecideWebSocketUpstreamMessage_UsesClientVisibilityAndParseDegradation(
 	t.Parallel()
 
 	providerPayload := []byte(`{"error":{"message":"Model 'gpt-5.4' is not allowed","type":"model_not_allowed"},"status":403,"type":"error"}`)
+	accountModelCapabilityPayload := []byte(`{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}}`)
 	genericProviderPayload := []byte(`{"error":{"message":"upstream crashed"},"status":500,"type":"error"}`)
 	clientPayload := []byte(`{"error":{"message":"invalid client payload","type":"invalid_request_error"},"status":400,"type":"error"}`)
 
@@ -246,6 +257,12 @@ func TestDecideWebSocketUpstreamMessage_UsesClientVisibilityAndParseDegradation(
 		{
 			name:         "suppress allowlisted provider scoped before visible",
 			payload:      providerPayload,
+			wantClass:    webSocketSemanticClassificationProviderScopedAllowlisted,
+			wantDecision: webSocketSemanticFrameDecisionSuppress,
+		},
+		{
+			name:         "suppress account model capability mismatch before visible",
+			payload:      accountModelCapabilityPayload,
 			wantClass:    webSocketSemanticClassificationProviderScopedAllowlisted,
 			wantDecision: webSocketSemanticFrameDecisionSuppress,
 		},
@@ -287,6 +304,84 @@ func TestDecideWebSocketUpstreamMessage_UsesClientVisibilityAndParseDegradation(
 			}
 			if decision.FrameDecision != tt.wantDecision {
 				t.Fatalf("FrameDecision = %v, want %v", decision.FrameDecision, tt.wantDecision)
+			}
+		})
+	}
+}
+
+func TestIsChatGPTAccountModelCapabilityMismatch_RequiresExactCapabilityContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  *WebSocketUpstreamError
+		want bool
+	}{
+		{
+			name: "recognized",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: codexInvalidRequestErrorType,
+				StatusCode:        http.StatusBadRequest,
+				Message:           "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+			},
+			want: true,
+		},
+		{
+			name: "generic invalid request",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: codexInvalidRequestErrorType,
+				StatusCode:        http.StatusBadRequest,
+				Message:           "invalid client payload",
+			},
+		},
+		{
+			name: "wrong status",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: codexInvalidRequestErrorType,
+				StatusCode:        http.StatusForbidden,
+				Message:           "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+			},
+		},
+		{
+			name: "wrong error type",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: "validation_error",
+				StatusCode:        http.StatusBadRequest,
+				Message:           "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+			},
+		},
+		{
+			name: "different invalid request contract",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: codexInvalidRequestErrorType,
+				StatusCode:        http.StatusBadRequest,
+				Message:           "The 'gpt-5.6-sol' model is unavailable for this endpoint.",
+			},
+		},
+		{
+			name: "missing quoted model",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: codexInvalidRequestErrorType,
+				StatusCode:        http.StatusBadRequest,
+				Message:           "The '' model is not supported when using Codex with a ChatGPT account.",
+			},
+		},
+		{
+			name: "malformed quoted model",
+			err: &WebSocketUpstreamError{
+				ProviderErrorType: codexInvalidRequestErrorType,
+				StatusCode:        http.StatusBadRequest,
+				Message:           "The 'gpt'5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+			},
+		},
+		{name: "nil"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isChatGPTAccountModelCapabilityMismatch(tt.err); got != tt.want {
+				t.Fatalf("isChatGPTAccountModelCapabilityMismatch() = %v, want %v", got, tt.want)
 			}
 		})
 	}

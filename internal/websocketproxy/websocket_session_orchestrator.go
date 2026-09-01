@@ -216,8 +216,10 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 		}
 
 		if o.shouldSwitchProvider(attemptResult) {
-			o.attempts[len(o.attempts)-1].SwitchReason = websocketSwitchReason(attemptResult)
-			o.switchTracker.prepareProviderSwitch()
+			switchReason := websocketSwitchReason(attemptResult)
+			o.attempts[len(o.attempts)-1].SwitchReason = switchReason
+			nextSelectionMode := o.switchTracker.prepareProviderSwitch()
+			o.logProviderSwitch(attemptResult, switchReason, nextSelectionMode)
 			o.excludeCurrentProvider()
 			continue
 		}

@@ -459,7 +459,7 @@ func assessWebSocketHealth(provider *model.Provider, result *WebSocketResult) we
 	}
 	if result != nil && result.UpstreamError != nil {
 		return webSocketHealthAssessment{
-			markFailure: assessment.providerFailure.isProviderScoped() && shouldTrackWebSocketFailureInHealth(result),
+			markFailure: assessment.providerFailure.affectsProviderHealth() && shouldTrackWebSocketFailureInHealth(result),
 		}
 	}
 	switch {
