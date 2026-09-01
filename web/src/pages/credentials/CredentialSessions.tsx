@@ -1,15 +1,32 @@
 import { useState } from "react";
-import { KeyRound, Pencil, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
-import type { CredentialSession } from "../../api";
-import { ConfirmModal, CopyButton } from "../../components";
+import { AlertCircle } from "lucide-react";
+import type {
+  CreateCredentialSessionInput,
+  CredentialSession,
+} from "../../api";
+import { ConfirmModal } from "../../components";
 import { useCredentialSessions } from "../../hooks/useCredentialSessions";
 import { useToast } from "../../hooks/useToast";
+import { CredentialCreateModal } from "./CredentialCreateModal";
+import {
+  CredentialEditorModal,
+  type CredentialEditorState,
+} from "./CredentialEditorModal";
+import { CredentialEmptyState } from "./CredentialEmptyState";
+import {
+  CredentialFilterToolbar,
+  type CredentialKindFilter,
+  type CredentialSortOption,
+  type CredentialStatusFilter,
+  type CredentialUsageFilter,
+  type CredentialViewMode,
+} from "./CredentialFilterToolbar";
+import { CredentialGrid } from "./CredentialGrid";
+import { CredentialHeroHeader } from "./CredentialHeroHeader";
+import { filterAndSortCredentialSessions } from "./credentialFilterUtils";
 import { CredentialSessionReauthenticationModal } from "./CredentialSessionReauthenticationModal";
-
-type EditorState =
-  | { kind: "rename"; session: CredentialSession; value: string }
-  | { kind: "rotate"; session: CredentialSession; value: string }
-  | null;
+import { CredentialStatsBar } from "./CredentialStatsBar";
+import { CredentialTable } from "./CredentialTable";
 
 export function CredentialSessions() {
   const {
@@ -17,18 +34,46 @@ export function CredentialSessions() {
     loading,
     error,
     refetch,
+    createCredentialSession,
     renameCredentialSession,
     updateCredentialSession,
     deleteCredentialSession,
   } = useCredentialSessions();
   const toast = useToast();
-  const [editor, setEditor] = useState<EditorState>(null);
+
+  // Modal and mutation states
+  const [editor, setEditor] = useState<CredentialEditorState>(null);
   const [deleteTarget, setDeleteTarget] = useState<CredentialSession | null>(
     null,
   );
   const [reauthenticationTarget, setReauthenticationTarget] =
     useState<CredentialSession | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Search, Filter, Sort & View states
+  const [search, setSearch] = useState("");
+  const [kindFilter, setKindFilter] = useState<CredentialKindFilter>("all");
+  const [statusFilter, setStatusFilter] =
+    useState<CredentialStatusFilter>("all");
+  const [usageFilter, setUsageFilter] = useState<CredentialUsageFilter>("all");
+  const [sortOption, setSortOption] = useState<CredentialSortOption>("updated");
+  const [viewMode, setViewMode] = useState<CredentialViewMode>("grid");
+
+  const resetFilters = () => {
+    setSearch("");
+    setKindFilter("all");
+    setStatusFilter("all");
+    setUsageFilter("all");
+  };
+
+  const filteredSessions = filterAndSortCredentialSessions(credentialSessions, {
+    search,
+    kindFilter,
+    statusFilter,
+    usageFilter,
+    sortOption,
+  });
 
   const saveEditor = async () => {
     if (!editor || !editor.value.trim()) return;
@@ -79,87 +124,122 @@ export function CredentialSessions() {
     setReauthenticationTarget(null);
   };
 
-  return (
-    <div className="space-y-5">
-      <header className="flex flex-col gap-4 rounded-2xl border border-border bg-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-text-primary">
-            Credentials
-          </h2>
-          <p className="mt-1.5 text-sm text-text-secondary">
-            Name, rotate, and retire reusable provider credentials.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="btn btn-secondary h-10 px-4"
-          disabled={loading}
-          onClick={() => void refetch()}
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
-      </header>
+  const handleCreateCredential = async (
+    input: CreateCredentialSessionInput,
+  ) => {
+    setBusy(true);
+    try {
+      await createCredentialSession(input);
+      toast.success(`Credential "${input.name}" created successfully`);
+      setIsCreating(false);
+    } catch (cause) {
+      toast.error(
+        cause instanceof Error ? cause.message : "Failed to create credential",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
 
+  let mainContent = (
+    <CredentialTable
+      sessions={filteredSessions}
+      disabled={busy}
+      onReconnect={(s) => setReauthenticationTarget(s)}
+      onRename={(s) => setEditor({ kind: "rename", session: s, value: s.name })}
+      onRotate={(s) => setEditor({ kind: "rotate", session: s, value: "" })}
+      onDelete={(s) => setDeleteTarget(s)}
+    />
+  );
+
+  if (credentialSessions.length === 0 && !loading) {
+    mainContent = (
+      <CredentialEmptyState
+        isFiltered={false}
+        onCreateCredential={() => setIsCreating(true)}
+      />
+    );
+  } else if (filteredSessions.length === 0 && !loading) {
+    mainContent = (
+      <CredentialEmptyState isFiltered={true} onResetFilters={resetFilters} />
+    );
+  } else if (viewMode === "grid") {
+    mainContent = (
+      <CredentialGrid
+        sessions={filteredSessions}
+        disabled={busy}
+        onReconnect={(s) => setReauthenticationTarget(s)}
+        onRename={(s) =>
+          setEditor({ kind: "rename", session: s, value: s.name })
+        }
+        onRotate={(s) => setEditor({ kind: "rotate", session: s, value: "" })}
+        onDelete={(s) => setDeleteTarget(s)}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Hero Header */}
+      <CredentialHeroHeader
+        loading={loading}
+        onRefresh={() => void refetch()}
+        onAddCredential={() => setIsCreating(true)}
+      />
+
+      {/* Error Alert */}
       {error && (
         <div
           role="alert"
-          className="rounded-xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger"
+          className="flex items-center gap-3 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger shadow-xs"
         >
-          {error.message}
+          <AlertCircle className="h-5 w-5 shrink-0" />
+          <span>{error.message}</span>
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px]">
-            <thead className="border-b border-border bg-bg-secondary text-left text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
-              <tr>
-                <th className="px-4 py-3.5">Credential</th>
-                <th className="px-4 py-3.5">References</th>
-                <th className="px-4 py-3.5">Status</th>
-                <th className="px-4 py-3.5">Updated</th>
-                <th className="px-4 py-3.5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
-              {credentialSessions.map((session) => (
-                <CredentialSessionRow
-                  key={session.id}
-                  session={session}
-                  disabled={busy}
-                  onReconnect={() => setReauthenticationTarget(session)}
-                  onRename={() =>
-                    setEditor({ kind: "rename", session, value: session.name })
-                  }
-                  onRotate={() =>
-                    setEditor({ kind: "rotate", session, value: "" })
-                  }
-                  onDelete={() => setDeleteTarget(session)}
-                />
-              ))}
-              {!loading && credentialSessions.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="px-6 py-16 text-center text-sm text-text-muted"
-                  >
-                    No credentials yet. Add a provider to create one.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* KPI Stats Overview */}
+      <CredentialStatsBar sessions={credentialSessions} />
 
+      {/* Filter & Command Toolbar */}
+      <CredentialFilterToolbar
+        search={search}
+        onSearchChange={setSearch}
+        kindFilter={kindFilter}
+        onKindFilterChange={setKindFilter}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        usageFilter={usageFilter}
+        onUsageFilterChange={setUsageFilter}
+        sortOption={sortOption}
+        onSortChange={setSortOption}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        totalCount={credentialSessions.length}
+        filteredCount={filteredSessions.length}
+        onResetFilters={resetFilters}
+      />
+
+      {/* Content Area */}
+      {mainContent}
+
+      {/* Modals & Dialogs */}
       {editor && (
-        <CredentialEditor
+        <CredentialEditorModal
           editor={editor}
           busy={busy}
           onChange={(value) => setEditor({ ...editor, value })}
           onCancel={() => setEditor(null)}
           onSave={() => void saveEditor()}
+        />
+      )}
+
+      {isCreating && (
+        <CredentialCreateModal
+          isOpen={isCreating}
+          busy={busy}
+          onClose={() => setIsCreating(false)}
+          onSubmit={handleCreateCredential}
         />
       )}
 
@@ -183,209 +263,6 @@ export function CredentialSessions() {
         variant="danger"
         loading={busy}
       />
-    </div>
-  );
-}
-
-function CredentialSessionRow({
-  session,
-  disabled,
-  onReconnect,
-  onRename,
-  onRotate,
-  onDelete,
-}: {
-  session: CredentialSession;
-  disabled: boolean;
-  onReconnect: () => void;
-  onRename: () => void;
-  onRotate: () => void;
-  onDelete: () => void;
-}) {
-  const references = session.route_references;
-  return (
-    <tr>
-      <td className="px-4 py-4 align-top">
-        <div className="flex items-start gap-3">
-          <span className="rounded-lg bg-primary-light p-2 text-primary">
-            <KeyRound className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <p className="font-medium text-text-primary">{session.name}</p>
-            <p className="mt-0.5 font-mono text-xs text-text-muted">
-              {session.kind === "api_key" ? "API Key" : "GPT Login"} ·{" "}
-              {session.id}
-            </p>
-            {session.secret_data && (
-              <div className="mt-2 flex max-w-sm items-center gap-2">
-                <input
-                  className="input h-8 font-mono text-xs"
-                  type="password"
-                  readOnly
-                  value={session.secret_data}
-                  aria-label={`API key for ${session.name}`}
-                />
-                <CopyButton
-                  text={session.secret_data}
-                  className="h-8 shrink-0 rounded-lg border border-border px-2"
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </td>
-      <td className="px-4 py-4 align-top">
-        {references.length === 0 ? (
-          <span className="rounded-full bg-warning-light px-2.5 py-1 text-xs font-medium text-amber-700">
-            Unused
-          </span>
-        ) : (
-          <div className="flex max-w-md flex-wrap gap-1.5">
-            {references.map((reference) => (
-              <span
-                key={`${reference.provider_id}/${reference.api_type}`}
-                className="rounded-full bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary"
-                title={reference.provider_id}
-              >
-                {reference.provider_name} · {reference.api_type}
-              </span>
-            ))}
-          </div>
-        )}
-      </td>
-      <td className="px-4 py-4 align-top text-sm text-text-secondary">
-        {session.auth_state.status}
-      </td>
-      <td className="px-4 py-4 align-top text-sm text-text-secondary">
-        {new Date(session.updated_at).toLocaleString()}
-      </td>
-      <td className="px-4 py-4 align-top">
-        <div className="flex justify-end gap-2">
-          {session.kind === "chatgpt" && (
-            <button
-              type="button"
-              className="btn btn-secondary h-9 px-3"
-              disabled={disabled}
-              onClick={onReconnect}
-              title="Reconnect this GPT credential for every referenced route"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Reconnect
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-secondary h-9 px-3"
-            disabled={disabled}
-            onClick={onRename}
-            title="Rename credential"
-          >
-            <Pencil className="h-4 w-4" />
-            Rename
-          </button>
-          {session.kind === "api_key" && (
-            <button
-              type="button"
-              className="btn btn-secondary h-9 px-3"
-              disabled={disabled}
-              onClick={onRotate}
-              title={`Rotate for ${references.length} routes`}
-            >
-              <RotateCcw className="h-4 w-4" />
-              Rotate
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn h-9 border border-danger/30 px-3 text-danger hover:bg-danger/5"
-            disabled={disabled || references.length !== 0}
-            onClick={onDelete}
-            title={
-              references.length === 0
-                ? "Delete unused credential"
-                : "Remove all route references before deleting"
-            }
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete
-          </button>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function CredentialEditor({
-  editor,
-  busy,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  editor: Exclude<EditorState, null>;
-  busy: boolean;
-  onChange: (value: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  const rotating = editor.kind === "rotate";
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="credential-editor-title"
-        className="w-full max-w-lg rounded-xl border border-border bg-white shadow-2xl"
-      >
-        <div className="border-b border-border p-6">
-          <h3
-            id="credential-editor-title"
-            className="text-xl font-bold text-text-primary"
-          >
-            {rotating ? "Rotate API Key" : "Rename Credential"}
-          </h3>
-          <p className="mt-1 text-sm text-text-secondary">
-            {rotating
-              ? `This changes every one of the ${editor.session.route_references.length} referenced routes together.`
-              : "The name is shown in provider credential selectors."}
-          </p>
-        </div>
-        <div className="p-6">
-          <label
-            className="text-sm font-medium text-text-secondary"
-            htmlFor="credential-editor-value"
-          >
-            {rotating ? "New API Key" : "Name"}
-          </label>
-          <input
-            id="credential-editor-value"
-            autoFocus
-            className="input mt-2"
-            type={rotating ? "password" : "text"}
-            maxLength={rotating ? undefined : 120}
-            value={editor.value}
-            onChange={(event) => onChange(event.target.value)}
-          />
-        </div>
-        <div className="flex justify-end gap-3 px-6 pb-6">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={busy}
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={busy || !editor.value.trim()}
-            onClick={onSave}
-          >
-            {busy ? "Saving..." : "Save"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

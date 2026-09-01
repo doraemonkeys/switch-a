@@ -8,7 +8,8 @@ export function ConfigFormActions({
   return (
     <div className="flex items-center justify-between pt-6 border-t border-border">
       <p className="text-sm text-text-muted">
-        Saved changes apply to subsequent requests. Active WebSocket connections require reconnection.
+        Saved changes apply to subsequent requests. Active WebSocket connections
+        require reconnection.
       </p>
       <div className="flex gap-3">
         <button

@@ -5,6 +5,7 @@ import type { CredentialSession } from "../../api";
 import { CredentialSessions } from "./CredentialSessions";
 
 const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
   rename: vi.fn(),
   update: vi.fn(),
   remove: vi.fn(),
@@ -15,14 +16,17 @@ const mocks = vi.hoisted(() => ({
   importLogin: vi.fn(),
   credentialLoginHook: vi.fn(),
   sessions: [] as CredentialSession[],
+  loading: false,
+  apiError: null as Error | null,
 }));
 
 vi.mock("../../hooks/useCredentialSessions", () => ({
   useCredentialSessions: () => ({
     credentialSessions: mocks.sessions,
-    loading: false,
-    error: null,
+    loading: mocks.loading,
+    error: mocks.apiError,
     refetch: mocks.refetch,
+    createCredentialSession: mocks.create,
     renameCredentialSession: mocks.rename,
     updateCredentialSession: mocks.update,
     deleteCredentialSession: mocks.remove,
@@ -89,6 +93,10 @@ function chatGPTCredential(): CredentialSession {
       status: "reauth_required",
       email: "team@example.com",
       account_id: "account-gpt",
+      plan_type: "team",
+      usage_snapshot: {
+        five_hour: { used_percent: 45, window_seconds: 18000 },
+      },
     },
   };
 }
@@ -96,6 +104,9 @@ function chatGPTCredential(): CredentialSession {
 describe("CredentialSessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.loading = false;
+    mocks.apiError = null;
+    mocks.create.mockResolvedValue(undefined);
     mocks.rename.mockResolvedValue(undefined);
     mocks.update.mockResolvedValue(undefined);
     mocks.remove.mockResolvedValue(undefined);
@@ -193,5 +204,137 @@ describe("CredentialSessions", () => {
       screen.getByRole("button", { name: "Reconnect with GPT Sign-In" }),
     );
     expect(mocks.startLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it("filters credentials dynamically by search query and kind filter tabs", async () => {
+    const user = userEvent.setup();
+    mocks.sessions = [
+      credential("shared", [
+        {
+          provider_id: "provider-a",
+          provider_name: "Claude Production",
+          api_type: "claude",
+        },
+      ]),
+      chatGPTCredential(),
+    ];
+    render(<CredentialSessions />);
+
+    expect(screen.getByText("Shared Claude key")).toBeInTheDocument();
+    expect(screen.getByText("GPT Team Login")).toBeInTheDocument();
+
+    // Filter by kind: API Keys only
+    await user.click(screen.getByRole("button", { name: /API Keys/i }));
+    expect(screen.getByText("Shared Claude key")).toBeInTheDocument();
+    expect(screen.queryByText("GPT Team Login")).not.toBeInTheDocument();
+
+    // Filter by kind: ChatGPT Sessions only
+    await user.click(screen.getByRole("button", { name: /ChatGPT Sessions/i }));
+    expect(screen.queryByText("Shared Claude key")).not.toBeInTheDocument();
+    expect(screen.getByText("GPT Team Login")).toBeInTheDocument();
+
+    // Reset to All Types
+    await user.click(screen.getByRole("button", { name: /All Types/i }));
+    expect(screen.getByText("Shared Claude key")).toBeInTheDocument();
+    expect(screen.getByText("GPT Team Login")).toBeInTheDocument();
+
+    // Search query
+    const searchInput = screen.getByPlaceholderText(
+      /Search by credential name/i,
+    );
+    await user.type(searchInput, "team@example.com");
+    expect(screen.queryByText("Shared Claude key")).not.toBeInTheDocument();
+    expect(screen.getByText("GPT Team Login")).toBeInTheDocument();
+  });
+
+  it("switches seamlessly between Card Grid View and Table View", async () => {
+    const user = userEvent.setup();
+    render(<CredentialSessions />);
+
+    // Default is Grid View
+    expect(screen.getByLabelText("Table View")).toBeInTheDocument();
+
+    // Click Table View
+    await user.click(screen.getByLabelText("Table View"));
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByText("Secret / Account")).toBeInTheDocument();
+
+    // Click Grid View
+    await user.click(screen.getByLabelText("Grid View"));
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("allows creating a new API key credential directly from the page", async () => {
+    const user = userEvent.setup();
+    render(<CredentialSessions />);
+
+    await user.click(screen.getByRole("button", { name: /Add Credential/i }));
+
+    expect(
+      screen.getByRole("heading", { name: "Add New Credential" }),
+    ).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Credential Name"), "New Gemini Key");
+    await user.type(
+      screen.getByLabelText("API Secret Key"),
+      "gemini-secret-12345",
+    );
+    await user.click(screen.getByRole("button", { name: "Create Credential" }));
+
+    expect(mocks.create).toHaveBeenCalledWith({
+      name: "New Gemini Key",
+      kind: "api_key",
+      secret_data: "gemini-secret-12345",
+    });
+  });
+
+  it("toggles password visibility with eye toggle button", async () => {
+    const user = userEvent.setup();
+    render(<CredentialSessions />);
+
+    const secretInput = screen.getByLabelText("API key for Shared Claude key");
+    expect(secretInput).toHaveAttribute("type", "password");
+
+    const showButton = screen.getAllByLabelText("Show secret")[0];
+    await user.click(showButton);
+    expect(secretInput).toHaveAttribute("type", "text");
+
+    const hideButton = screen.getByLabelText("Hide secret");
+    await user.click(hideButton);
+    expect(secretInput).toHaveAttribute("type", "password");
+  });
+
+  it("renders empty states when there are no credentials or search results", async () => {
+    const user = userEvent.setup();
+    mocks.sessions = [];
+    const { rerender } = render(<CredentialSessions />);
+
+    expect(screen.getByText("No Credentials Configured")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Add Your First Credential/i }),
+    ).toBeInTheDocument();
+
+    // Test filtered empty state
+    mocks.sessions = [credential("shared", [])];
+    rerender(<CredentialSessions />);
+    const searchInput = screen.getByPlaceholderText(
+      /Search by credential name/i,
+    );
+    await user.type(searchInput, "nonexistent-query-12345");
+
+    expect(
+      screen.getByText("No matching credentials found"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Reset all filters/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("displays error alert when the query returns an error", () => {
+    mocks.apiError = new Error("Failed to load credentials from server");
+    render(<CredentialSessions />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to load credentials from server",
+    );
   });
 });
