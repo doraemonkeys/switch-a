@@ -284,15 +284,12 @@ func TestProviderImportReceiptReservationSerializesStoreInstances(t *testing.T) 
 	results := make(chan error, 2)
 	var workers sync.WaitGroup
 	for _, candidateStore := range []*SQLiteStore{first, second} {
-		candidateStore := candidateStore
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			results <- candidateStore.ApplyProviderImport(context.Background(), &ProviderImportBundle{
 				Receipt: cloneProviderImportReceipt(receipt),
 			})
-		}()
+		})
 	}
 	close(start)
 	workers.Wait()
@@ -301,8 +298,8 @@ func TestProviderImportReceiptReservationSerializesStoreInstances(t *testing.T) 
 	successes := 0
 	replays := 0
 	for result := range results {
-		switch {
-		case result == nil:
+		switch result {
+		case nil:
 			successes++
 		default:
 			var replay *ProviderImportReceiptReplayError

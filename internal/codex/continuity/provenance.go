@@ -2,6 +2,7 @@ package codexcontinuity
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -271,12 +272,7 @@ func bindingMatchesClaimScope(binding Binding, command StoreClaim) bool {
 }
 
 func clientScopeMatches(owner codexidentity.ClientScope, candidates []codexidentity.ClientScope) bool {
-	for _, candidate := range candidates {
-		if owner.Equal(candidate) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(candidates, owner.Equal)
 }
 
 func sameProvenanceClaim(current, requested Binding) bool {

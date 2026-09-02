@@ -521,7 +521,7 @@ func TestQueryPageMaximumLimitSupportsUniqueTraces(t *testing.T) {
 		cfg.MaxRecordsPerProvider = DefaultMaxListLimit
 	})
 	session := startTestSession(t, manager, DefaultMaxListLimit, 32<<20, "selected")
-	for index := 0; index < DefaultMaxListLimit; index++ {
+	for index := range DefaultMaxListLimit {
 		addCompletedRecord(t, manager, index)
 	}
 	page, err := readRecordPageForTest(t, manager, session.SessionID, ListQuery{Limit: DefaultMaxListLimit})

@@ -120,7 +120,7 @@ func prepareTestWebSocketAttemptHeaders(
 	prepared := testPreparedProviderAttempt(t, provider, apiType, "https://provider.example.test")
 	gateway := &Gateway{auth: providerauth.NewService(providerauth.Config{})}
 	headers, _, err := gateway.prepareWebSocketAttemptHeaders(
-		request.Context(), request, provider, prepared.candidate, apiType,
+		request.Context(), request, provider, prepared.candidate,
 		globalAuthMode, prepared.finalURL, true,
 	)
 	if err != nil {

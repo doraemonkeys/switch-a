@@ -94,8 +94,11 @@ func TestAdditionalCaptureAllocationRollbackAndCommitFailures(t *testing.T) {
 	if allocation.releaseScratch(-1) || allocation.releaseScratch(31) || !allocation.releaseScratch(30) {
 		t.Fatal("scratch release bounds were not enforced")
 	}
-	if !allocation.rollbackLocked() || !allocation.rollbackLocked() {
-		t.Fatal("allocation rollback was not successful and idempotent")
+	if !allocation.rollbackLocked() {
+		t.Fatal("allocation rollback was not successful")
+	}
+	if !allocation.rollbackLocked() {
+		t.Fatal("allocation rollback was not idempotent")
 	}
 	if session.chargedBytes != 0 || session.temporaryBytes != 0 || session.manager.processCharged != 0 {
 		t.Fatal("rollback leaked account ownership")
@@ -228,7 +231,10 @@ func TestAdditionalStartAllocationAndConfigValidationFailures(t *testing.T) {
 	if !manager.beginStartAllocation(100, 20, &allocation) {
 		t.Fatal("valid start allocation failed")
 	}
-	if !allocation.rollback() || !allocation.rollback() {
+	if !allocation.rollback() {
+		t.Fatal("start allocation rollback was not successful")
+	}
+	if !allocation.rollback() {
 		t.Fatal("start allocation rollback was not idempotent")
 	}
 	if (*startAllocation)(nil).rollback() {

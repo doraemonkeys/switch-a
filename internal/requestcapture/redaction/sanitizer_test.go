@@ -88,7 +88,7 @@ func TestHeadersDetailedFailsClosedAndBoundsAttackerInput(t *testing.T) {
 	}
 
 	byteHeavy := make(http.Header)
-	for index := 0; index < 10; index++ {
+	for index := range 10 {
 		byteHeavy[string(rune('a'+index))] = []string{strings.Repeat("x", MaxRetainedHeaderValueBytes)}
 	}
 	if got := sanitizer.HeadersDetailed(byteHeavy, nil, nil, false); !got.Truncated || len(got.Value) >= len(byteHeavy) {

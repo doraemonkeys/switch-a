@@ -202,7 +202,7 @@ func TestPersistentStickyCache_RetryFlushAndErrorBranches(t *testing.T) {
 	store.setErrors(nil, nil, nil, nil)
 	keyB := model.StickyKey{IP: "10.0.0.2", APIType: "chat"}
 	cache.Set(keyB, "provider-b", time.Minute)
-	if err := cache.Close(nil); err != nil {
+	if err := cache.Close(context.Background()); err != nil {
 		t.Fatalf("retry flush failed: %v", err)
 	}
 	if _, ok := store.has(keyA); !ok {
@@ -258,7 +258,7 @@ func TestPersistentStickyCache_StartCleanupLoopAndNilPersistence(t *testing.T) {
 	if cache.Len() != 0 {
 		t.Fatal("cleanup loop should remove expired in-memory entries")
 	}
-	if err := cache.Close(nil); err != nil {
+	if err := cache.Close(context.Background()); err != nil {
 		t.Fatalf("nil persistence close failed: %v", err)
 	}
 

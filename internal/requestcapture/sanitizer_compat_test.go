@@ -2,7 +2,6 @@ package requestcapture
 
 import (
 	"net/http"
-	"net/url"
 
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
 )
@@ -43,10 +42,6 @@ type sanitizer struct {
 }
 
 type requestTarget = redaction.Target
-
-func (s sanitizer) headers(source http.Header, extraSensitive []string) map[string][]string {
-	return s.inner.Headers(source, extraSensitive)
-}
 
 func (s sanitizer) headersDetailed(
 	source http.Header,
@@ -120,10 +115,6 @@ func (s sanitizer) failureDetailed(
 	redactAll bool,
 ) (FailureObservation, bool) {
 	return s.inner.FailureDetailed(input, evidence, redactAll)
-}
-
-func borrowedHTTPTarget(raw *url.URL) redaction.Target {
-	return redaction.BorrowedHTTPTarget(raw)
 }
 
 func borrowedWebSocketTarget(raw string) redaction.Target {

@@ -76,7 +76,7 @@ func forwardedProto(values []string) (string, bool, error) {
 		return "", false, errors.New("forwarded must contain exactly one element")
 	}
 	var proto string
-	for _, parameter := range strings.Split(values[0], ";") {
+	for parameter := range strings.SplitSeq(values[0], ";") {
 		name, value, present := strings.Cut(strings.TrimSpace(parameter), "=")
 		if !present || !strings.EqualFold(strings.TrimSpace(name), "proto") {
 			continue

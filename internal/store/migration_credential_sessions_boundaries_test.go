@@ -69,7 +69,6 @@ func TestCredentialSessionMigrationFailsClosedOnIncompleteLegacySchema(t *testin
 		},
 	}
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			db := openCredentialMigrationBoundaryDB(t)
 			for _, statement := range testCase.statements {
@@ -167,7 +166,6 @@ func TestCredentialSessionMigrationRejectsUnrepresentableLegacyCredentials(t *te
 		},
 	}
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			db := openLegacyCredentialFixture(t)
 			if err := testCase.mutate(db); err != nil {

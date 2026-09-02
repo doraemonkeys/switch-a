@@ -9,10 +9,9 @@ import (
 )
 
 const (
-	truncatedOpaqueID          = captureid.TruncatedOpaqueID
-	maxBase36Uint64Bytes       = captureid.MaxBase36Uint64Bytes
-	maxSessionIDBytes          = captureid.MaxSessionIDBytes
-	maxCanonicalMessageIDBytes = captureid.MaxCanonicalMessageIDBytes
+	truncatedOpaqueID    = captureid.TruncatedOpaqueID
+	maxBase36Uint64Bytes = captureid.MaxBase36Uint64Bytes
+	maxSessionIDBytes    = captureid.MaxSessionIDBytes
 )
 
 func newUUID() ([16]byte, error) {

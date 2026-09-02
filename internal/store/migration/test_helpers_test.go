@@ -81,10 +81,6 @@ func assertConfigMissing(t *testing.T, db *gorm.DB, key string) {
 	}
 }
 
-func strPtr(value string) *string {
-	return &value
-}
-
 func setupWebSocketMigrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

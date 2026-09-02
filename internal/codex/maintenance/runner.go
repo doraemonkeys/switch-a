@@ -195,10 +195,7 @@ func (r *Runner) sweep(ctx context.Context, trigger Trigger) {
 }
 
 func (r *Runner) finish(event Event, started time.Time) {
-	event.Duration = r.clock.Now().UTC().Sub(started)
-	if event.Duration < 0 {
-		event.Duration = 0
-	}
+	event.Duration = max(r.clock.Now().UTC().Sub(started), 0)
 	if r.observer != nil {
 		r.observer.ObserveMaintenance(event)
 	}

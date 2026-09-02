@@ -439,7 +439,7 @@ func TestConcurrentClaimHasOneDurableOwner(t *testing.T) {
 	}
 	outcomes := make(chan outcome, workers)
 	var wait sync.WaitGroup
-	for worker := 0; worker < workers; worker++ {
+	for worker := range workers {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
@@ -609,7 +609,6 @@ func TestUnavailableStoreAndSecretFreeObservability(t *testing.T) {
 	assertKind(t, err, codexcontinuity.ErrorUnavailable)
 	_, err = fixture.service.RequiredHMACVersions(context.Background())
 	assertKind(t, err, codexcontinuity.ErrorUnavailable)
-	fixture.close = func() {}
 }
 
 func newFixture(t *testing.T, document []byte, policy codexcontinuity.Policy) testFixture {

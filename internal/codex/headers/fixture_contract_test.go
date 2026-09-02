@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -213,7 +214,6 @@ func TestCodexDesktop0150Alpha8FixtureContract(t *testing.T) {
 func TestCodexDesktop0150Alpha8FixturesReplayByteForByte(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	for _, fixture := range manifest.Fixtures {
-		fixture := fixture
 		t.Run(fixture.File, func(t *testing.T) {
 			raw := readFixture(t, fixture.File)
 			if fixture.Direction != "client_to_upstream" && fixture.Direction != "upstream_to_client" {
@@ -323,10 +323,5 @@ func readFixture(t *testing.T, name string) []byte {
 }
 
 func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }

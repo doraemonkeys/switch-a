@@ -167,6 +167,7 @@ func TestStatusAndConditionalStop(t *testing.T) {
 	stopReq := httptest.NewRequest(http.MethodDelete, "/", nil)
 	stopReq.SetPathValue("session_id", testOtherSessionID)
 	stopRecorder := httptest.NewRecorder()
-	handler.StopSession(stopRecorder, stopReq)
+	stopHandler := NewHandler(Config{Sessions: service})
+	stopHandler.StopSession(stopRecorder, stopReq)
 	assertErrorResponse(t, stopRecorder, http.StatusNotFound, errorCodeSessionNotFound)
 }

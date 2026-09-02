@@ -152,7 +152,7 @@ func (h *Gateway) prepareWebSocketDialHeaders(ctx context.Context, r *http.Reque
 	if err != nil {
 		return nil, err
 	}
-	headers, _, err := h.prepareWebSocketAttemptHeaders(ctx, r, provider, candidate, apiType, globalAuthMode, finalURL, true)
+	headers, _, err := h.prepareWebSocketAttemptHeaders(ctx, r, provider, candidate, globalAuthMode, finalURL, true)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,6 @@ func (h *Gateway) prepareWebSocketAttemptHeaders(
 	r *http.Request,
 	provider *model.Provider,
 	candidate codexidentity.CandidateSnapshot,
-	apiType,
 	globalAuthMode string,
 	finalURL *url.URL,
 	sanitizeProviderHeaders bool,

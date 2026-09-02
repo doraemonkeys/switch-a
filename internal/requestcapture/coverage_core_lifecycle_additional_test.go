@@ -275,8 +275,8 @@ func TestAdditionalQueryLockCancellationAndCursorValidation(t *testing.T) {
 	if generation, watermark, err := decodeWatermark(validWatermark); err != nil || generation != 4 || watermark != 5 {
 		t.Fatalf("decodeWatermark(valid) = (%d, %d, %v)", generation, watermark, err)
 	}
-	if contextDone(nil) != nil || queryContextCanceled(nil) {
-		t.Fatal("nil context channel was treated as canceled")
+	if contextDone(context.Background()) != nil || queryContextCanceled(nil) {
+		t.Fatal("non-cancelable context channel was treated as canceled")
 	}
 	closed := make(chan struct{})
 	close(closed)
@@ -482,8 +482,8 @@ func TestAdditionalStatusSlotStateChangeOverflowAndRetirement(t *testing.T) {
 	if slot.storage != nil || slot.session != nil || slot.charge != 0 {
 		t.Fatalf("discardStatusSlot() retained state: %#v", slot)
 	}
-	if statusContextError(nil) != nil {
-		t.Fatal("nil status context failed")
+	if statusContextError(context.Background()) != nil {
+		t.Fatal("live status context failed")
 	}
 }
 

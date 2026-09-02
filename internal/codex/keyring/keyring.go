@@ -11,7 +11,6 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	"fmt"
-	"hash"
 	"io"
 	"math"
 )
@@ -109,7 +108,7 @@ func (k *Keyring) deriveHMACKeys(ring parsedRing) error {
 	for _, purpose := range hmacPurposes {
 		versions := make(map[string][digestBytes]byte, len(ring.keys))
 		for version, root := range ring.keys {
-			derived, err := hkdf.Key[hash.Hash](sha256.New, root[:], nil, string(purpose), digestBytes)
+			derived, err := hkdf.Key(sha256.New, root[:], nil, string(purpose), digestBytes)
 			if err != nil {
 				return errorOf(ErrorInvalidDocument, "hmac", version, "could not derive purpose key", err)
 			}
@@ -126,7 +125,7 @@ func (k *Keyring) deriveAEADKeys(ring parsedRing) error {
 	for _, purpose := range aeadPurposes {
 		versions := make(map[string]cipher.AEAD, len(ring.keys))
 		for version, root := range ring.keys {
-			derived, err := hkdf.Key[hash.Hash](sha256.New, root[:], nil, string(purpose), keyMaterialBytes)
+			derived, err := hkdf.Key(sha256.New, root[:], nil, string(purpose), keyMaterialBytes)
 			if err != nil {
 				return errorOf(ErrorInvalidDocument, "aead", version, "could not derive purpose key", err)
 			}

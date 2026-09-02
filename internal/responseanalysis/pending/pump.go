@@ -192,7 +192,7 @@ type pumpConfig[T any] struct {
 }
 
 func runPump[T any](config pumpConfig[T]) {
-	source := newRawSource[T](
+	source := newRawSource(
 		config.body,
 		config.scratchBytes,
 		config.events,
@@ -396,7 +396,7 @@ func sendPumpTerminal[T any](
 	decodedBytes int64,
 	err error,
 ) {
-	config.events <- terminalEvent[T](source, decodedBytes, err)
+	config.events <- terminalEvent(source, decodedBytes, err)
 }
 
 func sendAnalysisFailure[T any](

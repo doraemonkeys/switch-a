@@ -615,9 +615,7 @@ func (a *providerImportIDAllocator) allocate(name string, auth *providerauth.Pro
 		return base
 	}
 	suffix := a.nextSuffix[base]
-	if suffix < 2 {
-		suffix = 2
-	}
+	suffix = max(suffix, 2)
 	for {
 		candidate := fmt.Sprintf("%s-%d", base, suffix)
 		suffix++

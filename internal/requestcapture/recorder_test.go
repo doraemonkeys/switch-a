@@ -207,7 +207,7 @@ func TestTransitionLimitMarksTraceTruncated(t *testing.T) {
 	})
 	session := startTestSession(t, manager, 2, 1<<20, "selected")
 	gateway := manager.BeginGateway(GatewayStart{GatewayRequestID: "trace"})
-	for index := 0; index < 2; index++ {
+	for range 2 {
 		gateway.Transition(TransitionStart{
 			Attempt: AttemptMetadata{Provider: ProviderIdentity{ID: "other"}},
 		})

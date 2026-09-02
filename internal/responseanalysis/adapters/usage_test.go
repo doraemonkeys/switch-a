@@ -56,7 +56,6 @@ func TestExtractUsageUsesOnlyReviewedEnvelopeLocations(t *testing.T) {
 		{name: "malformed", data: "{\"usage\":"},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			usage := ExtractUsage([]byte(test.data), nil)
 			if (usage != nil) != test.want {

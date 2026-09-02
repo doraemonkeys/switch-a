@@ -192,7 +192,7 @@ func TestBootstrapApplicationCodexSecurityRecordsEveryFailurePhaseWithoutActivat
 }
 
 func TestBootstrapApplicationCodexSecurityRejectsInvalidDependenciesAndPostcondition(t *testing.T) {
-	if _, err := bootstrapApplicationCodexSecurity(nil, "", "", nil, nil, nil, nil, nil); err == nil {
+	if _, err := bootstrapApplicationCodexSecurity(context.TODO(), "", "", nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("bootstrap accepted missing dependencies")
 	}
 	persistence := &applicationCodexPersistenceStub{inventories: []store.CodexPersistenceInventory{{}, {PendingStaticCredentialSessionIDs: []string{"still-pending"}}}}

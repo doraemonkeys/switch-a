@@ -246,7 +246,7 @@ func (m *Manager) scanStart(request StartRequest) (startShape, error) {
 		if provider.ID == "" {
 			return startShape{}, &ValidationError{Field: "providers", Reason: "provider ID at index is empty"}
 		}
-		for previous := 0; previous < index; previous++ {
+		for previous := range index {
 			if provider.ID == request.Providers[previous].ID {
 				return startShape{}, &ValidationError{Field: "providers", Reason: "provider IDs must be unique"}
 			}
@@ -355,10 +355,7 @@ func (m *Manager) Status() Status {
 			_ = s.releaseOwner()
 			continue
 		}
-		completedRecords := s.retainedRecordCount - s.activeRecords
-		if completedRecords < 0 {
-			completedRecords = 0
-		}
+		completedRecords := max(s.retainedRecordCount-s.activeRecords, 0)
 		sessionStatus := SessionStatus{
 			SessionID:                   makeStatusSessionID(s.id),
 			Generation:                  s.generation,

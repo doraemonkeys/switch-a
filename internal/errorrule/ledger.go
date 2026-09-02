@@ -3,6 +3,7 @@ package errorrule
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 )
 
@@ -122,9 +123,7 @@ func (l RetryLedger) clone() RetryLedger {
 
 func cloneCounterMap[K comparable](source map[K]uint) map[K]uint {
 	clone := make(map[K]uint, len(source)+1)
-	for key, value := range source {
-		clone[key] = value
-	}
+	maps.Copy(clone, source)
 	return clone
 }
 

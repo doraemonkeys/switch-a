@@ -363,14 +363,6 @@ func requireProviderImportStatus(t *testing.T, recorder *httptest.ResponseRecord
 	}
 }
 
-func closeProviderImportChannel(ch chan struct{}) {
-	select {
-	case <-ch:
-	default:
-		close(ch)
-	}
-}
-
 var _ io.ReadCloser = providerImportTestBody{}
 var _ ProviderCatalog = (*providerImportTestCatalog)(nil)
 var _ DraftService = (*providerImportTestDrafts)(nil)

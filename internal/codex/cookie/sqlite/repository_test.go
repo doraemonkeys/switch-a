@@ -492,7 +492,7 @@ func TestConcurrentPerKeyMergesPreserveDifferentKeysAndSerializeSameKey(t *testi
 	start := make(chan struct{})
 	errorsFound := make(chan error, workers)
 	var group sync.WaitGroup
-	for index := 0; index < workers; index++ {
+	for index := range workers {
 		group.Add(1)
 		go func(index int) {
 			defer group.Done()
@@ -517,7 +517,7 @@ func TestConcurrentPerKeyMergesPreserveDifferentKeysAndSerializeSameKey(t *testi
 
 	start = make(chan struct{})
 	errorsFound = make(chan error, workers)
-	for index := 0; index < workers; index++ {
+	for index := range workers {
 		group.Add(1)
 		go func(index int) {
 			defer group.Done()

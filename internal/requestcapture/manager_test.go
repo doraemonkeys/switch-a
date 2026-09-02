@@ -341,13 +341,11 @@ func TestStartDenialAndConcurrentLosersDoNotMaterialize(t *testing.T) {
 	const contenders = 32
 	results := make(chan error, contenders)
 	var wait sync.WaitGroup
-	for index := 0; index < contenders; index++ {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+	for range contenders {
+		wait.Go(func() {
 			_, startErr := manager.Start(request)
 			results <- startErr
-		}()
+		})
 	}
 	wait.Wait()
 	close(results)
@@ -514,9 +512,9 @@ func TestPerProviderRetentionEvictsByCompletedSequence(t *testing.T) {
 	manager := newTestManager(t, nil)
 	session := startTestSession(t, manager, 1, 1<<20, "selected")
 	var firstID string
-	for index := 0; index < 2; index++ {
+	for index := range 2 {
 		gateway, recorder := beginTestHTTP(manager, fmt.Sprintf("gateway-%d", index), "selected", nil)
-		completeHTTP(recorder, []byte(fmt.Sprintf("response-%d", index)))
+		completeHTTP(recorder, fmt.Appendf(nil, "response-%d", index))
 		gateway.Finish(GatewayOutcome{})
 		if index == 0 {
 			firstID = recorder.ID()

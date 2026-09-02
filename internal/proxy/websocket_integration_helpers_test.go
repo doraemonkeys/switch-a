@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,28 +100,6 @@ func marshalWebSocketGatewayError(statusCode int, code, message string) []byte {
 	envelope.Error.Message = message
 	payload, _ := json.Marshal(envelope)
 	return payload
-}
-
-func readTerminalGatewayErrorEvent(t *testing.T, ctx context.Context, conn *websocket.Conn, wantStatus int, wantCode string) webSocketGatewayErrorEnvelope {
-	t.Helper()
-	messageType, payload, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read terminal gateway event: %v", err)
-	}
-	if messageType != websocket.MessageText {
-		t.Fatalf("message type = %v, want text", messageType)
-	}
-	var envelope webSocketGatewayErrorEnvelope
-	if err := json.Unmarshal(payload, &envelope); err != nil {
-		t.Fatalf("decode terminal gateway event %q: %v", string(payload), err)
-	}
-	if envelope.Type != "error" || envelope.Error.Type != "gateway_error" || envelope.Status != wantStatus || envelope.Error.Code != wantCode {
-		t.Fatalf("terminal gateway event = %#v, want status=%d code=%q", envelope, wantStatus, wantCode)
-	}
-	if _, _, err := conn.Read(ctx); err == nil || (!errors.Is(err, io.EOF) && !isNormalClose(err)) {
-		t.Fatalf("expected websocket close after terminal gateway error, got %v", err)
-	}
-	return envelope
 }
 
 type mockDialer struct {

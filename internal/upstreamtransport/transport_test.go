@@ -168,9 +168,7 @@ func TestResponseConcurrentTransferHasSingleWinner(t *testing.T) {
 	var losers atomic.Int32
 	var wait sync.WaitGroup
 	for range 16 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			body, takeErr := response.TakeBody()
 			switch {
 			case takeErr == nil:
@@ -181,7 +179,7 @@ func TestResponseConcurrentTransferHasSingleWinner(t *testing.T) {
 			default:
 				t.Errorf("TakeBody error = %v", takeErr)
 			}
-		}()
+		})
 	}
 	wait.Wait()
 	if winners.Load() != 1 || losers.Load() != 15 {
@@ -369,9 +367,6 @@ func TestBuildRequestRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := BuildRequest(t.Context(), http.MethodGet, "://bad-url", nil, original); err == nil {
 		t.Fatal("BuildRequest accepted invalid URL")
-	}
-	if _, err := BuildRequest(nil, http.MethodGet, "http://upstream.example", nil, original); err == nil {
-		t.Fatal("BuildRequest accepted nil context")
 	}
 }
 
@@ -581,9 +576,6 @@ func TestFetchRejectsInvalidStateAndPropagatesRoundTripFailure(t *testing.T) {
 	}
 	if _, _, err := transport.Fetch(t.Context(), nil, ExecutionPolicy{}); err == nil {
 		t.Fatal("Fetch accepted nil request")
-	}
-	if _, _, err := transport.Fetch(nil, request, ExecutionPolicy{}); err == nil {
-		t.Fatal("Fetch accepted nil context")
 	}
 }
 

@@ -46,7 +46,6 @@ func TestFrozenProtocolFixtures(t *testing.T) {
 	for _, fileName := range []string{"protocol-envelopes-positive.json", "protocol-envelopes-negative.json"} {
 		fixtures := loadProtocolFixtures(t, fileName)
 		for _, fixture := range fixtures.Cases {
-			fixture := fixture
 			t.Run(fixture.Name, func(t *testing.T) {
 				t.Parallel()
 				body := decodeFixtureBody(t, fixture)
@@ -348,7 +347,6 @@ func TestResolveResponseMediaUsesOnlyAuthoritativeOrUnambiguousEvidence(t *testi
 		{name: "missing evidence remains unknown", wantSource: ResponseMediaUnknown, wantDecision: ResponseMediaUnresolved, wantReason: ResponseMediaEvidenceMissing},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			media := ResolveResponseMedia(test.contentType, test.accept)

@@ -107,7 +107,6 @@ func TestBoundedUsageParserPreservesCacheWritePresence(t *testing.T) {
 		{name: "positive", fixture: "openai-cache-write-positive.json", wantValue: 5, wantPresent: true},
 		{name: "missing", fixture: "", wantPresent: false},
 	} {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			data := []byte(`{"usage":{"input_tokens":12,"output_tokens":3,"total_tokens":15}}`)

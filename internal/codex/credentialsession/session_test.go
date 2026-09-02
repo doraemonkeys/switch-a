@@ -555,12 +555,13 @@ func TestRepositoryReplaceBindingsAndPendingResolution(t *testing.T) {
 }
 
 func TestMutationCoordinatorSerializesAndScopesOwnership(t *testing.T) {
+	var missingContext context.Context
 	var nilCoordinator *MutationCoordinator
 	if _, _, err := nilCoordinator.With(context.Background(), []string{"s"}); err == nil || nilCoordinator.Owns(context.Background(), "s") {
 		t.Fatal("nil coordinator accepted mutation")
 	}
 	coordinator := NewMutationCoordinator()
-	if _, _, err := coordinator.With(nil, []string{"s"}); err == nil {
+	if _, _, err := coordinator.With(missingContext, []string{"s"}); err == nil {
 		t.Fatal("With(nil context) succeeded")
 	}
 	if _, _, err := coordinator.With(context.Background(), []string{" "}); err == nil {

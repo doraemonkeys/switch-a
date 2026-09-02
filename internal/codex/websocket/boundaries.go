@@ -423,7 +423,7 @@ func projectPassableHandshakeHeaders(headers http.Header) http.Header {
 	projected := make(http.Header)
 	connectionNominated := make(map[string]struct{})
 	for _, value := range headerValues(headers, "Connection") {
-		for _, name := range strings.Split(value, ",") {
+		for name := range strings.SplitSeq(value, ",") {
 			if name = strings.TrimSpace(name); name != "" {
 				connectionNominated[http.CanonicalHeaderKey(name)] = struct{}{}
 			}

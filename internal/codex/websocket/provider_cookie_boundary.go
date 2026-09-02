@@ -168,7 +168,7 @@ func stripGatewayHandleCookie(headers http.Header) {
 	deleteHeaderFold(headers, "Cookie")
 	for _, value := range values {
 		kept := make([]string, 0)
-		for _, pair := range strings.Split(value, ";") {
+		for pair := range strings.SplitSeq(value, ";") {
 			pair = strings.TrimSpace(pair)
 			name, _, hasValue := strings.Cut(pair, "=")
 			if hasValue && name == providercookie.GatewayHandleName {

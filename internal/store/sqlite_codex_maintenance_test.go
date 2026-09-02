@@ -93,9 +93,6 @@ func TestCodexMaintenanceCatalogIsAtomicAndRejectsIncompleteRows(t *testing.T) {
 	if _, err := storage.LoadCodexMaintenanceCatalog(canceled); err == nil {
 		t.Fatal("catalog accepted a canceled list operation")
 	}
-	if _, err := storage.LoadCodexMaintenanceCatalog(nil); err == nil {
-		t.Fatal("catalog accepted nil context")
-	}
 	if _, err := (*SQLiteStore)(nil).LoadCodexMaintenanceCatalog(ctx); err == nil {
 		t.Fatal("nil store loaded catalog")
 	}

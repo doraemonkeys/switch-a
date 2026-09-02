@@ -179,7 +179,7 @@ func TestAnalyzeStopsGzipExpansionAtErrorObservationBound(t *testing.T) {
 	if len(observations) != MaxTestMessageErrors+1 {
 		t.Fatalf("observation count = %d", len(observations))
 	}
-	for index := 0; index < MaxTestMessageErrors; index++ {
+	for index := range MaxTestMessageErrors {
 		if observations[index].Class != EventError {
 			t.Fatalf("observation %d = %#v", index, observations[index])
 		}
@@ -264,7 +264,7 @@ func TestAnalyzeLimitsRejectExpansionBeyondHardMaximum(t *testing.T) {
 func manyAnthropicErrors(count int) []byte {
 	var builder strings.Builder
 	state := uint64(0x9e3779b97f4a7c15)
-	for index := 0; index < count; index++ {
+	for index := range count {
 		builder.WriteString("event: error\ndata: {\"type\":\"error\",\"padding\":\"")
 		for range 256 {
 			state ^= state << 13
@@ -273,7 +273,7 @@ func manyAnthropicErrors(count int) []byte {
 			builder.WriteByte("0123456789abcdef"[state&15])
 		}
 		builder.WriteString("\",\"error\":{\"type\":\"BUSY\",\"message\":\"RETRY ")
-		builder.WriteString(fmt.Sprint(index))
+		fmt.Fprint(&builder, index)
 		builder.WriteString("\"}}\n\n")
 	}
 	return []byte(builder.String())

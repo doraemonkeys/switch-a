@@ -76,7 +76,6 @@ func TestHTTPFetchMapsStableTransportFacts(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			reason, observation := HTTPFetch(test.contextErr, test.err)
 			if reason != test.wantReason {
@@ -135,7 +134,6 @@ func TestHTTPPreparationAndForwardMapControlFlowOrigin(t *testing.T) {
 		},
 	}
 	for _, test := range preparationTests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			reason, observation := HTTPPreparation(test.contextErr, opaque, test.code)
 			fact := observation.Primary
@@ -221,7 +219,6 @@ func TestHTTPPreparationAndForwardMapControlFlowOrigin(t *testing.T) {
 		},
 	}
 	for _, test := range forwardTests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			reason, observation := HTTPForward(test.contextErr, test.err, test.origin)
 			fact := observation.Primary

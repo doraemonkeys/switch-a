@@ -9,7 +9,7 @@ import (
 func addCompletedRecord(t *testing.T, manager *Manager, index int) string {
 	t.Helper()
 	gateway, recorder := beginTestHTTP(manager, fmt.Sprintf("gateway-%d", index), "selected", nil)
-	completeHTTP(recorder, []byte(fmt.Sprintf("payload-%d", index)))
+	completeHTTP(recorder, fmt.Appendf(nil, "payload-%d", index))
 	gateway.Finish(GatewayOutcome{})
 	return recorder.ID()
 }
@@ -55,7 +55,7 @@ func TestListRecordsStableWatermarkPagination(t *testing.T) {
 func TestListRecordsReportsEvictionGap(t *testing.T) {
 	manager := newTestManager(t, nil)
 	session := startTestSession(t, manager, 3, 1<<20, "selected")
-	for index := 0; index < 3; index++ {
+	for index := range 3 {
 		addCompletedRecord(t, manager, index)
 	}
 	first, err := readRecordPageForTest(t, manager, session.SessionID, ListQuery{Limit: 1})

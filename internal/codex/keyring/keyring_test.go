@@ -202,11 +202,11 @@ func TestKeyringOperationsAreConcurrentSafe(t *testing.T) {
 	const workers = 16
 	var wait sync.WaitGroup
 	errorsSeen := make(chan error, workers)
-	for worker := 0; worker < workers; worker++ {
+	for worker := range workers {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
-			input := []byte(fmt.Sprintf("value-%d", index))
+			input := fmt.Appendf(nil, "value-%d", index)
 			digest, err := keyring.Sign(HMACJarHandle, input)
 			if err == nil {
 				err = keyring.Verify(HMACJarHandle, input, digest)

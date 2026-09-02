@@ -57,7 +57,7 @@ func TestWebSocketRouteTargetPreferenceMatchesAbsorbingHTTPFold(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			for iteration := 0; iteration < 100; iteration++ {
+			for range 100 {
 				continuity := &routeHintContinuity{
 					Continuity: newTestContinuity(t),
 					owner: codexcontinuity.Owner{

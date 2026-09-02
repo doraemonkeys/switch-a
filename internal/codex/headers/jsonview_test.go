@@ -385,7 +385,7 @@ func TestServerResponseReferenceEvidence(t *testing.T) {
 			{name: "conflicting reference rejects", body: `{"type":"%s","response":{"id":"response"}}`, owner: OwnerConflict, wantAction: ActionReject, wantReason: ReasonOwnerConflict},
 		} {
 			t.Run(eventType+"/"+test.name, func(t *testing.T) {
-				body := []byte(fmt.Sprintf(test.body, eventType))
+				body := fmt.Appendf(nil, test.body, eventType)
 				view := InspectServerFrame(body)
 				wantLifecycle := ResponseLifecycleActive
 				if eventType == eventResponseCompleted || eventType == eventResponseIncomplete || eventType == eventResponseFailed {

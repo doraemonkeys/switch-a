@@ -38,7 +38,7 @@ func (h *Handler) resolveSemanticMatch(
 		Provider:          errorrule.EligibleProvider(),
 	})
 	if err != nil {
-		return h.commitSemanticResponse(ctx, pctx, state, pending, semantic, result, errorrule.Decision{})
+		return h.commitSemanticResponse(pctx, state, pending, semantic, result, errorrule.Decision{})
 	}
 	semantic.decision = decision
 	switch decision.Value {
@@ -47,7 +47,7 @@ func (h *Handler) resolveSemanticMatch(
 	case errorrule.DecisionSwitchProvider:
 		return h.switchSemanticProvider(ctx, pctx, state, pending, semantic, result, decision)
 	default:
-		return h.commitSemanticResponse(ctx, pctx, state, pending, semantic, result, decision)
+		return h.commitSemanticResponse(pctx, state, pending, semantic, result, decision)
 	}
 }
 
@@ -78,7 +78,7 @@ func (h *Handler) retrySemanticSameProvider(
 		if decision.Value == errorrule.DecisionSwitchProvider {
 			return h.switchSemanticProvider(ctx, pctx, state, pending, semantic, result, decision)
 		}
-		return h.commitSemanticResponse(ctx, pctx, state, pending, semantic, result, decision)
+		return h.commitSemanticResponse(pctx, state, pending, semantic, result, decision)
 	}
 	permit, err := h.httpSelector.ReserveSameProviderRetry(ctx, sameProviderRetryReservation{
 		current: state.currentLease, request: pctx.selectReq, ruleKey: key, ledger: state.ledger,
@@ -98,13 +98,13 @@ func (h *Handler) retrySemanticSameProvider(
 			Provider:          errorrule.IneligibleProvider(reason),
 		})
 		if decisionErr != nil {
-			return h.commitSemanticResponse(ctx, pctx, state, pending, semantic, result, errorrule.Decision{})
+			return h.commitSemanticResponse(pctx, state, pending, semantic, result, errorrule.Decision{})
 		}
 		semantic.decision = decision
 		if decision.Value == errorrule.DecisionSwitchProvider {
 			return h.switchSemanticProvider(ctx, pctx, state, pending, semantic, result, decision)
 		}
-		return h.commitSemanticResponse(ctx, pctx, state, pending, semantic, result, decision)
+		return h.commitSemanticResponse(pctx, state, pending, semantic, result, decision)
 	}
 	discarded, err := pending.discard(
 		responseanalysis.TransitionSemanticDecision,
@@ -207,7 +207,7 @@ func (h *Handler) resolveSemanticAlternateFailure(
 		return h.cancelPendingResponse(pending, semantic, prior, cancelErr)
 	}
 	if pending != nil && !resolved.responseCommitted && !resolved.discarded {
-		return h.commitSemanticResponse(ctx, pctx, state, pending, semantic, prior, semantic.decision)
+		return h.commitSemanticResponse(pctx, state, pending, semantic, prior, semantic.decision)
 	}
 	resolved.semantic = semantic
 	resolved.inheritHealth(prior)
@@ -226,7 +226,6 @@ func semanticAlternateFailureOutcome(result forwardResult) (errorrule.AlternateO
 }
 
 func (h *Handler) commitSemanticResponse(
-	ctx context.Context,
 	pctx *proxyContext,
 	state *retryState,
 	pending *pendingHTTPResponse,

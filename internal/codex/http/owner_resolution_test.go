@@ -45,7 +45,7 @@ func TestHTTPRouteTargetPreferenceUsesAbsorbingSharedFold(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			for iteration := 0; iteration < 100; iteration++ {
+			for range 100 {
 				continuity := &continuityRecorder{resolve: func(request codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error) {
 					return codexcontinuity.Binding{Kind: request.Evidence.Kind, Owner: codexcontinuity.Owner{
 						ClientScope:     clientScope,

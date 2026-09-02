@@ -250,7 +250,7 @@ func TestRequestAccountCloseReleaseRaceIsIdempotent(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			for iteration := 0; iteration < 1_000; iteration++ {
+			for iteration := range 1_000 {
 				process, err := NewProcessBudget(test.capacity)
 				if err != nil {
 					t.Fatal(err)
@@ -303,7 +303,7 @@ func TestProcessBudgetConcurrentHardCap(t *testing.T) {
 	results := make(chan bool, workerCount)
 	var wait sync.WaitGroup
 	wait.Add(workerCount)
-	for worker := 0; worker < workerCount; worker++ {
+	for range workerCount {
 		go func() {
 			defer wait.Done()
 			account, accountErr := newRequestAccount(process, grantBytes)
@@ -323,7 +323,7 @@ func TestProcessBudgetConcurrentHardCap(t *testing.T) {
 	}
 	close(start)
 	succeeded := 0
-	for worker := 0; worker < workerCount; worker++ {
+	for range workerCount {
 		if <-results {
 			succeeded++
 		}

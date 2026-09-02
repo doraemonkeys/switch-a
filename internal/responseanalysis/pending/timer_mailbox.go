@@ -134,7 +134,7 @@ func (c *coordinator[T]) enqueueTimer(signal timerSignal) {
 
 func (c *coordinator[T]) handlePendingTimerSignals() {
 	signals, count := c.timerSignals.drain()
-	for index := 0; index < count; index++ {
+	for index := range count {
 		c.handleTimerSignal(signals[index])
 	}
 }

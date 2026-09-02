@@ -402,7 +402,7 @@ func TestGateway_RetriesSameManagedProviderAfterUnauthorizedHandshake(t *testing
 	if auth.refreshCalls.Load() != 1 || upstreamCalls.Load() != 2 {
 		t.Fatalf("refresh calls = %d, upstream calls = %d, want 1/2", auth.refreshCalls.Load(), upstreamCalls.Load())
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		if got := <-upstreamOffers; got != "realtime.v2,"+subprotocol {
 			t.Fatalf("dial %d offer = %q, want full client offer", attempt+1, got)
 		}

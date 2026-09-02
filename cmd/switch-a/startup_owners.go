@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -123,8 +124,7 @@ func (activation *applicationActivation) Shutdown() error {
 	}
 	activation.stopOnce.Do(func() {
 		var errs []error
-		for index := len(activation.started) - 1; index >= 0; index-- {
-			step := activation.started[index]
+		for _, step := range slices.Backward(activation.started) {
 			if err := step.stop(); err != nil {
 				errs = append(errs, fmt.Errorf("stop application component %s: %w", step.component, err))
 			}

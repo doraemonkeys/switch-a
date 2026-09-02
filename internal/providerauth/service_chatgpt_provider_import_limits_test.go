@@ -97,7 +97,7 @@ func TestPreviewSub2APIChatGPTImport_StopsAtAccountLimitWithoutMaterializingRema
 	var document strings.Builder
 	document.Grow(5_100_000)
 	document.WriteString(`{"accounts":[`)
-	for index := 0; index < 1_000_000; index++ {
+	for index := range 1_000_000 {
 		if index > 0 {
 			document.WriteByte(',')
 		}
@@ -186,7 +186,7 @@ func TestChatGPTProviderImportLifecycle_ClaimSurvivesExpiryUntilReleased(t *test
 
 func TestChatGPTProviderImportLifecycle_ClaimAndCancelRaceIsAtomic(t *testing.T) {
 	service := NewService(Config{Clock: fixedClock{now: time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)}})
-	for iteration := 0; iteration < 64; iteration++ {
+	for iteration := range 64 {
 		service.mu.Lock()
 		service.providerImports["race-import"] = stagedChatGPTProviderImport{
 			expiresAt: time.Date(2026, time.July, 30, 13, 0, 0, 0, time.UTC),
@@ -231,7 +231,7 @@ func TestChatGPTProviderImportCapacity_BoundsSlotsAndAggregateBytes(t *testing.T
 	if err := service.reserveChatGPTProviderImportCapacity(maxChatGPTProviderImportDocumentBytes + 1); !errors.Is(err, ErrChatGPTProviderImportCapacityExceeded) {
 		t.Fatalf("oversized document error = %v, want capacity exceeded", err)
 	}
-	for index := 0; index < maxActiveChatGPTProviderImportDrafts; index++ {
+	for index := range maxActiveChatGPTProviderImportDrafts {
 		if err := service.reserveChatGPTProviderImportCapacity(1); err != nil {
 			t.Fatalf("slot reservation %d returned error: %v", index, err)
 		}
@@ -239,12 +239,12 @@ func TestChatGPTProviderImportCapacity_BoundsSlotsAndAggregateBytes(t *testing.T
 	if err := service.reserveChatGPTProviderImportCapacity(1); !errors.Is(err, ErrChatGPTProviderImportCapacityExceeded) {
 		t.Fatalf("slot overflow error = %v, want capacity exceeded", err)
 	}
-	for index := 0; index < maxActiveChatGPTProviderImportDrafts; index++ {
+	for range maxActiveChatGPTProviderImportDrafts {
 		service.releaseChatGPTProviderImportReservation(1)
 	}
 	const reservationBytes = 2 << 20
 	reservations := maxAggregateChatGPTProviderImportBytes / reservationBytes
-	for index := 0; index < reservations; index++ {
+	for index := range reservations {
 		if err := service.reserveChatGPTProviderImportCapacity(reservationBytes); err != nil {
 			t.Fatalf("aggregate reservation %d returned error: %v", index, err)
 		}
@@ -252,7 +252,7 @@ func TestChatGPTProviderImportCapacity_BoundsSlotsAndAggregateBytes(t *testing.T
 	if err := service.reserveChatGPTProviderImportCapacity(1); !errors.Is(err, ErrChatGPTProviderImportCapacityExceeded) {
 		t.Fatalf("aggregate overflow error = %v, want capacity exceeded", err)
 	}
-	for index := 0; index < reservations; index++ {
+	for range reservations {
 		service.releaseChatGPTProviderImportReservation(reservationBytes)
 	}
 	service.mu.Lock()

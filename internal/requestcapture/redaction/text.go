@@ -2,6 +2,7 @@ package redaction
 
 import (
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -95,14 +96,7 @@ func normalizeSensitiveHeaderNames(source []string) sensitiveNameSanitization {
 			continue
 		}
 		value = strings.Clone(strings.ToLower(value))
-		duplicate := false
-		for _, existing := range result.names {
-			if existing == value {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
+		if !slices.Contains(result.names, value) {
 			result.names = append(result.names, value)
 		}
 	}
@@ -118,14 +112,7 @@ func mergeSensitiveHeaderNames(existing, additions []string, redactAll bool) sen
 		return result
 	}
 	for _, name := range normalized.names {
-		duplicate := false
-		for _, existing := range result.names {
-			if existing == name {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
+		if slices.Contains(result.names, name) {
 			continue
 		}
 		if len(result.names) == MaxRetainedSensitiveHeaderNames {

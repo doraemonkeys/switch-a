@@ -9,10 +9,9 @@ import (
 )
 
 const (
-	recordIDPrefix         = captureid.RecordIDPrefix
-	recordIDTagBytes       = captureid.RecordIDTagBytes
-	recordIDEncodedBytes   = captureid.RecordIDEncodedBytes
-	canonicalRecordIDBytes = captureid.CanonicalRecordIDBytes
+	recordIDPrefix       = captureid.RecordIDPrefix
+	recordIDTagBytes     = captureid.RecordIDTagBytes
+	recordIDEncodedBytes = captureid.RecordIDEncodedBytes
 )
 
 type parsedRecordID struct {
@@ -311,10 +310,7 @@ func (s *sessionState) noteEvictionLocked(record *recordState) {
 			next.first = sequence
 		}
 	default:
-		indexCharge := evictionRangeChargeBytes
-		if indexCharge > record.charge {
-			indexCharge = record.charge
-		}
+		indexCharge := min(evictionRangeChargeBytes, record.charge)
 		record.charge -= indexCharge
 		s.evictionIndexCharge += indexCharge
 		node := &evictionRange{
@@ -371,14 +367,8 @@ func (s *sessionState) evictionCountBetweenLocked(lower, upper uint64) uint64 {
 		if interval.first > upper {
 			break
 		}
-		first := interval.first
-		if first < lower {
-			first = lower
-		}
-		last := interval.last
-		if last > upper {
-			last = upper
-		}
+		first := max(interval.first, lower)
+		last := min(interval.last, upper)
 		width := last - first + 1
 		if ^uint64(0)-count < width {
 			return ^uint64(0)

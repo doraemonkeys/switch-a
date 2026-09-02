@@ -36,7 +36,7 @@ func TestHandleSlotShapeUsesCheckedArithmetic(t *testing.T) {
 		t.Fatal("overflowing record capacity produced a handle arena")
 	}
 
-	for iteration := 0; iteration < 32; iteration++ {
+	for range 32 {
 		_, err := NewManager(Config{
 			ProcessCeilingBytes:      2 << 20,
 			DefaultSessionQuotaBytes: 1 << 20,

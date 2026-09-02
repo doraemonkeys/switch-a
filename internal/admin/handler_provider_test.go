@@ -147,7 +147,7 @@ func performProviderRequest(t *testing.T, handler http.HandlerFunc, method, targ
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(method, target, bytes.NewReader(body))
-	if id := strings.TrimPrefix(target, "/admin/api/providers/"); id != target {
+	if id, ok := strings.CutPrefix(target, "/admin/api/providers/"); ok {
 		request.SetPathValue("id", id)
 	}
 	w := httptest.NewRecorder()

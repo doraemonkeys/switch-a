@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -68,7 +69,6 @@ func TestSharedFixtureManifestAndSchemas(t *testing.T) {
 		t.Fatalf("shared fixture manifest has %d JSON files, want exactly %d: %v", len(actual), len(sharedFixtureManifest), actual)
 	}
 	for _, name := range sharedFixtureManifest {
-		name := name
 		t.Run(name, func(t *testing.T) {
 			if _, ok := actual[name]; !ok {
 				t.Fatalf("required shared fixture %q is missing", name)
@@ -720,7 +720,6 @@ func TestProtocolFixtureBodiesAreExecutable(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"protocol-envelopes-positive.json", "protocol-envelopes-negative.json"} {
-		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			data, err := os.ReadFile(filepath.Join("..", "..", "contracts", "internal-error", "v1", name))
@@ -802,12 +801,7 @@ func TestProtocolFixtureBodiesAreExecutable(t *testing.T) {
 }
 
 func containsProtocol(protocols []apicontract.ResponseProtocolID, want apicontract.ResponseProtocolID) bool {
-	for _, protocolID := range protocols {
-		if protocolID == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(protocols, want)
 }
 
 func decodeFixtureBody(t *testing.T, contentEncoding string, wireBytes []byte) []byte {

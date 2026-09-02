@@ -23,10 +23,7 @@ func beginImmediate(ctx context.Context, database *sql.DB, busyTimeout time.Dura
 	if err != nil {
 		return nil, classifyDatabaseError("acquire_connection", err)
 	}
-	milliseconds := busyTimeout.Milliseconds()
-	if milliseconds < 1 {
-		milliseconds = 1
-	}
+	milliseconds := max(busyTimeout.Milliseconds(), 1)
 	if _, err := connection.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", milliseconds)); err != nil {
 		_ = connection.Close()
 		return nil, classifyDatabaseError("configure_busy_timeout", err)

@@ -73,10 +73,7 @@ func (s *Service) syncSessionExpiryTaskLocked(now time.Time) {
 	if earliest.IsZero() {
 		return
 	}
-	delay := earliest.Sub(now)
-	if delay < 0 {
-		delay = 0
-	}
+	delay := max(earliest.Sub(now), 0)
 	epoch := s.sessionExpiryEpoch
 	s.sessionExpiryTask = s.scheduleAfter(delay, func() {
 		s.expireSessions(epoch)

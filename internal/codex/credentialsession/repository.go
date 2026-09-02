@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -368,9 +369,7 @@ func (r *Repository) UpdateCredentialCAS(
 		"subject_key_version": subject.KeyVersion,
 		"updated_at":          r.clock.Now().UTC(),
 	}
-	for column, value := range authStateUpdates {
-		updates[column] = value
-	}
+	maps.Copy(updates, authStateUpdates)
 	result := r.db.WithContext(ctx).Model(&Session{}).
 		Where("id = ? AND version = ?", strings.TrimSpace(sessionID), expectedVersion).
 		Updates(updates)

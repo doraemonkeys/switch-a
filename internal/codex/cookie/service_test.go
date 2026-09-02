@@ -368,6 +368,7 @@ func TestServiceAndRequestFailuresStayExplicit(t *testing.T) {
 }
 
 func TestServiceRejectsInvalidDependenciesAndCryptoFailures(t *testing.T) {
+	var missingContext context.Context
 	policy := DefaultPolicy()
 	base := ServiceConfig{Repository: newMemoryRepository(), HandleDigester: testDigester{version: "h1"}, HostCanonicalizer: testHosts, PublicSuffixList: testSuffixes, Policy: policy}
 	invalid := []ServiceConfig{
@@ -397,7 +398,7 @@ func TestServiceRejectsInvalidDependenciesAndCryptoFailures(t *testing.T) {
 	if _, err := service.ResolveJar(context.Background(), op, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
 		t.Fatalf("random failure = %v", err)
 	}
-	if _, err := service.ResolveJar(nil, op, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := service.ResolveJar(missingContext, op, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("nil context = %v", err)
 	}
 	if _, err := service.ResolveJar(context.Background(), "", "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrInvalidConfig) {

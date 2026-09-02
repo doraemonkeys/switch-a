@@ -23,7 +23,6 @@ const (
 	chatGPTOAuthUserAgent    = "github.com/doraemonkeys/switch-a/0.1"
 	chatGPTCodexOriginator   = "codex_cli_rs"
 	chatGPTCodexBaseURL      = "https://chatgpt.com/backend-api/codex"
-	chatGPTVendor            = "openai"
 	chatGPTAPIAudience       = "https://api.openai.com/v1"
 	codexAPIType             = "codex"
 	loopbackCallbackURLHost  = "localhost"

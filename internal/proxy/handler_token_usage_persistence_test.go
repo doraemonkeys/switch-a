@@ -31,7 +31,6 @@ func TestLogRequestPersistsObservedTokenPointersExactly(t *testing.T) {
 		{name: "explicit zeros", payload: fixture, wantTotal: tokenPointer(15), wantCacheWrite: tokenPointer(0), wantReasoning: tokenPointer(0)},
 		{name: "missing optional and total", payload: []byte(`{"usage":{"input_tokens":4,"output_tokens":2}}`)},
 	} {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			store := newMockStore()
@@ -127,7 +126,6 @@ func TestHandlerPersistsHTTPAndInferredSSEUsage(t *testing.T) {
 			wantPrompt: 2, wantCompletion: 5, wantTotal: 4,
 		},
 	} {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if test.responseContentType == "" {

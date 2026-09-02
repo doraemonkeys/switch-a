@@ -120,7 +120,7 @@ func TestBlobQuerySnapshotsDoNotSealOrFragmentMutableTail(t *testing.T) {
 	baseline := session.chargedBytes
 	manager.mu.Unlock()
 	builder := blobBuilder{}
-	for index := 0; index < 2*MinimumChunkBytes; index++ {
+	for index := range 2 * MinimumChunkBytes {
 		session.mu.Lock()
 		if captured := builder.appendLocked(session, []byte{byte(index)}); captured != 1 {
 			session.mu.Unlock()

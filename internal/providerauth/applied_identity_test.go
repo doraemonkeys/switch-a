@@ -96,7 +96,7 @@ func TestApplyProviderCredentialsRejectsExpectedAuthorityConflictBeforeInjection
 	headers := http.Header{
 		"Authorization":      {"Bearer client-secret"},
 		"X-Api-Key":          {"prior-attempt-secret"},
-		"ChatGPT-Account-Id": {"client-account"},
+		"Chatgpt-Account-Id": {"client-account"},
 	}
 
 	_, err := NewService(Config{}).ApplyProviderCredentials(
@@ -113,7 +113,7 @@ func TestApplyProviderCredentialsRejectsExpectedAuthorityConflictBeforeInjection
 			t.Fatalf("%s = %q after mismatch, want unchanged %q", name, got, want)
 		}
 	}
-	if got := headers["ChatGPT-Account-Id"]; len(got) != 1 || got[0] != "client-account" {
+	if got := headers["Chatgpt-Account-Id"]; len(got) != 1 || got[0] != "client-account" {
 		t.Fatalf("ChatGPT-Account-Id = %#v after mismatch, want unchanged", got)
 	}
 }
@@ -170,7 +170,7 @@ func TestApplyProviderCredentialsUsesActualChatGPTAccount(t *testing.T) {
 	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, "openai", snapshot, finalURL)
 	headers := http.Header{
 		"X-Api-Key":          {"client-key"},
-		"ChatGPT-Account-Id": {"forged-account"},
+		"Chatgpt-Account-Id": {"forged-account"},
 	}
 
 	applied, err := NewService(Config{Clock: fixedClock{now: now}}).ApplyProviderCredentials(
@@ -257,7 +257,7 @@ func TestApplyProviderCredentialsRejectsChatGPTSubjectConflictBeforeInjection(t 
 	snapshot := chatGPTCredentialSnapshot(t, "login-session", "acct-expected", "access-live", now.Add(time.Hour))
 	snapshot.AuthState.AccountID = "acct-actual"
 	candidate := mustAppliedIdentityCandidate(t, "route-chatgpt", codexAPIType, "openai", snapshot, finalURL)
-	headers := http.Header{"Authorization": {"Bearer client"}, "ChatGPT-Account-Id": {"forged"}}
+	headers := http.Header{"Authorization": {"Bearer client"}, "Chatgpt-Account-Id": {"forged"}}
 	doCalls := 0
 
 	_, err := NewService(Config{
@@ -276,7 +276,7 @@ func TestApplyProviderCredentialsRejectsChatGPTSubjectConflictBeforeInjection(t 
 	if doCalls != 0 {
 		t.Fatalf("refresh requests = %d before diagnostic mismatch rejection, want zero", doCalls)
 	}
-	if headers.Get("Authorization") != "Bearer client" || headers["ChatGPT-Account-Id"][0] != "forged" {
+	if headers.Get("Authorization") != "Bearer client" || headers["Chatgpt-Account-Id"][0] != "forged" {
 		t.Fatalf("headers changed before subject validation: %#v", headers)
 	}
 }
@@ -296,7 +296,7 @@ func TestApplyProviderCredentialsRejectsOriginConflictBeforeRefreshIO(t *testing
 			return nil, errors.New("unexpected refresh request")
 		}},
 	})
-	headers := http.Header{"Authorization": {"Bearer client"}, "ChatGPT-Account-Id": {"forged"}}
+	headers := http.Header{"Authorization": {"Bearer client"}, "Chatgpt-Account-Id": {"forged"}}
 
 	_, err := service.ApplyProviderCredentials(
 		context.Background(), headers, candidate, authModeBearer, authModeBearer, nil, actualURL,
@@ -308,7 +308,7 @@ func TestApplyProviderCredentialsRejectsOriginConflictBeforeRefreshIO(t *testing
 	if doCalls != 0 {
 		t.Fatalf("refresh requests = %d before AppliedIdentity validation, want zero", doCalls)
 	}
-	if headers.Get("Authorization") != "Bearer client" || headers["ChatGPT-Account-Id"][0] != "forged" {
+	if headers.Get("Authorization") != "Bearer client" || headers["Chatgpt-Account-Id"][0] != "forged" {
 		t.Fatalf("headers changed during preflight rejection: %#v", headers)
 	}
 }

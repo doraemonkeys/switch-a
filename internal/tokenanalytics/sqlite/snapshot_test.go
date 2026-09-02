@@ -123,7 +123,7 @@ func TestConcurrentWriterCleanupAndCheckpointStayWithinWriteBudget(t *testing.T)
 	database := newTestDatabase(t)
 	start := time.Now().UTC().Add(-48 * time.Hour)
 	query := testQuery(start, time.Now().UTC().Add(time.Hour), time.Hour)
-	for index := 0; index < 20; index++ {
+	for index := range 20 {
 		database.insertLog(t, model.RequestLog{
 			ProviderID: "seed", APIType: "codex", Model: "seed", CreatedAt: start.Add(time.Duration(index) * time.Minute),
 			PromptTokens: int64Pointer(1), CompletionTokens: int64Pointer(1),
@@ -152,7 +152,7 @@ func TestConcurrentWriterCleanupAndCheckpointStayWithinWriteBudget(t *testing.T)
 	group.Add(3)
 	go func() {
 		defer group.Done()
-		for index := 0; index < writerCount; index++ {
+		for index := range writerCount {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			started := time.Now()
 			err := database.writer.InsertLog(ctx, &model.RequestLog{
@@ -180,7 +180,7 @@ func TestConcurrentWriterCleanupAndCheckpointStayWithinWriteBudget(t *testing.T)
 	}()
 	go func() {
 		defer group.Done()
-		for index := 0; index < 5; index++ {
+		for range 5 {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			var busy, logFrames, checkpointedFrames int
 			err := checkpointDB.QueryRowContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)").Scan(&busy, &logFrames, &checkpointedFrames)

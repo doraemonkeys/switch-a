@@ -63,13 +63,6 @@ func requestLogTerminationReason(log *model.RequestLog) model.TerminationReason 
 	return *log.TerminationReason
 }
 
-func requestLogClientAction(log *model.RequestLog) model.ClientAction {
-	if log == nil || log.ClientAction == nil {
-		return ""
-	}
-	return *log.ClientAction
-}
-
 func requestLogEvidence(t *testing.T, log *model.RequestLog) webSocketEvidence {
 	t.Helper()
 	if log == nil || log.SessionEvidenceJSON == nil || *log.SessionEvidenceJSON == "" {

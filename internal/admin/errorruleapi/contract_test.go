@@ -96,7 +96,7 @@ func TestStrictMutationRequestRejectsMissingUnknownDuplicateTrailingAndUnionFiel
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
 			var decoded mutationRequest
-			apiErr := decodeRequest(httptest.NewRecorder(), request, MaxRuleMutationRequestBytes, &decoded)
+			apiErr := decodeRequest(request, MaxRuleMutationRequestBytes, &decoded)
 			if apiErr == nil {
 				_, apiErr = decoded.domainRule()
 			}
@@ -115,7 +115,7 @@ func TestStrictRuleRequestNormalizesAndKeepsRequiredBackoffZeroes(t *testing.T) 
 	body := `{"schema_version":1,"rule":{"name":"  Retry  ","enabled":false,"target":{"kind":"provider","provider_id":"p"},"api_type":"custom:tool","keywords":[" CAPACITY ","capacity"],"match_mode":"all","action":{"type":"retry_then_switch","max_retries":0,"backoff":{"initial_delay":"0s","max_delay":"0s","multiplier":0,"jitter":false}}}}`
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	var decoded mutationRequest
-	if apiErr := decodeRequest(httptest.NewRecorder(), request, MaxRuleMutationRequestBytes, &decoded); apiErr != nil {
+	if apiErr := decodeRequest(request, MaxRuleMutationRequestBytes, &decoded); apiErr != nil {
 		t.Fatal(apiErr)
 	}
 	spec, apiErr := decoded.domainRule()
@@ -138,7 +138,7 @@ func TestReorderAndMessageWireValidation(t *testing.T) {
 	}
 	for _, body := range invalidReorders {
 		var request reorderRequest
-		apiErr := decodeRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), MaxRuleReorderRequestBytes, &request)
+		apiErr := decodeRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), MaxRuleReorderRequestBytes, &request)
 		if apiErr == nil {
 			_, apiErr = request.ruleIDs()
 		}
@@ -159,7 +159,7 @@ func TestReorderAndMessageWireValidation(t *testing.T) {
 	}
 	for _, test := range messageTests {
 		var request testMessageRequest
-		apiErr := decodeRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body)), MaxTestMessageRequestBytes, &request)
+		apiErr := decodeRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body)), MaxTestMessageRequestBytes, &request)
 		if apiErr == nil {
 			_, apiErr = request.input()
 		}
@@ -174,27 +174,27 @@ func TestDecodeRequestLimitsUTF8AndReadFailures(t *testing.T) {
 	target := map[string]any{}
 	exact := `{"x":1}` + strings.Repeat(" ", 32-len(`{"x":1}`))
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(exact))
-	if apiErr := decodeRequest(httptest.NewRecorder(), request, 32, &target); apiErr != nil {
+	if apiErr := decodeRequest(request, 32, &target); apiErr != nil {
 		t.Fatalf("exact limit: %v", apiErr)
 	}
 	request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(exact+" "))
-	if apiErr := decodeRequest(httptest.NewRecorder(), request, 32, &target); apiErr == nil || apiErr.Status != http.StatusRequestEntityTooLarge {
+	if apiErr := decodeRequest(request, 32, &target); apiErr == nil || apiErr.Status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("limit+1 error = %#v", apiErr)
 	}
 	request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'}))
 	request.ContentLength = -1
-	if apiErr := decodeRequest(httptest.NewRecorder(), request, 32, &target); apiErr == nil || !strings.Contains(apiErr.Message, "UTF-8") {
+	if apiErr := decodeRequest(request, 32, &target); apiErr == nil || !strings.Contains(apiErr.Message, "UTF-8") {
 		t.Fatalf("invalid UTF-8 error = %#v", apiErr)
 	}
 	request = httptest.NewRequest(http.MethodPost, "/", &failingReader{})
-	if apiErr := decodeRequest(httptest.NewRecorder(), request, 32, &target); apiErr == nil || !errors.Is(apiErr, errTestFailure) {
+	if apiErr := decodeRequest(request, 32, &target); apiErr == nil || !errors.Is(apiErr, errTestFailure) {
 		t.Fatalf("read error = %#v", apiErr)
 	}
 	request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(""))
-	if apiErr := decodeRequest(httptest.NewRecorder(), request, 32, &target); apiErr == nil {
+	if apiErr := decodeRequest(request, 32, &target); apiErr == nil {
 		t.Fatal("empty body accepted")
 	}
-	if apiErr := decodeRequest(httptest.NewRecorder(), nil, 32, &target); apiErr == nil {
+	if apiErr := decodeRequest(nil, 32, &target); apiErr == nil {
 		t.Fatal("nil request accepted")
 	}
 }

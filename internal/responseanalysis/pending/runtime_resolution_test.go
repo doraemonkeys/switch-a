@@ -20,7 +20,7 @@ func TestResolutionCommitDiscardRace1000(t *testing.T) {
 		err        error
 	}
 
-	for iteration := 0; iteration < 1000; iteration++ {
+	for iteration := range 1000 {
 		body := newSteppedBody(immediateStep("race body", io.EOF))
 		writer := newRecordingWriter()
 		response := Start(context.Background(), config, StartInput[testObservation]{

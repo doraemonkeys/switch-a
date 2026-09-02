@@ -46,7 +46,7 @@ func normalizedHTTPResponseContentType(values []string, inferred string) string 
 func normalizedHTTPContentCodings(values []string) string {
 	var normalized []string
 	for _, value := range values {
-		for _, part := range strings.Split(value, ",") {
+		for part := range strings.SplitSeq(value, ",") {
 			if coding := strings.ToLower(strings.TrimSpace(part)); coding != "" {
 				normalized = append(normalized, coding)
 			}

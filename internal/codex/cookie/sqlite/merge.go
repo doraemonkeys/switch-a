@@ -348,6 +348,10 @@ func evictEntries(ctx context.Context, connection *sql.Conn, predicate string, a
 		}
 		candidates = append(candidates, item)
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, classifyDatabaseError("select_cookie_evictions", err)
+	}
 	if err := rows.Close(); err != nil {
 		return 0, classifyDatabaseError("select_cookie_evictions", err)
 	}
@@ -382,6 +386,10 @@ func evictAuthorities(ctx context.Context, connection *sql.Conn, jarID providerc
 			return 0, classifyDatabaseError("select_authority_evictions", err)
 		}
 		authorities = append(authorities, authority)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, classifyDatabaseError("select_authority_evictions", err)
 	}
 	if err := rows.Close(); err != nil {
 		return 0, classifyDatabaseError("select_authority_evictions", err)

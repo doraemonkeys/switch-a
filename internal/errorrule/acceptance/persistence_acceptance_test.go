@@ -167,8 +167,7 @@ func TestV5BConfigRevisionRestartAndProviderCascade(t *testing.T) {
 	globalAtThree := findRule(t, rulesAtThree, persistenceGlobalRuleID)
 	start := make(chan struct{})
 	results := make(chan error, 2)
-	for index := 0; index < 2; index++ {
-		index := index
+	for index := range 2 {
 		go func() {
 			<-start
 			spec := globalAtThree.RuleSpec
@@ -313,7 +312,7 @@ func TestV5BStatisticsRetryAndGenerationIsolation(t *testing.T) {
 
 	var waitGroup sync.WaitGroup
 	hitErrors := make(chan error, concurrentStatHits)
-	for index := 0; index < concurrentStatHits; index++ {
+	for index := range concurrentStatHits {
 		waitGroup.Add(1)
 		go func(index int) {
 			defer waitGroup.Done()

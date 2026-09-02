@@ -173,7 +173,7 @@ func (s *Service) PreviewSub2APIChatGPTImport(raw []byte) (*ChatGPTProviderImpor
 		return nil, errProviderAuthServiceShutdown
 	}
 	s.pruneExpiredSessionsLocked(now)
-	for attempt := 0; attempt < maxGeneratedIDAttempts; attempt++ {
+	for range maxGeneratedIDAttempts {
 		if _, exists := s.providerImports[importID]; !exists {
 			break
 		}
@@ -215,7 +215,7 @@ func (s *Service) PreviewSub2APIChatGPTImport(raw []byte) (*ChatGPTProviderImpor
 }
 
 func (s *Service) generateOpaqueImportID(used map[string]struct{}) (string, error) {
-	for attempt := 0; attempt < maxGeneratedIDAttempts; attempt++ {
+	for range maxGeneratedIDAttempts {
 		id := strings.TrimSpace(s.idGenerator.NewID())
 		if id == "" {
 			continue

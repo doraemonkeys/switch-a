@@ -166,7 +166,7 @@ func TestDownloadExportCapabilityCanBeRetriedUntilExpiry(t *testing.T) {
 		t.Fatalf("CreateExport() error = %v", err)
 	}
 	handler := NewHandler(Config{Exports: manager})
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		recorder := httptest.NewRecorder()
 		handler.DownloadExport(recorder, downloadRequest(http.MethodGet, ticket.ExportID, ticket.DownloadToken))
 		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "\"event\":\"export_end\"") {

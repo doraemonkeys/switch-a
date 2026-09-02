@@ -339,7 +339,6 @@ func TestApplyConfigImportCredentialSessionCASAndRollback(t *testing.T) {
 			match: "version mismatch",
 		},
 	} {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			store := newCredentialSessionStore(t)
 			ctx := context.Background()

@@ -152,7 +152,7 @@ func (s *Service) issueEmptyJar(
 	clientScope codexidentity.ClientScope,
 	reason string,
 ) (JarAccess, error) {
-	for attempt := 0; attempt < bindingGenerationAttempts; attempt++ {
+	for range bindingGenerationAttempts {
 		handleBytes := make([]byte, GatewayHandleEntropyBytes)
 		if _, err := io.ReadFull(s.random, handleBytes); err != nil {
 			return JarAccess{}, s.persistenceFailure(operationID, "generate_handle", PersistenceCrypto, err)

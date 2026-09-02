@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"maps"
 
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
@@ -389,8 +390,6 @@ func discardPendingForAlternateActivation(
 
 func cloneProviderExclusions(source map[string]bool) map[string]bool {
 	clone := make(map[string]bool, len(source)+1)
-	for providerID, excluded := range source {
-		clone[providerID] = excluded
-	}
+	maps.Copy(clone, source)
 	return clone
 }

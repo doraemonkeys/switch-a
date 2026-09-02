@@ -59,7 +59,7 @@ func BenchmarkDisabledPath(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		gateway := manager.BeginGateway(GatewayStart{})
 		recorder := gateway.BeginHTTP(input)
 		recorder.ObserveUpstream(payload)

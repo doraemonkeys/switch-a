@@ -20,19 +20,12 @@ type trackingHealthManager struct {
 	mu               sync.Mutex
 	markFailureCalls []markFailureCall
 	markSuccessIDs   []string
-	suspendCalls     []suspendCall
 	available        map[string]bool
 }
 
 type markFailureCall struct {
 	providerID string
 	err        error
-}
-
-type suspendCall struct {
-	providerID    string
-	disabledUntil time.Time
-	reason        string
 }
 
 func newTrackingHealthManager() *trackingHealthManager {
@@ -72,14 +65,7 @@ func (m *trackingHealthManager) ManualDisable(_ context.Context, _ string, _ str
 	return nil
 }
 
-func (m *trackingHealthManager) SuspendUntil(_ context.Context, providerID string, disabledUntil time.Time, reason string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.suspendCalls = append(m.suspendCalls, suspendCall{
-		providerID:    providerID,
-		disabledUntil: disabledUntil,
-		reason:        reason,
-	})
+func (m *trackingHealthManager) SuspendUntil(_ context.Context, _ string, _ time.Time, _ string) error {
 	return nil
 }
 
@@ -102,14 +88,6 @@ func (m *trackingHealthManager) getMarkSuccessIDs() []string {
 	defer m.mu.Unlock()
 	result := make([]string, len(m.markSuccessIDs))
 	copy(result, m.markSuccessIDs)
-	return result
-}
-
-func (m *trackingHealthManager) getSuspendCalls() []suspendCall {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	result := make([]suspendCall, len(m.suspendCalls))
-	copy(result, m.suspendCalls)
 	return result
 }
 

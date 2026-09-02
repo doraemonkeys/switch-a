@@ -298,28 +298,18 @@ const (
 	DefaultListLimit                    = 50
 	DefaultMaxListLimit                 = 200
 
-	maxRetainedProviders               = 256
-	maxRetainedIdentifierBytes         = 256
-	maxRetainedProviderIDBytes         = 256
-	maxRetainedProviderNameBytes       = 512
-	maxRetainedAPITypeBytes            = 128
-	maxRetainedMethodBytes             = 64
-	maxRetainedURLBytes                = 8 << 10
-	maxRetainedHostBytes               = 1 << 10
-	maxRetainedHeaderFields            = 128
-	maxRetainedHeaderValuesPerField    = 32
-	maxRetainedHeaderNameBytes         = 256
-	maxRetainedHeaderValueBytes        = 8 << 10
-	maxRetainedHeaderBytes             = 64 << 10
-	maxRetainedSensitiveHeaderNames    = 64
-	maxRetainedCredentialValues        = 64
-	maxRetainedCredentialValueBytes    = 4 << 10
-	maxRetainedCredentialBytes         = 64 << 10
-	maxRetainedProviderErrorFieldBytes = 128
-	maxRetainedErrorBytes              = 2 << 10
-	maxRetainedCloseReasonBytes        = 1 << 10
-	maxPendingLineagesPerTrace         = 4096
-	maxCursorBytes                     = 512
+	maxRetainedProviders            = 256
+	maxRetainedIdentifierBytes      = 256
+	maxRetainedProviderIDBytes      = 256
+	maxRetainedProviderNameBytes    = 512
+	maxRetainedAPITypeBytes         = 128
+	maxRetainedURLBytes             = 8 << 10
+	maxRetainedHeaderBytes          = 64 << 10
+	maxRetainedCredentialValueBytes = 4 << 10
+	maxRetainedErrorBytes           = 2 << 10
+	maxRetainedCloseReasonBytes     = 1 << 10
+	maxPendingLineagesPerTrace      = 4096
+	maxCursorBytes                  = 512
 )
 
 // Clock separates human-readable wall time from the monotonic elapsed-time

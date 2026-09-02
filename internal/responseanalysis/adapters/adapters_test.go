@@ -80,7 +80,6 @@ func TestFrozenEnvelopePredicates(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			result := New(test.family, test.kind, testLimits).Observe(framing.Frame{Event: test.event, Data: []byte(test.data)})
@@ -119,7 +118,6 @@ func TestNormalOutputNeverBecomesSemanticError(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			result := New(test.family, test.kind, testLimits).Observe(framing.Frame{Event: test.event, Data: []byte(test.data)})
@@ -138,7 +136,6 @@ func TestVisibilityWinsForUnknownEventsAndNormalJSONValues(t *testing.T) {
 		apicontract.ErrorFamilyOpenAIChatCompletions,
 		apicontract.ErrorFamilyGoogleGenerateContent,
 	} {
-		family := family
 		for _, data := range []string{"null", `"ordinary"`, `["ordinary"]`, "42"} {
 			result := New(family, framing.KindJSON, testLimits).Observe(framing.Frame{Data: []byte(data)})
 			if result.Class != EventClientVisible || result.Fields != nil {
@@ -238,7 +235,6 @@ func TestControlUsageMalformedAndUnsupportedEvents(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			result := New(test.family, test.kind, testLimits).Observe(test.frame)
@@ -329,7 +325,6 @@ func TestResponsesAuthoritativeTypeExtraction(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			result := New(apicontract.ErrorFamilyOpenAIResponses, test.kind, testLimits).Observe(framing.Frame{Data: []byte(test.data)})
@@ -358,7 +353,6 @@ func TestSemanticFieldBoundsFailOpen(t *testing.T) {
 		{"google reason", apicontract.ErrorFamilyGoogleGenerateContent, framing.KindJSON, `{"error":{"status":"x","message":"x","details":[{"@type":"google.rpc.ErrorInfo","reason":"` + long + `"}]}}`},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			result := New(test.family, test.kind, limits).Observe(framing.Frame{Data: []byte(test.data)})
 			if result.Class != EventFailOpen || result.Failure != framing.FailureSemanticFieldTooLarge {

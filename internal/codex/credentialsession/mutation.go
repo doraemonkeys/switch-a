@@ -157,8 +157,7 @@ func (c *mutationCoordinator) unreference(sessionID string, lock *mutationLock) 
 }
 
 func (c *mutationCoordinator) release(leases []mutationLease) {
-	for index := len(leases) - 1; index >= 0; index-- {
-		lease := leases[index]
+	for _, lease := range slices.Backward(leases) {
 		lease.lock.permit <- struct{}{}
 		c.unreference(lease.sessionID, lease.lock)
 	}

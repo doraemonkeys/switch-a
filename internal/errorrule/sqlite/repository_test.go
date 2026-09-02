@@ -308,7 +308,6 @@ func TestRepositoryConcurrentExpectedRevisionHasOneWinner(t *testing.T) {
 	start := make(chan struct{})
 	errorsByWriter := make(chan error, 2)
 	for _, name := range []string{"left", "right"} {
-		name := name
 		go func() {
 			<-start
 			spec := created.Rules[0].RuleSpec

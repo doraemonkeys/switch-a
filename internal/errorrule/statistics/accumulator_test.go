@@ -55,17 +55,14 @@ func TestAccumulatorConcurrentHitsFlushExactDelta(t *testing.T) {
 	base := time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)
 
 	var wait sync.WaitGroup
-	for worker := 0; worker < workers; worker++ {
-		worker := worker
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			for hit := 0; hit < hitsPerWorker; hit++ {
+	for worker := range workers {
+		wait.Go(func() {
+			for hit := range hitsPerWorker {
 				if err := accumulator.Hit(handle, base.Add(time.Duration(worker+hit)*time.Nanosecond)); err != nil {
 					t.Errorf("Hit() error = %v", err)
 				}
 			}
-		}()
+		})
 	}
 	wait.Wait()
 	if err := accumulator.Flush(context.Background()); err != nil {

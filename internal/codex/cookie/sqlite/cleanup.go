@@ -92,6 +92,10 @@ func loadAuthorityReachability(ctx context.Context, connection *sql.Conn) ([]aut
 		}
 		items = append(items, item)
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, classifyDatabaseError("load_authority_reachability", err)
+	}
 	if err := rows.Close(); err != nil {
 		return nil, classifyDatabaseError("load_authority_reachability", err)
 	}

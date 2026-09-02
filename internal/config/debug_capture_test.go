@@ -170,11 +170,11 @@ func TestLoadDebugCaptureRejectsNonIntegerJSONValues(t *testing.T) {
 
 func TestDecodeJSONDebugCaptureIntegerPreservesExactValue(t *testing.T) {
 	const exactValue int64 = 9_007_199_254_740_993
-	values, err := decodeJSONDebugCaptureIntegers([]byte(fmt.Sprintf(
+	values, err := decodeJSONDebugCaptureIntegers(fmt.Appendf(nil,
 		`{"%s":%d}`,
 		KeyDebugCaptureMaxActiveRecords,
 		exactValue,
-	)))
+	))
 	if err != nil {
 		t.Fatalf("decodeJSONDebugCaptureIntegers() error = %v", err)
 	}

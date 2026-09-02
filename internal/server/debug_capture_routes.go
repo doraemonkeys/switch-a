@@ -54,7 +54,7 @@ func hasNonCanonicalPathSegments(requestPath string) bool {
 	if strings.Contains(requestPath, "//") {
 		return true
 	}
-	for _, segment := range strings.Split(requestPath, "/") {
+	for segment := range strings.SplitSeq(requestPath, "/") {
 		if segment == "." || segment == ".." {
 			return true
 		}

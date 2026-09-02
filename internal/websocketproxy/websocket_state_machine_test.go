@@ -140,7 +140,6 @@ func TestReplayBufferStoresPermitDecisionAndNeverReclassifies(t *testing.T) {
 	commitOrder := make([]int, 0, len(payloads))
 	originalCommits := 0
 	for index, payload := range payloads {
-		index := index
 		decision := replayableClientFrameDecision()
 		decision.TraceContext = webSocketClientFrameTrace{Kind: "opaque", Decision: "forward"}
 		decision.OnWriteConfirmed = func() error {

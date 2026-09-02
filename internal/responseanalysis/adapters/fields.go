@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -89,12 +90,7 @@ func fieldHasKind(document jsonDocument, object jsonValue, name string, kinds ..
 	if !ok {
 		return false
 	}
-	for _, kind := range kinds {
-		if value.kind == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(kinds, value.kind)
 }
 
 func stringField(document jsonDocument, object jsonValue, name string, maxBytes int, resources *resourceContext) (string, fieldStatus) {

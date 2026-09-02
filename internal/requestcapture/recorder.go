@@ -525,10 +525,10 @@ func (r *recordState) observeHTTPResponseLocked(head HTTPResponseHead) {
 	// Discovery can affect later failure and close sanitization even when this
 	// optional response snapshot cannot be retained.
 	r.redactAllHeaders = r.redactAllHeaders || result.RedactAll
-	nameCharge := estimateStringSliceCharge(result.SensitiveNames) - estimateStringSliceCharge(r.sensitiveHeaderNames)
-	if nameCharge < 0 {
-		nameCharge = 0
-	}
+	nameCharge := max(
+		estimateStringSliceCharge(result.SensitiveNames)-estimateStringSliceCharge(r.sensitiveHeaderNames),
+		0,
+	)
 	charge := addRetainedCharge64(estimateHTTPResponseCharge(result.Snapshot, nil), nameCharge)
 	if !session.reserveLocked(charge, true) {
 		r.markOverflowLocked()
@@ -571,10 +571,10 @@ func (r *recordState) observeWebSocketHandshakeLocked(handshake WebSocketHandsha
 	)
 	// The safety decision survives metadata admission failure.
 	r.redactAllHeaders = r.redactAllHeaders || result.RedactAll
-	nameCharge := estimateStringSliceCharge(result.SensitiveNames) - estimateStringSliceCharge(r.sensitiveHeaderNames)
-	if nameCharge < 0 {
-		nameCharge = 0
-	}
+	nameCharge := max(
+		estimateStringSliceCharge(result.SensitiveNames)-estimateStringSliceCharge(r.sensitiveHeaderNames),
+		0,
+	)
 	charge := addRetainedCharge64(estimateWebSocketHandshakeCharge(result.Snapshot, nil), nameCharge)
 	if !session.reserveLocked(charge, true) {
 		r.markOverflowLocked()

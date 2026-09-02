@@ -433,7 +433,7 @@ func TestGatewayContextAndRequestHelpers(t *testing.T) {
 	if outcome := gatewayCaptureOutcome(timedOut); outcome.TerminationReason != requestcapture.TerminationReasonTimeout || outcome.Failure.Primary.Code != requestcapture.FailureCodeGatewayContext {
 		t.Fatalf("timeout outcome = %#v", outcome)
 	}
-	if contextError(nil) != nil || !errors.Is(contextError(canceled), context.Canceled) {
+	if !errors.Is(contextError(canceled), context.Canceled) {
 		t.Fatalf("contextError did not preserve cancellation")
 	}
 

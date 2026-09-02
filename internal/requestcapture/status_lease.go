@@ -455,10 +455,7 @@ func (m *Manager) populateActiveStatusSlot(
 		return errStatusChanged
 	}
 
-	completedRecords := session.retainedRecordCount - session.activeRecords
-	if completedRecords < 0 {
-		completedRecords = 0
-	}
+	completedRecords := max(session.retainedRecordCount-session.activeRecords, 0)
 	m.mu.Lock()
 	process := statusProcessSnapshot{
 		ceiling:   m.cfg.processCeilingBytes,

@@ -360,7 +360,7 @@ func TestRepositoryRejectsInvalidConstructionAndArguments(t *testing.T) {
 func TestRepositorySurfacesIntegerOverflow(t *testing.T) {
 	database := newTestDatabase(t)
 	start := time.Date(2026, time.August, 20, 0, 0, 0, 0, time.UTC)
-	for index := 0; index < 2; index++ {
+	for index := range 2 {
 		database.insertLog(t, model.RequestLog{
 			ProviderID: "overflow", APIType: "codex", Model: "overflow", CreatedAt: start.Add(time.Duration(index) * time.Minute),
 			PromptTokens: int64Pointer(1 << 62), CompletionTokens: int64Pointer(0), TotalTokens: int64Pointer(1 << 62),

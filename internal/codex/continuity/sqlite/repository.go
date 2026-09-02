@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -461,12 +462,7 @@ func deleteBinding(tx *gorm.DB, binding codexcontinuity.Binding) error {
 }
 
 func clientOwned(owner codexidentity.ClientScope, candidates []codexidentity.ClientScope) bool {
-	for _, candidate := range candidates {
-		if owner.Equal(candidate) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(candidates, owner.Equal)
 }
 
 func sameClaim(current, expected codexcontinuity.Binding) bool {

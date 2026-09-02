@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -118,11 +119,11 @@ func TestComposeApplicationRuntimeBuildsAndOwnsOneProcessGraph(t *testing.T) {
 			Component: component,
 		})
 	}
-	for index := len(started) - 1; index >= 0; index-- {
+	for _, component := range slices.Backward(started) {
 		wantEvents = append(wantEvents, applicationLifecycleEvent{
 			StartupID: "startup-composition",
 			Phase:     startupPhaseShutdownBackgrounds,
-			Component: started[index],
+			Component: component,
 		})
 	}
 	if !reflect.DeepEqual(events, wantEvents) {

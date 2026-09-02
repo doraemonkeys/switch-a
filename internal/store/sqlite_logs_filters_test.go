@@ -46,15 +46,7 @@ func intPtr(v int) *int {
 	return &v
 }
 
-func terminalCausePtr(v model.TerminalCause) *model.TerminalCause {
-	return &v
-}
-
 func commitSourcePtr(v model.CommitSource) *model.CommitSource {
-	return &v
-}
-
-func recoveryActionPtr(v model.RecoveryAction) *model.RecoveryAction {
 	return &v
 }
 

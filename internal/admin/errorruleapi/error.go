@@ -112,7 +112,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_, _ = w.Write(append(payload, '\n'))
 }
 
-func decodeRequest(w http.ResponseWriter, r *http.Request, limit int64, target any) *apiError {
+func decodeRequest(r *http.Request, limit int64, target any) *apiError {
 	if r == nil || r.Body == nil {
 		return validationError("request", "request body is required", nil)
 	}
@@ -155,8 +155,8 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, limit int64, target a
 
 func decodeValidationError(err error) *apiError {
 	const unknownPrefix = "json: unknown field "
-	if strings.HasPrefix(err.Error(), unknownPrefix) {
-		field := strings.Trim(strings.TrimPrefix(err.Error(), unknownPrefix), `"`)
+	if suffix, ok := strings.CutPrefix(err.Error(), unknownPrefix); ok {
+		field := strings.Trim(suffix, `"`)
 		return validationError(field, "request contains an unknown field", err)
 	}
 	var typeError *json.UnmarshalTypeError

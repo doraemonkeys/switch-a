@@ -311,7 +311,7 @@ func TestStatusEpochPreventsTornSnapshotsUnderRace(t *testing.T) {
 	session := makeStatusQuotaExact(t, manager)
 	writerDone := make(chan error, 1)
 	go func() {
-		for iteration := 0; iteration < 250; iteration++ {
+		for iteration := range 250 {
 			marker := iteration & 1
 			var mutation statusEpochMutation
 			if !manager.beginStatusEpochMutation(&mutation) {
@@ -379,13 +379,13 @@ func TestStatusValueContainsNoRetainedReferences(t *testing.T) {
 			t.Errorf("%s retains %s", path, current.Kind())
 		}
 	}
-	inspect(reflect.TypeOf(Status{}), "Status")
+	inspect(reflect.TypeFor[Status](), "Status")
 }
 
 func TestStatusLeaseContainsOnlyManagerNumericCapability(t *testing.T) {
-	typeOfLease := reflect.TypeOf(StatusLease{})
+	typeOfLease := reflect.TypeFor[StatusLease]()
 	if typeOfLease.NumField() != 2 ||
-		typeOfLease.Field(0).Type != reflect.TypeOf((*Manager)(nil)) ||
+		typeOfLease.Field(0).Type != reflect.TypeFor[*Manager]() ||
 		typeOfLease.Field(1).Type.Kind() != reflect.Uint64 {
 		t.Fatalf("StatusLease must contain only manager and numeric sequence: %v", typeOfLease)
 	}

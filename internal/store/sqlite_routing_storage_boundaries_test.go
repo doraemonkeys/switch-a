@@ -61,7 +61,6 @@ func TestProviderCredentialBindingsRejectAmbiguousRouteSnapshots(t *testing.T) {
 		},
 	}
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			_, err := credentialBindingsForProvider(testCase.provider)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {

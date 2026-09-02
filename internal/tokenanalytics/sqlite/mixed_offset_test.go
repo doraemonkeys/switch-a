@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"testing"
 	"time"
 
@@ -193,12 +194,7 @@ func readLexicallySelectedRequestIDs(t *testing.T, database *testDatabase, query
 }
 
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 func assertBucketRecordsInsideWindow(t *testing.T, records []tokenanalytics.BucketRecord, start, end time.Time, granularity time.Duration) {

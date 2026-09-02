@@ -84,6 +84,7 @@ func mustAAD(t *testing.T, scope CookieScope, key CookieKey) []byte {
 }
 
 func TestServiceCoversRefreshCleanupCollisionAndCryptoFailureBranches(t *testing.T) {
+	var missingContext context.Context
 	now := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
 	clock := &serviceClock{now: now}
 	repository := newMemoryRepository()
@@ -114,7 +115,7 @@ func TestServiceCoversRefreshCleanupCollisionAndCryptoFailureBranches(t *testing
 	if err != nil || result.ExpiredBindings != 1 || result.ExpiredCookies != 2 {
 		t.Fatalf("cleanup = %#v, %v", result, err)
 	}
-	if _, err := service.Cleanup(nil, operation, nil); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := service.Cleanup(missingContext, operation, nil); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("nil cleanup context = %v", err)
 	}
 	if _, err := service.Cleanup(context.Background(), "", nil); !errors.Is(err, ErrInvalidConfig) {
@@ -153,6 +154,7 @@ func TestServiceCoversRefreshCleanupCollisionAndCryptoFailureBranches(t *testing
 }
 
 func TestRequestBoundaryFailuresAndLifecycleValidation(t *testing.T) {
+	var missingContext context.Context
 	policy := DefaultPolicy()
 	policy.MaxSetCookieHeaders = 1
 	policy.MaxCookiesPerAuthority = 1
@@ -190,10 +192,10 @@ func TestRequestBoundaryFailuresAndLifecycleValidation(t *testing.T) {
 	if _, err := request.ApplyResponse(authority, mustURL(t, "https://example.com"), []string{"b=2"}); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("overlay boundary = %v", err)
 	}
-	if _, err := request.Select(nil, authority, mustURL(t, "https://example.com")); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := request.Select(missingContext, authority, mustURL(t, "https://example.com")); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("nil select context = %v", err)
 	}
-	if _, err := request.Commit(nil, authority); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := request.Commit(missingContext, authority); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("nil commit context = %v", err)
 	}
 	if err := request.Discard(mustCookieAuthority(t, "absent")); err != nil {

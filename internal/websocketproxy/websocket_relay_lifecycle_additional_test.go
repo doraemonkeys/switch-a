@@ -66,7 +66,6 @@ func TestWebSocketContextCaptureReasonPreservesCancellationOwnership(t *testing.
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			if got := webSocketContextCaptureReason(test.ctx, test.err, test.fallback); got != test.want {
@@ -148,7 +147,6 @@ func TestWebSocketRelayCaptureOutcomeMapsFailureBoundary(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			outcome := webSocketRelayCaptureOutcome(context.Background(), test.relay, test.result)
@@ -202,7 +200,6 @@ func TestWebSocketRelayFailureObservationAttributesOperationAndPeer(t *testing.T
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			observation := webSocketRelayFailureObservation(test.relay, &WebSocketResult{Err: errors.New("relay failed")})
@@ -317,7 +314,7 @@ func TestPreVisibleClientMessageBufferRejectsUnsafeReplayState(t *testing.T) {
 	}
 
 	messageLimited := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitMessages + 1)
-	for index := 0; index < preVisibleClientReplayBufferLimitMessages; index++ {
+	for index := range preVisibleClientReplayBufferLimitMessages {
 		if got := messageLimited.Record(websocket.MessageText, []byte{'x'}, false); got != index {
 			t.Fatalf("record %d index = %d", index, got)
 		}

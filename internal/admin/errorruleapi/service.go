@@ -184,7 +184,7 @@ func (s *service) reorderRules(
 }
 
 func (s *service) listStats(ctx context.Context) (errorrule.Revision, []errorrule.RuleStats, error) {
-	for attempt := 0; attempt < maxStatsSnapshotReadAttempts; attempt++ {
+	for range maxStatsSnapshotReadAttempts {
 		if err := ctx.Err(); err != nil {
 			return 0, nil, err
 		}

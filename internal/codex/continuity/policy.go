@@ -2,6 +2,7 @@ package codexcontinuity
 
 import (
 	"fmt"
+	"maps"
 	"time"
 )
 
@@ -60,8 +61,6 @@ func (p Policy) Limits(kind Kind) (Limits, bool) {
 
 func (p Policy) Entries() map[Kind]Limits {
 	result := make(map[Kind]Limits, len(p.limits))
-	for kind, limits := range p.limits {
-		result[kind] = limits
-	}
+	maps.Copy(result, p.limits)
 	return result
 }

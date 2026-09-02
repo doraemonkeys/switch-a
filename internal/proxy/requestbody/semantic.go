@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -73,8 +74,8 @@ func (Decoder) Decode(wire []byte, contentEncodingValues []string, maxDecodedByt
 	reader := io.Reader(bytes.NewReader(wire))
 	closers := make([]func(), 0, len(codings))
 	defer func() { closeDecoders(closers) }()
-	for index := len(codings) - 1; index >= 0; index-- {
-		reader, err = openDecoder(codings[index], reader, maxDecodedBytes, &closers)
+	for _, coding := range slices.Backward(codings) {
+		reader, err = openDecoder(coding, reader, maxDecodedBytes, &closers)
 		if err != nil {
 			return nil, err
 		}
@@ -175,8 +176,8 @@ func openDecoder(coding string, source io.Reader, maxDecodedBytes int64, closers
 }
 
 func closeDecoders(closers []func()) {
-	for index := len(closers) - 1; index >= 0; index-- {
-		closers[index]()
+	for _, closeDecoder := range slices.Backward(closers) {
+		closeDecoder()
 	}
 }
 

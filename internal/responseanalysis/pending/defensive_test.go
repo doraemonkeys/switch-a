@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -227,7 +228,7 @@ func TestRealSchedulerAndAccountDefensivePaths(t *testing.T) {
 }
 
 func TestUsageQueueSaturationRetainsLatestOwnership(t *testing.T) {
-	queue := newUsageQueue[testObservation](1, nil, testObservationOps().Release)
+	queue := newUsageQueue(1, nil, testObservationOps().Release)
 	firstRelease := &releaseCounter{}
 	lastRelease := &releaseCounter{}
 	queue.offer(testObservation{ID: "first", release: firstRelease})
@@ -265,9 +266,7 @@ func TestUsageQueueSaturationPreservesProductionOrderAndOwnership(t *testing.T) 
 		*observation = partialUsage{}
 	}
 	overlay := func(current *partialUsage, later partialUsage) {
-		for field, value := range later.values {
-			current.values[field] = value
-		}
+		maps.Copy(current.values, later.values)
 	}
 	queue := newUsageQueue(maxObservationQueueCapacity, overlay, release)
 	for _, sample := range samples {

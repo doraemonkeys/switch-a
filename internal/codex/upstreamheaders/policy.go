@@ -104,7 +104,7 @@ func connectionNominations(source http.Header) map[string]struct{} {
 			continue
 		}
 		for _, value := range values {
-			for _, token := range strings.Split(value, ",") {
+			for token := range strings.SplitSeq(value, ",") {
 				if token = strings.TrimSpace(token); token != "" {
 					nominated[strings.ToLower(token)] = struct{}{}
 				}

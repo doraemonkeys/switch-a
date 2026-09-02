@@ -107,7 +107,7 @@ func TestCredentialMaterialFailsClosedWhenEvidenceCapacityIsExceeded(t *testing.
 func TestHTTPBodyObservationIsFactsOnly(t *testing.T) {
 	t.Parallel()
 
-	wrapped, observation := WrapHTTPResponseBody(
+	_, observation := WrapHTTPResponseBody(
 		&trackingReadCloser{Reader: bytes.NewReader(nil)},
 		requestcapture.Recorder{},
 		0,
@@ -120,9 +120,6 @@ func TestHTTPBodyObservationIsFactsOnly(t *testing.T) {
 	}
 	if _, ok := any(observation).(io.WriterTo); ok {
 		t.Fatal("observation unexpectedly exposes io.WriterTo")
-	}
-	if _, ok := wrapped.(io.ReadCloser); !ok {
-		t.Fatal("body wrapper lost its read/close capability")
 	}
 }
 

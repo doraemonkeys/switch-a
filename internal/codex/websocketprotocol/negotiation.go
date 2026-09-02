@@ -3,6 +3,7 @@ package websocketprotocol
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -165,12 +166,7 @@ func (n Negotiation) ValidateDownstream(actual string) error {
 }
 
 func containsExact(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 type MismatchError struct {

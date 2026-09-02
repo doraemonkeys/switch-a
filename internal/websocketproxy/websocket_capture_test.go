@@ -108,7 +108,6 @@ func TestWebSocketDialCaptureFailureBodyCompletionTracksExistingDrain(t *testing
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
 				ID:   "provider",
@@ -577,7 +576,6 @@ func TestWebSocketCapturePersistsOnlyObservedCloseFrames(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			manager, session := startCaptureTestManager(t, []requestcapture.ProviderIdentity{{
 				ID:   "provider",
@@ -822,53 +820,6 @@ type webSocketCaptureExportManifest struct {
 type webSocketCaptureExportBlob struct {
 	BlobID  string `json:"blob_id"`
 	RawSize int64  `json:"raw_size"`
-}
-
-func waitForCompletedWebSocketCaptureRecord(
-	t *testing.T,
-	manager *requestcapture.Manager,
-	session requestcapture.SessionInfo,
-	providerID string,
-) requestcapture.RecordSummary {
-	t.Helper()
-	var record requestcapture.RecordSummary
-	waitFor(t, func() bool {
-		page, err := readCaptureTestPage(manager, session, requestcapture.ListQuery{Limit: 10})
-		if err != nil {
-			return false
-		}
-		found := findWebSocketCaptureRecord(page.Records, providerID)
-		if found == nil || found.LifecycleState != requestcapture.LifecycleStateCompleted {
-			return false
-		}
-		record = *found
-		return true
-	}, testPollTimeout)
-	return record
-}
-
-func findWebSocketCaptureRecord(
-	records []requestcapture.RecordSummary,
-	providerID string,
-) *requestcapture.RecordSummary {
-	for index := range records {
-		if records[index].Protocol == requestcapture.ProtocolWebSocket && records[index].Provider.ID == providerID {
-			return &records[index]
-		}
-	}
-	return nil
-}
-
-func findCapturedWebSocketMessage(
-	messages []requestcapture.MessageSnapshot,
-	direction requestcapture.MessageDirection,
-) *requestcapture.MessageSnapshot {
-	for index := range messages {
-		if messages[index].Direction == direction {
-			return &messages[index]
-		}
-	}
-	return nil
 }
 
 func exportWebSocketCaptureMetadata(

@@ -67,6 +67,7 @@ func (c fixedOpenCipher) Open(codexkeyring.AEADPurpose, []byte, codexkeyring.Sea
 }
 
 func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
+	var missingContext context.Context
 	ctx := context.Background()
 	keyring := testKeyring(t, "a1")
 	db := openTestDatabase(t, filepath.Join(t.TempDir(), "validation.db"))
@@ -85,13 +86,13 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 			t.Fatalf("Open accepted invalid config: %#v", config)
 		}
 	}
-	if _, err := Open(nil, Config{DB: db, Cipher: keyring}); err == nil {
+	if _, err := Open(missingContext, Config{DB: db, Cipher: keyring}); err == nil {
 		t.Fatal("Open accepted nil context")
 	}
-	if err := Migrate(nil, db); err == nil {
+	if err := Migrate(missingContext, db); err == nil {
 		t.Fatal("Migrate accepted nil context")
 	}
-	if err := ValidateSchema(nil, db); err == nil {
+	if err := ValidateSchema(missingContext, db); err == nil {
 		t.Fatal("ValidateSchema accepted nil context")
 	}
 
@@ -121,7 +122,7 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 	if _, err := repository.UseBinding(ctx, lookup); err == nil {
 		t.Fatal("UseBinding accepted invalid policy")
 	}
-	if _, err := repository.UseBinding(nil, lookup); err == nil {
+	if _, err := repository.UseBinding(missingContext, lookup); err == nil {
 		t.Fatal("UseBinding accepted nil context")
 	}
 
@@ -136,25 +137,25 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 			t.Fatalf("CreateBinding accepted invalid record: %#v", invalid)
 		}
 	}
-	if err := repository.CreateBinding(nil, record, policy); err == nil {
+	if err := repository.CreateBinding(missingContext, record, policy); err == nil {
 		t.Fatal("CreateBinding accepted nil context")
 	}
 	if err := repository.CreateBinding(ctx, record, badPolicy); err == nil {
 		t.Fatal("CreateBinding accepted invalid policy")
 	}
-	if _, err := repository.Load(nil, providercookie.CookieScope{}, now); err == nil {
+	if _, err := repository.Load(missingContext, providercookie.CookieScope{}, now); err == nil {
 		t.Fatal("Load accepted nil context")
 	}
 	if _, err := repository.Load(ctx, providercookie.CookieScope{}, now); err == nil {
 		t.Fatal("Load accepted invalid scope")
 	}
-	if err := repository.Touch(nil, providercookie.CookieScope{}, nil, now); err == nil {
+	if err := repository.Touch(missingContext, providercookie.CookieScope{}, nil, now); err == nil {
 		t.Fatal("Touch accepted nil context")
 	}
 	if err := repository.Touch(ctx, providercookie.CookieScope{}, nil, now); err == nil {
 		t.Fatal("Touch accepted invalid scope")
 	}
-	if _, err := repository.Merge(nil, providercookie.CookieScope{}, nil, now, policy); err == nil {
+	if _, err := repository.Merge(missingContext, providercookie.CookieScope{}, nil, now, policy); err == nil {
 		t.Fatal("Merge accepted nil context")
 	}
 	if _, err := repository.Merge(ctx, providercookie.CookieScope{}, nil, now, policy); err == nil {
@@ -163,7 +164,7 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 	if _, err := repository.Merge(ctx, providercookie.CookieScope{}, nil, now, badPolicy); err == nil {
 		t.Fatal("Merge accepted invalid policy")
 	}
-	if _, err := repository.Cleanup(nil, providercookie.CleanupRequest{}); err == nil {
+	if _, err := repository.Cleanup(missingContext, providercookie.CleanupRequest{}); err == nil {
 		t.Fatal("Cleanup accepted nil context")
 	}
 	if _, err := repository.Cleanup(ctx, providercookie.CleanupRequest{Policy: policy}); err == nil {
@@ -652,6 +653,7 @@ func TestCleanupRejectsCorruptReachabilityRows(t *testing.T) {
 }
 
 func TestAdditionalSchemaVersionAndCodecFailureSurfaces(t *testing.T) {
+	var missingContext context.Context
 	ctx := context.Background()
 	keyring := testKeyring(t, "a1")
 
@@ -659,10 +661,10 @@ func TestAdditionalSchemaVersionAndCodecFailureSurfaces(t *testing.T) {
 	if err := ValidateSchema(ctx, uninitialized); !errors.Is(err, providercookie.ErrStorageCorrupt) {
 		t.Fatalf("uninitialized validation = %v", err)
 	}
-	if _, err := RequiredHMACVersions(nil, uninitialized); !errors.Is(err, providercookie.ErrInvalidConfig) {
+	if _, err := RequiredHMACVersions(missingContext, uninitialized); !errors.Is(err, providercookie.ErrInvalidConfig) {
 		t.Fatalf("nil HMAC version context = %v", err)
 	}
-	if _, err := RequiredAEADVersions(nil, uninitialized); !errors.Is(err, providercookie.ErrInvalidConfig) {
+	if _, err := RequiredAEADVersions(missingContext, uninitialized); !errors.Is(err, providercookie.ErrInvalidConfig) {
 		t.Fatalf("nil AEAD version context = %v", err)
 	}
 

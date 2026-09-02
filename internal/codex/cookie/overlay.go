@@ -1,6 +1,9 @@
 package providercookie
 
-import "sort"
+import (
+	"maps"
+	"sort"
+)
 
 type Snapshot struct {
 	scope   CookieScope
@@ -54,9 +57,7 @@ func (o *Overlay) ApplyBatch(scope CookieScope, mutations []Mutation) error {
 		return &StateError{Reason: "cannot apply to a discarded overlay", Cause: ErrOverlayDiscarded}
 	}
 	projected := make(map[CookieKey]Mutation, len(o.entries)+len(mutations))
-	for key, mutation := range o.entries {
-		projected[key] = mutation
-	}
+	maps.Copy(projected, o.entries)
 	for _, mutation := range mutations {
 		if mutation.kind != MutationUpsert && mutation.kind != MutationTombstone {
 			return &StateError{Reason: "unknown mutation kind"}

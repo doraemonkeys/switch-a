@@ -44,7 +44,7 @@ func snapshotRecordDetailQueryLocked(
 	}
 	snapshot.detail.WebSocket = websocket
 	snapshot.messagePayloads = make([]blobView, 0, messageCount)
-	for index := 0; index < messageCount; index++ {
+	for index := range messageCount {
 		message := record.messages[index]
 		websocket.Messages = append(websocket.Messages, MessageSnapshot{
 			MessageID:       message.id,

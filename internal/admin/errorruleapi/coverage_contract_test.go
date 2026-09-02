@@ -72,7 +72,7 @@ func TestHandlerRejectsEveryInvalidBoundaryBeforeCallingDependencies(t *testing.
 
 func TestContractErrorClassificationAndFieldRouting(t *testing.T) {
 	t.Parallel()
-	typeError := &json.UnmarshalTypeError{Value: "string", Type: reflect.TypeOf(0), Field: "schema_version"}
+	typeError := &json.UnmarshalTypeError{Value: "string", Type: reflect.TypeFor[int](), Field: "schema_version"}
 	wrappedTypeError := fmt.Errorf("wrapped: %w", typeError)
 	tests := []struct {
 		err       error
@@ -80,7 +80,7 @@ func TestContractErrorClassificationAndFieldRouting(t *testing.T) {
 	}{
 		{err: typeError, wantField: "schema_version"},
 		{err: wrappedTypeError, wantField: "schema_version"},
-		{err: &json.UnmarshalTypeError{Value: "number", Type: reflect.TypeOf("")}, wantField: "request"},
+		{err: &json.UnmarshalTypeError{Value: "number", Type: reflect.TypeFor[string]()}, wantField: "request"},
 		{err: errors.New("syntax"), wantField: "request"},
 	}
 	for _, test := range tests {
@@ -185,7 +185,7 @@ func TestContractRequiredFieldsAndRawUnionValues(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"SCHEMA_VERSION":1}`))
 	var reorder reorderRequest
-	if apiErr := decodeRequest(httptest.NewRecorder(), request, MaxRuleReorderRequestBytes, &reorder); apiErr == nil {
+	if apiErr := decodeRequest(request, MaxRuleReorderRequestBytes, &reorder); apiErr == nil {
 		t.Fatal("non-canonical reorder key accepted")
 	}
 }

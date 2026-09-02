@@ -22,7 +22,7 @@ import (
 
 func TestSQLiteStoreRegistersIndependentCodexSchemasAndRestarts(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "codex.db")
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		persistence, err := NewSQLiteStore(databasePath, internal.RealClock{}, nil)
 		if err != nil {
 			t.Fatalf("NewSQLiteStore() attempt %d error = %v", attempt, err)

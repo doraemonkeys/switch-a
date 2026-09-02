@@ -374,7 +374,7 @@ func applyCookiePolicy(header http.Header, policy CookiePolicy) {
 	header.Del("Cookie")
 	for _, value := range values {
 		kept := make([]string, 0, strings.Count(value, ";")+1)
-		for _, pair := range strings.Split(value, ";") {
+		for pair := range strings.SplitSeq(value, ";") {
 			pair = strings.TrimSpace(pair)
 			if pair == "" {
 				continue
@@ -427,7 +427,7 @@ func downstreamHeader(response *http.Response) http.Header {
 func connectionTokens(values []string) []string {
 	var tokens []string
 	for _, value := range values {
-		for _, token := range strings.Split(value, ",") {
+		for token := range strings.SplitSeq(value, ",") {
 			if token = strings.TrimSpace(token); token != "" {
 				tokens = append(tokens, http.CanonicalHeaderKey(token))
 			}

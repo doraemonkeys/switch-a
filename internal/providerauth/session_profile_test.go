@@ -208,7 +208,7 @@ func TestRefreshFailureUpdatesCredentialSessionLifecycle(t *testing.T) {
 
 	transient := errors.New("temporary outage")
 	if err := service.persistChatGPTRefreshFailure(
-		context.Background(), "provider", &snapshot, nil, transient,
+		context.Background(), "provider", &snapshot, transient,
 	); !errors.Is(err, transient) {
 		t.Fatalf("transient refresh failure = %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRefreshFailureUpdatesCredentialSessionLifecycle(t *testing.T) {
 
 	terminal := errors.New("oauth invalid_grant")
 	err := service.persistChatGPTRefreshFailure(
-		context.Background(), "provider", &snapshot, nil, terminal,
+		context.Background(), "provider", &snapshot, terminal,
 	)
 	var stateErr *ProviderAuthStateError
 	if !errors.As(err, &stateErr) || stateErr.SessionID != "session" ||
@@ -231,7 +231,7 @@ func TestRefreshFailureUpdatesCredentialSessionLifecycle(t *testing.T) {
 	}
 
 	if err := service.persistChatGPTRefreshFailure(
-		context.Background(), "provider", nil, nil, transient,
+		context.Background(), "provider", nil, transient,
 	); !errors.Is(err, transient) {
 		t.Fatalf("failure without snapshot = %v", err)
 	}

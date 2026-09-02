@@ -510,7 +510,7 @@ func TestV5ACompressionBombFailOpenAndExactProcessCap(t *testing.T) {
 		release := make(chan struct{})
 		responses := make([]*responseanalysis.PendingResponse, 0, liveProbeCount)
 		writers := make([]*v5aWriter, 0, liveProbeCount)
-		for index := 0; index < liveProbeCount; index++ {
+		for range liveProbeCount {
 			started := make(chan struct{})
 			body := newV5ABlockingBody(v5aReadStep{started: started, release: release, err: io.EOF})
 			writer := newV5AWriter(0)
@@ -713,7 +713,7 @@ func TestV5ASemanticResolutionRace1000(t *testing.T) {
 	budget := v5aBudget(t, responseanalysis.ResponseProbeMemoryBudget)
 	analyzer := v5aAnalyzer(t, budget, responseanalysis.AnalyzerOptions{ProbeDuration: time.Hour})
 
-	for iteration := 0; iteration < iterations; iteration++ {
+	for iteration := range iterations {
 		body := newV5ASegmentBody(wire, (iteration*17)%(len(wire)+1))
 		writer := newV5AWriter((iteration % 7) + 1)
 		response := analyzer.Start(context.Background(), responseanalysis.StartInput{

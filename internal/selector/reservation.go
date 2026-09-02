@@ -3,6 +3,7 @@ package selector
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync/atomic"
 
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
@@ -228,9 +229,7 @@ func cloneExclusions(source map[string]bool) map[string]bool {
 		return nil
 	}
 	clone := make(map[string]bool, len(source))
-	for providerID, excluded := range source {
-		clone[providerID] = excluded
-	}
+	maps.Copy(clone, source)
 	return clone
 }
 

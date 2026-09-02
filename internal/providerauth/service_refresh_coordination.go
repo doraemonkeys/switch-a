@@ -259,7 +259,7 @@ func (s *Service) refreshAndPersistChatGPTCredentialDirect(
 ) (*model.ChatGPTProviderCredential, error) {
 	refreshed, err := s.refreshChatGPTCredential(ctx, credential)
 	if err != nil {
-		return nil, s.persistChatGPTRefreshFailure(ctx, routeTargetID, snapshot, credential, err)
+		return nil, s.persistChatGPTRefreshFailure(ctx, routeTargetID, snapshot, err)
 	}
 	if err := s.persistChatGPTCredentialSession(ctx, snapshot, refreshed); err != nil {
 		return nil, err
@@ -395,7 +395,6 @@ func (s *Service) persistChatGPTRefreshFailure(
 	ctx context.Context,
 	routeTargetID string,
 	snapshot *credentialsession.Snapshot,
-	credential *model.ChatGPTProviderCredential,
 	refreshErr error,
 ) error {
 	reason, terminal := classifyChatGPTRefreshFailure(refreshErr)

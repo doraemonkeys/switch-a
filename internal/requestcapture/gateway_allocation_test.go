@@ -620,9 +620,7 @@ func TestConcurrentMessageReadDenialConsumesPendingLineageExactlyOnce(t *testing
 	var wait sync.WaitGroup
 	var admitted atomic.Int64
 	for range contenders {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			<-start
 			if recorder.MessageRead(MessageRead{
 				Lineage:   lineage,
@@ -632,7 +630,7 @@ func TestConcurrentMessageReadDenialConsumesPendingLineageExactlyOnce(t *testing
 			}).Valid() {
 				admitted.Add(1)
 			}
-		}()
+		})
 	}
 	close(start)
 	wait.Wait()
@@ -736,10 +734,8 @@ func TestConcurrentGatewayAdmissionNeverExceedsCeiling(t *testing.T) {
 
 	var wait sync.WaitGroup
 	start := make(chan struct{})
-	for index := 0; index < contenders; index++ {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+	for range contenders {
+		wait.Go(func() {
 			<-start
 			if manager.BeginGateway(GatewayStart{
 				GatewayRequestID: "same",
@@ -747,7 +743,7 @@ func TestConcurrentGatewayAdmissionNeverExceedsCeiling(t *testing.T) {
 			}).Valid() {
 				successes.Add(1)
 			}
-		}()
+		})
 	}
 	close(start)
 	wait.Wait()
@@ -778,7 +774,7 @@ func TestConcurrentGatewayAdmissionNeverExceedsCeiling(t *testing.T) {
 }
 
 func TestGatewayRecorderAndLineageAreValueHandles(t *testing.T) {
-	lineageType := reflect.TypeOf(MessageLineage{})
+	lineageType := reflect.TypeFor[MessageLineage]()
 	if lineageType.NumField() != 3 {
 		t.Fatalf("MessageLineage fields = %d, want 3 numeric components", lineageType.NumField())
 	}
@@ -791,16 +787,16 @@ func TestGatewayRecorderAndLineageAreValueHandles(t *testing.T) {
 		name      string
 		valueType reflect.Type
 	}{
-		{name: "GatewayRecorder", valueType: reflect.TypeOf(GatewayRecorder{})},
-		{name: "Recorder", valueType: reflect.TypeOf(Recorder{})},
-		{name: "MessageRef", valueType: reflect.TypeOf(MessageRef{})},
+		{name: "GatewayRecorder", valueType: reflect.TypeFor[GatewayRecorder]()},
+		{name: "Recorder", valueType: reflect.TypeFor[Recorder]()},
+		{name: "MessageRef", valueType: reflect.TypeFor[MessageRef]()},
 	} {
 		for index := 0; index < handle.valueType.NumField(); index++ {
 			fieldType := handle.valueType.Field(index).Type
-			if fieldType == reflect.TypeOf((*gatewayState)(nil)) ||
-				fieldType == reflect.TypeOf((*recordState)(nil)) ||
-				fieldType == reflect.TypeOf((*transitionRecorderState)(nil)) ||
-				fieldType == reflect.TypeOf((*sessionState)(nil)) ||
+			if fieldType == reflect.TypeFor[*gatewayState]() ||
+				fieldType == reflect.TypeFor[*recordState]() ||
+				fieldType == reflect.TypeFor[*transitionRecorderState]() ||
+				fieldType == reflect.TypeFor[*sessionState]() ||
 				fieldType.Kind() == reflect.String {
 				t.Fatalf("%s retains capture graph/string through field %q", handle.name, handle.valueType.Field(index).Name)
 			}

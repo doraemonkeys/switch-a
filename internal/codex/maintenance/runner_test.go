@@ -359,6 +359,7 @@ func TestOwnerStopAlreadyExpiredContextWinsCompletedOwner(t *testing.T) {
 }
 
 func TestRunnerConfigurationBoundaries(t *testing.T) {
+	var missingContext context.Context
 	if _, err := NewInterval(0); err == nil {
 		t.Fatal("NewInterval accepted zero")
 	}
@@ -385,7 +386,7 @@ func TestRunnerConfigurationBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(nil); err == nil {
+	if err := runner.Run(missingContext); err == nil {
 		t.Fatal("Run accepted nil context")
 	}
 	canceled, cancel := context.WithCancel(context.Background())
@@ -393,7 +394,7 @@ func TestRunnerConfigurationBoundaries(t *testing.T) {
 	if err := runner.Run(canceled); err != nil {
 		t.Fatalf("Run(canceled) error = %v", err)
 	}
-	if _, err := runner.Start(nil); err == nil {
+	if _, err := runner.Start(missingContext); err == nil {
 		t.Fatal("Start accepted nil context")
 	}
 	if _, err := (*Runner)(nil).Start(context.Background()); err == nil {
@@ -403,7 +404,7 @@ func TestRunnerConfigurationBoundaries(t *testing.T) {
 		t.Fatalf("nil Owner Stop() = %v", err)
 	}
 	owner := &Owner{cancel: func() {}, done: make(chan struct{})}
-	if err := owner.Stop(nil); err == nil {
+	if err := owner.Stop(missingContext); err == nil {
 		t.Fatal("Stop accepted nil context")
 	}
 }

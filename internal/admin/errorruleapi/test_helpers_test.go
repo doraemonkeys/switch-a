@@ -33,12 +33,6 @@ func (c *fixedClock) Now() time.Time {
 	return c.now
 }
 
-func (c *fixedClock) set(value time.Time) {
-	c.mu.Lock()
-	c.now = value
-	c.mu.Unlock()
-}
-
 type sequenceIDs struct {
 	mu     sync.Mutex
 	values []string

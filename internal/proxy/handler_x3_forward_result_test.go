@@ -14,17 +14,17 @@ import (
 func TestX3ForwardResultIsFactOnly(t *testing.T) {
 	t.Parallel()
 
-	facts := reflect.TypeOf(forwardResult{})
+	facts := reflect.TypeFor[forwardResult]()
 	if facts.Kind() != reflect.Struct {
 		t.Fatalf("forwardResult kind = %s, want struct", facts.Kind())
 	}
 	bannedCapabilities := []reflect.Type{
-		reflect.TypeOf((*error)(nil)).Elem(),
-		reflect.TypeOf((*io.ReadCloser)(nil)).Elem(),
-		reflect.TypeOf((*http.ResponseWriter)(nil)).Elem(),
-		reflect.TypeOf((*providerLease)(nil)).Elem(),
-		reflect.TypeOf((*retryPermit)(nil)).Elem(),
-		reflect.TypeOf((*alternateProviderReservation)(nil)).Elem(),
+		reflect.TypeFor[error](),
+		reflect.TypeFor[io.ReadCloser](),
+		reflect.TypeFor[http.ResponseWriter](),
+		reflect.TypeFor[providerLease](),
+		reflect.TypeFor[retryPermit](),
+		reflect.TypeFor[alternateProviderReservation](),
 	}
 	allowedPointers := map[string]bool{"firstTokenMs": true, "tokenUsage": true, "semantic": true}
 	for index := 0; index < facts.NumField(); index++ {
@@ -49,14 +49,14 @@ func TestX3ForwardResultIsFactOnly(t *testing.T) {
 		}
 	}
 
-	owner := reflect.TypeOf(pendingHTTPResponse{})
+	owner := reflect.TypeFor[pendingHTTPResponse]()
 	pendingOwners := 0
 	for index := 0; index < owner.NumField(); index++ {
 		field := owner.Field(index)
-		if field.Type == reflect.TypeOf((*responseanalysis.PendingResponse)(nil)) {
+		if field.Type == reflect.TypeFor[*responseanalysis.PendingResponse]() {
 			pendingOwners++
 		}
-		if field.Type == reflect.TypeOf((*upstreamtransport.Response)(nil)) || field.Type.Implements(reflect.TypeOf((*io.ReadCloser)(nil)).Elem()) {
+		if field.Type == reflect.TypeFor[*upstreamtransport.Response]() || field.Type.Implements(reflect.TypeFor[io.ReadCloser]()) {
 			t.Fatalf("pendingHTTPResponse.%s bypasses the sole PendingResponse owner", field.Name)
 		}
 	}

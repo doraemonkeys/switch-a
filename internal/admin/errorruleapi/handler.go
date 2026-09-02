@@ -100,7 +100,7 @@ func (h *Handler) CreateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request mutationRequest
-	if apiErr := decodeRequest(w, r, MaxRuleMutationRequestBytes, &request); apiErr != nil {
+	if apiErr := decodeRequest(r, MaxRuleMutationRequestBytes, &request); apiErr != nil {
 		writeAPIError(w, apiErr)
 		return
 	}
@@ -136,7 +136,7 @@ func (h *Handler) UpdateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request mutationRequest
-	if apiErr := decodeRequest(w, r, MaxRuleMutationRequestBytes, &request); apiErr != nil {
+	if apiErr := decodeRequest(r, MaxRuleMutationRequestBytes, &request); apiErr != nil {
 		writeAPIError(w, apiErr)
 		return
 	}
@@ -191,7 +191,7 @@ func (h *Handler) ReorderRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request reorderRequest
-	if apiErr := decodeRequest(w, r, MaxRuleReorderRequestBytes, &request); apiErr != nil {
+	if apiErr := decodeRequest(r, MaxRuleReorderRequestBytes, &request); apiErr != nil {
 		writeAPIError(w, apiErr)
 		return
 	}
@@ -232,7 +232,7 @@ func (h *Handler) TestMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request testMessageRequest
-	if apiErr := decodeRequest(w, r, MaxTestMessageRequestBytes, &request); apiErr != nil {
+	if apiErr := decodeRequest(r, MaxTestMessageRequestBytes, &request); apiErr != nil {
 		writeAPIError(w, apiErr)
 		return
 	}

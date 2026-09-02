@@ -38,7 +38,7 @@ func TestMigrateRequestLogCreatedAtInstantsBackfillsAndQuarantinesRawStorageClas
 	`).Error; err != nil {
 		t.Fatalf("insert invalid timestamps: %v", err)
 	}
-	for index := 0; index < requestLogInvalidIDSampleSize; index++ {
+	for index := range requestLogInvalidIDSampleSize {
 		if err := db.Exec("INSERT INTO request_logs (created_at) VALUES (?)", fmt.Sprintf("bad-timestamp-%d", index)).Error; err != nil {
 			t.Fatalf("insert malformed timestamp %d: %v", index, err)
 		}

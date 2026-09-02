@@ -321,7 +321,7 @@ func (o *WebSocketSessionOrchestrator) prepareProviderAttempt(
 	}
 
 	dialHeaders, applied, err := o.handler.prepareWebSocketAttemptHeaders(
-		ctx, r, provider, candidate, o.apiType, o.globalAuthMode, finalURL, o.codexUpstreamHeaderHygiene(),
+		ctx, r, provider, candidate, o.globalAuthMode, finalURL, o.codexUpstreamHeaderHygiene(),
 	)
 	prepared := webSocketPreparedProviderAttempt{
 		upstreamURL:        upstreamURL,
@@ -415,7 +415,7 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 	}
 
 	dialHeaders, applied, err := o.handler.prepareWebSocketAttemptHeaders(
-		ctx, r, provider, prepared.candidate, o.apiType, o.globalAuthMode, prepared.finalURL, o.codexUpstreamHeaderHygiene(),
+		ctx, r, provider, prepared.candidate, o.globalAuthMode, prepared.finalURL, o.codexUpstreamHeaderHygiene(),
 	)
 	refreshedInjectedCredential := injectedCredentialForCapture(prepared.credential, dialHeaders)
 	if err != nil {
