@@ -30,18 +30,18 @@ export const STRATEGY_OPTIONS = [
     value: STRATEGIES.PRIORITY,
     label: "Priority",
     description:
-      "Select providers in order of priority. Lower number = higher priority. Best for primary/backup setups.",
+      "Select routing targets in priority order. Lower number = higher priority. Best for primary/backup setups.",
   },
   {
     value: STRATEGIES.RANDOM,
     label: "Random",
-    description: "Randomly select from available providers",
+    description: "Randomly select from available routing targets",
   },
   {
     value: STRATEGIES.WEIGHT,
     label: "Weight",
     description:
-      "Select based on configured weights (higher weight = more likely)",
+      "Select based on each routing target's weight (higher weight = more likely)",
   },
 ] as const;
 
@@ -256,7 +256,7 @@ export const CONFIG_KEYS = {
   MAX_BODY_SIZE: "max_body_size",
   GLOBAL_MAX_ATTEMPTS: "global_max_attempts",
   LOG_RETENTION_DAYS: "log_retention_days",
-  INTER_GROUP_STRATEGY: "inter_group_strategy",
+  ROOT_CANDIDATE_STRATEGY: "root_candidate_strategy",
 } as const;
 
 export type ConfigKey = (typeof CONFIG_KEYS)[keyof typeof CONFIG_KEYS];
@@ -304,7 +304,7 @@ export const DEFAULTS = {
   BACKOFF_JITTER: false,
 
   // Strategy
-  INTER_GROUP_STRATEGY: STRATEGIES.PRIORITY,
+  ROOT_CANDIDATE_STRATEGY: STRATEGIES.PRIORITY,
   PROVIDER_WEIGHT: 1,
 } as const;
 

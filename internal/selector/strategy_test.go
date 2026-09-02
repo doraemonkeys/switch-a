@@ -157,62 +157,61 @@ func TestSelectProvider(t *testing.T) {
 	}
 }
 
-func TestSelectGroup(t *testing.T) {
-	groups := []*groupCandidate{
-		{GroupID: "g1", Priority: 10, Weight: 50},
-		{GroupID: "g2", Priority: 5, Weight: 50},
+func TestSelectRootCandidate_Priority(t *testing.T) {
+	candidates := []*rootCandidate{
+		newExplicitGroupRootCandidate(&groupCandidate{GroupID: "g1", Priority: 10, Weight: 50}),
+		newExplicitGroupRootCandidate(&groupCandidate{GroupID: "g2", Priority: 5, Weight: 50}),
+		newStandaloneRootCandidate(&model.Provider{ID: "p1", Priority: 7, Weight: 50}),
 	}
 
-	// Priority strategy
-	g := SelectGroup(groups, StrategyPriority)
-	if g.GroupID != "g2" {
-		t.Errorf("SelectGroup(priority) = %s, want g2", g.GroupID)
+	candidate := selectRootCandidate(candidates, StrategyPriority)
+	if candidate.id() != "g2" {
+		t.Errorf("selectRootCandidate(priority) = %s, want g2", candidate.id())
 	}
 
-	// Empty list
-	g = SelectGroup(nil, StrategyPriority)
-	if g != nil {
-		t.Errorf("SelectGroup(nil) = %v, want nil", g)
+	candidate = selectRootCandidate(nil, StrategyPriority)
+	if candidate != nil {
+		t.Errorf("selectRootCandidate(nil) = %v, want nil", candidate)
 	}
 }
 
-func TestSelectGroup_Weight(t *testing.T) {
-	groups := []*groupCandidate{
-		{GroupID: "heavy", Weight: 100},
-		{GroupID: "light", Weight: 1},
+func TestSelectRootCandidate_Weight(t *testing.T) {
+	candidates := []*rootCandidate{
+		newExplicitGroupRootCandidate(&groupCandidate{GroupID: "heavy", Weight: 100}),
+		newStandaloneRootCandidate(&model.Provider{ID: "light", Weight: 1}),
 	}
 
 	heavyCount := 0
 	for range 1000 {
-		g := SelectGroup(groups, StrategyWeight)
-		if g.GroupID == "heavy" {
+		candidate := selectRootCandidate(candidates, StrategyWeight)
+		if candidate.id() == "heavy" {
 			heavyCount++
 		}
 	}
 
 	if heavyCount < 900 {
-		t.Errorf("SelectGroup(weight): heavy selected %d/1000 times, expected ~990", heavyCount)
+		t.Errorf("selectRootCandidate(weight): heavy selected %d/1000 times, expected ~990", heavyCount)
 	}
 }
 
-func TestSelectGroup_Random(t *testing.T) {
-	groups := []*groupCandidate{
-		{GroupID: "g1"},
-		{GroupID: "g2"},
-		{GroupID: "g3"},
+func TestSelectRootCandidate_Random(t *testing.T) {
+	candidates := []*rootCandidate{
+		newExplicitGroupRootCandidate(&groupCandidate{GroupID: "g1"}),
+		newStandaloneRootCandidate(&model.Provider{ID: "p1"}),
+		newStandaloneRootCandidate(&model.Provider{ID: "p2"}),
 	}
 
 	seen := make(map[string]bool)
 	for range 100 {
-		g := SelectGroup(groups, StrategyRandom)
-		if g == nil {
-			t.Fatal("SelectGroup returned nil")
+		candidate := selectRootCandidate(candidates, StrategyRandom)
+		if candidate == nil {
+			t.Fatal("selectRootCandidate returned nil")
 		}
-		seen[g.GroupID] = true
+		seen[candidate.id()] = true
 	}
 
 	if len(seen) < 2 {
-		t.Errorf("SelectGroup(random): expected multiple groups to be selected")
+		t.Errorf("selectRootCandidate(random): expected multiple candidates to be selected")
 	}
 }
 
@@ -279,37 +278,37 @@ func TestSelectByWeight_NegativeWeight(t *testing.T) {
 	}
 }
 
-func TestSelectGroup_PriorityTiebreaker(t *testing.T) {
-	groups := []*groupCandidate{
-		{GroupID: "b", Priority: 5},
-		{GroupID: "a", Priority: 5},
-		{GroupID: "c", Priority: 5},
+func TestSelectRootCandidate_PriorityTiebreaker(t *testing.T) {
+	candidates := []*rootCandidate{
+		newStandaloneRootCandidate(&model.Provider{ID: "b", Priority: 5}),
+		newExplicitGroupRootCandidate(&groupCandidate{GroupID: "a", Priority: 5}),
+		newStandaloneRootCandidate(&model.Provider{ID: "c", Priority: 5}),
 	}
 
-	g := SelectGroup(groups, StrategyPriority)
-	if g.GroupID != "a" {
-		t.Errorf("SelectGroup(priority) with tie = %s, want a (alphabetical tiebreaker)", g.GroupID)
+	candidate := selectRootCandidate(candidates, StrategyPriority)
+	if candidate.id() != "a" {
+		t.Errorf("selectRootCandidate(priority) with tie = %s, want a (alphabetical tiebreaker)", candidate.id())
 	}
 }
 
-func TestSelectGroup_ZeroWeight(t *testing.T) {
-	groups := []*groupCandidate{
-		{GroupID: "g1", Weight: 0},
-		{GroupID: "g2", Weight: 0},
+func TestSelectRootCandidate_ZeroWeight(t *testing.T) {
+	candidates := []*rootCandidate{
+		newExplicitGroupRootCandidate(&groupCandidate{GroupID: "g1", Weight: 0}),
+		newStandaloneRootCandidate(&model.Provider{ID: "p1", Weight: 0}),
 	}
 
 	seen := make(map[string]bool)
 	for range 100 {
-		g := SelectGroup(groups, StrategyWeight)
-		if g == nil {
-			t.Fatal("SelectGroup returned nil")
+		candidate := selectRootCandidate(candidates, StrategyWeight)
+		if candidate == nil {
+			t.Fatal("selectRootCandidate returned nil")
 		}
-		seen[g.GroupID] = true
+		seen[candidate.id()] = true
 	}
 
-	// Should select both groups (both treated as weight 1)
+	// Invalid weights are normalized consistently across both candidate kinds.
 	if len(seen) < 2 {
-		t.Errorf("SelectGroup with zero weights: expected both groups to be selected")
+		t.Errorf("selectRootCandidate with zero weights: expected both candidates to be selected")
 	}
 }
 

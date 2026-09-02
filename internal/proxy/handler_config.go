@@ -56,7 +56,6 @@ const (
 	ConfigKeyStickyMode                = "sticky_mode"
 	ConfigKeyStickyTTL                 = "sticky_ttl"
 	ConfigKeyWebSocketProbeClientModel = defaults.ConfigKeyWebSocketProbeClientModel
-	ConfigKeyInterGroupStrategy        = selector.ConfigKeyInterGroupStrategy
 )
 
 // defaultStickyTTLSeconds uses canonical value from selector package for consistency.

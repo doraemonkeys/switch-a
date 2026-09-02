@@ -3,7 +3,6 @@ package selector
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
@@ -22,23 +21,9 @@ const DefaultStickyTTLSeconds = defaults.StickyTTLSeconds
 // Derived from the centralized defaults package.
 const DefaultStickyTTL = defaults.StickyTTL
 
-// ConfigKeyInterGroupStrategy is the config key for inter-group selection strategy.
-const ConfigKeyInterGroupStrategy = "inter_group_strategy"
-
-// UngroupedProviderPriority is the priority assigned to ungrouped providers.
-// They are given the lowest priority (highest value) so grouped providers take precedence.
-//
-// Limitation: If a user sets a group priority to math.MaxInt32 (2147483647), it will
-// have the same priority as ungrouped providers. In this edge case, the tiebreaker is
-// alphabetical GroupID comparison, which may produce unexpected ordering. In practice,
-// group priorities should be kept in reasonable ranges (e.g., 0-1000).
-const UngroupedProviderPriority = math.MaxInt32
-
-// UngroupedGroupIDPrefix is the prefix for virtual group IDs assigned to ungrouped providers.
-const UngroupedGroupIDPrefix = "__ungrouped_"
-
-// UngroupedProviderWeight is the weight assigned to ungrouped provider virtual groups.
-const UngroupedProviderWeight = 1
+// ConfigKeyRootCandidateStrategy controls how explicit groups and standalone
+// providers compete at the root selection level.
+const ConfigKeyRootCandidateStrategy = defaults.ConfigKeyRootCandidateStrategy
 
 // Store defines the minimal storage interface needed by the selector.
 type Store interface {
@@ -313,59 +298,54 @@ func (s *Selector) selectExcludingInternal(ctx context.Context, scope *ProviderS
 		return nil, s.noProviderError(ctx, scope, excludeIDs)
 	}
 
-	// Get inter-group strategy from config
-	interGroupStrategy, err := s.store.GetConfig(ctx, ConfigKeyInterGroupStrategy)
+	rootCandidateStrategy, err := s.store.GetConfig(ctx, ConfigKeyRootCandidateStrategy)
 	if err != nil {
-		s.logger.Warn("failed to get inter_group_strategy, using default",
+		s.logger.Warn("failed to get root candidate strategy, using default",
+			zap.String("config_key", ConfigKeyRootCandidateStrategy),
 			zap.Error(err),
 			zap.String("default", StrategyPriority))
 	}
-	if interGroupStrategy == "" {
-		interGroupStrategy = StrategyPriority
+	if rootCandidateStrategy == "" {
+		rootCandidateStrategy = StrategyPriority
 	}
 
-	// Build group candidates with failover filtering
-	groupCandidates, ungroupedProviders, err := s.buildGroupCandidates(ctx, scope, providers, excludeIDs)
+	rootCandidates, err := s.buildRootCandidates(ctx, scope, providers, excludeIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	// Add ungrouped providers as individual virtual groups (lowest priority)
-	// Each gets a unique virtual group ID to allow independent removal during retry
-	for i, p := range ungroupedProviders {
-		provider := p // Create a copy to avoid pointer issues
-		groupCandidates = append(groupCandidates, &groupCandidate{
-			GroupID:   fmt.Sprintf("%s%d_%s", UngroupedGroupIDPrefix, i, provider.ID), // Unique virtual group ID
-			Priority:  UngroupedProviderPriority,
-			Weight:    UngroupedProviderWeight,
-			Strategy:  StrategyPriority,
-			Providers: []*model.Provider{&provider},
-		})
-	}
-
-	if len(groupCandidates) == 0 {
+	if len(rootCandidates) == 0 {
 		return nil, s.noProviderError(ctx, scope, excludeIDs)
 	}
 
-	// Try groups in order until we find an available provider
-	for len(groupCandidates) > 0 {
-		// Select a group
-		group := SelectGroup(groupCandidates, interGroupStrategy)
-		if group == nil {
+	for len(rootCandidates) > 0 {
+		candidate := selectRootCandidate(rootCandidates, rootCandidateStrategy)
+		if candidate == nil {
 			break
 		}
+		s.logger.Debug("root routing candidate selected",
+			zap.String("operation_id", reqOperationID(scope.req)),
+			zap.String("selection_strategy", rootCandidateStrategy),
+			zap.String("candidate_kind", candidate.kind.String()),
+			zap.String("candidate_id", candidate.id()),
+			zap.Int("candidate_priority", candidate.priority()),
+			zap.Int("candidate_weight", candidate.weight()),
+		)
 
-		// Remove from candidates to avoid re-selecting
-		groupCandidates = removeGroupCandidate(groupCandidates, group.GroupID)
+		rootCandidates = removeRootCandidate(rootCandidates, candidate)
 
-		// Try to select a provider from this group
-		lease, err := s.selectFromGroup(ctx, scope, group, excludeIDs)
+		lease, err := s.selectFromRootCandidate(ctx, scope, candidate, excludeIDs)
 		if err != nil {
 			return nil, err
 		}
 		if lease != nil {
 			return lease, nil
 		}
+		s.logger.Debug("root routing candidate unavailable after selection",
+			zap.String("operation_id", reqOperationID(scope.req)),
+			zap.String("candidate_kind", candidate.kind.String()),
+			zap.String("candidate_id", candidate.id()),
+		)
 	}
 
 	return nil, s.noProviderError(ctx, scope, excludeIDs)
@@ -458,10 +438,11 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 	return lease, nil
 }
 
-// buildGroupCandidates organizes providers into groups.
-func (s *Selector) buildGroupCandidates(ctx context.Context, scope *ProviderSelectionEligibility, providers []model.Provider, excludeIDs map[string]bool) ([]*groupCandidate, []model.Provider, error) {
+// buildRootCandidates preserves the configured selection level: explicit groups
+// compete as groups, while standalone providers retain their own routing values.
+func (s *Selector) buildRootCandidates(ctx context.Context, scope *ProviderSelectionEligibility, providers []model.Provider, excludeIDs map[string]bool) ([]*rootCandidate, error) {
 	groupMap := make(map[string]*groupCandidate)
-	var ungrouped []model.Provider
+	standalone := make([]*rootCandidate, 0, len(providers))
 
 	for _, p := range providers {
 		// Skip excluded providers
@@ -471,15 +452,15 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, scope *ProviderSele
 
 		allowed, err := scope.AllowsProvider(ctx, &p)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if !allowed {
 			continue
 		}
 
 		if p.GroupID == nil || *p.GroupID == "" {
-			// Ungrouped provider
-			ungrouped = append(ungrouped, p)
+			provider := p
+			standalone = append(standalone, newStandaloneRootCandidate(&provider))
 			continue
 		}
 
@@ -502,15 +483,35 @@ func (s *Selector) buildGroupCandidates(ctx context.Context, scope *ProviderSele
 		groupMap[groupID].Providers = append(groupMap[groupID].Providers, &provider)
 	}
 
-	// Convert map to slice, filtering out empty groups
-	var candidates []*groupCandidate
+	rootCandidates := standalone
 	for _, g := range groupMap {
 		if len(g.Providers) > 0 {
-			candidates = append(candidates, g)
+			rootCandidates = append(rootCandidates, newExplicitGroupRootCandidate(g))
 		}
 	}
 
-	return candidates, ungrouped, nil
+	return rootCandidates, nil
+}
+
+func (s *Selector) selectFromRootCandidate(
+	ctx context.Context,
+	scope *ProviderSelectionEligibility,
+	candidate *rootCandidate,
+	excludeIDs map[string]bool,
+) (*ProviderLease, error) {
+	if candidate == nil {
+		return nil, nil
+	}
+	if candidate.kind == rootCandidateStandaloneProvider {
+		provider := candidate.standaloneProvider
+		allowed, err := scope.AllowsProvider(ctx, provider)
+		if err != nil || !allowed {
+			return nil, err
+		}
+		lease, _ := s.acquireProvider(scope, provider)
+		return lease, nil
+	}
+	return s.selectFromGroup(ctx, scope, candidate.explicitGroup, excludeIDs)
 }
 
 // selectFromGroup selects a provider from a group using the group's strategy.
@@ -675,15 +676,4 @@ func (s *Selector) RetireAllProviderGenerations(mutation func() error) error {
 		return mutation()
 	}
 	return s.limiter.mutateWithRetiredGenerations(nil, true, mutation)
-}
-
-// removeGroupCandidate removes a group from the candidates list.
-func removeGroupCandidate(candidates []*groupCandidate, groupID string) []*groupCandidate {
-	result := make([]*groupCandidate, 0, len(candidates))
-	for _, c := range candidates {
-		if c.GroupID != groupID {
-			result = append(result, c)
-		}
-	}
-	return result
 }

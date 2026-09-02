@@ -267,8 +267,8 @@ func TestUpdateConfig_InvalidValues(t *testing.T) {
 			wantMsg: "must be 'auto', 'bearer', or 'x-api-key'",
 		},
 		{
-			name:    "inter_group_strategy invalid",
-			body:    `{"inter_group_strategy": "invalid"}`,
+			name:    "root_candidate_strategy invalid",
+			body:    `{"root_candidate_strategy": "invalid"}`,
 			wantMsg: "must be 'priority', 'random', or 'weight'",
 		},
 	}
@@ -331,9 +331,9 @@ func TestUpdateConfig_ValidValues(t *testing.T) {
 			value: "auto",
 		},
 		{
-			name:  "inter_group_strategy priority",
-			body:  `{"inter_group_strategy": "priority"}`,
-			key:   "inter_group_strategy",
+			name:  "root_candidate_strategy priority",
+			body:  `{"root_candidate_strategy": "priority"}`,
+			key:   "root_candidate_strategy",
 			value: "priority",
 		},
 		{

@@ -31,9 +31,9 @@ func newMockStore() *mockStore {
 		providers: []model.Provider{},
 		groups:    make(map[string]*model.Group),
 		configs: map[string]string{
-			"inter_group_strategy": "priority",
-			"sticky_mode":          "model",
-			"sticky_ttl":           "300",
+			ConfigKeyRootCandidateStrategy: "priority",
+			"sticky_mode":                  "model",
+			"sticky_ttl":                   "300",
 		},
 		authStates: make(map[string]*credentialsession.AuthState),
 	}
@@ -619,7 +619,7 @@ func TestSelector_Select_WithGroups(t *testing.T) {
 		"g1": {ID: "g1", Name: "Group 1", Strategy: "priority", Priority: 1, Weight: 1, Enabled: true},
 		"g2": {ID: "g2", Name: "Group 2", Strategy: "priority", Priority: 2, Weight: 1, Enabled: true},
 	}
-	store.configs["inter_group_strategy"] = "priority"
+	store.configs[ConfigKeyRootCandidateStrategy] = StrategyPriority
 
 	clock := &mockClock{now: time.Now()}
 	logger := zap.NewNop()
@@ -753,8 +753,8 @@ func TestSelector_ConfigError_DefaultsToStrategy(t *testing.T) {
 		{ID: "p1", Name: "Provider 1", Enabled: true, Priority: 1, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude"}}},
 		{ID: "p2", Name: "Provider 2", Enabled: true, Priority: 2, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude"}}},
 	}
-	// Remove the inter_group_strategy config to trigger default
-	delete(store.configs, "inter_group_strategy")
+	// Remove the root strategy config to trigger the default.
+	delete(store.configs, ConfigKeyRootCandidateStrategy)
 
 	clock := &mockClock{now: time.Now()}
 	logger := zap.NewNop()

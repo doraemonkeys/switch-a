@@ -11,17 +11,17 @@ export function RoutingStrategySection({
   return (
     <ConfigSection
       title="Routing Strategy"
-      description="Configure how requests are routed between groups."
+      description="Configure how explicit groups and standalone providers compete at the root routing level."
       icon="🔀"
     >
       <div>
         <label className="block text-sm font-medium text-text-primary mb-1.5">
-          Inter-Group Strategy
+          Root Candidate Strategy
           <ModifiedBadge
-            configKey={CONFIG_KEYS.INTER_GROUP_STRATEGY}
+            configKey={CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY}
             currentValue={getValue(
-              CONFIG_KEYS.INTER_GROUP_STRATEGY,
-              DEFAULTS.INTER_GROUP_STRATEGY,
+              CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY,
+              DEFAULTS.ROOT_CANDIDATE_STRATEGY,
             )}
             getDefault={getDefault}
           />
@@ -29,11 +29,11 @@ export function RoutingStrategySection({
         <select
           className="input"
           value={getValue(
-            CONFIG_KEYS.INTER_GROUP_STRATEGY,
-            DEFAULTS.INTER_GROUP_STRATEGY,
+            CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY,
+            DEFAULTS.ROOT_CANDIDATE_STRATEGY,
           )}
           onChange={(e) =>
-            handleChange(CONFIG_KEYS.INTER_GROUP_STRATEGY, e.target.value)
+            handleChange(CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY, e.target.value)
           }
         >
           {STRATEGY_OPTIONS.map((opt) => (
@@ -48,8 +48,8 @@ export function RoutingStrategySection({
               (opt) =>
                 opt.value ===
                 getValue(
-                  CONFIG_KEYS.INTER_GROUP_STRATEGY,
-                  DEFAULTS.INTER_GROUP_STRATEGY,
+                  CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY,
+                  DEFAULTS.ROOT_CANDIDATE_STRATEGY,
                 ),
             )?.description
           }

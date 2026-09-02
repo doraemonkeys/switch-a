@@ -16,13 +16,15 @@ const (
 	legacyCodexWebSocketSubprotocolKey  = "codex_websocket_subprotocol_enabled"
 	legacyCodexContinuityKey            = "codex_continuity_enabled"
 	legacyCodexProviderCookieJarKey     = "codex_provider_cookie_jar_enabled"
+	legacyInterGroupStrategyKey         = "inter_group_strategy"
 )
 
-var legacyCodexRolloutConfigKeys = []string{
+var obsoleteRuntimeConfigKeys = []string{
 	legacyCodexUpstreamHeaderHygieneKey,
 	legacyCodexWebSocketSubprotocolKey,
 	legacyCodexContinuityKey,
 	legacyCodexProviderCookieJarKey,
+	legacyInterGroupStrategyKey,
 }
 
 // GetDefaultConfigs returns the default runtime configuration values.
@@ -40,20 +42,20 @@ func GetDefaultConfigs() map[string]string {
 		"sticky_mode":              DefaultStickyMode,
 		"sticky_ttl":               DefaultStickyTTL,
 		defaults.ConfigKeyWebSocketProbeClientModel: DefaultWebSocketProbeClientModel,
-		"circuit_failure":      DefaultCircuitFailure,
-		"circuit_window":       DefaultCircuitWindow,
-		"circuit_disable":      DefaultCircuitDisable,
-		"max_body_size":        DefaultMaxBodySize,
-		"global_max_attempts":  DefaultGlobalMaxAttempts,
-		"log_retention_days":   DefaultLogRetentionDays,
-		"inter_group_strategy": DefaultInterGroupStrategy,
+		"circuit_failure":                       DefaultCircuitFailure,
+		"circuit_window":                        DefaultCircuitWindow,
+		"circuit_disable":                       DefaultCircuitDisable,
+		"max_body_size":                         DefaultMaxBodySize,
+		"global_max_attempts":                   DefaultGlobalMaxAttempts,
+		"log_retention_days":                    DefaultLogRetentionDays,
+		defaults.ConfigKeyRootCandidateStrategy: DefaultRootCandidateStrategy,
 	}
 	return configDefaults
 }
 
-func deleteLegacyCodexRolloutConfig(db *gorm.DB) error {
-	if err := db.Where("key IN ?", legacyCodexRolloutConfigKeys).Delete(&model.RuntimeConfig{}).Error; err != nil {
-		return fmt.Errorf("delete legacy Codex rollout config: %w", err)
+func deleteObsoleteRuntimeConfig(db *gorm.DB) error {
+	if err := db.Where("key IN ?", obsoleteRuntimeConfigKeys).Delete(&model.RuntimeConfig{}).Error; err != nil {
+		return fmt.Errorf("delete obsolete runtime config: %w", err)
 	}
 	return nil
 }

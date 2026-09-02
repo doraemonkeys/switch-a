@@ -105,8 +105,10 @@ const (
 
 // Strategy defaults.
 const (
-	InterGroupStrategy = "priority"
-	ProviderWeight     = 1
+	ConfigKeyRootCandidateStrategy = "root_candidate_strategy"
+	RootCandidateStrategy          = "priority"
+	GroupStrategy                  = "priority"
+	ProviderWeight                 = 1
 	// ProviderMaxRetries is the default retry count for a provider.
 	// 0 means try once, no retry.
 	ProviderMaxRetries = 0

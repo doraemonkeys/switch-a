@@ -224,10 +224,9 @@ func (s *SQLiteStore) Close() error {
 // InitDefaultConfig initializes default runtime configuration values.
 func (s *SQLiteStore) InitDefaultConfig(ctx context.Context) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Rollout switches described deployment mechanics rather than durable user
-		// intent, so initialization removes the rows instead of preserving hidden
-		// values that could influence a future runtime.
-		if err := deleteLegacyCodexRolloutConfig(tx); err != nil {
+		// Removed concepts must not survive as hidden configuration that can be
+		// mistaken for active runtime behavior by operators or future code.
+		if err := deleteObsoleteRuntimeConfig(tx); err != nil {
 			return err
 		}
 		for key, value := range GetDefaultConfigs() {

@@ -56,10 +56,10 @@ func TestValidateConfigValue(t *testing.T) {
 		{"auth_mode invalid", "auth_mode", "basic", true},
 
 		// Strategy validator
-		{"inter_group_strategy priority", "inter_group_strategy", "priority", false},
-		{"inter_group_strategy random", "inter_group_strategy", "random", false},
-		{"inter_group_strategy weight", "inter_group_strategy", "weight", false},
-		{"inter_group_strategy invalid", "inter_group_strategy", "round-robin", true},
+		{"root_candidate_strategy priority", "root_candidate_strategy", "priority", false},
+		{"root_candidate_strategy random", "root_candidate_strategy", "random", false},
+		{"root_candidate_strategy weight", "root_candidate_strategy", "weight", false},
+		{"root_candidate_strategy invalid", "root_candidate_strategy", "round-robin", true},
 
 		// No validator (any value accepted)
 		{"user_header any", "user_header", "X-Custom-User", false},
@@ -248,7 +248,7 @@ func TestIsValidConfigKey(t *testing.T) {
 		{"max_body_size", true},
 		{"global_max_attempts", true},
 		{"log_retention_days", true},
-		{"inter_group_strategy", true},
+		{"root_candidate_strategy", true},
 		{"unknown_key", false},
 		{"", false},
 	}

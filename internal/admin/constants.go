@@ -3,7 +3,6 @@ package admin
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -28,7 +27,7 @@ const (
 // Default values for resources.
 // Core defaults are derived from the centralized defaults package.
 const (
-	DefaultStrategy           = defaults.InterGroupStrategy
+	DefaultStrategy           = defaults.GroupStrategy
 	DefaultAuthMode           = defaults.AuthMode
 	DefaultWeight             = defaults.ProviderWeight
 	DefaultProviderMaxRetries = defaults.ProviderMaxRetries
@@ -52,10 +51,6 @@ const (
 const (
 	ContentTypeJSON = "application/json"
 )
-
-// ReservedGroupPriority is reserved for ungrouped providers.
-// Groups cannot use this priority value as it would conflict with ungrouped providers.
-const ReservedGroupPriority = math.MaxInt32
 
 // validStrategies contains the allowed strategy values.
 // Unexported to prevent external mutation; use IsValidStrategy() for validation.
@@ -85,13 +80,13 @@ var validConfigKeys = map[string]bool{
 	"sticky_mode":              true,
 	"sticky_ttl":               true,
 	defaults.ConfigKeyWebSocketProbeClientModel: true,
-	"circuit_failure":      true,
-	"circuit_window":       true,
-	"circuit_disable":      true,
-	"max_body_size":        true,
-	"global_max_attempts":  true,
-	"log_retention_days":   true,
-	"inter_group_strategy": true,
+	"circuit_failure":                       true,
+	"circuit_window":                        true,
+	"circuit_disable":                       true,
+	"max_body_size":                         true,
+	"global_max_attempts":                   true,
+	"log_retention_days":                    true,
+	defaults.ConfigKeyRootCandidateStrategy: true,
 }
 
 // IsValidStrategy checks if the given strategy is valid.
@@ -139,13 +134,13 @@ var configValidators = map[string]ConfigValidator{
 	"sticky_mode":              validateStickyModeConfig,
 	"sticky_ttl":               validatePositiveIntConfig,
 	defaults.ConfigKeyWebSocketProbeClientModel: validateBoolConfig,
-	"circuit_failure":      validatePositiveIntConfig,
-	"circuit_window":       validatePositiveIntConfig,
-	"circuit_disable":      validatePositiveIntConfig,
-	"max_body_size":        validatePositiveIntConfig,
-	"global_max_attempts":  validateNonNegativeIntConfig,
-	"log_retention_days":   validatePositiveIntConfig,
-	"inter_group_strategy": validateStrategyConfig,
+	"circuit_failure":                       validatePositiveIntConfig,
+	"circuit_window":                        validatePositiveIntConfig,
+	"circuit_disable":                       validatePositiveIntConfig,
+	"max_body_size":                         validatePositiveIntConfig,
+	"global_max_attempts":                   validateNonNegativeIntConfig,
+	"log_retention_days":                    validatePositiveIntConfig,
+	defaults.ConfigKeyRootCandidateStrategy: validateStrategyConfig,
 }
 
 // ValidateConfigValue validates a config value for the given key.

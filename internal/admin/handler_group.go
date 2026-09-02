@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -122,12 +121,6 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	if group.Weight <= 0 {
 		group.Weight = DefaultWeight
 	}
-	// Validate priority is not reserved for ungrouped providers
-	if group.Priority == ReservedGroupPriority {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, fmt.Sprintf("Priority value %d is reserved for ungrouped providers", ReservedGroupPriority))
-		return
-	}
-
 	if err := h.mutateAllProviderGenerations(func() error {
 		return h.store.CreateGroup(r.Context(), group)
 	}); err != nil {
@@ -187,11 +180,6 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		group.Strategy = *req.Strategy
 	}
 	if req.Priority != nil {
-		// Validate priority is not reserved for ungrouped providers
-		if *req.Priority == ReservedGroupPriority {
-			writeError(w, http.StatusBadRequest, ErrCodeValidation, fmt.Sprintf("Priority value %d is reserved for ungrouped providers", ReservedGroupPriority))
-			return
-		}
 		group.Priority = *req.Priority
 	}
 	if req.Weight != nil {

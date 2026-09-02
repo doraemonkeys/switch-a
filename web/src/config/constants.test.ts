@@ -208,7 +208,7 @@ describe("CONFIG_KEYS", () => {
     );
     expect(CONFIG_KEYS.CIRCUIT_FAILURE).toBe("circuit_failure");
     expect(CONFIG_KEYS.GLOBAL_MAX_ATTEMPTS).toBe("global_max_attempts");
-    expect(CONFIG_KEYS.INTER_GROUP_STRATEGY).toBe("inter_group_strategy");
+    expect(CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY).toBe("root_candidate_strategy");
   });
 
   it("should have exactly 17 config keys", () => {
@@ -256,7 +256,7 @@ describe("DEFAULTS", () => {
   });
 
   it("should have strategy defaults", () => {
-    expect(DEFAULTS.INTER_GROUP_STRATEGY).toBe(STRATEGIES.PRIORITY);
+    expect(DEFAULTS.ROOT_CANDIDATE_STRATEGY).toBe(STRATEGIES.PRIORITY);
     expect(DEFAULTS.PROVIDER_WEIGHT).toBe(1);
   });
 

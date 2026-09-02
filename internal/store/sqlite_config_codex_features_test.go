@@ -7,11 +7,11 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
-func TestInitDefaultConfigDeletesOnlyLegacyCodexRolloutRows(t *testing.T) {
+func TestInitDefaultConfigDeletesOnlyObsoleteRuntimeRows(t *testing.T) {
 	configStore := setupTestStore(t)
 	ctx := context.Background()
 
-	for _, key := range legacyCodexRolloutConfigKeys {
+	for _, key := range obsoleteRuntimeConfigKeys {
 		if err := configStore.SetConfig(ctx, key, "true"); err != nil {
 			t.Fatalf("SetConfig(%q) error = %v", key, err)
 		}
@@ -29,9 +29,9 @@ func TestInitDefaultConfigDeletesOnlyLegacyCodexRolloutRows(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetAllConfig() run %d error = %v", run, err)
 		}
-		for _, key := range legacyCodexRolloutConfigKeys {
+		for _, key := range obsoleteRuntimeConfigKeys {
 			if _, exists := stored[key]; exists {
-				t.Errorf("legacy rollout row %q remains after run %d", key, run)
+				t.Errorf("obsolete runtime row %q remains after run %d", key, run)
 			}
 		}
 		if stored[unrelatedKey] != "preserve-me" {
@@ -43,7 +43,7 @@ func TestInitDefaultConfigDeletesOnlyLegacyCodexRolloutRows(t *testing.T) {
 	}
 }
 
-func TestCodexRolloutKeysAreAbsentFromFreshDefaults(t *testing.T) {
+func TestObsoleteRuntimeKeysAreAbsentFromFreshDefaults(t *testing.T) {
 	configStore := setupTestStore(t)
 	ctx := context.Background()
 	if err := configStore.InitDefaultConfig(ctx); err != nil {
@@ -54,7 +54,7 @@ func TestCodexRolloutKeysAreAbsentFromFreshDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAllConfig() error = %v", err)
 	}
-	for _, key := range legacyCodexRolloutConfigKeys {
+	for _, key := range obsoleteRuntimeConfigKeys {
 		if _, exists := configDefaults[key]; exists {
 			t.Errorf("GetDefaultConfigs() contains removed key %q", key)
 		}

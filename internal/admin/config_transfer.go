@@ -373,10 +373,6 @@ func buildGroupFromExport(g *ExportedGroup) (*model.Group, bool) {
 		return nil, false
 	}
 
-	if g.Priority == ReservedGroupPriority {
-		return nil, false
-	}
-
 	weight := g.Weight
 	if weight <= 0 {
 		weight = DefaultWeight

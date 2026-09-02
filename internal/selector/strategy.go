@@ -120,39 +120,11 @@ func SelectProvider(providers []*model.Provider, strategy string) *model.Provide
 	}
 }
 
-// groupCandidate represents a group with its available providers.
+// groupCandidate represents an explicit group with its available providers.
 type groupCandidate struct {
 	GroupID   string
 	Priority  int
 	Weight    int
 	Strategy  string
 	Providers []*model.Provider
-}
-
-// SelectGroup applies the given strategy to select a group.
-func SelectGroup(groups []*groupCandidate, strategy string) *groupCandidate {
-	if len(groups) == 0 {
-		return nil
-	}
-
-	switch strategy {
-	case StrategyRandom:
-		return groups[rand.IntN(len(groups))]
-	case StrategyWeight:
-		result, _ := selectByWeightGeneric(groups, func(g *groupCandidate) int { return g.Weight })
-		return result
-	case StrategyPriority:
-		fallthrough
-	default:
-		// Sort by priority ascending
-		sorted := make([]*groupCandidate, len(groups))
-		copy(sorted, groups)
-		sort.Slice(sorted, func(i, j int) bool {
-			if sorted[i].Priority != sorted[j].Priority {
-				return sorted[i].Priority < sorted[j].Priority
-			}
-			return sorted[i].GroupID < sorted[j].GroupID
-		})
-		return sorted[0]
-	}
 }

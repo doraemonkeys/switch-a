@@ -58,6 +58,6 @@ var (
 	DefaultGlobalMaxAttempts = strconv.Itoa(defaults.GlobalMaxAttempts)
 	// DefaultLogRetentionDays is the default log retention period in days.
 	DefaultLogRetentionDays = strconv.Itoa(defaults.LogRetentionDays)
-	// DefaultInterGroupStrategy is the default inter-group routing strategy.
-	DefaultInterGroupStrategy = defaults.InterGroupStrategy
+	// DefaultRootCandidateStrategy is the default root-level routing strategy.
+	DefaultRootCandidateStrategy = defaults.RootCandidateStrategy
 )

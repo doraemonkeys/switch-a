@@ -433,10 +433,6 @@ func validateExportedGroup(g *ExportedGroup) []string {
 	if g.Strategy != "" && !IsValidStrategy(g.Strategy) {
 		warnings = append(warnings, "Group '"+g.ID+"' has invalid strategy: "+g.Strategy)
 	}
-	if g.Priority == ReservedGroupPriority {
-		warnings = append(warnings, "Group '"+g.ID+"' uses reserved priority value")
-	}
-
 	return warnings
 }
 
