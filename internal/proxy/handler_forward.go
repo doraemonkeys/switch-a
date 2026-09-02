@@ -29,14 +29,15 @@ const maxAttemptSnippetBytes = 512
 type attemptFailureKind string
 
 const (
-	attemptFailureNone             attemptFailureKind = ""
-	attemptFailurePreparation      attemptFailureKind = "preparation"
-	attemptFailureTransport        attemptFailureKind = "transport"
-	attemptFailureStatus           attemptFailureKind = "status"
-	attemptFailureRead             attemptFailureKind = "upstream_read"
-	attemptFailureWrite            attemptFailureKind = "client_write"
-	attemptFailureClientTerminated attemptFailureKind = "client_terminated"
-	attemptFailureInternal         attemptFailureKind = "internal"
+	attemptFailureNone               attemptFailureKind = ""
+	attemptFailurePreparation        attemptFailureKind = "preparation"
+	attemptFailureTransport          attemptFailureKind = "transport"
+	attemptFailureUpstreamNoResponse attemptFailureKind = "upstream_no_response"
+	attemptFailureStatus             attemptFailureKind = "status"
+	attemptFailureRead               attemptFailureKind = "upstream_read"
+	attemptFailureWrite              attemptFailureKind = "client_write"
+	attemptFailureClientTerminated   attemptFailureKind = "client_terminated"
+	attemptFailureInternal           attemptFailureKind = "internal"
 )
 
 // semanticAttemptFacts is deliberately value-only; evidence consumers can
@@ -114,6 +115,9 @@ func (r *forwardResult) inheritHealth(source forwardResult) {
 func (r forwardResult) terminalError() error {
 	if r.failureMessage == "" {
 		return nil
+	}
+	if r.failureKind == attemptFailureUpstreamNoResponse {
+		return fmt.Errorf("%w: %s", ErrUpstreamNoResponse, r.failureMessage)
 	}
 	if r.failureKind == attemptFailureRead {
 		if r.readTermination == responseanalysis.ReadTerminationIdleTimeout {

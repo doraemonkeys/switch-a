@@ -188,7 +188,9 @@ func classifyHTTPAttemptOutcome(result forwardResult) model.RequestAttemptOutcom
 	switch {
 	case result.failureKind == attemptFailurePreparation:
 		return model.RequestAttemptOutcomeGatewayError
-	case result.failureKind == attemptFailureTransport || result.failureKind == attemptFailureRead:
+	case result.failureKind == attemptFailureTransport ||
+		result.failureKind == attemptFailureUpstreamNoResponse ||
+		result.failureKind == attemptFailureRead:
 		return model.RequestAttemptOutcomeUpstreamTransportError
 	case result.failureKind == attemptFailureStatus || result.isStatusFailover:
 		return model.RequestAttemptOutcomeUpstreamHTTPStatusError

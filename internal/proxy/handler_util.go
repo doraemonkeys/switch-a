@@ -102,16 +102,28 @@ func (h *Handler) handleNoProvider(pctx *proxyContext, selectionErr error) {
 	})
 }
 
-// handleExhaustedRetries handles exhausted retry attempts.
-func (h *Handler) handleExhaustedRetries(pctx *proxyContext, lastErr error) {
+// handleExhaustedRetries returns the downstream status so request evidence uses
+// the same transport outcome that was written to the client.
+func (h *Handler) handleExhaustedRetries(pctx *proxyContext, lastErr error) int {
+	if errors.Is(lastErr, ErrUpstreamNoResponse) {
+		h.writeGatewayError(
+			pctx.w,
+			http.StatusBadGateway,
+			ErrCodeUpstreamNoResponse,
+			"Upstream provider closed the connection without returning a response",
+		)
+		return http.StatusBadGateway
+	}
 	if lastErr != nil {
 		h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderExhausted, "All providers failed")
-	} else {
-		// No lastErr means all providers were excluded/unavailable without actually failing.
-		// Log this edge case for visibility, as it indicates a selection issue rather than provider failure.
-		h.logger.Warn("exhausted retries with no provider errors", zap.String("api_type", pctx.apiType))
-		h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
+		return http.StatusServiceUnavailable
 	}
+
+	// No lastErr means all providers were excluded/unavailable without actually failing.
+	// Log this edge case for visibility, as it indicates a selection issue rather than provider failure.
+	h.logger.Warn("exhausted retries with no provider errors", zap.String("api_type", pctx.apiType))
+	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
+	return http.StatusServiceUnavailable
 }
 
 // suspendProviderUntil marks a provider unavailable until the given time.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -354,6 +355,9 @@ func (h *Handler) resolveStatusFailure(
 }
 
 func failureResult(kind attemptFailureKind, err error) forwardResult {
+	if kind == attemptFailureTransport && errors.Is(err, io.EOF) {
+		kind = attemptFailureUpstreamNoResponse
+	}
 	result := forwardResult{failureKind: kind}
 	if err != nil {
 		result.failureMessage = err.Error()
@@ -501,12 +505,9 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	if shouldStoreHTTPVisibleContinuitySeed(state) {
 		h.storeVisibleContinuitySeed(&state.switchTracker, time.Now())
 	}
-	if !state.success && !state.headersWritten {
-		h.handleExhaustedRetries(pctx, state.lastErr)
-	}
 	clientStatus := state.statusCode
 	if !state.success && !state.headersWritten {
-		clientStatus = http.StatusServiceUnavailable
+		clientStatus = h.handleExhaustedRetries(pctx, state.lastErr)
 	}
 	h.scheduleProviderUsagePersistence(pctx)
 	go h.logRequest(pctx, logRequestInputs{

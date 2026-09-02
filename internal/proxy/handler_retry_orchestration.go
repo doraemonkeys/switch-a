@@ -47,6 +47,19 @@ func (h *Handler) resolveLegacyFailure(
 		}
 	}
 	h.logLegacyRetryRejection(pctx, state, retryRejectionReason)
+	// A headerless EOF is attributable to the selected provider but does not prove
+	// whether that provider received the request. After its local retry budget is
+	// exhausted, changing providers would hide that ambiguity behind a new route.
+	if result.failureKind == attemptFailureUpstreamNoResponse {
+		h.logger.Info("proxy.provider_switch_suppressed",
+			zap.String("request_id", pctx.requestID),
+			zap.String("provider_id", state.currentProvider.ID),
+			zap.Int("provider_attempt", state.providerAttempt+1),
+			zap.String("failure_kind", string(result.failureKind)),
+			zap.String("decision", "return_upstream_error"),
+		)
+		return result, false
+	}
 
 	switched, resolved, continueExecution := h.activateAlternate(
 		ctx, pctx, state, pending, result,

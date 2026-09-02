@@ -339,6 +339,7 @@ const (
 	ErrCodeUnknownAPIType      = "UNKNOWN_API_TYPE"
 	ErrCodeProviderUnavailable = "PROVIDER_UNAVAILABLE"
 	ErrCodeProviderExhausted   = "PROVIDER_EXHAUSTED"
+	ErrCodeUpstreamNoResponse  = "UPSTREAM_NO_RESPONSE"
 	ErrCodeBodyTooLarge        = "BODY_TOO_LARGE"
 	ErrCodeWebSocketUpgrade    = "WEBSOCKET_UPGRADE_FAILED"
 	ErrCodeWebSocketReconnect  = "WEBSOCKET_RECONNECT_REQUIRED"

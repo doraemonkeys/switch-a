@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrReadTimeout    = errors.New("upstream response idle timeout")
-	ErrSSEIdleTimeout = errors.New("upstream SSE idle timeout")
+	ErrReadTimeout        = errors.New("upstream response idle timeout")
+	ErrSSEIdleTimeout     = errors.New("upstream SSE idle timeout")
+	ErrUpstreamNoResponse = errors.New("upstream provider returned no response")
 )
 
 // TransportConfig separates exchange-establishment deadlines from body idle
