@@ -248,7 +248,7 @@ func columnSetSignatures(columnSets [][]string) string {
 func canonicalSQL(statement string) string {
 	var builder strings.Builder
 	for _, character := range strings.ToLower(statement) {
-		if !unicode.IsSpace(character) && character != ';' {
+		if !unicode.IsSpace(character) && character != ';' && character != '"' && character != '`' && character != '[' && character != ']' {
 			builder.WriteRune(character)
 		}
 	}

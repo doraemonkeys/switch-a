@@ -5,6 +5,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/sqliteschema"
@@ -179,7 +180,32 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 	if ctx == nil || db == nil {
 		return &providercookie.ConfigurationError{Field: "database", Reason: "context and database are required"}
 	}
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return storageError("get_database", err)
+	}
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return storageError("reserve_connection", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	var initialForeignKeys int
+	if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&initialForeignKeys); err != nil {
+		return storageError("read_foreign_keys", err)
+	}
+	if initialForeignKeys != 0 {
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+			return storageError("disable_foreign_keys", err)
+		}
+		defer func() {
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+		}()
+	}
+
+	session := db.WithContext(ctx).Session(&gorm.Session{})
+	session.Statement.ConnPool = conn
+	err = session.Transaction(func(tx *gorm.DB) error {
 		existing, err := sqliteschema.ExistingTableCount(tx, []string{schemaTable, handlesTable, authoritiesTable, entriesTable})
 		if err != nil {
 			return storageError("inspect_schema", err)
@@ -188,40 +214,56 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 			return corruptError("migrate_schema", fmt.Errorf("provider-Cookie schema is partial: found %d of %d tables", existing, len(schemaManifest)))
 		}
 		if existing == 0 {
-			if err := tx.Exec(schemaDefinition).Error; err != nil {
-				return storageError("create_schema_meta", err)
-			}
-			for _, statement := range createSchemaStatements {
-				if err := tx.Exec(statement).Error; err != nil {
-					return storageError("create_schema", err)
-				}
-			}
-			if err := tx.Exec(
-				"INSERT INTO "+schemaTable+" (id, version) VALUES (?, ?)",
-				schemaRowID,
-				CurrentSchemaVersion,
-			).Error; err != nil {
-				return storageError("publish_schema_version", err)
+			if err := createFreshSchema(tx); err != nil {
+				return err
 			}
 			return validateSchema(ctx, tx)
 		}
-
-		version, exists, err := readSchemaVersion(ctx, tx)
-		if err != nil {
+		if err := ensureSchemaVersion(ctx, tx); err != nil {
 			return err
-		}
-		if !exists {
-			return corruptError("migrate_schema", fmt.Errorf("schema version row is missing"))
-		}
-		if version > CurrentSchemaVersion {
-			return corruptError("migrate_schema", fmt.Errorf("schema version %d is newer than supported version %d", version, CurrentSchemaVersion))
-		}
-		if version != CurrentSchemaVersion {
-			return corruptError("migrate_schema", fmt.Errorf("unsupported schema version %d", version))
 		}
 		return validateSchema(ctx, tx)
 	})
 	return classifyDatabaseError("migrate_schema", err)
+}
+
+func createFreshSchema(tx *gorm.DB) error {
+	if err := tx.Exec(schemaDefinition).Error; err != nil {
+		return storageError("create_schema_meta", err)
+	}
+	for _, statement := range createSchemaStatements {
+		if err := tx.Exec(statement).Error; err != nil {
+			return storageError("create_schema", err)
+		}
+	}
+	if err := tx.Exec(
+		"INSERT INTO "+schemaTable+" (id, version) VALUES (?, ?)",
+		schemaRowID,
+		CurrentSchemaVersion,
+	).Error; err != nil {
+		return storageError("publish_schema_version", err)
+	}
+	return nil
+}
+
+func ensureSchemaVersion(ctx context.Context, tx *gorm.DB) error {
+	version, exists, err := readSchemaVersion(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return corruptError("migrate_schema", fmt.Errorf("schema version row is missing"))
+	}
+	if version < 1 {
+		return corruptError("migrate_schema", fmt.Errorf("unsupported schema version %d", version))
+	}
+	if version > CurrentSchemaVersion {
+		return corruptError("migrate_schema", fmt.Errorf("schema version %d is newer than supported version %d", version, CurrentSchemaVersion))
+	}
+	if version < CurrentSchemaVersion {
+		return migrateSchema(tx, version)
+	}
+	return nil
 }
 
 func ValidateSchema(ctx context.Context, db *gorm.DB) error {
@@ -265,6 +307,55 @@ func readSchemaVersion(ctx context.Context, db *gorm.DB) (int, bool, error) {
 		return 0, false, nil
 	}
 	return row.Version, true, nil
+}
+
+func migrateSchema(tx *gorm.DB, version int) error {
+	switch version {
+	case 1, 2:
+		if err := rebuildHandlesTable(tx); err != nil {
+			return err
+		}
+		if err := tx.Exec(
+			"UPDATE "+schemaTable+" SET version = ? WHERE id = ?",
+			CurrentSchemaVersion,
+			schemaRowID,
+		).Error; err != nil {
+			return storageError("update_schema_version", err)
+		}
+		return nil
+	default:
+		return corruptError("migrate_schema", fmt.Errorf("unsupported schema version %d", version))
+	}
+}
+
+const handlesUpgradeTable = "codex_provider_cookie_handles_upgrade"
+
+func rebuildHandlesTable(tx *gorm.DB) error {
+	if err := tx.Exec("DROP TABLE IF EXISTS " + handlesUpgradeTable).Error; err != nil {
+		return storageError("drop_handles_upgrade_table", err)
+	}
+	upgradeDefinition := strings.Replace(handlesDefinition, handlesTable, handlesUpgradeTable, 1)
+	if err := tx.Exec(upgradeDefinition).Error; err != nil {
+		return storageError("create_handles_upgrade_table", err)
+	}
+	columns := "handle_key_version, handle_digest, jar_id, client_scope_key_version, client_scope_digest, created_at_ms, last_access_at_ms, idle_expires_at_ms, absolute_expires_at_ms"
+	copyStatement := fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s", handlesUpgradeTable, columns, columns, handlesTable)
+	if err := tx.Exec(copyStatement).Error; err != nil {
+		return storageError("copy_handles", err)
+	}
+	if err := tx.Exec("DROP INDEX IF EXISTS idx_codex_provider_cookie_handles_expiry").Error; err != nil {
+		return storageError("drop_handles_expiry_index", err)
+	}
+	if err := tx.Exec("DROP TABLE " + handlesTable).Error; err != nil {
+		return storageError("drop_handles_table", err)
+	}
+	if err := tx.Exec("ALTER TABLE " + handlesUpgradeTable + " RENAME TO " + handlesTable).Error; err != nil {
+		return storageError("rename_handles_table", err)
+	}
+	if err := tx.Exec(handlesExpiryIndex).Error; err != nil {
+		return storageError("create_handles_expiry_index", err)
+	}
+	return nil
 }
 
 func storageError(operation string, cause error) error {
