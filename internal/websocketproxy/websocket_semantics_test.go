@@ -309,6 +309,41 @@ func TestDecideWebSocketUpstreamMessage_UsesClientVisibilityAndParseDegradation(
 	}
 }
 
+func TestDecideWebSocketUpstreamMessage_UnknownEvent429FollowsVisibilityBoundary(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"type":"future.event","status":` + strconv.Itoa(http.StatusTooManyRequests) + `}`)
+	tests := []struct {
+		name          string
+		clientVisible bool
+		wantDecision  webSocketSemanticFrameDecision
+	}{
+		{
+			name:         "suppress before client visibility",
+			wantDecision: webSocketSemanticFrameDecisionSuppress,
+		},
+		{
+			name:          "forward after client visibility",
+			clientVisible: true,
+			wantDecision:  webSocketSemanticFrameDecisionForward,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			decision := decideWebSocketUpstreamMessage(websocket.MessageText, payload, false, tt.clientVisible)
+			if decision.Classification != webSocketSemanticClassificationProviderScopedAllowlisted {
+				t.Fatalf("Classification = %v, want %v", decision.Classification, webSocketSemanticClassificationProviderScopedAllowlisted)
+			}
+			if decision.FrameDecision != tt.wantDecision {
+				t.Fatalf("FrameDecision = %v, want %v", decision.FrameDecision, tt.wantDecision)
+			}
+		})
+	}
+}
+
 func TestIsChatGPTAccountModelCapabilityMismatch_RequiresExactCapabilityContract(t *testing.T) {
 	t.Parallel()
 
