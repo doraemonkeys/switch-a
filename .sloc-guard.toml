@@ -47,5 +47,5 @@ count_exclude = ["*_test.go", "*.test.*", "tmpclaude-*"]
 # only the direct-domain count and preserves every file and nested-folder limit.
 [[structure.rules]]
 scope = "./internal"
-max_dirs = 23
+max_dirs = 25
 reason = "analyticswindow, instant, and tokenanalytics are independent shared domains"
