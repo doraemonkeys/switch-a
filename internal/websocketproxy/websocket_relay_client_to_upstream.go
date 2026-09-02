@@ -11,6 +11,11 @@ import (
 	"github.com/coder/websocket"
 )
 
+var (
+	errWebSocketClientReadHandoffUnavailable = errors.New("websocket client read handoff is unavailable")
+	errWebSocketClientReadHandoffClosed      = errors.New("websocket client read handoff closed without a result")
+)
+
 // replayBufferedMessages is part of the client-to-upstream transport boundary:
 // it preserves the original wire bytes and applies the same capture and
 // write-confirmation hooks as live client traffic.
@@ -132,26 +137,25 @@ func (o *WebSocketSessionOrchestrator) observeReplayClientMessage(
 
 func (f *WebSocketForwarder) startClientToUpstreamRelay(
 	ctx context.Context,
+	sessionCtx context.Context,
 	cancel context.CancelFunc,
 	wg *sync.WaitGroup,
 	upstreamConn *websocket.Conn,
 	clientConn *websocket.Conn,
 	options webSocketRelayOptions,
 	lifecycle *webSocketLifecycleState,
-	initialClientReadCh <-chan webSocketInitialReadResult,
+	clientReads *webSocketClientReadHandoff,
 	observeClient func(websocket.MessageType, []byte),
 	errorOrder *atomic.Uint32,
 	result *webSocketRelayResult,
 ) {
 	wg.Go(func() {
-		initialClientRead := awaitInitialWebSocketRead(ctx, initialClientReadCh)
 		n, failurePeer, failureOperation, err := relayMessages(
 			ctx,
 			upstreamConn,
 			webSocketPeerUpstream,
-			clientConn,
 			webSocketPeerClient,
-			initialClientRead,
+			nil,
 			options,
 			requestcapture.MessageDirectionClientToUpstream,
 			observeClient,
@@ -191,6 +195,9 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 					ClientVisible:  lifecycleSnapshot.ClientVisible,
 				})
 			},
+			func(attemptCtx context.Context) (websocket.MessageType, []byte, error) {
+				return clientReads.Read(attemptCtx, sessionCtx, clientConn)
+			},
 		)
 		*result = newWebSocketRelayResultForOperation(n, err, failurePeer, failureOperation, errorOrder)
 		if err != nil {
@@ -199,19 +206,64 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 	})
 }
 
-func awaitInitialWebSocketRead(
-	ctx context.Context,
-	readCh <-chan webSocketInitialReadResult,
-) *webSocketInitialReadResult {
-	if readCh == nil {
+// webSocketClientReadHandoff keeps the single downstream reader owned by the
+// whole session rather than by one provider attempt. coder/websocket closes a
+// connection when a Read context is canceled, so an attempt-scoped Read would
+// destroy the downstream socket precisely when pre-visible failover needs to
+// preserve it. A pending read remains here for the next attempt to consume.
+type webSocketClientReadHandoff struct {
+	mu      sync.Mutex
+	pending <-chan webSocketInitialReadResult
+}
+
+func newWebSocketClientReadHandoff(initial <-chan webSocketInitialReadResult) *webSocketClientReadHandoff {
+	return &webSocketClientReadHandoff{pending: initial}
+}
+
+func (h *webSocketClientReadHandoff) pendingRead(
+	sessionCtx context.Context,
+	clientConn *websocket.Conn,
+) <-chan webSocketInitialReadResult {
+	if h == nil {
 		return nil
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pending == nil && clientConn != nil {
+		h.pending = startWebSocketInitialRead(sessionCtx, clientConn)
+	}
+	return h.pending
+}
 
+func (h *webSocketClientReadHandoff) complete(readCh <-chan webSocketInitialReadResult) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pending == readCh {
+		h.pending = nil
+	}
+}
+
+func (h *webSocketClientReadHandoff) Read(
+	attemptCtx context.Context,
+	sessionCtx context.Context,
+	clientConn *websocket.Conn,
+) (websocket.MessageType, []byte, error) {
+	readCh := h.pendingRead(sessionCtx, clientConn)
+	if readCh == nil {
+		return 0, nil, errWebSocketClientReadHandoffUnavailable
+	}
 	select {
-	case read := <-readCh:
-		return &read
-	case <-ctx.Done():
-		return &webSocketInitialReadResult{err: ctx.Err()}
+	case read, ok := <-readCh:
+		h.complete(readCh)
+		if !ok {
+			return 0, nil, errWebSocketClientReadHandoffClosed
+		}
+		return read.messageType, read.data, read.err
+	case <-attemptCtx.Done():
+		return 0, nil, attemptCtx.Err()
 	}
 }
 
@@ -304,11 +356,12 @@ func (p *webSocketRelayMessageProcessor) prepareWrite(
 	return decision, webSocketPeerUnknown, webSocketRelayFailureOperationUnknown, nil
 }
 
+type webSocketMessageReadFunc func(context.Context) (websocket.MessageType, []byte, error)
+
 func relayMessages(
 	ctx context.Context,
 	dst *websocket.Conn,
 	dstPeer webSocketPeer,
-	src *websocket.Conn,
 	srcPeer webSocketPeer,
 	initialRead *webSocketInitialReadResult,
 	options webSocketRelayOptions,
@@ -317,6 +370,7 @@ func relayMessages(
 	onForwarded func(messageType websocket.MessageType, data []byte),
 	onRead func(messageType websocket.MessageType, data []byte, captured webSocketCapturedRead, decision webSocketPreWriteDecision) func(),
 	preWrite func(messageType websocket.MessageType, data []byte) webSocketPreWriteDecision,
+	read webSocketMessageReadFunc,
 ) (int64, webSocketPeer, webSocketRelayFailureOperation, error) {
 	processor := webSocketRelayMessageProcessor{
 		ctx: ctx, dst: dst, dstPeer: dstPeer, srcPeer: srcPeer,
@@ -332,7 +386,7 @@ func relayMessages(
 		}
 	}
 	for {
-		messageType, data, err := src.Read(ctx)
+		messageType, data, err := read(ctx)
 		if err != nil {
 			return processor.totalBytes, srcPeer, webSocketRelayFailureOperationRead, err
 		}

@@ -249,6 +249,35 @@ func TestWebSocketRelayCloseAndPreservationBoundaries(t *testing.T) {
 	}
 }
 
+func TestWebSocketClientReadHandoffRetainsPendingFrameAcrossAttemptCancellation(t *testing.T) {
+	t.Parallel()
+
+	pending := make(chan webSocketInitialReadResult, 1)
+	handoff := newWebSocketClientReadHandoff(pending)
+	attemptCtx, cancelAttempt := context.WithCancel(context.Background())
+	cancelAttempt()
+
+	if _, _, err := handoff.Read(attemptCtx, context.Background(), nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled attempt read error = %v, want context canceled", err)
+	}
+
+	want := webSocketInitialReadResult{
+		messageType: websocket.MessageText,
+		data:        []byte(`{"type":"response.create"}`),
+	}
+	pending <- want
+	messageType, data, err := handoff.Read(context.Background(), context.Background(), nil)
+	if err != nil {
+		t.Fatalf("next attempt read error = %v", err)
+	}
+	if messageType != want.messageType || string(data) != string(want.data) {
+		t.Fatalf("next attempt read = (%v, %q), want (%v, %q)", messageType, data, want.messageType, want.data)
+	}
+	if got := handoff.pendingRead(context.Background(), nil); got != nil {
+		t.Fatal("completed handoff retained a stale read channel")
+	}
+}
+
 func TestPreVisibleClientMessageBufferRejectsUnsafeReplayState(t *testing.T) {
 	t.Parallel()
 

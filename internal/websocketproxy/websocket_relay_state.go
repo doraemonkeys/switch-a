@@ -1,7 +1,6 @@
 package websocketproxy
 
 import (
-	"context"
 	"sync"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
@@ -305,7 +304,7 @@ type webSocketRelayOptions struct {
 	PreWriteToClient         func(webSocketPreWriteContext) webSocketPreWriteDecision
 	PreWriteToUpstream       func(webSocketPreWriteContext) webSocketPreWriteDecision
 	OnClientVisible          func(webSocketVisibleWriteContext)
-	InitialClientReadCh      <-chan webSocketInitialReadResult
+	ClientReadHandoff        *webSocketClientReadHandoff
 	PreVisibleReplayBuffer   *preVisibleClientMessageBuffer
 	Lifecycle                *webSocketLifecycleState
 	PreserveClientOnSuppress bool
@@ -359,7 +358,6 @@ type webSocketPreVisibleRelayProgress struct {
 	BytesClientToUpstream   int64
 	BytesUpstreamToClient   int64
 	Result                  *webSocketRelaySessionResult
-	ConsumedInitialClient   bool
 	ConsumedInitialUpstream bool
 }
 
@@ -367,9 +365,10 @@ func (p *webSocketPreVisibleRelayProgress) merge(other webSocketPreVisibleRelayP
 	p.BytesClientToUpstream += other.BytesClientToUpstream
 	p.BytesUpstreamToClient += other.BytesUpstreamToClient
 	if other.Result != nil {
+		other.Result.BytesClientToUpstream = p.BytesClientToUpstream
+		other.Result.BytesUpstreamToClient = p.BytesUpstreamToClient
 		p.Result = other.Result
 	}
-	p.ConsumedInitialClient = p.ConsumedInitialClient || other.ConsumedInitialClient
 	p.ConsumedInitialUpstream = p.ConsumedInitialUpstream || other.ConsumedInitialUpstream
 }
 
@@ -398,18 +397,6 @@ func currentWebSocketObservation(observer WebSocketMessageObserver) WebSocketObs
 		return WebSocketObservation{}
 	}
 	return observer.Snapshot()
-}
-
-func waitForInitialWebSocketRead(
-	ctx context.Context,
-	initialReadCh <-chan webSocketInitialReadResult,
-) webSocketInitialReadResult {
-	select {
-	case initialRead := <-initialReadCh:
-		return initialRead
-	case <-ctx.Done():
-		return webSocketInitialReadResult{err: ctx.Err()}
-	}
 }
 
 type webSocketSuppressedUpstreamError struct {

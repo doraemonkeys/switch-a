@@ -167,14 +167,13 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 		return attemptResult
 	}
 
-	initialClientReadCh := o.takeInitialClientReadChannel()
 	relayResult := o.handler.wsForwarder.relay(ctx, o.clientConn, upstreamConn, webSocketRelayOptions{
 		GatewayCapture: captureOptions.GatewayCapture,
 		Capture:        captureOptions.Capture,
 		CaptureMode:    captureOptions.CaptureMode,
 
 		CredentialEvidence:                captureOptions.CredentialEvidence,
-		InitialClientReadCh:               initialClientReadCh,
+		ClientReadHandoff:                 o.sessionClientReadHandoff(),
 		Observer:                          observer,
 		OnFirstUpstreamMessage:            o.applyObservation,
 		OnClientVisible:                   o.onClientVisible,

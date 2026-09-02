@@ -68,6 +68,111 @@ func TestWebSocketForwarder_Forward_EchoRoundtrip(t *testing.T) {
 	}
 }
 
+func TestWebSocketForwarder_Relay_ForwardsAllPreVisibleClientFramesBeforeUpstreamResponds(t *testing.T) {
+	t.Parallel()
+
+	const upstreamResponse = `{"type":"response.created","response":{"id":"response-1"}}`
+	clientFrames := []webSocketReplayMessage{
+		{MessageType: websocket.MessageText, Data: []byte(`{"type":"session.update"}`)},
+		{MessageType: websocket.MessageText, Data: []byte(`{"type":"response.create"}`)},
+	}
+	receivedFrames := make(chan []webSocketReplayMessage, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept upstream websocket: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		frames := make([]webSocketReplayMessage, 0, len(clientFrames))
+		for range clientFrames {
+			messageType, data, readErr := conn.Read(r.Context())
+			if readErr != nil {
+				t.Errorf("read pre-visible client frame: %v", readErr)
+				return
+			}
+			frames = append(frames, webSocketReplayMessage{
+				MessageType: messageType,
+				Data:        append([]byte(nil), data...),
+			})
+		}
+		receivedFrames <- frames
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte(upstreamResponse)); err != nil {
+			t.Errorf("write upstream response: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	forwarder := NewWebSocketForwarder(WebSocketForwarderConfig{Logger: zaptest.NewLogger(t)})
+	releaseRelay := make(chan struct{})
+	relayResult := make(chan *webSocketRelaySessionResult, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dialExchange := forwarder.dialUpstream(r.Context(), WebSocketDialRequest{URL: wsURL(upstream)})
+		if !dialExchange.Accepted() {
+			t.Errorf("dial upstream websocket: %v", dialExchange.Err)
+			return
+		}
+		clientConn, err := forwarder.acceptClient(w, r)
+		if err != nil {
+			t.Errorf("accept client websocket: %v", err)
+			return
+		}
+		<-releaseRelay
+
+		lifecycle := newWebSocketLifecycleState()
+		buffer := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes)
+		relayResult <- forwarder.relay(r.Context(), clientConn, dialExchange.Conn, webSocketRelayOptions{
+			Observer:                 newCodexWebSocketMessageObserver(ModelUnknown, nil, nil, nil),
+			PreWriteToClient:         newAllowlistedProviderScopedSuppressDecision(buffer),
+			PreVisibleReplayBuffer:   buffer,
+			Lifecycle:                lifecycle,
+			PreserveClientOnSuppress: true,
+		})
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	clientConn := connectWSClient(t, ctx, wsURL(proxyServer))
+	defer clientConn.CloseNow()
+	for _, frame := range clientFrames {
+		if err := clientConn.Write(ctx, frame.MessageType, frame.Data); err != nil {
+			t.Fatalf("write pre-visible client frame: %v", err)
+		}
+	}
+	close(releaseRelay)
+
+	messageType, data, err := clientConn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read upstream response: %v", err)
+	}
+	if messageType != websocket.MessageText || string(data) != upstreamResponse {
+		t.Fatalf("upstream response = (%v, %q), want text/%q", messageType, data, upstreamResponse)
+	}
+
+	received := <-receivedFrames
+	if len(received) != len(clientFrames) {
+		t.Fatalf("received frames = %d, want %d", len(received), len(clientFrames))
+	}
+	for index, want := range clientFrames {
+		if received[index].MessageType != want.MessageType || !bytes.Equal(received[index].Data, want.Data) {
+			t.Fatalf("received frame %d = (%v, %q), want (%v, %q)",
+				index, received[index].MessageType, received[index].Data, want.MessageType, want.Data)
+		}
+	}
+	_ = clientConn.CloseNow()
+
+	select {
+	case result := <-relayResult:
+		if result.BytesClientToUpstream != int64(len(clientFrames[0].Data)+len(clientFrames[1].Data)) {
+			t.Fatalf("BytesClientToUpstream = %d, want both frames", result.BytesClientToUpstream)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for relay completion")
+	}
+}
+
 func TestWebSocketForwarder_Forward_BinaryMessages(t *testing.T) {
 	t.Parallel()
 

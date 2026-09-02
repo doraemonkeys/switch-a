@@ -574,17 +574,20 @@ func TestPreVisibleCodexWindowsHonorDemandAndCancellation(t *testing.T) {
 	}
 
 	if progress := forwarder.relayPreVisibleWindow(
-		context.Background(), nil, nil, options, nil, nil, nil, nil, nil, nil, commit,
+		context.Background(), context.Background(), nil, nil, options, nil,
+		newWebSocketClientReadHandoff(nil), nil, nil, nil, nil, commit,
 	); progress.Result != nil {
 		t.Fatalf("nil pre-visible lifecycle = %#v", progress)
 	}
 	if progress := forwarder.relayPreVisibleWindow(
-		context.Background(), nil, nil, webSocketRelayOptions{}, lifecycle, nil, nil, nil, nil, nil, commit,
+		context.Background(), context.Background(), nil, nil, webSocketRelayOptions{}, lifecycle,
+		newWebSocketClientReadHandoff(nil), nil, nil, nil, nil, commit,
 	); progress.Result != nil {
 		t.Fatalf("disabled pre-visible window = %#v", progress)
 	}
 	if progress := forwarder.relayPreVisibleWindow(
-		cancelled, nil, nil, options, lifecycle, make(chan webSocketInitialReadResult), nil, nil, nil, nil, commit,
+		cancelled, context.Background(), nil, nil, options, lifecycle,
+		newWebSocketClientReadHandoff(make(chan webSocketInitialReadResult)), nil, nil, nil, nil, commit,
 	); progress.Result == nil || !errors.Is(progress.Result.Err, context.Canceled) {
 		t.Fatalf("cancelled pre-visible window = %#v", progress)
 	}
@@ -592,8 +595,9 @@ func TestPreVisibleCodexWindowsHonorDemandAndCancellation(t *testing.T) {
 	clientReads := make(chan webSocketInitialReadResult, 1)
 	clientReads <- webSocketInitialReadResult{err: errors.New("client bootstrap")}
 	if progress := forwarder.relayPreVisibleWindow(
-		context.Background(), nil, nil, options, lifecycle, clientReads, nil, nil, nil, nil, commit,
-	); !progress.ConsumedInitialClient || progress.Result == nil {
+		context.Background(), context.Background(), nil, nil, options, lifecycle,
+		newWebSocketClientReadHandoff(clientReads), nil, nil, nil, nil, commit,
+	); progress.Result == nil {
 		t.Fatalf("client bootstrap progress = %#v", progress)
 	}
 
@@ -603,28 +607,39 @@ func TestPreVisibleCodexWindowsHonorDemandAndCancellation(t *testing.T) {
 		messageType: websocket.MessageBinary,
 		data:        []byte("bootstrap-client"),
 	}
-	failedUpstreamReads := make(chan webSocketInitialReadResult, 1)
-	failedUpstreamReads <- webSocketInitialReadResult{err: errors.New("bootstrap upstream failed")}
+	ctx, cancelRead := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelRead()
+	type upstreamReadResult struct {
+		payload []byte
+		err     error
+	}
+	upstreamRead := make(chan upstreamReadResult, 1)
+	failedUpstreamReads := make(chan webSocketInitialReadResult)
+	go func() {
+		_, payload, err := upstreamPeer.Read(ctx)
+		upstreamRead <- upstreamReadResult{payload: payload, err: err}
+		failedUpstreamReads <- webSocketInitialReadResult{err: errors.New("bootstrap upstream failed")}
+	}()
 	progress := forwarder.relayPreVisibleWindow(
+		context.Background(),
 		context.Background(),
 		nil,
 		upstream,
 		options,
 		lifecycle,
-		successfulClientReads,
+		newWebSocketClientReadHandoff(successfulClientReads),
 		failedUpstreamReads,
 		nil,
 		nil,
 		nil,
 		commit,
 	)
-	if !progress.ConsumedInitialClient || !progress.ConsumedInitialUpstream || progress.Result == nil {
+	if progress.BytesClientToUpstream == 0 || !progress.ConsumedInitialUpstream || progress.Result == nil {
 		t.Fatalf("combined bootstrap progress = %#v", progress)
 	}
-	ctx, cancelRead := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelRead()
-	if _, payload, err := upstreamPeer.Read(ctx); err != nil || string(payload) != "bootstrap-client" {
-		t.Fatalf("combined bootstrap payload=%q err=%v", payload, err)
+	read := <-upstreamRead
+	if read.err != nil || string(read.payload) != "bootstrap-client" {
+		t.Fatalf("combined bootstrap payload=%q err=%v", read.payload, read.err)
 	}
 }
 

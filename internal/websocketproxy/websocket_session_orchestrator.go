@@ -96,6 +96,7 @@ type WebSocketSessionOrchestrator struct {
 	lifecycle           *webSocketLifecycleState
 	clientConn          *websocket.Conn
 	initialClientReadCh <-chan webSocketInitialReadResult
+	clientReadHandoff   *webSocketClientReadHandoff
 	replayBuffer        *preVisibleClientMessageBuffer
 	suppressedAttempt   *webSocketSuppressedAttempt
 	probeOutcome        webSocketSelectionProbeOutcome
@@ -167,6 +168,13 @@ func (o *WebSocketSessionOrchestrator) takeInitialClientReadChannel() <-chan web
 	initialClientReadCh := o.initialClientReadCh
 	o.initialClientReadCh = nil
 	return initialClientReadCh
+}
+
+func (o *WebSocketSessionOrchestrator) sessionClientReadHandoff() *webSocketClientReadHandoff {
+	if o.clientReadHandoff == nil {
+		o.clientReadHandoff = newWebSocketClientReadHandoff(o.takeInitialClientReadChannel())
+	}
+	return o.clientReadHandoff
 }
 
 func (o *WebSocketSessionOrchestrator) learnResolvedModel(modelName string) {

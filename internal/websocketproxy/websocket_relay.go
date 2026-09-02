@@ -18,6 +18,7 @@ import (
 //nolint:gocognit,gocyclo,funlen // The relay keeps both transport directions and failover hooks in one place until the refactor settles.
 func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn *websocket.Conn, options webSocketRelayOptions) *webSocketRelaySessionResult {
 	options = options.withCaptureHooks()
+	sessionCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	preserveClient := false
 	defer func() {
@@ -38,9 +39,10 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		lifecycle = newWebSocketLifecycleState()
 	}
 	lifecycle.MarkClientAccepted()
-	preVisibleProgress := webSocketPreVisibleRelayProgress{}
-	initialClientReadCh := options.InitialClientReadCh
-	var initialUpstreamReadCh <-chan webSocketInitialReadResult
+	clientReads := options.ClientReadHandoff
+	if clientReads == nil {
+		clientReads = newWebSocketClientReadHandoff(nil)
+	}
 
 	var observeClient func(websocket.MessageType, []byte)
 	var observeUpstream func(websocket.MessageType, []byte)
@@ -83,14 +85,15 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		}
 	}
 
-	initialClientReadCh, initialUpstreamReadCh, preVisibleProgress = f.runPreVisibleSuppressionWindow(
+	initialUpstreamReadCh, preVisibleProgress := f.runPreVisibleSuppressionWindow(
 		ctx,
+		sessionCtx,
 		clientConn,
 		upstreamConn,
 		options,
 		lifecycle,
-		initialClientReadCh,
-		initialUpstreamReadCh,
+		clientReads,
+		nil,
 		observeClient,
 		observeUpstream,
 		onUpstreamVisible,
@@ -103,13 +106,14 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 
 	f.startClientToUpstreamRelay(
 		ctx,
+		sessionCtx,
 		cancel,
 		&wg,
 		upstreamConn,
 		clientConn,
 		options,
 		lifecycle,
-		initialClientReadCh,
+		clientReads,
 		observeClient,
 		&errorOrder,
 		&clientToUpstream,
@@ -129,7 +133,6 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 			ctx,
 			clientConn,
 			webSocketPeerClient,
-			upstreamConn,
 			webSocketPeerUpstream,
 			initialUpstreamRead,
 			options,
@@ -157,6 +160,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 					ClientVisible:  lifecycleSnapshot.ClientVisible,
 				})
 			},
+			upstreamConn.Read,
 		)
 		upstreamToClient = newWebSocketRelayResultForOperation(n, err, failurePeer, failureOperation, &errorOrder)
 		if err != nil {
@@ -238,24 +242,31 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	}
 }
 
-// runPreVisibleSuppressionWindow serializes the provider-first and client-first
-// pre-visible probes so failover sees exactly one authoritative first upstream read.
+// runPreVisibleSuppressionWindow owns both directions until the first upstream
+// application frame establishes whether the attempt is visible or replaceable.
+// Client frames remain independently readable and are forwarded in order, while
+// delivery decisions stay serialized so replay snapshots have an exact boundary.
 func (f *WebSocketForwarder) runPreVisibleSuppressionWindow(
-	ctx context.Context,
+	ctx, sessionCtx context.Context,
 	clientConn, upstreamConn *websocket.Conn,
 	options webSocketRelayOptions,
 	lifecycle *webSocketLifecycleState,
-	initialClientReadCh, initialUpstreamReadCh <-chan webSocketInitialReadResult,
+	clientReads *webSocketClientReadHandoff,
+	initialUpstreamReadCh <-chan webSocketInitialReadResult,
 	observeClient, observeUpstream func(websocket.MessageType, []byte),
 	onUpstreamVisible func(websocket.MessageType, []byte),
 	fallbackCommit *webSocketCommitState,
-) (<-chan webSocketInitialReadResult, <-chan webSocketInitialReadResult, webSocketPreVisibleRelayProgress) {
+) (<-chan webSocketInitialReadResult, webSocketPreVisibleRelayProgress) {
 	progress := webSocketPreVisibleRelayProgress{}
 	if !shouldRunPreVisibleSuppressionWindow(options) {
-		return initialClientReadCh, initialUpstreamReadCh, progress
+		return initialUpstreamReadCh, progress
 	}
 
 	initialUpstreamReadCh = startWebSocketInitialRead(ctx, upstreamConn)
+	// Begin the session-owned downstream read before the provider-first grace
+	// period. A ready client frame is retained by the handoff and cannot be lost
+	// if this provider fails before the frame is delivered.
+	clientReads.pendingRead(sessionCtx, clientConn)
 	progress = f.relayImmediatePreVisibleUpstreamWindow(
 		ctx,
 		options,
@@ -268,42 +279,33 @@ func (f *WebSocketForwarder) runPreVisibleSuppressionWindow(
 		fallbackCommit,
 	)
 	if progress.Result != nil {
-		return initialClientReadCh, initialUpstreamReadCh, progress
+		return initialUpstreamReadCh, progress
 	}
 	if lifecycle.Snapshot().ClientVisible {
 		if progress.ConsumedInitialUpstream {
 			initialUpstreamReadCh = nil
 		}
-		return initialClientReadCh, initialUpstreamReadCh, progress
+		return initialUpstreamReadCh, progress
 	}
 
-	if initialClientReadCh == nil {
-		// The orchestrator may already own a pending first-client read from the
-		// bootstrap selection probe. Replacing that channel would leave the
-		// original goroutine consuming the first application frame off-path,
-		// which makes the real relay miss the payload entirely.
-		initialClientReadCh = startWebSocketInitialRead(ctx, clientConn)
-	}
 	progress.merge(f.relayPreVisibleWindow(
 		ctx,
+		sessionCtx,
 		clientConn,
 		upstreamConn,
 		options,
 		lifecycle,
-		initialClientReadCh,
+		clientReads,
 		initialUpstreamReadCh,
 		observeClient,
 		observeUpstream,
 		onUpstreamVisible,
 		fallbackCommit,
 	))
-	if progress.ConsumedInitialClient {
-		initialClientReadCh = nil
-	}
 	if progress.ConsumedInitialUpstream {
 		initialUpstreamReadCh = nil
 	}
-	return initialClientReadCh, initialUpstreamReadCh, progress
+	return initialUpstreamReadCh, progress
 }
 
 func (f *WebSocketForwarder) relayPreVisibleClientMessage(
@@ -528,7 +530,7 @@ func (f *WebSocketForwarder) relayImmediatePreVisibleUpstreamWindow(
 		return progress
 	}
 
-	timer := time.NewTimer(webSocketPreVisibleClientReadWindow)
+	timer := time.NewTimer(webSocketPreVisibleProviderFirstWindow)
 	defer timer.Stop()
 
 	var initialUpstreamRead webSocketInitialReadResult
@@ -565,11 +567,11 @@ func (f *WebSocketForwarder) relayImmediatePreVisibleUpstreamWindow(
 }
 
 func (f *WebSocketForwarder) relayPreVisibleWindow(
-	ctx context.Context,
+	ctx, sessionCtx context.Context,
 	clientConn, upstreamConn *websocket.Conn,
 	options webSocketRelayOptions,
 	lifecycle *webSocketLifecycleState,
-	initialClientReadCh <-chan webSocketInitialReadResult,
+	clientReads *webSocketClientReadHandoff,
 	initialUpstreamReadCh <-chan webSocketInitialReadResult,
 	observeClient func(websocket.MessageType, []byte),
 	observeUpstream func(websocket.MessageType, []byte),
@@ -584,50 +586,51 @@ func (f *WebSocketForwarder) relayPreVisibleWindow(
 		return progress
 	}
 
-	timer := time.NewTimer(webSocketPreVisibleClientReadWindow)
-	defer timer.Stop()
-
-	select {
-	case initialClientRead := <-initialClientReadCh:
-		progress.ConsumedInitialClient = true
-		progress.merge(f.relayPreVisibleClientMessage(
-			ctx,
-			upstreamConn,
-			options,
-			lifecycle,
-			initialClientRead,
-			observeClient,
-			fallbackCommit,
-		))
-		if progress.Result != nil {
+	for {
+		clientReadCh := clientReads.pendingRead(sessionCtx, clientConn)
+		select {
+		case clientRead, ok := <-clientReadCh:
+			clientReads.complete(clientReadCh)
+			if !ok {
+				clientRead = webSocketInitialReadResult{err: errWebSocketClientReadHandoffClosed}
+			}
+			progress.merge(f.relayPreVisibleClientMessage(
+				ctx,
+				upstreamConn,
+				options,
+				lifecycle,
+				clientRead,
+				observeClient,
+				fallbackCommit,
+			))
+			if progress.Result != nil {
+				return progress
+			}
+		case initialUpstreamRead := <-initialUpstreamReadCh:
+			progress.ConsumedInitialUpstream = true
+			progress.merge(f.relayPreVisibleUpstreamMessage(
+				ctx,
+				clientConn,
+				upstreamConn,
+				options,
+				lifecycle,
+				initialUpstreamRead,
+				observeUpstream,
+				onUpstreamVisible,
+				fallbackCommit,
+				progress.BytesClientToUpstream,
+			))
+			return progress
+		case <-ctx.Done():
+			progress.Result = newSinglePeerRelaySessionResult(
+				ctx.Err(),
+				webSocketPeerClient,
+				fallbackCommit,
+				lifecycle,
+				progress.BytesClientToUpstream,
+				progress.BytesUpstreamToClient,
+			)
 			return progress
 		}
-
-		progress.ConsumedInitialUpstream = true
-		progress.merge(f.relayPreVisibleUpstreamMessage(
-			ctx,
-			clientConn,
-			upstreamConn,
-			options,
-			lifecycle,
-			waitForInitialWebSocketRead(ctx, initialUpstreamReadCh),
-			observeUpstream,
-			onUpstreamVisible,
-			fallbackCommit,
-			progress.BytesClientToUpstream,
-		))
-		return progress
-	case <-timer.C:
-		return progress
-	case <-ctx.Done():
-		progress.Result = newSinglePeerRelaySessionResult(
-			ctx.Err(),
-			webSocketPeerClient,
-			fallbackCommit,
-			lifecycle,
-			0,
-			0,
-		)
-		return progress
 	}
 }

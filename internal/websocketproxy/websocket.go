@@ -46,10 +46,10 @@ const (
 	// an unbounded wait, the handler can hang on a peer that never answers.
 	webSocketTerminalCloseFlushTimeout = 50 * time.Millisecond
 
-	// webSocketPreVisibleClientReadWindow bounds how long the serialized pre-visible
-	// path waits for a prompt-first client message before falling back to normal
-	// concurrent relay, which keeps server-first sessions moving.
-	webSocketPreVisibleClientReadWindow = 50 * time.Millisecond
+	// webSocketPreVisibleProviderFirstWindow gives a server-first provider a brief
+	// opportunity to fail before client traffic is delivered. Downstream reading
+	// starts concurrently, so this preference cannot block multi-frame protocols.
+	webSocketPreVisibleProviderFirstWindow = 50 * time.Millisecond
 
 	webSocketSemanticReplacementCloseReason = "semantic replacement"
 	webSocketSubprotocolMismatchCloseReason = "websocket subprotocol mismatch"
