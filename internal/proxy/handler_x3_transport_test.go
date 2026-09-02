@@ -18,6 +18,7 @@ import (
 )
 
 func TestX3CompressedCodexSSEUsesOneDecodedDownstreamRepresentation(t *testing.T) {
+	const clientAcceptEncoding = "gzip, br, zstd"
 	decoded := []byte(
 		"event: response.created\ndata: {\"type\":\"response.created\"}\n\n" +
 			"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
@@ -33,8 +34,8 @@ func TestX3CompressedCodexSSEUsesOneDecodedDownstreamRepresentation(t *testing.T
 	step.header.Set("ETag", "encoded-validator")
 	step.header.Set("Digest", "sha-256=encoded")
 	step.onRequest = func(request *http.Request) {
-		if got := request.Header.Get("Accept-Encoding"); got != "identity" {
-			t.Errorf("upstream Accept-Encoding = %q, want identity", got)
+		if got := request.Header.Get("Accept-Encoding"); got != clientAcceptEncoding {
+			t.Errorf("upstream Accept-Encoding = %q, want preserved client value %q", got, clientAcceptEncoding)
 		}
 	}
 	transport := &x3ScriptedTransport{events: events, steps: []x3TransportStep{step}}
@@ -43,6 +44,7 @@ func TestX3CompressedCodexSSEUsesOneDecodedDownstreamRepresentation(t *testing.T
 		providers: []*model.Provider{provider}, selector: selection, transport: transport,
 		rules: &x3RuleProvider{current: rules}, analyzer: x3AnalyzerSpyForTest(t), health: newX3Health(),
 		stats: &x3RuleStats{}, globalMaxAttempts: 1,
+		requestHeaders: http.Header{"Accept-Encoding": {clientAcceptEncoding}},
 	})
 
 	if recorder.Code != http.StatusOK || !bytes.Equal(recorder.Body.Bytes(), decoded) {

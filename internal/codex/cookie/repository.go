@@ -40,23 +40,6 @@ type BindingLookup struct {
 	Policy        Policy
 }
 
-// ClientJarBindingRequest makes ClientScope the authoritative identity for a
-// provider-Cookie jar. ProposedBinding supplies fresh opaque identifiers for a
-// new binding or for replacing the optional client-visible handle of an
-// existing binding.
-type ClientJarBindingRequest struct {
-	CurrentClientScope    codexidentity.ClientScope
-	ClientScopeCandidates []codexidentity.ClientScope
-	ProposedBinding       BindingRecord
-	At                    time.Time
-	Policy                Policy
-}
-
-type ClientJarBindingResult struct {
-	Record  BindingRecord
-	Created bool
-}
-
 type MergeResult struct {
 	Upserted    int
 	Deleted     int
@@ -82,7 +65,7 @@ type CleanupResult struct {
 // may reduce contention but is not the correctness mechanism.
 type Repository interface {
 	UseBinding(context.Context, BindingLookup) (BindingUse, error)
-	BindClientJar(context.Context, ClientJarBindingRequest) (ClientJarBindingResult, error)
+	CreateBinding(context.Context, BindingRecord, Policy) error
 	Load(context.Context, CookieScope, time.Time) (Snapshot, error)
 	Touch(context.Context, CookieScope, []CookieKey, time.Time) error
 	Merge(context.Context, CookieScope, []Mutation, time.Time, Policy) (MergeResult, error)

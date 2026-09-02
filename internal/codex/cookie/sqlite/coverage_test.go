@@ -142,42 +142,6 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 	if err := repository.CreateBinding(ctx, record, badPolicy); err == nil {
 		t.Fatal("CreateBinding accepted invalid policy")
 	}
-	otherOwner := testOwner(t, keyring, "validation-other")
-	validClientBinding := providercookie.ClientJarBindingRequest{
-		CurrentClientScope:    owner,
-		ClientScopeCandidates: []codexidentity.ClientScope{owner},
-		ProposedBinding:       record,
-		At:                    now,
-		Policy:                policy,
-	}
-	wrongOwnerBinding := record
-	wrongOwnerBinding.ClientScope = otherOwner
-	wrongTimeBinding := record
-	wrongTimeBinding.LastAccessAt = now.Add(time.Second)
-	invalidClientBindings := []providercookie.ClientJarBindingRequest{
-		{},
-		{CurrentClientScope: codexidentity.ClientScope{}, ClientScopeCandidates: []codexidentity.ClientScope{owner}, ProposedBinding: record, At: now, Policy: policy},
-		{CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{{}}, ProposedBinding: record, At: now, Policy: policy},
-		{CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{owner, owner}, ProposedBinding: record, At: now, Policy: policy},
-		{CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{otherOwner}, ProposedBinding: record, At: now, Policy: policy},
-		{CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{owner}, ProposedBinding: providercookie.BindingRecord{}, At: now, Policy: policy},
-		{CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{owner}, ProposedBinding: wrongOwnerBinding, At: now, Policy: policy},
-		{CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{owner}, ProposedBinding: wrongTimeBinding, At: now, Policy: policy},
-	}
-	for _, invalid := range invalidClientBindings {
-		if _, err := repository.BindClientJar(ctx, invalid); err == nil {
-			t.Fatalf("BindClientJar accepted invalid request: %#v", invalid)
-		}
-	}
-	if _, err := repository.BindClientJar(nil, validClientBinding); err == nil {
-		t.Fatal("BindClientJar accepted nil context")
-	}
-	invalidPolicyBinding := validClientBinding
-	invalidPolicyBinding.Policy = badPolicy
-	if _, err := repository.BindClientJar(ctx, invalidPolicyBinding); err == nil {
-		t.Fatal("BindClientJar accepted invalid policy")
-	}
-
 	if _, err := repository.Load(nil, providercookie.CookieScope{}, now); err == nil {
 		t.Fatal("Load accepted nil context")
 	}
@@ -238,12 +202,8 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 	}
 	closedScope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "closed"))
 	for name, operation := range map[string]func() error{
-		"use":    func() error { _, err := closedRepository.UseBinding(ctx, lookup); return err },
-		"create": func() error { return closedRepository.CreateBinding(ctx, record, policy) },
-		"bind": func() error {
-			_, err := closedRepository.BindClientJar(ctx, validClientBinding)
-			return err
-		},
+		"use":      func() error { _, err := closedRepository.UseBinding(ctx, lookup); return err },
+		"create":   func() error { return closedRepository.CreateBinding(ctx, record, policy) },
 		"load":     func() error { _, err := closedRepository.Load(ctx, closedScope, now); return err },
 		"versions": func() error { _, err := closedRepository.RequiredAEADVersions(ctx); return err },
 	} {
@@ -369,21 +329,6 @@ func TestMissingJarAmbiguousHandleAndVersionCorruptionFailClosed(t *testing.T) {
 	}
 	if err := repository.CreateBinding(ctx, second, policy); err != nil {
 		t.Fatal(err)
-	}
-	proposed := testBinding(t, keyring, "proposed", owner, now)
-	if _, err := repository.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
-		CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{owner, otherOwner},
-		ProposedBinding: proposed, At: now, Policy: policy,
-	}); !errors.Is(err, providercookie.ErrStorageCorrupt) {
-		t.Fatalf("ambiguous ClientScope = %v", err)
-	}
-	handleCollision := proposed
-	handleCollision.HandleDigest = second.HandleDigest
-	if _, err := repository.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
-		CurrentClientScope: owner, ClientScopeCandidates: []codexidentity.ClientScope{owner},
-		ProposedBinding: handleCollision, At: now, Policy: policy,
-	}); !errors.Is(err, providercookie.ErrIdentifierClash) {
-		t.Fatalf("rebound handle collision = %v", err)
 	}
 	if _, err := repository.UseBinding(ctx, providercookie.BindingLookup{
 		HandleDigests: []codexkeyring.Digest{first.HandleDigest, second.HandleDigest},

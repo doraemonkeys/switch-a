@@ -989,19 +989,6 @@ func (r *testCookieRepository) CreateBinding(_ context.Context, binding provider
 	return nil
 }
 
-func (r *testCookieRepository) BindClientJar(_ context.Context, request providercookie.ClientJarBindingRequest) (providercookie.ClientJarBindingResult, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	created := r.binding.JarID == (providercookie.JarID{})
-	if created {
-		r.binding = request.ProposedBinding
-	} else {
-		r.binding.HandleDigest = request.ProposedBinding.HandleDigest
-		r.binding.ClientScope = request.CurrentClientScope
-	}
-	return providercookie.ClientJarBindingResult{Record: r.binding, Created: created}, nil
-}
-
 func (r *testCookieRepository) Load(_ context.Context, scope providercookie.CookieScope, _ time.Time) (providercookie.Snapshot, error) {
 	if r.loadErr != nil {
 		return providercookie.Snapshot{}, r.loadErr

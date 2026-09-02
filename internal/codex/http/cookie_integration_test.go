@@ -70,23 +70,6 @@ func (r *cookieTestRepository) CreateBinding(_ context.Context, record providerc
 	return nil
 }
 
-func (r *cookieTestRepository) BindClientJar(_ context.Context, request providercookie.ClientJarBindingRequest) (providercookie.ClientJarBindingResult, error) {
-	for digest, record := range r.bindings {
-		for _, candidate := range request.ClientScopeCandidates {
-			if !candidate.Equal(record.ClientScope) {
-				continue
-			}
-			delete(r.bindings, digest)
-			record.HandleDigest = request.ProposedBinding.HandleDigest
-			record.ClientScope = request.CurrentClientScope
-			r.bindings[record.HandleDigest] = record
-			return providercookie.ClientJarBindingResult{Record: record}, nil
-		}
-	}
-	r.bindings[request.ProposedBinding.HandleDigest] = request.ProposedBinding
-	return providercookie.ClientJarBindingResult{Record: request.ProposedBinding, Created: true}, nil
-}
-
 func (r *cookieTestRepository) Load(_ context.Context, scope providercookie.CookieScope, _ time.Time) (providercookie.Snapshot, error) {
 	values := r.cookies[scope]
 	cookies := make([]providercookie.StoredCookie, 0, len(values))
@@ -195,10 +178,26 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 	if _, err := secondOperation.PrepareAttempt(context.Background(), persistedRequest, candidate, applied); err != nil {
 		t.Fatal(err)
 	}
-	if got := persistedRequest.Header.Get("Cookie"); got != "provider_session=one" {
-		t.Fatalf("persisted Cookie = %q", got)
+	if got := persistedRequest.Header.Get("Cookie"); got != "" {
+		t.Fatalf("missing handle inherited provider Cookie %q", got)
 	}
 	secondOperation.Discard()
+
+	explicitClientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
+	explicitClientRequest.Header.Set("Authorization", "Bearer client-a")
+	explicitClientRequest.AddCookie(&http.Cookie{Name: providercookie.GatewayHandleName, Value: handle})
+	explicitOperation, err := runtime.Begin(context.Background(), explicitClientRequest, codexAPIType, "cookie-operation-explicit", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitUpstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
+	if _, err := explicitOperation.PrepareAttempt(context.Background(), explicitUpstream, candidate, applied); err != nil {
+		t.Fatal(err)
+	}
+	if got := explicitUpstream.Header.Get("Cookie"); got != "provider_session=one" {
+		t.Fatalf("returned handle Cookie = %q", got)
+	}
+	explicitOperation.Discard()
 
 	otherScope := testClientScope(t, "client-b")
 	runtime.clientScopes = testScopeDigester{current: otherScope, candidates: []codexidentity.ClientScope{otherScope}}

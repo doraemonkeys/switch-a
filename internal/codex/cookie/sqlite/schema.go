@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 2
+	CurrentSchemaVersion = 3
 	schemaRowID          = 1
 
 	schemaTable      = "codex_provider_cookie_schema_meta"
@@ -37,7 +37,6 @@ const handlesDefinition = `CREATE TABLE codex_provider_cookie_handles (
 		idle_expires_at_ms INTEGER NOT NULL CHECK (idle_expires_at_ms > last_access_at_ms),
 		absolute_expires_at_ms INTEGER NOT NULL CHECK (absolute_expires_at_ms > created_at_ms),
 		PRIMARY KEY (handle_key_version, handle_digest),
-		UNIQUE (client_scope_key_version, client_scope_digest),
 		CHECK (idle_expires_at_ms <= absolute_expires_at_ms)
 ) WITHOUT ROWID`
 
@@ -122,7 +121,7 @@ var schemaManifest = []sqliteschema.Table{
 		Indexes: []sqliteschema.Index{{
 			Name: "idx_codex_provider_cookie_handles_expiry", Columns: []string{"idle_expires_at_ms", "absolute_expires_at_ms"}, SQL: handlesExpiryIndex,
 		}},
-		UniqueConstraints: [][]string{{"jar_id"}, {"client_scope_key_version", "client_scope_digest"}},
+		UniqueConstraints: [][]string{{"jar_id"}},
 	},
 	{
 		Name: authoritiesTable,

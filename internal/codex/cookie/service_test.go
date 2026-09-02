@@ -112,50 +112,6 @@ func (r *memoryRepository) CreateBinding(_ context.Context, record BindingRecord
 	return nil
 }
 
-func (r *memoryRepository) BindClientJar(_ context.Context, request ClientJarBindingRequest) (ClientJarBindingResult, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.createAlways != nil {
-		return ClientJarBindingResult{}, r.createAlways
-	}
-	if r.createErr != nil {
-		err := r.createErr
-		r.createErr = nil
-		return ClientJarBindingResult{}, err
-	}
-	for digest, record := range r.bindings {
-		owned := false
-		for _, candidate := range request.ClientScopeCandidates {
-			owned = owned || candidate.Equal(record.ClientScope)
-		}
-		if !owned {
-			continue
-		}
-		if !record.IdleExpiresAt.After(request.At) || !record.AbsoluteExpiresAt.After(request.At) {
-			delete(r.bindings, digest)
-			continue
-		}
-		if _, exists := r.bindings[request.ProposedBinding.HandleDigest]; exists && digest != request.ProposedBinding.HandleDigest {
-			return ClientJarBindingResult{}, ErrIdentifierClash
-		}
-		delete(r.bindings, digest)
-		record.HandleDigest = request.ProposedBinding.HandleDigest
-		record.ClientScope = request.CurrentClientScope
-		record.LastAccessAt = request.At
-		record.IdleExpiresAt = request.At.Add(request.Policy.HandleIdleTTL)
-		if record.AbsoluteExpiresAt.Before(record.IdleExpiresAt) {
-			record.IdleExpiresAt = record.AbsoluteExpiresAt
-		}
-		r.bindings[record.HandleDigest] = record
-		return ClientJarBindingResult{Record: record}, nil
-	}
-	if _, exists := r.bindings[request.ProposedBinding.HandleDigest]; exists {
-		return ClientJarBindingResult{}, ErrIdentifierClash
-	}
-	r.bindings[request.ProposedBinding.HandleDigest] = request.ProposedBinding
-	return ClientJarBindingResult{Record: request.ProposedBinding, Created: true}, nil
-}
-
 func (r *memoryRepository) Load(_ context.Context, scope CookieScope, _ time.Time) (Snapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -250,7 +206,7 @@ func deterministicRandom() io.Reader {
 	return bytes.NewReader(data)
 }
 
-func TestServiceUsesClientScopeAsAuthoritativeJarIdentity(t *testing.T) {
+func TestServiceUsesReturnedHandleAsAuthoritativeJarIdentity(t *testing.T) {
 	repository := newMemoryRepository()
 	clock := &serviceClock{now: time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC)}
 	trace := &traceRecorder{}
@@ -268,20 +224,24 @@ func TestServiceUsesClientScopeAsAuthoritativeJarIdentity(t *testing.T) {
 		t.Fatalf("reused resolve = %#v, %v", reused, err)
 	}
 	missing, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner})
-	if err != nil || !missing.Issued() || missing.JarID() != first.JarID() || missing.HandleValue() == first.HandleValue() {
+	if err != nil || !missing.Issued() || missing.JarID() == first.JarID() || missing.HandleValue() == first.HandleValue() {
 		t.Fatalf("missing-handle resolve = %#v, %v", missing, err)
 	}
 	malformed, err := service.ResolveJar(context.Background(), operation, "not-a-handle", []codexidentity.ClientScope{owner})
-	if err != nil || !malformed.Issued() || malformed.JarID() != first.JarID() {
+	if err != nil || !malformed.Issued() || malformed.JarID() == first.JarID() || malformed.JarID() == missing.JarID() {
 		t.Fatalf("malformed resolve = %#v, %v", malformed, err)
 	}
 	unknownValue := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0xfe}, GatewayHandleEntropyBytes))
 	unknown, err := service.ResolveJar(context.Background(), operation, unknownValue, []codexidentity.ClientScope{owner})
-	if err != nil || !unknown.Issued() || unknown.JarID() != first.JarID() {
+	if err != nil || !unknown.Issued() || unknown.JarID() == first.JarID() || unknown.JarID() == malformed.JarID() {
 		t.Fatalf("unknown resolve = %#v, %v", unknown, err)
 	}
-	if len(repository.bindings) != 1 {
-		t.Fatalf("same ClientScope created %d bindings", len(repository.bindings))
+	if len(repository.bindings) != 4 {
+		t.Fatalf("independent handles created %d bindings, want 4", len(repository.bindings))
+	}
+	reusedAgain, err := service.ResolveJar(context.Background(), operation, first.HandleValue(), []codexidentity.ClientScope{owner})
+	if err != nil || reusedAgain.JarID() != first.JarID() {
+		t.Fatalf("original returned handle resolve = %#v, %v", reusedAgain, err)
 	}
 	mismatch, err := service.ResolveJar(context.Background(), operation, unknown.HandleValue(), []codexidentity.ClientScope{other})
 	if err != nil || !mismatch.Issued() || mismatch.JarID() == first.JarID() {
@@ -292,7 +252,7 @@ func TestServiceUsesClientScopeAsAuthoritativeJarIdentity(t *testing.T) {
 	if err != nil || !expired.Issued() || expired.JarID() == first.JarID() {
 		t.Fatalf("expired resolve = %#v, %v", expired, err)
 	}
-	if len(trace.events) != 7 {
+	if len(trace.events) != 8 {
 		t.Fatalf("trace events = %d", len(trace.events))
 	}
 	for _, event := range trace.events {

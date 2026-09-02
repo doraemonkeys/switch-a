@@ -112,11 +112,14 @@ func (s *Service) ResolveJar(
 		return JarAccess{}, err
 	}
 
+	// Only a handle returned by the client authorizes reuse. Falling back to a
+	// client credential would silently add provider state that the client chose
+	// not to retain.
 	if rawHandle == "" {
-		return s.bindClientJar(ctx, operationID, clientScopes, "missing")
+		return s.issueEmptyJar(ctx, operationID, clientScopes[0], "missing")
 	}
 	if !canonicalHandleValue(rawHandle) {
-		return s.bindClientJar(ctx, operationID, clientScopes, "malformed")
+		return s.issueEmptyJar(ctx, operationID, clientScopes[0], "malformed")
 	}
 	digests, err := s.digester.LookupDigests(codexkeyring.HMACJarHandle, []byte(rawHandle))
 	if err != nil {
@@ -132,10 +135,7 @@ func (s *Service) ResolveJar(
 		return JarAccess{}, s.persistenceFailure(operationID, "resolve_handle", PersistenceUnavailable, err)
 	}
 	if use.Disposition != BindingValid {
-		return s.bindClientJar(ctx, operationID, clientScopes, string(use.Disposition))
-	}
-	if !use.Record.ClientScope.Equal(clientScopes[0]) || use.Record.HandleDigest.Version != digests[0].Version {
-		return s.bindClientJar(ctx, operationID, clientScopes, "key_rotation")
+		return s.issueEmptyJar(ctx, operationID, clientScopes[0], string(use.Disposition))
 	}
 	s.trace.RecordProviderCookieTrace(TraceEvent{
 		OperationID: operationID,
@@ -146,10 +146,10 @@ func (s *Service) ResolveJar(
 	return JarAccess{jarID: use.Record.JarID, handleValue: rawHandle, refresh: use.Refresh}, nil
 }
 
-func (s *Service) bindClientJar(
+func (s *Service) issueEmptyJar(
 	ctx context.Context,
 	operationID OperationID,
-	clientScopes []codexidentity.ClientScope,
+	clientScope codexidentity.ClientScope,
 	reason string,
 ) (JarAccess, error) {
 	for attempt := 0; attempt < bindingGenerationAttempts; attempt++ {
@@ -177,38 +177,28 @@ func (s *Service) bindClientJar(
 		record := BindingRecord{
 			HandleDigest:      digest,
 			JarID:             jarID,
-			ClientScope:       clientScopes[0],
+			ClientScope:       clientScope,
 			CreatedAt:         now,
 			LastAccessAt:      now,
 			IdleExpiresAt:     addDurationClamped(now, s.policy.HandleIdleTTL),
 			AbsoluteExpiresAt: addDurationClamped(now, s.policy.HandleAbsoluteTTL),
 		}
-		binding, err := s.repository.BindClientJar(ctx, ClientJarBindingRequest{
-			CurrentClientScope:    clientScopes[0],
-			ClientScopeCandidates: append([]codexidentity.ClientScope(nil), clientScopes...),
-			ProposedBinding:       record,
-			At:                    now,
-			Policy:                s.policy,
-		})
+		err = s.repository.CreateBinding(ctx, record, s.policy)
 		if err != nil {
 			if errors.Is(err, ErrIdentifierClash) {
 				continue
 			}
-			return JarAccess{}, s.persistenceFailure(operationID, "bind_client_jar", PersistenceUnavailable, err)
-		}
-		decision := "reuse_client_jar"
-		if binding.Created {
-			decision = "issue_empty_jar"
+			return JarAccess{}, s.persistenceFailure(operationID, "create_binding", PersistenceUnavailable, err)
 		}
 		s.trace.RecordProviderCookieTrace(TraceEvent{
 			OperationID: operationID,
 			Milestone:   "handle_resolved",
-			Decision:    decision,
+			Decision:    "issue_empty_jar",
 			Reason:      reason,
 		})
-		return JarAccess{jarID: binding.Record.JarID, handleValue: handleValue, issued: true}, nil
+		return JarAccess{jarID: jarID, handleValue: handleValue, issued: true}, nil
 	}
-	return JarAccess{}, s.persistenceFailure(operationID, "bind_client_jar", PersistenceUnavailable, ErrIdentifierClash)
+	return JarAccess{}, s.persistenceFailure(operationID, "create_binding", PersistenceUnavailable, ErrIdentifierClash)
 }
 
 func (s *Service) Cleanup(

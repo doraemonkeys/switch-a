@@ -27,8 +27,6 @@ type Attempt struct {
 	settlement         attemptSettlement
 }
 
-const identityContentCoding = "identity"
-
 type attemptSettlement uint8
 
 const (
@@ -73,10 +71,6 @@ func (o *Operation) PrepareAttempt(
 	for _, name := range o.clientDecision.HeaderNamesToDrop() {
 		request.Header.Del(name)
 	}
-	// Response protocol ownership requires event boundaries to survive transport.
-	// Codex requests can become SSE even when Accept does not advertise it, so the
-	// attempt must negotiate identity before the upstream response is selected.
-	request.Header.Set("Accept-Encoding", identityContentCoding)
 	if err := o.prepareAttemptCookiesLocked(ctx, request, attempt.authority.CookieAuthority()); err != nil {
 		return nil, err
 	}

@@ -98,7 +98,40 @@ func TestSSEGatePreservesProtocolLegalLargeEvent(t *testing.T) {
 	}
 }
 
+func TestPrepareAttemptDoesNotSynthesizeAcceptEncoding(t *testing.T) {
+	operation, candidate, applied, _ := testSSEOperation(t)
+	upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
+	if _, err := operation.PrepareAttempt(context.Background(), upstream, candidate, applied); err != nil {
+		t.Fatal(err)
+	}
+	if values, present := upstream.Header["Accept-Encoding"]; present {
+		t.Fatalf("upstream Accept-Encoding was synthesized with values %#v", values)
+	}
+}
+
 func testSSEGate(t *testing.T) (*SSEGate, *continuityRecorder) {
+	t.Helper()
+	const clientAcceptEncoding = "gzip, br, zstd"
+	operation, candidate, applied, continuity := testSSEOperation(t)
+	upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
+	upstream.Header.Set("Accept-Encoding", clientAcceptEncoding)
+	attempt, err := operation.PrepareAttempt(context.Background(), upstream, candidate, applied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := attempt.NewSSEGate()
+	if gate == nil {
+		t.Fatal("continuity-enabled attempt did not create an SSE gate")
+	}
+	if got := upstream.Header.Get("Accept-Encoding"); got != clientAcceptEncoding {
+		t.Fatalf("upstream Accept-Encoding = %q, want preserved client value %q", got, clientAcceptEncoding)
+	}
+	return gate, continuity
+}
+
+func testSSEOperation(
+	t *testing.T,
+) (*Operation, codexidentity.CandidateSnapshot, codexidentity.AppliedIdentity, *continuityRecorder) {
 	t.Helper()
 	clientScope := testClientScope(t, "sse-client")
 	candidate, applied := testCandidate(t, "route-sse", "provider.test", "sse-subject")
@@ -120,18 +153,5 @@ func testSSEGate(t *testing.T) (*SSEGate, *continuityRecorder) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	upstream := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
-	upstream.Header.Set("Accept-Encoding", "gzip, br, zstd")
-	attempt, err := operation.PrepareAttempt(context.Background(), upstream, candidate, applied)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gate := attempt.NewSSEGate()
-	if gate == nil {
-		t.Fatal("continuity-enabled attempt did not create an SSE gate")
-	}
-	if got := upstream.Header.Get("Accept-Encoding"); got != identityContentCoding {
-		t.Fatalf("upstream Accept-Encoding = %q, want %q", got, identityContentCoding)
-	}
-	return gate, continuity
+	return operation, candidate, applied, continuity
 }

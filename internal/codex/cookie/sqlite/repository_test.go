@@ -370,23 +370,16 @@ func TestPersistenceSurvivesRepositoryRestart(t *testing.T) {
 		t.Fatalf("restart binding = %#v, %v", use, err)
 	}
 	replacement := testBinding(t, keyring, "restart-replacement", record.ClientScope, now.Add(2*time.Minute))
-	rebound, err := restarted.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
-		CurrentClientScope:    record.ClientScope,
-		ClientScopeCandidates: []codexidentity.ClientScope{record.ClientScope},
-		ProposedBinding:       replacement,
-		At:                    replacement.CreatedAt,
-		Policy:                policy,
-	})
-	if err != nil || rebound.Created || rebound.Record.JarID != record.JarID {
-		t.Fatalf("restart ClientScope binding = %#v, %v", rebound, err)
+	if err := restarted.CreateBinding(ctx, replacement, policy); err != nil {
+		t.Fatalf("create independent same-scope binding: %v", err)
 	}
 	var bindingCount int64
-	if err := restartedDB.Table(handlesTable).Count(&bindingCount).Error; err != nil || bindingCount != 1 {
+	if err := restartedDB.Table(handlesTable).Count(&bindingCount).Error; err != nil || bindingCount != 2 {
 		t.Fatalf("restart binding count = %d, %v", bindingCount, err)
 	}
 }
 
-func TestBindClientJarSerializesConcurrentRequestsWithoutHandleGrowth(t *testing.T) {
+func TestCreateBindingKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDatabase(t, filepath.Join(t.TempDir(), "concurrent-bind.db"))
 	keyring := testKeyring(t, "a1")
@@ -394,14 +387,13 @@ func TestBindClientJarSerializesConcurrentRequestsWithoutHandleGrowth(t *testing
 	now := time.Date(2026, 8, 27, 5, 45, 0, 0, time.UTC)
 	owner := testOwner(t, keyring, "concurrent-bind")
 	policy := providercookie.DefaultPolicy()
-	policy.MaxHandleBindingsGlobal = 1
 
 	const workers = 24
+	policy.MaxHandleBindingsGlobal = workers
 	proposals := make([]providercookie.BindingRecord, workers)
 	for index := range proposals {
 		proposals[index] = testBinding(t, keyring, fmt.Sprintf("concurrent-bind-%02d", index), owner, now)
 	}
-	results := make([]providercookie.ClientJarBindingResult, workers)
 	errorsFound := make([]error, workers)
 	start := make(chan struct{})
 	var group sync.WaitGroup
@@ -410,49 +402,26 @@ func TestBindClientJarSerializesConcurrentRequestsWithoutHandleGrowth(t *testing
 		go func(index int) {
 			defer group.Done()
 			<-start
-			results[index], errorsFound[index] = repository.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
-				CurrentClientScope:    owner,
-				ClientScopeCandidates: []codexidentity.ClientScope{owner},
-				ProposedBinding:       proposals[index],
-				At:                    now,
-				Policy:                policy,
-			})
+			errorsFound[index] = repository.CreateBinding(ctx, proposals[index], policy)
 		}(index)
 	}
 	close(start)
 	group.Wait()
 
-	created := 0
-	jarID := results[0].Record.JarID
 	for index, err := range errorsFound {
 		if err != nil {
 			t.Fatalf("worker %d: %v", index, err)
 		}
-		if results[index].Created {
-			created++
-		}
-		if results[index].Record.JarID != jarID {
-			t.Fatalf("worker %d JarID = %v, want %v", index, results[index].Record.JarID, jarID)
-		}
-	}
-	if created != 1 {
-		t.Fatalf("created bindings = %d, want 1", created)
 	}
 	var count int64
-	if err := db.Table(handlesTable).Count(&count).Error; err != nil || count != 1 {
+	if err := db.Table(handlesTable).Count(&count).Error; err != nil || count != workers {
 		t.Fatalf("binding count = %d, %v", count, err)
 	}
 
 	otherOwner := testOwner(t, keyring, "concurrent-bind-other")
 	otherProposal := testBinding(t, keyring, "concurrent-bind-capacity", otherOwner, now)
-	if _, err := repository.BindClientJar(ctx, providercookie.ClientJarBindingRequest{
-		CurrentClientScope:    otherOwner,
-		ClientScopeCandidates: []codexidentity.ClientScope{otherOwner},
-		ProposedBinding:       otherProposal,
-		At:                    now,
-		Policy:                policy,
-	}); !errors.Is(err, providercookie.ErrLimitExceeded) {
-		t.Fatalf("second ClientScope capacity = %v", err)
+	if err := repository.CreateBinding(ctx, otherProposal, policy); !errors.Is(err, providercookie.ErrLimitExceeded) {
+		t.Fatalf("additional handle capacity = %v", err)
 	}
 }
 

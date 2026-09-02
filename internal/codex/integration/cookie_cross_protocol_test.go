@@ -122,8 +122,8 @@ func TestProviderCookieScopeIgnoresAPITypeButSeparatesJarAndAuthority(t *testing
 		wantCookie string
 	}{
 		{name: "different client", client: "client-beta", handle: handle},
-		{name: "malformed handle falls back to ClientScope", client: "client-alpha", handle: "malformed", wantCookie: "scope_cookie=base"},
-		{name: "missing handle falls back to ClientScope", client: "client-alpha", handle: "", wantCookie: "scope_cookie=base"},
+		{name: "malformed handle creates empty jar", client: "client-alpha", handle: "malformed"},
+		{name: "missing handle creates empty jar", client: "client-alpha", handle: ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			operation, isolatedHeaders := prepareWSCookieAttempt(
@@ -217,13 +217,12 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := fixture.ws.Begin(
+		_, err := fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "client-alpha", nil),
 			testAPIType, operationID("ws-cookie-capacity", 1),
-		); err != nil {
-			t.Fatalf("same ClientScope without a handle consumed capacity: %v", err)
-		}
-		_, err := fixture.ws.Begin(
+		)
+		requireWSFailure(t, err, codexws.FailureStorage)
+		_, err = fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "client-beta", nil),
 			testAPIType, operationID("ws-cookie-capacity", 2),
 		)
