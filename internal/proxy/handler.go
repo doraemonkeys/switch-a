@@ -22,6 +22,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
 
@@ -346,14 +347,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the API contract from the same method/path catalog used by the
-	// server mux so direct Handler callers observe identical route semantics.
-	apiType, ok := ResolveAPIType(r.Method, r.URL.Path)
+	// Resolve from the escaped wire path so encoded slashes remain segment data
+	// throughout routing, endpoint policy, and upstream target construction.
+	requestRoute, ok := ResolveRequestURL(r.Method, r.URL)
 	if !ok {
-		h.logger.Warn("unknown API type", zap.String("path", r.URL.Path))
+		h.logger.Warn("unknown API type",
+			zap.String("path", r.URL.Path),
+			zap.String("escaped_path", r.URL.EscapedPath()),
+		)
 		h.writeGatewayError(w, http.StatusBadRequest, ErrCodeUnknownAPIType, fmt.Sprintf("Unknown API path: %s", r.URL.Path))
 		return
 	}
+	apiType := requestRoute.APIType
 
 	// WebSocket upgrade is only valid for Codex (OpenAI Realtime API).
 	// Reject upgrades on other API types to prevent health metric pollution
@@ -382,11 +387,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// GET /responses exists solely for WebSocket (OpenAI Realtime API).
 	// A plain GET without Upgrade is meaningless there — reject early.
-	// Matching the normalized upstream path keeps the rule scoped to that
-	// endpoint, so other codex GET surfaces (e.g. /codex/v1/models discovery)
-	// proxy through like any other API type.
-	if r.Method == http.MethodGet && apiType == APITypeCodex &&
-		BuildUpstreamPath(r.URL.Path, apiType) == RouteCodexResponses {
+	// The resolved route owns this endpoint capability so encoded path data
+	// cannot be reinterpreted as separators by a later decoded-path check.
+	if requestRoute.RequiresWebSocketUpgrade {
 		h.writeGatewayError(w, http.StatusUpgradeRequired, ErrCodeWebSocketUpgrade, "This endpoint requires a WebSocket upgrade")
 		return
 	}
@@ -626,7 +629,6 @@ func (h *Handler) buildProviderRequest(
 	pctx *proxyContext,
 	provider *model.Provider,
 ) (*http.Request, requestcapture.FailureCode, error) {
-	upstreamPath := BuildUpstreamPath(pctx.r.URL.Path, pctx.apiType)
 	baseURL := provider.BaseURLForAPIType(pctx.apiType)
 
 	// Fail fast if provider has no BaseURL configured for this API type.
@@ -641,10 +643,19 @@ func (h *Handler) buildProviderRequest(
 			fmt.Errorf("provider %q has no base_url configured for api_type %q", provider.ID, pctx.apiType)
 	}
 
-	upstreamURL := h.buildFullURL(baseURL, upstreamPath, pctx.r.URL.RawQuery)
+	upstreamURL, err := upstreamtarget.Build(baseURL, pctx.r.URL, pctx.apiType)
+	if err != nil {
+		h.logger.Error("failed to build upstream target",
+			zap.String("request_id", pctx.requestID),
+			zap.String("provider_id", provider.ID),
+			zap.String("api_type", pctx.apiType),
+			zap.Error(err),
+		)
+		return nil, requestcapture.FailureCodeRequestBuild, fmt.Errorf("build upstream target: %w", err)
+	}
 
 	req, err := BuildUpstreamRequestWithPolicy(
-		ctx, pctx.r.Method, upstreamURL, pctx.body, pctx.r, pctx.codex.RequestPolicy(),
+		ctx, pctx.r.Method, upstreamURL.String(), pctx.body, pctx.r, pctx.codex.RequestPolicy(),
 	)
 	if err != nil {
 		h.logger.Error("failed to build upstream request", zap.Error(err))

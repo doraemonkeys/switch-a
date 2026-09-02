@@ -52,6 +52,7 @@ switch-a/
 │   ├── model/             # Domain models: Provider, Group, HealthState, RequestLog
 │   ├── store/             # SQLite persistence + CachedStore wrapper
 │   ├── proxy/             # HTTP proxy: routing, SSE, token capture
+│   ├── upstreamtarget/    # Lossless provider URL construction shared by HTTP/WebSocket
 │   ├── selector/          # Provider selection: strategy, sticky, concurrency
 │   ├── health/            # Circuit breaker, availability tracking
 │   ├── server/            # HTTP server setup (proxy + admin)
@@ -97,8 +98,9 @@ Defined in `internal/interfaces.go`:
 1. **Proxy receives request** → `internal/proxy/handler.go`
 2. **Resolve API contract** from the shared method/path catalog → `internal/proxy/router.go`
 3. **Select provider** (strategy + health + sticky + concurrency) → `internal/selector/selector.go`
-4. **Forward request** with retry/failover → `internal/proxy/transport.go`
-5. **Log result** (tokens, latency, attempts) → `internal/store/sqlite_logs.go`
+4. **Construct upstream target** without changing encoded path/query semantics → `internal/upstreamtarget/`
+5. **Forward request** with retry/failover → `internal/proxy/transport.go`
+6. **Log result** (tokens, latency, attempts) → `internal/store/sqlite_logs.go`
 
 ## Frontend Pages
 

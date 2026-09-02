@@ -456,13 +456,3 @@ func TestGatewayContextAndRequestHelpers(t *testing.T) {
 		t.Fatalf("unparsed remote address = %q", got)
 	}
 }
-
-func TestGatewayURLHelpers(t *testing.T) {
-	gateway := newTestGateway(t, Config{Store: newMockStore(), Logger: zaptest.NewLogger(t)})
-	if got := gateway.buildFullURL("https://provider.example/base/", "/responses", "model=gpt-5"); got != "https://provider.example/base/responses?model=gpt-5" {
-		t.Fatalf("full URL = %q", got)
-	}
-	if got := gateway.buildFullURL("https://provider.example/base/", "/responses", ""); got != "https://provider.example/base/responses" {
-		t.Fatalf("full URL without query = %q", got)
-	}
-}

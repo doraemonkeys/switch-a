@@ -3,6 +3,7 @@ package apicontract
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -201,6 +202,84 @@ func TestResolveRequestUsesFrozenRouteSemantics(t *testing.T) {
 	}
 }
 
+func TestResolveRequestURLUsesEscapedSegmentStructure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		method       string
+		rawURL       string
+		wantRoute    RequestRoute
+		wantResolved bool
+	}{
+		{
+			name:   "repeated slash remains in Gemini upstream path",
+			method: http.MethodPost,
+			rawURL: "/gemini/v1beta//models/gemini-pro:generateContent",
+			wantRoute: RequestRoute{
+				APIType:             string(APITypeGemini),
+				UpstreamEscapedPath: "/v1beta//models/gemini-pro:generateContent",
+			},
+			wantResolved: true,
+		},
+		{
+			name:   "encoded slash does not create optional v1 segment",
+			method: http.MethodGet,
+			rawURL: "/codex/v1%2Fresponses",
+			wantRoute: RequestRoute{
+				APIType:             string(APITypeCodex),
+				UpstreamEscapedPath: "/v1%2Fresponses",
+			},
+			wantResolved: true,
+		},
+		{
+			name:   "literal segments identify WebSocket-only endpoint",
+			method: http.MethodGet,
+			rawURL: "/codex/v1/responses",
+			wantRoute: RequestRoute{
+				APIType:                  string(APITypeCodex),
+				UpstreamEscapedPath:      "/responses",
+				RequiresWebSocketUpgrade: true,
+			},
+			wantResolved: true,
+		},
+		{
+			name:   "encoded characters retain endpoint identity within segments",
+			method: http.MethodGet,
+			rawURL: "/codex/%76%31/%72esponses",
+			wantRoute: RequestRoute{
+				APIType:                  string(APITypeCodex),
+				UpstreamEscapedPath:      "/%72esponses",
+				RequiresWebSocketUpgrade: true,
+			},
+			wantResolved: true,
+		},
+		{
+			name:   "encoded slash does not create namespace boundary",
+			method: http.MethodGet,
+			rawURL: "/codex%2Fv1/responses",
+		},
+		{
+			name:   "encoded slash does not create bare route segments",
+			method: http.MethodPost,
+			rawURL: "/v1%2Fmessages",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requestURL, err := url.ParseRequestURI(test.rawURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, ok := ResolveRequestURL(test.method, requestURL)
+			if ok != test.wantResolved || got != test.wantRoute {
+				t.Fatalf("ResolveRequestURL(%q, %q) = (%+v, %v), want (%+v, %v)", test.method, test.rawURL, got, ok, test.wantRoute, test.wantResolved)
+			}
+		})
+	}
+}
+
 func TestCustomAPITypeParserDefinesOneRoutableSegment(t *testing.T) {
 	t.Parallel()
 
@@ -253,6 +332,55 @@ func TestRewriteUpstreamPathUsesRequestPathPolicy(t *testing.T) {
 				t.Fatalf("RewriteUpstreamPath(%q, %q) = %q, want %q", test.path, test.apiType, got, test.wantPath)
 			}
 		})
+	}
+}
+
+func TestRewriteUpstreamEscapedPathUsesLiteralSeparators(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		path     string
+		apiType  string
+		wantPath string
+	}{
+		{name: "encoded dynamic slash", path: "/gemini/v1beta/models/org%2Fmodel", apiType: "gemini", wantPath: "/v1beta/models/org%2Fmodel"},
+		{name: "encoded optional v1", path: "/codex/%76%31/responses", apiType: "codex", wantPath: "/responses"},
+		{name: "encoded slash does not delimit v1", path: "/codex/v1%2Fresponses", apiType: "codex", wantPath: "/v1%2Fresponses"},
+		{name: "encoded namespace", path: "/cl%61ude/v1/messages", apiType: "claude", wantPath: "/v1/messages"},
+		{name: "custom encoded tool", path: "/custom/t%6Fol/v1/messages", apiType: "custom:tool", wantPath: "/v1/messages"},
+		{name: "custom root", path: "/custom/tool", apiType: "custom:tool", wantPath: "/"},
+		{name: "different namespace", path: "/claude/v1/messages", apiType: "gemini", wantPath: "/claude/v1/messages"},
+		{name: "invalid API type", path: "/v1/messages", apiType: "unknown", wantPath: "/v1/messages"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := RewriteUpstreamEscapedPath(test.path, test.apiType)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.wantPath {
+				t.Fatalf("RewriteUpstreamEscapedPath(%q, %q) = %q, want %q", test.path, test.apiType, got, test.wantPath)
+			}
+		})
+	}
+}
+
+func TestRewriteUpstreamEscapedPathRejectsMalformedContractSegments(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		path    string
+		apiType string
+	}{
+		{path: "/cl%zzude/v1/messages", apiType: "claude"},
+		{path: "/custom/t%zzool/v1/messages", apiType: "custom:tool"},
+		{path: "/%zz/v1/messages", apiType: "custom:tool"},
+		{path: "/%zz/responses", apiType: "codex"},
+	} {
+		if _, err := RewriteUpstreamEscapedPath(test.path, test.apiType); err == nil {
+			t.Fatalf("RewriteUpstreamEscapedPath(%q, %q) accepted a malformed contract segment", test.path, test.apiType)
+		}
 	}
 }
 

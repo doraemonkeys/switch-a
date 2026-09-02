@@ -305,7 +305,7 @@ func TestHandler_ServeHTTP_WebSocket_NonCodexAPIType_Rejected(t *testing.T) {
 // the WebSocket-only Responses endpoint returns 426 Upgrade Required in every
 // path form that normalizes to /responses.
 func TestHandler_ServeHTTP_NonUpgradeGET_Returns426(t *testing.T) {
-	for _, path := range []string{"/responses", "/v1/responses", "/codex/responses", "/codex/v1/responses"} {
+	for _, path := range []string{"/responses", "/v1/responses", "/codex/responses", "/codex/v1/responses", "/codex/%76%31/%72esponses"} {
 		t.Run(path, func(t *testing.T) {
 			store := newMockStore()
 			store.providers = []model.Provider{
@@ -329,5 +329,41 @@ func TestHandler_ServeHTTP_NonUpgradeGET_Returns426(t *testing.T) {
 				t.Errorf("body = %q, expected WebSocket upgrade message", w.Body.String())
 			}
 		})
+	}
+}
+
+func TestHandler_ServeHTTP_NonUpgradeGET_EncodedSlashIsForwarded(t *testing.T) {
+	requestURI := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI <- r.RequestURI
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{
+		withTestStaticCredential(model.Provider{
+			ID: "p1", Name: "Provider", AuthMode: "bearer", Enabled: true,
+			APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "codex", BaseURL: upstream.URL}},
+		}, "", "key"),
+	}
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
+
+	req := httptest.NewRequest(http.MethodGet, "/codex/v1%2Fresponses", nil)
+	authorizeProxyCodexTestRequest(req)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body = %q", w.Code, http.StatusNoContent, w.Body.String())
+	}
+	select {
+	case got := <-requestURI:
+		if got != "/v1%2Fresponses" {
+			t.Fatalf("upstream RequestURI = %q, want %q", got, "/v1%2Fresponses")
+		}
+	case <-time.After(testPollTimeout):
+		t.Fatal("upstream did not receive encoded-slash GET")
 	}
 }

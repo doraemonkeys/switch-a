@@ -125,6 +125,7 @@ func TestCreateProvider_ValidatesIdentifiersAndURLs(t *testing.T) {
 		{name: "missing id", request: CreateProviderRequest{Name: "Provider"}},
 		{name: "missing name", request: CreateProviderRequest{ID: "provider-1"}},
 		{name: "invalid URL", request: CreateProviderRequest{ID: "provider-1", Name: "Provider", APITypes: []APITypeInput{{APIType: "claude", BaseURL: "not-a-url", CredentialSessionID: "session-1"}}}},
+		{name: "URL fragment", request: CreateProviderRequest{ID: "provider-1", Name: "Provider", APITypes: []APITypeInput{{APIType: "claude", BaseURL: "https://api.example.com#ignored", CredentialSessionID: "session-1"}}}},
 		{name: "duplicate API type", request: CreateProviderRequest{ID: "provider-1", Name: "Provider", APITypes: []APITypeInput{
 			{APIType: "claude", BaseURL: "https://one.example.com", CredentialSessionID: "session-1"},
 			{APIType: "claude", BaseURL: "https://two.example.com", CredentialSessionID: "session-2"},

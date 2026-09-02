@@ -9,6 +9,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 )
 
 // CandidateAuthorityResolver is the narrow selector-side port for resolving an
@@ -70,7 +71,7 @@ func (e *ProviderSelectionEligibility) resolveCandidate(
 			VendorScope:   provider.Vendor,
 			Credential:    candidate.credential,
 		}
-		finalURL, parseErr := url.Parse(provider.BaseURLForAPIType(apiType))
+		finalURL, parseErr := upstreamtarget.ParseBaseURL(provider.BaseURLForAPIType(apiType))
 		if parseErr == nil {
 			candidate.identity, candidate.identityErr = e.resolver.Resolve(route, apiType, finalURL)
 		} else {

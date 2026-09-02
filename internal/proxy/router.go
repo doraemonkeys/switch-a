@@ -1,7 +1,11 @@
 // Package proxy provides the HTTP proxy implementation for forwarding requests to upstream providers.
 package proxy
 
-import "github.com/doraemonkeys/switch-a/internal/apicontract"
+import (
+	"net/url"
+
+	"github.com/doraemonkeys/switch-a/internal/apicontract"
+)
 
 // API type constants.
 const (
@@ -44,6 +48,10 @@ const (
 // contract without duplicating routing policy.
 type BareProxyRoute = apicontract.BareRoute
 
+// RequestRoute is the canonical interpretation shared by the server boundary
+// and the proxy handler.
+type RequestRoute = apicontract.RequestRoute
+
 // BareProxyRoutes returns a copy of the root-level HTTP contract for server
 // registration. Returning value objects prevents consumers from mutating the
 // catalog used to resolve API types.
@@ -66,10 +74,7 @@ func SplitAPINamespace(path string) (apiType, contractPath string, ok bool) {
 	return string(typeID), contractPath, ok
 }
 
-// ResolveAPIType determines the API type from the request method and path.
-// It mirrors the methods and exact/subtree matching semantics registered with
-// http.ServeMux so direct Handler use cannot accept requests that the server
-// itself would reject.
+// ResolveAPIType determines the API type from a decoded method/path pair.
 //
 // Explicit namespaces pin the type without contract-path sniffing:
 //   - /claude/*, /deepseek-claude/*, /codex/*, /deepseek-openai/*, /grok/*, /gemini/* → the corresponding built-in type
@@ -78,6 +83,12 @@ func SplitAPINamespace(path string) (apiType, contractPath string, ok bool) {
 // Bare contract paths are resolved from the canonical catalog.
 func ResolveAPIType(method, path string) (apiType string, ok bool) {
 	return apicontract.ResolveRequest(method, path)
+}
+
+// ResolveRequestURL preserves literal path-segment boundaries while resolving
+// API ownership, upstream rewriting, and endpoint capabilities.
+func ResolveRequestURL(method string, requestURL *url.URL) (RequestRoute, bool) {
+	return apicontract.ResolveRequestURL(method, requestURL)
 }
 
 // BuildUpstreamPath constructs the upstream request path.

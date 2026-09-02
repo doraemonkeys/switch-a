@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 
 	"go.uber.org/zap"
 )
@@ -108,14 +108,8 @@ type APITypeInput struct {
 	CredentialSessionID string `json:"credential_session_id"`
 }
 
-// isValidBaseURL checks that a base URL has a scheme and host,
-// rejecting bare strings that url.Parse would accept silently.
 func isValidBaseURL(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	return u.Scheme != "" && u.Host != ""
+	return upstreamtarget.ValidateBaseURL(raw) == nil
 }
 
 func validateAPITypeInputs(apiTypes []APITypeInput) string {
@@ -135,7 +129,7 @@ func validateAPITypeInputs(apiTypes []APITypeInput) string {
 			return "base_url is required for api_type: " + at.APIType
 		}
 		if !isValidBaseURL(at.BaseURL) {
-			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
+			return "Invalid base_url for api_type " + at.APIType + ": must be a valid absolute URL without a fragment"
 		}
 		if at.CredentialSessionID == "" {
 			return "credential_session_id is required for api_type: " + at.APIType
@@ -161,7 +155,7 @@ func validateProviderAPITypeConfiguration(provider *model.Provider) string {
 			return "base_url is required for api_type: " + at.APIType
 		}
 		if !isValidBaseURL(at.BaseURL) {
-			return "Invalid base_url for api_type " + at.APIType + ": must be a valid URL with scheme and host"
+			return "Invalid base_url for api_type " + at.APIType + ": must be a valid absolute URL without a fragment"
 		}
 	}
 	return ""

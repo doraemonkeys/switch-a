@@ -17,6 +17,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -139,7 +140,7 @@ func (h *Gateway) prepareWebSocketDialHeaders(ctx context.Context, r *http.Reque
 	if !ok || credential == nil {
 		return nil, fmt.Errorf("provider %q has no credential session for api_type %q", provider.ID, apiType)
 	}
-	finalURL, err := url.Parse(provider.BaseURLForAPIType(apiType))
+	finalURL, err := upstreamtarget.ParseBaseURL(provider.BaseURLForAPIType(apiType))
 	if err != nil {
 		return nil, err
 	}
@@ -196,22 +197,6 @@ func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
 	}
 
 	return statusCode, ErrCodeWebSocketUpgrade, message
-}
-
-func (h *Gateway) buildFullURL(baseURL, path, query string) string {
-	joined, err := url.JoinPath(baseURL, path)
-	if err != nil {
-		h.logger.Warn("invalid websocket base URL; using slash-preserving fallback", zap.String("base_url", baseURL), zap.Error(err))
-		if !strings.HasSuffix(baseURL, "/") && !strings.HasPrefix(path, "/") {
-			joined = baseURL + "/" + path
-		} else {
-			joined = baseURL + path
-		}
-	}
-	if query != "" {
-		return joined + "?" + query
-	}
-	return joined
 }
 
 func BuildUpstreamPath(originalPath, apiType string) string {

@@ -151,6 +151,40 @@ func TestProxyRouteRegistration_APINamespaces(t *testing.T) {
 	}
 }
 
+func TestProxyRouteBoundaryPreservesRepeatedSlashesBeforeServeMux(t *testing.T) {
+	s := testServer(t)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/gemini/v1beta//models/gemini-pro:generateContent",
+		strings.NewReader(`{"contents":[]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, req)
+
+	// The empty test store makes the proxy return 503. A 307 would prove that
+	// ServeMux canonicalized the request before the proxy boundary saw it.
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; Location = %q", w.Code, http.StatusServiceUnavailable, w.Header().Get("Location"))
+	}
+	if location := w.Header().Get("Location"); location != "" {
+		t.Fatalf("Location = %q, want no canonical-path redirect", location)
+	}
+}
+
+func TestProxyRouteBoundaryLeavesNonProxyCanonicalizationToServeMux(t *testing.T) {
+	s := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/health//", nil)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusTemporaryRedirect)
+	}
+}
+
 // TestProxyRouteRegistration_GrokWebSocketUpgrade pins the websocket-upgrade
 // contract on grok paths through the real mux: bare contract paths register
 // POST only, so a genuine RFC 6455 upgrade (always GET) dies at the mux

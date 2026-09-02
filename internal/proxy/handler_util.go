@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -487,36 +486,6 @@ func shouldForceProviderSwitch(statusCode int) bool {
 	return statusCode == defaults.StatusPaymentRequired ||
 		statusCode == defaults.StatusUnauthorized ||
 		statusCode == defaults.StatusForbidden
-}
-
-// buildFullURL constructs the full upstream URL.
-// It properly joins the baseURL's existing path (if any) with the given path.
-// For example: baseURL="https://api.openai.com/v1", path="/chat/completions"
-// yields "https://api.openai.com/v1/chat/completions".
-func (h *Handler) buildFullURL(baseURL, path, query string) string {
-	// url.JoinPath handles path joining correctly:
-	// - Preserves the base URL's scheme, host, and existing path
-	// - Properly joins paths (handles slashes, dots, etc.)
-	joined, err := url.JoinPath(baseURL, path)
-	if err != nil {
-		// Invalid base URL - fall back to string concatenation with proper slash handling.
-		// Warning: if the base URL is fundamentally malformed, this fallback may produce
-		// an invalid URL that will fail during the HTTP request with a less clear error.
-		h.logger.Warn("invalid base URL, falling back to string concatenation (may produce invalid URL)",
-			zap.String("base_url", baseURL),
-			zap.Error(err),
-		)
-		if !strings.HasSuffix(baseURL, "/") && !strings.HasPrefix(path, "/") {
-			joined = baseURL + "/" + path
-		} else {
-			joined = baseURL + path
-		}
-	}
-
-	if query != "" {
-		return joined + "?" + query
-	}
-	return joined
 }
 
 const headerUserAgent = "User-Agent"

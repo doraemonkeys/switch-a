@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"reflect"
 	"sync/atomic"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -152,7 +152,7 @@ func (h *Gateway) newFallbackProviderLease(provider *model.Provider, apiType str
 	}
 	if provider != nil {
 		credential, ok := provider.CredentialSessionForAPIType(apiType)
-		finalURL, parseErr := url.Parse(provider.BaseURLForAPIType(apiType))
+		finalURL, parseErr := upstreamtarget.ParseBaseURL(provider.BaseURLForAPIType(apiType))
 		if ok && credential != nil && parseErr == nil {
 			lease.candidate, parseErr = codexidentity.NewAuthorityResolver().Resolve(
 				credentialsession.RouteSnapshot{

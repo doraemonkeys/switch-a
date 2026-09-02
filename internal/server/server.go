@@ -194,7 +194,7 @@ func New(cfg Config) *Server {
 	s := &Server{
 		server: &http.Server{
 			Addr:              net.JoinHostPort("", cfg.Port),
-			Handler:           mux,
+			Handler:           proxyRouteBoundary(proxyHandler, mux),
 			ReadHeaderTimeout: ReadHeaderTimeout,
 			IdleTimeout:       IdleTimeout,
 		},

@@ -3,6 +3,7 @@ package websocketproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 
 	"go.uber.org/zap"
 )
@@ -307,14 +309,22 @@ func (o *WebSocketSessionOrchestrator) prepareProviderAttempt(
 		if knownBaseURL == "" {
 			return webSocketPreparedProviderAttempt{}, failureCode, err
 		}
-		upstreamPath := BuildUpstreamPath(r.URL.Path, o.apiType)
+		upstreamTarget, targetErr := upstreamtarget.Build(knownBaseURL, r.URL, o.apiType)
+		if targetErr != nil {
+			return webSocketPreparedProviderAttempt{}, requestcapture.FailureCodeRequestBuild,
+				fmt.Errorf("build websocket upstream target: %w", targetErr)
+		}
 		return webSocketPreparedProviderAttempt{
-			upstreamURL: httpToWSURL(o.handler.buildFullURL(knownBaseURL, upstreamPath, r.URL.RawQuery)),
+			upstreamURL: httpToWSURL(upstreamTarget.String()),
 		}, failureCode, err
 	}
 
-	upstreamPath := BuildUpstreamPath(r.URL.Path, o.apiType)
-	upstreamURL := httpToWSURL(o.handler.buildFullURL(baseURL, upstreamPath, r.URL.RawQuery))
+	upstreamTarget, err := upstreamtarget.Build(baseURL, r.URL, o.apiType)
+	if err != nil {
+		return webSocketPreparedProviderAttempt{}, requestcapture.FailureCodeRequestBuild,
+			fmt.Errorf("build websocket upstream target: %w", err)
+	}
+	upstreamURL := httpToWSURL(upstreamTarget.String())
 	finalURL, err := url.Parse(upstreamURL)
 	if err != nil {
 		return webSocketPreparedProviderAttempt{upstreamURL: upstreamURL}, requestcapture.FailureCodeUnknown, err
