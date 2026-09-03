@@ -92,8 +92,9 @@ func SplitNamespace(path string) (APIType, string, bool) {
 	return apiType, contractPath, ok
 }
 
-// ResolveRequest classifies the exact method/path contract exposed by the
-// gateway, including custom namespaces that remain opaque to semantic analysis.
+// ResolveRequest classifies explicit namespaces and the exact unnamespaced
+// method/path contracts exposed by the gateway. Namespaced paths remain opaque
+// because the namespace itself provides the otherwise ambiguous API ownership.
 func ResolveRequest(method, path string) (string, bool) {
 	apiType, ok, err := resolveRequest(method, path, preserveSegment)
 	return apiType, ok && err == nil
@@ -162,7 +163,7 @@ func preserveSegment(segment string) (string, error) {
 func resolveRequest(method, path string, decodeSegment pathSegmentDecoder) (string, bool, error) {
 	if apiType, _, ok, err := splitNamespace(path, decodeSegment); err != nil {
 		return "", false, err
-	} else if ok && supportsNamespaceMethod(method) {
+	} else if ok {
 		return string(apiType), true, nil
 	}
 	for _, definition := range definitions {
@@ -176,14 +177,12 @@ func resolveRequest(method, path string, decodeSegment pathSegmentDecoder) (stri
 			}
 		}
 	}
-	if supportsNamespaceMethod(method) {
-		apiType, ok, err := resolveCustomNamespace(path, decodeSegment)
-		if err != nil {
-			return "", false, err
-		}
-		if ok {
-			return apiType, true, nil
-		}
+	apiType, ok, err := resolveCustomNamespace(path, decodeSegment)
+	if err != nil {
+		return "", false, err
+	}
+	if ok {
+		return apiType, true, nil
 	}
 	return "", false, nil
 }
@@ -270,10 +269,6 @@ func decodePathSegments(path string, decodeSegment pathSegmentDecoder) ([]string
 
 func methodMatches(routeMethod, requestMethod string) bool {
 	return routeMethod == requestMethod || routeMethod == MethodGet && requestMethod == MethodHead
-}
-
-func supportsNamespaceMethod(method string) bool {
-	return method == MethodPost || methodMatches(MethodGet, method)
 }
 
 func splitNamespace(path string, decodeSegment pathSegmentDecoder) (APIType, string, bool, error) {

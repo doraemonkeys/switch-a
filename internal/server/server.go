@@ -214,15 +214,13 @@ func New(cfg Config) *Server {
 	}
 	// Explicit API namespaces (/claude/*, /codex/*, /grok/*, /gemini/*):
 	// clients pin the API type in their base URL when bare contract paths are
-	// ambiguous across vendors. GET is registered for model discovery
-	// (e.g. /claude/v1/models) and namespaced WebSocket upgrades.
+	// ambiguous across vendors. The namespace supplies API ownership, so methods
+	// and contract paths stay opaque and can evolve without gateway changes.
 	for _, pattern := range proxy.APINamespaceRoutePatterns() {
-		mux.HandleFunc("POST "+pattern, s.handleProxy)
-		mux.HandleFunc("GET "+pattern, s.handleProxy)
+		mux.HandleFunc(pattern, s.handleProxy)
 	}
 	// Custom API
-	mux.HandleFunc("POST "+proxy.RouteCustomPrefix, s.handleProxy)
-	mux.HandleFunc("GET "+proxy.RouteCustomPrefix, s.handleProxy)
+	mux.HandleFunc(proxy.RouteCustomPrefix, s.handleProxy)
 
 	// Catch-all for unregistered routes — log and return 404.
 	// Without this, Go's default ServeMux silently returns 404 with no visibility.

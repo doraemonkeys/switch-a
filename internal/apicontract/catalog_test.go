@@ -187,8 +187,9 @@ func TestResolveRequestUsesFrozenRouteSemantics(t *testing.T) {
 		{method: http.MethodPost, path: "/responses-evil/compact"},
 		{method: http.MethodPost, path: "/deepseek-openai/v1/chat/completions", want: "deepseek-openai", ok: true},
 		{method: http.MethodHead, path: "/grok/v1/models", want: "grok", ok: true},
-		{method: http.MethodDelete, path: "/grok/v1/models"},
+		{method: http.MethodDelete, path: "/codex/v1/responses/resp_123", want: "codex", ok: true},
 		{method: http.MethodPost, path: "/custom/tool/v1/messages", want: "custom:tool", ok: true},
+		{method: http.MethodPatch, path: "/custom/tool/v1/resources/123", want: "custom:tool", ok: true},
 		{method: http.MethodPost, path: "/custom/foo/bar", want: "custom:foo", ok: true},
 		{method: http.MethodPost, path: "/custom/"},
 	}

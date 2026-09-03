@@ -222,11 +222,11 @@ func TestResolveAPIType(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			name:     "namespace unsupported method",
+			name:     "namespace preserves delete method",
 			method:   "DELETE",
-			path:     "/claude/v1/messages",
-			wantType: "",
-			wantOK:   false,
+			path:     "/codex/v1/responses/resp_123",
+			wantType: APITypeCodex,
+			wantOK:   true,
 		},
 		{
 			name:     "bare namespace is handled by mux redirect",
@@ -257,11 +257,11 @@ func TestResolveAPIType(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			name:     "custom unsupported method",
+			name:     "custom namespace preserves patch method",
 			method:   "PATCH",
-			path:     "/custom/mytool/v1/messages",
-			wantType: "",
-			wantOK:   false,
+			path:     "/custom/mytool/v1/resources/123",
+			wantType: "custom:mytool",
+			wantOK:   true,
 		},
 		{
 			name:     "unknown path",

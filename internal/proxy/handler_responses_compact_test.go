@@ -105,3 +105,61 @@ func TestHandler_ServeHTTP_CodexResponsesCompactForwardsOpaqueContract(t *testin
 		t.Fatal("upstream did not receive Codex Responses compact request")
 	}
 }
+
+func TestHandler_ServeHTTP_CodexNamespaceForwardsDelete(t *testing.T) {
+	type capturedRequest struct {
+		method string
+		path   string
+		query  string
+	}
+
+	received := make(chan capturedRequest, 1)
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- capturedRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_123","object":"response","deleted":true}`))
+	}))
+	defer upstreamServer.Close()
+
+	store := newMockStore()
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID:       "codex-provider",
+		Name:     "Codex Provider",
+		AuthMode: "bearer",
+		Enabled:  true,
+		APITypes: []model.ProviderAPIType{{
+			ProviderID: "codex-provider",
+			APIType:    APITypeCodex,
+			BaseURL:    upstreamServer.URL + "/backend-api/codex",
+		}},
+	}, "", "provider-key")}
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Logger: zap.NewNop()})
+
+	req := httptest.NewRequest(http.MethodDelete, "/codex/v1/responses/resp_123?source=client", nil)
+	authorizeProxyCodexTestRequest(req)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if got := w.Body.String(); got != `{"id":"resp_123","object":"response","deleted":true}` {
+		t.Fatalf("response body = %q, want opaque upstream body", got)
+	}
+
+	select {
+	case upstream := <-received:
+		if upstream.method != http.MethodDelete {
+			t.Errorf("method = %q, want %q", upstream.method, http.MethodDelete)
+		}
+		if upstream.path != "/backend-api/codex/responses/resp_123" {
+			t.Errorf("path = %q, want %q", upstream.path, "/backend-api/codex/responses/resp_123")
+		}
+		if upstream.query != "source=client" {
+			t.Errorf("query = %q, want %q", upstream.query, "source=client")
+		}
+	case <-time.After(testResponseMaxDur):
+		t.Fatal("upstream did not receive namespaced DELETE request")
+	}
+}

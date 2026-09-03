@@ -80,7 +80,8 @@ func SplitAPINamespace(path string) (apiType, contractPath string, ok bool) {
 //   - /claude/*, /deepseek-claude/*, /codex/*, /deepseek-openai/*, /grok/*, /gemini/* → the corresponding built-in type
 //   - /custom/:toolId/* → custom:{toolId}
 //
-// Bare contract paths are resolved from the canonical catalog.
+// Namespaced methods and paths remain opaque. Bare contract paths are resolved
+// from the canonical method/path catalog because they do not identify an owner.
 func ResolveAPIType(method, path string) (apiType string, ok bool) {
 	return apicontract.ResolveRequest(method, path)
 }

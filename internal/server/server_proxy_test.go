@@ -110,8 +110,9 @@ func TestProxyRouteRegistration_CodexResponsesCompact(t *testing.T) {
 	}
 }
 
-// TestProxyRouteRegistration_APINamespaces verifies the explicit namespace
-// routes reach the proxy handler for both methods, again via the real mux.
+// TestProxyRouteRegistration_APINamespaces verifies explicit namespaces route
+// every method through the real mux. The namespace fixes API ownership, leaving
+// the upstream contract free to add methods without a gateway release.
 func TestProxyRouteRegistration_APINamespaces(t *testing.T) {
 	s := testServer(t)
 
@@ -124,6 +125,7 @@ func TestProxyRouteRegistration_APINamespaces(t *testing.T) {
 		{http.MethodPost, "/codex/responses"},
 		{http.MethodPost, "/codex/responses/compact"},
 		{http.MethodPost, "/codex/alpha/search"},
+		{http.MethodDelete, "/codex/v1/responses/resp_123"},
 		// GET model discovery must proxy through (503 on the empty store), not
 		// hit the 426 rule reserved for the WebSocket-only /responses endpoint.
 		{http.MethodGet, "/codex/v1/models"},
@@ -131,6 +133,7 @@ func TestProxyRouteRegistration_APINamespaces(t *testing.T) {
 		{http.MethodPost, "/grok/v1/chat/completions"},
 		{http.MethodGet, "/grok/v1/models"},
 		{http.MethodPost, "/gemini/v1beta/models/gemini-pro:generateContent"},
+		{http.MethodPatch, "/custom/tool/v1/resources/123"},
 	}
 
 	for _, test := range tests {
