@@ -45,7 +45,7 @@ Header 清理、WebSocket subprotocol、Continuity、ClientScope 和 Provider Co
 
 | 值 | 行为 |
 | --- | --- |
-| `preserve_conversation` | 默认值。保持现有 Authority 约束，只在同一 Authority 内重试和切换 RouteTarget。 |
+| `preserve_conversation` | 默认值。保持现有约束。 |
 | `switch_account_preserve_conversation` | state owner 不限制选路；使用旧版 `sticky → strategy` 软粘性，并允许选择其他符合现有规则的 Codex Provider 原样延续客户端对话。 |
 
 该设置不属于 `RoutingPolicy`。RoutingPolicy、健康状态、Provider 启用状态、模型匹配、组和现有选择策略仍共同决定候选集合；恢复策略只决定 state provenance 是否生成选路约束。
