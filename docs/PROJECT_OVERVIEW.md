@@ -14,7 +14,7 @@ An **AI API Gateway** that proxies HTTP and WebSocket traffic to multiple AI pro
 - **Resilient Failover & Two-Phase Switching**: Pre-visible replacement (silent transparent retry across providers) vs post-visible failover (strictly scoped by vendor isolation).
 - **Decoupled Credential Sessions**: Independent API Key & ChatGPT OAuth session pool with 401 auto-refresh, `ChatGPT-Account-Id` hygiene/injection, and quota window tracking.
 - **Pre-Commit Probing & Error Rules**: Semantic error matching on HTTP/SSE streams before flushing to client, triggering automatic failover.
-- **Concurrency & Continuity**: Lease-based concurrency limiting (with generation tags) and sticky session affinity (IP, user, or model).
+- **Concurrency & Continuity**: Lease-based concurrency limiting (with generation tags), configurable sticky affinity, and explicit provider/state continuity.
 - **Observability & Diagnostics**: Token usage analytics, structured attempt evidence, real-time live monitoring, and in-memory debug traffic capture.
 - **Admin UI**: Embedded management dashboard for credentials, providers, routing, error detection, logs, and config.
 
@@ -60,6 +60,19 @@ An **AI API Gateway** that proxies HTTP and WebSocket traffic to multiple AI pro
 │                 SQLite (GORM, pure Go)                 │
 └────────────────────────────────────────────────────────┘
 ```
+
+### Core Concepts & Runtime Policies
+
+> **Maintenance**: Update this section alongside code changes to these concepts, defaults, or lifecycle boundaries.
+
+- **Sticky** (`internal/selector/`): Soft Provider preference within routing, health, and concurrency constraints. `sticky_mode`: `off` / `api_type` / `model` (default); `sticky_ttl`: 300 seconds by default. Codex keys include client credential scope, not Thread-ID.
+- **Provider continuity** (`internal/model/switch.go`, `internal/model/continuity_seed.go`): Tracks client-visible origin and failover isolation. Request-local context is separate from one-shot, 5-second cross-request recovery seeds.
+- **Codex state ownership** (`internal/codex/continuity/`): Binds conversation/state evidence to client and upstream protocol scope; Provider ID is only a route hint. Ownership is independent of Sticky.
+- **Conversation recovery** (`internal/model/conversation_recovery_policy.go`, `internal/codex/http/`, `internal/codex/websocket/`): `conversation_recovery_policy` defaults to `preserve_conversation` (honor verified owner). `switch_account_preserve_conversation` permits eligible account switching while preserving original client state and its source ownership. Pre-visible attempts may be replaced; visible WebSocket failures requiring recovery use client reconnect. Routing and failover constraints still apply.
+- **Provider / CredentialSession / Authority** (`internal/codex/credentialsession/`, `internal/codex/identity/`): Provider defines a route target, CredentialSession owns credentials and authentication lifecycle, and Authority identifies the upstream ownership boundary. Switching Providers need not change accounts.
+- **Disclosure / ClientVisible** (`internal/upstreamtransport/`, `internal/codex/websocket/boundaries.go`): Possible upstream request disclosure and client-visible output are separate lifecycle boundaries governing recovery. An ordinary WebSocket `101` does not establish business visibility.
+- **Attempts & retries** (`internal/errorrule/ledger.go`, `internal/model/switch.go`, `internal/upstreamtransport/`): Logical attempts, same-provider retries, cross-provider switches, and transport transmissions have distinct accounting; network send counts do not directly equal retry-budget consumption.
+- **Usage-limit policy & health** (`internal/model/provider_usage_limit_policy.go`, `internal/errorrule/health.go`): Provider-scoped `usage_limit_policy` defaults to `switch_provider`; `suspend` opts into temporary suspension. Routing-away decisions and health verdicts are separate.
 
 ## Directory Structure
 
