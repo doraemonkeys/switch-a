@@ -110,57 +110,7 @@ func inspectClientRoot(view *MessageView, eventType string, root objectView) boo
 }
 
 func inspectResponseCreate(view *MessageView, root objectView) {
-	metadataField := root.exact("client_metadata")
-	if metadataField.duplicate {
-		view.issue = &parseIssue{reason: ReasonDuplicateSecurityKey, field: FieldEnvelope}
-		return
-	}
-	if metadataField.present {
-		metadata, err := decodeObject(metadataField.raw)
-		if err != nil {
-			view.issue = &parseIssue{reason: ReasonInvalidProjection, field: FieldEnvelope}
-			return
-		}
-		confirmed := []struct {
-			key   string
-			field Field
-		}{
-			{key: "thread_id", field: FieldThreadID},
-			{key: "session_id", field: FieldSessionID},
-			{key: "x-codex-window-id", field: FieldWindowID},
-			{key: "x-codex-turn-metadata", field: FieldTurnMetadata},
-		}
-		for _, projection := range confirmed {
-			field := metadata.exact(projection.key)
-			if field.duplicate {
-				view.issue = &parseIssue{reason: ReasonDuplicateSecurityKey, field: projection.field}
-				return
-			}
-			if !field.present {
-				continue
-			}
-			value, valid := decodeRequiredString(field.raw)
-			if !valid {
-				view.issue = &parseIssue{reason: ReasonInvalidProjection, field: projection.field}
-				return
-			}
-			view.setValue(projection.field, value)
-		}
-	}
-	previous := root.exact("previous_response_id")
-	if previous.duplicate {
-		view.issue = &parseIssue{reason: ReasonDuplicateSecurityKey, field: FieldResponseReference}
-		return
-	}
-	if !previous.present {
-		return
-	}
-	value, valid := decodeRequiredString(previous.raw)
-	if !valid {
-		view.issue = &parseIssue{reason: ReasonInvalidProjection, field: FieldResponseReference}
-		return
-	}
-	view.setValue(FieldResponseReference, value)
+	applyClientProjection(view, projectRawClient(root))
 }
 
 func inspectServerRoot(view *MessageView, eventType string, root objectView, sse bool) bool {

@@ -388,7 +388,7 @@ func shouldRunPreVisibleSuppressionWindow(options webSocketRelayOptions) bool {
 
 func disablePreVisibleReplayBufferIfNeeded(options webSocketRelayOptions) {
 	if options.Observer != nil && options.Observer.ParseDegraded() && options.PreVisibleReplayBuffer != nil {
-		options.PreVisibleReplayBuffer.Disable()
+		options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayParseDegraded)
 	}
 }
 
@@ -485,11 +485,11 @@ func newAllowlistedProviderScopedSuppressDecision(buffer *preVisibleClientMessag
 			if buffer == nil {
 				return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
 			}
-			snapshot := buffer.Snapshot()
+			status := buffer.Status()
 			// An empty replay snapshot still means failover is safe: the provider failed
 			// before any replayable client payload crossed the pre-visible boundary, so
 			// there is nothing to resend to the replacement provider.
-			if !snapshot.Enabled {
+			if status.State != webSocketReplayable {
 				return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward}
 			}
 		}

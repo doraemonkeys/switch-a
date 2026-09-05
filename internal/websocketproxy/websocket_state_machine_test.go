@@ -25,7 +25,7 @@ func TestWebSocketProbeBudgetExactBoundaries(t *testing.T) {
 	}
 
 	t.Run("duration", func(t *testing.T) {
-		budget := webSocketProbeBudget{Duration: 3 * time.Second, MaxFrames: 2, MaxBytes: 2}
+		budget := webSocketProbeBudget{Duration: 3 * time.Second, MaxWorkUnits: 2, MaxDecodedBytes: 2}
 		tracker := newTracker(budget)
 		now = started.Add(budget.Duration)
 		if err := tracker.Admit(1); err != nil {
@@ -41,7 +41,7 @@ func TestWebSocketProbeBudgetExactBoundaries(t *testing.T) {
 		now = started
 		budget := defaultWebSocketProbeBudget()
 		tracker := newTracker(budget)
-		for frame := 0; frame < budget.MaxFrames; frame++ {
+		for frame := 0; frame < budget.MaxWorkUnits; frame++ {
 			if err := tracker.Admit(0); err != nil {
 				t.Fatalf("frame %d rejected: %v", frame, err)
 			}
@@ -55,7 +55,7 @@ func TestWebSocketProbeBudgetExactBoundaries(t *testing.T) {
 		now = started
 		budget := defaultWebSocketProbeBudget()
 		tracker := newTracker(budget)
-		if err := tracker.Admit(budget.MaxBytes); err != nil {
+		if err := tracker.Admit(budget.MaxDecodedBytes); err != nil {
 			t.Fatalf("exact byte budget rejected: %v", err)
 		}
 		if err := tracker.Admit(1); err == nil {

@@ -21,14 +21,6 @@ const (
 	// 16 MB accommodates large AI payloads (e.g., base64-encoded audio for Realtime API).
 	wsReadLimit = 16 * 1024 * 1024
 
-	// preVisibleClientReplayBufferLimitBytes bounds buffered client application payloads
-	// so semantic replacement never turns an invisible session window into unbounded memory.
-	preVisibleClientReplayBufferLimitBytes = 4 * 1024 * 1024
-
-	// preVisibleClientReplayBufferLimitMessages prevents an endless stream of tiny
-	// pre-visible client frames from pinning memory even when the byte budget stays low.
-	preVisibleClientReplayBufferLimitMessages = 128
-
 	webSocketSelectionProbeTotalDuration = 3 * time.Second
 
 	// webSocketCloseReasonByteLimit keeps propagated close reasons within RFC 6455's
@@ -254,6 +246,7 @@ func NewWebSocketForwarder(cfg WebSocketForwarderConfig) *WebSocketForwarder {
 // WebSocketResult reports the outcome of a WebSocket forwarding session.
 // The caller uses this for health tracking, request logging, and active registry cleanup.
 type WebSocketResult struct {
+	ReplayStatus webSocketReplayStatus
 	// HandshakeAccepted indicates whether the selected provider completed the
 	// upstream WebSocket handshake. Client accept can still be true when a later
 	// replacement or failover dial is rejected because the logical downstream

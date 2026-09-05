@@ -64,7 +64,7 @@ func ResolveSelectionHiddenModelDemand(
 		// because continuity precision depends on the model dimension of the key.
 		return true, nil
 	}
-	policies, err := listRoutingPoliciesByAPIType(ctx, policySource, reqAPIType(req))
+	policies, err := selectionRoutingPolicies(ctx, policySource, req)
 	if err != nil {
 		return false, err
 	}

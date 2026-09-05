@@ -98,13 +98,18 @@ type Operation struct {
 	cookieClosed        bool
 }
 
+// RequiresClientEvidence expresses the continuity consumer's admission dependency.
+// Header claims cannot rule out conflicting or state-bearing body claims.
+func (r *Runtime) RequiresClientEvidence(apiType string, hasBody bool) bool {
+	return apiType == codexAPIType && hasBody
+}
+
 func (r *Runtime) Begin(
 	ctx context.Context,
 	request *http.Request,
 	apiType string,
 	operationID string,
-	wireBody []byte,
-	semanticBody []byte,
+	evidence codexheaders.ClientEvidence,
 ) (*Operation, error) {
 	op := &Operation{runtime: r, operationID: operationID, apiType: apiType}
 	if apiType != codexAPIType {
@@ -116,7 +121,7 @@ func (r *Runtime) Begin(
 	if request == nil {
 		return nil, clientError("begin", errors.New("request is required"))
 	}
-	message, discovery := discoverClientEvidence(request.Header, wireBody, semanticBody)
+	message, discovery := discoverClientEvidence(request.Header, evidence)
 	if err := op.bindClientScope(request.Header); err != nil {
 		return nil, err
 	}
@@ -129,17 +134,9 @@ func (r *Runtime) Begin(
 	return op, nil
 }
 
-func discoverClientEvidence(
-	headers http.Header,
-	wireBody []byte,
-	semanticBody []byte,
-) (codexheaders.MessageView, codexheaders.Result) {
-	var message codexheaders.MessageView
-	if len(wireBody) > 0 {
-		message = codexheaders.InspectClientPayload(wireBody, semanticBody)
-	}
-	discovery := codexheaders.DecideClient(codexheaders.ClientInput{
-		Headers: headers, Message: message,
+func discoverClientEvidence(headers http.Header, message codexheaders.ClientEvidence) (codexheaders.ClientEvidence, codexheaders.Result) {
+	discovery := codexheaders.DecideClientEvidence(codexheaders.ClientEvidenceInput{
+		Headers: headers, Evidence: message,
 		Owners: func(codexheaders.BindingCandidate) codexheaders.OwnerStatus {
 			return codexheaders.OwnerUnknown
 		},
@@ -174,7 +171,7 @@ func (o *Operation) bindClientScope(headers http.Header) error {
 func (o *Operation) beginContinuity(
 	ctx context.Context,
 	headers http.Header,
-	message codexheaders.MessageView,
+	message codexheaders.ClientEvidence,
 	discovery codexheaders.Result,
 ) error {
 	if o.runtime.continuity == nil {
@@ -243,7 +240,7 @@ func (o *Operation) RequiredAuthority() (*codexidentity.UpstreamAuthority, strin
 func (o *Operation) resolveClientDecision(
 	ctx context.Context,
 	headers http.Header,
-	message codexheaders.MessageView,
+	message codexheaders.ClientEvidence,
 	discovery codexheaders.Result,
 ) error {
 	o.resolveClientOwners(ctx, discovery)
@@ -254,8 +251,8 @@ func (o *Operation) resolveClientDecision(
 	if o.requiredProtocolScope != nil {
 		admission = codexheaders.StateAdmissionAnchored
 	}
-	o.clientDecision = codexheaders.DecideClient(codexheaders.ClientInput{
-		Headers: headers, Message: message,
+	o.clientDecision = codexheaders.DecideClientEvidence(codexheaders.ClientEvidenceInput{
+		Headers: headers, Evidence: message,
 		Owners:          o.resolvedOwnerStatus,
 		AttestationLock: codexheaders.OperationUnlocked,
 		StateAdmission:  admission,

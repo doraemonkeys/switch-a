@@ -10,6 +10,42 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 )
 
+func TestIngressFramingAndTerminalMetadataAreBounded(t *testing.T) {
+	head := IngressHead{Protocol: strings.Repeat("p", MaxRetainedIdentifierBytes+1), ContentLength: -1}
+	for range MaxRetainedHeaderFields + 1 {
+		head.TransferEncoding = append(head.TransferEncoding, strings.Repeat("e", MaxRetainedHeaderNameBytes+1))
+		head.TrailerKeys = append(head.TrailerKeys, strings.Repeat("t", MaxRetainedHeaderNameBytes+1))
+	}
+	value := (Sanitizer{}).Ingress(head)
+	if !value.CaptureTruncated || len(value.TransferEncoding) != MaxRetainedHeaderFields || len(value.DeclaredTrailerKeys) != MaxRetainedHeaderFields {
+		t.Fatalf("framing bounds: %+v", value)
+	}
+	for _, state := range []string{"complete", "failed", "aborted", "invalid"} {
+		result := (Sanitizer{}).FinishIngress(value, state, 4, http.Header{"X-End": {"done"}}, strings.Repeat("r", MaxRetainedIdentifierBytes+1))
+		if result.ReceivedBytes != 4 || len(result.Reason) > MaxRetainedIdentifierBytes || result.Trailers["X-End"][0] != "done" {
+			t.Fatalf("terminal bounds: %+v", result)
+		}
+		if state == "invalid" && result.State != "failed" {
+			t.Fatal("unknown state was published")
+		}
+	}
+}
+
+func TestIngressFailureKindAndReasonAreBounded(t *testing.T) {
+	for _, kind := range []capturevalue.IngressFailureKind{capturevalue.IngressFailureRead, capturevalue.IngressFailureLimit, capturevalue.IngressFailureLength, capturevalue.IngressFailureStorage, "invalid"} {
+		result, truncated := (Sanitizer{}).IngressFailure(capturevalue.IngressFailureSnapshot{Kind: kind, Reason: strings.Repeat("r", MaxRetainedIdentifierBytes+1)})
+		if !truncated || len(result.Reason) > MaxRetainedIdentifierBytes {
+			t.Fatalf("failure bounds: %+v", result)
+		}
+		if kind == "invalid" {
+			kind = capturevalue.IngressFailureUnknown
+		}
+		if result.Kind != kind {
+			t.Fatalf("failure kind=%q want=%q", result.Kind, kind)
+		}
+	}
+}
+
 func TestEvidenceMergeAndHeaderCredentialSetFailClosedAtInternalBounds(t *testing.T) {
 	t.Parallel()
 

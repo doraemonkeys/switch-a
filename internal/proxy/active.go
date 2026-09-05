@@ -29,12 +29,13 @@ type ActiveRequest struct {
 	StartedAt       time.Time        `json:"started_at"`   // When the request started
 	HasReceivedData bool             `json:"has_data"`     // Whether data has been received from upstream
 	model.RequestedReasoningObservation
-	BytesSent      int64 `json:"bytes_sent,omitempty"`       // Cumulative request payload bytes forwarded upstream
-	BytesReceived  int64 `json:"bytes_received,omitempty"`   // Cumulative response payload bytes forwarded to the client
-	MsgsSent       int64 `json:"msgs_sent,omitempty"`        // WebSocket messages sent upstream; zero for HTTP/SSE
-	MsgsReceived   int64 `json:"msgs_received,omitempty"`    // WebSocket messages received upstream; zero for HTTP/SSE
-	LastActivityAt int64 `json:"last_activity_at,omitempty"` // Unix ms of most recent transport activity, 0 = no activity yet
-	lease          providerLease
+	UpstreamBodyReadBytes int64 `json:"upstream_body_read_bytes,omitempty"` // HTTP body reads across attempts and redirects; not delivery confirmation
+	BytesSent             int64 `json:"bytes_sent,omitempty"`               // WebSocket message payload bytes forwarded upstream
+	BytesReceived         int64 `json:"bytes_received,omitempty"`           // Cumulative response payload bytes forwarded to the client
+	MsgsSent              int64 `json:"msgs_sent,omitempty"`                // WebSocket messages sent upstream; zero for HTTP/SSE
+	MsgsReceived          int64 `json:"msgs_received,omitempty"`            // WebSocket messages received upstream; zero for HTTP/SSE
+	LastActivityAt        int64 `json:"last_activity_at,omitempty"`         // Unix ms of most recent transport activity, 0 = no activity yet
+	lease                 providerLease
 }
 
 // ActiveRequestRemovalReason explains why a request left the registry.
@@ -63,11 +64,12 @@ type ActiveRequestRemovalHook func(ActiveRequest, ActiveRequestRemovalReason)
 // transports. Writers update it on the hot path while List reads a coherent-enough
 // monitoring snapshot without serializing transport activity through the registry.
 type LiveBytesTracker struct {
-	BytesSent      atomic.Int64 // client → upstream
-	BytesReceived  atomic.Int64 // upstream → client
-	MsgsSent       atomic.Int64
-	MsgsReceived   atomic.Int64
-	LastActivityAt atomic.Int64 // UnixMilli of most recent transport activity
+	UpstreamBodyReadBytes atomic.Int64 // HTTP request-body reader consumption, including rereads
+	BytesSent             atomic.Int64 // WebSocket client → upstream message payload
+	BytesReceived         atomic.Int64 // upstream → client
+	MsgsSent              atomic.Int64
+	MsgsReceived          atomic.Int64
+	LastActivityAt        atomic.Int64 // UnixMilli of most recent transport activity
 }
 
 // MemoryVisibleContinuitySeedStore keeps short-lived post-visible continuity
@@ -461,6 +463,22 @@ func (r *ActiveRequestRegistry) UpdateModel(requestID, model string) {
 	r.requests[requestID] = entry
 }
 
+// UpdateObservation publishes final body facts together without changing the
+// admission-time continuity key. Observation-only work can finish after dispatch.
+func (r *ActiveRequestRegistry) UpdateObservation(requestID, modelName string, reasoning model.RequestedReasoningObservation) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.requests[requestID]
+	if !ok {
+		return
+	}
+	if modelName != "" {
+		entry.request.Model = modelName
+	}
+	entry.request.RequestedReasoningObservation = reasoning
+	r.requests[requestID] = entry
+}
+
 // List returns a snapshot copy safe to use without synchronization.
 // Registered transport counters are merged into each snapshot for HTTP, SSE,
 // and WebSocket requests.
@@ -473,6 +491,7 @@ func (r *ActiveRequestRegistry) List() []ActiveRequest {
 		req := entry.request
 		if tracker, ok := r.liveTraffic[req.RequestID]; ok {
 			req.BytesSent = tracker.BytesSent.Load()
+			req.UpstreamBodyReadBytes = tracker.UpstreamBodyReadBytes.Load()
 			req.BytesReceived = tracker.BytesReceived.Load()
 			req.MsgsSent = tracker.MsgsSent.Load()
 			req.MsgsReceived = tracker.MsgsReceived.Load()

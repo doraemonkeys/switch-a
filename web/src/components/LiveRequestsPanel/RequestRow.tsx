@@ -48,6 +48,7 @@ function ActiveReasoningBadge({
   includeEmpty?: boolean;
 }) {
   const hasVisibleState =
+    request.reasoning_observation_state === "pending" ||
     request.reasoning_observation_state === "captured" ||
     request.reasoning_observation_state === "invalid" ||
     request.reasoning_observation_state === "ambiguous";
@@ -201,14 +202,16 @@ function RequestDetailPanel({
           </p>
         </div>
 
-        {((request.bytes_sent ?? 0) > 0 ||
+        {(upstreamReadOrSentBytes(request) > 0 ||
           (request.bytes_received ?? 0) > 0) && (
           <div className="col-span-2">
             <span className="text-text-muted text-xs uppercase tracking-wide">
-              Data Transfer
+              {request.is_websocket
+                ? "Data Transfer"
+                : "Body Read / Response Transfer"}
             </span>
             <p className="text-text-primary font-mono text-xs">
-              ↑ {formatBytes(request.bytes_sent ?? 0)}
+              ↑ {formatBytes(upstreamReadOrSentBytes(request))}
               {request.is_websocket && ` (${request.msgs_sent ?? 0} msgs)`}
               {" / "}↓ {formatBytes(request.bytes_received ?? 0)}
               {request.is_websocket && ` (${request.msgs_received ?? 0} msgs)`}
@@ -249,6 +252,14 @@ interface LiveTrafficIndicatorProps {
   currentTime: number;
 }
 
+function upstreamReadOrSentBytes(request: ActiveRequest): number {
+  return (
+    (request.is_websocket
+      ? request.bytes_sent
+      : request.upstream_body_read_bytes) ?? 0
+  );
+}
+
 /**
  * Compact inline indicator for HTTP, SSE, and WebSocket traffic.
  */
@@ -256,7 +267,8 @@ function LiveTrafficIndicator({
   request,
   currentTime,
 }: LiveTrafficIndicatorProps) {
-  const hasSent = (request.bytes_sent ?? 0) > 0;
+  const upstreamBytes = upstreamReadOrSentBytes(request);
+  const hasSent = upstreamBytes > 0;
   const hasReceived = (request.bytes_received ?? 0) > 0;
   if (!hasSent && !hasReceived) return null;
 
@@ -272,8 +284,14 @@ function LiveTrafficIndicator({
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-mono text-text-secondary flex-shrink-0">
       {hasSent && (
-        <span title="Bytes sent (client → upstream)">
-          ↑{formatBytes(request.bytes_sent!)}
+        <span
+          title={
+            request.is_websocket
+              ? "Bytes sent (client → upstream)"
+              : "Upstream body bytes read (includes retries and redirects; does not confirm delivery)"
+          }
+        >
+          ↑{formatBytes(upstreamBytes)}
         </span>
       )}
       {hasReceived && (

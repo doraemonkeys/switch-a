@@ -555,3 +555,13 @@ func (s *sessionState) removeProviderRecordLocked(record *recordState) bool {
 	index.count--
 	return true
 }
+
+func (s *sessionState) enforceProviderRetentionLocked(providerID string) {
+	for {
+		index := s.providerRecords[providerID]
+		if index == nil || index.count <= s.recordsPerProvider || index.first == nil {
+			return
+		}
+		s.evictRecordLocked(index.first)
+	}
+}

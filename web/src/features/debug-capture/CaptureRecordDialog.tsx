@@ -101,10 +101,85 @@ function HTTPDetail({ detail }: { detail: DebugCaptureRecordDetail }) {
           <DetailRow label="Host" value={exchange.request.host} />
           <DetailRow
             label="Content length"
-            value={formatBytes(exchange.request.content_length)}
+            value={
+              exchange.request.content_length < 0
+                ? "Unknown"
+                : formatBytes(exchange.request.content_length)
+            }
           />
         </dl>
       </section>
+      {exchange.request.ingress && (
+        <section aria-label="Original client input">
+          <h3 className="mb-2 font-semibold text-text-primary">
+            Original client input
+          </h3>
+          <dl>
+            <DetailRow
+              label="Protocol"
+              value={exchange.request.ingress.protocol}
+            />
+            <DetailRow
+              label="Declared content length"
+              value={
+                exchange.request.ingress.content_length < 0
+                  ? "Unknown"
+                  : formatBytes(exchange.request.ingress.content_length)
+              }
+            />
+            <DetailRow
+              label="Transfer encoding"
+              value={
+                exchange.request.ingress.transfer_encoding.join(", ") || "None"
+              }
+            />
+            <DetailRow
+              label="Declared trailers"
+              value={
+                exchange.request.ingress.declared_trailer_keys.join(", ") ||
+                "None"
+              }
+            />
+            <DetailRow
+              label="Input state"
+              value={
+                exchange.request.ingress.state === "receiving"
+                  ? "Pending"
+                  : exchange.request.ingress.state
+              }
+            />
+            <DetailRow
+              label="Received body"
+              value={formatBytes(exchange.request.ingress.received_bytes)}
+            />
+            {exchange.request.ingress.reason && (
+              <DetailRow
+                label="Input end reason"
+                value={exchange.request.ingress.reason}
+              />
+            )}
+            {exchange.request.ingress.capture_truncated && (
+              <DetailRow label="Capture evidence" value="Truncated" />
+            )}
+            {exchange.request.ingress.source_failure && (
+              <>
+                <DetailRow
+                  label="Source / replay failure"
+                  value={exchange.request.ingress.source_failure.kind}
+                />
+                <DetailRow
+                  label="Failure reason"
+                  value={exchange.request.ingress.source_failure.reason}
+                />
+              </>
+            )}
+          </dl>
+          <HeadersView
+            title="Original client trailers"
+            headers={exchange.request.ingress.trailers}
+          />
+        </section>
+      )}
       <HeadersView title="Request headers" headers={exchange.request.headers} />
       <HeadersView
         title="Request trailers"

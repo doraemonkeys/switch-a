@@ -15,6 +15,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
@@ -38,6 +39,7 @@ const (
 	attemptFailureWrite              attemptFailureKind = "client_write"
 	attemptFailureClientTerminated   attemptFailureKind = "client_terminated"
 	attemptFailureInternal           attemptFailureKind = "internal"
+	attemptFailureIngress            attemptFailureKind = "request_ingress"
 )
 
 // semanticAttemptFacts is deliberately value-only; evidence consumers can
@@ -88,6 +90,7 @@ type forwardResult struct {
 	tokenUsage          *tokenusage.TokenUsage
 	failureDisposition  providerFailureDisposition
 	failureKind         attemptFailureKind
+	ingressFailureKind  requestingress.FailureKind
 	failureMessage      string
 	upstreamBytes       int64
 	decodedBytes        int64
@@ -115,6 +118,9 @@ func (r *forwardResult) inheritHealth(source forwardResult) {
 func (r forwardResult) terminalError() error {
 	if r.failureMessage == "" {
 		return nil
+	}
+	if r.failureKind == attemptFailureIngress {
+		return &requestIngressFailure{cause: errors.New(r.failureMessage), kind: r.ingressFailureKind}
 	}
 	if r.failureKind == attemptFailureUpstreamNoResponse {
 		return fmt.Errorf("%w: %s", ErrUpstreamNoResponse, r.failureMessage)
@@ -183,6 +189,11 @@ func (h *Handler) prepareForwardRequest(
 		h.captureHTTPPreparationFailure(ctx, pctx, attempt, phase, nil, injectedCredentialForCapture(attempt.candidate, nil), failureCode, err)
 		return nil, err
 	}
+	defer func() {
+		if err != nil && request.Body != nil {
+			_ = request.Body.Close()
+		}
+	}()
 	applied, err := h.applyForwardCredentials(ctx, request, attempt, pctx)
 	if err != nil {
 		h.captureHTTPPreparationFailure(
@@ -225,11 +236,11 @@ func codexAttemptFromRequest(request *http.Request) *codexhttp.Attempt {
 func redirectExecutionPolicy(
 	apiType string,
 	requestPolicy upstreamtransport.RequestPolicy,
-) upstreamtransport.ExecutionPolicy {
+) upstreamtransport.ExecutionOptions {
 	if apiType == APITypeCodex && requestPolicy.Cookies == upstreamtransport.ServerManagedCookies {
-		return upstreamtransport.ExecutionPolicy{Redirects: upstreamtransport.ExposeRedirects}
+		return upstreamtransport.ExecutionOptions{Redirects: upstreamtransport.ExposeRedirects}
 	}
-	return upstreamtransport.ExecutionPolicy{Redirects: upstreamtransport.FollowRedirects}
+	return upstreamtransport.ExecutionOptions{Redirects: upstreamtransport.FollowRedirects}
 }
 
 func (h *Handler) applyForwardCredentials(
@@ -259,15 +270,16 @@ func (h *Handler) fetchPendingHTTPResponse(
 ) (*pendingHTTPResponse, error) {
 	injectedCredential := injectedCredentialForCapture(attempt.candidate, request.Header)
 	exchange := h.beginHTTPExchange(pctx, attempt, phase, request, injectedCredential)
-	if pctx.liveBytes != nil {
-		pctx.liveBytes.BytesSent.Add(int64(len(pctx.body)))
-		pctx.liveBytes.LastActivityAt.Store(time.Now().UnixMilli())
+	transportOptions := redirectExecutionPolicy(pctx.apiType, pctx.codex.RequestPolicy())
+	transportOptions.Observe = func(event upstreamtransport.TransmissionEvent) {
+		h.logger.Debug("request_ingress.transmission", zap.String("operation_id", pctx.requestID),
+			zap.String("attempt_id", fmt.Sprintf(responseAnalysisOperationIDFormat, pctx.requestID, attempt.logicalAttemptIndex, attempt.provider.ID, attempt.providerAttemptIndex, phase)),
+			zap.String("event", string(event.Kind)), zap.Int64("transmission_index", event.TransmissionIndex), zap.Int64("hop_index", event.HopIndex),
+			zap.String("reopen_reason", string(event.ReopenReason)), zap.Bool("retry_eligible", event.RetryEligible),
+			zap.Int("previous_reopens", event.PreviousReopens), zap.Int64("upstream_body_read_bytes", event.BodyReadBytes),
+			zap.String("disclosure", event.Disclosure.String()), zap.Bool("response_committed", pctx.responseCommitted.Load()), zap.Error(event.Err))
 	}
-	response, disclosure, err := pctx.transport.FetchUpstream(
-		ctx,
-		request,
-		redirectExecutionPolicy(pctx.apiType, pctx.codex.RequestPolicy()),
-	)
+	response, disclosure, err := pctx.transport.FetchUpstream(ctx, request, transportOptions)
 	if response != nil {
 		disclosure = upstreamtransport.RequestDisclosureConfirmed
 	}
@@ -390,6 +402,7 @@ func (h *Handler) fetchPendingHTTPResponse(
 		injectedCredential: injectedCredential,
 		codexAttempt:       codexAttempt,
 		wireBytesRead:      wireBytesRead,
+		closeUpload:        request.Body.Close,
 	}, nil
 }
 
@@ -528,6 +541,7 @@ func (h *Handler) newAttemptResponseWriter(
 ) *firstWriteResponseWriter {
 	writer := &firstWriteResponseWriter{
 		ResponseWriter: pctx.w,
+		onCommit:       pctx.closeRetryWindow,
 		prepareVisible: func(header http.Header) (*codexhttp.Visibility, error) {
 			return codexAttempt.PrepareVisible(pctx.r.Context(), header)
 		},

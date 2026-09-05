@@ -84,7 +84,7 @@ func TestHandlerActiveRequestExposesReasoningAndHTTPTraffic(t *testing.T) {
 			return false
 		}
 		active = requests[0]
-		return active.BytesSent == int64(len(requestBody)) &&
+		return active.UpstreamBodyReadBytes == int64(len(requestBody)) &&
 			active.BytesReceived == int64(len(responseChunk))
 	}, testResponseMaxDur)
 

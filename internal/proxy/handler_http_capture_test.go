@@ -17,6 +17,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 
@@ -26,6 +27,22 @@ import (
 type disabledCaptureProbe struct {
 	enabledCalls int
 	beginCalls   int
+}
+
+func initializeTestCaptureIngress(t *testing.T, pctx *proxyContext, body []byte) {
+	t.Helper()
+	source := httptest.NewRequest(http.MethodPost, "http://gateway.test/upload", bytes.NewReader(body))
+	handle, err := requestingress.Start(context.Background(), source, requestingress.Options{
+		OnHead: pctx.beginCaptureIngress, OnChunk: pctx.observeCaptureIngressChunk, OnFinish: pctx.finishCaptureIngress,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := handle.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pctx.ingress = handle
 }
 
 func (p *disabledCaptureProbe) Enabled() bool {
@@ -136,10 +153,10 @@ func TestHTTPCaptureRedactsOnlyInjectedAPIKey(t *testing.T) {
 	gateway := manager.BeginGateway(requestcapture.GatewayStart{GatewayRequestID: "credential-components"})
 	pctx := &proxyContext{
 		apiType:             APITypeClaude,
-		body:                []byte(`{"model":"claude-3"}`),
 		capture:             gateway,
 		captureParticipates: true,
 	}
+	initializeTestCaptureIngress(t, pctx, []byte(`{"model":"claude-3"}`))
 	request := httptest.NewRequest(http.MethodPost, "https://provider.invalid/v1/messages", nil)
 	request.Header = headers
 	handler := &Handler{logger: zap.NewNop()}
@@ -203,10 +220,10 @@ func TestHTTPCapturePreservesResponseCredentialsInTerminalDiagnostic(t *testing.
 	gateway := manager.BeginGateway(requestcapture.GatewayStart{GatewayRequestID: "response-evidence"})
 	pctx := &proxyContext{
 		apiType:             APITypeClaude,
-		body:                []byte(`{"model":"claude-3"}`),
 		capture:             gateway,
 		captureParticipates: true,
 	}
+	initializeTestCaptureIngress(t, pctx, []byte(`{"model":"claude-3"}`))
 	request := httptest.NewRequest(http.MethodPost, "https://provider.invalid/v1/messages", nil)
 	handler := &Handler{logger: zap.NewNop()}
 	exchange := handler.beginHTTPExchange(
@@ -281,10 +298,10 @@ func TestHTTPCaptureClientCancellationRecordsClientFacingFailure(t *testing.T) {
 	pctx := &proxyContext{
 		apiType:             APITypeClaude,
 		r:                   request,
-		body:                []byte(`{"model":"claude-3"}`),
 		capture:             gateway,
 		captureParticipates: true,
 	}
+	initializeTestCaptureIngress(t, pctx, []byte(`{"model":"claude-3"}`))
 	handler := &Handler{logger: zap.NewNop()}
 	exchange := handler.beginHTTPExchange(
 		pctx,

@@ -38,6 +38,7 @@ type pendingHTTPResponse struct {
 	injectedCredential string
 	codexAttempt       *codexhttp.Attempt
 	wireBytesRead      func() int64
+	closeUpload        func() error
 }
 
 type boundedSnippet struct {
@@ -75,6 +76,11 @@ func (p *pendingHTTPResponse) commit(cause responseanalysis.TransitionCause) (fo
 }
 
 func (p *pendingHTTPResponse) finishForwarding(forwarding *responseanalysis.ForwardingResponse) forwardResult {
+	if p.closeUpload != nil {
+		// The source reports failures through the operation callback; closing here
+		// joins upload work without replacing the settled response outcome.
+		defer func() { _ = p.closeUpload() }()
+	}
 	if forwarding == nil {
 		return p.internalFailure(errors.New("forwarding response is required"))
 	}
@@ -154,6 +160,9 @@ func (p *pendingHTTPResponse) discard(
 	reason requestcapture.TerminationReason,
 	failure requestcapture.FailureObservation,
 ) (forwardResult, error) {
+	if p.closeUpload != nil {
+		_ = p.closeUpload()
+	}
 	p.writer.DiscardBufferedSSE()
 	receipt, err := p.pending.Discard(cause)
 	result := forwardResult{

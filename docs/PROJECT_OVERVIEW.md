@@ -83,14 +83,18 @@ switch-a/
 │   ├── model/                 # Domain models (Provider, Group, Log, Attempt, etc.)
 │   ├── providerauth/          # ChatGPT OAuth login, token refresh, quota tracking
 │   ├── proxy/                 # HTTP proxy handler, contract resolution, SSE forwarding
-│   ├── requestcapture/        # In-memory debug traffic capture & HAR/JSON export
+│   ├── requestcapture/        # Bounded logical ingress/attempt capture & HAR/JSON export
+│   ├── requestingress/        # Growing wire spool, replay readers, source state & cleanup
+│   │   ├── clientconnection/  # Disconnect observation independent of upload interruption
+│   │   ├── h2ingress/         # TLS HTTP/2 boundary preserving undeclared trailers
+│   │   └── semantic/          # Streaming decoded model, reasoning and Codex evidence
 │   ├── responseanalysis/      # Multi-protocol streaming response & token analyzer
 │   ├── selector/              # Selection engine (root strategy, leases, sticky cache)
 │   ├── server/                # HTTP/WS server setup (proxy + admin)
 │   ├── store/                 # SQLite persistence (GORM) + CachedStore wrapper
 │   ├── tokenanalytics/        # Token analytics aggregation & time series
 │   ├── upstreamtarget/        # Lossless provider URL construction
-│   ├── upstreamtransport/     # Low-level HTTP transport connection pool
+│   ├── upstreamtransport/     # Connection pool, per-transmission body/framing, redirects & native retries
 │   ├── websocketproxy/        # WebSocket gateway, session orchestrator, replay relay
 │   ├── errors.go              # Standard domain error definitions
 │   └── interfaces.go          # Core interfaces (Store, HealthManager, StickyCache, Clock)
@@ -134,26 +138,30 @@ Defined in `internal/interfaces.go` (Note: following Go best practice, `Selector
 | `Clock` | `internal/interfaces.go` | Monotonic and wall time abstraction for testing |
 | `HTTPDoer` | `internal/interfaces.go` | HTTP request client abstraction |
 | `Selector` *(consumer)* | `internal/proxy/`, `internal/websocketproxy/` | Provider selection and concurrency lease acquisition |
+| `BodySource` *(consumer)* | `internal/upstreamtransport/` | Reopenable wire input with frozen framing and completed trailers |
 
 ## Request Flow
 
 ### 1. HTTP Request Flow
-1. **Receive & parse request** → `internal/proxy/handler.go`
-2. **Resolve API contract** (method, path catalog, dialect) → `internal/apicontract/`
-3. **Begin context & capture** (Codex state, thread ID, trace capture) → `internal/codex/`, `internal/requestcapture/`
-4. **Select provider & acquire lease** (root candidate strategy + sticky + concurrency) → `internal/selector/`
-5. **Build target & inject credentials** (lossless URL build, OAuth header injection) → `internal/upstreamtarget/`, `internal/providerauth/`
-6. **Forward request** (HTTP/SSE transport; 401 triggers in-place token refresh & retry) → `internal/upstreamtransport/`
-7. **Pre-commit probing & error rule matching** (inspect response before client sees bytes; trigger silent replacement on failure) → `internal/responseanalysis/`, `internal/errorrule/`
-8. **Log result & attempt evidence** (tokens, latency, continuity seed, release lease) → `internal/store/`
+
+1. **Receive & resolve contract** → `internal/server/`, `internal/proxy/`, `internal/apicontract/`; `requestingress/clientconnection` preserves disconnect observation after deliberate HTTP/1 upload interruption, and `requestingress/h2ingress` preserves TLS HTTP/2 trailers.
+2. **Start logical ingress & capture** → `internal/requestingress/`, `internal/requestcapture/`; freeze client framing, append original bytes to a memory/disk spool, retain bounded evidence.
+3. **Project facts & admit selection** → `requestingress/semantic`, `internal/codex/`, `internal/selector/`; wait only for effective routing/sticky/continuity dependencies, pin the routing catalog, and publish observation-only facts when ready.
+4. **Select provider & acquire lease** → `internal/selector/`; provider health and concurrency remain live within the admitted catalog.
+5. **Build & forward each transmission** → `internal/upstreamtarget/`, `internal/providerauth/`, `internal/upstreamtransport/`; reopen a reader from offset zero, follow the growing input, and pair it with independent framing/trailers for retries and redirects.
+6. **Classify HTTP/SSE before commit** → `internal/responseanalysis/`, `internal/errorrule/`; eligible refresh/replacement retains healthy input and waits for the old reader to close. Source failure has separate attribution from provider failure.
+7. **Finish response & release ownership** → `internal/proxy/`, `internal/store/`; stop unused upload after replay closes, retain disconnect cancellation, persist evidence, release leases and clean the spool after all readers/references finish.
+
+HTTP monitoring reports `upstream_body_read_bytes`: body bytes consumed across transmissions, including rereads, without implying delivery or disclosure. Ingress received bytes, final trailers and later replay-storage failure remain separate capture facts; `bytes_sent` retains WebSocket payload semantics.
 
 ### 2. WebSocket Request Flow
+
 1. **Upgrade detected** → branched from `internal/proxy/handler.go` to `internal/websocketproxy/gateway.go`
-2. **Client model probing** (probe initial frame budget if model unspecified) → `internal/codex/websocketprotocol/`
+2. **Client model probing** (independent duration, decoded-byte and work budgets; queue frames for first delivery) → `internal/websocketproxy/`, `internal/codex/websocketprotocol/`
 3. **Select provider & acquire lease** → `internal/selector/`
 4. **Dial upstream & 401 auto-refresh** (connect to upstream provider; retry on auth failure) → `internal/websocketproxy/`
 5. **Deferred downstream handshake** (send 101 Switching Protocols only after upstream agrees) → `internal/websocketproxy/`
-6. **Dual relay & pre-visible buffer** (buffer client upstream frames before first downstream byte) → `internal/websocketproxy/`
+6. **Dual relay & pre-visible replay** (budget immutable payload and snapshot descriptor retention; exhaustion preserves queued first delivery and live forwarding) → `internal/websocketproxy/`
 7. **Pre-visible replacement** (if upstream fails before downstream visibility, suppress error, select new provider, replay buffered frames)
 8. **Client-visible streaming & close** (maintain session continuity, release lease, record attempt & session logs)
 

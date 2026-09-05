@@ -74,6 +74,35 @@ func TestWriteRecordPageEncodesCompleteContract(t *testing.T) {
 	}
 }
 
+func TestWriteIngressFactsPreservesPendingAndPartialEvidence(t *testing.T) {
+	for _, state := range []string{"receiving", "aborted"} {
+		facts := &capturevalue.IngressSnapshot{Protocol: "HTTP/2.0", ContentLength: -1,
+			TransferEncoding: []string{"chunked"}, DeclaredTrailerKeys: []string{"X-End"}, State: state, ReceivedBytes: 17}
+		if state == "aborted" {
+			facts.Reason = "upstream stopped upload"
+			facts.Trailers = map[string][]string{"X-End": {"done"}}
+			facts.CaptureTruncated = true
+			facts.SourceFailure = &capturevalue.IngressFailureSnapshot{Kind: capturevalue.IngressFailureStorage, Reason: "disk read failed"}
+		}
+		detail := capturevalue.RecordDetail{HTTP: &capturevalue.HTTPExchangeDetail{Request: capturevalue.RequestSnapshot{Ingress: facts}}}
+		payload, _ := encodeDetail(t, detail)
+		var decoded capturevalue.RecordDetail
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		got := decoded.HTTP.Request.Ingress
+		if got == nil || got.State != state || got.ContentLength != -1 || got.ReceivedBytes != 17 || got.Reason != facts.Reason || got.CaptureTruncated != facts.CaptureTruncated {
+			t.Fatalf("ingress round trip: %+v", got)
+		}
+		if state == "aborted" && got.Trailers["X-End"][0] != "done" {
+			t.Fatal("final trailers missing")
+		}
+		if state == "aborted" && (got.SourceFailure == nil || *got.SourceFailure != *facts.SourceFailure) {
+			t.Fatal("source failure lost")
+		}
+	}
+}
+
 func TestWriteRecordDetailEncodesHTTPAndWebSocketContract(t *testing.T) {
 	t.Parallel()
 

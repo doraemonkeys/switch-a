@@ -4,17 +4,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
 )
-
-// GatewayRecorder is a lightweight value bound to one immutable session
-// generation. Its zero value is the disabled-path recorder and is always safe.
-type GatewayRecorder struct {
-	manager       *Manager
-	generation    uint64
-	traceSequence uint64
-	handleSlot    uint32
-}
 
 type gatewayState struct {
 	session                    *sessionState
@@ -53,6 +45,9 @@ type gatewayState struct {
 	sharedRequestInitialized   bool
 	sharedRequestComplete      bool
 	sharedRequestExpected      int64
+	ingress                    *capturevalue.IngressSnapshot
+	ingressBuilder             blobBuilder
+	ingressFailureObserved     bool
 }
 
 type traceEntryState struct {
@@ -70,27 +65,6 @@ type pendingLineageState struct {
 	after    *pendingLineageState
 	attached bool
 	charge   int64
-}
-
-// Recorder captures one real HTTP request or WebSocket dial. It never surfaces
-// failures to the proxy; capture degradation is represented in record metadata.
-type recorderKind uint8
-
-const (
-	recorderKindRecord recorderKind = iota + 1
-	recorderKindTransition
-)
-
-type Recorder struct {
-	manager        *Manager
-	generation     uint64
-	traceSequence  uint64
-	recordSequence uint64
-	entrySequence  uint64
-	gatewaySlot    uint32
-	recordSlot     uint32
-	recordID       recordIDValue
-	kind           recorderKind
 }
 
 type transitionRecorderState struct {

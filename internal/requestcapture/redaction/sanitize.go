@@ -325,6 +325,60 @@ func (s Sanitizer) Request(raw RequestMetadata, targets ...Target) capturevalue.
 	return s.RequestDetailed(raw, firstRequestTarget(targets)).Snapshot
 }
 
+func (s Sanitizer) Ingress(head IngressHead) capturevalue.IngressSnapshot {
+	protocol := boundedPlainText(head.Protocol, MaxRetainedIdentifierBytes, "PROTOCOL")
+	result := capturevalue.IngressSnapshot{Protocol: protocol.Value, ContentLength: head.ContentLength,
+		State: "receiving", CaptureTruncated: protocol.Truncated}
+	// The decoder supplies only a small protocol inventory, but capture still
+	// bounds every retained descriptor independently of the wire source.
+	for _, item := range head.TransferEncoding {
+		if len(result.TransferEncoding) == MaxRetainedHeaderFields {
+			result.CaptureTruncated = true
+			break
+		}
+		value := boundedPlainText(item, MaxRetainedHeaderNameBytes, "TRANSFER_ENCODING")
+		result.TransferEncoding = append(result.TransferEncoding, value.Value)
+		result.CaptureTruncated = result.CaptureTruncated || value.Truncated
+	}
+	for _, item := range head.TrailerKeys {
+		if len(result.DeclaredTrailerKeys) == MaxRetainedHeaderFields {
+			result.CaptureTruncated = true
+			break
+		}
+		value := boundedPlainText(item, MaxRetainedHeaderNameBytes, "TRAILER_KEY")
+		result.DeclaredTrailerKeys = append(result.DeclaredTrailerKeys, value.Value)
+		result.CaptureTruncated = result.CaptureTruncated || value.Truncated
+	}
+	return result
+}
+
+func (s Sanitizer) IngressFailure(input capturevalue.IngressFailureSnapshot) (capturevalue.IngressFailureSnapshot, bool) {
+	switch input.Kind {
+	case capturevalue.IngressFailureRead, capturevalue.IngressFailureLimit, capturevalue.IngressFailureLength, capturevalue.IngressFailureStorage:
+	default:
+		input.Kind = capturevalue.IngressFailureUnknown
+	}
+	text := boundedPlainText(input.Reason, MaxRetainedIdentifierBytes, "INGRESS_FAILURE")
+	input.Reason = text.Value
+	return input, text.Truncated
+}
+
+func (s Sanitizer) FinishIngress(source capturevalue.IngressSnapshot, state string, received int64, trailers http.Header, reason string) capturevalue.IngressSnapshot {
+	switch state {
+	case "complete", "failed", "aborted":
+		source.State = state
+	default:
+		source.State = "failed"
+	}
+	source.ReceivedBytes = received
+	text := boundedPlainText(reason, MaxRetainedIdentifierBytes, "INGRESS_REASON")
+	source.Reason = text.Value
+	headers := s.HeadersDetailed(trailers, nil, nil, false)
+	source.Trailers = headers.Value
+	source.CaptureTruncated = source.CaptureTruncated || text.Truncated || headers.Truncated
+	return source
+}
+
 func firstRequestTarget(targets []Target) Target {
 	if len(targets) == 0 {
 		return Target{}

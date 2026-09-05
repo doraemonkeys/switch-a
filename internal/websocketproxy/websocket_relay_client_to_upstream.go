@@ -3,6 +3,7 @@ package websocketproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -16,9 +17,13 @@ var (
 	errWebSocketClientReadHandoffClosed      = errors.New("websocket client read handoff closed without a result")
 )
 
-// replayBufferedMessages is part of the client-to-upstream transport boundary:
-// it preserves the original wire bytes and applies the same capture and
-// write-confirmation hooks as live client traffic.
+// Pending first delivery is independent of optional replay retention. A frame
+// remains here until its first successful physical write, even when replay closes.
+type webSocketPendingDelivery struct {
+	message     webSocketReplayMessage
+	replayIndex int
+}
+
 func (o *WebSocketSessionOrchestrator) replayBufferedMessages(
 	ctx context.Context,
 	upstreamConn *websocket.Conn,
@@ -26,96 +31,88 @@ func (o *WebSocketSessionOrchestrator) replayBufferedMessages(
 	captureOptions webSocketRelayOptions,
 ) (int64, bool, error) {
 	captureOptions = captureOptions.withCaptureHooks()
-	if o.replayBuffer == nil {
-		return 0, false, nil
-	}
-
 	snapshot := o.replayBuffer.Snapshot()
-	if !snapshot.Enabled {
-		if o.lifecycle != nil && o.lifecycle.Snapshot().ClientVisible {
-			// Once the session is already visible, a disabled pre-visible replay buffer
-			// is expected rather than fatal. Post-visible failover reuses the live
-			// downstream socket without trying to resurrect the pre-visible window.
+	defer snapshot.Release()
+	if !snapshot.Enabled && len(o.pendingDelivery) == 0 {
+		if o.replayBuffer == nil || o.lifecycle.Snapshot().ClientVisible {
 			return 0, false, nil
 		}
-		return 0, false, errors.New("pre-visible replay buffer disabled")
+		return 0, false, fmt.Errorf("pre-visible replay unavailable: %s", o.replayBuffer.Status().State)
 	}
-	if len(snapshot.Messages) == 0 {
-		// Suppression can happen before the client sends any replayable frame. In that
-		// case the replacement provider should continue with a clean socket rather than
-		// treating "nothing to replay" as a synthetic transport failure.
-		return 0, false, nil
-	}
-
-	var replayedBytes int64
+	var total int64
+	attempted := false
 	for index, message := range snapshot.Messages {
-		source := requestcapture.MessageSourceReplay
-		lineage := requestcapture.MessageLineage{}
-		sourceLineage := message.Lineage
-		if !message.Delivered {
-			// The bootstrap selector read this frame before a provider was chosen. Its
-			// first physical delivery is still the live event; only later attempts are
-			// replay events linked back to that stable original message identity.
-			source = requestcapture.MessageSourceLive
-			lineage = message.Lineage
-			sourceLineage = requestcapture.MessageLineage{}
+		if !message.Delivered && len(o.pendingDelivery) > 0 {
+			continue
 		}
-		captured := captureWebSocketMessageRead(
-			captureOptions,
-			requestcapture.MessageDirectionClientToUpstream,
-			message.MessageType,
-			message.Data,
-			source,
-			lineage,
-			sourceLineage,
-		)
-		o.observeReplayClientMessage(observer, message.MessageType, message.Data)
-		decision := message.Decision
-		if decision.PrepareReplay != nil {
-			decision = decision.PrepareReplay()
+		attempted = true
+		n, err := o.deliverBufferedClientMessage(ctx, upstreamConn, observer, captureOptions, message, index)
+		total += n
+		if err != nil {
+			return total, true, err
 		}
-		if decision.Action == webSocketPreWriteActionReject {
-			disposition := decision.RejectionDisposition
-			if disposition == "" {
-				disposition = requestcapture.MessageDispositionProtocolRejected
-			}
-			captureWebSocketMessageResult(captureOptions, captured, disposition, false, decision.Err)
-			return replayedBytes, true, decision.Err
-		}
-		if err := upstreamConn.Write(ctx, message.MessageType, message.Data); err != nil {
-			captureWebSocketMessageResult(
-				captureOptions,
-				captured,
-				requestcapture.MessageDispositionWriteFailed,
-				false,
-				err,
-			)
-			return replayedBytes, true, err
-		}
-		if !decision.ReplacementEligible && o.replayBuffer != nil {
-			o.replayBuffer.Disable()
-		}
-		if decision.OnWriteConfirmed != nil {
-			if err := decision.OnWriteConfirmed(); err != nil {
-				captureWebSocketMessageResult(
-					captureOptions, captured, requestcapture.MessageDispositionStorageRejected, true, err,
-				)
-				return replayedBytes + int64(len(message.Data)), true, err
-			}
-		}
-		if !message.Delivered {
-			o.replayBuffer.MarkDelivered(index, captured.Lineage)
-		}
-		captureWebSocketMessageResult(
-			captureOptions,
-			captured,
-			requestcapture.MessageDispositionForwarded,
-			true,
-			nil,
-		)
-		replayedBytes += int64(len(message.Data))
 	}
-	return replayedBytes, true, nil
+	for len(o.pendingDelivery) > 0 {
+		pending := o.pendingDelivery[0]
+		attempted = true
+		n, err := o.deliverBufferedClientMessage(ctx, upstreamConn, observer, captureOptions, pending.message, pending.replayIndex)
+		total += n
+		if err != nil {
+			return total, true, err
+		}
+		o.replayBuffer.releaseDelivery(pending.message)
+		o.pendingDelivery[0] = webSocketPendingDelivery{}
+		o.pendingDelivery = o.pendingDelivery[1:]
+	}
+	o.pendingDelivery = nil
+	return total, attempted, nil
+}
+
+func (o *WebSocketSessionOrchestrator) deliverBufferedClientMessage(
+	ctx context.Context, upstreamConn *websocket.Conn, observer WebSocketMessageObserver,
+	captureOptions webSocketRelayOptions, message webSocketReplayMessage, replayIndex int,
+) (int64, error) {
+	source := requestcapture.MessageSourceReplay
+	lineage := requestcapture.MessageLineage{}
+	sourceLineage := message.Lineage
+	if !message.Delivered {
+		source = requestcapture.MessageSourceLive
+		lineage = message.Lineage
+		sourceLineage = requestcapture.MessageLineage{}
+	}
+	captured := captureWebSocketMessageRead(captureOptions, requestcapture.MessageDirectionClientToUpstream,
+		message.MessageType, message.Data, source, lineage, sourceLineage)
+	o.observeReplayClientMessage(observer, message.MessageType, message.Data)
+	decision := message.Decision
+	if decision.PrepareReplay != nil {
+		decision = decision.PrepareReplay()
+	}
+	if decision.Action == webSocketPreWriteActionReject {
+		disposition := decision.RejectionDisposition
+		if disposition == "" {
+			disposition = requestcapture.MessageDispositionProtocolRejected
+		}
+		captureWebSocketMessageResult(captureOptions, captured, disposition, false, decision.Err)
+		return 0, decision.Err
+	}
+	if err := upstreamConn.Write(ctx, message.MessageType, message.Data); err != nil {
+		captureWebSocketMessageResult(captureOptions, captured, requestcapture.MessageDispositionWriteFailed, false, err)
+		return 0, err
+	}
+	if !decision.ReplacementEligible {
+		o.replayBuffer.CloseReplay(webSocketReplayNonReplayableFrame)
+	}
+	if decision.OnWriteConfirmed != nil {
+		if err := decision.OnWriteConfirmed(); err != nil {
+			captureWebSocketMessageResult(captureOptions, captured, requestcapture.MessageDispositionStorageRejected, true, err)
+			return int64(len(message.Data)), err
+		}
+	}
+	if !message.Delivered {
+		o.replayBuffer.MarkDelivered(replayIndex, captured.Lineage)
+	}
+	captureWebSocketMessageResult(captureOptions, captured, requestcapture.MessageDispositionForwarded, true, nil)
+	return int64(len(message.Data)), nil
 }
 
 func (o *WebSocketSessionOrchestrator) observeReplayClientMessage(
@@ -166,7 +163,7 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 				}
 				lifecycleSnapshot := lifecycle.Snapshot()
 				if options.Observer != nil && options.Observer.ParseDegraded() {
-					options.PreVisibleReplayBuffer.Disable()
+					options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayParseDegraded)
 				}
 				if !decision.ReplayEligible {
 					return nil
@@ -312,7 +309,7 @@ func (p *webSocketRelayMessageProcessor) process(
 	}
 	p.totalBytes += int64(len(data))
 	if !decision.ReplacementEligible && p.options.PreVisibleReplayBuffer != nil {
-		p.options.PreVisibleReplayBuffer.Disable()
+		p.options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayNonReplayableFrame)
 	}
 	if onWriteConfirmed != nil {
 		onWriteConfirmed()

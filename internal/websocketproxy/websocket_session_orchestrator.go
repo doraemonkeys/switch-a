@@ -97,6 +97,7 @@ type WebSocketSessionOrchestrator struct {
 	clientConn          *websocket.Conn
 	initialClientReadCh <-chan webSocketInitialReadResult
 	clientReadHandoff   *webSocketClientReadHandoff
+	pendingDelivery     []webSocketPendingDelivery
 	replayBuffer        *preVisibleClientMessageBuffer
 	suppressedAttempt   *webSocketSuppressedAttempt
 	probeOutcome        webSocketSelectionProbeOutcome
@@ -143,6 +144,8 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		probeBudget:               defaultWebSocketProbeBudget(),
 		probeNow:                  time.Now,
 	}
+	orchestrator.replayBuffer.onTransition = orchestrator.logReplayTransition
+	orchestrator.logReplayTransition(orchestrator.replayBuffer.Status())
 	orchestrator.onClientVisible = orchestrator.codexVisibleCallback(cfg.onClientVisible)
 	return orchestrator
 }
@@ -251,6 +254,7 @@ func (o *WebSocketSessionOrchestrator) applySessionLifecycleToResult(result *Web
 		return
 	}
 
+	result.ReplayStatus = o.replayBuffer.Status()
 	snapshot := o.lifecycle.Snapshot()
 	if snapshot.ClientAccepted {
 		result.ClientAccepted = true

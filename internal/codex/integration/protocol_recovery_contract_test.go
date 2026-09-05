@@ -26,7 +26,7 @@ func TestCreateAcceptanceAcrossHTTPJSONSSEAndWebSocket(t *testing.T) {
 		wire := append([]byte(nil), create...)
 		operation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "create-http-client", nil),
-			testAPIType, operationID("create-http-json", 1), create, create,
+			testAPIType, operationID("create-http-json", 1), testHTTPClientEvidence(create, create),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -53,7 +53,7 @@ func TestCreateAcceptanceAcrossHTTPJSONSSEAndWebSocket(t *testing.T) {
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		operation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "create-sse-client", nil),
-			testAPIType, operationID("create-http-sse", 1), create, create,
+			testAPIType, operationID("create-http-sse", 1), testHTTPClientEvidence(create, create),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -230,7 +230,7 @@ func TestPreviousResponseSurvivesDisconnectAndMixedCarrierReconnect(t *testing.T
 
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "reconnect-client", nil),
-		testAPIType, operationID("reconnect-http", 1), previous, previous,
+		testAPIType, operationID("reconnect-http", 1), testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestPreviousResponseSurvivesDisconnectAndMixedCarrierReconnect(t *testing.T
 	}
 	_, err = fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "other-reconnect-client", nil),
-		testAPIType, operationID("reconnect-wrong-client", 1), previous, previous,
+		testAPIType, operationID("reconnect-wrong-client", 1), testHTTPClientEvidence(previous, previous),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 }
@@ -256,7 +256,7 @@ func TestCompactionAndFutureContentRemainOpaqueAcrossCarriers(t *testing.T) {
 	wire := append([]byte(nil), payload...)
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "opaque-client", nil),
-		testAPIType, operationID("opaque-http", 1), payload, payload,
+		testAPIType, operationID("opaque-http", 1), testHTTPClientEvidence(payload, payload),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -476,7 +476,7 @@ func TestOwnerPreferenceConflictIsPermutationInvariantAcrossHTTPAndWebSocket(t *
 		}
 		httpOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "owner-permutation-client", headers),
-			testAPIType, operationID("owner-permutation-http", index), nil, nil,
+			testAPIType, operationID("owner-permutation-http", index), testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -524,7 +524,7 @@ func seedContinuityHeader(
 	t.Helper()
 	operation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, client, http.Header{header: {value}}),
-		testAPIType, operationID("owner-seed", sequence), nil, nil,
+		testAPIType, operationID("owner-seed", sequence), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -1,4 +1,4 @@
-package proxy
+package semantic
 
 import (
 	"bytes"
@@ -39,19 +39,8 @@ type requestedReasoningBuilder struct {
 	ambiguous   bool
 }
 
-// ExtractRequestedReasoning observes only request shapes whose meaning is
-// stable for the selected API and endpoint. Everything else stays explicit as
-// unsupported instead of being mistaken for an omitted configuration.
-func ExtractRequestedReasoning(apiType, path string, body []byte) model.RequestedReasoningObservation {
-	// Observation support is defined over the native contract path; an
-	// explicit namespace is routing metadata and must not mask the endpoint.
-	if namespaceType, contractPath, ok := SplitAPINamespace(path); ok && namespaceType == apiType {
-		path = contractPath
-	}
-	if !supportsReasoningObservation(apiType, path) {
-		return reasoningObservationWithState(model.ReasoningObservationUnsupported)
-	}
-
+// legacyRequestedReasoning preserves the pre-ingress consumer as a migration oracle.
+func legacyRequestedReasoning(apiType string, body []byte) model.RequestedReasoningObservation {
 	builder := &requestedReasoningBuilder{}
 	if err := scanRequestedReasoning(apiType, body, builder); err != nil {
 		builder.invalid = true
@@ -59,21 +48,10 @@ func ExtractRequestedReasoning(apiType, path string, body []byte) model.Requeste
 	return builder.build()
 }
 
-func supportsReasoningObservation(apiType, path string) bool {
-	if isClaudeCompatibleAPIType(apiType) && path == RouteClaudeMessages {
-		return true
-	}
-	if apiType == APITypeCodex && (path == RouteCodexResponses ||
-		path == RouteCodexResponsesV1 ||
-		path == RouteCodexWebSearch ||
-		path == RouteCodexWebSearchV1) {
-		return true
-	}
-	if isOpenAIChatCompletionsAPIType(apiType) && (path == RouteGrokChatCompletions || path == RouteGrokChatCompletionsV1) {
-		return true
-	}
-	return false
-}
+const APITypeCodex = "codex"
+
+func isOpenAIChatCompletionsAPIType(apiType string) bool { return apiType == "chat" }
+func isClaudeCompatibleAPIType(apiType string) bool      { return apiType == "claude" }
 
 func scanRequestedReasoning(apiType string, body []byte, builder *requestedReasoningBuilder) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))

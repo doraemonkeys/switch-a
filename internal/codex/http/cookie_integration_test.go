@@ -116,7 +116,7 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 
 	clientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	clientRequest.Header.Set("Authorization", "Bearer client-a")
-	operation, err := runtime.Begin(context.Background(), clientRequest, codexAPIType, "cookie-operation-one", nil, nil)
+	operation, err := runtime.Begin(context.Background(), clientRequest, codexAPIType, "cookie-operation-one", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 
 	secondClientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	secondClientRequest.Header.Set("Authorization", "Bearer client-a")
-	secondOperation, err := runtime.Begin(context.Background(), secondClientRequest, codexAPIType, "cookie-operation-two", nil, nil)
+	secondOperation, err := runtime.Begin(context.Background(), secondClientRequest, codexAPIType, "cookie-operation-two", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 	explicitClientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	explicitClientRequest.Header.Set("Authorization", "Bearer client-a")
 	explicitClientRequest.AddCookie(&http.Cookie{Name: providercookie.GatewayHandleName, Value: handle})
-	explicitOperation, err := runtime.Begin(context.Background(), explicitClientRequest, codexAPIType, "cookie-operation-explicit", nil, nil)
+	explicitOperation, err := runtime.Begin(context.Background(), explicitClientRequest, codexAPIType, "cookie-operation-explicit", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 	isolatedRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	isolatedRequest.Header.Set("Authorization", "Bearer client-b")
 	isolatedRequest.AddCookie(&http.Cookie{Name: providercookie.GatewayHandleName, Value: handle})
-	isolatedOperation, err := runtime.Begin(context.Background(), isolatedRequest, codexAPIType, "cookie-operation-three", nil, nil)
+	isolatedOperation, err := runtime.Begin(context.Background(), isolatedRequest, codexAPIType, "cookie-operation-three", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestCookieAuthoritySwitchDiscardsOverlayAndMergeFailureFailsGate(t *testing
 	secondCandidate, secondApplied := testCandidate(t, "route-b", "provider-b.test", "subject-b")
 	clientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	clientRequest.Header.Set("Authorization", "Bearer client")
-	operation, err := runtime.Begin(context.Background(), clientRequest, codexAPIType, "cookie-switch", nil, nil)
+	operation, err := runtime.Begin(context.Background(), clientRequest, codexAPIType, "cookie-switch", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -570,7 +570,7 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 		request.Header[name] = append([]string(nil), values...)
 	}
 	codexOperation, err := handler.codexHTTP.Begin(
-		request.Context(), request, APITypeCodex, x3TestRequestID, requestBody, requestBody,
+		request.Context(), request, APITypeCodex, x3TestRequestID, testClientEvidence(requestBody, requestBody),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -582,12 +582,13 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 			globalAuthMode: DefaultGlobalAuthMode, globalMaxAttempts: config.globalMaxAttempts,
 			readTimeout: time.Hour, sseIdleTimeout: time.Hour, stickyMode: model.StickyModeOff,
 		},
-		transport: config.transport, apiType: APITypeCodex, body: requestBody,
+		transport: config.transport, apiType: APITypeCodex, ingress: newTestIngress(t, requestBody),
 		info:      RequestInfo{Model: "x3-model", APIType: APITypeCodex, Path: "/responses", Method: http.MethodPost},
 		selectReq: &model.SelectRequest{APIType: APITypeCodex, Model: "x3-model", StickyMode: model.StickyModeOff},
 		startTime: time.Now(), requestID: x3TestRequestID, codex: codexOperation, liveBytes: &LiveBytesTracker{},
 		attempts: make([]model.RequestAttempt, 0),
 	}
+	pctx.upload = &ingressUpload{ingress: pctx.ingress, tracker: pctx.liveBytes}
 	pctx.capture = handler.beginGatewayCapture(pctx.requestID, pctx.startTime)
 	pctx.captureParticipates = pctx.capture.Valid()
 	handler.executeProxy(request.Context(), pctx)

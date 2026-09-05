@@ -11,6 +11,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
@@ -22,6 +23,47 @@ type httpCaptureExchange struct {
 	sensitiveHeaders   requestcapture.SensitiveHeaderEvidence
 	credentialEvidence requestcapture.CredentialEvidence
 	completedAt        time.Time
+}
+
+func (pctx *proxyContext) beginCaptureIngress(head requestingress.Head) {
+	pctx.captureIngress = pctx.capture.BeginIngress(requestcapture.IngressHead{
+		Protocol: head.Protocol, ContentLength: head.ContentLength,
+		TransferEncoding: head.TransferEncoding, TrailerKeys: head.TrailerKeys,
+	})
+}
+
+func (pctx *proxyContext) observeCaptureIngressChunk(chunk []byte) {
+	pctx.captureIngress.ObserveChunk(chunk)
+}
+
+func (pctx *proxyContext) finishCaptureIngress(snapshot requestingress.Snapshot) {
+	reason := ""
+	if snapshot.Err != nil {
+		reason = snapshot.Err.Error()
+	}
+	pctx.captureIngress.FinishIngress(requestcapture.IngressFinish{
+		State: string(snapshot.State), ReceivedBytes: snapshot.ReceivedBytes,
+		Trailers: snapshot.Trailers, Reason: reason,
+	})
+}
+
+func (pctx *proxyContext) failCaptureIngress(snapshot requestingress.Snapshot) {
+	kind := requestcapture.IngressFailureUnknown
+	switch snapshot.FailureKind {
+	case requestingress.FailureRead:
+		kind = requestcapture.IngressFailureRead
+	case requestingress.FailureLimit:
+		kind = requestcapture.IngressFailureLimit
+	case requestingress.FailureLength:
+		kind = requestcapture.IngressFailureLength
+	case requestingress.FailureStorage:
+		kind = requestcapture.IngressFailureStorage
+	}
+	reason := ""
+	if snapshot.Err != nil {
+		reason = snapshot.Err.Error()
+	}
+	pctx.captureIngress.ObserveFailure(requestcapture.IngressFailure{Kind: kind, Reason: reason})
 }
 
 func captureReasonForClientTermination(termination clientTermination) requestcapture.TerminationReason {
@@ -267,7 +309,6 @@ func (h *Handler) beginHTTPExchange(
 			Headers:            request.Header,
 			ContentLength:      request.ContentLength,
 			Trailers:           request.Trailer,
-			Body:               pctx.body,
 			SensitiveHeaders:   sensitiveHeaders,
 			CredentialEvidence: credentialEvidence,
 		},

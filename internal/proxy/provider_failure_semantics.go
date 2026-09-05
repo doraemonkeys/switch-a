@@ -392,6 +392,10 @@ func classifyClientTermination(ctx context.Context) clientTermination {
 	if ctx == nil {
 		return clientTerminationNone
 	}
+	var ingressFailure *requestIngressFailure
+	if errors.As(context.Cause(ctx), &ingressFailure) {
+		return clientTerminationNone
+	}
 	switch ctx.Err() {
 	case context.Canceled:
 		return clientTerminationDisconnect

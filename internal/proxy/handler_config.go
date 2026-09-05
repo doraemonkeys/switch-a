@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/proxy/requestbody"
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
@@ -90,6 +91,8 @@ func (k *transportCacheKey) Equals(other *transportCacheKey) bool {
 
 // Config holds proxy handler configuration.
 type Config struct {
+	Transport                  HTTPTransport
+	StartIngress               func(context.Context, *http.Request, requestingress.Options) (*requestingress.Handle, error)
 	Store                      Store
 	Selector                   Selector
 	Health                     internal.HealthManager
@@ -102,7 +105,6 @@ type Config struct {
 	ResponseAnalyzer           ResponseAnalyzer
 	RuleStatistics             RuleStatistics
 	BackoffWaiter              BackoffWaiter
-	RequestSemanticDecoder     RequestSemanticDecoder
 	CodexHTTP                  *codexhttp.Runtime
 	CodexWebSocket             *codexws.Runtime
 	Logger                     *zap.Logger
@@ -150,10 +152,6 @@ func NewHandler(cfg Config) *Handler {
 	if backoff == nil {
 		backoff = timerBackoffWaiter{}
 	}
-	requestSemanticDecoder := cfg.RequestSemanticDecoder
-	if requestSemanticDecoder == nil {
-		requestSemanticDecoder = requestbody.NewDecoder()
-	}
 	visibleContinuitySeedStore := cfg.VisibleContinuitySeedStore
 	if visibleContinuitySeedStore == nil {
 		visibleContinuitySeedStore = NewVisibleContinuitySeedStore()
@@ -162,7 +160,13 @@ func NewHandler(cfg Config) *Handler {
 	if usageObserver == nil {
 		usageObserver, _ = cfg.Auth.(ProviderUsageObserver)
 	}
+	startIngress := cfg.StartIngress
+	if startIngress == nil {
+		startIngress = requestingress.Start
+	}
 	handler := &Handler{
+		transportOverride:          cfg.Transport,
+		startIngress:               startIngress,
 		store:                      cfg.Store,
 		selector:                   cfg.Selector,
 		httpSelector:               newHTTPProviderSelector(cfg.Selector),
@@ -177,7 +181,6 @@ func NewHandler(cfg Config) *Handler {
 		analyzer:                   analyzer,
 		ruleStats:                  cfg.RuleStatistics,
 		backoff:                    backoff,
-		requestSemanticDecoder:     requestSemanticDecoder,
 		requestLogInsertTimeout:    logInsertTimeout,
 		codexHTTP:                  cfg.CodexHTTP,
 	}
@@ -192,7 +195,10 @@ func NewHandler(cfg Config) *Handler {
 }
 
 // getTransport returns a cached Transport or creates a new one if config changed.
-func (h *Handler) getTransport(cfg *runtimeConfig) *Transport {
+func (h *Handler) getTransport(cfg *runtimeConfig) HTTPTransport {
+	if h.transportOverride != nil {
+		return h.transportOverride
+	}
 	key := &transportCacheKey{
 		connectTimeout:   cfg.connectTimeout,
 		firstByteTimeout: cfg.firstByteTimeout,

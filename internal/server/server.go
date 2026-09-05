@@ -20,6 +20,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
+	"github.com/doraemonkeys/switch-a/internal/requestingress/clientconnection"
+	"github.com/doraemonkeys/switch-a/internal/requestingress/h2ingress"
 	storepkg "github.com/doraemonkeys/switch-a/internal/store"
 	"github.com/doraemonkeys/switch-a/web"
 
@@ -195,12 +197,17 @@ func New(cfg Config) *Server {
 		server: &http.Server{
 			Addr:              net.JoinHostPort("", cfg.Port),
 			Handler:           proxyRouteBoundary(proxyHandler, mux),
+			ConnContext:       clientconnection.Context,
 			ReadHeaderTimeout: ReadHeaderTimeout,
 			IdleTimeout:       IdleTimeout,
 		},
 		logger:       cfg.Logger,
 		store:        cfg.Store,
 		proxyHandler: proxyHandler,
+	}
+
+	if err := h2ingress.Configure(s.server, cfg.Logger); err != nil {
+		panic(err)
 	}
 
 	// Register routes
@@ -387,7 +394,8 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 // Start starts the HTTP server.
 func (s *Server) Start() error {
-	ln, err := net.Listen("tcp", s.server.Addr)
+	rawListener, err := net.Listen("tcp", s.server.Addr)
+	ln := clientconnection.Listen(rawListener)
 	if err != nil {
 		return err
 	}

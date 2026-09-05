@@ -4,6 +4,13 @@ import (
 	"net/http"
 )
 
+type IngressHead struct {
+	Protocol         string
+	ContentLength    int64
+	TransferEncoding []string
+	TrailerKeys      []string
+}
+
 const (
 	RedactedValue       = "[REDACTED]"
 	InvalidURLRedaction = "[REDACTED_INVALID_URL]"

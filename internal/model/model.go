@@ -285,6 +285,7 @@ const (
 type ReasoningObservationState string
 
 const (
+	ReasoningObservationPending     ReasoningObservationState = "pending"
 	ReasoningObservationCaptured    ReasoningObservationState = "captured"
 	ReasoningObservationAbsent      ReasoningObservationState = "absent"
 	ReasoningObservationInvalid     ReasoningObservationState = "invalid"
@@ -533,6 +534,7 @@ type StickyEntry struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
+	RoutingCatalog *RoutingCatalog
 	// OperationID is the server-generated request UUID used only to correlate
 	// selection decisions. It must never contain a client-provided request header.
 	OperationID string

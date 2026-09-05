@@ -24,6 +24,9 @@ func TestDisabledPathAllocs(t *testing.T) {
 	}
 	allocations := testing.AllocsPerRun(10_000, func() {
 		gateway := manager.BeginGateway(GatewayStart{})
+		ingress := gateway.BeginIngress(IngressHead{Protocol: "HTTP/2.0", ContentLength: -1})
+		ingress.ObserveChunk(payload)
+		ingress.FinishIngress(IngressFinish{State: "complete", ReceivedBytes: int64(len(payload))})
 		recorder := gateway.BeginHTTP(input)
 		recorder.ObserveUpstream(payload)
 		recorder.ObserveClientWrite(len(payload))

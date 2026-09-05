@@ -621,5 +621,8 @@ func (s *sessionState) releaseTraceLocked(gateway *gatewayState) {
 	gateway.sharedRequestInitialized = false
 	gateway.sharedRequestComplete = false
 	gateway.sharedRequestExpected = 0
+	gateway.ingress = nil
+	gateway.ingressBuilder = blobBuilder{}
+	gateway.ingressFailureObserved = false
 	s.releaseLocked(charge)
 }

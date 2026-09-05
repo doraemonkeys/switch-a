@@ -4,7 +4,6 @@
 package upstreamtransport
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -64,8 +63,9 @@ const (
 	ExposeRedirects
 )
 
-type ExecutionPolicy struct {
+type ExecutionOptions struct {
 	Redirects RedirectPolicy
+	Observe   func(TransmissionEvent)
 }
 
 // RequestDisclosure describes whether request-owned identity or continuity
@@ -109,7 +109,14 @@ func newRequestDisclosureTracker(initial RequestDisclosure) *requestDisclosureTr
 }
 
 func (t *requestDisclosureTracker) trace() *httptrace.ClientTrace {
-	markPossible := func() { t.state.Store(uint32(RequestDisclosurePossible)) }
+	markPossible := func() {
+		for {
+			state := t.state.Load()
+			if state >= uint32(RequestDisclosurePossible) || t.state.CompareAndSwap(state, uint32(RequestDisclosurePossible)) {
+				return
+			}
+		}
+	}
 	return &httptrace.ClientTrace{
 		// A failed header write may have exposed only a prefix. Marking the first
 		// field is intentionally earlier than WroteHeaders/WroteRequest.
@@ -118,6 +125,8 @@ func (t *requestDisclosureTracker) trace() *httptrace.ClientTrace {
 		WroteRequest:     func(httptrace.WroteRequestInfo) { markPossible() },
 	}
 }
+
+func (t *requestDisclosureTracker) confirm() { t.state.Store(uint32(RequestDisclosureConfirmed)) }
 
 func (t *requestDisclosureTracker) disclosure(responseReceived bool) RequestDisclosure {
 	if responseReceived {
@@ -137,10 +146,14 @@ type Transport struct {
 func New(config Config) *Transport {
 	roundTripper := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   config.ConnectTimeout,
-			KeepAlive: defaults.TCPKeepAlive,
-		}).DialContext,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialer := net.Dialer{Timeout: config.ConnectTimeout, KeepAlive: defaults.TCPKeepAlive}
+			connection, err := dialer.DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			return &observedConnection{Conn: connection}, nil
+		},
 		ResponseHeaderTimeout: config.FirstByteTimeout,
 		MaxIdleConns:          defaults.MaxIdleConns,
 		MaxIdleConnsPerHost:   defaults.MaxIdleConnsPerHost,
@@ -159,6 +172,18 @@ func New(config Config) *Transport {
 				return http.ErrUseLastResponse
 			},
 		},
+	}
+}
+
+// NewWithRoundTripper injects exchange I/O while retaining request framing,
+// redirects and reader ownership. Custom I/O has conservative disclosure facts.
+func NewWithRoundTripper(roundTripper http.RoundTripper) *Transport {
+	if roundTripper == nil {
+		roundTripper = http.DefaultTransport
+	}
+	return &Transport{
+		followClient: &http.Client{Transport: roundTripper},
+		rawClient:    &http.Client{Transport: roundTripper, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 }
 
@@ -251,7 +276,7 @@ func (r *Response) Take() (ResponseHead, io.ReadCloser, error) {
 func (t *Transport) Fetch(
 	ctx context.Context,
 	request *http.Request,
-	policy ExecutionPolicy,
+	policy ExecutionOptions,
 ) (*Response, RequestDisclosure, error) {
 	if t == nil || t.followClient == nil || t.rawClient == nil {
 		return nil, RequestDisclosureNone, errors.New("upstream transport is not initialized")
@@ -272,7 +297,11 @@ func (t *Transport) Fetch(
 	}
 	disclosure := newRequestDisclosureTracker(initialDisclosure)
 	traceContext := httptrace.WithClientTrace(ctx, disclosure.trace())
-	response, err := client.Do(request.WithContext(traceContext)) //nolint:bodyclose // ownership moves through Response.TakeBody
+	executionClient := *client
+	if requestBodySource(request) != nil {
+		executionClient.Transport = sourceRoundTripper{base: client.Transport, observer: &executionObserver{observe: policy.Observe, disclosure: disclosure}}
+	}
+	response, err := executionClient.Do(request.WithContext(traceContext)) //nolint:bodyclose // ownership moves through Response.TakeBody
 	if err != nil {
 		return nil, disclosure.disclosure(response != nil), err
 	}
@@ -289,7 +318,7 @@ func (t *Transport) Fetch(
 	return wrapped, disclosure.disclosure(true), wrapErr
 }
 
-func (t *Transport) clientFor(policy ExecutionPolicy) (*http.Client, error) {
+func (t *Transport) clientFor(policy ExecutionOptions) (*http.Client, error) {
 	switch policy.Redirects {
 	case FollowRedirects:
 		return t.followClient, nil
@@ -315,7 +344,7 @@ func BuildRequest(
 	ctx context.Context,
 	method string,
 	upstreamURL string,
-	body []byte,
+	body BodySource,
 	original *http.Request,
 ) (*http.Request, error) {
 	return BuildRequestWithPolicy(ctx, method, upstreamURL, body, original, RequestPolicy{})
@@ -325,7 +354,7 @@ func BuildRequestWithPolicy(
 	ctx context.Context,
 	method string,
 	upstreamURL string,
-	body []byte,
+	body BodySource,
 	original *http.Request,
 	policy RequestPolicy,
 ) (*http.Request, error) {
@@ -335,11 +364,7 @@ func BuildRequestWithPolicy(
 	if err := policy.validate(); err != nil {
 		return nil, err
 	}
-	var source io.Reader
-	if body != nil {
-		source = bytes.NewReader(body)
-	}
-	request, err := http.NewRequestWithContext(ctx, method, upstreamURL, source)
+	request, err := prepareSourceRequest(ctx, method, upstreamURL, body)
 	if err != nil {
 		return nil, err
 	}

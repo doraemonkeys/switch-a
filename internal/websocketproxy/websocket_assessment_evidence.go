@@ -68,6 +68,7 @@ type webSocketGatewayEvidenceInput struct {
 // (i.e., a bug in the builder that forgets to set it) will fall through to
 // the v1 renderer and misrender — the builder always sets it explicitly.
 type webSocketEvidence struct {
+	Replay            *webSocketReplayStatus              `json:"replay,omitempty"`
 	SchemaVersion     int                                 `json:"v"`
 	Gateway           *webSocketGatewayEvidence           `json:"gateway,omitempty"`
 	UpstreamHandshake *webSocketUpstreamHandshakeEvidence `json:"upstream_handshake,omitempty"`
@@ -113,6 +114,10 @@ func buildWebSocketEvidence(
 	injectedCredential string,
 ) *string {
 	evidence := webSocketEvidence{SchemaVersion: webSocketEvidenceSchemaVersion}
+	if result != nil && result.ReplayStatus.State != "" {
+		status := result.ReplayStatus
+		evidence.Replay = &status
+	}
 	if gateway.StatusCode > 0 || gateway.ErrorCode != "" || gateway.Message != "" {
 		evidence.Gateway = &webSocketGatewayEvidence{
 			TerminalStatusCode:     gateway.StatusCode,
@@ -272,7 +277,7 @@ func truncateTransportSnippet(value string) string {
 // emit `{"v":2}` even when no diagnostic data exists, wasting log bytes and
 // distorting evidence-presence dashboards.
 func (e webSocketEvidence) isEmptyPayload() bool {
-	return e.Gateway == nil && e.UpstreamHandshake == nil && e.Transport == nil && e.UpstreamEvent == nil
+	return e.Replay == nil && e.Gateway == nil && e.UpstreamHandshake == nil && e.Transport == nil && e.UpstreamEvent == nil
 }
 
 // marshalWebSocketEvidence enforces the 4 KiB evidence budget by trimming

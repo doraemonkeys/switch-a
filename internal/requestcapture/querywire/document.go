@@ -476,9 +476,51 @@ func writeQueryRequestSnapshotJSON(writer *jsonDocumentWriter, request captureva
 	writeHeadersJSON(writer, request.Headers)
 	writer.field("content_length", &first)
 	writer.int64(request.ContentLength)
+	if request.Ingress != nil {
+		writer.field("ingress", &first)
+		writeIngressSnapshotJSON(writer, request.Ingress)
+	}
 	if len(request.Trailers) > 0 {
 		writer.field("trailers", &first)
 		writeHeadersJSON(writer, request.Trailers)
+	}
+	writer.endObject()
+}
+
+func writeIngressSnapshotJSON(writer *jsonDocumentWriter, ingress *capturevalue.IngressSnapshot) {
+	first := true
+	writer.beginObject()
+	writer.field("protocol", &first)
+	writer.string(ingress.Protocol)
+	writer.field("content_length", &first)
+	writer.int64(ingress.ContentLength)
+	writer.field("transfer_encoding", &first)
+	writeStringsJSON(writer, ingress.TransferEncoding)
+	writer.field("declared_trailer_keys", &first)
+	writeStringsJSON(writer, ingress.DeclaredTrailerKeys)
+	writer.field("state", &first)
+	writer.string(ingress.State)
+	writer.field("received_bytes", &first)
+	writer.int64(ingress.ReceivedBytes)
+	if len(ingress.Trailers) > 0 {
+		writer.field("trailers", &first)
+		writeHeadersJSON(writer, ingress.Trailers)
+	}
+	if ingress.Reason != "" {
+		writer.field("reason", &first)
+		writer.string(ingress.Reason)
+	}
+	writer.field("capture_truncated", &first)
+	writer.boolean(ingress.CaptureTruncated)
+	if ingress.SourceFailure != nil {
+		writer.field("source_failure", &first)
+		writer.beginObject()
+		failureFirst := true
+		writer.field("kind", &failureFirst)
+		writer.string(string(ingress.SourceFailure.Kind))
+		writer.field("reason", &failureFirst)
+		writer.string(ingress.SourceFailure.Reason)
+		writer.endObject()
 	}
 	writer.endObject()
 }

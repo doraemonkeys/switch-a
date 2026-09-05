@@ -14,6 +14,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 
@@ -97,6 +98,16 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		attemptIndex := int(state.ledger.LogicalAttemptsStarted()) - 1
 		attemptStart := time.Now()
 		result, continueExecution := h.executeLogicalAttempt(ctx, pctx, state, attempt, rules)
+		if pctx.ingress != nil {
+			snapshot := pctx.ingress.Snapshot()
+			if snapshot.State == requestingress.Failed {
+				result.success = false
+				result.failureKind = attemptFailureIngress
+				result.ingressFailureKind = snapshot.FailureKind
+				result.failureMessage = snapshot.Err.Error()
+				continueExecution = false
+			}
+		}
 		h.applyForwardResult(state, result)
 		h.recordAttempt(pctx, attempt, result, attemptIndex, attemptStart)
 		facts := attemptFactsFromForwardResult(ctx, result)
@@ -135,6 +146,7 @@ func (h *Handler) startInitialSelection(ctx context.Context, pctx *proxyContext,
 	state.providerUsed = selection.provider
 	pctx.isSticky = selection.metadata.UsesContinuity()
 	h.registerActiveRequest(pctx, state)
+	pctx.publishRequestObservation()
 	return true
 }
 
@@ -408,6 +420,11 @@ func (h *Handler) assessAndApplyHealth(
 	facts errorrule.AttemptFacts,
 	action errorrule.Action,
 ) {
+	if pctx.ingressFailure() != nil {
+		result.health = errorrule.HealthAssessment{Verdict: errorrule.HealthNeutral, Cause: errorrule.HealthCauseIncomplete}
+		result.healthAvailable = true
+		return
+	}
 	class := errorrule.ClassifyAttempt(facts)
 	assessment, available, err := errorrule.AssessHealth(class, action)
 	if err != nil {
@@ -497,6 +514,11 @@ func attemptFactsFromForwardResult(ctx context.Context, result forwardResult) no
 }
 
 func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
+	pctx.finishIngress()
+	if sourceErr := pctx.ingressFailure(); sourceErr != nil {
+		state.lastErr = sourceErr
+		state.success = false
+	}
 	if state.activeRegistered && h.activeRegistry != nil {
 		h.activeRegistry.Unregister(pctx.requestID)
 	} else if state.currentLease != nil {
@@ -507,7 +529,15 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	}
 	clientStatus := state.statusCode
 	if !state.success && !state.headersWritten {
-		clientStatus = h.handleExhaustedRetries(pctx, state.lastErr)
+		if sourceErr := pctx.ingressFailure(); sourceErr != nil {
+			h.handleBodyError(pctx.w, sourceErr, pctx.cfg.maxBodySizeMB)
+			clientStatus = http.StatusInternalServerError
+			if errors.Is(sourceErr, requestingress.ErrBodyTooLarge) {
+				clientStatus = http.StatusRequestEntityTooLarge
+			}
+		} else {
+			clientStatus = h.handleExhaustedRetries(pctx, state.lastErr)
+		}
 	}
 	h.scheduleProviderUsagePersistence(pctx)
 	go h.logRequest(pctx, logRequestInputs{
@@ -525,4 +555,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 		FirstTokenMs: state.firstTokenMs, ResponseBytes: state.responseBytes,
 		TokenUsage: state.tokenUsage, Latency: time.Since(pctx.startTime),
 	})
+	if state.responseCommitted && pctx.ingressFailure() != nil {
+		panic(http.ErrAbortHandler)
+	}
 }

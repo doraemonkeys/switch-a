@@ -3,9 +3,12 @@ package proxy
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
@@ -41,7 +44,7 @@ func NewTransport(config TransportConfig) *Transport {
 func (t *Transport) FetchUpstream(
 	ctx context.Context,
 	request *http.Request,
-	policy upstreamtransport.ExecutionPolicy,
+	policy upstreamtransport.ExecutionOptions,
 ) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error) {
 	return t.upstream.Fetch(ctx, request, policy)
 }
@@ -56,7 +59,7 @@ func BuildUpstreamRequest(
 	ctx context.Context,
 	method string,
 	upstreamURL string,
-	body []byte,
+	body upstreamtransport.BodySource,
 	originalRequest *http.Request,
 ) (*http.Request, error) {
 	return upstreamtransport.BuildRequest(ctx, method, upstreamURL, body, originalRequest)
@@ -66,7 +69,7 @@ func BuildUpstreamRequestWithPolicy(
 	ctx context.Context,
 	method string,
 	upstreamURL string,
-	body []byte,
+	body upstreamtransport.BodySource,
 	originalRequest *http.Request,
 	policy upstreamtransport.RequestPolicy,
 ) (*http.Request, error) {
@@ -271,4 +274,78 @@ func truncateRawErrorSnippet(s string) string {
 		runes++
 	}
 	return s
+}
+
+type ingressUpload struct {
+	ingress     *requestingress.Handle
+	tracker     *LiveBytesTracker
+	mu          sync.Mutex
+	active      int
+	retryClosed bool
+}
+
+func (u *ingressUpload) Open() (io.ReadCloser, error) {
+	reader, err := u.ingress.Open()
+	if err != nil {
+		return nil, err
+	}
+	u.mu.Lock()
+	u.active++
+	u.mu.Unlock()
+	return &uploadReader{reader: reader, owner: u}, nil
+}
+
+func (u *ingressUpload) Framing() upstreamtransport.BodyFraming {
+	head := u.ingress.Head()
+	return upstreamtransport.BodyFraming{ProtocolMajor: head.ProtocolMajor, ContentLength: head.ContentLength,
+		HasBody: head.HasBody, TrailerKeys: head.TrailerKeys, Complete: u.ingress.Snapshot().State == requestingress.Complete}
+}
+
+func (u *ingressUpload) Trailers() http.Header { return u.ingress.Trailers() }
+
+func (u *ingressUpload) closeRetryWindow() {
+	u.mu.Lock()
+	u.retryClosed = true
+	stop := u.active == 0
+	u.mu.Unlock()
+	if stop && u.ingress.Snapshot().State == requestingress.Receiving {
+		u.ingress.Abort(errUpstreamInputFinished)
+	}
+}
+
+type uploadReader struct {
+	readMu sync.RWMutex
+	reader io.ReadCloser
+	owner  *ingressUpload
+	once   sync.Once
+	err    error
+}
+
+func (r *uploadReader) Read(p []byte) (int, error) {
+	r.readMu.RLock()
+	defer r.readMu.RUnlock()
+	n, err := r.reader.Read(p)
+	if n > 0 && r.owner.tracker != nil {
+		r.owner.tracker.UpstreamBodyReadBytes.Add(int64(n))
+		r.owner.tracker.LastActivityAt.Store(time.Now().UnixMilli())
+	}
+	return n, err
+}
+
+func (r *uploadReader) Close() error {
+	r.once.Do(func() {
+		r.err = r.reader.Close()
+		// Publish reader retirement only after every in-flight read has also
+		// published its byte count; a replacement may start as soon as this ends.
+		r.readMu.Lock()
+		r.owner.mu.Lock()
+		r.owner.active--
+		stop := r.owner.retryClosed && r.owner.active == 0
+		r.owner.mu.Unlock()
+		r.readMu.Unlock()
+		if stop && r.owner.ingress.Snapshot().State == requestingress.Receiving {
+			r.owner.ingress.Abort(errUpstreamInputFinished)
+		}
+	})
+	return r.err
 }

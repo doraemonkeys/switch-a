@@ -42,7 +42,7 @@ func TestProviderCookiesCrossHTTPAndWebSocketEquivalentSchemes(t *testing.T) {
 
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), requestWithHandle(http.MethodPost, "client-alpha", handle),
-		testAPIType, operationID("http-cookie", 2), nil, nil,
+		testAPIType, operationID("http-cookie", 2), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 			"Thread-Id": {"restart-identity"},
 		})
 		operation, err := fixture.http.Begin(
-			context.Background(), request, testAPIType, operationID("http-restart", 1), nil, nil,
+			context.Background(), request, testAPIType, operationID("http-restart", 1), testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -213,7 +213,7 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		})
 		if _, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-			testAPIType, operationID("http-cookie-capacity", 1), nil, nil,
+			testAPIType, operationID("http-cookie-capacity", 1), testHTTPClientEvidence(nil, nil),
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -297,7 +297,7 @@ func TestCookieStoreFailuresRemainTypedAcrossAdapters(t *testing.T) {
 	}
 	_, err = fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-cookie-store", 1), nil, nil,
+		testAPIType, operationID("http-cookie-store", 1), testHTTPClientEvidence(nil, nil),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorDependencyUnavailable)
 	_, err = fixture.ws.Begin(
@@ -350,7 +350,7 @@ func commitHTTPCookie(
 	t.Helper()
 	request := requestWithHandle(http.MethodPost, client, handle)
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), request, testAPIType, operation, nil, nil,
+		context.Background(), request, testAPIType, operation, testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)

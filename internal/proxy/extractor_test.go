@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -362,68 +361,6 @@ func TestExtractModelFromJSON(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestConsumeAndReplaceBody(t *testing.T) {
-	t.Run("normal body", func(t *testing.T) {
-		body := "test body content"
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-
-		got, err := ConsumeAndReplaceBody(req, 10)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if string(got) != body {
-			t.Errorf("got body %q, want %q", string(got), body)
-		}
-
-		// Verify body can be read again
-		readAgain, err := io.ReadAll(req.Body)
-		if err != nil {
-			t.Fatalf("failed to read body again: %v", err)
-		}
-		if string(readAgain) != body {
-			t.Errorf("second read got %q, want %q", string(readAgain), body)
-		}
-	})
-
-	t.Run("nil body", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Body = nil
-
-		got, err := ConsumeAndReplaceBody(req, 10)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != nil {
-			t.Errorf("expected nil body, got %v", got)
-		}
-	})
-
-	t.Run("body exceeds limit", func(t *testing.T) {
-		// Create a body larger than 1MB
-		largeBody := bytes.Repeat([]byte("x"), 2*1024*1024)
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(largeBody))
-
-		_, err := ConsumeAndReplaceBody(req, 1) // 1MB limit
-		if err != ErrBodyTooLarge {
-			t.Errorf("expected ErrBodyTooLarge, got %v", err)
-		}
-	})
-
-	t.Run("body at limit", func(t *testing.T) {
-		// Create a body exactly at limit
-		body := bytes.Repeat([]byte("x"), 1024*1024) // 1MB
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-
-		got, err := ConsumeAndReplaceBody(req, 1) // 1MB limit
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(got) != len(body) {
-			t.Errorf("got body length %d, want %d", len(got), len(body))
-		}
-	})
 }
 
 func TestGetReqBodySnippet(t *testing.T) {

@@ -176,6 +176,7 @@ const (
 	FailureCodeRequestBuild                 = capturevalue.FailureCodeRequestBuild
 	FailureCodeCredentialApply              = capturevalue.FailureCodeCredentialApply
 	FailureCodeGatewayContext               = capturevalue.FailureCodeGatewayContext
+	FailureCodeGatewayIngress               = capturevalue.FailureCodeGatewayIngress
 	FailureCodeDNS                          = capturevalue.FailureCodeDNS
 	FailureCodeConnection                   = capturevalue.FailureCodeConnection
 	FailureCodeRoundTrip                    = capturevalue.FailureCodeRoundTrip
@@ -281,6 +282,36 @@ type Status struct {
 	Session             SessionStatus
 }
 
+// GatewayRecorder is a lightweight value bound to one immutable session
+// generation. Its zero value is the disabled-path recorder and is always safe.
+type GatewayRecorder struct {
+	manager       *Manager
+	generation    uint64
+	traceSequence uint64
+	handleSlot    uint32
+}
+
+// Recorder captures one real HTTP request or WebSocket dial. It never surfaces
+// failures to the proxy; capture degradation is represented in record metadata.
+type recorderKind uint8
+
+const (
+	recorderKindRecord recorderKind = iota + 1
+	recorderKindTransition
+)
+
+type Recorder struct {
+	manager        *Manager
+	generation     uint64
+	traceSequence  uint64
+	recordSequence uint64
+	entrySequence  uint64
+	gatewaySlot    uint32
+	recordSlot     uint32
+	recordID       recordIDValue
+	kind           recorderKind
+}
+
 type GatewayStart struct {
 	GatewayRequestID string
 	StartedAt        time.Time
@@ -294,6 +325,24 @@ type RawRequest struct {
 	Body               []byte
 	SensitiveHeaders   SensitiveHeaderEvidence
 	CredentialEvidence CredentialEvidence
+}
+
+type IngressHead = redaction.IngressHead
+type IngressFailure = capturevalue.IngressFailureSnapshot
+
+const (
+	IngressFailureUnknown = capturevalue.IngressFailureUnknown
+	IngressFailureRead    = capturevalue.IngressFailureRead
+	IngressFailureLimit   = capturevalue.IngressFailureLimit
+	IngressFailureLength  = capturevalue.IngressFailureLength
+	IngressFailureStorage = capturevalue.IngressFailureStorage
+)
+
+type IngressFinish struct {
+	State         string
+	ReceivedBytes int64
+	Trailers      http.Header
+	Reason        string
 }
 
 type RawHTTPStart struct {

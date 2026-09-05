@@ -15,6 +15,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
 
 	"go.uber.org/zap"
 )
@@ -291,7 +292,7 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 		RequestIDHeader:           pctx.info.RequestID,
 		FirstTokenMs:              inputs.FirstTokenMs,
 		// Phase 3 transfer statistics
-		RequestBytes:                  int64(len(pctx.body)),
+		RequestBytes:                  pctx.receivedRequestBytes(),
 		ResponseBytes:                 inputs.ResponseBytes,
 		ContentType:                   pctx.info.ContentType,
 		RequestedReasoningObservation: pctx.info.Reasoning,
@@ -387,6 +388,10 @@ func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAsses
 }
 
 func deriveNonWebSocketServiceOutcome(facts nonWebSocketRuntimeFacts) model.ServiceOutcome {
+	var ingressFailure *requestIngressFailure
+	if errors.As(facts.TerminalErr, &ingressFailure) && facts.ServiceStarted {
+		return model.ServiceOutcomeInterrupted
+	}
 	switch {
 	case facts.ClientTermination.observed():
 		return model.ServiceOutcomeAbandonedByClient
@@ -418,6 +423,16 @@ func deriveNonWebSocketTermination(
 	facts nonWebSocketRuntimeFacts,
 	serviceOutcome model.ServiceOutcome,
 ) (*model.TerminationActor, *model.TerminationReason) {
+	var ingressFailure *requestIngressFailure
+	if errors.As(facts.TerminalErr, &ingressFailure) {
+		if ingressFailure.kind == requestingress.FailureRead {
+			return ptr(model.TerminationActorClient), ptr(model.TerminationReasonClientDisconnect)
+		}
+		if ingressFailure.kind == requestingress.FailureLimit || ingressFailure.kind == requestingress.FailureLength {
+			return ptr(model.TerminationActorClient), ptr(model.TerminationReasonClientRequestError)
+		}
+		return ptr(model.TerminationActorGateway), ptr(model.TerminationReasonTransportError)
+	}
 	switch facts.ClientTermination {
 	case clientTerminationDisconnect:
 		return ptr(model.TerminationActorClient), ptr(model.TerminationReasonClientDisconnect)

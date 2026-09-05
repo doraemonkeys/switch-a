@@ -103,7 +103,7 @@ func TestRuntimeResolvesOwnerBeforeSelectionAndValidatesAppliedIdentity(t *testi
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Thread-Id", "thread-known")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known", nil, nil)
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestRuntimeClaimsUnknownRequestOnlyAfterAppliedIdentity(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("X-Api-Key", "client-secret")
 	request.Header.Set("Thread-Id", "thread-new")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-claim", nil, nil)
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-claim", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 			request.Header.Set("Authorization", "Bearer client-secret")
 			request.Header.Set("Thread-Id", "thread-known")
 			request.Header.Set("X-Codex-Turn-State", "turn-imported")
-			operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-adopt", nil, nil)
+			operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-adopt", testClientEvidence(nil, nil))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -243,7 +243,7 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 		request.Header.Set("Authorization", "Bearer client-secret")
 		request.Header.Set("Thread-Id", "thread-known")
 		request.Header.Set("Session-Id", "session-during-outage")
-		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-identity-degraded", nil, nil)
+		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-identity-degraded", testClientEvidence(nil, nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -272,7 +272,7 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 		request.Header.Set("Authorization", "Bearer client-secret")
 		request.Header.Set("Thread-Id", "thread-known")
 		request.Header.Set("X-Codex-Turn-State", "turn-known")
-		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known-degraded", nil, nil)
+		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known-degraded", testClientEvidence(nil, nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -300,7 +300,7 @@ func TestRuntimeBindsResponseStateOnlyAtVisibleBoundary(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Thread-Id", "request-anchor")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-response", nil, nil)
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-response", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestPendingOwnerRetryFinalizesAtHTTPBoundaries(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Session-Id", "session-pending")
 	request.Header.Set("X-Codex-Turn-Metadata", "metadata-pending")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-pending-request", nil, nil)
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-pending-request", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,18 +419,18 @@ func TestRuntimeFailClosedInputAndDependencyErrors(t *testing.T) {
 	runtime := newAlwaysOnTestRuntime(t, Config{ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}, Continuity: &continuityRecorder{}})
 	request.Header.Set("Authorization", "Bearer one")
 	request.Header.Set("X-Api-Key", "two")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorClientInput) {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("always-on ambiguous credential error = %v", err)
 	}
 	request.Header.Del("X-Api-Key")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "opaque-json", []byte("{"), []byte("{")); err != nil {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "opaque-json", testClientEvidence([]byte("{"), []byte("{"))); err != nil {
 		t.Fatalf("non-JSON request body was not opaque: %v", err)
 	}
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "decode-failure", []byte{0x1f, 0x8b}, nil); err != nil {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "decode-failure", testClientEvidence([]byte{0x1f, 0x8b}, nil)); err != nil {
 		t.Fatalf("semantic decode failure was not opaque: %v", err)
 	}
 	invalidKnown := []byte(`{"type":"response.create","previous_response_id":null}`)
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "recognized-invalid", invalidKnown, invalidKnown); !IsKind(err, ErrorClientInput) {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "recognized-invalid", testClientEvidence(invalidKnown, invalidKnown)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("malformed recognized projection error = %v", err)
 	}
 	if !IsKind(identityError("test", errors.New("mismatch")), ErrorIdentityMismatch) || IsKind(nil, ErrorIdentityMismatch) {
@@ -453,7 +453,7 @@ func TestHeaderHygieneIsAlwaysOnOnlyForCodex(t *testing.T) {
 	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.SanitizeProviderHeaders || policy.Cookies != upstreamtransport.ServerManagedCookies {
 		t.Fatalf("Codex policy = %#v", policy)
 	}
-	nonCodex, err := (*Runtime)(nil).Begin(context.Background(), nil, "claude", "non-codex", nil, nil)
+	nonCodex, err := (*Runtime)(nil).Begin(context.Background(), nil, "claude", "non-codex", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -572,7 +572,7 @@ describe("LiveRequestsPanel - Live Traffic Metrics", () => {
     const requests = [
       createMockRequest({
         is_websocket: false,
-        bytes_sent: 1024,
+        upstream_body_read_bytes: 1024,
         bytes_received: 2048,
       }),
     ];
@@ -580,7 +580,9 @@ describe("LiveRequestsPanel - Live Traffic Metrics", () => {
       <LiveRequestsPanel requests={requests} loading={false} error={null} />,
     );
     switchToAllListView();
-    expect(screen.getByTitle(/Bytes sent/)).toHaveTextContent("↑1.0 KB");
+    expect(screen.getByTitle(/Upstream body bytes read/)).toHaveTextContent(
+      "↑1.0 KB",
+    );
     expect(screen.getByTitle(/Bytes received/)).toHaveTextContent("↓2.0 KB");
   });
 
@@ -632,7 +634,7 @@ describe("LiveRequestsPanel - Live Traffic Metrics", () => {
   it("shows transfer details without message counts for expanded HTTP requests", () => {
     const requests = [
       createMockRequest({
-        bytes_sent: 1024,
+        upstream_body_read_bytes: 1024,
         bytes_received: 8192,
         last_activity_at: Date.now() - 3000,
       }),
@@ -645,7 +647,9 @@ describe("LiveRequestsPanel - Live Traffic Metrics", () => {
       screen.getByRole("button", { name: /Active request for model/ }),
     );
 
-    const transfer = screen.getByText("Data Transfer").parentElement!;
+    const transfer = screen.getByText(
+      "Body Read / Response Transfer",
+    ).parentElement!;
     expect(transfer).toHaveTextContent("↑ 1.0 KB / ↓ 8.0 KB");
     expect(transfer).not.toHaveTextContent("msgs");
     expect(screen.getByText("Last Activity")).toBeInTheDocument();

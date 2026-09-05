@@ -1225,6 +1225,45 @@ func TestRegisterLiveBytes_NilTrackerIgnored(t *testing.T) {
 	}
 }
 
+func TestHTTPBodyReadBytesRemainDistinctFromWebSocketTraffic(t *testing.T) {
+	registry := NewActiveRequestRegistry()
+	registry.Register(&ActiveRequest{RequestID: "http-body", StartedAt: time.Now()})
+	tracker := &LiveBytesTracker{}
+	tracker.UpstreamBodyReadBytes.Add(3)
+	tracker.UpstreamBodyReadBytes.Add(7)
+	registry.RegisterLiveBytes("http-body", tracker)
+	request := registry.List()[0]
+	if request.UpstreamBodyReadBytes != 10 || request.BytesSent != 0 {
+		t.Fatalf("HTTP read consumption = %d, WS traffic = %d", request.UpstreamBodyReadBytes, request.BytesSent)
+	}
+	registry.Unregister("http-body")
+	registry.Register(&ActiveRequest{RequestID: "http-body", StartedAt: time.Now()})
+	if registry.List()[0].UpstreamBodyReadBytes != 0 {
+		t.Fatal("HTTP read counter survived request lifetime")
+	}
+}
+
+func TestUpdateObservationPublishesWithoutChangingContinuity(t *testing.T) {
+	registry := NewActiveRequestRegistry()
+	pending := model.ReasoningObservationPending
+	registry.Register(&ActiveRequest{RequestID: "observed", Model: "header-model", StartedAt: time.Now(),
+		RequestedReasoningObservation: model.RequestedReasoningObservation{State: &pending}})
+	before := registry.List()[0]
+	final := model.ReasoningObservationCaptured
+	effort := "high"
+	observation := model.RequestedReasoningObservation{State: &final, Effort: &effort}
+	registry.UpdateObservation("missing", "ignored", observation)
+	registry.UpdateObservation("observed", "", observation)
+	if registry.List()[0].Model != "header-model" {
+		t.Fatal("empty observation erased known model")
+	}
+	registry.UpdateObservation("observed", "body-model", observation)
+	after := registry.List()[0]
+	if after.Model != "body-model" || *after.State != final || *after.Effort != effort || after.ContinuityKey != before.ContinuityKey || *before.State != pending {
+		t.Fatalf("observations before=%+v after=%+v", before, after)
+	}
+}
+
 func TestRegisterLiveBytes_NonWSRequestUnaffected(t *testing.T) {
 	r := NewActiveRequestRegistry()
 

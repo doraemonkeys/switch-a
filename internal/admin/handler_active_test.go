@@ -113,8 +113,8 @@ func TestGetActiveRequests_WithRequests(t *testing.T) {
 					State:  &reasoningState,
 					Effort: &reasoningEffort,
 				},
-				BytesSent:     1024,
-				BytesReceived: 8192,
+				UpstreamBodyReadBytes: 1024,
+				BytesReceived:         8192,
 			},
 			{
 				RequestID:  "req-2",
@@ -191,8 +191,8 @@ func TestGetActiveRequests_WithRequests(t *testing.T) {
 			if r.Effort == nil || *r.Effort != reasoningEffort {
 				t.Errorf("Reasoning effort = %v, want %q", r.Effort, reasoningEffort)
 			}
-			if r.BytesSent != 1024 || r.BytesReceived != 8192 {
-				t.Errorf("traffic = sent:%d received:%d, want sent:1024 received:8192", r.BytesSent, r.BytesReceived)
+			if r.UpstreamBodyReadBytes != 1024 || r.BytesReceived != 8192 {
+				t.Errorf("traffic = sent:%d received:%d, want sent:1024 received:8192", r.UpstreamBodyReadBytes, r.BytesReceived)
 			}
 		}
 	}

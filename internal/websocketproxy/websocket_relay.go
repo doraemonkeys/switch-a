@@ -56,7 +56,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		}
 		becameVisible := lifecycle.MarkClientVisible()
 		if becameVisible && options.PreVisibleReplayBuffer != nil {
-			options.PreVisibleReplayBuffer.Disable()
+			options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayVisibilityClosed)
 		}
 		observation := WebSocketObservation{SessionCommitted: true}
 		if options.Observer != nil {
@@ -145,7 +145,7 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 				if options.Observer != nil {
 					observation = options.Observer.Snapshot()
 					if observation.ParseDegraded && options.PreVisibleReplayBuffer != nil {
-						options.PreVisibleReplayBuffer.Disable()
+						options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayParseDegraded)
 					}
 				}
 				lifecycleSnapshot := lifecycle.Snapshot()
@@ -390,7 +390,7 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 	}
 	progress.BytesClientToUpstream = int64(len(data))
 	if !decision.ReplacementEligible && options.PreVisibleReplayBuffer != nil {
-		options.PreVisibleReplayBuffer.Disable()
+		options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayNonReplayableFrame)
 	}
 	if decision.OnWriteConfirmed != nil {
 		if err := decision.OnWriteConfirmed(); err != nil {

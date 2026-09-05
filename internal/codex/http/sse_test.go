@@ -149,7 +149,7 @@ func testSSEOperation(
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Thread-Id", "sse-request-anchor")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "sse-operation", nil, nil)
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "sse-operation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

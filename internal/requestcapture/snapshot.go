@@ -354,6 +354,12 @@ func freezeSelectedExportRecordLocked(
 		messageOffset: len(source.messages),
 	})
 	recordSource := &source.records[len(source.records)-1]
+	if record.request.Ingress != nil {
+		// Framing slices and trailer maps are immutable after publication, while
+		// counters and source finality may still advance during export creation.
+		ingress := *record.request.Ingress
+		recordSource.request.Ingress = &ingress
+	}
 	if record.completed {
 		recordSource.snapshotState = SnapshotStateFinal
 	}
@@ -604,6 +610,7 @@ func estimateRecordSummaryOwnedStringCharge(summary RecordSummary) int64 {
 
 func estimateRequestSnapshotOwnedCharge(request RequestSnapshot) int64 {
 	total := int64(len(request.Method) + len(request.URL) + len(request.Host))
+	total = saturatedChargeAdd(total, estimateIngressCharge(request.Ingress))
 	total = saturatedChargeAdd(total, estimateHeaderCharge(request.Headers))
 	return saturatedChargeAdd(total, estimateHeaderCharge(request.Trailers))
 }

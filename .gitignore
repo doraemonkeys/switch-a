@@ -46,6 +46,7 @@ TODO
 .cursor/
 .claude/
 .codex/*.md
+.codex-work/
 
 # Coverage output directories
 web/coverage/

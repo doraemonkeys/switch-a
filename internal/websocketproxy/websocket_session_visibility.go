@@ -190,6 +190,7 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	result := relayResult.toWebSocketResult()
 	dialExchange.applyHandshake(result)
 	result.BytesClientToUpstream += replayedBytes
+	result.ReplayStatus = o.replayBuffer.Status()
 	if observer != nil {
 		mergeWebSocketObservation(result, observer.Snapshot())
 	}

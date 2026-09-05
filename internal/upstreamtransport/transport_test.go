@@ -262,7 +262,7 @@ func TestBuildRequestCopiesOnlyEndToEndHeaders(t *testing.T) {
 		"X-End-To-End":        {"preserved"},
 	}
 	payload := []byte("request-body")
-	request, err := BuildRequest(t.Context(), http.MethodPut, "https://upstream.example/v1/items?q=1", payload, original)
+	request, err := BuildRequest(t.Context(), http.MethodPut, "https://upstream.example/v1/items?q=1", testBodySource(payload), original)
 	if err != nil {
 		t.Fatalf("BuildRequest: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestFetchReturnsNormalizedHeadAndLiveTrailer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	response, disclosure, err := transport.Fetch(ctx, request, ExecutionPolicy{})
+	response, disclosure, err := transport.Fetch(ctx, request, ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestFetchPreservesCompressedWireIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	response, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
+	response, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionOptions{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -557,10 +557,10 @@ func TestFetchRejectsInvalidStateAndPropagatesRoundTripFailure(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	var nilTransport *Transport
-	if _, _, err := nilTransport.Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
+	if _, _, err := nilTransport.Fetch(t.Context(), request, ExecutionOptions{}); err == nil {
 		t.Fatal("nil Transport.Fetch succeeded")
 	}
-	if _, _, err := (&Transport{}).Fetch(t.Context(), request, ExecutionPolicy{}); err == nil {
+	if _, _, err := (&Transport{}).Fetch(t.Context(), request, ExecutionOptions{}); err == nil {
 		t.Fatal("uninitialized Transport.Fetch succeeded")
 	}
 
@@ -569,12 +569,12 @@ func TestFetchRejectsInvalidStateAndPropagatesRoundTripFailure(t *testing.T) {
 		return nil, wantErr
 	})}
 	transport := &Transport{followClient: client, rawClient: client}
-	if _, disclosure, err := transport.Fetch(t.Context(), request, ExecutionPolicy{}); !errors.Is(err, wantErr) {
+	if _, disclosure, err := transport.Fetch(t.Context(), request, ExecutionOptions{}); !errors.Is(err, wantErr) {
 		t.Fatalf("Fetch error = %v, want %v", err, wantErr)
 	} else if disclosure != RequestDisclosureUnknown {
 		t.Fatalf("custom transport disclosure = %s, want unknown", disclosure)
 	}
-	if _, _, err := transport.Fetch(t.Context(), nil, ExecutionPolicy{}); err == nil {
+	if _, _, err := transport.Fetch(t.Context(), nil, ExecutionOptions{}); err == nil {
 		t.Fatal("Fetch accepted nil request")
 	}
 }
@@ -593,7 +593,7 @@ func TestFetchProvesConnectionEstablishmentFailuresWereNotDisclosed(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
+		_, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionOptions{})
 		if err == nil {
 			t.Fatal("connection-refused request unexpectedly succeeded")
 		}
@@ -615,7 +615,7 @@ func TestFetchProvesConnectionEstablishmentFailuresWereNotDisclosed(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionPolicy{})
+		_, disclosure, err := New(Config{ConnectTimeout: time.Second, FirstByteTimeout: time.Second}).Fetch(t.Context(), request, ExecutionOptions{})
 		if err == nil {
 			t.Fatal("TLS handshake request unexpectedly succeeded")
 		}

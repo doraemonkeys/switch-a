@@ -1,33 +1,22 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/doraemonkeys/switch-a/internal/proxy/requestbody"
+	"github.com/doraemonkeys/switch-a/internal/requestingress/semantic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
 
-type headerEchoSemanticDecoder struct{}
-
-func (headerEchoSemanticDecoder) Decode(_ []byte, values []string, _ int64) ([]byte, error) {
-	raw := strings.Join(values, ",")
-	return nil, &requestbody.DecodeError{
-		Failure: requestbody.FailureUnsupportedEncoding,
-		Coding:  raw,
-		Cause:   errors.New("decoder rejected " + raw),
-	}
-}
-
 func TestDecodeSemanticRequestBodyLogsNormalizedEncodingWithoutSensitiveHeaders(t *testing.T) {
 	t.Parallel()
 	core, observed := observer.New(zap.WarnLevel)
-	handler := &Handler{logger: zap.New(core), requestSemanticDecoder: headerEchoSemanticDecoder{}}
+	handler := &Handler{logger: zap.New(core)}
 	request := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader("wire-body"))
 	request.Header.Add("Content-Encoding", "GZip")
 	request.Header.Add("Content-Encoding", " BR ")
@@ -37,9 +26,8 @@ func TestDecodeSemanticRequestBodyLogsNormalizedEncodingWithoutSensitiveHeaders(
 	request.Header.Set("X-Codex-Turn-Metadata", "codeql-secret-turn-metadata")
 	request.Header.Set("X-Oai-Attestation", "codeql-secret-attestation")
 
-	if decoded := handler.decodeSemanticRequestBody("request-safe-id", APITypeCodex, request, []byte("wire-body"), 1024); decoded != nil {
-		t.Fatalf("decoded body = %q, want nil after observational failure", decoded)
-	}
+	result := semantic.Project(context.Background(), strings.NewReader("wire-body"), semantic.Options{ContentEncodingValues: request.Header.Values("Content-Encoding"), MaxDecodedBytes: 1024})
+	handler.recordRequestProjection("request-safe-id", APITypeCodex, request, result)
 	entries := observed.All()
 	if len(entries) != 1 {
 		t.Fatalf("log entries = %d, want 1", len(entries))
@@ -69,15 +57,7 @@ func TestDecodeSemanticRequestBodyLogsNormalizedEncodingWithoutSensitiveHeaders(
 	if context["request_id"] != "request-safe-id" || context["operation_id"] != "request-safe-id" ||
 		context["api_type"] != APITypeCodex || context["content_encoding"] != "gzip,br" ||
 		context["content_encoding_value_count"] != int64(2) ||
-		context["decode_failure"] != string(requestbody.FailureUnsupportedEncoding) {
+		context["decode_failure"] != "unsupported_content_encoding" {
 		t.Fatalf("diagnostic context = %#v", context)
-	}
-}
-
-func TestSemanticDecodeFailureClampsUnknownClassification(t *testing.T) {
-	t.Parallel()
-	err := &requestbody.DecodeError{Failure: requestbody.Failure("codeql-secret-failure"), Cause: errors.New("cause")}
-	if got := semanticDecodeFailure(err); got != requestbody.FailureInternal {
-		t.Fatalf("failure = %q, want %q", got, requestbody.FailureInternal)
 	}
 }

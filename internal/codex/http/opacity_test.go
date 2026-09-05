@@ -25,18 +25,18 @@ func TestOpaqueHTTPBodiesPreserveWireBytesAndCreateNoOwnerEvidence(t *testing.T)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			before := append([]byte(nil), test.wire...)
-			view, result := discoverClientEvidence(nil, test.wire, test.semantic)
+			view, result := discoverClientEvidence(nil, testClientEvidence(test.wire, test.semantic))
 			if view.Recognized() || view.EventType() != "" {
 				t.Fatalf("opaque body recognized as %q", view.EventType())
 			}
 			if result.Outcome() != codexheaders.ActionForward || len(result.Decisions()) != 0 {
 				t.Fatalf("opaque body decisions = %#v", result.Decisions())
 			}
-			if !bytes.Equal(test.wire, before) || !bytes.Equal(result.ReplayBytes(), test.wire) {
+			if !bytes.Equal(test.wire, before) || len(result.ReplayBytes()) != 0 {
 				t.Fatal("opaque HTTP body bytes changed")
 			}
-			if len(test.wire) > 0 && &result.ReplayBytes()[0] != &test.wire[0] {
-				t.Fatal("opaque HTTP body did not retain the caller-owned wire buffer")
+			if len(result.ReplayBytes()) != 0 {
+				t.Fatal("HTTP semantic decisions retained wire bytes")
 			}
 		})
 	}
@@ -44,11 +44,11 @@ func TestOpaqueHTTPBodiesPreserveWireBytesAndCreateNoOwnerEvidence(t *testing.T)
 
 func TestRecognizedInvalidHTTPControlFieldStillRejects(t *testing.T) {
 	body := []byte(`{"type":"response.create","previous_response_id":null}`)
-	view, result := discoverClientEvidence(nil, body, body)
+	view, result := discoverClientEvidence(nil, testClientEvidence(body, body))
 	if !view.Recognized() || view.EventType() != "response.create" || !result.Rejected() {
 		t.Fatalf("recognized invalid body view=%#v decisions=%#v", view, result.Decisions())
 	}
-	if !bytes.Equal(result.ReplayBytes(), body) {
-		t.Fatal("rejected recognized body bytes changed")
+	if len(result.ReplayBytes()) != 0 {
+		t.Fatal("rejected HTTP semantic decision retained wire bytes")
 	}
 }

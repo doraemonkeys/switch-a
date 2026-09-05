@@ -166,7 +166,7 @@ func executeCredentialRefreshTestRequest(
 	request := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(requestBody))
 	authorizeProxyCodexTestRequest(request)
 	codexOperation, err := handler.codexHTTP.Begin(
-		request.Context(), request, APITypeCodex, "credential-refresh-request", requestBody, requestBody,
+		request.Context(), request, APITypeCodex, "credential-refresh-request", testClientEvidence(requestBody, requestBody),
 	)
 	if err != nil {
 		t.Fatalf("codex HTTP Begin() error = %v", err)
@@ -178,7 +178,7 @@ func executeCredentialRefreshTestRequest(
 			globalAuthMode: DefaultGlobalAuthMode, globalMaxAttempts: 1,
 			readTimeout: time.Hour, sseIdleTimeout: time.Hour, stickyMode: model.StickyModeOff,
 		},
-		transport: transport, apiType: APITypeCodex, body: requestBody,
+		transport: transport, apiType: APITypeCodex, ingress: newTestIngress(t, requestBody),
 		info: RequestInfo{
 			Model: "refresh-model", APIType: APITypeCodex, Path: "/responses", Method: http.MethodPost,
 		},
@@ -189,6 +189,7 @@ func executeCredentialRefreshTestRequest(
 		startTime: time.Now(), requestID: "credential-refresh-request", codex: codexOperation,
 		liveBytes: &LiveBytesTracker{}, attempts: make([]model.RequestAttempt, 0),
 	}
+	pctx.upload = &ingressUpload{ingress: pctx.ingress, tracker: pctx.liveBytes}
 	pctx.capture = handler.beginGatewayCapture(pctx.requestID, pctx.startTime)
 	pctx.captureParticipates = pctx.capture.Valid()
 	handler.executeProxy(request.Context(), pctx)

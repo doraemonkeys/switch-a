@@ -196,6 +196,7 @@ func estimateRecordDetailQueryChargeLocked(record *recordState, previewBytes, ev
 		len(record.request.Method)+len(record.request.URL)+len(record.request.Host))
 	sourceCharge = addRetainedCharge64(sourceCharge, estimateHeaderCharge(record.request.Headers))
 	sourceCharge = addRetainedCharge64(sourceCharge, estimateHeaderCharge(record.request.Trailers))
+	sourceCharge = addRetainedCharge64(sourceCharge, estimateIngressCharge(record.request.Ingress))
 	sourceCharge = addRetainedCharge64(sourceCharge, estimateBlobPreviewQueryCharge(record.requestBody, previewBytes))
 	sourceCharge = addRetainedCharge64(sourceCharge, estimateBlobPreviewQueryCharge(record.responseBody.value, previewBytes))
 	if record.httpResponse != nil {
@@ -381,6 +382,17 @@ func cloneRequestSnapshot(source RequestSnapshot) RequestSnapshot {
 	result := source
 	result.Headers = cloneHeaders(source.Headers)
 	result.Trailers = cloneHeaders(source.Trailers)
+	if source.Ingress != nil {
+		ingress := *source.Ingress
+		ingress.TransferEncoding = append([]string(nil), source.Ingress.TransferEncoding...)
+		ingress.DeclaredTrailerKeys = append([]string(nil), source.Ingress.DeclaredTrailerKeys...)
+		ingress.Trailers = cloneHeaders(source.Ingress.Trailers)
+		if source.Ingress.SourceFailure != nil {
+			failure := *source.Ingress.SourceFailure
+			ingress.SourceFailure = &failure
+		}
+		result.Ingress = &ingress
+	}
 	return result
 }
 

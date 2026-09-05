@@ -33,6 +33,12 @@ func (h *Handler) resolveLegacyFailure(
 	pending *pendingHTTPResponse,
 	result forwardResult,
 ) (forwardResult, bool) {
+	if sourceErr := pctx.ingressFailure(); sourceErr != nil {
+		if pending != nil {
+			_, _ = pending.discard(responseanalysis.TransitionExecutorDecision, requestcapture.TerminationReasonCanceled, requestcapture.FailureObservation{})
+		}
+		return failureResult(attemptFailureInternal, sourceErr), false
+	}
 	retryRejectionReason := errorrule.DecisionReason("")
 	if h.canAttemptLegacyRetry(ctx, pctx, state, result) {
 		retry := h.attemptLegacyRetry(ctx, pctx, state, pending, result)

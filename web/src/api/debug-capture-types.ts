@@ -261,6 +261,21 @@ export interface DebugCaptureRequestSnapshot {
   headers: DebugCaptureHeaders;
   content_length: number;
   trailers?: DebugCaptureHeaders;
+  ingress?: {
+    protocol: string;
+    content_length: number;
+    transfer_encoding: string[];
+    declared_trailer_keys: string[];
+    state: "receiving" | "complete" | "failed" | "aborted";
+    received_bytes: number;
+    trailers?: DebugCaptureHeaders;
+    reason?: string;
+    capture_truncated: boolean;
+    source_failure?: {
+      kind: "read" | "limit" | "length" | "storage" | "unknown";
+      reason: string;
+    };
+  };
 }
 
 export interface DebugCaptureHTTPResponseSnapshot {

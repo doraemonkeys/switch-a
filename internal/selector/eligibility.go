@@ -76,7 +76,7 @@ func newProviderSelectionEligibility(
 	req *model.SelectRequest,
 	providers []model.Provider,
 ) (*ProviderSelectionEligibility, error) {
-	policies, err := listRoutingPoliciesByAPIType(ctx, policySource, reqAPIType(req))
+	policies, err := selectionRoutingPolicies(ctx, policySource, req)
 	if err != nil {
 		return nil, err
 	}

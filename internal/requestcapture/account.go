@@ -2,6 +2,8 @@ package requestcapture
 
 import (
 	"fmt"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
+	"unsafe"
 
 	"go.uber.org/zap"
 )
@@ -338,6 +340,24 @@ func (allocation *CaptureAllocation) rollbackLocked() bool {
 	allocation.state = allocationStateRolledBack
 	allocation.session = nil
 	return true
+}
+
+func estimateIngressCharge(value *capturevalue.IngressSnapshot) int64 {
+	if value == nil {
+		return 0
+	}
+	total := int64(unsafe.Sizeof(*value)) + int64(len(value.Protocol)+len(value.State)+len(value.Reason))
+	total = addRetainedCharge64(total, estimateIngressFailureCharge(value.SourceFailure))
+	total = addRetainedCharge64(total, estimateStringSliceCharge(value.TransferEncoding))
+	total = addRetainedCharge64(total, estimateStringSliceCharge(value.DeclaredTrailerKeys))
+	return addRetainedCharge64(total, estimateHeaderCharge(value.Trailers))
+}
+
+func estimateIngressFailureCharge(value *capturevalue.IngressFailureSnapshot) int64 {
+	if value == nil {
+		return 0
+	}
+	return int64(unsafe.Sizeof(*value)) + int64(len(value.Kind)+len(value.Reason))
 }
 
 func estimateRecordCharge(request RequestSnapshot, summary RecordSummary, sensitiveHeaderNames []string) int64 {

@@ -19,6 +19,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
+	"github.com/doraemonkeys/switch-a/internal/requestingress"
+	"github.com/doraemonkeys/switch-a/internal/requestingress/clientconnection"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -34,6 +36,8 @@ type TokenUsage = tokenusage.TokenUsage
 
 // Handler handles proxy requests.
 type Handler struct {
+	transportOverride          HTTPTransport
+	startIngress               func(context.Context, *http.Request, requestingress.Options) (*requestingress.Handle, error)
 	store                      Store
 	selector                   Selector
 	httpSelector               httpProviderSelector
@@ -53,7 +57,6 @@ type Handler struct {
 	analyzer                   ResponseAnalyzer
 	ruleStats                  RuleStatistics
 	backoff                    BackoffWaiter
-	requestSemanticDecoder     RequestSemanticDecoder
 	requestLogInsertTimeout    time.Duration
 	codexHTTP                  *codexhttp.Runtime
 }
@@ -77,7 +80,7 @@ type HTTPTransport interface {
 	FetchUpstream(
 		context.Context,
 		*http.Request,
-		upstreamtransport.ExecutionPolicy,
+		upstreamtransport.ExecutionOptions,
 	) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error)
 }
 
@@ -319,7 +322,12 @@ type proxyContext struct {
 	cfg                 *runtimeConfig
 	transport           HTTPTransport
 	apiType             string
-	body                []byte
+	ingress             *requestingress.Handle
+	upload              *ingressUpload
+	operation           *clientconnection.Operation
+	captureIngress      requestcapture.IngressRecorder
+	responseCommitted   atomic.Bool
+	facts               *requestFacts
 	info                RequestInfo
 	selectReq           *model.SelectRequest
 	startTime           time.Time
@@ -394,69 +402,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Buffer request body for potential retries
-	body, err := ConsumeAndReplaceBody(r, cfg.maxBodySizeMB)
-	if err != nil {
-		h.handleBodyError(w, err, cfg.maxBodySizeMB)
-		return
-	}
-	semanticBody := h.decodeSemanticRequestBody(requestID, apiType, r, body, requestBodyLimitBytes(cfg.maxBodySizeMB))
-	codexOperation, err := h.codexHTTP.Begin(ctx, r, apiType, requestID, body, semanticBody)
-	if err != nil {
-		h.handleCodexHTTPBeginError(w, requestID, err)
-		return
-	}
-	defer codexOperation.Discard()
+	h.serveHTTPIngress(w, r, cfg, apiType, requestID, startTime)
 
-	// Build proxy context
-	pctx := &proxyContext{
-		handler:   h,
-		r:         r,
-		w:         w,
-		cfg:       cfg,
-		transport: h.getTransport(cfg),
-		apiType:   apiType,
-		body:      body,
-		info: RequestInfo{
-			ClientIP:    ExtractClientIP(r, cfg.trustProxy),
-			UserID:      ExtractUserID(r, cfg.userHeader),
-			Model:       ExtractModel(r, apiType, semanticBody),
-			APIType:     apiType,
-			Path:        r.URL.Path,
-			Method:      r.Method,
-			UserAgent:   ExtractUserAgent(r),
-			RequestID:   ExtractRequestIDHeader(r),
-			ContentType: ExtractContentType(r),
-			Reasoning:   ExtractRequestedReasoning(apiType, r.URL.Path, semanticBody),
-		},
-		startTime: startTime,
-		requestID: requestID,
-		codex:     codexOperation,
-		liveBytes: &LiveBytesTracker{},
-		attempts:  make([]model.RequestAttempt, 0),
-	}
-	pctx.capture = h.beginGatewayCapture(requestID, startTime)
-	pctx.captureParticipates = pctx.capture.Valid()
-	if pctx.captureParticipates {
-		defer func() {
-			pctx.capture.Finish(gatewayCaptureOutcome(ctx))
-		}()
-	}
-	pctx.selectReq = &model.SelectRequest{
-		OperationID: requestID,
-		ClientIP:    pctx.info.ClientIP,
-		User:        pctx.info.UserID,
-		APIType:     apiType,
-		Model:       pctx.info.Model,
-		StickyMode:  cfg.stickyMode,
-	}
-	if required, preferred := codexOperation.RequiredAuthority(); required != nil {
-		pctx.selectReq.RequiredAuthority = required
-		pctx.selectReq.PreferredRouteTargetID = preferred
-	}
-
-	// Execute proxy with retry logic
-	h.executeProxy(ctx, pctx)
 }
 
 func (h *Handler) beginGatewayCapture(requestID string, startedAt time.Time) requestcapture.GatewayRecorder {
@@ -475,6 +422,17 @@ func gatewayCaptureOutcome(ctx context.Context) requestcapture.GatewayOutcome {
 		return requestcapture.GatewayOutcome{}
 	}
 
+	var sourceFailure *requestIngressFailure
+	if errors.As(context.Cause(ctx), &sourceFailure) {
+		peer := requestcapture.FailurePeerGateway
+		if sourceFailure.kind != requestingress.FailureStorage {
+			peer = requestcapture.FailurePeerClient
+		}
+		return requestcapture.GatewayOutcome{
+			TerminationReason: requestcapture.TerminationReasonReadError,
+			Failure:           capturefailure.Observation(capturefailure.FromError(requestcapture.FailureSiteGateway, peer, requestcapture.FailureClassRead, requestcapture.FailureCodeGatewayIngress, sourceFailure), requestcapture.FailureFact{}),
+		}
+	}
 	peer := requestcapture.FailurePeerGateway
 	class := requestcapture.FailureClassCanceled
 	reason := requestcapture.TerminationReasonCanceled
@@ -505,7 +463,7 @@ func gatewayCaptureOutcome(ctx context.Context) requestcapture.GatewayOutcome {
 
 // handleBodyError handles body read errors.
 func (h *Handler) handleBodyError(w http.ResponseWriter, err error, maxSize int64) {
-	if errors.Is(err, ErrBodyTooLarge) {
+	if errors.Is(err, ErrBodyTooLarge) || errors.Is(err, requestingress.ErrBodyTooLarge) {
 		h.logger.Warn("request body too large", zap.Int64("max_size_mb", maxSize))
 		h.writeGatewayError(w, http.StatusRequestEntityTooLarge, ErrCodeBodyTooLarge, fmt.Sprintf("Request body exceeds %d MB limit", maxSize))
 		return
@@ -617,7 +575,7 @@ func (h *Handler) recordAttempt(
 		// request_attempts table. Administrators should be aware that error diagnostics
 		// include partial request content. The snippet is truncated to maxSnippetBytes to limit
 		// exposure. Consider the security implications when granting access to logs/attempts data.
-		attemptRecord.ReqBodySnippet = GetReqBodySnippet(pctx.body)
+		attemptRecord.ReqBodySnippet = pctx.requestBodySnippet()
 	}
 	pctx.attempts = append(pctx.attempts, attemptRecord)
 }
@@ -655,7 +613,7 @@ func (h *Handler) buildProviderRequest(
 	}
 
 	req, err := BuildUpstreamRequestWithPolicy(
-		ctx, pctx.r.Method, upstreamURL.String(), pctx.body, pctx.r, pctx.codex.RequestPolicy(),
+		ctx, pctx.r.Method, upstreamURL.String(), pctx.upload, pctx.r, pctx.codex.RequestPolicy(),
 	)
 	if err != nil {
 		h.logger.Error("failed to build upstream request", zap.Error(err))

@@ -446,6 +446,8 @@ function formatReasoningObservation(
   state: RequestLog["reasoning_observation_state"],
 ): string {
   switch (state) {
+    case "pending":
+      return "Pending";
     case "captured":
       return "Captured";
     case "absent":

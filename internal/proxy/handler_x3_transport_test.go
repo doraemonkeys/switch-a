@@ -162,7 +162,7 @@ type x3ScriptedTransport struct {
 func (t *x3ScriptedTransport) FetchUpstream(
 	ctx context.Context,
 	request *http.Request,
-	_ upstreamtransport.ExecutionPolicy,
+	_ upstreamtransport.ExecutionOptions,
 ) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, upstreamtransport.RequestDisclosureNone, err

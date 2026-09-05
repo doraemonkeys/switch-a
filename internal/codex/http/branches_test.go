@@ -50,7 +50,7 @@ func TestAttestationPinsLogicalOperationAuthorityOnlyAfterDisclosure(t *testing.
 	clientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	clientRequest.Header.Set("Authorization", "Bearer client")
 	clientRequest.Header.Set("X-Oai-Attestation", "attestation")
-	operation, err := runtime.Begin(context.Background(), clientRequest, codexAPIType, "attestation-operation", nil, nil)
+	operation, err := runtime.Begin(context.Background(), clientRequest, codexAPIType, "attestation-operation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestRuntimeUtilityBranches(t *testing.T) {
 func TestBeginAdditionalFailureBranches(t *testing.T) {
 	scope := testClientScope(t, "begin")
 	runtime := newAlwaysOnTestRuntime(t, Config{ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}})
-	if _, err := runtime.Begin(context.Background(), nil, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorClientInput) {
+	if _, err := runtime.Begin(context.Background(), nil, codexAPIType, "operation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("nil request error = %v", err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/", nil)
@@ -257,7 +257,7 @@ func TestBeginAdditionalFailureBranches(t *testing.T) {
 		ClientScopes: testScopeDigester{err: errors.New("HMAC unavailable")}, Continuity: &continuityRecorder{},
 	})
 	request.Header.Set("Thread-Id", "state-requires-scope")
-	if _, err := digestFailure.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorDependencyUnavailable) {
+	if _, err := digestFailure.Begin(context.Background(), request, codexAPIType, "operation", testClientEvidence(nil, nil)); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("scope digest error = %v", err)
 	}
 	conflictingOwner := newAlwaysOnTestRuntime(t, Config{
@@ -265,14 +265,14 @@ func TestBeginAdditionalFailureBranches(t *testing.T) {
 		Continuity:   &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorConflict}},
 	})
 	request.Header.Set("X-Codex-Turn-State", "turn")
-	if _, err := conflictingOwner.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorClientInput) {
+	if _, err := conflictingOwner.Begin(context.Background(), request, codexAPIType, "operation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("owner conflict error = %v", err)
 	}
 	unavailableOwner := newAlwaysOnTestRuntime(t, Config{
 		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
 		Continuity:   &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}},
 	})
-	if _, err := unavailableOwner.Begin(context.Background(), request, codexAPIType, "operation", nil, nil); !IsKind(err, ErrorDependencyUnavailable) {
+	if _, err := unavailableOwner.Begin(context.Background(), request, codexAPIType, "operation", testClientEvidence(nil, nil)); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("owner unavailable error = %v", err)
 	}
 }
@@ -291,7 +291,7 @@ func beginContinuityOperation(t *testing.T, scope codexidentity.ClientScope, con
 	for name, values := range headers {
 		request.Header[name] = append([]string(nil), values...)
 	}
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "branch-operation", nil, nil)
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "branch-operation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

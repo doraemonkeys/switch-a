@@ -356,6 +356,9 @@ export interface ActiveRequest {
   reasoning_effort?: string | null;
   reasoning_mode?: string | null;
   reasoning_budget_tokens?: number | null;
+  /** HTTP body reader consumption, including retries and redirects. */
+  upstream_body_read_bytes?: number;
+  /** WebSocket payload forwarded upstream. */
   bytes_sent?: number;
   bytes_received?: number;
   msgs_sent?: number;
@@ -510,7 +513,7 @@ export type ServiceOutcome =
   | "unknown";
 
 export type ReasoningObservationState =
-  "captured" | "absent" | "invalid" | "ambiguous" | "unsupported";
+  "pending" | "captured" | "absent" | "invalid" | "ambiguous" | "unsupported";
 
 export type WebSocketProbeOutcome =
   | "unknown"

@@ -1,10 +1,6 @@
 package proxy
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
 	"math"
 	"net"
 	"net/http"
@@ -12,17 +8,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
-	"github.com/doraemonkeys/switch-a/internal/proxy/requestbody"
-
-	"go.uber.org/zap"
 )
 
 // ModelUnknown is returned when the model cannot be extracted from the request.
 const ModelUnknown = "unknown"
-
-type modelRequestEnvelope struct {
-	Model string `json:"model"`
-}
 
 // MaxUserAgentLength is the maximum length of User-Agent to store.
 // Longer values are truncated to prevent database bloat.
@@ -36,11 +25,6 @@ const (
 	maxBoundedBodyBytes         = math.MaxInt64 - 1
 	contentEncodingHeader       = "Content-Encoding"
 )
-
-// RequestSemanticDecoder provides a bounded decoded view without owning wire bytes.
-type RequestSemanticDecoder interface {
-	Decode(wire []byte, contentEncodingValues []string, maxDecodedBytes int64) ([]byte, error)
-}
 
 // RequestInfo contains information extracted from a proxy request.
 type RequestInfo struct {
@@ -146,19 +130,12 @@ func GetReqBodySnippet(body []byte) string {
 	return string(snippet) + "..."
 }
 
-// ExtractModel extracts the model name from the request.
-// For Gemini API, extracts from URL path.
-// For other APIs, extracts from JSON body.
-// The body reader is replaced so it can be read again.
-func ExtractModel(r *http.Request, apiType string, body []byte) string {
-	// Gemini API: extract model from URL path
-	// e.g., /gemini/v1beta/models/gemini-pro:generateContent
+// requestHeadModel resolves model evidence available before body acquisition.
+func requestHeadModel(r *http.Request, apiType string) string {
 	if apiType == APITypeGemini {
 		return extractGeminiModel(r.URL.Path)
 	}
-
-	// For other APIs: extract from JSON body
-	return extractModelFromJSON(body)
+	return ModelUnknown
 }
 
 // extractGeminiModel extracts the model name from a Gemini API URL path.
@@ -187,56 +164,6 @@ func extractGeminiModel(path string) string {
 	return modelPart
 }
 
-// Only the top-level model participates in routing; nested model keys may belong
-// to tool schemas or user-provided input rather than the request contract.
-func extractModelFromJSON(body []byte) string {
-	var envelope modelRequestEnvelope
-	// Requests are already bounded and buffered before extraction. Decoding only the
-	// routing envelope lets encoding/json skip large prompts and tool definitions
-	// without duplicating them, while still finding fields anywhere in the body.
-	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Model == "" {
-		return ModelUnknown
-	}
-	return envelope.Model
-}
-
-// ConsumeAndReplaceBody reads the request body and returns a buffer containing it.
-// Returns an error if the body exceeds maxBodySize (in MB).
-//
-// This function consumes the original body and replaces r.Body with a new
-// io.NopCloser(bytes.Reader) so the body can be read again by subsequent handlers.
-// The original body is closed after reading to release resources.
-func ConsumeAndReplaceBody(r *http.Request, maxBodySizeMB int64) ([]byte, error) {
-	if r.Body == nil {
-		return nil, nil
-	}
-
-	// Close original body when done to release resources.
-	// While Go's HTTP server closes the body after request handling,
-	// explicit closing ensures timely resource release, especially on error paths.
-	originalBody := r.Body
-	defer originalBody.Close()
-
-	maxBytes := requestBodyLimitBytes(maxBodySizeMB)
-
-	// Use LimitReader to prevent reading too much
-	limitedReader := io.LimitReader(originalBody, maxBytes+1)
-	body, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if body exceeded limit
-	if int64(len(body)) > maxBytes {
-		return nil, ErrBodyTooLarge
-	}
-
-	// Replace the body so it can be read again
-	r.Body = io.NopCloser(bytes.NewReader(body))
-
-	return body, nil
-}
-
 func requestBodyLimitBytes(maxBodySizeMB int64) int64 {
 	if maxBodySizeMB <= 0 {
 		return 0
@@ -245,49 +172,4 @@ func requestBodyLimitBytes(maxBodySizeMB int64) int64 {
 		return maxBoundedBodyBytes
 	}
 	return maxBodySizeMB * bytesPerMiB
-}
-
-func (h *Handler) decodeSemanticRequestBody(
-	requestID string,
-	apiType string,
-	request *http.Request,
-	wireBody []byte,
-	maxDecodedBytes int64,
-) []byte {
-	contentEncodings := request.Header.Values(contentEncodingHeader)
-	semanticBody, err := h.requestSemanticDecoder.Decode(wireBody, contentEncodings, maxDecodedBytes)
-	if err == nil {
-		return semanticBody
-	}
-
-	failure := semanticDecodeFailure(err)
-	// Semantic inspection is observational: a decoder failure must not alter
-	// the raw request that an upstream may still understand.
-	h.logger.Warn("request body semantic decoding failed",
-		zap.String("request_id", requestID),
-		zap.String("operation_id", requestID),
-		zap.String("api_type", apiType),
-		zap.String("path", request.URL.Path),
-		zap.String("content_encoding", normalizedHTTPContentCodings(contentEncodings)),
-		zap.Int("content_encoding_value_count", len(contentEncodings)),
-		zap.String("decode_failure", string(failure)),
-	)
-	return nil
-}
-
-func semanticDecodeFailure(err error) requestbody.Failure {
-	var decodeErr *requestbody.DecodeError
-	if !errors.As(err, &decodeErr) {
-		return requestbody.FailureInternal
-	}
-	switch decodeErr.Failure {
-	case requestbody.FailureInvalidLimit,
-		requestbody.FailureInvalidEncoding,
-		requestbody.FailureUnsupportedEncoding,
-		requestbody.FailureContentDecoding,
-		requestbody.FailureDecodedBodyTooLarge:
-		return decodeErr.Failure
-	default:
-		return requestbody.FailureInternal
-	}
 }

@@ -22,7 +22,7 @@ func TestContinuityCrossesHTTPAndWebSocketWithinOneSecurityScope(t *testing.T) {
 		"Thread-Id": {"thread-cross-protocol"},
 	})
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), httpRequest, testAPIType, operationID("http", 1), nil, nil,
+		context.Background(), httpRequest, testAPIType, operationID("http", 1), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestContinuityCrossesHTTPAndWebSocketWithinOneSecurityScope(t *testing.T) {
 		"X-Codex-Turn-State": {"turn-from-ws"},
 	})
 	returnOperation, err := fixture.http.Begin(
-		context.Background(), returnRequest, testAPIType, operationID("http", 2), nil, nil,
+		context.Background(), returnRequest, testAPIType, operationID("http", 2), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 
 	seedRequest := fixtureRequest(http.MethodPost, clientAPIKey, http.Header{"Thread-Id": {threadID}})
 	seedOperation, err := fixture.http.Begin(
-		context.Background(), seedRequest, testAPIType, operationID("seed-visible-error", 1), nil, nil,
+		context.Background(), seedRequest, testAPIType, operationID("seed-visible-error", 1), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 		"X-Client-Request-Id": {clientRequestID},
 	})
 	errorOperation, err := fixture.http.Begin(
-		context.Background(), errorRequest, testAPIType, operationID("visible-error", 1), nil, nil,
+		context.Background(), errorRequest, testAPIType, operationID("visible-error", 1), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 		"X-Client-Request-Id": {clientRequestID},
 	})
 	retryOperation, err := fixture.http.Begin(
-		context.Background(), retryRequest, testAPIType, operationID("visible-error", 2), nil, nil,
+		context.Background(), retryRequest, testAPIType, operationID("visible-error", 2), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 	_, err = fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "different-client-key", http.Header{
 			"X-Codex-Turn-State": {turnState},
-		}), testAPIType, operationID("visible-error", 3), nil, nil,
+		}), testAPIType, operationID("visible-error", 3), testHTTPClientEvidence(nil, nil),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 }
@@ -289,7 +289,7 @@ func TestWebSocketResponseReferenceContinuesThroughHTTPPreviousResponse(t *testi
 	previous := []byte(`{"type":"response.create","previous_response_id":"response-cross-protocol"}`)
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-previous", 1), previous, previous,
+		testAPIType, operationID("http-previous", 1), testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -311,7 +311,7 @@ func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) 
 
 	httpRequest := fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"http-sse-scope"}})
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), httpRequest, testAPIType, operationID("http-sse", 1), nil, nil,
+		context.Background(), httpRequest, testAPIType, operationID("http-sse", 1), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +346,7 @@ func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) 
 	previous := []byte(`{"type":"response.create","previous_response_id":"response-from-http-sse"}`)
 	returnHTTP, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-sse", 2), previous, previous,
+		testAPIType, operationID("http-sse", 2), testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -395,7 +395,7 @@ func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
 	seed := fixtureRequest(http.MethodPost, "client-alpha", http.Header{
 		"Thread-Id": {"identity-isolation"},
 	})
-	seedOperation, err := fixture.http.Begin(context.Background(), seed, testAPIType, operationID("http", 3), nil, nil)
+	seedOperation, err := fixture.http.Begin(context.Background(), seed, testAPIType, operationID("http", 3), testHTTPClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +492,7 @@ func TestConcurrentCrossProtocolClaimsAreAtomic(t *testing.T) {
 		identity := []byte(`{"type":"response.create","client_metadata":{"session_id":"concurrent-shared"}}`)
 		httpOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-			testAPIType, operationID("http-concurrent", 1), identity, identity,
+			testAPIType, operationID("http-concurrent", 1), testHTTPClientEvidence(identity, identity),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -560,7 +560,7 @@ func TestConcurrentCrossProtocolClaimsAreAtomic(t *testing.T) {
 		identity := []byte(`{"type":"response.create","client_metadata":{"session_id":"concurrent-conflict"}}`)
 		httpOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-			testAPIType, operationID("http-concurrent", 2), identity, identity,
+			testAPIType, operationID("http-concurrent", 2), testHTTPClientEvidence(identity, identity),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -631,7 +631,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		operation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"uncertain-http-scope"}}),
-			testAPIType, operationID("http", 5), nil, nil,
+			testAPIType, operationID("http", 5), testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -676,7 +676,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		seedOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"capacity-one"}}),
-			testAPIType, operationID("http-capacity", 1), nil, nil,
+			testAPIType, operationID("http-capacity", 1), testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -710,7 +710,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		seedOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"store-http-scope"}}),
-			testAPIType, operationID("http-store", 1), nil, nil,
+			testAPIType, operationID("http-store", 1), testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -741,7 +741,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		stateHeaders := http.Header{"X-Codex-Turn-State": {"store-failure-state"}}
 		_, err = fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", stateHeaders),
-			testAPIType, operationID("http-store", 2), nil, nil,
+			testAPIType, operationID("http-store", 2), testHTTPClientEvidence(nil, nil),
 		)
 		requireHTTPError(t, err, codexhttp.ErrorDependencyUnavailable)
 		_, err = fixture.ws.Begin(
@@ -757,7 +757,7 @@ func TestResponseReferenceAndConnectionControlsHonorTheirNativeBoundaries(t *tes
 	previous := []byte(`{"type":"response.create","previous_response_id":"unknown-response"}`)
 	_, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-evidence", 1), previous, previous,
+		testAPIType, operationID("http-evidence", 1), testHTTPClientEvidence(previous, previous),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 

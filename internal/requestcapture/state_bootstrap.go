@@ -232,7 +232,10 @@ func (g *gatewayState) beginRecordLocked(
 			g.sharedRequest, g.sharedRequestComplete = newImmutableBlobLocked(session, raw.Body)
 		}
 	}
-	if int64(len(raw.Body)) != g.sharedRequestExpected || !g.sharedRequestComplete {
+	if g.ingress != nil && protocol == ProtocolHTTP {
+		record.request.Ingress = g.ingress
+	}
+	if (g.ingress == nil && int64(len(raw.Body)) != g.sharedRequestExpected) || !g.sharedRequestComplete || (g.ingress != nil && g.ingress.CaptureTruncated) {
 		record.markOverflowLocked()
 	}
 	if g.sharedRequest != nil && retainBlobLocked(g.sharedRequest) {
@@ -398,6 +401,7 @@ func (g *gatewayState) finishLocked(outcome GatewayOutcome) {
 	if g.sharedRequest != nil {
 		sharedRequest := g.sharedRequest
 		g.sharedRequest = nil
+		g.ingressBuilder = blobBuilder{}
 		releaseBlobLocked(sharedRequest)
 	}
 	if !g.selectedProvider || g.liveRecords == 0 {
@@ -616,14 +620,4 @@ func (r *recordState) markOverflowLocked() {
 func (r *recordState) syncCountersLocked() {
 	r.summary.UpstreamObservedBytes = r.observedBytes
 	r.summary.ApplicationWriteConfirmedBytes = r.writtenBytes
-}
-
-func (s *sessionState) enforceProviderRetentionLocked(providerID string) {
-	for {
-		index := s.providerRecords[providerID]
-		if index == nil || index.count <= s.recordsPerProvider || index.first == nil {
-			return
-		}
-		s.evictRecordLocked(index.first)
-	}
 }

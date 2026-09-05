@@ -21,7 +21,7 @@ func TestBuildRequestCookiePoliciesPreserveRequestIdentity(t *testing.T) {
 	original.Header.Add("Cookie", "second=b")
 
 	preserved, err := BuildRequestWithPolicy(
-		context.Background(), http.MethodPost, "https://provider.test/v1/responses", []byte("wire"), original,
+		context.Background(), http.MethodPost, "https://provider.test/v1/responses", testBodySource([]byte("wire")), original,
 		RequestPolicy{Cookies: PreserveClientCookies},
 	)
 	if err != nil {
@@ -100,13 +100,13 @@ func TestFetchFollowRedirectsPreservesNetHTTPMethodAndBodySemantics(t *testing.T
 			t.Cleanup(server.Close)
 
 			original := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/messages", strings.NewReader("wire"))
-			request, err := BuildRequest(context.Background(), http.MethodPost, server.URL+"/start", []byte("wire"), original)
+			request, err := BuildRequest(context.Background(), http.MethodPost, server.URL+"/start", testBodySource([]byte("wire")), original)
 			if err != nil {
 				t.Fatal(err)
 			}
 			transport := New(Config{})
 			t.Cleanup(transport.CloseIdleConnections)
-			response, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: FollowRedirects})
+			response, _, err := transport.Fetch(context.Background(), request, ExecutionOptions{Redirects: FollowRedirects})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,13 +148,13 @@ func TestFetchExposeRedirectsReturnsRawAttemptBoundary(t *testing.T) {
 			t.Cleanup(source.Close)
 
 			original := httptest.NewRequest(http.MethodPost, "http://gateway.test/responses", strings.NewReader("wire"))
-			request, err := BuildRequest(context.Background(), http.MethodPost, source.URL+"/start", []byte("wire"), original)
+			request, err := BuildRequest(context.Background(), http.MethodPost, source.URL+"/start", testBodySource([]byte("wire")), original)
 			if err != nil {
 				t.Fatal(err)
 			}
 			transport := New(Config{})
 			t.Cleanup(transport.CloseIdleConnections)
-			response, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: ExposeRedirects})
+			response, _, err := transport.Fetch(context.Background(), request, ExecutionOptions{Redirects: ExposeRedirects})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -189,7 +189,7 @@ func TestFetchFollowRedirectsReturnsLimitAndPolicyErrors(t *testing.T) {
 	}
 	transport := New(Config{})
 	t.Cleanup(transport.CloseIdleConnections)
-	if _, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{}); err == nil {
+	if _, _, err := transport.Fetch(context.Background(), request, ExecutionOptions{}); err == nil {
 		t.Fatal("redirect limit did not return an error")
 	} else {
 		var urlError *url.Error
@@ -206,7 +206,7 @@ func TestFetchFollowRedirectsReturnsLimitAndPolicyErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := requests.Load()
-	if _, _, err := transport.Fetch(context.Background(), request, ExecutionPolicy{Redirects: RedirectPolicy(99)}); err == nil {
+	if _, _, err := transport.Fetch(context.Background(), request, ExecutionOptions{Redirects: RedirectPolicy(99)}); err == nil {
 		t.Fatal("invalid redirect policy accepted")
 	}
 	if got := requests.Load(); got != before {

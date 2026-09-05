@@ -313,8 +313,8 @@ func TestPreVisibleClientMessageBufferRejectsUnsafeReplayState(t *testing.T) {
 		t.Fatalf("non-replayable record = index %d enabled %v, want disabled", got, invalidType.Enabled())
 	}
 
-	messageLimited := newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitMessages + 1)
-	for index := range preVisibleClientReplayBufferLimitMessages {
+	messageLimited := newPreVisibleClientMessageBuffer(128 + 2*128*webSocketReplayDescriptorBytes)
+	for index := range 128 {
 		if got := messageLimited.Record(websocket.MessageText, []byte{'x'}, false); got != index {
 			t.Fatalf("record %d index = %d", index, got)
 		}
@@ -328,7 +328,7 @@ func TestPreVisibleClientMessageBufferRejectsUnsafeReplayState(t *testing.T) {
 		t.Fatalf("byte-limit record = index %d enabled %v, want disabled", got, byteLimited.Enabled())
 	}
 
-	delivered := newPreVisibleClientMessageBuffer(16)
+	delivered := newPreVisibleClientMessageBuffer(16 + 2*webSocketReplayDescriptorBytes)
 	index := delivered.Record(websocket.MessageText, []byte("safe"), false)
 	delivered.MarkDelivered(index+1, requestcapture.MessageLineage{})
 	if delivered.Snapshot().Messages[index].Delivered {

@@ -23,6 +23,15 @@ export function ReasoningBadge({
   const compactLabel = getCompactLabel(effort, mode, budgetTokens);
 
   switch (observationState) {
+    case "pending":
+      return (
+        <span
+          className={`${BADGE_CLASS} ${NEUTRAL_BADGE_CLASS}`}
+          title="Requested reasoning observation is waiting for the complete input."
+        >
+          Pending
+        </span>
+      );
     case "captured":
       return (
         <span

@@ -21,7 +21,7 @@ func TestAlwaysOnPolicyAndClientRequestIDStayOperationScoped(t *testing.T) {
 	})
 
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), original, testAPIType, operationID("http-always-on", 1), nil, nil,
+		context.Background(), original, testAPIType, operationID("http-always-on", 1), testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestStructuredTraceAndSQLiteStaySecretFreeAcrossProtocols(t *testing.T) {
 		"X-Client-Request-Id": {"trace-logical-request"},
 	})
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), httpRequest, testAPIType, httpID, nil, nil,
+		context.Background(), httpRequest, testAPIType, httpID, testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestAlwaysOnRuntimesTreatFutureContentAsOpaqueWithoutReleaseConfiguration(t
 	wire := append([]byte(nil), opaque...)
 	if _, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "always-on-opaque-client", nil),
-		testAPIType, operationID("release-opaque-http", 1), opaque, opaque,
+		testAPIType, operationID("release-opaque-http", 1), testHTTPClientEvidence(opaque, opaque),
 	); err != nil {
 		t.Fatal(err)
 	}

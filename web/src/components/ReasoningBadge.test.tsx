@@ -3,6 +3,13 @@ import { describe, expect, it } from "vitest";
 import { ReasoningBadge } from "./ReasoningBadge";
 
 describe("ReasoningBadge", () => {
+  it("shows pending observations while input is still arriving", () => {
+    render(<ReasoningBadge observationState="pending" />);
+    expect(screen.getByText("Pending")).toHaveAttribute(
+      "title",
+      "Requested reasoning observation is waiting for the complete input.",
+    );
+  });
   it("prefers effort and keeps every captured value in the exact title", () => {
     render(
       <ReasoningBadge
