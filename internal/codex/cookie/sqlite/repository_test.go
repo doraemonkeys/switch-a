@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +36,38 @@ func openTestDatabase(t *testing.T, path string) *gorm.DB {
 	sqlDB.SetMaxIdleConns(16)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return db
+}
+
+func openSingleWriterTestDatabase(t *testing.T, path string) *gorm.DB {
+	t.Helper()
+	db := openTestDatabase(t, path)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Concurrent callers queue in database/sql in production. Making every
+	// caller a SQLite writer instead tests busy-timeout admission under load.
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func databaseFailure(err error) string {
+	var persistence *providercookie.PersistenceError
+	if !errors.As(err, &persistence) {
+		return fmt.Sprintf("%v", err)
+	}
+	// Native details belong in test diagnostics; the public error intentionally
+	// omits database messages that may include stored values.
+	detail := fmt.Sprintf("%v; cause=%T: %v", err, persistence.Cause, persistence.Cause)
+	var coded interface{ Code() int }
+	if errors.As(persistence.Cause, &coded) {
+		detail += fmt.Sprintf("; database_code=%d", coded.Code())
+	}
+	return detail
 }
 
 func testKeyring(t *testing.T, currentAEAD string) *codexkeyring.Keyring {
@@ -381,7 +412,7 @@ func TestPersistenceSurvivesRepositoryRestart(t *testing.T) {
 
 func TestCreateBindingKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
 	ctx := context.Background()
-	db := openTestDatabase(t, filepath.Join(t.TempDir(), "concurrent-bind.db"))
+	db := openSingleWriterTestDatabase(t, filepath.Join(t.TempDir(), "concurrent-bind.db"))
 	keyring := testKeyring(t, "a1")
 	repository := migrateAndOpen(t, db, keyring, 5*time.Second)
 	now := time.Date(2026, 8, 27, 5, 45, 0, 0, time.UTC)
@@ -410,7 +441,7 @@ func TestCreateBindingKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
 
 	for index, err := range errorsFound {
 		if err != nil {
-			t.Fatalf("worker %d: %v", index, err)
+			t.Fatalf("worker %d: %s", index, databaseFailure(err))
 		}
 	}
 	var count int64
@@ -477,7 +508,7 @@ func TestMergeRollsBackOnCryptoFailure(t *testing.T) {
 }
 
 func TestConcurrentPerKeyMergesPreserveDifferentKeysAndSerializeSameKey(t *testing.T) {
-	db := openTestDatabase(t, filepath.Join(t.TempDir(), "concurrent.db"))
+	db := openSingleWriterTestDatabase(t, filepath.Join(t.TempDir(), "concurrent.db"))
 	keyring := testKeyring(t, "a1")
 	repository := migrateAndOpen(t, db, keyring, 5*time.Second)
 	now := time.Date(2026, 8, 27, 7, 0, 0, 0, time.UTC)
@@ -491,6 +522,10 @@ func TestConcurrentPerKeyMergesPreserveDifferentKeysAndSerializeSameKey(t *testi
 	const workers = 24
 	start := make(chan struct{})
 	errorsFound := make(chan error, workers)
+	expectedValues := make(map[string]string, workers)
+	for index := range workers {
+		expectedValues[fmt.Sprintf("key-%02d", index)] = fmt.Sprintf("value-%02d", index)
+	}
 	var group sync.WaitGroup
 	for index := range workers {
 		group.Add(1)
@@ -507,12 +542,17 @@ func TestConcurrentPerKeyMergesPreserveDifferentKeysAndSerializeSameKey(t *testi
 	close(errorsFound)
 	for err := range errorsFound {
 		if err != nil {
-			t.Fatal(err)
+			t.Fatal(databaseFailure(err))
 		}
 	}
 	snapshot, err := repository.Load(context.Background(), scope, now)
 	if err != nil || len(snapshot.Cookies()) != workers {
 		t.Fatalf("different-key count = %d, %v", len(snapshot.Cookies()), err)
+	}
+	for _, cookie := range snapshot.Cookies() {
+		if expected, exists := expectedValues[cookie.Key().Name()]; !exists || cookie.Value() != expected {
+			t.Fatalf("different-key value = %s: %q", cookie.Key().Name(), cookie.Value())
+		}
 	}
 
 	start = make(chan struct{})
@@ -532,20 +572,26 @@ func TestConcurrentPerKeyMergesPreserveDifferentKeysAndSerializeSameKey(t *testi
 	close(errorsFound)
 	for err := range errorsFound {
 		if err != nil {
-			t.Fatal(err)
+			t.Fatal(databaseFailure(err))
 		}
 	}
 	snapshot, err = repository.Load(context.Background(), scope, now)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(snapshot.Cookies()) != workers+1 {
+		t.Fatalf("same-key merge count = %d, %s", len(snapshot.Cookies()), databaseFailure(err))
 	}
 	shared := 0
 	for _, cookie := range snapshot.Cookies() {
 		if cookie.Key().Name() == "shared" {
 			shared++
-			if !strings.HasPrefix(cookie.Value(), "winner-") {
+			winner := false
+			for index := range workers {
+				winner = winner || cookie.Value() == fmt.Sprintf("winner-%02d", index)
+			}
+			if !winner {
 				t.Fatalf("shared value = %q", cookie.Value())
 			}
+		} else if expected, exists := expectedValues[cookie.Key().Name()]; !exists || cookie.Value() != expected {
+			t.Fatalf("preserved value = %s: %q", cookie.Key().Name(), cookie.Value())
 		}
 	}
 	if shared != 1 {
@@ -830,9 +876,8 @@ func TestBusyDatabaseFailsClosedAndTombstoneDeletesPerKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.ExecContext(context.Background(), "ROLLBACK")
-	if _, err := repository.Merge(context.Background(), scope, []providercookie.Mutation{providercookie.Upsert(cookie)}, now, policy); !errors.Is(err, providercookie.ErrStorage) {
-		t.Fatalf("busy error = %v", err)
-	}
+	_, err = repository.Merge(context.Background(), scope, []providercookie.Mutation{providercookie.Upsert(cookie)}, now, policy)
+	assertBusyAdmission(t, err)
 }
 
 func TestStandaloneSchemaAPIsRejectMissingPartialAndFutureSchemas(t *testing.T) {
