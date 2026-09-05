@@ -112,7 +112,22 @@ func buildWebSocketEvidence(
 	fallback error,
 	isSyntheticFinal bool,
 	injectedCredential string,
-) *string {
+) (encoded *string) {
+	defer func() {
+		if result != nil && result.ClientDisguise != nil {
+			if merged, err := attemptevidence.EncodeClientDisguiseString(encoded, result.ClientDisguise); err == nil {
+				encoded = merged
+			} else {
+				// Retain the gateway diagnostic even if sibling evidence exhausted
+				// the envelope budget. The attempt owner logs this serialization loss.
+				fallback := *result.ClientDisguise
+				fallback.Truncated = true
+				if minimal, minimalErr := attemptevidence.EncodeClientDisguiseString(nil, &fallback); minimalErr == nil {
+					encoded = minimal
+				}
+			}
+		}
+	}()
 	evidence := webSocketEvidence{SchemaVersion: webSocketEvidenceSchemaVersion}
 	if result != nil && result.ReplayStatus.State != "" {
 		status := result.ReplayStatus

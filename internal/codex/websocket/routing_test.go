@@ -27,7 +27,7 @@ func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testin
 	t.Run("cookie-only", func(t *testing.T) {
 		repository := &testCookieRepository{}
 		runtime := newTestRuntime(t, Config{
-			ClientScopes: testClientDigester{}, ProviderCookies: newTestCookieService(t, repository),
+			ClientIdentities: testClientDigester{}, ProviderCookies: newTestCookieService(t, repository),
 			ExternalScheme: testSchemeResolver("https"),
 		})
 		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-owner-free", "")

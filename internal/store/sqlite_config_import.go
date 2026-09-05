@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	codexkeyring "github.com/doraemonkeys/switch-a/internal/codex/keyring"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -33,6 +34,9 @@ const (
 // ConfigImportBundle captures the normalized, fully validated import payload
 // that the store can apply atomically without re-running admin-level staging.
 type ConfigImportBundle struct {
+	restoredSticky       *[]model.StickyEntry
+	preview              bool
+	CodexState           *CodexState
 	Groups               []model.Group
 	CredentialSessions   []credentialsession.Session
 	Providers            []model.Provider
@@ -44,6 +48,30 @@ type ConfigImportBundle struct {
 }
 
 func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error {
+	if bundle != nil && bundle.CodexState != nil {
+		if s.codexKeyring == nil {
+			return fmt.Errorf("codex state import requires initialized keyring")
+		}
+		restoredSticky := []model.StickyEntry{}
+		importingBundle := *bundle
+		importingBundle.restoredSticky = &restoredSticky
+		err := s.codexKeyring.WithHMACImport(bundle.CodexState.HMAC, func(view *codexkeyring.Keyring) error {
+			if err := validateCodexTransferKeys(bundle.CodexState, view); err != nil {
+				return err
+			}
+			importing := *s
+			importing.credentialSigning = &credentialSubjectSigningState{signer: view}
+			return importing.applyConfigImport(ctx, &importingBundle)
+		})
+		if err == nil && s.codexStickyRestorer != nil {
+			s.codexStickyRestorer(restoredSticky)
+		}
+		return err
+	}
+	return s.applyConfigImport(ctx, bundle)
+}
+
+func (s *SQLiteStore) applyConfigImport(ctx context.Context, bundle *ConfigImportBundle) error {
 	if bundle == nil {
 		return nil
 	}
@@ -59,6 +87,7 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 	for i := range bundle.Providers {
 		sessionIDs = append(sessionIDs, bundle.Providers[i].CredentialSessionIDs()...)
 	}
+	sessionIDs = append(sessionIDs, codexImportSessionIDs(bundle.CodexState)...)
 	ownedCtx, release, err := s.WithCredentialSessionMutations(ctx, sessionIDs)
 	if err != nil {
 		return fmt.Errorf("apply config import: %w", err)
@@ -82,6 +111,9 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 		if err != nil {
 			return err
 		}
+		if err := importCodexState(ownedCtx, tx, bundle.CodexState); err != nil {
+			return err
+		}
 		if err := applyImportedGroups(ownedCtx, txStore, bundle.Groups); err != nil {
 			return err
 		}
@@ -100,7 +132,7 @@ func (s *SQLiteStore) ApplyConfigImport(ctx context.Context, bundle *ConfigImpor
 		if err := applyImportedProviders(ownedCtx, txStore, bundle.Providers); err != nil {
 			return err
 		}
-		return applyImportedSettings(ownedCtx, txStore, bundle.Settings)
+		return finishImportedConfig(ownedCtx, txStore, bundle)
 	}
 
 	if ruleImport.Mode == errorrulesqlite.ImportModePreserve {
@@ -378,4 +410,34 @@ func deleteRoutingPolicyRecord(tx *gorm.DB, id uint) error {
 		return err
 	}
 	return tx.Delete(&model.RoutingPolicy{}, "id = ?", id).Error
+}
+
+func finishImportedConfig(ctx context.Context, txStore *SQLiteStore, bundle *ConfigImportBundle) error {
+	if err := importCodexSticky(ctx, txStore, bundle.CodexState); err != nil {
+		return err
+	}
+	if err := validateCodexStateReferences(ctx, txStore.db, bundle.CodexState); err != nil {
+		return err
+	}
+	if err := applyImportedSettings(ctx, txStore, bundle.Settings); err != nil {
+		return err
+	}
+	if err := snapshotCommittedSticky(ctx, txStore, bundle); err != nil {
+		return err
+	}
+	if bundle.preview {
+		return errConfigImportPreview
+	}
+	return nil
+}
+
+func codexImportSessionIDs(state *CodexState) []string {
+	if state == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(state.Disguise.Logins))
+	for _, login := range state.Disguise.Logins {
+		ids = append(ids, login.CredentialSessionID)
+	}
+	return ids
 }

@@ -111,7 +111,7 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 	repository := newCookieTestRepository()
 	runtime := newCookieTestRuntime(t, repository)
 	clientScope := testClientScope(t, "client-a")
-	runtime.clientScopes = testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}
+	runtime.clientIdentities = testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}
 	candidate, applied := testCandidate(t, "route-a", "provider.test", "subject-a")
 
 	clientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
@@ -200,7 +200,7 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 	explicitOperation.Discard()
 
 	otherScope := testClientScope(t, "client-b")
-	runtime.clientScopes = testScopeDigester{current: otherScope, candidates: []codexidentity.ClientScope{otherScope}}
+	runtime.clientIdentities = testScopeDigester{current: otherScope, candidates: []codexidentity.ClientScope{otherScope}}
 	isolatedRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	isolatedRequest.Header.Set("Authorization", "Bearer client-b")
 	isolatedRequest.AddCookie(&http.Cookie{Name: providercookie.GatewayHandleName, Value: handle})
@@ -222,7 +222,7 @@ func TestCookieAuthoritySwitchDiscardsOverlayAndMergeFailureFailsGate(t *testing
 	repository := newCookieTestRepository()
 	runtime := newCookieTestRuntime(t, repository)
 	clientScope := testClientScope(t, "client")
-	runtime.clientScopes = testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}
+	runtime.clientIdentities = testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}
 	firstCandidate, firstApplied := testCandidate(t, "route-a", "provider-a.test", "subject-a")
 	secondCandidate, secondApplied := testCandidate(t, "route-b", "provider-b.test", "subject-b")
 	clientRequest := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)

@@ -72,7 +72,7 @@ func buildNonWebSocketAttemptEvidence(facts nonWebSocketRuntimeFacts) *string {
 // future non-SSE protocol needs its own observation, add a sibling adapter
 // instead of extending this one (YAGNI and orthogonality beat over-fitting).
 func deriveNonWebSocketTransportDiagnostic(facts nonWebSocketRuntimeFacts) *transportDiagnostic {
-	if !facts.IsSSE {
+	if !facts.IsSSE || errors.Is(facts.TerminalErr, errClientDisguiseFailed) {
 		return nil
 	}
 	return deriveTransportDiagnostic(transportObservation{
@@ -133,6 +133,7 @@ func (h *Handler) attachHTTPAttemptEvidence(
 		return
 	}
 	attempt := &pctx.attempts[len(pctx.attempts)-1]
+	defer func() { attempt.AttemptEvidenceJSON = h.mergeDisguiseEvidence(pctx, attempt.AttemptEvidenceJSON) }()
 	applyHTTPAttemptAxes(attempt, result)
 
 	transportEvidence := buildNonWebSocketAttemptEvidence(facts)
@@ -186,7 +187,7 @@ func applyHTTPAttemptAxes(attempt *model.RequestAttempt, result forwardResult) {
 
 func classifyHTTPAttemptOutcome(result forwardResult) model.RequestAttemptOutcome {
 	switch {
-	case result.failureKind == attemptFailurePreparation:
+	case result.failureKind == attemptFailurePreparation || result.failureKind == attemptFailureDisguise:
 		return model.RequestAttemptOutcomeGatewayError
 	case result.failureKind == attemptFailureTransport ||
 		result.failureKind == attemptFailureUpstreamNoResponse ||

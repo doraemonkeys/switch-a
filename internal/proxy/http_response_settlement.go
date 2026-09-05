@@ -41,6 +41,20 @@ type pendingHTTPResponse struct {
 	closeUpload        func() error
 }
 
+func responseAnalysisMode(statusCode int, plan errorrule.DetectionPlan) (responseanalysis.AnalysisMode, error) {
+	if statusCode < defaults.StatusSuccessMin || statusCode >= defaults.StatusSuccessMax {
+		return responseanalysis.HoldMode(), nil
+	}
+	switch plan {
+	case errorrule.DetectionProbe:
+		return responseanalysis.ProbeAndGateMode(), nil
+	case errorrule.DetectionObserveOnly:
+		return responseanalysis.ObserveMode(responseanalysis.BoundaryPassthroughOnly)
+	default:
+		return responseanalysis.ObserveMode(responseanalysis.BoundaryNoRetryCandidate)
+	}
+}
+
 type boundedSnippet struct {
 	bytes []byte
 }
@@ -211,7 +225,7 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 		value := p.writer.firstWriteTime.Sub(p.pctx.startTime).Milliseconds()
 		result.firstTokenMs = &value
 	}
-	if p.media.IsEventStream() && p.writer.sseGate != nil {
+	if p.writer.sseGate != nil || p.writer.responseStream != nil {
 		// The response coordinator commits its forwarding decision before the SSE
 		// gate may expose a complete event. Retry and fallback policy must follow
 		// the physical client boundary, not that earlier logical transition.
@@ -269,6 +283,16 @@ func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.C
 		result.failureKind = attemptFailureWrite
 		result.failureMessage = p.writer.writeErr.Error()
 		result.isClientWriteError = true
+	}
+	if failure, failed := p.pctx.handler.disguiseFailure(p.pctx, p.writer.writeErr); failed {
+		result.failureKind = failure.failureKind
+		result.failureMessage = failure.failureMessage
+		result.success = false
+		result.isClientWriteError = false
+		result.headersWritten = p.writer.committed
+		result.responseCommitted = p.writer.committed
+		result.responseBytes = p.writer.bytesWritten
+		result.firstByteVisible = p.writer.written
 	}
 	return result
 }

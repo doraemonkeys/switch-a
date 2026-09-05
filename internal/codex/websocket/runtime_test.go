@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientcredential"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
@@ -363,7 +364,7 @@ func TestCookieOverlayIsSelectedOnRedialAndCommittedAtVisibility(t *testing.T) {
 	cookieRepository := &testCookieRepository{}
 	cookieService := newTestCookieService(t, cookieRepository)
 	runtime := newTestRuntime(t, Config{
-		ClientScopes: testClientDigester{}, Continuity: newTestContinuity(t),
+		ClientIdentities: testClientDigester{}, Continuity: newTestContinuity(t),
 		ProviderCookies: cookieService,
 		ExternalScheme:  testSchemeResolver("https"),
 	})
@@ -533,7 +534,7 @@ func TestResponseActivationRequiresCurrentGeneration(t *testing.T) {
 func TestCookieFailureAndDiscardPaths(t *testing.T) {
 	repository := &testCookieRepository{}
 	service := newTestCookieService(t, repository)
-	base := Config{ClientScopes: testClientDigester{}, Continuity: newTestContinuity(t), ExternalScheme: testSchemeResolver("https")}
+	base := Config{ClientIdentities: testClientDigester{}, Continuity: newTestContinuity(t), ExternalScheme: testSchemeResolver("https")}
 	if _, err := New(base); err == nil {
 		t.Fatal("missing cookie dependency was accepted")
 	}
@@ -703,6 +704,15 @@ func TestProtocolAndZeroValueEdges(t *testing.T) {
 
 type testClientDigester struct{}
 
+func (d testClientDigester) Resolve(_ context.Context, raw []byte) (clientidentity.Resolution, error) {
+	primary, err := d.ClientScope(raw)
+	if err != nil {
+		return clientidentity.Resolution{}, err
+	}
+	aliases, err := d.ClientScopeCandidates(raw)
+	return clientidentity.Resolution{ID: string(raw), Primary: primary, Aliases: aliases}, err
+}
+
 func (testClientDigester) ClientScope(raw []byte) (codexidentity.ClientScope, error) {
 	sum := sha256.Sum256(raw)
 	return codexidentity.ClientScopeFromDigest("h1", sum)
@@ -768,8 +778,8 @@ func testRuntime(t *testing.T, continuity Continuity) *Runtime {
 
 func newTestRuntime(t *testing.T, config Config) *Runtime {
 	t.Helper()
-	if config.ClientScopes == nil {
-		config.ClientScopes = testClientDigester{}
+	if config.ClientIdentities == nil {
+		config.ClientIdentities = testClientDigester{}
 	}
 	if config.Continuity == nil {
 		config.Continuity = newTestContinuity(t)
@@ -1044,7 +1054,7 @@ func TestContinuityKindCatalogAndGatewayCookieStripping(t *testing.T) {
 	if discovery, err := initialClientEvidence(nil); err != nil || len(discovery.Decisions()) != 0 {
 		t.Fatalf("empty discovery = %#v, %v", discovery, err)
 	}
-	if err := (*Runtime)(nil).bindClientScope(&Operation{}, nil, false); Classify(err) != FailureStorage {
+	if err := (*Runtime)(nil).bindClientScope(context.Background(), &Operation{}, nil, false); Classify(err) != FailureStorage {
 		t.Fatalf("missing digester error = %v", err)
 	}
 

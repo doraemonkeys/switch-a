@@ -423,6 +423,9 @@ func classifyWebSocketProviderFailure(provider *model.Provider, result *WebSocke
 }
 
 func assessWebSocketHealth(provider *model.Provider, result *WebSocketResult) webSocketHealthAssessment {
+	if result != nil && disguiseFailure(result.Err) != nil {
+		return webSocketHealthAssessment{}
+	}
 	assessment := newWebSocketAssessment(provider, webSocketGatewayEvidenceInput{}, result, resultError(result), false, false, "")
 	if assessment.providerFailure.autoDisableUntil != nil {
 		return webSocketHealthAssessment{

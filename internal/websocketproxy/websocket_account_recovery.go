@@ -71,7 +71,7 @@ func (o *WebSocketSessionOrchestrator) accountRecoveryBeforeClose(ctx context.Co
 		return nil
 	}
 	return func(relay *webSocketRelaySessionResult) *webSocketClientClose {
-		if relay == nil || !relay.ClientVisible || provider == nil {
+		if relay == nil || !relay.ClientVisible || provider == nil || disguiseFailure(relay.Err) != nil {
 			return nil
 		}
 		result := relay.toWebSocketResult()

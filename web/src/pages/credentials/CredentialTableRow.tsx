@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type { CredentialSession } from "../../api";
 import { CopyButton } from "../../components";
+import { CredentialDisguiseSummary } from "@/features/client-disguise/CredentialDisguiseSummary";
 
 interface CredentialTableRowProps {
   session: CredentialSession;
@@ -57,6 +58,7 @@ export function CredentialTableRow({
             )}
           </div>
           <div className="min-w-0">
+            <CredentialDisguiseSummary session={session} />
             <div className="flex items-center gap-2">
               <span className="font-semibold text-text-primary">
                 {session.name}

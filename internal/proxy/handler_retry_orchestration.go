@@ -2,9 +2,12 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"maps"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
+	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -267,6 +270,9 @@ func (h *Handler) commitLegacyFailure(
 	if err != nil {
 		return committed, false
 	}
+	if committed.failureKind == attemptFailureDisguise {
+		return committed, false
+	}
 	committed.failureKind = result.failureKind
 	committed.failureMessage = result.failureMessage
 	committed.isStatusFailover = result.isStatusFailover
@@ -294,48 +300,85 @@ func (h *Handler) activateAlternate(
 	preview := state.switchTracker.previewProviderSwitch()
 	excluded := cloneProviderExclusions(state.excludedProviders)
 	excluded[state.currentProvider.ID] = true
-	reservation, err := h.reserveAlternateProvider(ctx, preview.request(), excluded)
-	if err != nil {
-		result.clientTermination = classifyClientTermination(ctx)
-		if result.clientTermination.observed() {
-			result.failureKind = attemptFailureClientTerminated
+	// Candidate exclusions do not consume an attempt: no request bytes or
+	// provider-health observations exist until the frozen target is committed.
+	for {
+		reservation, err := h.reserveAlternateProvider(ctx, preview.request(), excluded)
+		if err != nil {
+			result.clientTermination = classifyClientTermination(ctx)
+			if result.clientTermination.observed() {
+				result.failureKind = attemptFailureClientTerminated
+			}
+			return false, result, false
 		}
-		return false, result, false
-	}
-	releaseReservation := true
-	defer func() {
-		if releaseReservation {
-			reservation.Release()
+		releaseReservation := true
+		defer func() {
+			if releaseReservation {
+				reservation.Release()
+			}
+		}()
+		if err := reservation.PrepareActivation(ctx); err != nil {
+			result.clientTermination = classifyClientTermination(ctx)
+			if result.clientTermination.observed() {
+				result.failureKind = attemptFailureClientTerminated
+			} else {
+				result.failureKind = attemptFailureInternal
+				result.failureMessage = err.Error()
+			}
+			return false, result, false
 		}
-	}()
-	if err := reservation.PrepareActivation(ctx); err != nil {
-		result.clientTermination = classifyClientTermination(ctx)
-		if result.clientTermination.observed() {
-			result.failureKind = attemptFailureClientTerminated
-		} else {
+		alternate := reservation.Provider()
+		if alternate == nil {
 			result.failureKind = attemptFailureInternal
-			result.failureMessage = err.Error()
+			result.failureMessage = "alternate reservation returned no provider"
+			return false, result, false
 		}
-		return false, result, false
+		if pctx.disguise != nil {
+			if _, err := pctx.disguise.operation.Commit(ctx, alternate); err != nil {
+				reservation.Release()
+				if errors.Is(err, clientdisguise.ErrCandidateExcluded) {
+					excluded[alternate.ID] = true
+					continue
+				}
+				terminal, _ := h.disguiseFailure(pctx, httpDisguiseInvariantFailure(pctx, "target_commit", err))
+				resolved, _ := discardPendingForAlternateActivation(ctx, pending, result, discardCause, captureReason)
+				resolved.failureKind = terminal.failureKind
+				resolved.failureMessage = terminal.failureMessage
+				resolved.success = false
+				return true, resolved, false
+			}
+		}
+		dispatch := preparedAlternateDispatch{reservation: reservation, provider: alternate, preview: preview, switchReason: switchReason, discardCause: discardCause, captureReason: captureReason}
+		switched, resolved, continueExecution := h.activatePreparedAlternate(ctx, pctx, state, pending, result, dispatch)
+		if continueExecution {
+			releaseReservation = false
+		}
+		return switched, resolved, continueExecution
 	}
-	alternate := reservation.Provider()
-	if alternate == nil {
-		result.failureKind = attemptFailureInternal
-		result.failureMessage = "alternate reservation returned no provider"
-		return false, result, false
-	}
-	selectionMode := preview.recordSelection(alternate, reservation.Metadata())
-	nextLedger, err := state.ledger.StartAttempt(
-		errorrule.ProviderID(alternate.ID), globalAttemptLimit(pctx.cfg.globalMaxAttempts),
-	)
+}
+
+// A prepared dispatch has a committed target but still owns its reservation.
+// Ledger and continuity transfer happen together only after response discard.
+type preparedAlternateDispatch struct {
+	reservation   alternateProviderReservation
+	provider      *model.Provider
+	preview       providerSwitchPreview
+	switchReason  string
+	discardCause  responseanalysis.TransitionCause
+	captureReason requestcapture.TerminationReason
+}
+
+func (h *Handler) activatePreparedAlternate(ctx context.Context, pctx *proxyContext, state *retryState, pending *pendingHTTPResponse, result forwardResult, dispatch preparedAlternateDispatch) (bool, forwardResult, bool) {
+	reservation := dispatch.reservation
+	preview := dispatch.preview
+	selectionMode := preview.recordSelection(dispatch.provider, reservation.Metadata())
+	nextLedger, err := state.ledger.StartAttempt(errorrule.ProviderID(dispatch.provider.ID), globalAttemptLimit(pctx.cfg.globalMaxAttempts))
 	if err != nil {
 		result.failureKind = attemptFailureInternal
 		result.failureMessage = err.Error()
 		return false, result, false
 	}
-	result, discardFailed := discardPendingForAlternateActivation(
-		ctx, pending, result, discardCause, captureReason,
-	)
+	result, discardFailed := discardPendingForAlternateActivation(ctx, pending, result, dispatch.discardCause, dispatch.captureReason)
 	if discardFailed {
 		return false, result, false
 	}
@@ -350,7 +393,6 @@ func (h *Handler) activateAlternate(
 		result.failureMessage = "alternate reservation activation failed"
 		return false, result, false
 	}
-	releaseReservation = false
 	oldLease := state.currentLease
 	oldProviderID := state.currentProvider.ID
 	state.excludedProviders[oldProviderID] = true
@@ -365,15 +407,13 @@ func (h *Handler) activateAlternate(
 	} else if oldLease != nil {
 		oldLease.Release()
 	}
-	// The copy-on-write value was validated before discard but is adopted only at
-	// the dispatch boundary after both capability and continuity transfers.
 	state.ledger = nextLedger
 	h.logger.Debug("proxy.provider_switch", zap.String("operation_id", pctx.requestID),
 		zap.String("conversation_recovery_policy", string(pctx.cfg.ConversationRecoveryPolicy)),
 		zap.String("source_provider_id", oldProviderID), zap.String("target_provider_id", state.currentProvider.ID),
-		zap.String("switch_reason", switchReason), zap.String("switch_mode", string(selectionMode)),
+		zap.String("switch_reason", dispatch.switchReason), zap.String("switch_mode", string(selectionMode)),
 		zap.Int("attempt", int(nextLedger.LogicalAttemptsStarted())), zap.Bool("client_visible", result.responseCommitted))
-	result.switchReason = switchReason
+	result.switchReason = dispatch.switchReason
 	result.done = false
 	return true, result, true
 }

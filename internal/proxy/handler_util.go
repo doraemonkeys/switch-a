@@ -92,6 +92,12 @@ func (h *Handler) handleNoProvider(pctx *proxyContext, selectionErr error) {
 		return
 	}
 	h.logger.Warn("no providers available", zap.String("api_type", pctx.apiType))
+	if evidence := pctx.disguiseEvidence(); evidence != nil && len(evidence.Candidates) > 0 {
+		pctx.w.Header().Set("X-Switch-A-Diagnostic-Id", evidence.DiagnosticID)
+		h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("Client platform excludes available providers: %v (diagnostic %s)", evidence.Candidates, evidence.DiagnosticID))
+		go h.logRequest(pctx, logRequestInputs{Facts: nonWebSocketRuntimeFacts{ClientTransportStatusCode: http.StatusServiceUnavailable, TerminalErr: selectionErr}, Latency: time.Since(pctx.startTime)})
+		return
+	}
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
 	go h.logRequest(pctx, logRequestInputs{
 		Facts: nonWebSocketRuntimeFacts{
@@ -124,6 +130,23 @@ func (h *Handler) handleExhaustedRetries(pctx *proxyContext, lastErr error) int 
 	h.logger.Warn("exhausted retries with no provider errors", zap.String("api_type", pctx.apiType))
 	h.writeGatewayError(pctx.w, http.StatusServiceUnavailable, ErrCodeProviderUnavailable, fmt.Sprintf("No available provider for api_type: %s", pctx.apiType))
 	return http.StatusServiceUnavailable
+}
+
+func (h *Handler) writeUncommittedFailure(pctx *proxyContext, lastErr error) int {
+	if pctx.disguise != nil && pctx.disguise.failure != nil {
+		pctx.w.Header().Set("X-Switch-A-Diagnostic-Id", pctx.disguise.failure.DiagnosticID)
+		h.writeGatewayError(pctx.w, http.StatusInternalServerError, "client_disguise_failed", pctx.disguise.failure.Error())
+		return http.StatusInternalServerError
+	}
+	sourceErr := pctx.ingressFailure()
+	if sourceErr == nil {
+		return h.handleExhaustedRetries(pctx, lastErr)
+	}
+	h.handleBodyError(pctx.w, sourceErr, pctx.cfg.maxBodySizeMB)
+	if errors.Is(sourceErr, requestingress.ErrBodyTooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusInternalServerError
 }
 
 // suspendProviderUntil marks a provider unavailable until the given time.
@@ -266,6 +289,11 @@ type logRequestInputs struct {
 // completes and the request context may already be cancelled.
 func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 	assessment := assessNonWebSocketRequest(inputs.Facts)
+	assessment.SessionEvidenceJSON = h.mergeDisguiseEvidence(pctx, assessment.SessionEvidenceJSON)
+	if pctx.disguise != nil && pctx.disguise.failure != nil {
+		assessment.TerminationActor = ptr(model.TerminationActorGateway)
+		assessment.TerminationReason = ptr(model.TerminationReasonInternalError)
+	}
 
 	log := &model.RequestLog{
 		RequestID:                 pctx.requestID,
@@ -388,6 +416,12 @@ func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAsses
 }
 
 func deriveNonWebSocketServiceOutcome(facts nonWebSocketRuntimeFacts) model.ServiceOutcome {
+	if errors.Is(facts.TerminalErr, errClientDisguiseFailed) {
+		if facts.ServiceStarted {
+			return model.ServiceOutcomeInterrupted
+		}
+		return model.ServiceOutcomeNeverStarted
+	}
 	var ingressFailure *requestIngressFailure
 	if errors.As(facts.TerminalErr, &ingressFailure) && facts.ServiceStarted {
 		return model.ServiceOutcomeInterrupted
@@ -423,6 +457,9 @@ func deriveNonWebSocketTermination(
 	facts nonWebSocketRuntimeFacts,
 	serviceOutcome model.ServiceOutcome,
 ) (*model.TerminationActor, *model.TerminationReason) {
+	if errors.Is(facts.TerminalErr, errClientDisguiseFailed) {
+		return ptr(model.TerminationActorGateway), ptr(model.TerminationReasonInternalError)
+	}
 	var ingressFailure *requestIngressFailure
 	if errors.As(facts.TerminalErr, &ingressFailure) {
 		if ingressFailure.kind == requestingress.FailureRead {

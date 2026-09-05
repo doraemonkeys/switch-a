@@ -254,10 +254,11 @@ func (b *preVisibleClientMessageBuffer) closeLocked(state webSocketReplayState) 
 	}
 }
 func replayableClientFrameDecision() webSocketPreWriteDecision {
-	return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward, ReplayEligible: true, ReplacementEligible: true, PrepareReplay: replayableClientFrameDecision}
+	return webSocketPreWriteDecision{Action: webSocketPreWriteActionForward, ReplayEligible: true, ReplacementEligible: true, PrepareReplay: func([]byte) webSocketPreWriteDecision { return replayableClientFrameDecision() }}
 }
 func (d webSocketPreWriteDecision) forReplayStorage() webSocketPreWriteDecision {
 	d.OnWriteConfirmed = nil
+	d.PreparedPayload = nil
 	return d
 }
 func isReplayableWebSocketMessageType(messageType websocket.MessageType) bool {

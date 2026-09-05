@@ -1,12 +1,14 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rand"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
@@ -20,6 +22,22 @@ type proxyCodexFixture struct {
 	webSocketRuntime *codexws.Runtime
 	providerCookies  *providercookie.Service
 	externalScheme   codexhttp.ExternalSchemeResolver
+}
+
+type proxyClientIdentityResolver struct {
+	digester interface {
+		ClientScope([]byte) (codexidentity.ClientScope, error)
+		ClientScopeCandidates([]byte) ([]codexidentity.ClientScope, error)
+	}
+}
+
+func (r proxyClientIdentityResolver) Resolve(_ context.Context, key []byte) (clientidentity.Resolution, error) {
+	scope, err := r.digester.ClientScope(key)
+	if err != nil {
+		return clientidentity.Resolution{}, err
+	}
+	aliases, err := r.digester.ClientScopeCandidates(key)
+	return clientidentity.Resolution{ID: scope.KeyVersion() + string(key), Primary: scope, Aliases: aliases}, err
 }
 
 const proxyCodexTestAuthorization = "Bearer proxy-test-client"
@@ -73,13 +91,13 @@ func newProxyCodexFixture(t *testing.T) proxyCodexFixture {
 	}
 	scheme := codexhttp.NewTrustedProxySchemeResolver(nil)
 	httpRuntime, err := codexhttp.New(codexhttp.Config{
-		ClientScopes: &digesterValue, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+		ClientIdentities: proxyClientIdentityResolver{&digesterValue}, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	webSocketRuntime, err := codexws.New(codexws.Config{
-		ClientScopes: &digesterValue, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+		ClientIdentities: proxyClientIdentityResolver{&digesterValue}, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)

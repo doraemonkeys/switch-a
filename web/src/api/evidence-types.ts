@@ -214,6 +214,8 @@ export interface RequestEvidenceV1 extends RequestEvidenceSections<RequestEviden
 }
 
 export interface RequestEvidenceV2 extends RequestEvidenceSections<RequestEvidenceTransportV2> {
+  readonly client_disguise?:
+    import("./client-disguise/evidence").DisguiseEvidence | null;
   readonly v: 2;
   readonly semantic_error?: SemanticErrorEvidence | null;
 }

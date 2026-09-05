@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/admin/clientdisguiseapi"
 	"github.com/doraemonkeys/switch-a/internal/admin/tokenusageapi"
 	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 	"github.com/doraemonkeys/switch-a/internal/buildinfo"
@@ -179,6 +180,7 @@ func composeApplicationRuntime(
 	}
 	healthManager := health.NewManager(health.Config{Store: st, Clock: clock, Logger: log})
 	stickyCache := selector.NewPersistentStickyCache(sqlStore, clock, log)
+	sqlStore.SetCodexStickyRestorer(stickyCache.MergeRestoredEntries)
 	limiter := selector.NewConcurrencyLimiter()
 	// Exact generation ownership prevents provider recreation from releasing a
 	// different generation's in-flight capacity.
@@ -210,6 +212,7 @@ func composeApplicationRuntime(
 		RuleSetProvider:            errorRuntime.ruleRepository,
 		ResponseAnalyzer:           errorRuntime.responseAnalyzer,
 		RuleStatistics:             errorRuntime.ruleStatistics,
+		ClientDisguise:             sqlStore.ClientDisguiseRepository(),
 		CodexHTTP:                  codexRuntime.HTTP,
 		CodexWebSocket:             codexRuntime.WebSocket,
 	})
@@ -228,6 +231,7 @@ func composeApplicationRuntime(
 		Auth:                authService,
 		ProviderImportStore: st,
 		InternalErrorRules:  errorRuntime.adminHandler,
+		ClientDisguise:      clientdisguiseapi.NewHandler(clientdisguiseapi.Config{Repository: sqlStore.ClientDisguiseRepository(), Catalog: st, Clients: codexRuntime.identities, Logger: log}),
 		CaptureSessions:     captureManager,
 		CaptureQueries:      captureManager,
 		CaptureExports:      captureManager,

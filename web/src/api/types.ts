@@ -144,6 +144,7 @@ export interface ProviderCredentialSession {
 }
 
 export interface CredentialSession extends ProviderCredentialSession {
+  client_disguise?: { device_id: string; revision_id: string; mode: string };
   name: string;
   /** Present for operator-managed API-key sessions; ChatGPT tokens use the dedicated export flow. */
   secret_data?: string;
@@ -172,6 +173,7 @@ export interface ReauthenticateCredentialSessionInput {
 }
 
 export interface Provider {
+  client_disguise?: import("./client-disguise/types").ClientDisguisePolicy;
   id: string;
   name: string;
   api_types: ProviderAPIType[];
@@ -206,6 +208,7 @@ export interface APITypeInput {
 }
 
 export interface ProviderInput {
+  client_disguise?: import("./client-disguise/types").ClientDisguisePolicy;
   id?: string;
   name: string;
   api_types: APITypeInput[];

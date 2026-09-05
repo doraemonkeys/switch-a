@@ -18,6 +18,9 @@ func (s *Selector) noProviderError(
 	scope *ProviderSelectionEligibility,
 	excludeIDs map[string]bool,
 ) error {
+	if err := disguiseSelectionFailure(scope); err != nil {
+		return err
+	}
 	if scope == nil || len(excludeIDs) > 0 || !s.hasContinuityRoutingConflict(ctx, scope) {
 		return internal.ErrNoProvider
 	}

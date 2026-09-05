@@ -34,6 +34,7 @@ import {
   resolveProviderCredentialKind,
 } from "../../lib/providerAuth";
 import { generateClientKey } from "./types";
+import { DEFAULT_DISGUISE_POLICY } from "../../api/client-disguise/types";
 import type { ProviderAPITypeDraft, ProviderFormData } from "./types";
 
 const CREDENTIAL_SESSION_NAME_MAX_LENGTH = 120;
@@ -123,6 +124,7 @@ function createDefaultFormData(): ProviderFormData {
     failover_scope: FAILOVER_SCOPES.ANY,
     accept_failover: FAILOVER_SCOPES.ANY,
     enabled: true,
+    client_disguise: { ...DEFAULT_DISGUISE_POLICY },
   };
 }
 
@@ -158,6 +160,9 @@ function deriveFormData(initialData?: Provider): ProviderFormData {
     failover_scope: initialData.failover_scope || FAILOVER_SCOPES.ANY,
     accept_failover: initialData.accept_failover || FAILOVER_SCOPES.ANY,
     enabled: initialData.enabled,
+    client_disguise: initialData.client_disguise ?? {
+      ...DEFAULT_DISGUISE_POLICY,
+    },
   };
 }
 
@@ -337,6 +342,7 @@ function providerInputFromForm(
     failover_scope: formData.failover_scope,
     accept_failover: formData.accept_failover,
     enabled: formData.enabled,
+    client_disguise: formData.client_disguise,
   };
 }
 

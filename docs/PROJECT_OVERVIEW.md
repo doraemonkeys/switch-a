@@ -16,7 +16,8 @@ An **AI API Gateway** that proxies HTTP and WebSocket traffic to multiple AI pro
 - **Pre-Commit Probing & Error Rules**: Semantic error matching on HTTP/SSE streams before flushing to client, triggering automatic failover.
 - **Concurrency & Continuity**: Lease-based concurrency limiting (with generation tags), configurable sticky affinity, and explicit provider/state continuity.
 - **Observability & Diagnostics**: Token usage analytics, structured attempt evidence, real-time live monitoring, and in-memory debug traffic capture.
-- **Admin UI**: Embedded management dashboard for credentials, providers, routing, error detection, logs, and config.
+- **Codex Client Profiles**: Provider-scoped client disguise with persistent login devices, downstream Key bindings, platform filtering, versioned reference profiles, and field-level diagnostics.
+- **Admin UI**: Embedded management dashboard for credentials, providers, client profiles, routing, error detection, logs, and portable configuration backups.
 
 ## Tech Stack
 
@@ -65,11 +66,15 @@ An **AI API Gateway** that proxies HTTP and WebSocket traffic to multiple AI pro
 
 > **Maintenance**: Update this section alongside code changes to these concepts, defaults, or lifecycle boundaries.
 
-- **Sticky** (`internal/selector/`): Soft Provider preference within routing, health, and concurrency constraints. `sticky_mode`: `off` / `api_type` / `model` (default); `sticky_ttl`: 300 seconds by default. Codex keys include client credential scope, not Thread-ID.
+- **Sticky** (`internal/selector/`): Soft Provider preference within routing, health, and concurrency constraints. `sticky_mode`: `off` / `api_type` / `model` (default); `sticky_ttl`: 300 seconds by default. Codex keys include the persistent client's canonical scope; explicit replacement-Key binding retains that scope.
 - **Provider continuity** (`internal/model/switch.go`, `internal/model/continuity_seed.go`): Tracks client-visible origin and failover isolation. Request-local context is separate from one-shot, 5-second cross-request recovery seeds.
 - **Codex state ownership** (`internal/codex/continuity/`): Binds conversation/state evidence to client and upstream protocol scope; Provider ID is only a route hint. Ownership is independent of Sticky.
 - **Conversation recovery** (`internal/model/conversation_recovery_policy.go`, `internal/codex/http/`, `internal/codex/websocket/`): `conversation_recovery_policy` defaults to `preserve_conversation` (honor verified owner). `switch_account_preserve_conversation` permits eligible account switching while preserving original client state and its source ownership. Pre-visible attempts may be replaced; visible WebSocket failures requiring recovery use client reconnect. Routing and failover constraints still apply.
 - **Provider / CredentialSession / Authority** (`internal/codex/credentialsession/`, `internal/codex/identity/`): Provider defines a route target, CredentialSession owns credentials and authentication lifecycle, and Authority identifies the upstream ownership boundary. Switching Providers need not change accounts.
+- **Downstream client identity** (`internal/codex/clientidentity/`): Resolves entry API Keys to a persistent client and legacy scope aliases shared by disguise mappings, continuity and sticky routing. Explicit Key binding preserves identity; conflicting established ownership is rejected.
+- **Login device & client profile** (`internal/codex/clientdisguise/`): Each credential session has an independent device/generation; shared Providers reuse it. Same-account refresh/reauthentication preserves it, account changes archive it. Tuple-specific immutable revisions follow a designated reference's version/capture watermark or a pinned revision; unspecified sampled fields remain unchanged. Transport samples apply only supported, explicitly recorded settings.
+- **Disguise operation** (`internal/codex/disguiseruntime/`, `internal/codex/clientdisguise/wire/`): Provider policy/profile snapshots freeze per HTTP request or downstream WS connection. Selection evaluates original platform facts; only the final send target commits a binding. Conversion derives each transmission from original input and restores known response fields. Conversion faults terminate the operation with diagnostics and no upstream health penalty or retry bypass.
+- **Portable Codex restore** (`internal/store/*codex_transfer*`, `internal/codex/keyring/`): Config `codex_state` merges devices/history, profiles/reference tracks, mappings, client aliases, continuity, HMAC material and sticky bindings atomically. Selected imports follow referenced state; settings-only preserves it. ChatGPT restores as pending reauthentication; same-account verification reuses its device. Conflicts roll back and caches publish only committed state.
 - **Disclosure / ClientVisible** (`internal/upstreamtransport/`, `internal/codex/websocket/boundaries.go`): Possible upstream request disclosure and client-visible output are separate lifecycle boundaries governing recovery. An ordinary WebSocket `101` does not establish business visibility.
 - **Attempts & retries** (`internal/errorrule/ledger.go`, `internal/model/switch.go`, `internal/upstreamtransport/`): Logical attempts, same-provider retries, cross-provider switches, and transport transmissions have distinct accounting; network send counts do not directly equal retry-budget consumption.
 - **Usage-limit policy & health** (`internal/model/provider_usage_limit_policy.go`, `internal/errorrule/health.go`): Provider-scoped `usage_limit_policy` defaults to `switch_provider`; `suspend` opts into temporary suspension. Routing-away decisions and health verdicts are separate.
@@ -86,6 +91,9 @@ switch-a/
 │   ├── attemptevidence/       # Structured attempt diagnostic evidence
 │   ├── buildinfo/             # Version and build metadata
 │   ├── codex/                 # Codex state, headers policy, credentials, ws protocol
+│   │   ├── clientidentity/    # Persistent downstream clients and Key aliases
+│   │   ├── clientdisguise/    # Login devices, profiles, learning and wire conversion
+│   │   ├── disguiseruntime/   # Frozen operation proposals and final-target commits
 │   │   └── credentialsession/ # Credential session store & lifecycle
 │   ├── config/                # YAML/env config loading
 │   ├── defaults/              # Global default constants
@@ -131,6 +139,9 @@ Located primarily in `internal/model/` and `internal/codex/credentialsession/`:
 |---|---|---|
 | `Provider` | `internal/model/` | AI provider definition (bound credentials, concurrency, failover scopes, weight/priority) |
 | `Session` | `internal/codex/credentialsession/` | Decoupled credential session (API Key or ChatGPT OAuth, token state, usage quotas) |
+| `Client` / `Resolution` | `internal/codex/clientidentity/` | Persistent downstream identity, canonical scope and lookup aliases |
+| `LoginIdentity` / `ProfileBinding` | `internal/codex/clientdisguise/` | Credential-owned device generation and selected tuple/revision/mode |
+| `ProfileRevision` / `ProfileTrack` | `internal/codex/clientdisguise/` | Immutable feature observation and monotonic reference learning head |
 | `Group` | `internal/model/` | Provider grouping with strategy (priority, weight, random) |
 | `RoutingPolicy` | `internal/model/` | Model and vendor-based routing rules mapped to target providers or groups |
 | `HealthState` | `internal/model/` | Circuit breaker state (available, fail count, disabled_until) |
@@ -165,6 +176,8 @@ Defined in `internal/interfaces.go` (Note: following Go best practice, `Selector
 6. **Classify HTTP/SSE before commit** → `internal/responseanalysis/`, `internal/errorrule/`; eligible refresh/replacement retains healthy input and waits for the old reader to close. Source failure has separate attribution from provider failure.
 7. **Finish response & release ownership** → `internal/proxy/`, `internal/store/`; stop unused upload after replay closes, retain disconnect cancellation, persist evidence, release leases and clean the spool after all readers/references finish.
 
+For enabled Codex profiles, original input remains the source for routing, ownership, error analysis and replay; physical HTTP/WS output uses the frozen target's mappings and observed features. Disguise failures carry a diagnostic ID and original/derived field evidence.
+
 HTTP monitoring reports `upstream_body_read_bytes`: body bytes consumed across transmissions, including rereads, without implying delivery or disclosure. Ingress received bytes, final trailers and later replay-storage failure remain separate capture facts; `bytes_sent` retains WebSocket payload semantics.
 
 ### 2. WebSocket Request Flow
@@ -188,6 +201,7 @@ Mounted under `/admin/` (React Router `basename="/admin"`):
 | Monitor | `/monitor` (`/admin/monitor`) | Real-time request streams, latency, and active connections |
 | Providers | `/providers` (`/admin/providers`) | Provider management, health status, import/export, endpoint mappings |
 | Credentials | `/credentials` (`/admin/credentials`) | Credential sessions (ChatGPT OAuth & API Key), token state, quota windows |
+| Client Disguise | `/client-disguise` (`/admin/client-disguise`) | Login devices, profile versions/reference sources, pinned/automatic mode, transport samples and replacement-Key bindings |
 | Groups | `/groups` (`/admin/groups`) | Provider grouping and failover strategy config |
 | Routing | `/routing` (`/admin/routing`) | Model- and vendor-based intelligent routing policies |
 | Error Detection | `/error-detection` (`/admin/error-detection`) | Upstream semantic error matching rules and retry behavior |

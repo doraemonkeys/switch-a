@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	codexheaders "github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
@@ -56,6 +58,27 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	defer func() { pctx.capture.Finish(gatewayCaptureOutcome(ctx)) }()
 	pctx.selectReq = &model.SelectRequest{OperationID: requestID, ClientIP: pctx.info.ClientIP, User: pctx.info.UserID,
 		APIType: apiType, Model: pctx.info.Model, StickyMode: cfg.stickyMode}
+	var clientIdentity clientidentity.Resolution
+	if apiType == APITypeCodex {
+		var err error
+		clientIdentity, err = h.codexHTTP.ResolveClientIdentity(ctx, r.Header)
+		if err != nil {
+			h.handleCodexHTTPBeginError(w, requestID, err)
+			return
+		}
+		if observer, ok := h.clientDisguise.(interface {
+			ObserveClient(context.Context, string, http.Header, time.Time) error
+		}); ok {
+			if err := observer.ObserveClient(ctx, clientIdentity.ID, r.Header, startTime); err != nil {
+				h.handleCodexHTTPBeginError(w, requestID, err)
+				return
+			}
+		}
+	}
+	if err := h.beginHTTPDisguise(ctx, pctx); err != nil {
+		h.handleCodexHTTPBeginError(w, requestID, err)
+		return
+	}
 	needsModel, err := selector.PrepareAdmission(ctx, h.store, pctx.selectReq)
 	if err != nil {
 		h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to prepare request admission")
@@ -96,7 +119,7 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	defer ingress.Close()
 	pctx.upload = &ingressUpload{ingress: ingress, tracker: pctx.liveBytes}
 	pctx.facts = h.projectRequest(ctx, pctx)
-	needsCodexEvidence := h.codexHTTP.RequiresClientEvidence(apiType, ingress.Head().HasBody)
+	needsCodexEvidence := h.codexHTTP.RequiresClientEvidence(apiType, ingress.Head().HasBody, r.URL.EscapedPath())
 	if needsModel || needsCodexEvidence {
 		select {
 		case <-pctx.facts.done:
@@ -114,7 +137,7 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	if needsCodexEvidence {
 		evidence = pctx.facts.snapshot().Codex.Value
 	}
-	codexOperation, err := h.codexHTTP.Begin(ctx, r, apiType, requestID, pctx.cfg.ConversationRecoveryPolicy, evidence)
+	codexOperation, err := h.codexHTTP.BeginResolved(ctx, r, apiType, requestID, pctx.cfg.ConversationRecoveryPolicy, evidence, clientIdentity)
 	if err != nil {
 		h.handleCodexHTTPBeginError(w, requestID, err)
 		return
@@ -123,6 +146,12 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	defer codexOperation.Discard()
 	pctx.selectReq.Model = pctx.info.Model
 	pctx.selectReq.ClientScope = codexOperation.ClientScope()
+	if apiType == APITypeCodex {
+		switch strings.ToLower(cfg.userHeader) {
+		case "authorization", "x-api-key", "api-key":
+			pctx.selectReq.User = codexOperation.ClientIdentity().ID
+		}
+	}
 	h.syncCodexSelectionConstraints(pctx)
 	h.logger.Debug("request_ingress.admission-ready", zap.String("operation_id", requestID),
 		zap.Bool("model_required", needsModel), zap.String("model", pctx.info.Model),

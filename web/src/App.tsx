@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { Layout } from "@/components/Layout";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Config } from "@/pages/Config";
+import { ClientDisguisePage } from "@/features/client-disguise/ClientDisguisePage";
 import { Dashboard } from "@/pages/Dashboard";
 import { ErrorDetection } from "@/pages/ErrorDetection";
 import { Groups } from "@/pages/Groups";
@@ -39,6 +40,7 @@ export function AppRoutes() {
         <Route path="monitor" element={<Monitor />} />
         <Route path="providers" element={<Providers />} />
         <Route path="credentials" element={<CredentialSessions />} />
+        <Route path="client-disguise" element={<ClientDisguisePage />} />
         <Route path="groups" element={<Groups />} />
         <Route path="routing" element={<RoutingPolicies />} />
         <Route path="error-detection" element={<ErrorDetection />} />

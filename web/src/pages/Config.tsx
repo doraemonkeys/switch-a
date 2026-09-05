@@ -82,6 +82,11 @@ export function Config() {
             Configuration
           </h2>
           <p className="text-text-secondary mt-1">运行时配置管理</p>
+          <p className="mt-2 max-w-2xl text-sm text-text-muted">
+            备份包含配置、客户端伪装登录身份与档案、Key
+            绑定、映射、粘性路由绑定及对话归属。导入新环境后 ChatGPT
+            登录需重新认证；同账号重新认证复用恢复的设备身份。仅设置导入不更改身份状态。
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {error && (

@@ -108,6 +108,28 @@ func NewPersistentStickyCache(
 	return cache
 }
 
+// MergeRestoredEntries publishes a committed import without replacing live
+// affinity or resurrecting entries whose local deletion is still queued.
+func (c *PersistentStickyCache) MergeRestoredEntries(entries []model.StickyEntry) {
+	if c == nil || c.MemoryStickyCache == nil {
+		return
+	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	for _, entry := range entries {
+		if _, deleted := c.pending.deletes[entry.Key]; deleted {
+			continue
+		}
+		if _, evicted := c.pending.providerEvictions[entry.ProviderID]; evicted {
+			continue
+		}
+		if _, exists := c.Get(entry.Key); exists {
+			continue
+		}
+		c.restoreEntry(entry)
+	}
+}
+
 // Set updates memory first and queues a coalesced durable upsert.
 func (c *PersistentStickyCache) Set(key model.StickyKey, providerID string, ttl time.Duration) {
 	if c == nil || c.MemoryStickyCache == nil {

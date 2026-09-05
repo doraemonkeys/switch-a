@@ -6,9 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"context"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -26,6 +29,7 @@ const (
 
 // ExportedConfig represents the full exported configuration.
 type ExportedConfig struct {
+	CodexState         *store.CodexState           `json:"codex_state,omitempty"`
 	Version            string                      `json:"version"`
 	ExportedAt         time.Time                   `json:"exported_at"`
 	Providers          []ExportedProvider          `json:"providers"`
@@ -39,6 +43,7 @@ type ExportedConfig struct {
 // ExportedProvider represents a provider in the export format.
 // This is a flattened version without health state or timestamps.
 type ExportedProvider struct {
+	ClientDisguise   clientdisguise.Policy          `json:"client_disguise"`
 	ID               string                         `json:"id"`
 	Name             string                         `json:"name"`
 	APITypes         []ExportedAPIType              `json:"api_types"`
@@ -196,6 +201,16 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 		Settings: normalizeSupportedSettings(settings),
 	}
 
+	if source, ok := h.store.(interface {
+		ExportCodexState(context.Context) (*store.CodexState, error)
+	}); ok {
+		export.CodexState, err = source.ExportCodexState(ctx)
+		if err != nil {
+			h.logger.Error("failed to export Codex state", zap.Error(err))
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to export Codex state")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, export)
 }
 
@@ -252,6 +267,7 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 		APITypes:         apiTypes,
 		AuthMode:         canonical.AuthMode,
 		UsageLimitPolicy: canonical.UsageLimitPolicy,
+		ClientDisguise:   canonical.ClientDisguise,
 		GroupID:          groupID,
 		Weight:           canonical.Weight,
 		Priority:         canonical.Priority,

@@ -31,8 +31,14 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	attempt int,
 	selectionMode providerSwitchMode,
 	selectionMetadata selector.SelectionMetadata,
-) WebSocketAttemptResult {
+) (result WebSocketAttemptResult) {
+	defer func() { o.finishDisguiseAttempt(&result) }()
 	attemptStart := time.Now()
+	if o.disguise != nil {
+		if err := o.disguise.Select(provider); err != nil {
+			return o.newCodexBoundaryAttempt(provider, DialExchange{}, attempt, selectionMode, selectionMetadata, attemptStart, err, "")
+		}
+	}
 
 	prepared, failureCode, err := o.prepareProviderAttempt(ctx, r, provider, lease)
 	if err != nil {
@@ -65,6 +71,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	recoveryAttempted := false
 	injectedCredential := prepared.injectedCredential
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
+		HTTPClient:          prepared.httpClient,
 		URL:                 prepared.upstreamURL,
 		Headers:             prepared.headers,
 		Subprotocols:        o.subprotocol.DialOffer(),
@@ -276,6 +283,7 @@ func (o *WebSocketSessionOrchestrator) queueCredentialRefreshDrainCapture(dialEx
 }
 
 type webSocketPreparedProviderAttempt struct {
+	httpClient         *http.Client
 	upstreamURL        string
 	finalURL           *url.URL
 	headers            http.Header
@@ -480,8 +488,9 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 	}
 
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
+		HTTPClient:          prepared.httpClient,
 		URL:                 prepared.upstreamURL,
-		Headers:             dialHeaders,
+		Headers:             prepared.headers,
 		Subprotocols:        o.subprotocol.DialOffer(),
 		InjectedCredential:  refreshedInjectedCredential,
 		Capture:             o.capture,
@@ -534,6 +543,18 @@ func (o *WebSocketSessionOrchestrator) prepareCodexPhysicalDial(
 	}
 	prepared.boundaryPermit = permit
 	applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
+	// Ownership discovery consumes the client's original identifiers. The same
+	// frozen target then derives bytes only for this physical handshake.
+	if current := o.disguise.Current(); current != nil {
+		prepared.headers, err = current.Headers(ctx, prepared.headers)
+		if err != nil {
+			return errors.Join(err, permit.AbandonBeforeDisclosure(ctx))
+		}
+		prepared.httpClient, err = o.disguise.HTTPClient()
+		if err != nil {
+			return errors.Join(err, permit.AbandonBeforeDisclosure(ctx))
+		}
+	}
 	return nil
 }
 
@@ -567,6 +588,7 @@ func (o *WebSocketSessionOrchestrator) newCodexBoundaryAttempt(
 	err error,
 	injectedCredential string,
 ) WebSocketAttemptResult {
+	o.logDisguiseFailure(err)
 	if exchange.Conn != nil {
 		_ = exchange.Conn.Close(websocketCloseStatusForCodexFailure(err), "websocket state boundary rejected")
 	}

@@ -21,15 +21,15 @@ func TestGenerateDocumentUsesCanonicalCompleteSchema(t *testing.T) {
 	want := "{\n" +
 		"  \"schema_version\": 1,\n" +
 		"  \"hmac\": {\n" +
-		"    \"current\": \"hmac-1\",\n" +
+		"    \"current\": \"hmac-ae216c2ef5247a3782c135ef\",\n" +
 		"    \"keys\": {\n" +
-		"      \"hmac-1\": \"" + base64.RawURLEncoding.EncodeToString(randomBytes[:keyMaterialBytes]) + "\"\n" +
+		"      \"hmac-ae216c2ef5247a3782c135ef\": \"" + base64.RawURLEncoding.EncodeToString(randomBytes[:keyMaterialBytes]) + "\"\n" +
 		"    }\n" +
 		"  },\n" +
 		"  \"aead\": {\n" +
-		"    \"current\": \"aead-1\",\n" +
+		"    \"current\": \"aead-7eee5800ddcd3b3cc9fd0478\",\n" +
 		"    \"keys\": {\n" +
-		"      \"aead-1\": \"" + base64.RawURLEncoding.EncodeToString(randomBytes[keyMaterialBytes:]) + "\"\n" +
+		"      \"aead-7eee5800ddcd3b3cc9fd0478\": \"" + base64.RawURLEncoding.EncodeToString(randomBytes[keyMaterialBytes:]) + "\"\n" +
 		"    }\n" +
 		"  }\n" +
 		"}\n"
@@ -42,7 +42,7 @@ func TestGenerateDocumentUsesCanonicalCompleteSchema(t *testing.T) {
 		t.Fatalf("Parse(generated) error = %v", err)
 	}
 	capabilities := keyring.Capabilities()
-	if capabilities.HMACCurrent != initialHMACVersion || capabilities.AEADCurrent != initialAEADVersion {
+	if capabilities.HMACCurrent != "hmac-ae216c2ef5247a3782c135ef" || capabilities.AEADCurrent != "aead-7eee5800ddcd3b3cc9fd0478" {
 		t.Fatalf("generated capabilities = %+v", capabilities)
 	}
 }

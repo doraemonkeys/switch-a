@@ -9,6 +9,7 @@ import {
   UpstreamEventSection,
 } from "./RequestEvidenceSections";
 import { SemanticEvidencePanel } from "./SemanticEvidencePanel";
+import { DisguiseEvidencePanel } from "@/features/client-disguise/DisguiseEvidencePanel";
 
 interface RequestEvidenceViewerProps {
   evidenceJson?: string | null;
@@ -67,8 +68,10 @@ function EvidenceSections({ evidence }: { evidence: RequestEvidence }) {
   const showHandshake = hasRenderableSection(evidence.upstream_handshake);
   const showUpstreamEvent = hasRenderableSection(evidence.upstream_event);
   const semantic = evidence.v === 2 ? evidence.semantic_error : null;
+  const disguise = evidence.v === 2 ? evidence.client_disguise : null;
   if (
     !semantic &&
+    !disguise &&
     !showGateway &&
     !showTransport &&
     !showHandshake &&
@@ -83,6 +86,7 @@ function EvidenceSections({ evidence }: { evidence: RequestEvidence }) {
   return (
     <div className="space-y-3">
       {semantic && <SemanticEvidencePanel evidence={semantic} />}
+      {disguise && <DisguiseEvidencePanel evidence={disguise} />}
       {showGateway && <GatewaySection gateway={evidence.gateway!} />}
       {showTransport && evidence.v === 2 && (
         <TransportV2Section transport={evidence.transport!} />

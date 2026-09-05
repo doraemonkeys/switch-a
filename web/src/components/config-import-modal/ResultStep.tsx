@@ -73,6 +73,7 @@ export function ResultStep({
       <div className="bg-bg-tertiary rounded-lg p-4 divide-y divide-border-dark">
         {visibleSummaryKeys.map((key) => {
           const applied = result.applied[key];
+          if (!applied) return null;
           return (
             <AppliedBadge
               key={key}

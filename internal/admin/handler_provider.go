@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
@@ -83,6 +84,7 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 
 // CreateProviderRequest represents the request to create a provider.
 type CreateProviderRequest struct {
+	ClientDisguise        clientdisguise.Policy               `json:"client_disguise"`
 	ID                    string                              `json:"id"`
 	Name                  string                              `json:"name"`
 	APITypes              []APITypeInput                      `json:"api_types"`
@@ -175,6 +177,9 @@ func validateProviderConfiguration(provider *model.Provider) string {
 // validate checks that all required fields are present and all provided fields have valid values.
 // Returns an error message if validation fails, empty string otherwise.
 func (req *CreateProviderRequest) validate() string {
+	if err := req.ClientDisguise.Validate(); err != nil {
+		return err.Error()
+	}
 	if req.ID == "" {
 		return "Provider ID is required"
 	}
@@ -222,6 +227,7 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 	}
 
 	provider := &model.Provider{
+		ClientDisguise:   req.ClientDisguise,
 		ID:               req.ID,
 		Name:             req.Name,
 		APITypes:         apiTypes,
@@ -386,6 +392,7 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProviderRequest represents the request to update a provider.
 type UpdateProviderRequest struct {
+	ClientDisguise        *clientdisguise.Policy              `json:"client_disguise"`
 	Name                  *string                             `json:"name"`
 	APITypes              []APITypeInput                      `json:"api_types"`
 	NewCredentialSessions []NewProviderCredentialSessionInput `json:"new_credential_sessions,omitempty"`
@@ -406,6 +413,11 @@ type UpdateProviderRequest struct {
 // validate checks that all provided fields have valid values.
 // Returns an error message if validation fails, empty string otherwise.
 func (req *UpdateProviderRequest) validate() string {
+	if req.ClientDisguise != nil {
+		if err := req.ClientDisguise.Validate(); err != nil {
+			return err.Error()
+		}
+	}
 	if req.Name != nil && *req.Name == "" {
 		return "Name cannot be empty"
 	}
@@ -450,6 +462,9 @@ func (req *UpdateProviderRequest) validate() string {
 
 // applyTo updates the provider fields from the request.
 func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
+	if req.ClientDisguise != nil {
+		provider.ClientDisguise = *req.ClientDisguise
+	}
 	if req.Name != nil {
 		provider.Name = *req.Name
 	}

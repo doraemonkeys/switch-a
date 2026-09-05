@@ -475,10 +475,10 @@ func newPreCommitSSEGate(t *testing.T) (*codexhttp.Attempt, *codexhttp.SSEGate, 
 	continuity := &preCommitContinuity{}
 	fixture := newProxyCodexFixture(t)
 	runtime, err := codexhttp.New(codexhttp.Config{
-		ClientScopes:    preCommitScopeDigester{scope: clientScope},
-		Continuity:      continuity,
-		ProviderCookies: fixture.providerCookies,
-		ExternalScheme:  fixture.externalScheme,
+		ClientIdentities: proxyClientIdentityResolver{preCommitScopeDigester{scope: clientScope}},
+		Continuity:       continuity,
+		ProviderCookies:  fixture.providerCookies,
+		ExternalScheme:   fixture.externalScheme,
 	})
 	if err != nil {
 		t.Fatal(err)

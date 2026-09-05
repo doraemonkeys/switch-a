@@ -111,7 +111,16 @@ type webSocketPreWriteDecision struct {
 	ReplacementEligible     bool
 	CurrentConnection       bool
 	TraceContext            webSocketClientFrameTrace
-	PrepareReplay           func() webSocketPreWriteDecision
+	// PreparedPayload belongs only to this physical delivery; replay storage clears it.
+	PreparedPayload []byte
+	PrepareReplay   func([]byte) webSocketPreWriteDecision
+}
+
+func (d webSocketPreWriteDecision) physicalPayload(original []byte) []byte {
+	if d.PreparedPayload != nil {
+		return d.PreparedPayload
+	}
+	return original
 }
 
 type webSocketClientFrameTrace struct {

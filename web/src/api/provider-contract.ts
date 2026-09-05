@@ -154,6 +154,13 @@ export function parseCredentialSession(value: unknown): CredentialSession {
   }
   return {
     ...base,
+    ...(source.client_disguise == null
+      ? {}
+      : {
+          client_disguise: parseCredentialDisguiseSummary(
+            source.client_disguise,
+          ),
+        }),
     secret_data:
       base.kind === "api_key"
         ? stringValue(source.secret_data, "credential_session.secret_data")
@@ -190,12 +197,23 @@ export function parseCredentialSession(value: unknown): CredentialSession {
   };
 }
 
+function parseCredentialDisguiseSummary(value: unknown) {
+  const source = record(value, "credential disguise summary");
+  return {
+    device_id: stringValue(source.device_id, "device_id"),
+    revision_id: stringValue(source.revision_id, "revision_id"),
+    mode: stringValue(source.mode, "mode"),
+  };
+}
+
 export function parseCredentialSessions(value: unknown): CredentialSession[] {
   if (!Array.isArray(value)) {
     fail("credential sessions response must be an array");
   }
   return value.map(parseCredentialSession);
 }
+
+import { parseDisguisePolicy } from "./client-disguise/types";
 
 export function parseProvider(value: unknown): Provider {
   const source = record(value, "provider");
@@ -238,6 +256,7 @@ export function parseProvider(value: unknown): Provider {
   });
 
   return {
+    client_disguise: parseDisguisePolicy(source.client_disguise),
     id: stringValue(source.id, "provider.id"),
     name: stringValue(source.name, "provider.name"),
     api_types: apiTypes,

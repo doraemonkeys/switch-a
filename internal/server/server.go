@@ -11,6 +11,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/admin"
+	"github.com/doraemonkeys/switch-a/internal/admin/clientdisguiseapi"
 	admindebugcapture "github.com/doraemonkeys/switch-a/internal/admin/debugcapture"
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
 	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
@@ -121,6 +122,7 @@ type Selector = proxy.Selector
 
 // Config holds proxy server configuration.
 type Config struct {
+	ClientDisguise             proxy.ClientDisguiseRepository
 	Port                       string
 	Logger                     *zap.Logger
 	Store                      store
@@ -139,6 +141,7 @@ type Config struct {
 
 // AdminConfig holds admin server configuration.
 type AdminConfig struct {
+	ClientDisguise      *clientdisguiseapi.Handler
 	Port                string
 	AdminToken          string
 	Logger              *zap.Logger
@@ -177,6 +180,7 @@ func New(cfg Config) *Server {
 	// - No sticky sessions
 	// - Simple round-robin provider selection
 	proxyHandler := proxy.NewHandler(proxy.Config{
+		ClientDisguise:             cfg.ClientDisguise,
 		Store:                      cfg.Store,
 		Selector:                   cfg.Selector,
 		Health:                     cfg.Health,
@@ -303,6 +307,14 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("GET /admin/api/internal-error-rule-stats", auth.WrapFunc(adminHandler.GetInternalErrorRuleStats))
 
 	// Provider routes
+	if cfg.ClientDisguise != nil {
+		mux.Handle("GET /admin/api/client-disguise", auth.WrapFunc(cfg.ClientDisguise.Get))
+		mux.Handle("PUT /admin/api/client-disguise/logins/{id}", auth.WrapFunc(cfg.ClientDisguise.SaveBinding))
+		mux.Handle("POST /admin/api/client-disguise/samples", auth.WrapFunc(cfg.ClientDisguise.ImportSample))
+		mux.Handle("PUT /admin/api/client-disguise/references/{id}", auth.WrapFunc(cfg.ClientDisguise.SaveReference))
+		mux.Handle("POST /admin/api/client-disguise/transport-samples", auth.WrapFunc(cfg.ClientDisguise.ImportTransport))
+		mux.Handle("POST /admin/api/client-disguise/key-bindings", auth.WrapFunc(cfg.ClientDisguise.BindKey))
+	}
 	mux.Handle("GET /admin/api/providers", auth.WrapFunc(adminHandler.ListProviders))
 	mux.Handle("POST /admin/api/providers", auth.WrapFunc(adminHandler.CreateProvider))
 	mux.Handle("POST /admin/api/provider-auth/chatgpt/start", auth.WrapFunc(adminHandler.StartChatGPTProviderLogin))

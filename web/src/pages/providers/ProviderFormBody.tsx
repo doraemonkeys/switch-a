@@ -15,6 +15,7 @@ import { type ProviderCredentialMode, type ProviderFormData } from "./types";
 import { FailoverSection } from "./FailoverFields";
 import { hasFailoverConfig } from "./failoverConfig";
 import { BackoffSection } from "./BackoffFields";
+import { ProviderDisguiseFields } from "../../features/client-disguise/ProviderDisguiseFields";
 import { slugify, isValidId } from "../../lib/utils";
 import {
   formatProviderPlanType,
@@ -740,6 +741,12 @@ export function ProviderFormBody({
         setFormData={setFormData}
         expanded={failoverExpanded}
         onToggle={() => setFailoverExpanded(!failoverExpanded)}
+      />
+      <ProviderDisguiseFields
+        value={formState.data.client_disguise}
+        onChange={(client_disguise) =>
+          formState.setData((current) => ({ ...current, client_disguise }))
+        }
       />
       <EnabledCheckbox
         checked={formData.enabled ?? true}

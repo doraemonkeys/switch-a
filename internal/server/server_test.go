@@ -86,14 +86,18 @@ func testCodexRuntimes(t *testing.T) (*codexhttp.Runtime, *codexws.Runtime) {
 		t.Fatal(err)
 	}
 	scheme := codexhttp.NewTrustedProxySchemeResolver(nil)
+	clients, err := persistence.ClientIdentityResolver(&digester)
+	if err != nil {
+		t.Fatal(err)
+	}
 	httpRuntime, err := codexhttp.New(codexhttp.Config{
-		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+		ClientIdentities: clients, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	webSocketRuntime, err := codexws.New(codexws.Config{
-		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+		ClientIdentities: clients, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -11,12 +11,14 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	wsdisguise "github.com/doraemonkeys/switch-a/internal/websocketproxy/disguise"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
 type webSocketSessionOrchestratorConfig struct {
+	disguise                  *wsdisguise.Session
 	info                      RequestInfo
 	selectReq                 *model.SelectRequest
 	apiType                   string
@@ -66,7 +68,8 @@ const webSocketSubprotocolMismatchUnclassified = "unclassified_mismatch"
 // failover has different commitment boundaries from HTTP retries even though the
 // selector and failover constraints are shared.
 type WebSocketSessionOrchestrator struct {
-	handler *Gateway
+	disguise *wsdisguise.Session
+	handler  *Gateway
 
 	info                      RequestInfo
 	selectReq                 *model.SelectRequest
@@ -120,6 +123,7 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		}
 	}
 	orchestrator := &WebSocketSessionOrchestrator{
+		disguise:                  cfg.disguise,
 		handler:                   handler,
 		info:                      cfg.info,
 		selectReq:                 cfg.selectReq,
@@ -192,7 +196,8 @@ func (o *WebSocketSessionOrchestrator) learnResolvedModel(modelName string) {
 	}
 }
 
-func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseWriter, r *http.Request) *WebSocketSessionResult {
+func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseWriter, r *http.Request) (session *WebSocketSessionResult) {
+	defer func() { o.finishDisguiseSelection(session) }()
 	defer o.cleanup()
 	if session := o.initializeSubprotocol(r); session != nil {
 		return session
@@ -226,6 +231,9 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 
 		if attemptResult.Result != nil {
 			o.learnResolvedModel(attemptResult.Result.Model)
+		}
+		if disguiseFailure(attemptResult.terminalErr()) != nil {
+			return o.sessionFromAttempt(attemptResult)
 		}
 
 		if o.shouldSwitchProvider(attemptResult) {

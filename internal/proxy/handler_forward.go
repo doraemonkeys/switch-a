@@ -12,7 +12,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
@@ -40,6 +39,7 @@ const (
 	attemptFailureClientTerminated   attemptFailureKind = "client_terminated"
 	attemptFailureInternal           attemptFailureKind = "internal"
 	attemptFailureIngress            attemptFailureKind = "request_ingress"
+	attemptFailureDisguise           attemptFailureKind = "client_disguise"
 )
 
 // semanticAttemptFacts is deliberately value-only; evidence consumers can
@@ -122,6 +122,9 @@ func (r forwardResult) terminalError() error {
 	}
 	if r.failureKind == attemptFailureIngress {
 		return &requestIngressFailure{cause: errors.New(r.failureMessage), kind: r.ingressFailureKind}
+	}
+	if r.failureKind == attemptFailureDisguise {
+		return fmt.Errorf("%w: %s", errClientDisguiseFailed, r.failureMessage)
 	}
 	if r.failureKind == attemptFailureUpstreamNoResponse {
 		return fmt.Errorf("%w: %s", ErrUpstreamNoResponse, r.failureMessage)
@@ -228,6 +231,13 @@ func (h *Handler) prepareForwardRequest(
 	}
 	h.syncCodexSelectionConstraints(pctx)
 	request = request.WithContext(context.WithValue(request.Context(), codexAttemptContextKey{}, codexAttempt))
+	err = h.prepareHTTPDisguise(ctx, pctx, attempt.provider, request)
+	if err != nil {
+		if abandonErr := codexAttempt.AbandonBeforeDisclosure(ctx); abandonErr != nil {
+			h.logger.Warn("client_disguise.http_undisclosed_abandon_failed", zap.String("operation_id", pctx.requestID), zap.Error(abandonErr))
+		}
+		return nil, err
+	}
 	return request, nil
 }
 
@@ -288,13 +298,19 @@ func (h *Handler) fetchPendingHTTPResponse(
 	transportOptions := redirectExecutionPolicy(pctx.apiType, pctx.codex.RequestPolicy())
 	transportOptions.Observe = func(event upstreamtransport.TransmissionEvent) {
 		h.logger.Debug("request_ingress.transmission", zap.String("operation_id", pctx.requestID),
-			zap.String("attempt_id", fmt.Sprintf(responseAnalysisOperationIDFormat, pctx.requestID, attempt.logicalAttemptIndex, attempt.provider.ID, attempt.providerAttemptIndex, phase)),
+			zap.String("attempt_id", attempt.responseOperationID(pctx.requestID, phase)),
 			zap.String("event", string(event.Kind)), zap.Int64("transmission_index", event.TransmissionIndex), zap.Int64("hop_index", event.HopIndex),
 			zap.String("reopen_reason", string(event.ReopenReason)), zap.Bool("retry_eligible", event.RetryEligible),
 			zap.Int("previous_reopens", event.PreviousReopens), zap.Int64("upstream_body_read_bytes", event.BodyReadBytes),
 			zap.String("disclosure", event.Disclosure.String()), zap.Bool("response_committed", pctx.responseCommitted.Load()), zap.Error(event.Err))
 	}
 	response, disclosure, err := pctx.transport.FetchUpstream(ctx, request, transportOptions)
+	if result, failed := h.disguiseFailure(pctx, err); failed {
+		_ = h.settleCodexHTTPAttempt(ctx, pctx, attempt, codexAttemptFromRequest(request), nil, disclosure)
+		closeUpstreamResponse(response)
+		finishHTTPFetchFailure(ctx, pctx, exchange, result.terminalError())
+		return nil, pctx.disguise.failure
+	}
 	if response != nil {
 		disclosure = upstreamtransport.RequestDisclosureConfirmed
 	}
@@ -333,16 +349,10 @@ func (h *Handler) fetchPendingHTTPResponse(
 	snippet := &boundedSnippet{}
 	requestAccept := request.Header.Values("Accept")
 	media := resolveHTTPResponseMedia(&head, requestAccept)
+	hasResponseBody := httpResponseAllowsBody(request.Method, head.StatusCode)
 	var wireBytesRead func() int64
-	operationID := fmt.Sprintf(
-		responseAnalysisOperationIDFormat,
-		pctx.requestID,
-		attempt.logicalAttemptIndex,
-		attempt.provider.ID,
-		attempt.providerAttemptIndex,
-		phase,
-	)
-	if pctx.apiType == APITypeCodex && media.IsEventStream() {
+	operationID := attempt.responseOperationID(pctx.requestID, phase)
+	if pctx.apiType == APITypeCodex && hasResponseBody && media.IsEventStream() {
 		normalized, normalizeErr := upstreamtransport.NormalizeEventStream(head, body)
 		if normalizeErr != nil {
 			_ = body.Close()
@@ -374,8 +384,12 @@ func (h *Handler) fetchPendingHTTPResponse(
 		&exchange,
 		snippet,
 		codexAttempt,
-		pctx.apiType == APITypeCodex && media.IsEventStream(),
+		pctx.apiType == APITypeCodex && hasResponseBody && media.IsEventStream(),
 	)
+	if err := pctx.disguise.prepareResponse(ctx, writer, head, media, hasResponseBody); err != nil {
+		_ = body.Close()
+		return nil, err
+	}
 	idleDuration := pctx.cfg.readTimeout
 	if media.IsEventStream() {
 		idleDuration = pctx.cfg.sseIdleTimeout
@@ -531,20 +545,6 @@ func evidenceCredentialPhase(phase requestcapture.CredentialPhase) attempteviden
 		return attemptevidence.CredentialPhaseRefreshed
 	}
 	return attemptevidence.CredentialPhasePrimary
-}
-
-func responseAnalysisMode(statusCode int, plan errorrule.DetectionPlan) (responseanalysis.AnalysisMode, error) {
-	if statusCode < defaults.StatusSuccessMin || statusCode >= defaults.StatusSuccessMax {
-		return responseanalysis.HoldMode(), nil
-	}
-	switch plan {
-	case errorrule.DetectionProbe:
-		return responseanalysis.ProbeAndGateMode(), nil
-	case errorrule.DetectionObserveOnly:
-		return responseanalysis.ObserveMode(responseanalysis.BoundaryPassthroughOnly)
-	default:
-		return responseanalysis.ObserveMode(responseanalysis.BoundaryNoRetryCandidate)
-	}
 }
 
 func (h *Handler) newAttemptResponseWriter(

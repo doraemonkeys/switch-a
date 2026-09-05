@@ -7,11 +7,14 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientcredential"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
@@ -23,9 +26,8 @@ import (
 
 const codexAPIType = "codex"
 
-type ClientScopeDigester interface {
-	ClientScope([]byte) (codexidentity.ClientScope, error)
-	ClientScopeCandidates([]byte) ([]codexidentity.ClientScope, error)
+type ClientIdentityResolver interface {
+	Resolve(context.Context, []byte) (clientidentity.Resolution, error)
 }
 
 type Continuity interface {
@@ -48,25 +50,25 @@ type ExternalSchemeResolver interface {
 }
 
 type Config struct {
-	ClientScopes    ClientScopeDigester
-	Continuity      Continuity
-	ProviderCookies ProviderCookies
-	ExternalScheme  ExternalSchemeResolver
+	ClientIdentities ClientIdentityResolver
+	Continuity       Continuity
+	ProviderCookies  ProviderCookies
+	ExternalScheme   ExternalSchemeResolver
 }
 
 type Runtime struct {
-	clientScopes    ClientScopeDigester
-	continuity      Continuity
-	providerCookies ProviderCookies
-	externalScheme  ExternalSchemeResolver
+	clientIdentities ClientIdentityResolver
+	continuity       Continuity
+	providerCookies  ProviderCookies
+	externalScheme   ExternalSchemeResolver
 }
 
 func New(config Config) (*Runtime, error) {
-	if config.ClientScopes == nil || config.Continuity == nil || config.ProviderCookies == nil || config.ExternalScheme == nil {
-		return nil, fmt.Errorf("initialize Codex HTTP runtime: client scopes, continuity, provider cookies, and external scheme are required")
+	if config.ClientIdentities == nil || config.Continuity == nil || config.ProviderCookies == nil || config.ExternalScheme == nil {
+		return nil, fmt.Errorf("initialize Codex HTTP runtime: client identities, continuity, provider cookies, and external scheme are required")
 	}
 	return &Runtime{
-		clientScopes: config.ClientScopes, continuity: config.Continuity,
+		clientIdentities: config.ClientIdentities, continuity: config.Continuity,
 		providerCookies: config.ProviderCookies, externalScheme: config.ExternalScheme,
 	}, nil
 }
@@ -85,6 +87,7 @@ type Operation struct {
 	provenance     *codexprovenance.Ledger
 
 	currentClientScope codexidentity.ClientScope
+	clientIdentity     clientidentity.Resolution
 	clientScopes       []codexidentity.ClientScope
 	hasClientScope     bool
 	clientDecision     codexheaders.Result
@@ -105,8 +108,30 @@ type Operation struct {
 
 // RequiresClientEvidence expresses the continuity consumer's admission dependency.
 // Header claims cannot rule out conflicting or state-bearing body claims.
-func (r *Runtime) RequiresClientEvidence(apiType string, hasBody bool) bool {
-	return apiType == codexAPIType && hasBody
+func (r *Runtime) RequiresClientEvidence(apiType string, hasBody bool, requestPath string) bool {
+	if apiType != codexAPIType || !hasBody {
+		return false
+	}
+	path := strings.TrimPrefix(requestPath, "/codex")
+	path = strings.TrimPrefix(path, "/v1")
+	// Only response contracts carry conversation ownership. A search or models
+	// payload cannot introduce an owner late in its business data.
+	return path == "/responses" || path == "/responses/compact"
+}
+
+func IsJSONContentType(contentType string) bool {
+	media, _, err := mime.ParseMediaType(contentType)
+	return err == nil && (media == "application/json" || strings.HasSuffix(media, "+json"))
+}
+
+// RequestUsesJSON keeps opaque extension bodies outside the JSON protocol
+// converter, including nonconversation endpoints with an explicit media type.
+func RequestUsesJSON(request *http.Request) bool {
+	if value := request.Header.Get("Content-Type"); value != "" {
+		return IsJSONContentType(value)
+	}
+	path := strings.TrimPrefix(strings.TrimPrefix(request.URL.EscapedPath(), "/codex"), "/v1")
+	return path == "/responses" || path == "/responses/compact" || path == "/alpha/search"
 }
 
 func (r *Runtime) Begin(
@@ -117,6 +142,23 @@ func (r *Runtime) Begin(
 	recoveryPolicy model.ConversationRecoveryPolicy,
 	evidence codexheaders.ClientEvidence,
 ) (*Operation, error) {
+	var identity clientidentity.Resolution
+	if apiType == codexAPIType {
+		if request == nil {
+			return nil, clientError("begin", errors.New("request is required"))
+		}
+		var err error
+		identity, err = r.ResolveClientIdentity(ctx, request.Header)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r.BeginResolved(ctx, request, apiType, operationID, recoveryPolicy, evidence, identity)
+}
+
+// BeginResolved consumes the identity frozen at ingress, while body-dependent
+// ownership waits separately for the conversation contract's semantic facts.
+func (r *Runtime) BeginResolved(ctx context.Context, request *http.Request, apiType, operationID string, recoveryPolicy model.ConversationRecoveryPolicy, evidence codexheaders.ClientEvidence, identity clientidentity.Resolution) (*Operation, error) {
 	op := &Operation{runtime: r, operationID: operationID, apiType: apiType,
 		recoveryPolicy: model.NormalizeConversationRecoveryPolicy(string(recoveryPolicy))}
 	if apiType != codexAPIType {
@@ -129,9 +171,11 @@ func (r *Runtime) Begin(
 		return nil, clientError("begin", errors.New("request is required"))
 	}
 	message, discovery := discoverClientEvidence(request.Header, evidence)
-	if err := op.bindClientScope(request.Header); err != nil {
-		return nil, err
-	}
+	identity.Aliases = append([]codexidentity.ClientScope(nil), identity.Aliases...)
+	op.clientIdentity = identity
+	op.currentClientScope = identity.Primary
+	op.clientScopes = append([]codexidentity.ClientScope(nil), identity.Aliases...)
+	op.hasClientScope = true
 	if err := op.beginContinuity(ctx, request.Header, message, discovery); err != nil {
 		return nil, err
 	}
@@ -152,27 +196,29 @@ func discoverClientEvidence(headers http.Header, message codexheaders.ClientEvid
 	return message, discovery
 }
 
-func (o *Operation) bindClientScope(headers http.Header) error {
-	if o == nil || o.runtime == nil || o.runtime.clientScopes == nil {
-		return dependencyError("client_scope", errors.New("client scope digester is unavailable"))
+func (r *Runtime) ResolveClientIdentity(ctx context.Context, headers http.Header) (clientidentity.Resolution, error) {
+	if r == nil || r.clientIdentities == nil {
+		return clientidentity.Resolution{}, dependencyError("client_scope", errors.New("client identity resolver is unavailable"))
 	}
 	credential := clientcredential.Extract(map[string][]string(headers))
 	if credential.State != clientcredential.StateSingle {
-		return clientError("client_scope", fmt.Errorf("client credential is not a single canonical value (state %s)", credential.State))
+		return clientidentity.Resolution{}, clientError("client_scope", fmt.Errorf("client credential is not a single canonical value (state %s)", credential.State))
 	}
 	defer credential.Clear()
-	current, err := o.runtime.clientScopes.ClientScope(credential.Token)
+	resolution, err := r.clientIdentities.Resolve(ctx, credential.Token)
 	if err != nil {
-		return dependencyError("client_scope", err)
+		return clientidentity.Resolution{}, dependencyError("client_scope", err)
 	}
-	candidates, err := o.runtime.clientScopes.ClientScopeCandidates(credential.Token)
-	if err != nil {
-		return dependencyError("client_scope", err)
+	return resolution, nil
+}
+
+func (o *Operation) ClientIdentity() clientidentity.Resolution {
+	if o == nil {
+		return clientidentity.Resolution{}
 	}
-	o.currentClientScope = current
-	o.clientScopes = candidates
-	o.hasClientScope = true
-	return nil
+	result := o.clientIdentity
+	result.Aliases = append([]codexidentity.ClientScope(nil), result.Aliases...)
+	return result
 }
 
 func (o *Operation) beginContinuity(

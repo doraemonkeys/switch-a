@@ -37,8 +37,9 @@ func (k *Keyring) Capabilities() Capabilities {
 	if k == nil {
 		return Capabilities{}
 	}
+	state := k.hmacState()
 	return Capabilities{
-		HMACVersions: append([]string(nil), k.hmacVersions...),
+		HMACVersions: append([]string(nil), state.versions...),
 		AEADVersions: append([]string(nil), k.aeadVersions...),
 		HMACCurrent:  k.hmacCurrent,
 		AEADCurrent:  k.aeadCurrent,

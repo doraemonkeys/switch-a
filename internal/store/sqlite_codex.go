@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	continuitysqlite "github.com/doraemonkeys/switch-a/internal/codex/continuity/sqlite"
 	providercookiesqlite "github.com/doraemonkeys/switch-a/internal/codex/cookie/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
@@ -25,6 +26,7 @@ type CredentialSubjectRecord struct {
 // CodexPersistenceInventory preserves each durable key family independently so
 // keyring validation can report the exact family and missing generation.
 type CodexPersistenceInventory struct {
+	ClientIdentityHMACVersions        []string
 	CredentialSubjects                []CredentialSubjectRecord
 	CredentialHMACVersions            []string
 	ContinuityHMACVersions            []string
@@ -77,6 +79,15 @@ func (s *SQLiteStore) InspectCodexPersistence(ctx context.Context) (CodexPersist
 	if err != nil {
 		return CodexPersistenceInventory{}, fmt.Errorf("inspect provider-Cookie AEAD versions: %w", err)
 	}
+	inventory.ClientIdentityHMACVersions, err = clientidentity.RequiredHMACVersions(ctx, s.db)
+	if err != nil {
+		return CodexPersistenceInventory{}, err
+	}
+	basisVersions, err := s.ClientDisguiseRepository().RequiredHMACVersions(ctx)
+	if err != nil {
+		return CodexPersistenceInventory{}, err
+	}
+	inventory.ClientIdentityHMACVersions = append(inventory.ClientIdentityHMACVersions, basisVersions...)
 	inventory.ContinuityHMACVersions = slices.Clone(continuityHMAC)
 	inventory.ProviderCookieHMACVersions = slices.Clone(cookieHMAC)
 	inventory.ProviderCookieAEADVersions = slices.Clone(cookieAEAD)
@@ -149,6 +160,9 @@ func (s *SQLiteStore) FinalizeStaticCredentialSubjects(ctx context.Context, sign
 	}
 	if err := finalizePendingStaticSubjects(s.db.WithContext(ctx), signer); err != nil {
 		return fmt.Errorf("finalize static credential subjects: %w", err)
+	}
+	if err := initializeDisguiseLogins(ctx, s.db); err != nil {
+		return fmt.Errorf("initialize client disguise logins: %w", err)
 	}
 	inventory, err := s.InspectCodexPersistence(ctx)
 	if err != nil {

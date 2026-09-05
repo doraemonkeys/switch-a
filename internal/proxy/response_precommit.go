@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	disguiseresponse "github.com/doraemonkeys/switch-a/internal/proxy/disguise"
 )
 
 // firstWriteResponseWriter is the client-visibility boundary for one HTTP
@@ -36,9 +37,15 @@ type firstWriteResponseWriter struct {
 	sseContext          context.Context
 	headerPending       bool
 	pendingStatus       int
+	responseStream      *disguiseresponse.ResponseStream
+	restoreHeader       func(http.Header) (http.Header, error)
+	restoreEvent        func([]byte) ([]byte, error)
 }
 
 func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
+	if w.responseStream != nil {
+		return w.responseStream.Write(p)
+	}
 	if w != nil && w.sseGate != nil {
 		return w.writeSSE(p)
 	}
@@ -46,6 +53,15 @@ func (w *firstWriteResponseWriter) Write(p []byte) (int, error) {
 }
 
 func (w *firstWriteResponseWriter) writePhysical(p []byte, eventVisibility *codexhttp.Visibility) (int, error) {
+	originalLength := len(p)
+	if w.restoreEvent != nil {
+		derived, err := w.restoreEvent(p)
+		if err != nil {
+			w.writeErr = err
+			return 0, err
+		}
+		p = derived
+	}
 	if !w.prepareGate() {
 		return 0, w.gateErr
 	}
@@ -70,6 +86,12 @@ func (w *firstWriteResponseWriter) writePhysical(p []byte, eventVisibility *code
 	}
 	if n > 0 {
 		w.observeWrite(p[:n], writeTime)
+	}
+	if w.restoreEvent != nil {
+		if err == nil {
+			return originalLength, nil
+		}
+		return 0, err
 	}
 	return n, err
 }
@@ -128,7 +150,7 @@ func (w *firstWriteResponseWriter) observeWrite(payload []byte, writeTime time.T
 }
 
 func (w *firstWriteResponseWriter) WriteHeader(statusCode int) {
-	if w != nil && w.sseGate != nil {
+	if w != nil && (w.sseGate != nil || w.responseStream != nil) {
 		if !w.headerPending && !w.committed {
 			w.headerPending = true
 			w.pendingStatus = statusCode
@@ -178,6 +200,19 @@ func (w *firstWriteResponseWriter) prepareGate() bool {
 	visibility, err := w.prepareVisible(w.Header())
 	if err == nil {
 		w.visibility = visibility
+		if w.restoreHeader != nil {
+			derived, restoreErr := w.restoreHeader(w.Header())
+			if restoreErr != nil {
+				w.gateErr = restoreErr
+				return false
+			}
+			for name := range w.Header() {
+				delete(w.Header(), name)
+			}
+			for name, values := range derived {
+				w.Header()[name] = append([]string(nil), values...)
+			}
+		}
 		return true
 	}
 	w.gateErr = err
@@ -214,6 +249,9 @@ func (w *firstWriteResponseWriter) commitVisibility(visibility *codexhttp.Visibi
 // Flush preserves http.Flusher while withholding incomplete SSE events from
 // the client-visible boundary.
 func (w *firstWriteResponseWriter) Flush() {
+	if w.responseStream != nil {
+		return
+	}
 	if w != nil && w.sseGate != nil && w.sseGate.BufferedBytes() > 0 && !w.committed {
 		return
 	}
@@ -234,6 +272,9 @@ func (w *firstWriteResponseWriter) Flush() {
 }
 
 func (w *firstWriteResponseWriter) FlushError() error {
+	if w.responseStream != nil {
+		return nil
+	}
 	if w != nil && w.sseGate != nil && w.sseGate.BufferedBytes() > 0 && !w.committed {
 		return nil
 	}
@@ -256,9 +297,6 @@ func (w *firstWriteResponseWriter) FlushError() error {
 }
 
 func (w *firstWriteResponseWriter) ReadFrom(reader io.Reader) (int64, error) {
-	if !w.prepareGate() {
-		return 0, w.gateErr
-	}
 	buffer := make([]byte, 32*1024)
 	return io.CopyBuffer(struct{ io.Writer }{Writer: w}, reader, buffer)
 }
@@ -302,6 +340,19 @@ func (w *firstWriteResponseWriter) failSSEGate(err error) {
 }
 
 func (w *firstWriteResponseWriter) Finalize() error {
+	if w != nil && w.responseStream != nil {
+		if err := w.responseStream.Close(); err != nil {
+			w.writeErr = err
+			return err
+		}
+		if w.headerPending {
+			if !w.prepareGate() {
+				return w.gateErr
+			}
+			w.writePendingHeader()
+		}
+		return nil
+	}
 	if w == nil || w.sseGate == nil {
 		return nil
 	}
@@ -339,6 +390,9 @@ func (w *firstWriteResponseWriter) Finalize() error {
 }
 
 func (w *firstWriteResponseWriter) DiscardBufferedSSE() {
+	if w != nil && w.responseStream != nil {
+		w.responseStream.Abort()
+	}
 	if w != nil && w.sseGate != nil {
 		w.sseGate.Discard()
 		w.headerPending = false

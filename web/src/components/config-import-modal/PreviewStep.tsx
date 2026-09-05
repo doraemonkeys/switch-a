@@ -118,6 +118,7 @@ export function PreviewStep({
         <div className="grid gap-3">
           {visibleSummaryKeys.map((key) => {
             const change = preview.changes[key];
+            if (!change) return null;
             return (
               <ChangeBadge
                 key={key}

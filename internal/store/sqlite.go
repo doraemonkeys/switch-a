@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	continuitysqlite "github.com/doraemonkeys/switch-a/internal/codex/continuity/sqlite"
 	providercookiesqlite "github.com/doraemonkeys/switch-a/internal/codex/cookie/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	codexkeyring "github.com/doraemonkeys/switch-a/internal/codex/keyring"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storemigration "github.com/doraemonkeys/switch-a/internal/store/migration"
@@ -28,6 +31,8 @@ var _ internal.Store = (*SQLiteStore)(nil)
 
 // SQLiteStore implements the Store interface using GORM and SQLite.
 type SQLiteStore struct {
+	codexStickyRestorer func([]model.StickyEntry)
+	codexKeyring        *codexkeyring.Keyring
 	db                  *gorm.DB
 	clock               internal.Clock
 	credentialMutations *credentialsession.MutationCoordinator
@@ -109,6 +114,18 @@ func NewSQLiteStore(
 	}
 	if err := migrateCredentialSessions(db, clock); err != nil {
 		return nil, fmt.Errorf("migrate credential sessions: %w", err)
+	}
+	if err := clientdisguise.Migrate(context.Background(), db); err != nil {
+		return nil, fmt.Errorf("migrate client disguise: %w", err)
+	}
+	if err := clientidentity.Migrate(db); err != nil {
+		return nil, fmt.Errorf("migrate client identities: %w", err)
+	}
+	if err := db.AutoMigrate(&codexkeyring.HMACMaterial{}); err != nil {
+		return nil, err
+	}
+	if err := initializeDisguiseLogins(context.Background(), db); err != nil {
+		return nil, fmt.Errorf("initialize client disguise logins: %w", err)
 	}
 	if err := continuitysqlite.Migrate(context.Background(), db); err != nil {
 		return nil, fmt.Errorf("migrate Codex continuity storage: %w", err)

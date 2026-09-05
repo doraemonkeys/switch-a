@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
@@ -20,6 +21,10 @@ type testScopeDigester struct {
 	current    codexidentity.ClientScope
 	candidates []codexidentity.ClientScope
 	err        error
+}
+
+func (d testScopeDigester) Resolve(context.Context, []byte) (clientidentity.Resolution, error) {
+	return clientidentity.Resolution{ID: "test-client", Primary: d.current, Aliases: append([]codexidentity.ClientScope(nil), d.candidates...)}, d.err
 }
 
 func (d testScopeDigester) ClientScope([]byte) (codexidentity.ClientScope, error) {
@@ -119,8 +124,8 @@ func TestRuntimeResolvesOwnerBeforeSelectionAndValidatesAppliedIdentity(t *testi
 		ClientScope: clientScope, ProtocolScope: candidate.ProtocolScope(), RouteTargetHint: "route-a",
 	}}}
 	runtime := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-		Continuity:   continuity,
+		ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+		Continuity:       continuity,
 	})
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
@@ -154,8 +159,8 @@ func TestRuntimeClaimsUnknownRequestOnlyAfterAppliedIdentity(t *testing.T) {
 	_, wrongApplied := testCandidate(t, "route-b", "provider.test", "subject-b")
 	continuity := &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown}}
 	runtime := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-		Continuity:   continuity,
+		ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+		Continuity:       continuity,
 	})
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("X-Api-Key", "client-secret")
@@ -211,8 +216,8 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 				return codexcontinuity.Binding{}, &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown}
 			}
 			runtime := newAlwaysOnTestRuntime(t, Config{
-				ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-				Continuity:   continuity,
+				ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+				Continuity:       continuity,
 			})
 			request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 			request.Header.Set("Authorization", "Bearer client-secret")
@@ -258,8 +263,8 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 			return codexcontinuity.Lease{}, &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}
 		}
 		runtime := newAlwaysOnTestRuntime(t, Config{
-			ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-			Continuity:   continuity,
+			ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+			Continuity:       continuity,
 		})
 		request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 		request.Header.Set("Authorization", "Bearer client-secret")
@@ -287,8 +292,8 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 			return codexcontinuity.Lease{}, nil
 		}
 		runtime := newAlwaysOnTestRuntime(t, Config{
-			ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-			Continuity:   continuity,
+			ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+			Continuity:       continuity,
 		})
 		request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 		request.Header.Set("Authorization", "Bearer client-secret")
@@ -316,8 +321,8 @@ func TestRuntimeBindsResponseStateOnlyAtVisibleBoundary(t *testing.T) {
 		validateErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown},
 	}
 	runtime := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-		Continuity:   continuity,
+		ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+		Continuity:       continuity,
 	})
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
@@ -361,8 +366,8 @@ func TestPendingOwnerRetryFinalizesAtHTTPBoundaries(t *testing.T) {
 		},
 	}}
 	runtime := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-		Continuity:   continuity,
+		ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+		Continuity:       continuity,
 	})
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
@@ -438,7 +443,7 @@ func TestRuntimeFailClosedInputAndDependencyErrors(t *testing.T) {
 		t.Fatal("constructor accepted missing mandatory dependencies")
 	}
 	clientScope := testClientScope(t, "client")
-	runtime := newAlwaysOnTestRuntime(t, Config{ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}, Continuity: &continuityRecorder{}})
+	runtime := newAlwaysOnTestRuntime(t, Config{ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}, Continuity: &continuityRecorder{}})
 	request.Header.Set("Authorization", "Bearer one")
 	request.Header.Set("X-Api-Key", "two")
 	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", "preserve_conversation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
@@ -486,9 +491,9 @@ func TestHeaderHygieneIsAlwaysOnOnlyForCodex(t *testing.T) {
 
 func newAlwaysOnTestRuntime(t *testing.T, config Config) *Runtime {
 	t.Helper()
-	if config.ClientScopes == nil {
+	if config.ClientIdentities == nil {
 		scope := testClientScope(t, "default-client")
-		config.ClientScopes = testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}
+		config.ClientIdentities = testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}
 	}
 	if config.Continuity == nil {
 		config.Continuity = &continuityRecorder{}

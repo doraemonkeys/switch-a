@@ -1,14 +1,15 @@
 package codexkeyring
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"io"
 )
 
 const (
-	initialHMACVersion = "hmac-1"
-	initialAEADVersion = "aead-1"
-	generatedRootCount = 2
+	keyVersionFingerprintBytes = 12
+	generatedRootCount         = 2
 )
 
 // GenerateDocument creates a complete first-generation keyring document.
@@ -25,6 +26,8 @@ func GenerateDocument(random io.Reader) ([]byte, error) {
 		return nil, errorOf(ErrorRandomSource, "document", "", "could not generate root key material", err)
 	}
 
+	initialHMACVersion := generatedVersion("hmac", material[:keyMaterialBytes])
+	initialAEADVersion := generatedVersion("aead", material[keyMaterialBytes:])
 	generated := document{
 		SchemaVersion: documentSchemaVersion,
 		HMAC: documentRing{
@@ -55,4 +58,11 @@ func GenerateDocument(random io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return serialized, nil
+}
+
+// Independent installations must not assign the same version to different roots:
+// those versions become durable references when ownership is transferred.
+func generatedVersion(family string, root []byte) string {
+	digest := sha256.Sum256(root)
+	return family + "-" + hex.EncodeToString(digest[:keyVersionFingerprintBytes])
 }

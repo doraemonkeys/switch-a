@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
@@ -107,6 +108,7 @@ func (realDialer) Dial(ctx context.Context, url string, opts *websocket.DialOpti
 // Capture begins only after headers reach their final wire shape, so the record
 // describes the real dial without gaining authority over transport behavior.
 type WebSocketDialRequest struct {
+	HTTPClient          *http.Client
 	URL                 string
 	Headers             http.Header
 	Subprotocols        []string
@@ -246,6 +248,7 @@ func NewWebSocketForwarder(cfg WebSocketForwarderConfig) *WebSocketForwarder {
 // WebSocketResult reports the outcome of a WebSocket forwarding session.
 // The caller uses this for health tracking, request logging, and active registry cleanup.
 type WebSocketResult struct {
+	ClientDisguise          *attemptevidence.ClientDisguise
 	healthOutcomePublished  bool
 	accountRecoveryNotified bool
 	ReplayStatus            webSocketReplayStatus
@@ -548,6 +551,7 @@ func (f *WebSocketForwarder) dialUpstream(ctx context.Context, request WebSocket
 	exchange.captureMode = captureMode
 	exchange.credentialEvidence = credentialEvidence
 	upstreamConn, resp, err := f.dialer.Dial(ctx, request.URL, &websocket.DialOptions{
+		HTTPClient:   request.HTTPClient,
 		HTTPHeader:   dialHeaders,
 		Subprotocols: append([]string(nil), request.Subprotocols...),
 	})

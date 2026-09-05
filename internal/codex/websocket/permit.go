@@ -23,6 +23,7 @@ type Permit struct {
 	closeReplacement bool
 	mu               sync.Mutex
 	committed        bool
+	abandoned        bool
 }
 
 func (p *Permit) Commit(ctx context.Context) error {
@@ -33,6 +34,9 @@ func (p *Permit) Commit(ctx context.Context) error {
 	defer p.mu.Unlock()
 	if p.committed {
 		return nil
+	}
+	if p.abandoned {
+		return continuityFailure("commit_visibility", errors.New("permit was abandoned before disclosure"))
 	}
 	commitContext := context.WithoutCancel(ctx)
 	for _, lease := range p.leases {
@@ -92,12 +96,32 @@ func containsLease(haystack []codexcontinuity.Lease, needle codexcontinuity.Leas
 }
 
 func (p *Permit) abandon(ctx context.Context) {
+	_ = p.AbandonBeforeDisclosure(ctx)
+}
+
+// AbandonBeforeDisclosure releases only newly claimed ownership when delivery
+// preparation fails before any physical write can have exposed the identifiers.
+// Callers must retain pending claims after an uncertain physical write instead.
+func (p *Permit) AbandonBeforeDisclosure(ctx context.Context) error {
 	if p == nil || p.operation == nil {
-		return
+		return nil
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.committed || p.abandoned {
+		return nil
+	}
+	var failures []error
 	for _, lease := range p.leases {
 		if lease.NewlyClaimed() {
-			_ = p.operation.runtime.continuity.AbandonBeforeDisclosure(ctx, lease)
+			if err := p.operation.runtime.continuity.AbandonBeforeDisclosure(context.WithoutCancel(ctx), lease); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
+	if err := errors.Join(failures...); err != nil {
+		return continuityFailure("abandon_before_disclosure", err)
+	}
+	p.abandoned = true
+	return nil
 }

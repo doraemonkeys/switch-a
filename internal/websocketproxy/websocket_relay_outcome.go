@@ -189,6 +189,11 @@ func shouldPreserveClientOnPreVisibleFailure(
 
 func firstSuppressedUpstreamError(results ...webSocketRelayResult) *WebSocketUpstreamError {
 	for _, result := range results {
+		if disguiseFailure(result.err) != nil {
+			return nil
+		}
+	}
+	for _, result := range results {
 		if result.suppressedUpstreamError != nil {
 			return result.suppressedUpstreamError.Clone()
 		}

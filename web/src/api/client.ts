@@ -1,5 +1,6 @@
 import { API_BASE, STORAGE_KEYS } from "../config";
 import { createDebugCaptureApi } from "./debug-capture";
+import { createClientDisguiseApi } from "./client-disguise/client";
 import {
   type ApiClientDeps,
   type Storage,
@@ -457,6 +458,7 @@ export function createApiClient(deps: ApiClientDeps) {
       get: async () => parseAPICatalog(await request<unknown>("/api-catalog")),
     },
     errorDetection: createErrorDetectionApi(requestResponse),
+    clientDisguise: createClientDisguiseApi(request),
     providers: createProvidersApi(request),
     credentialSessions: createCredentialSessionsApi(request),
     providerImports: {

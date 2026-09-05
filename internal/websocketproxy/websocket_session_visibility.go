@@ -258,6 +258,11 @@ func (o *WebSocketSessionOrchestrator) prepareAcceptedCodexHandshake(
 		var projected http.Header
 		var err error
 		permit, projected, err = o.codexOperation.PrepareServerHeaders(ctx, dialExchange.HandshakeHeaders)
+		if err == nil {
+			if current := o.disguise.Current(); current != nil {
+				projected, err = current.RestoreHeaders(ctx, projected)
+			}
+		}
 		if err != nil {
 			failure := o.newCodexBoundaryAttempt(
 				provider, dialExchange, attempt, selectionMode, selectionMetadata, attemptStart, err, injectedCredential,
@@ -379,7 +384,7 @@ func (o *WebSocketSessionOrchestrator) codexClientPreWrite(
 	return func(write webSocketPreWriteContext) webSocketPreWriteDecision {
 		frame := o.codexOperation.ClassifyClientFrame(ctx, write.MessageType == websocket.MessageText, write.Data)
 		o.logCodexClientFramePermit(frame)
-		return o.codexClientFrameDecision(ctx, frame, true)
+		return o.codexClientFrameDecision(ctx, frame, true, write.MessageType, write.Data)
 	}
 }
 
@@ -419,6 +424,8 @@ func (o *WebSocketSessionOrchestrator) codexClientFrameDecision(
 	ctx context.Context,
 	frame *codexws.ClientFramePermit,
 	prepareDelivery bool,
+	messageType websocket.MessageType,
+	original []byte,
 ) webSocketPreWriteDecision {
 	if frame == nil {
 		return replayableClientFrameDecision()
@@ -436,11 +443,19 @@ func (o *WebSocketSessionOrchestrator) codexClientFrameDecision(
 			Kind: string(trace.Kind), EventType: trace.EventType, Decision: string(trace.Decision),
 		},
 	}
-	decision.PrepareReplay = func() webSocketPreWriteDecision {
-		return o.codexClientFrameDecision(ctx, frame, true)
+	decision.PrepareReplay = func(source []byte) webSocketPreWriteDecision {
+		return o.codexClientFrameDecision(ctx, frame, true, messageType, source)
 	}
 	if !prepareDelivery {
 		return decision
+	}
+	if current := o.disguise.Current(); current != nil && messageType == websocket.MessageText {
+		derived, err := current.ClientFrame(ctx, original)
+		if err != nil {
+			o.logDisguiseFailure(err)
+			return disguiseRejectedWrite(err)
+		}
+		decision.PreparedPayload = derived
 	}
 	permit, err := frame.PrepareDelivery(ctx)
 	if err != nil {
@@ -470,12 +485,20 @@ func (o *WebSocketSessionOrchestrator) composeUpstreamPreWrite(
 				return decision
 			}
 		}
+		decision := webSocketPreWriteDecision{
+			Action: webSocketPreWriteActionForward, ReplayEligible: true, ReplacementEligible: true,
+		}
+		if current := o.disguise.Current(); current != nil && write.MessageType == websocket.MessageText {
+			derived, err := current.ServerFrame(ctx, write.Data)
+			if err != nil {
+				o.logDisguiseFailure(err)
+				return disguiseRejectedWrite(err)
+			}
+			decision.PreparedPayload = derived
+		}
 		permit, err := o.codexOperation.PrepareServerFrame(ctx, write.MessageType == websocket.MessageText, write.Data)
 		if err != nil {
 			return codexRejectedWrite(err)
-		}
-		decision := webSocketPreWriteDecision{
-			Action: webSocketPreWriteActionForward, ReplayEligible: true, ReplacementEligible: true,
 		}
 		decision.OnWriteConfirmed = func() error {
 			if permit != nil {

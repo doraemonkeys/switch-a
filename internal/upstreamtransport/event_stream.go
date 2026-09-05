@@ -94,6 +94,10 @@ func NormalizeEventStream(head ResponseHead, body io.ReadCloser) (EventStreamNor
 	if body == nil {
 		return EventStreamNormalization{}, newDecodeError(FailureContentDecoding, "", errors.New("response body is required"))
 	}
+	if !head.AllowsBody() {
+		head.Header = head.Header.Clone()
+		return EventStreamNormalization{Head: head, Body: body}, nil
+	}
 	codings, sourceEncoding, err := parseContentCodings(head.Header.Values("Content-Encoding"))
 	if err != nil {
 		return EventStreamNormalization{}, err

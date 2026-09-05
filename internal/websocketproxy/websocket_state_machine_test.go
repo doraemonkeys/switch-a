@@ -146,7 +146,7 @@ func TestReplayBufferStoresPermitDecisionAndNeverReclassifies(t *testing.T) {
 			originalCommits++
 			return nil
 		}
-		decision.PrepareReplay = func() webSocketPreWriteDecision {
+		decision.PrepareReplay = func([]byte) webSocketPreWriteDecision {
 			prepareOrder = append(prepareOrder, index)
 			replay := replayableClientFrameDecision()
 			replay.OnWriteConfirmed = func() error {

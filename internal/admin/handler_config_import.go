@@ -89,16 +89,13 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	)
 	ruleRepository := snapshot.ruleRepository
 	ruleRevision := snapshot.ruleRevision
-	if staged.ruleError != nil {
-		if errors.Is(staged.ruleError, errorrulesqlite.ErrImportIDCollision) ||
-			errors.Is(staged.ruleError, errorrulesqlite.ErrRuleCapacity) {
-			writeError(w, http.StatusConflict, ErrCodeConflict, staged.ruleError.Error())
-			return
-		}
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, staged.ruleError.Error())
+	if rejectConfigImportRuleError(w, staged.ruleError) {
 		return
 	}
 
+	if !h.validateCodexImportPreview(w, ctx, &staged.bundle) {
+		return
+	}
 	// If dry_run, return preview
 	if dryRun {
 		h.writeConfigImportPreview(w, staged, ruleRevision)
@@ -211,6 +208,7 @@ func newConfigImportResult(
 		RuleSetRevision:              revision.String(),
 		RuleSetETag:                  formatInternalErrorRuleETag(revision),
 		Applied: ImportedCounts{
+			CodexState: AppliedCount{Updated: changes.CodexState.Update},
 			Providers: AppliedCount{
 				Added:   changes.Providers.Add,
 				Updated: changes.Providers.Update,
@@ -561,4 +559,34 @@ func credentialSessionsFromProviders(providers map[string]*model.Provider) map[s
 		}
 	}
 	return sessions
+}
+
+func (h *Handler) validateCodexImportPreview(w http.ResponseWriter, ctx context.Context, bundle *store.ConfigImportBundle) bool {
+	if bundle.CodexState == nil {
+		return true
+	}
+	validator, ok := h.store.(interface {
+		PreviewConfigImport(context.Context, *store.ConfigImportBundle) error
+	})
+	if !ok {
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Codex state import preview unavailable")
+		return false
+	}
+	if err := validator.PreviewConfigImport(ctx, bundle); err != nil {
+		writeError(w, http.StatusConflict, ErrCodeConflict, "Codex state import conflict: "+err.Error())
+		return false
+	}
+	return true
+}
+
+func rejectConfigImportRuleError(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errorrulesqlite.ErrImportIDCollision) || errors.Is(err, errorrulesqlite.ErrRuleCapacity) {
+		writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+	} else {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
+	}
+	return true
 }

@@ -54,8 +54,8 @@ func TestHTTPRouteTargetPreferenceUsesAbsorbingSharedFold(t *testing.T) {
 					}}, nil
 				}}
 				runtime := newAlwaysOnTestRuntime(t, Config{
-					ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-					Continuity:   continuity,
+					ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+					Continuity:       continuity,
 				})
 				request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 				request.Header.Set("Authorization", "Bearer client-secret")
@@ -90,8 +90,8 @@ func TestHTTPBeginPreservesContinuityRootCause(t *testing.T) {
 		t.Run(string(test.kind), func(t *testing.T) {
 			continuity := &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: test.kind}}
 			runtime := newAlwaysOnTestRuntime(t, Config{
-				ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
-				Continuity:   continuity,
+				ClientIdentities: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}},
+				Continuity:       continuity,
 			})
 			request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 			request.Header.Set("Authorization", "Bearer client-secret")

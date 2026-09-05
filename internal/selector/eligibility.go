@@ -171,6 +171,15 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 	if mode.checkRouting && !e.routing.allowsProvider(provider) {
 		return false, errorrule.ReasonRoutingChanged, nil
 	}
+	if e.req != nil && e.req.ClientDisguise != nil && reqAPIType(e.req) == "codex" {
+		disguise, err := e.req.ClientDisguise.Evaluate(ctx, provider)
+		if err != nil {
+			return false, errorrule.ReasonProviderLookupError, err
+		}
+		if !disguise.Decision.Allowed {
+			return false, errorrule.ReasonClientPlatformExcluded, nil
+		}
+	}
 	if candidate.groupErr != nil {
 		return false, errorrule.ReasonProviderLookupError, candidate.groupErr
 	}

@@ -39,6 +39,7 @@ type CredentialSessionStore interface {
 }
 
 type CredentialSessionPayload struct {
+	ClientDisguise         *CredentialDisguiseSummary         `json:"client_disguise,omitempty"`
 	ID                     string                             `json:"id"`
 	Name                   string                             `json:"name"`
 	Kind                   credentialsession.Kind             `json:"kind"`
@@ -565,8 +566,13 @@ func credentialSessionPayload(ctx context.Context, repository CredentialSessionS
 		// has its own explicit export flow and is intentionally not projected here.
 		secretData = session.SecretData
 	}
+	disguise, err := credentialDisguiseSummary(ctx, repository, session.ID)
+	if err != nil {
+		return CredentialSessionPayload{}, err
+	}
 	return CredentialSessionPayload{
-		ID: session.ID, Name: name, Kind: session.Kind, Version: session.Version,
+		ClientDisguise: disguise,
+		ID:             session.ID, Name: name, Kind: session.Kind, Version: session.Version,
 		SecretData: secretData,
 		Subject:    session.Subject(), AuthState: session.AuthState.Clone(),
 		ReferencedRouteTargets: references, RouteReferences: routeReferences,

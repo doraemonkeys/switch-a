@@ -13,6 +13,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/store"
 )
 
 const (
@@ -78,6 +79,7 @@ type ConfigImportSelection struct {
 
 // ImportConfigRequest represents the request body for config import.
 type ImportConfigRequest struct {
+	CodexState         *store.CodexState           `json:"codex_state,omitempty"`
 	Version            string                      `json:"version"`
 	ImportScope        *ConfigImportScope          `json:"import_scope,omitempty"`
 	Providers          []ExportedProvider          `json:"providers"`
@@ -90,6 +92,7 @@ type ImportConfigRequest struct {
 
 // ImportChanges represents the changes that will be applied during import.
 type ImportChanges struct {
+	CodexState         ChangeCount `json:"codex_state"`
 	Providers          ChangeCount `json:"providers"`
 	CredentialSessions ChangeCount `json:"credential_sessions"`
 	Groups             ChangeCount `json:"groups"`
@@ -132,6 +135,7 @@ type ImportResult struct {
 
 // ImportedCounts represents the counts of successfully imported items.
 type ImportedCounts struct {
+	CodexState         AppliedCount `json:"codex_state"`
 	Providers          AppliedCount `json:"providers"`
 	CredentialSessions AppliedCount `json:"credential_sessions"`
 	Groups             AppliedCount `json:"groups"`
@@ -173,6 +177,7 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		APITypes:         apiTypes,
 		AuthMode:         authMode,
 		UsageLimitPolicy: p.UsageLimitPolicy,
+		ClientDisguise:   p.ClientDisguise,
 		GroupID:          buildProviderGroupIDFromExport(p.GroupID, validGroups),
 		Weight:           normalizeProviderWeightFromExport(p.Weight),
 		Priority:         p.Priority,

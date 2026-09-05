@@ -100,14 +100,18 @@ func acceptanceCodexRuntimes(t *testing.T, persistence *store.SQLiteStore) (*cod
 		t.Fatal(err)
 	}
 	scheme := codexhttp.NewTrustedProxySchemeResolver(nil)
+	clientIdentities, err := persistence.ClientIdentityResolver(&digester)
+	if err != nil {
+		t.Fatal(err)
+	}
 	httpRuntime, err := codexhttp.New(codexhttp.Config{
-		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+		ClientIdentities: clientIdentities, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	webSocketRuntime, err := codexws.New(codexws.Config{
-		ClientScopes: &digester, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
+		ClientIdentities: clientIdentities, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)

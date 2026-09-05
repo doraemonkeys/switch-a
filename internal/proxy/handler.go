@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/wire"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/codex/disguiseruntime"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
@@ -59,6 +61,13 @@ type Handler struct {
 	backoff                    BackoffWaiter
 	requestLogInsertTimeout    time.Duration
 	codexHTTP                  *codexhttp.Runtime
+	clientDisguise             ClientDisguiseRepository
+	disguisePool               *upstreamtransport.Pool
+}
+
+type ClientDisguiseRepository interface {
+	disguiseruntime.Repository
+	wire.Mapper
 }
 
 // Store defines the minimal storage interface needed by the proxy handler.
@@ -339,6 +348,7 @@ type proxyContext struct {
 	attempts            []model.RequestAttempt // Attempts made during this request
 	usageObservations   map[string]*model.ProviderUsageSnapshot
 	codex               *codexhttp.Operation
+	disguise            *httpDisguiseOperation
 }
 
 // ServeHTTP handles proxy requests.

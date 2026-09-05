@@ -13,6 +13,7 @@ const navItems: Array<{
   { to: "/monitor", label: "Monitor", icon: "📡" },
   { to: "/providers", label: "Providers", icon: "🔌" },
   { to: "/credentials", label: "Credentials", icon: "🔑" },
+  { to: "/client-disguise", label: "Client disguise", icon: "🖥️" },
   { to: "/groups", label: "Groups", icon: "📁" },
   { to: "/routing", label: "Routing", icon: "🧭" },
   { to: "/error-detection", label: "Error Detection", icon: "🛡️" },

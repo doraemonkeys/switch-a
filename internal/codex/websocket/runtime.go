@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientcredential"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
@@ -19,9 +20,8 @@ import (
 
 const codexAPIType = "codex"
 
-type ClientScopeDigester interface {
-	ClientScope([]byte) (codexidentity.ClientScope, error)
-	ClientScopeCandidates([]byte) ([]codexidentity.ClientScope, error)
+type ClientIdentityResolver interface {
+	Resolve(context.Context, []byte) (clientidentity.Resolution, error)
 }
 
 type Continuity interface {
@@ -49,25 +49,25 @@ type ExternalSchemeResolver interface {
 }
 
 type Config struct {
-	ClientScopes    ClientScopeDigester
-	Continuity      Continuity
-	ProviderCookies ProviderCookies
-	ExternalScheme  ExternalSchemeResolver
+	ClientIdentities ClientIdentityResolver
+	Continuity       Continuity
+	ProviderCookies  ProviderCookies
+	ExternalScheme   ExternalSchemeResolver
 }
 
 type Runtime struct {
-	clientScopes    ClientScopeDigester
-	continuity      Continuity
-	providerCookies ProviderCookies
-	externalScheme  ExternalSchemeResolver
+	clientIdentities ClientIdentityResolver
+	continuity       Continuity
+	providerCookies  ProviderCookies
+	externalScheme   ExternalSchemeResolver
 }
 
 func New(config Config) (*Runtime, error) {
-	if config.ClientScopes == nil || config.Continuity == nil || config.ProviderCookies == nil || config.ExternalScheme == nil {
+	if config.ClientIdentities == nil || config.Continuity == nil || config.ProviderCookies == nil || config.ExternalScheme == nil {
 		return nil, fmt.Errorf("initialize Codex WebSocket runtime: client scopes, continuity, provider cookies, and external scheme are required")
 	}
 	return &Runtime{
-		clientScopes: config.ClientScopes, continuity: config.Continuity,
+		clientIdentities: config.ClientIdentities, continuity: config.Continuity,
 		providerCookies: config.ProviderCookies, externalScheme: config.ExternalScheme,
 	}, nil
 }
@@ -88,6 +88,7 @@ type Operation struct {
 	apiType        string
 	headers        http.Header
 
+	clientIdentity     clientidentity.Resolution
 	currentClientScope codexidentity.ClientScope
 	clientScopes       []codexidentity.ClientScope
 	hasClientScope     bool
@@ -122,7 +123,7 @@ func (r *Runtime) Begin(ctx context.Context, request *http.Request, apiType, ope
 	if _, err := initialClientEvidence(request.Header); err != nil {
 		return nil, err
 	}
-	if err := r.bindClientScope(op, request.Header, true); err != nil {
+	if err := r.bindClientScope(ctx, op, request.Header, true); err != nil {
 		return nil, err
 	}
 	op.ledger = codexprovenance.NewLedger(codexprovenance.Config{Resolver: r.continuity, RecoveryPolicy: op.recoveryPolicy, ClientScopeCandidates: op.clientScopes, APIType: apiType, OperationID: operationID})
@@ -150,8 +151,8 @@ func initialClientEvidence(headers http.Header) (codexheaders.Result, error) {
 	return discovery, nil
 }
 
-func (r *Runtime) bindClientScope(op *Operation, headers http.Header, required bool) error {
-	if r == nil || r.clientScopes == nil {
+func (r *Runtime) bindClientScope(ctx context.Context, op *Operation, headers http.Header, required bool) error {
+	if r == nil || r.clientIdentities == nil {
 		return &Failure{Class: FailureStorage, Stage: "client_scope", Cause: errors.New("client scope digester is unavailable")}
 	}
 	credential := clientcredential.Extract(map[string][]string(headers))
@@ -162,18 +163,24 @@ func (r *Runtime) bindClientScope(op *Operation, headers http.Header, required b
 		return nil
 	}
 	defer credential.Clear()
-	current, err := r.clientScopes.ClientScope(credential.Token)
+	resolution, err := r.clientIdentities.Resolve(ctx, credential.Token)
 	if err != nil {
 		return &Failure{Class: FailureStorage, Stage: "client_scope", Cause: err}
 	}
-	candidates, err := r.clientScopes.ClientScopeCandidates(credential.Token)
-	if err != nil {
-		return &Failure{Class: FailureStorage, Stage: "client_scope", Cause: err}
-	}
-	op.currentClientScope = current
-	op.clientScopes = append([]codexidentity.ClientScope(nil), candidates...)
+	op.clientIdentity = resolution
+	op.currentClientScope = resolution.Primary
+	op.clientScopes = append([]codexidentity.ClientScope(nil), resolution.Aliases...)
 	op.hasClientScope = true
 	return nil
+}
+
+func (o *Operation) ClientIdentity() clientidentity.Resolution {
+	if o == nil {
+		return clientidentity.Resolution{}
+	}
+	result := o.clientIdentity
+	result.Aliases = append([]codexidentity.ClientScope(nil), result.Aliases...)
+	return result
 }
 
 func (o *Operation) NeedsOwnerBootstrap() bool {

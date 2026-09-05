@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
@@ -80,13 +81,24 @@ func testCodexRuntime(t *testing.T) *codexws.Runtime {
 		t.Fatal(err)
 	}
 	runtime, err := codexws.New(codexws.Config{
-		ClientScopes: &digesterValue, Continuity: continuity, ProviderCookies: cookies,
+		ClientIdentities: testWSClientIdentityResolver{&digesterValue}, Continuity: continuity, ProviderCookies: cookies,
 		ExternalScheme: codexhttp.NewTrustedProxySchemeResolver(nil),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return runtime
+}
+
+type testWSClientIdentityResolver struct{ digester *codexidentity.Digester }
+
+func (r testWSClientIdentityResolver) Resolve(_ context.Context, raw []byte) (clientidentity.Resolution, error) {
+	primary, err := r.digester.ClientScope(raw)
+	if err != nil {
+		return clientidentity.Resolution{}, err
+	}
+	aliases, err := r.digester.ClientScopeCandidates(raw)
+	return clientidentity.Resolution{ID: string(raw), Primary: primary, Aliases: aliases}, err
 }
 
 func testCodexOperation(t *testing.T) *codexws.Operation {

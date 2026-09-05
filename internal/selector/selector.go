@@ -552,7 +552,8 @@ func (s *Selector) selectFromGroup(ctx context.Context, scope *ProviderSelection
 
 		// The lease is the ownership result of selection, not an incidental
 		// counter mutation that downstream code must reconstruct from an ID.
-		if lease, acquired := s.acquireProvider(scope, selected); acquired {
+		lease, acquired := s.acquireProvider(scope, selected)
+		if acquired {
 			return lease, nil
 		}
 
@@ -572,7 +573,8 @@ func (s *Selector) acquireProvider(scope *ProviderSelectionEligibility, provider
 		return nil, false
 	}
 	candidate, resolved := scope.CandidateSnapshot(provider.ID)
-	return newProviderLeaseWithCandidate(provider, slot, candidate, resolved), true
+	lease := newProviderLeaseWithCandidate(provider, slot, candidate, resolved)
+	return lease, true
 }
 
 func (s *Selector) selectionScope(ctx context.Context, req *model.SelectRequest) (*ProviderSelectionEligibility, error) {

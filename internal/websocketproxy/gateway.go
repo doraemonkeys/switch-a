@@ -20,6 +20,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
+	wsdisguise "github.com/doraemonkeys/switch-a/internal/websocketproxy/disguise"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -158,6 +160,8 @@ type ActiveSessions interface {
 }
 
 type Config struct {
+	Disguise                   wsdisguise.Repository
+	TransportPool              *upstreamtransport.Pool
 	Store                      Store
 	Selector                   Selector
 	Health                     internal.HealthManager
@@ -174,6 +178,8 @@ type Config struct {
 // Gateway contains the WebSocket subsystem. All dependencies are immutable and
 // injected; request contexts stay request-local and are never stored here.
 type Gateway struct {
+	disguise                   wsdisguise.Repository
+	transportPool              *upstreamtransport.Pool
 	store                      Store
 	selector                   Selector
 	health                     internal.HealthManager
@@ -211,6 +217,7 @@ func NewGateway(cfg Config) *Gateway {
 		usageObserver, _ = cfg.Auth.(ProviderUsageObserver)
 	}
 	return &Gateway{
+		disguise: cfg.Disguise, transportPool: cfg.TransportPool,
 		store: cfg.Store, selector: cfg.Selector, health: cfg.Health,
 		activeSessions: cfg.ActiveSessions, visibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
 		auth: cfg.Auth, usageObserver: usageObserver,
@@ -285,6 +292,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		StickyMode:  cfg.StickyMode,
 	}
 	var codexOperation *codexws.Operation
+	var disguiseSession *wsdisguise.Session
 	if apiType == APITypeCodex {
 		var err error
 		codexOperation, err = h.codex.Begin(ctx, r, apiType, requestID, cfg.ConversationRecoveryPolicy)
@@ -298,6 +306,14 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 			w.Header().Add("Set-Cookie", setCookie)
 		}
 		applyCodexWebSocketRouteConstraint(selectReq, codexOperation)
+		disguiseSession, err = h.beginDisguiseSession(ctx, r.Header, codexOperation.ClientIdentity().ID, requestID, startTime)
+		if err != nil {
+			h.writeCodexWebSocketFailureForOperation(w, requestID, err)
+			return
+		}
+		if disguiseSession != nil {
+			selectReq.ClientDisguise = disguiseSession.Operation()
+		}
 	}
 	newObserver, tracker, applyObservation, onClientVisible := h.newWebSocketObserverPipeline(apiType, requestID)
 	orchestrator := newWebSocketSessionOrchestrator(h, webSocketSessionOrchestratorConfig{
@@ -317,6 +333,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		capture:             capture,
 		captureParticipates: captureParticipates,
 		codexOperation:      codexOperation,
+		disguise:            disguiseSession,
 	})
 	if captureParticipates {
 		// Exchange records must close before their gateway, but only after sticky,
@@ -358,6 +375,29 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	applyWebSocketSessionHealthOutcomes(ctx, h, session)
 	go h.logWebSocketSession(info, session, time.Since(startTime))
+}
+
+func (h *Gateway) beginDisguiseSession(ctx context.Context, headers http.Header, clientID, requestID string, capturedAt time.Time) (*wsdisguise.Session, error) {
+	if h.disguise == nil {
+		return nil, nil
+	}
+	if observer, ok := h.disguise.(interface {
+		ObserveClient(context.Context, string, http.Header, time.Time) error
+	}); ok {
+		if err := observer.ObserveClient(ctx, clientID, headers, capturedAt); err != nil {
+			h.logger.Error("websocket.client_disguise_learning_failed", zap.String("operation_id", requestID), zap.Error(err))
+			return nil, err
+		}
+	}
+	providers, err := h.store.ListProvidersByAPIType(ctx, APITypeCodex)
+	var session *wsdisguise.Session
+	if err == nil {
+		session, err = wsdisguise.New(ctx, h.disguise, providers, headers, clientID, requestID, h.transportPool)
+	}
+	if err != nil {
+		h.logger.Error("websocket.client_disguise_admission_failed", zap.String("operation_id", requestID), zap.Error(err))
+	}
+	return session, err
 }
 
 func applyCodexWebSocketRouteConstraint(request *model.SelectRequest, operation *codexws.Operation) {

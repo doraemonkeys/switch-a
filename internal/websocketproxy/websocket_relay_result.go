@@ -145,6 +145,13 @@ func orderWebSocketRelayResults(first, second webSocketRelayResult) (webSocketRe
 }
 
 func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult) webSocketRelayOutcome {
+	// Conversion cannot be bypassed by an earlier sibling close or cancellation.
+	for _, candidate := range []webSocketRelayResult{primary, secondary} {
+		if disguiseFailure(candidate.err) != nil {
+			return webSocketRelayOutcome{closeCode: websocket.StatusInternalError, err: candidate.err,
+				terminalCause: model.TerminalInternalError, failureOperation: candidate.failureOperation}
+		}
+	}
 	for _, candidate := range []webSocketRelayResult{primary, secondary} {
 		if candidate.err == nil {
 			continue

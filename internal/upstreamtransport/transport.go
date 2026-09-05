@@ -203,6 +203,7 @@ func (t *Transport) CloseIdleConnections() {
 // ResponseHead is a value snapshot. SourceHeader records the exchange as
 // received while Header is normalized for the downstream writer.
 type ResponseHead struct {
+	RequestMethod string
 	StatusCode    int
 	Protocol      string
 	SourceHeader  http.Header
@@ -308,6 +309,7 @@ func (t *Transport) Fetch(
 	sourceHeader := response.Header.Clone()
 	clientHeader := downstreamHeader(response)
 	wrapped, wrapErr := NewResponse(ResponseHead{
+		RequestMethod: request.Method,
 		StatusCode:    response.StatusCode,
 		Protocol:      response.Proto,
 		SourceHeader:  sourceHeader,

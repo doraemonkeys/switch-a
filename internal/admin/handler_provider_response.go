@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
@@ -11,6 +12,7 @@ import (
 // ProviderPayload keeps route configuration and session lifecycle summaries
 // explicit without serializing the session-owned secret.
 type ProviderPayload struct {
+	ClientDisguise     clientdisguise.Policy              `json:"client_disguise"`
 	ID                 string                             `json:"id"`
 	Name               string                             `json:"name"`
 	APITypes           []ProviderAPITypePayload           `json:"api_types"`
@@ -87,6 +89,7 @@ func (h *Handler) providerPayload(provider *model.Provider) ProviderPayload {
 		return sessions[i].Name < sessions[j].Name
 	})
 	return ProviderPayload{
+		ClientDisguise:           provider.ClientDisguise,
 		ID:                       provider.ID,
 		Name:                     provider.Name,
 		APITypes:                 apiTypes,

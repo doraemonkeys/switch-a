@@ -17,6 +17,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
 
 	"go.uber.org/zap"
@@ -108,6 +109,7 @@ type Config struct {
 	RuleStatistics             RuleStatistics
 	BackoffWaiter              BackoffWaiter
 	CodexHTTP                  *codexhttp.Runtime
+	ClientDisguise             ClientDisguiseRepository
 	CodexWebSocket             *codexws.Runtime
 	Logger                     *zap.Logger
 }
@@ -185,6 +187,8 @@ func NewHandler(cfg Config) *Handler {
 		backoff:                    backoff,
 		requestLogInsertTimeout:    logInsertTimeout,
 		codexHTTP:                  cfg.CodexHTTP,
+		clientDisguise:             cfg.ClientDisguise,
+		disguisePool:               upstreamtransport.NewPool(),
 	}
 	handler.webSocketGateway = websocketproxy.NewGateway(websocketproxy.Config{
 		Store: cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,
@@ -192,6 +196,7 @@ func NewHandler(cfg Config) *Handler {
 		VisibleContinuitySeedStore: visibleContinuitySeedStore,
 		Auth:                       cfg.Auth, UsageObserver: usageObserver,
 		Capture: cfg.Capture, Codex: cfg.CodexWebSocket, Logger: cfg.Logger,
+		Disguise: cfg.ClientDisguise, TransportPool: handler.disguisePool,
 	})
 	return handler
 }

@@ -71,6 +71,7 @@ export function hasVisibleChanges(
 
   return getVisibleSummaryKeys(mode).some((key) => {
     const change = preview.changes[key];
+    if (!change) return false;
     return change.add > 0 || change.update > 0 || change.delete > 0;
   });
 }
@@ -116,6 +117,9 @@ export function buildImportRequest(
 ): ImportConfigRequest {
   return {
     version: parsedConfig.version,
+    ...(parsedConfig.codex_state === undefined
+      ? {}
+      : { codex_state: parsedConfig.codex_state }),
     import_scope: scope,
     providers: parsedConfig.providers,
     credential_sessions: parsedConfig.credential_sessions,

@@ -140,7 +140,7 @@ func testSSEOperation(
 		validateErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown},
 	}
 	runtime := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{
+		ClientIdentities: testScopeDigester{
 			current:    clientScope,
 			candidates: []codexidentity.ClientScope{clientScope},
 		},

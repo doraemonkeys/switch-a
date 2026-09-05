@@ -10,6 +10,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -39,6 +40,10 @@ func (a httpAttemptContext) metadata(apiType string, phase requestcapture.Creden
 		APIType:  apiType, SelectionMode: a.selectionMode, SelectionSource: a.selectionSource,
 		ProviderAttemptIndex: a.providerAttemptIndex, CredentialPhase: phase,
 	}
+}
+
+func (a httpAttemptContext) responseOperationID(requestID string, phase requestcapture.CredentialPhase) string {
+	return fmt.Sprintf(responseAnalysisOperationIDFormat, requestID, a.logicalAttemptIndex, a.provider.ID, a.providerAttemptIndex, phase)
 }
 
 func requestAttemptSelectionMode(mode model.SwitchMode) requestcapture.SelectionMode {
@@ -102,8 +107,27 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		attempt := state.attemptContext()
 		attemptIndex := int(state.ledger.LogicalAttemptsStarted()) - 1
 		attemptStart := time.Now()
+		ledgerBefore := state.ledger
 		result, continueExecution := h.executeLogicalAttempt(ctx, pctx, state, attempt, rules)
-		if pctx.ingress != nil {
+		if terminal, failed := h.disguiseFailure(pctx, result.terminalError()); failed {
+			result.failureKind = terminal.failureKind
+			result.failureMessage = terminal.failureMessage
+			result.success = false
+			result.healthAvailable = false
+			continueExecution = false
+		}
+		if pctx.disguise != nil && pctx.disguise.target.Policy.Enabled && result.failureKind != attemptFailureDisguise && pctx.ingressFailure() == nil {
+			h.applyHealthAssessment(ctx, attempt.provider.ID, &result)
+			if result.healthCircuitOpened && continueExecution && state.currentProvider.ID == attempt.provider.ID {
+				// Health is published only after conversion settles. An already
+				// prepared same-provider dispatch has not sent bytes or earned an
+				// attempt, so restore its ledger before choosing a healthy target.
+				state.ledger = ledgerBefore
+				state.providerAttempt = attempt.providerAttemptIndex
+				_, result, continueExecution = h.activateAlternate(ctx, pctx, state, nil, result, SwitchReasonCircuitBreakerTriggered, responseanalysis.TransitionExecutorDecision, requestcapture.TerminationReasonStatusFailoverDrain)
+			}
+		}
+		if pctx.ingress != nil && result.failureKind != attemptFailureDisguise {
 			snapshot := pctx.ingress.Snapshot()
 			if snapshot.State == requestingress.Failed {
 				result.success = false
@@ -126,11 +150,36 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 
 func (h *Handler) startInitialSelection(ctx context.Context, pctx *proxyContext, state *retryState) bool {
 	state.selectionMode = state.switchTracker.prepareSelection()
-	selection, err := h.selectInitialProvider(ctx, pctx.selectReq, 0, state.excludedProviders, pctx.cfg.ConversationRecoveryPolicy)
+	var selection *providerSelection
+	var err error
+	for {
+		selection, err = h.selectInitialProvider(ctx, pctx.selectReq, 0, state.excludedProviders, pctx.cfg.ConversationRecoveryPolicy)
+		if err != nil {
+			break
+		}
+		if pctx.disguise == nil {
+			break
+		}
+		_, err = pctx.disguise.operation.Commit(ctx, selection.provider)
+		if err == nil {
+			break
+		}
+		selection.lease.Release()
+		if !errors.Is(err, clientdisguise.ErrCandidateExcluded) {
+			err = httpDisguiseInvariantFailure(pctx, "target_commit", err)
+			break
+		}
+		state.excludedProviders[selection.provider.ID] = true
+	}
 	if err != nil {
 		state.lastErr = err
 		if errors.Is(err, internal.ErrNoProvider) {
 			h.handleNoProvider(pctx, err)
+		} else {
+			if terminal, failed := h.disguiseFailure(pctx, err); failed {
+				state.lastErr = terminal.terminalError()
+			}
+			h.finalizeProxy(pctx, state)
 		}
 		return false
 	}
@@ -185,6 +234,9 @@ func (h *Handler) executeLogicalAttempt(
 ) (forwardResult, bool) {
 	request, err := h.prepareForwardRequest(ctx, pctx, attempt, requestcapture.CredentialPhaseInitial)
 	if err != nil {
+		if result, failed := h.disguiseFailure(pctx, err); failed {
+			return result, false
+		}
 		result := failureResult(attemptFailurePreparation, err)
 		return h.resolveLegacyFailure(ctx, pctx, state, nil, result)
 	}
@@ -193,6 +245,9 @@ func (h *Handler) executeLogicalAttempt(
 		ctx, pctx, attempt, requestcapture.CredentialPhaseInitial, request, rules,
 	)
 	if err != nil {
+		if result, failed := h.disguiseFailure(pctx, err); failed {
+			return result, false
+		}
 		result := failureResult(attemptFailureTransport, err)
 		result.clientTermination = classifyClientTermination(ctx)
 		if result.clientTermination.observed() {
@@ -253,6 +308,10 @@ func (h *Handler) refreshUnauthorizedSubexchange(
 	)
 	if err != nil {
 		permit.Release()
+		if result, failed := h.disguiseFailure(pctx, err); failed {
+			_, _ = pending.discard(responseanalysis.TransitionExecutorDecision, requestcapture.TerminationReasonReadError, statusCaptureFailure(http.StatusUnauthorized))
+			return nil, &result, false
+		}
 		return pending, nil, false
 	}
 	discarded, discardErr := pending.discard(
@@ -285,6 +344,9 @@ func (h *Handler) refreshUnauthorizedSubexchange(
 		ctx, pctx, refreshedAttempt, requestcapture.CredentialPhaseRefreshed, request, rules,
 	)
 	if err != nil {
+		if result, failed := h.disguiseFailure(pctx, err); failed {
+			return nil, &result, false
+		}
 		result := failureResult(attemptFailureTransport, err)
 		result.clientTermination = classifyClientTermination(ctx)
 		if result.clientTermination.observed() {
@@ -428,7 +490,7 @@ func (h *Handler) assessAndApplyHealth(
 	facts errorrule.AttemptFacts,
 	action errorrule.Action,
 ) {
-	if pctx.ingressFailure() != nil {
+	if pctx.ingressFailure() != nil || result.failureKind == attemptFailureDisguise {
 		result.health = errorrule.HealthAssessment{Verdict: errorrule.HealthNeutral, Cause: errorrule.HealthCauseIncomplete}
 		result.healthAvailable = true
 		return
@@ -441,14 +503,21 @@ func (h *Handler) assessAndApplyHealth(
 	}
 	result.health = assessment
 	result.healthAvailable = available
-	if !available || h.health == nil {
+	if pctx.disguise != nil && pctx.disguise.target.Policy.Enabled {
 		return
 	}
-	switch assessment.Verdict {
+	h.applyHealthAssessment(ctx, providerID, result)
+}
+
+func (h *Handler) applyHealthAssessment(ctx context.Context, providerID string, result *forwardResult) {
+	if !result.healthAvailable || h.health == nil {
+		return
+	}
+	switch result.health.Verdict {
 	case errorrule.HealthSuccess:
 		h.health.MarkSuccess(ctx, providerID)
 	case errorrule.HealthFailure:
-		result.healthCircuitOpened = h.health.MarkFailure(ctx, providerID, fmt.Errorf("provider attempt failed: %s", assessment.Cause))
+		result.healthCircuitOpened = h.health.MarkFailure(ctx, providerID, fmt.Errorf("provider attempt failed: %s", result.health.Cause))
 	}
 }
 
@@ -523,7 +592,7 @@ func attemptFactsFromForwardResult(ctx context.Context, result forwardResult) no
 
 func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	pctx.finishIngress()
-	if sourceErr := pctx.ingressFailure(); sourceErr != nil {
+	if sourceErr := pctx.ingressFailure(); sourceErr != nil && (pctx.disguise == nil || pctx.disguise.failure == nil) {
 		state.lastErr = sourceErr
 		state.success = false
 	}
@@ -537,15 +606,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 	}
 	clientStatus := state.statusCode
 	if !state.success && !state.headersWritten {
-		if sourceErr := pctx.ingressFailure(); sourceErr != nil {
-			h.handleBodyError(pctx.w, sourceErr, pctx.cfg.maxBodySizeMB)
-			clientStatus = http.StatusInternalServerError
-			if errors.Is(sourceErr, requestingress.ErrBodyTooLarge) {
-				clientStatus = http.StatusRequestEntityTooLarge
-			}
-		} else {
-			clientStatus = h.handleExhaustedRetries(pctx, state.lastErr)
-		}
+		clientStatus = h.writeUncommittedFailure(pctx, state.lastErr)
 	}
 	h.scheduleProviderUsagePersistence(pctx)
 	go h.logRequest(pctx, logRequestInputs{
@@ -563,7 +624,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 		FirstTokenMs: state.firstTokenMs, ResponseBytes: state.responseBytes,
 		TokenUsage: state.tokenUsage, Latency: time.Since(pctx.startTime),
 	})
-	if state.responseCommitted && pctx.ingressFailure() != nil {
+	if state.responseCommitted && (pctx.ingressFailure() != nil || pctx.disguise != nil && pctx.disguise.failure != nil) {
 		panic(http.ErrAbortHandler)
 	}
 }

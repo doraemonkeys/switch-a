@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 )
@@ -60,10 +61,11 @@ func IsValidStickyMode(m StickyMode) bool {
 
 // Provider represents an AI provider configuration.
 type Provider struct {
-	ID       string            `gorm:"primaryKey" json:"id"`
-	Name     string            `gorm:"not null" json:"name"`
-	APITypes []ProviderAPIType `gorm:"foreignKey:ProviderID" json:"api_types"`
-	AuthMode string            `gorm:"default:auto" json:"auth_mode"`
+	ClientDisguise clientdisguise.Policy `json:"client_disguise" gorm:"serializer:json;type:text"`
+	ID             string                `gorm:"primaryKey" json:"id"`
+	Name           string                `gorm:"not null" json:"name"`
+	APITypes       []ProviderAPIType     `gorm:"foreignKey:ProviderID" json:"api_types"`
+	AuthMode       string                `gorm:"default:auto" json:"auth_mode"`
 	// UsageLimitPolicy stores only an explicit route-target override. Empty values
 	// use the target-independent switch-provider default; a target can reference
 	// different credential kinds for different API types.
@@ -536,6 +538,7 @@ type StickyEntry struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
+	ClientDisguise SelectDisguise
 	RoutingCatalog *RoutingCatalog
 	// OperationID is the server-generated request UUID used only to correlate
 	// selection decisions. It must never contain a client-provided request header.

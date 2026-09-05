@@ -120,11 +120,17 @@ func bootstrapApplicationCodexSecurity(
 	historical := codexkeyring.HistoricalVersions{
 		HMAC: mergeRequiredVersions(
 			inventory.CredentialHMACVersions,
+			inventory.ClientIdentityHMACVersions,
 			inventory.ContinuityHMACVersions,
 			inventory.ProviderCookieHMACVersions,
 		),
 		AEAD: mergeRequiredVersions(inventory.ProviderCookieAEADVersions),
 	}
+	portable, portableErr := loadApplicationPortableHMAC(ctx, persistence)
+	if portableErr != nil {
+		return nil, portableErr
+	}
+	historical.HMAC = fileRequiredHMAC(historical.HMAC, portable)
 	loaded, err := codexkeyring.LoadOrCreateFileWithStore(files, resolvedPath, historical, random)
 	if err != nil {
 		if diagnostic := diagnoseCodexInventoryCoverage(files, resolvedPath, random, inventory, err); diagnostic != nil {
@@ -133,6 +139,16 @@ func bootstrapApplicationCodexSecurity(
 		wrapped := fmt.Errorf("load or create Codex keyring: %w", err)
 		logCodexStartupFailure(log, startupID, startupPhaseKeyring, wrapped)
 		return nil, wrapped
+	}
+	if err := loaded.Keyring.WithHMACImport(portable, nil); err != nil {
+		return nil, err
+	}
+	if installer, ok := persistence.(interface {
+		InstallCodexKeyring(context.Context, *codexkeyring.Keyring) error
+	}); ok {
+		if err := installer.InstallCodexKeyring(ctx, loaded.Keyring); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateCodexInventoryCoverage(loaded.Keyring, inventory); err != nil {
 		logCodexStartupFailure(log, startupID, startupPhaseKeyring, err)
@@ -254,6 +270,7 @@ type codexHistoryFamily struct {
 func codexHistoryFamilies(inventory store.CodexPersistenceInventory) []codexHistoryFamily {
 	return []codexHistoryFamily{
 		{name: "credential_subject_hmac", hmac: inventory.CredentialHMACVersions},
+		{name: "client_identity_hmac", hmac: inventory.ClientIdentityHMACVersions},
 		{name: "continuity_hmac", hmac: inventory.ContinuityHMACVersions},
 		{name: "provider_cookie_hmac", hmac: inventory.ProviderCookieHMACVersions},
 		{name: "provider_cookie_aead", aead: inventory.ProviderCookieAEADVersions},

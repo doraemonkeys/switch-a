@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type { CredentialSession } from "../../api";
 import { CopyButton } from "../../components";
+import { CredentialDisguiseSummary } from "@/features/client-disguise/CredentialDisguiseSummary";
 
 interface CredentialCardProps {
   session: CredentialSession;
@@ -73,6 +74,7 @@ export function CredentialCard({
     <div className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
       {/* Top Section: Header & Status Badge */}
       <div>
+        <CredentialDisguiseSummary session={session} />
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
             <div

@@ -73,6 +73,20 @@ func stageConfigImport(
 		finalGroups,
 		finalProviders,
 	)
+	if req.CodexState != nil && resolved.Scope.Mode != ConfigImportModeSettingsOnly {
+		staged.bundle.CodexState = req.CodexState
+		if resolved.Scope.Mode == ConfigImportModeSelection {
+			providerIDs, sessionIDs := []string{}, []string{}
+			for _, provider := range resolved.Providers {
+				providerIDs = append(providerIDs, provider.ID)
+				for _, api := range provider.APITypes {
+					sessionIDs = append(sessionIDs, api.CredentialSessionID)
+				}
+			}
+			staged.bundle.CodexState = req.CodexState.Select(providerIDs, sessionIDs)
+		}
+		staged.changes.CodexState.Update = 1
+	}
 	stageImportedSettings(&staged, resolved.Settings, existingSettings)
 	stageImportedInternalErrorRules(&staged, resolved, existingRules, finalProviders)
 	return staged

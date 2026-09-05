@@ -219,7 +219,16 @@ func (t sourceRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 		// RoundTripper may close asynchronously. Join before opening the replacement
 		// so an old reader cannot race new framing or consume the live tail.
 		_ = transmission.Body.Close()
-		event.RetryEligible = errors.Is(err, errTransmissionReopen)
+		// A converter failure is terminal even if the protocol engine concurrently
+		// requests a native reopen after seeing a connection failure.
+		terminalConversion := false
+		if source, ok := body.source.(interface{ terminalError() error }); ok {
+			if failure := source.terminalError(); failure != nil {
+				err = failure
+				terminalConversion = true
+			}
+		}
+		event.RetryEligible = !terminalConversion && errors.Is(err, errTransmissionReopen)
 		if !event.RetryEligible {
 			t.observer.emit(event, TransmissionRetryDecision, reader, err)
 			return response, err

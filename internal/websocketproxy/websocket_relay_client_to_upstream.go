@@ -85,7 +85,7 @@ func (o *WebSocketSessionOrchestrator) deliverBufferedClientMessage(
 	o.observeReplayClientMessage(observer, message.MessageType, message.Data)
 	decision := message.Decision
 	if decision.PrepareReplay != nil {
-		decision = decision.PrepareReplay()
+		decision = decision.PrepareReplay(message.Data)
 	}
 	if decision.Action == webSocketPreWriteActionReject {
 		disposition := decision.RejectionDisposition
@@ -95,7 +95,8 @@ func (o *WebSocketSessionOrchestrator) deliverBufferedClientMessage(
 		captureWebSocketMessageResult(captureOptions, captured, disposition, false, decision.Err)
 		return 0, decision.Err
 	}
-	if err := upstreamConn.Write(ctx, message.MessageType, message.Data); err != nil {
+	payload := decision.physicalPayload(message.Data)
+	if err := upstreamConn.Write(ctx, message.MessageType, payload); err != nil {
 		captureWebSocketMessageResult(captureOptions, captured, requestcapture.MessageDispositionWriteFailed, false, err)
 		return 0, err
 	}
@@ -105,14 +106,14 @@ func (o *WebSocketSessionOrchestrator) deliverBufferedClientMessage(
 	if decision.OnWriteConfirmed != nil {
 		if err := decision.OnWriteConfirmed(); err != nil {
 			captureWebSocketMessageResult(captureOptions, captured, requestcapture.MessageDispositionStorageRejected, true, err)
-			return int64(len(message.Data)), err
+			return int64(len(payload)), err
 		}
 	}
 	if !message.Delivered {
 		o.replayBuffer.MarkDelivered(replayIndex, captured.Lineage)
 	}
 	captureWebSocketMessageResult(captureOptions, captured, requestcapture.MessageDispositionForwarded, true, nil)
-	return int64(len(message.Data)), nil
+	return int64(len(payload)), nil
 }
 
 func (o *WebSocketSessionOrchestrator) observeReplayClientMessage(
@@ -302,12 +303,13 @@ func (p *webSocketRelayMessageProcessor) process(
 	if p.observe != nil {
 		p.observe(messageType, data)
 	}
-	if err := p.dst.Write(p.ctx, messageType, data); err != nil {
+	payload := decision.physicalPayload(data)
+	if err := p.dst.Write(p.ctx, messageType, payload); err != nil {
 		writeErr := clientFrameWriteError(decision, err)
 		captureWebSocketMessageResult(p.options, captured, requestcapture.MessageDispositionWriteFailed, false, writeErr)
 		return p.dstPeer, webSocketRelayFailureOperationWrite, writeErr
 	}
-	p.totalBytes += int64(len(data))
+	p.totalBytes += int64(len(payload))
 	if !decision.ReplacementEligible && p.options.PreVisibleReplayBuffer != nil {
 		p.options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayNonReplayableFrame)
 	}

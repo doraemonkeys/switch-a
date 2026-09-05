@@ -247,30 +247,30 @@ func TestRuntimeUtilityBranches(t *testing.T) {
 
 func TestBeginAdditionalFailureBranches(t *testing.T) {
 	scope := testClientScope(t, "begin")
-	runtime := newAlwaysOnTestRuntime(t, Config{ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}})
+	runtime := newAlwaysOnTestRuntime(t, Config{ClientIdentities: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}}})
 	if _, err := runtime.Begin(context.Background(), nil, codexAPIType, "operation", "preserve_conversation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("nil request error = %v", err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/", nil)
 	request.Header.Set("Authorization", "Bearer client")
 	digestFailure := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{err: errors.New("HMAC unavailable")}, Continuity: &continuityRecorder{},
+		ClientIdentities: testScopeDigester{err: errors.New("HMAC unavailable")}, Continuity: &continuityRecorder{},
 	})
 	request.Header.Set("Thread-Id", "state-requires-scope")
 	if _, err := digestFailure.Begin(context.Background(), request, codexAPIType, "operation", "preserve_conversation", testClientEvidence(nil, nil)); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("scope digest error = %v", err)
 	}
 	conflictingOwner := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
-		Continuity:   &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorConflict}},
+		ClientIdentities: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
+		Continuity:       &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorConflict}},
 	})
 	request.Header.Set("X-Codex-Turn-State", "turn")
 	if _, err := conflictingOwner.Begin(context.Background(), request, codexAPIType, "operation", "preserve_conversation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("owner conflict error = %v", err)
 	}
 	unavailableOwner := newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
-		Continuity:   &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}},
+		ClientIdentities: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
+		Continuity:       &continuityRecorder{resolveErr: &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnavailable}},
 	})
 	if _, err := unavailableOwner.Begin(context.Background(), request, codexAPIType, "operation", "preserve_conversation", testClientEvidence(nil, nil)); !IsKind(err, ErrorDependencyUnavailable) {
 		t.Fatalf("owner unavailable error = %v", err)
@@ -300,7 +300,7 @@ func beginContinuityOperation(t *testing.T, scope codexidentity.ClientScope, con
 
 func newContinuityTestRuntime(t *testing.T, scope codexidentity.ClientScope, continuity *continuityRecorder) *Runtime {
 	return newAlwaysOnTestRuntime(t, Config{
-		ClientScopes: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
-		Continuity:   continuity,
+		ClientIdentities: testScopeDigester{current: scope, candidates: []codexidentity.ClientScope{scope}},
+		Continuity:       continuity,
 	})
 }

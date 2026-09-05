@@ -17,6 +17,7 @@ import { stringToColor } from "../../lib/utils";
 import { DetailSection, DetailRow } from "./DrawerSection";
 import { AuthSection } from "./ProviderDetailDrawerAuthSection";
 import { ProviderErrorDetectionSummary } from "./ProviderErrorDetectionSummary";
+import { ProviderDisguiseSummary } from "@/features/client-disguise/ProviderDisguiseSummary";
 import { RecoveryTimer } from "./RecoveryTimer";
 import { CloseIcon } from "../icons/CloseIcon";
 import {
@@ -671,6 +672,7 @@ export function ProviderDetailDrawer({
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           <BasicInfoSection provider={provider} getGroupName={getGroupName} />
           <ProviderErrorDetectionSummary provider={provider} />
+          <ProviderDisguiseSummary provider={provider} />
           <AuthSection
             provider={provider}
             onRefreshCredential={onRefreshCredential}

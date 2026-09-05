@@ -26,6 +26,11 @@ const credentialSession = {
 
 function providerPayload(overrides: Record<string, unknown> = {}) {
   return {
+    client_disguise: {
+      enabled: false,
+      match_platform: true,
+      unknown_platform: "exclude",
+    },
     id: "1",
     name: "OpenAI",
     api_types: [

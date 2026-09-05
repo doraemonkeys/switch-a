@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -65,6 +67,8 @@ type SealedValue struct {
 // Keyring stores derived purpose keys rather than the root material. Its API
 // intentionally has no way to request issuance with a legacy version.
 type Keyring struct {
+	transferMu   sync.Mutex
+	imported     atomic.Pointer[hmacImportState]
 	hmacCurrent  string
 	hmacVersions []string
 	hmacKeys     map[HMACPurpose]map[string][digestBytes]byte
@@ -157,17 +161,22 @@ func (k *Keyring) Sign(purpose HMACPurpose, input []byte) (Digest, error) {
 // ordering makes the active generation observable without allowing legacy
 // issuance through Sign.
 func (k *Keyring) LookupDigests(purpose HMACPurpose, input []byte) ([]Digest, error) {
+	state := k.hmacState()
 	versions, ok := k.hmacKeys[purpose]
 	if !ok {
 		return nil, errorOf(ErrorInvalidPurpose, "hmac", "", "unsupported HMAC purpose", nil)
 	}
-	result := make([]Digest, 0, len(k.hmacVersions))
+	result := make([]Digest, 0, len(state.versions))
 	result = append(result, digestWithKey(k.hmacCurrent, versions[k.hmacCurrent], input))
-	for _, version := range k.hmacVersions {
+	for _, version := range state.versions {
 		if version == k.hmacCurrent {
 			continue
 		}
-		result = append(result, digestWithKey(version, versions[version], input))
+		key, found := versions[version]
+		if !found {
+			key = state.keys[purpose][version]
+		}
+		result = append(result, digestWithKey(version, key, input))
 	}
 	return result, nil
 }
@@ -182,6 +191,7 @@ func digestWithKey(version string, key [digestBytes]byte, input []byte) Digest {
 
 // Verify validates a stored versioned digest with current or legacy material.
 func (k *Keyring) Verify(purpose HMACPurpose, input []byte, expected Digest) error {
+	state := k.hmacState()
 	versions, ok := k.hmacKeys[purpose]
 	if !ok {
 		return errorOf(ErrorInvalidPurpose, "hmac", "", "unsupported HMAC purpose", nil)
@@ -193,6 +203,9 @@ func (k *Keyring) Verify(purpose HMACPurpose, input []byte, expected Digest) err
 		return errorOf(ErrorUnknownVersion, "hmac", "", "digest key version is invalid", nil)
 	}
 	key, ok := versions[expected.Version]
+	if !ok {
+		key, ok = state.keys[purpose][expected.Version]
+	}
 	if !ok {
 		return errorOf(ErrorUnknownVersion, "hmac", expected.Version, "digest key version is unavailable", nil)
 	}

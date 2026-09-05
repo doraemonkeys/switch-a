@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
@@ -30,6 +31,7 @@ const (
 )
 
 type applicationCodexRuntime struct {
+	identities      *clientidentity.Resolver
 	HTTP            *codexhttp.Runtime
 	WebSocket       *codexws.Runtime
 	continuity      *codexcontinuity.Service
@@ -61,22 +63,34 @@ func newApplicationCodexRuntime(
 		return nil, err
 	}
 
+	identities, err := persistence.ClientIdentityResolver(digester)
+	if err != nil {
+		return nil, err
+	}
+	identities.SetObserver(func(event clientidentity.Trace) {
+		fields := []zap.Field{zap.String("client_identity_id", event.ClientID), zap.String("decision", event.Decision), zap.Int("alias_count", event.AliasCount)}
+		if event.Err != nil {
+			log.Error("codex.client_identity", append(fields, zap.Error(event.Err))...)
+		} else {
+			log.Debug("codex.client_identity", fields...)
+		}
+	})
 	httpRuntime, err := codexhttp.New(codexhttp.Config{
-		ClientScopes: digester, Continuity: continuity,
+		ClientIdentities: identities, Continuity: continuity,
 		ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize Codex HTTP runtime: %w", err)
 	}
 	webSocketRuntime, err := codexws.New(codexws.Config{
-		ClientScopes: digester, Continuity: continuity,
+		ClientIdentities: identities, Continuity: continuity,
 		ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize Codex WebSocket runtime: %w", err)
 	}
 	return &applicationCodexRuntime{
-		HTTP: httpRuntime, WebSocket: webSocketRuntime,
+		HTTP: httpRuntime, WebSocket: webSocketRuntime, identities: identities,
 		continuity:      continuity,
 		providerCookies: cookies,
 	}, nil

@@ -27,6 +27,7 @@ const (
 	ReasonProviderDeleted              DecisionReason = "provider_deleted"
 	ReasonProviderDisabled             DecisionReason = "provider_disabled"
 	ReasonAPIRemoved                   DecisionReason = "api_removed"
+	ReasonClientPlatformExcluded       DecisionReason = "client_platform_excluded"
 	ReasonRoutingChanged               DecisionReason = "routing_changed"
 	ReasonGroupDisabled                DecisionReason = "group_disabled"
 	ReasonAuthUnavailable              DecisionReason = "auth_unavailable"
@@ -75,6 +76,7 @@ func isProviderRejection(reason DecisionReason) bool {
 		ReasonProviderDisabled,
 		ReasonAPIRemoved,
 		ReasonRoutingChanged,
+		ReasonClientPlatformExcluded,
 		ReasonGroupDisabled,
 		ReasonAuthUnavailable,
 		ReasonProviderLookupError:

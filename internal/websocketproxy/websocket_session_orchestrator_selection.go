@@ -508,7 +508,7 @@ func (o *WebSocketSessionOrchestrator) selectionProbeFrameDecision(
 	if o.codexOperation != nil {
 		frame := o.codexOperation.ClassifyClientFrame(ctx, messageType == websocket.MessageText, data)
 		o.logCodexClientFramePermit(frame)
-		decision = o.codexClientFrameDecision(ctx, frame, false)
+		decision = o.codexClientFrameDecision(ctx, frame, false, messageType, data)
 		if decision.Action != webSocketPreWriteActionReject {
 			applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
 		}
@@ -564,15 +564,7 @@ func (o *WebSocketSessionOrchestrator) selectProvider(
 ) (ProviderSelection, providerSwitchMode, *WebSocketSessionResult) {
 	selectionMode := o.switchTracker.prepareSelection()
 
-	var selection ProviderSelection
-	var err error
-	if o.codexOperation != nil && o.codexOperation.AllowsAccountSwitch() && attempt == 0 && len(o.excludedProviders) == 0 && o.handler.selector != nil {
-		// Recovery follows the selector's soft sticky then strategy order; a live
-		// connection is not a completed-response preference for another request.
-		selection, err = normalizeProviderSelection(o.handler.selector.SelectInitial(ctx, o.selectReq))
-	} else {
-		selection, err = o.handler.selectProviderWithTracking(ctx, o.selectReq, attempt, o.excludedProviders)
-	}
+	selection, err := o.selectPhysicalTarget(ctx, attempt)
 	if err == nil {
 		o.switchTracker.recordSelection(selection.Provider(), selection.Metadata)
 		return selection, selectionMode, nil
@@ -605,6 +597,11 @@ func (o *WebSocketSessionOrchestrator) selectProvider(
 	}
 
 	if errors.Is(err, internal.ErrNoProvider) {
+		if message := o.disguiseExclusionMessage(); message != "" {
+			return ProviderSelection{}, providerSwitchModeInitial, newWebSocketSelectionFailureSession(
+				o.requestID, o.isSticky, o.attempts, http.StatusServiceUnavailable, model.TerminalProviderUnavailable,
+				ErrCodeProviderUnavailable, message, err)
+		}
 		if len(o.attempts) > 0 {
 			return ProviderSelection{}, providerSwitchModeInitial, o.finalSessionFromLastAttempt(ctx)
 		}

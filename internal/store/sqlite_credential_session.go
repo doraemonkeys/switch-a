@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"gorm.io/gorm"
 )
 
 func (s *SQLiteStore) CreateCredentialSession(ctx context.Context, session *credentialsession.Session) (*credentialsession.Session, error) {
@@ -13,7 +14,21 @@ func (s *SQLiteStore) CreateCredentialSession(ctx context.Context, session *cred
 	if err := resolveStaticCredentialSubject(session, s.credentialSigning.signer); err != nil {
 		return nil, fmt.Errorf("create credential session: %w", err)
 	}
-	created, err := s.credentialSessions.Create(ctx, session)
+	var created *credentialsession.Session
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repository, err := s.credentialSessions.WithDB(tx)
+		if err != nil {
+			return err
+		}
+		if err := preserveRestoredStaticSubject(ctx, tx, session, s.credentialSigning.signer); err != nil {
+			return err
+		}
+		created, err = repository.Create(ctx, session)
+		if err != nil {
+			return err
+		}
+		return syncDisguiseLogin(ctx, tx, created.ID, created.Subject())
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create credential session: %w", err)
 	}
@@ -52,7 +67,16 @@ func (s *SQLiteStore) DeleteCredentialSession(ctx context.Context, sessionID str
 	defer release()
 	s.credentialSigning.mu.RLock()
 	defer s.credentialSigning.mu.RUnlock()
-	return s.credentialSessions.DeleteIfUnreferenced(ownedCtx, sessionID)
+	return s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
+		repository, err := s.credentialSessions.WithDB(tx)
+		if err != nil {
+			return err
+		}
+		if err := repository.DeleteIfUnreferenced(ownedCtx, sessionID); err != nil {
+			return err
+		}
+		return s.ClientDisguiseRepository().WithDB(tx).RetireLogin(ownedCtx, sessionID)
+	})
 }
 
 func (s *SQLiteStore) RenameCredentialSessionCAS(ctx context.Context, sessionID string, expectedVersion int64, name string) (int64, error) {
@@ -100,7 +124,19 @@ func (s *SQLiteStore) UpdateCredentialSessionCAS(
 			subject = candidate.Subject()
 		}
 	}
-	return s.credentialSessions.UpdateCredentialCAS(ctx, sessionID, expectedVersion, secretData, subject, authState)
+	var version int64
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repository, err := s.credentialSessions.WithDB(tx)
+		if err != nil {
+			return err
+		}
+		version, err = repository.UpdateCredentialCAS(ctx, sessionID, expectedVersion, secretData, subject, authState)
+		if err != nil {
+			return err
+		}
+		return syncDisguiseLogin(ctx, tx, sessionID, subject)
+	})
+	return version, err
 }
 
 func resolveStaticCredentialSubject(session *credentialsession.Session, signer StaticCredentialSubjectSigner) error {

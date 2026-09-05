@@ -15,6 +15,7 @@ export interface ExportedAPIType {
 }
 
 export interface ExportedProvider {
+  client_disguise?: import("./client-disguise/types").ClientDisguisePolicy;
   id: string;
   name: string;
   api_types: ExportedAPIType[];
@@ -118,6 +119,7 @@ export interface ExportedInternalErrorRule {
 }
 
 export interface ExportedConfig {
+  codex_state?: Record<string, unknown>;
   version: string;
   exported_at: string;
   providers: ExportedProvider[];
@@ -150,6 +152,7 @@ export type ImportScope =
   FullImportScope | SettingsOnlyImportScope | SelectionImportScope;
 
 export interface ImportConfigRequest {
+  codex_state?: Record<string, unknown>;
   version: string;
   import_scope: ImportScope;
   providers: ExportedProvider[];
@@ -168,6 +171,7 @@ export interface ChangeCount {
 }
 
 export interface ImportChanges {
+  codex_state?: ChangeCount;
   providers: ChangeCount;
   credential_sessions: ChangeCount;
   groups: ChangeCount;
@@ -197,6 +201,7 @@ export interface AppliedCount {
 }
 
 export interface ImportedCounts {
+  codex_state?: AppliedCount;
   providers: AppliedCount;
   credential_sessions: AppliedCount;
   groups: AppliedCount;

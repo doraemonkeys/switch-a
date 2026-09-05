@@ -255,10 +255,16 @@ export function parseEvidenceV1(envelope: JsonRecord): RequestEvidenceV1 {
   });
 }
 
+import { parseDisguiseEvidence } from "../client-disguise/evidence";
+
 export function parseEvidenceV2(envelope: JsonRecord): RequestEvidenceV2 {
   const path = "request evidence";
   return Object.freeze({
     v: 2,
+    client_disguise:
+      envelope.client_disguise == null
+        ? null
+        : parseDisguiseEvidence(envelope.client_disguise),
     gateway: parseNullable(
       envelope.gateway,
       `${path}.gateway`,

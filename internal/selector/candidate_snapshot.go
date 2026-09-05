@@ -171,6 +171,7 @@ func cloneProviderSelectionSnapshot(provider *model.Provider) *model.Provider {
 		return nil
 	}
 	clone := *provider
+	clone.ClientDisguise = provider.ClientDisguise.Clone()
 	clone.APITypes = append([]model.ProviderAPIType(nil), provider.APITypes...)
 	clone.CredentialSessions = make([]credentialsession.RouteSnapshot, len(provider.CredentialSessions))
 	for index := range provider.CredentialSessions {

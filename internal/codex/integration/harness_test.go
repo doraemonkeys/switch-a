@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	continuitysqlite "github.com/doraemonkeys/switch-a/internal/codex/continuity/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
@@ -124,6 +125,13 @@ func newRuntimeFixture(t *testing.T, options fixtureOptions) *runtimeFixture {
 		t.Fatal(err)
 	}
 	digester := &digesterValue
+	if err := clientidentity.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	clientIdentities, err := clientidentity.New(db, digester)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	continuityRepository, err := continuitysqlite.Open(context.Background(), db)
 	if err != nil {
@@ -155,14 +163,14 @@ func newRuntimeFixture(t *testing.T, options fixtureOptions) *runtimeFixture {
 
 	scheme := fixtureSchemeResolver("https")
 	httpRuntime, err := codexhttp.New(codexhttp.Config{
-		ClientScopes: digester, Continuity: continuity,
+		ClientIdentities: clientIdentities, Continuity: continuity,
 		ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	webSocketRuntime, err := codexws.New(codexws.Config{
-		ClientScopes: digester, Continuity: continuity,
+		ClientIdentities: clientIdentities, Continuity: continuity,
 		ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
