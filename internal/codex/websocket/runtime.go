@@ -13,6 +13,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/provenance"
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 const codexAPIType = "codex"
@@ -23,6 +25,7 @@ type ClientScopeDigester interface {
 }
 
 type Continuity interface {
+	Resolve(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Resolution, error)
 	ResolveOwner(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error)
 	AcquireExisting(context.Context, codexcontinuity.ValidateRequest) (codexcontinuity.Lease, error)
 	Claim(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
@@ -78,10 +81,12 @@ type ownerResolution struct {
 // Operation is request-local. Its mutex protects the two relay directions,
 // which may validate and commit state concurrently after the handshake.
 type Operation struct {
-	runtime     *Runtime
-	operationID string
-	apiType     string
-	headers     http.Header
+	recoveryPolicy model.ConversationRecoveryPolicy
+	ledger         *codexprovenance.Ledger
+	runtime        *Runtime
+	operationID    string
+	apiType        string
+	headers        http.Header
 
 	currentClientScope codexidentity.ClientScope
 	clientScopes       []codexidentity.ClientScope
@@ -101,14 +106,14 @@ type Operation struct {
 	replacementClosed   bool
 }
 
-func (r *Runtime) Begin(ctx context.Context, request *http.Request, apiType, operationID string) (*Operation, error) {
+func (r *Runtime) Begin(ctx context.Context, request *http.Request, apiType, operationID string, policy model.ConversationRecoveryPolicy) (*Operation, error) {
 	if apiType != codexAPIType {
 		return nil, &Failure{Class: FailureProtocol, Stage: "begin", Cause: errors.New("codex WebSocket runtime only accepts Codex traffic")}
 	}
 	if r == nil {
 		return nil, &Failure{Class: FailureStorage, Stage: "begin", Cause: errors.New("codex WebSocket runtime is unavailable")}
 	}
-	op := &Operation{runtime: r, operationID: operationID, apiType: apiType}
+	op := &Operation{runtime: r, operationID: operationID, apiType: apiType, recoveryPolicy: model.NormalizeConversationRecoveryPolicy(string(policy))}
 	if request == nil {
 		return nil, &Failure{Class: FailureProtocol, Stage: "begin", Cause: errors.New("request is required")}
 	}
@@ -120,6 +125,7 @@ func (r *Runtime) Begin(ctx context.Context, request *http.Request, apiType, ope
 	if err := r.bindClientScope(op, request.Header, true); err != nil {
 		return nil, err
 	}
+	op.ledger = codexprovenance.NewLedger(codexprovenance.Config{Resolver: r.continuity, RecoveryPolicy: op.recoveryPolicy, ClientScopeCandidates: op.clientScopes, APIType: apiType, OperationID: operationID})
 	if err := op.inspectClientInput(ctx, request.Header, codexheaders.MessageView{}, false); err != nil {
 		return nil, err
 	}
@@ -233,7 +239,7 @@ func (o *Operation) inspectClientInput(
 	if len(discovery.Decisions()) > 0 && !o.hasClientScope {
 		return &Failure{Class: FailureIdentity, Stage: "client_scope", Cause: errors.New("state-bearing frame requires one client credential")}
 	}
-	owners, err := o.resolveOwners(ctx, discovery)
+	owners, err := o.resolveRequestOwners(ctx, discovery)
 	if err != nil {
 		return err
 	}
@@ -314,6 +320,9 @@ func (o *Operation) anchorUnresolvedEvidenceToPhysicalCandidate(
 	result codexheaders.Result,
 	owners map[[sha256.Size]byte]ownerResolution,
 ) error {
+	if o.AllowsAccountSwitch() {
+		return nil
+	}
 	needsAnchor := false
 	for _, decision := range result.Decisions() {
 		resolution, exists := owners[candidateKey(decision.Candidate())]
@@ -341,6 +350,9 @@ func (o *Operation) anchorUnresolvedEvidenceToPhysicalCandidate(
 }
 
 func (o *Operation) applyRequiredOwners(owners map[[sha256.Size]byte]ownerResolution) error {
+	if o.AllowsAccountSwitch() {
+		return nil
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, resolution := range owners {

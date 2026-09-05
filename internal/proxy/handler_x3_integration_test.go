@@ -534,6 +534,9 @@ type x3ExecutionConfig struct {
 	selector          *x3Selector
 	transport         HTTPTransport
 	requestHeaders    http.Header
+	requestBody       []byte
+	recoveryPolicy    model.ConversationRecoveryPolicy
+	stickyMode        model.StickyMode
 	rules             *x3RuleProvider
 	analyzer          *x3AnalyzerSpy
 	health            *x3Health
@@ -547,6 +550,9 @@ type x3ExecutionConfig struct {
 
 func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecorder, *proxyContext) {
 	t.Helper()
+	if config.stickyMode == "" {
+		config.stickyMode = model.StickyModeOff
+	}
 	storeProviders := make([]model.Provider, 0, len(config.providers))
 	for _, provider := range config.providers {
 		if provider != nil {
@@ -563,14 +569,17 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 		RuleSetProvider: config.rules, ResponseAnalyzer: config.analyzer,
 		RuleStatistics: config.stats, BackoffWaiter: config.backoff, Capture: config.capture, Logger: logger,
 	})
-	requestBody := []byte(`{"model":"x3-model"}`)
+	requestBody := config.requestBody
+	if requestBody == nil {
+		requestBody = []byte(`{"model":"x3-model"}`)
+	}
 	request := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(requestBody))
 	authorizeProxyCodexTestRequest(request)
 	for name, values := range config.requestHeaders {
 		request.Header[name] = append([]string(nil), values...)
 	}
 	codexOperation, err := handler.codexHTTP.Begin(
-		request.Context(), request, APITypeCodex, x3TestRequestID, testClientEvidence(requestBody, requestBody),
+		request.Context(), request, APITypeCodex, x3TestRequestID, config.recoveryPolicy, testClientEvidence(requestBody, requestBody),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -580,11 +589,12 @@ func x3Execute(t *testing.T, config x3ExecutionConfig) (*httptest.ResponseRecord
 		handler: handler, r: request, w: recorder,
 		cfg: &runtimeConfig{
 			globalAuthMode: DefaultGlobalAuthMode, globalMaxAttempts: config.globalMaxAttempts,
-			readTimeout: time.Hour, sseIdleTimeout: time.Hour, stickyMode: model.StickyModeOff,
+			readTimeout: time.Hour, sseIdleTimeout: time.Hour, stickyMode: config.stickyMode,
+			ConversationRecoveryPolicy: config.recoveryPolicy,
 		},
 		transport: config.transport, apiType: APITypeCodex, ingress: newTestIngress(t, requestBody),
 		info:      RequestInfo{Model: "x3-model", APIType: APITypeCodex, Path: "/responses", Method: http.MethodPost},
-		selectReq: &model.SelectRequest{APIType: APITypeCodex, Model: "x3-model", StickyMode: model.StickyModeOff},
+		selectReq: &model.SelectRequest{APIType: APITypeCodex, Model: "x3-model", StickyMode: config.stickyMode, ClientScope: codexOperation.ClientScope()},
 		startTime: time.Now(), requestID: x3TestRequestID, codex: codexOperation, liveBytes: &LiveBytesTracker{},
 		attempts: make([]model.RequestAttempt, 0),
 	}
@@ -903,6 +913,8 @@ type x3Selector struct {
 	initial             *model.Provider
 	initialLease        *x3Lease
 	alternate           *model.Provider
+	alternates          []*model.Provider
+	stickyProviders     []string
 	events              *x3EventLog
 	permit              *x3Permit
 	reservation         *x3Reservation
@@ -916,8 +928,12 @@ func (*x3Selector) SelectWithMetadata(context.Context, *model.SelectRequest) (*s
 	return nil, errors.New("legacy provider selection is outside the HTTP lease contract")
 }
 
-func (*x3Selector) UpdateStickyWithTTL(*model.SelectRequest, string, time.Duration) {}
-func (*x3Selector) EvictProviderContinuity(string)                                  {}
+func (s *x3Selector) UpdateStickyWithTTL(_ *model.SelectRequest, providerID string, _ time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stickyProviders = append(s.stickyProviders, providerID)
+}
+func (*x3Selector) EvictProviderContinuity(string) {}
 func (s *x3Selector) SelectInitial(ctx context.Context, request *model.SelectRequest) (*providerSelection, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -985,6 +1001,10 @@ func (s *x3Selector) ReserveAlternate(
 	s.mu.Lock()
 	s.alternateRequests = append(s.alternateRequests, cloneHTTPSelectRequest(request))
 	s.mu.Unlock()
+	if len(s.alternates) > 0 {
+		s.alternate = s.alternates[0]
+		s.alternates = s.alternates[1:]
+	}
 	if s.alternate == nil {
 		return nil, internal.ErrNoProvider
 	}

@@ -44,13 +44,14 @@ const (
 // configuration. Keeping this value-only prevents the subsystem from depending
 // on the HTTP handler's mutable configuration representation.
 type RequestConfig struct {
-	GlobalAuthMode    string
-	GlobalMaxAttempts int
-	StickyMode        model.StickyMode
-	StickyTTL         time.Duration
-	TrustProxy        bool
-	UserHeader        string
-	ProbeClientModel  bool
+	ConversationRecoveryPolicy model.ConversationRecoveryPolicy
+	GlobalAuthMode             string
+	GlobalMaxAttempts          int
+	StickyMode                 model.StickyMode
+	StickyTTL                  time.Duration
+	TrustProxy                 bool
+	UserHeader                 string
+	ProbeClientModel           bool
 }
 
 type RequestInfo struct {
@@ -286,12 +287,13 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	var codexOperation *codexws.Operation
 	if apiType == APITypeCodex {
 		var err error
-		codexOperation, err = h.codex.Begin(ctx, r, apiType, requestID)
+		codexOperation, err = h.codex.Begin(ctx, r, apiType, requestID, cfg.ConversationRecoveryPolicy)
 		if err != nil {
 			h.writeCodexWebSocketFailureForOperation(w, requestID, err)
 			return
 		}
 		defer codexOperation.DiscardCookies()
+		selectReq.ClientScope = codexOperation.ClientScope()
 		if setCookie := codexOperation.GatewaySetCookie(); setCookie != "" {
 			w.Header().Add("Set-Cookie", setCookie)
 		}
@@ -333,9 +335,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// Commit-based sticky records continuity after real upstream service starts.
 	// Later reuse still flows through selector eligibility and health checks, so
 	// this write does not bypass a subsequent suspension such as usage-limit handling.
-	if session.ClientAccepted &&
-		session.FinalResult != nil &&
-		session.FinalResult.SessionCommitted &&
+	if shouldWriteWebSocketSticky(session, codexOperation != nil && codexOperation.AllowsAccountSwitch()) &&
 		cfg.StickyMode != model.StickyModeOff &&
 		h.selector != nil &&
 		session.FinalProvider != nil {

@@ -26,7 +26,7 @@ func TestCreateAcceptanceAcrossHTTPJSONSSEAndWebSocket(t *testing.T) {
 		wire := append([]byte(nil), create...)
 		operation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "create-http-client", nil),
-			testAPIType, operationID("create-http-json", 1), testHTTPClientEvidence(create, create),
+			testAPIType, operationID("create-http-json", 1), "preserve_conversation", testHTTPClientEvidence(create, create),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -53,7 +53,7 @@ func TestCreateAcceptanceAcrossHTTPJSONSSEAndWebSocket(t *testing.T) {
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		operation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "create-sse-client", nil),
-			testAPIType, operationID("create-http-sse", 1), testHTTPClientEvidence(create, create),
+			testAPIType, operationID("create-http-sse", 1), "preserve_conversation", testHTTPClientEvidence(create, create),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -86,7 +86,7 @@ func TestCreateAcceptanceAcrossHTTPJSONSSEAndWebSocket(t *testing.T) {
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		request := fixtureRequest(http.MethodGet, "create-ws-client", nil)
 		operation, err := fixture.ws.Begin(
-			context.Background(), request, testAPIType, operationID("create-ws", 1),
+			context.Background(), request, testAPIType, operationID("create-ws", 1), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -128,7 +128,7 @@ func TestWebSocketAppendAndInjectAreOpaqueCurrentConnectionControls(t *testing.T
 	fixture := newRuntimeFixture(t, fixtureOptions{})
 	candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 	request := fixtureRequest(http.MethodGet, "controls-client", nil)
-	operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("controls", 1))
+	operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("controls", 1), "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestPreviousResponseSurvivesDisconnectAndMixedCarrierReconnect(t *testing.T
 	const responseID = "response-reconnect-acceptance"
 
 	seedRequest := fixtureRequest(http.MethodGet, "reconnect-client", nil)
-	seed, err := fixture.ws.Begin(context.Background(), seedRequest, testAPIType, operationID("reconnect-seed", 1))
+	seed, err := fixture.ws.Begin(context.Background(), seedRequest, testAPIType, operationID("reconnect-seed", 1), "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestPreviousResponseSurvivesDisconnectAndMixedCarrierReconnect(t *testing.T
 	previous := []byte(`{"type":"response.create","previous_response_id":"` + responseID + `"}`)
 	reconnectRequest := fixtureRequest(http.MethodGet, "reconnect-client", nil)
 	reconnect, err := fixture.ws.Begin(
-		context.Background(), reconnectRequest, testAPIType, operationID("reconnect-ws", 2),
+		context.Background(), reconnectRequest, testAPIType, operationID("reconnect-ws", 2), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestPreviousResponseSurvivesDisconnectAndMixedCarrierReconnect(t *testing.T
 
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "reconnect-client", nil),
-		testAPIType, operationID("reconnect-http", 1), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("reconnect-http", 1), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestPreviousResponseSurvivesDisconnectAndMixedCarrierReconnect(t *testing.T
 	}
 	_, err = fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "other-reconnect-client", nil),
-		testAPIType, operationID("reconnect-wrong-client", 1), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("reconnect-wrong-client", 1), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 }
@@ -256,7 +256,7 @@ func TestCompactionAndFutureContentRemainOpaqueAcrossCarriers(t *testing.T) {
 	wire := append([]byte(nil), payload...)
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "opaque-client", nil),
-		testAPIType, operationID("opaque-http", 1), testHTTPClientEvidence(payload, payload),
+		testAPIType, operationID("opaque-http", 1), "preserve_conversation", testHTTPClientEvidence(payload, payload),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +284,7 @@ func TestCompactionAndFutureContentRemainOpaqueAcrossCarriers(t *testing.T) {
 	}
 
 	wsRequest := fixtureRequest(http.MethodGet, "opaque-client", nil)
-	wsOperation, err := fixture.ws.Begin(context.Background(), wsRequest, testAPIType, operationID("opaque-ws", 1))
+	wsOperation, err := fixture.ws.Begin(context.Background(), wsRequest, testAPIType, operationID("opaque-ws", 1), "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestOrdinaryWebSocketReselectionEndsOnlyAtVisibleCommit(t *testing.T) {
 	t.Run("ordinary 101 and failed projection remain replaceable", func(t *testing.T) {
 		fixture := newRuntimeFixture(t, fixtureOptions{})
 		request := fixtureRequest(http.MethodGet, "replace-before-visible", nil)
-		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("replace-101", 1))
+		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("replace-101", 1), "preserve_conversation")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -340,7 +340,7 @@ func TestOrdinaryWebSocketReselectionEndsOnlyAtVisibleCommit(t *testing.T) {
 	t.Run("committed Turn State pins its RouteTarget", func(t *testing.T) {
 		fixture := newRuntimeFixture(t, fixtureOptions{})
 		request := fixtureRequest(http.MethodGet, "turn-state-visible", nil)
-		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("visible-state", 1))
+		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("visible-state", 1), "preserve_conversation")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -372,7 +372,7 @@ func TestOrdinaryWebSocketReselectionEndsOnlyAtVisibleCommit(t *testing.T) {
 	t.Run("failed first-frame write remains replaceable; successful write pins", func(t *testing.T) {
 		fixture := newRuntimeFixture(t, fixtureOptions{})
 		failedRequest := fixtureRequest(http.MethodGet, "failed-frame", nil)
-		failed, err := fixture.ws.Begin(context.Background(), failedRequest, testAPIType, operationID("failed-frame", 1))
+		failed, err := fixture.ws.Begin(context.Background(), failedRequest, testAPIType, operationID("failed-frame", 1), "preserve_conversation")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -387,7 +387,7 @@ func TestOrdinaryWebSocketReselectionEndsOnlyAtVisibleCommit(t *testing.T) {
 		}
 
 		visibleRequest := fixtureRequest(http.MethodGet, "visible-frame", nil)
-		visible, err := fixture.ws.Begin(context.Background(), visibleRequest, testAPIType, operationID("visible-frame", 1))
+		visible, err := fixture.ws.Begin(context.Background(), visibleRequest, testAPIType, operationID("visible-frame", 1), "preserve_conversation")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -413,7 +413,7 @@ func TestOrdinaryWebSocketReselectionEndsOnlyAtVisibleCommit(t *testing.T) {
 func TestProbeClassifierPreservesPreCreateFramesInOrder(t *testing.T) {
 	fixture := newRuntimeFixture(t, fixtureOptions{})
 	request := fixtureRequest(http.MethodGet, "probe-order-client", nil)
-	operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("probe-order", 1))
+	operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("probe-order", 1), "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +476,7 @@ func TestOwnerPreferenceConflictIsPermutationInvariantAcrossHTTPAndWebSocket(t *
 		}
 		httpOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "owner-permutation-client", headers),
-			testAPIType, operationID("owner-permutation-http", index), testHTTPClientEvidence(nil, nil),
+			testAPIType, operationID("owner-permutation-http", index), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -485,7 +485,7 @@ func TestOwnerPreferenceConflictIsPermutationInvariantAcrossHTTPAndWebSocket(t *
 
 		wsOperation, err := fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "owner-permutation-client", headers),
-			testAPIType, operationID("owner-permutation-ws", index),
+			testAPIType, operationID("owner-permutation-ws", index), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -524,7 +524,7 @@ func seedContinuityHeader(
 	t.Helper()
 	operation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, client, http.Header{header: {value}}),
-		testAPIType, operationID("owner-seed", sequence), testHTTPClientEvidence(nil, nil),
+		testAPIType, operationID("owner-seed", sequence), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)

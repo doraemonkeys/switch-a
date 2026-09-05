@@ -101,6 +101,7 @@ type WebSocketSessionOrchestrator struct {
 	replayBuffer        *preVisibleClientMessageBuffer
 	suppressedAttempt   *webSocketSuppressedAttempt
 	probeOutcome        webSocketSelectionProbeOutcome
+	accountRecoveryKey  model.StickyKey
 	captureCompletions  []webSocketDialCaptureCompletion
 	subprotocol         websocketprotocol.Negotiation
 	codexOperation      *codexws.Operation
@@ -154,6 +155,7 @@ func (o *WebSocketSessionOrchestrator) codexVisibleCallback(
 	next func(webSocketVisibleWriteContext),
 ) func(webSocketVisibleWriteContext) {
 	return func(visible webSocketVisibleWriteContext) {
+		o.switchTracker.markClientVisible(o.currentProvider, time.Now())
 		if next != nil {
 			next(visible)
 		}
@@ -199,7 +201,7 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 	if bootstrapSession := o.bootstrapSelectionContext(ctx, w, r); bootstrapSession != nil {
 		return bootstrapSession
 	}
-	o.handler.maybeLookupVisibleContinuityCandidate(ctx, &o.switchTracker)
+	o.prepareSelectionContinuity(ctx)
 
 	for attempt := 0; ; attempt++ {
 		if o.maxAttempts > 0 && attempt >= o.maxAttempts {
@@ -227,6 +229,12 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 		}
 
 		if o.shouldSwitchProvider(attemptResult) {
+			if o.codexOperation != nil {
+				if err := o.codexOperation.ReplacePhysicalAttempt(); err != nil {
+					return o.sessionFromAttempt(attemptResult)
+				}
+				applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
+			}
 			switchReason := websocketSwitchReason(attemptResult)
 			o.attempts[len(o.attempts)-1].SwitchReason = switchReason
 			nextSelectionMode := o.switchTracker.prepareProviderSwitch()

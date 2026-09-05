@@ -61,6 +61,9 @@ func (o *Operation) PrepareAttempt(
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if o.visibleRouteTargetID != "" && o.visibleRouteTargetID != attempt.routeTargetID {
+		return nil, identityError("client_visible", errors.New("visible operation cannot change route target"))
+	}
 	if o.requiredAuthority != nil && !o.requiredAuthority.Equal(attempt.authority) {
 		return nil, identityError("required_authority", errors.New("selected attempt crosses the required authority"))
 	}
@@ -116,7 +119,7 @@ func (o *Operation) prepareRequestContinuityLocked(
 	ctx context.Context,
 	attempt *Attempt,
 ) error {
-	if o.requestClaimsCommitted {
+	if o.requestClaimsCommitted && !o.allowsAccountSwitch() {
 		return nil
 	}
 	var leases []codexcontinuity.Lease
@@ -152,6 +155,9 @@ func (o *Operation) prepareRequestLease(
 	routeTargetID string,
 ) (codexcontinuity.Lease, bool, error) {
 	candidate := decision.Candidate()
+	if o.allowsAccountSwitch() {
+		return o.prepareRecoveryRequestLease(ctx, candidate)
+	}
 	var (
 		lease codexcontinuity.Lease
 		err   error
@@ -246,7 +252,7 @@ func (a *Attempt) MarkDisclosed(ctx context.Context) error {
 	a.settlement = attemptDisclosureStarted
 	commitContext := context.WithoutCancel(ctx)
 	for len(a.requestClaimLeases) > 0 {
-		if _, err := o.runtime.continuity.Commit(commitContext, a.requestClaimLeases[0]); err != nil {
+		if _, err := o.runtime.continuity.Commit(commitContext, a.requestClaimLeases[0]); err != nil && !o.permitsContinuityDegradation(err) {
 			return dependencyError("continuity_disclosure", err)
 		}
 		a.requestClaimLeases = a.requestClaimLeases[1:]
@@ -296,6 +302,11 @@ func (a *Attempt) AbandonBeforeDisclosure(ctx context.Context) error {
 }
 
 func (o *Operation) pinAttemptLocked(attempt *Attempt) error {
+	// Recovery disclosure is physical-attempt-local. Client visibility is the
+	// executor's terminal boundary, so provenance cannot pin a replacement.
+	if o.allowsAccountSwitch() {
+		return nil
+	}
 	if attempt.pinProtocolScope {
 		if o.requiredProtocolScope != nil && !o.requiredProtocolScope.Equal(attempt.protocolScope) {
 			return identityError("required_protocol_scope", errors.New("disclosed attempt crosses the required protocol scope"))
@@ -336,6 +347,7 @@ func (a *Attempt) ObserveResponse(head *upstreamtransport.ResponseHead) error {
 
 type Visibility struct {
 	operation *Operation
+	attempt   *Attempt
 	leases    []codexcontinuity.Lease
 	mu        sync.Mutex
 	committed bool
@@ -348,6 +360,7 @@ func (a *Attempt) PrepareVisible(ctx context.Context, headers http.Header) (*Vis
 	}
 	o := a.operation
 	visibility.operation = o
+	visibility.attempt = a
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -436,6 +449,13 @@ func (o *Operation) prepareServerDecisionLocked(
 		if _, persistent := candidate.PersistentNamespace(); !persistent {
 			continue
 		}
+		if o.allowsAccountSwitch() {
+			if status, resolved, err := o.recoveryResponseStatus(ctx, candidate, scope); resolved {
+				statuses[candidateKey(candidate)] = status
+				lookupErrors[candidateKey(candidate)] = err
+				continue
+			}
+		}
 		lease, err := o.runtime.continuity.AcquireExisting(ctx, codexcontinuity.ValidateRequest{
 			Evidence: evidence(candidate), ClientScopeCandidates: o.clientScopes,
 			ProtocolScope: scope, OperationID: o.operationID,
@@ -446,6 +466,8 @@ func (o *Operation) prepareServerDecisionLocked(
 			existingLeases[candidateKey(candidate)] = lease
 		case codexcontinuity.IsError(err, codexcontinuity.ErrorUnknown):
 			statuses[candidateKey(candidate)] = codexheaders.OwnerUnknown
+		case o.permitsContinuityDegradation(err):
+			statuses[candidateKey(candidate)] = codexheaders.OwnerOpaquePassthrough
 		case codexcontinuity.IsError(err, codexcontinuity.ErrorConflict),
 			codexcontinuity.IsError(err, codexcontinuity.ErrorExpired):
 			statuses[candidateKey(candidate)] = codexheaders.OwnerConflict
@@ -489,6 +511,9 @@ func (o *Operation) prepareServerDecisionLocked(
 			},
 			OperationID: o.operationID,
 		})
+		if o.permitsContinuityDegradation(err) {
+			continue
+		}
 		if err != nil {
 			return decision, nil, dependencyError("response_continuity_prepare", err)
 		}
@@ -508,10 +533,18 @@ func (v *Visibility) Commit(ctx context.Context) error {
 	}
 	commitContext := context.WithoutCancel(ctx)
 	for len(v.leases) > 0 {
-		if _, err := v.operation.runtime.continuity.Commit(commitContext, v.leases[0]); err != nil {
+		if _, err := v.operation.runtime.continuity.Commit(commitContext, v.leases[0]); err != nil && !v.operation.permitsContinuityDegradation(err) {
 			return dependencyError("response_continuity_commit", err)
 		}
 		v.leases = v.leases[1:]
+	}
+	if v.operation.allowsAccountSwitch() && v.attempt != nil {
+		v.operation.mu.Lock()
+		v.operation.visibleRouteTargetID = v.attempt.routeTargetID
+		scope, authority := v.attempt.protocolScope, v.attempt.authority
+		v.operation.requiredProtocolScope = &scope
+		v.operation.requiredAuthority = &authority
+		v.operation.mu.Unlock()
 	}
 	v.committed = true
 	return nil

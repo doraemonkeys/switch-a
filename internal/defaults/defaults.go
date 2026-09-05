@@ -49,6 +49,14 @@ const (
 	StickyTTL        = StickyTTLSeconds * time.Second
 )
 
+// Conversation recovery remains opt-in because switching accounts may leave
+// state that the original account cannot resume.
+const (
+	ConfigKeyConversationRecoveryPolicy = "conversation_recovery_policy"
+	// A literal avoids a cycle: model already imports defaults.
+	DefaultConversationRecoveryPolicy = "preserve_conversation"
+)
+
 // WebSocket pre-selection probe defaults.
 const (
 	// ConfigKeyWebSocketProbeClientModel is the stable runtime-config identifier

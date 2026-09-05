@@ -125,7 +125,7 @@ func applyWebSocketHealthOutcome(
 	provider *model.Provider,
 	result *WebSocketResult,
 ) {
-	if provider == nil || result == nil {
+	if provider == nil || result == nil || result.healthOutcomePublished {
 		return
 	}
 	healthAssessment := assessWebSocketHealth(provider, result)
@@ -349,7 +349,7 @@ func (o *WebSocketSessionOrchestrator) emitTerminalGatewayErrorIfNeeded(
 	errorCode,
 	message string,
 ) error {
-	if o == nil || o.clientConn == nil || result == nil || statusCode <= 0 {
+	if o == nil || o.clientConn == nil || result == nil || statusCode <= 0 || result.accountRecoveryNotified {
 		return nil
 	}
 	if result.ClientVisible && result.RecoveryAction != model.RecoveryActionReconnectRequired {

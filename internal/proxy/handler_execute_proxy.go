@@ -84,6 +84,11 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 		),
 	}
 	h.maybeLookupVisibleContinuityCandidate(ctx, &state.switchTracker)
+	if state.switchTracker.consumeAccountRecoverySeed(pctx.cfg.ConversationRecoveryPolicy, state.excludedProviders) {
+		h.logger.Debug("proxy.account_recovery_seed_consumed", zap.String("operation_id", pctx.requestID),
+			zap.String("conversation_recovery_policy", string(pctx.cfg.ConversationRecoveryPolicy)),
+			zap.Strings("excluded_provider_ids", state.switchTracker.recoveryExclusions), zap.String("switch_mode", string(model.SwitchModeFailover)))
+	}
 	if !h.startInitialSelection(ctx, pctx, state) {
 		return
 	}
@@ -121,7 +126,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 
 func (h *Handler) startInitialSelection(ctx context.Context, pctx *proxyContext, state *retryState) bool {
 	state.selectionMode = state.switchTracker.prepareSelection()
-	selection, err := h.selectInitialProvider(ctx, pctx.selectReq, 0, state.excludedProviders)
+	selection, err := h.selectInitialProvider(ctx, pctx.selectReq, 0, state.excludedProviders, pctx.cfg.ConversationRecoveryPolicy)
 	if err != nil {
 		state.lastErr = err
 		if errors.Is(err, internal.ErrNoProvider) {
@@ -407,7 +412,10 @@ func (h *Handler) finalizeCommittedResponse(pctx *proxyContext, state *retryStat
 	if result.responseCommitted {
 		state.switchTracker.markClientVisible(state.currentProvider, time.Now())
 	}
-	if result.responseCommitted && pctx.cfg.stickyMode != model.StickyModeOff && h.selector != nil {
+	completedSuccess := result.success && !result.upstreamErrorObserved && result.failureKind == attemptFailureNone &&
+		!result.clientTermination.observed() && pctx.ingressFailure() == nil
+	stickyEligible := pctx.apiType != APITypeCodex || pctx.cfg.ConversationRecoveryPolicy != model.ConversationRecoverySwitchAccountPreserveConversation || completedSuccess
+	if result.responseCommitted && stickyEligible && pctx.cfg.stickyMode != model.StickyModeOff && h.selector != nil {
 		h.selector.UpdateStickyWithTTL(pctx.selectReq, state.currentProvider.ID, pctx.cfg.stickyTTL)
 	}
 }

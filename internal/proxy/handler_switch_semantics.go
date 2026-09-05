@@ -25,6 +25,7 @@ type providerSwitchTracker struct {
 	continuityContext   *model.ProviderContinuityContext
 	continuityCandidate *model.VisibleContinuitySeedCandidate
 	generation          uint64
+	recoveryExclusions  []string
 }
 
 type providerSwitchPreview struct {
@@ -68,6 +69,32 @@ func (t *providerSwitchTracker) lookupVisibleContinuityCandidate() bool {
 	}
 
 	t.continuityCandidate = candidate
+	t.generation++
+	t.syncRequest()
+	return true
+}
+
+// Recovery seeds are already ClientVisible evidence. Consume before selection
+// so failover excludes the failed account without first selecting it again.
+func (t *providerSwitchTracker) consumeAccountRecoverySeed(policy model.ConversationRecoveryPolicy, excluded map[string]bool) bool {
+	if t == nil || policy != model.ConversationRecoverySwitchAccountPreserveConversation ||
+		t.seedStore == nil || t.continuityCandidate == nil ||
+		t.continuityCandidate.Purpose != model.VisibleContinuitySeedAccountRecovery {
+		return false
+	}
+	candidate := t.continuityCandidate
+	t.continuityCandidate = nil
+	seed, ok := t.seedStore.CompareAndConsume(candidate.ContinuityKey, candidate.SeedID)
+	if !ok {
+		t.syncRequest()
+		return false
+	}
+	for _, providerID := range seed.ExcludedProviderIDs {
+		excluded[providerID] = true
+	}
+	t.recoveryExclusions = append([]string(nil), seed.ExcludedProviderIDs...)
+	t.continuityContext = seed.ProviderContinuityContext()
+	t.nextMode = model.SwitchModeFailover
 	t.generation++
 	t.syncRequest()
 	return true
@@ -222,6 +249,7 @@ func cloneProviderSwitchTracker(source providerSwitchTracker) providerSwitchTrac
 	clone.continuityContext = source.continuityContext.Clone()
 	if source.continuityCandidate != nil {
 		candidate := *source.continuityCandidate
+		candidate.ExcludedProviderIDs = append([]string(nil), source.continuityCandidate.ExcludedProviderIDs...)
 		clone.continuityCandidate = &candidate
 	}
 	return clone

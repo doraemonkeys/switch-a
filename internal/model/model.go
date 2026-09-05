@@ -521,6 +521,8 @@ type StickyKey struct {
 	User    string
 	APIType string
 	Model   string
+	// ClientScope contains only the versioned Codex client-credential digest.
+	ClientScope string
 }
 
 // StickyEntry is the durable representation of one sticky binding.
@@ -543,6 +545,8 @@ type SelectRequest struct {
 	APIType     string
 	Model       string
 	StickyMode  StickyMode // Sticky session mode pre-loaded from runtime config
+	// ClientScope isolates Codex affinity using the original client credential.
+	ClientScope codexidentity.ClientScope
 	// RequiredAuthority is a security boundary established by verified Codex
 	// state ownership. Route-target affinity must never widen this constraint.
 	RequiredAuthority *codexidentity.UpstreamAuthority

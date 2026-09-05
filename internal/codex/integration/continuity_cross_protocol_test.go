@@ -22,7 +22,7 @@ func TestContinuityCrossesHTTPAndWebSocketWithinOneSecurityScope(t *testing.T) {
 		"Thread-Id": {"thread-cross-protocol"},
 	})
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), httpRequest, testAPIType, operationID("http", 1), testHTTPClientEvidence(nil, nil),
+		context.Background(), httpRequest, testAPIType, operationID("http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestContinuityCrossesHTTPAndWebSocketWithinOneSecurityScope(t *testing.T) {
 		"Thread-Id":          {"thread-cross-protocol"},
 		"X-Codex-Turn-State": {"turn-from-http"},
 	})
-	wsOperation, err := fixture.ws.Begin(context.Background(), wsRequest, testAPIType, operationID("ws", 1))
+	wsOperation, err := fixture.ws.Begin(context.Background(), wsRequest, testAPIType, operationID("ws", 1), "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestContinuityCrossesHTTPAndWebSocketWithinOneSecurityScope(t *testing.T) {
 		"X-Codex-Turn-State": {"turn-from-ws"},
 	})
 	returnOperation, err := fixture.http.Begin(
-		context.Background(), returnRequest, testAPIType, operationID("http", 2), testHTTPClientEvidence(nil, nil),
+		context.Background(), returnRequest, testAPIType, operationID("http", 2), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 
 	seedRequest := fixtureRequest(http.MethodPost, clientAPIKey, http.Header{"Thread-Id": {threadID}})
 	seedOperation, err := fixture.http.Begin(
-		context.Background(), seedRequest, testAPIType, operationID("seed-visible-error", 1), testHTTPClientEvidence(nil, nil),
+		context.Background(), seedRequest, testAPIType, operationID("seed-visible-error", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 		"X-Client-Request-Id": {clientRequestID},
 	})
 	errorOperation, err := fixture.http.Begin(
-		context.Background(), errorRequest, testAPIType, operationID("visible-error", 1), testHTTPClientEvidence(nil, nil),
+		context.Background(), errorRequest, testAPIType, operationID("visible-error", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 		"X-Client-Request-Id": {clientRequestID},
 	})
 	retryOperation, err := fixture.http.Begin(
-		context.Background(), retryRequest, testAPIType, operationID("visible-error", 2), testHTTPClientEvidence(nil, nil),
+		context.Background(), retryRequest, testAPIType, operationID("visible-error", 2), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestClientRetryAfterVisibleUpstreamErrorKeepsProviderContinuity(t *testing.
 	_, err = fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "different-client-key", http.Header{
 			"X-Codex-Turn-State": {turnState},
-		}), testAPIType, operationID("visible-error", 3), testHTTPClientEvidence(nil, nil),
+		}), testAPIType, operationID("visible-error", 3), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 }
@@ -259,7 +259,7 @@ func TestWebSocketResponseReferenceContinuesThroughHTTPPreviousResponse(t *testi
 
 	wsRequest := fixtureRequest(http.MethodGet, "client-alpha", nil)
 	wsOperation, err := fixture.ws.Begin(
-		context.Background(), wsRequest, testAPIType, operationID("ws-response", 1),
+		context.Background(), wsRequest, testAPIType, operationID("ws-response", 1), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +289,7 @@ func TestWebSocketResponseReferenceContinuesThroughHTTPPreviousResponse(t *testi
 	previous := []byte(`{"type":"response.create","previous_response_id":"response-cross-protocol"}`)
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-previous", 1), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("http-previous", 1), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -311,7 +311,7 @@ func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) 
 
 	httpRequest := fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"http-sse-scope"}})
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), httpRequest, testAPIType, operationID("http-sse", 1), testHTTPClientEvidence(nil, nil),
+		context.Background(), httpRequest, testAPIType, operationID("http-sse", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +346,7 @@ func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) 
 	previous := []byte(`{"type":"response.create","previous_response_id":"response-from-http-sse"}`)
 	returnHTTP, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-sse", 2), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("http-sse", 2), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +358,7 @@ func TestHTTPSSEResponseReferenceContinuesThroughHTTPAndWebSocket(t *testing.T) 
 
 	wsRequest := fixtureRequest(http.MethodGet, "client-alpha", nil)
 	returnWS, err := fixture.ws.Begin(
-		context.Background(), wsRequest, testAPIType, operationID("ws-sse", 1),
+		context.Background(), wsRequest, testAPIType, operationID("ws-sse", 1), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -395,7 +395,7 @@ func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
 	seed := fixtureRequest(http.MethodPost, "client-alpha", http.Header{
 		"Thread-Id": {"identity-isolation"},
 	})
-	seedOperation, err := fixture.http.Begin(context.Background(), seed, testAPIType, operationID("http", 3), testHTTPClientEvidence(nil, nil))
+	seedOperation, err := fixture.http.Begin(context.Background(), seed, testAPIType, operationID("http", 3), "preserve_conversation", testHTTPClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
 
 	wrongClient := fixtureRequest(http.MethodGet, "client-beta", http.Header{"Thread-Id": {"identity-isolation"}})
 	wrongClientOperation, err := fixture.ws.Begin(
-		context.Background(), wrongClient, testAPIType, operationID("ws", 2),
+		context.Background(), wrongClient, testAPIType, operationID("ws", 2), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal("a pure identity Header conflict should be dropped, not rejected:", err)
@@ -441,7 +441,7 @@ func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
 	wrongState := fixtureRequest(http.MethodGet, "client-beta", http.Header{
 		"X-Codex-Turn-State": {"state-isolation"},
 	})
-	_, err = fixture.ws.Begin(context.Background(), wrongState, testAPIType, operationID("ws", 3))
+	_, err = fixture.ws.Begin(context.Background(), wrongState, testAPIType, operationID("ws", 3), "preserve_conversation")
 	requireWSFailure(t, err, codexws.FailureIdentity)
 
 	variations := []struct {
@@ -458,7 +458,7 @@ func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
 			candidate, applied, finalURL := fixtureCandidate(t, variation.spec)
 			request := fixtureRequest(http.MethodGet, "client-alpha", http.Header{"Thread-Id": {"identity-isolation"}})
 			operation, beginErr := fixture.ws.Begin(
-				context.Background(), request, testAPIType, operationID("ws-isolation", index+1),
+				context.Background(), request, testAPIType, operationID("ws-isolation", index+1), "preserve_conversation",
 			)
 			if beginErr != nil {
 				t.Fatal(beginErr)
@@ -473,7 +473,7 @@ func TestContinuityIsolationMatrixAndIdentityDropSemantics(t *testing.T) {
 	replacement, replacementApplied, _ := fixtureCandidate(t, candidateSpec{routeTarget: "route-b"})
 	replacementRequest := fixtureRequest(http.MethodGet, "client-alpha", http.Header{"Thread-Id": {"identity-isolation"}})
 	replacementOperation, err := fixture.ws.Begin(
-		context.Background(), replacementRequest, testAPIType, operationID("ws", 4),
+		context.Background(), replacementRequest, testAPIType, operationID("ws", 4), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -492,14 +492,14 @@ func TestConcurrentCrossProtocolClaimsAreAtomic(t *testing.T) {
 		identity := []byte(`{"type":"response.create","client_metadata":{"session_id":"concurrent-shared"}}`)
 		httpOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-			testAPIType, operationID("http-concurrent", 1), testHTTPClientEvidence(identity, identity),
+			testAPIType, operationID("http-concurrent", 1), "preserve_conversation", testHTTPClientEvidence(identity, identity),
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
 		wsRequest := fixtureRequest(http.MethodGet, "client-alpha", nil)
 		wsOperation, err := fixture.ws.Begin(
-			context.Background(), wsRequest, testAPIType, operationID("ws-concurrent", 1),
+			context.Background(), wsRequest, testAPIType, operationID("ws-concurrent", 1), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -560,14 +560,14 @@ func TestConcurrentCrossProtocolClaimsAreAtomic(t *testing.T) {
 		identity := []byte(`{"type":"response.create","client_metadata":{"session_id":"concurrent-conflict"}}`)
 		httpOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-			testAPIType, operationID("http-concurrent", 2), testHTTPClientEvidence(identity, identity),
+			testAPIType, operationID("http-concurrent", 2), "preserve_conversation", testHTTPClientEvidence(identity, identity),
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
 		wsRequest := fixtureRequest(http.MethodGet, "client-alpha", nil)
 		wsOperation, err := fixture.ws.Begin(
-			context.Background(), wsRequest, testAPIType, operationID("ws-concurrent", 2),
+			context.Background(), wsRequest, testAPIType, operationID("ws-concurrent", 2), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -631,7 +631,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		operation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"uncertain-http-scope"}}),
-			testAPIType, operationID("http", 5), testHTTPClientEvidence(nil, nil),
+			testAPIType, operationID("http", 5), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -653,7 +653,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 			"X-Codex-Turn-State": {"uncertain-turn-state"},
 		})
 		continued, err := fixture.ws.Begin(
-			context.Background(), sameOwner, testAPIType, operationID("ws", 5),
+			context.Background(), sameOwner, testAPIType, operationID("ws", 5), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal("pending owner was not reusable by its original scope:", err)
@@ -664,7 +664,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		_, err = fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "client-beta", http.Header{
 				"X-Codex-Turn-State": {"uncertain-turn-state"},
-			}), testAPIType, operationID("ws", 6),
+			}), testAPIType, operationID("ws", 6), "preserve_conversation",
 		)
 		requireWSFailure(t, err, codexws.FailureIdentity)
 	})
@@ -676,7 +676,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		seedOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"capacity-one"}}),
-			testAPIType, operationID("http-capacity", 1), testHTTPClientEvidence(nil, nil),
+			testAPIType, operationID("http-capacity", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -692,7 +692,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		}
 
 		request := fixtureRequest(http.MethodGet, "client-alpha", http.Header{"Thread-Id": {"capacity-two"}})
-		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("ws-capacity", 1))
+		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("ws-capacity", 1), "preserve_conversation")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -710,7 +710,7 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		seedOperation, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", http.Header{"Thread-Id": {"store-http-scope"}}),
-			testAPIType, operationID("http-store", 1), testHTTPClientEvidence(nil, nil),
+			testAPIType, operationID("http-store", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -741,12 +741,12 @@ func TestPendingCapacityAndStoreFailuresRemainCrossProtocolBoundaries(t *testing
 		stateHeaders := http.Header{"X-Codex-Turn-State": {"store-failure-state"}}
 		_, err = fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", stateHeaders),
-			testAPIType, operationID("http-store", 2), testHTTPClientEvidence(nil, nil),
+			testAPIType, operationID("http-store", 2), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		requireHTTPError(t, err, codexhttp.ErrorDependencyUnavailable)
 		_, err = fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "client-alpha", stateHeaders),
-			testAPIType, operationID("ws-store", 1),
+			testAPIType, operationID("ws-store", 1), "preserve_conversation",
 		)
 		requireWSFailure(t, err, codexws.FailureStorage)
 	})
@@ -757,13 +757,13 @@ func TestResponseReferenceAndConnectionControlsHonorTheirNativeBoundaries(t *tes
 	previous := []byte(`{"type":"response.create","previous_response_id":"unknown-response"}`)
 	_, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-evidence", 1), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("http-evidence", 1), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 
 	candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 	request := fixtureRequest(http.MethodGet, "client-alpha", nil)
-	operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("ws-evidence", 1))
+	operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("ws-evidence", 1), "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}

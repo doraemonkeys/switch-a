@@ -382,13 +382,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.webSocketGateway.Handle(ctx, w, r, websocketproxy.RequestConfig{
-			GlobalAuthMode:    cfg.globalAuthMode,
-			GlobalMaxAttempts: cfg.globalMaxAttempts,
-			StickyMode:        cfg.stickyMode,
-			StickyTTL:         cfg.stickyTTL,
-			TrustProxy:        cfg.trustProxy,
-			UserHeader:        cfg.userHeader,
-			ProbeClientModel:  cfg.websocketProbeClientModel,
+			GlobalAuthMode:             cfg.globalAuthMode,
+			GlobalMaxAttempts:          cfg.globalMaxAttempts,
+			StickyMode:                 cfg.stickyMode,
+			ConversationRecoveryPolicy: cfg.ConversationRecoveryPolicy,
+			StickyTTL:                  cfg.stickyTTL,
+			TrustProxy:                 cfg.trustProxy,
+			UserHeader:                 cfg.userHeader,
+			ProbeClientModel:           cfg.websocketProbeClientModel,
 		}, apiType, requestID, startTime)
 		return
 	}

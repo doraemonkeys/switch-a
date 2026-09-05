@@ -40,18 +40,19 @@ type configEntry struct {
 // This reduces database pressure for high-frequency config reads during proxy requests.
 //
 // Design tradeoffs:
-//   - GetAllConfig is NOT cached (returns fresh values), while GetConfig uses cache.
-//     This may cause brief inconsistency (up to 5s TTL), acceptable for proxy use.
+//   - GetAllConfig is NOT cached, while GetConfig uses cache. Writes through this
+//     wrapper invalidate immediately; external writes become visible after the TTL.
 //   - No stampede protection on cache expiry. Acceptable for low-cardinality config
 //     keys with 5s TTL. Consider singleflight if this becomes a bottleneck.
 //   - TOCTOU gap: concurrent requests for the same expired key may redundantly fetch
 //     from DB. Not a correctness bug, just slightly wasteful under high concurrency.
 type CachedStore struct {
 	internal.Store
-	cache    map[string]configEntry
-	mu       sync.RWMutex
-	cacheTTL time.Duration
-	clock    internal.Clock
+	cache      map[string]configEntry
+	generation uint64
+	mu         sync.RWMutex
+	cacheTTL   time.Duration
+	clock      internal.Clock
 }
 
 // NewCachedStore creates a new cached store wrapper.
@@ -90,6 +91,7 @@ func (s *CachedStore) GetConfig(ctx context.Context, key string) (string, error)
 		s.mu.RUnlock()
 		return entry.value, nil
 	}
+	generation := s.generation
 	s.mu.RUnlock()
 
 	// Cache miss or expired - fetch from underlying store
@@ -98,12 +100,14 @@ func (s *CachedStore) GetConfig(ctx context.Context, key string) (string, error)
 		return "", err
 	}
 
-	// Cache the value with write lock
-	// Use fresh timestamp after DB call for accurate TTL
+	// An in-flight read may keep its snapshot, but it must not repopulate stale
+	// data after a completed write invalidated the cache for subsequent requests.
 	s.mu.Lock()
-	s.cache[key] = configEntry{
-		value:     value,
-		expiresAt: s.clock.Now().Add(s.cacheTTL),
+	if generation == s.generation {
+		s.cache[key] = configEntry{
+			value:     value,
+			expiresAt: s.clock.Now().Add(s.cacheTTL),
+		}
 	}
 	s.mu.Unlock()
 
@@ -117,10 +121,7 @@ func (s *CachedStore) SetConfig(ctx context.Context, key, value string) error {
 		return err
 	}
 
-	// Invalidate cache entry to ensure next read gets fresh value
-	s.mu.Lock()
-	delete(s.cache, key)
-	s.mu.Unlock()
+	s.InvalidateConfig(key)
 
 	return nil
 }
@@ -134,6 +135,7 @@ func (s *CachedStore) SetConfigs(ctx context.Context, configs map[string]string)
 
 	// Invalidate all updated keys
 	s.mu.Lock()
+	s.generation++
 	for key := range configs {
 		delete(s.cache, key)
 	}
@@ -146,6 +148,7 @@ func (s *CachedStore) SetConfigs(ctx context.Context, configs map[string]string)
 // This can be called when config is known to have changed externally.
 func (s *CachedStore) InvalidateConfig(key string) {
 	s.mu.Lock()
+	s.generation++
 	delete(s.cache, key)
 	s.mu.Unlock()
 }
@@ -154,6 +157,7 @@ func (s *CachedStore) InvalidateConfig(key string) {
 // This forces all subsequent reads to hit the database.
 func (s *CachedStore) InvalidateAllConfig() {
 	s.mu.Lock()
+	s.generation++
 	s.cache = make(map[string]configEntry)
 	s.mu.Unlock()
 }

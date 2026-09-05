@@ -274,7 +274,7 @@ func TestStoreDecisionsCommitAndAbandonFailures(t *testing.T) {
 		StoreExpired:         ErrorExpired,
 		StoreConflict:        ErrorConflict,
 		StoreCapacity:        ErrorCapacity,
-		StoreDecision("bad"): ErrorUnavailable,
+		StoreDecision("bad"): ErrorInvalidTransition,
 	} {
 		t.Run(string(decision), func(t *testing.T) {
 			store := &stubStore{claim: func(StoreClaim) (StoreResult, error) {

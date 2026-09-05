@@ -49,6 +49,28 @@ type continuityRecorder struct {
 	abandonCalls   int
 }
 
+func (r *continuityRecorder) Resolve(ctx context.Context, request codexcontinuity.ResolveRequest) (codexcontinuity.Resolution, error) {
+	binding, err := r.ResolveOwner(ctx, request)
+	result := codexcontinuity.Resolution{}
+	switch {
+	case err == nil:
+		result.Status = codexcontinuity.ResolutionOwned
+		result.Owner = &binding.Owner
+	case codexcontinuity.IsError(err, codexcontinuity.ErrorUnknown):
+		result.Status = codexcontinuity.ResolutionUnknown
+	case codexcontinuity.IsError(err, codexcontinuity.ErrorExpired):
+		result.Status = codexcontinuity.ResolutionExpired
+		if binding.Owner.ClientScope.KeyVersion() != "" {
+			result.Owner = &binding.Owner
+		}
+	case codexcontinuity.IsError(err, codexcontinuity.ErrorUnavailable):
+		result.Status = codexcontinuity.ResolutionUnavailable
+	default:
+		return result, err
+	}
+	return result, nil
+}
+
 func (r *continuityRecorder) ResolveOwner(_ context.Context, request codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error) {
 	r.resolveCalls = append(r.resolveCalls, request)
 	if r.resolve != nil {
@@ -103,7 +125,7 @@ func TestRuntimeResolvesOwnerBeforeSelectionAndValidatesAppliedIdentity(t *testi
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Thread-Id", "thread-known")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known", testClientEvidence(nil, nil))
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known", "preserve_conversation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +160,7 @@ func TestRuntimeClaimsUnknownRequestOnlyAfterAppliedIdentity(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("X-Api-Key", "client-secret")
 	request.Header.Set("Thread-Id", "thread-new")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-claim", testClientEvidence(nil, nil))
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-claim", "preserve_conversation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +218,7 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 			request.Header.Set("Authorization", "Bearer client-secret")
 			request.Header.Set("Thread-Id", "thread-known")
 			request.Header.Set("X-Codex-Turn-State", "turn-imported")
-			operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-adopt", testClientEvidence(nil, nil))
+			operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-adopt", "preserve_conversation", testClientEvidence(nil, nil))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -243,7 +265,7 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 		request.Header.Set("Authorization", "Bearer client-secret")
 		request.Header.Set("Thread-Id", "thread-known")
 		request.Header.Set("Session-Id", "session-during-outage")
-		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-identity-degraded", testClientEvidence(nil, nil))
+		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-identity-degraded", "preserve_conversation", testClientEvidence(nil, nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -272,7 +294,7 @@ func TestRuntimeAdoptsExistingStateOnlyInsideResolvedProtocolScope(t *testing.T)
 		request.Header.Set("Authorization", "Bearer client-secret")
 		request.Header.Set("Thread-Id", "thread-known")
 		request.Header.Set("X-Codex-Turn-State", "turn-known")
-		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known-degraded", testClientEvidence(nil, nil))
+		operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-known-degraded", "preserve_conversation", testClientEvidence(nil, nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -300,7 +322,7 @@ func TestRuntimeBindsResponseStateOnlyAtVisibleBoundary(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Thread-Id", "request-anchor")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-response", testClientEvidence(nil, nil))
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-response", "preserve_conversation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +368,7 @@ func TestPendingOwnerRetryFinalizesAtHTTPBoundaries(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Session-Id", "session-pending")
 	request.Header.Set("X-Codex-Turn-Metadata", "metadata-pending")
-	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-pending-request", testClientEvidence(nil, nil))
+	operation, err := runtime.Begin(context.Background(), request, codexAPIType, "operation-pending-request", "preserve_conversation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,18 +441,18 @@ func TestRuntimeFailClosedInputAndDependencyErrors(t *testing.T) {
 	runtime := newAlwaysOnTestRuntime(t, Config{ClientScopes: testScopeDigester{current: clientScope, candidates: []codexidentity.ClientScope{clientScope}}, Continuity: &continuityRecorder{}})
 	request.Header.Set("Authorization", "Bearer one")
 	request.Header.Set("X-Api-Key", "two")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "operation", "preserve_conversation", testClientEvidence(nil, nil)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("always-on ambiguous credential error = %v", err)
 	}
 	request.Header.Del("X-Api-Key")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "opaque-json", testClientEvidence([]byte("{"), []byte("{"))); err != nil {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "opaque-json", "preserve_conversation", testClientEvidence([]byte("{"), []byte("{"))); err != nil {
 		t.Fatalf("non-JSON request body was not opaque: %v", err)
 	}
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "decode-failure", testClientEvidence([]byte{0x1f, 0x8b}, nil)); err != nil {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "decode-failure", "preserve_conversation", testClientEvidence([]byte{0x1f, 0x8b}, nil)); err != nil {
 		t.Fatalf("semantic decode failure was not opaque: %v", err)
 	}
 	invalidKnown := []byte(`{"type":"response.create","previous_response_id":null}`)
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "recognized-invalid", testClientEvidence(invalidKnown, invalidKnown)); !IsKind(err, ErrorClientInput) {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "recognized-invalid", "preserve_conversation", testClientEvidence(invalidKnown, invalidKnown)); !IsKind(err, ErrorClientInput) {
 		t.Fatalf("malformed recognized projection error = %v", err)
 	}
 	if !IsKind(identityError("test", errors.New("mismatch")), ErrorIdentityMismatch) || IsKind(nil, ErrorIdentityMismatch) {
@@ -453,7 +475,7 @@ func TestHeaderHygieneIsAlwaysOnOnlyForCodex(t *testing.T) {
 	if policy := operation.RequestPolicy(); policy.Headers != upstreamtransport.SanitizeProviderHeaders || policy.Cookies != upstreamtransport.ServerManagedCookies {
 		t.Fatalf("Codex policy = %#v", policy)
 	}
-	nonCodex, err := (*Runtime)(nil).Begin(context.Background(), nil, "claude", "non-codex", testClientEvidence(nil, nil))
+	nonCodex, err := (*Runtime)(nil).Begin(context.Background(), nil, "claude", "non-codex", "preserve_conversation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

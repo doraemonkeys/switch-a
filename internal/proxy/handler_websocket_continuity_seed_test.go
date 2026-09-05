@@ -269,11 +269,12 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureStoresContinuitySeed(t *t
 	_, _, _ = conn.Read(ctx)
 
 	key := selector.BuildContinuityKey(&model.SelectRequest{
-		ClientIP:   "198.51.100.77",
-		User:       "seed-user",
-		APIType:    APITypeCodex,
-		Model:      "gpt-5.4",
-		StickyMode: model.StickyModeModel,
+		ClientIP:    "198.51.100.77",
+		ClientScope: proxyCodexTestClientScope(t),
+		User:        "seed-user",
+		APIType:     APITypeCodex,
+		Model:       "gpt-5.4",
+		StickyMode:  model.StickyModeModel,
 	})
 	waitFor(t, func() bool { return seedStore.Len() == 1 }, testPollTimeout)
 	candidate, ok := seedStore.Lookup(key)

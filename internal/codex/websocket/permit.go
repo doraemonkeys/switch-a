@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
+	"github.com/doraemonkeys/switch-a/internal/codex/provenance"
 )
 
 // Permit represents persistence work prepared before a physical disclosure.
@@ -36,6 +37,9 @@ func (p *Permit) Commit(ctx context.Context) error {
 	commitContext := context.WithoutCancel(ctx)
 	for _, lease := range p.leases {
 		if _, err := p.operation.runtime.continuity.Commit(commitContext, lease); err != nil {
+			if p.operation.AllowsAccountSwitch() && codexprovenance.IsOpaqueDegradation(err) {
+				continue
+			}
 			return continuityFailure("commit_visibility", err)
 		}
 	}

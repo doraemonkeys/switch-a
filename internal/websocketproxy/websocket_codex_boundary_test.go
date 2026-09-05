@@ -93,7 +93,7 @@ func testCodexOperation(t *testing.T) *codexws.Operation {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
 	request.Header.Set("Authorization", "Bearer client")
-	operation, err := testCodexRuntime(t).Begin(context.Background(), request, APITypeCodex, "ws-boundary-test")
+	operation, err := testCodexRuntime(t).Begin(context.Background(), request, APITypeCodex, "ws-boundary-test", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestCodexWebSocketRecoveryAdapterClassifiesRealBoundaryFailures(t *testing.
 		t.Helper()
 		request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
 		request.Header.Set("Authorization", "Bearer client")
-		operation, err := runtime.Begin(ctx, request, APITypeCodex, operationID)
+		operation, err := runtime.Begin(ctx, request, APITypeCodex, operationID, "")
 		if err != nil {
 			t.Fatalf("begin %s: %v", operationID, err)
 		}
@@ -212,19 +212,19 @@ func TestCodexWebSocketRecoveryAdapterClassifiesRealBoundaryFailures(t *testing.
 		return err
 	}
 
-	_, protocolErr := runtime.Begin(ctx, nil, APITypeCodex, "protocol-invalid")
+	_, protocolErr := runtime.Begin(ctx, nil, APITypeCodex, "protocol-invalid", "")
 	protocolErr = requireFailure("Runtime.Begin protocol validation", protocolErr)
 
 	var unavailableRuntime *codexws.Runtime
 	unavailableRequest := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
 	unavailableRequest.Header.Set("Authorization", "Bearer client")
-	_, storageErr := unavailableRuntime.Begin(ctx, unavailableRequest, APITypeCodex, "storage-unavailable")
+	_, storageErr := unavailableRuntime.Begin(ctx, unavailableRequest, APITypeCodex, "storage-unavailable", "")
 	storageErr = requireFailure("Runtime.Begin unavailable runtime", storageErr)
 
 	unknownRequest := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
 	unknownRequest.Header.Set("Authorization", "Bearer client")
 	unknownRequest.Header.Set("X-Codex-Turn-State", "unknown-turn-state")
-	_, newThreadErr := runtime.Begin(ctx, unknownRequest, APITypeCodex, "new-thread")
+	_, newThreadErr := runtime.Begin(ctx, unknownRequest, APITypeCodex, "new-thread", "")
 	newThreadErr = requireFailure("Runtime.Begin unknown state", newThreadErr)
 
 	openConnectionErr := requireFailure("OpenConnection without provider", begin("open-connection").OpenConnection())

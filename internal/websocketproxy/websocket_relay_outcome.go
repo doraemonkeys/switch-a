@@ -147,16 +147,18 @@ func (r *webSocketRelaySessionResult) toWebSocketResult() *WebSocketResult {
 		return &WebSocketResult{CommitSource: model.CommitUnknown}
 	}
 	return &WebSocketResult{
-		ClientAccepted:        r.ClientAccepted,
-		ClientVisible:         r.ClientVisible,
-		SessionCommitted:      r.SessionCommitted,
-		TerminalCause:         r.TerminalCause,
-		CommitSource:          r.CommitSource,
-		CloseCode:             r.CloseCode,
-		BytesClientToUpstream: r.BytesClientToUpstream,
-		BytesUpstreamToClient: r.BytesUpstreamToClient,
-		Err:                   r.Err,
-		UpstreamError:         r.SuppressedUpstreamError,
+		healthOutcomePublished:  r.healthOutcomePublished,
+		accountRecoveryNotified: r.accountRecoveryNotified,
+		ClientAccepted:          r.ClientAccepted,
+		ClientVisible:           r.ClientVisible,
+		SessionCommitted:        r.SessionCommitted,
+		TerminalCause:           r.TerminalCause,
+		CommitSource:            r.CommitSource,
+		CloseCode:               r.CloseCode,
+		BytesClientToUpstream:   r.BytesClientToUpstream,
+		BytesUpstreamToClient:   r.BytesUpstreamToClient,
+		Err:                     r.Err,
+		UpstreamError:           r.SuppressedUpstreamError,
 		// The transport observation is surfaced here so evidence derivation
 		// (session + attempt) has a single source of truth. Suppressed-payload
 		// relays intentionally pass through nil values — those paths report

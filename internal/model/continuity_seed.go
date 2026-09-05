@@ -4,10 +4,19 @@ import "time"
 
 const VisibleContinuitySeedTTL = 5 * time.Second
 
+type VisibleContinuitySeedPurpose string
+
+const (
+	VisibleContinuitySeedOrdinary        VisibleContinuitySeedPurpose = ""
+	VisibleContinuitySeedAccountRecovery VisibleContinuitySeedPurpose = "account_recovery"
+)
+
 // VisibleContinuitySeed is the shared cross-request breadcrumb left behind by a
 // post-visible continuity break. It stores just enough provenance for a later
 // request to prove re-entry before failover semantics attach locally.
 type VisibleContinuitySeed struct {
+	Purpose             VisibleContinuitySeedPurpose
+	ExcludedProviderIDs []string
 	SeedID              string
 	ContinuityKey       StickyKey
 	OriginProviderID    string
@@ -22,6 +31,7 @@ func (s *VisibleContinuitySeed) Clone() *VisibleContinuitySeed {
 		return nil
 	}
 	clone := *s
+	clone.ExcludedProviderIDs = append([]string(nil), s.ExcludedProviderIDs...)
 	clone.ContaminatedVendors = append([]string(nil), s.ContaminatedVendors...)
 	return &clone
 }
@@ -33,12 +43,14 @@ func (s *VisibleContinuitySeed) Candidate(observedAt time.Time) *VisibleContinui
 	age := observedAt.Sub(s.ObservedAt)
 	age = max(age, 0)
 	return &VisibleContinuitySeedCandidate{
-		SeedID:           s.SeedID,
-		ContinuityKey:    s.ContinuityKey,
-		OriginProviderID: s.OriginProviderID,
-		OriginVendor:     s.OriginVendor,
-		ObservedAt:       s.ObservedAt,
-		Age:              age,
+		Purpose:             s.Purpose,
+		ExcludedProviderIDs: append([]string(nil), s.ExcludedProviderIDs...),
+		SeedID:              s.SeedID,
+		ContinuityKey:       s.ContinuityKey,
+		OriginProviderID:    s.OriginProviderID,
+		OriginVendor:        s.OriginVendor,
+		ObservedAt:          s.ObservedAt,
+		Age:                 age,
 	}
 }
 
@@ -67,12 +79,14 @@ func (s *VisibleContinuitySeed) ProviderContinuityContext() *ProviderContinuityC
 // found within the short heuristic window. It is intentionally immutable so
 // callers cannot mutate shared continuity state before compare-and-consume.
 type VisibleContinuitySeedCandidate struct {
-	SeedID           string
-	ContinuityKey    StickyKey
-	OriginProviderID string
-	OriginVendor     string
-	ObservedAt       time.Time
-	Age              time.Duration
+	Purpose             VisibleContinuitySeedPurpose
+	ExcludedProviderIDs []string
+	SeedID              string
+	ContinuityKey       StickyKey
+	OriginProviderID    string
+	OriginVendor        string
+	ObservedAt          time.Time
+	Age                 time.Duration
 }
 
 // VisibleContinuitySeedStore keeps cross-request continuity seeds independent

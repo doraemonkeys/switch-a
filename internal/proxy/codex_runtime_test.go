@@ -24,6 +24,19 @@ type proxyCodexFixture struct {
 
 const proxyCodexTestAuthorization = "Bearer proxy-test-client"
 
+func proxyCodexTestClientScope(t *testing.T) codexidentity.ClientScope {
+	t.Helper()
+	digester, err := codexidentity.NewDigester(proxyCodexTestHMAC{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := digester.ClientScope([]byte("proxy-test-client"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scope
+}
+
 func newProxyCodexFixture(t *testing.T) proxyCodexFixture {
 	t.Helper()
 	hmac := proxyCodexTestHMAC{}

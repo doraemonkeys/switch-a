@@ -62,7 +62,7 @@ func TestHTTPRouteTargetPreferenceUsesAbsorbingSharedFold(t *testing.T) {
 				for kind := range test.hints {
 					request.Header.Set(ownerHeader(kind), string(kind)+"-value")
 				}
-				operation, err := runtime.Begin(context.Background(), request, codexAPIType, "route-preference", testClientEvidence(nil, nil))
+				operation, err := runtime.Begin(context.Background(), request, codexAPIType, "route-preference", "preserve_conversation", testClientEvidence(nil, nil))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -96,7 +96,7 @@ func TestHTTPBeginPreservesContinuityRootCause(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 			request.Header.Set("Authorization", "Bearer client-secret")
 			request.Header.Set("X-Codex-Turn-State", "state")
-			_, err := runtime.Begin(context.Background(), request, codexAPIType, "root-cause", testClientEvidence(nil, nil))
+			_, err := runtime.Begin(context.Background(), request, codexAPIType, "root-cause", "preserve_conversation", testClientEvidence(nil, nil))
 			if !IsKind(err, test.wantHTTPKind) || !codexcontinuity.IsError(err, test.kind) {
 				t.Fatalf("error = %v, want HTTP kind %q with continuity kind %q", err, test.wantHTTPKind, test.kind)
 			}

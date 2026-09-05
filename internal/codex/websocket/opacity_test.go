@@ -25,7 +25,7 @@ func (c *resolveCountingContinuity) ResolveOwner(
 func TestOpaqueWebSocketFramesCreateNoOwnerOrRouteEffect(t *testing.T) {
 	continuity := &resolveCountingContinuity{Continuity: newTestContinuity(t)}
 	runtime := testRuntime(t, continuity)
-	op, err := runtime.Begin(context.Background(), testRequest("opaque-client"), codexAPIType, "opaque-frames")
+	op, err := runtime.Begin(context.Background(), testRequest("opaque-client"), codexAPIType, "opaque-frames", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestOpaqueWebSocketFramesCreateNoOwnerOrRouteEffect(t *testing.T) {
 func TestAppendAndInjectRecognitionDoesNotGuessOwnerFields(t *testing.T) {
 	continuity := &resolveCountingContinuity{Continuity: newTestContinuity(t)}
 	runtime := testRuntime(t, continuity)
-	op, err := runtime.Begin(context.Background(), testRequest("controls-client"), codexAPIType, "connection-controls")
+	op, err := runtime.Begin(context.Background(), testRequest("controls-client"), codexAPIType, "connection-controls", "")
 	if err != nil {
 		t.Fatal(err)
 	}

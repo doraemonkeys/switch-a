@@ -280,6 +280,8 @@ func decideOwner(
 	admission StateAdmission,
 ) Decision {
 	switch status {
+	case OwnerOpaquePassthrough:
+		return newDecision(ActionForward, candidate.field, carriers, ReasonOpaquePassthrough, candidate, headerNames, ClaimSpec{})
 	case OwnerCurrent:
 		return newDecision(ActionForward, candidate.field, carriers, ReasonOwnerMatch, candidate, headerNames, ClaimSpec{})
 	case OwnerUnknown:

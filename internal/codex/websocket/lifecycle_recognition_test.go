@@ -58,7 +58,7 @@ func TestConfirmedTerminalEventsDeactivateOnlyAfterSuccessfulWriteCommit(t *test
 			service := &lifecycleRecordingContinuity{Continuity: newTestContinuity(t)}
 			runtime := testRuntime(t, service)
 			operationID := "terminal-" + terminalEvent
-			op, err := runtime.Begin(context.Background(), testRequest("terminal-client"), codexAPIType, operationID)
+			op, err := runtime.Begin(context.Background(), testRequest("terminal-client"), codexAPIType, operationID, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,7 +109,7 @@ func TestConfirmedTerminalEventsDeactivateOnlyAfterSuccessfulWriteCommit(t *test
 func TestUnknownFutureLifecycleEventDoesNotDeactivateResponse(t *testing.T) {
 	service := &lifecycleRecordingContinuity{Continuity: newTestContinuity(t)}
 	runtime := testRuntime(t, service)
-	op, err := runtime.Begin(context.Background(), testRequest("future-client"), codexAPIType, "future-lifecycle")
+	op, err := runtime.Begin(context.Background(), testRequest("future-client"), codexAPIType, "future-lifecycle", "")
 	if err != nil {
 		t.Fatal(err)
 	}

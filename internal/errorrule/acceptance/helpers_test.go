@@ -46,10 +46,11 @@ const (
 	primaryProviderID             = "v5b-primary"
 	secondaryProviderID           = "v5b-secondary"
 	providerGroupID               = "v5b-group"
-	acceptanceClientAuthorization = "Bearer v5b-client"
+	acceptanceClientCredential    = "v5b-client"
+	acceptanceClientAuthorization = "Bearer " + acceptanceClientCredential
 )
 
-func acceptanceCodexRuntimes(t *testing.T, persistence *store.SQLiteStore) (*codexhttp.Runtime, *codexws.Runtime) {
+func acceptanceCodexRuntimes(t *testing.T, persistence *store.SQLiteStore) (*codexhttp.Runtime, *codexws.Runtime, codexidentity.ClientScope) {
 	t.Helper()
 	document, err := codexkeyring.GenerateDocument(rand.Reader)
 	if err != nil {
@@ -111,7 +112,11 @@ func acceptanceCodexRuntimes(t *testing.T, persistence *store.SQLiteStore) (*cod
 	if err != nil {
 		t.Fatal(err)
 	}
-	return httpRuntime, webSocketRuntime
+	clientScope, err := digester.ClientScope([]byte(acceptanceClientCredential))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httpRuntime, webSocketRuntime, clientScope
 }
 
 type acceptanceProviderAuthenticator struct{}
@@ -364,6 +369,7 @@ type proxyHarnessOptions struct {
 }
 
 type proxyHarness struct {
+	clientScope  codexidentity.ClientScope
 	store        *store.SQLiteStore
 	proxyStore   *observedProxyStore
 	handler      *proxy.Handler
@@ -467,7 +473,7 @@ func newProxyHarness(t *testing.T, options proxyHarnessOptions) *proxyHarness {
 	}); err != nil {
 		t.Fatalf("compose backend config: %v", err)
 	}
-	httpRuntime, webSocketRuntime := acceptanceCodexRuntimes(t, backend)
+	httpRuntime, webSocketRuntime, clientScope := acceptanceCodexRuntimes(t, backend)
 
 	repository := backend.InternalErrorRuleRepository()
 	accumulator, err := statistics.New(repository)
@@ -543,7 +549,8 @@ func newProxyHarness(t *testing.T, options proxyHarnessOptions) *proxyHarness {
 		Logger:                     zap.NewNop(),
 	})
 	return &proxyHarness{
-		store: backend, proxyStore: observedStore, handler: handler, health: options.health, stats: accumulator,
+		clientScope: clientScope,
+		store:       backend, proxyStore: observedStore, handler: handler, health: options.health, stats: accumulator,
 		rule: rules[0], ruleSetReads: ruleReads, capture: captureManager, session: session,
 	}
 }

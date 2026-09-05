@@ -163,7 +163,7 @@ func TestPrepareWebSocketProviderAttemptAppliesCodexHygieneOnlyToCodexOperations
 			var operation *codexws.Operation
 			if test.apiType == APITypeCodex {
 				var err error
-				operation, err = testCodexRuntime(t).Begin(context.Background(), request, test.apiType, "ws-hygiene")
+				operation, err = testCodexRuntime(t).Begin(context.Background(), request, test.apiType, "ws-hygiene", "")
 				if err != nil {
 					t.Fatal(err)
 				}

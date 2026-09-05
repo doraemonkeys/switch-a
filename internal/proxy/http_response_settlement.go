@@ -195,7 +195,8 @@ func (p *pendingHTTPResponse) discard(
 
 func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.Completion) forwardResult {
 	result := forwardResult{
-		headersWritten: completion.HeadersCommitted, responseCommitted: completion.HeadersCommitted,
+		upstreamErrorObserved: p.matcher.ObservedError(),
+		headersWritten:        completion.HeadersCommitted, responseCommitted: completion.HeadersCommitted,
 		firstByteVisible: completion.ClientBodyBytesWritten > 0,
 		statusCode:       p.head.StatusCode, isSSE: p.media.IsEventStream(),
 		responseBytes: completion.ClientBodyBytesWritten, upstreamBytes: p.sourceBytesRead(completion.UpstreamBytesRead),

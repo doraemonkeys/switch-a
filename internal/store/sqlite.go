@@ -117,6 +117,10 @@ func NewSQLiteStore(
 		return nil, fmt.Errorf("migrate Codex provider-Cookie storage: %w", err)
 	}
 
+	if err := storemigration.MigrateStickyClientScope(db); err != nil {
+		return nil, fmt.Errorf("migrate sticky client scope: %w", err)
+	}
+
 	if err := db.AutoMigrate(
 		&model.Group{},
 		&model.Provider{},

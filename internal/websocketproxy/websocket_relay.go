@@ -172,25 +172,23 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 
 	lifecycleSnapshot := lifecycle.Snapshot()
 	if suppressedUpstreamError := firstSuppressedUpstreamError(clientToUpstream, upstreamToClient); suppressedUpstreamError != nil {
-		if options.PreserveClientOnSuppress {
-			preserveClient = true
-			closeWebSocketForSemanticReplacement(upstreamConn)
-		} else {
-			closeWebSocketForSemanticReplacement(clientConn)
-			closeWebSocketForSemanticReplacement(upstreamConn)
-		}
 		sessionCommitted, commitSource := fallbackCommit.Snapshot()
-		return &webSocketRelaySessionResult{
-			Disposition:             webSocketRelayDispositionSuppressedUpstreamError,
-			SessionCommitted:        sessionCommitted,
-			TerminalCause:           model.TerminalUpstreamSemanticError,
-			CommitSource:            commitSource,
-			BytesClientToUpstream:   preVisibleProgress.BytesClientToUpstream + clientToUpstream.bytes,
-			BytesUpstreamToClient:   preVisibleProgress.BytesUpstreamToClient + upstreamToClient.bytes,
-			ClientAccepted:          lifecycleSnapshot.ClientAccepted,
-			ClientVisible:           lifecycleSnapshot.ClientVisible,
-			SuppressedUpstreamError: suppressedUpstreamError,
+		result := &webSocketRelaySessionResult{
+			Disposition:      webSocketRelayDispositionSuppressedUpstreamError,
+			SessionCommitted: sessionCommitted, TerminalCause: model.TerminalUpstreamSemanticError, CommitSource: commitSource,
+			BytesClientToUpstream: preVisibleProgress.BytesClientToUpstream + clientToUpstream.bytes,
+			BytesUpstreamToClient: preVisibleProgress.BytesUpstreamToClient + upstreamToClient.bytes,
+			ClientAccepted:        lifecycleSnapshot.ClientAccepted, ClientVisible: lifecycleSnapshot.ClientVisible, SuppressedUpstreamError: suppressedUpstreamError,
 		}
+		switch {
+		case closeWebSocketWithPolicy(sessionCtx, clientConn, result, options):
+		case options.PreserveClientOnSuppress:
+			preserveClient = true
+		default:
+			closeWebSocketForSemanticReplacement(clientConn)
+		}
+		closeWebSocketForSemanticReplacement(upstreamConn)
+		return result
 	}
 
 	outcome := reduceWebSocketRelayErrors(clientToUpstream, upstreamToClient)
@@ -215,17 +213,8 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		}
 	}
 
-	closeMsg := ""
-	if outcome.err != nil {
-		closeMsg = truncateUTF8(outcome.err.Error(), webSocketCloseReasonByteLimit)
-	}
-	propagatedCloseCode := sanitizeWebSocketCloseCode(outcome.closeCode, outcome.err)
-
-	_ = clientConn.Close(propagatedCloseCode, closeMsg)
-	_ = upstreamConn.Close(propagatedCloseCode, closeMsg)
-
 	sessionCommitted, commitSource := fallbackCommit.Snapshot()
-	return &webSocketRelaySessionResult{
+	result := &webSocketRelaySessionResult{
 		Disposition:           webSocketRelayDispositionCompleted,
 		SessionCommitted:      sessionCommitted,
 		TerminalCause:         outcome.terminalCause,
@@ -240,6 +229,16 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		FailurePeer:           outcome.failurePeer,
 		FailureOperation:      outcome.failureOperation,
 	}
+	if !closeWebSocketWithPolicy(sessionCtx, clientConn, result, options) {
+		closeMsg := ""
+		if outcome.err != nil {
+			closeMsg = truncateUTF8(outcome.err.Error(), webSocketCloseReasonByteLimit)
+		}
+		_ = clientConn.Close(sanitizeWebSocketCloseCode(outcome.closeCode, outcome.err), closeMsg)
+	}
+	_ = upstreamConn.CloseNow()
+	return result
+
 }
 
 // runPreVisibleSuppressionWindow owns both directions until the first upstream

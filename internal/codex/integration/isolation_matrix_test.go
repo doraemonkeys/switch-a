@@ -129,7 +129,7 @@ func seedIsolationCellHTTP(
 	request.Header.Set("Thread-Id", cell.threadID)
 	request.Header.Set("X-Codex-Turn-Metadata", cell.turnMetadata)
 	operation, err := fixture.http.Begin(
-		context.Background(), request, testAPIType, operationID("matrix-http-seed", sequence), testHTTPClientEvidence(nil, nil),
+		context.Background(), request, testAPIType, operationID("matrix-http-seed", sequence), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func seedIsolationResponseOnWebSocket(
 	request := requestWithHandle(http.MethodGet, cell.client, cell.handle)
 	request.Header.Set("X-Codex-Turn-State", cell.turnState)
 	operation, err := fixture.ws.Begin(
-		context.Background(), request, testAPIType, operationID("matrix-ws-seed", sequence),
+		context.Background(), request, testAPIType, operationID("matrix-ws-seed", sequence), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func assertIsolationCellRetrievableOverHTTP(t *testing.T, fixture *runtimeFixtur
 	previous := []byte(`{"type":"response.create","previous_response_id":"` + cell.responseID + `"}`)
 	request := isolationCellRequest(http.MethodPost, cell, cell.handle)
 	operation, err := fixture.http.Begin(
-		context.Background(), request, testAPIType, operationID("matrix-http-read", cell.providerIndex*2+cell.accountIndex), testHTTPClientEvidence(previous, previous),
+		context.Background(), request, testAPIType, operationID("matrix-http-read", cell.providerIndex*2+cell.accountIndex), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func assertIsolationCellRetrievableAfterWebSocketReconnect(t *testing.T, fixture
 	t.Helper()
 	request := isolationCellRequest(http.MethodGet, cell, cell.handle)
 	operation, err := fixture.ws.Begin(
-		context.Background(), request, testAPIType, operationID("matrix-ws-reconnect", cell.providerIndex*2+cell.accountIndex),
+		context.Background(), request, testAPIType, operationID("matrix-ws-reconnect", cell.providerIndex*2+cell.accountIndex), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func assertIsolationCellRejectsOtherAuthority(
 	previous := []byte(`{"type":"response.create","previous_response_id":"` + cell.responseID + `"}`)
 	operation, err := fixture.http.Begin(
 		context.Background(), isolationCellRequest(http.MethodPost, cell, cell.handle),
-		testAPIType, operationID("matrix-wrong-authority", cell.providerIndex*2+cell.accountIndex), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("matrix-wrong-authority", cell.providerIndex*2+cell.accountIndex), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -304,13 +304,13 @@ func assertIsolationCellRejectsOtherClient(t *testing.T, fixture *runtimeFixture
 	previous := []byte(`{"type":"response.create","previous_response_id":"` + cell.responseID + `"}`)
 	_, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, otherClient, nil),
-		testAPIType, operationID("matrix-wrong-client", cell.providerIndex*2+cell.accountIndex), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("matrix-wrong-client", cell.providerIndex*2+cell.accountIndex), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 
 	request := requestWithHandle(http.MethodGet, otherClient, cell.handle)
 	operation, err := fixture.ws.Begin(
-		context.Background(), request, testAPIType, operationID("matrix-wrong-cookie-client", cell.providerIndex*2+cell.accountIndex),
+		context.Background(), request, testAPIType, operationID("matrix-wrong-cookie-client", cell.providerIndex*2+cell.accountIndex), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +331,7 @@ func assertIsolationCellRejectsOtherProtocolScope(t *testing.T, fixture *runtime
 	previous := []byte(`{"type":"response.create","previous_response_id":"` + cell.responseID + `"}`)
 	operation, err := fixture.http.Begin(
 		context.Background(), isolationCellRequest(http.MethodPost, cell, cell.handle),
-		testAPIType, operationID("matrix-wrong-protocol", cell.providerIndex*2+cell.accountIndex), testHTTPClientEvidence(previous, previous),
+		testAPIType, operationID("matrix-wrong-protocol", cell.providerIndex*2+cell.accountIndex), "preserve_conversation", testHTTPClientEvidence(previous, previous),
 	)
 	if err != nil {
 		t.Fatal(err)

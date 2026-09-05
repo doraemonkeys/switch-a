@@ -11,7 +11,7 @@ import (
 )
 
 func TestClientFramePermitStrategy(t *testing.T) {
-	op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("frame-strategy"), codexAPIType, "frame-strategy")
+	op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("frame-strategy"), codexAPIType, "frame-strategy", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestPreviousResponseUsesClientAndProtocolScopeWithoutConnectionOrRoutePin(t
 		t.Fatal(err)
 	}
 
-	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "reconnected")
+	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "reconnected", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestPreviousResponseUsesClientAndProtocolScopeWithoutConnectionOrRoutePin(t
 		t.Fatalf("different ProtocolScope class=%q err=%v", Classify(err), err)
 	}
 
-	otherClient, err := runtime.Begin(context.Background(), testRequest("client-b"), codexAPIType, "wrong-client")
+	otherClient, err := runtime.Begin(context.Background(), testRequest("client-b"), codexAPIType, "wrong-client", "")
 	if err != nil {
 		t.Fatal(err)
 	}

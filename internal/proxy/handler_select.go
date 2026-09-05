@@ -268,6 +268,7 @@ func (h *Handler) selectInitialProvider(
 	request *model.SelectRequest,
 	attempt int,
 	excluded map[string]bool,
+	recoveryPolicy model.ConversationRecoveryPolicy,
 ) (*providerSelection, error) {
 	if h.httpSelector == nil {
 		provider, err := normalizeSelectedProvider(h.selectProviderFallback(ctx, request, attempt, excluded))
@@ -281,6 +282,9 @@ func (h *Handler) selectInitialProvider(
 		}, nil
 	}
 
+	if len(excluded) > 0 {
+		return h.selectInitialWithExclusions(ctx, request, excluded)
+	}
 	result, err := h.httpSelector.SelectInitial(ctx, request)
 	if err != nil {
 		return nil, err
@@ -288,7 +292,8 @@ func (h *Handler) selectInitialProvider(
 	if result == nil || result.provider == nil || result.lease == nil || !result.lease.Held() {
 		return nil, internal.ErrNoProvider
 	}
-	if result.metadata.UsesContinuity() || h.activeRegistry == nil || request.StickyMode == model.StickyModeOff {
+	if (request.APIType == APITypeCodex && recoveryPolicy == model.ConversationRecoverySwitchAccountPreserveConversation) ||
+		result.metadata.UsesContinuity() || h.activeRegistry == nil || request.StickyMode == model.StickyModeOff {
 		return result, nil
 	}
 
@@ -305,6 +310,22 @@ func (h *Handler) selectInitialProvider(
 	}
 	result.lease.Release()
 	return activeResult, nil
+}
+
+func (h *Handler) selectInitialWithExclusions(ctx context.Context, request *model.SelectRequest, excluded map[string]bool) (*providerSelection, error) {
+	reservation, err := h.httpSelector.ReserveAlternate(ctx, request, excluded)
+	if err != nil {
+		return nil, err
+	}
+	defer reservation.Release()
+	if err := reservation.PrepareActivation(ctx); err != nil {
+		return nil, err
+	}
+	lease := reservation.Activate()
+	if lease == nil || !lease.Held() || lease.Provider() == nil {
+		return nil, internal.ErrNoProvider
+	}
+	return &providerSelection{provider: lease.Provider(), lease: lease, metadata: reservation.Metadata()}, nil
 }
 
 func normalizeSelectedProvider(provider *model.Provider, err error) (*model.Provider, error) {

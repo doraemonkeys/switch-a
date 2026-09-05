@@ -326,6 +326,10 @@ type preCommitContinuity struct {
 	commitCalls  int
 }
 
+func (*preCommitContinuity) Resolve(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Resolution, error) {
+	return codexcontinuity.Resolution{Status: codexcontinuity.ResolutionUnknown}, nil
+}
+
 func (*preCommitContinuity) ResolveOwner(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error) {
 	return codexcontinuity.Binding{}, &codexcontinuity.Error{Kind: codexcontinuity.ErrorUnknown}
 }
@@ -482,7 +486,7 @@ func newPreCommitSSEGate(t *testing.T) (*codexhttp.Attempt, *codexhttp.SSEGate, 
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/codex/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer client-secret")
 	request.Header.Set("Thread-Id", "precommit-request-anchor")
-	operation, err := runtime.Begin(context.Background(), request, APITypeCodex, "operation-sse", testClientEvidence(nil, nil))
+	operation, err := runtime.Begin(context.Background(), request, APITypeCodex, "operation-sse", "preserve_conversation", testClientEvidence(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

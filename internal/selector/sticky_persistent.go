@@ -113,20 +113,22 @@ func (c *PersistentStickyCache) Set(key model.StickyKey, providerID string, ttl 
 	if c == nil || c.MemoryStickyCache == nil {
 		return
 	}
+	// Memory and queued persistence must share one mutation order; otherwise a
+	// concurrent completion can restore a different affinity after restart.
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
 	now := c.clock.Now()
 	c.setAt(key, providerID, now.Add(ttl))
 	if c.persistence == nil {
 		return
 	}
 
-	c.pendingMu.Lock()
 	delete(c.pending.deletes, key)
 	c.pending.upserts[key] = model.StickyEntry{
 		Key:        key,
 		ProviderID: providerID,
 		ExpiresAt:  now.Add(ttl),
 	}
-	c.pendingMu.Unlock()
 	c.signalPersistence()
 }
 
@@ -135,15 +137,15 @@ func (c *PersistentStickyCache) Delete(key model.StickyKey) {
 	if c == nil || c.MemoryStickyCache == nil {
 		return
 	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
 	c.MemoryStickyCache.Delete(key)
 	if c.persistence == nil {
 		return
 	}
 
-	c.pendingMu.Lock()
 	delete(c.pending.upserts, key)
 	c.pending.deletes[key] = struct{}{}
-	c.pendingMu.Unlock()
 	c.signalPersistence()
 }
 
@@ -154,19 +156,19 @@ func (c *PersistentStickyCache) EvictProvider(providerID string) {
 	if c == nil || c.MemoryStickyCache == nil || providerID == "" {
 		return
 	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
 	c.MemoryStickyCache.EvictProvider(providerID)
 	if c.persistence == nil {
 		return
 	}
 
-	c.pendingMu.Lock()
 	c.pending.providerEvictions[providerID] = struct{}{}
 	for key, entry := range c.pending.upserts {
 		if entry.ProviderID == providerID {
 			delete(c.pending.upserts, key)
 		}
 	}
-	c.pendingMu.Unlock()
 	c.signalPersistence()
 }
 
@@ -176,13 +178,14 @@ func (c *PersistentStickyCache) Cleanup() {
 	if c == nil || c.MemoryStickyCache == nil {
 		return
 	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
 	now := c.clock.Now()
 	c.MemoryStickyCache.Cleanup()
 	if c.persistence == nil {
 		return
 	}
 
-	c.pendingMu.Lock()
 	if c.pending.cleanupBefore.IsZero() || now.After(c.pending.cleanupBefore) {
 		c.pending.cleanupBefore = now
 	}
@@ -191,7 +194,6 @@ func (c *PersistentStickyCache) Cleanup() {
 			delete(c.pending.upserts, key)
 		}
 	}
-	c.pendingMu.Unlock()
 	c.signalPersistence()
 }
 
@@ -386,6 +388,7 @@ func stickyKeyOrder(left, right model.StickyKey) bool {
 		{left.User, right.User},
 		{left.APIType, right.APIType},
 		{left.Model, right.Model},
+		{left.ClientScope, right.ClientScope},
 	} {
 		if pair[0] != pair[1] {
 			return pair[0] < pair[1]

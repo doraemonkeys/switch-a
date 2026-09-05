@@ -1,11 +1,14 @@
 package selector
 
 import (
+	"encoding/hex"
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
+
+const stickyCodexAPIType = "codex"
 
 // BuildContinuityKey derives the sticky/continuity key from the request
 // dimensions already known before provider selection. Unknown models degrade to
@@ -15,6 +18,13 @@ func BuildContinuityKey(req *model.SelectRequest) model.StickyKey {
 		IP:      reqClientIP(req),
 		User:    reqUser(req),
 		APIType: reqAPIType(req),
+	}
+	if req != nil && key.APIType == stickyCodexAPIType {
+		// String deliberately redacts the digest; the binary codec retains both
+		// key version and digest so separate client credentials cannot collide.
+		if scope, err := req.ClientScope.MarshalBinary(); err == nil {
+			key.ClientScope = hex.EncodeToString(scope)
+		}
 	}
 	if stickyModeConsumesModel(reqStickyMode(req)) {
 		key.Model = requestSelectionModel(req)

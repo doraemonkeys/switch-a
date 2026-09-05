@@ -5,6 +5,7 @@ export { AuthSettingsSection } from "./AuthSettingsSection";
 export { TimeoutSettingsSection } from "./TimeoutSettingsSection";
 export { RequestLimitsSection } from "./RequestLimitsSection";
 export { StickySessionSection } from "./StickySessionSection";
+export { ConversationRecoverySection } from "./ConversationRecoverySection";
 export { CircuitBreakerSection } from "./CircuitBreakerSection";
 export { OtherSettingsSection } from "./OtherSettingsSection";
 export { ConfigFormActions } from "./ConfigFormActions";

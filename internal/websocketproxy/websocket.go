@@ -246,7 +246,9 @@ func NewWebSocketForwarder(cfg WebSocketForwarderConfig) *WebSocketForwarder {
 // WebSocketResult reports the outcome of a WebSocket forwarding session.
 // The caller uses this for health tracking, request logging, and active registry cleanup.
 type WebSocketResult struct {
-	ReplayStatus webSocketReplayStatus
+	healthOutcomePublished  bool
+	accountRecoveryNotified bool
+	ReplayStatus            webSocketReplayStatus
 	// HandshakeAccepted indicates whether the selected provider completed the
 	// upstream WebSocket handshake. Client accept can still be true when a later
 	// replacement or failover dial is rejected because the logical downstream

@@ -293,6 +293,7 @@ func captureWebSocketMessageType(messageType websocket.MessageType) (requestcapt
 }
 
 type webSocketRelayOptions struct {
+	BeforeClientClose        func(*webSocketRelaySessionResult) *webSocketClientClose
 	GatewayCapture           requestcapture.GatewayRecorder
 	Capture                  requestcapture.Recorder
 	CaptureMode              captureMode
@@ -332,6 +333,8 @@ func (o webSocketRelayOptions) withCaptureHooks() webSocketRelayOptions {
 }
 
 type webSocketRelaySessionResult struct {
+	healthOutcomePublished  bool
+	accountRecoveryNotified bool
 	Disposition             webSocketRelayDisposition
 	SessionCommitted        bool
 	CommitSource            model.CommitSource
@@ -494,9 +497,7 @@ func newAllowlistedProviderScopedSuppressDecision(buffer *preVisibleClientMessag
 			}
 		}
 		if suppressedUpstreamError == nil {
-			suppressedUpstreamError = &WebSocketUpstreamError{
-				Raw: string(ctx.Data),
-			}
+			suppressedUpstreamError = &WebSocketUpstreamError{Raw: string(ctx.Data)}
 		}
 		return webSocketPreWriteDecision{
 			Action:                  webSocketPreWriteActionSuppress,

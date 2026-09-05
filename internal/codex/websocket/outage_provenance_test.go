@@ -13,7 +13,7 @@ func TestLiveConnectionAndUpstreamResponsesSurviveContinuityStoreOutages(t *test
 	service, store := newTestContinuityFixture(t)
 	runtime := testRuntime(t, service)
 	request := testRequest("degraded-client")
-	op, err := runtime.Begin(context.Background(), request, codexAPIType, "degraded-operation")
+	op, err := runtime.Begin(context.Background(), request, codexAPIType, "degraded-operation", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestStoreOutageCannotAssignUnknownStateAcrossConcurrentAuthorities(t *testi
 
 	operations := make([]*Operation, 0, 2)
 	for index, origin := range []string{"https://authority-a.example/v1", "https://authority-b.example/v1"} {
-		op, err := runtime.Begin(context.Background(), testRequest("shared-client"), codexAPIType, fmt.Sprintf("concurrent-%d", index))
+		op, err := runtime.Begin(context.Background(), testRequest("shared-client"), codexAPIType, fmt.Sprintf("concurrent-%d", index), "")
 		if err != nil {
 			t.Fatal(err)
 		}

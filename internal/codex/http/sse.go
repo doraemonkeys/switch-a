@@ -79,6 +79,6 @@ func (g *SSEGate) PrepareNext(ctx context.Context, final bool) (SSEEvent, bool, 
 	}
 	return SSEEvent{
 		wire:       wire,
-		visibility: &Visibility{operation: o, leases: leases},
+		visibility: &Visibility{operation: o, attempt: g.attempt, leases: leases},
 	}, true, nil
 }

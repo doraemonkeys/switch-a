@@ -71,7 +71,7 @@ func TestWebSocketRouteTargetPreferenceMatchesAbsorbingHTTPFold(t *testing.T) {
 				for kind := range test.hints {
 					request.Header.Set(webSocketOwnerHeader(kind), string(kind)+"-value")
 				}
-				operation, err := runtime.Begin(context.Background(), request, codexAPIType, "route-preference")
+				operation, err := runtime.Begin(context.Background(), request, codexAPIType, "route-preference", "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -103,7 +103,7 @@ func TestWebSocketRouteConflictRemainsAbsorbingAcrossFrameObservations(t *testin
 	runtime := testRuntime(t, continuity)
 	request := testRequest("route-sequence-client")
 	request.Header.Set("Thread-Id", "thread-a")
-	op, err := runtime.Begin(context.Background(), request, codexAPIType, "route-sequence")
+	op, err := runtime.Begin(context.Background(), request, codexAPIType, "route-sequence", "")
 	if err != nil {
 		t.Fatal(err)
 	}

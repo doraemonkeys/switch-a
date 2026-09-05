@@ -17,7 +17,7 @@ func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testin
 
 	t.Run("continuity owner-free", func(t *testing.T) {
 		runtime := testRuntime(t, nil)
-		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "owner-free")
+		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "owner-free", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -30,7 +30,7 @@ func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testin
 			ClientScopes: testClientDigester{}, ProviderCookies: newTestCookieService(t, repository),
 			ExternalScheme: testSchemeResolver("https"),
 		})
-		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-owner-free")
+		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-owner-free", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +62,7 @@ func TestOwnerFreePhysicalReplacementMayCrossAuthorityBeforeDisclosure(t *testin
 
 	t.Run("stateless first frame", func(t *testing.T) {
 		runtime := testRuntime(t, nil)
-		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "stateless-first-frame")
+		op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "stateless-first-frame", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +105,7 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 	t.Run("durable claim", func(t *testing.T) {
 		request := testRequest("client-a")
 		request.Header.Set("Thread-Id", "new-thread")
-		op, err := testRuntime(t, nil).Begin(context.Background(), request, codexAPIType, "claim-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), request, codexAPIType, "claim-pin", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +128,7 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 	t.Run("attestation", func(t *testing.T) {
 		request := testRequest("client-a")
 		request.Header.Set("X-Oai-Attestation", "opaque-attestation")
-		op, err := testRuntime(t, nil).Begin(context.Background(), request, codexAPIType, "attestation-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), request, codexAPIType, "attestation-pin", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,7 +149,7 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 	})
 
 	t.Run("active response", func(t *testing.T) {
-		op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "response-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "response-pin", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,7 +177,7 @@ func TestDisclosureAndVisibilityEstablishSecurityPins(t *testing.T) {
 	})
 
 	t.Run("client visible route", func(t *testing.T) {
-		op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "visible-pin")
+		op, err := testRuntime(t, nil).Begin(context.Background(), testRequest("client-a"), codexAPIType, "visible-pin", "")
 		if err != nil {
 			t.Fatal(err)
 		}

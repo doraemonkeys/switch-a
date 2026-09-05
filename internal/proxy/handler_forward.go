@@ -74,39 +74,40 @@ type semanticAttemptFacts struct {
 // body, writer, pending-response, reservation, and raw error capabilities are
 // intentionally absent.
 type forwardResult struct {
-	headersWritten      bool
-	responseCommitted   bool
-	clientTermination   clientTermination
-	firstByteVisible    bool
-	isStatusFailover    bool
-	isClientWriteError  bool
-	statusCode          int
-	success             bool
-	done                bool
-	isSSE               bool
-	bodySnippet         string
-	firstTokenMs        *int64
-	responseBytes       int64
-	tokenUsage          *tokenusage.TokenUsage
-	failureDisposition  providerFailureDisposition
-	failureKind         attemptFailureKind
-	ingressFailureKind  requestingress.FailureKind
-	failureMessage      string
-	upstreamBytes       int64
-	decodedBytes        int64
-	peakRequestBytes    int
-	peakProcessBytes    int
-	elapsedMs           int64
-	boundaryReason      responseanalysis.BoundaryReason
-	readTermination     responseanalysis.ReadTermination
-	analysisFailure     responseanalysis.BoundaryReason
-	semantic            *semanticAttemptFacts
-	health              errorrule.HealthAssessment
-	healthAvailable     bool
-	healthCircuitOpened bool
-	switchReason        string
-	discarded           bool
-	injectedCredential  string
+	headersWritten        bool
+	responseCommitted     bool
+	clientTermination     clientTermination
+	firstByteVisible      bool
+	isStatusFailover      bool
+	isClientWriteError    bool
+	statusCode            int
+	success               bool
+	upstreamErrorObserved bool
+	done                  bool
+	isSSE                 bool
+	bodySnippet           string
+	firstTokenMs          *int64
+	responseBytes         int64
+	tokenUsage            *tokenusage.TokenUsage
+	failureDisposition    providerFailureDisposition
+	failureKind           attemptFailureKind
+	ingressFailureKind    requestingress.FailureKind
+	failureMessage        string
+	upstreamBytes         int64
+	decodedBytes          int64
+	peakRequestBytes      int
+	peakProcessBytes      int
+	elapsedMs             int64
+	boundaryReason        responseanalysis.BoundaryReason
+	readTermination       responseanalysis.ReadTermination
+	analysisFailure       responseanalysis.BoundaryReason
+	semantic              *semanticAttemptFacts
+	health                errorrule.HealthAssessment
+	healthAvailable       bool
+	healthCircuitOpened   bool
+	switchReason          string
+	discarded             bool
+	injectedCredential    string
 }
 
 func (r *forwardResult) inheritHealth(source forwardResult) {
@@ -138,11 +139,12 @@ func (r forwardResult) terminalError() error {
 }
 
 type semanticMatchTracker struct {
-	mu      sync.Mutex
-	rules   *errorrule.CompiledRuleSet
-	scope   errorrule.RequestScope
-	result  errorrule.MatchResult
-	matched bool
+	mu            sync.Mutex
+	rules         *errorrule.CompiledRuleSet
+	scope         errorrule.RequestScope
+	result        errorrule.MatchResult
+	matched       bool
+	observedError bool
 }
 
 func newSemanticMatchTracker(rules *errorrule.CompiledRuleSet, scope errorrule.RequestScope) *semanticMatchTracker {
@@ -150,6 +152,13 @@ func newSemanticMatchTracker(rules *errorrule.CompiledRuleSet, scope errorrule.R
 }
 
 func (m *semanticMatchTracker) Match(fields responseanalysis.SemanticFields) bool {
+	if m != nil {
+		// The analyzer invokes this callback only for classified upstream error
+		// events. A missing matching rule does not turn that event into success.
+		m.mu.Lock()
+		m.observedError = true
+		m.mu.Unlock()
+	}
 	if m == nil || m.rules == nil {
 		return false
 	}
@@ -167,6 +176,15 @@ func (m *semanticMatchTracker) Match(fields responseanalysis.SemanticFields) boo
 	}
 	m.mu.Unlock()
 	return true
+}
+
+func (m *semanticMatchTracker) ObservedError() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.observedError
 }
 
 func (m *semanticMatchTracker) Facts() (errorrule.MatchResult, bool) {
@@ -217,10 +235,7 @@ func (h *Handler) syncCodexSelectionConstraints(pctx *proxyContext) {
 	if pctx == nil || pctx.codex == nil || pctx.selectReq == nil {
 		return
 	}
-	if required, preferred := pctx.codex.RequiredAuthority(); required != nil {
-		pctx.selectReq.RequiredAuthority = required
-		pctx.selectReq.PreferredRouteTargetID = preferred
-	}
+	pctx.selectReq.RequiredAuthority, pctx.selectReq.PreferredRouteTargetID = pctx.codex.RequiredAuthority()
 }
 
 type codexAttemptContextKey struct{}

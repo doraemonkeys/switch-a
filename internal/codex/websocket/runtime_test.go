@@ -26,18 +26,18 @@ func TestRuntimeRequiresDependenciesAndRejectsInvalidBegin(t *testing.T) {
 		t.Fatal("constructor accepted missing mandatory dependencies")
 	}
 	runtime := testRuntime(t, nil)
-	if _, err := runtime.Begin(context.Background(), nil, codexAPIType, "missing-request"); Classify(err) != FailureProtocol {
+	if _, err := runtime.Begin(context.Background(), nil, codexAPIType, "missing-request", ""); Classify(err) != FailureProtocol {
 		t.Fatalf("missing request class = %q, err=%v", Classify(err), err)
 	}
 	request := testRequest("client-secret")
-	if _, err := runtime.Begin(context.Background(), request, "claude", "non-codex"); Classify(err) != FailureProtocol {
+	if _, err := runtime.Begin(context.Background(), request, "claude", "non-codex", ""); Classify(err) != FailureProtocol {
 		t.Fatalf("non-Codex begin class = %q, err=%v", Classify(err), err)
 	}
 
 	ambiguous := testRequest("first")
 	ambiguous.Header.Set("X-Api-Key", "second")
 	ambiguous.Header.Set("Thread-Id", "thread-a")
-	if _, err := runtime.Begin(context.Background(), ambiguous, codexAPIType, "ambiguous"); Classify(err) != FailureIdentity {
+	if _, err := runtime.Begin(context.Background(), ambiguous, codexAPIType, "ambiguous", ""); Classify(err) != FailureIdentity {
 		t.Fatalf("ambiguous credential class = %q, err=%v", Classify(err), err)
 	}
 }
@@ -51,7 +51,7 @@ func TestOperationUsesExistingOwnerBeforeSelection(t *testing.T) {
 	claimFixtureEvidence(t, service, client, candidate, "seed", http.Header{"Thread-Id": {"thread-a"}})
 	request.Header.Set("Thread-Id", "thread-a")
 
-	op, err := runtime.Begin(context.Background(), request, codexAPIType, "request-existing")
+	op, err := runtime.Begin(context.Background(), request, codexAPIType, "request-existing", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestOperationResolvesCommittedTurnStateBeforeOwnerPolicy(t *testing.T) {
 
 	request := testRequest("client-a")
 	request.Header.Set("X-Codex-Turn-State", "turn-from-http")
-	op, err := runtime.Begin(context.Background(), request, codexAPIType, "ws-followup")
+	op, err := runtime.Begin(context.Background(), request, codexAPIType, "ws-followup", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestOperationResolvesCommittedTurnStateBeforeOwnerPolicy(t *testing.T) {
 func TestFrameClaimsValidationAndConnectionGeneration(t *testing.T) {
 	service := newTestContinuity(t)
 	runtime := testRuntime(t, service)
-	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "frame-flow")
+	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "frame-flow", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestPendingOwnerRetryFinalizesAtWebSocketWriteBoundaries(t *testing.T) {
 		runtime := testRuntime(t, service)
 		payload := []byte(`{"type":"response.create","client_metadata":{"session_id":"session-pending","x-codex-turn-metadata":"metadata-pending"}}`)
 
-		first, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-request-uncertain")
+		first, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-request-uncertain", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,7 +205,7 @@ func TestPendingOwnerRetryFinalizesAtWebSocketWriteBoundaries(t *testing.T) {
 			t.Fatalf("uncertain request permit leases=%d err=%v", len(uncertain.leases), err)
 		}
 
-		retry, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-request-retry")
+		retry, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-request-retry", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,7 +232,7 @@ func TestPendingOwnerRetryFinalizesAtWebSocketWriteBoundaries(t *testing.T) {
 		runtime := testRuntime(t, service)
 		headers := http.Header{"X-Codex-Turn-State": {"turn-pending"}}
 
-		first, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-state-uncertain")
+		first, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-state-uncertain", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -244,7 +244,7 @@ func TestPendingOwnerRetryFinalizesAtWebSocketWriteBoundaries(t *testing.T) {
 			t.Fatalf("uncertain handshake permit=%#v err=%v", uncertain, err)
 		}
 
-		retry, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-state-retry")
+		retry, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-state-retry", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,7 +269,7 @@ func TestPendingOwnerRetryFinalizesAtWebSocketWriteBoundaries(t *testing.T) {
 		runtime := testRuntime(t, service)
 		payload := []byte(`{"type":"response.created","response":{"id":"response-pending"}}`)
 
-		first, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-response-uncertain")
+		first, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-response-uncertain", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestPendingOwnerRetryFinalizesAtWebSocketWriteBoundaries(t *testing.T) {
 			t.Fatalf("uncertain response permit=%#v err=%v", uncertain, err)
 		}
 
-		retry, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-response-retry")
+		retry, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "ws-response-retry", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +309,7 @@ func TestPendingOwnerRetryFinalizesAtWebSocketWriteBoundaries(t *testing.T) {
 func TestServerVisibilityAndAppliedIdentityBoundaries(t *testing.T) {
 	service := newTestContinuity(t)
 	runtime := testRuntime(t, service)
-	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "server-flow")
+	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "server-flow", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestCookieOverlayIsSelectedOnRedialAndCommittedAtVisibility(t *testing.T) {
 		ExternalScheme:  testSchemeResolver("https"),
 	})
 	request := testRequest("client-a")
-	op, err := runtime.Begin(context.Background(), request, codexAPIType, "cookie-flow")
+	op, err := runtime.Begin(context.Background(), request, codexAPIType, "cookie-flow", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,12 +441,12 @@ func TestBoundaryFailuresRemainTypedAndLocal(t *testing.T) {
 	request := testRequest("client-a")
 	request.Header.Set("Thread-Id", "thread-a")
 	continuityStore.lookupErr = errors.New("lookup unavailable")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "lookup-failure"); Classify(err) != FailureStorage {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "lookup-failure", ""); Classify(err) != FailureStorage {
 		t.Fatalf("lookup failure class=%q err=%v", Classify(err), err)
 	}
 	continuityStore.lookupErr = nil
 
-	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "claim-failure")
+	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "claim-failure", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +488,7 @@ func TestBoundaryFailuresRemainTypedAndLocal(t *testing.T) {
 func TestResponseActivationRequiresCurrentGeneration(t *testing.T) {
 	service := newTestContinuity(t)
 	runtime := testRuntime(t, service)
-	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "activation")
+	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "activation", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,11 +539,11 @@ func TestCookieFailureAndDiscardPaths(t *testing.T) {
 	}
 	base.ProviderCookies = service
 	base.ExternalScheme = testSchemeResolver("invalid")
-	if _, err := newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "bad-scheme"); Classify(err) != FailureStorage {
+	if _, err := newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "bad-scheme", ""); Classify(err) != FailureStorage {
 		t.Fatalf("external scheme class=%q err=%v", Classify(err), err)
 	}
 	base.ExternalScheme = testSchemeResolver("http")
-	op, err := newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-discard")
+	op, err := newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-discard", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func TestCookieFailureAndDiscardPaths(t *testing.T) {
 
 	failingRepository := &testCookieRepository{loadErr: errors.New("load failed")}
 	base.ProviderCookies = newTestCookieService(t, failingRepository)
-	op, err = newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-load")
+	op, err = newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-load", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +572,7 @@ func TestCookieFailureAndDiscardPaths(t *testing.T) {
 
 	mergeRepository := &testCookieRepository{mergeErr: errors.New("merge failed")}
 	base.ProviderCookies = newTestCookieService(t, mergeRepository)
-	op, err = newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-merge")
+	op, err = newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-merge", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ func TestMultipleOwnersAndGatewayHandleStayFailClosed(t *testing.T) {
 	request := testRequest("client-a")
 	request.Header.Set("Thread-Id", "thread-a")
 	request.Header.Set("Session-Id", "session-a")
-	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "multi-owner"); Classify(err) != FailureIdentity {
+	if _, err := runtime.Begin(context.Background(), request, codexAPIType, "multi-owner", ""); Classify(err) != FailureIdentity {
 		t.Fatalf("multiple owner class=%q err=%v", Classify(err), err)
 	}
 
@@ -638,17 +638,17 @@ func TestProtocolAndZeroValueEdges(t *testing.T) {
 	runtime := testRuntime(t, service)
 	malformed := testRequest("client-a")
 	malformed.Header["Thread-Id"] = []string{"one", "two"}
-	if _, err := runtime.Begin(context.Background(), malformed, codexAPIType, "malformed-header"); err != nil {
+	if _, err := runtime.Begin(context.Background(), malformed, codexAPIType, "malformed-header", ""); err != nil {
 		t.Fatalf("header-only malformed state should be dropped: %v", err)
 	}
 	stateWithoutClient := testRequest("")
 	stateWithoutClient.Header.Del("Authorization")
 	stateWithoutClient.Header.Set("Thread-Id", "thread-a")
-	if _, err := runtime.Begin(context.Background(), stateWithoutClient, codexAPIType, "missing-client"); Classify(err) != FailureIdentity {
+	if _, err := runtime.Begin(context.Background(), stateWithoutClient, codexAPIType, "missing-client", ""); Classify(err) != FailureIdentity {
 		t.Fatalf("state without client class=%q err=%v", Classify(err), err)
 	}
 
-	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "protocol-edge")
+	op, err := runtime.Begin(context.Background(), testRequest("client-a"), codexAPIType, "protocol-edge", "")
 	if err != nil {
 		t.Fatal(err)
 	}

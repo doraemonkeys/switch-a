@@ -171,7 +171,10 @@ func (s *Service) ResolveOwner(ctx context.Context, request ResolveRequest) (Bin
 		return Binding{}, err
 	}
 	resolved, err := s.lookup(ctx, "resolve", lookup)
-	return resolved.binding, err
+	if err != nil {
+		return Binding{}, err
+	}
+	return resolved.binding, nil
 }
 
 func (s *Service) Validate(ctx context.Context, request ValidateRequest) (Binding, error) {
@@ -227,7 +230,7 @@ func (s *Service) lookup(ctx context.Context, action string, lookup StoreLookup)
 	}
 	if result.Decision != StoreOwned {
 		s.emit(action, string(result.Decision), lookup.OperationID, result.Binding)
-		return resolvedBinding{}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
+		return resolvedBinding{binding: result.Binding}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
 	}
 	mirror := StoreClaim{
 		Kind: lookup.Kind, CurrentDigest: result.Binding.Digest,
@@ -256,7 +259,7 @@ func (s *Service) lookupProvenance(
 	}
 	if result.Decision != StoreOwned {
 		s.emit("provenance_lookup", string(result.Decision), lookup.OperationID, result.Binding)
-		return resolvedBinding{}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
+		return resolvedBinding{binding: result.Binding}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
 	}
 	if durableUnknown {
 		return s.restoreDurableProvenance(ctx, action, lookup, result.Binding)
@@ -288,7 +291,7 @@ func (s *Service) restoreDurableProvenance(
 	}
 	if result.Decision != StoreClaimed && result.Decision != StoreOwned {
 		s.emit("provenance_restore", string(result.Decision), lookup.OperationID, result.Binding)
-		return resolvedBinding{}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
+		return resolvedBinding{binding: result.Binding}, decisionError(result.Decision, lookup.Kind, lookup.OperationID)
 	}
 	if err := s.rememberProvenance(command, result.Binding, lookup.OperationID); err != nil {
 		return resolvedBinding{}, err
@@ -609,7 +612,7 @@ func decisionError(decision StoreDecision, kind Kind, operationID string) error 
 	case StoreCapacity:
 		return errorOf(ErrorCapacity, kind, operationID, "binding capacity is exhausted", nil)
 	default:
-		return errorOf(ErrorUnavailable, kind, operationID, "store returned an invalid decision", nil)
+		return errorOf(ErrorInvalidTransition, kind, operationID, "store returned an invalid decision", nil)
 	}
 }
 

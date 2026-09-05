@@ -172,7 +172,7 @@ func (o *Operation) PrepareServerHeaders(ctx context.Context, headers http.Heade
 	discovery := codexheaders.DecideServerHeaders(headers, func(codexheaders.BindingCandidate) codexheaders.OwnerStatus {
 		return codexheaders.OwnerUnknown
 	})
-	owners, err := o.resolveOwners(ctx, discovery)
+	owners, err := o.resolveServerOwners(ctx, discovery)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -236,7 +236,7 @@ func (o *Operation) PrepareServerFrame(ctx context.Context, text bool, payload [
 	if discovery.Rejected() {
 		return nil, protocolFailure("server_frame", discovery)
 	}
-	owners, err := o.resolveOwners(ctx, discovery)
+	owners, err := o.resolveServerOwners(ctx, discovery)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (o *Operation) decideClient(
 		Owners:          func(codexheaders.BindingCandidate) codexheaders.OwnerStatus { return codexheaders.OwnerUnknown },
 		AttestationLock: codexheaders.OperationUnlocked,
 	})
-	owners, err := o.resolveOwners(ctx, discovery)
+	owners, err := o.resolveRequestOwners(ctx, discovery)
 	if err != nil {
 		return codexheaders.Result{}, nil, err
 	}
@@ -335,6 +335,9 @@ func (o *Operation) pinPhysicalCandidate(protocolScope, authority, routeTarget b
 		return &Failure{Class: FailureIdentity, Stage: "security_pin", Cause: errors.New("provider identity is not bound")}
 	}
 	candidate := *o.physicalCandidate
+	if o.AllowsAccountSwitch() && !o.visibilityCommitted && !routeTarget {
+		return nil
+	}
 	if protocolScope {
 		if err := o.pinProtocolScopeLocked(candidate.ProtocolScope(), "security_pin"); err != nil {
 			return err

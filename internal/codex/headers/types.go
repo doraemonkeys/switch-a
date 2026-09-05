@@ -69,6 +69,7 @@ type Reason string
 const (
 	ReasonNone                  Reason = "none"
 	ReasonOwnerMatch            Reason = "owner_match"
+	ReasonOpaquePassthrough     Reason = "opaque_passthrough"
 	ReasonOwnerUnknown          Reason = "owner_unknown"
 	ReasonOwnerConflict         Reason = "owner_conflict"
 	ReasonOwnerUnavailable      Reason = "owner_unavailable"
@@ -105,6 +106,9 @@ const (
 	OwnerUnknown
 	OwnerCurrent
 	OwnerConflict
+	// OwnerOpaquePassthrough admits validated source provenance without claiming
+	// that the state belongs to the selected physical upstream.
+	OwnerOpaquePassthrough
 )
 
 // OwnerLookup is a read-only capability. Atomic claim remains the caller's

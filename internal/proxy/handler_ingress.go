@@ -114,7 +114,7 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	if needsCodexEvidence {
 		evidence = pctx.facts.snapshot().Codex.Value
 	}
-	codexOperation, err := h.codexHTTP.Begin(ctx, r, apiType, requestID, evidence)
+	codexOperation, err := h.codexHTTP.Begin(ctx, r, apiType, requestID, pctx.cfg.ConversationRecoveryPolicy, evidence)
 	if err != nil {
 		h.handleCodexHTTPBeginError(w, requestID, err)
 		return
@@ -122,9 +122,11 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	pctx.codex = codexOperation
 	defer codexOperation.Discard()
 	pctx.selectReq.Model = pctx.info.Model
+	pctx.selectReq.ClientScope = codexOperation.ClientScope()
 	h.syncCodexSelectionConstraints(pctx)
 	h.logger.Debug("request_ingress.admission-ready", zap.String("operation_id", requestID),
 		zap.Bool("model_required", needsModel), zap.String("model", pctx.info.Model),
+		zap.String("conversation_recovery_policy", string(pctx.cfg.ConversationRecoveryPolicy)),
 		zap.String("source_state", string(ingress.Snapshot().State)))
 	h.executeProxy(ctx, pctx)
 }

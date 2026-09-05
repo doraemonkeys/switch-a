@@ -207,18 +207,21 @@ func (h *Gateway) maybeLookupVisibleContinuityCandidate(ctx context.Context, tra
 	if h == nil || tracker == nil || tracker.selectReq == nil {
 		return
 	}
-	if hasUsableSelectionModel(tracker.selectReq.Model) {
+	if h.ordinaryVisibleContinuityReady(ctx, tracker.selectReq) {
 		tracker.lookupVisibleContinuityCandidate()
-		return
 	}
-	consumesHiddenModel, err := selector.ResolveSelectionHiddenModelDemand(ctx, h.store, tracker.selectReq)
+}
+
+func (h *Gateway) ordinaryVisibleContinuityReady(ctx context.Context, req *model.SelectRequest) bool {
+	if hasUsableSelectionModel(req.Model) {
+		return true
+	}
+	consumesHiddenModel, err := selector.ResolveSelectionHiddenModelDemand(ctx, h.store, req)
 	if err != nil {
-		h.logger.Warn("failed to resolve hidden-model demand for websocket continuity", zap.String("api_type", tracker.selectReq.APIType), zap.Error(err))
-		return
+		h.logger.Warn("failed to resolve hidden-model demand for websocket continuity", zap.String("api_type", req.APIType), zap.Error(err))
+		return false
 	}
-	if !consumesHiddenModel {
-		tracker.lookupVisibleContinuityCandidate()
-	}
+	return !consumesHiddenModel
 }
 
 func (h *Gateway) storeVisibleContinuitySeedFromContext(
@@ -256,7 +259,7 @@ func (h *Gateway) storeVisibleContinuitySeedFromContext(
 }
 
 func shouldStoreWebSocketVisibleContinuitySeed(session *WebSocketSessionResult) bool {
-	if session == nil || session.FinalResult == nil || !session.FinalResult.ClientVisible {
+	if session == nil || session.FinalResult == nil || !session.FinalResult.ClientVisible || session.FinalResult.accountRecoveryNotified {
 		return false
 	}
 	switch session.FinalResult.TerminalCause {
@@ -283,7 +286,7 @@ func (h *Gateway) selectProviderWithTracking(
 			Metadata: selector.BuildSelectionMetadataAt(req, selector.SelectionSourceStrategy, time.Now()),
 		}, nil
 	}
-	if attempt == 0 {
+	if attempt == 0 && len(excluded) == 0 {
 		result, err := normalizeProviderSelection(h.selector.SelectInitial(ctx, req))
 		if err != nil {
 			return ProviderSelection{}, err

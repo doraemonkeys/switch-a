@@ -16,6 +16,8 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/codex/provenance"
+	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
@@ -27,7 +29,7 @@ type ClientScopeDigester interface {
 }
 
 type Continuity interface {
-	ResolveOwner(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Binding, error)
+	Resolve(context.Context, codexcontinuity.ResolveRequest) (codexcontinuity.Resolution, error)
 	AcquireExisting(context.Context, codexcontinuity.ValidateRequest) (codexcontinuity.Lease, error)
 	Claim(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
 	Adopt(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
@@ -76,9 +78,11 @@ type ownerResolution struct {
 }
 
 type Operation struct {
-	runtime     *Runtime
-	operationID string
-	apiType     string
+	runtime        *Runtime
+	operationID    string
+	apiType        string
+	recoveryPolicy model.ConversationRecoveryPolicy
+	provenance     *codexprovenance.Ledger
 
 	currentClientScope codexidentity.ClientScope
 	clientScopes       []codexidentity.ClientScope
@@ -90,6 +94,7 @@ type Operation struct {
 	requiredProtocolScope  *codexidentity.ProtocolScope
 	requiredAuthority      *codexidentity.UpstreamAuthority
 	preferredRouteTargetID string
+	visibleRouteTargetID   string
 	requestClaimsCommitted bool
 
 	cookieRequest       *providercookie.Request
@@ -109,9 +114,11 @@ func (r *Runtime) Begin(
 	request *http.Request,
 	apiType string,
 	operationID string,
+	recoveryPolicy model.ConversationRecoveryPolicy,
 	evidence codexheaders.ClientEvidence,
 ) (*Operation, error) {
-	op := &Operation{runtime: r, operationID: operationID, apiType: apiType}
+	op := &Operation{runtime: r, operationID: operationID, apiType: apiType,
+		recoveryPolicy: model.NormalizeConversationRecoveryPolicy(string(recoveryPolicy))}
 	if apiType != codexAPIType {
 		return op, nil
 	}
@@ -243,6 +250,10 @@ func (o *Operation) resolveClientDecision(
 	message codexheaders.ClientEvidence,
 	discovery codexheaders.Result,
 ) error {
+	o.provenance = codexprovenance.NewLedger(codexprovenance.Config{
+		Resolver: o.runtime.continuity, RecoveryPolicy: o.recoveryPolicy,
+		ClientScopeCandidates: o.clientScopes, APIType: o.apiType, OperationID: o.operationID,
+	})
 	o.resolveClientOwners(ctx, discovery)
 	if err := o.applyResolvedOwnerConstraints(); err != nil {
 		return err
@@ -274,11 +285,8 @@ func (o *Operation) resolveClientOwners(ctx context.Context, discovery codexhead
 		if _, exists := o.owners[key]; exists {
 			continue
 		}
-		binding, err := o.runtime.continuity.ResolveOwner(ctx, codexcontinuity.ResolveRequest{
-			Evidence: evidence(candidate), ClientScopeCandidates: o.clientScopes,
-			OperationID: o.operationID,
-		})
-		o.owners[key] = classifyOwnerResolution(binding, err)
+		resolution, err := o.provenance.ObserveRequest(ctx, evidence(candidate))
+		o.owners[key] = o.classifyProvenanceResolution(resolution, err)
 	}
 }
 
@@ -335,6 +343,9 @@ func (o *Operation) clientDecisionError() error {
 }
 
 func (o *Operation) applyResolvedOwnerConstraints() error {
+	if o.allowsAccountSwitch() {
+		return nil
+	}
 	var routePreference codexcontinuity.RouteTargetPreference
 	for _, resolution := range o.owners {
 		if resolution.status != codexheaders.OwnerCurrent {

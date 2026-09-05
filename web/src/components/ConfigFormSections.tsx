@@ -5,7 +5,10 @@ export { RoutingStrategySection } from "./config-form-sections";
 export { AuthSettingsSection } from "./config-form-sections";
 export { TimeoutSettingsSection } from "./config-form-sections";
 export { RequestLimitsSection } from "./config-form-sections";
-export { StickySessionSection } from "./config-form-sections";
+export {
+  StickySessionSection,
+  ConversationRecoverySection,
+} from "./config-form-sections";
 export { CircuitBreakerSection } from "./config-form-sections";
 export { OtherSettingsSection } from "./config-form-sections";
 export { ConfigFormActions } from "./config-form-sections";

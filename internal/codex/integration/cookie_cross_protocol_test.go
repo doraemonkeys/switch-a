@@ -42,7 +42,7 @@ func TestProviderCookiesCrossHTTPAndWebSocketEquivalentSchemes(t *testing.T) {
 
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), requestWithHandle(http.MethodPost, "client-alpha", handle),
-		testAPIType, operationID("http-cookie", 2), testHTTPClientEvidence(nil, nil),
+		testAPIType, operationID("http-cookie", 2), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 			"Thread-Id": {"restart-identity"},
 		})
 		operation, err := fixture.http.Begin(
-			context.Background(), request, testAPIType, operationID("http-restart", 1), testHTTPClientEvidence(nil, nil),
+			context.Background(), request, testAPIType, operationID("http-restart", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -185,7 +185,7 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		wsRequest := requestWithHandle(http.MethodGet, "client-alpha", handle)
 		wsRequest.Header.Set("Thread-Id", "restart-identity")
 		wsOperation, err := restarted.ws.Begin(
-			context.Background(), wsRequest, testAPIType, operationID("ws-restart", 1),
+			context.Background(), wsRequest, testAPIType, operationID("ws-restart", 1), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -213,18 +213,18 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		})
 		if _, err := fixture.http.Begin(
 			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-			testAPIType, operationID("http-cookie-capacity", 1), testHTTPClientEvidence(nil, nil),
+			testAPIType, operationID("http-cookie-capacity", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		); err != nil {
 			t.Fatal(err)
 		}
 		_, err := fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "client-alpha", nil),
-			testAPIType, operationID("ws-cookie-capacity", 1),
+			testAPIType, operationID("ws-cookie-capacity", 1), "preserve_conversation",
 		)
 		requireWSFailure(t, err, codexws.FailureStorage)
 		_, err = fixture.ws.Begin(
 			context.Background(), fixtureRequest(http.MethodGet, "client-beta", nil),
-			testAPIType, operationID("ws-cookie-capacity", 2),
+			testAPIType, operationID("ws-cookie-capacity", 2), "preserve_conversation",
 		)
 		requireWSFailure(t, err, codexws.FailureStorage)
 	})
@@ -297,12 +297,12 @@ func TestCookieStoreFailuresRemainTypedAcrossAdapters(t *testing.T) {
 	}
 	_, err = fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-		testAPIType, operationID("http-cookie-store", 1), testHTTPClientEvidence(nil, nil),
+		testAPIType, operationID("http-cookie-store", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorDependencyUnavailable)
 	_, err = fixture.ws.Begin(
 		context.Background(), fixtureRequest(http.MethodGet, "client-alpha", nil),
-		testAPIType, operationID("ws-cookie-store", 1),
+		testAPIType, operationID("ws-cookie-store", 1), "preserve_conversation",
 	)
 	requireWSFailure(t, err, codexws.FailureStorage)
 }
@@ -350,7 +350,7 @@ func commitHTTPCookie(
 	t.Helper()
 	request := requestWithHandle(http.MethodPost, client, handle)
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), request, testAPIType, operation, testHTTPClientEvidence(nil, nil),
+		context.Background(), request, testAPIType, operation, "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -392,7 +392,7 @@ func prepareWSCookieAttempt(
 ) (*codexws.Operation, http.Header) {
 	t.Helper()
 	request := requestWithHandle(http.MethodGet, client, handle)
-	wsOperation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operation)
+	wsOperation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operation, "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}

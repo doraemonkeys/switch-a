@@ -157,6 +157,7 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	captureOptions.PreWriteToUpstream = o.codexClientPreWrite(ctx)
 	replayedBytes, replayed, replayErr := o.replayBufferedMessages(ctx, upstreamConn, observer, captureOptions)
 	if replayErr != nil {
+		o.handler.logger.Warn("websocket.replay_failed", zap.String("operation_id", o.requestID), zap.String("provider_id", provider.ID), zap.Error(replayErr))
 		attemptResult, outcome := o.newReplayFailureAttempt(
 			ctx, provider, dialExchange, attempt, selectionMode, selectionMetadata,
 			attemptStart, recoveryAttempted, injectedCredential, replayedBytes, replayErr,
@@ -168,16 +169,17 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	}
 
 	relayResult := o.handler.wsForwarder.relay(ctx, o.clientConn, upstreamConn, webSocketRelayOptions{
-		GatewayCapture: captureOptions.GatewayCapture,
-		Capture:        captureOptions.Capture,
-		CaptureMode:    captureOptions.CaptureMode,
+		BeforeClientClose: o.accountRecoveryBeforeClose(ctx, provider, observer),
+		GatewayCapture:    captureOptions.GatewayCapture,
+		Capture:           captureOptions.Capture,
+		CaptureMode:       captureOptions.CaptureMode,
 
 		CredentialEvidence:                captureOptions.CredentialEvidence,
 		ClientReadHandoff:                 o.sessionClientReadHandoff(),
 		Observer:                          observer,
 		OnFirstUpstreamMessage:            o.applyObservation,
 		OnClientVisible:                   o.onClientVisible,
-		PreWriteToClient:                  o.composeUpstreamPreWrite(ctx, newAllowlistedProviderScopedSuppressDecision(o.replayBuffer)),
+		PreWriteToClient:                  o.composeUpstreamPreWrite(ctx, o.providerScopedSuppressDecision()),
 		PreWriteToUpstream:                o.codexClientPreWrite(ctx),
 		PreVisibleReplayBuffer:            o.replayBuffer,
 		Lifecycle:                         o.lifecycle,
@@ -192,7 +194,7 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	result.BytesClientToUpstream += replayedBytes
 	result.ReplayStatus = o.replayBuffer.Status()
 	if observer != nil {
-		mergeWebSocketObservation(result, observer.Snapshot())
+		o.mergeRecoveryObservation(result, observer.Snapshot())
 	}
 	if result.UpstreamError != nil {
 		result.TerminalCause = model.TerminalUpstreamSemanticError
@@ -285,11 +287,11 @@ func (o *WebSocketSessionOrchestrator) commitAcceptedCodexHandshake(
 			_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(err), "websocket state commit failed")
 			return err
 		}
-		if serverHeaderPermit.PinsRouteTarget() {
-			if err := o.codexOperation.CommitVisibility(ctx); err != nil {
-				_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(err), "websocket visibility state failed")
-				return err
-			}
+	}
+	if serverHeaderPermit.PinsRouteTarget() {
+		if err := o.commitProjectedCodexVisibility(ctx); err != nil {
+			_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(err), "websocket visibility state failed")
+			return err
 		}
 	}
 	if o.codexOperation == nil {
@@ -298,6 +300,22 @@ func (o *WebSocketSessionOrchestrator) commitAcceptedCodexHandshake(
 	if err := o.codexOperation.OpenConnection(); err != nil {
 		_ = o.clientConn.Close(websocketCloseStatusForCodexFailure(err), "websocket connection state failed")
 		return err
+	}
+	return nil
+}
+
+func (o *WebSocketSessionOrchestrator) commitProjectedCodexVisibility(ctx context.Context) error {
+	if err := o.codexOperation.CommitVisibility(ctx); err != nil {
+		return err
+	}
+	// Projected opaque state has already crossed the downstream handshake;
+	// the session and relay must share that same one-way visibility boundary.
+	if !o.lifecycle.MarkClientVisible() {
+		return nil
+	}
+	o.replayBuffer.CloseReplay(webSocketReplayVisibilityClosed)
+	if o.onClientVisible != nil {
+		o.onClientVisible(webSocketVisibleWriteContext{})
 	}
 	return nil
 }

@@ -21,13 +21,13 @@ func TestAlwaysOnPolicyAndClientRequestIDStayOperationScoped(t *testing.T) {
 	})
 
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), original, testAPIType, operationID("http-always-on", 1), testHTTPClientEvidence(nil, nil),
+		context.Background(), original, testAPIType, operationID("http-always-on", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.ws.Begin(
-		context.Background(), original, testAPIType, operationID("ws-always-on", 1),
+		context.Background(), original, testAPIType, operationID("ws-always-on", 1), "preserve_conversation",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestStructuredTraceAndSQLiteStaySecretFreeAcrossProtocols(t *testing.T) {
 		"X-Client-Request-Id": {"trace-logical-request"},
 	})
 	httpOperation, err := fixture.http.Begin(
-		context.Background(), httpRequest, testAPIType, httpID, testHTTPClientEvidence(nil, nil),
+		context.Background(), httpRequest, testAPIType, httpID, "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestStructuredTraceAndSQLiteStaySecretFreeAcrossProtocols(t *testing.T) {
 	wsRequest := requestWithHandle(http.MethodGet, clientSecret, handle)
 	wsRequest.Header.Set("Thread-Id", threadID)
 	wsRequest.Header.Set("X-Codex-Turn-State", turnState)
-	wsOperation, err := fixture.ws.Begin(context.Background(), wsRequest, testAPIType, wsID)
+	wsOperation, err := fixture.ws.Begin(context.Background(), wsRequest, testAPIType, wsID, "preserve_conversation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +180,13 @@ func TestAlwaysOnRuntimesTreatFutureContentAsOpaqueWithoutReleaseConfiguration(t
 	wire := append([]byte(nil), opaque...)
 	if _, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "always-on-opaque-client", nil),
-		testAPIType, operationID("release-opaque-http", 1), testHTTPClientEvidence(opaque, opaque),
+		testAPIType, operationID("release-opaque-http", 1), "preserve_conversation", testHTTPClientEvidence(opaque, opaque),
 	); err != nil {
 		t.Fatal(err)
 	}
 	request := fixtureRequest(http.MethodGet, "always-on-opaque-client", nil)
 	operation, err := fixture.ws.Begin(
-		context.Background(), request, testAPIType, operationID("release-opaque-ws", 1),
+		context.Background(), request, testAPIType, operationID("release-opaque-ws", 1), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)

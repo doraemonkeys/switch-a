@@ -57,6 +57,22 @@ export const STICKY_MODES = {
 
 export type StickyMode = (typeof STICKY_MODES)[keyof typeof STICKY_MODES];
 
+export const CONVERSATION_RECOVERY_POLICIES = {
+  PRESERVE_CONVERSATION: "preserve_conversation",
+  SWITCH_ACCOUNT_PRESERVE_CONVERSATION: "switch_account_preserve_conversation",
+} as const;
+
+export const CONVERSATION_RECOVERY_POLICY_OPTIONS = [
+  {
+    value: CONVERSATION_RECOVERY_POLICIES.PRESERVE_CONVERSATION,
+    label: "固定原账号（默认）",
+  },
+  {
+    value: CONVERSATION_RECOVERY_POLICIES.SWITCH_ACCOUNT_PRESERVE_CONVERSATION,
+    label: "允许换账号续聊",
+  },
+] as const;
+
 export const STICKY_MODE_OPTIONS = [
   {
     value: STICKY_MODES.OFF,
@@ -249,6 +265,7 @@ export const CONFIG_KEYS = {
   SSE_IDLE_TIMEOUT: "sse_idle_timeout",
   STICKY_MODE: "sticky_mode",
   STICKY_TTL: "sticky_ttl",
+  CONVERSATION_RECOVERY_POLICY: "conversation_recovery_policy",
   WEBSOCKET_PROBE_CLIENT_MODEL: "websocket_probe_client_model",
   CIRCUIT_FAILURE: "circuit_failure",
   CIRCUIT_WINDOW: "circuit_window",
@@ -284,6 +301,8 @@ export const DEFAULTS = {
   // Sticky Session
   STICKY_MODE: STICKY_MODES.MODEL,
   STICKY_TTL: 300,
+  CONVERSATION_RECOVERY_POLICY:
+    CONVERSATION_RECOVERY_POLICIES.PRESERVE_CONVERSATION,
   WEBSOCKET_PROBE_CLIENT_MODEL: true,
 
   // Circuit Breaker

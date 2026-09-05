@@ -491,9 +491,15 @@ func TestV5BContinuitySeedPromotesReplacementToFailover(t *testing.T) {
 	primary := newUpstreamSequence(t, wireResponse{contentType: "application/json", body: errorWire})
 	secondary := newUpstreamSequence(t, wireResponse{contentType: "application/json", body: successWire})
 	seeds := proxy.NewVisibleContinuitySeedStore()
+	sticky := selector.NewMemoryStickyCache(internal.RealClock{})
+	harness := newProxyHarness(t, proxyHarnessOptions{
+		action: retryThenSwitchAction(t, 0), globalMaxAttempts: 2,
+		primary: primary, secondary: secondary,
+		stickyMode: model.StickyModeModel, stickyCache: sticky, continuitySeeds: seeds,
+	})
 	key := selector.BuildContinuityKey(&model.SelectRequest{
 		ClientIP: acceptanceClientIP, User: acceptanceUser, APIType: proxy.APITypeCodex,
-		Model: acceptanceModel, StickyMode: model.StickyModeModel,
+		Model: acceptanceModel, StickyMode: model.StickyModeModel, ClientScope: harness.clientScope,
 	})
 	seeds.Store(model.VisibleContinuitySeed{
 		SeedID: "v5b-seed", ContinuityKey: key,
@@ -501,13 +507,7 @@ func TestV5BContinuitySeedPromotesReplacementToFailover(t *testing.T) {
 		ContaminatedVendors: []string{"v5b-vendor"}, StrictestScope: model.ScopeAny,
 		ObservedAt: time.Now().Add(-time.Second),
 	})
-	sticky := selector.NewMemoryStickyCache(internal.RealClock{})
 	sticky.Set(key, primaryProviderID, time.Minute)
-	harness := newProxyHarness(t, proxyHarnessOptions{
-		action: retryThenSwitchAction(t, 0), globalMaxAttempts: 2,
-		primary: primary, secondary: secondary,
-		stickyMode: model.StickyModeModel, stickyCache: sticky, continuitySeeds: seeds,
-	})
 
 	recorder := harness.serve(t)
 	if recorder.Code != http.StatusOK || !bytes.Equal(recorder.Body.Bytes(), successWire) {

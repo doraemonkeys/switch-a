@@ -96,6 +96,7 @@ func (o *WebSocketSessionOrchestrator) logProviderSwitch(
 	}
 
 	fields := []zap.Field{
+		zap.Bool("account_recovery_enabled", o.codexOperation != nil && o.codexOperation.AllowsAccountSwitch()),
 		zap.String("request_id", o.requestID),
 		zap.String("session_id", o.requestID),
 		zap.Int("attempt_index", attempt.Attempt),
@@ -563,7 +564,15 @@ func (o *WebSocketSessionOrchestrator) selectProvider(
 ) (ProviderSelection, providerSwitchMode, *WebSocketSessionResult) {
 	selectionMode := o.switchTracker.prepareSelection()
 
-	selection, err := o.handler.selectProviderWithTracking(ctx, o.selectReq, attempt, o.excludedProviders)
+	var selection ProviderSelection
+	var err error
+	if o.codexOperation != nil && o.codexOperation.AllowsAccountSwitch() && attempt == 0 && len(o.excludedProviders) == 0 && o.handler.selector != nil {
+		// Recovery follows the selector's soft sticky then strategy order; a live
+		// connection is not a completed-response preference for another request.
+		selection, err = normalizeProviderSelection(o.handler.selector.SelectInitial(ctx, o.selectReq))
+	} else {
+		selection, err = o.handler.selectProviderWithTracking(ctx, o.selectReq, attempt, o.excludedProviders)
+	}
 	if err == nil {
 		o.switchTracker.recordSelection(selection.Provider(), selection.Metadata)
 		return selection, selectionMode, nil

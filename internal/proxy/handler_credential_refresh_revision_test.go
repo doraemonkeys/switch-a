@@ -166,7 +166,7 @@ func executeCredentialRefreshTestRequest(
 	request := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(requestBody))
 	authorizeProxyCodexTestRequest(request)
 	codexOperation, err := handler.codexHTTP.Begin(
-		request.Context(), request, APITypeCodex, "credential-refresh-request", testClientEvidence(requestBody, requestBody),
+		request.Context(), request, APITypeCodex, "credential-refresh-request", "preserve_conversation", testClientEvidence(requestBody, requestBody),
 	)
 	if err != nil {
 		t.Fatalf("codex HTTP Begin() error = %v", err)

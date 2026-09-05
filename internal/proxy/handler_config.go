@@ -45,18 +45,19 @@ const StatusCodeNoResponse = 0
 
 // Config keys for runtime configuration stored in the database.
 const (
-	ConfigKeyTrustProxyHeaders         = "trust_proxy_headers"
-	ConfigKeyUserHeader                = "user_header"
-	ConfigKeyMaxBodySize               = "max_body_size"
-	ConfigKeyAuthMode                  = "auth_mode"
-	ConfigKeyGlobalMaxAttempts         = "global_max_attempts"
-	ConfigKeyUpstreamConnectTimeout    = "upstream_connect_timeout"
-	ConfigKeyFirstByteTimeout          = "first_byte_timeout"
-	ConfigKeyUpstreamReadTimeout       = "upstream_read_timeout"
-	ConfigKeySSEIdleTimeout            = "sse_idle_timeout"
-	ConfigKeyStickyMode                = "sticky_mode"
-	ConfigKeyStickyTTL                 = "sticky_ttl"
-	ConfigKeyWebSocketProbeClientModel = defaults.ConfigKeyWebSocketProbeClientModel
+	ConfigKeyTrustProxyHeaders          = "trust_proxy_headers"
+	ConfigKeyUserHeader                 = "user_header"
+	ConfigKeyMaxBodySize                = "max_body_size"
+	ConfigKeyAuthMode                   = "auth_mode"
+	ConfigKeyGlobalMaxAttempts          = "global_max_attempts"
+	ConfigKeyUpstreamConnectTimeout     = "upstream_connect_timeout"
+	ConfigKeyFirstByteTimeout           = "first_byte_timeout"
+	ConfigKeyUpstreamReadTimeout        = "upstream_read_timeout"
+	ConfigKeySSEIdleTimeout             = "sse_idle_timeout"
+	ConfigKeyStickyMode                 = "sticky_mode"
+	ConfigKeyStickyTTL                  = "sticky_ttl"
+	ConfigKeyConversationRecoveryPolicy = defaults.ConfigKeyConversationRecoveryPolicy
+	ConfigKeyWebSocketProbeClientModel  = defaults.ConfigKeyWebSocketProbeClientModel
 )
 
 // defaultStickyTTLSeconds uses canonical value from selector package for consistency.
@@ -64,18 +65,19 @@ const defaultStickyTTLSeconds = selector.DefaultStickyTTLSeconds
 
 // runtimeConfig holds configuration loaded from the store per-request (immutable once created).
 type runtimeConfig struct {
-	trustProxy                bool
-	userHeader                string
-	maxBodySizeMB             int64
-	globalAuthMode            string
-	globalMaxAttempts         int
-	connectTimeout            time.Duration
-	firstByteTimeout          time.Duration
-	readTimeout               time.Duration
-	sseIdleTimeout            time.Duration
-	stickyMode                model.StickyMode
-	stickyTTL                 time.Duration
-	websocketProbeClientModel bool
+	trustProxy                 bool
+	userHeader                 string
+	maxBodySizeMB              int64
+	globalAuthMode             string
+	globalMaxAttempts          int
+	connectTimeout             time.Duration
+	firstByteTimeout           time.Duration
+	readTimeout                time.Duration
+	sseIdleTimeout             time.Duration
+	stickyMode                 model.StickyMode
+	stickyTTL                  time.Duration
+	ConversationRecoveryPolicy model.ConversationRecoveryPolicy
+	websocketProbeClientModel  bool
 }
 
 // transportCacheKey isolates the immutable values that determine transport reuse.
@@ -304,6 +306,16 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 		h.logger.Warn("failed to get sse_idle_timeout, using default", zap.Error(err))
 	}
 	cfg.sseIdleTimeout = parseDurationSecondsOrDefault(sseIdleTimeout, DefaultSSEIdleTimeout)
+
+	// Snapshot once so an in-flight operation retains one recovery contract.
+	recoveryPolicy, err := h.store.GetConfig(ctx, ConfigKeyConversationRecoveryPolicy)
+	if err != nil {
+		h.logger.Warn("failed to get conversation_recovery_policy, using default", zap.Error(err))
+		recoveryPolicy = defaults.DefaultConversationRecoveryPolicy
+	} else if recoveryPolicy != "" && !model.ConversationRecoveryPolicy(recoveryPolicy).IsValid() {
+		h.logger.Warn("invalid conversation_recovery_policy, using default", zap.String("value", recoveryPolicy))
+	}
+	cfg.ConversationRecoveryPolicy = model.NormalizeConversationRecoveryPolicy(recoveryPolicy)
 
 	// Sticky session config
 	stickyModeStr, err := h.store.GetConfig(ctx, ConfigKeyStickyMode)

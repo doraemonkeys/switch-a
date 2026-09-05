@@ -124,11 +124,12 @@ func TestHandler_ServeHTTP_WebSocket_ContinuitySeedLookupWaitsForProbeResolvedMo
 
 	seedStore := NewVisibleContinuitySeedStore()
 	seedKey := selector.BuildContinuityKey(&model.SelectRequest{
-		ClientIP:   "198.51.100.44",
-		User:       "seed-user",
-		APIType:    APITypeCodex,
-		Model:      "client-model",
-		StickyMode: model.StickyModeModel,
+		ClientIP:    "198.51.100.44",
+		ClientScope: proxyCodexTestClientScope(t),
+		User:        "seed-user",
+		APIType:     APITypeCodex,
+		Model:       "client-model",
+		StickyMode:  model.StickyModeModel,
 	})
 	seedStore.Store(model.VisibleContinuitySeed{
 		SeedID:           "ws-probe-seed-1",

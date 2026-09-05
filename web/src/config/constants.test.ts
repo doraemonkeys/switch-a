@@ -203,6 +203,9 @@ describe("CONFIG_KEYS", () => {
     expect(CONFIG_KEYS.USER_HEADER).toBe("user_header");
     expect(CONFIG_KEYS.STICKY_MODE).toBe("sticky_mode");
     expect(CONFIG_KEYS.STICKY_TTL).toBe("sticky_ttl");
+    expect(CONFIG_KEYS.CONVERSATION_RECOVERY_POLICY).toBe(
+      "conversation_recovery_policy",
+    );
     expect(CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(
       "websocket_probe_client_model",
     );
@@ -211,8 +214,8 @@ describe("CONFIG_KEYS", () => {
     expect(CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY).toBe("root_candidate_strategy");
   });
 
-  it("should have exactly 17 config keys", () => {
-    expect(Object.keys(CONFIG_KEYS)).toHaveLength(17);
+  it("should have exactly 18 config keys", () => {
+    expect(Object.keys(CONFIG_KEYS)).toHaveLength(18);
   });
 
   it("does not expose rollout controls as runtime configuration", () => {
@@ -240,6 +243,10 @@ describe("DEFAULTS", () => {
     expect(DEFAULTS.STICKY_MODE).toBe("model");
     expect(DEFAULTS.STICKY_TTL).toBe(300);
     expect(DEFAULTS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(true);
+  });
+
+  it("defaults conversation recovery to the original account", () => {
+    expect(DEFAULTS.CONVERSATION_RECOVERY_POLICY).toBe("preserve_conversation");
   });
 
   it("should have circuit breaker defaults", () => {

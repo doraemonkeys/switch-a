@@ -368,6 +368,11 @@ func (h *Handler) activateAlternate(
 	// The copy-on-write value was validated before discard but is adopted only at
 	// the dispatch boundary after both capability and continuity transfers.
 	state.ledger = nextLedger
+	h.logger.Debug("proxy.provider_switch", zap.String("operation_id", pctx.requestID),
+		zap.String("conversation_recovery_policy", string(pctx.cfg.ConversationRecoveryPolicy)),
+		zap.String("source_provider_id", oldProviderID), zap.String("target_provider_id", state.currentProvider.ID),
+		zap.String("switch_reason", switchReason), zap.String("switch_mode", string(selectionMode)),
+		zap.Int("attempt", int(nextLedger.LogicalAttemptsStarted())), zap.Bool("client_visible", result.responseCommitted))
 	result.switchReason = switchReason
 	result.done = false
 	return true, result, true

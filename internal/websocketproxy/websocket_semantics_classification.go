@@ -10,18 +10,18 @@ import (
 )
 
 func classifyWebSocketUpstreamMessage(messageType websocket.MessageType, data []byte, parseDegraded bool) webSocketSemanticClassification {
-	if parseDegraded || shouldSkipCodexObservedPayload(messageType, data) {
-		return webSocketSemanticClassificationUnknown
-	}
+	return classifyWebSocketUpstreamError(inspectWebSocketUpstreamError(messageType, data, parseDegraded))
+}
 
+func inspectWebSocketUpstreamError(messageType websocket.MessageType, data []byte, parseDegraded bool) *WebSocketUpstreamError {
+	if parseDegraded || shouldSkipCodexObservedPayload(messageType, data) {
+		return nil
+	}
 	var event codexWebSocketEventEnvelope
-	if err := json.Unmarshal(data, &event); err != nil {
-		return webSocketSemanticClassificationUnknown
+	if err := json.Unmarshal(data, &event); err != nil || !codexEventRepresentsError(&event) {
+		return nil
 	}
-	if !codexEventRepresentsError(&event) {
-		return webSocketSemanticClassificationUnknown
-	}
-	return classifyWebSocketUpstreamError(buildWebSocketUpstreamError(&event, data, time.Now().UTC()))
+	return buildWebSocketUpstreamError(&event, data, time.Now().UTC())
 }
 
 func classifyWebSocketUpstreamError(upstreamErr *WebSocketUpstreamError) webSocketSemanticClassification {

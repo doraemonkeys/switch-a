@@ -8,17 +8,20 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const stickyCodexAPIType = "codex"
+
 // stickyEntryRecord stores only the dimensions needed to reconstruct a sticky
 // key. The composite key prevents one client dimension from overwriting another
 // while keeping lookups index-friendly for SQLite.
 type stickyEntryRecord struct {
-	IP         string    `gorm:"primaryKey;column:ip"`
-	User       string    `gorm:"primaryKey;column:user"`
-	APIType    string    `gorm:"primaryKey;column:api_type"`
-	Model      string    `gorm:"primaryKey;column:model"`
-	ProviderID string    `gorm:"not null;index;column:provider_id"`
-	ExpiresAt  time.Time `gorm:"not null;index;column:expires_at"`
-	UpdatedAt  time.Time `gorm:"not null;column:updated_at"`
+	IP          string    `gorm:"primaryKey;column:ip"`
+	User        string    `gorm:"primaryKey;column:user"`
+	APIType     string    `gorm:"primaryKey;column:api_type"`
+	Model       string    `gorm:"primaryKey;column:model"`
+	ClientScope string    `gorm:"primaryKey;not null;default:'';column:client_scope"`
+	ProviderID  string    `gorm:"not null;index;column:provider_id"`
+	ExpiresAt   time.Time `gorm:"not null;index;column:expires_at"`
+	UpdatedAt   time.Time `gorm:"not null;column:updated_at"`
 }
 
 func (stickyEntryRecord) TableName() string { return "sticky_entries" }
@@ -29,6 +32,7 @@ func (s *SQLiteStore) LoadStickyEntries(ctx context.Context, now time.Time) ([]m
 	var records []stickyEntryRecord
 	if err := s.db.WithContext(ctx).
 		Where("expires_at > ?", now).
+		Where("api_type <> ? OR client_scope <> ?", stickyCodexAPIType, "").
 		Find(&records).Error; err != nil {
 		return nil, err
 	}
@@ -37,10 +41,11 @@ func (s *SQLiteStore) LoadStickyEntries(ctx context.Context, now time.Time) ([]m
 	for _, record := range records {
 		entries = append(entries, model.StickyEntry{
 			Key: model.StickyKey{
-				IP:      record.IP,
-				User:    record.User,
-				APIType: record.APIType,
-				Model:   record.Model,
+				IP:          record.IP,
+				User:        record.User,
+				APIType:     record.APIType,
+				Model:       record.Model,
+				ClientScope: record.ClientScope,
 			},
 			ProviderID: record.ProviderID,
 			ExpiresAt:  record.ExpiresAt,
@@ -54,13 +59,14 @@ func (s *SQLiteStore) LoadStickyEntries(ctx context.Context, now time.Time) ([]m
 // a recovery aid, not a cross-process coordination protocol.
 func (s *SQLiteStore) UpsertStickyEntry(ctx context.Context, entry model.StickyEntry) error {
 	record := stickyEntryRecord{
-		IP:         entry.Key.IP,
-		User:       entry.Key.User,
-		APIType:    entry.Key.APIType,
-		Model:      entry.Key.Model,
-		ProviderID: entry.ProviderID,
-		ExpiresAt:  entry.ExpiresAt,
-		UpdatedAt:  s.clock.Now(),
+		IP:          entry.Key.IP,
+		User:        entry.Key.User,
+		APIType:     entry.Key.APIType,
+		Model:       entry.Key.Model,
+		ClientScope: entry.Key.ClientScope,
+		ProviderID:  entry.ProviderID,
+		ExpiresAt:   entry.ExpiresAt,
+		UpdatedAt:   s.clock.Now(),
 	}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{
@@ -68,6 +74,7 @@ func (s *SQLiteStore) UpsertStickyEntry(ctx context.Context, entry model.StickyE
 			{Name: "user"},
 			{Name: "api_type"},
 			{Name: "model"},
+			{Name: "client_scope"},
 		},
 		DoUpdates: clause.AssignmentColumns([]string{"provider_id", "expires_at", "updated_at"}),
 	}).Create(&record).Error
@@ -76,7 +83,7 @@ func (s *SQLiteStore) UpsertStickyEntry(ctx context.Context, entry model.StickyE
 // DeleteStickyEntry removes one binding from durable storage.
 func (s *SQLiteStore) DeleteStickyEntry(ctx context.Context, key model.StickyKey) error {
 	return s.db.WithContext(ctx).
-		Where("ip = ? AND user = ? AND api_type = ? AND model = ?", key.IP, key.User, key.APIType, key.Model).
+		Where("ip = ? AND user = ? AND api_type = ? AND model = ? AND client_scope = ?", key.IP, key.User, key.APIType, key.Model, key.ClientScope).
 		Delete(&stickyEntryRecord{}).Error
 }
 

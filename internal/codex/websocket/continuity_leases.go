@@ -8,6 +8,7 @@ import (
 	codexcontinuity "github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	codexheaders "github.com/doraemonkeys/switch-a/internal/codex/headers"
 	codexidentity "github.com/doraemonkeys/switch-a/internal/codex/identity"
+	codexprovenance "github.com/doraemonkeys/switch-a/internal/codex/provenance"
 )
 
 func (o *Operation) prepareClaims(ctx context.Context, result codexheaders.Result, options claimOptions) (*Permit, error) {
@@ -43,6 +44,9 @@ func (o *Operation) prepareNewClaims(
 		}
 		lease, err := o.prepareClaimLease(ctx, decision, visible)
 		if err != nil {
+			if o.AllowsAccountSwitch() && codexprovenance.IsOpaqueDegradation(err) {
+				continue
+			}
 			if !visible && continuityPersistenceUnavailable(err) && o.hasProviderAnchor() {
 				continue
 			}
@@ -94,6 +98,12 @@ func (o *Operation) prepareExistingClaims(
 		}
 		lease, err := o.acquireExistingLease(ctx, decision)
 		if err != nil {
+			if o.AllowsAccountSwitch() {
+				if codexprovenance.IsOpaqueDegradation(err) {
+					continue
+				}
+				return err
+			}
 			if continuityPersistenceUnavailable(err) {
 				continue
 			}

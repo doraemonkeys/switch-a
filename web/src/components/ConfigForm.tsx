@@ -4,6 +4,7 @@ import {
   RoutingStrategySection,
   AuthSettingsSection,
   StickySessionSection,
+  ConversationRecoverySection,
   CircuitBreakerSection,
   TimeoutSettingsSection,
   RequestLimitsSection,
@@ -119,6 +120,11 @@ export function ConfigForm({
           getDefault={getDefault}
         />
         <AuthSettingsSection
+          getValue={getValue}
+          handleChange={handleChange}
+          getDefault={getDefault}
+        />
+        <ConversationRecoverySection
           getValue={getValue}
           handleChange={handleChange}
           getDefault={getDefault}

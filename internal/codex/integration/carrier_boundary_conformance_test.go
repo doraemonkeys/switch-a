@@ -32,7 +32,7 @@ func TestTurnMetadataClaimDisclosureAndIsolationConformAcrossCarriers(t *testing
 			case "HTTP":
 				request := fixtureRequest(http.MethodPost, client, headers)
 				operation, err := fixture.http.Begin(
-					context.Background(), request, testAPIType, operationID("metadata-http", 1), testHTTPClientEvidence(nil, nil),
+					context.Background(), request, testAPIType, operationID("metadata-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 				)
 				if err != nil {
 					t.Fatal(err)
@@ -57,7 +57,7 @@ func TestTurnMetadataClaimDisclosureAndIsolationConformAcrossCarriers(t *testing
 			case "WebSocket":
 				request := fixtureRequest(http.MethodGet, client, headers)
 				operation, err := fixture.ws.Begin(
-					context.Background(), request, testAPIType, operationID("metadata-ws", 1),
+					context.Background(), request, testAPIType, operationID("metadata-ws", 1), "preserve_conversation",
 				)
 				if err != nil {
 					t.Fatal(err)
@@ -101,7 +101,7 @@ func TestTurnStateProjectionCommitFailedWriteAndIsolationConformAcrossCarriers(t
 			case "HTTP":
 				operation, err := fixture.http.Begin(
 					context.Background(), fixtureRequest(http.MethodPost, client, nil),
-					testAPIType, operationID("state-http", 1), testHTTPClientEvidence(nil, nil),
+					testAPIType, operationID("state-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 				)
 				if err != nil {
 					t.Fatal(err)
@@ -127,7 +127,7 @@ func TestTurnStateProjectionCommitFailedWriteAndIsolationConformAcrossCarriers(t
 			case "WebSocket":
 				request := fixtureRequest(http.MethodGet, client, nil)
 				operation, err := fixture.ws.Begin(
-					context.Background(), request, testAPIType, operationID("state-ws", 1),
+					context.Background(), request, testAPIType, operationID("state-ws", 1), "preserve_conversation",
 				)
 				if err != nil {
 					t.Fatal(err)
@@ -166,7 +166,7 @@ func TestTurnStateProjectionCommitFailedWriteAndIsolationConformAcrossCarriers(t
 		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
 		const state = "failed-write-pending-state"
 		request := fixtureRequest(http.MethodGet, "failed-write-owner", nil)
-		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("state-failed-write", 1))
+		operation, err := fixture.ws.Begin(context.Background(), request, testAPIType, operationID("state-failed-write", 1), "preserve_conversation")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -200,7 +200,7 @@ func TestAttestationAuthorityLifetimeAndResponseProjectionConformAcrossCarriers(
 			"X-Oai-Attestation": {attestation},
 		})
 		operation, err := fixture.http.Begin(
-			context.Background(), request, testAPIType, operationID("attestation-http", 1), testHTTPClientEvidence(nil, nil),
+			context.Background(), request, testAPIType, operationID("attestation-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -251,7 +251,7 @@ func TestAttestationAuthorityLifetimeAndResponseProjectionConformAcrossCarriers(
 			"X-Oai-Attestation": {attestation},
 		})
 		operation, err := fixture.ws.Begin(
-			context.Background(), request, testAPIType, operationID("attestation-ws", 1),
+			context.Background(), request, testAPIType, operationID("attestation-ws", 1), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -301,7 +301,7 @@ func TestAttestationAuthorityLifetimeAndResponseProjectionConformAcrossCarriers(
 		t.Run(test.name, func(t *testing.T) {
 			request := fixtureRequest(http.MethodPost, test.client, http.Header{"X-Oai-Attestation": {attestation}})
 			operation, err := fixture.http.Begin(
-				context.Background(), request, testAPIType, operationID("attestation-new-operation", 1), testHTTPClientEvidence(nil, nil),
+				context.Background(), request, testAPIType, operationID("attestation-new-operation", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -329,7 +329,7 @@ func TestProviderCookieCommitRetryReplacementAndIsolationConformAcrossCarriers(t
 		request := requestWithHandle(http.MethodPost, "cookie-client", handle)
 		request.AddCookie(&http.Cookie{Name: "raw_client_cookie", Value: "must-not-forward"})
 		httpOperation, err := fixture.http.Begin(
-			context.Background(), request, testAPIType, operationID("cookie-select-http", 1), testHTTPClientEvidence(nil, nil),
+			context.Background(), request, testAPIType, operationID("cookie-select-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -345,7 +345,7 @@ func TestProviderCookieCommitRetryReplacementAndIsolationConformAcrossCarriers(t
 		wsRequest := requestWithHandle(http.MethodGet, "cookie-client", handle)
 		wsRequest.AddCookie(&http.Cookie{Name: "raw_client_cookie", Value: "must-not-forward"})
 		wsOperation, err := fixture.ws.Begin(
-			context.Background(), wsRequest, testAPIType, operationID("cookie-select-ws", 1),
+			context.Background(), wsRequest, testAPIType, operationID("cookie-select-ws", 1), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -364,7 +364,7 @@ func TestProviderCookieCommitRetryReplacementAndIsolationConformAcrossCarriers(t
 	t.Run("HTTP replacement discards the abandoned overlay", func(t *testing.T) {
 		request := requestWithHandle(http.MethodPost, "cookie-client", handle)
 		operation, err := fixture.http.Begin(
-			context.Background(), request, testAPIType, operationID("cookie-replace-http", 1), testHTTPClientEvidence(nil, nil),
+			context.Background(), request, testAPIType, operationID("cookie-replace-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -403,7 +403,7 @@ func TestProviderCookieCommitRetryReplacementAndIsolationConformAcrossCarriers(t
 	t.Run("WebSocket replacement discards the abandoned handshake overlay", func(t *testing.T) {
 		request := requestWithHandle(http.MethodGet, "cookie-client", handle)
 		operation, err := fixture.ws.Begin(
-			context.Background(), request, testAPIType, operationID("cookie-replace-ws", 1),
+			context.Background(), request, testAPIType, operationID("cookie-replace-ws", 1), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -442,7 +442,7 @@ func TestProviderCookieCommitRetryReplacementAndIsolationConformAcrossCarriers(t
 	t.Run("WebSocket visibility commit is readable from HTTP", func(t *testing.T) {
 		request := requestWithHandle(http.MethodGet, "cookie-client", handle)
 		operation, err := fixture.ws.Begin(
-			context.Background(), request, testAPIType, operationID("cookie-commit-ws", 1),
+			context.Background(), request, testAPIType, operationID("cookie-commit-ws", 1), "preserve_conversation",
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -463,7 +463,7 @@ func TestProviderCookieCommitRetryReplacementAndIsolationConformAcrossCarriers(t
 
 		readRequest := requestWithHandle(http.MethodPost, "cookie-client", handle)
 		readOperation, err := fixture.http.Begin(
-			context.Background(), readRequest, testAPIType, operationID("cookie-read-http", 1), testHTTPClientEvidence(nil, nil),
+			context.Background(), readRequest, testAPIType, operationID("cookie-read-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -491,7 +491,7 @@ func TestProviderCookieCommitRetryReplacementAndIsolationConformAcrossCarriers(t
 		t.Run(isolated.name, func(t *testing.T) {
 			request := requestWithHandle(http.MethodGet, isolated.client, handle)
 			operation, err := fixture.ws.Begin(
-				context.Background(), request, testAPIType, operationID("cookie-isolation", 1),
+				context.Background(), request, testAPIType, operationID("cookie-isolation", 1), "preserve_conversation",
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -519,7 +519,7 @@ func assertPendingMetadataVisibleOnlyToOwner(
 	t.Helper()
 	owner, err := fixture.ws.Begin(
 		context.Background(), fixtureRequest(http.MethodGet, client, http.Header{"X-Codex-Turn-Metadata": {metadata}}),
-		testAPIType, operationID("metadata-pending-owner", 1),
+		testAPIType, operationID("metadata-pending-owner", 1), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -530,7 +530,7 @@ func assertPendingMetadataVisibleOnlyToOwner(
 	_, err = fixture.ws.Begin(
 		context.Background(), fixtureRequest(http.MethodGet, "wrong-metadata-client", http.Header{
 			"X-Codex-Turn-Metadata": {metadata},
-		}), testAPIType, operationID("metadata-pending-wrong-client", 1),
+		}), testAPIType, operationID("metadata-pending-wrong-client", 1), "preserve_conversation",
 	)
 	requireWSFailure(t, err, codexws.FailureIdentity)
 }
@@ -551,7 +551,7 @@ func assertMetadataRetrievalAcrossCarriers(
 	headers := http.Header{"X-Codex-Turn-Metadata": {metadata}}
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, client, headers),
-		testAPIType, operationID("metadata-read-http", 1), testHTTPClientEvidence(nil, nil),
+		testAPIType, operationID("metadata-read-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -571,7 +571,7 @@ func assertMetadataRetrievalAcrossCarriers(
 
 	wsOperation, err := fixture.ws.Begin(
 		context.Background(), fixtureRequest(http.MethodGet, client, headers),
-		testAPIType, operationID("metadata-read-ws", 1),
+		testAPIType, operationID("metadata-read-ws", 1), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -596,7 +596,7 @@ func assertPendingTurnStateVisibleOnlyToOwner(
 	headers := http.Header{"X-Codex-Turn-State": {turnState}}
 	owner, err := fixture.ws.Begin(
 		context.Background(), fixtureRequest(http.MethodGet, client, headers),
-		testAPIType, operationID("state-pending-owner", 1),
+		testAPIType, operationID("state-pending-owner", 1), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -606,7 +606,7 @@ func assertPendingTurnStateVisibleOnlyToOwner(
 	}
 	_, err = fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, "wrong-state-client", headers),
-		testAPIType, operationID("state-pending-wrong-client", 1), testHTTPClientEvidence(nil, nil),
+		testAPIType, operationID("state-pending-wrong-client", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	requireHTTPError(t, err, codexhttp.ErrorClientInput)
 }
@@ -624,7 +624,7 @@ func assertTurnStateRetrievalAcrossCarriers(
 	headers := http.Header{"X-Codex-Turn-State": {turnState}}
 	httpOperation, err := fixture.http.Begin(
 		context.Background(), fixtureRequest(http.MethodPost, client, headers),
-		testAPIType, operationID("state-read-http", 1), testHTTPClientEvidence(nil, nil),
+		testAPIType, operationID("state-read-http", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -640,7 +640,7 @@ func assertTurnStateRetrievalAcrossCarriers(
 
 	wsOperation, err := fixture.ws.Begin(
 		context.Background(), fixtureRequest(http.MethodGet, client, headers),
-		testAPIType, operationID("state-read-ws", 1),
+		testAPIType, operationID("state-read-ws", 1), "preserve_conversation",
 	)
 	if err != nil {
 		t.Fatal(err)
