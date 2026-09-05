@@ -43,14 +43,14 @@ Header 清理、WebSocket subprotocol、Continuity、ClientScope 和 Provider Co
 
 新增全局设置 `conversation_recovery_policy`，对应 `ConversationRecoveryPolicy`：
 
-| 值 | 行为 |
-| --- | --- |
-| `preserve_conversation` | 默认值。保持现有约束。 |
-| `switch_account_preserve_conversation` | state owner 不限制选路；使用旧版 `sticky → strategy` 软粘性，并允许选择其他符合现有规则的 Codex Provider 原样延续客户端对话。 |
+| 值 | 界面名称 | 行为 |
+| --- | --- | --- |
+| `preserve_conversation` | 固定原账号（默认） | 保持现有约束。 |
+| `switch_account_preserve_conversation` | 允许换账号续聊 | state owner 不限制选路；使用旧版 `sticky → strategy` 软粘性，并允许选择其他符合现有规则的 Codex Provider 原样延续客户端对话。 |
 
 该设置不属于 `RoutingPolicy`。RoutingPolicy、健康状态、Provider 启用状态、模型匹配、组和现有选择策略仍共同决定候选集合；恢复策略只决定 state provenance 是否生成选路约束。
 
-管理 API、配置导入导出和 Web 配置页使用同一个字段。配置页使用选择框表达两个互斥语义。运行时按请求读取当前值，设置变化从后续请求或 WebSocket 重连开始生效。
+管理 API、配置导入导出和 Web 配置页使用同一个字段。配置页使用选择框，并提示：“切回固定原账号后，已跨账号续聊的对话可能无法继续。”运行时按请求读取当前值，设置变化从后续请求或 WebSocket 重连开始生效。
 
 `client_decides` 本次不定义、不持久化，也不在界面暴露。
 
@@ -75,7 +75,7 @@ opaque passthrough state 不生成 `RequiredAuthority`、`requiredProtocolScope`
 
 跨账号策略使用旧版 `sticky → strategy` 顺序。最后一次完成 ClientVisible 成功路径的 Provider 更新软 sticky；以 provider-scoped `reconnect_required` 结束的失败 Provider 不回写 sticky。旧 state 的 provenance 不覆盖或删除该 sticky。历史 owner 不初始化 `ProviderContinuityContext` 或 Vendor failover context；只有现有 ClientVisible continuity seed 或本次物理执行进入 ClientVisible 后，后续切换才按 Failover 执行。
 
-沿用现有 sticky SQLite 持久化和启动恢复；sticky key 在 `IP + User + APIType + Model` 基础上加入由客户端原始 API Key 派生的 `ClientScope`，只持久化 scope digest，不保存原始 Key。
+沿用现有 sticky SQLite 持久化和启动恢复；仅 Codex sticky key 在 `IP + User + APIType + Model` 基础上加入由客户端原始 API Key 派生的 `ClientScope`，只持久化 scope digest，不保存原始 Key。同步迁移 SQLite 联合主键和读写；缺少 ClientScope 的旧 Codex sticky 按 miss 重建，不继承旧账号偏好。
 
 跨账号策略下，HTTP request disclosure，以及 WS dial 和客户端帧向上游的 pre-visible disclosure 所产生的 ProtocolScope、Authority、RouteTarget 约束均为 physical-attempt-local，包括 claim、adopt、response reference 和 opaque attestation。replacement 时清除这些路由约束和当前 connection generation，但不删除 durable provenance；后续 attempt 原样携带客户端 state 和 opaque attestation。默认策略继续沿用现有 operation-wide pin 行为。ClientVisible 后不再进行透明 Provider 切换。
 
@@ -135,6 +135,7 @@ opaque passthrough state 不生成 `RequiredAuthority`、`requiredProtocolScope`
 - `response.append` 和 `response.inject` 继续绑定当前物理连接，不跨连接重放；出现相关连接约束错误时要求客户端重连。
 - 首个有效应用帧成功写入客户端后进入 ClientVisible，并记录实际 Provider；正常成功路径更新软 sticky。
 - ClientVisible 后不在同一个下游连接中切换账号。需要恢复时，先同步发布失败 health/suspension、阻止失败 Provider 回写 sticky，并建立携带失败 Provider exclusion 的一次性重连 continuity seed；随后发送 `WEBSOCKET_RECONNECT_REQUIRED`，以真实 `1012` 关闭连接。客户端重连后从新的请求边界执行恢复。
+- 跨账号恢复 seed 在首次选路前 compare-and-consume；消费成功后应用 exclusion、建立 `ProviderContinuityContext`，并按 Failover 选路，不要求重新选中失败 Provider。默认策略和普通 continuity seed 保留现有消费语义。
 
 ## 可观测性
 
@@ -146,5 +147,5 @@ opaque passthrough state 不生成 `RequiredAuthority`、`requiredProtocolScope`
 2. 拆分 provenance resolution、validation 与 routing constraint，引入请求级 provenance ledger：默认模式严格匹配 ProtocolScope；跨账号模式对可确定的 owner 验证 ClientScope/APIType，并允许 mixed-authority state；无法解析的 state 进入 opaque passthrough。
 3. 调整选择入口：跨账号模式不从 owner 生成选路约束，使用 `sticky → strategy` 软粘性。
 4. 接入 HTTP 和 WebSocket Operation、continuity acquisition、physical-attempt-local attestation/disclosure pin，以及现有 replay、ClientVisible、重连和 connection-bound 帧语义。
-5. 补齐结构化日志和测试，覆盖 HTTP/WS A→B→C、多 Authority state、默认模式隔离、跨 ClientScope 拒绝、owner 不生成 Vendor context、sticky 按 ClientScope 隔离、重启恢复未过期且 eligible 的 sticky、off/miss/expiry/ineligible 后回到 strategy、剩余预算内恢复、unknown/expired/store unavailable opaque passthrough、B 回显旧 state 沿用入口 resolution、B 新 state 归 B、Probe/非 Probe `101` 边界、WS pre-visible disclosure 后跨账号 replacement、真实 `1012`、零延迟重连不再选择失败 Provider、并发 sticky 和失败或未提交响应不更新 sticky。
+5. 补齐结构化日志和测试，覆盖 HTTP/WS A→B→C、多 Authority state、默认模式隔离、切回默认后 mixed-authority 拒绝、跨 ClientScope 拒绝、owner 不生成 Vendor context、sticky 按 ClientScope 隔离、旧 sticky 升级重建、重启恢复未过期且 eligible 的 sticky、off/miss/expiry/ineligible 后回到 strategy、剩余预算内恢复、unknown/expired/store unavailable opaque passthrough、B 回显旧 state 沿用入口 resolution、B 新 state 归 B、Probe/非 Probe `101` 边界、WS pre-visible disclosure 后跨账号 replacement、真实 `1012`、零延迟重连不再选择失败 Provider、恢复 seed 选路前消费并应用 Failover、并发 sticky 和失败或未提交响应不更新 sticky。
 6. 运行 `make ci`。
