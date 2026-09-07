@@ -1,223 +1,216 @@
 import { useState } from "react";
-import { useApi } from "@/api/useApi";
-import type {
-  ClientAPIKey,
-  ClientAccessMode,
-  ClientAPIKeysState,
-} from "@/api/client-api-keys/types";
-import { useQuery } from "@/hooks/useQuery";
-import { ConfirmModal } from "@/components/ConfirmModal";
+import {
+  Check,
+  CheckCircle2,
+  KeyRound,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
+import type { ClientAPIKey } from "@/api/client-api-keys/types";
 import { CopyButton } from "@/components/CopyButton";
+import { ClientKeyDialog } from "./ClientKeyDialog";
 import { ClientKeyForm } from "./ClientKeyForm";
-import { ClientKeyRow } from "./ClientKeyRow";
+import { ClientKeyList } from "./ClientKeyList";
+import { GatewayAccess } from "./GatewayAccess";
+import { useClientAPIKeys } from "./useClientAPIKeys";
+import "./client-api-keys.css";
 
-function withoutKey(state: ClientAPIKeysState | null, id: string) {
-  return (
-    state && { ...state, keys: state.keys.filter((item) => item.id !== id) }
-  );
-}
+type KeyDialog =
+  | { kind: "create" }
+  | { kind: "created"; item: ClientAPIKey }
+  | { kind: "delete"; item: ClientAPIKey };
 
 export function ClientAPIKeysPage() {
-  const api = useApi();
-  const query = useQuery(() => api.clientApiKeys.get(), { queryKey: api });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [generated, setGenerated] = useState<ClientAPIKey | null>(null);
-  const [deleting, setDeleting] = useState<ClientAPIKey | null>(null);
-
-  const mutate = async (action: () => Promise<void>): Promise<boolean> => {
-    setBusy(true);
-    setError(null);
-    try {
-      await action();
-      return true;
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Operation failed");
-      return false;
-    } finally {
-      setBusy(false);
-    }
+  const { query, busy, error, clearError, setPolicy, create, rename, remove } =
+    useClientAPIKeys();
+  const [dialog, setDialog] = useState<KeyDialog | null>(null);
+  const openDialog = (next: KeyDialog) => {
+    clearError();
+    setDialog(next);
   };
-  const upsert = (item: ClientAPIKey) => {
-    query.updateData(
-      (state) =>
-        state && {
-          ...state,
-          keys: state.keys.some((current) => current.id === item.id)
-            ? state.keys.map((current) =>
-                current.id === item.id ? item : current,
-              )
-            : [...state.keys, item],
-        },
-    );
+  const closeDialog = () => {
+    clearError();
+    setDialog(null);
   };
-  const setPolicy = (mode: ClientAccessMode) =>
-    mutate(async () => {
-      const policy = await api.clientApiKeys.setPolicy(mode);
-      query.updateData((state) => state && { ...state, ...policy });
-    });
-  const create = (name: string, key?: string) =>
-    mutate(async () => {
-      const item =
-        key === undefined
-          ? await api.clientApiKeys.generate(name)
-          : await api.clientApiKeys.add(name, key);
-      upsert(item);
-      if (key === undefined) setGenerated(item);
-    });
-  const rename = (id: string, name: string) =>
-    mutate(async () => {
-      const item = await api.clientApiKeys.rename(id, name);
-      upsert(item);
-      setGenerated((current) => (current?.id === id ? item : current));
-    });
-
-  const remove = (id: string) =>
-    mutate(async () => {
-      await api.clientApiKeys.delete(id);
-      query.updateData((state) => withoutKey(state, id));
-      setGenerated((current) => (current?.id === id ? null : current));
-      setDeleting(null);
-    });
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 text-text-primary">
-      <header>
-        <h1 className="text-2xl font-bold">Client API Keys</h1>
-        <p className="mt-2 text-text-secondary">
-          Control which client keys can access the gateway. These keys are
-          separate from upstream credentials and the admin sign-in token.
-        </p>
+    <div className="client-keys-page mx-auto w-full max-w-7xl space-y-7 py-2 text-slate-900">
+      <header className="flex flex-wrap items-center justify-between gap-5">
+        <div>
+          <p className="key-eyebrow flex items-center gap-2">
+            <KeyRound size={14} aria-hidden="true" /> CLIENT ACCESS
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+            API keys
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Manage the keys your apps and devices use to connect to Switch-A.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="key-button-primary"
+          disabled={busy || !query.data}
+          onClick={() => openDialog({ kind: "create" })}
+        >
+          <Plus size={17} aria-hidden="true" /> Create key
+        </button>
       </header>
-      {!deleting && (error || query.error) && (
-        <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
+      {!dialog && (error || query.error) && (
+        <p role="alert" className="key-error">
           {error || query.error?.message}
         </p>
       )}
-      {!query.data && query.loading && <p>Loading client API keys…</p>}
-      {!query.data && !query.loading && (
-        <button className="btn-secondary" onClick={() => void query.refetch()}>
-          Retry
-        </button>
+      {!query.data && (
+        <div className="flex min-h-80 items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white text-sm text-slate-500">
+          {query.loading ? (
+            <>
+              <LoaderCircle
+                size={20}
+                className="animate-spin"
+                aria-hidden="true"
+              />
+              <p>Loading client API keys…</p>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="key-button-secondary"
+              onClick={() => void query.refetch()}
+            >
+              <RefreshCw size={16} aria-hidden="true" /> Retry
+            </button>
+          )}
+        </div>
       )}
       {query.data && (
-        <>
-          <section className="rounded-xl border border-border-light bg-bg-secondary p-5">
-            <h2 className="text-lg font-semibold">Gateway access</h2>
-            <fieldset className="mt-3 space-y-3" disabled={busy}>
-              <legend className="sr-only">Access policy</legend>
-              <label className="flex items-start gap-3">
-                <input
-                  className="mt-1"
-                  type="radio"
-                  name="access-policy"
-                  checked={query.data.mode === "permissive"}
-                  onChange={() => void setPolicy("permissive")}
-                />
-                <span>
-                  <strong>Allow any key</strong>
-                  <span className="block text-sm text-text-secondary">
-                    Default. Accepts any API key, including requests without a
-                    key.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-3">
-                <input
-                  className="mt-1"
-                  type="radio"
-                  name="access-policy"
-                  checked={query.data.mode === "restricted"}
-                  onChange={() => void setPolicy("restricted")}
-                />
-                <span>
-                  <strong>Configured keys only</strong>
-                  <span className="block text-sm text-text-secondary">
-                    Rejects requests with a missing or unlisted key.
-                  </span>
-                </span>
-              </label>
-            </fieldset>
-            <p className="mt-4 text-sm text-text-muted">
-              Changes apply to new HTTP requests and WebSocket connections.
-              Existing streams stay open.
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="min-w-0 space-y-5">
+            <ClientKeyList
+              keys={query.data.keys}
+              busy={busy}
+              onCreate={() => openDialog({ kind: "create" })}
+              rename={rename}
+              remove={(item) => openDialog({ kind: "delete", item })}
+            />
+            <p className="flex items-start gap-2 px-1 text-xs leading-5 text-slate-500">
+              <KeyRound
+                size={14}
+                className="mt-0.5 shrink-0"
+                aria-hidden="true"
+              />
+              Client keys are separate from upstream credentials and your admin
+              sign-in token.
             </p>
-            {query.data.mode === "restricted" &&
-              query.data.keys.length === 0 && (
-                <p role="status" className="mt-3 text-amber-700">
-                  No keys are configured. All new client requests are blocked
-                  until you add a key or allow any key.
-                </p>
-              )}
-          </section>
-          <ClientKeyForm busy={busy} create={create} />
-          {generated && (
-            <section
-              className="rounded-xl border border-primary p-5"
-              aria-label="Generated key"
-            >
-              <h2 className="font-semibold">Generated key: {generated.name}</h2>
-              <p className="mt-1 text-sm text-text-secondary">
-                Copy this key into your client. You can reveal and copy it again
-                from the list.
+          </div>
+          <GatewayAccess
+            mode={query.data.mode}
+            keyCount={query.data.keys.length}
+            busy={busy}
+            setPolicy={(mode) => void setPolicy(mode)}
+          />
+        </div>
+      )}
+      {dialog?.kind === "create" && (
+        <ClientKeyDialog
+          title="Create a client key"
+          description="Connect an app or device with a new or existing API key."
+          busy={busy}
+          onClose={closeDialog}
+        >
+          <ClientKeyForm
+            busy={busy}
+            error={error}
+            create={create}
+            onCreated={(item) => setDialog({ kind: "created", item })}
+            onCancel={closeDialog}
+          />
+        </ClientKeyDialog>
+      )}
+      {dialog?.kind === "created" && (
+        <ClientKeyDialog
+          title="Your key is ready"
+          description="Copy this key into your client. You can reveal and copy it again from the list."
+          busy={false}
+          onClose={closeDialog}
+        >
+          <section aria-label="Created key" className="space-y-5 p-6">
+            <div className="flex items-center gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                <CheckCircle2 size={20} aria-hidden="true" />
+              </span>
+              <h3 className="min-w-0 break-words font-medium">
+                {dialog.item.name}
+              </h3>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <code className="block break-all font-mono text-sm leading-6">
+                {dialog.item.key}
+              </code>
+              <CopyButton
+                text={dialog.item.key}
+                className="key-copy-button mt-3"
+              />
+            </div>
+            {query.data?.mode === "permissive" && (
+              <p className="text-xs leading-5 text-slate-500">
+                The gateway still allows any key. Select “Configured keys only”
+                to limit access to your list.
               </p>
-              <code className="my-3 block break-all">{generated.key}</code>
-              <div className="flex gap-4">
-                <CopyButton text={generated.key} />
-                <button
-                  type="button"
-                  className="text-sm text-primary"
-                  onClick={() => setGenerated(null)}
-                >
-                  Dismiss
-                </button>
-              </div>
-            </section>
-          )}
-          <section aria-label="Configured client keys">
-            <h2 className="mb-3 text-lg font-semibold">
-              Configured keys ({query.data.keys.length})
-            </h2>
-            {query.data.keys.length === 0 ? (
-              <p className="text-text-secondary">
-                No client keys yet. Add an existing key or generate one above.
-              </p>
-            ) : (
-              <ul className="space-y-3">
-                {query.data.keys.map((item) => (
-                  <ClientKeyRow
-                    key={item.id}
-                    item={item}
-                    busy={busy}
-                    rename={rename}
-                    remove={(item) => {
-                      setError(null);
-                      setDeleting(item);
-                    }}
-                  />
-                ))}
-              </ul>
             )}
           </section>
-        </>
+          <footer className="flex justify-end border-t border-slate-100 px-6 py-4">
+            <button
+              type="button"
+              className="key-button-primary"
+              onClick={closeDialog}
+            >
+              <Check size={16} aria-hidden="true" /> Done
+            </button>
+          </footer>
+        </ClientKeyDialog>
       )}
-      <ConfirmModal
-        isOpen={deleting !== null}
-        onClose={() => setDeleting(null)}
-        title="Delete client API key"
-        message={
-          'Delete "' +
-          (deleting?.name ?? "") +
-          '"? When access is restricted, this key will no longer authorize new requests.'
-        }
-        confirmText="Delete key"
-        variant="danger"
-        loading={busy}
-        error={error}
-        onConfirm={() => {
-          if (deleting) void remove(deleting.id);
-        }}
-      />
-    </main>
+      {dialog?.kind === "delete" && (
+        <ClientKeyDialog
+          title="Delete client API key"
+          description={
+            'Delete "' +
+            dialog.item.name +
+            '"? When access is restricted, this key will no longer authorize new requests.'
+          }
+          busy={busy}
+          onClose={closeDialog}
+        >
+          {error && (
+            <p role="alert" className="key-error mx-6 mt-5">
+              {error}
+            </p>
+          )}
+          <footer className="flex justify-end gap-3 px-6 py-5">
+            <button
+              type="button"
+              className="key-button-secondary"
+              disabled={busy}
+              onClick={closeDialog}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="key-button-danger"
+              disabled={busy}
+              onClick={() => {
+                void remove(dialog.item.id).then((removed) => {
+                  if (removed) closeDialog();
+                });
+              }}
+            >
+              {busy ? "Deleting…" : "Delete key"}
+            </button>
+          </footer>
+        </ClientKeyDialog>
+      )}
+    </div>
   );
 }

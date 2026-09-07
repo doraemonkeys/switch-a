@@ -236,7 +236,7 @@ describe("App", () => {
   it("renders client API keys as an authenticated route", async () => {
     render(<TestApp initialPath="/api-keys" />);
     expect(
-      await screen.findByRole("heading", { name: "Client API Keys" }),
+      await screen.findByRole("heading", { name: "API keys" }),
     ).toBeInTheDocument();
     expect(
       await screen.findByRole("radio", { name: /Allow any key/ }),

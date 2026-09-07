@@ -1,0 +1,126 @@
+/* This stylesheet may load before the entry CSS; establish the same layer order
+   so Tailwind's reset cannot override the controls below. */
+@layer theme, base, components, utilities;
+@reference "../../index.css";
+
+/* Local controls form one complete contract, including spacing, focus and disabled
+   states; callers do not need to compose a separate base button class. */
+@layer components {
+  .key-eyebrow {
+    @apply text-[10px] font-semibold tracking-[0.16em] text-slate-500;
+  }
+
+  .key-button-primary,
+  .key-button-secondary,
+  .key-button-danger {
+    @apply inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .key-button-primary {
+    @apply border border-slate-900 bg-slate-900 text-white hover:border-slate-700 hover:bg-slate-700;
+  }
+
+  .key-button-secondary {
+    @apply border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50;
+  }
+
+  .key-button-danger {
+    @apply border border-red-600 bg-red-600 text-white hover:bg-red-700;
+  }
+
+  .key-icon-button {
+    @apply inline-flex size-9 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .key-delete-button {
+    @apply hover:bg-red-50 hover:text-red-600;
+  }
+
+  .key-copy-button {
+    @apply min-h-9 shrink-0 cursor-pointer justify-center rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900;
+  }
+
+  .key-input {
+    @apply block w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none disabled:opacity-50;
+  }
+
+  .key-policy-option {
+    @apply flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-4 transition-colors hover:border-slate-300 has-checked:border-slate-400 has-checked:bg-slate-50 has-disabled:cursor-not-allowed has-disabled:opacity-60;
+  }
+
+  .key-radio-indicator {
+    @apply mt-0.5 size-3.5 shrink-0 rounded-full border border-slate-300 bg-white;
+  }
+
+  .key-policy-option:has(:checked) .key-radio-indicator {
+    @apply border-4 border-slate-800;
+  }
+
+  .key-source-option {
+    @apply flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg px-2 py-2 text-xs font-medium text-slate-500 has-checked:bg-white has-checked:text-slate-900 has-checked:shadow-sm has-disabled:cursor-not-allowed;
+  }
+
+  .key-row {
+    @apply grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 border-t border-slate-100 px-6 py-5 transition-colors hover:bg-slate-50/50;
+  }
+
+  .key-row > :nth-child(2) {
+    @apply col-span-full row-start-2;
+  }
+
+  .key-list-columns {
+    @apply hidden border-y border-slate-100 bg-slate-50/70 px-6 py-3 text-[10px] font-medium tracking-wider text-slate-500;
+  }
+
+  .key-error {
+    @apply rounded-lg border border-red-200 bg-red-50 p-3 text-sm leading-6 text-red-700;
+  }
+}
+
+.client-keys-dialog {
+  @apply fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl;
+}
+
+.client-keys-page .key-copy-button,
+.client-keys-dialog .key-copy-button {
+  color: var(--color-slate-600);
+}
+
+.client-keys-dialog::backdrop {
+  background: rgb(15 23 42 / 35%);
+  backdrop-filter: blur(4px);
+}
+
+.client-keys-page :focus-visible,
+.client-keys-dialog :focus-visible,
+.key-policy-option:has(:focus-visible),
+.key-source-option:has(:focus-visible) {
+  outline: 2px solid var(--color-slate-500);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+@media (min-width: 768px) {
+  .key-row,
+  .key-list-columns {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 76px;
+  }
+
+  .key-row > :nth-child(2) {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .key-list-columns {
+    display: grid;
+    column-gap: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .client-keys-page *,
+  .client-keys-dialog * {
+    animation: none;
+    transition: none;
+  }
+}
