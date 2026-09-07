@@ -6,7 +6,17 @@ import type {
   Strategy,
 } from "../config/constants";
 import type { BackoffPolicy } from "./retry-policy-types";
+import type {
+  ClientAccessMode,
+  ClientAPIKeysState,
+} from "./client-api-keys/types";
+
 import type { RoutingPolicyModelMatchType } from "./routing-policy-types";
+
+export interface ClientAPIKeyPolicyChange {
+  from: ClientAccessMode;
+  to: ClientAccessMode;
+}
 
 export interface ExportedAPIType {
   api_type: string;
@@ -120,6 +130,7 @@ export interface ExportedInternalErrorRule {
 
 export interface ExportedConfig {
   codex_state?: Record<string, unknown>;
+  client_api_keys?: ClientAPIKeysState | null;
   version: string;
   exported_at: string;
   providers: ExportedProvider[];
@@ -153,6 +164,7 @@ export type ImportScope =
 
 export interface ImportConfigRequest {
   codex_state?: Record<string, unknown>;
+  client_api_keys?: ClientAPIKeysState | null;
   version: string;
   import_scope: ImportScope;
   providers: ExportedProvider[];
@@ -172,6 +184,8 @@ export interface ChangeCount {
 
 export interface ImportChanges {
   codex_state?: ChangeCount;
+  client_api_keys?: ChangeCount;
+  client_api_key_policy?: ClientAPIKeyPolicyChange;
   providers: ChangeCount;
   credential_sessions: ChangeCount;
   groups: ChangeCount;
@@ -202,6 +216,8 @@ export interface AppliedCount {
 
 export interface ImportedCounts {
   codex_state?: AppliedCount;
+  client_api_keys?: AppliedCount;
+  client_api_key_policy?: ClientAPIKeyPolicyChange;
   providers: AppliedCount;
   credential_sessions: AppliedCount;
   groups: AppliedCount;

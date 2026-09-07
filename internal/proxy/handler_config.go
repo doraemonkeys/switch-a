@@ -94,6 +94,7 @@ func (k *transportCacheKey) Equals(other *transportCacheKey) bool {
 
 // Config holds proxy handler configuration.
 type Config struct {
+	ClientAdmission            ClientAdmission
 	Transport                  HTTPTransport
 	StartIngress               func(context.Context, *http.Request, requestingress.Options) (*requestingress.Handle, error)
 	Store                      Store
@@ -169,6 +170,7 @@ func NewHandler(cfg Config) *Handler {
 		startIngress = requestingress.Start
 	}
 	handler := &Handler{
+		clientAdmission:            cfg.ClientAdmission,
 		transportOverride:          cfg.Transport,
 		startIngress:               startIngress,
 		store:                      cfg.Store,

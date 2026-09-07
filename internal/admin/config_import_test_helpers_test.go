@@ -18,6 +18,7 @@ func selectionConfigImportScope(groupIDs, providerIDs []string) *ConfigImportSco
 
 func importRequestFromExport(exported ExportedConfig) ImportConfigRequest {
 	return ImportConfigRequest{
+		ClientAPIKeys:      exported.ClientAPIKeys,
 		Version:            exported.Version,
 		ImportScope:        fullConfigImportScope(),
 		Providers:          exported.Providers,

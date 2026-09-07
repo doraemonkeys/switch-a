@@ -3,6 +3,7 @@ import { IMPORT_SUMMARY_SECTIONS } from "./constants";
 import { FileCard } from "./common";
 import { getVisibleSummaryKeys } from "./helpers";
 import { ReauthenticationNotice } from "./ReauthenticationNotice";
+import { ClientAccessNotice } from "./ClientAccessNotice";
 const WarningIcon = () => (
   <svg
     className="w-4 h-4 text-warning shrink-0"
@@ -113,6 +114,18 @@ export function PreviewStep({
         disabled={importing}
       />
 
+      <ClientAccessNotice
+        policy={
+          mode === "full" ? preview.changes.client_api_key_policy : undefined
+        }
+        empty={Boolean(
+          preview.changes.client_api_keys &&
+          preview.changes.client_api_keys.add +
+            preview.changes.client_api_keys.update +
+            preview.changes.client_api_keys.unchanged ===
+            0,
+        )}
+      />
       <div className="space-y-3">
         <h3 className="text-sm font-medium text-text-secondary">变更预览</h3>
         <div className="grid gap-3">

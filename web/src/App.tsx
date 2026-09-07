@@ -3,6 +3,7 @@ import { Layout } from "@/components/Layout";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Config } from "@/pages/Config";
 import { ClientDisguisePage } from "@/features/client-disguise/ClientDisguisePage";
+import { ClientAPIKeysPage } from "@/features/client-api-keys/ClientAPIKeysPage";
 import { Dashboard } from "@/pages/Dashboard";
 import { ErrorDetection } from "@/pages/ErrorDetection";
 import { Groups } from "@/pages/Groups";
@@ -40,6 +41,7 @@ export function AppRoutes() {
         <Route path="monitor" element={<Monitor />} />
         <Route path="providers" element={<Providers />} />
         <Route path="credentials" element={<CredentialSessions />} />
+        <Route path="api-keys" element={<ClientAPIKeysPage />} />
         <Route path="client-disguise" element={<ClientDisguisePage />} />
         <Route path="groups" element={<Groups />} />
         <Route path="routing" element={<RoutingPolicies />} />

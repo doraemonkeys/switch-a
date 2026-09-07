@@ -11,6 +11,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/admin"
+	"github.com/doraemonkeys/switch-a/internal/admin/clientapikeyapi"
 	"github.com/doraemonkeys/switch-a/internal/admin/clientdisguiseapi"
 	admindebugcapture "github.com/doraemonkeys/switch-a/internal/admin/debugcapture"
 	adminerrorruleapi "github.com/doraemonkeys/switch-a/internal/admin/errorruleapi"
@@ -122,6 +123,7 @@ type Selector = proxy.Selector
 
 // Config holds proxy server configuration.
 type Config struct {
+	ClientAdmission            proxy.ClientAdmission
 	ClientDisguise             proxy.ClientDisguiseRepository
 	Port                       string
 	Logger                     *zap.Logger
@@ -141,6 +143,7 @@ type Config struct {
 
 // AdminConfig holds admin server configuration.
 type AdminConfig struct {
+	ClientAPIKeys       *clientapikeyapi.Handler
 	ClientDisguise      *clientdisguiseapi.Handler
 	Port                string
 	AdminToken          string
@@ -180,6 +183,7 @@ func New(cfg Config) *Server {
 	// - No sticky sessions
 	// - Simple round-robin provider selection
 	proxyHandler := proxy.NewHandler(proxy.Config{
+		ClientAdmission:            cfg.ClientAdmission,
 		ClientDisguise:             cfg.ClientDisguise,
 		Store:                      cfg.Store,
 		Selector:                   cfg.Selector,
@@ -217,7 +221,7 @@ func New(cfg Config) *Server {
 	// Register routes
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	// Proxy API routes (no auth required). Root-level contracts share their
+	// Proxy API routes share downstream admission in Handler. Root-level contracts share their
 	// catalog with Handler resolution so adding an endpoint cannot update only
 	// one of the two routing layers.
 	for _, route := range proxy.BareProxyRoutes() {
@@ -289,6 +293,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Create auth middleware
 	auth := admin.NewAuthMiddleware(cfg.AdminToken)
 	s.registerDebugCaptureRoutes(mux, cfg, auth)
+	registerClientAPIKeyRoutes(mux, cfg.ClientAPIKeys, auth)
 
 	// The frontend derives all built-in API presentation and capability state
 	// from this authenticated projection; no static UI fallback is registered.

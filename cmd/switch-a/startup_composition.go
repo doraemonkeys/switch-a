@@ -6,10 +6,12 @@ import (
 	"fmt"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/admin/clientapikeyapi"
 	"github.com/doraemonkeys/switch-a/internal/admin/clientdisguiseapi"
 	"github.com/doraemonkeys/switch-a/internal/admin/tokenusageapi"
 	"github.com/doraemonkeys/switch-a/internal/analyticswindow"
 	"github.com/doraemonkeys/switch-a/internal/buildinfo"
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/config"
 	"github.com/doraemonkeys/switch-a/internal/health"
 	"github.com/doraemonkeys/switch-a/internal/logger"
@@ -199,7 +201,9 @@ func composeApplicationRuntime(
 		Clock:           clock,
 		Logger:          log,
 	})
+	clientAccess := clientaccess.NewService(clientaccess.ServiceConfig{Store: sqlStore.ClientAPIKeyRepository(), Now: clock.Now})
 	proxyServer := server.New(server.Config{
+		ClientAdmission:            clientAccess,
 		Port:                       cfg.Port,
 		Logger:                     log,
 		Store:                      st,
@@ -217,6 +221,7 @@ func composeApplicationRuntime(
 		CodexWebSocket:             codexRuntime.WebSocket,
 	})
 	adminServer := server.NewAdmin(server.AdminConfig{
+		ClientAPIKeys:       clientapikeyapi.NewHandler(clientAccess, log),
 		Port:                cfg.AdminPort,
 		AdminToken:          cfg.AdminToken,
 		Logger:              log,

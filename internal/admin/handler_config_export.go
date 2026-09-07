@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"context"
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
@@ -29,6 +30,7 @@ const (
 
 // ExportedConfig represents the full exported configuration.
 type ExportedConfig struct {
+	ClientAPIKeys      *clientaccess.Snapshot      `json:"client_api_keys,omitempty"`
 	CodexState         *store.CodexState           `json:"codex_state,omitempty"`
 	Version            string                      `json:"version"`
 	ExportedAt         time.Time                   `json:"exported_at"`
@@ -210,6 +212,12 @@ func (h *Handler) ExportConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to export Codex state")
 			return
 		}
+	}
+	export.ClientAPIKeys, err = loadClientAPIKeys(ctx, h.store)
+	if err != nil {
+		h.logger.Error("failed to export client API keys", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to export client API keys")
+		return
 	}
 	writeJSON(w, http.StatusOK, export)
 }

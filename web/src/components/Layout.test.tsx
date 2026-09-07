@@ -10,6 +10,7 @@ const NAVIGATION_CASES = [
   { name: "Dashboard", href: "/", icon: "📊" },
   { name: "Monitor", href: "/monitor", icon: "📡" },
   { name: "Providers", href: "/providers", icon: "🔌" },
+  { name: "Client API Keys", href: "/api-keys", icon: "🎟️" },
   { name: "Groups", href: "/groups", icon: "📁" },
   { name: "Routing", href: "/routing", icon: "🧭" },
   {

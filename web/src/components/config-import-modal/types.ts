@@ -5,7 +5,10 @@ import type {
 } from "../../api/types";
 
 export type ImportStep = "select" | "preview" | "result";
-export type SummarySectionKey = keyof ImportPreviewResponse["changes"];
+export type SummarySectionKey = Exclude<
+  keyof ImportPreviewResponse["changes"],
+  "client_api_key_policy"
+>;
 
 export interface ConfigImportModalProps {
   isOpen: boolean;

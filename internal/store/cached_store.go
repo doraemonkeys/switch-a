@@ -8,9 +8,22 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
+
+// ClientAPIKeySnapshot bypasses the settings cache because admission policy and
+// membership must describe one committed aggregate.
+func (s *CachedStore) ClientAPIKeySnapshot(ctx context.Context) (clientaccess.Snapshot, error) {
+	source, ok := s.Store.(interface {
+		ClientAPIKeySnapshot(context.Context) (clientaccess.Snapshot, error)
+	})
+	if !ok {
+		return clientaccess.Snapshot{}, fmt.Errorf("client API key snapshot unavailable")
+	}
+	return source.ClientAPIKeySnapshot(ctx)
+}
 
 // Default cache configuration values.
 const (

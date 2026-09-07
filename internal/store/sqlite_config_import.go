@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	codexkeyring "github.com/doraemonkeys/switch-a/internal/codex/keyring"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
@@ -34,6 +35,7 @@ const (
 // ConfigImportBundle captures the normalized, fully validated import payload
 // that the store can apply atomically without re-running admin-level staging.
 type ConfigImportBundle struct {
+	ClientAPIKeys        *clientaccess.Snapshot
 	restoredSticky       *[]model.StickyEntry
 	preview              bool
 	CodexState           *CodexState
@@ -110,6 +112,11 @@ func (s *SQLiteStore) applyConfigImport(ctx context.Context, bundle *ConfigImpor
 		txStore.credentialSessions, err = s.credentialSessions.WithDB(tx)
 		if err != nil {
 			return err
+		}
+		if bundle.ClientAPIKeys != nil {
+			if err := clientaccess.NewRepository(tx).Replace(ownedCtx, *bundle.ClientAPIKeys); err != nil {
+				return fmt.Errorf("replace client API keys: %w", err)
+			}
 		}
 		if err := importCodexState(ownedCtx, tx, bundle.CodexState); err != nil {
 			return err

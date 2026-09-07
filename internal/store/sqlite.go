@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	continuitysqlite "github.com/doraemonkeys/switch-a/internal/codex/continuity/sqlite"
@@ -117,6 +118,9 @@ func NewSQLiteStore(
 	}
 	if err := clientdisguise.Migrate(context.Background(), db); err != nil {
 		return nil, fmt.Errorf("migrate client disguise: %w", err)
+	}
+	if err := clientaccess.Migrate(db); err != nil {
+		return nil, fmt.Errorf("migrate client API keys: %w", err)
 	}
 	if err := clientidentity.Migrate(db); err != nil {
 		return nil, fmt.Errorf("migrate client identities: %w", err)

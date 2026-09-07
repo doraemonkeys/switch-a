@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/wire"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/disguiseruntime"
@@ -38,6 +39,7 @@ type TokenUsage = tokenusage.TokenUsage
 
 // Handler handles proxy requests.
 type Handler struct {
+	clientAdmission            ClientAdmission
 	transportOverride          HTTPTransport
 	startIngress               func(context.Context, *http.Request, requestingress.Options) (*requestingress.Handle, error)
 	store                      Store
@@ -64,6 +66,13 @@ type Handler struct {
 	clientDisguise             ClientDisguiseRepository
 	disguisePool               *upstreamtransport.Pool
 }
+
+// ClientAdmission owns downstream access independently of upstream credentials.
+type ClientAdmission interface {
+	Admit(context.Context, *http.Request, string) (clientaccess.Decision, error)
+}
+
+const ErrCodeUnauthorized = "unauthorized"
 
 type ClientDisguiseRepository interface {
 	disguiseruntime.Repository
@@ -378,6 +387,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	apiType := requestRoute.APIType
 
+	// Admission precedes both ingress ownership and the WebSocket branch so every
+	// route, including the raw-path boundary, observes the same committed policy.
+	if !h.admitClient(w, r, apiType, requestID) {
+		return
+	}
+
 	// WebSocket upgrade is only valid for Codex (OpenAI Realtime API).
 	// Reject upgrades on other API types to prevent health metric pollution
 	// from failed WS dials to non-WebSocket backends.
@@ -415,6 +430,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h.serveHTTPIngress(w, r, cfg, apiType, requestID, startTime)
 
+}
+
+func (h *Handler) admitClient(w http.ResponseWriter, r *http.Request, apiType, requestID string) bool {
+	if h.clientAdmission == nil {
+		return true
+	}
+	decision, err := h.clientAdmission.Admit(r.Context(), r, apiType)
+	log := h.logger.With(
+		zap.String("request_id", requestID),
+		zap.String("api_type", apiType),
+		zap.String("mode", string(decision.Mode)),
+		zap.String("credential_state", decision.CredentialState),
+		zap.String("reason", decision.Reason),
+		zap.String("key_id", decision.KeyID),
+	)
+	if err != nil {
+		log.Error("client API key admission unavailable", zap.Error(err))
+		h.writeGatewayError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to check client API key access")
+		return false
+	}
+	log.Debug("client API key admission", zap.Bool("allowed", decision.Allowed))
+	if !decision.Allowed {
+		h.writeGatewayError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "A configured client API key is required")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) beginGatewayCapture(requestID string, startedAt time.Time) requestcapture.GatewayRecorder {

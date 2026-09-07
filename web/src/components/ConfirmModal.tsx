@@ -10,6 +10,7 @@ interface ConfirmModalProps {
   cancelText?: string;
   variant?: "danger" | "warning" | "default";
   loading?: boolean;
+  error?: string | null;
 }
 
 export function ConfirmModal({
@@ -22,6 +23,7 @@ export function ConfirmModal({
   cancelText = "Cancel",
   variant = "default",
   loading = false,
+  error,
 }: ConfirmModalProps) {
   // Handle Escape key to close modal
   const handleEscape = useCallback(
@@ -77,6 +79,11 @@ export function ConfirmModal({
 
         <div className="p-6">
           <p className="text-text-secondary">{message}</p>
+          {error && (
+            <p role="alert" className="mt-3 text-danger">
+              {error}
+            </p>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 p-6 pt-0">

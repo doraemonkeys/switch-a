@@ -27,32 +27,9 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	// Check for dry_run query parameter
 	dryRun := r.URL.Query().Get("dry_run") == "true"
 
-	var req ImportConfigRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Request body must contain exactly one JSON value")
-		return
-	}
-	if req.Version != ConfigExportVersion {
-		writeError(
-			w,
-			http.StatusBadRequest,
-			ErrCodeValidation,
-			fmt.Sprintf(
-				"Unsupported config export version %q; expected %q",
-				req.Version,
-				ConfigExportVersion,
-			),
-		)
-		return
-	}
-	if settingErrors := validateImportSettings(req.Settings); len(settingErrors) > 0 {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Import validation failed: "+strings.Join(settingErrors, "; "))
+	req, validationMessage := decodeConfigImportRequest(r.Body)
+	if validationMessage != "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, validationMessage)
 		return
 	}
 
@@ -77,6 +54,15 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		snapshot.settings,
 		snapshot.rules,
 	)
+	if err := stageClientAPIKeys(ctx, h.store, &req, &staged); err != nil {
+		if errors.Is(err, errInvalidClientAPIKeyImport) {
+			writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
+		} else {
+			h.logger.Error("failed to stage client API keys", zap.String("operation_id", operationID), zap.Error(err))
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to read client API keys")
+		}
+		return
+	}
 	h.logger.Info(
 		"config import staged",
 		zap.String("operation_id", operationID),
@@ -86,6 +72,9 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 		zap.Int("credential_reauthentication_requirement_count", len(staged.reauthenticationRequirements)),
 		zap.Int("provider_add_count", staged.changes.Providers.Add),
 		zap.Int("credential_session_add_count", staged.changes.CredentialSessions.Add),
+		zap.Bool("client_api_keys_in_scope", staged.bundle.ClientAPIKeys != nil),
+		zap.Any("client_api_key_policy", staged.changes.ClientAPIKeyPolicy),
+		zap.Any("client_api_key_changes", staged.changes.ClientAPIKeys),
 	)
 	ruleRepository := snapshot.ruleRepository
 	ruleRevision := snapshot.ruleRevision
@@ -164,6 +153,29 @@ func (h *Handler) ImportConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func decodeConfigImportRequest(body io.Reader) (ImportConfigRequest, string) {
+	var req ImportConfigRequest
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return req, "Invalid request body"
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return req, "Request body must contain exactly one JSON value"
+	}
+	if req.Version != ConfigExportVersion {
+		return req, fmt.Sprintf(
+			"Unsupported config export version %q; expected %q",
+			req.Version,
+			ConfigExportVersion,
+		)
+	}
+	if settingErrors := validateImportSettings(req.Settings); len(settingErrors) > 0 {
+		return req, "Import validation failed: " + strings.Join(settingErrors, "; ")
+	}
+	return req, ""
+}
+
 func (h *Handler) writeConfigImportPreview(
 	w http.ResponseWriter,
 	staged stagedConfigImport,
@@ -208,7 +220,9 @@ func newConfigImportResult(
 		RuleSetRevision:              revision.String(),
 		RuleSetETag:                  formatInternalErrorRuleETag(revision),
 		Applied: ImportedCounts{
-			CodexState: AppliedCount{Updated: changes.CodexState.Update},
+			ClientAPIKeys:      AppliedCount{Added: changes.ClientAPIKeys.Add, Updated: changes.ClientAPIKeys.Update, Deleted: changes.ClientAPIKeys.Delete},
+			ClientAPIKeyPolicy: changes.ClientAPIKeyPolicy,
+			CodexState:         AppliedCount{Updated: changes.CodexState.Update},
 			Providers: AppliedCount{
 				Added:   changes.Providers.Add,
 				Updated: changes.Providers.Update,

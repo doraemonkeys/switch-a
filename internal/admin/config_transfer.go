@@ -2,13 +2,16 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
@@ -59,6 +62,56 @@ func configRuleRepository(source any) *errorrulesqlite.Repository {
 	return provider.InternalErrorRuleRepository()
 }
 
+func loadClientAPIKeys(ctx context.Context, source any) (*clientaccess.Snapshot, error) {
+	reader, ok := source.(interface {
+		ClientAPIKeySnapshot(context.Context) (clientaccess.Snapshot, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	snapshot, err := reader.ClientAPIKeySnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
+var errInvalidClientAPIKeyImport = errors.New("invalid client API key import")
+
+func stageClientAPIKeys(ctx context.Context, source any, req *ImportConfigRequest, staged *stagedConfigImport) error {
+	if staged.mode != ConfigImportModeFull || req.ClientAPIKeys == nil {
+		return nil
+	}
+	desired := *req.ClientAPIKeys
+	if err := clientaccess.ValidateSnapshot(desired); err != nil {
+		return fmt.Errorf("%w: %w", errInvalidClientAPIKeyImport, err)
+	}
+	current, err := loadClientAPIKeys(ctx, source)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		return fmt.Errorf("client API key snapshot unavailable")
+	}
+	// Keep policy and membership together even when the preview finds no delta:
+	// a full restore is authoritative for this aggregate at commit time.
+	staged.bundle.ClientAPIKeys = &desired
+	staged.changes.ClientAPIKeyPolicy = &ClientAPIKeyPolicyChange{From: current.Mode, To: desired.Mode}
+	existing := make(map[string]clientaccess.Key, len(current.Keys))
+	for _, key := range current.Keys {
+		existing[key.ID] = key
+	}
+	for _, key := range desired.Keys {
+		previous, found := existing[key.ID]
+		equal := found && previous.Name == key.Name && previous.Key == key.Key &&
+			previous.CreatedAt.Equal(key.CreatedAt) && previous.UpdatedAt.Equal(key.UpdatedAt)
+		recordStagedUpsert(&staged.changes.ClientAPIKeys, found, !equal)
+		delete(existing, key.ID)
+	}
+	staged.changes.ClientAPIKeys.Delete = len(existing)
+	return nil
+}
+
 type ConfigImportMode string
 
 const (
@@ -79,6 +132,7 @@ type ConfigImportSelection struct {
 
 // ImportConfigRequest represents the request body for config import.
 type ImportConfigRequest struct {
+	ClientAPIKeys      *clientaccess.Snapshot      `json:"client_api_keys,omitempty"`
 	CodexState         *store.CodexState           `json:"codex_state,omitempty"`
 	Version            string                      `json:"version"`
 	ImportScope        *ConfigImportScope          `json:"import_scope,omitempty"`
@@ -92,13 +146,20 @@ type ImportConfigRequest struct {
 
 // ImportChanges represents the changes that will be applied during import.
 type ImportChanges struct {
-	CodexState         ChangeCount `json:"codex_state"`
-	Providers          ChangeCount `json:"providers"`
-	CredentialSessions ChangeCount `json:"credential_sessions"`
-	Groups             ChangeCount `json:"groups"`
-	RoutingPolicies    ChangeCount `json:"routing_policies"`
-	Settings           ChangeCount `json:"settings"`
-	InternalErrorRules ChangeCount `json:"internal_error_rules"`
+	ClientAPIKeys      ChangeCount               `json:"client_api_keys"`
+	ClientAPIKeyPolicy *ClientAPIKeyPolicyChange `json:"client_api_key_policy,omitempty"`
+	CodexState         ChangeCount               `json:"codex_state"`
+	Providers          ChangeCount               `json:"providers"`
+	CredentialSessions ChangeCount               `json:"credential_sessions"`
+	Groups             ChangeCount               `json:"groups"`
+	RoutingPolicies    ChangeCount               `json:"routing_policies"`
+	Settings           ChangeCount               `json:"settings"`
+	InternalErrorRules ChangeCount               `json:"internal_error_rules"`
+}
+
+type ClientAPIKeyPolicyChange struct {
+	From clientaccess.Mode `json:"from"`
+	To   clientaccess.Mode `json:"to"`
 }
 
 // ChangeCount represents preview counts for imported records.
@@ -135,13 +196,15 @@ type ImportResult struct {
 
 // ImportedCounts represents the counts of successfully imported items.
 type ImportedCounts struct {
-	CodexState         AppliedCount `json:"codex_state"`
-	Providers          AppliedCount `json:"providers"`
-	CredentialSessions AppliedCount `json:"credential_sessions"`
-	Groups             AppliedCount `json:"groups"`
-	RoutingPolicies    AppliedCount `json:"routing_policies"`
-	Settings           AppliedCount `json:"settings"`
-	InternalErrorRules AppliedCount `json:"internal_error_rules"`
+	ClientAPIKeys      AppliedCount              `json:"client_api_keys"`
+	ClientAPIKeyPolicy *ClientAPIKeyPolicyChange `json:"client_api_key_policy,omitempty"`
+	CodexState         AppliedCount              `json:"codex_state"`
+	Providers          AppliedCount              `json:"providers"`
+	CredentialSessions AppliedCount              `json:"credential_sessions"`
+	Groups             AppliedCount              `json:"groups"`
+	RoutingPolicies    AppliedCount              `json:"routing_policies"`
+	Settings           AppliedCount              `json:"settings"`
+	InternalErrorRules AppliedCount              `json:"internal_error_rules"`
 }
 
 // AppliedCount represents applied snapshot deltas after import.

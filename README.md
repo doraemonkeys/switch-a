@@ -80,6 +80,10 @@ Then:
 
 The default proxy address is `http://localhost:28080`. Runtime data is stored in `data.db` by default.
 
+Client access defaults to **Allow any key**, including requests without a key. To restrict access, open **Client API Keys**, add an existing key or generate one, configure it in your client, then select **Configured keys only**. Keys can be revealed, copied, renamed, and deleted. Changes affect new HTTP requests and WebSocket connections; established streams stay open. These keys are separate from upstream credentials and the admin token.
+
+Full configuration backups include client keys and their access policy. Full import replaces them when the backup contains `client_api_keys`; backups without that field, settings-only imports, and selected imports preserve local client access.
+
 To build a reusable binary after the frontend has been built:
 
 ```sh
@@ -106,7 +110,7 @@ Most routing and reliability settings are managed in the admin UI and persisted 
 
 ## Security
 
-> **Do not expose Switch-A directly to the public internet.** Both servers listen on all network interfaces by default. The admin token protects the admin API, but proxy routes currently have no client authentication.
+> **Do not expose Switch-A directly to the public internet.** Both servers listen on all network interfaces by default. The admin token protects the admin API. Proxy access remains permissive unless you enable **Configured keys only** in **Client API Keys**.
 
 For remote access, place Switch-A behind a private network or an authenticated reverse proxy with TLS. Keep `config.yaml`, the SQLite database, the Codex keyring, and exported configurations private because they contain credentials or persistent-state secrets.
 

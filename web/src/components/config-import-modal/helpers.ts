@@ -1,3 +1,4 @@
+import { parseClientAPIKeysState } from "@/api/client-api-keys/types";
 import type {
   ExportedConfig,
   ImportConfigRequest,
@@ -69,6 +70,9 @@ export function hasVisibleChanges(
     return false;
   }
 
+  const policy = preview.changes.client_api_key_policy;
+  if (mode === "full" && policy && policy.from !== policy.to) return true;
+
   return getVisibleSummaryKeys(mode).some((key) => {
     const change = preview.changes[key];
     if (!change) return false;
@@ -120,6 +124,13 @@ export function buildImportRequest(
     ...(parsedConfig.codex_state === undefined
       ? {}
       : { codex_state: parsedConfig.codex_state }),
+    ...(scope.mode === "full" && parsedConfig.client_api_keys != null
+      ? {
+          client_api_keys: parseClientAPIKeysState(
+            parsedConfig.client_api_keys,
+          ),
+        }
+      : {}),
     import_scope: scope,
     providers: parsedConfig.providers,
     credential_sessions: parsedConfig.credential_sessions,

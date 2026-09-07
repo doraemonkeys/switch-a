@@ -71,6 +71,7 @@ An **AI API Gateway** that proxies HTTP and WebSocket traffic to multiple AI pro
 - **Codex state ownership** (`internal/codex/continuity/`): Binds conversation/state evidence to client and upstream protocol scope; Provider ID is only a route hint. Ownership is independent of Sticky.
 - **Conversation recovery** (`internal/model/conversation_recovery_policy.go`, `internal/codex/http/`, `internal/codex/websocket/`): `conversation_recovery_policy` defaults to `preserve_conversation` (honor verified owner). `switch_account_preserve_conversation` permits eligible account switching while preserving original client state and its source ownership. Pre-visible attempts may be replaced; visible WebSocket failures requiring recovery use client reconnect. Routing and failover constraints still apply.
 - **Provider / CredentialSession / Authority** (`internal/codex/credentialsession/`, `internal/codex/identity/`): Provider defines a route target, CredentialSession owns credentials and authentication lifecycle, and Authority identifies the upstream ownership boundary. Switching Providers need not change accounts.
+- **Client API Key access** (`internal/clientaccess/`): Independent downstream key registry and access policy. Default `permissive` admits arbitrary or missing keys; `restricted` admits configured keys before HTTP/WS dispatch. Policy changes affect new requests/connections, preserving established streams. Full config transfer replaces the optional `client_api_keys` aggregate atomically; omitted aggregates and scoped imports preserve it.
 - **Downstream client identity** (`internal/codex/clientidentity/`): Resolves entry API Keys to a persistent client and legacy scope aliases shared by disguise mappings, continuity and sticky routing. Explicit Key binding preserves identity; conflicting established ownership is rejected.
 - **Login device & client profile** (`internal/codex/clientdisguise/`): Each credential session has an independent device/generation; shared Providers reuse it. Same-account refresh/reauthentication preserves it, account changes archive it. Tuple-specific immutable revisions follow a designated reference's version/capture watermark or a pinned revision; unspecified sampled fields remain unchanged. Transport samples apply only supported, explicitly recorded settings.
 - **Disguise operation** (`internal/codex/disguiseruntime/`, `internal/codex/clientdisguise/wire/`): Provider policy/profile snapshots freeze per HTTP request or downstream WS connection. Selection evaluates original platform facts; only the final send target commits a binding. Conversion derives each transmission from original input and restores known response fields. Conversion faults terminate the operation with diagnostics and no upstream health penalty or retry bypass.
@@ -95,6 +96,7 @@ switch-a/
 │   │   ├── clientdisguise/    # Login devices, profiles, learning and wire conversion
 │   │   ├── disguiseruntime/   # Frozen operation proposals and final-target commits
 │   │   └── credentialsession/ # Credential session store & lifecycle
+│   ├── clientaccess/          # Downstream API Key registry, policy and ingress admission
 │   ├── config/                # YAML/env config loading
 │   ├── defaults/              # Global default constants
 │   ├── errorrule/             # Semantic error matching rules & retry ledger
@@ -201,6 +203,7 @@ Mounted under `/admin/` (React Router `basename="/admin"`):
 | Monitor | `/monitor` (`/admin/monitor`) | Real-time request streams, latency, and active connections |
 | Providers | `/providers` (`/admin/providers`) | Provider management, health status, import/export, endpoint mappings |
 | Credentials | `/credentials` (`/admin/credentials`) | Credential sessions (ChatGPT OAuth & API Key), token state, quota windows |
+| Client API Keys | `/api-keys` (`/admin/api-keys`) | Downstream access policy, existing/generated keys, reveal/copy and lifecycle management |
 | Client Disguise | `/client-disguise` (`/admin/client-disguise`) | Login devices, profile versions/reference sources, pinned/automatic mode, transport samples and replacement-Key bindings |
 | Groups | `/groups` (`/admin/groups`) | Provider grouping and failover strategy config |
 | Routing | `/routing` (`/admin/routing`) | Model- and vendor-based intelligent routing policies |

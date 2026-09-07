@@ -66,6 +66,9 @@ function createMockApiClient(): ApiClient {
         ],
       }),
     },
+    clientApiKeys: {
+      get: vi.fn().mockResolvedValue({ mode: "permissive", keys: [] }),
+    },
     providers: {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
@@ -228,6 +231,16 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: /Dashboard/i }),
     ).toBeInTheDocument();
+  });
+
+  it("renders client API keys as an authenticated route", async () => {
+    render(<TestApp initialPath="/api-keys" />);
+    expect(
+      await screen.findByRole("heading", { name: "Client API Keys" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("radio", { name: /Allow any key/ }),
+    ).toBeChecked();
   });
 
   it("should render all navigation links", async () => {

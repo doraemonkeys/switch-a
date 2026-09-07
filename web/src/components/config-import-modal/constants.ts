@@ -12,6 +12,7 @@ export const IMPORT_SUMMARY_SECTIONS: Record<
   { label: string }
 > = {
   codex_state: { label: "身份、档案与对话连续性快照" },
+  client_api_keys: { label: "Client API Keys" },
   providers: { label: "Providers" },
   credential_sessions: { label: "Credential Sessions" },
   groups: { label: "Groups" },
@@ -25,6 +26,7 @@ export const IMPORT_SUMMARY_KEYS_BY_MODE: Record<
   SummarySectionKey[]
 > = {
   full: [
+    "client_api_keys",
     "codex_state",
     "providers",
     "credential_sessions",

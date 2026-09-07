@@ -281,12 +281,12 @@ function useImportFlowHandlers(
 
     setError(null);
 
-    const request = buildImportRequest(parsedConfig, currentScope);
     const requestVersion = previewRequestVersionRef.current + 1;
     previewRequestVersionRef.current = requestVersion;
     setPreviewing(true);
 
     try {
+      const request = buildImportRequest(parsedConfig, currentScope);
       const previewResult = await onPreview(request);
       if (previewRequestVersionRef.current !== requestVersion) {
         return;

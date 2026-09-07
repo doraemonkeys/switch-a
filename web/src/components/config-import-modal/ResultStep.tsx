@@ -2,6 +2,7 @@ import type { ImportMode, ImportResult } from "../../api/types";
 import { IMPORT_SUMMARY_SECTIONS } from "./constants";
 import { getVisibleSummaryKeys } from "./helpers";
 import { ReauthenticationNotice } from "./ReauthenticationNotice";
+import { ClientAccessNotice } from "./ClientAccessNotice";
 const CheckCircleIcon = () => (
   <svg className="w-16 h-16 text-success" fill="none" viewBox="0 0 24 24">
     <path
@@ -86,6 +87,11 @@ export function ResultStep({
         })}
       </div>
 
+      <ClientAccessNotice
+        policy={
+          mode === "full" ? result.applied.client_api_key_policy : undefined
+        }
+      />
       <ReauthenticationNotice
         requirements={reauthenticationRequirements}
         imported
