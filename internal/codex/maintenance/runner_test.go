@@ -47,23 +47,31 @@ type fakeMaintenanceTicker struct {
 func (t *fakeMaintenanceTicker) C() <-chan time.Time { return t.ticks }
 func (t *fakeMaintenanceTicker) Stop()               { t.once.Do(func() { close(t.stopped) }) }
 
+const maintenanceTestTimeout = 2 * time.Second
+
 type fakeTickerFactory struct {
-	mu       sync.Mutex
-	ticker   Ticker
-	interval Interval
+	ticker  Ticker
+	created chan Interval
+}
+
+func newFakeTickerFactory(ticker Ticker) *fakeTickerFactory {
+	return &fakeTickerFactory{ticker: ticker, created: make(chan Interval, 1)}
 }
 
 func (f *fakeTickerFactory) NewTicker(interval Interval) Ticker {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.interval = interval
+	f.created <- interval
 	return f.ticker
 }
 
-func (f *fakeTickerFactory) createdInterval() Interval {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.interval
+func (f *fakeTickerFactory) awaitCreatedInterval(t *testing.T) Interval {
+	t.Helper()
+	select {
+	case interval := <-f.created:
+		return interval
+	case <-time.After(maintenanceTestTimeout):
+		t.Fatal("timed out waiting for maintenance ticker creation")
+		return Interval{}
+	}
 }
 
 type sequenceIDs struct {
@@ -153,7 +161,7 @@ func (c *fakeCookieCleaner) Cleanup(_ context.Context, operationID providercooki
 func TestRunnerRunsInitialPeriodicAndStopJoinsTicker(t *testing.T) {
 	clock := &fakeMaintenanceClock{now: time.Date(2026, 8, 27, 1, 0, 0, 0, time.FixedZone("local", 8*60*60))}
 	ticker := &fakeMaintenanceTicker{ticks: make(chan time.Time, 1), stopped: make(chan struct{})}
-	factory := &fakeTickerFactory{ticker: ticker}
+	factory := newFakeTickerFactory(ticker)
 	interval, _ := NewInterval(15 * time.Minute)
 	account, _ := credentialsession.AccountSubject("account-a")
 	catalog := &fakeCatalog{snapshots: []CatalogSnapshot{
@@ -171,10 +179,7 @@ func TestRunnerRunsInitialPeriodicAndStopJoinsTicker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := runner.Start(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	owner := startTestRunner(t, runner, context.Background())
 	initial := awaitMaintenanceEvent(t, events)
 	if initial.Trigger != TriggerInitial || initial.SweepID != "sweep-1" || initial.Duration != 2*time.Second || initial.ReachableAuthorities != 1 {
 		t.Fatalf("initial event = %+v", initial)
@@ -182,7 +187,8 @@ func TestRunnerRunsInitialPeriodicAndStopJoinsTicker(t *testing.T) {
 	if initial.Continuity.Deleted != 3 || initial.Cookies.OrphanAuthorities != 6 || initial.Failed() {
 		t.Fatalf("initial result = %+v", initial)
 	}
-	if got := factory.createdInterval().Duration(); got != 15*time.Minute {
+	// The initial event precedes ticker creation, so it cannot synchronize this assertion.
+	if got := factory.awaitCreatedInterval(t).Duration(); got != interval.Duration() {
 		t.Fatalf("ticker interval = %v", got)
 	}
 	ticker.ticks <- clock.Now()
@@ -226,12 +232,9 @@ func TestRunnerSkipsWholeCookieReachabilityOnCatalogFailures(t *testing.T) {
 			cookies := &fakeCookieCleaner{}
 			events := make(chan Event, 1)
 			runner := newTestRunner(t, clock, test.catalog, continuity, cookies, &sequenceIDs{values: []string{test.id}}, events)
-			ctx, cancel := context.WithCancel(context.Background())
-			done := make(chan error, 1)
-			go func() { done <- runner.Run(ctx) }()
+			owner := startTestRunner(t, runner, context.Background())
 			event := awaitMaintenanceEvent(t, events)
-			cancel()
-			if err := <-done; err != nil {
+			if err := owner.Stop(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if event.CookieSkipReason != test.wantReason || event.CookieError == nil || !event.Failed() {
@@ -255,12 +258,11 @@ func TestRunnerIsolatesCleanupErrorsAndReportsCookieFailure(t *testing.T) {
 	cookies := &fakeCookieCleaner{err: cookieErr}
 	events := make(chan Event, 1)
 	runner := newTestRunner(t, clock, &fakeCatalog{}, continuity, cookies, &sequenceIDs{values: []string{"sweep-errors"}}, events)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- runner.Run(ctx) }()
+	owner := startTestRunner(t, runner, context.Background())
 	event := awaitMaintenanceEvent(t, events)
-	cancel()
-	_ = <-done
+	if err := owner.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if !errors.Is(event.ContinuityError, continuityErr) || !errors.Is(event.CookieError, cookieErr) || !event.Failed() {
 		t.Fatalf("event = %+v", event)
 	}
@@ -278,10 +280,7 @@ func TestOwnerStopCancelsInFlightSweepAndHonorsDeadline(t *testing.T) {
 	}
 	events := make(chan Event, 1)
 	runner := newTestRunner(t, &fakeMaintenanceClock{now: time.Now()}, &fakeCatalog{}, continuity, &fakeCookieCleaner{}, &sequenceIDs{}, events)
-	owner, err := runner.Start(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	owner := startTestRunner(t, runner, context.Background())
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -412,7 +411,7 @@ func TestRunnerConfigurationBoundaries(t *testing.T) {
 func TestRunnerRejectsNilTicker(t *testing.T) {
 	interval, _ := NewInterval(time.Minute)
 	runner, err := NewRunner(Config{
-		Interval: interval, Clock: &fakeMaintenanceClock{now: time.Now()}, Tickers: &fakeTickerFactory{},
+		Interval: interval, Clock: &fakeMaintenanceClock{now: time.Now()}, Tickers: newFakeTickerFactory(nil),
 		Catalog: &fakeCatalog{}, Continuity: &fakeContinuityCleaner{}, Cookies: &fakeCookieCleaner{},
 	})
 	if err != nil {
@@ -432,7 +431,7 @@ func TestPeriodicSweepRetiresQuietContinuityLegacyKeyReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sqlDatabase.Close()
+	t.Cleanup(func() { _ = sqlDatabase.Close() })
 	ctx := context.Background()
 	if err := continuitysqlite.Migrate(ctx, database); err != nil {
 		t.Fatal(err)
@@ -495,16 +494,13 @@ func TestPeriodicSweepRetiresQuietContinuityLegacyKeyReference(t *testing.T) {
 	events := make(chan Event, 2)
 	interval, _ := NewInterval(time.Minute)
 	runner, err := NewRunner(Config{
-		Interval: interval, Clock: clock, Tickers: &fakeTickerFactory{ticker: ticker}, IDs: &sequenceIDs{values: []string{"legacy-1", "legacy-2"}},
+		Interval: interval, Clock: clock, Tickers: newFakeTickerFactory(ticker), IDs: &sequenceIDs{values: []string{"legacy-1", "legacy-2"}},
 		Catalog: &fakeCatalog{}, Continuity: service, Cookies: &fakeCookieCleaner{}, Observer: ObserverFunc(func(event Event) { events <- event }),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := runner.Start(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	owner := startTestRunner(t, runner, ctx)
 	initial := awaitMaintenanceEvent(t, events)
 	if initial.Continuity.Tombstoned != 1 || initial.Continuity.Deleted != 0 {
 		t.Fatalf("initial cleanup = %+v", initial.Continuity)
@@ -523,12 +519,30 @@ func TestPeriodicSweepRetiresQuietContinuityLegacyKeyReference(t *testing.T) {
 	}
 }
 
+// Cleanup must join the runner even when an assertion aborts the test; callers
+// register storage cleanup first so it runs after the scheduling goroutine stops.
+func startTestRunner(t *testing.T, runner *Runner, parent context.Context) *Owner {
+	t.Helper()
+	owner, err := runner.Start(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), maintenanceTestTimeout)
+		defer cancel()
+		if err := owner.Stop(ctx); err != nil {
+			t.Errorf("stop maintenance runner during cleanup: %v", err)
+		}
+	})
+	return owner
+}
+
 func newTestRunner(t *testing.T, clock Clock, catalog Catalog, continuity ContinuityCleaner, cookies CookieCleaner, ids IDSource, events chan<- Event) *Runner {
 	t.Helper()
 	interval, _ := NewInterval(time.Hour)
 	ticker := &fakeMaintenanceTicker{ticks: make(chan time.Time), stopped: make(chan struct{})}
 	runner, err := NewRunner(Config{
-		Interval: interval, Clock: clock, Tickers: &fakeTickerFactory{ticker: ticker}, IDs: ids,
+		Interval: interval, Clock: clock, Tickers: newFakeTickerFactory(ticker), IDs: ids,
 		Catalog: catalog, Continuity: continuity, Cookies: cookies, Observer: ObserverFunc(func(event Event) { events <- event }),
 	})
 	if err != nil {
@@ -542,7 +556,7 @@ func awaitMaintenanceEvent(t *testing.T, events <-chan Event) Event {
 	select {
 	case event := <-events:
 		return event
-	case <-time.After(2 * time.Second):
+	case <-time.After(maintenanceTestTimeout):
 		t.Fatal("timed out waiting for maintenance event")
 		return Event{}
 	}
