@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/admin"
@@ -27,12 +23,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-)
-
-const (
-	adminServerReadyTimeout = 5 * time.Second
-	adminServerPollInterval = 10 * time.Millisecond
-	adminRequestTimeout     = time.Second
 )
 
 func TestComposeApplicationRuntimeBuildsAndOwnsOneProcessGraph(t *testing.T) {
@@ -159,7 +149,7 @@ func TestComposeApplicationRuntimePreservesAdminCredentialCapabilities(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.captures.Close() })
-	baseURL := startComposedAdminServer(t, runtime.adminServer)
+	client := startComposedHTTPServer(t, runtime.adminServer)
 	const configKey = defaults.ConfigKeyWebSocketProbeClientModel
 	if err := sqlStore.SetConfig(context.Background(), configKey, "true"); err != nil {
 		t.Fatal(err)
@@ -167,7 +157,7 @@ func TestComposeApplicationRuntimePreservesAdminCredentialCapabilities(t *testin
 	if value, err := cachedStore.GetConfig(context.Background(), configKey); err != nil || value != "true" {
 		t.Fatalf("primed cached config = (%q, %v)", value, err)
 	}
-	response := performComposedAdminRequest(t, http.MethodPut, baseURL+"/admin/api/config", cfg.AdminToken, map[string]string{
+	response := client.request(t, http.MethodPut, "/admin/api/config", cfg.AdminToken, map[string]string{
 		configKey: "false",
 	})
 	if response.status != http.StatusOK {
@@ -177,13 +167,13 @@ func TestComposeApplicationRuntimePreservesAdminCredentialCapabilities(t *testin
 		t.Fatalf("cached config after admin update = (%q, %v)", value, err)
 	}
 
-	response = performComposedAdminRequest(t, http.MethodGet, baseURL+"/admin/api/credential-sessions", cfg.AdminToken, nil)
+	response = client.request(t, http.MethodGet, "/admin/api/credential-sessions", cfg.AdminToken, nil)
 	if response.status != http.StatusOK {
 		t.Fatalf("initial credential session list = %d %s", response.status, response.body)
 	}
 
 	const sessionID = "composition-session"
-	response = performComposedAdminRequest(t, http.MethodPost, baseURL+"/admin/api/providers", cfg.AdminToken, admin.CreateProviderRequest{
+	response = client.request(t, http.MethodPost, "/admin/api/providers", cfg.AdminToken, admin.CreateProviderRequest{
 		ID: "composition-provider", Name: "Composition Provider", AuthMode: "bearer", Vendor: "openai",
 		APITypes: []admin.APITypeInput{{
 			APIType: "claude", BaseURL: "https://api.example.com", CredentialSessionID: sessionID,
@@ -196,7 +186,7 @@ func TestComposeApplicationRuntimePreservesAdminCredentialCapabilities(t *testin
 		t.Fatalf("provider materialization = %d %s", response.status, response.body)
 	}
 
-	response = performComposedAdminRequest(t, http.MethodGet, baseURL+"/admin/api/credential-sessions", cfg.AdminToken, nil)
+	response = client.request(t, http.MethodGet, "/admin/api/credential-sessions", cfg.AdminToken, nil)
 	if response.status != http.StatusOK {
 		t.Fatalf("credential session list = %d %s", response.status, response.body)
 	}
@@ -208,7 +198,7 @@ func TestComposeApplicationRuntimePreservesAdminCredentialCapabilities(t *testin
 		t.Fatalf("credential sessions = %#v", sessions)
 	}
 
-	response = performComposedAdminRequest(t, http.MethodPatch, baseURL+"/admin/api/credential-sessions/"+sessionID+"/name", cfg.AdminToken, admin.RenameCredentialSessionRequest{
+	response = client.request(t, http.MethodPatch, "/admin/api/credential-sessions/"+sessionID+"/name", cfg.AdminToken, admin.RenameCredentialSessionRequest{
 		ExpectedVersion: sessions[0].Version,
 		Name:            "Renamed Composition Key",
 	})
@@ -222,87 +212,6 @@ func TestComposeApplicationRuntimePreservesAdminCredentialCapabilities(t *testin
 	if renamed.Name != "Renamed Composition Key" || len(renamed.RouteReferences) != 1 {
 		t.Fatalf("renamed credential session = %#v", renamed)
 	}
-}
-
-type composedAdminServer interface {
-	Start() error
-	Shutdown(context.Context) error
-	Addr() string
-}
-
-type composedAdminResponse struct {
-	status int
-	body   []byte
-}
-
-func startComposedAdminServer(t *testing.T, server composedAdminServer) string {
-	t.Helper()
-	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start() }()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), adminServerReadyTimeout)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
-			t.Errorf("shutdown composed admin server: %v", err)
-		}
-		select {
-		case err := <-errCh:
-			if err != nil {
-				t.Errorf("composed admin server stopped: %v", err)
-			}
-		case <-time.After(adminServerReadyTimeout):
-			t.Error("composed admin server did not stop")
-		}
-	})
-
-	client := &http.Client{Timeout: adminRequestTimeout}
-	deadline := time.Now().Add(adminServerReadyTimeout)
-	for time.Now().Before(deadline) {
-		_, port, err := net.SplitHostPort(server.Addr())
-		if err == nil && port != "0" {
-			baseURL := "http://127.0.0.1:" + port
-			response, requestErr := client.Get(baseURL + "/health")
-			if requestErr == nil {
-				_ = response.Body.Close()
-				if response.StatusCode == http.StatusOK {
-					return baseURL
-				}
-			}
-		}
-		time.Sleep(adminServerPollInterval)
-	}
-	t.Fatal("composed admin server did not become ready")
-	return ""
-}
-
-func performComposedAdminRequest(t *testing.T, method, target, token string, payload any) composedAdminResponse {
-	t.Helper()
-	var body io.Reader
-	if payload != nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequestWithContext(context.Background(), method, target, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	if payload != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	response, err := (&http.Client{Timeout: adminRequestTimeout}).Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	responseBody, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return composedAdminResponse{status: response.StatusCode, body: responseBody}
 }
 
 func TestNewApplicationAnalyticsRejectsUnopenableDatabase(t *testing.T) {

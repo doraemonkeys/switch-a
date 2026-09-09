@@ -35,22 +35,22 @@ func TestComposedClientAccessSharesAdminAndProxyPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.captures.Close() })
-	adminURL := startComposedAdminServer(t, runtime.adminServer)
-	proxyURL := startComposedAdminServer(t, runtime.proxyServer)
+	adminClient := startComposedHTTPServer(t, runtime.adminServer)
+	proxyClient := startComposedHTTPServer(t, runtime.proxyServer)
 	checkProxy := func(token string, status int) {
 		t.Helper()
-		response := performComposedAdminRequest(t, http.MethodPost, proxyURL+"/v1/messages", token, map[string]any{"model": "test"})
+		response := proxyClient.request(t, http.MethodPost, "/v1/messages", token, map[string]any{"model": "test"})
 		if response.status != status {
 			t.Fatalf("proxy status %d: %s", response.status, response.body)
 		}
 	}
 	// A fresh installation still lets arbitrary keys reach provider selection.
 	checkProxy("arbitrary", http.StatusServiceUnavailable)
-	response := performComposedAdminRequest(t, http.MethodPost, adminURL+"/admin/api/client-api-keys", cfg.AdminToken, map[string]string{"name": "Client", "key": "managed-client"})
+	response := adminClient.request(t, http.MethodPost, "/admin/api/client-api-keys", cfg.AdminToken, map[string]string{"name": "Client", "key": "managed-client"})
 	if response.status != http.StatusCreated {
 		t.Fatalf("create %d: %s", response.status, response.body)
 	}
-	response = performComposedAdminRequest(t, http.MethodPut, adminURL+"/admin/api/client-api-keys/policy", cfg.AdminToken, map[string]string{"mode": "restricted"})
+	response = adminClient.request(t, http.MethodPut, "/admin/api/client-api-keys/policy", cfg.AdminToken, map[string]string{"mode": "restricted"})
 	if response.status != http.StatusOK {
 		t.Fatalf("policy %d: %s", response.status, response.body)
 	}
