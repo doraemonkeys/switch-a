@@ -415,6 +415,12 @@ function ResponseInfo({ log }: { log: RequestLog }) {
 function ReasoningInfo({ log }: { log: RequestLog }) {
   return (
     <DetailSection title="Requested Reasoning">
+      {log.is_websocket && (
+        <DetailRow
+          label="Scope"
+          value="Most recent client request in this connection"
+        />
+      )}
       <DetailRow
         label="Observation"
         value={formatReasoningObservation(log.reasoning_observation_state)}

@@ -527,8 +527,7 @@ func (o *WebSocketSessionOrchestrator) selectionProbeFrameDecision(
 ) (webSocketPreWriteDecision, bool) {
 	decision := replayableClientFrameDecision()
 	if o.codexOperation != nil {
-		frame := o.codexOperation.ClassifyClientFrame(ctx, messageType == websocket.MessageText, data)
-		o.logCodexClientFramePermit(frame)
+		frame := o.classifyClientFrame(ctx, messageType, data)
 		decision = o.codexClientFrameDecision(ctx, frame, false, messageType, data)
 		if decision.Action != webSocketPreWriteActionReject {
 			applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)

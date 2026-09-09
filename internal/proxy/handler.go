@@ -211,6 +211,10 @@ func (sessions webSocketActiveSessions) UpdateModel(requestID, modelName string)
 	sessions.registry.UpdateModel(requestID, modelName)
 }
 
+func (sessions webSocketActiveSessions) UpdateReasoning(requestID string, reasoning model.RequestedReasoningObservation) {
+	sessions.registry.UpdateObservation(requestID, "", reasoning)
+}
+
 func (sessions webSocketActiveSessions) MarkDataReceived(requestID string) {
 	sessions.registry.MarkDataReceived(requestID)
 }

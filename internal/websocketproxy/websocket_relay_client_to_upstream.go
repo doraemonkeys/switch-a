@@ -207,6 +207,19 @@ func (f *WebSocketForwarder) startClientToUpstreamRelay(
 	})
 }
 
+func (o *WebSocketSessionOrchestrator) takeInitialClientReadChannel() <-chan webSocketInitialReadResult {
+	initialClientReadCh := o.initialClientReadCh
+	o.initialClientReadCh = nil
+	return initialClientReadCh
+}
+
+func (o *WebSocketSessionOrchestrator) sessionClientReadHandoff() *webSocketClientReadHandoff {
+	if o.clientReadHandoff == nil {
+		o.clientReadHandoff = newWebSocketClientReadHandoff(o.takeInitialClientReadChannel())
+	}
+	return o.clientReadHandoff
+}
+
 // webSocketClientReadHandoff keeps the single downstream reader owned by the
 // whole session rather than by one provider attempt. coder/websocket closes a
 // connection when a Read context is canceled, so an attempt-scoped Read would

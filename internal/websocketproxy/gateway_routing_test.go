@@ -62,9 +62,10 @@ func (*routingTestActiveSessions) NewLiveTraffic() LiveTraffic { return nil }
 func (*routingTestActiveSessions) Register(ActiveSession, <-chan struct{}, LiveTraffic) bool {
 	return true
 }
-func (*routingTestActiveSessions) Unregister(string) bool     { return true }
-func (*routingTestActiveSessions) UpdateModel(string, string) {}
-func (*routingTestActiveSessions) MarkDataReceived(string)    {}
+func (*routingTestActiveSessions) Unregister(string) bool                                      { return true }
+func (*routingTestActiveSessions) UpdateModel(string, string)                                  {}
+func (*routingTestActiveSessions) UpdateReasoning(string, model.RequestedReasoningObservation) {}
+func (*routingTestActiveSessions) MarkDataReceived(string)                                     {}
 func (sessions *routingTestActiveSessions) FindActiveLeaseForRequest(*model.SelectRequest) (ProviderLease, bool) {
 	return sessions.lease, sessions.found
 }

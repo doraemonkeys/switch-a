@@ -12,6 +12,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	wsdisguise "github.com/doraemonkeys/switch-a/internal/websocketproxy/disguise"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy/requestobservation"
 	wsretry "github.com/doraemonkeys/switch-a/internal/websocketproxy/retry"
 
 	"github.com/coder/websocket"
@@ -111,6 +112,7 @@ type WebSocketSessionOrchestrator struct {
 	codexOperation      *codexws.Operation
 	probeBudget         webSocketProbeBudget
 	probeNow            func() time.Time
+	requestObservation  *requestobservation.Session
 }
 
 func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrchestratorConfig) *WebSocketSessionOrchestrator {
@@ -149,6 +151,7 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		replayBuffer:              newPreVisibleClientMessageBuffer(preVisibleClientReplayBufferLimitBytes),
 		probeBudget:               defaultWebSocketProbeBudget(),
 		probeNow:                  time.Now,
+		requestObservation:        requestobservation.New(cfg.apiType == APITypeCodex),
 	}
 	orchestrator.replayBuffer.onTransition = orchestrator.logReplayTransition
 	orchestrator.logReplayTransition(orchestrator.replayBuffer.Status())
@@ -172,19 +175,6 @@ func (o *WebSocketSessionOrchestrator) newAttemptObserver() WebSocketMessageObse
 		return nil
 	}
 	return o.newObserver(o.info.Model)
-}
-
-func (o *WebSocketSessionOrchestrator) takeInitialClientReadChannel() <-chan webSocketInitialReadResult {
-	initialClientReadCh := o.initialClientReadCh
-	o.initialClientReadCh = nil
-	return initialClientReadCh
-}
-
-func (o *WebSocketSessionOrchestrator) sessionClientReadHandoff() *webSocketClientReadHandoff {
-	if o.clientReadHandoff == nil {
-		o.clientReadHandoff = newWebSocketClientReadHandoff(o.takeInitialClientReadChannel())
-	}
-	return o.clientReadHandoff
 }
 
 func (o *WebSocketSessionOrchestrator) learnResolvedModel(modelName string) {
@@ -570,7 +560,7 @@ func (o *WebSocketSessionOrchestrator) trackCurrentAttempt(selection ProviderSel
 		RequestID: o.requestID, Lease: selection.Lease, Model: o.info.Model,
 		APIType: o.apiType, UserID: o.info.UserID, ClientIP: o.info.ClientIP,
 		StickyMode: o.selectReq.StickyMode, ContinuityKey: selector.BuildContinuityKey(o.selectReq),
-		StartedAt: o.startTime, Reasoning: o.info.Reasoning,
+		StartedAt: o.startTime, Reasoning: o.requestObservation.Snapshot().Reasoning,
 	}, o.requestDone, o.tracker)
 	o.activeRegistered = registered
 	if !registered {

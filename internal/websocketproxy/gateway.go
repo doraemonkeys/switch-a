@@ -124,6 +124,7 @@ type ActiveSessions interface {
 	Register(ActiveSession, <-chan struct{}, LiveTraffic) bool
 	Unregister(string) bool
 	UpdateModel(string, string)
+	UpdateReasoning(string, model.RequestedReasoningObservation)
 	MarkDataReceived(string)
 	FindActiveLeaseForRequest(*model.SelectRequest) (ProviderLease, bool)
 }
@@ -246,7 +247,6 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}()
 	}
 
-	reasoningState := model.ReasoningObservationUnsupported
 	info := RequestInfo{
 		ClientIP:  extractClientIP(r, cfg.TrustProxy),
 		UserID:    extractUserID(r, cfg.UserHeader),
@@ -256,7 +256,6 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		Method:    r.Method,
 		UserAgent: extractUserAgent(r),
 		RequestID: extractRequestIDHeader(r),
-		Reasoning: model.RequestedReasoningObservation{State: &reasoningState},
 	}
 
 	selectReq := &model.SelectRequest{
@@ -321,6 +320,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	info.Reasoning = orchestrator.requestObservation.Snapshot().Reasoning
 	if session.ResolvedModel != "" {
 		info.Model = session.ResolvedModel
 	}

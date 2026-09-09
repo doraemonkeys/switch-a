@@ -406,10 +406,28 @@ func (o *WebSocketSessionOrchestrator) codexClientPreWrite(
 		return nil
 	}
 	return func(write webSocketPreWriteContext) webSocketPreWriteDecision {
-		frame := o.codexOperation.ClassifyClientFrame(ctx, write.MessageType == websocket.MessageText, write.Data)
-		o.logCodexClientFramePermit(frame)
+		frame := o.classifyClientFrame(ctx, write.MessageType, write.Data)
 		return o.codexClientFrameDecision(ctx, frame, true, write.MessageType, write.Data)
 	}
+}
+
+// Classification is the logical client admission boundary shared by bootstrap
+// and live relay. PrepareReplay reuses its permit without observing another turn.
+func (o *WebSocketSessionOrchestrator) classifyClientFrame(ctx context.Context, messageType websocket.MessageType, data []byte) *codexws.ClientFramePermit {
+	frame := o.codexOperation.ClassifyClientFrame(ctx, messageType == websocket.MessageText, data)
+	o.logCodexClientFramePermit(frame)
+	if frame.IsResponseCreate() && o.requestObservation != nil {
+		snapshot := o.requestObservation.ObserveResponseCreate(data)
+		if o.handler.activeSessions != nil {
+			o.handler.activeSessions.UpdateReasoning(o.requestID, snapshot.Reasoning)
+		}
+		o.handler.logger.Debug("websocket.request_reasoning_observed",
+			zap.String("operation_id", o.requestID),
+			zap.Uint64("client_request_index", snapshot.ClientRequestIndex),
+			zap.String("observation_state", string(*snapshot.Reasoning.State)),
+			zap.Any("reasoning_effort", snapshot.Reasoning.Effort))
+	}
+	return frame
 }
 
 func (o *WebSocketSessionOrchestrator) logCodexClientFramePermit(frame *codexws.ClientFramePermit) {

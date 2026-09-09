@@ -40,8 +40,9 @@ func (s *leaseLifecycleSessions) Unregister(requestID string) bool {
 	return session.Lease.Release()
 }
 
-func (*leaseLifecycleSessions) UpdateModel(string, string) {}
-func (*leaseLifecycleSessions) MarkDataReceived(string)    {}
+func (*leaseLifecycleSessions) UpdateModel(string, string)                                  {}
+func (*leaseLifecycleSessions) UpdateReasoning(string, model.RequestedReasoningObservation) {}
+func (*leaseLifecycleSessions) MarkDataReceived(string)                                     {}
 
 func (s *leaseLifecycleSessions) FindActiveLeaseForRequest(*model.SelectRequest) (ProviderLease, bool) {
 	for _, session := range s.registered {

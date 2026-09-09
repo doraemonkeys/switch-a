@@ -15,9 +15,10 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
-const retryTestFrame = `{ "type":"response.create", "model":"gpt-5", "previous_response_id":"opaque-prior" }`
+const retryTestFrame = `{ "type":"response.create", "model":"gpt-5", "previous_response_id":"opaque-prior", "reasoning":{"effort":"high"} }`
 const retryTestCompleted = `{"type":"response.completed","response":{"id":"retry-response","model":"gpt-5","status":"completed"}}`
 
 type retryTestWaiter func(context.Context, time.Duration) error
@@ -159,7 +160,7 @@ func TestWebSocketProviderRetryPreservesSettingsAndReplay(t *testing.T) {
 						if probe {
 							// An unowned previous_response_id is correctly rejected before
 							// provider selection under preserve_conversation.
-							frame = `{ "type":"response.create", "model":"gpt-5", "input":[] }`
+							frame = `{ "type":"response.create", "model":"gpt-5", "input":[], "reasoning":{"effort":"high"} }`
 						}
 						var calls atomic.Int32
 						frames := make(chan string, 2)
@@ -197,7 +198,8 @@ func TestWebSocketProviderRetryPreservesSettingsAndReplay(t *testing.T) {
 							store.routingPolicies = []model.RoutingPolicy{{Enabled: true, APIType: APITypeCodex, ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-"}}
 						}
 						selection := &accountRecoverySelector{providers: []model.Provider{p}}
-						gateway := newTestGateway(t, Config{Store: store, Selector: selection, Logger: zap.NewNop()})
+						core, traces := observer.New(zap.DebugLevel)
+						gateway := newTestGateway(t, Config{Store: store, Selector: selection, Logger: zap.New(core)})
 						selection.gateway = gateway
 						server, done := retryTestServer(t, gateway, RequestConfig{ConversationRecoveryPolicy: policy, GlobalAuthMode: "bearer", ProbeClientModel: probe, StickyMode: sticky, StickyTTL: time.Minute})
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -252,6 +254,14 @@ func TestWebSocketProviderRetryPreservesSettingsAndReplay(t *testing.T) {
 							t.Fatalf("selections=%d active=%d sticky=%v", len(selections), active, stickyWrites)
 						}
 						assertRetryTestAttempts(t, store, 2)
+						log := store.LastLog()
+						if log.State == nil || *log.State != model.ReasoningObservationCaptured || log.Effort == nil || *log.Effort != "high" {
+							t.Fatalf("requested reasoning lost during retry: %+v", log.RequestedReasoningObservation)
+						}
+						events := traces.FilterMessage("websocket.request_reasoning_observed").All()
+						if len(events) != 1 || events[0].ContextMap()["client_request_index"] != uint64(1) {
+							t.Fatalf("physical replay was counted as a new logical request: %+v", events)
+						}
 					})
 				}
 			}
