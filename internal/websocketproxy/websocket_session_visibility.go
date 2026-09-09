@@ -160,25 +160,8 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	readCtx, cancelRead := context.WithCancel(ctx)
 	defer cancelRead()
 	initialRead := startWebSocketInitialRead(readCtx, upstreamConn)
-	type replayDelivery struct {
-		bytes     int64
-		attempted bool
-		err       error
-	}
-	delivery, read := withWebSocketConcurrentRead(ctx, initialRead, "replay_upload",
-		func(uploadCtx context.Context) replayDelivery {
-			n, attempted, err := o.replayBufferedMessages(uploadCtx, upstreamConn, observer, captureOptions)
-			return replayDelivery{n, attempted, err}
-		})
+	delivery, initialRead := o.replayWithUpstreamRead(ctx, upstreamConn, initialRead, observer, captureOptions)
 	replayedBytes, replayed, replayErr := delivery.bytes, delivery.attempted, delivery.err
-	if read != nil {
-		initialRead = retainedWebSocketRead(*read)
-		if read.err != nil {
-			// Let the relay classify the original upstream read failure. The interrupted
-			// upload is still recorded separately by its physical-write capture.
-			replayErr = nil
-		}
-	}
 	if replayErr != nil {
 		o.handler.logger.Warn("websocket.replay_failed", zap.String("operation_id", o.requestID), zap.String("provider_id", provider.ID), zap.Error(replayErr))
 		attemptResult, outcome := o.newReplayFailureAttempt(
@@ -241,6 +224,35 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 		dialCaptureOutcome.CredentialEvidence = dialExchange.credentialEvidence
 	}
 	return attemptResult
+}
+
+type webSocketReplayDelivery struct {
+	bytes     int64
+	attempted bool
+	err       error
+}
+
+func (o *WebSocketSessionOrchestrator) replayWithUpstreamRead(
+	ctx context.Context,
+	upstreamConn *websocket.Conn,
+	initialRead <-chan webSocketInitialReadResult,
+	observer WebSocketMessageObserver,
+	captureOptions webSocketRelayOptions,
+) (webSocketReplayDelivery, <-chan webSocketInitialReadResult) {
+	delivery, read := withWebSocketConcurrentRead(ctx, initialRead, "replay_upload",
+		func(uploadCtx context.Context) webSocketReplayDelivery {
+			n, attempted, err := o.replayBufferedMessages(uploadCtx, upstreamConn, observer, captureOptions)
+			return webSocketReplayDelivery{bytes: n, attempted: attempted, err: err}
+		})
+	if read == nil {
+		return delivery, initialRead
+	}
+	if read.err != nil {
+		// Let the relay classify the original upstream read failure. The interrupted
+		// upload is still recorded separately by its physical-write capture.
+		delivery.err = nil
+	}
+	return delivery, retainedWebSocketRead(*read)
 }
 
 func (o *WebSocketSessionOrchestrator) prepareAcceptedSubprotocol(

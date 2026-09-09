@@ -113,6 +113,7 @@ switch-a/
 │   │   ├── h2ingress/         # TLS HTTP/2 boundary preserving undeclared trailers
 │   │   └── semantic/          # Streaming decoded model, reasoning and Codex evidence
 │   ├── responseanalysis/      # Multi-protocol streaming response & token analyzer
+│   ├── responsefacts/         # Shared protocol completion, response rounds & write outcomes
 │   ├── selector/              # Selection engine (root strategy, leases, sticky cache)
 │   ├── server/                # HTTP/WS server setup (proxy + admin)
 │   ├── store/                 # SQLite persistence (GORM) + CachedStore wrapper

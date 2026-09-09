@@ -140,23 +140,27 @@ func (a *Analyzer) Start(ctx context.Context, input StartInput) *PendingResponse
 	// deliberately holds the response without semantic inspection.
 	pendingInput.Flush = mediaSupported && mediaKind == framing.KindSSE
 
-	if input.Mode.Analyzes() {
-		contentEncoding := input.ContentEncoding
-		if contentEncoding == "" {
-			contentEncoding = input.Header.Get("Content-Encoding")
-		}
-		protocol, failure := a.registry.Resolve(input.APIType, contentType, contentEncoding)
-		if failure != "" {
-			pendingInput.InitialFailure = pending.BoundaryReason(failure)
-		} else {
-			pendingInput.NewDriver = func(source io.Reader, reserver pendingReserver) (pending.Driver[Observation], error) {
-				driver, err := newRuntimeDriver(protocol, source, reserver)
-				if driver != nil {
-					driver.observeCompletion = input.ObserveCompletion
-				}
-				return driver, err
-			}
-		}
-	}
+	pendingInput.NewDriver, pendingInput.InitialFailure = a.analysisDriver(input, contentType)
 	return pending.Start(ctx, config, pendingInput)
+}
+
+func (a *Analyzer) analysisDriver(input StartInput, contentType string) (pending.DriverFactory[Observation], pending.BoundaryReason) {
+	if !input.Mode.Analyzes() {
+		return nil, ""
+	}
+	contentEncoding := input.ContentEncoding
+	if contentEncoding == "" {
+		contentEncoding = input.Header.Get("Content-Encoding")
+	}
+	protocol, failure := a.registry.Resolve(input.APIType, contentType, contentEncoding)
+	if failure != "" {
+		return nil, pending.BoundaryReason(failure)
+	}
+	return func(source io.Reader, reserver pendingReserver) (pending.Driver[Observation], error) {
+		driver, err := newRuntimeDriver(protocol, source, reserver)
+		if driver != nil {
+			driver.observeCompletion = input.ObserveCompletion
+		}
+		return driver, err
+	}, ""
 }

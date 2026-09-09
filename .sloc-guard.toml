@@ -41,12 +41,13 @@ max_files = 50
 max_dirs = 20
 count_exclude = ["*_test.go", "*.test.*", "tmpclaude-*"]
 
-# Window resolution, exact-instant validation, token analytics, and downstream
-# client access are cohesive domains shared by independent delivery/storage layers.
+# Window resolution, exact-instant validation, token analytics, downstream client
+# access, and response facts are shared by independent delivery/storage layers.
 # Client access is separate from Codex identity, upstream credentials, and admin
-# authentication. Peer domains preserve these boundaries; this rule changes only
-# the direct-domain count and preserves every file and nested-folder limit.
+# authentication. Response facts keep protocol completion and write outcomes
+# independent of HTTP analysis and WebSocket lifecycle policy. This rule changes
+# only the direct-domain count, preserving every file and nested-folder limit.
 [[structure.rules]]
 scope = "./internal"
-max_dirs = 26
-reason = "analyticswindow, instant, tokenanalytics, and clientaccess are independent shared domains"
+max_dirs = 27
+reason = "analyticswindow, instant, tokenanalytics, clientaccess, and responsefacts are independent shared domains"

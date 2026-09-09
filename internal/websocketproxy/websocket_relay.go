@@ -21,7 +21,11 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 	options = options.withCaptureHooks()
 	// Every physical attempt owns its upstream socket, including exits before
 	// visibility. Preserving the downstream session must not preserve this socket.
-	defer upstreamConn.CloseNow()
+	defer func() {
+		// Cleanup can encounter an already-closed socket; the relay's terminal
+		// observation remains authoritative for the attempt outcome.
+		_ = upstreamConn.CloseNow()
+	}()
 	sessionCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	preserveClient := false
@@ -240,7 +244,6 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		}
 		_ = clientConn.Close(sanitizeWebSocketCloseCode(outcome.closeCode, outcome.err), closeMsg)
 	}
-	_ = upstreamConn.CloseNow()
 	return result
 
 }

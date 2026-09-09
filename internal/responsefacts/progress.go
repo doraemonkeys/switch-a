@@ -57,29 +57,7 @@ func (t *Tracker) Observe(fromUpstream bool, eventType, responseID, status strin
 	default:
 		return false
 	}
-	round := t.rounds[responseID]
-	if responseID == "" || round == 0 {
-		if len(t.pending) == 0 {
-			// Some streams omit the ID on created, then supply it on the terminal.
-			// Reuse that observed round instead of inventing another request.
-			current := t.progress.Current
-			if current.Round > 0 && eventType != ResponseCreated &&
-				(responseID == "" || (current.ResponseID == "" && current.EventType == ResponseCreated)) {
-				round = t.progress.Current.Round
-			} else {
-				t.begin(at)
-			}
-		}
-		if round == 0 {
-			round, t.pending = t.pending[0], t.pending[1:]
-		}
-		if responseID != "" {
-			if t.rounds == nil {
-				t.rounds = make(map[string]uint64)
-			}
-			t.rounds[responseID] = round
-		}
-	}
+	round := t.resolveRound(eventType, responseID, at)
 	response := Response{Round: round, ResponseID: responseID, EventType: eventType, Status: status, ObservedAt: at}
 	if round == t.progress.Current.Round && responseID == "" {
 		response.ResponseID = t.progress.Current.ResponseID
@@ -101,6 +79,36 @@ func (t *Tracker) Observe(fromUpstream bool, eventType, responseID, status strin
 	}
 	t.progress.Current = response
 	return true
+}
+
+func (t *Tracker) resolveRound(eventType, responseID string, at time.Time) uint64 {
+	if round := t.rounds[responseID]; responseID != "" && round != 0 {
+		return round
+	}
+	round := t.claimRound(eventType, responseID, at)
+	if responseID != "" {
+		if t.rounds == nil {
+			t.rounds = make(map[string]uint64)
+		}
+		t.rounds[responseID] = round
+	}
+	return round
+}
+
+func (t *Tracker) claimRound(eventType, responseID string, at time.Time) uint64 {
+	if len(t.pending) == 0 {
+		// Some streams omit the ID on created, then supply it on the terminal.
+		// Reuse that observed round instead of inventing another request.
+		current := t.progress.Current
+		if current.Round > 0 && eventType != ResponseCreated &&
+			(responseID == "" || (current.ResponseID == "" && current.EventType == ResponseCreated)) {
+			return current.Round
+		}
+		t.begin(at)
+	}
+	round := t.pending[0]
+	t.pending = t.pending[1:]
+	return round
 }
 
 func isTerminal(eventType string) bool {
