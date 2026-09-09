@@ -198,6 +198,7 @@ func mergeWebSocketObservation(result *WebSocketResult, observation WebSocketObs
 	result.TokenUsage = observation.TokenUsage
 	result.UpstreamError = observation.UpstreamError
 	result.CompletionObserved = observation.CompletionObserved
+	result.ResponseProgress = observation.ResponseProgress
 	if observation.SessionCommitted {
 		result.SessionCommitted = true
 		result.CommitSource = model.CommitSemantic
@@ -212,7 +213,7 @@ func classifyDialFailure(statusCode int) model.TerminalCause {
 }
 
 func classifyRelayTerminalCause(err error, failurePeer webSocketPeer) model.TerminalCause {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if failurePeer == webSocketPeerUnknown && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return model.TerminalInternalError
 	}
 	switch failurePeer {

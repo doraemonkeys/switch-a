@@ -349,6 +349,18 @@ func (r WebSocketAttemptResult) shouldReplaceBeforeClientVisible() bool {
 	}
 }
 
+func (r WebSocketAttemptResult) retryableFailure() bool {
+	if r.Result == nil || r.Result.ClientVisible || r.ReplayFailed {
+		return false
+	}
+	switch r.Result.TerminalCause {
+	case model.TerminalUpstreamTransportError:
+		return true
+	default:
+		return false
+	}
+}
+
 // WebSocketSessionResult is the handler-owned aggregate that survives provider
 // switches. The runtime worker can extend this with post-upgrade visibility
 // boundaries later without changing the pre-visible orchestration contract.

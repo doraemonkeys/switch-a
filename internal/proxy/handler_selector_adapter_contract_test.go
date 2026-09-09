@@ -305,6 +305,43 @@ func TestSelectorHTTPAdapterForwardsConcreteSameProviderDispatchPermit(t *testin
 	}
 }
 
+func TestWebSocketAdapterRetryRetainsSingleConcurrencySlot(t *testing.T) {
+	concrete, capability, limiter := newX3ConcreteSelectorAdapter()
+	adapter := webSocketSelectorAdapter{routing: concrete, capability: capability}
+	ctx := context.Background()
+	req := &model.SelectRequest{APIType: x3AdapterAPIType}
+	selection, err := adapter.SelectInitial(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer selection.Lease.Release()
+	for range 3 {
+		permit, err := adapter.ReserveSameProviderDispatch(ctx, req, selection.Lease)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := permit.Activate(); err != nil {
+			t.Fatal(err)
+		}
+		permit.Release()
+		if limiter.Current(x3AdapterProviderID) != 1 || !selection.Lease.Held() {
+			t.Fatal("retry acquired another slot or released the active lease")
+		}
+	}
+	permit, err := adapter.ReserveSameProviderDispatch(ctx, req, selection.Lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection.Lease.Release()
+	if _, err := permit.Activate(); err == nil {
+		t.Fatal("retired lease dispatched")
+	}
+	permit.Release()
+	if limiter.Current(x3AdapterProviderID) != 0 {
+		t.Fatal("retry leaked concurrency capacity")
+	}
+}
+
 func TestSelectorHTTPAdapterForwardsConcreteRetryReservation(t *testing.T) {
 	_, adapter, limiter := newX3ConcreteSelectorAdapter()
 	request := &model.SelectRequest{APIType: x3AdapterAPIType}

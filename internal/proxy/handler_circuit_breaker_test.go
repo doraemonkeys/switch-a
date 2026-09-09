@@ -252,8 +252,8 @@ func TestDeadlineExceeded_DoesNotTriggerCircuitBreaker(t *testing.T) {
 	if log.TerminationActor == nil || *log.TerminationActor != model.TerminationActorClient {
 		t.Fatalf("TerminationActor = %v, want %q", log.TerminationActor, model.TerminationActorClient)
 	}
-	if outcome := requestLogServiceOutcome(log); outcome != model.ServiceOutcomeAbandonedByClient {
-		t.Fatalf("ServiceOutcome = %q, want %q", outcome, model.ServiceOutcomeAbandonedByClient)
+	if outcome := requestLogServiceOutcome(log); outcome != model.ServiceOutcomeUnknown {
+		t.Fatalf("ServiceOutcome = %q, want %q", outcome, model.ServiceOutcomeUnknown)
 	}
 }
 
@@ -446,8 +446,8 @@ func TestClientDisconnectDuringSSE_IsHealthNeutralAndPersistsClientOutcome(t *te
 	// while the health assessment remains neutral.
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
 	log := store.LastLog()
-	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
-		t.Errorf("ServiceOutcome = %q, want %q", requestLogServiceOutcome(log), model.ServiceOutcomeAbandonedByClient)
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeUnknown {
+		t.Errorf("ServiceOutcome = %q, want %q", requestLogServiceOutcome(log), model.ServiceOutcomeUnknown)
 	}
 	if got := requestLogEvidenceMessage(t, log); got != "client canceled response forwarding" {
 		t.Errorf("SessionEvidenceJSON = %q, want client cancellation evidence", got)

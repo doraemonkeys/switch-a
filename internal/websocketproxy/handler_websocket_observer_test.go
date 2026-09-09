@@ -9,6 +9,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
 	"github.com/coder/websocket"
 )
@@ -190,6 +191,13 @@ func TestBytesTrackingObserver_CountsAndTimestamp(t *testing.T) {
 	// Simulate upstream → client messages.
 	obs.ObserveUpstreamMessage(websocket.MessageText, []byte("response data 1234567890")) // 24 bytes
 
+	if tracker.BytesSent.Load() != 0 || tracker.BytesReceived.Load() != 0 || tracker.MsgsSent.Load() != 0 || tracker.MsgsReceived.Load() != 0 {
+		t.Fatal("reading messages must not count them as written")
+	}
+	recordWebSocketWrite(obs, requestcapture.MessageDirectionClientToUpstream, 5)
+	recordWebSocketWrite(obs, requestcapture.MessageDirectionClientToUpstream, 5)
+	recordWebSocketWrite(obs, requestcapture.MessageDirectionUpstreamToClient, 24)
+
 	if got := tracker.BytesSent.Load(); got != 10 {
 		t.Errorf("BytesSent = %d, want 10", got)
 	}
@@ -261,6 +269,8 @@ func TestBytesTrackingObserver_NilInner(t *testing.T) {
 	if obs.HasSemanticObservation() {
 		t.Fatal("nil inner observer must not report semantic observation support")
 	}
+	recordWebSocketWrite(obs, requestcapture.MessageDirectionClientToUpstream, 4)
+	recordWebSocketWrite(obs, requestcapture.MessageDirectionUpstreamToClient, 4)
 	if tracker.MsgsSent.Load() != 1 || tracker.MsgsReceived.Load() != 1 {
 		t.Error("counters should still increment with nil inner")
 	}

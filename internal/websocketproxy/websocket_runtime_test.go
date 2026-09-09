@@ -367,10 +367,10 @@ func TestWebSocketRuntime_ClassifyAndSanitizeTerminalOutcomes(t *testing.T) {
 		want model.TerminalCause
 	}{
 		{
-			name: "caller cancellation stays internal",
+			name: "cancellation preserves the failing upstream operation",
 			err:  context.Canceled,
 			peer: webSocketPeerUpstream,
-			want: model.TerminalInternalError,
+			want: model.TerminalUpstreamTransportError,
 		},
 		{
 			name: "client-side failure attributes disconnect to client",

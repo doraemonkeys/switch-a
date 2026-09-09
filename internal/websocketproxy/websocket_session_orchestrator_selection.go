@@ -56,7 +56,7 @@ func (o *WebSocketSessionOrchestrator) captureSuppressedAttempt(
 
 func (o *WebSocketSessionOrchestrator) clearSuppressedAttempt() { o.suppressedAttempt = nil }
 
-func (o *WebSocketSessionOrchestrator) shouldSwitchProvider(attempt WebSocketAttemptResult) bool {
+func (o *WebSocketSessionOrchestrator) canReplacePhysicalAttempt(attempt WebSocketAttemptResult) bool {
 	if attempt.Result == nil {
 		return false
 	}
@@ -138,7 +138,7 @@ func (o *WebSocketSessionOrchestrator) shouldFallbackToSuppressedPayload(attempt
 	if attempt.ReplayFailed {
 		return true
 	}
-	return attempt.clientAccepted() && !o.shouldSwitchProvider(attempt)
+	return attempt.clientAccepted() && !o.canReplacePhysicalAttempt(attempt)
 }
 
 type fallbackProviderLease struct {
@@ -147,6 +147,27 @@ type fallbackProviderLease struct {
 	held       atomic.Bool
 	candidate  codexidentity.CandidateSnapshot
 	resolved   bool
+}
+
+// Standalone gateways retain the same logical lease across retries, just as the
+// selector-backed dispatch permit does. Releasing this permit never frees it.
+type fallbackDispatchPermit struct {
+	current  ProviderLease
+	provider *model.Provider
+	settled  atomic.Bool
+}
+
+func (p *fallbackDispatchPermit) Provider() *model.Provider { return p.provider }
+
+func (p *fallbackDispatchPermit) Activate() (*model.Provider, error) {
+	if !p.settled.CompareAndSwap(false, true) || !p.current.Held() {
+		return nil, internal.ErrNoProvider
+	}
+	return p.provider, nil
+}
+
+func (p *fallbackDispatchPermit) Release() bool {
+	return p.settled.CompareAndSwap(false, true)
 }
 
 func (h *Gateway) newFallbackProviderLease(provider *model.Provider, apiType string) ProviderLease {

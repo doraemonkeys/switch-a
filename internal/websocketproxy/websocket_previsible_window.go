@@ -2,8 +2,10 @@ package websocketproxy
 
 import (
 	"context"
-	"github.com/coder/websocket"
+	"io"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func (f *WebSocketForwarder) relayImmediatePreVisibleUpstreamWindow(
@@ -88,15 +90,24 @@ func (f *WebSocketForwarder) relayPreVisibleWindow(
 			if !ok {
 				clientRead = webSocketInitialReadResult{err: errWebSocketClientReadHandoffClosed}
 			}
-			progress.merge(f.relayPreVisibleClientMessage(
-				ctx,
-				upstreamConn,
-				options,
-				lifecycle,
-				clientRead,
-				observeClient,
-				fallbackCommit,
-			))
+			upload, upstreamRead := withWebSocketConcurrentRead(ctx, initialUpstreamReadCh, "pre_visible_upload",
+				func(uploadCtx context.Context) webSocketPreVisibleRelayProgress {
+					return f.relayPreVisibleClientMessage(uploadCtx, upstreamConn, options, lifecycle, clientRead, observeClient, fallbackCommit)
+				})
+			if upstreamRead != nil && upstreamRead.err != nil {
+				// The upload's cancellation is a consequence, not the origin, of failure.
+				upload.Result = nil
+			}
+			progress.merge(upload)
+			if upstreamRead != nil {
+				progress.ConsumedInitialUpstream = true
+				if progress.Result == nil {
+					progress.merge(f.relayPreVisibleUpstreamMessage(ctx, clientConn, upstreamConn,
+						options, lifecycle, *upstreamRead, observeUpstream, onUpstreamVisible,
+						fallbackCommit, progress.BytesClientToUpstream))
+				}
+				return progress
+			}
 			if progress.Result != nil {
 				return progress
 			}
@@ -127,4 +138,38 @@ func (f *WebSocketForwarder) relayPreVisibleWindow(
 			return progress
 		}
 	}
+}
+
+// withWebSocketConcurrentRead keeps transport failure observable while a physical
+// upload blocks. Join the uploader before applying read results: replay retention,
+// delivery confirmation and lifecycle hooks still have one serialized owner.
+func withWebSocketConcurrentRead[T any](
+	ctx context.Context,
+	reads <-chan webSocketInitialReadResult,
+	phase string,
+	upload func(context.Context) T,
+) (T, *webSocketInitialReadResult) {
+	uploadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan T, 1)
+	go func() { done <- upload(uploadCtx) }()
+	select {
+	case result := <-done:
+		return result, nil
+	case read, ok := <-reads:
+		if !ok {
+			read.err = io.ErrUnexpectedEOF
+		}
+		if read.err != nil {
+			cancel()
+		}
+		return <-done, &read
+	}
+}
+
+// A consumed initial read belongs to the relay, even when it arrived during replay.
+func retainedWebSocketRead(read webSocketInitialReadResult) <-chan webSocketInitialReadResult {
+	results := make(chan webSocketInitialReadResult, 1)
+	results <- read
+	return results
 }

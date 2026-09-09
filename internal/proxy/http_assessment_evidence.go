@@ -7,6 +7,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 
 	"go.uber.org/zap"
 )
@@ -28,8 +29,10 @@ const nonWebSocketEvidenceSchemaVersion = 2
 // added without bumping the schema version as long as renderers tolerate
 // unknown fields — only breaking shape changes warrant a version bump.
 type nonWebSocketEvidence struct {
-	Version   int                           `json:"v"`
-	Transport *nonWebSocketTransportPayload `json:"transport,omitempty"`
+	UpstreamCompletion *responsefacts.Completion     `json:"upstream_completion,omitempty"`
+	DownstreamWrite    *responsefacts.Write          `json:"downstream_write,omitempty"`
+	Version            int                           `json:"v"`
+	Transport          *nonWebSocketTransportPayload `json:"transport,omitempty"`
 }
 
 // nonWebSocketTransportPayload is the projection of `transportDiagnostic`
@@ -44,14 +47,10 @@ type nonWebSocketTransportPayload struct {
 	RawErrorSnippet string `json:"raw_error_snippet,omitempty"`
 }
 
-// buildNonWebSocketSessionEvidence converts the session-level observation
-// into an `session_evidence_json` payload. Returns nil when the derivation
-// decides the observation has no transport fact to report (pure client
-// cancel, status failover, non-SSE success, etc.) — the caller then leaves
-// the DB column NULL, which keeps `session_evidence_json` clean of
-// noise-only rows.
+// Completed events and successful writes remain evidence even without a
+// transport error. An empty envelope means none of these facts was observed.
 func buildNonWebSocketSessionEvidence(facts nonWebSocketRuntimeFacts) *string {
-	return marshalNonWebSocketEvidence(deriveNonWebSocketTransportDiagnostic(facts), facts.InjectedCredential)
+	return marshalNonWebSocketEvidence(facts)
 }
 
 // buildNonWebSocketAttemptEvidence produces the attempt-level evidence. It
@@ -59,7 +58,7 @@ func buildNonWebSocketSessionEvidence(facts nonWebSocketRuntimeFacts) *string {
 // explicitly after recordAttempt rather than folding it into recordAttempt
 // itself, so the HTTP attempt abstraction stays protocol-agnostic.
 func buildNonWebSocketAttemptEvidence(facts nonWebSocketRuntimeFacts) *string {
-	return marshalNonWebSocketEvidence(deriveNonWebSocketTransportDiagnostic(facts), facts.InjectedCredential)
+	return marshalNonWebSocketEvidence(facts)
 }
 
 // deriveNonWebSocketTransportDiagnostic adapts `nonWebSocketRuntimeFacts` to
@@ -88,24 +87,25 @@ func deriveNonWebSocketTransportDiagnostic(facts nonWebSocketRuntimeFacts) *tran
 	})
 }
 
-func marshalNonWebSocketEvidence(diag *transportDiagnostic, injectedCredential string) *string {
-	if diag == nil {
-		return nil
+func marshalNonWebSocketEvidence(facts nonWebSocketRuntimeFacts) *string {
+	payload := nonWebSocketEvidence{Version: nonWebSocketEvidenceSchemaVersion}
+	if diag := deriveNonWebSocketTransportDiagnostic(facts); diag != nil {
+		payload.Transport = &nonWebSocketTransportPayload{
+			Source: diag.Source, Stage: diag.Stage, Kind: diag.Kind, Signal: diag.Signal,
+			RawErrorSnippet: sanitizeEvidenceSnippet(diag.RawErrorSnippet, facts.InjectedCredential),
+		}
 	}
-	// The derivation function preserves raw fact text so unit tests can
-	// round-trip it. Serialization is the single boundary where the explicitly
-	// injected switch-a credential is replaced; all other provider diagnostics,
-	// URLs, and token-shaped values remain available for debugging.
-	diag.RawErrorSnippet = sanitizeEvidenceSnippet(diag.RawErrorSnippet, injectedCredential)
-	payload := nonWebSocketEvidence{
-		Version: nonWebSocketEvidenceSchemaVersion,
-		Transport: &nonWebSocketTransportPayload{
-			Source:          diag.Source,
-			Stage:           diag.Stage,
-			Kind:            diag.Kind,
-			Signal:          diag.Signal,
-			RawErrorSnippet: diag.RawErrorSnippet,
-		},
+	if facts.UpstreamCompletion.EventType != "" {
+		completion := facts.UpstreamCompletion
+		payload.UpstreamCompletion = &completion
+	}
+	if facts.DownstreamWrite.Calls > 0 {
+		writes := facts.DownstreamWrite
+		writes.LastError = sanitizeEvidenceSnippet(writes.LastError, facts.InjectedCredential)
+		payload.DownstreamWrite = &writes
+	}
+	if payload.Transport == nil && payload.UpstreamCompletion == nil && payload.DownstreamWrite == nil {
+		return nil
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

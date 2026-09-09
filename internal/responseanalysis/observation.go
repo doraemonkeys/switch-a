@@ -38,12 +38,13 @@ const (
 )
 
 type Observation struct {
-	ProtocolID     apicontract.ResponseProtocolID `json:"response_protocol_id,omitempty"`
-	Class          EventClass                     `json:"event_class"`
-	Fields         *SemanticFields                `json:"fields,omitempty"`
-	Usage          *tokenusage.TokenUsage         `json:"usage,omitempty"`
-	AnalysisReason AnalysisFailureReason          `json:"analysis_reason,omitempty"`
-	resources      allocation.Bundle
+	CompletionEvent string                         `json:"completion_event,omitempty"`
+	ProtocolID      apicontract.ResponseProtocolID `json:"response_protocol_id,omitempty"`
+	Class           EventClass                     `json:"event_class"`
+	Fields          *SemanticFields                `json:"fields,omitempty"`
+	Usage           *tokenusage.TokenUsage         `json:"usage,omitempty"`
+	AnalysisReason  AnalysisFailureReason          `json:"analysis_reason,omitempty"`
+	resources       allocation.Bundle
 }
 
 // Release ends the lifetime of copied semantic values carried by an

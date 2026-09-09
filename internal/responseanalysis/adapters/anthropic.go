@@ -30,7 +30,7 @@ func (a anthropicAdapter) Observe(frame framing.Frame) Result {
 
 	eventType := frame.Event
 	if eventType == "" {
-		for _, candidate := range []string{"ping", "message_start", "message_delta"} {
+		for _, candidate := range []string{"ping", "message_start", "message_delta", "message_stop"} {
 			if matched, _ := exactStringFieldEquals(document, document.root, "type", candidate, a.limits.TypeBytes); matched {
 				eventType = candidate
 				break
@@ -40,5 +40,9 @@ func (a anthropicAdapter) Observe(frame framing.Frame) Result {
 	if eventType == "ping" || eventType == "message_start" {
 		return resources.finish(Result{Class: EventControl, Usage: usage})
 	}
-	return a.nonError(usage, eventType == "message_delta", &resources)
+	result := a.nonError(usage, eventType == "message_delta", &resources)
+	if eventType == "message_stop" {
+		result.CompletionEvent = eventType
+	}
+	return result
 }

@@ -23,6 +23,52 @@ import (
 	"go.uber.org/zap"
 )
 
+// ProviderLease is the exact generation-bound slot capability retained across
+// same-provider attempts. Cleanup receives the capability itself because a
+// provider ID cannot identify the lifecycle generation that was acquired.
+type ProviderLease interface {
+	Provider() *model.Provider
+	ProviderID() string
+	Generation() uint64
+	// CapabilityIdentity returns a process-local opaque identity. Copies of one
+	// lease share it; separately acquired slots never do. Zero is invalid.
+	CapabilityIdentity() uintptr
+	CandidateSnapshot() (codexidentity.CandidateSnapshot, bool)
+	Held() bool
+	Release() bool
+}
+
+// ProviderSelection keeps routing facts and slot ownership inseparable at the
+// WebSocket boundary. This prevents an attempt from being dispatched with a
+// provider snapshot whose concurrency capability was lost by an adapter.
+type ProviderSelection struct {
+	Lease    ProviderLease
+	Metadata selector.SelectionMetadata
+}
+
+func (s ProviderSelection) Provider() *model.Provider {
+	if s.Lease == nil {
+		return nil
+	}
+	return s.Lease.Provider()
+}
+
+type Selector interface {
+	SelectInitial(context.Context, *model.SelectRequest) (ProviderSelection, error)
+	SelectActive(context.Context, *model.SelectRequest, ProviderLease) (ProviderSelection, error)
+	SelectAlternate(context.Context, *model.SelectRequest, map[string]bool) (ProviderSelection, error)
+	ReserveSameProviderDispatch(context.Context, *model.SelectRequest, ProviderLease) (SameProviderDispatchPermit, error)
+	UpdateStickyWithTTL(*model.SelectRequest, string, time.Duration)
+	EvictProviderContinuity(string)
+}
+
+// A dispatch permit revalidates the live route without acquiring another slot.
+type SameProviderDispatchPermit interface {
+	Provider() *model.Provider
+	Activate() (*model.Provider, error)
+	Release() bool
+}
+
 type webSocketProviderConfigError struct {
 	missingField string
 	err          error
@@ -186,6 +232,9 @@ func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
 	}
 
 	message := "Upstream WebSocket handshake failed"
+	if result != nil && result.TerminalCause == model.TerminalUpstreamTransportError {
+		message = "Upstream WebSocket connection failed"
+	}
 	switch statusCode {
 	case http.StatusUnauthorized:
 		message = "Upstream WebSocket authentication failed"
@@ -196,7 +245,7 @@ func websocketGatewayFailure(result *WebSocketResult) (int, string, string) {
 		message = result.HandshakeBodySnippet
 	}
 
-	return statusCode, ErrCodeWebSocketUpgrade, message
+	return statusCode, webSocketFailureCode(result), message
 }
 
 func BuildUpstreamPath(originalPath, apiType string) string {
@@ -419,6 +468,40 @@ func (h *Gateway) selectProviderFallback(ctx context.Context, req *model.SelectR
 	index := h.fallbackCounter.Add(1)
 	provider := available[int(uint64(index-1+int64(attempt))%uint64(len(available)))]
 	return &provider, nil
+}
+
+func (h *Gateway) reserveSameProviderDispatch(ctx context.Context, req *model.SelectRequest, current ProviderLease) (SameProviderDispatchPermit, error) {
+	if h.selector != nil {
+		return h.selector.ReserveSameProviderDispatch(ctx, req, current)
+	}
+	if current == nil || !current.Held() {
+		return nil, internal.ErrNoProvider
+	}
+	providers, err := h.store.ListProvidersByAPIType(ctx, req.APIType)
+	if err != nil {
+		return nil, err
+	}
+	for i := range providers {
+		provider := &providers[i]
+		if provider.ID != current.ProviderID() {
+			continue
+		}
+		scope, err := selector.NewProviderSelectionEligibility(ctx, h.store, h.health, req, *provider)
+		if err != nil {
+			return nil, err
+		}
+		allowed, err := scope.AllowsProvider(ctx, provider)
+		if err != nil {
+			return nil, err
+		}
+		candidate, resolved := scope.CandidateSnapshot(provider.ID)
+		original, originalResolved := current.CandidateSnapshot()
+		if !allowed || !resolved || !originalResolved || !original.SameDispatchIdentity(candidate) {
+			return nil, internal.ErrNoProvider
+		}
+		return &fallbackDispatchPermit{current: current, provider: provider}, nil
+	}
+	return nil, internal.ErrNoProvider
 }
 
 const headerUserAgent = "User-Agent"

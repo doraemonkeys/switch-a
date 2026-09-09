@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -98,8 +99,8 @@ func TestHandler_ServeHTTP_WebSocket_FullProxy(t *testing.T) {
 	if log.ProviderID != "ws-p1" {
 		t.Errorf("log.ProviderID = %q, want 'ws-p1'", log.ProviderID)
 	}
-	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
-		t.Errorf("expected abandoned-by-client outcome, got %q", requestLogServiceOutcome(log))
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeUnknown {
+		t.Errorf("expected unknown outcome, got %q", requestLogServiceOutcome(log))
 	}
 	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
 		t.Errorf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
@@ -437,8 +438,8 @@ func TestHandler_ServeHTTP_WebSocket_WithSelector(t *testing.T) {
 	if log.ProviderID != "ws-sel-p1" {
 		t.Errorf("log.ProviderID = %q, want 'ws-sel-p1'", log.ProviderID)
 	}
-	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
-		t.Errorf("expected abandoned-by-client outcome, got %q", requestLogServiceOutcome(log))
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeUnknown {
+		t.Errorf("expected unknown outcome, got %q", requestLogServiceOutcome(log))
 	}
 	if requestLogEvidenceMessage(t, log) != "" {
 		t.Errorf("expected empty SessionEvidenceJSON message for successful WS, got %q", requestLogEvidenceMessage(t, log))
@@ -858,8 +859,8 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 	}
 	wantGatewayPayload := string(marshalWebSocketGatewayError(
 		http.StatusBadGateway,
-		ErrCodeWebSocketUpgrade,
-		"Upstream WebSocket handshake failed",
+		websocketproxy.ErrCodeWebSocketTransport,
+		"Upstream WebSocket connection failed",
 	))
 	if string(payload) != wantGatewayPayload {
 		t.Fatalf("payload = %q, want canonical gateway payload %q", string(payload), wantGatewayPayload)
@@ -889,7 +890,7 @@ func TestHandler_ServeHTTP_WebSocket_SemanticReplacementEmitsCanonicalGatewayErr
 	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
 		t.Fatalf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)
 	}
-	if requestLogEvidenceMessage(t, log) != "Upstream WebSocket handshake failed" {
+	if requestLogEvidenceMessage(t, log) != "Upstream WebSocket connection failed" {
 		t.Fatalf("evidence message = %q, want canonical gateway message", requestLogEvidenceMessage(t, log))
 	}
 
@@ -970,8 +971,8 @@ func TestHandler_ServeHTTP_WebSocket_SuccessLogHasNoError(t *testing.T) {
 	if requestLogEvidenceMessage(t, log) != "" {
 		t.Errorf("expected empty SessionEvidenceJSON message for successful WS, got %q", requestLogEvidenceMessage(t, log))
 	}
-	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
-		t.Error("expected abandoned-by-client service outcome")
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeUnknown {
+		t.Error("expected unknown service outcome")
 	}
 }
 
@@ -1017,8 +1018,8 @@ func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
 	if requestLogEvidenceMessage(t, log) != "" {
 		t.Errorf("expected empty SessionEvidenceJSON message for CloseNow teardown, got %q", requestLogEvidenceMessage(t, log))
 	}
-	if requestLogServiceOutcome(log) != model.ServiceOutcomeAbandonedByClient {
-		t.Errorf("expected abandoned-by-client service outcome, got %q", requestLogServiceOutcome(log))
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeUnknown {
+		t.Errorf("expected unknown service outcome, got %q", requestLogServiceOutcome(log))
 	}
 	if requestLogClientTransportStatusCode(log) != http.StatusSwitchingProtocols {
 		t.Errorf("ClientTransportStatusCode = %d, want %d", requestLogClientTransportStatusCode(log), http.StatusSwitchingProtocols)

@@ -30,7 +30,6 @@ func TestSourceHTTP2DestinationKeepsKnownLengthAndTrailers(t *testing.T) {
 	transport := New(Config{})
 	defer transport.CloseIdleConnections()
 	base := transport.followClient.Transport.(*http.Transport)
-	base.ForceAttemptHTTP2 = true
 	base.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	source := &memoryBodySource{payload: []byte("wire"), framing: BodyFraming{ProtocolMajor: 2, ContentLength: 4, HasBody: true, Complete: true}, trailers: http.Header{"X-Late": {"complete"}}}
 	closeResponse(t, fetchSource(t, transport, server.URL, source, ExecutionOptions{}))

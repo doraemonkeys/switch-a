@@ -34,6 +34,10 @@ func (s *routingTestSelector) SelectInitial(context.Context, *model.SelectReques
 	return s.initial, s.initialErr
 }
 
+func (*routingTestSelector) ReserveSameProviderDispatch(_ context.Context, _ *model.SelectRequest, current ProviderLease) (SameProviderDispatchPermit, error) {
+	return &fallbackDispatchPermit{current: current, provider: current.Provider()}, nil
+}
+
 func (s *routingTestSelector) SelectAlternate(context.Context, *model.SelectRequest, map[string]bool) (ProviderSelection, error) {
 	return s.alternate, s.alternateErr
 }

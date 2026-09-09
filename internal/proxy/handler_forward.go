@@ -10,13 +10,14 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
-	"github.com/doraemonkeys/switch-a/internal/codex/http"
-	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
+	codexidentity "github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 
 	"go.uber.org/zap"
@@ -74,6 +75,8 @@ type semanticAttemptFacts struct {
 // body, writer, pending-response, reservation, and raw error capabilities are
 // intentionally absent.
 type forwardResult struct {
+	UpstreamCompletion    responsefacts.Completion
+	DownstreamWrite       responsefacts.Write
 	headersWritten        bool
 	responseCommitted     bool
 	clientTermination     clientTermination
@@ -119,6 +122,9 @@ func (r *forwardResult) inheritHealth(source forwardResult) {
 func (r forwardResult) terminalError() error {
 	if r.failureMessage == "" {
 		return nil
+	}
+	if r.failureKind == attemptFailureClientTerminated {
+		return &clientTerminationError{termination: r.clientTermination, message: r.failureMessage}
 	}
 	if r.failureKind == attemptFailureIngress {
 		return &requestIngressFailure{cause: errors.New(r.failureMessage), kind: r.ingressFailureKind}
@@ -407,23 +413,26 @@ func (h *Handler) fetchPendingHTTPResponse(
 		contentEncoding:       normalizedHTTPContentCodings(head.SourceHeader.Values("Content-Encoding")),
 	})
 	analysisStartedAt := time.Now()
+	upstreamCompletion := new(responsefacts.CompletionObserver)
 	pending := h.analyzer.Start(ctx, responseanalysis.StartInput{
-		OperationID:     operationID,
-		Mode:            mode,
-		APIType:         pctx.apiType,
-		ContentType:     media.ContentType(),
-		ContentEncoding: head.Header.Get("Content-Encoding"),
-		StatusCode:      head.StatusCode,
-		Header:          head.Header,
-		Trailer:         head.Trailer,
-		Body:            body,
-		Writer:          writer,
-		IdleDuration:    idleDuration,
-		Match:           matcher.Match,
+		OperationID:       operationID,
+		Mode:              mode,
+		APIType:           pctx.apiType,
+		ContentType:       media.ContentType(),
+		ContentEncoding:   head.Header.Get("Content-Encoding"),
+		StatusCode:        head.StatusCode,
+		Header:            head.Header,
+		Trailer:           head.Trailer,
+		Body:              body,
+		Writer:            writer,
+		IdleDuration:      idleDuration,
+		Match:             matcher.Match,
+		ObserveCompletion: upstreamCompletion.Observe,
 	})
 	return &pendingHTTPResponse{
 		head: head, media: media, pending: pending, writer: writer, exchange: exchange,
-		matcher: matcher, rules: rules, snippet: snippet, pctx: pctx,
+		upstreamCompletion: upstreamCompletion,
+		matcher:            matcher, rules: rules, snippet: snippet, pctx: pctx,
 		operationID: operationID, providerID: attempt.provider.ID,
 		logicalAttempt:  uint64(attempt.logicalAttemptIndex + 1),
 		providerAttempt: uint64(attempt.providerAttemptIndex + 1),

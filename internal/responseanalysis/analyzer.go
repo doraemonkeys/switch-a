@@ -68,18 +68,19 @@ func NewAnalyzer(registry Registry, processBudget *ProcessMemoryBudget, options 
 }
 
 type StartInput struct {
-	OperationID     string
-	Mode            AnalysisMode
-	APIType         string
-	ContentType     string
-	ContentEncoding string
-	StatusCode      int
-	Header          http.Header
-	Trailer         http.Header
-	Body            io.ReadCloser
-	Writer          ResponseWriter
-	IdleDuration    time.Duration
-	Match           SemanticMatchFunc
+	ObserveCompletion func(string)
+	OperationID       string
+	Mode              AnalysisMode
+	APIType           string
+	ContentType       string
+	ContentEncoding   string
+	StatusCode        int
+	Header            http.Header
+	Trailer           http.Header
+	Body              io.ReadCloser
+	Writer            ResponseWriter
+	IdleDuration      time.Duration
+	Match             SemanticMatchFunc
 }
 
 func (a *Analyzer) Start(ctx context.Context, input StartInput) *PendingResponse {
@@ -149,7 +150,11 @@ func (a *Analyzer) Start(ctx context.Context, input StartInput) *PendingResponse
 			pendingInput.InitialFailure = pending.BoundaryReason(failure)
 		} else {
 			pendingInput.NewDriver = func(source io.Reader, reserver pendingReserver) (pending.Driver[Observation], error) {
-				return newRuntimeDriver(protocol, source, reserver)
+				driver, err := newRuntimeDriver(protocol, source, reserver)
+				if driver != nil {
+					driver.observeCompletion = input.ObserveCompletion
+				}
+				return driver, err
 			}
 		}
 	}

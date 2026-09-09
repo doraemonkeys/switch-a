@@ -564,13 +564,13 @@ func TestWebSocketPreVisibleRecoveryGuardsUnsafeTransitions(t *testing.T) {
 			suppressedAttempt: &webSocketSuppressedAttempt{upstreamError: switchable.Clone()},
 		}
 
-		if orchestrator.shouldSwitchProvider(WebSocketAttemptResult{}) {
+		if orchestrator.canReplacePhysicalAttempt(WebSocketAttemptResult{}) {
 			t.Fatal("nil attempt result switched provider")
 		}
-		if orchestrator.shouldSwitchProvider(WebSocketAttemptResult{Result: &WebSocketResult{}, ReplayFailed: true}) {
+		if orchestrator.canReplacePhysicalAttempt(WebSocketAttemptResult{Result: &WebSocketResult{}, ReplayFailed: true}) {
 			t.Fatal("replay failure switched provider")
 		}
-		if orchestrator.shouldSwitchProvider(WebSocketAttemptResult{Result: &WebSocketResult{TerminalCause: model.TerminalCleanClose}}) {
+		if orchestrator.canReplacePhysicalAttempt(WebSocketAttemptResult{Result: &WebSocketResult{TerminalCause: model.TerminalCleanClose}}) {
 			t.Fatal("clean pre-visible close switched provider")
 		}
 
@@ -579,7 +579,7 @@ func TestWebSocketPreVisibleRecoveryGuardsUnsafeTransitions(t *testing.T) {
 				ClientVisible: true, UpstreamError: upstreamError,
 			}}
 			orchestrator.switchTracker.continuityContext = &model.ProviderContinuityContext{}
-			if orchestrator.shouldSwitchProvider(visibleAttempt) {
+			if orchestrator.canReplacePhysicalAttempt(visibleAttempt) {
 				t.Fatal("client-visible route target was handed off")
 			}
 		}

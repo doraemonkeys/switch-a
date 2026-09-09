@@ -154,10 +154,7 @@ func providerLookupFailure(err error, notFoundReason errorrule.DecisionReason) e
 // reloads the authoritative revision before every dispatch and validates it
 // against this frozen identity boundary.
 func sameCandidateDispatchIdentity(left, right codexidentity.CandidateSnapshot) bool {
-	return left.RouteTargetID() == right.RouteTargetID() &&
-		left.CredentialSessionID() == right.CredentialSessionID() &&
-		left.APIType() == right.APIType() &&
-		left.Authority().Equal(right.Authority())
+	return left.SameDispatchIdentity(right)
 }
 
 func contextError(err error) error {

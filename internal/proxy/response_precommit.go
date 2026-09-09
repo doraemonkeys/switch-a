@@ -6,14 +6,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
 	disguiseresponse "github.com/doraemonkeys/switch-a/internal/proxy/disguise"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 )
 
 // firstWriteResponseWriter is the client-visibility boundary for one HTTP
 // attempt. It keeps continuity and Cookie state pending until the underlying
 // writer makes the response observable, while preserving streaming interfaces.
 type firstWriteResponseWriter struct {
+	downstreamWrite responsefacts.Write
 	http.ResponseWriter
 	prepareVisible      func(http.Header) (*codexhttp.Visibility, error)
 	commitVisible       func(*codexhttp.Visibility) error
@@ -84,6 +86,7 @@ func (w *firstWriteResponseWriter) writePhysical(p []byte, eventVisibility *code
 			w.uncertain()
 		}
 	}
+	w.downstreamWrite.Record(n, err)
 	if n > 0 {
 		w.observeWrite(p[:n], writeTime)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -346,6 +347,8 @@ type WebSocketResult struct {
 	// terminal completion event. Assessment uses this to distinguish "completed"
 	// from "transport vanished after something visible happened".
 	CompletionObserved bool
+	ResponseProgress   responsefacts.Progress
+	DownstreamWrite    responsefacts.Write
 
 	// TransportObservation carries the real runtime transport facts observed by
 	// the relay layer (CloseError frames, failing peer). It is evidence-layer

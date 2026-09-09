@@ -128,11 +128,11 @@ func TestHandler_RealSSEClientDisconnectPersistsClientAttribution(t *testing.T) 
 			if log.TerminationActor == nil || *log.TerminationActor != model.TerminationActorClient {
 				t.Fatalf("TerminationActor = %v, want %q", log.TerminationActor, model.TerminationActorClient)
 			}
-			if outcome := requestLogServiceOutcome(log); outcome != model.ServiceOutcomeAbandonedByClient {
-				t.Fatalf("ServiceOutcome = %q, want %q", outcome, model.ServiceOutcomeAbandonedByClient)
+			if outcome := requestLogServiceOutcome(log); outcome != model.ServiceOutcomeUnknown {
+				t.Fatalf("ServiceOutcome = %q, want %q", outcome, model.ServiceOutcomeUnknown)
 			}
-			if completion := requestLogCompletionState(log); completion != model.CompletionStateIncomplete {
-				t.Fatalf("CompletionState = %q, want %q", completion, model.CompletionStateIncomplete)
+			if completion := requestLogCompletionState(log); completion != model.CompletionStateUnknown {
+				t.Fatalf("CompletionState = %q, want %q", completion, model.CompletionStateUnknown)
 			}
 			if failures := health.getMarkFailureCalls(); len(failures) != 0 {
 				t.Fatalf("MarkFailure calls = %d, want health-neutral client termination", len(failures))

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy/messageio"
+
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
 	"github.com/coder/websocket"
@@ -96,10 +98,11 @@ func (o *WebSocketSessionOrchestrator) deliverBufferedClientMessage(
 		return 0, decision.Err
 	}
 	payload := decision.physicalPayload(message.Data)
-	if err := upstreamConn.Write(ctx, message.MessageType, payload); err != nil {
+	if err := messageio.Write(ctx, upstreamConn, message.MessageType, payload); err != nil {
 		captureWebSocketMessageResult(captureOptions, captured, requestcapture.MessageDispositionWriteFailed, false, err)
 		return 0, err
 	}
+	recordWebSocketWrite(observer, requestcapture.MessageDirectionClientToUpstream, len(payload))
 	if !decision.ReplacementEligible {
 		o.replayBuffer.CloseReplay(webSocketReplayNonReplayableFrame)
 	}
@@ -304,11 +307,18 @@ func (p *webSocketRelayMessageProcessor) process(
 		p.observe(messageType, data)
 	}
 	payload := decision.physicalPayload(data)
-	if err := p.dst.Write(p.ctx, messageType, payload); err != nil {
+	if err := messageio.Write(p.ctx, p.dst, messageType, payload); err != nil {
+		if p.direction == requestcapture.MessageDirectionUpstreamToClient {
+			p.options.Lifecycle.RecordDownstreamWrite(0, err)
+		}
 		writeErr := clientFrameWriteError(decision, err)
 		captureWebSocketMessageResult(p.options, captured, requestcapture.MessageDispositionWriteFailed, false, writeErr)
 		return p.dstPeer, webSocketRelayFailureOperationWrite, writeErr
 	}
+	if p.direction == requestcapture.MessageDirectionUpstreamToClient {
+		p.options.Lifecycle.RecordDownstreamWrite(len(payload), nil)
+	}
+	recordWebSocketWrite(p.options.Observer, p.direction, len(payload))
 	p.totalBytes += int64(len(payload))
 	if !decision.ReplacementEligible && p.options.PreVisibleReplayBuffer != nil {
 		p.options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayNonReplayableFrame)

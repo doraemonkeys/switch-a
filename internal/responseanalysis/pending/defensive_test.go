@@ -145,6 +145,11 @@ func TestClosedUnionsNilHandlesAndCachedValueHelpers(t *testing.T) {
 	if _, err := response.Discard(TransitionCause("invalid")); err == nil {
 		t.Fatal("nil discard accepted invalid cause")
 	}
+	for _, response := range []*Response[testObservation]{nil, {}} {
+		if got := response.Wait(); got.State != 0 || got.Termination != "" {
+			t.Fatalf("empty response completion=%#v", got)
+		}
+	}
 	var forwarding *ForwardingResponse[testObservation]
 	if got := forwarding.AwaitSemanticOrCompletion(); got.Matched || got.Completed || got.State != 0 {
 		t.Fatalf("nil milestone=%#v", got)

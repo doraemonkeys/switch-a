@@ -14,14 +14,14 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
-	"github.com/doraemonkeys/switch-a/internal/codex/identity"
-	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
-	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
+	codexidentity "github.com/doraemonkeys/switch-a/internal/codex/identity"
+	codexrecovery "github.com/doraemonkeys/switch-a/internal/codex/recovery"
+	codexws "github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
-	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 	wsdisguise "github.com/doraemonkeys/switch-a/internal/websocketproxy/disguise"
+	wsretry "github.com/doraemonkeys/switch-a/internal/websocketproxy/retry"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -31,15 +31,18 @@ const (
 	webSocketGatewayErrorEventType = "error"
 	webSocketGatewayErrorType      = "gateway_error"
 
-	ErrCodeProviderUnavailable = "PROVIDER_UNAVAILABLE"
-	ErrCodeWebSocketUpgrade    = "WEBSOCKET_UPGRADE_FAILED"
-	ErrCodeWebSocketReconnect  = "WEBSOCKET_RECONNECT_REQUIRED"
-	ErrCodeInternalError       = "INTERNAL_ERROR"
-	ModelUnknown               = "unknown"
-	APITypeCodex               = string(apicontract.APITypeCodex)
-	StatusCodeNoResponse       = 0
-	logInsertTimeout           = 5 * time.Second
-	maxUserAgentLength         = 512
+	ErrCodeProviderUnavailable   = "PROVIDER_UNAVAILABLE"
+	ErrCodeWebSocketUpgrade      = "WEBSOCKET_UPGRADE_FAILED"
+	ErrCodeWebSocketRelay        = "WEBSOCKET_RELAY_FAILED"
+	ErrCodeWebSocketTransport    = "WEBSOCKET_TRANSPORT_ERROR"
+	ErrCodeProviderConfiguration = "PROVIDER_CONFIGURATION_ERROR"
+	ErrCodeWebSocketReconnect    = "WEBSOCKET_RECONNECT_REQUIRED"
+	ErrCodeInternalError         = "INTERNAL_ERROR"
+	ModelUnknown                 = "unknown"
+	APITypeCodex                 = string(apicontract.APITypeCodex)
+	StatusCodeNoResponse         = 0
+	logInsertTimeout             = 5 * time.Second
+	maxUserAgentLength           = 512
 )
 
 // RequestConfig is the immutable WebSocket projection of proxy runtime
@@ -77,42 +80,8 @@ type Store interface {
 	InsertAttempts(context.Context, []model.RequestAttempt) error
 }
 
-// ProviderLease is the exact generation-bound slot capability owned by one
-// WebSocket provider attempt. Cleanup receives the capability itself because a
-// provider ID cannot identify the lifecycle generation that was acquired.
-type ProviderLease interface {
-	Provider() *model.Provider
-	ProviderID() string
-	Generation() uint64
-	// CapabilityIdentity returns a process-local opaque identity. Copies of one
-	// lease share it; separately acquired slots never do. Zero is invalid.
-	CapabilityIdentity() uintptr
-	CandidateSnapshot() (codexidentity.CandidateSnapshot, bool)
-	Held() bool
-	Release() bool
-}
-
-// ProviderSelection keeps routing facts and slot ownership inseparable at the
-// WebSocket boundary. This prevents an attempt from being dispatched with a
-// provider snapshot whose concurrency capability was lost by an adapter.
-type ProviderSelection struct {
-	Lease    ProviderLease
-	Metadata selector.SelectionMetadata
-}
-
-func (s ProviderSelection) Provider() *model.Provider {
-	if s.Lease == nil {
-		return nil
-	}
-	return s.Lease.Provider()
-}
-
-type Selector interface {
-	SelectInitial(context.Context, *model.SelectRequest) (ProviderSelection, error)
-	SelectActive(context.Context, *model.SelectRequest, ProviderLease) (ProviderSelection, error)
-	SelectAlternate(context.Context, *model.SelectRequest, map[string]bool) (ProviderSelection, error)
-	UpdateStickyWithTTL(*model.SelectRequest, string, time.Duration)
-	EvictProviderContinuity(string)
+type BackoffWaiter interface {
+	Wait(context.Context, time.Duration) error
 }
 
 type ProviderAuthenticator interface {
@@ -160,6 +129,7 @@ type ActiveSessions interface {
 }
 
 type Config struct {
+	Backoff                    BackoffWaiter
 	Disguise                   wsdisguise.Repository
 	TransportPool              *upstreamtransport.Pool
 	Store                      Store
@@ -178,6 +148,7 @@ type Config struct {
 // Gateway contains the WebSocket subsystem. All dependencies are immutable and
 // injected; request contexts stay request-local and are never stored here.
 type Gateway struct {
+	backoff                    BackoffWaiter
 	disguise                   wsdisguise.Repository
 	transportPool              *upstreamtransport.Pool
 	store                      Store
@@ -216,7 +187,12 @@ func NewGateway(cfg Config) *Gateway {
 	if usageObserver == nil {
 		usageObserver, _ = cfg.Auth.(ProviderUsageObserver)
 	}
+	backoff := cfg.Backoff
+	if backoff == nil {
+		backoff = wsretry.TimerWaiter{}
+	}
 	return &Gateway{
+		backoff:  backoff,
 		disguise: cfg.Disguise, transportPool: cfg.TransportPool,
 		store: cfg.Store, selector: cfg.Selector, health: cfg.Health,
 		activeSessions: cfg.ActiveSessions, visibleContinuitySeedStore: cfg.VisibleContinuitySeedStore,
@@ -385,7 +361,10 @@ func (h *Gateway) beginDisguiseSession(ctx context.Context, headers http.Header,
 		ObserveClient(context.Context, string, http.Header, time.Time) error
 	}); ok {
 		if err := observer.ObserveClient(ctx, clientID, headers, capturedAt); err != nil {
-			h.logger.Error("websocket.client_disguise_learning_failed", zap.String("operation_id", requestID), zap.Error(err))
+			h.logger.Error("websocket.client_disguise_learning_failed",
+				zap.String("operation_id", requestID),
+				zap.String("client_identity_id", clientID),
+				zap.Error(err))
 			return nil, err
 		}
 	}
@@ -512,8 +491,8 @@ func newWebSocketGatewayFailureResult(statusCode int, terminalCause model.Termin
 }
 
 // bytesTrackingObserver decorates a WebSocketMessageObserver, recording byte
-// counts, message counts, and last-activity timestamps into a LiveBytesTracker.
-// This piggybacks on the existing observer pipeline — zero transport-layer changes.
+// counts only after the transport confirms a complete message write. Semantic
+// observation stays on the read path so admission and suppression can run first.
 type bytesTrackingObserver struct {
 	inner   WebSocketMessageObserver
 	tracker LiveTraffic
@@ -524,18 +503,23 @@ func newBytesTrackingObserver(inner WebSocketMessageObserver, tracker LiveTraffi
 }
 
 func (o *bytesTrackingObserver) ObserveClientMessage(messageType websocket.MessageType, data []byte) {
-	n := int64(len(data))
-	o.tracker.ObserveClientToUpstream(n)
 	if o.inner != nil {
 		o.inner.ObserveClientMessage(messageType, data)
 	}
 }
 
 func (o *bytesTrackingObserver) ObserveUpstreamMessage(messageType websocket.MessageType, data []byte) {
-	n := int64(len(data))
-	o.tracker.ObserveUpstreamToClient(n)
 	if o.inner != nil {
 		o.inner.ObserveUpstreamMessage(messageType, data)
+	}
+}
+
+func (o *bytesTrackingObserver) ObserveMessageWritten(direction requestcapture.MessageDirection, bytes int64) {
+	switch direction {
+	case requestcapture.MessageDirectionClientToUpstream:
+		o.tracker.ObserveClientToUpstream(bytes)
+	case requestcapture.MessageDirectionUpstreamToClient:
+		o.tracker.ObserveUpstreamToClient(bytes)
 	}
 }
 

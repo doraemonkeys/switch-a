@@ -7,18 +7,20 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
-	"github.com/doraemonkeys/switch-a/internal/codex/http"
+	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 
 	"go.uber.org/zap"
 )
 
 type pendingHTTPResponse struct {
+	upstreamCompletion *responsefacts.CompletionObserver
 	head               upstreamtransport.ResponseHead
 	media              responseanalysis.ResponseMedia
 	pending            *responseanalysis.PendingResponse
@@ -109,7 +111,17 @@ func (p *pendingHTTPResponse) finishForwarding(forwarding *responseanalysis.Forw
 		_ = forwarding.Continue(responseanalysis.TransitionSemanticDecision)
 		milestone.Observation.Release()
 	}
-	completion := forwarding.Wait()
+	return p.finishCompletion(forwarding.Wait())
+}
+
+func (p *pendingHTTPResponse) finishResolved() forwardResult {
+	if p.closeUpload != nil {
+		defer func() { _ = p.closeUpload() }()
+	}
+	return p.finishCompletion(p.pending.Wait())
+}
+
+func (p *pendingHTTPResponse) finishCompletion(completion responseanalysis.Completion) forwardResult {
 	if completion.Termination == responseanalysis.TerminationCompleted {
 		_ = p.writer.Finalize()
 	} else {
@@ -180,7 +192,9 @@ func (p *pendingHTTPResponse) discard(
 	p.writer.DiscardBufferedSSE()
 	receipt, err := p.pending.Discard(cause)
 	result := forwardResult{
-		statusCode: p.head.StatusCode, isSSE: p.media.IsEventStream(),
+		UpstreamCompletion: p.upstreamCompletion.Snapshot(),
+		DownstreamWrite:    p.writer.downstreamWrite,
+		statusCode:         p.head.StatusCode, isSSE: p.media.IsEventStream(),
 		upstreamBytes: p.sourceBytesRead(receipt.UpstreamBytesRead), decodedBytes: receipt.DecodedBytesAnalyzed,
 		responseBytes:    receipt.ClientBodyBytesWritten,
 		peakRequestBytes: receipt.PeakRequestBytes, peakProcessBytes: receipt.PeakProcessBytes,
@@ -209,6 +223,8 @@ func (p *pendingHTTPResponse) discard(
 
 func (p *pendingHTTPResponse) resultFromCompletion(completion responseanalysis.Completion) forwardResult {
 	result := forwardResult{
+		UpstreamCompletion:    p.upstreamCompletion.Snapshot(),
+		DownstreamWrite:       p.writer.downstreamWrite,
 		upstreamErrorObserved: p.matcher.ObservedError(),
 		headersWritten:        completion.HeadersCommitted, responseCommitted: completion.HeadersCommitted,
 		firstByteVisible: completion.ClientBodyBytesWritten > 0,

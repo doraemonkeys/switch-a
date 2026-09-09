@@ -68,6 +68,7 @@ func (f *SemanticFields) preserveEmptyPresence(value string, status fieldStatus,
 }
 
 type Result struct {
+	CompletionEvent string
 	Class           EventClass
 	Fields          *SemanticFields
 	Usage           *tokenusage.TokenUsage

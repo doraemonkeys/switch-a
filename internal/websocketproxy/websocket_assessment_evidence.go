@@ -9,6 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 )
 
 const (
@@ -35,6 +36,7 @@ const (
 	transportSignalTimeout             = "timeout"
 	transportSignalCanceled            = "canceled"
 	transportSignalUnknownTransport    = "unknown_transport"
+	transportSignalConnectionReset     = "connection_reset"
 	transportRawErrorSnippetLimitRunes = 256
 )
 
@@ -68,6 +70,8 @@ type webSocketGatewayEvidenceInput struct {
 // (i.e., a bug in the builder that forgets to set it) will fall through to
 // the v1 renderer and misrender — the builder always sets it explicitly.
 type webSocketEvidence struct {
+	UpstreamResponses *responsefacts.Progress             `json:"upstream_responses,omitempty"`
+	DownstreamWrite   *responsefacts.Write                `json:"downstream_write,omitempty"`
 	Replay            *webSocketReplayStatus              `json:"replay,omitempty"`
 	SchemaVersion     int                                 `json:"v"`
 	Gateway           *webSocketGatewayEvidence           `json:"gateway,omitempty"`
@@ -129,6 +133,17 @@ func buildWebSocketEvidence(
 		}
 	}()
 	evidence := webSocketEvidence{SchemaVersion: webSocketEvidenceSchemaVersion}
+	if result != nil {
+		if result.ResponseProgress.Current.Round > 0 {
+			progress := result.ResponseProgress
+			evidence.UpstreamResponses = &progress
+		}
+		if result.DownstreamWrite.Calls > 0 {
+			writes := result.DownstreamWrite
+			writes.LastError = sanitizeEvidenceSnippet(writes.LastError, injectedCredential)
+			evidence.DownstreamWrite = &writes
+		}
+	}
 	if result != nil && result.ReplayStatus.State != "" {
 		status := result.ReplayStatus
 		evidence.Replay = &status
@@ -247,9 +262,11 @@ func buildWebSocketTransportDiagnostic(result *WebSocketResult, fallback error, 
 	case closeError != nil:
 		signal, kind = transportSignalCloseError, transportKindDisconnect
 	case errors.Is(err, context.DeadlineExceeded):
-		signal, kind, source = transportSignalTimeout, transportKindTimeout, transportSourceUpstream
+		signal, kind = transportSignalTimeout, transportKindTimeout
 	case errors.Is(err, context.Canceled):
-		signal, kind, source = transportSignalCanceled, transportKindLocalError, transportSourceClient
+		signal, kind = transportSignalCanceled, transportKindLocalError
+	case attemptevidence.IsConnectionReset(err):
+		signal, kind = transportSignalConnectionReset, transportKindDisconnect
 	case errors.Is(err, io.ErrUnexpectedEOF):
 		signal, kind = transportSignalUnexpectedEOF, transportKindDisconnect
 	case errors.Is(err, io.EOF):
@@ -292,7 +309,7 @@ func truncateTransportSnippet(value string) string {
 // emit `{"v":2}` even when no diagnostic data exists, wasting log bytes and
 // distorting evidence-presence dashboards.
 func (e webSocketEvidence) isEmptyPayload() bool {
-	return e.Replay == nil && e.Gateway == nil && e.UpstreamHandshake == nil && e.Transport == nil && e.UpstreamEvent == nil
+	return e.UpstreamResponses == nil && e.DownstreamWrite == nil && e.Replay == nil && e.Gateway == nil && e.UpstreamHandshake == nil && e.Transport == nil && e.UpstreamEvent == nil
 }
 
 // marshalWebSocketEvidence enforces the 4 KiB evidence budget by trimming

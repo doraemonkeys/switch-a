@@ -193,7 +193,8 @@ func NewHandler(cfg Config) *Handler {
 		disguisePool:               upstreamtransport.NewPool(),
 	}
 	handler.webSocketGateway = websocketproxy.NewGateway(websocketproxy.Config{
-		Store: cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,
+		Backoff: handler.backoff,
+		Store:   cfg.Store, Selector: newWebSocketSelectorAdapter(cfg.Selector, handler.httpSelector), Health: cfg.Health,
 		ActiveSessions:             newWebSocketActiveSessions(cfg.ActiveRegistry),
 		VisibleContinuitySeedStore: visibleContinuitySeedStore,
 		Auth:                       cfg.Auth, UsageObserver: usageObserver,

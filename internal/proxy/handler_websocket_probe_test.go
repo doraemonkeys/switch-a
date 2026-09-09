@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -660,8 +661,8 @@ func TestHandler_ServeHTTP_WebSocket_ProbeFailureReturnsGatewayErrorEvent(t *tes
 	if !strings.Contains(body, `"type":"error"`) {
 		t.Fatalf("payload = %q, want protocol error event", body)
 	}
-	if !strings.Contains(body, ErrCodeWebSocketUpgrade) {
-		t.Fatalf("payload = %q, want error code %q", body, ErrCodeWebSocketUpgrade)
+	if !strings.Contains(body, websocketproxy.ErrCodeProviderConfiguration) {
+		t.Fatalf("payload = %q, want error code %q", body, websocketproxy.ErrCodeProviderConfiguration)
 	}
 
 	if _, _, err := conn.Read(ctx); err == nil || (!errors.Is(err, io.EOF) && !isNormalClose(err)) {

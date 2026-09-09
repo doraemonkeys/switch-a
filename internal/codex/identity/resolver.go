@@ -96,6 +96,14 @@ func (s CandidateSnapshot) Authority() UpstreamAuthority { return s.protocolScop
 func (s CandidateSnapshot) ProtocolScope() ProtocolScope { return s.protocolScope }
 func (s CandidateSnapshot) APIType() string              { return s.protocolScope.apiType }
 
+// SameDispatchIdentity permits credential refresh within one account, while
+// rejecting a route that was rebound to another credential session or subject.
+func (s CandidateSnapshot) SameDispatchIdentity(other CandidateSnapshot) bool {
+	return s.RouteTargetID() == other.RouteTargetID() &&
+		s.CredentialSessionID() == other.CredentialSessionID() &&
+		s.APIType() == other.APIType() && s.Authority().Equal(other.Authority())
+}
+
 func (s CandidateSnapshot) ValidateApplied(actual AppliedIdentity) error {
 	return ValidateAppliedIdentity(s.Authority(), actual)
 }

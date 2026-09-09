@@ -104,8 +104,10 @@ const (
 	transportSignalUpstreamReadError = "upstream_read_error"
 	transportSignalClientWriteError  = "client_write_error"
 
-	// Shared fallback.
+	// Shared termination signals and fallback.
 	transportSignalUnknownTransport = "unknown_transport"
+	transportSignalCanceled         = "canceled"
+	transportSignalTimeout          = "timeout"
 )
 
 // transportProtocol is an internal discriminator so the derivation function
@@ -227,6 +229,7 @@ func deriveSSETransportDiagnostic(obs transportObservation) *transportDiagnostic
 }
 
 func classifySSESignal(obs transportObservation) (signal, kind, source string) {
+	var clientErr *clientTerminationError
 	switch {
 	case errors.Is(obs.err, ErrSSEIdleTimeout):
 		return transportSignalSSEIdleTimeout, transportKindTimeout, transportSourceUpstream
@@ -234,6 +237,11 @@ func classifySSESignal(obs transportObservation) (signal, kind, source string) {
 		return transportSignalUpstreamReadError, transportKindProtocolError, transportSourceUpstream
 	case obs.sse.isClientWriteError:
 		return transportSignalClientWriteError, transportKindProtocolError, transportSourceClient
+	case errors.As(obs.err, &clientErr):
+		if clientErr.termination == clientTerminationTimeout {
+			return transportSignalTimeout, transportKindTimeout, transportSourceClient
+		}
+		return transportSignalCanceled, transportKindDisconnect, transportSourceClient
 	default:
 		return transportSignalUnknownTransport, transportKindLocalError, transportSourceUpstream
 	}

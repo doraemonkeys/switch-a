@@ -13,6 +13,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth/codexquota"
 	tokenusage "github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -98,6 +99,7 @@ type WebSocketObservation struct {
 	UpstreamError      *WebSocketUpstreamError
 	SessionCommitted   bool
 	CompletionObserved bool
+	ResponseProgress   responsefacts.Progress
 	CommitEventType    string
 	ParseDegraded      bool
 }
@@ -222,8 +224,9 @@ type codexWebSocketSession struct {
 }
 
 type codexWebSocketEventTarget struct {
-	ID    string `json:"id"`
-	Model string `json:"model"`
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Model  string `json:"model"`
 }
 
 type codexObserveState struct {
@@ -235,19 +238,19 @@ type codexObserveState struct {
 }
 
 type codexWebSocketMessageObserver struct {
-	mu                 sync.Mutex
-	model              string
-	modelSource        webSocketModelSource
-	tokenUsage         *TokenUsage
-	upstreamError      *WebSocketUpstreamError
-	parseDegraded      bool
-	sessionCommitted   bool
-	completionObserved bool
-	commitEventType    string
-	seenUsageKeys      map[string]struct{}
-	logger             Logger
-	onUpdate           func(WebSocketObservation)
-	onCommit           func(WebSocketObservation)
+	mu               sync.Mutex
+	model            string
+	modelSource      webSocketModelSource
+	tokenUsage       *TokenUsage
+	upstreamError    *WebSocketUpstreamError
+	parseDegraded    bool
+	sessionCommitted bool
+	responses        responsefacts.Tracker
+	commitEventType  string
+	seenUsageKeys    map[string]struct{}
+	logger           Logger
+	onUpdate         func(WebSocketObservation)
+	onCommit         func(WebSocketObservation)
 }
 
 type webSocketModelSource uint8
@@ -293,7 +296,8 @@ func (o *codexWebSocketMessageObserver) Snapshot() WebSocketObservation {
 		TokenUsage:         o.tokenUsage.Clone(),
 		UpstreamError:      o.upstreamError.Clone(),
 		SessionCommitted:   o.sessionCommitted,
-		CompletionObserved: o.completionObserved,
+		CompletionObserved: o.responses.Snapshot().Current.Completed(),
+		ResponseProgress:   o.responses.Snapshot(),
 		CommitEventType:    o.commitEventType,
 		ParseDegraded:      o.parseDegraded,
 	}
@@ -449,10 +453,10 @@ func (o *codexWebSocketMessageObserver) captureCodexObserveState(event *codexWeb
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	completionChanged := o.captureCompletionLocked(event, fromUpstream)
 	modelChanged := o.captureModelLocked(event, fromUpstream)
 	errorChanged := o.captureUpstreamErrorLocked(event, data, fromUpstream)
 	commitChanged := o.captureCommitLocked(event, fromUpstream)
-	completionChanged := o.captureCompletionLocked(event, fromUpstream)
 	semanticChanged := modelChanged || errorChanged || commitChanged || completionChanged
 	if !fromUpstream || !isCodexUsageEvent(event.Type) {
 		return o.newCodexObserveStateLocked(semanticChanged, commitChanged, "", false)
@@ -565,14 +569,20 @@ func (o *codexWebSocketMessageObserver) captureCommitLocked(event *codexWebSocke
 }
 
 func (o *codexWebSocketMessageObserver) captureCompletionLocked(event *codexWebSocketEventEnvelope, fromUpstream bool) bool {
-	if !fromUpstream || o.completionObserved || event == nil || !isCodexUsageEvent(event.Type) {
+	if event == nil {
 		return false
 	}
-	if codexEventRepresentsError(event) {
-		return false
+	if !fromUpstream && event.Type == webSocketEventResponseCreate {
+		o.upstreamError = nil
 	}
-	o.completionObserved = true
-	return true
+	id, status := "", ""
+	if event.Response != nil {
+		id, status = event.Response.ID, event.Response.Status
+	}
+	if codexEventRepresentsError(event) && status == "" {
+		status = "failed"
+	}
+	return o.responses.Observe(fromUpstream, event.Type, id, status, time.Now())
 }
 
 func isCodexUsageEvent(eventType string) bool {
@@ -622,7 +632,8 @@ func (o *codexWebSocketMessageObserver) snapshotForPublishLocked(changed bool) (
 		TokenUsage:         o.tokenUsage.Clone(),
 		UpstreamError:      o.upstreamError.Clone(),
 		SessionCommitted:   o.sessionCommitted,
-		CompletionObserved: o.completionObserved,
+		CompletionObserved: o.responses.Snapshot().Current.Completed(),
+		ResponseProgress:   o.responses.Snapshot(),
 		CommitEventType:    o.commitEventType,
 		ParseDegraded:      o.parseDegraded,
 	}, true

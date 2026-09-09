@@ -175,7 +175,7 @@ func TestDisguiseConversionFailureIsTerminalAndHasDurableEvidence(t *testing.T) 
 	}
 	attempt := WebSocketAttemptResult{Provider: &providers[0], ForwardErr: decision.Err, Result: &WebSocketResult{Err: decision.Err, TerminalCause: model.TerminalUpstreamTransportError, CompletionObserved: true}}
 	o.finishDisguiseAttempt(&attempt)
-	if attempt.Result.TerminalCause != model.TerminalInternalError || o.shouldSwitchProvider(attempt) || o.shouldFallbackToSuppressedPayload(attempt) {
+	if attempt.Result.TerminalCause != model.TerminalInternalError || o.canReplacePhysicalAttempt(attempt) || o.shouldFallbackToSuppressedPayload(attempt) {
 		t.Fatalf("conversion retry allowed: %#v", attempt)
 	}
 	if health := assessWebSocketHealth(&providers[0], attempt.Result); health.markFailure || health.markSuccess {

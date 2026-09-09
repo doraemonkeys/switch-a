@@ -8,6 +8,11 @@ import {
   TransportV2Section,
   UpstreamEventSection,
 } from "./RequestEvidenceSections";
+import {
+  UpstreamCompletionSection,
+  UpstreamResponsesSection,
+  DownstreamWriteSection,
+} from "./ResponseFactsSections";
 import { SemanticEvidencePanel } from "./SemanticEvidencePanel";
 import { DisguiseEvidencePanel } from "@/features/client-disguise/DisguiseEvidencePanel";
 
@@ -69,7 +74,13 @@ function EvidenceSections({ evidence }: { evidence: RequestEvidence }) {
   const showUpstreamEvent = hasRenderableSection(evidence.upstream_event);
   const semantic = evidence.v === 2 ? evidence.semantic_error : null;
   const disguise = evidence.v === 2 ? evidence.client_disguise : null;
+  const completion = evidence.v === 2 ? evidence.upstream_completion : null;
+  const progress = evidence.v === 2 ? evidence.upstream_responses : null;
+  const writes = evidence.v === 2 ? evidence.downstream_write : null;
   if (
+    !completion &&
+    !progress &&
+    !writes &&
     !semantic &&
     !disguise &&
     !showGateway &&
@@ -85,6 +96,9 @@ function EvidenceSections({ evidence }: { evidence: RequestEvidence }) {
   }
   return (
     <div className="space-y-3">
+      {completion && <UpstreamCompletionSection completion={completion} />}
+      {progress && <UpstreamResponsesSection progress={progress} />}
+      {writes && <DownstreamWriteSection writes={writes} />}
       {semantic && <SemanticEvidencePanel evidence={semantic} />}
       {disguise && <DisguiseEvidencePanel evidence={disguise} />}
       {showGateway && <GatewaySection gateway={evidence.gateway!} />}

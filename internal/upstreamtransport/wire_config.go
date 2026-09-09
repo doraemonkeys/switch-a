@@ -144,7 +144,24 @@ func (t *Transport) WebSocketClient() *http.Client {
 	if t == nil || t.rawClient == nil {
 		return nil
 	}
-	client := *t.rawClient
+	t.webSocketMu.Lock()
+	defer t.webSocketMu.Unlock()
+	if t.webSocketClient == nil {
+		client := *t.rawClient
+		if base, ok := client.Transport.(*http.Transport); ok {
+			// RFC 6455 Upgrade requires HTTP/1.1. Keep that constraint local to
+			// the WS client instead of disabling HTTP/2 for ordinary requests.
+			upgrade := base.Clone()
+			upgrade.Protocols = new(http.Protocols)
+			upgrade.Protocols.SetHTTP1(true)
+			if upgrade.TLSClientConfig != nil {
+				upgrade.TLSClientConfig.NextProtos = []string{"http/1.1"}
+			}
+			client.Transport = upgrade
+		}
+		t.webSocketClient = &client
+	}
+	client := *t.webSocketClient
 	return &client
 }
 

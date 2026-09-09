@@ -13,8 +13,9 @@ import (
 type pendingReserver = allocation.Reserver
 
 type runtimeDriver struct {
-	decoder *framing.Decoder
-	stream  *Stream
+	observeCompletion func(string)
+	decoder           *framing.Decoder
+	stream            *Stream
 }
 
 func newRuntimeDriver(protocol Protocol, source io.Reader, reserver allocation.Reserver) (*runtimeDriver, error) {
@@ -45,6 +46,9 @@ func (d *runtimeDriver) Read(decoded []byte, emit func(Observation) bool) (int, 
 	}
 	keepGoing := true
 	consume := func(observation Observation) bool {
+		if observation.CompletionEvent != "" && d.observeCompletion != nil {
+			d.observeCompletion(observation.CompletionEvent)
+		}
 		keepGoing = emit(observation)
 		return keepGoing
 	}
@@ -111,9 +115,10 @@ func runtimeFailureReason(err error) pending.BoundaryReason {
 
 func cloneRuntimeObservation(source Observation) Observation {
 	clone := Observation{
-		ProtocolID:     source.ProtocolID,
-		Class:          source.Class,
-		AnalysisReason: source.AnalysisReason,
+		ProtocolID:      source.ProtocolID,
+		Class:           source.Class,
+		AnalysisReason:  source.AnalysisReason,
+		CompletionEvent: source.CompletionEvent,
 	}
 	if source.Fields != nil {
 		fields := *source.Fields

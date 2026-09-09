@@ -7,7 +7,7 @@ type chatAdapter struct{ baseAdapter }
 func (a chatAdapter) Observe(frame framing.Frame) Result {
 	if frame.Done {
 		if frame.Event == "" {
-			return Result{Class: EventControl}
+			return Result{Class: EventControl, CompletionEvent: "[DONE]"}
 		}
 		return Result{Class: EventClientVisible}
 	}

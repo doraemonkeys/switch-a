@@ -87,6 +87,10 @@ func (s *accountRecoverySelector) selectProvider(req *model.SelectRequest, exclu
 func (s *accountRecoverySelector) SelectInitial(_ context.Context, req *model.SelectRequest) (ProviderSelection, error) {
 	return s.selectProvider(req, nil)
 }
+
+func (*accountRecoverySelector) ReserveSameProviderDispatch(_ context.Context, _ *model.SelectRequest, current ProviderLease) (SameProviderDispatchPermit, error) {
+	return &fallbackDispatchPermit{current: current, provider: current.Provider()}, nil
+}
 func (s *accountRecoverySelector) SelectAlternate(_ context.Context, req *model.SelectRequest, excluded map[string]bool) (ProviderSelection, error) {
 	return s.selectProvider(req, excluded)
 }

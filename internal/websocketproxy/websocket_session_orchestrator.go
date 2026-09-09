@@ -12,6 +12,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	wsdisguise "github.com/doraemonkeys/switch-a/internal/websocketproxy/disguise"
+	wsretry "github.com/doraemonkeys/switch-a/internal/websocketproxy/retry"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -77,7 +78,7 @@ type WebSocketSessionOrchestrator struct {
 	requestID                 string
 	requestDone               <-chan struct{}
 	startTime                 time.Time
-	maxAttempts               int
+	retryBudget               wsretry.Budget
 	globalAuthMode            string
 	probeClientModel          bool
 	newObserver               webSocketObserverFactory
@@ -131,7 +132,7 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		requestID:                 cfg.requestID,
 		requestDone:               cfg.requestDone,
 		startTime:                 cfg.startTime,
-		maxAttempts:               cfg.maxAttempts,
+		retryBudget:               wsretry.NewBudget(cfg.maxAttempts),
 		globalAuthMode:            cfg.globalAuthMode,
 		probeClientModel:          cfg.probeClientModel,
 		newObserver:               cfg.newObserver,
@@ -208,25 +209,32 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 	}
 	o.prepareSelectionContinuity(ctx)
 
-	for attempt := 0; ; attempt++ {
-		if o.maxAttempts > 0 && attempt >= o.maxAttempts {
+	var selection ProviderSelection
+	var selectionMode providerSwitchMode
+	for {
+		if !o.retryBudget.CanStart() {
 			return o.finalSessionFromLastAttempt(ctx)
 		}
-
-		selection, selectionMode, selectionResult := o.selectProvider(ctx, attempt)
-		if selectionResult != nil {
-			return o.finalizeSelectionFailureSession(selectionResult)
+		attempt := o.retryBudget.Attempts()
+		if o.currentProvider == nil {
+			var selectionResult *WebSocketSessionResult
+			selection, selectionMode, selectionResult = o.selectProvider(ctx, attempt)
+			if selectionResult != nil {
+				return o.finalizeSelectionFailureSession(selectionResult)
+			}
+			if attempt == 0 {
+				o.isSticky = selection.Metadata.UsesContinuity()
+			}
+			o.currentProvider = selection.Provider()
+			o.currentLease = selection.Lease
+			o.trackCurrentAttempt(selection)
 		}
-
-		if attempt == 0 {
-			o.isSticky = selection.Metadata.UsesContinuity()
+		if err := o.retryBudget.Start(o.currentProvider.ID); err != nil {
+			return o.finalizeSelectionFailureSession(newWebSocketSelectionFailureSession(
+				o.requestID, o.isSticky, o.attempts, http.StatusInternalServerError,
+				model.TerminalInternalError, ErrCodeInternalError, "WebSocket attempt budget failed", err))
 		}
-
-		o.currentProvider = selection.Provider()
-		o.currentLease = selection.Lease
-		o.trackCurrentAttempt(selection)
-
-		attemptResult := o.executeProviderAttempt(ctx, w, r, selection.Provider(), selection.Lease, attempt, selectionMode, selection.Metadata)
+		attemptResult := o.executeProviderAttempt(ctx, w, r, o.currentProvider, o.currentLease, attempt, selectionMode, selection.Metadata)
 		o.attempts = append(o.attempts, attemptResult)
 
 		if attemptResult.Result != nil {
@@ -236,18 +244,10 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 			return o.sessionFromAttempt(attemptResult)
 		}
 
-		if o.shouldSwitchProvider(attemptResult) {
-			if o.codexOperation != nil {
-				if err := o.codexOperation.ReplacePhysicalAttempt(); err != nil {
-					return o.sessionFromAttempt(attemptResult)
-				}
-				applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
+		if o.canReplacePhysicalAttempt(attemptResult) {
+			if terminal := o.preparePhysicalReplacement(ctx, attemptResult); terminal != nil {
+				return terminal
 			}
-			switchReason := websocketSwitchReason(attemptResult)
-			o.attempts[len(o.attempts)-1].SwitchReason = switchReason
-			nextSelectionMode := o.switchTracker.prepareProviderSwitch()
-			o.logProviderSwitch(attemptResult, switchReason, nextSelectionMode)
-			o.excludeCurrentProvider()
 			continue
 		}
 		if o.shouldFallbackToSuppressedPayload(attemptResult) {
@@ -257,6 +257,102 @@ func (o *WebSocketSessionOrchestrator) Run(ctx context.Context, w http.ResponseW
 		o.attempts[len(o.attempts)-1] = attemptResult
 		return o.sessionFromAttempt(attemptResult)
 	}
+}
+
+// Only an exhausted or ineligible same-provider retry enters provider selection.
+// Keeping this ordering here prevents a physical reconnect from consuming the
+// account-switch policy or releasing the session's concurrency slot.
+func (o *WebSocketSessionOrchestrator) preparePhysicalReplacement(ctx context.Context, attempt WebSocketAttemptResult) *WebSocketSessionResult {
+	if !o.retryBudget.CanStart() {
+		return o.finalSessionFromLastAttempt(ctx)
+	}
+	retried, err := o.retryCurrentProvider(ctx, attempt)
+	if err != nil {
+		return o.sessionAfterRetryCancellation(attempt, err)
+	}
+	if retried {
+		return nil
+	}
+	if o.codexOperation != nil {
+		if err := o.codexOperation.ReplacePhysicalAttempt(); err != nil {
+			return o.sessionFromAttempt(attempt)
+		}
+		applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
+	}
+	switchReason := websocketSwitchReason(attempt)
+	o.attempts[len(o.attempts)-1].SwitchReason = switchReason
+	nextSelectionMode := o.switchTracker.prepareProviderSwitch()
+	o.logProviderSwitch(attempt, switchReason, nextSelectionMode)
+	o.excludeCurrentProvider()
+	return nil
+}
+
+// Retry retains the logical session and its exact lease. Only cross-provider
+// replacement releases ownership or relaxes account-recovery routing state.
+func (o *WebSocketSessionOrchestrator) retryCurrentProvider(ctx context.Context, attempt WebSocketAttemptResult) (bool, error) {
+	provider := o.currentProvider
+	if !attempt.retryableFailure() || !o.retryBudget.CanRetry(provider.ID, provider.MaxRetries) {
+		return false, nil
+	}
+	if o.handler.health != nil && !o.handler.health.IsAvailable(ctx, provider.ID) {
+		o.logProviderRetry("rejected", "provider_unavailable", 0, nil)
+		return false, nil
+	}
+	delay := provider.Backoff.DelayForRetry(o.retryBudget.ProviderAttempts(provider.ID) - 1)
+	o.logProviderRetry("waiting", "transient_upstream_failure", delay, nil)
+	if err := o.handler.backoff.Wait(ctx, delay); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if o.handler.health != nil && !o.handler.health.IsAvailable(ctx, provider.ID) {
+		o.logProviderRetry("rejected", "provider_unavailable", delay, nil)
+		return false, nil
+	}
+	applyCodexWebSocketRouteConstraint(o.selectReq, o.codexOperation)
+	permit, err := o.handler.reserveSameProviderDispatch(ctx, selectRequestForSameProviderRetry(o.selectReq), o.currentLease)
+	if permit != nil {
+		defer permit.Release()
+	}
+	if err != nil || permit == nil {
+		o.logProviderRetry("rejected", "dispatch_unavailable", delay, err)
+		return false, ctx.Err()
+	}
+	live := permit.Provider()
+	if live == nil || live.ID != provider.ID || !o.retryBudget.CanRetry(live.ID, live.MaxRetries) {
+		o.logProviderRetry("rejected", "provider_retry_budget_changed", delay, nil)
+		return false, nil
+	}
+	live, err = permit.Activate()
+	if err != nil {
+		o.logProviderRetry("rejected", "dispatch_activation_failed", delay, err)
+		return false, ctx.Err()
+	}
+	o.currentProvider = live
+	o.logProviderRetry("activated", "transient_upstream_failure", delay, nil)
+	return true, nil
+}
+
+func (o *WebSocketSessionOrchestrator) logProviderRetry(decision, reason string, delay time.Duration, err error) {
+	o.handler.logger.Debug("websocket.provider_retry",
+		zap.String("operation_id", o.requestID), zap.String("session_id", o.requestID),
+		zap.String("provider_id", o.currentProvider.ID), zap.String("decision", decision),
+		zap.String("reason", reason), zap.Int("attempt_index", o.retryBudget.Attempts()),
+		zap.Int("provider_attempt", o.retryBudget.ProviderAttempts(o.currentProvider.ID)+1),
+		zap.Int("provider_switch_count", o.switchTracker.providerSwitchCount()),
+		zap.Duration("backoff", delay), zap.Error(err))
+}
+
+func (o *WebSocketSessionOrchestrator) sessionAfterRetryCancellation(attempt WebSocketAttemptResult, err error) *WebSocketSessionResult {
+	o.logProviderRetry("canceled", "request_canceled", 0, err)
+	attempt.Result = &WebSocketResult{Err: err, TerminalCause: model.TerminalClientDisconnect}
+	o.applySessionLifecycleToAttempt(&attempt)
+	attempt.ForwardErr = err
+	attempt.GatewayStatusCode = 0
+	attempt.GatewayErrorCode = ""
+	attempt.GatewayMessage = ""
+	return o.sessionFromAttempt(attempt)
 }
 
 func (o *WebSocketSessionOrchestrator) applySessionLifecycleToAttempt(attempt *WebSocketAttemptResult) {
@@ -272,6 +368,7 @@ func (o *WebSocketSessionOrchestrator) applySessionLifecycleToResult(result *Web
 
 	result.ReplayStatus = o.replayBuffer.Status()
 	snapshot := o.lifecycle.Snapshot()
+	result.DownstreamWrite = snapshot.DownstreamWrite
 	if snapshot.ClientAccepted {
 		result.ClientAccepted = true
 	}
@@ -561,27 +658,5 @@ func (o *WebSocketSessionOrchestrator) unregisterCurrentLease(reason string) {
 			zap.Bool("registry_entry_removed", entryRemoved),
 			zap.Bool("lease_held_after", o.currentLease.Held()),
 		)
-	}
-}
-
-func closeTerminalSuppressedClientConn(conn *websocket.Conn) {
-	if conn == nil {
-		return
-	}
-	// Post-terminal gateway ownership is only protocol-stable if the close frame is
-	// queued before the handler returns, but waiting for the full close handshake
-	// on the main goroutine would wedge terminal session finalization. CloseRead
-	// keeps the control-plane handshake moving while the bounded wait preserves the
-	// canonical close frame in the common case.
-	conn.CloseRead(context.Background())
-	closed := make(chan struct{})
-	go func() {
-		defer close(closed)
-		_ = conn.Close(websocket.StatusNormalClosure, "")
-	}()
-
-	select {
-	case <-closed:
-	case <-time.After(webSocketTerminalCloseFlushTimeout):
 	}
 }

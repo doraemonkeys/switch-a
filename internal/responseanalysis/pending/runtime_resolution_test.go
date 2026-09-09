@@ -524,7 +524,7 @@ func TestSemanticBarrierAndCachedResultsAreDeeplyImmutable(t *testing.T) {
 	results := make(chan Completion[testObservation], concurrentWaiters)
 	for range concurrentWaiters {
 		go func() {
-			value := forwarding.Wait()
+			value := response.Wait()
 			value.SemanticObservation.Values[0] = "private mutation"
 			value.Header.Set("X-Start", "private mutation")
 			results <- value

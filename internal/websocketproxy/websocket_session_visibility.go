@@ -155,7 +155,30 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 
 	observer, captureOptions := o.newAttemptRelayContext(dialExchange)
 	captureOptions.PreWriteToUpstream = o.codexClientPreWrite(ctx)
-	replayedBytes, replayed, replayErr := o.replayBufferedMessages(ctx, upstreamConn, observer, captureOptions)
+	// The upstream reader must run during replay as well as live forwarding;
+	// it services control frames and can terminate a blocked first delivery.
+	readCtx, cancelRead := context.WithCancel(ctx)
+	defer cancelRead()
+	initialRead := startWebSocketInitialRead(readCtx, upstreamConn)
+	type replayDelivery struct {
+		bytes     int64
+		attempted bool
+		err       error
+	}
+	delivery, read := withWebSocketConcurrentRead(ctx, initialRead, "replay_upload",
+		func(uploadCtx context.Context) replayDelivery {
+			n, attempted, err := o.replayBufferedMessages(uploadCtx, upstreamConn, observer, captureOptions)
+			return replayDelivery{n, attempted, err}
+		})
+	replayedBytes, replayed, replayErr := delivery.bytes, delivery.attempted, delivery.err
+	if read != nil {
+		initialRead = retainedWebSocketRead(*read)
+		if read.err != nil {
+			// Let the relay classify the original upstream read failure. The interrupted
+			// upload is still recorded separately by its physical-write capture.
+			replayErr = nil
+		}
+	}
 	if replayErr != nil {
 		o.handler.logger.Warn("websocket.replay_failed", zap.String("operation_id", o.requestID), zap.String("provider_id", provider.ID), zap.Error(replayErr))
 		attemptResult, outcome := o.newReplayFailureAttempt(
@@ -169,10 +192,11 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 	}
 
 	relayResult := o.handler.wsForwarder.relay(ctx, o.clientConn, upstreamConn, webSocketRelayOptions{
-		BeforeClientClose: o.accountRecoveryBeforeClose(ctx, provider, observer),
-		GatewayCapture:    captureOptions.GatewayCapture,
-		Capture:           captureOptions.Capture,
-		CaptureMode:       captureOptions.CaptureMode,
+		InitialUpstreamRead: initialRead,
+		BeforeClientClose:   o.accountRecoveryBeforeClose(ctx, provider, observer),
+		GatewayCapture:      captureOptions.GatewayCapture,
+		Capture:             captureOptions.Capture,
+		CaptureMode:         captureOptions.CaptureMode,
 
 		CredentialEvidence:                captureOptions.CredentialEvidence,
 		ClientReadHandoff:                 o.sessionClientReadHandoff(),
@@ -185,7 +209,7 @@ func (o *WebSocketSessionOrchestrator) relayAcceptedProviderAttempt(
 		Lifecycle:                         o.lifecycle,
 		PreserveClientOnSuppress:          true,
 		SkipPreVisibleWindow:              replayed && o.suppressedAttempt != nil,
-		PreserveClientOnPreVisibleFailure: o.suppressedAttempt != nil,
+		PreserveClientOnPreVisibleFailure: true,
 	})
 	upstreamConn = nil
 

@@ -392,7 +392,7 @@ func TestAssessWebSocketSession_WebSocketConnectionLimitDerivesOutcomeFromRuntim
 	}
 }
 
-func TestAssessWebSocketSession_CompletedCleanCloseOmitsTerminationAttribution(t *testing.T) {
+func TestAssessWebSocketSession_CleanClosePreservesIndependentCompletionFacts(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
@@ -404,7 +404,7 @@ func TestAssessWebSocketSession_CompletedCleanCloseOmitsTerminationAttribution(t
 			completionObserved: true,
 		},
 		{
-			name:               "inferred from clean close",
+			name:               "clean close without completion",
 			completionObserved: false,
 		},
 	}
@@ -425,17 +425,15 @@ func TestAssessWebSocketSession_CompletedCleanCloseOmitsTerminationAttribution(t
 				},
 			})
 
-			if assessment.ServiceOutcome != model.ServiceOutcomeCompleted {
-				t.Fatalf("ServiceOutcome = %q, want %q", assessment.ServiceOutcome, model.ServiceOutcomeCompleted)
+			wantOutcome, wantCompletion := model.ServiceOutcomeUnknown, model.CompletionStateUnknown
+			if testCase.completionObserved {
+				wantOutcome, wantCompletion = model.ServiceOutcomeCompleted, model.CompletionStateCompleted
 			}
-			if assessment.CompletionState != model.CompletionStateCompleted {
-				t.Fatalf("CompletionState = %q, want %q", assessment.CompletionState, model.CompletionStateCompleted)
+			if assessment.ServiceOutcome != wantOutcome || assessment.CompletionState != wantCompletion {
+				t.Fatalf("completion facts = %s/%s, want %s/%s", assessment.ServiceOutcome, assessment.CompletionState, wantOutcome, wantCompletion)
 			}
-			if assessment.TerminationReason != nil {
-				t.Fatalf("TerminationReason = %v, want nil for nominal clean close", assessment.TerminationReason)
-			}
-			if assessment.TerminationActor != nil {
-				t.Fatalf("TerminationActor = %v, want nil for nominal clean close", assessment.TerminationActor)
+			if deref(assessment.TerminationReason) != model.TerminationReasonCleanClose || deref(assessment.TerminationActor) != model.TerminationActorUpstream {
+				t.Fatalf("clean close attribution was discarded: %+v", assessment)
 			}
 		})
 	}
@@ -483,7 +481,7 @@ func TestAssessWebSocketSession_NeverStartedReplacementDoesNotClaimTransparentRe
 	}
 }
 
-func TestAssessWebSocketSession_ClientDisconnectMapsAbandonedByClient(t *testing.T) {
+func TestAssessWebSocketSession_ClientDisconnectDoesNotInferAbandonment(t *testing.T) {
 	t.Parallel()
 
 	assessment := assessWebSocketSession(&WebSocketSessionResult{
@@ -497,8 +495,8 @@ func TestAssessWebSocketSession_ClientDisconnectMapsAbandonedByClient(t *testing
 		},
 	})
 
-	if assessment.ServiceOutcome != model.ServiceOutcomeAbandonedByClient {
-		t.Fatalf("ServiceOutcome = %q, want %q", assessment.ServiceOutcome, model.ServiceOutcomeAbandonedByClient)
+	if assessment.ServiceOutcome != model.ServiceOutcomeUnknown {
+		t.Fatalf("ServiceOutcome = %q, want %q", assessment.ServiceOutcome, model.ServiceOutcomeUnknown)
 	}
 	if assessment.ClientAction != model.ClientActionNone {
 		t.Fatalf("ClientAction = %q, want %q", assessment.ClientAction, model.ClientActionNone)

@@ -3,6 +3,7 @@ package websocketproxy
 import (
 	"context"
 	"fmt"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy/messageio"
 	"sync"
 	"time"
 	"unsafe"
@@ -200,7 +201,7 @@ func (b *preVisibleClientMessageBuffer) Replay(ctx context.Context, upstreamConn
 		return fmt.Errorf("pre-visible replay unavailable: %s", b.Status().State)
 	}
 	for _, message := range snapshot.Messages {
-		if err := upstreamConn.Write(ctx, message.MessageType, message.Data); err != nil {
+		if err := messageio.Write(ctx, upstreamConn, message.MessageType, message.Data); err != nil {
 			return err
 		}
 	}

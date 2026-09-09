@@ -388,6 +388,22 @@ const (
 	clientTerminationTimeout
 )
 
+// clientTerminationError preserves the response path's observed ownership;
+// a request context becoming canceled later must not reclassify an upstream error.
+type clientTerminationError struct {
+	termination clientTermination
+	message     string
+}
+
+func (e *clientTerminationError) Error() string { return e.message }
+
+func (e *clientTerminationError) Unwrap() error {
+	if e.termination == clientTerminationTimeout {
+		return context.DeadlineExceeded
+	}
+	return context.Canceled
+}
+
 func classifyClientTermination(ctx context.Context) clientTermination {
 	if ctx == nil {
 		return clientTerminationNone

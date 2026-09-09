@@ -237,7 +237,7 @@ func TestConnectionBoundWriteFailureRequiresReconnectWithoutReplacement(t *testi
 	attempt := WebSocketAttemptResult{Result: &WebSocketResult{
 		Err: reconnectErr, TerminalCause: model.TerminalUpstreamTransportError,
 	}}
-	if orchestrator.shouldSwitchProvider(attempt) {
+	if orchestrator.canReplacePhysicalAttempt(attempt) {
 		t.Fatal("connection-bound write failure allowed provider replacement")
 	}
 	if got := clientFrameWriteError(replayableClientFrameDecision(), writeErr); !errors.Is(got, writeErr) ||

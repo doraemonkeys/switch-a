@@ -54,7 +54,7 @@ func TestAssessNonWebSocketRequest_UsesRuntimeFacts(t *testing.T) {
 			wantReason:     model.TerminationReasonTransportError,
 		},
 		{
-			name: "client canceled stream becomes abandoned by client",
+			name: "client cancellation leaves completion unknown",
 			facts: nonWebSocketRuntimeFacts{
 				ClientTransportStatusCode: http.StatusOK,
 				ResponseCommitted:         true,
@@ -62,8 +62,8 @@ func TestAssessNonWebSocketRequest_UsesRuntimeFacts(t *testing.T) {
 				ClientTermination:         clientTerminationDisconnect,
 				Success:                   true,
 			},
-			wantOutcome:    model.ServiceOutcomeAbandonedByClient,
-			wantCompletion: model.CompletionStateIncomplete,
+			wantOutcome:    model.ServiceOutcomeUnknown,
+			wantCompletion: model.CompletionStateUnknown,
 			wantReason:     model.TerminationReasonClientDisconnect,
 		},
 		{
@@ -74,8 +74,8 @@ func TestAssessNonWebSocketRequest_UsesRuntimeFacts(t *testing.T) {
 				ServiceStarted:            true,
 				ClientTermination:         clientTerminationTimeout,
 			},
-			wantOutcome:    model.ServiceOutcomeAbandonedByClient,
-			wantCompletion: model.CompletionStateIncomplete,
+			wantOutcome:    model.ServiceOutcomeUnknown,
+			wantCompletion: model.CompletionStateUnknown,
 			wantReason:     model.TerminationReasonTimeout,
 		},
 		{

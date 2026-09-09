@@ -26,6 +26,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestingress/clientconnection"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
@@ -282,6 +283,14 @@ func (a webSocketSelectorAdapter) SelectAlternate(
 	}, nil
 }
 
+func (a webSocketSelectorAdapter) ReserveSameProviderDispatch(
+	ctx context.Context,
+	request *model.SelectRequest,
+	current websocketproxy.ProviderLease,
+) (websocketproxy.SameProviderDispatchPermit, error) {
+	return a.capability.ReserveSameProviderDispatch(ctx, current, request)
+}
+
 func (a webSocketSelectorAdapter) UpdateStickyWithTTL(
 	request *model.SelectRequest,
 	providerID string,
@@ -526,16 +535,18 @@ func (h *Handler) handleBodyError(w http.ResponseWriter, err error, maxSize int6
 
 // retryState tracks mutable state across retry attempts in executeProxy.
 type retryState struct {
-	ledger            errorrule.RetryLedger
-	lastErr           error
-	providerUsed      *model.Provider
-	statusCode        int
-	success           bool
-	isSSE             bool
-	headersWritten    bool
-	responseCommitted bool
-	clientTermination clientTermination
-	semanticError     bool
+	UpstreamCompletion responsefacts.Completion
+	DownstreamWrite    responsefacts.Write
+	ledger             errorrule.RetryLedger
+	lastErr            error
+	providerUsed       *model.Provider
+	statusCode         int
+	success            bool
+	isSSE              bool
+	headersWritten     bool
+	responseCommitted  bool
+	clientTermination  clientTermination
+	semanticError      bool
 	// Transport observation plumbing — mirrored from forwardResult so the
 	// final logRequest/evidence path can reconstruct the observation without
 	// re-running forwarding logic. Only the last attempt's values survive

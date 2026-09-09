@@ -456,8 +456,7 @@ func awaitResponseCompletion(t *testing.T, response *Response[testObservation]) 
 	t.Helper()
 	result := make(chan Completion[testObservation], 1)
 	go func() {
-		completion := response.shared.completion.wait()
-		result <- response.shared.cloneCompletion(completion)
+		result <- response.Wait()
 	}()
 	select {
 	case completion := <-result:

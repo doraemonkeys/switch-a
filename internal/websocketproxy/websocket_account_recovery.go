@@ -2,6 +2,7 @@ package websocketproxy
 
 import (
 	"context"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy/messageio"
 	"time"
 
 	"github.com/coder/websocket"
@@ -115,7 +116,7 @@ func closeWebSocketWithPolicy(ctx context.Context, client *websocket.Conn, resul
 	writeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), webSocketFallbackWriteTimeout)
 	defer cancel()
 	if len(directive.Notice) > 0 {
-		_ = client.Write(writeContext, websocket.MessageText, directive.Notice)
+		_ = messageio.Write(writeContext, client, websocket.MessageText, directive.Notice)
 	}
 	_ = client.Close(directive.Code, directive.Reason)
 	return true

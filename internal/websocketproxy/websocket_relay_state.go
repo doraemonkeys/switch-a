@@ -6,6 +6,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 
 	"github.com/coder/websocket"
 )
@@ -73,14 +74,16 @@ const (
 )
 
 type webSocketLifecycleState struct {
-	mu             sync.Mutex
-	clientAccepted bool
-	clientVisible  bool
+	mu              sync.Mutex
+	clientAccepted  bool
+	clientVisible   bool
+	downstreamWrite responsefacts.Write
 }
 
 type webSocketLifecycleSnapshot struct {
-	ClientAccepted bool
-	ClientVisible  bool
+	DownstreamWrite responsefacts.Write
+	ClientAccepted  bool
+	ClientVisible   bool
 }
 
 type webSocketPreWriteContext struct {
@@ -302,6 +305,7 @@ func captureWebSocketMessageType(messageType websocket.MessageType) (requestcapt
 }
 
 type webSocketRelayOptions struct {
+	InitialUpstreamRead      <-chan webSocketInitialReadResult
 	BeforeClientClose        func(*webSocketRelaySessionResult) *webSocketClientClose
 	GatewayCapture           requestcapture.GatewayRecorder
 	Capture                  requestcapture.Recorder
@@ -320,9 +324,8 @@ type webSocketRelayOptions struct {
 	PreserveClientOnSuppress bool
 	SkipPreVisibleWindow     bool
 	// PreserveClientOnPreVisibleFailure keeps the downstream socket open when a
-	// fallback attempt dies before any upstream bytes become client-visible, so
-	// the orchestrator can keep switching providers or surface the suppressed
-	// original payload instead of collapsing the session into a transport close.
+	// physical attempt dies before any upstream bytes become client-visible. The
+	// orchestrator owns the final close after retry, replacement, or termination.
 	PreserveClientOnPreVisibleFailure bool
 }
 
@@ -342,6 +345,7 @@ func (o webSocketRelayOptions) withCaptureHooks() webSocketRelayOptions {
 }
 
 type webSocketRelaySessionResult struct {
+	DownstreamWrite         responsefacts.Write
 	healthOutcomePublished  bool
 	accountRecoveryNotified bool
 	Disposition             webSocketRelayDisposition
@@ -468,6 +472,15 @@ func (s *webSocketLifecycleState) MarkClientVisible() bool {
 	return true
 }
 
+func (s *webSocketLifecycleState) RecordDownstreamWrite(n int, err error) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.downstreamWrite.Record(n, err)
+}
+
 func (s *webSocketLifecycleState) Snapshot() webSocketLifecycleSnapshot {
 	if s == nil {
 		return webSocketLifecycleSnapshot{}
@@ -475,8 +488,9 @@ func (s *webSocketLifecycleState) Snapshot() webSocketLifecycleSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return webSocketLifecycleSnapshot{
-		ClientAccepted: s.clientAccepted,
-		ClientVisible:  s.clientVisible,
+		ClientAccepted:  s.clientAccepted,
+		ClientVisible:   s.clientVisible,
+		DownstreamWrite: s.downstreamWrite,
 	}
 }
 
@@ -542,4 +556,14 @@ func (s *webSocketCommitState) Snapshot() (bool, model.CommitSource) {
 	defer s.mu.Unlock()
 
 	return s.committed, s.source
+}
+
+// Traffic is a write-side observation: neither reading a message nor accepting
+// its semantic contents proves that its payload was sent to the other peer.
+func recordWebSocketWrite(observer WebSocketMessageObserver, direction requestcapture.MessageDirection, size int) {
+	if confirmed, ok := observer.(interface {
+		ObserveMessageWritten(requestcapture.MessageDirection, int64)
+	}); ok {
+		confirmed.ObserveMessageWritten(direction, int64(size))
+	}
 }

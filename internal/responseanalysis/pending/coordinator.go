@@ -354,7 +354,7 @@ func (c *coordinator[T]) handleRaw(raw []byte, generation uint64) {
 	c.finishRead(generation)
 	c.upstreamBytes += int64(len(raw))
 	if c.state == StateDiscarded || c.termination == TerminationClientWriteFailure || c.termination == TerminationClientCancelled {
-		c.rawAck <- directiveStop
+		c.rawAck <- c.bufferedAnalysisDirective()
 		return
 	}
 
@@ -407,7 +407,7 @@ func (c *coordinator[T]) handleForwardingRaw(raw []byte) {
 func (c *coordinator[T]) writeForwardingRaw(raw []byte) {
 	if err := c.writeRaw(raw); err != nil {
 		c.stopAfterClientWriteFailure()
-		c.rawAck <- directiveStop
+		c.rawAck <- c.bufferedAnalysisDirective()
 		return
 	}
 	if c.analyzing && c.analysisFailure == "" {
@@ -431,9 +431,19 @@ func (c *coordinator[T]) stopAfterClientWriteFailure() {
 	c.closeBody()
 }
 
+// A failed downstream write stops new upstream reads, but the current read
+// may already contain terminal or usage events. Finish observing those bytes;
+// handleReadStarted still prevents any further network reads.
+func (c *coordinator[T]) bufferedAnalysisDirective() pumpDirective {
+	if c.state != StateDiscarded && c.analyzing && c.analysisFailure == "" {
+		return directiveAnalyze
+	}
+	return directiveStop
+}
+
 func (c *coordinator[T]) handleAnalysisCheckpoint() {
 	if c.state == StateDiscarded || c.termination == TerminationClientWriteFailure || c.termination == TerminationClientCancelled {
-		c.observationAck <- directiveStop
+		c.observationAck <- c.bufferedAnalysisDirective()
 		return
 	}
 	if c.state == StateForwarding {
@@ -448,6 +458,11 @@ func (c *coordinator[T]) handleAnalysisCheckpoint() {
 }
 
 func (c *coordinator[T]) handleDecisiveObservation(event pumpEvent[T]) {
+	if c.state == StateDiscarded || c.termination == TerminationClientWriteFailure || c.termination == TerminationClientCancelled {
+		c.config.Observations.Release(&event.observation)
+		c.observationAck <- c.bufferedAnalysisDirective()
+		return
+	}
 	switch event.observationKind {
 	case ObservationSemanticMatch:
 		if c.hasSemantic {

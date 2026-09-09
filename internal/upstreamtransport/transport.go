@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
+	providercookie "github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/upstreamheaders"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
@@ -136,8 +136,10 @@ func (t *requestDisclosureTracker) disclosure(responseReceived bool) RequestDisc
 }
 
 type Transport struct {
-	followClient *http.Client
-	rawClient    *http.Client
+	followClient    *http.Client
+	rawClient       *http.Client
+	webSocketMu     sync.Mutex
+	webSocketClient *http.Client
 	// Injected RoundTrippers are disclosure-unknown unless they implement their
 	// own outer transport contract; only New installs the traced net/http path.
 	tracksRequestDisclosure bool
@@ -154,6 +156,9 @@ func New(config Config) *Transport {
 			}
 			return &observedConnection{Conn: connection}, nil
 		},
+		// The observation dialer must not silently disable normal HTTP/2
+		// negotiation. Explicit sampled protocols still take precedence.
+		ForceAttemptHTTP2:     true,
 		ResponseHeaderTimeout: config.FirstByteTimeout,
 		MaxIdleConns:          defaults.MaxIdleConns,
 		MaxIdleConnsPerHost:   defaults.MaxIdleConnsPerHost,
@@ -190,6 +195,12 @@ func NewWithRoundTripper(roundTripper http.RoundTripper) *Transport {
 func (t *Transport) CloseIdleConnections() {
 	if t == nil {
 		return
+	}
+	t.webSocketMu.Lock()
+	upgradeClient := t.webSocketClient
+	t.webSocketMu.Unlock()
+	if upgradeClient != nil {
+		upgradeClient.CloseIdleConnections()
 	}
 	if t.followClient != nil {
 		t.followClient.CloseIdleConnections()

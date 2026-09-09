@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
-	"github.com/doraemonkeys/switch-a/internal/codex/http"
-	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
+	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
+	codexrecovery "github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
+	"github.com/doraemonkeys/switch-a/internal/responsefacts"
 
 	"go.uber.org/zap"
 )
@@ -383,6 +384,8 @@ type nonWebSocketAssessment struct {
 // derivation pure while the termination/outcome logic stays isolated on
 // request-level axes.
 type nonWebSocketRuntimeFacts struct {
+	UpstreamCompletion        responsefacts.Completion
+	DownstreamWrite           responsefacts.Write
 	ClientTransportStatusCode int
 	Success                   bool
 	ResponseCommitted         bool
@@ -416,6 +419,10 @@ func assessNonWebSocketRequest(facts nonWebSocketRuntimeFacts) nonWebSocketAsses
 }
 
 func deriveNonWebSocketServiceOutcome(facts nonWebSocketRuntimeFacts) model.ServiceOutcome {
+	// A downstream failure cannot erase a terminal event received from upstream.
+	if facts.UpstreamCompletion.EventType != "" {
+		return model.ServiceOutcomeCompleted
+	}
 	if errors.Is(facts.TerminalErr, errClientDisguiseFailed) {
 		if facts.ServiceStarted {
 			return model.ServiceOutcomeInterrupted
@@ -428,7 +435,7 @@ func deriveNonWebSocketServiceOutcome(facts nonWebSocketRuntimeFacts) model.Serv
 	}
 	switch {
 	case facts.ClientTermination.observed():
-		return model.ServiceOutcomeAbandonedByClient
+		return model.ServiceOutcomeUnknown
 	case !facts.ServiceStarted:
 		return model.ServiceOutcomeNeverStarted
 	case facts.TerminalErr != nil:

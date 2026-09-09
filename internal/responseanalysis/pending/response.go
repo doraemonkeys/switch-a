@@ -87,6 +87,17 @@ func (p *Response[T]) AwaitBoundary() Boundary[T] {
 	return p.shared.cloneBoundary(p.shared.boundary.wait())
 }
 
+// Wait observes the final outcome independently of forwarding permission.
+// A canceled or discarded probe never grants that permission, but still owns
+// response facts and resources that must settle before its caller returns.
+// Like ForwardingResponse.Wait, the caller owns any cloned observations.
+func (p *Response[T]) Wait() Completion[T] {
+	if p == nil || p.shared == nil {
+		return Completion[T]{}
+	}
+	return p.shared.cloneCompletion(p.shared.completion.wait())
+}
+
 func (p *Response[T]) Commit(cause TransitionCause) (*ForwardingResponse[T], error) {
 	if err := cause.validate(); err != nil {
 		return nil, err

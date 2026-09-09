@@ -11,7 +11,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
-	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	codexidentity "github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
@@ -390,18 +390,15 @@ func (h *Handler) resolvePendingResponse(
 		pending.recordWinningRule(semantic)
 		return h.resolveSemanticMatch(ctx, pctx, state, pending, semantic)
 	}
+	var result forwardResult
 	if boundary.Forwarding == nil {
-		result := pending.internalFailure(errors.New("response resolved without forwarding capability"))
-		if boundary.Reason == responseanalysis.BoundaryClientCancelled {
-			result.clientTermination = classifyClientTermination(ctx)
-			if !result.clientTermination.observed() {
-				result.clientTermination = clientTerminationDisconnect
-			}
-			result.failureKind = attemptFailureClientTerminated
-		}
-		return result, false
+		// Cancellation can settle a probe before it grants forwarding permission.
+		// Read its final outcome after teardown so byte counts and failure ownership
+		// come from the response coordinator, just as they do after commitment.
+		result = pending.finishResolved()
+	} else {
+		result = pending.finishForwarding(boundary.Forwarding)
 	}
-	result := pending.finishForwarding(boundary.Forwarding)
 	h.finalizeCommittedAttempt(ctx, pctx, state, &result)
 	return result, false
 }
@@ -560,6 +557,8 @@ func visibleSemanticDecision(reason responseanalysis.BoundaryReason) errorrule.D
 }
 
 func (h *Handler) applyForwardResult(state *retryState, result forwardResult) {
+	state.UpstreamCompletion = result.UpstreamCompletion
+	state.DownstreamWrite = result.DownstreamWrite
 	state.headersWritten = result.headersWritten
 	state.statusCode = result.statusCode
 	state.lastErr = result.terminalError()
@@ -581,6 +580,7 @@ func (h *Handler) applyForwardResult(state *retryState, result forwardResult) {
 func attemptFactsFromForwardResult(ctx context.Context, result forwardResult) nonWebSocketRuntimeFacts {
 	return nonWebSocketRuntimeFacts{
 		ClientTransportStatusCode: result.statusCode, Success: result.success,
+		UpstreamCompletion: result.UpstreamCompletion, DownstreamWrite: result.DownstreamWrite,
 		ResponseCommitted: result.responseCommitted,
 		ServiceStarted:    nonWebSocketServiceStarted(result.statusCode, result.responseCommitted),
 		ClientTermination: result.clientTermination, TerminalErr: result.terminalError(),
@@ -613,6 +613,7 @@ func (h *Handler) finalizeProxy(pctx *proxyContext, state *retryState) {
 		Provider: state.providerUsed,
 		Facts: nonWebSocketRuntimeFacts{
 			ClientTransportStatusCode: clientStatus, Success: state.success,
+			UpstreamCompletion: state.UpstreamCompletion, DownstreamWrite: state.DownstreamWrite,
 			ResponseCommitted: state.responseCommitted,
 			ServiceStarted:    nonWebSocketServiceStarted(clientStatus, state.responseCommitted),
 			ClientTermination: state.clientTermination, TerminalErr: state.lastErr,

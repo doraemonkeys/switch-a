@@ -17,6 +17,11 @@ import {
   type JsonRecord,
 } from "@/features/error-detection/contracts/contract";
 import { parseSemanticError } from "./semantic-decoder";
+import {
+  parseCompletion,
+  parseResponseProgress,
+  parseWrite,
+} from "./response-facts";
 
 const TRANSPORT_SOURCES = ["upstream", "client"] as const;
 const TRANSPORT_STAGES = [
@@ -36,6 +41,7 @@ const TRANSPORT_SIGNALS = [
   "client_write_error",
   "eof",
   "unexpected_eof",
+  "connection_reset",
   "close_without_status",
   "close_error",
   "timeout",
@@ -261,6 +267,21 @@ export function parseEvidenceV2(envelope: JsonRecord): RequestEvidenceV2 {
   const path = "request evidence";
   return Object.freeze({
     v: 2,
+    upstream_completion: parseNullable(
+      envelope.upstream_completion,
+      `${path}.upstream_completion`,
+      parseCompletion,
+    ),
+    upstream_responses: parseNullable(
+      envelope.upstream_responses,
+      `${path}.upstream_responses`,
+      parseResponseProgress,
+    ),
+    downstream_write: parseNullable(
+      envelope.downstream_write,
+      `${path}.downstream_write`,
+      parseWrite,
+    ),
     client_disguise:
       envelope.client_disguise == null
         ? null

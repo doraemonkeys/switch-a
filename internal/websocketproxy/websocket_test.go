@@ -966,8 +966,12 @@ func TestWebSocketForwarder_Forward_ContextCancel(t *testing.T) {
 		if !errors.Is(result.Err, context.Canceled) {
 			t.Errorf("expected context cancellation to remain observable, got: %v", result.Err)
 		}
-		if result.TerminalCause != model.TerminalInternalError {
-			t.Errorf("TerminalCause = %q, want %q", result.TerminalCause, model.TerminalInternalError)
+		if result.DownstreamWrite.SuccessfulCalls != 1 || result.DownstreamWrite.ConfirmedBytes != 2 {
+			t.Fatalf("successful relay write facts were lost during cancellation: %+v", result.DownstreamWrite)
+		}
+		wantCause := classifyRelayTerminalCause(result.Err, result.TransportObservation.FailurePeer)
+		if result.TerminalCause != wantCause {
+			t.Errorf("TerminalCause = %q, want %q for failure peer %q", result.TerminalCause, wantCause, result.TransportObservation.FailurePeer)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Forward did not return after context cancellation")

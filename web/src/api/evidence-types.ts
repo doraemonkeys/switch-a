@@ -31,6 +31,7 @@ export type TransportEvidenceSignal =
   | "client_write_error"
   | "eof"
   | "unexpected_eof"
+  | "connection_reset"
   | "close_without_status"
   | "close_error"
   | "timeout"
@@ -213,11 +214,38 @@ export interface RequestEvidenceV1 extends RequestEvidenceSections<RequestEviden
   readonly v?: 1;
 }
 
+export interface RequestEvidenceCompletion {
+  readonly event_type: string;
+  readonly observed_at: string;
+}
+export interface RequestEvidenceResponse {
+  readonly round: number;
+  readonly response_id?: string;
+  readonly event_type?: string;
+  readonly status?: string;
+  readonly observed_at?: string;
+}
+export interface RequestEvidenceResponseProgress {
+  readonly current: RequestEvidenceResponse;
+  readonly last_completed?: RequestEvidenceResponse;
+  readonly completed_responses: number;
+}
+export interface RequestEvidenceWrite {
+  readonly calls: number;
+  readonly successful_calls: number;
+  readonly failed_calls: number;
+  readonly confirmed_bytes: number;
+  readonly last_error?: string;
+}
+
 export interface RequestEvidenceV2 extends RequestEvidenceSections<RequestEvidenceTransportV2> {
   readonly client_disguise?:
     import("./client-disguise/evidence").DisguiseEvidence | null;
   readonly v: 2;
   readonly semantic_error?: SemanticErrorEvidence | null;
+  readonly upstream_completion?: RequestEvidenceCompletion | null;
+  readonly upstream_responses?: RequestEvidenceResponseProgress | null;
+  readonly downstream_write?: RequestEvidenceWrite | null;
 }
 
 export type RequestEvidence = RequestEvidenceV1 | RequestEvidenceV2;

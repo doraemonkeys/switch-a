@@ -2,7 +2,9 @@ package upstreamtransport
 
 import (
 	"crypto/tls"
+	"github.com/coder/websocket"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
@@ -25,8 +27,16 @@ func TestSampledTransportValidationAndPoolIsolation(t *testing.T) {
 		if err != nil || again != transport {
 			t.Fatal("same actual configuration lost pool", err)
 		}
-		if transport.WebSocketClient() == nil || transport.WebSocketClient().Transport != transport.followClient.Transport {
-			t.Fatal("WS transport mismatch")
+		client := transport.WebSocketClient()
+		upgrade := client.Transport.(*http.Transport)
+		if upgrade != transport.WebSocketClient().Transport {
+			t.Fatal("WS client lost its pooled transport")
+		}
+		if upgrade == transport.followClient.Transport || !upgrade.Protocols.HTTP1() || upgrade.Protocols.HTTP2() {
+			t.Fatal("WS handshake must use an independent HTTP/1.1 transport")
+		}
+		if upgrade.TLSClientConfig != nil && !reflect.DeepEqual(upgrade.TLSClientConfig.NextProtos, []string{"http/1.1"}) {
+			t.Fatal("WS ALPN must agree with its upgrade protocol")
 		}
 		if !transport.followClient.Transport.(*http.Transport).DisableCompression {
 			t.Fatal("sample enabled implicit encoding")
@@ -76,5 +86,41 @@ func TestSampledTransportRejectsUnsupportedClaims(t *testing.T) {
 	}
 	if _, err := NewPool().Get(Config{}, WireConfig{HTTPProtocol: "chrome"}); err == nil {
 		t.Fatal("unchecked direct config")
+	}
+}
+
+func TestWebSocketUpgradeRemainsHTTP1OnHTTP2Server(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 1 {
+			t.Errorf("upgrade protocol = %s", r.Proto)
+		}
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer connection.CloseNow()
+		if err := connection.Write(r.Context(), websocket.MessageText, []byte("ready")); err != nil {
+			t.Error(err)
+		}
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	transport := New(Config{})
+	defer transport.CloseIdleConnections()
+	base := transport.followClient.Transport.(*http.Transport)
+	base.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	connection, response, err := websocket.Dial(t.Context(), server.URL, &websocket.DialOptions{HTTPClient: transport.WebSocketClient()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	if response.StatusCode != http.StatusSwitchingProtocols || response.ProtoMajor != 1 {
+		t.Fatalf("upgrade response = %d %s", response.StatusCode, response.Proto)
+	}
+	_, data, err := connection.Read(t.Context())
+	if err != nil || string(data) != "ready" {
+		t.Fatalf("message = %q, error = %v", data, err)
 	}
 }

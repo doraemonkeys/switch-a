@@ -260,14 +260,14 @@ func deriveWebSocketServiceOutcome(
 
 	switch deref(reason) {
 	case model.TerminationReasonClientDisconnect:
-		return model.ServiceOutcomeAbandonedByClient
+		return ctx.completionAwareOutcome()
 	case model.TerminationReasonWebSocketConnectionLimitReached:
 		// Connection-limit events are provider-native terminal evidence for this
 		// socket only. Keep the raw upstream payload and non-failure semantics,
 		// but derive completion from the runtime facts we actually observed.
 		return ctx.providerNativeSocketTerminalOutcome()
 	case model.TerminationReasonCleanClose:
-		return model.ServiceOutcomeCompleted
+		return ctx.completionAwareOutcome()
 	case model.TerminationReasonUsageLimitReached:
 		return ctx.usageLimitOutcome()
 	case model.TerminationReasonTransportError:
@@ -362,7 +362,7 @@ func deriveWebSocketCompletionState(
 	}
 	switch deref(reason) {
 	case model.TerminationReasonCleanClose:
-		return model.CompletionStateCompleted
+		return model.CompletionStateUnknown
 	default:
 		return model.CompletionStateIncomplete
 	}
@@ -401,11 +401,6 @@ func normalizeWebSocketTerminationAttribution(
 	case reason == nil && serviceOutcome == model.ServiceOutcomeUnknown:
 		return ptr(model.TerminationReasonUnknown), ptr(model.TerminationActorUnknown)
 	case reason == nil:
-		return nil, nil
-	// The normalized end-state contract treats nominal clean closes as completions,
-	// not as diagnostic terminations, regardless of whether completion was explicit
-	// or inferred from terminal clean-close evidence.
-	case serviceOutcome == model.ServiceOutcomeCompleted && *reason == model.TerminationReasonCleanClose:
 		return nil, nil
 	default:
 		return reason, actor

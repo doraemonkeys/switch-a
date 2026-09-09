@@ -41,7 +41,11 @@ func (a responsesAdapter) Observe(frame framing.Frame) Result {
 	if isResponseControlType(eventType) {
 		return resources.finish(Result{Class: EventControl, Usage: usage})
 	}
-	return a.nonError(usage, eventType == "response.completed", &resources)
+	result := a.nonError(usage, eventType == "response.completed", &resources)
+	if eventType == "response.completed" {
+		result.CompletionEvent = eventType
+	}
+	return result
 }
 
 func (a responsesAdapter) observeJSON(

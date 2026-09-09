@@ -203,11 +203,12 @@ func (s *Stream) Feed(decoded []byte, eof bool, consume ObservationConsumer) {
 			break
 		}
 		observation := Observation{
-			ProtocolID: s.protocolID,
-			Class:      result.Class,
-			Fields:     result.Fields,
-			Usage:      result.Usage,
-			resources:  result.TakeResources(),
+			ProtocolID:      s.protocolID,
+			Class:           result.Class,
+			CompletionEvent: result.CompletionEvent,
+			Fields:          result.Fields,
+			Usage:           result.Usage,
+			resources:       result.TakeResources(),
 		}
 		if result.Failure != "" {
 			observation.AnalysisReason = failureFromFraming(result.Failure)

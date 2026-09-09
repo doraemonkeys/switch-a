@@ -351,8 +351,8 @@ func TestNewWebSocketProviderConfigurationAttemptMapsGatewayFailure(t *testing.T
 	if attempt.GatewayStatusCode != http.StatusBadGateway {
 		t.Fatalf("GatewayStatusCode = %d, want %d", attempt.GatewayStatusCode, http.StatusBadGateway)
 	}
-	if attempt.GatewayErrorCode != ErrCodeWebSocketUpgrade {
-		t.Fatalf("GatewayErrorCode = %q, want %q", attempt.GatewayErrorCode, ErrCodeWebSocketUpgrade)
+	if attempt.GatewayErrorCode != ErrCodeProviderConfiguration {
+		t.Fatalf("GatewayErrorCode = %q, want %q", attempt.GatewayErrorCode, ErrCodeProviderConfiguration)
 	}
 	if attempt.GatewayMessage == "" {
 		t.Fatal("expected GatewayMessage to describe the missing provider field")
@@ -978,8 +978,8 @@ func TestWebSocketSessionOrchestrator_SwitchAndFallbackPredicates(t *testing.T) 
 			UpstreamError:  suppressed.upstreamError.Clone(),
 		},
 	}
-	if !orchestrator.shouldSwitchProvider(semanticAttempt) {
-		t.Fatal("shouldSwitchProvider() = false, want true for suppressed provider-scoped semantic error")
+	if !orchestrator.canReplacePhysicalAttempt(semanticAttempt) {
+		t.Fatal("canReplacePhysicalAttempt() = false, want true for suppressed provider-scoped semantic error")
 	}
 
 	genericProviderAttempt := WebSocketAttemptResult{
@@ -993,8 +993,8 @@ func TestWebSocketSessionOrchestrator_SwitchAndFallbackPredicates(t *testing.T) 
 			},
 		},
 	}
-	if !orchestrator.shouldSwitchProvider(genericProviderAttempt) {
-		t.Fatal("shouldSwitchProvider() = false, want true for generic provider-scoped semantic 5xx")
+	if !orchestrator.canReplacePhysicalAttempt(genericProviderAttempt) {
+		t.Fatal("canReplacePhysicalAttempt() = false, want true for generic provider-scoped semantic 5xx")
 	}
 
 	orchestrator.suppressedAttempt = &webSocketSuppressedAttempt{provider: suppressed.provider}
@@ -1025,8 +1025,8 @@ func TestWebSocketSessionOrchestrator_SwitchAndFallbackPredicates(t *testing.T) 
 	}
 
 	orchestrator.suppressedAttempt = nil
-	if orchestrator.shouldSwitchProvider(semanticAttempt) {
-		t.Fatal("shouldSwitchProvider() = true, want false without suppressed attempt context")
+	if orchestrator.canReplacePhysicalAttempt(semanticAttempt) {
+		t.Fatal("canReplacePhysicalAttempt() = true, want false without suppressed attempt context")
 	}
 }
 

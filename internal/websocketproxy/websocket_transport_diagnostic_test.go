@@ -21,8 +21,8 @@ func TestBuildWebSocketTransportDiagnostic_SignalClassification(t *testing.T) {
 		wantSource string
 	}{
 		{name: "fallback unknown", fallback: errors.New("dial failed"), wantSignal: transportSignalUnknownTransport, wantKind: transportKindLocalError, wantSource: transportSourceUpstream},
-		{name: "timeout remains upstream", result: &WebSocketResult{Err: context.DeadlineExceeded, TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerClient}}, wantSignal: transportSignalTimeout, wantKind: transportKindTimeout, wantSource: transportSourceUpstream},
-		{name: "cancel remains client", result: &WebSocketResult{Err: context.Canceled, TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerUpstream}}, wantSignal: transportSignalCanceled, wantKind: transportKindLocalError, wantSource: transportSourceClient},
+		{name: "timeout preserves client peer", result: &WebSocketResult{Err: context.DeadlineExceeded, TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerClient}}, wantSignal: transportSignalTimeout, wantKind: transportKindTimeout, wantSource: transportSourceClient},
+		{name: "cancellation preserves upstream peer", result: &WebSocketResult{Err: context.Canceled, TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerUpstream}}, wantSignal: transportSignalCanceled, wantKind: transportKindLocalError, wantSource: transportSourceUpstream},
 		{name: "unexpected eof", result: &WebSocketResult{Err: io.ErrUnexpectedEOF}, wantSignal: transportSignalUnexpectedEOF, wantKind: transportKindDisconnect, wantSource: transportSourceUpstream},
 		{name: "eof", result: &WebSocketResult{Err: io.EOF}, wantSignal: transportSignalEOF, wantKind: transportKindDisconnect, wantSource: transportSourceUpstream},
 		{name: "close without status", result: &WebSocketResult{CloseCode: websocket.StatusNoStatusRcvd}, wantSignal: transportSignalCloseWithoutStatus, wantKind: transportKindDisconnect, wantSource: transportSourceUpstream},

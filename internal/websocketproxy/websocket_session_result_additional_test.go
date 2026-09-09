@@ -619,8 +619,8 @@ func TestPopulateCanonicalWebSocketGatewayMetadataCoversCanonicalFallbacks(t *te
 		}
 
 		populateCanonicalWebSocketGatewayMetadata(session)
-		if session.GatewayErrorCode != ErrCodeWebSocketUpgrade {
-			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeWebSocketUpgrade)
+		if session.GatewayErrorCode != ErrCodeProviderConfiguration {
+			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeProviderConfiguration)
 		}
 		if session.GatewayMessage != configErr.Error() {
 			t.Fatalf("GatewayMessage = %q, want %q", session.GatewayMessage, configErr.Error())
@@ -654,8 +654,8 @@ func TestPopulateCanonicalWebSocketGatewayMetadataCoversCanonicalFallbacks(t *te
 		if session.GatewayStatusCode != webSocketPreVisibleFailureStatusCode {
 			t.Fatalf("GatewayStatusCode = %d, want %d", session.GatewayStatusCode, webSocketPreVisibleFailureStatusCode)
 		}
-		if session.GatewayErrorCode != ErrCodeWebSocketUpgrade {
-			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeWebSocketUpgrade)
+		if session.GatewayErrorCode != ErrCodeWebSocketTransport {
+			t.Fatalf("GatewayErrorCode = %q, want %q", session.GatewayErrorCode, ErrCodeWebSocketTransport)
 		}
 		if session.GatewayMessage != webSocketPreVisibleFailureMessage {
 			t.Fatalf("GatewayMessage = %q, want %q", session.GatewayMessage, webSocketPreVisibleFailureMessage)
@@ -863,8 +863,8 @@ func TestNewWebSocketProviderConfigurationAttemptUsesTypedMissingField(t *testin
 	if attempt.GatewayStatusCode != http.StatusBadGateway {
 		t.Fatalf("GatewayStatusCode = %d, want %d", attempt.GatewayStatusCode, http.StatusBadGateway)
 	}
-	if attempt.GatewayErrorCode != ErrCodeWebSocketUpgrade {
-		t.Fatalf("GatewayErrorCode = %q, want %q", attempt.GatewayErrorCode, ErrCodeWebSocketUpgrade)
+	if attempt.GatewayErrorCode != ErrCodeProviderConfiguration {
+		t.Fatalf("GatewayErrorCode = %q, want %q", attempt.GatewayErrorCode, ErrCodeProviderConfiguration)
 	}
 
 	wantMessage := `Provider "provider-1" is not ready for websocket "openai": credentials`

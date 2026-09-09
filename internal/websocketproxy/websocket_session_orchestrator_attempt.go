@@ -266,7 +266,7 @@ func (o *WebSocketSessionOrchestrator) queueRejectedDialCapture(
 		webSocketDialFailureCaptureOutcome(
 			ctx,
 			dialExchange,
-			webSocketDialFailureReason(dialExchange, o.shouldSwitchProvider(attempt)),
+			webSocketDialFailureReason(dialExchange, o.canReplacePhysicalAttempt(attempt)),
 		),
 	)
 }
@@ -616,5 +616,8 @@ func (o *WebSocketSessionOrchestrator) stampAttemptSelectionContext(
 	attempt.SelectionMode = selectionMode
 	attempt.SelectionMetadata = selectionMetadata
 	attempt.ProviderAttempt = 1
+	if attempt.Provider != nil {
+		attempt.ProviderAttempt = max(1, o.retryBudget.ProviderAttempts(attempt.Provider.ID))
+	}
 	attempt.ProviderSwitchCount = o.switchTracker.providerSwitchCount()
 }

@@ -236,6 +236,28 @@ describe("isV2Evidence + getLogEvidenceSummary routing", () => {
     );
   });
 
+  it.each(["client", "upstream"])(
+    "preserves %s connection reset through decoding and display",
+    (source) => {
+      const transport = {
+        source,
+        stage: "post_payload_visible",
+        kind: "disconnect",
+        signal: "connection_reset",
+        raw_error_snippet:
+          "An existing connection was forcibly closed by the remote host.",
+      };
+      const evidenceJson = JSON.stringify({ v: 2, transport });
+      expect(parseRequestEvidence(evidenceJson)).toMatchObject({
+        v: 2,
+        transport,
+      });
+      const summary = `${source} disconnect (connection_reset) after payload visible`;
+      expect(getLogEvidenceSummary(withEvidence(evidenceJson))).toBe(summary);
+      expect(getLogTransportSummary(withEvidence(evidenceJson))).toBe(summary);
+    },
+  );
+
   it("prefers gateway terminal text over the transport-formatted summary", () => {
     const evidenceJson = JSON.stringify({
       v: 2,

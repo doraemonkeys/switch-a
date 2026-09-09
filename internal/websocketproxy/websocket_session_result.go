@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy/messageio"
 	"net/http"
 	"time"
 
@@ -360,7 +361,7 @@ func (o *WebSocketSessionOrchestrator) emitTerminalGatewayErrorIfNeeded(
 	writeCtx, cancel := context.WithTimeout(context.Background(), webSocketFallbackWriteTimeout)
 	defer cancel()
 
-	if err := o.clientConn.Write(writeCtx, websocket.MessageText, payload); err != nil {
+	if err := messageio.Write(writeCtx, o.clientConn, websocket.MessageText, payload); err != nil {
 		_ = o.clientConn.Close(websocket.StatusInternalError, "")
 		o.clientConn = nil
 		return err
@@ -470,7 +471,7 @@ func newWebSocketProviderConfigurationAttempt(
 		LatencyMs:         latency.Milliseconds(),
 		CreatedAt:         time.Now(),
 		GatewayStatusCode: http.StatusBadGateway,
-		GatewayErrorCode:  ErrCodeWebSocketUpgrade,
+		GatewayErrorCode:  ErrCodeProviderConfiguration,
 		GatewayMessage:    message,
 	}
 }
@@ -519,7 +520,7 @@ func populateCanonicalWebSocketGatewayMetadata(session *WebSocketSessionResult) 
 	}
 	if session.GatewayStatusCode > 0 {
 		if session.GatewayErrorCode == "" {
-			session.GatewayErrorCode = ErrCodeWebSocketUpgrade
+			session.GatewayErrorCode = webSocketFailureCode(session.FinalResult)
 		}
 		if session.GatewayMessage == "" {
 			session.GatewayMessage = canonicalWebSocketGatewayMessage(session.FinalResult)
@@ -530,8 +531,30 @@ func populateCanonicalWebSocketGatewayMetadata(session *WebSocketSessionResult) 
 		return
 	}
 	session.GatewayStatusCode = webSocketPreVisibleFailureStatusCode
-	session.GatewayErrorCode = ErrCodeWebSocketUpgrade
+	session.GatewayErrorCode = webSocketFailureCode(session.FinalResult)
 	session.GatewayMessage = canonicalWebSocketGatewayMessage(session.FinalResult)
+}
+
+// A missing visible payload does not move an established socket back into its handshake.
+func webSocketFailureCode(result *WebSocketResult) string {
+	if result == nil {
+		return ErrCodeWebSocketUpgrade
+	}
+	switch result.TerminalCause {
+	case model.TerminalProviderConfigurationError:
+		return ErrCodeProviderConfiguration
+	case model.TerminalInternalError:
+		return ErrCodeInternalError
+	case model.TerminalUpstreamHandshakeRejected, model.TerminalClientUpgradeRejected:
+		return ErrCodeWebSocketUpgrade
+	}
+	if result.HandshakeAccepted {
+		return ErrCodeWebSocketRelay
+	}
+	if result.TerminalCause == model.TerminalUpstreamTransportError {
+		return ErrCodeWebSocketTransport
+	}
+	return ErrCodeWebSocketUpgrade
 }
 
 func canonicalWebSocketGatewayMessage(result *WebSocketResult) string {
@@ -541,6 +564,9 @@ func canonicalWebSocketGatewayMessage(result *WebSocketResult) string {
 	if result.TerminalCause == model.TerminalProviderConfigurationError && result.Err != nil {
 		return result.Err.Error()
 	}
+	if result.HandshakeAccepted {
+		return "WebSocket relay ended before a response payload was forwarded"
+	}
 	return webSocketPreVisibleFailureMessage
 }
 
@@ -549,4 +575,26 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func closeTerminalSuppressedClientConn(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	// Post-terminal gateway ownership is only protocol-stable if the close frame is
+	// queued before the handler returns, but waiting for the full close handshake
+	// on the main goroutine would wedge terminal session finalization. CloseRead
+	// keeps the control-plane handshake moving while the bounded wait preserves the
+	// canonical close frame in the common case.
+	conn.CloseRead(context.Background())
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(webSocketTerminalCloseFlushTimeout):
+	}
 }
