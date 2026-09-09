@@ -103,7 +103,7 @@ func (r *Repository) LearnSample(ctx context.Context, sample Sample) (LearnResul
 		if err := tx.First(&source, "id = ?", sample.SourceID).Error; err != nil {
 			return recordError(err)
 		}
-		if err := mergeImmutable(tx, &sample, "id", sample.ID); err != nil {
+		if err := mergeImmutable(tx, &sample, "id", sample.ID, Sample.equalImmutable); err != nil {
 			return err
 		}
 		track, trackErr := loadProfileTrack(tx, sample.SourceID, sample.Tuple)

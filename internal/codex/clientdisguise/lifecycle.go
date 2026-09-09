@@ -18,7 +18,7 @@ func (r *Repository) RetireLogin(ctx context.Context, sessionID string) error {
 			return err
 		}
 		history := LoginHistory{GenerationID: login.GenerationID, Identity: login}
-		if err := mergeImmutable(tx, &history, "generation_id", history.GenerationID); err != nil {
+		if err := mergeImmutable(tx, &history, "generation_id", history.GenerationID, LoginHistory.equalImmutable); err != nil {
 			return err
 		}
 		if err := tx.Delete(&ProfileBinding{}, "credential_session_id = ?", sessionID).Error; err != nil {

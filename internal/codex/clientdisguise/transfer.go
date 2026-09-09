@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -12,7 +11,7 @@ import (
 
 // Identity and historical feature records are immutable across environments.
 // Merging a backup must never silently change an already-issued mapping.
-func mergeImmutable[T any](db *gorm.DB, record *T, key string, value any) error {
+func mergeImmutable[T any](db *gorm.DB, record *T, key string, value any, equal func(T, T) bool) error {
 	var existing T
 	err := db.Where(key+" = ?", value).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -25,7 +24,7 @@ func mergeImmutable[T any](db *gorm.DB, record *T, key string, value any) error 
 	} else if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(existing, *record) {
+	if !equal(existing, *record) {
 		return fmt.Errorf("%w: %s %v", ErrConflict, key, value)
 	}
 	return nil
@@ -80,7 +79,7 @@ func (r *Repository) importProfiles(ctx context.Context, tx *gorm.DB, records []
 		if err := validateRevision(record); err != nil {
 			return err
 		}
-		if err := mergeImmutable(tx, &record, "id", record.ID); err != nil {
+		if err := mergeImmutable(tx, &record, "id", record.ID, ProfileRevision.equalImmutable); err != nil {
 			return err
 		}
 	}
@@ -113,7 +112,7 @@ func (r *Repository) importSamples(ctx context.Context, tx *gorm.DB, records []S
 		if record.ID == "" || record.SourceID == "" || record.CapturedAt.IsZero() {
 			return invalid("invalid imported sample")
 		}
-		if err := mergeImmutable(tx, &record, "id", record.ID); err != nil {
+		if err := mergeImmutable(tx, &record, "id", record.ID, Sample.equalImmutable); err != nil {
 			return err
 		}
 	}
@@ -125,7 +124,7 @@ func (r *Repository) importLoginHistory(ctx context.Context, tx *gorm.DB, record
 		if record.GenerationID == "" || record.GenerationID != record.Identity.GenerationID {
 			return invalid("invalid login history")
 		}
-		if err := mergeImmutable(tx, &record, "generation_id", record.GenerationID); err != nil {
+		if err := mergeImmutable(tx, &record, "generation_id", record.GenerationID, LoginHistory.equalImmutable); err != nil {
 			return err
 		}
 	}
@@ -137,7 +136,7 @@ func (r *Repository) importLogins(ctx context.Context, tx *gorm.DB, records []Lo
 		if record.CredentialSessionID == "" || record.GenerationID == "" || record.DeviceID == "" || !record.AccountBasis.Resolved() {
 			return invalid("invalid login identity")
 		}
-		if err := mergeImmutable(tx, &record, "credential_session_id", record.CredentialSessionID); err != nil {
+		if err := mergeImmutable(tx, &record, "credential_session_id", record.CredentialSessionID, LoginIdentity.equalImmutable); err != nil {
 			return err
 		}
 	}

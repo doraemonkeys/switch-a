@@ -70,6 +70,10 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 			ObserveClient(context.Context, string, http.Header, time.Time) error
 		}); ok {
 			if err := observer.ObserveClient(ctx, clientIdentity.ID, r.Header, startTime); err != nil {
+				h.logger.Error("client_disguise.http_learning_failed",
+					zap.String("operation_id", requestID),
+					zap.String("client_identity_id", clientIdentity.ID),
+					zap.Error(err))
 				h.handleCodexHTTPBeginError(w, requestID, err)
 				return
 			}

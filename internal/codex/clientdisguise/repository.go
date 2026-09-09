@@ -265,7 +265,7 @@ func (r *Repository) SaveTransportSample(ctx context.Context, sample TransportSa
 	if err := validateTransportSample(sample); err != nil {
 		return err
 	}
-	return mergeImmutable(r.db.WithContext(ctx), &sample, "id", sample.ID)
+	return mergeImmutable(r.db.WithContext(ctx), &sample, "id", sample.ID, TransportSample.equalImmutable)
 }
 
 func (r *Repository) MapIdentity(ctx context.Context, key MappingKey) (string, error) {
