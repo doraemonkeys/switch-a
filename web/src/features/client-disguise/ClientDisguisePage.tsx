@@ -64,7 +64,10 @@ export function ClientDisguisePage() {
           <h1>
             Client disguise<span>.</span>
           </h1>
-          <p>A consistent client profile for every credential login.</p>
+          <p>
+            A stable device and client profile for every credential login.
+            Conversation IDs and cache keys stay unchanged.
+          </p>
         </div>
         <Link className="cd-button cd-button-secondary" to="/providers">
           Manage providers <ArrowRight size={15} aria-hidden="true" />

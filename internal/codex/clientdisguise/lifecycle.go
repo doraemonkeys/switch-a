@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// RetireLogin retains historical mappings while removing the live credential
+// RetireLogin retains historical devices while removing the live credential
 // reference, so deleting a login cannot leave a backup that cannot be restored.
 func (r *Repository) RetireLogin(ctx context.Context, sessionID string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

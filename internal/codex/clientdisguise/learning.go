@@ -88,6 +88,9 @@ func validateRevision(p ProfileRevision) error {
 	if p.Features.ClientVersion != "" && p.Features.ClientVersion != p.ClientVersion {
 		return invalid("profile feature version differs from client version")
 	}
+	if version := userAgentVersion(p.Features.ClientUserAgent()); version != "" && version != p.ClientVersion {
+		return invalid("profile User-Agent version differs from client version")
+	}
 	return validateFeatures(p.Features)
 }
 func (r *Repository) LearnSample(ctx context.Context, sample Sample) (LearnResult, error) {
@@ -141,8 +144,8 @@ func (r *Repository) LearnSample(ctx context.Context, sample Sample) (LearnResul
 // An absent observation is not evidence that a previous feature disappeared.
 func overlayFeatures(previous, observed Features) Features {
 	result := previous.Clone()
-	if observed.UserAgent != "" {
-		result.UserAgent = observed.UserAgent
+	if ua := observed.ClientUserAgent(); ua != "" {
+		result.UserAgent = ua
 	}
 	if observed.Originator != "" {
 		result.Originator = observed.Originator
@@ -214,7 +217,13 @@ func (r *Repository) learnRevision(tx *gorm.DB, sample Sample, track ProfileTrac
 			use = previous.ID == track.RevisionID
 		}
 		if use {
-			features = overlayFeatures(previous.Features, features)
+			base := previous.Features
+			if previous.ClientVersion != sample.ClientVersion {
+				// Partial observations may preserve environment facts, but cannot
+				// attribute an older release's UA to a newly observed version.
+				base = withoutPreviousRelease(base)
+			}
+			features = overlayFeatures(base, features)
 			break
 		}
 	}

@@ -5,59 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	disguise "github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 )
 
-type memoryMapper struct {
-	mu     sync.Mutex
-	values map[disguise.MappingKey]string
-	fail   error
-}
-
-func (m *memoryMapper) MapIdentity(_ context.Context, key disguise.MappingKey) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.fail != nil {
-		return "", m.fail
-	}
-	if m.values == nil {
-		m.values = make(map[disguise.MappingKey]string)
-	}
-	if value, ok := m.values[key]; ok {
-		return value, nil
-	}
-	value := fmt.Sprintf("mapped-%s-%s-%s-%s", key.GenerationID, key.ClientIdentityID, key.Namespace, key.Original)
-	m.values[key] = value
-	return value, nil
-}
-func (m *memoryMapper) RestoreIdentity(_ context.Context, generation, client, namespace, value string) (string, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.fail != nil {
-		return "", false, m.fail
-	}
-	for key, mapped := range m.values {
-		if key.GenerationID == generation && key.ClientIdentityID == client && key.Namespace == namespace && mapped == value {
-			return key.Original, true, nil
-		}
-	}
-	return "", false, nil
-}
 func testSession() *Session {
-	return NewSession(&memoryMapper{}, disguise.TargetSnapshot{
+	return NewSession(disguise.TargetSnapshot{
 		Policy:  disguise.Policy{Enabled: true},
 		Login:   disguise.LoginIdentity{GenerationID: "login", DeviceID: "device"},
 		Binding: disguise.ProfileBinding{TelemetryPathMappings: map[string]string{"/original": "/telemetry"}},
 		Profile: disguise.ProfileRevision{Features: disguise.Features{UserAgent: "sample-agent", Originator: "sample-origin", Headers: map[string]string{"Cookie": "forbidden", "Accept-Encoding": "br", "Version": "1.2.3"}}},
-	}, "client", "operation")
+	}, "operation")
 }
 func TestIdentityAcrossCarriersAndProtocolOnlyInverse(t *testing.T) {
 	s := testSession()
@@ -72,7 +35,7 @@ func TestIdentityAcrossCarriersAndProtocolOnlyInverse(t *testing.T) {
 		t.Fatal("headers mutated")
 	}
 	thread := headers.Get("Thread-Id")
-	if thread == "thread" || headers.Get("X-Codex-Window-Id") != thread+":17" || headers.Get("User-Agent") != "sample-agent" || headers.Get("Originator") != "sample-origin" || headers.Get("Accept-Encoding") != "gzip" || headers.Get("Cookie") != "client=1" {
+	if thread != "thread" || headers.Get("Session-Id") != "session" || headers.Get("X-Client-Request-Id") != "req" || headers.Get("X-Codex-Window-Id") != thread+":17" || headers["Installation_id"][0] != "device" || headers.Get("User-Agent") != "sample-agent" || headers.Get("Originator") != "sample-origin" || headers.Get("Accept-Encoding") != "gzip" || headers.Get("Cookie") != "client=1" {
 		t.Fatal(headers)
 	}
 	metadata := `{"installation_id":"install","thread_id":"thread","turn_id":"","cwd":"/original","nested":{"thread_id":"prompt"}}`
@@ -137,7 +100,7 @@ func TestUnknownAndEmptyProtocolPreservation(t *testing.T) {
 	}
 }
 func TestKnownInvalidJSONFailsWithStableDiagnostic(t *testing.T) {
-	malformed := []string{`{"thread_id":1}`, `{"thread_id":[]}`, `{"thread_id":tru}`, `{"a":"\q"}`, `{"a":"\u0X00"}`, `{"a":"` + "\n" + `"}`, `{"a" 1}`, `{"a":1 "b":2}`, `[1 2]`, `{"a":01}`, `{"a":1.}`, `{"a":1e}`, `{"a":--1}`, `{"a":+1}`, `{"a":nulL}`, `{} trailing`, `{"a":`, `{"type":"response.create","a":`}
+	malformed := []string{`{"installation_id":1}`, `{"installation_id":[]}`, `{"thread_id":tru}`, `{"a":"\q"}`, `{"a":"\u0X00"}`, `{"a":"` + "\n" + `"}`, `{"a" 1}`, `{"a":1 "b":2}`, `[1 2]`, `{"a":01}`, `{"a":1.}`, `{"a":1e}`, `{"a":--1}`, `{"a":+1}`, `{"a":nulL}`, `{} trailing`, `{"a":`, `{"type":"response.create","a":`}
 	for _, input := range malformed {
 		t.Run(input, func(t *testing.T) {
 			s := testSession()
@@ -149,36 +112,23 @@ func TestKnownInvalidJSONFailsWithStableDiagnostic(t *testing.T) {
 			if !strings.Contains(err.Error(), failure.DiagnosticID) {
 				t.Fatal(err)
 			}
-			_, next := s.RequestJSON(context.Background(), []byte(`{"thread_id":false}`))
+			_, next := s.RequestJSON(context.Background(), []byte(`{"installation_id":false}`))
 			if next != err {
 				t.Fatal("diagnostic changed")
 			}
 		})
 	}
 }
-func TestMappingFailureAndFrozenSnapshots(t *testing.T) {
+func TestDeviceFailureAndFrozenSnapshots(t *testing.T) {
 	s := testSession()
-	cause := errors.New("database mapping failure")
-	s.mapper.(*memoryMapper).fail = cause
-	_, err := s.Headers(context.Background(), http.Header{"Thread-Id": {"thread"}})
+	s.target.Login.DeviceID = ""
+	_, err := s.Headers(context.Background(), http.Header{"Installation-Id": {"install"}})
 	var failure *Failure
-	if !errors.As(err, &failure) || !errors.Is(err, cause) || failure.Stage != "mapping" || failure.OriginalSnippet != "thread" {
+	if !errors.As(err, &failure) || failure.Stage != "mapping" || failure.OriginalSnippet != "install" {
 		t.Fatal(err)
 	}
-	s = testSession()
-	s.mapper = nil
-	_, err = s.RequestJSON(context.Background(), []byte(`{"thread_id":"a"}`))
-	if err == nil {
-		t.Fatal("missing mapper")
-	}
-	s = testSession()
-	s.target.Login.DeviceID = ""
-	_, err = s.Headers(context.Background(), http.Header{"Installation-Id": {"a"}})
-	if err == nil {
-		t.Fatal("missing device")
-	}
 	target := testSession().target
-	session := NewSession(&memoryMapper{}, target, "client", "op")
+	session := NewSession(target, "op")
 	target.Profile.Features.Headers["Version"] = "changed"
 	target.Binding.TelemetryPathMappings["/original"] = "/changed"
 	headers, err := session.Headers(context.Background(), nil)
@@ -186,9 +136,8 @@ func TestMappingFailureAndFrozenSnapshots(t *testing.T) {
 		t.Fatal(headers, err)
 	}
 	s = testSession()
-	s.target.Binding.RemapCacheKeys = true
 	got, err := s.RequestJSON(context.Background(), []byte(`{"prompt_cache_key":"a","window_id":"opaque","turn_id":"turn"}`))
-	if err != nil || bytes.Contains(got, []byte(`"prompt_cache_key":"a"`)) {
+	if err != nil || string(got) != `{"prompt_cache_key":"a","window_id":"opaque","turn_id":"turn"}` {
 		t.Fatal(string(got), err)
 	}
 	restored, err := s.ResponseJSON(context.Background(), got)

@@ -27,7 +27,7 @@ func (r *Repository) WithDB(db *gorm.DB) *Repository {
 
 func Migrate(ctx context.Context, db *gorm.DB) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.AutoMigrate(&LoginIdentity{}, &LoginHistory{}, &ProfileBinding{}, &ProfileRevision{}, &Sample{}, &ReferenceSource{}, &Mapping{}, &TransportSample{}, &ProfileTrack{}); err != nil {
+		if err := tx.AutoMigrate(&LoginIdentity{}, &LoginHistory{}, &ProfileBinding{}, &ProfileRevision{}, &Sample{}, &ReferenceSource{}, &TransportSample{}, &ProfileTrack{}); err != nil {
 			return err
 		}
 		for _, profile := range BuiltinProfiles() {
@@ -75,7 +75,7 @@ func (r *Repository) SyncLoginAccount(ctx context.Context, sessionID string, bas
 				return err
 			}
 			// A replaced account must make a fresh first-profile decision. Old
-			// generations and mappings remain available for ownership diagnostics.
+			// generations remain available for ownership diagnostics.
 			if err := tx.Delete(&ProfileBinding{}, "credential_session_id = ?", sessionID).Error; err != nil {
 				return err
 			}
@@ -266,29 +266,4 @@ func (r *Repository) SaveTransportSample(ctx context.Context, sample TransportSa
 		return err
 	}
 	return mergeImmutable(r.db.WithContext(ctx), &sample, "id", sample.ID, TransportSample.equalImmutable)
-}
-
-func (r *Repository) MapIdentity(ctx context.Context, key MappingKey) (string, error) {
-	if key.Original == "" {
-		return "", nil
-	}
-	if key.GenerationID == "" || key.ClientIdentityID == "" || key.Namespace == "" {
-		return "", invalid("mapping generation, client and namespace required")
-	}
-	mapping := Mapping{MappingKey: key, Mapped: uuid.NewString()}
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&mapping).Error; err != nil {
-			return err
-		}
-		return tx.First(&mapping, "generation_id = ? AND client_identity_id = ? AND namespace = ? AND original = ?", key.GenerationID, key.ClientIdentityID, key.Namespace, key.Original).Error
-	})
-	return mapping.Mapped, err
-}
-func (r *Repository) RestoreIdentity(ctx context.Context, generationID, clientIdentityID, namespace, mapped string) (string, bool, error) {
-	var mapping Mapping
-	err := r.db.WithContext(ctx).First(&mapping, "generation_id = ? AND client_identity_id = ? AND namespace = ? AND mapped = ?", generationID, clientIdentityID, namespace, mapped).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return mapped, false, nil
-	}
-	return mapping.Original, err == nil, err
 }

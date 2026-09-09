@@ -24,12 +24,6 @@ func (r repository) EvaluateCandidate(_ context.Context, id string, basis client
 func (r repository) CommitTarget(context.Context, clientdisguise.Candidate) (clientdisguise.TargetSnapshot, error) {
 	return r.target, r.err
 }
-func (repository) MapIdentity(_ context.Context, key clientdisguise.MappingKey) (string, error) {
-	return "mapped-" + key.Original, nil
-}
-func (repository) RestoreIdentity(context.Context, string, string, string, string) (string, bool, error) {
-	return "", false, nil
-}
 func route() model.Provider {
 	return model.Provider{ID: "route", CredentialSessions: []credentialsession.RouteSnapshot{{APIType: "codex", Credential: credentialsession.Snapshot{SessionID: "login"}}}}
 }
@@ -41,7 +35,7 @@ func TestConnectionTargetAndTransportSnapshot(t *testing.T) {
 		Login:     clientdisguise.LoginIdentity{GenerationID: "generation", DeviceID: "device"},
 		Profile:   clientdisguise.ProfileRevision{Features: clientdisguise.Features{UserAgent: "observed"}},
 		Transport: &clientdisguise.TransportSample{Config: []byte(`{"http_protocol":"http1","alpn":["http/1.1"]}`)}}}
-	session, err := New(context.Background(), repo, []model.Provider{provider}, nil, "client", "operation", pool)
+	session, err := New(context.Background(), repo, []model.Provider{provider}, nil, "operation", pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +77,7 @@ func TestUnsupportedWebSocketTransportTerminatesBeforeDial(t *testing.T) {
 			provider := route()
 			repo := repository{target: clientdisguise.TargetSnapshot{Policy: clientdisguise.Policy{Enabled: true},
 				Transport: &clientdisguise.TransportSample{Config: []byte(config)}}}
-			session, err := New(context.Background(), repo, []model.Provider{provider}, nil, "client", "operation", nil)
+			session, err := New(context.Background(), repo, []model.Provider{provider}, nil, "operation", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,14 +103,14 @@ func TestOptionalSessionAndDependencyBoundaries(t *testing.T) {
 	if client, err := absent.HTTPClient(); client != nil || err != nil {
 		t.Fatal("absent feature changed transport")
 	}
-	if _, err := New(context.Background(), nil, nil, nil, "client", "operation", nil); err == nil {
+	if _, err := New(context.Background(), nil, nil, nil, "operation", nil); err == nil {
 		t.Fatal("nil repository accepted")
 	}
 	provider := route()
-	if _, err := New(context.Background(), repository{err: errors.New("store")}, []model.Provider{provider}, nil, "client", "operation", nil); err == nil {
+	if _, err := New(context.Background(), repository{err: errors.New("store")}, []model.Provider{provider}, nil, "operation", nil); err == nil {
 		t.Fatal("repository error ignored")
 	}
-	session, err := New(context.Background(), repository{}, []model.Provider{provider}, nil, "client", "operation", nil)
+	session, err := New(context.Background(), repository{}, []model.Provider{provider}, nil, "operation", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,6 @@ export interface ProfileBinding {
   revision_id: string;
   reference_source_id: string;
   transport_sample_id: string;
-  remap_cache_keys: boolean;
   telemetry_path_mappings: Record<string, string> | null;
   updated_at?: string;
 }

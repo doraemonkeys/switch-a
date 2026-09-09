@@ -112,7 +112,6 @@ type ProfileBinding struct {
 	RevisionID            string            `json:"revision_id"`
 	ReferenceSourceID     string            `json:"reference_source_id"`
 	TransportSampleID     string            `json:"transport_sample_id"`
-	RemapCacheKeys        bool              `json:"remap_cache_keys"`
 	TelemetryPathMappings map[string]string `json:"telemetry_path_mappings,omitempty" gorm:"serializer:json"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 }
@@ -165,19 +164,6 @@ type TargetSnapshot struct {
 	Transport *TransportSample `json:"transport,omitempty"`
 }
 
-type MappingKey struct {
-	GenerationID     string `json:"generation_id" gorm:"primaryKey"`
-	ClientIdentityID string `json:"client_identity_id" gorm:"primaryKey"`
-	Namespace        string `json:"namespace" gorm:"primaryKey"`
-	Original         string `json:"original" gorm:"primaryKey"`
-}
-type Mapping struct {
-	MappingKey `gorm:"embedded"`
-	Mapped     string `json:"mapped" gorm:"uniqueIndex:idx_disguise_mapped"`
-}
-
-func (Mapping) TableName() string { return "client_disguise_mappings" }
-
 // ProfileTrack separates the latest observation time from the chosen immutable
 // revision, because duplicate samples advance ordering without changing features.
 type ProfileTrack struct {
@@ -203,6 +189,5 @@ type Snapshot struct {
 	Profiles         []ProfileRevision `json:"profiles"`
 	Samples          []Sample          `json:"samples"`
 	References       []ReferenceSource `json:"references"`
-	Mappings         []Mapping         `json:"mappings"`
 	TransportSamples []TransportSample `json:"transport_samples"`
 }

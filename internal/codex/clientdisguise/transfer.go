@@ -10,7 +10,7 @@ import (
 )
 
 // Identity and historical feature records are immutable across environments.
-// Merging a backup must never silently change an already-issued mapping.
+// Merging a backup must never silently change an already-issued device identity.
 func mergeImmutable[T any](db *gorm.DB, record *T, key string, value any, equal func(T, T) bool) error {
 	var existing T
 	err := db.Where(key+" = ?", value).First(&existing).Error
@@ -32,7 +32,7 @@ func mergeImmutable[T any](db *gorm.DB, record *T, key string, value any, equal 
 func (r *Repository) Export(ctx context.Context) (Snapshot, error) {
 	var result Snapshot
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, target := range []any{&result.Logins, &result.LoginHistory, &result.Bindings, &result.Profiles, &result.Samples, &result.References, &result.Mappings, &result.TransportSamples, &result.Tracks} {
+		for _, target := range []any{&result.Logins, &result.LoginHistory, &result.Bindings, &result.Profiles, &result.Samples, &result.References, &result.TransportSamples, &result.Tracks} {
 			if err := tx.Find(target).Error; err != nil {
 				return err
 			}
@@ -65,9 +65,6 @@ func (r *Repository) Import(ctx context.Context, snapshot Snapshot) error {
 			return err
 		}
 		if err := r.importTracks(ctx, tx, snapshot.Tracks); err != nil {
-			return err
-		}
-		if err := r.importMappings(ctx, tx, snapshot.Mappings); err != nil {
 			return err
 		}
 		return r.reconcileAutoBindings(tx)
@@ -188,30 +185,6 @@ func (r *Repository) importTracks(ctx context.Context, tx *gorm.DB, records []Pr
 			return err
 		}
 		if err := tx.Save(&record).Error; err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *Repository) importMappings(ctx context.Context, tx *gorm.DB, records []Mapping) error {
-	for _, record := range records {
-		if record.GenerationID == "" || record.ClientIdentityID == "" || record.Namespace == "" || record.Original == "" || record.Mapped == "" {
-			return invalid("invalid imported mapping")
-		}
-		var current Mapping
-		query := tx.Where("generation_id = ? AND client_identity_id = ? AND namespace = ? AND original = ?", record.GenerationID, record.ClientIdentityID, record.Namespace, record.Original)
-		err := query.First(&current).Error
-		if err == nil {
-			if current != record {
-				return fmt.Errorf("%w: identity mapping", ErrConflict)
-			}
-			continue
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if err := tx.Create(&record).Error; err != nil {
 			return err
 		}
 	}

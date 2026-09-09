@@ -78,7 +78,7 @@ export function ClientIdentitySettings({
             <h3>Bind a replacement API key</h3>
           </div>
           <p className="cd-description">
-            Retain device mappings, conversation ownership, recovery and sticky
+            Retain client identity, conversation ownership, recovery and sticky
             routing.
           </p>
           <fieldset disabled={busy}>

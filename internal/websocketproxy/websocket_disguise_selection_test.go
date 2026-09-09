@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -60,7 +59,7 @@ func TestDisguiseServerRestorationPreservesProtocolAndBusinessData(t *testing.T)
 	providers := []model.Provider{testDisguiseProvider("first")}
 	o := newDisguiseTestOrchestrator(t, repository, providers)
 	selectDisguiseTestTarget(t, o, &providers[0])
-	mapped, err := o.disguise.Current().ClientFrame(context.Background(), []byte(`{"type":"response.create","turn_id":"original-turn"}`))
+	mapped, err := o.disguise.Current().ClientFrame(context.Background(), []byte(`{"type":"response.create","installation_id":"original-device","turn_id":"original-turn"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,19 +67,19 @@ func TestDisguiseServerRestorationPreservesProtocolAndBusinessData(t *testing.T)
 	if err = json.Unmarshal(mapped, &request); err != nil {
 		t.Fatal(err)
 	}
-	source := []byte(fmt.Sprintf(`{"type":"response.created","response":{"id":"resp-original","turn_id":%q,"output":[{"text":%q}]}}`, request["turn_id"], request["turn_id"]))
+	source := []byte(fmt.Sprintf(`{"type":"response.created","response":{"id":"resp-original","installation_id":%q,"turn_id":%q,"output":[{"text":%q}]}}`, request["installation_id"], request["turn_id"], request["installation_id"]))
 	decision := o.composeUpstreamPreWrite(context.Background(), nil)(webSocketPreWriteContext{MessageType: websocket.MessageText, Data: source})
 	if decision.Action != webSocketPreWriteActionForward {
 		t.Fatal(decision.Err)
 	}
-	if !bytes.Contains(decision.PreparedPayload, []byte(`"turn_id":"original-turn"`)) || !bytes.Contains(decision.PreparedPayload, []byte(`"id":"resp-original"`)) {
+	if !bytes.Contains(decision.PreparedPayload, []byte(`"installation_id":"original-device"`)) || !bytes.Contains(decision.PreparedPayload, []byte(`"turn_id":"original-turn"`)) || !bytes.Contains(decision.PreparedPayload, []byte(`"id":"resp-original"`)) {
 		t.Fatalf("protocol restoration wrong: %s", decision.PreparedPayload)
 	}
-	if !bytes.Contains(decision.PreparedPayload, []byte(fmt.Sprintf(`"text":%q`, request["turn_id"]))) {
+	if !bytes.Contains(decision.PreparedPayload, []byte(fmt.Sprintf(`"text":%q`, request["installation_id"]))) {
 		t.Fatal("business text altered")
 	}
-	repository.mappingError = errors.New("inverse unavailable")
-	failed := o.composeUpstreamPreWrite(context.Background(), nil)(webSocketPreWriteContext{MessageType: websocket.MessageText, Data: source})
+	invalid := []byte(`{"type":"response.created","response":{"installation_id":42}}`)
+	failed := o.composeUpstreamPreWrite(context.Background(), nil)(webSocketPreWriteContext{MessageType: websocket.MessageText, Data: invalid})
 	if failed.Action != webSocketPreWriteActionReject || disguiseFailure(failed.Err) == nil {
 		t.Fatal("restore failure allowed original passthrough")
 	}

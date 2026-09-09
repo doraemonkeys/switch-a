@@ -37,7 +37,7 @@ func (shortWriter) Write(p []byte) (int, error) { return len(p) / 2, nil }
 func TestSampleSnapshotAndTransportFailure(t *testing.T) {
 	target := testSession().target
 	target.Transport = &disguise.TransportSample{Config: []byte(`{"http_protocol":"http1","alpn":["http/1.1"]}`)}
-	s := NewSession(&memoryMapper{}, target, "client", "op")
+	s := NewSession(target, "op")
 	target.Transport.Config[0] = '!'
 	config, err := s.TransportConfig()
 	if err != nil || config.HTTPProtocol != "http1" {
@@ -63,7 +63,7 @@ func TestSampleSnapshotAndTransportFailure(t *testing.T) {
 	if _, err = s.TransportConfig(); err != nil {
 		t.Fatal(err)
 	}
-	bare := NewSession(nil, disguise.TargetSnapshot{}, "", "")
+	bare := NewSession(disguise.TargetSnapshot{}, "")
 	if got, err := bare.Headers(context.Background(), nil); err != nil || got != nil {
 		t.Fatal(got, err)
 	}
@@ -158,8 +158,7 @@ func TestProtocolEnvelopeClassificationAndBoundaryFailures(t *testing.T) {
 		t.Fatal("unsupported response encoding")
 	}
 	s = testSession()
-	s.mapper.(*memoryMapper).fail = errors.New("mapping")
-	head.Header = http.Header{"Thread-Id": {"thread"}}
+	head.Header = http.Header{"X-Codex-Turn-Metadata": {"invalid JSON"}}
 	if _, _, err = s.RestoreResponse(context.Background(), head, io.NopCloser(strings.NewReader("{}"))); err == nil {
 		t.Fatal("response header failure")
 	}

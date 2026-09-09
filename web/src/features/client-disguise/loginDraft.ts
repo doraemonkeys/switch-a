@@ -10,7 +10,6 @@ export interface LoginDraft {
   mode: ProfileBinding["mode"];
   reference: string;
   transport: string;
-  cacheKeys: boolean;
   paths: string;
 }
 
@@ -27,7 +26,6 @@ export function createLoginDraft(
     mode: binding?.mode ?? "auto",
     reference: binding?.reference_source_id ?? "",
     transport: binding?.transport_sample_id ?? "",
-    cacheKeys: binding?.remap_cache_keys ?? false,
     paths: JSON.stringify(binding?.telemetry_path_mappings ?? {}, null, 2),
   };
 }
@@ -68,7 +66,6 @@ export function buildProfileBinding(
     mode: draft.mode,
     reference_source_id: draft.reference,
     transport_sample_id: draft.transport,
-    remap_cache_keys: draft.cacheKeys,
     telemetry_path_mappings: mappings as Record<string, string>,
   };
 }

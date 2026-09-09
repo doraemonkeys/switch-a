@@ -1,5 +1,5 @@
 // Package clientidentity owns the persistent downstream identity shared by
-// disguise mappings, continuity ownership, and routing affinity.
+// reference learning, continuity ownership, and routing affinity.
 package clientidentity
 
 import (

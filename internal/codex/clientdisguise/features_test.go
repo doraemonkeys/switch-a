@@ -68,15 +68,11 @@ func TestObservedReferenceFeaturesAndPartialUpdates(t *testing.T) {
 	}
 }
 
-func TestTransportSnapshotCloneAndBackupMappingHistory(t *testing.T) {
+func TestTransportSnapshotCloneAndBackupDeviceHistory(t *testing.T) {
 	r := testRepository(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	login, err := r.SyncLoginAccount(ctx, "login", AccountBasis{Kind: "keyed_digest", KeyVersion: "h1", Value: make([]byte, 32)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = r.MapIdentity(ctx, MappingKey{GenerationID: login.GenerationID, ClientIdentityID: "client", Namespace: "turn", Original: "turn"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +105,6 @@ func TestTransportSnapshotCloneAndBackupMappingHistory(t *testing.T) {
 	binding := target.Binding
 	binding.TransportSampleID = sample.ID
 	binding.TelemetryPathMappings = map[string]string{"telemetry/a": "telemetry/b"}
-	binding.RemapCacheKeys = true
 	if _, err := r.SetBinding(ctx, binding); err != nil {
 		t.Fatal(err)
 	}
@@ -150,9 +145,12 @@ func TestTransportSnapshotCloneAndBackupMappingHistory(t *testing.T) {
 	if err := restored.Import(ctx, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	snapshot.Mappings[0].Mapped = "conflicting"
+	if len(snapshot.LoginHistory) != 1 || snapshot.LoginHistory[0].Identity.DeviceID != login.DeviceID {
+		t.Fatal("historical device lost", snapshot.LoginHistory)
+	}
+	snapshot.LoginHistory[0].Identity.DeviceID = "conflicting"
 	if err := restored.Import(ctx, snapshot); !errors.Is(err, ErrConflict) {
-		t.Fatal("mapping conflict accepted", err)
+		t.Fatal("historical device conflict accepted", err)
 	}
 }
 
@@ -181,15 +179,6 @@ func TestDomainValidationAndTransactionalFailure(t *testing.T) {
 		if err := r.SaveTransportSample(ctx, sample); !errors.Is(err, ErrInvalid) {
 			t.Fatal(err)
 		}
-	}
-	if mapped, err := r.MapIdentity(ctx, MappingKey{}); err != nil || mapped != "" {
-		t.Fatal(mapped, err)
-	}
-	if _, err := r.MapIdentity(ctx, MappingKey{Original: "x"}); !errors.Is(err, ErrInvalid) {
-		t.Fatal(err)
-	}
-	if original, ok, err := r.RestoreIdentity(ctx, "missing", "c", "thread", "x"); err != nil || ok || original != "x" {
-		t.Fatal(original, ok, err)
 	}
 	disabled, err := r.EvaluateCandidate(ctx, "s", account("a"), Policy{}, PlatformFacts{})
 	if err != nil || !disabled.Decision.Allowed {

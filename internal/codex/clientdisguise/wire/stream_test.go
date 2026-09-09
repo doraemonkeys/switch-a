@@ -35,17 +35,17 @@ func source(payload string) testSource {
 func TestSSEKnownEventsPreserveWireAndOpaqueText(t *testing.T) {
 	s := testSession()
 	ctx := context.Background()
-	mapped, err := s.RequestJSON(ctx, []byte(`{"thread_id":"thread"}`))
+	mapped, err := s.RequestJSON(ctx, []byte(`{"installation_id":"install"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct{ input, want string }{
-		{": comment\r\nevent: response.created\r\ndata: " + string(mapped) + "\r\nid: abc\r\n\r\n", ": comment\r\nevent: response.created\r\ndata: {\"thread_id\":\"thread\"}\r\nid: abc\r\n\r\n"},
-		{"event: response.created\ndata: {\ndata: \"thread_id\":" + quote(strings.TrimSuffix(strings.TrimPrefix(string(mapped), `{"thread_id":"`), `"}`)) + "}\n\n", "event: response.created\ndata: {\ndata: \"thread_id\":\"thread\"}\n\n"},
+		{": comment\r\nevent: response.created\r\ndata: " + string(mapped) + "\r\nid: abc\r\n\r\n", ": comment\r\nevent: response.created\r\ndata: {\"installation_id\":\"install\"}\r\nid: abc\r\n\r\n"},
+		{"event: response.created\ndata: {\ndata: \"installation_id\":" + quote(strings.TrimSuffix(strings.TrimPrefix(string(mapped), `{"installation_id":"`), `"}`)) + "}\n\n", "event: response.created\ndata: {\ndata: \"installation_id\":\"install\"}\n\n"},
 		{"event:future\ndata: " + string(mapped) + "\n\n", "event:future\ndata: " + string(mapped) + "\n\n"},
 		{"data: [DONE]\n\n", "data: [DONE]\n\n"},
 		{"data\n\n", "data\n\n"},
-		{"event: response.created\rdata:" + string(mapped) + "\r\r", "event: response.created\rdata:{\"thread_id\":\"thread\"}\r\r"},
+		{"event: response.created\rdata:" + string(mapped) + "\r\r", "event: response.created\rdata:{\"installation_id\":\"install\"}\r\r"},
 		{"data: {\"type\":\"future.event\",\"text\":\"" + string(bytes.Trim(mapped, `{}`)) + "\"}\n\n", "data: {\"type\":\"future.event\",\"text\":\"" + string(bytes.Trim(mapped, `{}`)) + "\"}\n\n"},
 	}
 	for _, test := range tests {
@@ -63,7 +63,7 @@ func TestSSEKnownEventsPreserveWireAndOpaqueText(t *testing.T) {
 		t.Fatal(err, output.String())
 	}
 	s = testSession()
-	_, err = s.ServerSSE(ctx, []byte("event: response.created\ndata: {\"thread_id\":1}\n\n"))
+	_, err = s.ServerSSE(ctx, []byte("event: response.created\ndata: {\"installation_id\":1}\n\n"))
 	var failure *Failure
 	if !errors.As(err, &failure) {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestSSEKnownEventsPreserveWireAndOpaqueText(t *testing.T) {
 func TestRequestBodyStreamsBeforeEOFAndRetainsOriginalForReopen(t *testing.T) {
 	s := testSession()
 	ctx := context.Background()
-	prefix := `{"thread_id":"thread","input":"` + strings.Repeat("x", 16384)
+	prefix := `{"installation_id":"install","input":"` + strings.Repeat("x", 16384)
 	tail := `"}`
 	release := make(chan struct{})
 	original := source(prefix + tail)
@@ -102,7 +102,7 @@ func TestRequestBodyStreamsBeforeEOFAndRetainsOriginalForReopen(t *testing.T) {
 	go func() { buffer := make([]byte, 128); n, _ := reader.Read(buffer); first <- buffer[:n] }()
 	select {
 	case got := <-first:
-		if !bytes.Contains(got, []byte("mapped-login-client-thread-thread")) {
+		if !bytes.Contains(got, []byte("device")) {
 			t.Fatalf("%s", got)
 		}
 	case <-time.After(2 * time.Second):
@@ -121,7 +121,7 @@ func TestRequestBodyStreamsBeforeEOFAndRetainsOriginalForReopen(t *testing.T) {
 	}
 	got, err := io.ReadAll(reopen)
 	_ = reopen.Close()
-	if err != nil || !bytes.Contains(got, []byte("mapped-login-client-thread-thread")) {
+	if err != nil || !bytes.Contains(got, []byte("device")) {
 		t.Fatal(err)
 	}
 	if string(original.payload) != prefix+tail {
@@ -130,7 +130,7 @@ func TestRequestBodyStreamsBeforeEOFAndRetainsOriginalForReopen(t *testing.T) {
 }
 func TestRequestBodyStickyLateFailureAndEncoding(t *testing.T) {
 	s := testSession()
-	derived, err := s.RequestBody(context.Background(), source(`{"thread_id":"thread","input":[1,}`), nil)
+	derived, err := s.RequestBody(context.Background(), source(`{"installation_id":"install","input":[1,}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestRequestBodyStickyLateFailureAndEncoding(t *testing.T) {
 	s = testSession()
 	var encoded bytes.Buffer
 	writer := gzip.NewWriter(&encoded)
-	_, _ = io.WriteString(writer, `{"thread_id":"thread"}`)
+	_, _ = io.WriteString(writer, `{"installation_id":"install"}`)
 	_ = writer.Close()
 	original := source(encoded.String())
 	original.trailers = http.Header{"X-End": {"yes"}}
@@ -175,14 +175,14 @@ func TestRequestBodyStickyLateFailureAndEncoding(t *testing.T) {
 	got, err := io.ReadAll(decoder)
 	_ = decoder.Close()
 	_ = reader.Close()
-	if err != nil || !bytes.Contains(got, []byte("mapped-login-client-thread-thread")) || derived.Trailers().Get("X-End") != "yes" {
+	if err != nil || !bytes.Contains(got, []byte("device")) || derived.Trailers().Get("X-End") != "yes" {
 		t.Fatal(string(got), err)
 	}
 }
 func TestRestoreResponseOwnershipFramingAndCoding(t *testing.T) {
 	s := testSession()
 	ctx := context.Background()
-	mapped, err := s.RequestJSON(ctx, []byte(`{"thread_id":"thread"}`))
+	mapped, err := s.RequestJSON(ctx, []byte(`{"installation_id":"install"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,12 +195,12 @@ func TestRestoreResponseOwnershipFramingAndCoding(t *testing.T) {
 			_ = writer.Close()
 			payload = encoded.Bytes()
 		}
-		head := upstreamtransport.ResponseHead{ContentLength: int64(len(payload)), Header: http.Header{"Content-Type": {"application/json"}, "Content-Encoding": {coding}, "Content-Length": {"999"}, "Etag": {"original"}, "Thread-Id": {"mapped-login-client-thread-thread"}}, SourceHeader: http.Header{"Thread-Id": {"mapped-login-client-thread-thread"}}, Trailer: http.Header{"X-End": {"yes"}}}
+		head := upstreamtransport.ResponseHead{ContentLength: int64(len(payload)), Header: http.Header{"Content-Type": {"application/json"}, "Content-Encoding": {coding}, "Content-Length": {"999"}, "Etag": {"original"}, "Installation-Id": {"device"}}, SourceHeader: http.Header{"Installation-Id": {"device"}}, Trailer: http.Header{"X-End": {"yes"}}}
 		restored, body, err := s.RestoreResponse(ctx, head, io.NopCloser(bytes.NewReader(payload)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if restored.ContentLength != -1 || restored.Header.Get("Content-Length") != "" || restored.Header.Get("Etag") != "" || restored.Header.Get("Content-Encoding") != coding || restored.Header.Get("Thread-Id") != "thread" || restored.SourceHeader.Get("Thread-Id") == "thread" || restored.Trailer.Get("X-End") != "yes" {
+		if restored.ContentLength != -1 || restored.Header.Get("Content-Length") != "" || restored.Header.Get("Etag") != "" || restored.Header.Get("Content-Encoding") != coding || restored.Header.Get("Installation-Id") != "install" || restored.SourceHeader.Get("Installation-Id") == "install" || restored.Trailer.Get("X-End") != "yes" {
 			t.Fatal(restored)
 		}
 		var decoded io.Reader = body
@@ -214,7 +214,7 @@ func TestRestoreResponseOwnershipFramingAndCoding(t *testing.T) {
 		}
 		result, err := io.ReadAll(decoded)
 		_ = body.Close()
-		if err != nil || string(result) != `{"thread_id":"thread"}` {
+		if err != nil || string(result) != `{"installation_id":"install"}` {
 			t.Fatal(string(result), err)
 		}
 	}

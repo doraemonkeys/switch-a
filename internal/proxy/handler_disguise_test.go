@@ -16,18 +16,15 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 type httpDisguiseRepository struct {
-	mu             sync.Mutex
-	commits        []string
-	mappings       map[clientdisguise.MappingKey]string
-	mapFailure     error
-	restoreFailure error
-	commitFailure  error
-	excludeCommit  string
+	mu            sync.Mutex
+	commits       []string
+	missingDevice bool
+	commitFailure error
+	excludeCommit string
 }
 
 func (r *httpDisguiseRepository) EvaluateCandidate(_ context.Context, id string, basis clientdisguise.AccountBasis, policy clientdisguise.Policy, facts clientdisguise.PlatformFacts) (clientdisguise.Candidate, error) {
@@ -43,34 +40,11 @@ func (r *httpDisguiseRepository) CommitTarget(_ context.Context, c clientdisguis
 	if c.CredentialSessionID == r.excludeCommit {
 		return clientdisguise.TargetSnapshot{}, clientdisguise.ErrCandidateExcluded
 	}
-	return clientdisguise.TargetSnapshot{Policy: c.Policy, Profile: c.Profile, Login: clientdisguise.LoginIdentity{CredentialSessionID: c.CredentialSessionID, GenerationID: c.CredentialSessionID, DeviceID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}}, nil
-}
-func (r *httpDisguiseRepository) MapIdentity(_ context.Context, key clientdisguise.MappingKey) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.mapFailure != nil {
-		return "", r.mapFailure
+	deviceID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	if r.missingDevice {
+		deviceID = ""
 	}
-	if r.mappings == nil {
-		r.mappings = make(map[clientdisguise.MappingKey]string)
-	}
-	if r.mappings[key] == "" {
-		r.mappings[key] = uuid.NewSHA1(uuid.NameSpaceOID, []byte(key.GenerationID+key.Namespace+key.Original)).String()
-	}
-	return r.mappings[key], nil
-}
-func (r *httpDisguiseRepository) RestoreIdentity(_ context.Context, generation, client, namespace, mapped string) (string, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.restoreFailure != nil {
-		return "", false, r.restoreFailure
-	}
-	for key, value := range r.mappings {
-		if key.GenerationID == generation && key.ClientIdentityID == client && key.Namespace == namespace && value == mapped {
-			return key.Original, true, nil
-		}
-	}
-	return mapped, false, nil
+	return clientdisguise.TargetSnapshot{Policy: c.Policy, Profile: c.Profile, Login: clientdisguise.LoginIdentity{CredentialSessionID: c.CredentialSessionID, GenerationID: c.CredentialSessionID, DeviceID: deviceID}}, nil
 }
 
 func disguiseHandler(t *testing.T, upstreamURL string, repo *httpDisguiseRepository, transport HTTPTransport) (*Handler, *mockStore) {
@@ -177,16 +151,16 @@ func (f disguiseTransportFunc) FetchUpstream(ctx context.Context, r *http.Reques
 
 func TestHTTPDisguiseHeaderFailureDoesNotSend(t *testing.T) {
 	var attempts atomic.Int32
-	h, _ := disguiseHandler(t, "https://example.test", &httpDisguiseRepository{mapFailure: errors.New("mapping storage failed")}, disguiseTransportFunc(func(context.Context, *http.Request, upstreamtransport.ExecutionOptions) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error) {
+	h, _ := disguiseHandler(t, "https://example.test", &httpDisguiseRepository{missingDevice: true}, disguiseTransportFunc(func(context.Context, *http.Request, upstreamtransport.ExecutionOptions) (*upstreamtransport.Response, upstreamtransport.RequestDisclosure, error) {
 		attempts.Add(1)
 		return nil, 0, errors.New("unexpected send")
 	}))
 	request := httptest.NewRequest("GET", "/codex/models", nil)
 	request.Header.Set("Authorization", proxyCodexTestAuthorization)
-	request.Header.Set("X-Client-Request-Id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	request.Header.Set("Installation-Id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
-	if attempts.Load() != 0 || response.Code != 500 || !strings.Contains(response.Body.String(), "mapping storage failed") {
+	if attempts.Load() != 0 || response.Code != 500 || !strings.Contains(response.Body.String(), "login device identity is missing") {
 		t.Fatalf("sent=%d status=%d body=%s", attempts.Load(), response.Code, response.Body.String())
 	}
 }
@@ -226,12 +200,13 @@ func TestHTTPDisguiseResponseRestoresOnlyProtocolFields(t *testing.T) {
 		t.Run(map[bool]string{false: "json", true: "sse"}[sse], func(t *testing.T) {
 			var sent string
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				sent = r.Header.Get("X-Client-Request-Id")
-				if sent == original || r.Header.Get("User-Agent") != "frozen-agent" {
+				sent = r.Header.Get("Installation-Id")
+				if sent == original || r.Header.Get("User-Agent") != "frozen-agent" || r.Header.Get("X-Client-Request-Id") != original {
 					t.Error("request identity/profile was not derived")
 				}
-				w.Header().Set("X-Client-Request-Id", sent)
-				payload := `{"type":"response.completed","request_id":"` + sent + `","text":"` + sent + `"}`
+				w.Header().Set("Installation-Id", sent)
+				w.Header().Set("X-Client-Request-Id", original)
+				payload := `{"type":"response.completed","installation_id":"` + sent + `","request_id":"` + original + `","text":"` + sent + `"}`
 				if sse {
 					w.Header().Set("Content-Type", "text/event-stream")
 					payload = "data: " + payload + "\n\n"
@@ -245,9 +220,10 @@ func TestHTTPDisguiseResponseRestoresOnlyProtocolFields(t *testing.T) {
 			request := httptest.NewRequest("GET", "/codex/models", nil)
 			request.Header.Set("Authorization", proxyCodexTestAuthorization)
 			request.Header.Set("X-Client-Request-Id", original)
+			request.Header.Set("Installation-Id", original)
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, request)
-			if response.Code != 200 || response.Header().Get("X-Client-Request-Id") != original {
+			if response.Code != 200 || response.Header().Get("X-Client-Request-Id") != original || response.Header().Get("Installation-Id") != original {
 				t.Fatalf("response=%d %v", response.Code, response.Header())
 			}
 			payload := strings.TrimSpace(strings.TrimPrefix(response.Body.String(), "data: "))
@@ -255,7 +231,7 @@ func TestHTTPDisguiseResponseRestoresOnlyProtocolFields(t *testing.T) {
 			if err := json.Unmarshal([]byte(payload), &fields); err != nil {
 				t.Fatal(err)
 			}
-			if fields["request_id"] != original || fields["text"] != sent {
+			if fields["installation_id"] != original || fields["request_id"] != original || fields["text"] != sent {
 				t.Fatalf("restored protocol/business fields: %s", payload)
 			}
 		})
@@ -386,11 +362,12 @@ func TestHTTPDisguiseRetryFreezesTargetAndReopensOriginal(t *testing.T) {
 	})
 	h, createdStore := disguiseHandler(t, "https://example.test", repo, transport)
 	store = createdStore
-	payload := `{"request_id":"` + original + `","business":"` + original + `"}`
+	payload := `{"installation_id":"` + original + `","request_id":"` + original + `","business":"` + original + `"}`
 	serve := func() {
 		request := httptest.NewRequest("POST", "/codex/alpha/search", strings.NewReader(payload))
 		request.Header.Set("Authorization", proxyCodexTestAuthorization)
 		request.Header.Set("X-Client-Request-Id", original)
+		request.Header.Set("Installation-Id", original)
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("User-Agent", "original-agent")
 		response := httptest.NewRecorder()
@@ -407,8 +384,8 @@ func TestHTTPDisguiseRetryFreezesTargetAndReopensOriginal(t *testing.T) {
 	if err := json.Unmarshal([]byte(bodies[0]), &fields); err != nil {
 		t.Fatal(err)
 	}
-	if fields["request_id"] != headers[0].Get("X-Client-Request-Id") || fields["request_id"] == original || fields["business"] != original {
-		t.Fatalf("cross-carrier mapping=%v", fields)
+	if fields["installation_id"] != headers[0].Get("Installation-Id") || fields["installation_id"] == original || fields["request_id"] != original || headers[0].Get("X-Client-Request-Id") != original || headers[1].Get("X-Client-Request-Id") != original || fields["business"] != original {
+		t.Fatalf("device replacement changed conversation identity: %v", fields)
 	}
 	serve()
 	if len(headers) != 3 || headers[2].Get("User-Agent") != "original-agent" || bodies[2] != payload {
@@ -443,10 +420,10 @@ func TestHTTPDisguiseSSEFailureAfterVisibilityAbortsWithEvidence(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: opaque-ready\n\n")
 		_ = http.NewResponseController(w).Flush()
-		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"request_id\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"installation_id\":42}\n\n")
 	}))
 	defer upstream.Close()
-	h, store := disguiseHandler(t, upstream.URL, &httpDisguiseRepository{restoreFailure: errors.New("inverse mapping unavailable")}, nil)
+	h, store := disguiseHandler(t, upstream.URL, &httpDisguiseRepository{}, nil)
 	health := newTrackingHealthManager()
 	h.health = health
 	request := httptest.NewRequest("GET", "/codex/models", nil)
@@ -469,7 +446,7 @@ func TestHTTPDisguiseSSEFailureAfterVisibilityAbortsWithEvidence(t *testing.T) {
 	waitFor(t, func() bool { store.mu.Lock(); defer store.mu.Unlock(); return len(store.logs) == 1 }, time.Second)
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if e := store.logs[0].SessionEvidenceJSON; e == nil || !strings.Contains(*e, "inverse mapping unavailable") || !strings.Contains(*e, `"decision":"failed"`) {
+	if e := store.logs[0].SessionEvidenceJSON; e == nil || !strings.Contains(*e, "identity field must be a string or null") || !strings.Contains(*e, `"decision":"failed"`) {
 		t.Fatalf("SSE failure evidence=%v", e)
 	}
 }

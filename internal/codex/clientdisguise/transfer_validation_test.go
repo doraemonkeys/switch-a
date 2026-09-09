@@ -33,7 +33,6 @@ func TestImportInvalidGraphRollsBackMutableState(t *testing.T) {
 		"binding_profile": {Bindings: []ProfileBinding{missingProfile}},
 		"binding_tuple":   {Bindings: []ProfileBinding{wrongTuple}},
 		"track":           {Tracks: []ProfileTrack{{}}},
-		"mapping":         {Mappings: []Mapping{{}}},
 	}
 	missingTrack := validTrack
 	missingTrack.RevisionID = "missing"

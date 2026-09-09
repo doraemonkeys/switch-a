@@ -26,7 +26,6 @@ const login: LoginView = {
     revision_id: "new",
     reference_source_id: "",
     transport_sample_id: "",
-    remap_cache_keys: false,
     telemetry_path_mappings: null,
   },
 };

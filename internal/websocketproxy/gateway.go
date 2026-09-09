@@ -371,7 +371,7 @@ func (h *Gateway) beginDisguiseSession(ctx context.Context, headers http.Header,
 	providers, err := h.store.ListProvidersByAPIType(ctx, APITypeCodex)
 	var session *wsdisguise.Session
 	if err == nil {
-		session, err = wsdisguise.New(ctx, h.disguise, providers, headers, clientID, requestID, h.transportPool)
+		session, err = wsdisguise.New(ctx, h.disguise, providers, headers, requestID, h.transportPool)
 	}
 	if err != nil {
 		h.logger.Error("websocket.client_disguise_admission_failed", zap.String("operation_id", requestID), zap.Error(err))

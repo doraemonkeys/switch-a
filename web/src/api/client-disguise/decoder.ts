@@ -79,7 +79,6 @@ export function parseBinding(value: unknown): ProfileBinding {
     revision_id: str(item.revision_id),
     reference_source_id: str(item.reference_source_id),
     transport_sample_id: str(item.transport_sample_id),
-    remap_cache_keys: bool(item.remap_cache_keys),
     telemetry_path_mappings:
       item.telemetry_path_mappings == null
         ? null

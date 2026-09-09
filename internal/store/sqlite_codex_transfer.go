@@ -125,26 +125,6 @@ func validateCodexStateReferences(ctx context.Context, tx *gorm.DB, state *Codex
 	if err := validateImportedLogins(tx, state.Disguise.Logins); err != nil {
 		return err
 	}
-	for _, mapping := range state.Disguise.Mappings {
-		var count int64
-		if err := tx.Model(&clientidentity.Client{}).Where("id = ?", mapping.ClientIdentityID).Count(&count).Error; err != nil {
-			return err
-		}
-		if count != 1 {
-			return fmt.Errorf("mapping references missing client %s", mapping.ClientIdentityID)
-		}
-		if err := tx.Model(&clientdisguise.LoginIdentity{}).Where("generation_id = ?", mapping.GenerationID).Count(&count).Error; err != nil {
-			return err
-		}
-		if count == 0 {
-			if err := tx.Model(&clientdisguise.LoginHistory{}).Where("generation_id = ?", mapping.GenerationID).Count(&count).Error; err != nil {
-				return err
-			}
-		}
-		if count != 1 {
-			return fmt.Errorf("mapping references missing generation %s", mapping.GenerationID)
-		}
-	}
 	for _, reference := range state.Disguise.References {
 		var count int64
 		if err := tx.Model(&clientidentity.Client{}).Where("id = ?", reference.ClientIdentityID).Count(&count).Error; err != nil {

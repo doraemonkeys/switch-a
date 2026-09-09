@@ -17,27 +17,11 @@ export function AdvancedLoginSettings({
         <span>
           <Settings2 size={17} aria-hidden="true" />
           <strong>Advanced login settings</strong>
-          <small>Cache keys, telemetry & transport</small>
+          <small>Telemetry & transport</small>
         </span>
         <ChevronDown size={16} aria-hidden="true" />
       </summary>
       <div className="cd-advanced-body">
-        <label className="cd-checkbox">
-          <input
-            type="checkbox"
-            checked={draft.cacheKeys}
-            onChange={(event) =>
-              change({ ...draft, cacheKeys: event.target.checked })
-            }
-          />
-          <span>
-            <strong>Stably remap prompt cache keys</strong>
-            <small>
-              Preserves original cache grouping. Disabled keeps original cache
-              keys.
-            </small>
-          </span>
-        </label>
         <label className="cd-field">
           Telemetry path mappings (JSON)
           <textarea

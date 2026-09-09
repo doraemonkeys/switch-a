@@ -14,7 +14,8 @@ const (
 
 // Public source fixes the release and originator, while host OS and terminal
 // values are runtime observations. Only the repository's captured Windows
-// Desktop tuple supplies those additional fields; other defaults preserve them.
+// Desktop tuple supplies a complete UA; other defaults preserve the incoming
+// UA and version together until a complete reference sample is available.
 func BuiltinProfiles() []ProfileRevision {
 	result := make([]ProfileRevision, 0, 18)
 	for _, clientType := range []string{"desktop", "tui", "cli"} {

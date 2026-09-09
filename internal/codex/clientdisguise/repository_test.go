@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -65,6 +66,16 @@ func TestLoginLifecycleAndConcurrentBinding(t *testing.T) {
 	if a.DeviceID == b.DeviceID {
 		t.Fatal("same-account logins share device")
 	}
+	for _, login := range []LoginIdentity{a, b} {
+		device, err := uuid.Parse(login.DeviceID)
+		if err != nil || device.Version() != 4 {
+			t.Fatalf("device identity = %q, err %v", login.DeviceID, err)
+		}
+	}
+	reopened, err := NewRepository(r.db).GetLogin(ctx, "a")
+	if err != nil || reopened.DeviceID != a.DeviceID {
+		t.Fatal("repository reopen changed device", reopened, err)
+	}
 	refreshed, err := r.SyncLoginAccount(ctx, "a", account("account"))
 	if err != nil || refreshed.DeviceID != a.DeviceID {
 		t.Fatal("refresh changed device", err)
@@ -102,19 +113,6 @@ func TestLoginLifecycleAndConcurrentBinding(t *testing.T) {
 			t.Fatal(target)
 		}
 	}
-	mapping, err := r.MapIdentity(ctx, MappingKey{GenerationID: a.GenerationID, ClientIdentityID: "client", Namespace: "thread", Original: "thread-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	same, _ := r.MapIdentity(ctx, MappingKey{GenerationID: a.GenerationID, ClientIdentityID: "client", Namespace: "thread", Original: "thread-a"})
-	other, _ := r.MapIdentity(ctx, MappingKey{GenerationID: a.GenerationID, ClientIdentityID: "another", Namespace: "thread", Original: "thread-a"})
-	if mapping != same || other == mapping {
-		t.Fatal("mapping scope")
-	}
-	original, ok, err := r.RestoreIdentity(ctx, a.GenerationID, "client", "thread", mapping)
-	if err != nil || !ok || original != "thread-a" {
-		t.Fatal(original, ok, err)
-	}
 	changed, err := r.SyncLoginAccount(ctx, "a", account("different"))
 	if err != nil || changed.DeviceID == a.DeviceID {
 		t.Fatal("account change preserved identity", err)
@@ -124,7 +122,7 @@ func TestLoginLifecycleAndConcurrentBinding(t *testing.T) {
 		t.Fatal("account change retained binding")
 	}
 	snapshot, _ := r.Export(ctx)
-	if len(snapshot.LoginHistory) != 1 || len(snapshot.Mappings) != 2 {
+	if len(snapshot.LoginHistory) != 1 || snapshot.LoginHistory[0].Identity.DeviceID != a.DeviceID {
 		t.Fatal(snapshot)
 	}
 }

@@ -50,7 +50,7 @@ export function ProfileSummary({ profile }: { profile: ProfileRevision }) {
             <dt>Feature scope</dt>
             <dd>
               {features.map(([key]) => key.replaceAll("_", " ")).join(", ") ||
-                "Identity mappings only"}
+                "Device identity only"}
             </dd>
           </div>
         </dl>
@@ -66,8 +66,8 @@ export function ProfileSummary({ profile }: { profile: ProfileRevision }) {
           </a>
         )}
         <p className="cd-field-help">
-          Application identity and observed fields apply. Transport
-          characteristics require an independently selected sample.
+          Device identity and observed fields apply. Transport characteristics
+          require an independently selected sample.
         </p>
       </details>
     </div>

@@ -17,11 +17,6 @@ import (
 
 const snippetLimit = 512
 
-type Mapper interface {
-	MapIdentity(context.Context, disguise.MappingKey) (string, error)
-	RestoreIdentity(context.Context, string, string, string, string) (string, bool, error)
-}
-
 type Failure struct {
 	DiagnosticID    string `json:"diagnostic_id"`
 	OperationID     string `json:"operation_id"`
@@ -46,9 +41,7 @@ type Difference struct {
 }
 
 type Session struct {
-	mapper          Mapper
 	target          disguise.TargetSnapshot
-	clientID        string
 	operationID     string
 	mu              sync.Mutex
 	installations   map[string]string
@@ -56,7 +49,9 @@ type Session struct {
 	terminalFailure *Failure
 }
 
-func NewSession(mapper Mapper, target disguise.TargetSnapshot, clientIdentityID, operationID string) *Session {
+// Conversation identifiers belong to the client and continuity layer. Wire
+// conversion needs only the selected device/profile, never an identity database.
+func NewSession(target disguise.TargetSnapshot, operationID string) *Session {
 	target.Profile.Features.Headers = cloneMap(target.Profile.Features.Headers)
 	target.Binding.TelemetryPathMappings = cloneMap(target.Binding.TelemetryPathMappings)
 	if target.Transport != nil {
@@ -64,7 +59,7 @@ func NewSession(mapper Mapper, target disguise.TargetSnapshot, clientIdentityID,
 		transport.Config = append([]byte(nil), transport.Config...)
 		target.Transport = &transport
 	}
-	return &Session{mapper: mapper, target: target, clientID: clientIdentityID, operationID: operationID, installations: make(map[string]string)}
+	return &Session{target: target, operationID: operationID, installations: make(map[string]string)}
 }
 func cloneMap(source map[string]string) map[string]string {
 	if source == nil {
@@ -140,34 +135,6 @@ func (s *Session) WebSocketTransportConfig() (upstreamtransport.WireConfig, erro
 	}
 	return config, nil
 }
-func (s *Session) identity(ctx context.Context, namespace, value string, restore bool) (string, error) {
-	if value == "" {
-		return value, nil
-	}
-	switch namespace {
-	case "installation":
-		return s.installationIdentity(value, restore)
-	case "window":
-		if thread, generation, ok := windowParts(value); ok {
-			mapped, err := s.identity(ctx, "thread", thread, restore)
-			return mapped + generation, err
-		}
-	}
-	if s.mapper == nil {
-		return "", fmt.Errorf("identity mapper is unavailable")
-	}
-	if !restore {
-		return s.mapper.MapIdentity(ctx, disguise.MappingKey{GenerationID: s.target.Login.GenerationID, ClientIdentityID: s.clientID, Namespace: namespace, Original: value})
-	}
-	original, ok, err := s.mapper.RestoreIdentity(ctx, s.target.Login.GenerationID, s.clientID, namespace, value)
-	if err != nil {
-		return "", err
-	}
-	if ok {
-		return original, nil
-	}
-	return value, nil
-}
 func (s *Session) installationIdentity(value string, restore bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -186,18 +153,6 @@ func (s *Session) installationIdentity(value string, restore bool) (string, erro
 		s.installations[s.target.Login.DeviceID] = value
 	}
 	return s.target.Login.DeviceID, nil
-}
-func windowParts(value string) (string, string, bool) {
-	split := strings.LastIndexByte(value, ':')
-	if split <= 0 || split >= len(value)-1 {
-		return "", "", false
-	}
-	for _, c := range value[split+1:] {
-		if c < '0' || c > '9' {
-			return "", "", false
-		}
-	}
-	return value[:split], value[split:], true
 }
 func (s *Session) Headers(ctx context.Context, original http.Header) (http.Header, error) {
 	return s.headers(ctx, original, false)
@@ -230,25 +185,7 @@ func (s *Session) headers(ctx context.Context, original http.Header, restore boo
 		}
 	}
 	if !restore {
-		features := s.target.Profile.Features
-		updates := cloneMap(features.Headers)
-		if updates == nil {
-			updates = make(map[string]string)
-		}
-		if features.UserAgent != "" {
-			updates["User-Agent"] = features.UserAgent
-		}
-		if features.Originator != "" {
-			updates["Originator"] = features.Originator
-		}
-		for name, value := range updates {
-			if !featureHeader(name) {
-				continue
-			}
-			old := result.Get(name)
-			result.Set(name, value)
-			s.difference("header", name, old, value)
-		}
+		s.applyProfileHeaders(result)
 	}
 	return result, nil
 }
@@ -261,21 +198,11 @@ func featureHeader(name string) bool {
 	}
 }
 func fieldKind(name string) string {
+	// A virtual installation can run the client's original conversations. Their
+	// IDs and cache keys must retain their format, references and grouping.
 	switch strings.ToLower(name) {
 	case "installation_id", "installation-id", "x-codex-installation-id":
 		return "installation"
-	case "session_id", "session-id":
-		return "session"
-	case "thread_id", "thread-id":
-		return "thread"
-	case "turn_id", "turn-id", "x-codex-turn-id":
-		return "turn"
-	case "request_id", "request-id", "x-client-request-id":
-		return "request"
-	case "window_id", "window-id", "x-codex-window-id":
-		return "window"
-	case "prompt_cache_key":
-		return "cache"
 	case "x-codex-turn-metadata", "turn_metadata":
 		return "serialized"
 	default:
@@ -284,9 +211,6 @@ func fieldKind(name string) string {
 }
 func (s *Session) transformValue(ctx context.Context, kind, value string, restore bool, carrier, path string) (string, error) {
 	if value == "" {
-		return value, nil
-	}
-	if kind == "cache" && !s.target.Binding.RemapCacheKeys {
 		return value, nil
 	}
 	var derived string
@@ -315,8 +239,10 @@ func (s *Session) transformValue(ctx context.Context, kind, value string, restor
 		} else if mapped, ok := s.target.Binding.TelemetryPathMappings[value]; ok {
 			derived = mapped
 		}
+	case kind == "installation":
+		derived, err = s.installationIdentity(value, restore)
 	default:
-		derived, err = s.identity(ctx, kind, value, restore)
+		derived = value
 	}
 	if err != nil {
 		if ctx.Err() != nil {

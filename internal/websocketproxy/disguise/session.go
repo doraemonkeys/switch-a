@@ -15,15 +15,12 @@ import (
 
 type Repository interface {
 	disguiseruntime.Repository
-	wire.Mapper
 }
 
 // Session owns the downstream connection boundary. Upstream redials may select
 // another target, but cannot replace any target snapshot already observed here.
 type Session struct {
 	operation   *disguiseruntime.Operation
-	mapper      wire.Mapper
-	clientID    string
 	operationID string
 	pool        *upstreamtransport.Pool
 	mu          sync.RWMutex
@@ -32,7 +29,7 @@ type Session struct {
 	target      clientdisguise.TargetSnapshot
 }
 
-func New(ctx context.Context, repository Repository, providers []model.Provider, headers http.Header, clientID, operationID string, pool *upstreamtransport.Pool) (*Session, error) {
+func New(ctx context.Context, repository Repository, providers []model.Provider, headers http.Header, operationID string, pool *upstreamtransport.Pool) (*Session, error) {
 	operation, err := disguiseruntime.New(ctx, repository, providers, headers, operationID)
 	if err != nil {
 		return nil, err
@@ -40,7 +37,7 @@ func New(ctx context.Context, repository Repository, providers []model.Provider,
 	if pool == nil {
 		pool = upstreamtransport.NewPool()
 	}
-	return &Session{operation: operation, mapper: repository, clientID: clientID, operationID: operationID, pool: pool, sessions: make(map[string]*wire.Session)}, nil
+	return &Session{operation: operation, operationID: operationID, pool: pool, sessions: make(map[string]*wire.Session)}, nil
 }
 func (s *Session) Operation() *disguiseruntime.Operation {
 	if s == nil {
@@ -69,7 +66,7 @@ func (s *Session) Select(provider *model.Provider) error {
 	defer s.mu.Unlock()
 	session := s.sessions[key]
 	if session == nil {
-		session = wire.NewSession(s.mapper, target, s.clientID, s.operationID)
+		session = wire.NewSession(target, s.operationID)
 		s.sessions[key] = session
 	}
 	s.current = session

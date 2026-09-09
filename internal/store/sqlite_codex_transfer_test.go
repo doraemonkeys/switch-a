@@ -71,7 +71,6 @@ func TestPortableStateRoundTripPreviewRollbackAndBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Disguise.Mappings = []clientdisguise.Mapping{{MappingKey: clientdisguise.MappingKey{GenerationID: logins[0].GenerationID, ClientIdentityID: client.ID, Namespace: "thread", Original: "old-thread"}, Mapped: "mapped-thread"}}
 	serialized, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +125,7 @@ func TestPortableStateRoundTripPreviewRollbackAndBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(imported.Disguise.Logins) != 1 || imported.Disguise.Logins[0].DeviceID != logins[0].DeviceID || len(imported.Disguise.Mappings) != 1 {
+	if len(imported.Disguise.Logins) != 1 || imported.Disguise.Logins[0].DeviceID != logins[0].DeviceID {
 		t.Fatal("identity history changed")
 	}
 	// Persisted imported keys are sufficient to rebuild the live ring at restart.

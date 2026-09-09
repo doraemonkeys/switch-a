@@ -19,7 +19,6 @@ const login: LoginView = {
     revision_id: "new",
     reference_source_id: "reference",
     transport_sample_id: "",
-    remap_cache_keys: false,
     telemetry_path_mappings: null,
   },
 };
@@ -136,9 +135,9 @@ describe("login lifecycle controls", () => {
             differences: [
               {
                 carrier: "header",
-                location: "Thread-Id",
-                original: "original-thread",
-                derived: "mapped-thread",
+                location: "Installation-Id",
+                original: "original-device",
+                derived: "virtual-device",
               },
             ],
             failure: {
@@ -150,8 +149,8 @@ describe("login lifecycle controls", () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.getByText("original-thread")).toBeInTheDocument();
-    expect(screen.getByText("mapped-thread")).toBeInTheDocument();
+    expect(screen.getByText("original-device")).toBeInTheDocument();
+    expect(screen.getByText("virtual-device")).toBeInTheDocument();
     expect(screen.getByText(/platform mismatch/)).toBeInTheDocument();
     expect(screen.getByRole("link")).toHaveAttribute(
       "href",

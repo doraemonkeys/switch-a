@@ -72,7 +72,7 @@ func (h *Handler) prepareHTTPDisguise(ctx context.Context, pctx *proxyContext, p
 	key := provider.ID + "\x00" + credential.SessionID
 	session := d.sessions[key]
 	if session == nil {
-		session = wire.NewSession(h.clientDisguise, target, pctx.codex.ClientIdentity().ID, pctx.requestID)
+		session = wire.NewSession(target, pctx.requestID)
 		d.sessions[key] = session
 	}
 	d.current, d.target, d.providerID = session, target, provider.ID

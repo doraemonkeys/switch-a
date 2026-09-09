@@ -28,7 +28,6 @@ const binding = {
   revision_id: "revision",
   reference_source_id: "ref",
   transport_sample_id: "",
-  remap_cache_keys: false,
   telemetry_path_mappings: null,
 };
 const reference = {

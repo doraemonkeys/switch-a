@@ -23,10 +23,8 @@ import (
 
 type testDisguiseRepository struct {
 	mu              sync.Mutex
-	mapped          map[clientdisguise.MappingKey]string
 	commits         []string
 	excludedSession string
-	mappingError    error
 	revision        string
 }
 
@@ -45,35 +43,6 @@ func (r *testDisguiseRepository) CommitTarget(_ context.Context, c clientdisguis
 	return clientdisguise.TargetSnapshot{Policy: c.Policy, Profile: c.Profile, Login: clientdisguise.LoginIdentity{
 		CredentialSessionID: c.CredentialSessionID, GenerationID: "generation-" + c.CredentialSessionID, DeviceID: "device-" + c.CredentialSessionID, AccountBasis: c.AccountBasis}}, nil
 }
-func (r *testDisguiseRepository) MapIdentity(_ context.Context, key clientdisguise.MappingKey) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.mappingError != nil {
-		return "", r.mappingError
-	}
-	if r.mapped == nil {
-		r.mapped = make(map[clientdisguise.MappingKey]string)
-	}
-	if mapped, ok := r.mapped[key]; ok {
-		return mapped, nil
-	}
-	mapped := key.GenerationID + "-" + key.Namespace + "-" + key.Original
-	r.mapped[key] = mapped
-	return mapped, nil
-}
-func (r *testDisguiseRepository) RestoreIdentity(_ context.Context, generation, client, namespace, mapped string) (string, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.mappingError != nil {
-		return "", false, r.mappingError
-	}
-	for key, value := range r.mapped {
-		if key.GenerationID == generation && key.ClientIdentityID == client && key.Namespace == namespace && value == mapped {
-			return key.Original, true, nil
-		}
-	}
-	return mapped, false, nil
-}
 func testDisguiseProvider(id string) model.Provider {
 	return model.Provider{ID: id, Enabled: true, ClientDisguise: clientdisguise.Policy{Enabled: true},
 		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://upstream.example"}},
@@ -81,7 +50,7 @@ func testDisguiseProvider(id string) model.Provider {
 }
 func newDisguiseTestOrchestrator(t *testing.T, repository *testDisguiseRepository, providers []model.Provider) *WebSocketSessionOrchestrator {
 	t.Helper()
-	session, err := wsdisguise.New(context.Background(), repository, providers, http.Header{"User-Agent": {"codex/1.0.0 (Windows; amd64)"}}, "client", "disguise-operation", nil)
+	session, err := wsdisguise.New(context.Background(), repository, providers, http.Header{"User-Agent": {"codex/1.0.0 (Windows; amd64)"}}, "disguise-operation", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +86,7 @@ func TestDisguiseReplayDerivesEachTargetFromOriginalPermit(t *testing.T) {
 	providers := []model.Provider{testDisguiseProvider("first"), testDisguiseProvider("second")}
 	o := newDisguiseTestOrchestrator(t, repository, providers)
 	selectDisguiseTestTarget(t, o, &providers[0])
-	source := []byte(`{"type":"response.create","turn_id":"turn","installation_id":"client-device","input":[{"text":"turn must remain unchanged"}]}`)
+	source := []byte(`{"type":"response.create","thread_id":"thread","session_id":"thread","turn_id":"turn","prompt_cache_key":"review:thread","client_metadata":{"x-codex-window-id":"thread:3","parent_thread_id":"parent","root_turn_id":"root-turn"},"installation_id":"client-device","input":[{"text":"turn must remain unchanged"}]}`)
 	original := append([]byte(nil), source...)
 	decision := o.codexClientPreWrite(context.Background())(webSocketPreWriteContext{MessageType: websocket.MessageText, Data: source})
 	if decision.Action != webSocketPreWriteActionForward {
@@ -145,6 +114,12 @@ func TestDisguiseReplayDerivesEachTargetFromOriginalPermit(t *testing.T) {
 	if !bytes.Contains(replay.PreparedPayload, []byte("turn must remain unchanged")) {
 		t.Fatal("business payload transformed")
 	}
+	if expected := bytes.Replace(original, []byte("client-device"), []byte("device-"+providers[0].CredentialSessions[0].Credential.SessionID), 1); !bytes.Equal(decision.physicalPayload(original), expected) {
+		t.Fatalf("first target changed context identity: %s", decision.physicalPayload(original))
+	}
+	if expected := bytes.Replace(original, []byte("client-device"), []byte("device-"+providers[1].CredentialSessions[0].Credential.SessionID), 1); !bytes.Equal(replay.physicalPayload(original), expected) {
+		t.Fatalf("replay changed context identity: %s", replay.physicalPayload(original))
+	}
 	headers, err := o.disguise.Current().Headers(context.Background(), http.Header{})
 	if err != nil || headers.Get("User-Agent") != "profile-revision-one" {
 		t.Fatalf("operation revision changed: %v %v", headers, err)
@@ -164,8 +139,7 @@ func TestDisguiseConversionFailureIsTerminalAndHasDurableEvidence(t *testing.T) 
 	providers := []model.Provider{testDisguiseProvider("first")}
 	o := newDisguiseTestOrchestrator(t, repository, providers)
 	selectDisguiseTestTarget(t, o, &providers[0])
-	repository.mappingError = errors.New("mapping database unavailable")
-	decision := o.codexClientPreWrite(context.Background())(webSocketPreWriteContext{MessageType: websocket.MessageText, Data: []byte(`{"type":"response.create","turn_id":"turn"}`)})
+	decision := o.codexClientPreWrite(context.Background())(webSocketPreWriteContext{MessageType: websocket.MessageText, Data: []byte(`{"type":"response.create","installation_id":42}`)})
 	if decision.Action != webSocketPreWriteActionReject {
 		t.Fatalf("failed conversion allowed: %#v", decision)
 	}
@@ -182,7 +156,7 @@ func TestDisguiseConversionFailureIsTerminalAndHasDurableEvidence(t *testing.T) 
 		t.Fatalf("conversion affected provider health: %#v", health)
 	}
 	encoded := buildWebSocketAttemptEvidence(attempt)
-	if encoded == nil || !strings.Contains(*encoded, failure.DiagnosticID) || !strings.Contains(*encoded, "mapping database unavailable") {
+	if encoded == nil || !strings.Contains(*encoded, failure.DiagnosticID) || !strings.Contains(*encoded, "identity field must be a string or null") {
 		t.Fatalf("missing durable evidence: %v", encoded)
 	}
 	var envelope map[string]json.RawMessage

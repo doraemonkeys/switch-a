@@ -7,15 +7,10 @@ import (
 	"testing"
 )
 
-func TestRetirementPreservesHistoricalMappingAndRestores(t *testing.T) {
+func TestRetirementPreservesHistoricalDeviceAndRestores(t *testing.T) {
 	ctx := context.Background()
 	r := testRepository(t)
 	target, err := r.CommitTarget(ctx, candidateFor(t, r, "retire", windowsDesktop))
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := MappingKey{GenerationID: target.Login.GenerationID, ClientIdentityID: "client", Namespace: "thread", Original: "original"}
-	mapped, err := r.MapIdentity(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,16 +24,16 @@ func TestRetirementPreservesHistoricalMappingAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err := r.Export(ctx)
-	if err != nil || len(snapshot.Logins) != 0 || len(snapshot.Bindings) != 0 || len(snapshot.LoginHistory) != 1 || len(snapshot.Mappings) != 1 {
+	if err != nil || len(snapshot.Logins) != 0 || len(snapshot.Bindings) != 0 || len(snapshot.LoginHistory) != 1 {
 		t.Fatal(snapshot, err)
 	}
 	restored := testRepository(t)
 	if err := restored.Import(ctx, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	original, found, err := restored.RestoreIdentity(ctx, key.GenerationID, key.ClientIdentityID, key.Namespace, mapped)
-	if err != nil || !found || original != "original" {
-		t.Fatal(original, found, err)
+	history, err := restored.Export(ctx)
+	if err != nil || len(history.LoginHistory) != 1 || !history.LoginHistory[0].Identity.equalImmutable(target.Login) {
+		t.Fatal(history.LoginHistory, err)
 	}
 }
 func TestPlatformTupleRecognitionAndCandidateAccountRace(t *testing.T) {

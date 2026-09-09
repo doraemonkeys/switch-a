@@ -15,7 +15,7 @@ import (
 )
 
 func responseSession() *wire.Session {
-	return wire.NewSession(nil, clientdisguise.TargetSnapshot{Policy: clientdisguise.Policy{Enabled: true}}, "client", "operation")
+	return wire.NewSession(clientdisguise.TargetSnapshot{Policy: clientdisguise.Policy{Enabled: true}}, "operation")
 }
 func jsonHead() upstreamtransport.ResponseHead {
 	return upstreamtransport.ResponseHead{Header: http.Header{"Content-Type": []string{"application/json"}, "Content-Length": []string{"10"}}}

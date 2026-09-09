@@ -19,18 +19,18 @@ func (r *Repository) ObserveClient(ctx context.Context, clientID string, headers
 		return nil
 	}
 	ua := headers.Get("User-Agent")
-	match := versionPattern.FindStringSubmatch(ua)
-	if len(match) != 2 {
+	version := userAgentVersion(ua)
+	if version == "" {
 		return nil
 	}
-	features := Features{UserAgent: ua, Originator: headers.Get("Originator"), ClientVersion: match[1]}
+	features := Features{UserAgent: ua, Originator: headers.Get("Originator"), ClientVersion: version}
 	if build := desktopBuildPattern.FindStringSubmatch(ua); len(build) == 2 {
 		features.DesktopBuild = build[1]
 	}
 	if os := osVersionPattern.FindStringSubmatch(ua); len(os) == 2 {
 		features.OSVersion = os[1]
 	}
-	_, err := r.ObserveReference(ctx, clientID, Sample{Tuple: facts.Tuple, ClientVersion: match[1], Features: features, CapturedAt: capturedAt})
+	_, err := r.ObserveReference(ctx, clientID, Sample{Tuple: facts.Tuple, ClientVersion: version, Features: features, CapturedAt: capturedAt})
 	return err
 }
 func (r *Repository) RequiredHMACVersions(ctx context.Context) ([]string, error) {

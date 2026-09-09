@@ -11,13 +11,13 @@ import (
 )
 
 type codexTransferSelection struct {
-	result                                              *CodexState
-	providerIDs, sessionIDs                             []string
-	generations, clients, sources, profiles, transports map[string]bool
+	result                                 *CodexState
+	providerIDs, sessionIDs                []string
+	clients, sources, profiles, transports map[string]bool
 }
 
 // Select follows references rather than truncating tables independently:
-// archived login generations still own mappings and conversations.
+// archived login generations retain account evidence for conversation ownership.
 func (state *CodexState) Select(providerIDs, sessionIDs []string) *CodexState {
 	if state == nil {
 		return nil
@@ -25,7 +25,7 @@ func (state *CodexState) Select(providerIDs, sessionIDs []string) *CodexState {
 	selection := codexTransferSelection{
 		result:      &CodexState{Version: state.Version, HMAC: slices.Clone(state.HMAC)},
 		providerIDs: providerIDs, sessionIDs: sessionIDs,
-		generations: map[string]bool{}, clients: map[string]bool{}, sources: map[string]bool{}, profiles: map[string]bool{}, transports: map[string]bool{},
+		clients: map[string]bool{}, sources: map[string]bool{}, profiles: map[string]bool{}, transports: map[string]bool{},
 	}
 	selection.selectLogins(state.Disguise)
 	selection.selectFeatures(state.Disguise)
@@ -54,13 +54,11 @@ func (s *codexTransferSelection) selectLogins(state clientdisguise.Snapshot) {
 	for _, login := range state.Logins {
 		if slices.Contains(s.sessionIDs, login.CredentialSessionID) {
 			s.result.Disguise.Logins = append(s.result.Disguise.Logins, login)
-			s.generations[login.GenerationID] = true
 		}
 	}
 	for _, history := range state.LoginHistory {
 		if slices.Contains(s.sessionIDs, history.Identity.CredentialSessionID) {
 			s.result.Disguise.LoginHistory = append(s.result.Disguise.LoginHistory, history)
-			s.generations[history.GenerationID] = true
 		}
 	}
 	for _, binding := range state.Bindings {
@@ -71,12 +69,6 @@ func (s *codexTransferSelection) selectLogins(state clientdisguise.Snapshot) {
 		s.sources[binding.ReferenceSourceID] = true
 		s.profiles[binding.RevisionID] = true
 		s.transports[binding.TransportSampleID] = true
-	}
-	for _, mapping := range state.Mappings {
-		if s.generations[mapping.GenerationID] {
-			s.result.Disguise.Mappings = append(s.result.Disguise.Mappings, mapping)
-			s.clients[mapping.ClientIdentityID] = true
-		}
 	}
 }
 func (s *codexTransferSelection) selectFeatures(state clientdisguise.Snapshot) {

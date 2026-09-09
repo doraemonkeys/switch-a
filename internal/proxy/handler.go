@@ -12,7 +12,6 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/clientaccess"
-	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/wire"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/disguiseruntime"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
@@ -77,7 +76,6 @@ const ErrCodeUnauthorized = "unauthorized"
 
 type ClientDisguiseRepository interface {
 	disguiseruntime.Repository
-	wire.Mapper
 }
 
 // Store defines the minimal storage interface needed by the proxy handler.
