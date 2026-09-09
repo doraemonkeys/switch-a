@@ -1,112 +1,186 @@
-import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
-import { useApi } from "@/api/useApi";
-import type { DisguiseState } from "@/api/client-disguise/types";
+import { useState } from "react";
+import { Link, useSearchParams } from "react-router";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Fingerprint,
+  KeyRound,
+  Library,
+  SlidersHorizontal,
+} from "lucide-react";
 import { LoginSettings } from "./LoginSettings";
+import { LoginList } from "./LoginList";
 import { ReferenceSettings } from "./ReferenceSettings";
+import { ClientIdentitySettings } from "./references/ClientIdentitySettings";
+import {
+  createLoginDraft,
+  hasLoginChanges,
+  type LoginDraft,
+} from "./loginDraft";
+import { useClientDisguise } from "./useClientDisguise";
+import "./client-disguise.css";
+
+const SECTIONS = [
+  { id: "profiles", label: "Login profiles", icon: SlidersHorizontal },
+  { id: "references", label: "Reference library", icon: Library },
+  { id: "clients", label: "Client identities", icon: KeyRound },
+] as const;
 
 export function ClientDisguisePage() {
-  const api = useApi();
-  const [params] = useSearchParams();
-  const [state, setState] = useState<DisguiseState | null>(null);
-  const [selected, setSelected] = useState(params.get("login") ?? "");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let active = true;
-    api.clientDisguise
-      .get()
-      .then((value) => {
-        if (active) setState(value);
-      })
-      .catch((reason) => {
-        if (active) setError(String(reason));
-      });
-    return () => {
-      active = false;
-    };
-  }, [api]);
-  async function mutate(action: () => Promise<unknown>) {
-    setBusy(true);
-    setError("");
-    try {
-      await action();
-      setState(await api.clientDisguise.get());
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const { api, state, error, notice, busy, mutate, retry } =
+    useClientDisguise();
+  const [params, setParams] = useSearchParams();
+  // Keep drafts by login so navigation never silently discards an unfinished edit.
+  const [drafts, setDrafts] = useState<Record<string, LoginDraft>>({});
+  const section =
+    SECTIONS.find((item) => item.id === params.get("view"))?.id ?? "profiles";
   const login =
-    state?.logins.find((item) => item.credential_session_id === selected) ??
-    state?.logins[0];
+    state?.logins.find(
+      (item) => item.credential_session_id === params.get("login"),
+    ) ?? state?.logins[0];
+  function navigate(key: string, value: string) {
+    setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set(key, value);
+      return next;
+    });
+  }
+  const edited = new Set(
+    state?.logins
+      .filter((item) => {
+        const draft = drafts[item.credential_session_id];
+        return draft && hasLoginChanges(draft, item, state);
+      })
+      .map((item) => item.credential_session_id),
+  );
+
   return (
-    <main className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-text-primary">
-          Client disguise
-        </h1>
-        <p className="mt-2 text-text-secondary">
-          Each credential login owns a stable device identity and profile.
-          Providers choose independently whether to apply them.
-        </p>
-        <p className="mt-1 text-sm text-text-muted">
-          Changes apply to new HTTP requests and WebSocket connections. Internal
-          retries retain their original profile. Platform exclusions skip a
-          candidate; conversion failures terminate the request with a diagnostic
-          ID.
-        </p>
-      </div>
+    <div className="client-disguise">
+      <header className="cd-page-header">
+        <div>
+          <p className="cd-eyebrow">
+            <Fingerprint size={15} aria-hidden="true" /> CLIENT IDENTITY
+          </p>
+          <h1>
+            Client disguise<span>.</span>
+          </h1>
+          <p>A consistent client profile for every credential login.</p>
+        </div>
+        <Link className="cd-button cd-button-secondary" to="/providers">
+          Manage providers <ArrowRight size={15} aria-hidden="true" />
+        </Link>
+      </header>
+      <nav className="cd-navigation" aria-label="Client disguise sections">
+        {SECTIONS.map(({ id, label, icon: Icon }) => (
+          <button
+            type="button"
+            key={id}
+            aria-current={section === id ? "page" : undefined}
+            onClick={() => navigate("view", id)}
+          >
+            <Icon size={16} aria-hidden="true" />
+            {label}
+            {id === "references" && state && (
+              <span className="cd-count">{state.references.length}</span>
+            )}
+          </button>
+        ))}
+      </nav>
       {error && (
-        <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
-        </p>
+        <div role="alert" className="cd-feedback cd-feedback-error">
+          <span>{error}</span>
+          {!state && (
+            <button className="cd-button cd-button-secondary" onClick={retry}>
+              Try again
+            </button>
+          )}
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="cd-feedback cd-feedback-success">
+          <CheckCircle2 size={17} aria-hidden="true" />
+          {notice}
+        </div>
       )}
       {!state ? (
-        <p>Loading client disguise settings…</p>
+        !error && (
+          <div className="cd-loading" role="status">
+            <span className="cd-loading-line" />
+            Loading client disguise settings…
+          </div>
+        )
       ) : (
         <>
-          <label className="block">
-            Credential login
-            <select
-              className="input mt-1 w-full"
-              value={login?.credential_session_id ?? ""}
-              onChange={(event) => setSelected(event.target.value)}
-            >
-              {state.logins.map((item) => (
-                <option
-                  key={item.credential_session_id}
-                  value={item.credential_session_id}
-                >
-                  {item.name} — {item.credential_session_id}
-                </option>
-              ))}
-            </select>
-          </label>
-          {login ? (
-            <LoginSettings
-              key={
-                login.credential_session_id + (login.binding?.updated_at ?? "")
-              }
-              login={login}
-              state={state}
-              busy={busy}
-              save={(binding) =>
-                mutate(() =>
-                  api.clientDisguise.saveBinding(
-                    login.credential_session_id,
-                    binding,
-                  ),
-                )
-              }
-            />
-          ) : (
-            <p>Create a credential login before configuring its profile.</p>
-          )}
-          <ReferenceSettings state={state} busy={busy} mutate={mutate} />
+          <div hidden={section !== "profiles"}>
+            <div className="cd-workspace">
+              <LoginList
+                logins={state.logins}
+                selected={login?.credential_session_id}
+                drafts={edited}
+                select={(id) => navigate("login", id)}
+              />
+              {login ? (
+                <LoginSettings
+                  key={login.credential_session_id}
+                  login={login}
+                  state={state}
+                  busy={busy}
+                  draft={
+                    drafts[login.credential_session_id] ??
+                    createLoginDraft(login, state)
+                  }
+                  change={(draft) =>
+                    setDrafts((previous) => ({
+                      ...previous,
+                      [login.credential_session_id]: draft,
+                    }))
+                  }
+                  save={async (binding) => {
+                    const id = login.credential_session_id;
+                    const saved = await mutate(
+                      () => api.clientDisguise.saveBinding(id, binding),
+                      "Login profile saved. New requests and connections will use these settings.",
+                    );
+                    if (saved)
+                      setDrafts((previous) => {
+                        const next = { ...previous };
+                        delete next[id];
+                        return next;
+                      });
+                  }}
+                />
+              ) : (
+                <div className="cd-empty">
+                  <span className="cd-empty-icon">
+                    <Fingerprint size={30} aria-hidden="true" />
+                  </span>
+                  <h2>Give each login its own client profile</h2>
+                  <p>
+                    Create a credential login before configuring its profile.
+                  </p>
+                  <Link
+                    className="cd-button cd-button-primary"
+                    to="/credentials"
+                  >
+                    Manage credentials{" "}
+                    <ArrowRight size={16} aria-hidden="true" />
+                  </Link>
+                </div>
+              )}
+            </div>
+            <p className="cd-page-note">
+              Changes apply to new HTTP requests and WebSocket connections.
+              In-flight requests keep their original profile.
+            </p>
+          </div>
+          <div hidden={section !== "references"}>
+            <ReferenceSettings state={state} busy={busy} mutate={mutate} />
+          </div>
+          <div hidden={section !== "clients"}>
+            <ClientIdentitySettings state={state} busy={busy} mutate={mutate} />
+          </div>
         </>
       )}
-    </main>
+    </div>
   );
 }

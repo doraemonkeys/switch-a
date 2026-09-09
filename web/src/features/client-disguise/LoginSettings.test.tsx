@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { render, screen } from "@testing-library/react";
+import { createLoginDraft } from "./loginDraft";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, it, expect, vi } from "vitest";
@@ -44,18 +46,39 @@ const state: DisguiseState = {
     },
   })),
 };
+function Editor({
+  save,
+}: {
+  save: (
+    binding: import("@/api/client-disguise/types").ProfileBinding,
+  ) => Promise<void>;
+}) {
+  const [draft, change] = useState(() => createLoginDraft(login, state));
+  return (
+    <LoginSettings
+      login={login}
+      state={state}
+      busy={false}
+      save={save}
+      draft={draft}
+      change={change}
+    />
+  );
+}
 describe("login lifecycle controls", () => {
   it("pins a manually selected historical revision then allows explicit automatic follow", async () => {
     const user = userEvent.setup();
     const save = vi.fn().mockResolvedValue(undefined);
     render(
       <MemoryRouter>
-        <LoginSettings login={login} state={state} busy={false} save={save} />
+        <Editor save={save} />
       </MemoryRouter>,
     );
     expect(screen.getByText(/created atomically/)).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
-    expect(screen.getByLabelText("Update mode")).toHaveValue("pinned");
+    expect(
+      screen.getByRole("radio", { name: /Pin this revision/ }),
+    ).toBeChecked();
     await user.click(
       screen.getByRole("button", { name: "Save login settings" }),
     );
@@ -66,7 +89,8 @@ describe("login lifecycle controls", () => {
         credential_session_id: "login",
       }),
     );
-    await user.selectOptions(screen.getByLabelText("Update mode"), "auto");
+    await user.click(screen.getByRole("radio", { name: /Automatic follow/ }));
+    await user.selectOptions(screen.getByLabelText("Reference source"), "");
     await user.click(
       screen.getByRole("button", { name: "Save login settings" }),
     );
@@ -79,9 +103,10 @@ describe("login lifecycle controls", () => {
     const save = vi.fn();
     render(
       <MemoryRouter>
-        <LoginSettings login={login} state={state} busy={false} save={save} />
+        <Editor save={save} />
       </MemoryRouter>,
     );
+    await user.click(screen.getByText("Advanced login settings"));
     await user.clear(screen.getByLabelText("Telemetry path mappings"));
     await user.type(screen.getByLabelText("Telemetry path mappings"), "null");
     await user.click(
