@@ -8,7 +8,7 @@ const CLIENT_MODE_OPTIONS = [
     value: DEFAULTS.GPT_ACCOUNT_FALLBACK_CLIENT,
     label: "保持当前行为（默认）",
   },
-  { value: "official_stable", label: "使用官方稳定版本特征" },
+  { value: "official_stable", label: "同步 Codex CLI 官方稳定版" },
 ] as const;
 
 export function GPTAccountSettingsSection({
@@ -57,7 +57,7 @@ export function GPTAccountSettingsSection({
       <p className="text-xs text-text-muted mt-1.5">
         {mode === DEFAULTS.GPT_ACCOUNT_FALLBACK_CLIENT
           ? "优先使用凭据绑定的客户端 UA；没有可用 UA 时使用 switch-a/版本。"
-          : "无可用伪装 UA 时，使用内置 Codex Desktop 模板并同步官方稳定版本；首次同步完成前沿用模板版本。"}
+          : "无可用伪装 UA 时，使用内置 Codex Desktop 模板并同步 Codex CLI 官方稳定版；首次同步完成前沿用模板版本。"}
       </p>
       <p className="text-xs text-text-muted mt-1.5">
         伪装配置中的 UA

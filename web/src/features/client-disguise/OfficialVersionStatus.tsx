@@ -18,11 +18,12 @@ export function OfficialVersionStatus({
   const version = state?.release.version;
   const checked = state?.checked_at && !state.checked_at.startsWith("0001-");
   return (
-    <section className="cd-feedback" aria-label="Official stable version">
+    <section className="cd-feedback" aria-label="Codex CLI 官方稳定版">
       <div>
-        <strong>Official stable version{version ? `: ${version}` : ""}</strong>
+        <strong>Codex CLI 官方稳定版{version ? `: ${version}` : ""}</strong>
         <p className="cd-description">
-          Checks every 6 hours when a login follows official releases.
+          Checks Codex CLI releases every 6 hours while this version source is
+          selected.
           {checked
             ? ` Last checked: ${new Date(state.checked_at).toLocaleString()}.`
             : " No release has been checked yet."}
@@ -37,7 +38,7 @@ export function OfficialVersionStatus({
         )}
         {version && (
           <a href={state.release.url} target="_blank" rel="noreferrer">
-            View official release
+            View Codex CLI release
           </a>
         )}
       </div>
@@ -48,7 +49,7 @@ export function OfficialVersionStatus({
         onClick={() =>
           void mutate(
             () => api.clientDisguise.syncOfficialVersion(),
-            "Official stable version checked. New requests and connections use the saved version choice.",
+            "Codex CLI 官方稳定版已检查。新请求和连接将使用已保存的版本设置。",
           )
         }
       >

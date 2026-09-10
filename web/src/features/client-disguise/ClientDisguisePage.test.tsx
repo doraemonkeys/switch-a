@@ -104,13 +104,13 @@ describe("client disguise workspace", () => {
     );
     api.get.mockResolvedValue({ ...populated, official_version: official });
     await user.click(screen.getByRole("button", { name: "Check now" }));
-    await screen.findByText("Official stable version: 0.151.0");
+    await screen.findByText("Codex CLI 官方稳定版: 0.151.0");
     expect(syncOfficialVersion).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("Version source")).toHaveValue(
       "official_stable",
     );
     expect(
-      screen.getByRole("link", { name: "View official release" }),
+      screen.getByRole("link", { name: "View Codex CLI release" }),
     ).toHaveAttribute("href", official.release.url);
   });
   it("keeps the last release visible when an official version check fails", async () => {
@@ -134,12 +134,12 @@ describe("client disguise workspace", () => {
           .mockRejectedValue(new Error("GitHub unavailable")),
       },
     );
-    await screen.findByText("Official stable version: 0.151.0");
+    await screen.findByText("Codex CLI 官方稳定版: 0.151.0");
     expect(screen.getByText(/Continuing with 0.151.0/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Check now" }));
     await screen.findByText("GitHub unavailable");
     expect(
-      screen.getByText("Official stable version: 0.151.0"),
+      screen.getByText("Codex CLI 官方稳定版: 0.151.0"),
     ).toBeInTheDocument();
   });
   it("creates reference sources and preserves identity when replacing a key", async () => {

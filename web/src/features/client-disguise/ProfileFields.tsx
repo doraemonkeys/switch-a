@@ -25,7 +25,7 @@ export function ProfileFields({
   );
   const officialVersion = state.official_version?.release.version;
   const syncStatus = officialVersion
-    ? `Official stable: ${officialVersion}.`
+    ? `Codex CLI 官方稳定版: ${officialVersion}.`
     : "Uses the profile version until the first successful sync.";
   return (
     <section className="cd-editor-section" aria-labelledby="profile-heading">
@@ -49,11 +49,11 @@ export function ProfileFields({
           }
         >
           <option value="">Profile version (built-in or reference)</option>
-          <option value="official_stable">Sync official stable version</option>
+          <option value="official_stable">同步 Codex CLI 官方稳定版</option>
         </select>
         <span className="cd-field-help">
           {draft.versionSource === "official_stable"
-            ? `Updates the Codex version in User-Agent and version fields while keeping this profile’s environment. ${syncStatus}`
+            ? `Uses the Codex CLI stable release for User-Agent and version fields while keeping this profile’s environment. ${syncStatus}`
             : "Uses the version recorded in your selected client profile."}
         </span>
       </label>
@@ -136,7 +136,7 @@ export function ProfileFields({
               <strong>Pin this revision</strong>
               <small>
                 {draft.versionSource === "official_stable"
-                  ? "Pin environment features; the official version still updates."
+                  ? "Pin environment features; the Codex CLI version still updates."
                   : "Keep this exact profile until you change it."}
               </small>
             </span>
