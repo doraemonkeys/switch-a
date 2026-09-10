@@ -68,12 +68,13 @@ func (uuidIDGenerator) NewID() string {
 
 // Config configures the provider auth service.
 type Config struct {
-	ClientProfiles  accountclient.ProfileStore
-	CredentialStore any
-	HTTPClient      OAuthHTTPDoer
-	Clock           internal.Clock
-	Logger          *zap.Logger
-	IDGenerator     IDGenerator
+	ClientProfiles      accountclient.ProfileStore
+	AccountClientPolicy accountclient.PolicyStore
+	CredentialStore     any
+	HTTPClient          OAuthHTTPDoer
+	Clock               internal.Clock
+	Logger              *zap.Logger
+	IDGenerator         IDGenerator
 }
 
 type scheduledTask interface {
@@ -172,7 +173,7 @@ func newService(cfg Config, runtime serviceRuntime) *Service {
 	}
 
 	service := &Service{
-		clientProfiles:            accountclient.NewResolver(cfg.ClientProfiles, logger),
+		clientProfiles:            accountclient.NewResolver(accountclient.Config{Profiles: cfg.ClientProfiles, Policy: cfg.AccountClientPolicy, Logger: logger}),
 		credentialStore:           cfg.CredentialStore,
 		httpClient:                httpClient,
 		clock:                     clock,

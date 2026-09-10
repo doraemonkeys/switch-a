@@ -197,10 +197,11 @@ func composeApplicationRuntime(
 		Logger:        log,
 	})
 	authService := providerauth.NewService(providerauth.Config{
-		ClientProfiles:  sqlStore.ClientDisguiseRepository(),
-		CredentialStore: st,
-		Clock:           clock,
-		Logger:          log,
+		ClientProfiles:      sqlStore.ClientDisguiseRepository(),
+		AccountClientPolicy: sqlStore,
+		CredentialStore:     st,
+		Clock:               clock,
+		Logger:              log,
 	})
 	clientAccess := clientaccess.NewService(clientaccess.ServiceConfig{Store: sqlStore.ClientAPIKeyRepository(), Now: clock.Now})
 	proxyServer := server.New(server.Config{

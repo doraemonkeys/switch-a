@@ -15,6 +15,12 @@ const (
 	TrustProxyHeaders = true
 )
 
+// Missing profile UAs identify the gateway unless the operator selects an official fallback.
+const (
+	ConfigKeyGPTAccountFallbackClient = "gpt_account_fallback_client"
+	DefaultGPTAccountFallbackClient   = "switch_a"
+)
+
 // Connection pool defaults.
 const (
 	MaxIdleConns = 100

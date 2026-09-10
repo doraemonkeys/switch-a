@@ -27,14 +27,21 @@ type ProfileStore interface {
 
 type Resolver struct {
 	profiles ProfileStore
+	policy   PolicyStore
 	logger   *zap.Logger
 }
 
-func NewResolver(profiles ProfileStore, logger *zap.Logger) *Resolver {
-	if logger == nil {
-		logger = zap.NewNop()
+type Config struct {
+	Profiles ProfileStore
+	Policy   PolicyStore
+	Logger   *zap.Logger
+}
+
+func NewResolver(config Config) *Resolver {
+	if config.Logger == nil {
+		config.Logger = zap.NewNop()
 	}
-	return &Resolver{profiles: profiles, logger: logger}
+	return &Resolver{profiles: config.Profiles, policy: config.Policy, logger: config.Logger}
 }
 
 // Operation freezes identity for all transmissions of an account operation,
@@ -61,7 +68,15 @@ func (r *Resolver) Resolve(ctx context.Context, sessionID, kind string) (Operati
 	}
 
 	ua, source := profile.UserAgent(), "profile"
+	var policy Policy
+	fallbackReason := ""
 	if ua == "" {
+		var err error
+		policy, err = r.resolvePolicy(ctx)
+		if err != nil {
+			log.Warn("account_client.policy_resolution_failed", zap.Error(err))
+			return Operation{}, err
+		}
 		ua = buildinfo.Current().UserAgent()
 		switch {
 		case sessionID == "":
@@ -73,12 +88,28 @@ func (r *Resolver) Resolve(ctx context.Context, sessionID, kind string) (Operati
 		default:
 			source = "profile_without_user_agent"
 		}
+		fallbackReason = source
+	}
+	release, uaRevisionID := profile.OfficialVersion, profile.Profile.ID
+	versionSource := profile.Binding.VersionSource
+	// A credential's disguise UA and version selection remain authoritative;
+	// this global setting only replaces the gateway's otherwise-default UA.
+	officialFallback := profile.UserAgent() == "" && policy.FallbackClient == FallbackOfficialStable
+	if officialFallback {
+		selected := clientdisguise.BuiltinAccountProfile()
+		release = policy.OfficialVersion
+		versionSource = string(policy.FallbackClient)
+		ua, source, uaRevisionID = selected.UserAgent(release.Version), "official_stable_builtin", selected.ID
 	}
 	log = log.With(
+		zap.String("account_client_fallback", string(policy.FallbackClient)),
+		zap.String("user_agent_profile_revision_id", uaRevisionID),
+		zap.Bool("official_version_pending", officialFallback && release.Version == ""),
 		zap.String("profile_revision_id", profile.Binding.RevisionID),
 		zap.String("login_generation_id", profile.Login.GenerationID),
-		zap.String("version_source", profile.Binding.VersionSource),
-		zap.String("official_version", profile.OfficialVersion.Version),
+		zap.String("version_source", versionSource),
+		zap.String("fallback_reason", fallbackReason),
+		zap.String("official_version", release.Version),
 		zap.String("user_agent_source", source),
 		zap.String("user_agent", ua),
 	)

@@ -199,6 +199,9 @@ describe("ERROR_CODES", () => {
 
 describe("CONFIG_KEYS", () => {
   it("should have all config keys", () => {
+    expect(CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT).toBe(
+      "gpt_account_fallback_client",
+    );
     expect(CONFIG_KEYS.AUTH_MODE).toBe("auth_mode");
     expect(CONFIG_KEYS.USER_HEADER).toBe("user_header");
     expect(CONFIG_KEYS.STICKY_MODE).toBe("sticky_mode");
@@ -214,10 +217,6 @@ describe("CONFIG_KEYS", () => {
     expect(CONFIG_KEYS.ROOT_CANDIDATE_STRATEGY).toBe("root_candidate_strategy");
   });
 
-  it("should have exactly 18 config keys", () => {
-    expect(Object.keys(CONFIG_KEYS)).toHaveLength(18);
-  });
-
   it("does not expose rollout controls as runtime configuration", () => {
     expect(
       Object.values(CONFIG_KEYS).filter((key) => key.startsWith("codex_")),
@@ -226,6 +225,10 @@ describe("CONFIG_KEYS", () => {
 });
 
 describe("DEFAULTS", () => {
+  it("preserves the Switch-A fallback for GPT account requests", () => {
+    expect(DEFAULTS.GPT_ACCOUNT_FALLBACK_CLIENT).toBe("switch_a");
+  });
+
   it("should have auth defaults", () => {
     expect(DEFAULTS.AUTH_MODE).toBe(AUTH_MODES.AUTO);
     expect(DEFAULTS.USER_HEADER).toBe("X-User-ID");

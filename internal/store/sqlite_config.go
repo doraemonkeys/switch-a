@@ -32,6 +32,7 @@ var obsoleteRuntimeConfigKeys = []string{
 // This is exported so the admin API can return defaults separately from user values.
 func GetDefaultConfigs() map[string]string {
 	configDefaults := map[string]string{
+		defaults.ConfigKeyGPTAccountFallbackClient: defaults.DefaultGPTAccountFallbackClient,
 		"auth_mode":                DefaultAuthMode,
 		"user_header":              DefaultUserHeader,
 		"trust_proxy_headers":      DefaultTrustProxyHeaders,

@@ -12,6 +12,23 @@ const (
 	builtinDesktopOSVersion     = "10.0.26200"
 )
 
+// BuiltinAccountProfile supplies the captured environment for account operations
+// that have no sampled UA. Reusing this tuple keeps its provenance and version
+// projection identical to the client-disguise feature.
+func BuiltinAccountProfile() ProfileRevision {
+	return ProfileRevision{
+		ID:            "builtin-desktop-windows-amd64",
+		Tuple:         Tuple{ClientType: "desktop", Platform: "windows", Arch: "amd64"},
+		ClientVersion: builtinVersion,
+		Features: Features{
+			ClientVersion: builtinVersion, Originator: "Codex Desktop",
+			UserAgent: builtinDesktopUserAgent, DesktopBuild: builtinDesktopBuild, OSVersion: builtinDesktopOSVersion,
+		},
+		SourceID: "builtin", EvidenceKind: "capture", SourceURL: builtinDesktopCaptureSource,
+		CreatedAt: time.Unix(0, 0).UTC(),
+	}
+}
+
 // Public source fixes the release and originator, while host OS and terminal
 // values are runtime observations. Only the repository's captured Windows
 // Desktop tuple supplies a complete UA; other defaults preserve the incoming
@@ -31,8 +48,7 @@ func BuiltinProfiles() []ProfileRevision {
 				tuple := Tuple{ClientType: clientType, Platform: platform, Arch: arch}
 				profile := ProfileRevision{ID: "builtin-" + clientType + "-" + platform + "-" + arch, Tuple: tuple, ClientVersion: builtinVersion, Features: Features{ClientVersion: builtinVersion, Originator: originator}, SourceID: "builtin", EvidenceKind: "source", SourceURL: source, CreatedAt: time.Unix(0, 0).UTC()}
 				if tuple == (Tuple{ClientType: "desktop", Platform: "windows", Arch: "amd64"}) {
-					profile.EvidenceKind, profile.SourceURL = "capture", builtinDesktopCaptureSource
-					profile.Features.UserAgent, profile.Features.DesktopBuild, profile.Features.OSVersion = builtinDesktopUserAgent, builtinDesktopBuild, builtinDesktopOSVersion
+					profile = BuiltinAccountProfile()
 				}
 				result = append(result, profile)
 			}

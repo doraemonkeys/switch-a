@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useToast } from "../hooks/useToast";
+import { GPTAccountSettingsSection } from "./config-form-sections/GPTAccountSettingsSection";
 import {
   RoutingStrategySection,
   AuthSettingsSection,
@@ -120,6 +121,11 @@ export function ConfigForm({
           getDefault={getDefault}
         />
         <AuthSettingsSection
+          getValue={getValue}
+          handleChange={handleChange}
+          getDefault={getDefault}
+        />
+        <GPTAccountSettingsSection
           getValue={getValue}
           handleChange={handleChange}
           getDefault={getDefault}

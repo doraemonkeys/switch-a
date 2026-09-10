@@ -5,8 +5,11 @@ import (
 	"errors"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	codexkeyring "github.com/doraemonkeys/switch-a/internal/codex/keyring"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 	"gorm.io/gorm"
 )
 
@@ -21,6 +24,50 @@ func (s *CachedStore) ClientDisguiseRepository() *clientdisguise.Repository {
 	}
 	return nil
 }
+
+// ResolveAccountClientPolicy reads the choice and release as one snapshot so a
+// concurrent settings edit cannot change an account operation halfway through.
+func (s *SQLiteStore) ResolveAccountClientPolicy(ctx context.Context) (accountclient.Policy, error) {
+	var policy accountclient.Policy
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		mode, err := (&SQLiteStore{db: tx}).GetConfig(ctx, defaults.ConfigKeyGPTAccountFallbackClient)
+		if err != nil {
+			return err
+		}
+		policy.FallbackClient = accountclient.FallbackClient(mode)
+		if policy.FallbackClient == accountclient.FallbackOfficialStable {
+			state, err := clientdisguise.NewRepository(tx).OfficialVersion(ctx)
+			policy.OfficialVersion = state.Release
+			return err
+		}
+		return nil
+	})
+	return policy, err
+}
+
+// OfficialVersionRepository counts global account requests as release followers,
+// even before the first credential has a client-disguise binding.
+type OfficialVersionRepository struct {
+	*clientdisguise.Repository
+	settings *SQLiteStore
+}
+
+func (s *SQLiteStore) OfficialVersionRepository() *OfficialVersionRepository {
+	return &OfficialVersionRepository{Repository: s.ClientDisguiseRepository(), settings: s}
+}
+
+func (r *OfficialVersionRepository) HasOfficialVersionFollowers(ctx context.Context) (bool, error) {
+	mode, err := r.settings.GetConfig(ctx, defaults.ConfigKeyGPTAccountFallbackClient)
+	if err != nil {
+		return false, err
+	}
+	if accountclient.FallbackClient(mode) == accountclient.FallbackOfficialStable {
+		return true, nil
+	}
+	return r.Repository.HasOfficialVersionFollowers(ctx)
+}
+
+var _ officialversion.Store = (*OfficialVersionRepository)(nil)
 
 // A static credential imported alongside its identity keeps its verified source
 // subject. Re-signing it with a destination key would change conversation authority.

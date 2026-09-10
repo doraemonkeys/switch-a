@@ -95,7 +95,7 @@ func newApplicationCodexRuntime(
 		return nil, fmt.Errorf("initialize Codex WebSocket runtime: %w", err)
 	}
 	return &applicationCodexRuntime{
-		versions: officialversion.NewService(persistence.ClientDisguiseRepository(), officialversion.NewGitHub(&http.Client{Timeout: officialversion.RequestTimeout}), log),
+		versions: officialversion.NewService(persistence.OfficialVersionRepository(), officialversion.NewGitHub(&http.Client{Timeout: officialversion.RequestTimeout}), log),
 		HTTP:     httpRuntime, WebSocket: webSocketRuntime, identities: identities,
 		continuity:      continuity,
 		providerCookies: cookies,

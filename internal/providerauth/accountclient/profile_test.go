@@ -41,7 +41,7 @@ func TestOperationFreezesSelectedUserAgentAndPreservesEndpointHeaders(t *testing
 		return profile, nil
 	})
 	core, logs := observer.New(zap.DebugLevel)
-	resolver := NewResolver(store, zap.New(core))
+	resolver := NewResolver(Config{Profiles: store, Logger: zap.New(core)})
 	operation, err := resolver.Resolve(context.Background(), "credential", UsageQuery)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestResolveDefaultIdentityReasons(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			core, logs := observer.New(zap.DebugLevel)
-			op, err := NewResolver(tc.store, zap.New(core)).Resolve(context.Background(), tc.sessionID, OAuthLogin)
+			op, err := NewResolver(Config{Profiles: tc.store, Logger: zap.New(core)}).Resolve(context.Background(), tc.sessionID, OAuthLogin)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,9 +112,9 @@ func TestResolveDefaultIdentityReasons(t *testing.T) {
 
 func TestResolveErrorDoesNotSubstituteDefaultIdentity(t *testing.T) {
 	want := errors.New("profile database unavailable")
-	resolver := NewResolver(profileStoreFunc(func(context.Context, string) (clientdisguise.LoginProfile, error) {
+	resolver := NewResolver(Config{Profiles: profileStoreFunc(func(context.Context, string) (clientdisguise.LoginProfile, error) {
 		return clientdisguise.LoginProfile{}, want
-	}), nil)
+	})})
 	op, err := resolver.Resolve(context.Background(), "session", TokenRefresh)
 	if !errors.Is(err, want) || op.userAgent != "" {
 		t.Fatalf("operation=%#v error=%v", op, err)

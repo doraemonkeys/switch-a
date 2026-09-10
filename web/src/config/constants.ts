@@ -256,6 +256,7 @@ export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
  * @see internal/admin/constants.go ValidConfigKeys
  */
 export const CONFIG_KEYS = {
+  GPT_ACCOUNT_FALLBACK_CLIENT: "gpt_account_fallback_client",
   AUTH_MODE: "auth_mode",
   USER_HEADER: "user_header",
   TRUST_PROXY_HEADERS: "trust_proxy_headers",
@@ -287,6 +288,7 @@ export type ConfigKey = (typeof CONFIG_KEYS)[keyof typeof CONFIG_KEYS];
  * @see internal/defaults/defaults.go
  */
 export const DEFAULTS = {
+  GPT_ACCOUNT_FALLBACK_CLIENT: "switch_a",
   // Authentication
   AUTH_MODE: AUTH_MODES.AUTO,
   USER_HEADER: "X-User-ID",

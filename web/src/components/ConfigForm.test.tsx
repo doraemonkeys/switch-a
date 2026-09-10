@@ -34,6 +34,44 @@ function renderConfigForm(
 }
 
 describe("ConfigForm", () => {
+  it("keeps the current GPT client mode by default and saves either choice", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderConfigForm(onSave);
+    const select = screen.getByRole("combobox", {
+      name: /无伪装 UA 时的客户端特征/,
+    });
+    expect(select).toHaveValue("switch_a");
+    expect(screen.getByText(/没有可用 UA 时使用 switch-a/)).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "official_stable" } });
+    expect(screen.getByText(/首次同步完成前沿用模板版本/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "official_stable",
+        }),
+      ),
+    );
+    fireEvent.change(select, { target: { value: "switch_a" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "switch_a",
+        }),
+      ),
+    );
+  });
+
+  it("loads a saved official GPT client mode", () => {
+    renderConfigForm(vi.fn(), {
+      [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "official_stable",
+    });
+    expect(
+      screen.getByRole("combobox", { name: /无伪装 UA 时的客户端特征/ }),
+    ).toHaveValue("official_stable");
+  });
+
   it("defaults recovery to the original account and explains switching back", () => {
     renderConfigForm();
     expect(

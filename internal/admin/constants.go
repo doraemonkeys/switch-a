@@ -9,6 +9,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 )
 
 // Error codes for API responses.
@@ -70,6 +71,7 @@ var validAuthModes = map[string]bool{
 
 // Unexported to prevent external mutation; use IsValidConfigKey() for validation.
 var validConfigKeys = map[string]bool{
+	defaults.ConfigKeyGPTAccountFallbackClient: true,
 	"auth_mode":                true,
 	"user_header":              true,
 	"trust_proxy_headers":      true,
@@ -125,6 +127,7 @@ func IsValidConfigKey(k string) bool {
 type ConfigValidator func(value string) error
 
 var configValidators = map[string]ConfigValidator{
+	defaults.ConfigKeyGPTAccountFallbackClient: validateGPTAccountClientMode,
 	"auth_mode":                validateAuthModeConfig,
 	"user_header":              nil, // Any string is valid
 	"trust_proxy_headers":      validateBoolConfig,
@@ -181,6 +184,13 @@ func validateBoolConfig(value string) error {
 	lower := strings.ToLower(value)
 	if lower != "true" && lower != "false" && lower != "1" && lower != "0" {
 		return fmt.Errorf("must be 'true' or 'false'")
+	}
+	return nil
+}
+
+func validateGPTAccountClientMode(value string) error {
+	if !accountclient.FallbackClient(value).IsValid() {
+		return fmt.Errorf("must be %q or %q", accountclient.FallbackSwitchA, accountclient.FallbackOfficialStable)
 	}
 	return nil
 }
