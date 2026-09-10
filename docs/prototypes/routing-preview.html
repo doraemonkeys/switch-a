@@ -1,0 +1,1889 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Routing · UI/UX proposal</title>
+    <style>
+      :root {
+        --ink: #1c2925;
+        --muted: #64736c;
+        --faint: #87938d;
+        --line: #dfe5df;
+        --paper: #fff;
+        --ground: #f6f7f4;
+        --accent: #14765b;
+        --accent-wash: #eaf4ee;
+        --amber: #95611e;
+        --amber-wash: #fcf6e9;
+        --danger: #b34239;
+        --radius: 10px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--ground);
+        color: var(--ink);
+        font:
+          14px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "Microsoft YaHei",
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      button,
+      input,
+      select {
+        outline-offset: 4px;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid var(--accent);
+      }
+      button {
+        color: inherit;
+      }
+      svg {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.65;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex-shrink: 0;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      button {
+        border: 0;
+        background: none;
+      }
+      code,
+      .mono {
+        font-family: "SFMono-Regular", Consolas, monospace;
+      }
+      small {
+        font-size: 12px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .topbar {
+        height: 64px;
+        background: var(--paper);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 40px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-weight: 650;
+        letter-spacing: -0.4px;
+        font-size: 17px;
+      }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 29px;
+        height: 29px;
+        background: var(--ink);
+        color: #fff;
+        border-radius: 7px;
+      }
+      .crumb {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+      .slash {
+        color: #b5beb8;
+        font-weight: 400;
+      }
+      .top-note {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .prototype {
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+      }
+      .text-button {
+        color: var(--muted);
+        text-decoration: underline;
+        text-underline-offset: 4px;
+        padding: 4px 0;
+      }
+      .workspace {
+        max-width: 1380px;
+        margin: auto;
+        padding: 44px 48px 70px;
+      }
+      .page-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+      }
+      .eyebrow {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        color: var(--accent);
+        margin-bottom: 7px;
+      }
+      h1 {
+        font-size: 34px;
+        line-height: 1.2;
+        letter-spacing: -1.2px;
+        font-weight: 650;
+      }
+      .subtitle {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 39px;
+        padding: 0 15px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: white;
+        font-size: 13px;
+        font-weight: 550;
+        white-space: nowrap;
+      }
+      .btn:hover {
+        background: #f1f4f0;
+        border-color: #bbc8be;
+      }
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .btn.primary:hover {
+        background: #0d6049;
+      }
+      .btn.plain {
+        background: transparent;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .summary {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 24px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .summary strong {
+        font-weight: 650;
+        color: var(--ink);
+      }
+      .dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        margin-right: 6px;
+      }
+      .dot.gray {
+        background: #a8b2ac;
+      }
+      .divider {
+        height: 12px;
+        width: 1px;
+        background: #d3dbd4;
+      }
+      .notice {
+        margin-top: 18px;
+        border-left: 2px solid #b9c7bd;
+        background: #edf1eb;
+        padding: 11px 15px;
+        color: #56665c;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .notice strong {
+        color: #344a3d;
+        font-weight: 600;
+      }
+      .list-surface {
+        margin-top: 28px;
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        overflow: hidden;
+      }
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 15px 20px;
+        border-bottom: 1px solid var(--line);
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+      }
+      .tab {
+        padding: 7px 10px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        border-radius: 6px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .tab[aria-pressed="true"] {
+        background: var(--accent-wash);
+        color: #15533e;
+        font-weight: 650;
+      }
+      .count {
+        font-size: 10px;
+        font-weight: 600;
+        border-radius: 4px;
+        padding: 0 5px;
+        background: #e9eee8;
+        color: #65766a;
+      }
+      .tab[aria-pressed="true"] .count {
+        background: #d5e8dc;
+        color: #236347;
+      }
+      .search-box {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .search {
+        position: relative;
+      }
+      .search svg {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        width: 15px;
+        height: 15px;
+        color: var(--muted);
+      }
+      .search input {
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        width: 215px;
+        padding: 0 10px 0 32px;
+        background: #fff;
+        font-size: 12px;
+      }
+      .filter {
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: white;
+        padding: 0 10px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .columns,
+      .policy {
+        display: grid;
+        grid-template-columns: 78px minmax(190px, 1fr) 56px minmax(
+            220px,
+            1.15fr
+          ) 150px 76px;
+        align-items: center;
+        gap: 12px;
+        padding: 0 22px;
+      }
+      .columns {
+        height: 39px;
+        background: #fafbf8;
+        border-bottom: 1px solid var(--line);
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--muted);
+        letter-spacing: 0.05em;
+      }
+      .group-heading {
+        padding: 13px 22px 6px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: 0.06em;
+        color: #44574c;
+      }
+      .group-heading span {
+        font-size: 11px;
+        color: var(--faint);
+        letter-spacing: 0;
+        font-weight: 400;
+      }
+      .api-symbol {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        background: #edf2eb;
+        border: 1px solid #e0e7dd;
+        border-radius: 5px;
+        font-family: Consolas, monospace;
+        font-size: 10px;
+      }
+      .policy {
+        min-height: 98px;
+        border-bottom: 1px solid #edf0eb;
+        position: relative;
+      }
+      .policy:hover {
+        background: #fafcf9;
+      }
+      .policy.selected {
+        background: #f0f7f0;
+        box-shadow: inset 3px 0 var(--accent);
+      }
+      .toggle-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-start;
+      }
+      .switch {
+        height: 20px;
+        width: 35px;
+        border-radius: 20px;
+        background: #c4ccc5;
+        padding: 3px;
+        transition: background 0.12s;
+        display: flex;
+        align-items: center;
+      }
+      .switch:before {
+        content: "";
+        display: block;
+        width: 14px;
+        height: 14px;
+        background: white;
+        border-radius: 50%;
+        box-shadow: 0 1px 2px #142b1d20;
+        transition: transform 0.12s;
+      }
+      .switch[aria-checked="true"] {
+        background: var(--accent);
+      }
+      .switch[aria-checked="true"]:before {
+        transform: translateX(15px);
+      }
+      .toggle-cell small {
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .match-kind {
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 5px;
+      }
+      .match-value {
+        font-size: 15px;
+        font-weight: 550;
+        letter-spacing: -0.3px;
+      }
+      .match-value.any {
+        font-family: inherit;
+        letter-spacing: 0;
+        font-size: 14px;
+      }
+      .arrow {
+        color: #9ba99f;
+        display: flex;
+        align-items: center;
+      }
+      .arrow:before {
+        content: "";
+        height: 1px;
+        width: 22px;
+        background: #c1cdc3;
+      }
+      .arrow svg {
+        width: 16px;
+        height: 16px;
+        margin-left: -7px;
+      }
+      .target-title {
+        font-size: 14px;
+        font-weight: 550;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .target-sub {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 5px;
+      }
+      .target-kind {
+        font-size: 10px;
+        color: #6c7b71;
+        background: #f2f5ef;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 400;
+        white-space: nowrap;
+      }
+      .status {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .status.warning {
+        color: var(--amber);
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+      }
+      .status.warning svg {
+        width: 13px;
+        height: 13px;
+        margin-top: 2px;
+      }
+      .row-actions {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 1px;
+      }
+      .edit {
+        font-size: 12px;
+        padding: 6px 8px;
+        color: #496c58;
+        border-radius: 5px;
+      }
+      .edit:hover {
+        background: #e4eee3;
+      }
+      .icon-btn {
+        width: 30px;
+        height: 30px;
+        border-radius: 5px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+      }
+      .icon-btn:hover {
+        background: #e8ede6;
+      }
+      .order {
+        padding: 14px 22px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 11px;
+        color: var(--muted);
+        background: #fcfdfb;
+        flex-wrap: wrap;
+      }
+      .order strong {
+        color: #495b4d;
+        font-weight: 550;
+      }
+      .order .chevron {
+        color: #b5bfb5;
+      }
+      .order .end {
+        margin-left: auto;
+        font-size: 10px;
+      }
+      .empty {
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .preview {
+        margin-top: 27px;
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 32px;
+        padding: 26px 2px;
+        border-bottom: 1px solid var(--line);
+      }
+      h2 {
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: -0.3px;
+      }
+      .preview-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .preview-head svg {
+        color: var(--accent);
+        width: 17px;
+      }
+      .preview .desc {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 7px;
+      }
+      .preview-inputs {
+        display: flex;
+        gap: 7px;
+        margin-top: 16px;
+      }
+      .input {
+        height: 39px;
+        width: 100%;
+        padding: 0 11px;
+        border: 1px solid #d6dfd6;
+        border-radius: 6px;
+        background: #fff;
+        color: var(--ink);
+        font-size: 13px;
+      }
+      .preview-inputs select {
+        width: 95px;
+        flex-shrink: 0;
+      }
+      .preview-inputs input {
+        min-width: 0;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+      }
+      .preview-result {
+        padding-left: 30px;
+        border-left: 1px solid var(--line);
+        display: flex;
+        justify-content: center;
+        flex-direction: column;
+      }
+      .result-eyebrow {
+        color: var(--muted);
+        font-size: 10px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+      .result-line {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        font-size: 14px;
+        font-weight: 550;
+        flex-wrap: wrap;
+      }
+      .result-line svg {
+        width: 16px;
+        color: #91a397;
+      }
+      .result-detail {
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .result-detail.warning {
+        color: var(--amber);
+      }
+      .boundary {
+        margin-top: 12px;
+        color: #728075;
+        font-size: 10px;
+      }
+      .page-foot {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 23px;
+      }
+      .page-foot strong {
+        font-weight: 550;
+        color: #3f5648;
+      }
+      dialog {
+        position: fixed;
+        inset: 0 0 0 auto;
+        margin: 0;
+        height: 100dvh;
+        max-height: 100dvh;
+        width: 550px;
+        max-width: 100vw;
+        border: 0;
+        border-left: 1px solid var(--line);
+        padding: 0;
+        color: var(--ink);
+        box-shadow: -15px 0 60px #18321b12;
+        background: white;
+      }
+      dialog::backdrop {
+        background: #20372825;
+      }
+      dialog[open] {
+        display: flex;
+        flex-direction: column;
+      }
+      .drawer-top {
+        padding: 26px 28px 20px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .drawer-top h2 {
+        font-size: 21px;
+      }
+      .drawer-top p {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .drawer-top .icon-btn {
+        margin-top: 6px;
+      }
+      .drawer-body {
+        padding: 25px 28px;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .field-section + .field-section {
+        margin-top: 30px;
+      }
+      .section-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 650;
+        margin-bottom: 17px;
+      }
+      .step {
+        width: 21px;
+        height: 21px;
+        border-radius: 50%;
+        border: 1px solid #ccd8cd;
+        color: #637767;
+        display: grid;
+        place-items: center;
+        font-size: 10px;
+        font-weight: 500;
+      }
+      .field-label {
+        font-size: 12px;
+        display: block;
+        font-weight: 500;
+        margin-bottom: 7px;
+      }
+      .field-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 13px;
+      }
+      .full-field {
+        margin-top: 17px;
+      }
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 7px;
+      }
+      .mode-options {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 4px;
+        gap: 4px;
+        margin-bottom: 19px;
+      }
+      .mode-options label {
+        cursor: pointer;
+        font-size: 12px;
+        padding: 9px 8px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        border-radius: 4px;
+        justify-content: center;
+      }
+      .mode-options label:has(input:checked) {
+        background: var(--accent-wash);
+        color: #155a3f;
+        font-weight: 550;
+      }
+      .mode-options input {
+        accent-color: var(--accent);
+        width: 13px;
+        height: 13px;
+      }
+      .checks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+      .checks label {
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 7px 9px;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+      }
+      .checks input {
+        accent-color: var(--accent);
+      }
+      .checks label:has(input:checked) {
+        background: #f0f7ee;
+        border-color: #8aaf96;
+      }
+      .inline-warning {
+        padding: 9px 11px;
+        margin-top: 11px;
+        background: var(--amber-wash);
+        color: var(--amber);
+        font-size: 11px;
+        border-radius: 5px;
+      }
+      .form-summary {
+        margin-top: 25px;
+        padding: 16px;
+        border: 1px solid #dce7d9;
+        background: #f5f9f1;
+        border-radius: 7px;
+        font-size: 12px;
+        line-height: 1.8;
+      }
+      .form-summary .eyebrow {
+        margin-bottom: 4px;
+        font-size: 9px;
+      }
+      .enabled-field {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-top: 22px;
+        margin-top: 22px;
+        border-top: 1px solid var(--line);
+      }
+      .enabled-field label {
+        font-size: 12px;
+        font-weight: 550;
+      }
+      .enabled-field input {
+        accent-color: var(--accent);
+        width: 17px;
+        height: 17px;
+      }
+      .drawer-footer {
+        padding: 17px 28px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #fff;
+      }
+      .drawer-footer small {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .error {
+        color: var(--danger);
+        font-size: 12px;
+        margin-top: 14px;
+      }
+      .hidden,
+      [hidden] {
+        display: none !important;
+      }
+      .toast {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 11px 19px;
+        border-radius: 8px;
+        background: #233c2e;
+        color: white;
+        font-size: 12px;
+        box-shadow: 0 8px 25px #19371c25;
+        z-index: 10;
+      }
+      .popover {
+        position: fixed;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 5px;
+        box-shadow: 0 7px 25px #18341c1a;
+        z-index: 2;
+      }
+      .popover button {
+        padding: 8px 14px;
+        color: var(--danger);
+        font-size: 12px;
+        border-radius: 4px;
+      }
+      .popover button:hover {
+        background: #fff0ed;
+      }
+      .workspace {
+        padding-top: 34px;
+      }
+      .summary {
+        margin-top: 20px;
+      }
+      .notice {
+        margin-top: 14px;
+      }
+      .list-surface {
+        margin-top: 22px;
+      }
+      .policy {
+        min-height: 82px;
+      }
+      .match-kind,
+      .target-sub,
+      .status {
+        font-size: 12px;
+      }
+      .columns {
+        font-size: 11px;
+      }
+      .preview {
+        margin-top: 17px;
+        padding-top: 22px;
+      }
+      .group-heading {
+        padding-top: 11px;
+        padding-bottom: 4px;
+      }
+      @media (min-width: 1800px) {
+        .workspace {
+          padding-top: 38px;
+        }
+      }
+      @media (max-width: 1100px) {
+        .workspace {
+          padding: 30px 24px;
+        }
+        .columns,
+        .policy {
+          grid-template-columns: 54px minmax(155px, 1fr) 28px minmax(
+              190px,
+              1fr
+            ) 115px 63px;
+          gap: 9px;
+          padding-left: 17px;
+          padding-right: 17px;
+        }
+        .search input {
+          width: 170px;
+        }
+        .target-kind {
+          display: none;
+        }
+        .preview {
+          grid-template-columns: 300px 1fr;
+        }
+        .toolbar {
+          padding: 13px;
+        }
+        .order .end {
+          display: none;
+        }
+      }
+      @media (max-width: 760px) {
+        .topbar {
+          padding: 0 19px;
+          height: 56px;
+        }
+        .crumb > .slash,
+        .crumb > .muted,
+        .top-note > .text-button {
+          display: none;
+        }
+        .workspace {
+          padding: 26px 17px;
+        }
+        .page-heading {
+          align-items: flex-start;
+        }
+        h1 {
+          font-size: 29px;
+        }
+        .subtitle {
+          max-width: 220px;
+          font-size: 12px;
+        }
+        .page-heading .btn.plain {
+          display: none;
+        }
+        .summary {
+          gap: 11px;
+          flex-wrap: wrap;
+        }
+        .notice {
+          font-size: 11px;
+        }
+        .toolbar {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .search-box {
+          width: 100%;
+        }
+        .search {
+          flex: 1;
+        }
+        .search input {
+          width: 100%;
+        }
+        .columns {
+          display: none;
+        }
+        .policy {
+          grid-template-columns: 36px 1fr 22px 1fr;
+          gap: 9px;
+          padding: 15px 13px;
+          min-height: 120px;
+        }
+        .group-heading {
+          padding: 15px 13px 3px;
+        }
+        .match-value {
+          font-size: 12px;
+        }
+        .target-title {
+          font-size: 12px;
+        }
+        .target-sub {
+          font-size: 10px;
+        }
+        .status {
+          grid-column: 4;
+          font-size: 10px;
+        }
+        .row-actions {
+          grid-column: 2;
+          grid-row: 2;
+          justify-content: flex-start;
+          margin-left: -8px;
+        }
+        .match-kind {
+          font-size: 10px;
+        }
+        .preview {
+          grid-template-columns: 1fr;
+          gap: 22px;
+          padding-bottom: 23px;
+        }
+        .preview-result {
+          padding: 20px 0 0;
+          border: 0;
+          border-top: 1px solid var(--line);
+        }
+        .page-foot {
+          display: block;
+        }
+        .page-foot span {
+          display: block;
+          margin-bottom: 7px;
+        }
+        .order {
+          padding: 12px;
+          font-size: 10px;
+          gap: 6px;
+        }
+        .drawer-top,
+        .drawer-body {
+          padding: 22px;
+        }
+        .drawer-footer {
+          padding: 15px 22px;
+        }
+        .drawer-footer small {
+          display: none;
+        }
+        .drawer-footer .actions {
+          margin-left: auto;
+        }
+        .target-title {
+          word-break: break-word;
+        }
+        .field-row {
+          gap: 10px;
+        }
+        .mode-options label {
+          font-size: 11px;
+        }
+        .top-note {
+          gap: 7px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <svg hidden>
+      <defs>
+        <symbol id="route" viewBox="0 0 24 24">
+          <circle cx="6" cy="5" r="2" />
+          <circle cx="18" cy="19" r="2" />
+          <circle cx="6" cy="19" r="2" />
+          <path d="M6 7v10M6 12h8a4 4 0 0 1 4 4v1" />
+        </symbol>
+        <symbol id="plus" viewBox="0 0 24 24">
+          <path d="M12 5v14M5 12h14" />
+        </symbol>
+        <symbol id="arrow" viewBox="0 0 24 24">
+          <path d="M4 12h15m-5-5 5 5-5 5" />
+        </symbol>
+        <symbol id="search" viewBox="0 0 24 24">
+          <circle cx="10" cy="10" r="6" />
+          <path d="m15 15 5 5" />
+        </symbol>
+        <symbol id="close" viewBox="0 0 24 24">
+          <path d="m6 6 12 12M6 18 18 6" />
+        </symbol>
+        <symbol id="warn" viewBox="0 0 24 24">
+          <path d="m12 3 10 18H2Z" />
+          <path d="M12 9v5m0 3h.01" />
+        </symbol>
+        <symbol id="more" viewBox="0 0 24 24">
+          <circle cx="5" cy="12" r=".7" />
+          <circle cx="12" cy="12" r=".7" />
+          <circle cx="19" cy="12" r=".7" />
+        </symbol>
+        <symbol id="info" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v6m0-10h.01" />
+        </symbol>
+      </defs>
+    </svg>
+    <header class="topbar">
+      <div class="crumb">
+        <div class="brand">
+          <span class="mark"
+            ><svg><use href="#route" /></svg></span
+          >Switch-A
+        </div>
+        <span class="slash">/</span><span class="muted">Routing</span>
+      </div>
+      <div class="top-note">
+        <span class="prototype">DESIGN PREVIEW</span
+        ><button class="text-button" id="reset">Reset demo</button>
+      </div>
+    </header>
+    <main class="workspace">
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow">TRAFFIC CONTROL</div>
+          <h1>Routing</h1>
+          <p class="subtitle">Match requests. Choose their destination.</p>
+        </div>
+        <div class="actions">
+          <button class="btn plain" id="try-match">
+            <svg><use href="#route" /></svg>Preview match</button
+          ><button class="btn primary" id="add">
+            <svg><use href="#plus" /></svg>New policy
+          </button>
+        </div>
+      </div>
+      <div class="summary" id="summary" aria-live="polite"></div>
+      <div class="notice" id="notice"></div>
+      <section class="list-surface" aria-label="Routing policies">
+        <div class="toolbar">
+          <nav class="tabs" id="tabs" aria-label="Filter by API"></nav>
+          <div class="search-box">
+            <label class="search"
+              ><svg><use href="#search" /></svg
+              ><input
+                id="search-input"
+                aria-label="Search policies"
+                placeholder="Search model or target…" /></label
+            ><select
+              class="filter"
+              id="status-filter"
+              aria-label="Filter by status"
+            >
+              <option value="all">All statuses</option>
+              <option value="on">Enabled</option>
+              <option value="off">Disabled</option>
+            </select>
+          </div>
+        </div>
+        <div class="columns" aria-hidden="true">
+          <span>ENABLED</span><span>WHEN REQUEST MATCHES</span><span></span
+          ><span>ROUTE TO</span><span>TARGET STATUS</span><span></span>
+        </div>
+        <div id="policies"></div>
+        <div class="order">
+          <svg style="width: 13px; height: 13px"><use href="#info" /></svg
+          ><span>Match precedence</span><strong>Exact model</strong
+          ><span class="chevron">›</span><strong>Longest prefix</strong
+          ><span class="chevron">›</span><strong>Any model</strong
+          ><span class="end">Only enabled policies participate.</span>
+        </div>
+      </section>
+      <section class="preview" aria-label="Match preview">
+        <div>
+          <div class="preview-head">
+            <svg><use href="#route" /></svg>
+            <h2>Try a request</h2>
+          </div>
+          <p class="desc">See which policy matches before changing traffic.</p>
+          <div class="preview-inputs">
+            <select id="preview-api" class="input" aria-label="Preview API">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option></select
+            ><input
+              class="input"
+              id="preview-model"
+              aria-label="Preview model"
+              value="gpt-5.5"
+              placeholder="Model name"
+            />
+          </div>
+        </div>
+        <div
+          class="preview-result"
+          id="preview-result"
+          aria-live="polite"
+        ></div>
+      </section>
+      <div class="page-foot">
+        <span
+          ><strong>Interactive concept</strong> · Example data, stored only in
+          this tab.</span
+        ><span
+          >Toggle a rule or select <strong>Edit</strong> to explore the proposed
+          workflow.</span
+        >
+      </div>
+    </main>
+    <dialog id="editor" aria-labelledby="editor-title">
+      <div class="drawer-top">
+        <div>
+          <div class="eyebrow">ROUTING POLICY</div>
+          <h2 id="editor-title">Edit policy</h2>
+          <p id="editor-context"></p>
+        </div>
+        <button class="icon-btn" id="close-editor" aria-label="Close editor">
+          <svg><use href="#close" /></svg>
+        </button>
+      </div>
+      <form id="form" style="display: contents">
+        <div class="drawer-body">
+          <section class="field-section">
+            <h3 class="section-label">
+              <span class="step">1</span>When a request matches
+            </h3>
+            <div class="field-row">
+              <label
+                ><span class="field-label">API type</span
+                ><input
+                  class="input"
+                  name="api"
+                  id="edit-api"
+                  list="api-options"
+                  required
+                  placeholder="Select or enter API type" /><datalist
+                  id="api-options"
+                >
+                  <option value="codex"></option>
+                  <option value="claude"></option></datalist></label
+              ><label
+                ><span class="field-label">Model matching</span
+                ><select class="input" id="edit-match">
+                  <option value="any">Any model</option>
+                  <option value="exact">Exact model</option>
+                  <option value="prefix">Starts with</option>
+                </select></label
+              >
+            </div>
+            <label class="full-field" id="model-field" style="display: block"
+              ><span class="field-label" id="model-field-label"
+                >Model prefix</span
+              ><input
+                class="input mono"
+                id="edit-model"
+                placeholder="e.g. gpt-5.5"
+              /><span class="hint" style="display: block"
+                >The model name passes through unchanged.</span
+              ></label
+            >
+          </section>
+          <section class="field-section">
+            <h3 class="section-label"><span class="step">2</span>Route to</h3>
+            <div class="mode-options">
+              <label
+                ><input
+                  type="radio"
+                  name="target-mode"
+                  value="provider"
+                  checked
+                />Specific provider</label
+              ><label
+                ><input type="radio" name="target-mode" value="filters" />Group
+                / vendor filters</label
+              >
+            </div>
+            <div id="provider-fields">
+              <label
+                ><span class="field-label">Provider</span
+                ><select class="input" id="edit-provider"></select
+              ></label>
+              <p class="hint">Requests are limited to this provider.</p>
+              <p id="provider-warning" class="inline-warning" hidden></p>
+            </div>
+            <div id="filter-fields" hidden>
+              <span class="field-label">Groups</span>
+              <div class="checks" id="group-options"></div>
+              <div class="full-field">
+                <span class="field-label">Vendors</span>
+                <div class="checks" id="vendor-options"></div>
+              </div>
+              <p class="hint">
+                Match any selected group AND any selected vendor.<br />Leave one
+                category empty to apply no restriction there.
+              </p>
+            </div>
+          </section>
+          <div class="form-summary">
+            <div class="eyebrow">POLICY SUMMARY</div>
+            <p id="form-summary"></p>
+          </div>
+          <div class="enabled-field">
+            <div>
+              <label for="edit-enabled">Enable this policy</label>
+              <p class="hint">
+                Disabled policies are saved but do not affect traffic.
+              </p>
+            </div>
+            <input type="checkbox" id="edit-enabled" />
+          </div>
+          <p class="error" id="form-error" role="alert" hidden></p>
+        </div>
+        <div class="drawer-footer">
+          <small>Demo changes stay in this tab.</small>
+          <div class="actions">
+            <button type="button" class="btn" id="cancel">Cancel</button
+            ><button class="btn primary" type="submit">Save policy</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+    <div id="menu" class="popover" hidden>
+      <button id="delete">Delete policy</button>
+    </div>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const icon = (name) =>
+        '<svg aria-hidden="true"><use href="#' + name + '"/></svg>';
+      const escapeHtml = (value) =>
+        String(value).replace(
+          /[&<>"']/g,
+          (char) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[char],
+        );
+      const providerCatalog = [
+        {
+          id: "personal",
+          name: "Personal Codex",
+          api: "codex",
+          group: "GPT-Account",
+          vendor: "OpenAI",
+          enabled: true,
+        },
+        {
+          id: "legacy",
+          name: "Legacy Codex",
+          api: "codex",
+          group: "GPT-Account",
+          vendor: "OpenAI",
+          enabled: false,
+        },
+        {
+          id: "claude-team",
+          name: "Claude Team",
+          api: "claude",
+          group: "yes",
+          vendor: "Anthropic",
+          enabled: true,
+        },
+      ];
+      const initialPolicies = [
+        {
+          id: "prefix",
+          api: "codex",
+          match: "prefix",
+          value: "gpt-5.5",
+          mode: "provider",
+          provider: "legacy",
+          groups: [],
+          vendors: [],
+          enabled: false,
+        },
+        {
+          id: "default",
+          api: "codex",
+          match: "any",
+          value: "",
+          mode: "provider",
+          provider: "personal",
+          groups: [],
+          vendors: [],
+          enabled: false,
+        },
+        {
+          id: "group",
+          api: "claude",
+          match: "any",
+          value: "",
+          mode: "filters",
+          provider: "",
+          groups: ["yes"],
+          vendors: [],
+          enabled: false,
+        },
+      ];
+      let policies = structuredClone(initialPolicies),
+        apiFilter = "all",
+        editingId = null,
+        menuPolicyId = null,
+        toastTimer,
+        opener;
+      const providerFor = (rule) =>
+        providerCatalog.find((provider) => provider.id === rule.provider);
+      const kindLabel = (rule) =>
+        rule.match === "prefix"
+          ? "Model starts with"
+          : rule.match === "exact"
+            ? "Model equals"
+            : "API default";
+      const valueLabel = (rule) =>
+        rule.match === "any" ? "Any model" : rule.value;
+      const rank = (rule) => ({ exact: 3, prefix: 2, any: 1 })[rule.match];
+      const ordered = (rules) =>
+        rules
+          .slice()
+          .sort(
+            (a, b) =>
+              rank(b) - rank(a) ||
+              (b.match === "prefix" ? b.value.length - a.value.length : 0),
+          );
+      const filterTarget = (rule) =>
+        [
+          rule.groups.length ? "Group: " + rule.groups.join(" or ") : "",
+          rule.vendors.length ? "Vendor: " + rule.vendors.join(" or ") : "",
+        ]
+          .filter(Boolean)
+          .join(" AND ");
+      const destination = (rule) =>
+        rule.mode === "provider"
+          ? providerFor(rule)?.name || "Choose a provider"
+          : filterTarget(rule);
+      function notify(message) {
+        $("toast").textContent = message;
+        $("toast").hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => ($("toast").hidden = true), 3500);
+      }
+      function render() {
+        const enabled = policies.filter((p) => p.enabled).length;
+        const disabledTargets = policies.filter(
+          (p) => p.mode === "provider" && !providerFor(p)?.enabled,
+        ).length;
+        $("summary").innerHTML =
+          "<span><strong>" +
+          policies.length +
+          '</strong> policies</span><span class="divider"></span><span><i class="dot ' +
+          (enabled ? "" : "gray") +
+          '"></i><strong>' +
+          enabled +
+          "</strong> enabled</span><span><strong>" +
+          (policies.length - enabled) +
+          "</strong> disabled</span>" +
+          (disabledTargets
+            ? '<span class="divider"></span><span style="color:var(--amber)">' +
+              disabledTargets +
+              " disabled target</span>"
+            : "");
+        $("notice").innerHTML =
+          icon("info") +
+          (enabled
+            ? "<span><strong>" +
+              enabled +
+              " " +
+              (enabled === 1 ? "policy is" : "policies are") +
+              " enabled.</strong> Requests with no matching policy use default selection.</span>"
+            : "<span><strong>No policies enabled.</strong> Requests currently use default selection.</span>");
+        const apis = [...new Set(policies.map((p) => p.api))].sort();
+        if (apiFilter !== "all" && !apis.includes(apiFilter)) apiFilter = "all";
+        $("tabs").innerHTML = ["all", ...apis]
+          .map(
+            (api) =>
+              '<button class="tab" data-api="' +
+              escapeHtml(api) +
+              '" aria-pressed="' +
+              (apiFilter === api) +
+              '">' +
+              escapeHtml(api === "all" ? "All APIs" : api.toUpperCase()) +
+              '<span class="count">' +
+              policies.filter((p) => api === "all" || p.api === api).length +
+              "</span></button>",
+          )
+          .join("");
+        const query = $("search-input").value.toLowerCase(),
+          status = $("status-filter").value;
+        const shown = policies.filter(
+          (p) =>
+            (apiFilter === "all" || p.api === apiFilter) &&
+            (status === "all" || p.enabled === (status === "on")) &&
+            [p.api, p.value, destination(p)].some((v) =>
+              v.toLowerCase().includes(query),
+            ),
+        );
+        $("policies").innerHTML =
+          apis
+            .map((api) => {
+              const rows = ordered(shown.filter((p) => p.api === api));
+              if (!rows.length) return "";
+              return (
+                '<div class="group-heading"><b class="api-symbol">' +
+                escapeHtml(api.slice(0, 1).toUpperCase()) +
+                "</b>" +
+                escapeHtml(api.toUpperCase()) +
+                "<span>" +
+                rows.length +
+                " " +
+                (rows.length === 1 ? "policy" : "policies") +
+                "</span></div>" +
+                rows
+                  .map((p) => {
+                    const target = providerFor(p),
+                      warning = p.mode === "provider" && !target?.enabled;
+                    return (
+                      '<article class="policy" id="policy-' +
+                      p.id +
+                      '" aria-label="' +
+                      escapeHtml(p.api + " " + valueLabel(p) + " policy") +
+                      '"><div class="toggle-cell"><button class="switch" role="switch" aria-checked="' +
+                      p.enabled +
+                      '" aria-label="Enable ' +
+                      escapeHtml(p.api + " " + valueLabel(p)) +
+                      '" data-toggle="' +
+                      p.id +
+                      '"></button><small>' +
+                      (p.enabled ? "Enabled" : "Disabled") +
+                      '</small></div><div><div class="match-kind">' +
+                      kindLabel(p) +
+                      '</div><div class="match-value ' +
+                      (p.match === "any" ? "any" : "mono") +
+                      '">' +
+                      escapeHtml(valueLabel(p)) +
+                      '</div></div><div class="arrow">' +
+                      icon("arrow") +
+                      '</div><div><div class="target-title">' +
+                      escapeHtml(
+                        p.mode === "provider"
+                          ? destination(p)
+                          : p.groups.join(", ") || p.vendors.join(", "),
+                      ) +
+                      '<span class="target-kind">' +
+                      (p.mode === "provider" ? "Provider" : "Filter") +
+                      '</span></div><div class="target-sub">' +
+                      escapeHtml(
+                        p.mode === "provider"
+                          ? target?.group || "Missing provider"
+                          : (p.groups.length ? "Group" : "Vendor") +
+                              (p.groups.length && p.vendors.length
+                                ? " · AND vendor " + p.vendors.join(", ")
+                                : " · " +
+                                  (p.groups.length
+                                    ? "Any vendor"
+                                    : "Any group")),
+                      ) +
+                      '</div></div><div class="status ' +
+                      (warning ? "warning" : "") +
+                      '">' +
+                      (warning
+                        ? icon("warn") + "<span>Provider disabled</span>"
+                        : p.mode === "provider"
+                          ? "Provider enabled"
+                          : "Configured scope") +
+                      '</div><div class="row-actions"><button class="edit" data-edit="' +
+                      p.id +
+                      '" aria-label="Edit ' +
+                      escapeHtml(p.api + " " + valueLabel(p)) +
+                      '">Edit</button><button class="icon-btn" data-more="' +
+                      p.id +
+                      '" aria-label="More actions for ' +
+                      escapeHtml(p.api + " " + valueLabel(p)) +
+                      '">' +
+                      icon("more") +
+                      "</button></div></article>"
+                    );
+                  })
+                  .join("")
+              );
+            })
+            .join("") ||
+          '<div class="empty">' +
+            (policies.length
+              ? "No policies match these filters."
+              : "No routing policies yet. New requests use default selection.") +
+            "</div>";
+        renderPreview();
+      }
+      function renderPreview() {
+        const api = $("preview-api").value,
+          model = $("preview-model").value.trim();
+        const match = ordered(
+          policies.filter(
+            (p) =>
+              p.enabled &&
+              p.api === api &&
+              (p.match === "any" ||
+                (model &&
+                  model.toLowerCase() !== "unknown" &&
+                  (p.match === "exact"
+                    ? model === p.value
+                    : model.startsWith(p.value)))),
+          ),
+        )[0];
+        const warning =
+          match?.mode === "provider" && !providerFor(match)?.enabled;
+        $("preview-result").innerHTML =
+          '<div class="result-eyebrow">' +
+          (match ? "MATCHED POLICY" : "NO ACTIVE MATCH") +
+          '</div><div class="result-line"><code>' +
+          escapeHtml(api) +
+          "</code>" +
+          icon("arrow") +
+          "<span>" +
+          escapeHtml(match ? valueLabel(match) : "Default selection") +
+          "</span>" +
+          (match
+            ? icon("arrow") +
+              "<span>" +
+              escapeHtml(destination(match)) +
+              "</span>"
+            : "") +
+          '</div><p class="result-detail ' +
+          (warning ? "warning" : "") +
+          '">' +
+          (match
+            ? warning
+              ? "This policy points to a disabled provider. It does not fall through to the next policy."
+              : match.match === "any"
+                ? "No enabled model-specific policy matched this request."
+                : "The most specific enabled policy matches this request."
+            : "No enabled policy matches. Existing provider selection applies.") +
+          '</p><p class="boundary">Configuration matching only. Runtime health, capacity and conversation continuity are evaluated separately.</p>';
+      }
+      function readDraft() {
+        return {
+          id: editingId || "new",
+          api: $("edit-api").value.trim(),
+          match: $("edit-match").value,
+          value:
+            $("edit-match").value === "any" ? "" : $("edit-model").value.trim(),
+          mode: document.querySelector('input[name="target-mode"]:checked')
+            .value,
+          provider: $("edit-provider").value,
+          groups: [
+            ...document.querySelectorAll("#group-options input:checked"),
+          ].map((i) => i.value),
+          vendors: [
+            ...document.querySelectorAll("#vendor-options input:checked"),
+          ].map((i) => i.value),
+          enabled: $("edit-enabled").checked,
+        };
+      }
+      function updateEditor() {
+        const p = readDraft();
+        $("model-field").hidden = p.match === "any";
+        $("edit-model").required = p.match !== "any";
+        $("model-field-label").textContent =
+          p.match === "prefix" ? "Model prefix" : "Model name";
+        $("provider-fields").hidden = p.mode !== "provider";
+        $("filter-fields").hidden = p.mode !== "filters";
+        $("edit-provider").required = p.mode === "provider";
+        $("edit-provider").disabled = p.mode !== "provider";
+        const target = providerFor(p),
+          warning = p.mode === "provider" && target && !target.enabled;
+        $("provider-warning").hidden = !warning;
+        $("provider-warning").textContent =
+          "This provider is disabled. Matching requests cannot use it until the provider is enabled.";
+        const condition =
+          p.match === "any"
+            ? "any model"
+            : p.match === "prefix"
+              ? "a model starting with " + (p.value || "…")
+              : "model " + (p.value || "…");
+        $("form-summary").textContent =
+          "When " +
+          (p.api || "…") +
+          " receives " +
+          condition +
+          ", restrict selection to " +
+          (destination(p) || "the selected scope") +
+          ".";
+      }
+      function populateTargets(rule) {
+        const compatible = providerCatalog.filter(
+          (p) => p.api === $("edit-api").value.trim(),
+        );
+        $("edit-provider").innerHTML =
+          '<option value="">Select a provider…</option>' +
+          compatible
+            .map(
+              (p) =>
+                '<option value="' +
+                p.id +
+                '">' +
+                escapeHtml(p.name) +
+                (p.enabled ? "" : " · Disabled") +
+                "</option>",
+            )
+            .join("");
+        $("edit-provider").value = rule.provider || "";
+        const groups = [...new Set(providerCatalog.map((p) => p.group))],
+          vendors = [...new Set(compatible.map((p) => p.vendor))];
+        $("group-options").innerHTML = groups
+          .map(
+            (g) =>
+              '<label><input type="checkbox" value="' +
+              escapeHtml(g) +
+              '" ' +
+              (rule.groups.includes(g) ? "checked" : "") +
+              ">" +
+              escapeHtml(g) +
+              "</label>",
+          )
+          .join("");
+        $("vendor-options").innerHTML =
+          vendors
+            .map(
+              (v) =>
+                '<label><input type="checkbox" value="' +
+                escapeHtml(v) +
+                '" ' +
+                (rule.vendors.includes(v) ? "checked" : "") +
+                ">" +
+                escapeHtml(v) +
+                "</label>",
+            )
+            .join("") ||
+          '<span class="hint">No vendors for this API in the demo catalog.</span>';
+      }
+      function openEditor(id, trigger) {
+        opener = trigger;
+        editingId = id;
+        const p = policies.find((p) => p.id === id) || {
+          api: apiFilter === "all" ? "codex" : apiFilter,
+          match: "any",
+          value: "",
+          mode: "provider",
+          provider: "",
+          groups: [],
+          vendors: [],
+          enabled: true,
+        };
+        $("editor-title").textContent = id ? "Edit policy" : "New policy";
+        $("editor-context").textContent = id
+          ? p.api.toUpperCase() + " / " + valueLabel(p)
+          : "Define a request condition and its destination.";
+        $("edit-api").value = p.api;
+        $("edit-match").value = p.match;
+        $("edit-model").value = p.value;
+        $("edit-enabled").checked = p.enabled;
+        document.querySelector(
+          'input[name="target-mode"][value="' + p.mode + '"]',
+        ).checked = true;
+        populateTargets(p);
+        $("form-error").hidden = true;
+        updateEditor();
+        $("editor").showModal();
+      }
+      function closeEditor() {
+        $("editor").close();
+        opener?.focus();
+      }
+      $("tabs").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-api]");
+        if (button) {
+          apiFilter = button.dataset.api;
+          render();
+        }
+      });
+      $("search-input").addEventListener("input", render);
+      $("status-filter").addEventListener("change", render);
+      $("preview-api").addEventListener("change", renderPreview);
+      $("preview-model").addEventListener("input", renderPreview);
+      $("policies").addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+        if (button.dataset.toggle) {
+          const p = policies.find((p) => p.id === button.dataset.toggle);
+          p.enabled = !p.enabled;
+          render();
+          document.querySelector('[data-toggle="' + p.id + '"]')?.focus();
+          notify(
+            p.enabled ? "Policy enabled in demo." : "Policy disabled in demo.",
+          );
+        }
+        if (button.dataset.edit) openEditor(button.dataset.edit, button);
+        if (button.dataset.more) {
+          menuPolicyId = button.dataset.more;
+          const r = button.getBoundingClientRect();
+          $("menu").style.top = r.bottom + 5 + "px";
+          $("menu").style.left = Math.min(r.left, innerWidth - 160) + "px";
+          $("menu").hidden = false;
+        }
+      });
+      document.addEventListener("click", (event) => {
+        if (
+          !event.target.closest("[data-more]") &&
+          !event.target.closest("#menu")
+        )
+          $("menu").hidden = true;
+      });
+      $("delete").addEventListener("click", () => {
+        policies = policies.filter((p) => p.id !== menuPolicyId);
+        $("menu").hidden = true;
+        render();
+        notify(
+          "Demo policy deleted. Reset demo restores all example policies.",
+        );
+      });
+      $("add").addEventListener("click", (event) =>
+        openEditor(null, event.currentTarget),
+      );
+      $("close-editor").addEventListener("click", closeEditor);
+      $("cancel").addEventListener("click", closeEditor);
+      $("edit-api").addEventListener("change", () => {
+        const draft = readDraft();
+        populateTargets(draft);
+        updateEditor();
+      });
+      $("form").addEventListener("input", updateEditor);
+      $("form").addEventListener("change", updateEditor);
+      $("form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const draft = readDraft();
+        let error = "";
+        if (
+          policies.some(
+            (p) =>
+              p.id !== editingId &&
+              p.api === draft.api &&
+              p.match === draft.match &&
+              p.value === draft.value,
+          )
+        )
+          error =
+            "A policy already exists for this API and model condition. Edit that policy instead.";
+        else if (
+          draft.mode === "filters" &&
+          !draft.groups.length &&
+          !draft.vendors.length
+        )
+          error = "Select at least one group or vendor.";
+        if (error) {
+          $("form-error").textContent = error;
+          $("form-error").hidden = false;
+          return;
+        }
+        if (draft.mode === "provider") {
+          draft.groups = [];
+          draft.vendors = [];
+        } else draft.provider = "";
+        if (editingId)
+          policies = policies.map((p) => (p.id === editingId ? draft : p));
+        else {
+          draft.id = "demo-" + Date.now();
+          policies.push(draft);
+        }
+        closeEditor();
+        render();
+        document.querySelector('[data-edit="' + draft.id + '"]')?.focus();
+        notify("Policy saved in demo. Live routing has not changed.");
+      });
+      $("reset").addEventListener("click", () => {
+        policies = structuredClone(initialPolicies);
+        apiFilter = "all";
+        $("search-input").value = "";
+        $("status-filter").value = "all";
+        $("preview-api").value = "codex";
+        $("preview-model").value = "gpt-5.5";
+        render();
+        notify("Example policies restored.");
+      });
+      $("try-match").addEventListener("click", () =>
+        $("preview-model").focus(),
+      );
+      render();
+    </script>
+  </body>
+</html>
