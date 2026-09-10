@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import { createClientDisguiseApi } from "./client";
 import { parseDisguisePolicy } from "./types";
 import { parseDisguiseEvidence } from "./evidence";
-import { parseDisguiseState } from "./decoder";
+import {
+  parseDisguiseState,
+  parseBinding,
+  parseOfficialVersion,
+} from "./decoder";
 
 const tuple = { client_type: "desktop", platform: "windows", arch: "amd64" };
 const features = {
@@ -45,6 +49,47 @@ const transport = {
   config: {},
 };
 describe("client disguise administration contract", () => {
+  it("preserves version selection and parses official synchronization results", async () => {
+    expect(
+      parseBinding({ ...binding, version_source: "official_stable" })
+        .version_source,
+    ).toBe("official_stable");
+    expect(() =>
+      parseBinding({ ...binding, version_source: "alpha" }),
+    ).toThrow();
+    const official = {
+      release: {
+        version: "0.151.0",
+        tag: "rust-v0.151.0",
+        url: "https://github.com/openai/codex/releases/tag/rust-v0.151.0",
+        published_at: "2026-09-10",
+      },
+      checked_at: "2026-09-10",
+      synced_at: "2026-09-10",
+      last_error: "",
+    };
+    const request = vi.fn().mockResolvedValue(official);
+    expect(
+      await createClientDisguiseApi(request).syncOfficialVersion(),
+    ).toEqual(official);
+    expect(request).toHaveBeenCalledWith(
+      "/client-disguise/official-version/sync",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(
+      parseDisguiseState({
+        logins: [],
+        profiles: [],
+        references: [],
+        transport_samples: [],
+        clients: [],
+        official_version: official,
+      }).official_version,
+    ).toEqual(official);
+    expect(() =>
+      parseOfficialVersion({ ...official, release: null }),
+    ).toThrow();
+  });
   it("normalizes policy defaults and rejects invalid enums", () => {
     expect(parseDisguisePolicy(undefined)).toEqual({
       enabled: false,

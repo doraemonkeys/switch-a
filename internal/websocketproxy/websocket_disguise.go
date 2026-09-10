@@ -152,7 +152,9 @@ func (o *WebSocketSessionOrchestrator) appendDisguiseTargetEvidence(evidence *at
 	if target.Login.AccountBasis.Kind == "account" {
 		evidence.AccountID = string(target.Login.AccountBasis.Value)
 	}
-	evidence.ClientVersion = target.Profile.ClientVersion
+	evidence.ClientVersion = target.ClientVersion()
+	evidence.VersionSource = target.Binding.VersionSource
+	evidence.VersionReleaseURL = target.OfficialVersion.URL
 	evidence.RevisionID = target.Profile.ID
 	evidence.SourceID = target.Profile.SourceID
 	if !target.Profile.CapturedAt.IsZero() {

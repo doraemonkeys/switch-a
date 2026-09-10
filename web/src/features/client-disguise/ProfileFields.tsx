@@ -23,6 +23,10 @@ export function ProfileFields({
   const revisions = state.profiles.filter(
     (item) => !draft.version || item.client_version === draft.version,
   );
+  const officialVersion = state.official_version?.release.version;
+  const syncStatus = officialVersion
+    ? `Official stable: ${officialVersion}.`
+    : "Uses the profile version until the first successful sync.";
   return (
     <section className="cd-editor-section" aria-labelledby="profile-heading">
       <div className="cd-section-heading">
@@ -32,6 +36,27 @@ export function ProfileFields({
       <p className="cd-description">
         Choose the client version and environment this login presents upstream.
       </p>
+      <label className="cd-field cd-reference-field">
+        Version source
+        <select
+          aria-label="Version source"
+          value={draft.versionSource}
+          onChange={(event) =>
+            change({
+              ...draft,
+              versionSource: event.target.value as typeof draft.versionSource,
+            })
+          }
+        >
+          <option value="">Profile version (built-in or reference)</option>
+          <option value="official_stable">Sync official stable version</option>
+        </select>
+        <span className="cd-field-help">
+          {draft.versionSource === "official_stable"
+            ? `Updates the Codex version in User-Agent and version fields while keeping this profile’s environment. ${syncStatus}`
+            : "Uses the version recorded in your selected client profile."}
+        </span>
+      </label>
       <div className="cd-field-grid">
         <label className="cd-field">
           Client version
@@ -109,7 +134,11 @@ export function ProfileFields({
             <Pin size={18} aria-hidden="true" />
             <span>
               <strong>Pin this revision</strong>
-              <small>Keep this exact profile until you change it.</small>
+              <small>
+                {draft.versionSource === "official_stable"
+                  ? "Pin environment features; the official version still updates."
+                  : "Keep this exact profile until you change it."}
+              </small>
             </span>
           </label>
         </div>

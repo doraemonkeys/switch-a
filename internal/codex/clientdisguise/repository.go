@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"time"
 
@@ -27,7 +28,7 @@ func (r *Repository) WithDB(db *gorm.DB) *Repository {
 
 func Migrate(ctx context.Context, db *gorm.DB) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.AutoMigrate(&LoginIdentity{}, &LoginHistory{}, &ProfileBinding{}, &ProfileRevision{}, &Sample{}, &ReferenceSource{}, &TransportSample{}, &ProfileTrack{}); err != nil {
+		if err := tx.AutoMigrate(&LoginIdentity{}, &LoginHistory{}, &ProfileBinding{}, &ProfileRevision{}, &Sample{}, &ReferenceSource{}, &TransportSample{}, &ProfileTrack{}, &officialversion.State{}); err != nil {
 			return err
 		}
 		for _, profile := range BuiltinProfiles() {
@@ -115,6 +116,10 @@ func (r *Repository) EvaluateCandidate(ctx context.Context, sessionID string, ba
 	if err != nil {
 		return candidate, err
 	}
+	candidate.OfficialVersion, err = r.officialVersionForBinding(ctx, binding)
+	if err != nil {
+		return candidate, err
+	}
 	if binding.TransportSampleID != "" {
 		var transport TransportSample
 		if err := r.db.WithContext(ctx).First(&transport, "id = ?", binding.TransportSampleID).Error; err != nil {
@@ -131,7 +136,7 @@ func (r *Repository) EvaluateCandidate(ctx context.Context, sessionID string, ba
 }
 
 func (r *Repository) CommitTarget(ctx context.Context, candidate Candidate) (TargetSnapshot, error) {
-	result := TargetSnapshot{Policy: candidate.Policy}
+	result := TargetSnapshot{Policy: candidate.Policy, OfficialVersion: candidate.OfficialVersion}
 	if !candidate.Policy.Enabled {
 		return result, nil
 	}
@@ -185,6 +190,9 @@ func (r *Repository) CommitTarget(ctx context.Context, candidate Candidate) (Tar
 }
 
 func (r *Repository) SetBinding(ctx context.Context, binding ProfileBinding) (ProfileBinding, error) {
+	if err := validateVersionSource(binding.VersionSource); err != nil {
+		return binding, err
+	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var login LoginIdentity
 		if err := tx.First(&login, "credential_session_id = ?", binding.CredentialSessionID).Error; err != nil {

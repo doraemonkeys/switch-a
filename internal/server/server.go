@@ -314,6 +314,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	// Provider routes
 	if cfg.ClientDisguise != nil {
 		mux.Handle("GET /admin/api/client-disguise", auth.WrapFunc(cfg.ClientDisguise.Get))
+		mux.Handle("POST /admin/api/client-disguise/official-version/sync", auth.WrapFunc(cfg.ClientDisguise.SyncOfficialVersion))
 		mux.Handle("PUT /admin/api/client-disguise/logins/{id}", auth.WrapFunc(cfg.ClientDisguise.SaveBinding))
 		mux.Handle("POST /admin/api/client-disguise/samples", auth.WrapFunc(cfg.ClientDisguise.ImportSample))
 		mux.Handle("PUT /admin/api/client-disguise/references/{id}", auth.WrapFunc(cfg.ClientDisguise.SaveReference))

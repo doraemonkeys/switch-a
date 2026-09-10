@@ -81,6 +81,67 @@ async function openLibrary(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("client disguise workspace", () => {
+  it("checks and displays the official stable release without changing login drafts", async () => {
+    const official = {
+      release: {
+        version: "0.151.0",
+        tag: "rust-v0.151.0",
+        url: "https://github.com/openai/codex/releases/tag/rust-v0.151.0",
+        published_at: "2026-09-10T00:00:00Z",
+      },
+      checked_at: "2026-09-10T01:00:00Z",
+      synced_at: "2026-09-10T01:00:00Z",
+      last_error: "",
+    };
+    const syncOfficialVersion = vi.fn().mockResolvedValue(official);
+    const { api, user } = setup(populated, "/client-disguise", {
+      syncOfficialVersion,
+    });
+    await screen.findByLabelText("Version source");
+    await user.selectOptions(
+      screen.getByLabelText("Version source"),
+      "official_stable",
+    );
+    api.get.mockResolvedValue({ ...populated, official_version: official });
+    await user.click(screen.getByRole("button", { name: "Check now" }));
+    await screen.findByText("Official stable version: 0.151.0");
+    expect(syncOfficialVersion).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Version source")).toHaveValue(
+      "official_stable",
+    );
+    expect(
+      screen.getByRole("link", { name: "View official release" }),
+    ).toHaveAttribute("href", official.release.url);
+  });
+  it("keeps the last release visible when an official version check fails", async () => {
+    const official = {
+      release: {
+        version: "0.151.0",
+        tag: "rust-v0.151.0",
+        url: "https://github.com/openai/codex/releases/tag/rust-v0.151.0",
+        published_at: "2026-09-10T00:00:00Z",
+      },
+      checked_at: "2026-09-10T01:00:00Z",
+      synced_at: "2026-09-10T01:00:00Z",
+      last_error: "Previous check failed",
+    };
+    const { user } = setup(
+      { ...populated, official_version: official },
+      "/client-disguise",
+      {
+        syncOfficialVersion: vi
+          .fn()
+          .mockRejectedValue(new Error("GitHub unavailable")),
+      },
+    );
+    await screen.findByText("Official stable version: 0.151.0");
+    expect(screen.getByText(/Continuing with 0.151.0/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Check now" }));
+    await screen.findByText("GitHub unavailable");
+    expect(
+      screen.getByText("Official stable version: 0.151.0"),
+    ).toBeInTheDocument();
+  });
   it("creates reference sources and preserves identity when replacing a key", async () => {
     const { api, user } = setup();
     await screen.findByText(

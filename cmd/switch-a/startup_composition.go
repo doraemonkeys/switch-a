@@ -236,7 +236,7 @@ func composeApplicationRuntime(
 		Auth:                authService,
 		ProviderImportStore: st,
 		InternalErrorRules:  errorRuntime.adminHandler,
-		ClientDisguise:      clientdisguiseapi.NewHandler(clientdisguiseapi.Config{Repository: sqlStore.ClientDisguiseRepository(), Catalog: st, Clients: codexRuntime.identities, Logger: log}),
+		ClientDisguise:      clientdisguiseapi.NewHandler(clientdisguiseapi.Config{Repository: sqlStore.ClientDisguiseRepository(), Catalog: st, Clients: codexRuntime.identities, Logger: log, Versions: codexRuntime.versions}),
 		CaptureSessions:     captureManager,
 		CaptureQueries:      captureManager,
 		CaptureExports:      captureManager,

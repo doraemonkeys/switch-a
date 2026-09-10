@@ -42,6 +42,8 @@ export function parseDisguiseEvidence(value: unknown): DisguiseEvidence {
     "generation_id",
     "device_id",
     "client_version",
+    "version_source",
+    "version_release_url",
     "revision_id",
     "transport_sample_id",
     "source_id",

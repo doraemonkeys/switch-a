@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 )
 
 type ProviderView struct {
@@ -23,6 +24,7 @@ type ClientView struct {
 	ClientID string `json:"client_id"`
 }
 type Overview struct {
+	OfficialVersion  *officialversion.State           `json:"official_version,omitempty"`
 	Logins           []LoginView                      `json:"logins"`
 	Profiles         []clientdisguise.ProfileRevision `json:"profiles"`
 	References       []clientdisguise.ReferenceSource `json:"references"`
@@ -40,6 +42,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) overview(ctx context.Context) (Overview, error) {
 	result := Overview{Logins: []LoginView{}, Clients: []ClientView{}}
+	var err error
+	result.OfficialVersion, err = h.officialVersionOverview(ctx)
+	if err != nil {
+		return result, err
+	}
 	sessions, err := h.catalog.ListCredentialSessions(ctx)
 	if err != nil {
 		return result, err
@@ -100,4 +107,12 @@ func (h *Handler) overview(ctx context.Context) (Overview, error) {
 		result.Logins = append(result.Logins, view)
 	}
 	return result, nil
+}
+
+func (h *Handler) officialVersionOverview(ctx context.Context) (*officialversion.State, error) {
+	if h.versions == nil {
+		return nil, nil
+	}
+	state, err := h.versions.State(ctx)
+	return &state, err
 }

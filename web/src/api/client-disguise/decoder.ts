@@ -7,6 +7,7 @@ import {
   type ProfileRevision,
   type ReferenceSource,
   type TransportSample,
+  type OfficialVersionState,
 } from "./types";
 
 export function record(value: unknown): Record<string, unknown> {
@@ -72,7 +73,16 @@ export function parseBinding(value: unknown): ProfileBinding {
   const item = record(value);
   if (item.mode !== "auto" && item.mode !== "pinned")
     throw new Error("Invalid profile binding mode");
+  if (
+    item.version_source != null &&
+    item.version_source !== "" &&
+    item.version_source !== "official_stable"
+  )
+    throw new Error("Invalid client version source");
   return {
+    ...(item.version_source === "official_stable"
+      ? { version_source: "official_stable" as const }
+      : {}),
     credential_session_id: str(item.credential_session_id),
     tuple: tuple(item.tuple),
     mode: item.mode,
@@ -138,6 +148,9 @@ function parseLogin(value: unknown): LoginView {
 export function parseDisguiseState(value: unknown): DisguiseState {
   const item = record(value);
   return {
+    ...(item.official_version == null
+      ? {}
+      : { official_version: parseOfficialVersion(item.official_version) }),
     logins: list(item.logins, parseLogin),
     profiles: list(item.profiles, parseProfile),
     references: list(item.references, parseReference),
@@ -145,5 +158,21 @@ export function parseDisguiseState(value: unknown): DisguiseState {
     clients: list(item.clients, (value) => ({
       client_id: str(record(value).client_id),
     })),
+  };
+}
+
+export function parseOfficialVersion(value: unknown): OfficialVersionState {
+  const item = record(value);
+  const release = record(item.release);
+  return {
+    release: {
+      version: str(release.version),
+      tag: str(release.tag),
+      url: str(release.url),
+      published_at: str(release.published_at),
+    },
+    checked_at: str(item.checked_at),
+    synced_at: str(item.synced_at),
+    last_error: str(item.last_error),
   };
 }

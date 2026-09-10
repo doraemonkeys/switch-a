@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
@@ -31,6 +33,9 @@ const (
 )
 
 type applicationCodexRuntime struct {
+	versions        *officialversion.Service
+	versionsCancel  context.CancelFunc
+	versionsDone    chan struct{}
 	identities      *clientidentity.Resolver
 	HTTP            *codexhttp.Runtime
 	WebSocket       *codexws.Runtime
@@ -90,7 +95,8 @@ func newApplicationCodexRuntime(
 		return nil, fmt.Errorf("initialize Codex WebSocket runtime: %w", err)
 	}
 	return &applicationCodexRuntime{
-		HTTP: httpRuntime, WebSocket: webSocketRuntime, identities: identities,
+		versions: officialversion.NewService(persistence.ClientDisguiseRepository(), officialversion.NewGitHub(&http.Client{Timeout: officialversion.RequestTimeout}), log),
+		HTTP:     httpRuntime, WebSocket: webSocketRuntime, identities: identities,
 		continuity:      continuity,
 		providerCookies: cookies,
 	}, nil

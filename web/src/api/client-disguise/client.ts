@@ -4,6 +4,7 @@ import {
   parseBinding,
   parseDisguiseState,
   parseProfile,
+  parseOfficialVersion,
   parseReference,
   parseTransport,
   record,
@@ -24,6 +25,8 @@ export function createClientDisguiseApi(request: Request) {
     request<unknown>(`${BASE}${path}`, { method, body: JSON.stringify(body) });
   return {
     get: async () => parseDisguiseState(await request<unknown>(BASE)),
+    syncOfficialVersion: async () =>
+      parseOfficialVersion(await write("/official-version/sync", "POST", {})),
     saveBinding: async (id: string, binding: ProfileBinding) =>
       parseBinding(
         await write(`/logins/${encodeURIComponent(id)}`, "PUT", binding),

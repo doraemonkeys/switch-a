@@ -1,6 +1,29 @@
 package clientdisguise
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+var productSuffixVersion = regexp.MustCompile(`(?i)(\((?:codex_cli_rs|codex-tui|codex_desktop|Codex Desktop|codex); )([^ )]+)(\))`)
+
+// An explicit release selection changes only the Codex product version. Desktop
+// build numbers, OS releases and terminal/runtime versions remain observations.
+func WithUserAgentVersion(ua, version string) string {
+	match := versionPattern.FindStringSubmatchIndex(ua)
+	if len(match) != 4 || version == "" {
+		return ua
+	}
+	previous := ua[match[2]:match[3]]
+	ua = ua[:match[2]] + version + ua[match[3]:]
+	return productSuffixVersion.ReplaceAllStringFunc(ua, func(suffix string) string {
+		parts := productSuffixVersion.FindStringSubmatch(suffix)
+		if parts[2] != previous {
+			return suffix
+		}
+		return parts[1] + version + parts[3]
+	})
+}
 
 func userAgentVersion(userAgent string) string {
 	match := versionPattern.FindStringSubmatch(userAgent)

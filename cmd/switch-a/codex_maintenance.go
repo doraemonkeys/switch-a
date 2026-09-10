@@ -48,7 +48,19 @@ func startApplicationCodexLifecycle(ctx context.Context, runtime *applicationCod
 	if ctx == nil || runtime == nil || runtime.maintenance == nil {
 		return fmt.Errorf("start Codex lifecycle: context and composed runtime are required")
 	}
-	return runtime.maintenance.Start(ctx)
+	if err := runtime.maintenance.Start(ctx); err != nil {
+		return err
+	}
+	if runtime.versions != nil {
+		var versionsCtx context.Context
+		versionsCtx, runtime.versionsCancel = context.WithCancel(ctx)
+		runtime.versionsDone = make(chan struct{})
+		go func() {
+			defer close(runtime.versionsDone)
+			runtime.versions.Run(versionsCtx)
+		}()
+	}
+	return nil
 }
 
 func stopApplicationCodexLifecycle(runtime *applicationCodexRuntime, log *zap.Logger) {
@@ -57,6 +69,14 @@ func stopApplicationCodexLifecycle(runtime *applicationCodexRuntime, log *zap.Lo
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer cancel()
+	if runtime.versionsCancel != nil {
+		runtime.versionsCancel()
+		select {
+		case <-runtime.versionsDone:
+		case <-shutdownCtx.Done():
+			log.Error("failed to stop official version sync", zap.Error(shutdownCtx.Err()))
+		}
+	}
 	if err := runtime.maintenance.Stop(shutdownCtx); err != nil {
 		log.Error("failed to stop Codex maintenance", zap.Error(err))
 	}

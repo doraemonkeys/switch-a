@@ -142,6 +142,9 @@ func (r *Repository) importLogins(ctx context.Context, tx *gorm.DB, records []Lo
 
 func (r *Repository) importBindings(ctx context.Context, tx *gorm.DB, records []ProfileBinding) error {
 	for _, record := range records {
+		if err := validateVersionSource(record.VersionSource); err != nil {
+			return err
+		}
 		if record.CredentialSessionID == "" || !record.Tuple.Valid() || (record.Mode != ModeAuto && record.Mode != ModePinned) {
 			return invalid("invalid profile binding")
 		}

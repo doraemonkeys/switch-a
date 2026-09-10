@@ -29,6 +29,7 @@ export interface ProfileRevision {
   created_at: string;
 }
 export interface ProfileBinding {
+  version_source?: "official_stable";
   credential_session_id: string;
   tuple: ClientTuple;
   mode: "auto" | "pinned";
@@ -79,11 +80,18 @@ export interface ClientSample {
   features: ClientFeatures;
 }
 export interface DisguiseState {
+  official_version?: OfficialVersionState;
   logins: LoginView[];
   profiles: ProfileRevision[];
   references: ReferenceSource[];
   transport_samples: TransportSample[];
   clients: { client_id: string }[];
+}
+export interface OfficialVersionState {
+  release: { version: string; tag: string; url: string; published_at: string };
+  checked_at: string;
+  synced_at: string;
+  last_error: string;
 }
 export interface LearnResult {
   revision: ProfileRevision;

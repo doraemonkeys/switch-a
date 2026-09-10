@@ -3,6 +3,8 @@ package wire
 import (
 	"net/http"
 	"strings"
+
+	disguise "github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 )
 
 func (s *Session) applyProfileHeaders(result http.Header) {
@@ -11,8 +13,15 @@ func (s *Session) applyProfileHeaders(result http.Header) {
 	if updates == nil {
 		updates = make(map[string]string)
 	}
-	if ua := features.ClientUserAgent(); ua != "" {
+	if ua := s.profileFeature("user_agent"); ua != "" {
 		updates["User-Agent"] = ua
+	} else if s.target.OfficialVersion.Version != "" {
+		old := result.Get("User-Agent")
+		ua := disguise.WithUserAgentVersion(old, s.target.OfficialVersion.Version)
+		if ua != old {
+			result.Set("User-Agent", ua)
+			s.difference("header", "User-Agent", old, ua)
+		}
 	}
 	if features.Originator != "" {
 		updates["Originator"] = features.Originator
@@ -52,10 +61,13 @@ func (s *Session) profileFeature(name string) string {
 	features := s.target.Profile.Features
 	switch name {
 	case "user_agent":
-		return features.ClientUserAgent()
+		return disguise.WithUserAgentVersion(features.ClientUserAgent(), s.target.OfficialVersion.Version)
 	case "originator":
 		return features.Originator
 	case "client_version":
+		if s.target.OfficialVersion.Version != "" {
+			return s.target.OfficialVersion.Version
+		}
 		return s.target.Profile.WireClientVersion()
 	case "desktop_build":
 		return features.DesktopBuild

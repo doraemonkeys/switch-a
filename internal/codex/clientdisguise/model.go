@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 )
 
 const (
@@ -106,6 +108,7 @@ type LoginHistory struct {
 func (LoginHistory) TableName() string { return "client_disguise_login_history" }
 
 type ProfileBinding struct {
+	VersionSource         string            `json:"version_source,omitempty"`
 	CredentialSessionID   string            `json:"credential_session_id" gorm:"primaryKey"`
 	Tuple                 Tuple             `json:"tuple" gorm:"serializer:json"`
 	Mode                  string            `json:"mode"`
@@ -157,11 +160,12 @@ type TransportSample struct {
 func (TransportSample) TableName() string { return "client_disguise_transport_samples" }
 
 type TargetSnapshot struct {
-	Policy    Policy           `json:"policy"`
-	Login     LoginIdentity    `json:"login"`
-	Binding   ProfileBinding   `json:"binding"`
-	Profile   ProfileRevision  `json:"profile"`
-	Transport *TransportSample `json:"transport,omitempty"`
+	OfficialVersion officialversion.Release `json:"official_version"`
+	Policy          Policy                  `json:"policy"`
+	Login           LoginIdentity           `json:"login"`
+	Binding         ProfileBinding          `json:"binding"`
+	Profile         ProfileRevision         `json:"profile"`
+	Transport       *TransportSample        `json:"transport,omitempty"`
 }
 
 // ProfileTrack separates the latest observation time from the chosen immutable

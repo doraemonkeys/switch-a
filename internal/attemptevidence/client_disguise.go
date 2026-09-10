@@ -9,6 +9,8 @@ import (
 // ClientDisguise records application transformation separately from upstream
 // error rules so gateway conversion faults cannot imply an unhealthy account.
 type ClientDisguise struct {
+	VersionSource       string               `json:"version_source,omitempty"`
+	VersionReleaseURL   string               `json:"version_release_url,omitempty"`
 	DiagnosticID        string               `json:"diagnostic_id"`
 	Truncated           bool                 `json:"truncated,omitempty"`
 	RequestID           string               `json:"request_id,omitempty"`

@@ -9,6 +9,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { LoginSettings } from "./LoginSettings";
+import { OfficialVersionStatus } from "./OfficialVersionStatus";
 import { LoginList } from "./LoginList";
 import { ReferenceSettings } from "./ReferenceSettings";
 import { ClientIdentitySettings } from "./references/ClientIdentitySettings";
@@ -115,6 +116,11 @@ export function ClientDisguisePage() {
       ) : (
         <>
           <div hidden={section !== "profiles"}>
+            <OfficialVersionStatus
+              state={state.official_version}
+              busy={busy}
+              mutate={mutate}
+            />
             <div className="cd-workspace">
               <LoginList
                 logins={state.logins}

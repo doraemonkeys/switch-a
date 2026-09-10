@@ -221,6 +221,8 @@ func (s *Session) transformValue(ctx context.Context, kind, value string, restor
 		if !restore {
 			if sample := s.profileFeature(strings.TrimPrefix(kind, "feature:")); sample != "" {
 				derived = sample
+			} else if kind == "feature:user_agent" {
+				derived = disguise.WithUserAgentVersion(value, s.target.OfficialVersion.Version)
 			}
 		}
 	case kind == "serialized":

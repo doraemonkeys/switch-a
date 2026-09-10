@@ -180,6 +180,9 @@ func (pctx *proxyContext) disguiseEvidence() *attemptevidence.ClientDisguise {
 	e.CredentialSessionID = d.credentialSessionID
 	e.AccountID = d.accountID
 	e.SourceID = t.Profile.SourceID
+	e.ClientVersion = t.ClientVersion()
+	e.VersionSource = t.Binding.VersionSource
+	e.VersionReleaseURL = t.OfficialVersion.URL
 	if !t.Profile.CapturedAt.IsZero() {
 		e.CapturedAt = t.Profile.CapturedAt.Format(time.RFC3339Nano)
 	}

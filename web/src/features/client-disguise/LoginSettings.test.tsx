@@ -65,6 +65,32 @@ function Editor({
   );
 }
 describe("login lifecycle controls", () => {
+  it("saves official version following independently of the profile revision", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <Editor save={save} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByLabelText("Version source")).toHaveValue("");
+    await user.selectOptions(
+      screen.getByLabelText("Version source"),
+      "official_stable",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save login settings" }),
+    );
+    expect(save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        version_source: "official_stable",
+        revision_id: "new",
+        reference_source_id: "reference",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByLabelText("Version source")).toHaveValue("");
+  });
   it("pins a manually selected historical revision then allows explicit automatic follow", async () => {
     const user = userEvent.setup();
     const save = vi.fn().mockResolvedValue(undefined);

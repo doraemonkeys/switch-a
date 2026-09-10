@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 )
 
 type PlatformEvidence struct {
@@ -23,6 +25,7 @@ type PlatformDecision struct {
 	ProfilePlatform string        `json:"profile_platform"`
 }
 type Candidate struct {
+	OfficialVersion     officialversion.Release
 	CredentialSessionID string
 	AccountBasis        AccountBasis
 	Policy              Policy

@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -35,12 +36,14 @@ type Clients interface {
 	BindKey(context.Context, []byte, string) (clientidentity.Resolution, error)
 }
 type Config struct {
+	Versions   Versions
 	Repository Repository
 	Catalog    Catalog
 	Clients    Clients
 	Logger     *zap.Logger
 }
 type Handler struct {
+	versions   Versions
 	repository Repository
 	catalog    Catalog
 	clients    Clients
@@ -51,7 +54,26 @@ func NewHandler(cfg Config) *Handler {
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()
 	}
-	return &Handler{repository: cfg.Repository, catalog: cfg.Catalog, clients: cfg.Clients, logger: cfg.Logger}
+	return &Handler{repository: cfg.Repository, catalog: cfg.Catalog, clients: cfg.Clients, logger: cfg.Logger, versions: cfg.Versions}
+}
+
+type Versions interface {
+	State(context.Context) (officialversion.State, error)
+	Sync(context.Context, bool) (officialversion.State, error)
+}
+
+func (h *Handler) SyncOfficialVersion(w http.ResponseWriter, r *http.Request) {
+	if h.versions == nil {
+		respond(w, http.StatusServiceUnavailable, map[string]string{"message": "Official version synchronization is unavailable"})
+		return
+	}
+	state, err := h.versions.Sync(r.Context(), true)
+	if err != nil {
+		h.logger.Warn("client disguise official version check failed", zap.Error(err))
+		respond(w, http.StatusBadGateway, map[string]string{"message": err.Error()})
+		return
+	}
+	respond(w, http.StatusOK, state)
 }
 func (h *Handler) fail(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
@@ -107,7 +129,7 @@ func (h *Handler) SaveBinding(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	h.logger.Info("client disguise binding updated", zap.String("credential_session_id", value.CredentialSessionID), zap.String("revision_id", result.RevisionID), zap.String("mode", result.Mode))
+	h.logger.Info("client disguise binding updated", zap.String("credential_session_id", value.CredentialSessionID), zap.String("revision_id", result.RevisionID), zap.String("mode", result.Mode), zap.String("version_source", result.VersionSource))
 	respond(w, http.StatusOK, result)
 }
 func (h *Handler) ImportSample(w http.ResponseWriter, r *http.Request) {

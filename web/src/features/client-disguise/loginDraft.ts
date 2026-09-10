@@ -5,6 +5,7 @@ import type {
 } from "@/api/client-disguise/types";
 
 export interface LoginDraft {
+  versionSource: "" | "official_stable";
   revisionID: string;
   version: string;
   mode: ProfileBinding["mode"];
@@ -19,6 +20,7 @@ export function createLoginDraft(
 ): LoginDraft {
   const binding = login.binding;
   return {
+    versionSource: binding?.version_source ?? "",
     revisionID: binding?.revision_id ?? "",
     version:
       state.profiles.find((profile) => profile.id === binding?.revision_id)
@@ -61,6 +63,7 @@ export function buildProfileBinding(
   }
   return {
     credential_session_id: login.credential_session_id,
+    ...(draft.versionSource ? { version_source: draft.versionSource } : {}),
     tuple: profile.tuple,
     revision_id: draft.revisionID,
     mode: draft.mode,
