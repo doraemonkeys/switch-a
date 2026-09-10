@@ -30,7 +30,7 @@ func TestGlobalOfficialPolicyFreezesNewLoginUntilCallbackCompletes(t *testing.T)
 		AccountClientPolicy: accountPolicyStoreFunc(func(context.Context) (accountclient.Policy, error) { policyCalls++; return policy, nil }),
 		HTTPClient: stubHTTPDoer{do: func(request *http.Request) (*http.Response, error) {
 			networkCalls++
-			if request.Header.Get("User-Agent") != wantUA || request.Header.Get("Cookie") != "" || request.Header.Get("Thread-Id") != "" {
+			if request.Header.Get("User-Agent") != wantUA || request.Header.Get("Originator") != "" || request.Header.Get("Cookie") != "" || request.Header.Get("Thread-Id") != "" {
 				t.Fatalf("account headers = %#v", request.Header)
 			}
 			if request.URL.Path == "/oauth/token" {
@@ -76,7 +76,7 @@ func TestGlobalOfficialPolicyAppliesToUnboundTokenRefresh(t *testing.T) {
 		}),
 		HTTPClient: stubHTTPDoer{do: func(request *http.Request) (*http.Response, error) {
 			calls++
-			if request.Header.Get("User-Agent") != clientdisguise.BuiltinAccountProfile().UserAgent("0.151.0") {
+			if request.Header.Get("User-Agent") != clientdisguise.BuiltinAccountProfile().UserAgent("0.151.0") || request.Header.Get("Originator") != "Codex Desktop" {
 				t.Fatal(request.Header)
 			}
 			if err := request.ParseForm(); err != nil || request.Form.Get("grant_type") != "refresh_token" || request.Form.Get("client_id") != defaultOAuthClientID {

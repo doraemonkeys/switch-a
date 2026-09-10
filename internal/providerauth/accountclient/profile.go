@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/buildinfo"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
@@ -47,8 +48,9 @@ func NewResolver(config Config) *Resolver {
 // Operation freezes identity for all transmissions of an account operation,
 // including usage endpoint fallback and the callback of a pending OAuth login.
 type Operation struct {
-	userAgent string
-	logger    *zap.Logger
+	userAgent  string
+	originator string
+	logger     *zap.Logger
 }
 
 func (r *Resolver) Resolve(ctx context.Context, sessionID, kind string) (Operation, error) {
@@ -68,6 +70,7 @@ func (r *Resolver) Resolve(ctx context.Context, sessionID, kind string) (Operati
 	}
 
 	ua, source := profile.UserAgent(), "profile"
+	originator := refreshOriginator(ua)
 	var policy Policy
 	fallbackReason := ""
 	if ua == "" {
@@ -100,6 +103,7 @@ func (r *Resolver) Resolve(ctx context.Context, sessionID, kind string) (Operati
 		release = policy.OfficialVersion
 		versionSource = string(policy.FallbackClient)
 		ua, source, uaRevisionID = selected.UserAgent(release.Version), "official_stable_builtin", selected.ID
+		originator = refreshOriginator(ua)
 	}
 	log = log.With(
 		zap.String("account_client_fallback", string(policy.FallbackClient)),
@@ -112,18 +116,41 @@ func (r *Resolver) Resolve(ctx context.Context, sessionID, kind string) (Operati
 		zap.String("official_version", release.Version),
 		zap.String("user_agent_source", source),
 		zap.String("user_agent", ua),
+		zap.String("refresh_originator", originator),
 	)
 	log.Debug("account_client.profile_resolved")
-	return Operation{userAgent: ua, logger: log}, nil
+	return Operation{userAgent: ua, originator: originator, logger: log}, nil
 }
 
-// Apply changes only the client feature supported by these account endpoints.
-// Copying a Responses header set would invent conversation and device carriers.
+// The default Codex UA starts with its process originator. Inference samples may
+// carry a thread-specific Originator override, so that header cannot identify the
+// account client. An unsampled gateway fallback has no Codex originator.
+func refreshOriginator(userAgent string) string {
+	name, version, ok := strings.Cut(userAgent, "/")
+	if !ok || strings.TrimSpace(version) == "" {
+		return ""
+	}
+	return strings.TrimSpace(name)
+}
+
+// ApplyTokenRefresh mirrors Codex's default auth client. Authorization-code
+// exchange uses a raw auth client, so sharing an OAuth operation or token URL
+// must not implicitly add this header to that request.
+func (o Operation) ApplyTokenRefresh(request *http.Request) {
+	if o.originator != "" {
+		request.Header.Set("Originator", o.originator)
+	}
+	o.Apply(request)
+}
+
+// Apply projects the configured UA without importing inference headers.
+// Token refresh uses ApplyTokenRefresh to include its paired process originator.
 func (o Operation) Apply(request *http.Request) {
 	request.Header.Set("User-Agent", o.userAgent)
 	o.logger.Debug("account_client.request_prepared",
 		zap.String("method", request.Method),
 		zap.String("host", request.URL.Host),
 		zap.String("path", request.URL.Path),
+		zap.String("originator", request.Header.Get("Originator")),
 	)
 }

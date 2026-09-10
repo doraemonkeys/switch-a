@@ -35,7 +35,7 @@ func (s *Service) refreshChatGPTCredential(ctx context.Context, credential *mode
 		return nil, fmt.Errorf("build chatgpt refresh request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client.Apply(request)
+	client.ApplyTokenRefresh(request)
 
 	response, err := s.httpClient.Do(request)
 	if err != nil {

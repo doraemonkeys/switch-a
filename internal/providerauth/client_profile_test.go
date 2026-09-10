@@ -63,7 +63,7 @@ func TestRefreshUsesCredentialProfileAcrossProviderRoutes(t *testing.T) {
 					if request.Method != http.MethodPost || request.URL.String() != defaultOAuthIssuer+"/oauth/token" {
 						t.Fatalf("unexpected refresh target: %s %s", request.Method, request.URL)
 					}
-					wantHeaders := http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "User-Agent": {selectedAccountUA}}
+					wantHeaders := http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "User-Agent": {selectedAccountUA}, "Originator": {"codex-tui"}}
 					if !reflect.DeepEqual(request.Header, wantHeaders) {
 						t.Fatalf("refresh headers = %#v", request.Header)
 					}
@@ -163,7 +163,7 @@ func TestOAuthLoginFreezesReauthenticationProfileBeforeCallback(t *testing.T) {
 				}),
 				HTTPClient: stubHTTPDoer{do: func(request *http.Request) (*http.Response, error) {
 					calls++
-					if request.Header.Get("User-Agent") != wantUA || request.Header.Get("Cookie") != "" || request.Header.Get("Thread-Id") != "" {
+					if request.Header.Get("User-Agent") != wantUA || request.Header.Get("Originator") != "" || request.Header.Get("Cookie") != "" || request.Header.Get("Thread-Id") != "" {
 						t.Fatalf("login headers = %#v", request.Header)
 					}
 					if request.URL.Path == "/oauth/token" {
