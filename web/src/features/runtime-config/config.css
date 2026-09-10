@@ -1,0 +1,750 @@
+:where(.config-page, .config-workspace) {
+  --config-ink: #192a38;
+  --config-muted: #617180;
+  --config-line: #e2e8ed;
+  --config-surface: #f5f7f9;
+  --config-accent: #126d83;
+  --config-tint: #eaf4f6;
+  color: var(--config-ink);
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.config-page {
+  max-width: 1320px;
+  margin-inline: auto;
+}
+.config-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 5px 0 25px;
+}
+.config-page-header h2 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.7px;
+  line-height: 1.4;
+}
+.config-page-header > div > p {
+  margin-top: 7px;
+  color: var(--config-muted);
+}
+.config-transfer {
+  position: relative;
+  flex-shrink: 0;
+}
+.config-transfer-actions,
+.config-save-actions {
+  display: flex;
+  gap: 10px;
+}
+.config-transfer-help {
+  margin-top: 8px;
+  color: var(--config-muted);
+  font-size: 12px;
+}
+.config-transfer-help summary {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  list-style: none;
+}
+.config-transfer-help summary::-webkit-details-marker {
+  display: none;
+}
+.config-transfer-help[open] summary svg {
+  transform: rotate(180deg);
+}
+.config-transfer-help > div {
+  position: absolute;
+  top: 78px;
+  right: 0;
+  z-index: 8;
+  width: min(360px, 80vw);
+  padding: 18px;
+  border: 1px solid var(--config-line);
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 8px 28px #192a3814;
+  font-size: 13px;
+}
+.config-transfer-help p + p {
+  margin-top: 10px;
+}
+.config-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px 15px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.config-button-secondary {
+  background: white;
+  border-color: var(--config-line);
+  color: var(--config-ink);
+}
+.config-button-secondary:hover {
+  background: var(--config-surface);
+}
+.config-button-primary {
+  background: var(--config-accent);
+  color: white;
+}
+.config-button-primary:hover {
+  background: #0c576b;
+}
+.config-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.config-workspace {
+  background: white;
+  border: 1px solid var(--config-line);
+  border-radius: 12px;
+  box-shadow: 0 3px 16px #192a3805;
+}
+.config-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 17px 24px;
+  border-bottom: 1px solid var(--config-line);
+}
+.config-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(460px, 100%);
+  padding: 7px 11px;
+  border: 1px solid var(--config-line);
+  border-radius: 7px;
+  color: var(--config-muted);
+  background: var(--config-surface);
+}
+.config-search:focus-within {
+  outline: 2px solid var(--config-accent);
+  outline-offset: 2px;
+}
+.config-search > svg {
+  flex-shrink: 0;
+}
+.config-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  font: inherit;
+  color: var(--config-ink);
+}
+.config-search input::placeholder {
+  color: var(--config-muted);
+}
+.config-search input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.config-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.config-search button {
+  display: flex;
+  padding: 4px;
+  cursor: pointer;
+}
+.config-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--config-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.config-filter:hover,
+.config-filter[aria-pressed="true"] {
+  background: var(--config-tint);
+  color: var(--config-accent);
+}
+.config-filter span {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.config-body {
+  display: grid;
+  grid-template-columns: 214px minmax(0, 1fr);
+  min-height: 530px;
+}
+.config-navigation {
+  padding: 24px 14px;
+  border-right: 1px solid var(--config-line);
+  background: #fbfcfd;
+}
+.config-navigation > button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 13px 12px;
+  text-align: left;
+  border-radius: 7px;
+  color: var(--config-muted);
+  cursor: pointer;
+}
+.config-navigation > button > svg {
+  flex-shrink: 0;
+}
+.config-navigation > button > svg:last-child {
+  margin-left: auto;
+}
+.config-navigation > button:hover {
+  background: var(--config-surface);
+  color: var(--config-ink);
+}
+.config-navigation > button[aria-current="page"] {
+  background: var(--config-tint);
+  color: var(--config-accent);
+}
+.config-navigation button span {
+  font-size: 14px;
+  font-weight: 600;
+}
+.config-navigation small {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  margin-top: 2px;
+  opacity: 0.85;
+}
+.config-navigation b {
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: #fff0d6;
+  color: #89520e;
+  font-size: 11px;
+}
+.config-navigation-note {
+  margin: 26px 12px 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--config-line);
+  color: var(--config-muted);
+  font-size: 11px;
+}
+.config-navigation-note .config-pending-dot {
+  margin: 0 6px 1px 0;
+}
+.config-navigation-note p {
+  margin-top: 7px;
+  line-height: 1.8;
+}
+.config-content {
+  min-width: 0;
+  padding: 28px 34px 32px;
+}
+.config-content-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+  padding-bottom: 24px;
+}
+.config-content-heading h3 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+}
+.config-content-heading p {
+  margin-top: 5px;
+  color: var(--config-muted);
+  font-size: 13px;
+}
+.config-content-heading > span {
+  margin-top: 6px;
+  white-space: nowrap;
+  color: var(--config-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.config-fields {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  min-width: 0;
+}
+.config-group + .config-group {
+  margin-top: 27px;
+}
+.config-group-heading {
+  padding: 11px 14px;
+  background: var(--config-surface);
+  border-radius: 6px;
+}
+.config-group-heading h4 {
+  font-size: 13px;
+  font-weight: 650;
+  margin: 0;
+}
+.config-group-heading p {
+  font-size: 12px;
+  color: var(--config-muted);
+  margin-top: 2px;
+}
+.config-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 0.85fr);
+  align-items: start;
+  gap: 28px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--config-line);
+}
+.config-field:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.config-field-copy label {
+  display: inline;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.config-field-copy > p {
+  max-width: 48ch;
+  margin-top: 5px;
+  color: var(--config-muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.config-field-control {
+  min-width: 0;
+}
+.config-select {
+  position: relative;
+}
+.config-select > svg {
+  pointer-events: none;
+  position: absolute;
+  top: 13px;
+  right: 12px;
+  color: var(--config-muted);
+}
+.config-select select,
+.config-text-input,
+.config-number {
+  width: 100%;
+  min-height: 41px;
+  background: white;
+  border: 1px solid #cfd9e1;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.config-select select {
+  appearance: none;
+  padding: 9px 36px 9px 12px;
+  cursor: pointer;
+}
+.config-text-input {
+  padding: 9px 12px;
+}
+.config-number {
+  display: flex;
+  align-items: center;
+  width: 148px;
+  margin-left: auto;
+}
+.config-number input {
+  min-width: 0;
+  width: 100%;
+  padding: 9px 8px 9px 12px;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.config-number input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.config-number:focus-within {
+  outline: 2px solid var(--config-accent);
+  outline-offset: 2px;
+}
+.config-number span {
+  flex-shrink: 0;
+  margin-right: 12px;
+  color: var(--config-muted);
+  font-size: 12px;
+}
+.config-number:has(input:disabled) {
+  background: var(--config-surface);
+  opacity: 0.55;
+}
+.config-field-feedback {
+  font-size: 11px;
+  color: var(--config-muted);
+  line-height: 1.8;
+}
+.config-field-feedback p {
+  margin-top: 7px;
+}
+.config-default {
+  color: var(--config-accent);
+  font-size: 11px;
+  margin-top: 8px;
+}
+.config-field-control:has(.config-number) .config-default,
+.config-field-control:has(.config-switch) .config-default {
+  text-align: right;
+}
+.config-pending-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ba751a;
+  margin: 0 0 2px 7px;
+  flex-shrink: 0;
+}
+.config-switch-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 32px;
+  color: var(--config-muted);
+  font-size: 12px;
+}
+.config-workspace input.config-switch {
+  appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 38px;
+  height: 22px;
+  border: 0;
+  border-radius: 12px;
+  background: #9aabb7;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.config-switch::after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px #192a3820;
+  transition: transform 0.15s;
+}
+.config-workspace input.config-switch:checked {
+  background: var(--config-accent);
+}
+.config-switch:checked::after {
+  transform: translateX(16px);
+}
+.config-choice-field {
+  border: 0;
+  min-width: 0;
+  padding: 17px 0 0;
+}
+.config-choice-field legend {
+  float: left;
+  width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.config-choices {
+  clear: both;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 11px;
+}
+.config-choice {
+  position: relative;
+  padding: 14px;
+  border: 1px solid #d4dfe6;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.config-choice:has(input:checked) {
+  border-color: var(--config-accent);
+  background: #f3fafb;
+  box-shadow: inset 0 0 0 1px var(--config-accent);
+}
+.config-choice:has(input:focus-visible) {
+  outline: 2px solid var(--config-accent);
+  outline-offset: 3px;
+}
+.config-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.config-choice-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 13px;
+}
+.config-choice-title svg {
+  visibility: hidden;
+  color: var(--config-accent);
+}
+.config-choice:has(input:checked) svg {
+  visibility: visible;
+}
+.config-choice-description {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--config-muted);
+}
+.config-fields:disabled {
+  opacity: 0.6;
+}
+.config-fields:disabled .config-choice {
+  cursor: not-allowed;
+}
+.config-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 17px 24px;
+  border-top: 1px solid var(--config-line);
+  border-radius: 0 0 12px 12px;
+  background: white;
+  box-shadow: 0 -5px 18px #192a3804;
+}
+.config-save-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.config-save-status > svg {
+  color: var(--config-accent);
+  flex-shrink: 0;
+}
+.config-save-status .config-pending-dot {
+  margin: 0 6px;
+  width: 7px;
+  height: 7px;
+}
+.config-save-status strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+.config-save-status p {
+  margin-top: 2px;
+  color: var(--config-muted);
+  font-size: 11px;
+}
+.config-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 60px 12px;
+  text-align: center;
+  color: var(--config-muted);
+}
+.config-empty h4 {
+  margin-top: 10px;
+  font-size: 16px;
+  color: var(--config-ink);
+}
+.config-empty p {
+  font-size: 13px;
+}
+.config-empty .config-button {
+  margin-top: 8px;
+}
+.config-field-error {
+  color: #a33530;
+}
+.config-field [aria-invalid="true"] {
+  border-color: #a33530;
+}
+.config-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 14px 18px;
+  border-radius: 8px;
+  border: 1px solid #f0cecb;
+  background: #fff5f4;
+  color: #a33530;
+}
+.config-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 400px;
+  color: var(--config-muted);
+}
+.config-spinner {
+  animation: config-spin 1s linear infinite;
+}
+:where(.config-page, .config-workspace)
+  :is(button, input, select, summary):focus-visible {
+  outline: 2px solid var(--config-accent);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+@keyframes config-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 1200px) {
+  .config-body {
+    grid-template-columns: 185px minmax(0, 1fr);
+  }
+  .config-content {
+    padding: 24px;
+  }
+  .config-navigation {
+    padding-inline: 9px;
+  }
+  .config-field {
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 1fr);
+    gap: 20px;
+  }
+}
+@media (max-width: 760px) {
+  .config-page-header {
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .config-page-header h2 {
+    font-size: 25px;
+  }
+  .config-toolbar {
+    padding: 14px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .config-search {
+    width: 100%;
+  }
+  .config-filter {
+    margin-left: auto;
+  }
+  .config-body {
+    display: block;
+    min-height: 420px;
+  }
+  .config-navigation {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--config-line);
+  }
+  .config-navigation > button {
+    padding: 9px;
+    margin: 0;
+    gap: 8px;
+  }
+  .config-navigation button span {
+    font-size: 13px;
+  }
+  .config-navigation small,
+  .config-navigation-note {
+    display: none;
+  }
+  .config-content {
+    padding: 22px 18px;
+  }
+  .config-content-heading {
+    padding-bottom: 20px;
+  }
+  .config-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding-block: 17px;
+  }
+  .config-number {
+    width: 100%;
+  }
+  .config-switch-control {
+    justify-content: flex-start;
+  }
+  .config-field-control:has(.config-number) .config-default,
+  .config-field-control:has(.config-switch) .config-default {
+    text-align: left;
+  }
+  .config-savebar {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px 18px;
+  }
+  .config-save-actions {
+    width: 100%;
+  }
+  .config-save-actions > button {
+    flex: 1;
+  }
+  .config-save-status p {
+    max-width: 36ch;
+  }
+}
+@media (max-width: 480px) {
+  .config-choices {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .config-choice {
+    padding: 11px 13px;
+  }
+  .config-choice-description {
+    margin-top: 3px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .config-spinner {
+    animation: none;
+  }
+  .config-workspace *,
+  .config-button {
+    transition: none;
+  }
+}

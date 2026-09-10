@@ -1,6 +1,5 @@
 export * from "./ConfigForm";
 export * from "./ConfigImportModal";
-export * from "./ConfigSection";
 export * from "./ConfirmModal";
 export * from "./CopyButton";
 export * from "./detail-drawers";

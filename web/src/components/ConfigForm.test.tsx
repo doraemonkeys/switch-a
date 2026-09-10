@@ -37,6 +37,7 @@ describe("ConfigForm", () => {
   it("keeps the current GPT client mode by default and saves either choice", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     renderConfigForm(onSave);
+    fireEvent.click(screen.getByRole("button", { name: /认证与账号/ }));
     const select = screen.getByRole("combobox", {
       name: /无伪装 UA 时的客户端特征/,
     });
@@ -44,7 +45,7 @@ describe("ConfigForm", () => {
     expect(screen.getByText(/没有可用 UA 时使用 switch-a/)).toBeInTheDocument();
     fireEvent.change(select, { target: { value: "official_stable" } });
     expect(screen.getByText(/首次同步完成前沿用模板版本/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
     await waitFor(() =>
       expect(onSave).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -53,7 +54,7 @@ describe("ConfigForm", () => {
       ),
     );
     fireEvent.change(select, { target: { value: "switch_a" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
     await waitFor(() =>
       expect(onSave).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -67,6 +68,7 @@ describe("ConfigForm", () => {
     renderConfigForm(vi.fn(), {
       [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "official_stable",
     });
+    fireEvent.click(screen.getByRole("button", { name: /认证与账号/ }));
     expect(
       screen.getByRole("combobox", { name: /无伪装 UA 时的客户端特征/ }),
     ).toHaveValue("official_stable");
@@ -96,7 +98,7 @@ describe("ConfigForm", () => {
     fireEvent.change(select, {
       target: { value: "switch_account_preserve_conversation" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
     await waitFor(() =>
       expect(onSave).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -107,7 +109,7 @@ describe("ConfigForm", () => {
       ),
     );
     fireEvent.change(select, { target: { value: "preserve_conversation" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
     await waitFor(() =>
       expect(onSave).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -126,7 +128,7 @@ describe("ConfigForm", () => {
       name: /对话恢复策略/,
     });
     fireEvent.change(select, { target: { value: "preserve_conversation" } });
-    fireEvent.click(screen.getByRole("button", { name: /Reset/i }));
+    fireEvent.click(screen.getByRole("button", { name: /撤销修改/ }));
     expect(select).toHaveValue("switch_account_preserve_conversation");
   });
 
@@ -152,27 +154,23 @@ describe("ConfigForm", () => {
   it("defaults websocket probe control to checked", () => {
     renderConfigForm();
 
-    expect(
-      screen.getByLabelText(/Probe WebSocket Client Model Before Selection/i),
-    ).toBeChecked();
+    expect(screen.getByLabelText(/WebSocket 模型探测/)).toBeChecked();
   });
 
   it("submits websocket probe updates as string config values", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     renderConfigForm(onSave);
 
-    const checkbox = screen.getByLabelText(
-      /Probe WebSocket Client Model Before Selection/i,
-    );
+    const checkbox = screen.getByLabelText(/WebSocket 模型探测/);
     fireEvent.click(checkbox);
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /Save Changes/i }),
+        screen.getByRole("button", { name: /保存修改/ }),
       ).not.toBeDisabled();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith(

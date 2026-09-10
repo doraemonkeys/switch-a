@@ -1,34 +1,25 @@
-import React, { useState, useMemo } from "react";
+import { useRef, useState, type FormEvent } from "react";
+import { Search, X, SlidersHorizontal } from "lucide-react";
 import { useToast } from "../hooks/useToast";
-import { GPTAccountSettingsSection } from "./config-form-sections/GPTAccountSettingsSection";
-import {
-  RoutingStrategySection,
-  AuthSettingsSection,
-  StickySessionSection,
-  ConversationRecoverySection,
-  CircuitBreakerSection,
-  TimeoutSettingsSection,
-  RequestLimitsSection,
-  OtherSettingsSection,
-  ConfigFormActions,
-} from "./ConfigFormSections";
+import { generateUUIDv4 } from "../lib/uuid";
+import { CONFIG_CATEGORIES } from "../features/runtime-config/schema";
+import { fieldMatches, validateConfig } from "../features/runtime-config/model";
+import { useConfigDraft } from "../features/runtime-config/useConfigDraft";
+import { ConfigField } from "../features/runtime-config/ConfigField";
+import { ConfigNavigation } from "../features/runtime-config/ConfigNavigation";
+import type {
+  ConfigCategoryId,
+  ConfigValues,
+} from "../features/runtime-config/types";
+import "../features/runtime-config/config.css";
+
+import { ConfigSaveBar } from "../features/runtime-config/ConfigSaveBar";
 
 interface ConfigFormProps {
-  initialConfig: Record<string, string>;
-  /** Default values from server (for comparing with current values) */
-  defaults?: Record<string, string>;
-  onSave: (config: Record<string, string>) => Promise<void>;
+  initialConfig: ConfigValues;
+  defaults?: ConfigValues;
+  onSave: (config: ConfigValues) => Promise<void>;
   saving: boolean;
-}
-
-function normalizeConfig(
-  config: Record<string, string>,
-): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  Object.entries(config).forEach(([key, value]) => {
-    normalized[key] = String(value);
-  });
-  return normalized;
 }
 
 export function ConfigForm({
@@ -38,134 +29,221 @@ export function ConfigForm({
   saving,
 }: ConfigFormProps) {
   const toast = useToast();
-
-  // Memoize the normalized initial config to maintain stable reference
-  const normalizedInitialConfig = useMemo(
-    () => normalizeConfig(initialConfig),
-    [initialConfig],
+  const { draft, changes, change, reset, acceptSaved } = useConfigDraft(
+    initialConfig,
+    defaults,
+  );
+  const [category, setCategory] = useState<ConfigCategoryId>("routing");
+  const [query, setQuery] = useState("");
+  const [onlyChanged, setOnlyChanged] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const saveInFlight = useRef(false);
+  const busy = saving || submitting;
+  const changeCount = Object.keys(changes).length;
+  const filtering = query.trim() !== "" || onlyChanged;
+  const activeCategory = CONFIG_CATEGORIES.find(
+    (item) => item.id === category,
+  )!;
+  const visibleCategories = (filtering ? CONFIG_CATEGORIES : [activeCategory])
+    .map((item) => ({
+      ...item,
+      groups: item.groups
+        .map((group) => ({
+          ...group,
+          fields: group.fields.filter(
+            (field) =>
+              fieldMatches(field, query, `${item.title} ${group.title}`) &&
+              (!onlyChanged || field.key in changes),
+          ),
+        }))
+        .filter((group) => group.fields.length > 0),
+    }))
+    .filter((item) => item.groups.length > 0);
+  const resultCount = visibleCategories.reduce(
+    (total, item) =>
+      total +
+      item.groups.reduce((count, group) => count + group.fields.length, 0),
+    0,
   );
 
-  // Track the config we're synced to, and local edits
-  const [syncedConfig, setSyncedConfig] = useState(normalizedInitialConfig);
-  const [localConfig, setLocalConfig] = useState(normalizedInitialConfig);
-  const [isDirty, setIsDirty] = useState(false);
-
-  // Sync when initialConfig changes (React-recommended pattern for prop-to-state sync)
-  // See: https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
-  if (normalizedInitialConfig !== syncedConfig) {
-    setSyncedConfig(normalizedInitialConfig);
-    setLocalConfig(normalizedInitialConfig);
-    setIsDirty(false);
-  }
-
-  const handleChange = (key: string, value: string) => {
-    setLocalConfig((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
-    setIsDirty(true);
+  const selectCategory = (id: ConfigCategoryId) => {
+    setCategory(id);
+    setQuery("");
+    setOnlyChanged(false);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isDirty) return;
+  const handleFieldChange = (key: string, value: string) => {
+    change(key, value);
+    if (errors[key])
+      setErrors((previous) => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+  };
 
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!changeCount || busy || saveInFlight.current) return;
+    const nextErrors = validateConfig(draft);
+    setErrors(nextErrors);
+    const invalidCategory = CONFIG_CATEGORIES.find((item) =>
+      item.groups
+        .flatMap((group) => group.fields)
+        .some((field) => field.key in nextErrors),
+    );
+    if (invalidCategory) {
+      selectCategory(invalidCategory.id);
+      const form = event.currentTarget;
+      // Reveal the category before focusing a control that was not mounted.
+      requestAnimationFrame(() => {
+        form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+      });
+      toast.error("请检查标出的配置项");
+      return;
+    }
+    saveInFlight.current = true;
+    setSubmitting(true);
+    const operationId = generateUUIDv4();
+    const submitted = { ...draft };
+    console.info("config.save.started", {
+      operationId,
+      changedKeys: Object.keys(changes),
+    });
     try {
-      await onSave(localConfig);
-      setIsDirty(false);
-      toast.success("Configuration saved successfully");
-    } catch (err) {
-      console.error("Failed to save config:", err);
+      await onSave(submitted);
+      acceptSaved(submitted);
+      console.info("config.save.completed", { operationId });
+      toast.success("配置已保存");
+    } catch (error) {
+      console.error("config.save.failed", { operationId, error });
       toast.error(
-        err instanceof Error ? err.message : "Failed to save configuration",
+        error instanceof Error ? error.message : "保存配置失败，请重试",
       );
+    } finally {
+      saveInFlight.current = false;
+      setSubmitting(false);
     }
-  };
-
-  const handleReset = () => {
-    setLocalConfig(normalizedInitialConfig);
-    setIsDirty(false);
-    toast.info("Configuration reset to last saved state");
-  };
-
-  // Helper to get value with default fallback
-  const getValue = (key: string, defaultValue: string | number | boolean) => {
-    if (localConfig[key] !== undefined) {
-      return localConfig[key];
-    }
-    return String(defaultValue);
-  };
-
-  // Helper to get server default value for a key (used by ModifiedBadge for comparison)
-  const getDefault = (key: string): string | undefined => {
-    return defaults[key];
   };
 
   return (
-    <div className="card">
-      <div className="mb-6 flex justify-end">
-        <span
-          className={`badge ${!isDirty ? "badge-success" : "badge-warning"}`}
+    <form
+      className="config-workspace"
+      onSubmit={handleSubmit}
+      noValidate
+      aria-label="运行配置"
+    >
+      <div className="config-toolbar">
+        <div className="config-search">
+          <Search size={18} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label="搜索配置"
+            placeholder="搜索设置名称或配置键…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.preventDefault();
+            }}
+          />
+          {query && (
+            <button
+              type="button"
+              aria-label="清空搜索"
+              onClick={() => setQuery("")}
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          className="config-filter"
+          aria-pressed={onlyChanged}
+          onClick={() => setOnlyChanged(!onlyChanged)}
         >
-          <span
-            className={`w-2 h-2 ${!isDirty ? "bg-success" : "bg-warning"} rounded-full mr-1.5`}
-          ></span>
-          {isDirty ? "Unsaved Changes" : "Synced"}
-        </span>
+          <SlidersHorizontal size={16} aria-hidden="true" />
+          仅看未保存{changeCount > 0 && <span>{changeCount}</span>}
+        </button>
       </div>
-
-      <form onSubmit={handleSubmit} className="space-y-8">
-        <RoutingStrategySection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
+      <div className="config-body">
+        <ConfigNavigation
+          active={filtering ? undefined : category}
+          changes={changes}
+          onSelect={selectCategory}
         />
-        <AuthSettingsSection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <GPTAccountSettingsSection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <ConversationRecoverySection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <StickySessionSection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <CircuitBreakerSection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <TimeoutSettingsSection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <RequestLimitsSection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <OtherSettingsSection
-          getValue={getValue}
-          handleChange={handleChange}
-          getDefault={getDefault}
-        />
-        <ConfigFormActions
-          isDirty={isDirty}
-          saving={saving}
-          onReset={handleReset}
-        />
-      </form>
-    </div>
+        <div className="config-content">
+          <div className="config-content-heading">
+            <div>
+              <h3>{filtering ? "筛选结果" : activeCategory.title}</h3>
+              <p>
+                {filtering
+                  ? "在全部分类中查找，修改会与其他配置一起保存。"
+                  : activeCategory.description}
+              </p>
+            </div>
+            <span aria-live="polite">{resultCount} 项</span>
+          </div>
+          <fieldset className="config-fields" disabled={busy}>
+            <legend className="sr-only">配置项</legend>
+            {visibleCategories.flatMap((item) =>
+              item.groups.map((group) => (
+                <section
+                  className="config-group"
+                  key={group.title}
+                  aria-label={group.title}
+                >
+                  <div className="config-group-heading">
+                    <h4>{group.title}</h4>
+                    <p>{group.description}</p>
+                  </div>
+                  {group.fields.map((field) => (
+                    <ConfigField
+                      key={field.key}
+                      field={field}
+                      values={draft}
+                      defaultValue={defaults[field.key]}
+                      changed={field.key in changes}
+                      error={errors[field.key]}
+                      onChange={handleFieldChange}
+                    />
+                  ))}
+                </section>
+              )),
+            )}
+          </fieldset>
+          {resultCount === 0 && (
+            <div className="config-empty">
+              <Search size={28} aria-hidden="true" />
+              <h4>
+                {onlyChanged && !query
+                  ? "没有待保存的修改"
+                  : "没有找到匹配的配置"}
+              </h4>
+              <p>试试其他名称，或清除筛选查看全部设置。</p>
+              <button
+                type="button"
+                className="config-button config-button-secondary"
+                onClick={() => {
+                  setQuery("");
+                  setOnlyChanged(false);
+                }}
+              >
+                清除筛选
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      <ConfigSaveBar
+        changeCount={changeCount}
+        busy={busy}
+        onReset={() => {
+          reset();
+          setErrors({});
+        }}
+      />
+    </form>
   );
 }

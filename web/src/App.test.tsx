@@ -301,7 +301,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: /Configuration/i }),
+        screen.getByRole("heading", { name: "配置管理" }),
       ).toBeInTheDocument();
     });
   });
