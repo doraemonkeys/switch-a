@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
+
 	"go.uber.org/zap"
 )
 
@@ -68,7 +70,7 @@ func firstStringField(scopes []map[string]any, keys ...string) string {
 // session so the existing provider-creation pipeline can persist it via
 // credential_login_id, exactly like the OAuth popup flow. Returning the same shape
 // as a completed GetChatGPTLoginStatus lets the admin UI skip status polling.
-func (s *Service) ImportChatGPTLogin(ctx context.Context, rawAuthData string) (*ChatGPTLoginStatusResponse, error) {
+func (s *Service) ImportChatGPTLogin(ctx context.Context, rawAuthData, sessionID string) (*ChatGPTLoginStatusResponse, error) {
 	tokens, err := parseImportedChatGPTTokens(rawAuthData)
 	if err != nil {
 		return nil, err
@@ -95,9 +97,14 @@ func (s *Service) ImportChatGPTLogin(ctx context.Context, rawAuthData string) (*
 		return nil, fmt.Errorf("imported chatgpt credential is incomplete")
 	}
 
+	client, err := s.clientProfiles.Resolve(ctx, sessionID, accountclient.TokenImport)
+	if err != nil {
+		return nil, err
+	}
+
 	// Mirror the OAuth flow: the usage snapshot is best-effort so a flaky upstream
 	// never blocks the import.
-	if snapshot, usageErr := s.fetchChatGPTUsageSnapshot(ctx, credential); usageErr != nil {
+	if snapshot, usageErr := s.fetchChatGPTUsageSnapshot(ctx, credential, client); usageErr != nil {
 		s.logger.Debug("chatgpt usage snapshot unavailable after token import",
 			zap.String("account_id", credential.AccountID),
 			zap.Error(usageErr),

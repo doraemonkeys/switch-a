@@ -33,6 +33,11 @@ func Current() Info {
 	}
 }
 
+// UserAgent identifies unprofiled outbound requests with the actual build.
+func (i Info) UserAgent() string {
+	return applicationName + "/" + i.Version
+}
+
 func (i Info) String() string {
 	return fmt.Sprintf("%s %s (commit %s, built %s)", applicationName, i.Version, i.Commit, i.BuiltAt)
 }

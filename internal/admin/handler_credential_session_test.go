@@ -28,7 +28,7 @@ type provenLoginAuth struct {
 	finalized   string
 }
 
-func (*provenLoginAuth) StartChatGPTLogin() (*providerauth.ChatGPTLoginStartResponse, error) {
+func (*provenLoginAuth) StartChatGPTLogin(context.Context, string) (*providerauth.ChatGPTLoginStartResponse, error) {
 	return nil, nil
 }
 
@@ -36,7 +36,7 @@ func (*provenLoginAuth) GetChatGPTLoginStatus(string) (*providerauth.ChatGPTLogi
 	return nil, nil
 }
 
-func (*provenLoginAuth) ImportChatGPTLogin(context.Context, string) (*providerauth.ChatGPTLoginStatusResponse, error) {
+func (*provenLoginAuth) ImportChatGPTLogin(context.Context, string, string) (*providerauth.ChatGPTLoginStatusResponse, error) {
 	return nil, nil
 }
 

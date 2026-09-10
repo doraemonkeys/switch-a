@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/buildinfo"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -266,7 +267,7 @@ func TestMapChatGPTUsageSnapshot_PicksNearestWindowsAcrossAllSources(t *testing.
 func TestFetchChatGPTUsageSnapshot_RequiresCredentialFields(t *testing.T) {
 	service := NewService(Config{})
 
-	_, err := service.fetchChatGPTUsageSnapshot(context.Background(), &model.ChatGPTProviderCredential{})
+	_, err := service.fetchChatGPTUsageSnapshot(context.Background(), &model.ChatGPTProviderCredential{}, testAccountOperation(t, service, ""))
 	if err == nil || !strings.Contains(err.Error(), "requires access token and account id") {
 		t.Fatalf("error = %v, want missing credential fields", err)
 	}
@@ -285,8 +286,8 @@ func TestFetchChatGPTUsageSnapshot_RetriesCandidatesUntilSuccess(t *testing.T) {
 				if got := req.Header.Get("ChatGPT-Account-Id"); got != "acct_test" {
 					t.Fatalf("ChatGPT-Account-Id = %q, want %q", got, "acct_test")
 				}
-				if got := req.Header.Get("User-Agent"); got != chatGPTOAuthUserAgent {
-					t.Fatalf("User-Agent = %q, want %q", got, chatGPTOAuthUserAgent)
+				if got := req.Header.Get("User-Agent"); got != buildinfo.Current().UserAgent() {
+					t.Fatalf("User-Agent = %q, want %q", got, buildinfo.Current().UserAgent())
 				}
 				if req.URL.String() != candidates[callCount] {
 					t.Fatalf("request URL = %q, want %q", req.URL.String(), candidates[callCount])
@@ -320,7 +321,7 @@ func TestFetchChatGPTUsageSnapshot_RetriesCandidatesUntilSuccess(t *testing.T) {
 	snapshot, err := service.fetchChatGPTUsageSnapshot(context.Background(), &model.ChatGPTProviderCredential{
 		AccessToken: "access-token",
 		AccountID:   "acct_test",
-	})
+	}, testAccountOperation(t, service, ""))
 	if err != nil {
 		t.Fatalf("fetchChatGPTUsageSnapshot returned error: %v", err)
 	}
@@ -354,7 +355,7 @@ func TestFetchChatGPTUsageSnapshot_StopsAfterTerminalAuthFailure(t *testing.T) {
 	_, err := service.fetchChatGPTUsageSnapshot(context.Background(), &model.ChatGPTProviderCredential{
 		AccessToken: "access-token",
 		AccountID:   "acct_test",
-	})
+	}, testAccountOperation(t, service, ""))
 	if err == nil {
 		t.Fatal("fetchChatGPTUsageSnapshot returned nil error")
 	}
@@ -381,7 +382,7 @@ func TestFetchChatGPTUsageSnapshot_ReturnsJoinedErrorsWhenAllCandidatesFail(t *t
 	_, err := service.fetchChatGPTUsageSnapshot(context.Background(), &model.ChatGPTProviderCredential{
 		AccessToken: "access-token",
 		AccountID:   "acct_test",
-	})
+	}, testAccountOperation(t, service, ""))
 	if err == nil {
 		t.Fatal("fetchChatGPTUsageSnapshot returned nil error")
 	}

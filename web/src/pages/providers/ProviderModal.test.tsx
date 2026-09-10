@@ -629,6 +629,7 @@ describe("ProviderModal token import", () => {
     ).toBeInTheDocument();
     expect(mockApi.providers.importChatGPTLogin).toHaveBeenCalledWith(
       tokenBlob,
+      undefined,
     );
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));

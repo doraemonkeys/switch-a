@@ -54,18 +54,22 @@ export function createProvidersApi(request: AuthenticatedRequest) {
       ),
     reset: (id: string) =>
       request<HealthState>(`/providers/${id}/reset`, { method: "POST" }),
-    startChatGPTLogin: () =>
+    startChatGPTLogin: (credentialSessionID?: string) =>
       request<ChatGPTLoginStartResponse>("/provider-auth/chatgpt/start", {
         method: "POST",
+        body: JSON.stringify({ credential_session_id: credentialSessionID }),
       }),
     getChatGPTLoginStatus: (loginId: string) =>
       request<ChatGPTLoginStatusResponse>(
         `/provider-auth/chatgpt/sessions/${encodeURIComponent(loginId)}`,
       ),
-    importChatGPTLogin: (authData: string) =>
+    importChatGPTLogin: (authData: string, credentialSessionID?: string) =>
       request<ChatGPTLoginStatusResponse>("/provider-auth/chatgpt/import", {
         method: "POST",
-        body: JSON.stringify({ auth_data: authData }),
+        body: JSON.stringify({
+          auth_data: authData,
+          credential_session_id: credentialSessionID,
+        }),
       }),
     batch: (data: BatchProviderRequest) =>
       request<BatchProviderResponse>("/providers/batch", {

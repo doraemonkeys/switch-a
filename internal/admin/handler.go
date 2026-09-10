@@ -93,9 +93,9 @@ type ActiveRequest = proxy.ActiveRequest
 // ProviderAuthService captures the provider-auth behaviors the admin surface needs
 // without binding handlers to the concrete OAuth service implementation.
 type ProviderAuthService interface {
-	StartChatGPTLogin() (*providerauth.ChatGPTLoginStartResponse, error)
+	StartChatGPTLogin(ctx context.Context, sessionID string) (*providerauth.ChatGPTLoginStartResponse, error)
 	GetChatGPTLoginStatus(loginID string) (*providerauth.ChatGPTLoginStatusResponse, error)
-	ImportChatGPTLogin(ctx context.Context, rawAuthData string) (*providerauth.ChatGPTLoginStatusResponse, error)
+	ImportChatGPTLogin(ctx context.Context, rawAuthData, sessionID string) (*providerauth.ChatGPTLoginStatusResponse, error)
 }
 
 type ProviderImportService = adminproviderimport.DraftService

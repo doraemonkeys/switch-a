@@ -160,11 +160,11 @@ func TestChatGPTLoginCallbackEndpoint_IsStartedOnDemandAndShared(t *testing.T) {
 	if active, starts, _ := endpoint.snapshot(); active || starts != 0 {
 		t.Fatalf("endpoint before login = (active=%t, starts=%d), want idle", active, starts)
 	}
-	first, err := service.StartChatGPTLogin()
+	first, err := service.StartChatGPTLogin(context.Background(), "")
 	if err != nil {
 		t.Fatalf("first StartChatGPTLogin returned error: %v", err)
 	}
-	second, err := service.StartChatGPTLogin()
+	second, err := service.StartChatGPTLogin(context.Background(), "")
 	if err != nil {
 		t.Fatalf("second StartChatGPTLogin returned error: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestStartChatGPTLogin_StoresPendingSessionAndBuildsAuthorizeURL(t *testing.
 	}
 	service.mu.Unlock()
 
-	response, err := service.StartChatGPTLogin()
+	response, err := service.StartChatGPTLogin(context.Background(), "")
 	if err != nil {
 		t.Fatalf("StartChatGPTLogin returned error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestChatGPTLoginCallbackEndpoint_ConcurrentStartsShareOneRun(t *testing.T) 
 	var wg sync.WaitGroup
 	for range loginCount {
 		wg.Go(func() {
-			login, err := service.StartChatGPTLogin()
+			login, err := service.StartChatGPTLogin(context.Background(), "")
 			if err != nil {
 				errorsCh <- err
 				return
@@ -326,7 +326,7 @@ func TestChatGPTLoginCallbackEndpoint_StartFailureDoesNotPublishSession(t *testi
 	scheduler := &manualScheduler{}
 	service := newCallbackLifecycleTestService(Config{}, endpoint, scheduler)
 
-	response, err := service.StartChatGPTLogin()
+	response, err := service.StartChatGPTLogin(context.Background(), "")
 	if !errors.Is(err, listenErr) {
 		t.Fatalf("StartChatGPTLogin error = %v, want %v", err, listenErr)
 	}
@@ -480,7 +480,7 @@ func TestProviderAuthServiceShutdown_ReleasesEndpointAndRejectsNewLogin(t *testi
 	if active, starts, shutdowns := endpoint.snapshot(); active || starts != 1 || shutdowns != 1 {
 		t.Fatalf("endpoint after Shutdown = (active=%t, starts=%d, shutdowns=%d), want released", active, starts, shutdowns)
 	}
-	if _, err := service.StartChatGPTLogin(); !errors.Is(err, errProviderAuthServiceShutdown) {
+	if _, err := service.StartChatGPTLogin(context.Background(), ""); !errors.Is(err, errProviderAuthServiceShutdown) {
 		t.Fatalf("StartChatGPTLogin after Shutdown error = %v, want %v", err, errProviderAuthServiceShutdown)
 	}
 	if err := service.Shutdown(context.Background()); err != nil {
@@ -490,7 +490,7 @@ func TestProviderAuthServiceShutdown_ReleasesEndpointAndRejectsNewLogin(t *testi
 
 func mustStartChatGPTLogin(t *testing.T, service *Service) *ChatGPTLoginStartResponse {
 	t.Helper()
-	login, err := service.StartChatGPTLogin()
+	login, err := service.StartChatGPTLogin(context.Background(), "")
 	if err != nil {
 		t.Fatalf("StartChatGPTLogin returned error: %v", err)
 	}

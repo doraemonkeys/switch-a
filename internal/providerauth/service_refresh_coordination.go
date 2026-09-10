@@ -8,6 +8,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 	"go.uber.org/zap"
 )
 
@@ -257,7 +258,11 @@ func (s *Service) refreshAndPersistChatGPTCredentialDirect(
 	snapshot *credentialsession.Snapshot,
 	credential *model.ChatGPTProviderCredential,
 ) (*model.ChatGPTProviderCredential, error) {
-	refreshed, err := s.refreshChatGPTCredential(ctx, credential)
+	client, err := s.clientProfiles.Resolve(ctx, snapshot.SessionID, accountclient.TokenRefresh)
+	if err != nil {
+		return nil, err
+	}
+	refreshed, err := s.refreshChatGPTCredential(ctx, credential, client)
 	if err != nil {
 		return nil, s.persistChatGPTRefreshFailure(ctx, routeTargetID, snapshot, err)
 	}

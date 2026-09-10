@@ -254,7 +254,9 @@ function useChatGPTLoginActions(
       if (!api) {
         throw new Error("API client is unavailable for GPT login");
       }
-      const start = await api.providers.startChatGPTLogin();
+      const start = await api.providers.startChatGPTLogin(
+        state.reauthenticationTarget?.sessionID,
+      );
       if (generation !== loginGeneration.current) {
         return;
       }
@@ -294,7 +296,10 @@ function useChatGPTLoginActions(
       if (!api) {
         throw new Error("API client is unavailable for GPT login");
       }
-      const result = await api.providers.importChatGPTLogin(authData);
+      const result = await api.providers.importChatGPTLogin(
+        authData,
+        state.reauthenticationTarget?.sessionID,
+      );
       if (generation !== loginGeneration.current) {
         return false;
       }

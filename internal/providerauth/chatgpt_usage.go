@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 )
 
 const (
@@ -167,7 +168,7 @@ func resolveChatGPTUsageCandidateURLs() []string {
 	return deduped
 }
 
-func (s *Service) fetchChatGPTUsageSnapshot(ctx context.Context, credential *model.ChatGPTProviderCredential) (*model.ProviderUsageSnapshot, error) {
+func (s *Service) fetchChatGPTUsageSnapshot(ctx context.Context, credential *model.ChatGPTProviderCredential, client accountclient.Operation) (*model.ProviderUsageSnapshot, error) {
 	if credential == nil || credential.AccessToken == "" || credential.AccountID == "" {
 		return nil, fmt.Errorf("chatgpt usage requires access token and account id")
 	}
@@ -183,7 +184,7 @@ func (s *Service) fetchChatGPTUsageSnapshot(ctx context.Context, credential *mod
 		request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
 		request.Header.Set("ChatGPT-Account-Id", credential.AccountID)
 		request.Header.Set("Accept", "application/json")
-		request.Header.Set("User-Agent", chatGPTOAuthUserAgent)
+		client.Apply(request)
 
 		response, err := s.httpClient.Do(request)
 		if err != nil {

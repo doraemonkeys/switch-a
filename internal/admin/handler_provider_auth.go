@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -21,14 +22,22 @@ type codexAuthExportBlockedDetails struct {
 	BlockingRouteTargetIDs []string `json:"blocking_route_target_ids"`
 }
 
-// StartChatGPTProviderLogin starts a temporary login that can be consumed only
-// by credential-session creation; route targets never own the resulting secret.
-func (h *Handler) StartChatGPTProviderLogin(w http.ResponseWriter, _ *http.Request) {
+// StartChatGPTProviderLogin stages credentials for creation or reauthentication.
+// The optional target supplies its client profile; route targets own no secrets.
+func (h *Handler) StartChatGPTProviderLogin(w http.ResponseWriter, r *http.Request) {
 	if h.auth == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "GPT login is unavailable in this build")
 		return
 	}
-	start, err := h.auth.StartChatGPTLogin()
+	limitRequestBody(w, r)
+	var req struct {
+		CredentialSessionID string `json:"credential_session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid request body")
+		return
+	}
+	start, err := h.auth.StartChatGPTLogin(r.Context(), strings.TrimSpace(req.CredentialSessionID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 		return
@@ -55,11 +64,12 @@ func (h *Handler) GetChatGPTProviderLoginStatus(w http.ResponseWriter, r *http.R
 }
 
 type ImportChatGPTProviderCredentialRequest struct {
-	AuthData string `json:"auth_data"`
+	CredentialSessionID string `json:"credential_session_id"`
+	AuthData            string `json:"auth_data"`
 }
 
-// ImportChatGPTProviderCredential stages pasted auth data as a temporary login;
-// callers then create a CredentialSession with the returned login identifier.
+// ImportChatGPTProviderCredential stages pasted auth data for credential-session
+// creation or reauthentication using the returned login identifier.
 func (h *Handler) ImportChatGPTProviderCredential(w http.ResponseWriter, r *http.Request) {
 	if h.auth == nil {
 		writeError(w, http.StatusNotImplemented, ErrCodeInternal, "GPT login is unavailable in this build")
@@ -75,7 +85,7 @@ func (h *Handler) ImportChatGPTProviderCredential(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, "auth_data is required")
 		return
 	}
-	status, err := h.auth.ImportChatGPTLogin(r.Context(), req.AuthData)
+	status, err := h.auth.ImportChatGPTLogin(r.Context(), req.AuthData, strings.TrimSpace(req.CredentialSessionID))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, ErrCodeValidation, err.Error())
 		return

@@ -90,6 +90,32 @@ describe("createApiClient providers API", () => {
     });
   });
 
+  it.each([undefined, "session-1"])(
+    "carries login profile target %s to account operations",
+    async (sessionID) => {
+      mockHttpClient.mockResponse({});
+      await api.providers.startChatGPTLogin(sessionID);
+      expect(mockHttpClient.fetch).toHaveBeenLastCalledWith(
+        "https://test-api.example.com/provider-auth/chatgpt/start",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ credential_session_id: sessionID }),
+        }),
+      );
+      await api.providers.importChatGPTLogin("tokens", sessionID);
+      expect(mockHttpClient.fetch).toHaveBeenLastCalledWith(
+        "https://test-api.example.com/provider-auth/chatgpt/import",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            auth_data: "tokens",
+            credential_session_id: sessionID,
+          }),
+        }),
+      );
+    },
+  );
+
   it("should list providers", async () => {
     const providers = [providerPayload()];
     mockHttpClient.mockResponse({

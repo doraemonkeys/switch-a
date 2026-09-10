@@ -10,6 +10,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -20,7 +21,6 @@ const (
 	defaultOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
 	defaultOAuthScope        = "openid profile email offline_access"
 	defaultOAuthOriginator   = "codex_vscode"
-	chatGPTOAuthUserAgent    = "github.com/doraemonkeys/switch-a/0.1"
 	chatGPTCodexOriginator   = "codex_cli_rs"
 	chatGPTCodexBaseURL      = "https://chatgpt.com/backend-api/codex"
 	chatGPTAPIAudience       = "https://api.openai.com/v1"
@@ -68,6 +68,7 @@ func (uuidIDGenerator) NewID() string {
 
 // Config configures the provider auth service.
 type Config struct {
+	ClientProfiles  accountclient.ProfileStore
 	CredentialStore any
 	HTTPClient      OAuthHTTPDoer
 	Clock           internal.Clock
@@ -106,6 +107,7 @@ type inFlightProviderUsageObservation struct {
 
 // Service manages provider-backed authentication flows and credential injection.
 type Service struct {
+	clientProfiles  *accountclient.Resolver
 	credentialStore any
 	httpClient      OAuthHTTPDoer
 	clock           internal.Clock
@@ -170,6 +172,7 @@ func newService(cfg Config, runtime serviceRuntime) *Service {
 	}
 
 	service := &Service{
+		clientProfiles:            accountclient.NewResolver(cfg.ClientProfiles, logger),
 		credentialStore:           cfg.CredentialStore,
 		httpClient:                httpClient,
 		clock:                     clock,

@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 )
 
 // The OAuth exchange is deliberately separate from session coordination and
 // persistence so the applied-identity boundary can reject a mismatched final
 // authority before any refresh token is sent over the network.
-func (s *Service) refreshChatGPTCredential(ctx context.Context, credential *model.ChatGPTProviderCredential) (*model.ChatGPTProviderCredential, error) {
+func (s *Service) refreshChatGPTCredential(ctx context.Context, credential *model.ChatGPTProviderCredential, client accountclient.Operation) (*model.ChatGPTProviderCredential, error) {
 	issuer, clientID, err := resolveChatGPTRefreshContext(credential)
 	if err != nil {
 		return nil, err
@@ -34,7 +35,7 @@ func (s *Service) refreshChatGPTCredential(ctx context.Context, credential *mode
 		return nil, fmt.Errorf("build chatgpt refresh request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", chatGPTOAuthUserAgent)
+	client.Apply(request)
 
 	response, err := s.httpClient.Do(request)
 	if err != nil {

@@ -61,7 +61,7 @@ func (s *Session) profileFeature(name string) string {
 	features := s.target.Profile.Features
 	switch name {
 	case "user_agent":
-		return disguise.WithUserAgentVersion(features.ClientUserAgent(), s.target.OfficialVersion.Version)
+		return s.target.Profile.UserAgent(s.target.OfficialVersion.Version)
 	case "originator":
 		return features.Originator
 	case "client_version":

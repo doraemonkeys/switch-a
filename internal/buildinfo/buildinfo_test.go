@@ -12,6 +12,9 @@ func TestCurrentReturnsLinkerValues(t *testing.T) {
 	Commit = "0123456789abcdef"
 	BuiltAt = "2026-07-29T00:00:00Z"
 
+	if got := Current().UserAgent(); got != "switch-a/v0.1.0" {
+		t.Fatalf("UserAgent = %q", got)
+	}
 	want := Info{Version: Version, Commit: Commit, BuiltAt: BuiltAt}
 	if got := Current(); got != want {
 		t.Fatalf("Current() = %#v, want %#v", got, want)

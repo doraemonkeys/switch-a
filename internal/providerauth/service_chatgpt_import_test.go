@@ -203,7 +203,7 @@ func TestImportChatGPTLogin(t *testing.T) {
 		service := newImportService()
 		raw := `{"tokens":{"id_token":"` + idToken + `","access_token":"` + accessToken + `","refresh_token":"ref"}}`
 
-		status, err := service.ImportChatGPTLogin(context.Background(), raw)
+		status, err := service.ImportChatGPTLogin(context.Background(), raw, "")
 		if err != nil {
 			t.Fatalf("ImportChatGPTLogin error = %v", err)
 		}
@@ -246,7 +246,7 @@ func TestImportChatGPTLogin(t *testing.T) {
 	t.Run("rejects missing refresh token", func(t *testing.T) {
 		service := newImportService()
 		raw := `{"access_token":"acc","id_token":"` + idToken + `"}`
-		_, err := service.ImportChatGPTLogin(context.Background(), raw)
+		_, err := service.ImportChatGPTLogin(context.Background(), raw, "")
 		if err == nil || !strings.Contains(err.Error(), "refresh token") {
 			t.Fatalf("error = %v, want missing refresh token", err)
 		}
@@ -255,7 +255,7 @@ func TestImportChatGPTLogin(t *testing.T) {
 	t.Run("rejects missing access token", func(t *testing.T) {
 		service := newImportService()
 		raw := `{"refresh_token":"ref","id_token":"` + idToken + `"}`
-		_, err := service.ImportChatGPTLogin(context.Background(), raw)
+		_, err := service.ImportChatGPTLogin(context.Background(), raw, "")
 		if err == nil || !strings.Contains(err.Error(), "access token") {
 			t.Fatalf("error = %v, want missing access token", err)
 		}
@@ -263,7 +263,7 @@ func TestImportChatGPTLogin(t *testing.T) {
 
 	t.Run("rejects invalid json", func(t *testing.T) {
 		service := newImportService()
-		if _, err := service.ImportChatGPTLogin(context.Background(), "{bad"); err == nil {
+		if _, err := service.ImportChatGPTLogin(context.Background(), "{bad", ""); err == nil {
 			t.Fatal("expected error for invalid json")
 		}
 	})

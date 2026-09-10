@@ -8,6 +8,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 )
 
 // BuildCredentialSessionAuthView exposes the pure-read session projection needed
@@ -41,7 +42,11 @@ func (s *Service) refreshChatGPTUsageSnapshot(ctx context.Context, routeSnapshot
 	}
 	ctx = ownedCtx
 
-	snapshot, err := s.fetchChatGPTUsageSnapshot(ctx, credential)
+	client, err := s.clientProfiles.Resolve(ctx, latest.SessionID, accountclient.UsageQuery)
+	if err != nil {
+		return err
+	}
+	snapshot, err := s.fetchChatGPTUsageSnapshot(ctx, credential, client)
 	if err != nil {
 		if reason, terminal := classifyChatGPTUsageAuthFailure(err); terminal {
 			return s.markChatGPTUsageReauthenticationRequired(

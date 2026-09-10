@@ -197,6 +197,7 @@ func composeApplicationRuntime(
 		Logger:        log,
 	})
 	authService := providerauth.NewService(providerauth.Config{
+		ClientProfiles:  sqlStore.ClientDisguiseRepository(),
 		CredentialStore: st,
 		Clock:           clock,
 		Logger:          log,

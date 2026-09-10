@@ -25,6 +25,11 @@ func WithUserAgentVersion(ua, version string) string {
 	})
 }
 
+// UserAgent projects the same selected release into proxy and account requests.
+func (p ProfileRevision) UserAgent(version string) string {
+	return WithUserAgentVersion(p.Features.ClientUserAgent(), version)
+}
+
 func userAgentVersion(userAgent string) string {
 	match := versionPattern.FindStringSubmatch(userAgent)
 	if len(match) == 2 {

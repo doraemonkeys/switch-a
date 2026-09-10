@@ -14,11 +14,13 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 
 	"go.uber.org/zap"
 )
 
 type pendingLogin struct {
+	client       accountclient.Operation
 	loginID      string
 	state        string
 	codeVerifier string
@@ -55,7 +57,11 @@ type ChatGPTLoginStatusResponse struct {
 }
 
 // StartChatGPTLogin prepares a ChatGPT OAuth login flow for the admin UI popup.
-func (s *Service) StartChatGPTLogin() (*ChatGPTLoginStartResponse, error) {
+func (s *Service) StartChatGPTLogin(ctx context.Context, sessionID string) (*ChatGPTLoginStartResponse, error) {
+	client, err := s.clientProfiles.Resolve(ctx, sessionID, accountclient.OAuthLogin)
+	if err != nil {
+		return nil, err
+	}
 	state, err := randomURLSafeString(32)
 	if err != nil {
 		return nil, err
@@ -86,6 +92,7 @@ func (s *Service) StartChatGPTLogin() (*ChatGPTLoginStartResponse, error) {
 	authURL.RawQuery = query.Encode()
 
 	if err := s.beginChatGPTLogin(pendingLogin{
+		client:       client,
 		loginID:      loginID,
 		state:        state,
 		codeVerifier: codeVerifier,
@@ -273,7 +280,7 @@ func (s *Service) handleChatGPTOAuthCallback(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	credential, err := s.exchangeAuthorizationCode(r.Context(), code, pending.codeVerifier)
+	credential, err := s.exchangeAuthorizationCode(r.Context(), code, pending.codeVerifier, pending.client)
 	if err != nil {
 		s.mu.Lock()
 		s.deletePendingLoginLocked(pending)
@@ -357,7 +364,7 @@ func (s *Service) cancelPendingLoginFromCallback(state string, now time.Time) {
 	}
 }
 
-func (s *Service) exchangeAuthorizationCode(ctx context.Context, code, codeVerifier string) (*model.ChatGPTProviderCredential, error) {
+func (s *Service) exchangeAuthorizationCode(ctx context.Context, code, codeVerifier string, client accountclient.Operation) (*model.ChatGPTProviderCredential, error) {
 	tokenURL := defaultOAuthIssuer + "/oauth/token"
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
@@ -371,7 +378,7 @@ func (s *Service) exchangeAuthorizationCode(ctx context.Context, code, codeVerif
 		return nil, fmt.Errorf("build oauth token exchange request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", chatGPTOAuthUserAgent)
+	client.Apply(request)
 
 	response, err := s.httpClient.Do(request)
 	if err != nil {
@@ -393,7 +400,7 @@ func (s *Service) exchangeAuthorizationCode(ctx context.Context, code, codeVerif
 		return nil, err
 	}
 
-	snapshot, usageErr := s.fetchChatGPTUsageSnapshot(ctx, credential)
+	snapshot, usageErr := s.fetchChatGPTUsageSnapshot(ctx, credential, client)
 	if usageErr != nil {
 		s.logger.Debug("chatgpt usage snapshot unavailable after oauth exchange",
 			zap.String("account_id", credential.AccountID),

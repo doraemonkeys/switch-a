@@ -91,6 +91,35 @@ afterEach(() => {
 });
 
 describe("useChatGPTCredentialLogin transactions", () => {
+  it("sends the selected credential to OAuth start before opening the login page", async () => {
+    const user = userEvent.setup();
+    const startChatGPTLogin = vi.fn().mockResolvedValue({
+      login_id: "login-a",
+      auth_url: "https://example.com/login-a",
+    });
+    const openWindow = vi.spyOn(window, "open").mockReturnValue(null);
+    const api = {
+      providers: {
+        startChatGPTLogin,
+        getChatGPTLoginStatus: vi.fn().mockResolvedValue({ status: "pending" }),
+      },
+    } as unknown as ApiClient;
+    render(
+      <ApiContext.Provider value={api}>
+        <LoginHarness
+          initialTarget={{ sessionID: "session-a", expectedVersion: 3 }}
+        />
+      </ApiContext.Provider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    expect(startChatGPTLogin).toHaveBeenCalledWith("session-a");
+    expect(openWindow).toHaveBeenCalledWith(
+      "https://example.com/login-a",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
   it("keeps the reauthentication target immutable after its commit starts", async () => {
     const user = userEvent.setup();
     const pendingReauthentication = deferred<CredentialSession>();
@@ -127,6 +156,10 @@ describe("useChatGPTCredentialLogin transactions", () => {
         expected_version: 3,
         credential_login_id: "login-a",
       }),
+    );
+    expect(api.providers.importChatGPTLogin).toHaveBeenCalledWith(
+      "token",
+      "session-a",
     );
     expect(screen.getByTestId("committing")).toHaveTextContent("true");
 
