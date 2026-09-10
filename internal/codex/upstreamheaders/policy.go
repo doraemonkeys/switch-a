@@ -56,9 +56,6 @@ func ForWebSocketTransportAttempt(source http.Header) http.Header {
 	return forAttempt(source, true, false)
 }
 
-// Forward end-to-end headers without a Codex allowlist, preserving session,
-// thread, parent and subagent headers across HTTP/WS so they need no
-// reconstruction from request-body metadata.
 func forAttempt(source http.Header, webSocket, sanitizeProviderIdentity bool) http.Header {
 	nominated := connectionNominations(source)
 	clean := make(http.Header, len(source))
