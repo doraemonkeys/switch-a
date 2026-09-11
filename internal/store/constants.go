@@ -52,7 +52,8 @@ var (
 	// DefaultCircuitDisable is the default circuit breaker disable duration in seconds.
 	DefaultCircuitDisable = durationToSecondsString(defaults.CircuitDisabled)
 	// DefaultMaxBodySize is the default maximum request body size in MB.
-	DefaultMaxBodySize = strconv.FormatInt(defaults.MaxBodySizeMB, 10)
+	DefaultMaxBodySize                = strconv.FormatInt(defaults.MaxBodySizeMB, 10)
+	DefaultWebSocketMaxMessageSizeMiB = strconv.FormatInt(defaults.WebSocketMaxMessageSizeMiB, 10)
 	// DefaultGlobalMaxAttempts is the default maximum number of upstream attempts per request.
 	// 0 means unlimited.
 	DefaultGlobalMaxAttempts = strconv.Itoa(defaults.GlobalMaxAttempts)

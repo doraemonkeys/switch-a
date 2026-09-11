@@ -113,7 +113,7 @@ func TestWebSocketForwarder_Relay_ForwardsAllPreVisibleClientFramesBeforeUpstrea
 			t.Errorf("dial upstream websocket: %v", dialExchange.Err)
 			return
 		}
-		clientConn, err := forwarder.acceptClient(w, r)
+		clientConn, err := forwarder.acceptClient(w, r, defaultWebSocketReadLimit)
 		if err != nil {
 			t.Errorf("accept client websocket: %v", err)
 			return
@@ -288,7 +288,7 @@ func TestWebSocketForwarder_Relay_OnClientVisibleRunsOnce(t *testing.T) {
 		}
 		upstreamConn := dialExchange.Conn
 
-		clientConn, err := fwd.acceptClient(w, r)
+		clientConn, err := fwd.acceptClient(w, r, defaultWebSocketReadLimit)
 		if err != nil {
 			t.Errorf("unexpected client accept error: %v", err)
 			_ = upstreamConn.Close(websocket.StatusGoingAway, "client accept failed")
@@ -389,7 +389,7 @@ func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorBefore
 		}
 		upstreamConn := dialExchange.Conn
 
-		clientConn, err := fwd.acceptClient(w, r)
+		clientConn, err := fwd.acceptClient(w, r, defaultWebSocketReadLimit)
 		if err != nil {
 			t.Errorf("unexpected client accept error: %v", err)
 			_ = upstreamConn.Close(websocket.StatusGoingAway, "client accept failed")
@@ -497,7 +497,7 @@ func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorWithou
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		conn.SetReadLimit(wsReadLimit)
+		conn.SetReadLimit(defaultWebSocketReadLimit)
 		_ = conn.Write(r.Context(), websocket.MessageText, semanticPayload)
 		<-r.Context().Done()
 	}))
@@ -522,7 +522,7 @@ func TestWebSocketForwarder_Relay_SuppressesAllowlistedProviderScopedErrorWithou
 		}
 		upstreamConn := dialExchange.Conn
 
-		clientConn, err := fwd.acceptClient(w, r)
+		clientConn, err := fwd.acceptClient(w, r, defaultWebSocketReadLimit)
 		if err != nil {
 			t.Errorf("unexpected client accept error: %v", err)
 			_ = upstreamConn.Close(websocket.StatusGoingAway, "client accept failed")

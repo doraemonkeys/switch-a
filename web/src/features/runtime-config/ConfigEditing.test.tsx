@@ -64,6 +64,41 @@ describe("configuration editing", () => {
     },
   );
 
+  it("edits and resets the WebSocket message limit in MiB", async () => {
+    const { onSave } = createForm();
+    category("超时与重试");
+    const input = screen.getByLabelText("WebSocket 单条消息上限");
+    expect(input).toHaveValue(128);
+    expect(screen.getByText(/已有连接继续使用原值/)).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "256" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ [K.WEBSOCKET_MAX_MESSAGE_SIZE_MIB]: "256" }),
+      ),
+    );
+    fireEvent.change(input, { target: { value: "128" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith(
+        expect.objectContaining({ [K.WEBSOCKET_MAX_MESSAGE_SIZE_MIB]: "128" }),
+      ),
+    );
+  });
+
+  it.each(["0", "-1", "1.5", "8796093022208"])(
+    "rejects invalid WebSocket message limit %s",
+    (value) => {
+      const { onSave } = createForm();
+      category("超时与重试");
+      const input = screen.getByLabelText("WebSocket 单条消息上限");
+      fireEvent.change(input, { target: { value } });
+      fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(onSave).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not submit edits when confirming a search with Enter", async () => {
     const { onSave } = createForm();
     const user = userEvent.setup();

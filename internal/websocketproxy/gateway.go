@@ -58,6 +58,8 @@ type RequestConfig struct {
 	TrustProxy                 bool
 	UserHeader                 string
 	ProbeClientModel           bool
+	// The same snapshot applies to client reads and every upstream replacement.
+	MaxMessageBytes int64
 }
 
 type RequestInfo struct {
@@ -304,6 +306,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		maxAttempts:         cfg.GlobalMaxAttempts,
 		globalAuthMode:      cfg.GlobalAuthMode,
 		probeClientModel:    cfg.ProbeClientModel,
+		maxMessageBytes:     cfg.MaxMessageBytes,
 		newObserver:         newObserver,
 		applyObservation:    applyObservation,
 		onClientVisible:     onClientVisible,

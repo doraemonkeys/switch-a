@@ -9,6 +9,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/attemptevidence"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responsefacts"
@@ -19,9 +20,7 @@ import (
 
 // WebSocket forwarding constants.
 const (
-	// wsReadLimit caps message size to prevent unbounded memory usage.
-	// 16 MB accommodates large AI payloads (e.g., base64-encoded audio for Realtime API).
-	wsReadLimit = 16 * 1024 * 1024
+	defaultWebSocketReadLimit = defaults.WebSocketMaxMessageSizeMiB * defaults.BytesPerMiB
 
 	webSocketSelectionProbeTotalDuration = 3 * time.Second
 
@@ -109,6 +108,7 @@ func (realDialer) Dial(ctx context.Context, url string, opts *websocket.DialOpti
 // Capture begins only after headers reach their final wire shape, so the record
 // describes the real dial without gaining authority over transport behavior.
 type WebSocketDialRequest struct {
+	MaxMessageBytes     int64
 	HTTPClient          *http.Client
 	URL                 string
 	Headers             http.Header
@@ -485,7 +485,7 @@ func (f *WebSocketForwarder) ForwardObserved(
 		result.TerminalCause = model.TerminalInternalError
 		return result, nil
 	}
-	clientConn, err := f.acceptClient(w, r, downstreamOffer...)
+	clientConn, err := f.acceptClient(w, r, defaultWebSocketReadLimit, downstreamOffer...)
 	if err != nil {
 		_ = dialExchange.Conn.Close(websocket.StatusGoingAway, "client websocket upgrade rejected")
 		result := &WebSocketResult{
@@ -603,13 +603,13 @@ func (f *WebSocketForwarder) dialUpstream(ctx context.Context, request WebSocket
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
-	upstreamConn.SetReadLimit(wsReadLimit)
+	upstreamConn.SetReadLimit(webSocketMessageReadLimit(request.MaxMessageBytes))
 	exchange.Conn = upstreamConn
 	exchange.NegotiatedSubprotocol = upstreamConn.Subprotocol()
 	return exchange
 }
 
-func (f *WebSocketForwarder) acceptClient(w http.ResponseWriter, r *http.Request, subprotocols ...string) (*websocket.Conn, error) {
+func (f *WebSocketForwarder) acceptClient(w http.ResponseWriter, r *http.Request, maxMessageBytes int64, subprotocols ...string) (*websocket.Conn, error) {
 	// Accept the client's WebSocket upgrade only after the provider handshake succeeds.
 	// This avoids hiding upstream handshake failures behind an already-open proxy socket.
 	clientConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -619,8 +619,15 @@ func (f *WebSocketForwarder) acceptClient(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return nil, err
 	}
-	clientConn.SetReadLimit(wsReadLimit)
+	clientConn.SetReadLimit(webSocketMessageReadLimit(maxMessageBytes))
 	return clientConn, nil
+}
+
+func webSocketMessageReadLimit(maxMessageBytes int64) int64 {
+	if maxMessageBytes <= 0 {
+		return defaultWebSocketReadLimit
+	}
+	return maxMessageBytes
 }
 
 func parseWebSocketSubprotocolNegotiation(headers http.Header) (websocketprotocol.Negotiation, error) {

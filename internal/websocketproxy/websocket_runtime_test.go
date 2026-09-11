@@ -24,7 +24,7 @@ func newRuntimeEchoWSServer(t *testing.T) *httptest.Server {
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		conn.SetReadLimit(wsReadLimit)
+		conn.SetReadLimit(defaultWebSocketReadLimit)
 		for {
 			messageType, data, err := conn.Read(r.Context())
 			if err != nil {
@@ -45,7 +45,7 @@ func newRuntimeRecordingWSServer(t *testing.T, received chan<- webSocketReplayMe
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		conn.SetReadLimit(wsReadLimit)
+		conn.SetReadLimit(defaultWebSocketReadLimit)
 		messageType, data, err := conn.Read(r.Context())
 		if err != nil {
 			return

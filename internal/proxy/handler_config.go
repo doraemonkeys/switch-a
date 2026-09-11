@@ -79,6 +79,7 @@ type runtimeConfig struct {
 	stickyTTL                  time.Duration
 	ConversationRecoveryPolicy model.ConversationRecoveryPolicy
 	websocketProbeClientModel  bool
+	websocketMaxMessageBytes   int64
 }
 
 // transportCacheKey isolates the immutable values that determine transport reuse.
@@ -355,7 +356,25 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 		DefaultWebSocketProbeClientModel,
 	)
 
+	cfg.websocketMaxMessageBytes = h.loadWebSocketMaxMessageBytes(ctx)
 	return cfg, nil
+}
+
+func (h *Handler) loadWebSocketMaxMessageBytes(ctx context.Context) int64 {
+	value, err := h.store.GetConfig(ctx, defaults.ConfigKeyWebSocketMaxMessageSizeMiB)
+	sizeMiB := defaults.WebSocketMaxMessageSizeMiB
+	switch {
+	case err != nil:
+		h.logger.Warn("failed to get websocket_max_message_size_mib, using default", zap.Error(err))
+	case value != "":
+		parsed, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil || parsed < 1 || parsed > defaults.MaxWebSocketMessageSizeMiB {
+			h.logger.Warn("invalid websocket_max_message_size_mib, using default", zap.String("value", value))
+		} else {
+			sizeMiB = parsed
+		}
+	}
+	return sizeMiB * defaults.BytesPerMiB
 }
 
 // parseIntOrDefault parses a string to int, returning defaultVal on error.

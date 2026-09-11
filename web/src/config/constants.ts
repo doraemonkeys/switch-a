@@ -269,6 +269,7 @@ export const CONFIG_KEYS = {
   STICKY_TTL: "sticky_ttl",
   CONVERSATION_RECOVERY_POLICY: "conversation_recovery_policy",
   WEBSOCKET_PROBE_CLIENT_MODEL: "websocket_probe_client_model",
+  WEBSOCKET_MAX_MESSAGE_SIZE_MIB: "websocket_max_message_size_mib",
   CIRCUIT_FAILURE: "circuit_failure",
   CIRCUIT_WINDOW: "circuit_window",
   CIRCUIT_DISABLE: "circuit_disable",
@@ -316,6 +317,7 @@ export const DEFAULTS = {
 
   // Request Handling
   MAX_BODY_SIZE_MB: 10,
+  WEBSOCKET_MAX_MESSAGE_SIZE_MIB: 128,
   GLOBAL_MAX_ATTEMPTS: 0, // 0 = unlimited (iterate through all providers)
   PROVIDER_MAX_RETRIES: 0, // 0 = try once, no retry on same provider
   LOG_RETENTION_DAYS: 7,
@@ -355,6 +357,8 @@ export const CONFIG_DEFAULTS = {
 // Form Constraints
 export const FORM_CONSTRAINTS = {
   MIN_POSITIVE: 1,
+  // Largest whole MiB value representable by the Go WebSocket reader.
+  MAX_WEBSOCKET_MESSAGE_SIZE_MIB: 2 ** 43 - 1,
   MIN_ZERO: 0,
   MAX_PROVIDER_RETRIES: 10, // Max value for provider-level max_retries
   MAX_GLOBAL_ATTEMPTS: 20, // Max value for global_max_attempts

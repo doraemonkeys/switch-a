@@ -71,6 +71,7 @@ func (o *WebSocketSessionOrchestrator) executeProviderAttempt(
 	recoveryAttempted := false
 	injectedCredential := prepared.injectedCredential
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
+		MaxMessageBytes:     o.maxMessageBytes,
 		HTTPClient:          prepared.httpClient,
 		URL:                 prepared.upstreamURL,
 		Headers:             prepared.headers,
@@ -488,6 +489,7 @@ func (o *WebSocketSessionOrchestrator) recoverUnauthorizedSameProvider(
 	}
 
 	dialExchange := o.handler.wsForwarder.dialUpstream(ctx, WebSocketDialRequest{
+		MaxMessageBytes:     o.maxMessageBytes,
 		HTTPClient:          prepared.httpClient,
 		URL:                 prepared.upstreamURL,
 		Headers:             prepared.headers,

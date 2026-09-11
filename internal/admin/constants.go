@@ -88,6 +88,7 @@ var validConfigKeys = map[string]bool{
 	"circuit_window":                             true,
 	"circuit_disable":                            true,
 	"max_body_size":                              true,
+	defaults.ConfigKeyWebSocketMaxMessageSizeMiB: true,
 	"global_max_attempts":                        true,
 	"log_retention_days":                         true,
 	defaults.ConfigKeyRootCandidateStrategy:      true,
@@ -145,6 +146,7 @@ var configValidators = map[string]ConfigValidator{
 	"circuit_window":                             validatePositiveIntConfig,
 	"circuit_disable":                            validatePositiveIntConfig,
 	"max_body_size":                              validatePositiveIntConfig,
+	defaults.ConfigKeyWebSocketMaxMessageSizeMiB: validateWebSocketMaxMessageSizeMiB,
 	"global_max_attempts":                        validateNonNegativeIntConfig,
 	"log_retention_days":                         validatePositiveIntConfig,
 	defaults.ConfigKeyRootCandidateStrategy:      validateStrategyConfig,
@@ -167,6 +169,14 @@ func validatePositiveIntConfig(value string) error {
 	}
 	if n <= 0 {
 		return fmt.Errorf("must be a positive integer")
+	}
+	return nil
+}
+
+func validateWebSocketMaxMessageSizeMiB(value string) error {
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n < 1 || n > defaults.MaxWebSocketMessageSizeMiB {
+		return fmt.Errorf("must be an integer between 1 and %d MiB", defaults.MaxWebSocketMessageSizeMiB)
 	}
 	return nil
 }

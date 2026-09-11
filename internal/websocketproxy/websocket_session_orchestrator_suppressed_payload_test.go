@@ -122,7 +122,7 @@ func TestWebSocketSessionOrchestrator_FallsBackToSuppressedPayloadAfterRelaySupp
 		}
 		upstreamConn := dialExchange.Conn
 
-		clientConn, err := fwd.acceptClient(w, r)
+		clientConn, err := fwd.acceptClient(w, r, defaultWebSocketReadLimit)
 		if err != nil {
 			t.Errorf("unexpected client accept error: %v", err)
 			_ = upstreamConn.Close(websocket.StatusGoingAway, "client accept failed")

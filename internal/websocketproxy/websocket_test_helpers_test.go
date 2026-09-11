@@ -439,7 +439,7 @@ func newEchoWSServer(t *testing.T) *httptest.Server {
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		conn.SetReadLimit(wsReadLimit)
+		conn.SetReadLimit(defaultWebSocketReadLimit)
 		for {
 			msgType, data, err := conn.Read(r.Context())
 			if err != nil {
@@ -461,7 +461,7 @@ func newCloseAfterNWSServer(t *testing.T, n int, code websocket.StatusCode, reas
 		if err != nil {
 			return
 		}
-		conn.SetReadLimit(wsReadLimit)
+		conn.SetReadLimit(defaultWebSocketReadLimit)
 		for range n {
 			msgType, data, err := conn.Read(r.Context())
 			if err != nil {
@@ -501,7 +501,7 @@ func newSemanticErrorWSServer(t *testing.T, payload []byte) *httptest.Server {
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		conn.SetReadLimit(wsReadLimit)
+		conn.SetReadLimit(defaultWebSocketReadLimit)
 		if _, _, err := conn.Read(r.Context()); err != nil {
 			return
 		}
@@ -518,7 +518,7 @@ func newRecordingWSServer(t *testing.T, received chan<- webSocketReplayMessage) 
 			return
 		}
 		defer conn.Close(websocket.StatusNormalClosure, "")
-		conn.SetReadLimit(wsReadLimit)
+		conn.SetReadLimit(defaultWebSocketReadLimit)
 		messageType, data, err := conn.Read(r.Context())
 		if err != nil {
 			return

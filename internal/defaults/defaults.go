@@ -79,6 +79,15 @@ const (
 	WebSocketProbeClientModel = true
 )
 
+// WebSocket message sizes are configured in MiB and frozen per connection.
+const (
+	ConfigKeyWebSocketMaxMessageSizeMiB       = "websocket_max_message_size_mib"
+	WebSocketMaxMessageSizeMiB          int64 = 128
+	BytesPerMiB                         int64 = 1024 * 1024
+	// Leave room for the WebSocket reader's extra byte when checking the limit.
+	MaxWebSocketMessageSizeMiB int64 = (1<<63 - 2) / BytesPerMiB
+)
+
 // Circuit breaker defaults.
 const (
 	CircuitFailure  = 3

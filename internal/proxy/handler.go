@@ -426,6 +426,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			TrustProxy:                 cfg.trustProxy,
 			UserHeader:                 cfg.userHeader,
 			ProbeClientModel:           cfg.websocketProbeClientModel,
+			MaxMessageBytes:            cfg.websocketMaxMessageBytes,
 		}, apiType, requestID, startTime)
 		return
 	}

@@ -245,6 +245,17 @@ export const CONFIG_CATEGORIES: readonly ConfigCategory[] = [
             defaultValue: D.MAX_BODY_SIZE_MB,
             min: C.MIN_POSITIVE,
           },
+          {
+            key: K.WEBSOCKET_MAX_MESSAGE_SIZE_MIB,
+            label: "WebSocket 单条消息上限",
+            kind: "number",
+            unit: "MiB",
+            description: "客户端与上游每条完整 WebSocket 消息的大小上限。",
+            defaultValue: D.WEBSOCKET_MAX_MESSAGE_SIZE_MIB,
+            min: C.MIN_POSITIVE,
+            max: C.MAX_WEBSOCKET_MESSAGE_SIZE_MIB,
+            help: "默认 128 MiB。保存后从新建连接生效，已有连接继续使用原值。",
+          },
         ],
       },
       {

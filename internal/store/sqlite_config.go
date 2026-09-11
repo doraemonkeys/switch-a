@@ -49,6 +49,7 @@ func GetDefaultConfigs() map[string]string {
 		"circuit_window":                             DefaultCircuitWindow,
 		"circuit_disable":                            DefaultCircuitDisable,
 		"max_body_size":                              DefaultMaxBodySize,
+		defaults.ConfigKeyWebSocketMaxMessageSizeMiB: DefaultWebSocketMaxMessageSizeMiB,
 		"global_max_attempts":                        DefaultGlobalMaxAttempts,
 		"log_retention_days":                         DefaultLogRetentionDays,
 		defaults.ConfigKeyRootCandidateStrategy:      DefaultRootCandidateStrategy,

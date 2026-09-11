@@ -28,6 +28,7 @@ type webSocketSessionOrchestratorConfig struct {
 	requestDone               <-chan struct{}
 	startTime                 time.Time
 	maxAttempts               int
+	maxMessageBytes           int64
 	globalAuthMode            string
 	probeClientModel          bool
 	newObserver               webSocketObserverFactory
@@ -80,6 +81,7 @@ type WebSocketSessionOrchestrator struct {
 	requestDone               <-chan struct{}
 	startTime                 time.Time
 	retryBudget               wsretry.Budget
+	maxMessageBytes           int64
 	globalAuthMode            string
 	probeClientModel          bool
 	newObserver               webSocketObserverFactory
@@ -137,6 +139,7 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		retryBudget:               wsretry.NewBudget(cfg.maxAttempts),
 		globalAuthMode:            cfg.globalAuthMode,
 		probeClientModel:          cfg.probeClientModel,
+		maxMessageBytes:           webSocketMessageReadLimit(cfg.maxMessageBytes),
 		newObserver:               cfg.newObserver,
 		newSelectionProbeObserver: selectionProbeObserverFactory,
 		applyObservation:          cfg.applyObservation,
@@ -153,6 +156,10 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		probeNow:                  time.Now,
 		requestObservation:        requestobservation.New(cfg.apiType == APITypeCodex),
 	}
+	handler.logger.Debug("websocket.message_limit_applied",
+		zap.String("request_id", cfg.requestID),
+		zap.Int64("max_message_bytes", orchestrator.maxMessageBytes),
+	)
 	orchestrator.replayBuffer.onTransition = orchestrator.logReplayTransition
 	orchestrator.logReplayTransition(orchestrator.replayBuffer.Status())
 	orchestrator.onClientVisible = orchestrator.codexVisibleCallback(cfg.onClientVisible)
@@ -389,7 +396,7 @@ func (o *WebSocketSessionOrchestrator) ensureClientAccepted(
 	if err != nil {
 		return err
 	}
-	clientConn, err := o.handler.wsForwarder.acceptClient(w, r, downstreamOffer...)
+	clientConn, err := o.handler.wsForwarder.acceptClient(w, r, o.maxMessageBytes, downstreamOffer...)
 	if err != nil {
 		return err
 	}
