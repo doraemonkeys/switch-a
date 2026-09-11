@@ -273,14 +273,22 @@ func TestRunnerIsolatesCleanupErrorsAndReportsCookieFailure(t *testing.T) {
 
 func TestOwnerStopCancelsInFlightSweepAndHonorsDeadline(t *testing.T) {
 	release := make(chan struct{})
+	releaseCleaner := sync.OnceFunc(func() { close(release) })
 	started := make(chan struct{})
 	continuity := &fakeContinuityCleaner{
-		blocked: release,
-		onCall:  func() { close(started) },
+		// Cancellation must be the only completion path; releasing a second
+		// ready select case would make the observed result scheduler-dependent.
+		blocked: make(chan struct{}),
+		onCall: func() {
+			close(started)
+			<-release
+		},
 	}
 	events := make(chan Event, 1)
 	runner := newTestRunner(t, &fakeMaintenanceClock{now: time.Now()}, &fakeCatalog{}, continuity, &fakeCookieCleaner{}, &sequenceIDs{}, events)
 	owner := startTestRunner(t, runner, context.Background())
+	// Release before the owner's cleanup joins, including on assertion failure.
+	t.Cleanup(releaseCleaner)
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -291,7 +299,8 @@ func TestOwnerStopCancelsInFlightSweepAndHonorsDeadline(t *testing.T) {
 	if err := owner.Stop(deadline); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop(deadline) = %v", err)
 	}
-	close(release)
+	// Keep the cleaner blocked until Stop has returned its deadline result.
+	releaseCleaner()
 	if err := owner.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop(join) = %v", err)
 	}
