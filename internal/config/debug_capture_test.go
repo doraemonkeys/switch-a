@@ -45,7 +45,7 @@ func TestLoadDebugCaptureDefaults(t *testing.T) {
 
 func TestLoadDebugCaptureFromFile(t *testing.T) {
 	cfg := loadDebugCaptureConfig(t, `
-debug_capture_memory_ceiling_mib: 768
+debug_capture_memory_ceiling_mib: 5120
 debug_capture_max_active_records: 111
 debug_capture_max_active_traces: 112
 debug_capture_max_transitions_per_trace: 13
@@ -54,13 +54,13 @@ debug_capture_max_concurrent_downloads: 15
 debug_capture_detail_preview_bytes: 16000
 debug_capture_detail_event_limit: 17
 debug_capture_download_token_ttl_seconds: 18
-debug_capture_max_records_per_provider: 19
+debug_capture_max_records_per_provider: 100
 debug_capture_chunk_bytes: 20000
 debug_capture_export_line_bytes: 40000
 `)
 
 	assertDebugCaptureConfig(t, cfg, expectedDebugCaptureConfig{
-		memoryCeilingBytes:     768 * bytesPerMiB,
+		memoryCeilingBytes:     5120 * bytesPerMiB,
 		maxActiveRecords:       111,
 		maxActiveTraces:        112,
 		maxTransitionsPerTrace: 13,
@@ -69,7 +69,7 @@ debug_capture_export_line_bytes: 40000
 		detailPreviewBytes:     16000,
 		detailEventLimit:       17,
 		downloadTokenTTL:       18 * time.Second,
-		maxRecordsPerProvider:  19,
+		maxRecordsPerProvider:  100,
 		chunkBytes:             20000,
 		exportLineBytes:        40000,
 	})
@@ -77,7 +77,7 @@ debug_capture_export_line_bytes: 40000
 
 func TestLoadDebugCaptureFromEnvironment(t *testing.T) {
 	values := map[string]string{
-		EnvDebugCaptureMemoryCeilingMiB:        "1024",
+		EnvDebugCaptureMemoryCeilingMiB:        "5120",
 		EnvDebugCaptureMaxActiveRecords:        "21",
 		EnvDebugCaptureMaxActiveTraces:         "22",
 		EnvDebugCaptureMaxTransitionsPerTrace:  "23",
@@ -86,7 +86,7 @@ func TestLoadDebugCaptureFromEnvironment(t *testing.T) {
 		EnvDebugCaptureDetailPreviewBytes:      "26000",
 		EnvDebugCaptureDetailEventLimit:        "27",
 		EnvDebugCaptureDownloadTokenTTLSeconds: "28",
-		EnvDebugCaptureMaxRecordsPerProvider:   "29",
+		EnvDebugCaptureMaxRecordsPerProvider:   "100",
 		EnvDebugCaptureChunkBytes:              "30000",
 		EnvDebugCaptureExportLineBytes:         "50000",
 	}
@@ -110,7 +110,7 @@ debug_capture_export_line_bytes: 1
 `)
 
 	assertDebugCaptureConfig(t, cfg, expectedDebugCaptureConfig{
-		memoryCeilingBytes:     1024 * bytesPerMiB,
+		memoryCeilingBytes:     5120 * bytesPerMiB,
 		maxActiveRecords:       21,
 		maxActiveTraces:        22,
 		maxTransitionsPerTrace: 23,
@@ -119,7 +119,7 @@ debug_capture_export_line_bytes: 1
 		detailPreviewBytes:     26000,
 		detailEventLimit:       27,
 		downloadTokenTTL:       28 * time.Second,
-		maxRecordsPerProvider:  29,
+		maxRecordsPerProvider:  100,
 		chunkBytes:             30000,
 		exportLineBytes:        50000,
 	})

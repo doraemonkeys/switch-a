@@ -191,6 +191,16 @@ export function StartCaptureForm({
             </span>
           </label>
         </div>
+        <p className="text-sm text-text-secondary">
+          Keeps the newest completed exchanges per Provider. Older completed
+          exchanges are evicted when the count or memory limit is reached. A
+          WebSocket connection is one exchange, regardless of its message count.
+        </p>
+        <p className="text-sm text-text-secondary">
+          To raise the process ceiling, set{" "}
+          <code>SWITCHA_DEBUG_CAPTURE_MEMORY_CEILING_MIB</code> on the server
+          and restart it. For 5 GiB, set it to 5120 and enter 5120 MiB above.
+        </p>
       </section>
 
       <section className="rounded-xl border border-warning/30 bg-warning-light p-5">

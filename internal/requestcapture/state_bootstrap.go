@@ -215,7 +215,7 @@ func (g *gatewayState) beginRecordLocked(
 		credentialEvidence:   raw.CredentialEvidence,
 		sensitiveHeaderNames: requestResult.SensitiveNames,
 		redactAllHeaders:     requestResult.RedactAll,
-		messageByID:          make(map[string]*messageState),
+		messageByLineage:     make(map[uint64]*messageState),
 		summary:              summary,
 	}
 	record.boundSession.Store(session)
@@ -547,7 +547,7 @@ func (r *recordState) messageReadLocked(input MessageRead) MessageRef {
 		r.gateway.nextLineage = lineage.lineage
 	}
 	r.messages = append(r.messages, message)
-	r.messageByID[messageID] = message
+	r.messageByLineage[lineage.lineage] = message
 	if !complete {
 		r.markOverflowLocked()
 	}
@@ -566,12 +566,7 @@ func (r *recordState) consumeDeniedMessageLineageLocked(pending *pendingLineageS
 }
 
 func (r *recordState) hasMessageLineageLocked(lineage uint64) bool {
-	for _, message := range r.messages {
-		if message != nil && message.lineage == lineage {
-			return true
-		}
-	}
-	return false
+	return r.messageByLineage[lineage] != nil
 }
 
 func (r *transitionRecorderState) finishLocked(outcome Outcome) {

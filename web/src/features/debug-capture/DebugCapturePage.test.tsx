@@ -113,6 +113,96 @@ describe("DebugCapturePage", () => {
     );
   });
 
+  it("starts 100 records with 5 GiB when the server ceiling permits it", async () => {
+    const user = userEvent.setup();
+    const api = createMockApiClient();
+    const retainedBytes = 5120 * MIB;
+    vi.mocked(api.debugCapture.status).mockResolvedValue({
+      ...stoppedStatus,
+      process_memory: {
+        ...stoppedStatus.process_memory,
+        ceiling_bytes: retainedBytes,
+      },
+    });
+    vi.mocked(api.providers.list).mockResolvedValue([provider]);
+    vi.mocked(api.debugCapture.start).mockResolvedValue({
+      ...sessionInfo,
+      completed_records_per_provider: 100,
+      retained_bytes_limit: retainedBytes,
+    });
+
+    renderDebugPage(api);
+    await user.click(
+      await screen.findByRole("checkbox", { name: /Provider A/i }),
+    );
+    const records = screen.getByRole("spinbutton", {
+      name: /Completed records per Provider/,
+    });
+    const memory = screen.getByRole("spinbutton", {
+      name: /Retained memory limit/,
+    });
+    await user.clear(records);
+    await user.type(records, "100");
+    await user.clear(memory);
+    await user.type(memory, "5120");
+    expect(memory).toBeValid();
+    expect(screen.getByText(/For 5 GiB, set it to 5120/)).toBeVisible();
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /I understand and accept the raw payload risk/i,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Start Debug Capture" }),
+    );
+    await waitFor(() =>
+      expect(api.debugCapture.start).toHaveBeenCalledWith({
+        provider_ids: ["provider-a"],
+        completed_records_per_provider: 100,
+        retained_bytes_limit: retainedBytes,
+        acknowledge_raw_payload_risk: true,
+      }),
+    );
+  });
+
+  it("distinguishes cumulative exchanges from retained records after eviction", async () => {
+    const api = createMockApiClient();
+    vi.mocked(api.debugCapture.status).mockResolvedValue({
+      ...activeStatus,
+      session: {
+        ...activeStatus.session!,
+        completed_records_per_provider: 100,
+        completed_record_count: 100,
+        active_record_count: 2,
+        evicted_record_count: 25,
+      },
+    });
+    vi.mocked(api.debugCapture.listRecords).mockResolvedValue(recordsPage);
+    renderDebugPage(api);
+
+    const metric = await screen.findByText("Total captured exchanges");
+    expect(metric.parentElement).toHaveTextContent("127");
+    expect(metric.parentElement).toHaveTextContent(
+      "100 completed retained \u00b7 2 active \u00b7 25 evicted",
+    );
+    expect(screen.getByText(/Rolling retention keeps up to 100/)).toBeVisible();
+    expect(
+      screen.getByText(/Each WebSocket connection counts as one exchange/),
+    ).toBeVisible();
+    vi.mocked(api.debugCapture.createExport).mockResolvedValue({
+      export_id: EXPORT_ID,
+      session_id: "session-a",
+      record_count: 102,
+      expires_at: "2099-08-01T00:05:00Z",
+      download_url: EXPORT_DOWNLOAD_URL,
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Prepare all" }));
+    expect(
+      await screen.findByText(/Ready to download all 102 records/),
+    ).toBeVisible();
+  });
+
   it("shows orthogonal completeness, bounded previews, and native download", async () => {
     const user = userEvent.setup();
     const api = createMockApiClient();

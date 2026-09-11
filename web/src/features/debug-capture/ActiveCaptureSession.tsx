@@ -44,9 +44,20 @@ function CaptureMetrics({ status, session }: ActiveCaptureSessionProps) {
         detail={"Limit " + formatBytes(session.retained_bytes_limit)}
       />
       <MetricCard
-        label="Records"
-        value={String(session.completed_record_count)}
-        detail={session.active_record_count + " active"}
+        label="Total captured exchanges"
+        value={String(
+          session.completed_record_count +
+            session.active_record_count +
+            session.evicted_record_count,
+        )}
+        detail={
+          session.completed_record_count +
+          " completed retained · " +
+          session.active_record_count +
+          " active · " +
+          session.evicted_record_count +
+          " evicted"
+        }
       />
       <MetricCard
         label="Gateway traces"
@@ -121,7 +132,7 @@ export function ActiveCaptureSession({
     }
   };
 
-  const capturedRecordCount =
+  const retainedRecordCount =
     session.active_record_count + session.completed_record_count;
 
   return (
@@ -173,10 +184,17 @@ export function ActiveCaptureSession({
       </section>
 
       <CaptureMetrics status={status} session={session} />
+      <p className="text-sm text-text-secondary">
+        Rolling retention keeps up to {session.completed_records_per_provider}{" "}
+        completed exchanges per Provider within the memory limit. Older
+        completed exchanges are evicted as new data arrives. Each WebSocket
+        connection counts as one exchange until it closes; its messages do not
+        increase the exchange count.
+      </p>
 
       <CaptureExportPanel
         sessionId={session.session_id}
-        totalRecords={capturedRecordCount}
+        totalRecords={retainedRecordCount}
         selectedRecordIds={selectedRecordIds}
       />
 

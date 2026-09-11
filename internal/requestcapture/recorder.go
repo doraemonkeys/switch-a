@@ -105,9 +105,11 @@ type recordState struct {
 	sensitiveHeaderNames                                 []string
 	redactAllHeaders, responseObserved, stateFaultLogged bool
 	messages                                             []*messageState
-	messageByID                                          map[string]*messageState
-	observedBytes                                        int64
-	writtenBytes                                         int64
+	// Numeric lineage avoids scanning a growing WebSocket transcript while holding
+	// the session lock, which would stall unrelated capture and proxy operations.
+	messageByLineage map[uint64]*messageState
+	observedBytes    int64
+	writtenBytes     int64
 }
 
 type messageState struct {
@@ -577,15 +579,8 @@ func (r *recordState) messageResultLocked(ref MessageRef, result MessageResult) 
 		return
 	}
 	session := r.session
-	var message *messageState
-	for _, candidate := range r.messages {
-		if candidate != nil && candidate.sequence == ref.sequence &&
-			candidate.lineage == ref.lineage {
-			message = candidate
-			break
-		}
-	}
-	if message == nil || message.resultSet {
+	message := r.messageByLineage[ref.lineage]
+	if message == nil || message.sequence != ref.sequence || message.resultSet {
 		return
 	}
 	disposition, dispositionValid := canonicalMessageDisposition(result.Disposition)

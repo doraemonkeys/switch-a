@@ -553,7 +553,7 @@ func (s *sessionState) releaseRecordLocked(record *recordState) {
 	record.responseBody.value = nil
 	messages := record.messages
 	record.messages = nil
-	record.messageByID = nil
+	record.messageByLineage = nil
 
 	releaseBlobLocked(requestBody)
 	releaseBlobLocked(responseBody)
