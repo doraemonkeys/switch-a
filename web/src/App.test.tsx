@@ -359,7 +359,7 @@ describe("App", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: "Internal Error Detection" }),
+      await screen.findByRole("heading", { name: "Error detection" }),
     ).toBeInTheDocument();
     const editorHeading = await screen.findByRole("heading", {
       name: "Create detection rule",

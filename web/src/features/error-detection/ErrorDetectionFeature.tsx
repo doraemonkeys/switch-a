@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { RefreshCw, ShieldAlert } from "lucide-react";
+import {
+  DetectionWorkspaceHeader,
+  type DetectionWorkspace,
+} from "./components/DetectionWorkspaceHeader";
+import "./error-detection.css";
 import { useAPICatalog } from "@/api";
 import type { InternalErrorRule, InternalErrorRuleSpec } from "./contracts";
 import { CONFIG_KEYS } from "@/config/constants";
@@ -46,47 +50,6 @@ function createSession(prefill?: ErrorDetectionPrefill): EditorSession {
 function editSession(rule: InternalErrorRule): EditorSession {
   const draft = ruleToDraft(rule);
   return { mode: "edit", ruleID: rule.id, baseline: draft, draft };
-}
-
-function FeatureHero({
-  busy,
-  refreshing,
-  onRefresh,
-}: {
-  readonly busy: boolean;
-  readonly refreshing: boolean;
-  readonly onRefresh: () => void;
-}) {
-  return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-border bg-white p-6 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex items-start gap-3">
-        <div className="rounded-xl border border-primary/10 bg-primary-light/40 p-3">
-          <ShieldAlert className="h-6 w-6 text-primary" aria-hidden="true" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-            Internal Error Detection
-          </h1>
-          <p className="mt-1.5 max-w-3xl text-sm text-text-secondary">
-            Match keywords only in protocol-recognized error envelopes, then
-            pass through, retry the same provider, or retry before switching.
-          </p>
-        </div>
-      </div>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={onRefresh}
-        className="btn btn-secondary"
-      >
-        <RefreshCw
-          className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-          aria-hidden="true"
-        />
-        Refresh
-      </button>
-    </section>
-  );
 }
 
 function FeatureFeedback({
@@ -162,6 +125,7 @@ export interface ErrorDetectionFeatureProps {
 }
 
 export function ErrorDetectionFeature({ prefill }: ErrorDetectionFeatureProps) {
+  const [workspace, setWorkspace] = useState<DetectionWorkspace>("rules");
   const catalogState = useAPICatalog();
   const providersState = useProviders();
   const configState = useConfig();
@@ -294,8 +258,13 @@ export function ErrorDetectionFeature({ prefill }: ErrorDetectionFeatureProps) {
   }
 
   return (
-    <div className="space-y-5">
-      <FeatureHero
+    <div className="error-detection space-y-5">
+      <DetectionWorkspaceHeader
+        workspace={workspace}
+        onWorkspaceChange={setWorkspace}
+        enabledCount={rules.filter((rule) => rule.enabled).length}
+        ruleCount={rules.length}
+        loaded={resources.rulesResource !== null}
         busy={busy}
         refreshing={resources.pendingOperation === "refresh"}
         onRefresh={() => void refreshAll()}
@@ -327,65 +296,72 @@ export function ErrorDetectionFeature({ prefill }: ErrorDetectionFeatureProps) {
         </section>
       )}
 
-      {catalog && editor && (
-        <RuleEditor
-          mode={editor.mode}
-          draft={editor.draft}
-          baseline={editor.baseline}
-          catalog={catalog}
-          providers={providersState.providers}
-          providersLoading={providersState.loading}
-          providersError={providersState.error}
-          errors={draftErrors}
-          submitError={submitError}
-          busy={busy}
-          globalMaxAttempts={globalMaxAttempts}
-          configUnavailable={Boolean(configState.error)}
-          onChange={changeDraft}
-          onSubmit={() => void saveRule()}
-          onCancel={closeEditor}
-        />
-      )}
+      <div hidden={workspace !== "rules"}>
+        {catalog && editor && (
+          <RuleEditor
+            mode={editor.mode}
+            draft={editor.draft}
+            baseline={editor.baseline}
+            catalog={catalog}
+            providers={providersState.providers}
+            providersLoading={providersState.loading}
+            providersError={providersState.error}
+            errors={draftErrors}
+            submitError={submitError}
+            busy={busy}
+            globalMaxAttempts={globalMaxAttempts}
+            configUnavailable={Boolean(configState.error)}
+            onChange={changeDraft}
+            onSubmit={() => void saveRule()}
+            onCancel={closeEditor}
+          />
+        )}
 
-      {catalog && (
-        <RuleList
-          rules={rules}
-          ruleRevision={ruleRevision}
-          catalog={catalog}
-          providers={providersState.providers}
-          stats={resources.stats}
-          statsLoading={resources.statsLoading}
-          statsError={resources.statsError}
-          loading={resources.rulesLoading}
-          error={resources.rulesError}
-          busy={busy}
-          canCreate={resources.rulesResource !== null}
-          onCreate={() => {
-            setEditor(createSession(prefill));
-            setDraftErrors({});
-            setSubmitError(null);
-          }}
-          onEdit={(rule) => {
-            setEditor(editSession(rule));
-            setDraftErrors({});
-            setSubmitError(null);
-          }}
-          onDelete={setDeleteTarget}
-          onToggle={toggleRule}
-          onReorder={reorderRules}
-        />
-      )}
+        <div hidden={editor !== null}>
+          {catalog && (
+            <RuleList
+              rules={rules}
+              ruleRevision={ruleRevision}
+              catalog={catalog}
+              providers={providersState.providers}
+              stats={resources.stats}
+              statsLoading={resources.statsLoading}
+              statsError={resources.statsError}
+              loading={resources.rulesLoading}
+              error={resources.rulesError}
+              busy={busy}
+              canCreate={resources.rulesResource !== null}
+              onCreate={() => {
+                setEditor(createSession(prefill));
+                setDraftErrors({});
+                setSubmitError(null);
+              }}
+              onEdit={(rule) => {
+                setEditor(editSession(rule));
+                setDraftErrors({});
+                setSubmitError(null);
+              }}
+              onDelete={setDeleteTarget}
+              onToggle={toggleRule}
+              onReorder={reorderRules}
+            />
+          )}
+        </div>
+      </div>
 
-      {catalog && resources.rulesResource && (
-        <TestMessagePanel
-          catalog={catalog}
-          providers={providersState.providers}
-          prefill={prefill}
-          captureSource={debugCaptureSource}
-          disabled={busy}
-          onTest={resources.testMessage}
-        />
-      )}
+      <div hidden={workspace !== "test"}>
+        {catalog && resources.rulesResource && (
+          <TestMessagePanel
+            catalog={catalog}
+            ruleSet={resources.rulesResource.value}
+            providers={providersState.providers}
+            prefill={prefill}
+            captureSource={debugCaptureSource}
+            disabled={busy}
+            onTest={resources.testMessage}
+          />
+        )}
+      </div>
 
       <ActionDialog
         open={deleteTarget !== null}

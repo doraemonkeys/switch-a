@@ -100,6 +100,33 @@ function renderFeature(api: ApiClient) {
 }
 
 describe("ErrorDetectionFeature", () => {
+  it("keeps editor and test drafts when switching workspaces and restores the editor invoker", async () => {
+    const user = userEvent.setup();
+    renderFeature(createFeatureApi());
+    const edit = await screen.findByRole("button", {
+      name: "Edit Codex capacity",
+    });
+    expect(
+      screen.queryByRole("button", { name: "Analyze message" }),
+    ).not.toBeInTheDocument();
+    await user.click(edit);
+    const name = screen.getByLabelText("Rule name");
+    expect(name).toHaveFocus();
+    await user.clear(name);
+    await user.type(name, "Retained draft");
+    await user.click(screen.getByRole("button", { name: "Test Message" }));
+    const body = screen.getByLabelText("Response body");
+    await user.type(body, "a response to keep");
+    await user.click(screen.getByRole("button", { name: /^Rules/ }));
+    expect(name).toBeVisible();
+    expect(name).toHaveValue("Retained draft");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(edit).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Test Message" }));
+    expect(body).toBeVisible();
+    expect(body).toHaveValue("a response to keep");
+  });
+
   it("creates a normalized preset draft with the last received ETag", async () => {
     const user = userEvent.setup();
     const api = createFeatureApi();

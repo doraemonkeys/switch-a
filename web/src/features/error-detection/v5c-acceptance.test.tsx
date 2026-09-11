@@ -280,9 +280,11 @@ describe("V5C Error Detection accessibility acceptance", () => {
     expect(deleteDialog).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add rule" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Analyze message" }),
+      screen.getByRole("button", { name: "Add rule", hidden: true }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Analyze message", hidden: true }),
     ).toBeDisabled();
     expect(api.errorDetection.rules.delete).toHaveBeenCalledWith(
       updatedRule.id,
@@ -461,9 +463,11 @@ describe("V5C Error Detection recovery and Test Message acceptance", () => {
     await waitFor(() => {
       expect(editorForm).toHaveAttribute("aria-busy", "true");
       expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Add rule" })).toBeDisabled();
       expect(
-        screen.getByRole("button", { name: "Analyze message" }),
+        screen.getByRole("button", { name: "Add rule", hidden: true }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Analyze message", hidden: true }),
       ).toBeDisabled();
     });
     const updateCalls = vi.mocked(api.errorDetection.rules.update).mock.calls;
@@ -486,6 +490,7 @@ describe("V5C Error Detection recovery and Test Message acceptance", () => {
     vi.mocked(api.errorDetection.testMessage).mockReturnValue(analysis.promise);
     renderFeature(api);
 
+    await user.click(screen.getByRole("button", { name: "Test Message" }));
     const analyzeButton = await screen.findByRole("button", {
       name: "Analyze message",
     });

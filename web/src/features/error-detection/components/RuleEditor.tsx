@@ -1,5 +1,5 @@
-import { useId, useState, type FormEvent } from "react";
-import { AlertTriangle, Sparkles } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { AlertTriangle, ArrowLeft, Sparkles } from "lucide-react";
 import {
   findBuiltInAPIType,
   isValidCustomAPIType,
@@ -454,7 +454,7 @@ function RuleActionFields({
           </label>
         )}
         {retryAction && (
-          <label className="space-y-1 text-sm text-text-secondary">
+          <label className="space-y-1 text-sm text-text-secondary sm:col-span-2">
             <span>When an error is already streaming</span>
             <select
               className="input"
@@ -472,7 +472,7 @@ function RuleActionFields({
               }
             >
               <option value="disconnect_client">
-                Disconnect and let the client retry (Recommended)
+                Disconnect for client retry
               </option>
               <option value="commit_current">
                 Keep current pass-through behavior
@@ -551,14 +551,24 @@ export function RuleEditor({
   onSubmit,
   onCancel,
 }: RuleEditorProps) {
+  const editorRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const invoker = document.activeElement;
+    editorRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+    return () => {
+      if (invoker instanceof HTMLElement && invoker.isConnected)
+        invoker.focus();
+    };
+  }, []);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onSubmit();
   }
 
   return (
-    <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-      <div className="mb-5 flex items-start justify-between gap-4">
+    <section ref={editorRef} className="detection-editor">
+      <div className="detection-editor-header">
         <div>
           <h2 className="text-lg font-semibold text-text-primary">
             {mode === "create"
@@ -566,98 +576,118 @@ export function RuleEditor({
               : "Edit detection rule"}
           </h2>
           <p className="mt-1 text-sm text-text-secondary">
-            Only structured protocol error fields are matched. Ordinary output
-            is never scanned.
+            Define the matching conditions and the response in one place.
           </p>
         </div>
-        <span className="rounded-full bg-bg-secondary px-2.5 py-1 text-xs text-text-muted">
-          Unsaved draft
-        </span>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="btn btn-ghost btn-sm"
+        >
+          <ArrowLeft size={15} aria-hidden="true" />
+          Back to rules
+        </button>
       </div>
 
-      <form onSubmit={handleSubmit} aria-busy={busy} className="space-y-6">
-        <PresetPicker
-          draft={draft}
-          baseline={baseline}
-          catalog={catalog}
-          copy={presetCopy}
-          disabled={busy}
-          onApply={onChange}
-        />
-
-        <RuleIdentityFields
-          draft={draft}
-          catalog={catalog}
-          errors={errors}
-          busy={busy}
-          onChange={onChange}
-        />
-
-        <ScopeFields
-          draft={draft}
-          providers={providers}
-          providersLoading={providersLoading}
-          providersError={providersError}
-          busy={busy}
-          error={errors.target}
-          onChange={onChange}
-        />
-
-        <KeywordMatchFields
-          draft={draft}
-          error={errors.keywords}
-          busy={busy}
-          onChange={onChange}
-        />
-
-        <RuleActionFields
-          draft={draft}
-          errors={errors}
-          busy={busy}
-          globalMaxAttempts={globalMaxAttempts}
-          configUnavailable={configUnavailable}
-          onChange={onChange}
-        />
-
-        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-bg-secondary p-3">
-          <input
-            type="checkbox"
-            checked={draft.enabled}
+      <form onSubmit={handleSubmit} aria-busy={busy}>
+        <details className="detection-editor-presets" open={mode === "create"}>
+          <summary>Start from a preset</summary>
+          <PresetPicker
+            draft={draft}
+            baseline={baseline}
+            catalog={catalog}
+            copy={presetCopy}
             disabled={busy}
-            onChange={(event) =>
-              onChange({ ...draft, enabled: event.target.checked })
-            }
+            onApply={onChange}
           />
-          <span className="text-sm text-text-primary">
-            <strong className="block">Enabled</strong>
-            <span className="text-xs text-text-muted">
-              Disabled rules remain ordered and editable but never affect
-              traffic.
-            </span>
-          </span>
-        </label>
+        </details>
+        <div className="detection-editor-grid">
+          <div className="detection-editor-section space-y-5">
+            <h3 className="detection-section-title">
+              <span className="detection-step">1</span>Match conditions
+            </h3>
+            <RuleIdentityFields
+              draft={draft}
+              catalog={catalog}
+              errors={errors}
+              busy={busy}
+              onChange={onChange}
+            />
 
+            <ScopeFields
+              draft={draft}
+              providers={providers}
+              providersLoading={providersLoading}
+              providersError={providersError}
+              busy={busy}
+              error={errors.target}
+              onChange={onChange}
+            />
+
+            <KeywordMatchFields
+              draft={draft}
+              error={errors.keywords}
+              busy={busy}
+              onChange={onChange}
+            />
+          </div>
+          <div className="detection-editor-section space-y-5">
+            <h3 className="detection-section-title">
+              <span className="detection-step">2</span>Response behavior
+            </h3>
+            <RuleActionFields
+              draft={draft}
+              errors={errors}
+              busy={busy}
+              globalMaxAttempts={globalMaxAttempts}
+              configUnavailable={configUnavailable}
+              onChange={onChange}
+            />
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-bg-secondary p-3">
+              <input
+                type="checkbox"
+                checked={draft.enabled}
+                disabled={busy}
+                onChange={(event) =>
+                  onChange({ ...draft, enabled: event.target.checked })
+                }
+              />
+              <span className="text-sm text-text-primary">
+                <strong className="block">Enabled</strong>
+                <span className="text-xs text-text-muted">
+                  Disabled rules remain ordered and editable but never affect
+                  traffic.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
         {submitError && (
           <div
             role="alert"
-            className="rounded-xl bg-danger/5 p-3 text-sm text-danger"
+            className="mx-7 mb-4 rounded-lg bg-danger/5 p-3 text-sm text-danger"
           >
             {submitError}
           </div>
         )}
 
-        <div className="flex justify-end gap-3 border-t border-border pt-4">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onCancel}
-            className="btn btn-secondary"
-          >
-            Cancel
-          </button>
-          <button type="submit" disabled={busy} className="btn btn-primary">
-            {submitLabel(mode, busy)}
-          </button>
+        <div className="detection-editor-footer">
+          <span className="text-xs text-text-secondary">Unsaved draft</span>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onCancel}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button type="submit" disabled={busy} className="btn btn-primary">
+              {submitLabel(mode, busy)}
+            </button>
+          </div>
         </div>
       </form>
     </section>

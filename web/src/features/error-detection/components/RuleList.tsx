@@ -1,9 +1,9 @@
 import {
   ArrowDown,
   ArrowUp,
-  Pencil,
+  ArrowRight,
+  Repeat2,
   Plus,
-  Power,
   RefreshCw,
   Trash2,
 } from "lucide-react";
@@ -28,11 +28,39 @@ function formatHitCount(value: string): string {
   }
 }
 
-function actionLabel(rule: InternalErrorRule): string {
-  if (rule.action.type === "passthrough") return "Pass through";
-  return rule.action.type === "retry_only"
-    ? `Retry only · ${rule.action.max_retries}`
-    : `Retry then switch · ${rule.action.max_retries}`;
+function RuleActionSummary({ rule }: { rule: InternalErrorRule }) {
+  const action = rule.action;
+  if (action.type === "passthrough") {
+    return (
+      <div className="detection-rule-action">
+        <strong>
+          <ArrowRight size={14} aria-hidden="true" />
+          Pass through
+        </strong>
+        <p>Return the upstream error</p>
+      </div>
+    );
+  }
+  return (
+    <div className="detection-rule-action">
+      <strong>
+        <Repeat2 size={14} aria-hidden="true" />
+        {action.type === "retry_only"
+          ? "Retry same provider"
+          : "Retry, then switch"}
+      </strong>
+      <p>
+        Up to {action.max_retries}{" "}
+        {action.max_retries === 1 ? "retry" : "retries"}
+        {action.type === "retry_then_switch" && (
+          <>
+            <br />
+            Then try another provider
+          </>
+        )}
+      </p>
+    </div>
+  );
 }
 
 function APITypeLabel({
@@ -83,17 +111,22 @@ function ScopeLabel({
 function RuleStats({
   stat,
   loading,
+  available,
 }: {
   stat: InternalErrorRuleStat | undefined;
   loading: boolean;
+  available: boolean;
 }) {
   if (!stat && loading)
     return <span className="text-text-muted">Loading…</span>;
+  if (!available)
+    return <span className="text-xs text-text-muted">Unavailable</span>;
   return (
     <div>
       <span className="font-mono text-sm text-text-primary">
         {formatHitCount(stat?.hit_count ?? "0")}
       </span>
+      <span className="ml-1 text-xs text-text-muted">hits</span>
       <span className="mt-1 block text-xs text-text-muted">
         {stat?.last_hit_at
           ? `Last hit ${new Date(stat.last_hit_at).toLocaleString()}`
@@ -111,6 +144,7 @@ interface RuleRowProps {
   readonly providerByID: ReadonlyMap<string, Provider>;
   readonly stat?: InternalErrorRuleStat;
   readonly statsLoading: boolean;
+  readonly statsAvailable: boolean;
   readonly busy: boolean;
   readonly onEdit: (rule: InternalErrorRule) => void;
   readonly onDelete: (rule: InternalErrorRule) => void;
@@ -126,6 +160,7 @@ function RuleRow({
   providerByID,
   stat,
   statsLoading,
+  statsAvailable,
   busy,
   onEdit,
   onDelete,
@@ -146,103 +181,90 @@ function RuleRow({
   }
 
   return (
-    <tr className="align-top transition-colors hover:bg-bg-secondary/50">
-      <td className="px-4 py-3">
-        <span className="text-xs font-semibold text-text-muted">
-          #{index + 1}
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <span
-          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-            rule.enabled
-              ? "bg-success-light text-success-dark"
-              : "bg-bg-secondary text-text-secondary"
-          }`}
-        >
-          {rule.enabled ? "Enabled" : "Disabled"}
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <strong className="block text-sm text-text-primary">{rule.name}</strong>
-        <span className="mt-1 block text-xs text-text-muted">
-          <ScopeLabel rule={rule} providerByID={providerByID} />
-        </span>
-      </td>
-      <td className="px-4 py-3 text-sm text-text-secondary">
-        <APITypeLabel catalog={catalog} apiType={rule.api_type} />
-      </td>
-      <td className="max-w-72 px-4 py-3">
-        <div className="flex flex-wrap gap-1.5">
-          {rule.keywords.map((keyword) => (
-            <span
-              key={keyword}
-              className="rounded-md border border-border bg-bg-tertiary px-2 py-0.5 font-mono text-xs text-text-primary"
-            >
-              {keyword}
-            </span>
-          ))}
-        </div>
-        <span className="mt-1 block text-xs uppercase tracking-wide text-text-muted">
-          Match {rule.match_mode}
-        </span>
-      </td>
-      <td className="px-4 py-3 text-sm text-text-secondary">
-        {actionLabel(rule)}
-      </td>
-      <td className="px-4 py-3 text-sm">
-        <RuleStats stat={stat} loading={statsLoading} />
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center justify-end gap-1">
+    <li className="detection-rule">
+      <div className="detection-rule-order">
+        <span>#{index + 1}</span>
+        <div className="detection-order-buttons">
           <button
             type="button"
             disabled={busy || index === 0}
             onClick={(event) => void move(-1, event.currentTarget)}
-            className="rounded-md p-2 text-text-muted hover:bg-bg-hover hover:text-primary disabled:opacity-30"
+            className="detection-icon-button"
             aria-label={`Move ${rule.name} up`}
+            title="Move up"
           >
-            <ArrowUp className="h-4 w-4" aria-hidden="true" />
+            <ArrowUp size={12} aria-hidden="true" />
           </button>
           <button
             type="button"
             disabled={busy || index === rules.length - 1}
             onClick={(event) => void move(1, event.currentTarget)}
-            className="rounded-md p-2 text-text-muted hover:bg-bg-hover hover:text-primary disabled:opacity-30"
+            className="detection-icon-button"
             aria-label={`Move ${rule.name} down`}
+            title="Move down"
           >
-            <ArrowDown className="h-4 w-4" aria-hidden="true" />
+            <ArrowDown size={12} aria-hidden="true" />
           </button>
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="detection-rule-title">
+          <strong>{rule.name}</strong>
           <button
             type="button"
             disabled={busy}
             onClick={() => void onToggle(rule)}
-            className="rounded-md p-2 text-text-muted hover:bg-bg-hover hover:text-warning-dark disabled:opacity-50"
+            className="detection-state"
+            data-enabled={rule.enabled}
             aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`}
+            title={rule.enabled ? "Disable rule" : "Enable rule"}
           >
-            <Power className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onEdit(rule)}
-            className="rounded-md p-2 text-text-muted hover:bg-primary-light hover:text-primary disabled:opacity-50"
-            aria-label={`Edit ${rule.name}`}
-          >
-            <Pencil className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onDelete(rule)}
-            className="rounded-md p-2 text-text-muted hover:bg-danger-light hover:text-danger disabled:opacity-50"
-            aria-label={`Delete ${rule.name}`}
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            <span aria-hidden="true" />
+            {rule.enabled ? "Enabled" : "Disabled"}
           </button>
         </div>
-      </td>
-    </tr>
+        <div className="detection-rule-meta">
+          <APITypeLabel catalog={catalog} apiType={rule.api_type} />
+          <span aria-hidden="true">·</span>
+          <ScopeLabel rule={rule} providerByID={providerByID} />
+        </div>
+        <div className="detection-rule-keywords">
+          <span>{rule.match_mode === "any" ? "ANY OF" : "ALL OF"}</span>
+          {rule.keywords.map((keyword) => (
+            <code key={keyword}>{keyword}</code>
+          ))}
+        </div>
+      </div>
+      <RuleActionSummary rule={rule} />
+      <div className="detection-rule-stats">
+        <RuleStats
+          stat={stat}
+          loading={statsLoading}
+          available={statsAvailable}
+        />
+      </div>
+      <div className="detection-rule-actions">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onEdit(rule)}
+          className="detection-edit-button"
+          aria-label={`Edit ${rule.name}`}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onDelete(rule)}
+          className="detection-icon-button hover:text-danger"
+          aria-label={`Delete ${rule.name}`}
+          title="Delete rule"
+        >
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      </div>
+    </li>
   );
 }
 
@@ -325,53 +347,36 @@ function RuleListContent({
   const statByRuleID = new Map(
     stats?.stats.map((stat) => [stat.rule_id, stat]) ?? [],
   );
-  const headings = [
-    "Position",
-    "Status",
-    "Rule / scope",
-    "API type",
-    "Keywords",
-    "Action / retries",
-    "Hits",
-    "Actions",
-  ];
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[1180px] table-auto">
-        <thead className="border-b border-border bg-bg-secondary">
-          <tr>
-            {headings.map((heading) => (
-              <th
-                key={heading}
-                scope="col"
-                className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-text-secondary"
-              >
-                {heading}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {orderedRules.map((rule, index) => (
-            <RuleRow
-              key={rule.id}
-              rule={rule}
-              index={index}
-              rules={orderedRules}
-              catalog={catalog}
-              providerByID={providerByID}
-              stat={statByRuleID.get(rule.id)}
-              statsLoading={statsLoading}
-              busy={busy}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              onToggle={onToggle}
-              onReorder={onReorder}
-            />
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="detection-columns" aria-hidden="true">
+        <span>Order</span>
+        <span>Rule / match conditions</span>
+        <span>On match</span>
+        <span>Total hits</span>
+        <span />
+      </div>
+      <ol aria-label="Ordered detection rules">
+        {orderedRules.map((rule, index) => (
+          <RuleRow
+            key={rule.id}
+            rule={rule}
+            index={index}
+            rules={orderedRules}
+            catalog={catalog}
+            providerByID={providerByID}
+            stat={statByRuleID.get(rule.id)}
+            statsAvailable={stats !== null}
+            statsLoading={statsLoading}
+            busy={busy}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            onToggle={onToggle}
+            onReorder={onReorder}
+          />
+        ))}
+      </ol>
+    </>
   );
 }
 
@@ -405,9 +410,9 @@ export function RuleList({
     <section
       aria-labelledby="internal-error-rules-heading"
       aria-busy={loading || busy}
-      className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm"
+      className="detection-rules"
     >
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-5 py-4">
+      <div className="detection-toolbar">
         <div>
           <h2
             id="internal-error-rules-heading"
@@ -416,15 +421,14 @@ export function RuleList({
             Detection rules
           </h2>
           <p className="mt-1 text-sm text-text-secondary">
-            {rules.length} {rules.length === 1 ? "rule" : "rules"}
-            {ruleRevision !== null ? ` · revision ${ruleRevision}` : ""}
+            Match an upstream error, then choose what happens next.
           </p>
         </div>
         <button
           type="button"
           disabled={!canCreate || busy}
           onClick={onCreate}
-          className="btn btn-primary"
+          className="btn btn-primary btn-sm"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           Add rule
@@ -470,6 +474,10 @@ export function RuleList({
         onToggle={onToggle}
         onReorder={onReorder}
       />
+      <footer className="detection-rules-footer">
+        <span>Priority: provider scope → exact API type → rule order.</span>
+        {ruleRevision !== null && <span>Revision {ruleRevision}</span>}
+      </footer>
     </section>
   );
 }
