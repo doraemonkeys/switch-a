@@ -512,14 +512,37 @@
   }
 }
 @container (max-width: 680px) {
-  .detection-editor-header { flex-direction: column; align-items: flex-start; gap: 12px; }
-  .detection-editor-footer { flex-wrap: wrap; gap: 12px; }
-  .detection-editor-footer > div { margin-left: auto; }
-  .detection-toolbar { align-items: flex-start; flex-wrap: wrap; }
-  .detection-icon-button { min-width: 32px; min-height: 32px; }
-  .detection-state, .detection-edit-button { min-height: 28px; }
-  .detection-editor-section .grid, .detection-test-form > .grid { grid-template-columns: minmax(0, 1fr); }
-  .detection-editor-section .grid > label { grid-column: auto; }
+  .detection-editor-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .detection-editor-footer {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .detection-editor-footer > div {
+    margin-left: auto;
+  }
+  .detection-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .detection-icon-button {
+    min-width: 32px;
+    min-height: 32px;
+  }
+  .detection-state,
+  .detection-edit-button {
+    min-height: 28px;
+  }
+  .detection-editor-section .grid,
+  .detection-test-form > .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .detection-editor-section .grid > label {
+    grid-column: auto;
+  }
   .detection-heading {
     align-items: flex-start;
     flex-direction: column;
