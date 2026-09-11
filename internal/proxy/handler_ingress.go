@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	codexheaders "github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -46,7 +47,8 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 		startTime: startTime, requestID: requestID, operation: operation,
 		liveBytes: &LiveBytesTracker{},
 		info: RequestInfo{
-			ClientIP: ExtractClientIP(r, cfg.trustProxy), UserID: ExtractUserID(r, cfg.userHeader),
+			ClientAPIKey: clientaccess.ObserveUsageIdentity(r, apiType),
+			ClientIP:     ExtractClientIP(r, cfg.trustProxy), UserID: ExtractUserID(r, cfg.userHeader),
 			Model: requestHeadModel(r, apiType), APIType: apiType, Path: r.URL.Path, Method: r.Method,
 			UserAgent: ExtractUserAgent(r), RequestID: ExtractRequestIDHeader(r),
 			ContentType: ExtractContentType(r),

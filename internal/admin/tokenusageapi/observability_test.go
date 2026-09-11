@@ -59,7 +59,7 @@ func TestObservabilityCorrelatesStartAndCompletionWithDecisionContext(t *testing
 
 	recorder := httptest.NewRecorder()
 	handler.GetTokenUsage(recorder, httptest.NewRequest(http.MethodGet,
-		"/admin/api/token-usage?as_of=2026-08-21T01%3A00%3A00Z&provider_id=provider-a", nil))
+		"/admin/api/token-usage?as_of=2026-08-21T01%3A00%3A00Z&provider_id=provider-a&client_api_key_fingerprint="+strings.Repeat("a", 64), nil))
 
 	if recorder.Code != http.StatusOK || ids.calls != 1 {
 		t.Fatalf("status/id calls = %d/%d, want 200/1", recorder.Code, ids.calls)
@@ -70,6 +70,9 @@ func TestObservabilityCorrelatesStartAndCompletionWithDecisionContext(t *testing
 	}
 	for _, entry := range entries {
 		fields := entry.ContextMap()
+		if fields[clientAPIKeyFilterName] != strings.Repeat("a", 64) {
+			t.Fatalf("API key filter missing from lifecycle context: %+v", fields)
+		}
 		if fields["operation"] != operationName || fields["operation_id"] != "stable-operation-id" ||
 			fields["period"] != analyticswindow.Period24Hours || fields["granularity"] != analyticswindow.Granularity1Hour ||
 			fields["provider_id"] != "provider-a" {

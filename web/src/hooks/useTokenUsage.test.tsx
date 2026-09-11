@@ -161,4 +161,26 @@ describe("useTokenUsage", () => {
     expect(result.current.error?.message).toBe("API network failure");
     expect(result.current.data).toBeNull();
   });
+
+  it("refetches when the API key changes, including unattributed and global traffic", async () => {
+    const { result, rerender } = renderHook(
+      ({ fingerprint }: { fingerprint: string | undefined }) =>
+        useTokenUsage({ client_api_key_fingerprint: fingerprint }),
+      {
+        initialProps: { fingerprint: undefined as string | undefined },
+        wrapper: createWrapper(mockApi),
+      },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    for (const fingerprint of ["a".repeat(64), "b".repeat(64), "", undefined]) {
+      rerender({ fingerprint });
+      await waitFor(() =>
+        expect(mockApi.tokenUsage.get).toHaveBeenLastCalledWith({
+          client_api_key_fingerprint: fingerprint,
+        }),
+      );
+      await waitFor(() => expect(result.current.loading).toBe(false));
+    }
+    expect(mockApi.tokenUsage.get).toHaveBeenCalledTimes(5);
+  });
 });

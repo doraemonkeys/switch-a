@@ -48,6 +48,8 @@ func (h *Gateway) logWebSocketSession(info RequestInfo, session *WebSocketSessio
 		Model:                         info.Model,
 		ClientIP:                      info.ClientIP,
 		UserID:                        info.UserID,
+		ClientAPIKeyFingerprint:       info.ClientAPIKey.Fingerprint,
+		ClientAPIKeyMasked:            info.ClientAPIKey.MaskedKey,
 		SemanticsVersion:              assessment.SemanticsVersion,
 		ClientTransportStatusCode:     ptr(assessment.ClientTransportStatusCode),
 		CompletionState:               ptr(assessment.CompletionState),

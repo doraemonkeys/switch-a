@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { ApiClient, TokenUsageResponse } from "../api/client";
@@ -72,6 +78,135 @@ function createTokenUsageApi(): ApiClient {
 }
 
 describe("TokenUsage", () => {
+  const registeredKey = {
+    fingerprint: "a".repeat(64),
+    name: "Laptop",
+    masked_key: "prefix…same",
+  };
+  const observedKey = {
+    fingerprint: "b".repeat(64),
+    name: "",
+    masked_key: "prefix…same",
+  };
+
+  it("filters every report request by the original key and preserves the selection across window changes", async () => {
+    const apiClient = createTokenUsageApi();
+    vi.mocked(apiClient.tokenUsage.clientAPIKeys).mockResolvedValue([
+      registeredKey,
+      observedKey,
+    ]);
+    renderPage({
+      apiClient,
+      clock: { now: () => new Date("2026-08-21T08:00:00.000Z") },
+    });
+    await screen.findByRole("option", { name: /Laptop/ });
+    expect(
+      screen.getByRole("option", { name: "prefix…same · bbbbbbbbbbbb" }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Client API Key"), {
+      target: { value: observedKey.fingerprint },
+    });
+    await waitFor(() =>
+      expect(apiClient.tokenUsage.get).toHaveBeenLastCalledWith({
+        period: "24h",
+        granularity: "1h",
+        as_of: "2026-08-21T08:00:00.000Z",
+        client_api_key_fingerprint: observedKey.fingerprint,
+      }),
+    );
+    expect(screen.queryByText("Global")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Time Range"), {
+      target: { value: "7d" },
+    });
+    await waitFor(() =>
+      expect(apiClient.tokenUsage.get).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          period: "7d",
+          client_api_key_fingerprint: observedKey.fingerprint,
+        }),
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Client API Key"), {
+      target: { value: "" },
+    });
+    await waitFor(() =>
+      expect(apiClient.tokenUsage.get).toHaveBeenLastCalledWith(
+        expect.objectContaining({ client_api_key_fingerprint: "" }),
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Client API Key"), {
+      target: { value: "all" },
+    });
+    await waitFor(() =>
+      expect(apiClient.tokenUsage.get).toHaveBeenLastCalledWith({
+        period: "7d",
+        granularity: "6h",
+        as_of: "2026-08-21T08:00:00.000Z",
+      }),
+    );
+  });
+
+  it("does not relabel old reports or publish an earlier key response after a failed switch", async () => {
+    const apiClient = createTokenUsageApi();
+    vi.mocked(apiClient.tokenUsage.clientAPIKeys).mockResolvedValue([
+      registeredKey,
+      observedKey,
+    ]);
+    renderPage({
+      apiClient,
+      clock: { now: () => new Date("2026-08-21T08:00:00.000Z") },
+    });
+    await screen.findByText("No Token Telemetry Recorded");
+    let resolveEarlier!: (value: TokenUsageResponse) => void;
+    vi.mocked(apiClient.tokenUsage.get)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveEarlier = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error("selected key unavailable"));
+    fireEvent.change(screen.getByLabelText("Client API Key"), {
+      target: { value: registeredKey.fingerprint },
+    });
+    await waitFor(() =>
+      expect(apiClient.tokenUsage.get).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      screen.queryByText("No Token Telemetry Recorded"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Client API Key"), {
+      target: { value: observedKey.fingerprint },
+    });
+    await screen.findByText("selected key unavailable");
+    await act(async () => {
+      resolveEarlier(EMPTY_TOKEN_USAGE_RESPONSE);
+    });
+    expect(
+      screen.queryByText("No Token Telemetry Recorded"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("selected key unavailable")).toBeInTheDocument();
+  });
+
+  it("keeps global analytics usable when the key directory fails and retries the directory", async () => {
+    const apiClient = createTokenUsageApi();
+    vi.mocked(apiClient.tokenUsage.clientAPIKeys)
+      .mockRejectedValueOnce(new Error("directory unavailable"))
+      .mockResolvedValue([registeredKey]);
+    renderPage({
+      apiClient,
+      clock: { now: () => new Date("2026-08-21T08:00:00.000Z") },
+    });
+    await screen.findByText(/Failed to load API keys/);
+    expect(screen.getByText("No Token Telemetry Recorded")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry API keys" }));
+    await screen.findByRole("option", { name: /Laptop/ });
+    expect(
+      screen.queryByText(/Failed to load API keys/),
+    ).not.toBeInTheDocument();
+    expect(apiClient.tokenUsage.get).toHaveBeenCalledTimes(1);
+  });
+
   it("owns a default global analytics window without inheriting URL or Logs filters", async () => {
     const apiClient = createTokenUsageApi();
     const now = vi.fn(() => new Date("2026-08-21T08:00:00.000Z"));

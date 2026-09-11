@@ -384,6 +384,7 @@ func (s *AdminServer) registerAdminRoutes(mux *http.ServeMux, cfg AdminConfig) {
 	mux.Handle("GET /admin/api/stats", auth.WrapFunc(adminHandler.GetStats))
 	if cfg.TokenUsageHandler != nil {
 		mux.Handle("GET /admin/api/token-usage", auth.Wrap(cfg.TokenUsageHandler))
+		mux.Handle("GET /admin/api/token-usage/client-api-keys", auth.Wrap(cfg.TokenUsageHandler))
 	}
 
 	// Unknown admin API paths must not fall through into the SPA handler.

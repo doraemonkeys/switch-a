@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -93,7 +94,9 @@ func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", codexDialOptions())
+	options := codexDialOptions()
+	clientKey := clientaccess.ObserveUsageIdentity(&http.Request{Header: options.HTTPHeader}, APITypeCodex)
+	connection, _, err := websocket.Dial(ctx, wsURL(server)+"/responses?model=gpt-5", options)
 	if err != nil {
 		t.Fatalf("dial gateway websocket: %v", err)
 	}
@@ -114,6 +117,9 @@ func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 	log := store.LastLog()
 	if log.ProviderID != providerID || !log.IsWebSocket || log.RequestID != requestID {
 		t.Fatalf("request log = %#v, want provider=%q websocket request=%q", log, providerID, requestID)
+	}
+	if clientKey.Fingerprint == "" || log.ClientAPIKeyFingerprint != clientKey.Fingerprint || log.ClientAPIKeyMasked != clientKey.MaskedKey {
+		t.Fatalf("WebSocket client key = %q/%q, want %+v", log.ClientAPIKeyFingerprint, log.ClientAPIKeyMasked, clientKey)
 	}
 }
 

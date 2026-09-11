@@ -302,6 +302,8 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 		Model:                     pctx.info.Model,
 		ClientIP:                  pctx.info.ClientIP,
 		UserID:                    pctx.info.UserID,
+		ClientAPIKeyFingerprint:   pctx.info.ClientAPIKey.Fingerprint,
+		ClientAPIKeyMasked:        pctx.info.ClientAPIKey.MaskedKey,
 		SemanticsVersion:          model.RequestSemanticsVersionNormalizedV1,
 		ClientTransportStatusCode: ptr(inputs.Facts.ClientTransportStatusCode),
 		CompletionState:           ptr(assessment.CompletionState),
@@ -335,6 +337,7 @@ func (h *Handler) logRequest(pctx *proxyContext, inputs logRequestInputs) {
 	if inputs.TokenUsage != nil {
 		h.logger.Debug("token usage captured",
 			zap.String("request_id", pctx.requestID),
+			zap.String("client_api_key_fingerprint", pctx.info.ClientAPIKey.Fingerprint),
 			zap.Int64("prompt_tokens", inputs.TokenUsage.PromptTokens.Value),
 			zap.Int64("completion_tokens", inputs.TokenUsage.CompletionTokens.Value),
 			zap.Int64("total_tokens", inputs.TokenUsage.TotalTokens.Value),

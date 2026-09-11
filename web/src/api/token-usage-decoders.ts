@@ -8,9 +8,31 @@ import type {
   TokenSummaryDTO,
   TokenTimeRangeDTO,
   TokenUsageResponse,
+  TokenClientAPIKeyDTO,
 } from "./token-usage-types";
 
 type JsonRecord = Record<string, unknown>;
+
+export function parseTokenClientAPIKeys(
+  value: unknown,
+): TokenClientAPIKeyDTO[] {
+  assertContract(Array.isArray(value), "token usage API keys must be an array");
+  return value.map((key: unknown) => {
+    assertContract(
+      isRecord(key) &&
+        typeof key.fingerprint === "string" &&
+        /^[a-f0-9]{64}$/.test(key.fingerprint) &&
+        typeof key.name === "string" &&
+        typeof key.masked_key === "string",
+      "invalid token usage API key",
+    );
+    return {
+      fingerprint: key.fingerprint,
+      name: key.name,
+      masked_key: key.masked_key,
+    };
+  });
+}
 
 const BREAKDOWN_FIELDS = [
   "total_tokens",

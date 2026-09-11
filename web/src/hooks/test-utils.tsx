@@ -57,6 +57,7 @@ export function createMockApiClient(): ApiClient {
       get: vi.fn(),
     },
     tokenUsage: {
+      clientAPIKeys: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
     },
     requests: {

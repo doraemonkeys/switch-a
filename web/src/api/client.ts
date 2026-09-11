@@ -13,7 +13,10 @@ import {
   parseRequestLog,
   parseStatsResponse,
 } from "./contracts";
-import { parseTokenUsageResponse } from "./token-usage-decoders";
+import {
+  parseTokenUsageResponse,
+  parseTokenClientAPIKeys,
+} from "./token-usage-decoders";
 import { parseAPICatalog } from "./api-catalog";
 import {
   createCredentialSessionsApi,
@@ -231,6 +234,9 @@ function buildStatsQuery(params?: StatsParams): string {
 // Build query string for token-usage API
 function buildTokenUsageQuery(params?: TokenUsageParams): string {
   const query = new URLSearchParams();
+  if (params?.client_api_key_fingerprint !== undefined) {
+    query.set("client_api_key_fingerprint", params.client_api_key_fingerprint);
+  }
   if (params?.period) query.set("period", params.period);
   if (params?.granularity) query.set("granularity", params.granularity);
   if (params?.as_of) query.set("as_of", params.as_of);
@@ -549,6 +555,10 @@ export function createApiClient(deps: ApiClientDeps) {
       },
     },
     tokenUsage: {
+      clientAPIKeys: async () =>
+        parseTokenClientAPIKeys(
+          await request<unknown>("/token-usage/client-api-keys"),
+        ),
       get: async (params?: TokenUsageParams) => {
         const queryStr = buildTokenUsageQuery(params);
         return parseTokenUsageResponse(

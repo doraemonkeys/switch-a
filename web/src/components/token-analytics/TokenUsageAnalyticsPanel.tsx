@@ -13,6 +13,7 @@ import { TokenTopBreakdown } from "./TokenTopBreakdown";
 import { TokenTrendChart } from "./TokenTrendChart";
 
 interface TokenUsageAnalyticsPanelProps {
+  scopeLabel?: string;
   data: TokenUsageResponse | null;
   loading: boolean;
   error: Error | null;
@@ -21,6 +22,7 @@ interface TokenUsageAnalyticsPanelProps {
 }
 
 export function TokenUsageAnalyticsPanel({
+  scopeLabel,
   data,
   loading,
   error,
@@ -39,6 +41,7 @@ export function TokenUsageAnalyticsPanel({
     >
       {/* Header controls & summary */}
       <TokenAnalyticsHeader
+        scopeLabel={scopeLabel}
         period={window.period}
         granularity={window.granularity}
         onPeriodChange={(period) =>

@@ -18,12 +18,18 @@ import (
 )
 
 type analyzerStub struct {
-	report tokenanalytics.Report
-	err    error
-	query  tokenanalytics.Query
-	ctx    context.Context
-	calls  int
-	fn     func(context.Context, tokenanalytics.Query) (tokenanalytics.Report, error)
+	keys    []tokenanalytics.ClientAPIKey
+	keysErr error
+	report  tokenanalytics.Report
+	err     error
+	query   tokenanalytics.Query
+	ctx     context.Context
+	calls   int
+	fn      func(context.Context, tokenanalytics.Query) (tokenanalytics.Report, error)
+}
+
+func (s *analyzerStub) ClientAPIKeys(context.Context) ([]tokenanalytics.ClientAPIKey, error) {
+	return s.keys, s.keysErr
 }
 
 func (s *analyzerStub) Analyze(ctx context.Context, query tokenanalytics.Query) (tokenanalytics.Report, error) {

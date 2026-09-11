@@ -313,12 +313,16 @@ type RequestLog struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement" json:"id"`
 	RequestID string `gorm:"index" json:"request_id"`
 	// ProviderID belongs to the final request/session outcome visible to the client.
-	ProviderID       string                  `gorm:"index" json:"provider_id"`
-	APIType          string                  `json:"api_type"`
-	Model            string                  `json:"model"`
-	ClientIP         string                  `json:"client_ip"`
-	UserID           string                  `json:"user_id"`
-	SemanticsVersion RequestSemanticsVersion `gorm:"type:text;not null;default:normalized_v1;index" json:"semantics_version"`
+	ProviderID string `gorm:"index" json:"provider_id"`
+	APIType    string `json:"api_type"`
+	Model      string `json:"model"`
+	ClientIP   string `json:"client_ip"`
+	UserID     string `json:"user_id"`
+	// Key values outlive registry membership; legacy and unattributable requests
+	// retain an empty fingerprint instead of being assigned to a current key.
+	ClientAPIKeyFingerprint string                  `gorm:"not null;default:''" json:"client_api_key_fingerprint"`
+	ClientAPIKeyMasked      string                  `gorm:"not null;default:''" json:"client_api_key_masked"`
+	SemanticsVersion        RequestSemanticsVersion `gorm:"type:text;not null;default:normalized_v1;index" json:"semantics_version"`
 	// Normalized assessment fields stay nullable at the schema layer so legacy rows
 	// can remain explicit legacy data instead of being heuristically rewritten.
 	ClientTransportStatusCode *int               `gorm:"default:null" json:"client_transport_status_code"`

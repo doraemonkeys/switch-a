@@ -94,6 +94,64 @@ function createValidTokenUsagePayload(): TokenUsageResponse {
   };
 }
 
+describe("createApiClient tokenUsage API key identity", () => {
+  it.each([undefined, "", "a".repeat(64)])(
+    "preserves API key filter semantics (%s)",
+    async (fingerprint) => {
+      const httpClient = createMockHttpClient();
+      httpClient.mockResponse({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(createValidTokenUsagePayload()),
+      });
+      const client = createApiClient({
+        httpClient,
+        storage: createMockStorage(),
+        baseUrl: "https://test-api.example.com",
+      });
+      await client.tokenUsage.get({ client_api_key_fingerprint: fingerprint });
+      const url = new URL(String(vi.mocked(httpClient.fetch).mock.calls[0][0]));
+      expect(url.searchParams.get("client_api_key_fingerprint")).toBe(
+        fingerprint ?? null,
+      );
+    },
+  );
+
+  it("loads the registered and observed key directory without raw credentials", async () => {
+    const httpClient = createMockHttpClient();
+    const keys = [
+      {
+        fingerprint: "a".repeat(64),
+        name: "Laptop",
+        masked_key: "prefix…tail",
+        value: "must-not-be-returned",
+      },
+    ];
+    httpClient.mockResponse({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(keys),
+    });
+    const client = createApiClient({
+      httpClient,
+      storage: createMockStorage(),
+      baseUrl: "https://test-api.example.com",
+    });
+    const actual = await client.tokenUsage.clientAPIKeys();
+    expect(actual).toEqual([
+      {
+        fingerprint: keys[0].fingerprint,
+        name: "Laptop",
+        masked_key: "prefix…tail",
+      },
+    ]);
+    expect(httpClient.fetch).toHaveBeenCalledWith(
+      "https://test-api.example.com/token-usage/client-api-keys",
+      expect.any(Object),
+    );
+  });
+});
+
 describe("createApiClient tokenUsage API", () => {
   let mockStorage: ReturnType<typeof createMockStorage>;
   let mockHttpClient: ReturnType<typeof createMockHttpClient>;

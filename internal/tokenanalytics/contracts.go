@@ -15,10 +15,11 @@ const (
 // Query carries an already validated window and exact optional filters.
 // Pointers distinguish an absent filter from a present persisted empty value.
 type Query struct {
-	Window     analyticswindow.Window
-	ProviderID *string
-	Model      *string
-	APIType    *string
+	Window                  analyticswindow.Window
+	ProviderID              *string
+	Model                   *string
+	APIType                 *string
+	ClientAPIKeyFingerprint *string
 }
 
 // Breakdown keeps every token quantity exact until the endpoint serializes it.

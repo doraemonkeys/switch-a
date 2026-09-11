@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
@@ -146,6 +147,7 @@ func TestHandlerPersistsHTTPAndInferredSSEUsage(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello"}`))
 			request.Header.Set("Content-Type", "application/json")
 			authorizeProxyCodexTestRequest(request)
+			clientKey := clientaccess.ObserveUsageIdentity(request, APITypeCodex)
 			if test.accept != "" {
 				request.Header.Set("Accept", test.accept)
 			}
@@ -160,6 +162,9 @@ func TestHandlerPersistsHTTPAndInferredSSEUsage(t *testing.T) {
 				t.Fatal("expected persisted log")
 			}
 			assertTokenPointer(t, "prompt", log.PromptTokens, test.wantPrompt, true)
+			if clientKey.Fingerprint == "" || log.ClientAPIKeyFingerprint != clientKey.Fingerprint || log.ClientAPIKeyMasked != clientKey.MaskedKey {
+				t.Fatalf("client key attribution = %q/%q, want %+v", log.ClientAPIKeyFingerprint, log.ClientAPIKeyMasked, clientKey)
+			}
 			assertTokenPointer(t, "completion", log.CompletionTokens, test.wantCompletion, true)
 			assertTokenPointer(t, "total", log.TotalTokens, test.wantTotal, true)
 			assertOptionalTokenPointer(t, "cache read", log.CacheReadInputTokens, test.wantCacheRead)

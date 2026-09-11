@@ -147,6 +147,7 @@ function createMockApiClient(): ApiClient {
       testMessage: vi.fn(),
     },
     tokenUsage: {
+      clientAPIKeys: vi.fn().mockResolvedValue([]),
       get: vi.fn().mockResolvedValue(EMPTY_TOKEN_USAGE_RESPONSE),
     },
     stats: {

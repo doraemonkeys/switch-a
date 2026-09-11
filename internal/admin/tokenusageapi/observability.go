@@ -93,6 +93,9 @@ func lifecycleFields(operationID string, query tokenanalytics.Query, window anal
 	if query.APIType != nil {
 		fields = append(fields, zap.String("api_type", *query.APIType))
 	}
+	if query.ClientAPIKeyFingerprint != nil {
+		fields = append(fields, zap.String(clientAPIKeyFilterName, *query.ClientAPIKeyFingerprint))
+	}
 	return fields
 }
 

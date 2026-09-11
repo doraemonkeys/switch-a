@@ -18,6 +18,7 @@ const (
 	requestLogProviderCreatedAtUnixNanoIndex = "idx_request_logs_provider_created_at_unix_nano"
 	requestLogModelCreatedAtUnixNanoIndex    = "idx_request_logs_model_created_at_unix_nano"
 	requestLogAPITypeCreatedAtUnixNanoIndex  = "idx_request_logs_api_type_created_at_unix_nano"
+	requestLogClientAPIKeyCreatedAtIndex     = "idx_request_logs_client_api_key_created_at"
 	legacyRequestLogProviderCreatedAtIndex   = "idx_request_logs_provider_created_at"
 	legacyRequestLogModelCreatedAtIndex      = "idx_request_logs_model_created_at"
 	legacyRequestLogAPITypeCreatedAtIndex    = "idx_request_logs_api_type_created_at"
@@ -40,6 +41,9 @@ var requestLogAnalyticsIndexes = []struct {
 	{name: requestLogProviderCreatedAtUnixNanoIndex, columns: []string{"provider_id", requestLogCreatedAtUnixNanoColumn}, legacyName: legacyRequestLogProviderCreatedAtIndex},
 	{name: requestLogModelCreatedAtUnixNanoIndex, columns: []string{"model", requestLogCreatedAtUnixNanoColumn}, legacyName: legacyRequestLogModelCreatedAtIndex},
 	{name: requestLogAPITypeCreatedAtUnixNanoIndex, columns: []string{"api_type", requestLogCreatedAtUnixNanoColumn}, legacyName: legacyRequestLogAPITypeCreatedAtIndex},
+	// Cover the key directory as well as exact-key time ranges without reading
+	// token payloads from the request log table to enumerate observed keys.
+	{name: requestLogClientAPIKeyCreatedAtIndex, columns: []string{"client_api_key_fingerprint", requestLogCreatedAtUnixNanoColumn, "client_api_key_masked"}},
 }
 
 type requestLogTimestampBackfill struct {

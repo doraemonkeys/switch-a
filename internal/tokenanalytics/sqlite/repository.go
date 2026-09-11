@@ -89,8 +89,8 @@ func readOnlyDSN(databasePath string) (string, error) {
 }
 
 // OpenSnapshot reserves the sole analytics connection and begins one read
-// transaction. The summary query is intentionally the first SELECT performed by
-// the consumer because that statement pins the WAL snapshot for later reads.
+// transaction. The first SELECT pins the WAL snapshot so report aggregates and
+// key-directory labels each observe one consistent database state.
 func (r *Repository) OpenSnapshot(ctx context.Context) (tokenanalytics.Snapshot, error) {
 	conn, err := r.db.Conn(ctx)
 	if err != nil {

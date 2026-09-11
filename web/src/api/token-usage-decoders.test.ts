@@ -1,6 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { parseTokenUsageResponse } from "./token-usage-decoders";
+import {
+  parseTokenUsageResponse,
+  parseTokenClientAPIKeys,
+} from "./token-usage-decoders";
 import type { TokenUsageResponse } from "./token-usage-types";
+
+describe("parseTokenClientAPIKeys", () => {
+  it("accepts an empty directory", () => {
+    expect(parseTokenClientAPIKeys([])).toEqual([]);
+  });
+  it.each([
+    null,
+    {},
+    [null],
+    [{ fingerprint: "short", name: "Laptop", masked_key: "key" }],
+    [{ fingerprint: "a".repeat(64), name: 12, masked_key: "key" }],
+    [{ fingerprint: "a".repeat(64), name: "Laptop", masked_key: null }],
+  ])("rejects malformed directory payloads (%j)", (payload) => {
+    expect(() => parseTokenClientAPIKeys(payload)).toThrow();
+  });
+});
 
 function createValidTokenUsageResponse(): TokenUsageResponse {
   return {

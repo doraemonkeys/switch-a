@@ -36,6 +36,7 @@ const (
 
 type Analyzer interface {
 	Analyze(context.Context, tokenanalytics.Query) (tokenanalytics.Report, error)
+	ClientAPIKeys(context.Context) ([]tokenanalytics.ClientAPIKey, error)
 }
 
 type Clock interface {
@@ -88,6 +89,10 @@ func NewHandler(config Config) (*Handler, error) {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/admin/api/token-usage/client-api-keys" {
+		h.GetClientAPIKeys(w, r)
+		return
+	}
 	h.GetTokenUsage(w, r)
 }
 
@@ -139,7 +144,11 @@ func (h *Handler) parseQuery(values url.Values) (tokenanalytics.Query, error) {
 	if err != nil {
 		return tokenanalytics.Query{}, err
 	}
-	return tokenanalytics.Query{Window: window, ProviderID: providerID, Model: modelName, APIType: apiType}, nil
+	fingerprint, err := clientAPIKeyFilter(values)
+	if err != nil {
+		return tokenanalytics.Query{}, err
+	}
+	return tokenanalytics.Query{Window: window, ProviderID: providerID, Model: modelName, APIType: apiType, ClientAPIKeyFingerprint: fingerprint}, nil
 }
 
 type validationError struct {

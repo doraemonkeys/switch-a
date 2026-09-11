@@ -15,6 +15,8 @@ func TestMigrateRequestLogAnalyticsIndexesResumesAtFirstIncompleteStage(t *testi
 		provider_id TEXT,
 		model TEXT,
 		api_type TEXT,
+		client_api_key_fingerprint TEXT NOT NULL DEFAULT '',
+		client_api_key_masked TEXT NOT NULL DEFAULT '',
 		created_at DATETIME,
 		created_at_unix_nano INTEGER
 	)`).Error; err != nil {

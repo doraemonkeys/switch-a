@@ -20,6 +20,7 @@ const (
 	providerCreatedAtUnixNanoIndex = "idx_request_logs_provider_created_at_unix_nano"
 	modelCreatedAtUnixNanoIndex    = "idx_request_logs_model_created_at_unix_nano"
 	apiTypeCreatedAtUnixNanoIndex  = "idx_request_logs_api_type_created_at_unix_nano"
+	clientAPIKeyCreatedAtIndex     = "idx_request_logs_client_api_key_created_at"
 )
 
 const projectionSQLTemplate = `
@@ -332,6 +333,10 @@ func buildProjection(query tokenanalytics.Query) (projection, error) {
 		predicates = append(predicates, "rl.api_type = ?")
 		args = append(args, *query.APIType)
 	}
+	if query.ClientAPIKeyFingerprint != nil {
+		predicates = append(predicates, "rl.client_api_key_fingerprint = ?")
+		args = append(args, *query.ClientAPIKeyFingerprint)
+	}
 
 	sql := fmt.Sprintf(projectionSQLTemplate,
 		strings.Join(valueRows, ", "),
@@ -346,6 +351,8 @@ func buildProjection(query tokenanalytics.Query) (projection, error) {
 // the active exact filter keeps the instant range bounded for every query shape.
 func projectionIndex(query tokenanalytics.Query) string {
 	switch {
+	case query.ClientAPIKeyFingerprint != nil:
+		return clientAPIKeyCreatedAtIndex
 	case query.APIType != nil:
 		return apiTypeCreatedAtUnixNanoIndex
 	case query.Model != nil:

@@ -13,12 +13,13 @@ import (
 type FailureStage string
 
 const (
-	FailureStageSnapshotOpen FailureStage = "snapshot_open"
-	FailureStageSummary      FailureStage = "summary"
-	FailureStageTimeSeries   FailureStage = "timeseries"
-	FailureStageProviderRank FailureStage = "provider_rank"
-	FailureStageModelRank    FailureStage = "model_rank"
-	FailureStageResponseMap  FailureStage = "response_map"
+	FailureStageSnapshotOpen  FailureStage = "snapshot_open"
+	FailureStageSummary       FailureStage = "summary"
+	FailureStageTimeSeries    FailureStage = "timeseries"
+	FailureStageProviderRank  FailureStage = "provider_rank"
+	FailureStageModelRank     FailureStage = "model_rank"
+	FailureStageClientAPIKeys FailureStage = "client_api_keys"
+	FailureStageResponseMap   FailureStage = "response_map"
 )
 
 // FailureCode is a bounded, non-sensitive explanation suitable for structured
@@ -174,5 +175,6 @@ type Snapshot interface {
 	ReadBuckets(context.Context, Query) ([]BucketRecord, error)
 	ReadProviderRanks(context.Context, Query, int) ([]ProviderRankRecord, error)
 	ReadModelRanks(context.Context, Query, int) ([]ModelRankRecord, error)
+	ReadClientAPIKeys(context.Context) ([]ClientAPIKey, error)
 	Close() error
 }

@@ -13,6 +13,7 @@ import {
 } from "./token-format";
 
 interface TokenAnalyticsHeaderProps {
+  scopeLabel?: string;
   period: StatsPeriod;
   granularity: StatsGranularity;
   onPeriodChange: (period: StatsPeriod) => void;
@@ -24,6 +25,7 @@ interface TokenAnalyticsHeaderProps {
 }
 
 export function TokenAnalyticsHeader({
+  scopeLabel = "Global",
   period,
   granularity,
   onPeriodChange,
@@ -53,12 +55,15 @@ export function TokenAnalyticsHeader({
           <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
             Token Usage Analytics
           </h2>
-          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300">
-            Global
+          <span
+            title={scopeLabel}
+            className="max-w-64 truncate px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300"
+          >
+            {scopeLabel}
           </span>
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span>Global aggregated volume & efficiency</span>
+          <span>Aggregated volume & efficiency</span>
           {coverageText && (
             <>
               <span>•</span>

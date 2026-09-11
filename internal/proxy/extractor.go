@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -28,16 +29,17 @@ const (
 
 // RequestInfo contains information extracted from a proxy request.
 type RequestInfo struct {
-	ClientIP    string
-	UserID      string
-	Model       string
-	APIType     string
-	Path        string // Request path (relative, e.g., /v1/messages)
-	Method      string // HTTP method (GET/POST/PUT/DELETE)
-	UserAgent   string // Client User-Agent (truncated to MaxUserAgentLength)
-	RequestID   string // Client's X-Request-ID header for tracing
-	ContentType string // Request Content-Type header
-	Reasoning   model.RequestedReasoningObservation
+	ClientAPIKey clientaccess.UsageIdentity
+	ClientIP     string
+	UserID       string
+	Model        string
+	APIType      string
+	Path         string // Request path (relative, e.g., /v1/messages)
+	Method       string // HTTP method (GET/POST/PUT/DELETE)
+	UserAgent    string // Client User-Agent (truncated to MaxUserAgentLength)
+	RequestID    string // Client's X-Request-ID header for tracing
+	ContentType  string // Request Content-Type header
+	Reasoning    model.RequestedReasoningObservation
 }
 
 // ExtractClientIP extracts the client IP address from the request.

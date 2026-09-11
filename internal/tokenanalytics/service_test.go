@@ -713,6 +713,8 @@ func (reader *fakeReader) OpenSnapshot(ctx context.Context) (Snapshot, error) {
 }
 
 type fakeSnapshot struct {
+	keys      []ClientAPIKey
+	keysErr   error
 	summary   SummaryRecord
 	buckets   []BucketRecord
 	providers []ProviderRankRecord
@@ -732,6 +734,10 @@ type fakeSnapshot struct {
 	modelLimits     []int
 	calls           []string
 	closed          int
+}
+
+func (snapshot *fakeSnapshot) ReadClientAPIKeys(context.Context) ([]ClientAPIKey, error) {
+	return snapshot.keys, snapshot.keysErr
 }
 
 func (snapshot *fakeSnapshot) ReadSummary(_ context.Context, query Query) (SummaryRecord, error) {

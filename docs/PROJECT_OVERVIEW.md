@@ -214,6 +214,6 @@ Mounted under `/admin/` (React Router `basename="/admin"`):
 | Error Detection | `/error-detection` (`/admin/error-detection`) | Upstream semantic error matching rules and retry behavior |
 | Config | `/config` (`/admin/config`) | Global runtime settings (sticky TTL, circuit breaker thresholds), backup/restore |
 | Logs | `/logs` (`/admin/logs`) | Request log explorer, attempt diagnostics drill-down, deep link to error rules |
-| Token Usage | `/token-usage` (`/admin/token-usage`) | Aggregated token usage analytics and breakdown by model/provider |
+| Token Usage | `/token-usage` (`/admin/token-usage`) | Token analytics by model/provider, filterable by original client API Key (including unregistered keys); older or unattributable logs remain unassigned |
 | Debug Capture | `/debug-capture` (`/admin/debug-capture`) | In-memory traffic trace capture sessions and HAR/JSON export |
 | Login | `/login` (`/admin/login`) | Admin token authentication |

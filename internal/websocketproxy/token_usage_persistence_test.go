@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"go.uber.org/zap"
 )
@@ -17,7 +18,8 @@ func TestWebSocketSessionPersistsObservedCacheWriteZero(t *testing.T) {
 	}
 	store := newMockStore()
 	gateway := newTestGateway(t, Config{Store: store, Logger: zap.NewNop()})
-	gateway.logWebSocketSession(RequestInfo{APIType: "codex", Method: http.MethodGet, Path: "/v1/responses"}, &WebSocketSessionResult{
+	clientKey := clientaccess.IdentifyKey([]byte("unregistered-ws-client-key"))
+	gateway.logWebSocketSession(RequestInfo{ClientAPIKey: clientKey, APIType: "codex", Method: http.MethodGet, Path: "/v1/responses"}, &WebSocketSessionResult{
 		RequestID: "ws-token-usage",
 		FinalResult: &WebSocketResult{
 			HandshakeStatusCode: http.StatusSwitchingProtocols,
@@ -28,6 +30,9 @@ func TestWebSocketSessionPersistsObservedCacheWriteZero(t *testing.T) {
 	log := store.LastLog()
 	if log == nil {
 		t.Fatal("expected log")
+	}
+	if log.ClientAPIKeyFingerprint != clientKey.Fingerprint || log.ClientAPIKeyMasked != clientKey.MaskedKey {
+		t.Fatalf("client key attribution = %q/%q", log.ClientAPIKeyFingerprint, log.ClientAPIKeyMasked)
 	}
 	if log.PromptTokens == nil || *log.PromptTokens != 8 || log.CompletionTokens == nil || *log.CompletionTokens != 1 ||
 		log.TotalTokens == nil || *log.TotalTokens != 9 || log.CacheReadInputTokens == nil || *log.CacheReadInputTokens != 2 ||

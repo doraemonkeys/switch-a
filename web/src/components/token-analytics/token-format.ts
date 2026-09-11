@@ -1,4 +1,12 @@
 import type { StatsGranularity, StatsPeriod } from "../../api/types";
+import type { TokenClientAPIKeyDTO } from "../../api/token-usage-types";
+
+const FINGERPRINT_PREVIEW_LENGTH = 12;
+
+export function tokenAPIKeyLabel(key: TokenClientAPIKeyDTO): string {
+  const identity = `${key.masked_key} · ${key.fingerprint.slice(0, FINGERPRINT_PREVIEW_LENGTH)}`;
+  return key.name ? `${key.name} — ${identity}` : identity;
+}
 
 export {
   DEFAULT_GRANULARITY_BY_PERIOD,

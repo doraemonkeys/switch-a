@@ -13,6 +13,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
+	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	codexidentity "github.com/doraemonkeys/switch-a/internal/codex/identity"
 	codexrecovery "github.com/doraemonkeys/switch-a/internal/codex/recovery"
@@ -60,15 +61,16 @@ type RequestConfig struct {
 }
 
 type RequestInfo struct {
-	ClientIP  string
-	UserID    string
-	Model     string
-	APIType   string
-	Path      string
-	Method    string
-	UserAgent string
-	RequestID string
-	Reasoning model.RequestedReasoningObservation
+	ClientAPIKey clientaccess.UsageIdentity
+	ClientIP     string
+	UserID       string
+	Model        string
+	APIType      string
+	Path         string
+	Method       string
+	UserAgent    string
+	RequestID    string
+	Reasoning    model.RequestedReasoningObservation
 }
 
 // Store is the persistence and routing-policy surface consumed by WebSocket
@@ -248,14 +250,15 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	info := RequestInfo{
-		ClientIP:  extractClientIP(r, cfg.TrustProxy),
-		UserID:    extractUserID(r, cfg.UserHeader),
-		Model:     extractWebSocketModel(r),
-		APIType:   apiType,
-		Path:      r.URL.Path,
-		Method:    r.Method,
-		UserAgent: extractUserAgent(r),
-		RequestID: extractRequestIDHeader(r),
+		ClientAPIKey: clientaccess.ObserveUsageIdentity(r, apiType),
+		ClientIP:     extractClientIP(r, cfg.TrustProxy),
+		UserID:       extractUserID(r, cfg.UserHeader),
+		Model:        extractWebSocketModel(r),
+		APIType:      apiType,
+		Path:         r.URL.Path,
+		Method:       r.Method,
+		UserAgent:    extractUserAgent(r),
+		RequestID:    extractRequestIDHeader(r),
 	}
 
 	selectReq := &model.SelectRequest{

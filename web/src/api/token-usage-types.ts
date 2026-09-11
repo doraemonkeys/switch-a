@@ -76,10 +76,18 @@ export interface TokenUsageResponse {
 }
 
 export interface TokenUsageParams {
+  /** Omitted selects all traffic; empty selects requests without an attributed key. */
+  client_api_key_fingerprint?: string;
   period?: StatsPeriod;
   granularity?: StatsGranularity;
   as_of?: string;
   provider_id?: string;
   model?: string;
   api_type?: string;
+}
+
+export interface TokenClientAPIKeyDTO {
+  fingerprint: string;
+  name: string;
+  masked_key: string;
 }

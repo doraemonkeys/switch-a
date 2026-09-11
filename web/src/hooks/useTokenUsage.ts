@@ -23,6 +23,7 @@ export function useTokenUsage(
     params.provider_id,
     params.model,
     params.api_type,
+    params.client_api_key_fingerprint,
   ]);
   const query = useQuery(() => api.tokenUsage.get(params), {
     queryKey,
