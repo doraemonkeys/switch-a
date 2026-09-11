@@ -21,6 +21,12 @@ const (
 	DefaultGPTAccountFallbackClient   = "switch_a"
 )
 
+// OAuth authorization identifies the selected login client independently of account-request UAs.
+const (
+	ConfigKeyCodexOAuthOriginator = "codex_oauth_originator"
+	DefaultCodexOAuthOriginator   = "codex_cli_rs"
+)
+
 // Connection pool defaults.
 const (
 	MaxIdleConns = 100

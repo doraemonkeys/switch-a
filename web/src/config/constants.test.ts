@@ -218,9 +218,15 @@ describe("CONFIG_KEYS", () => {
   });
 
   it("does not expose rollout controls as runtime configuration", () => {
-    expect(
-      Object.values(CONFIG_KEYS).filter((key) => key.startsWith("codex_")),
-    ).toEqual([]);
+    const obsoleteControls = [
+      "codex_upstream_header_hygiene_enabled",
+      "codex_websocket_subprotocol_enabled",
+      "codex_continuity_enabled",
+      "codex_provider_cookie_jar_enabled",
+    ];
+    for (const key of obsoleteControls) {
+      expect(Object.values(CONFIG_KEYS)).not.toContain(key);
+    }
   });
 });
 

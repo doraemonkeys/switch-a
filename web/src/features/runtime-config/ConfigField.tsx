@@ -137,14 +137,28 @@ export function ConfigField({
             <span aria-hidden="true">{field.unit}</span>
           </div>
         )}
-        {field.kind === "text" && (
+        {(field.kind === "text" || field.kind === "combobox") && (
           <input
             {...controlProps}
             type="text"
             className="config-text-input"
+            list={
+              field.kind === "combobox" ? `${field.key}-options` : undefined
+            }
             value={value}
             onChange={(event) => onChange(field.key, event.target.value)}
           />
+        )}
+        {field.kind === "combobox" && (
+          <datalist id={`${field.key}-options`}>
+            {field.options.map((option) => (
+              <option
+                key={option.value}
+                value={option.value}
+                label={option.label}
+              />
+            ))}
+          </datalist>
         )}
         <div id={feedbackId} className="config-field-feedback">
           {selectedDescription && <p>{selectedDescription}</p>}

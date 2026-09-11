@@ -71,25 +71,26 @@ var validAuthModes = map[string]bool{
 
 // Unexported to prevent external mutation; use IsValidConfigKey() for validation.
 var validConfigKeys = map[string]bool{
-	defaults.ConfigKeyGPTAccountFallbackClient: true,
-	"auth_mode":                true,
-	"user_header":              true,
-	"trust_proxy_headers":      true,
-	"upstream_connect_timeout": true,
-	"first_byte_timeout":       true,
-	"upstream_read_timeout":    true,
-	"sse_idle_timeout":         true,
-	"sticky_mode":              true,
-	"sticky_ttl":               true,
+	defaults.ConfigKeyGPTAccountFallbackClient:   true,
+	defaults.ConfigKeyCodexOAuthOriginator:       true,
+	"auth_mode":                                  true,
+	"user_header":                                true,
+	"trust_proxy_headers":                        true,
+	"upstream_connect_timeout":                   true,
+	"first_byte_timeout":                         true,
+	"upstream_read_timeout":                      true,
+	"sse_idle_timeout":                           true,
+	"sticky_mode":                                true,
+	"sticky_ttl":                                 true,
 	defaults.ConfigKeyConversationRecoveryPolicy: true,
 	defaults.ConfigKeyWebSocketProbeClientModel:  true,
-	"circuit_failure":                       true,
-	"circuit_window":                        true,
-	"circuit_disable":                       true,
-	"max_body_size":                         true,
-	"global_max_attempts":                   true,
-	"log_retention_days":                    true,
-	defaults.ConfigKeyRootCandidateStrategy: true,
+	"circuit_failure":                            true,
+	"circuit_window":                             true,
+	"circuit_disable":                            true,
+	"max_body_size":                              true,
+	"global_max_attempts":                        true,
+	"log_retention_days":                         true,
+	defaults.ConfigKeyRootCandidateStrategy:      true,
 }
 
 // IsValidStrategy checks if the given strategy is valid.
@@ -127,25 +128,26 @@ func IsValidConfigKey(k string) bool {
 type ConfigValidator func(value string) error
 
 var configValidators = map[string]ConfigValidator{
-	defaults.ConfigKeyGPTAccountFallbackClient: validateGPTAccountClientMode,
-	"auth_mode":                validateAuthModeConfig,
-	"user_header":              nil, // Any string is valid
-	"trust_proxy_headers":      validateBoolConfig,
-	"upstream_connect_timeout": validatePositiveIntConfig,
-	"first_byte_timeout":       validateNonNegativeIntConfig, // 0 means no timeout (wait indefinitely)
-	"upstream_read_timeout":    validateNonNegativeIntConfig, // 0 means no timeout
-	"sse_idle_timeout":         validateNonNegativeIntConfig, // 0 means no timeout
-	"sticky_mode":              validateStickyModeConfig,
-	"sticky_ttl":               validatePositiveIntConfig,
+	defaults.ConfigKeyGPTAccountFallbackClient:   validateGPTAccountClientMode,
+	defaults.ConfigKeyCodexOAuthOriginator:       nil, // Custom values are encoded as an OAuth query parameter.
+	"auth_mode":                                  validateAuthModeConfig,
+	"user_header":                                nil, // Any string is valid
+	"trust_proxy_headers":                        validateBoolConfig,
+	"upstream_connect_timeout":                   validatePositiveIntConfig,
+	"first_byte_timeout":                         validateNonNegativeIntConfig, // 0 means no timeout (wait indefinitely)
+	"upstream_read_timeout":                      validateNonNegativeIntConfig, // 0 means no timeout
+	"sse_idle_timeout":                           validateNonNegativeIntConfig, // 0 means no timeout
+	"sticky_mode":                                validateStickyModeConfig,
+	"sticky_ttl":                                 validatePositiveIntConfig,
 	defaults.ConfigKeyConversationRecoveryPolicy: validateConversationRecoveryPolicyConfig,
 	defaults.ConfigKeyWebSocketProbeClientModel:  validateBoolConfig,
-	"circuit_failure":                       validatePositiveIntConfig,
-	"circuit_window":                        validatePositiveIntConfig,
-	"circuit_disable":                       validatePositiveIntConfig,
-	"max_body_size":                         validatePositiveIntConfig,
-	"global_max_attempts":                   validateNonNegativeIntConfig,
-	"log_retention_days":                    validatePositiveIntConfig,
-	defaults.ConfigKeyRootCandidateStrategy: validateStrategyConfig,
+	"circuit_failure":                            validatePositiveIntConfig,
+	"circuit_window":                             validatePositiveIntConfig,
+	"circuit_disable":                            validatePositiveIntConfig,
+	"max_body_size":                              validatePositiveIntConfig,
+	"global_max_attempts":                        validateNonNegativeIntConfig,
+	"log_retention_days":                         validatePositiveIntConfig,
+	defaults.ConfigKeyRootCandidateStrategy:      validateStrategyConfig,
 }
 
 // ValidateConfigValue validates a config value for the given key.

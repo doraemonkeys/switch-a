@@ -257,6 +257,7 @@ export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
  */
 export const CONFIG_KEYS = {
   GPT_ACCOUNT_FALLBACK_CLIENT: "gpt_account_fallback_client",
+  CODEX_OAUTH_ORIGINATOR: "codex_oauth_originator",
   AUTH_MODE: "auth_mode",
   USER_HEADER: "user_header",
   TRUST_PROXY_HEADERS: "trust_proxy_headers",
@@ -289,6 +290,7 @@ export type ConfigKey = (typeof CONFIG_KEYS)[keyof typeof CONFIG_KEYS];
  */
 export const DEFAULTS = {
   GPT_ACCOUNT_FALLBACK_CLIENT: "switch_a",
+  CODEX_OAUTH_ORIGINATOR: "codex_cli_rs",
   // Authentication
   AUTH_MODE: AUTH_MODES.AUTO,
   USER_HEADER: "X-User-ID",

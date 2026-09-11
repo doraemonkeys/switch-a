@@ -31,6 +31,39 @@ function search(query: string) {
 }
 
 describe("configuration editing", () => {
+  it.each(["codex_vscode", "my_codex_client", ""])(
+    "saves OAuth originator %s and can restore the CLI default",
+    async (value) => {
+      const { onSave, rerender, view } = createForm();
+      category("认证与账号");
+      const input = screen.getByRole("combobox", { name: "OAuth originator" });
+      expect(input).toHaveValue("codex_cli_rs");
+      const choices = (input as HTMLInputElement).list;
+      expect(
+        Array.from(choices?.options ?? []).map((option) => option.value),
+      ).toEqual(["codex_cli_rs", "codex_vscode"]);
+      expect(screen.getByText(/留空使用 codex_cli_rs/)).toBeInTheDocument();
+      fireEvent.change(input, { target: { value } });
+      fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+      await waitFor(() =>
+        expect(onSave).toHaveBeenCalledWith(
+          expect.objectContaining({ [K.CODEX_OAUTH_ORIGINATOR]: value }),
+        ),
+      );
+      rerender(view({ ...defaults, [K.CODEX_OAUTH_ORIGINATOR]: value }));
+      expect(input).toHaveValue(value);
+      fireEvent.change(input, { target: { value: "codex_cli_rs" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+      await waitFor(() =>
+        expect(onSave).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            [K.CODEX_OAUTH_ORIGINATOR]: "codex_cli_rs",
+          }),
+        ),
+      );
+    },
+  );
+
   it("does not submit edits when confirming a search with Enter", async () => {
     const { onSave } = createForm();
     const user = userEvent.setup();

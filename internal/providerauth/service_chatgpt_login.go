@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 
@@ -62,6 +63,16 @@ func (s *Service) StartChatGPTLogin(ctx context.Context, sessionID string) (*Cha
 	if err != nil {
 		return nil, err
 	}
+	loginID := s.idGenerator.NewID()
+	originator, err := s.oauthLoginOriginator(ctx)
+	if err != nil {
+		s.logger.Warn("chatgpt_oauth.login_config_failed",
+			zap.String("login_id", loginID),
+			zap.String("credential_session_id", sessionID),
+			zap.Error(err),
+		)
+		return nil, err
+	}
 	state, err := randomURLSafeString(32)
 	if err != nil {
 		return nil, err
@@ -72,7 +83,6 @@ func (s *Service) StartChatGPTLogin(ctx context.Context, sessionID string) (*Cha
 	}
 	hash := sha256.Sum256([]byte(codeVerifier))
 	codeChallenge := base64.RawURLEncoding.EncodeToString(hash[:])
-	loginID := s.idGenerator.NewID()
 
 	authURL, err := url.Parse(defaultOAuthIssuer + "/oauth/authorize")
 	if err != nil {
@@ -88,7 +98,7 @@ func (s *Service) StartChatGPTLogin(ctx context.Context, sessionID string) (*Cha
 	query.Set("code_challenge_method", "S256")
 	query.Set("id_token_add_organizations", "true")
 	query.Set("codex_cli_simplified_flow", "true")
-	query.Set("originator", defaultOAuthOriginator)
+	query.Set("originator", originator)
 	authURL.RawQuery = query.Encode()
 
 	if err := s.beginChatGPTLogin(pendingLogin{
@@ -100,10 +110,30 @@ func (s *Service) StartChatGPTLogin(ctx context.Context, sessionID string) (*Cha
 		return nil, err
 	}
 
+	s.logger.Info("chatgpt_oauth.login_started",
+		zap.String("login_id", loginID),
+		zap.String("credential_session_id", sessionID),
+		zap.String("oauth_originator", originator),
+	)
 	return &ChatGPTLoginStartResponse{
 		LoginID: loginID,
 		AuthURL: authURL.String(),
 	}, nil
+}
+
+func (s *Service) oauthLoginOriginator(ctx context.Context) (string, error) {
+	if s.runtimeConfig == nil {
+		return defaultOAuthOriginator, nil
+	}
+	// Resolve only when creating the URL; already-started logins keep their chosen originator.
+	value, err := s.runtimeConfig.GetConfig(ctx, defaults.ConfigKeyCodexOAuthOriginator)
+	if err != nil {
+		return "", fmt.Errorf("resolve Codex OAuth originator: %w", err)
+	}
+	if value = strings.TrimSpace(value); value == "" {
+		return defaultOAuthOriginator, nil
+	}
+	return value, nil
 }
 
 // GetChatGPTLoginStatus reports whether a prepared login session is still waiting

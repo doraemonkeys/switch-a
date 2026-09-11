@@ -9,6 +9,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth/accountclient"
 
@@ -19,8 +20,8 @@ import (
 const (
 	defaultOAuthIssuer       = "https://auth.openai.com"
 	defaultOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
-	defaultOAuthScope        = "openid profile email offline_access"
-	defaultOAuthOriginator   = "codex_vscode"
+	defaultOAuthScope        = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+	defaultOAuthOriginator   = defaults.DefaultCodexOAuthOriginator
 	chatGPTCodexOriginator   = "codex_cli_rs"
 	chatGPTCodexBaseURL      = "https://chatgpt.com/backend-api/codex"
 	chatGPTAPIAudience       = "https://api.openai.com/v1"
@@ -54,6 +55,11 @@ type OAuthHTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// RuntimeConfigStore allows new logins to observe saved settings without restarting.
+type RuntimeConfigStore interface {
+	GetConfig(context.Context, string) (string, error)
+}
+
 // IDGenerator keeps process-local auth and import session identifiers opaque
 // while allowing lifecycle behavior to be deterministic in tests.
 type IDGenerator interface {
@@ -70,6 +76,7 @@ func (uuidIDGenerator) NewID() string {
 type Config struct {
 	ClientProfiles      accountclient.ProfileStore
 	AccountClientPolicy accountclient.PolicyStore
+	RuntimeConfig       RuntimeConfigStore
 	CredentialStore     any
 	HTTPClient          OAuthHTTPDoer
 	Clock               internal.Clock
@@ -109,6 +116,7 @@ type inFlightProviderUsageObservation struct {
 // Service manages provider-backed authentication flows and credential injection.
 type Service struct {
 	clientProfiles  *accountclient.Resolver
+	runtimeConfig   RuntimeConfigStore
 	credentialStore any
 	httpClient      OAuthHTTPDoer
 	clock           internal.Clock
@@ -175,6 +183,7 @@ func newService(cfg Config, runtime serviceRuntime) *Service {
 	service := &Service{
 		clientProfiles:            accountclient.NewResolver(accountclient.Config{Profiles: cfg.ClientProfiles, Policy: cfg.AccountClientPolicy, Logger: logger}),
 		credentialStore:           cfg.CredentialStore,
+		runtimeConfig:             cfg.RuntimeConfig,
 		httpClient:                httpClient,
 		clock:                     clock,
 		logger:                    logger,

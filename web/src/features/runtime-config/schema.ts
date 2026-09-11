@@ -125,6 +125,24 @@ export const CONFIG_CATEGORIES: readonly ConfigCategory[] = [
         ],
       },
       {
+        title: "Codex OAuth 登录",
+        description: "设置浏览器授权时使用的客户端来源标识。",
+        fields: [
+          {
+            key: K.CODEX_OAUTH_ORIGINATOR,
+            label: "OAuth originator",
+            kind: "combobox",
+            description: "选择常用客户端标识，也可直接输入自定义值。",
+            defaultValue: D.CODEX_OAUTH_ORIGINATOR,
+            options: [
+              { value: D.CODEX_OAUTH_ORIGINATOR, label: "Codex CLI" },
+              { value: "codex_vscode", label: "Codex VS Code" },
+            ],
+            help: "留空使用 codex_cli_rs。保存后从下一次登录或重新授权生效。",
+          },
+        ],
+      },
+      {
         title: "GPT 账号请求",
         description: "适用于 GPT 登录、Token 刷新和额度查询。",
         fields: [

@@ -26,7 +26,10 @@ func TestGlobalOfficialPolicyFreezesNewLoginUntilCallbackCompletes(t *testing.T)
 	wantUA := clientdisguise.BuiltinAccountProfile().UserAgent("0.151.0")
 	policyCalls, networkCalls := 0, 0
 	service := newCallbackLifecycleTestService(Config{
-		Clock:               fixedClock{now: now},
+		Clock: fixedClock{now: now},
+		RuntimeConfig: oauthRuntimeConfigFunc(func(context.Context, string) (string, error) {
+			return "oauth-only-client", nil
+		}),
 		AccountClientPolicy: accountPolicyStoreFunc(func(context.Context) (accountclient.Policy, error) { policyCalls++; return policy, nil }),
 		HTTPClient: stubHTTPDoer{do: func(request *http.Request) (*http.Response, error) {
 			networkCalls++
@@ -48,6 +51,10 @@ func TestGlobalOfficialPolicyFreezesNewLoginUntilCallbackCompletes(t *testing.T)
 		login, err := service.StartChatGPTLogin(context.Background(), "")
 		if err != nil {
 			t.Fatal(err)
+		}
+		parsed, err := url.Parse(login.AuthURL)
+		if err != nil || parsed.Query().Get("originator") != "oauth-only-client" {
+			t.Fatal(login.AuthURL, err)
 		}
 		policy = accountclient.Policy{FallbackClient: accountclient.FallbackSwitchA}
 		state := loginStateFromAuthURL(t, login.AuthURL)
@@ -71,6 +78,10 @@ func TestGlobalOfficialPolicyAppliesToUnboundTokenRefresh(t *testing.T) {
 	calls := 0
 	service := NewService(Config{
 		CredentialStore: store, Clock: fixedClock{now: now},
+		RuntimeConfig: oauthRuntimeConfigFunc(func(context.Context, string) (string, error) {
+			t.Fatal("token refresh consulted OAuth login settings")
+			return "", nil
+		}),
 		AccountClientPolicy: accountPolicyStoreFunc(func(context.Context) (accountclient.Policy, error) {
 			return accountclient.Policy{FallbackClient: accountclient.FallbackOfficialStable, OfficialVersion: officialversion.Release{Version: "0.151.0"}}, nil
 		}),

@@ -20,7 +20,10 @@ export interface ConfigOption {
 
 export type ConfigFieldDefinition = FieldBase &
   (
-    | { kind: "select" | "choice"; options: readonly ConfigOption[] }
+    | {
+        kind: "select" | "choice" | "combobox";
+        options: readonly ConfigOption[];
+      }
     | { kind: "number"; min: number; max?: number; unit: string }
     | { kind: "text" }
     | { kind: "toggle" }
