@@ -230,6 +230,9 @@ func buildWebSocketTransportDiagnostic(result *WebSocketResult, fallback error, 
 	if result != nil && result.Err != nil {
 		err = result.Err
 	}
+	if result != nil && result.TransportObservation.Err != nil {
+		err = result.TransportObservation.Err
+	}
 	var closeError *websocket.CloseError
 	closedWithoutStatus := false
 	stage := transportStagePreConnectionVisible

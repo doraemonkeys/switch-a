@@ -140,7 +140,7 @@ func TestWebSocketRelayCaptureOutcomeMapsFailureBoundary(t *testing.T) {
 		},
 		{
 			name:   "unclassified client peer",
-			relay:  &webSocketRelaySessionResult{FailurePeer: webSocketPeerClient},
+			relay:  &webSocketRelaySessionResult{TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerClient}},
 			result: &WebSocketResult{TerminalCause: model.TerminalInternalError},
 			want:   requestcapture.TerminationReasonClientDisconnect,
 		},
@@ -185,14 +185,14 @@ func TestWebSocketRelayFailureObservationAttributesOperationAndPeer(t *testing.T
 		},
 		{
 			name:      "client read",
-			relay:     &webSocketRelaySessionResult{FailurePeer: webSocketPeerClient, FailureOperation: webSocketRelayFailureOperationRead},
+			relay:     &webSocketRelaySessionResult{TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerClient}, FailureOperation: webSocketRelayFailureOperationRead},
 			wantPeer:  requestcapture.FailurePeerClient,
 			wantClass: requestcapture.FailureClassRead,
 			wantCode:  requestcapture.FailureCodeRelayRead,
 		},
 		{
 			name:      "upstream write",
-			relay:     &webSocketRelaySessionResult{FailurePeer: webSocketPeerUpstream, FailureOperation: webSocketRelayFailureOperationWrite},
+			relay:     &webSocketRelaySessionResult{TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerUpstream}, FailureOperation: webSocketRelayFailureOperationWrite},
 			wantPeer:  requestcapture.FailurePeerUpstream,
 			wantClass: requestcapture.FailureClassWrite,
 			wantCode:  requestcapture.FailureCodeRelayWrite,
@@ -214,8 +214,7 @@ func TestWebSocketRelayCloseAndPreservationBoundaries(t *testing.T) {
 	t.Parallel()
 
 	unknownPeer := webSocketCaptureCloseObservation(&webSocketRelaySessionResult{
-		FailurePeer:        webSocketPeerUnknown,
-		ObservedCloseError: &websocket.CloseError{Code: websocket.StatusInternalError},
+		TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerUnknown, CloseError: &websocket.CloseError{Code: websocket.StatusInternalError}},
 	})
 	if unknownPeer != nil {
 		t.Fatalf("unknown-peer close observation = %#v, want nil", unknownPeer)

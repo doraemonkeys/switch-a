@@ -35,15 +35,15 @@ func TestWebSocketRelayResult_CloseErrorPropagatedThroughReduction(t *testing.T)
 		t.Fatal("closeError = nil on primary, want populated")
 	}
 	outcome := reduceOrderedWebSocketRelayResults(primary, webSocketRelayResult{})
-	if outcome.observedCloseError == nil {
-		t.Fatal("outcome.observedCloseError = nil, want primary closeError forwarded")
+	if outcome.transportObservation.CloseError == nil {
+		t.Fatal("outcome.transportObservation.CloseError = nil, want primary closeError forwarded")
 	}
-	if outcome.observedCloseError.Code != websocket.StatusAbnormalClosure {
-		t.Fatalf("outcome.observedCloseError.Code = %d, want %d",
-			outcome.observedCloseError.Code, websocket.StatusAbnormalClosure)
+	if outcome.transportObservation.CloseError.Code != websocket.StatusAbnormalClosure {
+		t.Fatalf("outcome.transportObservation.CloseError.Code = %d, want %d",
+			outcome.transportObservation.CloseError.Code, websocket.StatusAbnormalClosure)
 	}
-	if outcome.failurePeer != webSocketPeerUpstream {
-		t.Fatalf("outcome.failurePeer = %v, want upstream", outcome.failurePeer)
+	if outcome.transportObservation.FailurePeer != webSocketPeerUpstream {
+		t.Fatalf("outcome.transportObservation.FailurePeer = %v, want upstream", outcome.transportObservation.FailurePeer)
 	}
 
 	session := newWebSocketRelaySessionResultFromOutcome(outcome, nil, nil, 0, 0)
@@ -75,8 +75,8 @@ func TestWebSocketRelayResult_WriteCloseIsNotPeerObservation(t *testing.T) {
 		t.Fatalf("write failure close observation = %#v, want nil", result.closeError)
 	}
 	outcome := reduceOrderedWebSocketRelayResults(result, webSocketRelayResult{})
-	if outcome.observedCloseError != nil {
-		t.Fatalf("reduced write failure close observation = %#v, want nil", outcome.observedCloseError)
+	if outcome.transportObservation.CloseError != nil {
+		t.Fatalf("reduced write failure close observation = %#v, want nil", outcome.transportObservation.CloseError)
 	}
 }
 
@@ -111,11 +111,15 @@ func TestWebSocketResult_ClonePreservesTransportObservation(t *testing.T) {
 	closeErr := &websocket.CloseError{Code: websocket.StatusInternalError, Reason: "boom"}
 	original := &WebSocketResult{
 		TransportObservation: WebSocketTransportObservation{
+			Err:         io.EOF,
 			CloseError:  closeErr,
 			FailurePeer: webSocketPeerUpstream,
 		},
 	}
 	clone := original.Clone()
+	if clone.TransportObservation.Err != io.EOF {
+		t.Fatalf("Clone().TransportObservation.Err = %v, want EOF", clone.TransportObservation.Err)
+	}
 	if clone.TransportObservation.CloseError != closeErr {
 		t.Fatalf("Clone().TransportObservation.CloseError = %p, want pointer-identical %p",
 			clone.TransportObservation.CloseError, closeErr)
@@ -147,6 +151,7 @@ func TestApplyLastAttemptToSuppressedPayload_ZerosTransportObservation(t *testin
 			HandshakeAccepted: true,
 			TerminalCause:     model.TerminalUpstreamTransportError,
 			TransportObservation: WebSocketTransportObservation{
+				Err:         io.ErrUnexpectedEOF,
 				CloseError:  &websocket.CloseError{Code: websocket.StatusAbnormalClosure},
 				FailurePeer: webSocketPeerUpstream,
 			},

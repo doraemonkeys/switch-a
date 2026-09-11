@@ -194,10 +194,7 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("upstream unavailable")).toBeInTheDocument();
   });
 
-  it("renders v2 transport evidence with formatted summary, kind, signal, and stage", () => {
-    // SSE idle timeout before payload visible — the v2 renderer must surface
-    // the structured `{source} {kind} ({signal}) {stage-phrase}` summary even
-    // when the raw `error` channel is empty.
+  it("renders the original transport error with kind, signal, and stage", () => {
     const log = createMockLog({
       is_websocket: false,
       is_sse: true,
@@ -228,7 +225,7 @@ describe("LogDetailModal", () => {
     // Summary line rendered with role="note" so assistive tech can attach it
     // to the status header.
     expect(screen.getByRole("note")).toHaveTextContent(
-      "upstream timeout (sse_idle_timeout) before payload visible",
+      "sse idle watchdog fired",
     );
 
     // Detail view carries the structured fields from the v2 renderer.
@@ -238,7 +235,7 @@ describe("LogDetailModal", () => {
     expect(screen.getByText("timeout")).toBeInTheDocument();
     expect(screen.getByText("Stage")).toBeInTheDocument();
     expect(screen.getByText("before payload visible")).toBeInTheDocument();
-    expect(screen.getByText("sse idle watchdog fired")).toBeInTheDocument();
+    expect(screen.getAllByText("sse idle watchdog fired")).toHaveLength(2);
 
     // v2 schema must not surface the v1-only "Timeout" / "Client Cancel"
     // toggles — routing is by `evidence.v`, not heuristic field probing.

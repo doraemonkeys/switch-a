@@ -590,10 +590,9 @@ func TestWebSocketCapturePersistsOnlyObservedCloseFrames(t *testing.T) {
 			}
 			modelCause := modelTerminalCauseForCaptureClose(test.peer, test.clean)
 			relay := &webSocketRelaySessionResult{
-				TerminalCause:      modelCause,
-				ObservedCloseError: closeErr,
-				FailurePeer:        test.peer,
-				FailureOperation:   webSocketRelayFailureOperationRead,
+				TerminalCause:        modelCause,
+				TransportObservation: WebSocketTransportObservation{CloseError: closeErr, FailurePeer: test.peer},
+				FailureOperation:     webSocketRelayFailureOperationRead,
 			}
 			result := relay.toWebSocketResult()
 			outcome := webSocketRelayCaptureOutcome(context.Background(), relay, result)
@@ -640,8 +639,8 @@ func TestWebSocketCapturePersistsOnlyObservedCloseFrames(t *testing.T) {
 	}
 
 	synthesized := &webSocketRelaySessionResult{
-		CloseCode:   websocket.StatusNormalClosure,
-		FailurePeer: webSocketPeerUpstream,
+		CloseCode:            websocket.StatusNormalClosure,
+		TransportObservation: WebSocketTransportObservation{FailurePeer: webSocketPeerUpstream},
 	}
 	if observed := webSocketCaptureCloseObservation(synthesized); observed != nil {
 		t.Fatalf("synthesized close produced observation = %#v", observed)
@@ -671,9 +670,8 @@ func TestWebSocketCaptureCleanCloseWinsContextRace(t *testing.T) {
 			var relay *webSocketRelaySessionResult
 			if test.observedClose {
 				relay = &webSocketRelaySessionResult{
-					ObservedCloseError: &websocket.CloseError{Code: websocket.StatusNormalClosure, Reason: "done"},
-					FailurePeer:        webSocketPeerUpstream,
-					FailureOperation:   webSocketRelayFailureOperationRead,
+					TransportObservation: WebSocketTransportObservation{CloseError: &websocket.CloseError{Code: websocket.StatusNormalClosure, Reason: "done"}, FailurePeer: webSocketPeerUpstream},
+					FailureOperation:     webSocketRelayFailureOperationRead,
 				}
 			}
 			outcome := webSocketRelayCaptureOutcome(test.ctx, relay, &WebSocketResult{

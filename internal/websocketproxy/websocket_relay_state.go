@@ -31,17 +31,10 @@ type webSocketRelayOutcome struct {
 	closeCode     websocket.StatusCode
 	err           error
 	terminalCause model.TerminalCause
-	// observedCloseError carries the per-peer CloseError through reduction so
-	// the evidence builder can populate WebSocketResult.TransportObservation.
-	// It is strictly an observation-layer signal: unlike closeCode (which can
-	// be synthesized as StatusNoStatusRcvd for isUnexpectedPeerDisconnect),
-	// this pointer is non-nil only when a real frame was observed.
-	observedCloseError *websocket.CloseError
-	// failurePeer records which side originated the error that survived
-	// reduction. Evidence builders need this to attribute transport facts to
-	// upstream vs client; close propagation does not.
-	failurePeer      webSocketPeer
-	failureOperation webSocketRelayFailureOperation
+	// Carry the original observation as one value so close-policy normalization
+	// cannot discard or detach the error from its originating peer.
+	transportObservation WebSocketTransportObservation
+	failureOperation     webSocketRelayFailureOperation
 }
 
 type webSocketRelayFailureOperation uint8
@@ -361,13 +354,8 @@ type webSocketRelaySessionResult struct {
 	SuppressedUpstreamError *WebSocketUpstreamError
 	SuppressedMessageType   websocket.MessageType
 	SuppressedMessageData   []byte
-	// ObservedCloseError + FailurePeer pass the per-peer transport observation
-	// through the relay session layer so it reaches WebSocketResult unchanged.
-	// They are evidence-layer only — close propagation reads CloseCode, not
-	// this pointer.
-	ObservedCloseError *websocket.CloseError
-	FailurePeer        webSocketPeer
-	FailureOperation   webSocketRelayFailureOperation
+	TransportObservation    WebSocketTransportObservation
+	FailureOperation        webSocketRelayFailureOperation
 }
 
 type webSocketPreVisibleRelayProgress struct {

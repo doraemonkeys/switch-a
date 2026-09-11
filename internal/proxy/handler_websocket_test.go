@@ -976,7 +976,7 @@ func TestHandler_ServeHTTP_WebSocket_SuccessLogHasNoError(t *testing.T) {
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_CloseNowPreservesTransportError(t *testing.T) {
 	upstream := newEchoWSServer(t)
 	defer upstream.Close()
 
@@ -1015,8 +1015,11 @@ func TestHandler_ServeHTTP_WebSocket_CloseNowStillLogsSuccess(t *testing.T) {
 	if log == nil {
 		t.Fatal("expected log entry")
 	}
-	if requestLogEvidenceMessage(t, log) != "" {
-		t.Errorf("expected empty SessionEvidenceJSON message for CloseNow teardown, got %q", requestLogEvidenceMessage(t, log))
+	if requestLogEvidenceMessage(t, log) == "" {
+		t.Error("expected original transport error for CloseNow teardown")
+	}
+	if requestLogTerminationReason(log) != model.TerminationReasonClientDisconnect {
+		t.Errorf("termination reason = %q, want client_disconnect", requestLogTerminationReason(log))
 	}
 	if requestLogServiceOutcome(log) != model.ServiceOutcomeUnknown {
 		t.Errorf("expected unknown service outcome, got %q", requestLogServiceOutcome(log))

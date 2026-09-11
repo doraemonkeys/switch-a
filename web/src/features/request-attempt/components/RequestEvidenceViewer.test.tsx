@@ -31,6 +31,29 @@ function loadFixture(): EvidenceFixture {
 afterEach(cleanup);
 
 describe("RequestEvidenceViewer", () => {
+  it("shows the raw EOF error with its transport source and stage", () => {
+    const rawError = "failed to get reader: failed to read frame header: EOF";
+    render(
+      <RequestEvidenceViewer
+        evidenceJson={JSON.stringify({
+          v: 2,
+          transport: {
+            source: "upstream",
+            kind: "disconnect",
+            stage: "post_payload_visible",
+            signal: "eof",
+            raw_error_snippet: rawError,
+          },
+        })}
+      />,
+    );
+    const transport = within(screen.getByRole("region", { name: "Transport" }));
+    expect(transport.getByText("Raw Error")).toBeInTheDocument();
+    expect(transport.getByText(rawError)).toBeInTheDocument();
+    expect(transport.getByText("upstream")).toBeInTheDocument();
+    expect(transport.getByText("after payload visible")).toBeInTheDocument();
+  });
+
   it("renders every shared-fixture decision as an explicit semantic axis", () => {
     for (const fixtureCase of loadFixture().cases) {
       render(

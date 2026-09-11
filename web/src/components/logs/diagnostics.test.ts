@@ -171,9 +171,7 @@ describe("formatTransportSummary (v2)", () => {
     ).toBe("upstream protocol_error (upstream_read_error)");
   });
 
-  it("returns null when the signal is excluded from list summaries", () => {
-    // close_without_status stays in the detail view but must never be a
-    // first-choice list summary.
+  it("shows close_without_status when it is the only available diagnostic", () => {
     expect(
       formatTransportSummary(
         build({
@@ -182,7 +180,7 @@ describe("formatTransportSummary (v2)", () => {
           stage: "post_payload_visible",
         }),
       ),
-    ).toBeNull();
+    ).toBe("upstream disconnect (close_without_status) after payload visible");
   });
 
   it("returns null when core fields are missing", () => {
@@ -253,7 +251,9 @@ describe("isV2Evidence + getLogEvidenceSummary routing", () => {
         transport,
       });
       const summary = `${source} disconnect (connection_reset) after payload visible`;
-      expect(getLogEvidenceSummary(withEvidence(evidenceJson))).toBe(summary);
+      expect(getLogEvidenceSummary(withEvidence(evidenceJson))).toBe(
+        transport.raw_error_snippet,
+      );
       expect(getLogTransportSummary(withEvidence(evidenceJson))).toBe(summary);
     },
   );
@@ -275,7 +275,7 @@ describe("isV2Evidence + getLogEvidenceSummary routing", () => {
     );
   });
 
-  it("falls back to raw_error_snippet when the signal is list-suppressed", () => {
+  it("prefers the raw error over close_without_status", () => {
     const evidenceJson = JSON.stringify({
       v: 2,
       transport: {
@@ -290,7 +290,9 @@ describe("isV2Evidence + getLogEvidenceSummary routing", () => {
     expect(getLogEvidenceSummary(withEvidence(evidenceJson))).toBe(
       "client closed without status",
     );
-    expect(getLogTransportSummary(withEvidence(evidenceJson))).toBeNull();
+    expect(getLogTransportSummary(withEvidence(evidenceJson))).toBe(
+      "client disconnect (close_without_status) after payload visible",
+    );
   });
 
   it("renders v1 transport message_snippet through the v1 path unchanged", () => {

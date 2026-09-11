@@ -4,7 +4,6 @@ import type {
   RequestEvidenceTransportV2,
   RequestEvidenceV2,
   TransportEvidenceKind,
-  TransportEvidenceSignal,
   TransportEvidenceSource,
   TransportEvidenceStage,
 } from "@/api/evidence-types";
@@ -36,18 +35,6 @@ const SOURCE_PHRASES: Record<TransportEvidenceSource, string> = {
   upstream: "upstream",
   client: "client",
 };
-
-/**
- * Signals the plan explicitly excludes from first-choice list summaries.
- *
- * Pure client close-without-status carries no root-cause fault; surfacing it at
- * the top of a list row would mislead the reader. Detail views still render the
- * evidence in full via `RequestEvidenceTransportV2` so diagnostic information
- * is never lost.
- */
-const SUPPRESSED_LIST_SIGNALS: ReadonlySet<TransportEvidenceSignal> = new Set([
-  "close_without_status",
-]);
 
 export function parseRequestEvidence(
   evidenceJson?: string | null,
@@ -97,8 +84,7 @@ export function getV1Transport(
  * `upstream timeout (sse_idle_timeout) before payload visible`.
  *
  * Returns null when the observation lacks enough structure to construct a
- * meaningful phrase, or when the signal is explicitly excluded from list
- * summaries (detail views still render it — see SUPPRESSED_LIST_SIGNALS).
+ * meaningful phrase.
  */
 export function formatTransportSummary(
   transport: RequestEvidenceTransportV2 | null | undefined,
@@ -108,9 +94,6 @@ export function formatTransportSummary(
   }
   const { source, kind, signal, stage } = transport;
   if (!source || !kind || !signal) {
-    return null;
-  }
-  if (SUPPRESSED_LIST_SIGNALS.has(signal)) {
     return null;
   }
   const sourcePhrase = SOURCE_PHRASES[source];
@@ -154,10 +137,9 @@ export function getTransportSourceLabel(
 /**
  * Summary text suitable for list rows and terse previews.
  *
- * Priority mirrors the gateway-first / transport-second / event-third
- * precedence used by historical rows, with one structural change: a v2
- * transport observation is formatted through `formatTransportSummary` rather
- * than pulling the freeform `message_snippet` (which no longer exists in v2).
+ * Keep the original transport error visible so a broad classification cannot
+ * hide the concrete failure. Structured evidence still explains older rows
+ * whose original error was not retained.
  */
 export function getRequestEvidenceSummary(
   evidenceJson?: string | null,
@@ -174,14 +156,12 @@ export function getRequestEvidenceSummary(
 
   if (isV2Evidence(evidence)) {
     const v2Transport = getV2Transport(evidence);
+    if (v2Transport?.raw_error_snippet) {
+      return v2Transport.raw_error_snippet;
+    }
     const transportSummary = formatTransportSummary(v2Transport);
     if (transportSummary) {
       return transportSummary;
-    }
-    // Raw error snippet stays as a last-resort transport fallback — v2 keeps it
-    // as the freeform escape hatch while the structured phrase remains primary.
-    if (v2Transport?.raw_error_snippet) {
-      return v2Transport.raw_error_snippet;
     }
   } else {
     const v1Transport = getV1Transport(evidence);

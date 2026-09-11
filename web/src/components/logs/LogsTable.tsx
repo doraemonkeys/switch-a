@@ -383,7 +383,7 @@ function LogTableRow({ log, providerName, onClick }: LogTableRowProps) {
           )}
           {evidenceSummary && (
             <span
-              className="text-xs text-text-muted truncate max-w-[280px]"
+              className="text-xs text-text-muted whitespace-normal break-words max-w-[280px]"
               title={evidenceSummary}
             >
               {evidenceSummary}

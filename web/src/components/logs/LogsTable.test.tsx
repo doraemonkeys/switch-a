@@ -89,3 +89,63 @@ describe("LogsTable reasoning observation", () => {
     ).toHaveAttribute("colspan", "10");
   });
 });
+
+describe("LogsTable transport diagnostics", () => {
+  it.each([
+    ["eof", "failed to get reader: failed to read frame header: EOF"],
+    ["unexpected_eof", "failed to read frame payload: unexpected EOF"],
+    [
+      "connection_reset",
+      "An existing connection was forcibly closed by the remote host.",
+    ],
+  ])(
+    "shows the original %s error beside the transport status",
+    (signal, rawError) => {
+      renderTable([
+        makeLog({
+          is_websocket: true,
+          client_transport_status_code: 101,
+          service_outcome: "unknown",
+          completion_state: "unknown",
+          termination_reason: "transport_error",
+          termination_actor: "upstream",
+          session_evidence_json: JSON.stringify({
+            v: 2,
+            transport: {
+              source: "upstream",
+              kind: "disconnect",
+              stage: "post_payload_visible",
+              signal,
+              raw_error_snippet: rawError,
+            },
+          }),
+        }),
+      ]);
+      expect(screen.getByText("Transport Error")).toBeInTheDocument();
+      expect(screen.getByText(rawError)).toBeInTheDocument();
+    },
+  );
+
+  it("shows the available signal for an older row without the original error", () => {
+    renderTable([
+      makeLog({
+        is_websocket: true,
+        termination_reason: "transport_error",
+        session_evidence_json: JSON.stringify({
+          v: 2,
+          transport: {
+            source: "upstream",
+            kind: "disconnect",
+            stage: "post_payload_visible",
+            signal: "close_without_status",
+          },
+        }),
+      }),
+    ]);
+    expect(
+      screen.getByText(
+        "upstream disconnect (close_without_status) after payload visible",
+      ),
+    ).toBeInTheDocument();
+  });
+});

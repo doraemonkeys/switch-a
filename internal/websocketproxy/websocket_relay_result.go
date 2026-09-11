@@ -156,36 +156,30 @@ func reduceOrderedWebSocketRelayResults(primary, secondary webSocketRelayResult)
 		if candidate.err == nil {
 			continue
 		}
-		terminalCause := classifyRelayTerminalCause(candidate.err, candidate.failurePeer)
-		// The observation-layer fields (observedCloseError, failurePeer) are
-		// populated for every candidate-producing branch so evidence derivation
-		// has a complete picture; close propagation still reads only closeCode.
-		if isNormalClose(candidate.err) {
-			return webSocketRelayOutcome{
-				closeCode:          extractCloseCode(candidate.err),
-				terminalCause:      terminalCause,
-				observedCloseError: candidate.closeError,
-				failurePeer:        candidate.failurePeer,
-				failureOperation:   candidate.failureOperation,
-			}
+		outcome := webSocketRelayOutcome{
+			closeCode:        extractCloseCode(candidate.err),
+			err:              candidate.err,
+			terminalCause:    classifyRelayTerminalCause(candidate.err, candidate.failurePeer),
+			failureOperation: candidate.failureOperation,
+			transportObservation: WebSocketTransportObservation{
+				Err:         candidate.err,
+				CloseError:  candidate.closeError,
+				FailurePeer: candidate.failurePeer,
+			},
 		}
-		if isUnexpectedPeerDisconnect(candidate.err) {
-			return webSocketRelayOutcome{
-				closeCode:          websocket.StatusNoStatusRcvd,
-				terminalCause:      terminalCause,
-				observedCloseError: candidate.closeError,
-				failurePeer:        candidate.failurePeer,
-				failureOperation:   candidate.failureOperation,
-			}
+		// Peer closes retain their existing client-close policy, while evidence
+		// keeps the original error instead of inheriting the normalized nil.
+		switch {
+		case isNormalClose(candidate.err):
+			outcome.err = nil
+			// Clean closes are represented by their observed frame, not a
+			// transport failure with the reader's misleading error wrapper.
+			outcome.transportObservation.Err = nil
+		case isUnexpectedPeerDisconnect(candidate.err):
+			outcome.closeCode = websocket.StatusNoStatusRcvd
+			outcome.err = nil
 		}
-		return webSocketRelayOutcome{
-			closeCode:          extractCloseCode(candidate.err),
-			err:                candidate.err,
-			terminalCause:      terminalCause,
-			observedCloseError: candidate.closeError,
-			failurePeer:        candidate.failurePeer,
-			failureOperation:   candidate.failureOperation,
-		}
+		return outcome
 	}
 	return webSocketRelayOutcome{
 		closeCode:     websocket.StatusNormalClosure,

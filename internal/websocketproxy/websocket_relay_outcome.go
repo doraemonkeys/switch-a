@@ -115,8 +115,7 @@ func newWebSocketRelaySessionResultFromOutcome(
 		ClientAccepted:        lifecycleSnapshot.ClientAccepted,
 		ClientVisible:         lifecycleSnapshot.ClientVisible,
 		DownstreamWrite:       lifecycleSnapshot.DownstreamWrite,
-		ObservedCloseError:    outcome.observedCloseError,
-		FailurePeer:           outcome.failurePeer,
+		TransportObservation:  outcome.transportObservation,
 		FailureOperation:      outcome.failureOperation,
 	}
 }
@@ -166,10 +165,7 @@ func (r *webSocketRelaySessionResult) toWebSocketResult() *WebSocketResult {
 		// (session + attempt) has a single source of truth. Suppressed-payload
 		// relays intentionally pass through nil values — those paths report
 		// semantic errors, not transport facts.
-		TransportObservation: WebSocketTransportObservation{
-			CloseError:  r.ObservedCloseError,
-			FailurePeer: r.FailurePeer,
-		},
+		TransportObservation: r.TransportObservation,
 	}
 }
 
@@ -207,12 +203,12 @@ func firstSuppressedUpstreamError(results ...webSocketRelayResult) *WebSocketUps
 func webSocketCaptureCloseObservation(
 	relay *webSocketRelaySessionResult,
 ) *requestcapture.WebSocketCloseObservation {
-	if relay == nil || relay.ObservedCloseError == nil {
+	if relay == nil || relay.TransportObservation.CloseError == nil {
 		return nil
 	}
 
 	var direction requestcapture.MessageDirection
-	switch relay.FailurePeer {
+	switch relay.TransportObservation.FailurePeer {
 	case webSocketPeerClient:
 		direction = requestcapture.MessageDirectionClientToUpstream
 	case webSocketPeerUpstream:
@@ -222,9 +218,9 @@ func webSocketCaptureCloseObservation(
 	}
 	return &requestcapture.WebSocketCloseObservation{
 		Direction: direction,
-		Code:      int(relay.ObservedCloseError.Code),
-		Reason:    relay.ObservedCloseError.Reason,
-		Clean:     isCleanWebSocketCloseCode(relay.ObservedCloseError.Code),
+		Code:      int(relay.TransportObservation.CloseError.Code),
+		Reason:    relay.TransportObservation.CloseError.Reason,
+		Clean:     isCleanWebSocketCloseCode(relay.TransportObservation.CloseError.Code),
 	}
 }
 
@@ -279,7 +275,7 @@ func webSocketRelayCaptureOutcome(
 				outcome.TerminationReason = requestcapture.TerminationReasonReadError
 			case relay.FailureOperation == webSocketRelayFailureOperationWrite:
 				outcome.TerminationReason = requestcapture.TerminationReasonWriteError
-			case relay.FailurePeer == webSocketPeerClient:
+			case relay.TransportObservation.FailurePeer == webSocketPeerClient:
 				outcome.TerminationReason = requestcapture.TerminationReasonClientDisconnect
 			}
 		}
@@ -307,12 +303,12 @@ func webSocketRelayFailureObservation(
 		observation.Truncated = truncated
 		return observation
 	}
-	if relay != nil && relay.ObservedCloseError != nil &&
-		!isCleanWebSocketCloseCode(relay.ObservedCloseError.Code) {
+	if relay != nil && relay.TransportObservation.CloseError != nil &&
+		!isCleanWebSocketCloseCode(relay.TransportObservation.CloseError.Code) {
 		fact, truncated := WebSocketClose(
 			requestcapture.FailureSiteWebSocketClose,
-			captureFailurePeer(relay.FailurePeer),
-			relay.ObservedCloseError,
+			captureFailurePeer(relay.TransportObservation.FailurePeer),
+			relay.TransportObservation.CloseError,
 		)
 		observation := Observation(fact, requestcapture.FailureFact{})
 		observation.Truncated = truncated
@@ -326,7 +322,7 @@ func webSocketRelayFailureObservation(
 	class := requestcapture.FailureClassTransport
 	code := requestcapture.FailureCodeUnknown
 	if relay != nil {
-		peer = captureFailurePeer(relay.FailurePeer)
+		peer = captureFailurePeer(relay.TransportObservation.FailurePeer)
 		switch relay.FailureOperation {
 		case webSocketRelayFailureOperationRead:
 			class = requestcapture.FailureClassRead

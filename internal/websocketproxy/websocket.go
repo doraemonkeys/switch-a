@@ -351,7 +351,7 @@ type WebSocketResult struct {
 	DownstreamWrite    responsefacts.Write
 
 	// TransportObservation carries the real runtime transport facts observed by
-	// the relay layer (CloseError frames, failing peer). It is evidence-layer
+	// the relay layer (original error, CloseError frames, failing peer). It is evidence-layer
 	// input only: session assessment and evidence derivation read it to build a
 	// transport diagnostic, nothing else on this struct depends on it.
 	//
@@ -369,6 +369,9 @@ type WebSocketResult struct {
 // pointer because a zero-valued CloseError{} with Code=0 is a legitimate
 // observation — presence must be unambiguous.
 type WebSocketTransportObservation struct {
+	// Err preserves the original failure even when relay close policy consumes
+	// it. Diagnostics must not depend on the error used to close the client.
+	Err error
 	// CloseError is the real observed close frame, populated only when the
 	// relay layer extracted one. A nil pointer means "no concrete frame" and
 	// forces the derivation layer onto EOF / close_without_status paths.
