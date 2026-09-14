@@ -6,6 +6,8 @@ English | [简体中文](README-ZH.md)
 
 Switch-A gives your applications one stable endpoint. It selects an eligible provider, forwards the request in its native API format, retries or fails over when appropriate, and records each attempt for troubleshooting.
 
+Switch-A focuses on native protocol forwarding, preserving client characteristics as much as possible. Using official clients is recommended whenever possible.
+
 It includes a browser-based admin UI, stores its data in SQLite, and ships the frontend inside the Go binary.
 
 ## Why Switch-A over a typical "X-to-API" gateway?
