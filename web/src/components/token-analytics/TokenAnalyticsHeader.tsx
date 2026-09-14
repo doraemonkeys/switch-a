@@ -7,6 +7,7 @@ import type {
   TokenDataQualityDTO,
 } from "../../api/types";
 import {
+  formatObservedQualityRate,
   GRANULARITY_LABELS,
   GRANULARITY_OPTIONS_BY_PERIOD,
   PERIOD_OPTIONS,
@@ -41,7 +42,7 @@ export function TokenAnalyticsHeader({
     ? `Coverage: ${(coverage.rate * 100).toFixed(1)}%`
     : null;
   const qualityText = dataQuality
-    ? `Observed-data quality: ${(dataQuality.quality_rate * 100).toFixed(1)}%`
+    ? `Observed-data quality: ${formatObservedQualityRate(dataQuality.quality_rate)}`
     : null;
 
   return (

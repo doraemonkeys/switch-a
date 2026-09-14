@@ -111,8 +111,9 @@ func TestServiceAnalyzeBuildsConservingReport(t *testing.T) {
 	if report.Coverage != wantCoverage {
 		t.Fatalf("coverage = %+v, want %+v", report.Coverage, wantCoverage)
 	}
-	wantQuality := DataQuality{QualityRate: 0.5, PartialRequests: 2, InvalidRequests: 1, UnknownSemanticsRequests: 1}
-	if report.DataQuality != wantQuality {
+	wantQualityRate := 0.5
+	wantQuality := DataQuality{QualityRate: &wantQualityRate, PartialRequests: 2, InvalidRequests: 1, UnknownSemanticsRequests: 1}
+	if !reflect.DeepEqual(report.DataQuality, wantQuality) {
 		t.Fatalf("data quality = %+v, want %+v", report.DataQuality, wantQuality)
 	}
 	if report.TimeRange != (TimeRange{Start: start, End: end}) {
@@ -172,8 +173,11 @@ func TestServiceAnalyzeNormalizesEmptyCollectionsAndZeroDenominators(t *testing.
 	if len(report.TimeSeries) != 2 || len(report.ByProvider) != 0 || len(report.ByModel) != 0 {
 		t.Fatalf("empty collection lengths = %d, %d, %d", len(report.TimeSeries), len(report.ByProvider), len(report.ByModel))
 	}
-	if report.Summary.CacheHitRate != 0 || report.Summary.ReasoningRatio != 0 || report.Coverage.Rate != 0 || report.DataQuality.QualityRate != 0 {
-		t.Fatalf("zero-denominator ratios must be zero: %+v", report)
+	if report.Summary.CacheHitRate != 0 || report.Summary.ReasoningRatio != 0 || report.Coverage.Rate != 0 {
+		t.Fatalf("zero-denominator volume ratios must be zero: %+v", report)
+	}
+	if report.DataQuality.QualityRate != nil {
+		t.Fatalf("quality without observations = %v, want nil", *report.DataQuality.QualityRate)
 	}
 }
 

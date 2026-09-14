@@ -37,7 +37,7 @@ const EMPTY_TOKEN_USAGE_RESPONSE: TokenUsageResponse = {
     rate: 0,
   },
   data_quality: {
-    quality_rate: 0,
+    quality_rate: null,
     partial_requests: 0,
     invalid_requests: 0,
     unknown_semantics_requests: 0,

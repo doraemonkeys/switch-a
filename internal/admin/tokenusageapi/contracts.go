@@ -60,10 +60,10 @@ type CoverageDTO struct {
 }
 
 type DataQualityDTO struct {
-	QualityRate              float64 `json:"quality_rate"`
-	PartialRequests          int64   `json:"partial_requests"`
-	InvalidRequests          int64   `json:"invalid_requests"`
-	UnknownSemanticsRequests int64   `json:"unknown_semantics_requests"`
+	QualityRate              *float64 `json:"quality_rate"`
+	PartialRequests          int64    `json:"partial_requests"`
+	InvalidRequests          int64    `json:"invalid_requests"`
+	UnknownSemanticsRequests int64    `json:"unknown_semantics_requests"`
 }
 
 // ResponseDTO has exactly the seven stable top-level sections consumed by the

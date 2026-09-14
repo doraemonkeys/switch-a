@@ -408,7 +408,9 @@ function parseDataQuality(
     hasOwn(value, "quality_rate"),
     `${context}.quality_rate is required`,
   );
-  assertRatioValue(value.quality_rate, `${context}.quality_rate`);
+  if (value.quality_rate !== null) {
+    assertRatioValue(value.quality_rate, `${context}.quality_rate`);
+  }
 
   for (const field of [
     "partial_requests",
@@ -506,12 +508,23 @@ export function parseTokenUsageResponse(value: unknown): TokenUsageResponse {
       coverage.observed_requests,
     "token usage response observed request quality partition is inconsistent",
   );
-  assertDerivedRatio(
-    dataQuality.quality_rate,
-    coverage.comparable_requests,
-    coverage.observed_requests,
-    "token usage response.data_quality.quality_rate",
-  );
+  if (coverage.observed_requests === 0) {
+    assertContract(
+      dataQuality.quality_rate === null,
+      "token usage response.data_quality.quality_rate must be null without observed requests",
+    );
+  } else {
+    assertContract(
+      dataQuality.quality_rate !== null,
+      "token usage response.data_quality.quality_rate is required for observed requests",
+    );
+    assertDerivedRatio(
+      dataQuality.quality_rate,
+      coverage.comparable_requests,
+      coverage.observed_requests,
+      "token usage response.data_quality.quality_rate",
+    );
+  }
 
   for (const [index, rank] of byProvider.entries()) {
     assertDerivedRatio(

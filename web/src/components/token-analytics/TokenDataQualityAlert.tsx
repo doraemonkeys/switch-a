@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import type { TokenDataQualityDTO } from "../../api/types";
+import { formatObservedQualityRate } from "./token-format";
 
 interface TokenDataQualityAlertProps {
   dataQuality: TokenDataQualityDTO;
@@ -8,18 +9,14 @@ interface TokenDataQualityAlertProps {
 export function TokenDataQualityAlert({
   dataQuality,
 }: TokenDataQualityAlertProps) {
-  // Only display alert when quality is under 100% or issues were observed
   const hasIssues =
-    dataQuality.quality_rate < 1.0 ||
     dataQuality.partial_requests > 0 ||
     dataQuality.invalid_requests > 0 ||
     dataQuality.unknown_semantics_requests > 0;
 
-  if (!hasIssues) {
+  if (dataQuality.quality_rate === null || !hasIssues) {
     return null;
   }
-
-  const qualityPct = (dataQuality.quality_rate * 100).toFixed(1);
 
   return (
     <div
@@ -32,7 +29,8 @@ export function TokenDataQualityAlert({
       />
       <div className="space-y-0.5">
         <p className="font-semibold">
-          Observed Data Quality Notice ({qualityPct}% quality rate)
+          Observed Data Quality Notice (
+          {formatObservedQualityRate(dataQuality.quality_rate)} quality rate)
         </p>
         <p className="text-amber-700 dark:text-amber-400">
           Encountered {dataQuality.partial_requests.toLocaleString()} partial,{" "}

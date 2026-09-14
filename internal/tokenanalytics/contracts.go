@@ -59,7 +59,8 @@ type Coverage struct {
 // DataQuality classifies only requests with at least one observed core token
 // field. Its three non-comparable classes are mutually exclusive.
 type DataQuality struct {
-	QualityRate              float64
+	// No observed usage leaves quality unassessed; zero means every observation is non-comparable.
+	QualityRate              *float64
 	PartialRequests          int64
 	InvalidRequests          int64
 	UnknownSemanticsRequests int64

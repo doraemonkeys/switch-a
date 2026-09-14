@@ -130,6 +130,80 @@ describe("token-usage-decoders", () => {
     expect(result.by_model).toEqual([]);
   });
 
+  it.each([0, 12])(
+    "keeps quality unassessed for %i requests without usage",
+    (totalRequests) => {
+      const response = createValidTokenUsageResponse();
+      response.summary = {
+        total_tokens: "0",
+        input_tokens: "0",
+        output_tokens: "0",
+        fresh_input_tokens: "0",
+        cache_read_input_tokens: "0",
+        cache_creation_input_tokens: "0",
+        unclassified_input_tokens: "0",
+        standard_output_tokens: "0",
+        reasoning_tokens: "0",
+        unclassified_output_tokens: "0",
+        cache_hit_rate: 0,
+        reasoning_ratio: 0,
+      };
+      response.timeseries = [];
+      response.by_provider = [];
+      response.by_model = [];
+      response.coverage = {
+        total_requests: totalRequests,
+        observed_requests: 0,
+        comparable_requests: 0,
+        without_usage_requests: totalRequests,
+        rate: 0,
+      };
+      response.data_quality.quality_rate = null;
+
+      expect(
+        parseTokenUsageResponse(response).data_quality.quality_rate,
+      ).toBeNull();
+
+      response.data_quality.quality_rate = 0;
+      expect(() => parseTokenUsageResponse(response)).toThrow(
+        "token usage response.data_quality.quality_rate must be null without observed requests",
+      );
+    },
+  );
+
+  it("requires a numeric quality rate when usage was observed", () => {
+    const response = createValidTokenUsageResponse();
+    response.data_quality.quality_rate = null;
+
+    expect(() => parseTokenUsageResponse(response)).toThrow(
+      "token usage response.data_quality.quality_rate is required for observed requests",
+    );
+
+    response.summary = {
+      total_tokens: "0",
+      input_tokens: "0",
+      output_tokens: "0",
+      fresh_input_tokens: "0",
+      cache_read_input_tokens: "0",
+      cache_creation_input_tokens: "0",
+      unclassified_input_tokens: "0",
+      standard_output_tokens: "0",
+      reasoning_tokens: "0",
+      unclassified_output_tokens: "0",
+      cache_hit_rate: 0,
+      reasoning_ratio: 0,
+    };
+    response.timeseries = [];
+    response.coverage.comparable_requests = 0;
+    response.coverage.rate = 0;
+    response.data_quality.partial_requests =
+      response.coverage.observed_requests;
+    response.data_quality.quality_rate = 0;
+    response.by_provider = [];
+    response.by_model = [];
+    expect(parseTokenUsageResponse(response).data_quality.quality_rate).toBe(0);
+  });
+
   it("rejects non-object responses", () => {
     expect(() => parseTokenUsageResponse(null)).toThrow(
       "token usage response must be an object",

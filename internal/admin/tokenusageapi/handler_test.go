@@ -225,6 +225,7 @@ func TestHandlerMapsDTOWithoutRecomputingDomainValues(t *testing.T) {
 		UnclassifiedInputTokens: 4, StandardOutputTokens: 5, ReasoningTokens: 6,
 		UnclassifiedOutputTokens: 7,
 	}
+	qualityRate := 0.875
 	report := tokenanalytics.Report{
 		Summary:    tokenanalytics.Aggregate{Breakdown: breakdown, CacheHitRate: 0.123, ReasoningRatio: 0.456},
 		TimeSeries: []tokenanalytics.Bucket{{Start: start, End: end, Breakdown: breakdown, TotalRequests: 9, ObservedRequests: 8, ComparableRequests: 7}},
@@ -234,7 +235,7 @@ func TestHandlerMapsDTOWithoutRecomputingDomainValues(t *testing.T) {
 		Coverage: tokenanalytics.Coverage{
 			TotalRequests: 9, ObservedRequests: 8, ComparableRequests: 7, WithoutUsageRequests: 1, Rate: 0.777,
 		},
-		DataQuality: tokenanalytics.DataQuality{QualityRate: 0.875, PartialRequests: 1, InvalidRequests: 2, UnknownSemanticsRequests: 3},
+		DataQuality: tokenanalytics.DataQuality{QualityRate: &qualityRate, PartialRequests: 1, InvalidRequests: 2, UnknownSemanticsRequests: 3},
 	}
 	analyzer := &analyzerStub{report: report}
 	handler := newTestHandler(t, analyzer, end.UTC())
@@ -263,6 +264,10 @@ func TestHandlerMapsDTOWithoutRecomputingDomainValues(t *testing.T) {
 		if _, exists := raw[key]; !exists {
 			t.Fatalf("missing top-level section %q", key)
 		}
+	}
+	quality := raw["data_quality"].(map[string]any)
+	if quality["quality_rate"] != json.Number("0.875") {
+		t.Fatalf("quality mapping = %+v", quality)
 	}
 	summary := raw["summary"].(map[string]any)
 	if summary["total_tokens"] != "9007199254740993" || summary["input_tokens"] != "11" || summary["cache_hit_rate"] != json.Number("0.123") {
@@ -301,6 +306,43 @@ func TestHandlerNormalizesEveryNilCollectionToArray(t *testing.T) {
 		if string(raw[field]) != "[]" {
 			t.Fatalf("%s = %s, want []", field, raw[field])
 		}
+	}
+}
+
+func TestHandlerPreservesUnassessedAndZeroQualityRates(t *testing.T) {
+	zeroRate := 0.0
+	for _, test := range []struct {
+		name     string
+		rate     *float64
+		observed int64
+		want     string
+	}{
+		{name: "no observed usage", want: "null"},
+		{name: "observed but not comparable", rate: &zeroRate, observed: 1, want: "0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC)
+			report := emptyReport(now.Add(-24*time.Hour), now)
+			report.Coverage.TotalRequests = test.observed
+			report.Coverage.ObservedRequests = test.observed
+			report.DataQuality.QualityRate = test.rate
+			report.DataQuality.PartialRequests = test.observed
+			handler := newTestHandler(t, &analyzerStub{report: report}, now)
+			recorder := httptest.NewRecorder()
+			handler.GetTokenUsage(recorder, httptest.NewRequest(http.MethodGet, "/admin/api/token-usage", nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", recorder.Code)
+			}
+			var response struct {
+				DataQuality map[string]json.RawMessage `json:"data_quality"`
+			}
+			if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if got := string(response.DataQuality["quality_rate"]); got != test.want {
+				t.Fatalf("quality_rate = %s, want %s", got, test.want)
+			}
+		})
 	}
 }
 

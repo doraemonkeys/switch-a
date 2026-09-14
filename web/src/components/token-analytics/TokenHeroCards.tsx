@@ -7,6 +7,7 @@ import type {
 } from "../../api/types";
 import {
   calculateTokenPercent,
+  formatObservedQualityRate,
   formatTokenCompact,
   formatTokenLocale,
   parseTokenBigInt,
@@ -462,7 +463,7 @@ function EfficiencyQualityCard({
           <span className="font-mono font-medium text-slate-900 dark:text-slate-200">
             {coverage.comparable_requests.toLocaleString()} /{" "}
             {coverage.observed_requests.toLocaleString()} (
-            {(dataQuality.quality_rate * 100).toFixed(1)}%)
+            {formatObservedQualityRate(dataQuality.quality_rate)})
           </span>
         </div>
       </div>

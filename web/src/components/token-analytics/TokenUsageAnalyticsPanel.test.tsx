@@ -102,6 +102,19 @@ const mockTokenUsageResponse: TokenUsageResponse = {
   },
 };
 
+const zeroBreakdown = {
+  total_tokens: "0",
+  input_tokens: "0",
+  output_tokens: "0",
+  fresh_input_tokens: "0",
+  cache_read_input_tokens: "0",
+  cache_creation_input_tokens: "0",
+  unclassified_input_tokens: "0",
+  standard_output_tokens: "0",
+  reasoning_tokens: "0",
+  unclassified_output_tokens: "0",
+};
+
 interface RenderPanelOptions {
   data?: TokenUsageResponse | null;
   loading?: boolean;
@@ -205,6 +218,43 @@ describe("TokenUsageAnalyticsPanel", () => {
     );
   });
 
+  it("warns when observed usage has no comparable requests", () => {
+    renderPanel({
+      data: {
+        ...mockTokenUsageResponse,
+        summary: { ...zeroBreakdown, cache_hit_rate: 0, reasoning_ratio: 0 },
+        coverage: {
+          total_requests: 3,
+          observed_requests: 3,
+          comparable_requests: 0,
+          without_usage_requests: 0,
+          rate: 0,
+        },
+        data_quality: {
+          quality_rate: 0,
+          partial_requests: 1,
+          invalid_requests: 1,
+          unknown_semantics_requests: 1,
+        },
+        timeseries: [],
+        by_provider: [],
+        by_model: [],
+      },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Observed Data Quality Notice (0.0% quality rate)",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "1 partial, 1 invalid, and 1 unknown semantics",
+    );
+    expect(screen.getByText("Observed-data quality: 0.0%")).toBeInTheDocument();
+    expect(screen.getByText("Total Tokens")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No Token Telemetry Recorded"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders loading skeleton when loading without data", () => {
     renderPanel({ data: null, loading: true });
 
@@ -251,59 +301,66 @@ describe("TokenUsageAnalyticsPanel", () => {
     expect(onWindowIntent).toHaveBeenCalledWith({ type: "refresh-requested" });
   });
 
-  it("treats bounded zero-filled buckets as an empty report", () => {
-    const zeroBucket = {
-      total_tokens: "0",
-      input_tokens: "0",
-      output_tokens: "0",
-      fresh_input_tokens: "0",
-      cache_read_input_tokens: "0",
-      cache_creation_input_tokens: "0",
-      unclassified_input_tokens: "0",
-      standard_output_tokens: "0",
-      reasoning_tokens: "0",
-      unclassified_output_tokens: "0",
-      total_requests: 0,
-      observed_requests: 0,
-      comparable_requests: 0,
-    };
-    const emptyData: TokenUsageResponse = {
-      ...mockTokenUsageResponse,
-      summary: {
-        ...zeroBucket,
-        cache_hit_rate: 0,
-        reasoning_ratio: 0,
-      },
-      coverage: {
+  it.each([0, 12])(
+    "does not assess quality for %i requests without usage",
+    (totalRequests) => {
+      const zeroBucket = {
+        ...zeroBreakdown,
         total_requests: 0,
         observed_requests: 0,
         comparable_requests: 0,
-        without_usage_requests: 0,
-        rate: 0,
-      },
-      timeseries: [
-        {
+      };
+      const emptyData: TokenUsageResponse = {
+        ...mockTokenUsageResponse,
+        summary: {
           ...zeroBucket,
-          start: "2026-08-20T16:00:00Z",
-          end: "2026-08-20T17:00:00Z",
+          cache_hit_rate: 0,
+          reasoning_ratio: 0,
         },
-        {
-          ...zeroBucket,
-          start: "2026-08-20T17:00:00Z",
-          end: "2026-08-20T18:00:00Z",
+        coverage: {
+          total_requests: totalRequests,
+          observed_requests: 0,
+          comparable_requests: 0,
+          without_usage_requests: totalRequests,
+          rate: 0,
         },
-      ],
-      by_provider: [],
-      by_model: [],
-    };
+        data_quality: {
+          quality_rate: null,
+          partial_requests: 0,
+          invalid_requests: 0,
+          unknown_semantics_requests: 0,
+        },
+        timeseries: [
+          {
+            ...zeroBucket,
+            total_requests: totalRequests,
+            start: "2026-08-20T16:00:00Z",
+            end: "2026-08-20T17:00:00Z",
+          },
+          {
+            ...zeroBucket,
+            start: "2026-08-20T17:00:00Z",
+            end: "2026-08-20T18:00:00Z",
+          },
+        ],
+        by_provider: [],
+        by_model: [],
+      };
 
-    renderPanel({ data: emptyData });
+      renderPanel({ data: emptyData });
 
-    expect(screen.getByText("No Token Telemetry Recorded")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Token Consumption Trend Over Time"),
-    ).not.toBeInTheDocument();
-  });
+      expect(
+        screen.getByText("No Token Telemetry Recorded"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Observed-data quality: No usage observed"),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Token Consumption Trend Over Time"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("opens and closes the information modal", () => {
     renderPanel();

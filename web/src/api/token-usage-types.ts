@@ -59,7 +59,8 @@ export interface TokenCoverageDTO {
 }
 
 export interface TokenDataQualityDTO {
-  quality_rate: number;
+  /** Null when no core token usage was observed; zero is an assessed quality rate. */
+  quality_rate: number | null;
   partial_requests: number;
   invalid_requests: number;
   unknown_semantics_requests: number;

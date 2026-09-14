@@ -14,6 +14,10 @@ export {
   isGranularityAllowed,
 } from "../../features/analytics-window/analytics-window";
 
+export function formatObservedQualityRate(rate: number | null): string {
+  return rate === null ? "No usage observed" : `${(rate * 100).toFixed(1)}%`;
+}
+
 export type TokenValue = string | number | bigint | undefined | null;
 
 /**

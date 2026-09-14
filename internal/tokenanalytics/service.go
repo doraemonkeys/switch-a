@@ -111,7 +111,7 @@ func (s *Service) Analyze(ctx context.Context, query Query) (report Report, err 
 			Rate:                 ratio(summary.ComparableRequests, summary.TotalRequests),
 		},
 		DataQuality: DataQuality{
-			QualityRate:              ratio(summary.ComparableRequests, summary.ObservedRequests),
+			QualityRate:              observedQualityRate(summary.ComparableRequests, summary.ObservedRequests),
 			PartialRequests:          summary.PartialRequests,
 			InvalidRequests:          summary.InvalidRequests,
 			UnknownSemanticsRequests: summary.UnknownSemanticsRequests,
@@ -354,6 +354,14 @@ func aggregate(breakdown Breakdown) Aggregate {
 		CacheHitRate:   ratio(breakdown.CacheReadInputTokens, breakdown.InputTokens),
 		ReasoningRatio: ratio(breakdown.ReasoningTokens, breakdown.OutputTokens),
 	}
+}
+
+func observedQualityRate(comparable, observed int64) *float64 {
+	if observed == 0 {
+		return nil
+	}
+	rate := ratio(comparable, observed)
+	return &rate
 }
 
 func ratio(numerator, denominator int64) float64 {
