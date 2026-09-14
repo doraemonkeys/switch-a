@@ -112,11 +112,6 @@ Startup settings can come from environment variables or `config.yaml`. Environme
 
 Most routing and reliability settings are managed in the admin UI and persisted in SQLite. See [`config.example.yaml`](config.example.yaml) for all startup options.
 
-## Security
-
-> **Do not expose Switch-A directly to the public internet.** Both servers listen on all network interfaces by default. The admin token protects the admin API. Proxy access remains permissive unless you enable **Configured keys only** in **Client API Keys**.
-
-For remote access, place Switch-A behind a private network or an authenticated reverse proxy with TLS. Keep `config.yaml`, the SQLite database, the Codex keyring, and exported configurations private because they contain credentials or persistent-state secrets.
 
 ## Development
 

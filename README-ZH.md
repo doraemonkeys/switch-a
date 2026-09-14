@@ -108,12 +108,6 @@ Windows 请使用 `go build -o switch-a.exe ./cmd/switch-a`，确保生成的文
 
 大部分路由和可靠性配置都在管理界面中维护，并持久化到 SQLite。所有启动选项见 [`config.example.yaml`](config.example.yaml)。
 
-## 安全说明
-
-> **不要将 Switch-A 直接暴露在公网。** 两个服务默认都会监听所有网络接口。管理员令牌会保护管理 API，但代理路由目前没有客户端鉴权。
-
-如需远程访问，请将 Switch-A 放在私有网络中，或置于启用了身份认证与 TLS 的反向代理之后。`config.yaml`、SQLite 数据库、Codex keyring 和导出的配置包含凭据或持久状态密钥，请妥善保管。
-
 ## 开发
 
 运行后端和前端测试：
