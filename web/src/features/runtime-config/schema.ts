@@ -5,6 +5,7 @@ import {
   STRATEGIES,
   STICKY_MODES,
   AUTH_MODES,
+  GPT_ACCOUNT_FALLBACK_CLIENTS,
   CONVERSATION_RECOVERY_POLICY_OPTIONS,
 } from "../../config";
 import type { ConfigCategory } from "./types";
@@ -155,14 +156,14 @@ export const CONFIG_CATEGORIES: readonly ConfigCategory[] = [
             defaultValue: D.GPT_ACCOUNT_FALLBACK_CLIENT,
             options: [
               {
-                value: D.GPT_ACCOUNT_FALLBACK_CLIENT,
-                label: "保持当前行为（默认）",
+                value: GPT_ACCOUNT_FALLBACK_CLIENTS.SWITCH_A,
+                label: "使用 Switch-A 客户端特征",
                 description:
                   "优先使用凭据绑定的客户端 UA；没有可用 UA 时使用 switch-a/版本。",
               },
               {
-                value: "official_stable",
-                label: "同步 Codex CLI 官方稳定版",
+                value: GPT_ACCOUNT_FALLBACK_CLIENTS.OFFICIAL_STABLE,
+                label: "同步 Codex CLI 官方稳定版（默认）",
                 description:
                   "无可用伪装 UA 时，使用内置 Codex Desktop 模板并同步 Codex CLI 官方稳定版；首次同步完成前沿用模板版本。",
               },

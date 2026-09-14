@@ -12,7 +12,7 @@ import (
 type FallbackClient string
 
 const (
-	FallbackSwitchA        FallbackClient = defaults.DefaultGPTAccountFallbackClient
+	FallbackSwitchA        FallbackClient = "switch_a"
 	FallbackOfficialStable FallbackClient = officialversion.Source
 )
 
@@ -33,7 +33,7 @@ type PolicyStore interface {
 
 func (r *Resolver) resolvePolicy(ctx context.Context) (Policy, error) {
 	if r.policy == nil {
-		return Policy{FallbackClient: FallbackSwitchA}, nil
+		return Policy{FallbackClient: FallbackClient(defaults.DefaultGPTAccountFallbackClient)}, nil
 	}
 	policy, err := r.policy.ResolveAccountClientPolicy(ctx)
 	if err != nil {

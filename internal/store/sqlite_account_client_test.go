@@ -29,18 +29,8 @@ func TestGlobalAccountModeOwnsReleaseFollowingWithoutBindings(t *testing.T) {
 	fetcher := &accountReleaseFetcher{}
 	service := officialversion.NewService(versions, fetcher, nil)
 	policy, err := st.ResolveAccountClientPolicy(ctx)
-	if err != nil || policy.FallbackClient != accountclient.FallbackSwitchA || policy.OfficialVersion.Version != "" {
+	if err != nil || policy.FallbackClient != accountclient.FallbackOfficialStable || policy.OfficialVersion.Version != "" {
 		t.Fatal(policy, err)
-	}
-	if _, err := service.Sync(ctx, false); err != nil || fetcher.calls != 0 {
-		t.Fatal(fetcher.calls, err)
-	}
-	if err := st.SetConfig(ctx, defaults.ConfigKeyGPTAccountFallbackClient, string(accountclient.FallbackOfficialStable)); err != nil {
-		t.Fatal(err)
-	}
-	pending, err := st.ResolveAccountClientPolicy(ctx)
-	if err != nil || pending.FallbackClient != accountclient.FallbackOfficialStable || pending.OfficialVersion.Version != "" {
-		t.Fatal(pending, err)
 	}
 	if _, err := service.Sync(ctx, false); err != nil || fetcher.calls != 1 {
 		t.Fatal(fetcher.calls, err)
@@ -57,7 +47,7 @@ func TestGlobalAccountModeOwnsReleaseFollowingWithoutBindings(t *testing.T) {
 	if err != nil || retained != frozen {
 		t.Fatal(retained, frozen, err)
 	}
-	if err := st.SetConfigs(ctx, map[string]string{defaults.ConfigKeyGPTAccountFallbackClient: defaults.DefaultGPTAccountFallbackClient}); err != nil {
+	if err := st.SetConfigs(ctx, map[string]string{defaults.ConfigKeyGPTAccountFallbackClient: string(accountclient.FallbackSwitchA)}); err != nil {
 		t.Fatal(err)
 	}
 	reset, err := st.ResolveAccountClientPolicy(ctx)
@@ -66,6 +56,9 @@ func TestGlobalAccountModeOwnsReleaseFollowingWithoutBindings(t *testing.T) {
 	}
 	if enabled, err := versions.HasOfficialVersionFollowers(ctx); err != nil || enabled {
 		t.Fatal(enabled, err)
+	}
+	if _, err := service.Sync(ctx, false); err != nil || fetcher.calls != 2 {
+		t.Fatal(fetcher.calls, err)
 	}
 	bindings, err := st.ClientDisguiseRepository().ListBindings(ctx)
 	if err != nil || len(bindings) != 0 {

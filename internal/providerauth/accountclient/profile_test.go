@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/doraemonkeys/switch-a/internal/buildinfo"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 	"go.uber.org/zap"
@@ -103,7 +102,9 @@ func TestResolveDefaultIdentityReasons(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if op.userAgent != buildinfo.Current().UserAgent() || logs.All()[0].ContextMap()["user_agent_source"] != tc.source {
+			fields := logs.All()[0].ContextMap()
+			if op.userAgent != clientdisguise.BuiltinAccountProfile().UserAgent("") ||
+				fields["user_agent_source"] != "official_stable_builtin" || fields["fallback_reason"] != tc.source {
 				t.Fatalf("operation=%#v logs=%#v", op, logs.All())
 			}
 		})

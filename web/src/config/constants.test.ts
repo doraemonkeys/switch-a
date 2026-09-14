@@ -42,20 +42,20 @@ describe("STORAGE_KEYS", () => {
 
 describe("DEFAULTS (sticky & circuit breaker)", () => {
   it("should have STICKY_TTL", () => {
-    expect(DEFAULTS.STICKY_TTL).toBe(300);
+    expect(DEFAULTS.STICKY_TTL).toBe(604800);
     expect(typeof DEFAULTS.STICKY_TTL).toBe("number");
   });
 
   it("should have CIRCUIT_BREAKER settings", () => {
-    expect(DEFAULTS.CIRCUIT_FAILURE).toBe(3);
+    expect(DEFAULTS.CIRCUIT_FAILURE).toBe(30);
     expect(DEFAULTS.CIRCUIT_WINDOW).toBe(60);
     expect(DEFAULTS.CIRCUIT_DISABLE).toBe(300);
   });
 
   it("should have sensible defaults for circuit breaker", () => {
-    // Failure threshold should be reasonable (1-10)
-    expect(DEFAULTS.CIRCUIT_FAILURE).toBeGreaterThanOrEqual(1);
-    expect(DEFAULTS.CIRCUIT_FAILURE).toBeLessThanOrEqual(10);
+    expect(DEFAULTS.CIRCUIT_FAILURE).toBeGreaterThanOrEqual(
+      FORM_CONSTRAINTS.MIN_POSITIVE,
+    );
     // Window should be at least 10 seconds
     expect(DEFAULTS.CIRCUIT_WINDOW).toBeGreaterThanOrEqual(10);
     // Disable duration should be at least window time
@@ -231,8 +231,8 @@ describe("CONFIG_KEYS", () => {
 });
 
 describe("DEFAULTS", () => {
-  it("preserves the Switch-A fallback for GPT account requests", () => {
-    expect(DEFAULTS.GPT_ACCOUNT_FALLBACK_CLIENT).toBe("switch_a");
+  it("follows the official stable client for GPT account requests", () => {
+    expect(DEFAULTS.GPT_ACCOUNT_FALLBACK_CLIENT).toBe("official_stable");
   });
 
   it("should have auth defaults", () => {
@@ -243,15 +243,15 @@ describe("DEFAULTS", () => {
 
   it("should have timeout defaults", () => {
     expect(DEFAULTS.UPSTREAM_CONNECT_TIMEOUT).toBe(10);
-    expect(DEFAULTS.FIRST_BYTE_TIMEOUT).toBe(0);
-    expect(DEFAULTS.UPSTREAM_READ_TIMEOUT).toBe(0);
-    expect(DEFAULTS.SSE_IDLE_TIMEOUT).toBe(0);
+    expect(DEFAULTS.FIRST_BYTE_TIMEOUT).toBe(120);
+    expect(DEFAULTS.UPSTREAM_READ_TIMEOUT).toBe(400);
+    expect(DEFAULTS.SSE_IDLE_TIMEOUT).toBe(300);
   });
 
   it("should have sticky session defaults", () => {
-    expect(DEFAULTS.STICKY_MODE).toBe("model");
-    expect(DEFAULTS.STICKY_TTL).toBe(300);
-    expect(DEFAULTS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(true);
+    expect(DEFAULTS.STICKY_MODE).toBe("api_type");
+    expect(DEFAULTS.STICKY_TTL).toBe(604800);
+    expect(DEFAULTS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(false);
   });
 
   it("defaults conversation recovery to the original account", () => {
@@ -259,7 +259,7 @@ describe("DEFAULTS", () => {
   });
 
   it("should have circuit breaker defaults", () => {
-    expect(DEFAULTS.CIRCUIT_FAILURE).toBe(3);
+    expect(DEFAULTS.CIRCUIT_FAILURE).toBe(30);
     expect(DEFAULTS.CIRCUIT_WINDOW).toBe(60);
     expect(DEFAULTS.CIRCUIT_DISABLE).toBe(300);
   });
@@ -268,7 +268,7 @@ describe("DEFAULTS", () => {
     expect(DEFAULTS.MAX_BODY_SIZE_MB).toBe(10);
     expect(DEFAULTS.GLOBAL_MAX_ATTEMPTS).toBe(0); // 0 = unlimited
     expect(DEFAULTS.PROVIDER_MAX_RETRIES).toBe(0); // 0 = no retry on same provider
-    expect(DEFAULTS.LOG_RETENTION_DAYS).toBe(7);
+    expect(DEFAULTS.LOG_RETENTION_DAYS).toBe(90);
   });
 
   it("should have strategy defaults", () => {

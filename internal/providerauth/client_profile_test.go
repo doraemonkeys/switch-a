@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/buildinfo"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 )
@@ -148,7 +147,7 @@ func TestOAuthLoginFreezesReauthenticationProfileBeforeCallback(t *testing.T) {
 			now := time.Now().UTC()
 			profile := selectedLoginProfile()
 			calls, profileCalls := 0, 0
-			wantUA := buildinfo.Current().UserAgent()
+			wantUA := clientdisguise.BuiltinAccountProfile().UserAgent("")
 			if sessionID != "" {
 				wantUA = selectedAccountUA
 			}

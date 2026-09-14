@@ -15,10 +15,10 @@ const (
 	TrustProxyHeaders = true
 )
 
-// Missing profile UAs identify the gateway unless the operator selects an official fallback.
+// Account requests follow the official client when no profile UA is available.
 const (
 	ConfigKeyGPTAccountFallbackClient = "gpt_account_fallback_client"
-	DefaultGPTAccountFallbackClient   = "switch_a"
+	DefaultGPTAccountFallbackClient   = "official_stable"
 )
 
 // OAuth authorization identifies the selected login client independently of account-request UAs.
@@ -40,24 +40,19 @@ const (
 // Timeout defaults.
 const (
 	UpstreamConnectTimeout = 20 * time.Second
-	// FirstByteTimeout: 0 means wait indefinitely for the first byte.
-	// Supports AI model inference scenarios where the model may take 60+ seconds
-	// to start responding, but once started, responds quickly.
-	FirstByteTimeout = 0 * time.Second
-	// UpstreamReadTimeout: 0 means no timeout. When set, connection closes
-	// if no data received within this duration during data transfer.
-	UpstreamReadTimeout = 0 * time.Second
-	// SSEIdleTimeout: 0 trusts upstream to close connection.
-	// Recommended: 0 for trusted providers (OpenAI, Anthropic), 300 for user-defined providers.
-	SSEIdleTimeout = 0 * time.Second
+	// Allow inference and streaming pauses while bounding stalled upstream requests.
+	// An explicit zero still disables the corresponding timeout.
+	FirstByteTimeout    = 120 * time.Second
+	UpstreamReadTimeout = 400 * time.Second
+	SSEIdleTimeout      = 300 * time.Second
 )
 
 // Sticky session defaults.
 const (
 	// StickyMode is a string literal to avoid importing model package here.
 	// model already imports defaults, so importing model would create a cycle.
-	StickyMode       = "model"
-	StickyTTLSeconds = 300
+	StickyMode       = "api_type"
+	StickyTTLSeconds = 7 * 24 * 60 * 60
 	StickyTTL        = StickyTTLSeconds * time.Second
 )
 
@@ -74,9 +69,8 @@ const (
 	// ConfigKeyWebSocketProbeClientModel is the stable runtime-config identifier
 	// shared across persistence, admin APIs, and request-time loading.
 	ConfigKeyWebSocketProbeClientModel = "websocket_probe_client_model"
-	// WebSocketProbeClientModel keeps the current hidden-model-aware behavior
-	// unless an operator explicitly opts into handshake-only selection.
-	WebSocketProbeClientModel = true
+	// Handshake-only selection avoids waiting for a client frame before routing.
+	WebSocketProbeClientModel = false
 )
 
 // WebSocket message sizes are configured in MiB and frozen per connection.
@@ -90,7 +84,7 @@ const (
 
 // Circuit breaker defaults.
 const (
-	CircuitFailure  = 3
+	CircuitFailure  = 30
 	CircuitWindow   = 60 * time.Second
 	CircuitDisabled = 300 * time.Second
 )
@@ -101,7 +95,7 @@ const (
 	// GlobalMaxAttempts is the maximum number of upstream attempts for a single request.
 	// 0 means unlimited (will iterate through all providers subject to per-provider retries).
 	GlobalMaxAttempts int = 0
-	LogRetentionDays  int = 7
+	LogRetentionDays  int = 90
 )
 
 // Logger defaults.

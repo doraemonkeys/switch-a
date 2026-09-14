@@ -88,7 +88,7 @@ export const STICKY_MODE_OPTIONS = [
     value: STICKY_MODES.MODEL,
     label: "Model",
     description:
-      "Same user + API type + model always routes to the same provider (recommended)",
+      "Same user + API type + model always routes to the same provider",
   },
 ] as const;
 
@@ -103,6 +103,11 @@ export const AUTH_MODES = {
 } as const;
 
 export type AuthMode = (typeof AUTH_MODES)[keyof typeof AUTH_MODES];
+
+export const GPT_ACCOUNT_FALLBACK_CLIENTS = {
+  SWITCH_A: "switch_a",
+  OFFICIAL_STABLE: "official_stable",
+} as const;
 
 export const AUTH_MODE_OPTIONS = [
   {
@@ -290,7 +295,7 @@ export type ConfigKey = (typeof CONFIG_KEYS)[keyof typeof CONFIG_KEYS];
  * @see internal/defaults/defaults.go
  */
 export const DEFAULTS = {
-  GPT_ACCOUNT_FALLBACK_CLIENT: "switch_a",
+  GPT_ACCOUNT_FALLBACK_CLIENT: GPT_ACCOUNT_FALLBACK_CLIENTS.OFFICIAL_STABLE,
   CODEX_OAUTH_ORIGINATOR: "codex_cli_rs",
   // Authentication
   AUTH_MODE: AUTH_MODES.AUTO,
@@ -299,19 +304,19 @@ export const DEFAULTS = {
 
   // Timeouts (in seconds)
   UPSTREAM_CONNECT_TIMEOUT: 10,
-  FIRST_BYTE_TIMEOUT: 0, // 0 = no timeout
-  UPSTREAM_READ_TIMEOUT: 0, // 0 = no timeout
-  SSE_IDLE_TIMEOUT: 0, // 0 = no timeout
+  FIRST_BYTE_TIMEOUT: 120,
+  UPSTREAM_READ_TIMEOUT: 400,
+  SSE_IDLE_TIMEOUT: 300,
 
   // Sticky Session
-  STICKY_MODE: STICKY_MODES.MODEL,
-  STICKY_TTL: 300,
+  STICKY_MODE: STICKY_MODES.API_TYPE,
+  STICKY_TTL: 7 * 24 * 60 * 60,
   CONVERSATION_RECOVERY_POLICY:
     CONVERSATION_RECOVERY_POLICIES.PRESERVE_CONVERSATION,
-  WEBSOCKET_PROBE_CLIENT_MODEL: true,
+  WEBSOCKET_PROBE_CLIENT_MODEL: false,
 
   // Circuit Breaker
-  CIRCUIT_FAILURE: 3,
+  CIRCUIT_FAILURE: 30,
   CIRCUIT_WINDOW: 60,
   CIRCUIT_DISABLE: 300,
 
@@ -320,7 +325,7 @@ export const DEFAULTS = {
   WEBSOCKET_MAX_MESSAGE_SIZE_MIB: 128,
   GLOBAL_MAX_ATTEMPTS: 0, // 0 = unlimited (iterate through all providers)
   PROVIDER_MAX_RETRIES: 0, // 0 = try once, no retry on same provider
-  LOG_RETENTION_DAYS: 7,
+  LOG_RETENTION_DAYS: 90,
 
   // Backoff Policy (for same-provider retries)
   BACKOFF_INITIAL_DELAY: "100ms",

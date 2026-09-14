@@ -20,8 +20,8 @@ func TestInitDefaultConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfig failed: %v", err)
 	}
-	if value != "300" {
-		t.Errorf("sticky_ttl = %q, want %q", value, "300")
+	if value != "604800" {
+		t.Errorf("sticky_ttl = %q, want %q", value, "604800")
 	}
 
 	value, err = store.GetConfig(ctx, "sticky_mode")
@@ -68,8 +68,8 @@ func TestConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfig for default failed: %v", err)
 	}
-	if value != "300" {
-		t.Errorf("default sticky_ttl = %q, want %q", value, "300")
+	if value != "604800" {
+		t.Errorf("default sticky_ttl = %q, want %q", value, "604800")
 	}
 
 	value, err = store.GetConfig(ctx, defaults.ConfigKeyWebSocketProbeClientModel)

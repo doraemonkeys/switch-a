@@ -52,12 +52,12 @@ func TestGetConfig(t *testing.T) {
 	if _, ok := resp.Defaults["sticky_mode"]; !ok {
 		t.Error("Defaults should contain sticky_mode")
 	}
-	if got := resp.Defaults[defaults.ConfigKeyWebSocketProbeClientModel]; got != "true" {
+	if got := resp.Defaults[defaults.ConfigKeyWebSocketProbeClientModel]; got != "false" {
 		t.Errorf(
 			"Defaults[%s] = %q, want %q",
 			defaults.ConfigKeyWebSocketProbeClientModel,
 			got,
-			"true",
+			"false",
 		)
 	}
 }

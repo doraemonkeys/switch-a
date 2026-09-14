@@ -28,8 +28,8 @@ const (
 	DefaultMaxBodySizeMB             = defaults.MaxBodySizeMB
 	DefaultGlobalMaxAttempts         = defaults.GlobalMaxAttempts
 	DefaultUserHeader                = defaults.UserHeader
-	DefaultStickyMode                = model.StickyModeModel // Default stickiness includes model dimension
-	DefaultGlobalAuthMode            = defaults.AuthMode     // Default auth mode for provider authentication
+	DefaultStickyMode                = model.StickyMode(defaults.StickyMode)
+	DefaultGlobalAuthMode            = defaults.AuthMode
 	DefaultWebSocketProbeClientModel = defaults.WebSocketProbeClientModel
 )
 
@@ -307,7 +307,7 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 
 	cfg.connectTimeout = parseDurationSecondsOrDefault(connectTimeout, DefaultConnectTimeout)
 	cfg.firstByteTimeout = parseDurationSecondsOrDefault(firstByteTimeout, DefaultFirstByteTimeout)
-	cfg.readTimeout = parseDurationSecondsOrDefault(readTimeout, 0)
+	cfg.readTimeout = parseDurationSecondsOrDefault(readTimeout, defaults.UpstreamReadTimeout)
 
 	// SSE idle timeout - protects against silent upstream connections
 	sseIdleTimeout, err := h.store.GetConfig(ctx, ConfigKeySSEIdleTimeout)

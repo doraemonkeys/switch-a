@@ -8,17 +8,11 @@ function renderConfigForm(
   onSave: (config: Record<string, string>) => Promise<void> = vi.fn(),
   initialOverrides: Record<string, string> = {},
 ) {
-  const initialConfig = {
-    [CONFIG_KEYS.STICKY_MODE]: "model",
-    [CONFIG_KEYS.STICKY_TTL]: "300",
-    [CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL]: "true",
-    ...initialOverrides,
-  };
-
+  const initialConfig = initialOverrides;
   const defaults = {
-    [CONFIG_KEYS.STICKY_MODE]: "model",
-    [CONFIG_KEYS.STICKY_TTL]: "300",
-    [CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL]: "true",
+    [CONFIG_KEYS.STICKY_MODE]: "api_type",
+    [CONFIG_KEYS.STICKY_TTL]: "604800",
+    [CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL]: "false",
   };
 
   return render(
@@ -34,26 +28,17 @@ function renderConfigForm(
 }
 
 describe("ConfigForm", () => {
-  it("keeps the current GPT client mode by default and saves either choice", async () => {
+  it("follows the official GPT client by default and saves either choice", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     renderConfigForm(onSave);
     fireEvent.click(screen.getByRole("button", { name: /认证与账号/ }));
     const select = screen.getByRole("combobox", {
       name: /无伪装 UA 时的客户端特征/,
     });
-    expect(select).toHaveValue("switch_a");
-    expect(screen.getByText(/没有可用 UA 时使用 switch-a/)).toBeInTheDocument();
-    fireEvent.change(select, { target: { value: "official_stable" } });
+    expect(select).toHaveValue("official_stable");
     expect(screen.getByText(/首次同步完成前沿用模板版本/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
-    await waitFor(() =>
-      expect(onSave).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "official_stable",
-        }),
-      ),
-    );
     fireEvent.change(select, { target: { value: "switch_a" } });
+    expect(screen.getByText(/没有可用 UA 时使用 switch-a/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
     await waitFor(() =>
       expect(onSave).toHaveBeenLastCalledWith(
@@ -62,16 +47,25 @@ describe("ConfigForm", () => {
         }),
       ),
     );
+    fireEvent.change(select, { target: { value: "official_stable" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "official_stable",
+        }),
+      ),
+    );
   });
 
-  it("loads a saved official GPT client mode", () => {
+  it("loads a saved Switch-A GPT client mode", () => {
     renderConfigForm(vi.fn(), {
-      [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "official_stable",
+      [CONFIG_KEYS.GPT_ACCOUNT_FALLBACK_CLIENT]: "switch_a",
     });
     fireEvent.click(screen.getByRole("button", { name: /认证与账号/ }));
     expect(
       screen.getByRole("combobox", { name: /无伪装 UA 时的客户端特征/ }),
-    ).toHaveValue("official_stable");
+    ).toHaveValue("switch_a");
   });
 
   it("defaults recovery to the original account and explains switching back", () => {
@@ -151,10 +145,10 @@ describe("ConfigForm", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("defaults websocket probe control to checked", () => {
+  it("defaults websocket probe control to unchecked", () => {
     renderConfigForm();
 
-    expect(screen.getByLabelText(/WebSocket 模型探测/)).toBeChecked();
+    expect(screen.getByLabelText(/WebSocket 模型探测/)).not.toBeChecked();
   });
 
   it("submits websocket probe updates as string config values", async () => {
@@ -175,7 +169,7 @@ describe("ConfigForm", () => {
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith(
         expect.objectContaining({
-          [CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL]: "false",
+          [CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL]: "true",
         }),
       );
     });

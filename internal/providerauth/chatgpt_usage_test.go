@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doraemonkeys/switch-a/internal/buildinfo"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
@@ -286,8 +286,8 @@ func TestFetchChatGPTUsageSnapshot_RetriesCandidatesUntilSuccess(t *testing.T) {
 				if got := req.Header.Get("ChatGPT-Account-Id"); got != "acct_test" {
 					t.Fatalf("ChatGPT-Account-Id = %q, want %q", got, "acct_test")
 				}
-				if got := req.Header.Get("User-Agent"); got != buildinfo.Current().UserAgent() {
-					t.Fatalf("User-Agent = %q, want %q", got, buildinfo.Current().UserAgent())
+				if got := req.Header.Get("User-Agent"); got != clientdisguise.BuiltinAccountProfile().UserAgent("") {
+					t.Fatalf("User-Agent = %q, want %q", got, clientdisguise.BuiltinAccountProfile().UserAgent(""))
 				}
 				if req.URL.String() != candidates[callCount] {
 					t.Fatalf("request URL = %q, want %q", req.URL.String(), candidates[callCount])

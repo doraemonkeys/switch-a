@@ -129,7 +129,7 @@ describe("configuration editing", () => {
 
   it("distinguishes custom saved values from unsaved edits and detects reverting a value", () => {
     createForm({ ...defaults, [K.STICKY_TTL]: "600" });
-    expect(screen.getByText("自定义 · 默认：300 秒")).toBeInTheDocument();
+    expect(screen.getByText("自定义 · 默认：604800 秒")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
     const ttl = screen.getByLabelText("粘性有效期");
     fireEvent.change(ttl, { target: { value: "900" } });

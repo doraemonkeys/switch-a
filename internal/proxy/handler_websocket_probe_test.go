@@ -59,6 +59,7 @@ func TestHandler_ServeHTTP_WebSocket_SelectionProbeUsesClientModel(t *testing.T)
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeModel)
+	store.configs[ConfigKeyWebSocketProbeClientModel] = "true"
 	store.routingPolicies = []model.RoutingPolicy{{
 		Enabled: true, APIType: APITypeCodex,
 		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "client-",
@@ -160,6 +161,7 @@ func TestHandler_ServeHTTP_WebSocket_ContinuitySeedLookupWaitsForProbeResolvedMo
 
 	store := newMockStore()
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeModel)
+	store.configs[ConfigKeyWebSocketProbeClientModel] = "true"
 	store.configs[ConfigKeyTrustProxyHeaders] = "true"
 	store.routingPolicies = []model.RoutingPolicy{{
 		Enabled: true, APIType: APITypeCodex,
@@ -352,6 +354,7 @@ func TestHandler_ServeHTTP_WebSocket_RoutingPolicyDemandUsesClientModel(t *testi
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
 	store.configs[ConfigKeyStickyMode] = string(model.StickyModeOff)
+	store.configs[ConfigKeyWebSocketProbeClientModel] = "true"
 	store.routingPolicies = []model.RoutingPolicy{
 		{
 			Enabled:         true,
@@ -529,6 +532,7 @@ func TestHandler_ServeHTTP_WebSocket_PreVisibleConfigFailureAfterProbeSwitchesPr
 
 	store := newMockStore()
 	store.providers = []model.Provider{*primaryProvider, *fallbackProvider}
+	store.configs[ConfigKeyWebSocketProbeClientModel] = "true"
 	store.routingPolicies = []model.RoutingPolicy{{
 		Enabled: true, APIType: APITypeCodex,
 		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "client-",
@@ -614,6 +618,7 @@ func TestHandler_ServeHTTP_WebSocket_ProbeFailureReturnsGatewayErrorEvent(t *tes
 
 	store := newMockStore()
 	store.providers = []model.Provider{*provider}
+	store.configs[ConfigKeyWebSocketProbeClientModel] = "true"
 	store.routingPolicies = []model.RoutingPolicy{{
 		Enabled: true, APIType: APITypeCodex,
 		ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "client-",
