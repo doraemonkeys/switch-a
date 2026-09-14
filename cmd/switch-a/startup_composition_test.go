@@ -47,6 +47,8 @@ func TestComposeApplicationRuntimeBuildsAndOwnsOneProcessGraph(t *testing.T) {
 
 	cachedStore := store.NewCachedStore(store.CachedStoreConfig{Store: sqlStore})
 	cfg := startupCompositionTestConfig()
+	cfg.Host = "192.0.2.10"
+	cfg.AdminHost = "::1"
 
 	// A failed security preflight must not bind the process-wide error runtime;
 	// the same storage graph remains valid for the corrected composition.
@@ -71,6 +73,12 @@ func TestComposeApplicationRuntimeBuildsAndOwnsOneProcessGraph(t *testing.T) {
 	}
 	if got := runtime.captures.Status().ProcessMemory.CeilingBytes; got != cfg.DebugCaptureMemoryCeilingBytes {
 		t.Fatalf("capture process ceiling = %d, want %d", got, cfg.DebugCaptureMemoryCeilingBytes)
+	}
+	if got := runtime.proxyServer.Addr(); got != "192.0.2.10:0" {
+		t.Fatalf("proxy listener = %q, want configured IPv4 address", got)
+	}
+	if got := runtime.adminServer.Addr(); got != "[::1]:0" {
+		t.Fatalf("admin listener = %q, want independently configured IPv6 address", got)
 	}
 
 	var events []applicationLifecycleEvent
@@ -234,7 +242,9 @@ func TestLogApplicationStartupEmitsConfigurationAndBuildContext(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	cfg := &config.Config{
 		ConfigFileUsed: "C:/switch-a/config.yaml",
+		Host:           "192.0.2.10",
 		Port:           "8181",
+		AdminHost:      "::1",
 		AdminPort:      "9191",
 		LogPath:        "C:/switch-a/logs",
 		LogLevel:       "debug",
@@ -252,7 +262,9 @@ func TestLogApplicationStartupEmitsConfigurationAndBuildContext(t *testing.T) {
 	}
 	fields := started[0].ContextMap()
 	for key, want := range map[string]string{
+		"proxy_host": cfg.Host,
 		"proxy_port": cfg.Port,
+		"admin_host": cfg.AdminHost,
 		"admin_port": cfg.AdminPort,
 		"log_path":   cfg.LogPath,
 		"log_level":  cfg.LogLevel,

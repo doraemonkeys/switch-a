@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/config"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/selector"
@@ -248,13 +251,22 @@ func startServers(
 	return errCh
 }
 
-func printServerURLs(proxyPort string, adminPort string) {
+func printServerURLs(cfg *config.Config) {
 	fmt.Println()
 	fmt.Println("=========================================")
-	fmt.Printf("  Proxy URL:  http://localhost:%s\n", proxyPort)
-	fmt.Printf("  Admin URL:  http://localhost:%s/admin\n", adminPort)
+	fmt.Printf("  Proxy URL:  %s\n", serverURL(cfg.Host, cfg.Port, ""))
+	fmt.Printf("  Admin URL:  %s\n", serverURL(cfg.AdminHost, cfg.AdminPort, "/admin"))
 	fmt.Println("=========================================")
 	fmt.Println()
+}
+
+func serverURL(host, port, path string) string {
+	// Wildcard bind addresses describe interfaces, not a destination to open in a browser.
+	if host == "" || net.ParseIP(host).IsUnspecified() {
+		host = "localhost"
+	}
+	endpoint := url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: path}
+	return endpoint.String()
 }
 
 func waitForShutdown(errCh <-chan error, log *zap.Logger) error {

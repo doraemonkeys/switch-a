@@ -11,10 +11,20 @@
 #   - ./config/config.yaml
 #   - /etc/switch-a/config.yaml
 
+# 代理服务监听 IP（IPv4 或 IPv6；IPv6 不加方括号，例如 ::1）
+# 环境变量: SWITCHA_HOST
+# 默认值: ""，省略或留空时监听所有网络接口；仅本机访问可设为 127.0.0.1
+host: ""
+
 # 代理服务端口
 # 环境变量: SWITCHA_PORT
 # 默认值: 28080
 port: "28080"
+
+# 管理服务监听 IP，独立于代理服务
+# 环境变量: SWITCHA_ADMIN_HOST
+# 默认值: ""，省略或留空时监听所有网络接口
+admin_host: ""
 
 # 管理服务端口
 # 环境变量: SWITCHA_ADMIN_PORT

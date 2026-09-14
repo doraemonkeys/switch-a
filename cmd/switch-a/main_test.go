@@ -240,15 +240,34 @@ func TestWaitForShutdownJoinsQueuedServerErrors(t *testing.T) {
 }
 
 func TestPrintServerURLsWritesExpectedEndpoints(t *testing.T) {
-	output := captureStdout(t, func() {
-		printServerURLs(testProxyPort, testAdminPort)
-	})
-
-	if !strings.Contains(output, "http://localhost:"+testProxyPort) {
-		t.Fatalf("expected proxy URL in output, got %q", output)
+	tests := []struct {
+		name      string
+		host      string
+		adminHost string
+		wantProxy string
+		wantAdmin string
+	}{
+		{name: "default", wantProxy: "localhost", wantAdmin: "localhost"},
+		{name: "IPv4", host: "192.0.2.10", adminHost: "127.0.0.1", wantProxy: "192.0.2.10", wantAdmin: "127.0.0.1"},
+		{name: "IPv6", host: "2001:db8::10", adminHost: "::1", wantProxy: "[2001:db8::10]", wantAdmin: "[::1]"},
+		{name: "wildcards", host: "0.0.0.0", adminHost: "::", wantProxy: "localhost", wantAdmin: "localhost"},
+		{name: "IPv6 zone", host: "fe80::1%eth0", wantProxy: "[fe80::1%25eth0]", wantAdmin: "localhost"},
 	}
-	if !strings.Contains(output, "http://localhost:"+testAdminPort+"/admin") {
-		t.Fatalf("expected admin URL in output, got %q", output)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureStdout(t, func() {
+				printServerURLs(&config.Config{
+					Host: tt.host, Port: testProxyPort,
+					AdminHost: tt.adminHost, AdminPort: testAdminPort,
+				})
+			})
+			if want := "Proxy URL:  http://" + tt.wantProxy + ":" + testProxyPort; !strings.Contains(output, want) {
+				t.Fatalf("expected %q in output, got %q", want, output)
+			}
+			if want := "Admin URL:  http://" + tt.wantAdmin + ":" + testAdminPort + "/admin"; !strings.Contains(output, want) {
+				t.Fatalf("expected %q in output, got %q", want, output)
+			}
+		})
 	}
 }
 

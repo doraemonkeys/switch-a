@@ -35,7 +35,9 @@ func configureViperPaths(v *viper.Viper, configPath string) {
 // Debug-capture values use runtime-native units so conversion cannot be repeated or
 // interpreted differently by the composition root and the capture manager.
 type Config struct {
+	Host             string
 	Port             string
+	AdminHost        string
 	AdminPort        string
 	DBPath           string
 	AdminToken       string
@@ -65,7 +67,9 @@ type Config struct {
 // validated. Keeping this representation private prevents MiB and seconds from
 // leaking beyond the configuration boundary.
 type serializedConfig struct {
+	Host             string `mapstructure:"host"`
 	Port             string `mapstructure:"port"`
+	AdminHost        string `mapstructure:"admin_host"`
 	AdminPort        string `mapstructure:"admin_port"`
 	DBPath           string `mapstructure:"db_path"`
 	AdminToken       string `mapstructure:"admin_token"`
@@ -146,7 +150,9 @@ func LoadWithPath(configPath string) (*Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
+	v.SetDefault(KeyHost, DefaultHost)
 	v.SetDefault(KeyPort, DefaultPort)
+	v.SetDefault(KeyAdminHost, DefaultAdminHost)
 	v.SetDefault(KeyAdminPort, DefaultAdminPort)
 	v.SetDefault(KeyDBPath, DefaultDBPath)
 	v.SetDefault(KeyCodexKeyringFile, DefaultCodexKeyringFile)
@@ -173,7 +179,9 @@ func bindEnvironment(v *viper.Viper) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	_ = v.BindEnv(KeyHost, EnvHost)
 	_ = v.BindEnv(KeyPort, EnvPort)
+	_ = v.BindEnv(KeyAdminHost, EnvAdminHost)
 	_ = v.BindEnv(KeyAdminPort, EnvAdminPort)
 	_ = v.BindEnv(KeyDBPath, EnvDBPath)
 	_ = v.BindEnv(KeyAdminToken, EnvAdminToken)
@@ -257,7 +265,9 @@ func (serialized serializedConfig) runtimeConfig() (*Config, error) {
 	}
 
 	return &Config{
+		Host:                               serialized.Host,
 		Port:                               serialized.Port,
+		AdminHost:                          serialized.AdminHost,
 		AdminPort:                          serialized.AdminPort,
 		DBPath:                             serialized.DBPath,
 		AdminToken:                         serialized.AdminToken,

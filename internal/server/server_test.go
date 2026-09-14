@@ -265,66 +265,16 @@ func TestServerShutdown(t *testing.T) {
 }
 
 func TestServerStartAndShutdown(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	httpRuntime, webSocketRuntime := testCodexRuntimes(t)
-	s := New(Config{
-		Port:   "0", // Use port 0 to get a random available port
-		Logger: logger, Store: &mockStore{},
-		CodexHTTP: httpRuntime, CodexWebSocket: webSocketRuntime,
-	})
-
-	// Start server in background
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- s.Start()
-	}()
-
-	// Poll health endpoint until server is ready (max 5 seconds)
-	ready := false
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		addr := s.Addr()
-		// Wait until the listener is set and we have an actual address
-		if addr == ":0" {
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		// Extract port from address (handles both IPv4 and IPv6 formats)
-		_, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		resp, err := http.Get("http://127.0.0.1:" + port + "/health")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				ready = true
-				break
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !ready {
-		t.Fatal("server did not become ready in time")
-	}
-
-	// Shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := s.Shutdown(ctx); err != nil {
-		t.Errorf("Shutdown error: %v", err)
-	}
-
-	// Start should return nil after shutdown
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Errorf("Start returned error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("Start did not return after shutdown")
+	for _, host := range []string{"", "127.0.0.1", "::1"} {
+		t.Run("host="+host, func(t *testing.T) {
+			httpRuntime, webSocketRuntime := testCodexRuntimes(t)
+			s := New(Config{
+				Host: host, Port: "0",
+				Logger: zap.NewNop(), Store: &mockStore{},
+				CodexHTTP: httpRuntime, CodexWebSocket: webSocketRuntime,
+			})
+			testListenerStartAndShutdown(t, s, host)
+		})
 	}
 }
 
@@ -355,67 +305,85 @@ func TestAdminServerShutdown(t *testing.T) {
 }
 
 func TestAdminServerStartAndShutdown(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	s := NewAdmin(AdminConfig{
-		Port:       "0", // Use port 0 to get a random available port
-		AdminToken: "test-token",
-		Logger:     logger,
-		Store:      &mockStore{},
+	for _, host := range []string{"", "127.0.0.1", "::1"} {
+		t.Run("host="+host, func(t *testing.T) {
+			s := NewAdmin(AdminConfig{
+				Host: host, Port: "0",
+				AdminToken: "test-token",
+				Logger:     zap.NewNop(), Store: &mockStore{},
+			})
+			testListenerStartAndShutdown(t, s, host)
+		})
+	}
+}
+
+type testListenerServer interface {
+	Start() error
+	Shutdown(context.Context) error
+	Addr() string
+}
+
+func testListenerStartAndShutdown(t *testing.T, s testListenerServer, host string) {
+	t.Helper()
+	const readyTimeout = 5 * time.Second
+	const pollInterval = 10 * time.Millisecond
+	if host == "::1" {
+		probe, err := net.Listen("tcp6", "[::1]:0")
+		if err != nil {
+			t.Skipf("IPv6 loopback is unavailable: %v", err)
+		}
+		_ = probe.Close()
+	}
+	if got, want := s.Addr(), net.JoinHostPort(host, "0"); got != want {
+		t.Fatalf("configured address = %q, want %q", got, want)
+	}
+
+	client := &http.Client{Transport: &http.Transport{}, Timeout: readyTimeout}
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Start() }()
+	t.Cleanup(func() {
+		client.CloseIdleConnections()
+		ctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
+		defer cancel()
+		if err := s.Shutdown(ctx); err != nil {
+			t.Errorf("Shutdown error: %v", err)
+		}
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("Start returned error: %v", err)
+			}
+		case <-ctx.Done():
+			t.Error("Start did not return after shutdown")
+		}
 	})
 
-	// Start server in background
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- s.Start()
-	}()
-
-	// Poll health endpoint until server is ready (max 5 seconds)
-	ready := false
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(readyTimeout)
 	for time.Now().Before(deadline) {
-		addr := s.Addr()
-		// Wait until the listener is set and we have an actual address
-		if addr == ":0" {
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		// Extract port from address (handles both IPv4 and IPv6 formats)
-		_, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		resp, err := http.Get("http://127.0.0.1:" + port + "/health")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				ready = true
-				break
+		boundHost, port, err := net.SplitHostPort(s.Addr())
+		if err == nil && port != "0" {
+			if host == "" {
+				if !net.ParseIP(boundHost).IsUnspecified() {
+					t.Fatalf("default listener bound to %q, want all interfaces", boundHost)
+				}
+			} else if boundHost != host {
+				t.Fatalf("listener bound to %q, want %q", boundHost, host)
+			}
+			requestHost := host
+			if requestHost == "" {
+				requestHost = "127.0.0.1"
+			}
+			resp, err := client.Get("http://" + net.JoinHostPort(requestHost, port) + "/health")
+			if err == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return
+				}
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(pollInterval)
 	}
-	if !ready {
-		t.Fatal("admin server did not become ready in time")
-	}
-
-	// Shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := s.Shutdown(ctx); err != nil {
-		t.Errorf("Shutdown error: %v", err)
-	}
-
-	// Start should return nil after shutdown
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Errorf("Start returned error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("Start did not return after shutdown")
-	}
+	t.Fatal("server did not become ready in time")
 }
 
 func TestHandleNotFound(t *testing.T) {

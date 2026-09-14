@@ -111,7 +111,7 @@ func runApplication(recorder applicationLifecycleRecorder) error {
 
 	errCh := startServers(runtime.proxyServer, runtime.adminServer)
 	recordApplicationLifecycle(recorder, startupID, startupPhaseListeners)
-	printServerURLs(cfg.Port, cfg.AdminPort)
+	printServerURLs(cfg)
 	if err := completeServerLifecycle(
 		func() error { return waitForShutdown(errCh, log) },
 		func() error {

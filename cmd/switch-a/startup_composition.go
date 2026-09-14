@@ -96,7 +96,9 @@ func logApplicationStartup(log *zap.Logger, cfg *config.Config) {
 		zap.String("version", build.Version),
 		zap.String("commit", build.Commit),
 		zap.String("built_at", build.BuiltAt),
+		zap.String("proxy_host", cfg.Host),
 		zap.String("proxy_port", cfg.Port),
+		zap.String("admin_host", cfg.AdminHost),
 		zap.String("admin_port", cfg.AdminPort),
 		zap.String("log_path", cfg.LogPath),
 		zap.String("log_level", cfg.LogLevel),
@@ -207,6 +209,7 @@ func composeApplicationRuntime(
 	clientAccess := clientaccess.NewService(clientaccess.ServiceConfig{Store: sqlStore.ClientAPIKeyRepository(), Now: clock.Now})
 	proxyServer := server.New(server.Config{
 		ClientAdmission:            clientAccess,
+		Host:                       cfg.Host,
 		Port:                       cfg.Port,
 		Logger:                     log,
 		Store:                      st,
@@ -225,6 +228,7 @@ func composeApplicationRuntime(
 	})
 	adminServer := server.NewAdmin(server.AdminConfig{
 		ClientAPIKeys:       clientapikeyapi.NewHandler(clientAccess, log),
+		Host:                cfg.AdminHost,
 		Port:                cfg.AdminPort,
 		AdminToken:          cfg.AdminToken,
 		Logger:              log,

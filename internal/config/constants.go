@@ -6,7 +6,9 @@ import "github.com/doraemonkeys/switch-a/internal/defaults"
 // Environment variable names.
 const (
 	EnvPrefix                              = "SWITCHA"
+	EnvHost                                = "SWITCHA_HOST"
 	EnvPort                                = "SWITCHA_PORT"
+	EnvAdminHost                           = "SWITCHA_ADMIN_HOST"
 	EnvAdminPort                           = "SWITCHA_ADMIN_PORT"
 	EnvDBPath                              = "SWITCHA_DB_PATH"
 	EnvAdminToken                          = "SWITCHA_ADMIN_TOKEN"
@@ -37,7 +39,9 @@ const (
 
 // Config keys for viper.
 const (
+	KeyHost                                = "host"
 	KeyPort                                = "port"
+	KeyAdminHost                           = "admin_host"
 	KeyAdminPort                           = "admin_port"
 	KeyDBPath                              = "db_path"
 	KeyAdminToken                          = "admin_token"
@@ -62,7 +66,10 @@ const (
 
 // Default configuration values.
 const (
+	// An empty host lets net.Listen use all available network interfaces and IP families.
+	DefaultHost                                = ""
 	DefaultPort                                = "28080"
+	DefaultAdminHost                           = ""
 	DefaultAdminPort                           = "28081"
 	DefaultDBPath                              = "./data.db"
 	DefaultCodexKeyringFile                    = "./codex-keyring.json"

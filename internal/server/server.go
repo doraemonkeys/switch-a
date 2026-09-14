@@ -125,6 +125,7 @@ type Selector = proxy.Selector
 type Config struct {
 	ClientAdmission            proxy.ClientAdmission
 	ClientDisguise             proxy.ClientDisguiseRepository
+	Host                       string
 	Port                       string
 	Logger                     *zap.Logger
 	Store                      store
@@ -145,6 +146,7 @@ type Config struct {
 type AdminConfig struct {
 	ClientAPIKeys       *clientapikeyapi.Handler
 	ClientDisguise      *clientdisguiseapi.Handler
+	Host                string
 	Port                string
 	AdminToken          string
 	Logger              *zap.Logger
@@ -203,7 +205,7 @@ func New(cfg Config) *Server {
 
 	s := &Server{
 		server: &http.Server{
-			Addr:              net.JoinHostPort("", cfg.Port),
+			Addr:              net.JoinHostPort(cfg.Host, cfg.Port),
 			Handler:           proxyRouteBoundary(proxyHandler, mux),
 			ConnContext:       clientconnection.Context,
 			ReadHeaderTimeout: ReadHeaderTimeout,
@@ -250,7 +252,7 @@ func NewAdmin(cfg AdminConfig) *AdminServer {
 
 	s := &AdminServer{
 		server: &http.Server{
-			Addr:              net.JoinHostPort("", cfg.Port),
+			Addr:              net.JoinHostPort(cfg.Host, cfg.Port),
 			Handler:           secureDebugCaptureBoundary(mux),
 			ReadHeaderTimeout: ReadHeaderTimeout,
 			IdleTimeout:       IdleTimeout,

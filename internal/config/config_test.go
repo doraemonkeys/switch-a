@@ -46,6 +46,9 @@ func TestLoad_DefaultValues(t *testing.T) {
 	if cfg.Port != DefaultPort {
 		t.Errorf("Port = %q, want default %q", cfg.Port, DefaultPort)
 	}
+	if cfg.Host != "" || cfg.AdminHost != "" {
+		t.Errorf("listener hosts = %q / %q, want all interfaces", cfg.Host, cfg.AdminHost)
+	}
 	if cfg.AdminPort != DefaultAdminPort {
 		t.Errorf("AdminPort = %q, want default %q", cfg.AdminPort, DefaultAdminPort)
 	}
@@ -66,6 +69,58 @@ func TestLoad_DefaultValues(t *testing.T) {
 	}
 	if cfg.CodexKeyringFile != DefaultCodexKeyringFile {
 		t.Errorf("CodexKeyringFile = %q, want default %q", cfg.CodexKeyringFile, DefaultCodexKeyringFile)
+	}
+}
+
+func TestLoadWithPath_ListenerHosts(t *testing.T) {
+	tests := []struct {
+		name          string
+		content       string
+		envHost       string
+		envAdminHost  string
+		wantHost      string
+		wantAdminHost string
+	}{
+		{name: "omitted hosts listen on all interfaces"},
+		{name: "empty hosts listen on all interfaces", content: "host: \"\"\nadmin_host: \"\"\n"},
+		{
+			name:     "independent IPv4 and IPv6 hosts",
+			content:  "host: 192.0.2.10\nadmin_host: '::1'\n",
+			wantHost: "192.0.2.10", wantAdminHost: "::1",
+		},
+		{
+			name:    "environment only",
+			envHost: "::1", envAdminHost: "127.0.0.1",
+			wantHost: "::1", wantAdminHost: "127.0.0.1",
+		},
+		{
+			name:    "proxy override preserves admin file setting",
+			content: "host: 192.0.2.10\nadmin_host: '::1'\n",
+			envHost: "127.0.0.1", wantHost: "127.0.0.1", wantAdminHost: "::1",
+		},
+		{
+			name:         "admin override preserves proxy file setting",
+			content:      "host: 192.0.2.10\nadmin_host: '::1'\n",
+			envAdminHost: "127.0.0.1", wantHost: "192.0.2.10", wantAdminHost: "127.0.0.1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(EnvHost, tt.envHost)
+			t.Setenv(EnvAdminHost, tt.envAdminHost)
+			t.Setenv(EnvAdminToken, "test-token")
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadWithPath(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Host != tt.wantHost || cfg.AdminHost != tt.wantAdminHost {
+				t.Fatalf("listener hosts = %q / %q, want %q / %q", cfg.Host, cfg.AdminHost, tt.wantHost, tt.wantAdminHost)
+			}
+		})
 	}
 }
 

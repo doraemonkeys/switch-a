@@ -97,7 +97,9 @@ Windows 请使用 `go build -o switch-a.exe ./cmd/switch-a`，确保生成的文
 | 环境变量 | 用途 | 默认值 |
 | --- | --- | --- |
 | `SWITCHA_ADMIN_TOKEN` | 保护管理 API；必填 | 无 |
+| `SWITCHA_HOST` | 代理监听 IP（IPv4 或 IPv6） | 空：所有网络接口 |
 | `SWITCHA_PORT` | 代理端口 | `28080` |
+| `SWITCHA_ADMIN_HOST` | 管理界面和管理 API 监听 IP | 空：所有网络接口 |
 | `SWITCHA_ADMIN_PORT` | 管理界面和管理 API 端口 | `28081` |
 | `SWITCHA_DB_PATH` | SQLite 数据库路径 | `./data.db` |
 | `SWITCHA_LOG_PATH` | 日志文件路径 | `./logs/switch-a.log` |

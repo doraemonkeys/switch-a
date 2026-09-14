@@ -101,7 +101,9 @@ Startup settings can come from environment variables or `config.yaml`. Environme
 | Environment variable | Purpose | Default |
 | --- | --- | --- |
 | `SWITCHA_ADMIN_TOKEN` | Protects the admin API; required | none |
+| `SWITCHA_HOST` | Proxy listen IP (IPv4 or IPv6) | empty: all interfaces |
 | `SWITCHA_PORT` | Proxy port | `28080` |
+| `SWITCHA_ADMIN_HOST` | Admin UI and API listen IP | empty: all interfaces |
 | `SWITCHA_ADMIN_PORT` | Admin UI and API port | `28081` |
 | `SWITCHA_DB_PATH` | SQLite database path | `./data.db` |
 | `SWITCHA_LOG_PATH` | Log file path | `./logs/switch-a.log` |
