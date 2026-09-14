@@ -264,6 +264,6 @@ describe("configuration editing", () => {
       target: { value: "off" },
     });
     expect(screen.getByLabelText("粘性有效期")).toBeDisabled();
-    expect(screen.getByLabelText("对话恢复策略")).toBeEnabled();
+    expect(screen.getByLabelText("GPT 对话恢复策略")).toBeEnabled();
   });
 });

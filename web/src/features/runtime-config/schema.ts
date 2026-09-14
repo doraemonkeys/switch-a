@@ -75,7 +75,7 @@ export const CONFIG_CATEGORIES: readonly ConfigCategory[] = [
           },
           {
             key: K.CONVERSATION_RECOVERY_POLICY,
-            label: "对话恢复策略",
+            label: "GPT 对话恢复策略",
             kind: "select",
             description:
               "允许换账号时，按粘性和选路策略选择可用账号，原样传递对话状态。",

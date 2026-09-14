@@ -72,7 +72,7 @@ describe("ConfigForm", () => {
     renderConfigForm();
     expect(
       screen.getByRole("combobox", {
-        name: /对话恢复策略/,
+        name: /GPT 对话恢复策略/,
       }),
     ).toHaveValue("preserve_conversation");
     expect(
@@ -87,7 +87,7 @@ describe("ConfigForm", () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     renderConfigForm(onSave, { [CONFIG_KEYS.STICKY_MODE]: "off" });
     const select = screen.getByRole("combobox", {
-      name: /对话恢复策略/,
+      name: /GPT 对话恢复策略/,
     });
     fireEvent.change(select, {
       target: { value: "switch_account_preserve_conversation" },
@@ -119,7 +119,7 @@ describe("ConfigForm", () => {
         "switch_account_preserve_conversation",
     });
     const select = screen.getByRole("combobox", {
-      name: /对话恢复策略/,
+      name: /GPT 对话恢复策略/,
     });
     fireEvent.change(select, { target: { value: "preserve_conversation" } });
     fireEvent.click(screen.getByRole("button", { name: /撤销修改/ }));
