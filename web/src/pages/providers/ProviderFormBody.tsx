@@ -587,7 +587,8 @@ export function ProviderFormBody({
   );
 
   const effectiveUsageLimitPolicy =
-    formData.usage_limit_policy || defaultProviderUsageLimitPolicy();
+    formData.usage_limit_policy ||
+    defaultProviderUsageLimitPolicy(formData.credential_mode);
 
   return (
     <>

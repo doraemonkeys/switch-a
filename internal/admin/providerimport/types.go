@@ -163,11 +163,7 @@ func defaultProviderImportCreateSettings() ProviderImportCreateDefaults {
 	return ProviderImportCreateDefaults{
 		Weight:     DefaultWeight,
 		MaxRetries: DefaultProviderMaxRetries,
-		Backoff: model.BackoffPolicy{
-			InitialDelay: model.Duration(defaults.BackoffInitialDelay),
-			MaxDelay:     model.Duration(defaults.BackoffMaxDelay),
-			Multiplier:   defaults.BackoffMultiplier,
-		},
+		Backoff:    model.DefaultProviderBackoffPolicy(),
 	}
 }
 
@@ -183,7 +179,7 @@ type ProviderImportCommitItem struct {
 	Name        string               `json:"name,omitempty"`
 	Priority    int                  `json:"priority,omitempty"`
 	Weight      *int                 `json:"weight,omitempty"`
-	Concurrency int                  `json:"concurrency,omitempty"`
+	Concurrency *int                 `json:"concurrency,omitempty"`
 	MaxRetries  *int                 `json:"max_retries,omitempty"`
 	Backoff     *model.BackoffPolicy `json:"backoff,omitempty"`
 }

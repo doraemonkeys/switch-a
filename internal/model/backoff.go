@@ -76,6 +76,16 @@ type BackoffPolicy struct {
 	Jitter bool `gorm:"column:jitter" json:"jitter,omitempty"`
 }
 
+// DefaultProviderBackoffPolicy keeps interactive creation and account imports aligned.
+func DefaultProviderBackoffPolicy() BackoffPolicy {
+	return BackoffPolicy{
+		InitialDelay: Duration(defaults.ProviderBackoffInitialDelay),
+		MaxDelay:     Duration(defaults.ProviderBackoffMaxDelay),
+		Multiplier:   defaults.ProviderBackoffMultiplier,
+		Jitter:       defaults.ProviderBackoffJitter,
+	}
+}
+
 // IsZero reports whether the policy is unconfigured.
 // A zero InitialDelay means no backoff should be applied.
 func (b BackoffPolicy) IsZero() bool {

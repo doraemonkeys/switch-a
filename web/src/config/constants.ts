@@ -162,8 +162,12 @@ export const PROVIDER_USAGE_LIMIT_POLICIES = {
 export type ProviderUsageLimitPolicy =
   (typeof PROVIDER_USAGE_LIMIT_POLICIES)[keyof typeof PROVIDER_USAGE_LIMIT_POLICIES];
 
-export function defaultProviderUsageLimitPolicy(): ProviderUsageLimitPolicy {
-  return PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER;
+export function defaultProviderUsageLimitPolicy(
+  credentialKind: ProviderCredentialType | "mixed" | null,
+): ProviderUsageLimitPolicy {
+  return credentialKind === PROVIDER_CREDENTIAL_TYPES.CHATGPT
+    ? PROVIDER_USAGE_LIMIT_POLICIES.SUSPEND
+    : PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER;
 }
 
 export const PROVIDER_USAGE_LIMIT_POLICY_OPTIONS = [
@@ -324,7 +328,7 @@ export const DEFAULTS = {
   MAX_BODY_SIZE_MB: 10,
   WEBSOCKET_MAX_MESSAGE_SIZE_MIB: 128,
   GLOBAL_MAX_ATTEMPTS: 0, // 0 = unlimited (iterate through all providers)
-  PROVIDER_MAX_RETRIES: 0, // 0 = try once, no retry on same provider
+  PROVIDER_MAX_RETRIES: 4,
   LOG_RETENTION_DAYS: 90,
 
   // Backoff Policy (for same-provider retries)
@@ -340,10 +344,10 @@ export const DEFAULTS = {
 
 /**
  * Default provider max retries value.
- * 0 = try once, no retry on same provider before switching to next.
+ * Explicit zero disables retries on the same provider.
  * @see internal/defaults/defaults.go ProviderMaxRetries
  */
-export const DEFAULT_PROVIDER_MAX_RETRIES = 0;
+export const DEFAULT_PROVIDER_MAX_RETRIES = DEFAULTS.PROVIDER_MAX_RETRIES;
 
 // =============================================================================
 // Deprecated - Use DEFAULTS instead
@@ -379,8 +383,8 @@ export const RECENT_LOGS_LIMIT = 5;
 export const PROVIDER_DEFAULTS = {
   PRIORITY: 0,
   WEIGHT: 1,
-  CONCURRENCY: 10,
-  MAX_RETRIES: 0,
+  CONCURRENCY: 100,
+  MAX_RETRIES: DEFAULTS.PROVIDER_MAX_RETRIES,
   /** Default backoff policy for same-provider retries */
   BACKOFF: {
     INITIAL_DELAY: DEFAULTS.BACKOFF_INITIAL_DELAY,
@@ -392,12 +396,12 @@ export const PROVIDER_DEFAULTS = {
 
 export const PROVIDER_UNLIMITED_BACKOFF_MAX_DELAY = "0s";
 
-// Defaults used only when creating a provider through the frontend form.
+// Provider creation defaults mirror internal/defaults; stored zero backoff still means disabled.
 export const ADD_PROVIDER_DEFAULTS = {
   PRIORITY: PROVIDER_DEFAULTS.PRIORITY,
   WEIGHT: PROVIDER_DEFAULTS.WEIGHT,
   CONCURRENCY: PROVIDER_DEFAULTS.CONCURRENCY,
-  MAX_RETRIES: 3,
+  MAX_RETRIES: PROVIDER_DEFAULTS.MAX_RETRIES,
   BACKOFF: {
     INITIAL_DELAY: "1s",
     // The backend models an uncapped max delay as a zero duration, and Go

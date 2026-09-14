@@ -187,7 +187,7 @@ func providerImportCommitRequestFingerprint(req ProviderImportCommitRequest) str
 			canonical.Name = strings.TrimSpace(item.Name)
 			canonical.Priority = item.Priority
 			canonical.Weight = *item.Weight
-			canonical.Concurrency = item.Concurrency
+			canonical.Concurrency = *item.Concurrency
 			canonical.MaxRetries = *item.MaxRetries
 			canonical.Backoff = *item.Backoff
 		}

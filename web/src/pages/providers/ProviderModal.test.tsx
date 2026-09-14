@@ -143,6 +143,7 @@ describe("ProviderModal", () => {
 
     render(<ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />);
 
+    expect(screen.getByLabelText("Concurrency Limit")).toHaveValue(100);
     expect(screen.getByLabelText("Max Retries")).toHaveValue(
       ADD_PROVIDER_DEFAULTS.MAX_RETRIES,
     );
@@ -171,6 +172,7 @@ describe("ProviderModal", () => {
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({
+          concurrency: 100,
           max_retries: ADD_PROVIDER_DEFAULTS.MAX_RETRIES,
           backoff: {
             initial_delay: ADD_PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY,
@@ -181,6 +183,26 @@ describe("ProviderModal", () => {
         }),
       ),
     );
+  });
+
+  it("follows credential defaults until the usage policy is explicitly chosen", async () => {
+    const user = userEvent.setup();
+    render(<ProviderModal onClose={vi.fn()} onSubmit={vi.fn()} groups={[]} />);
+    const credential = screen.getByLabelText("Credential Type");
+    const policy = screen.getByLabelText("Usage Limit Policy");
+    expect(policy).toHaveValue(PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER);
+    await user.selectOptions(credential, PROVIDER_CREDENTIAL_TYPES.CHATGPT);
+    expect(policy).toHaveValue(PROVIDER_USAGE_LIMIT_POLICIES.SUSPEND);
+    await user.selectOptions(credential, PROVIDER_CREDENTIAL_TYPES.API_KEY);
+    expect(policy).toHaveValue(PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER);
+    await user.selectOptions(credential, PROVIDER_CREDENTIAL_TYPES.CHATGPT);
+    await user.selectOptions(
+      policy,
+      PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER,
+    );
+    await user.selectOptions(credential, PROVIDER_CREDENTIAL_TYPES.API_KEY);
+    await user.selectOptions(credential, PROVIDER_CREDENTIAL_TYPES.CHATGPT);
+    expect(policy).toHaveValue(PROVIDER_USAGE_LIMIT_POLICIES.SWITCH_PROVIDER);
   });
 
   it("preserves persisted retry settings in edit mode", async () => {

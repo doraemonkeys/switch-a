@@ -1,5 +1,7 @@
 package model
 
+import "github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+
 // ProviderUsageLimitPolicy controls whether provider-scoped usage-limit evidence
 // should temporarily suspend the provider or only force routing away from it.
 // This keeps relay-specific quota semantics explicit instead of inferring them
@@ -22,26 +24,23 @@ func IsValidProviderUsageLimitPolicy(value ProviderUsageLimitPolicy) bool {
 	}
 }
 
-// DefaultProviderUsageLimitPolicy is independent of credential kind because one
-// route target may reference different session kinds for different API types.
-// Operators must opt into suspension explicitly when that behavior is desired.
-func DefaultProviderUsageLimitPolicy() ProviderUsageLimitPolicy {
-	return ProviderUsageLimitPolicySwitchProvider
-}
-
-// NormalizeProviderUsageLimitPolicy applies the route-target default when no
-// explicit override is stored.
-func NormalizeProviderUsageLimitPolicy(value ProviderUsageLimitPolicy) ProviderUsageLimitPolicy {
-	if value == "" {
-		return DefaultProviderUsageLimitPolicy()
-	}
-	return value
-}
-
 // UsageLimitPolicyOrDefault returns the effective policy for runtime decisions.
 func (p *Provider) UsageLimitPolicyOrDefault() ProviderUsageLimitPolicy {
 	if p == nil {
-		return DefaultProviderUsageLimitPolicy()
+		return ProviderUsageLimitPolicySwitchProvider
 	}
-	return NormalizeProviderUsageLimitPolicy(p.UsageLimitPolicy)
+	if p.UsageLimitPolicy != "" {
+		return p.UsageLimitPolicy
+	}
+	if len(p.CredentialSessions) == 0 {
+		return ProviderUsageLimitPolicySwitchProvider
+	}
+	// Suspension affects the whole provider, so mixed credential routes require
+	// an explicit choice instead of inheriting a GPT-only account policy.
+	for _, route := range p.CredentialSessions {
+		if route.Credential.Kind != credentialsession.KindChatGPT {
+			return ProviderUsageLimitPolicySwitchProvider
+		}
+	}
+	return ProviderUsageLimitPolicySuspend
 }

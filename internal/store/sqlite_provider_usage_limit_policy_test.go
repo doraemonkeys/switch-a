@@ -61,7 +61,7 @@ func TestProviderUsageLimitPolicyPersistsAcrossCreateAndUpdate(t *testing.T) {
 	}
 }
 
-func TestProviderUsageLimitPolicyDefaultRemainsStableAcrossSessionRebind(t *testing.T) {
+func TestProviderUsageLimitPolicyDefaultFollowsSessionRebind(t *testing.T) {
 	t.Parallel()
 
 	store := setupTestStore(t)
@@ -122,8 +122,8 @@ func TestProviderUsageLimitPolicyDefaultRemainsStableAcrossSessionRebind(t *test
 	if updated.UsageLimitPolicy != "" {
 		t.Fatalf("stored UsageLimitPolicy after session rebind = %q, want empty inherit-default value", updated.UsageLimitPolicy)
 	}
-	if updated.UsageLimitPolicyOrDefault() != model.ProviderUsageLimitPolicySwitchProvider {
-		t.Fatalf("effective UsageLimitPolicy after session rebind = %q, want %q", updated.UsageLimitPolicyOrDefault(), model.ProviderUsageLimitPolicySwitchProvider)
+	if updated.UsageLimitPolicyOrDefault() != model.ProviderUsageLimitPolicySuspend {
+		t.Fatalf("effective UsageLimitPolicy after session rebind = %q, want %q", updated.UsageLimitPolicyOrDefault(), model.ProviderUsageLimitPolicySuspend)
 	}
 }
 

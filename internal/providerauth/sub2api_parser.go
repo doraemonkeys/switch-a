@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 )
 
 const (
@@ -236,6 +237,9 @@ func parseSub2APIAccountRouting(account sub2APIAccountDocument) (sub2APIAccountR
 	// review controls, logs, and persisted configuration needlessly expensive.
 	if nameTruncated {
 		return routing, "Account name must not exceed 200 characters."
+	}
+	if !hasOptionalJSONValue(account.Concurrency) {
+		concurrency = defaults.ProviderConcurrency
 	}
 	routing.concurrency = concurrency
 	routing.priority = priority

@@ -984,6 +984,33 @@ func TestSealChatGPTProviderImportPreview_ValidatesAndFreezesDisposition(t *test
 	}
 }
 
+func TestParseSub2APIAccountRouting_ConcurrencyDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "omitted", want: 100},
+		{name: "null", raw: " null ", want: 100},
+		{name: "unlimited", raw: "0", want: 0},
+		{name: "custom", raw: "7", want: 7},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			routing, warning := parseSub2APIAccountRouting(sub2APIAccountDocument{
+				Name:        "Imported account",
+				Concurrency: json.RawMessage(tt.raw),
+			})
+			if warning != "" {
+				t.Fatalf("parseSub2APIAccountRouting warning = %q", warning)
+			}
+			if routing.concurrency != tt.want {
+				t.Errorf("concurrency = %d, want %d", routing.concurrency, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseSub2APIAccount_ValidationMatrix(t *testing.T) {
 	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
 	validAccess := chatgptAccessJWT(t, "acct", "user@example.com", "plus", now.Add(time.Hour))

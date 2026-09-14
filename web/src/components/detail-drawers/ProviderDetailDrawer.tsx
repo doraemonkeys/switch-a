@@ -12,6 +12,7 @@ import {
 import {
   formatProviderCredentialType,
   resolveProviderCredentialSession,
+  resolveProviderCredentialKind,
 } from "../../lib/providerAuth";
 import { stringToColor } from "../../lib/utils";
 import { DetailSection, DetailRow } from "./DrawerSection";
@@ -234,7 +235,9 @@ function BasicInfoSection({
             (option) =>
               option.value ===
               (provider.usage_limit_policy ||
-                defaultProviderUsageLimitPolicy()),
+                defaultProviderUsageLimitPolicy(
+                  resolveProviderCredentialKind(provider),
+                )),
           )?.label || "Unknown"
         }
       />

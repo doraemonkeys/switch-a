@@ -235,7 +235,7 @@ export const CONFIG_CATEGORIES: readonly ConfigCategory[] = [
             defaultValue: D.GLOBAL_MAX_ATTEMPTS,
             min: C.MIN_ZERO,
             max: C.MAX_GLOBAL_ATTEMPTS,
-            help: "单个供应商的重试次数由其 max_retries 控制；默认 0 表示试一次就切换。",
+            help: "单个供应商的重试次数由其 max_retries 控制；默认 4 次，设为 0 表示试一次就切换。",
           },
           {
             key: K.MAX_BODY_SIZE,

@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/store"
@@ -300,7 +301,7 @@ func buildProviderImportCreate(
 		GroupID:        groupID,
 		Weight:         *selection.Weight,
 		Priority:       selection.Priority,
-		Concurrency:    selection.Concurrency,
+		Concurrency:    *selection.Concurrency,
 		MaxRetries:     *selection.MaxRetries,
 		Backoff:        *selection.Backoff,
 		FailoverScope:  model.ScopeAny,
@@ -506,6 +507,10 @@ func normalizeProviderImportCreateItem(item *ProviderImportCommitItem, index int
 	item.ProviderID = strings.TrimSpace(item.ProviderID)
 	item.Name = strings.TrimSpace(item.Name)
 	createDefaults := defaultProviderImportCreateSettings()
+	if item.Concurrency == nil {
+		concurrency := defaults.ProviderConcurrency
+		item.Concurrency = &concurrency
+	}
 	if item.Weight == nil {
 		weight := createDefaults.Weight
 		item.Weight = &weight
@@ -536,7 +541,7 @@ func normalizeProviderImportCreateItem(item *ProviderImportCommitItem, index int
 	if *item.Weight < 1 || *item.Weight > maxProviderImportRoutingValue {
 		return fmt.Errorf("items[%d].weight must be between 1 and %d", index, maxProviderImportRoutingValue)
 	}
-	if item.Concurrency < 0 || item.Concurrency > maxProviderImportRoutingValue {
+	if *item.Concurrency < 0 || *item.Concurrency > maxProviderImportRoutingValue {
 		return fmt.Errorf("items[%d].concurrency must be between 0 and %d", index, maxProviderImportRoutingValue)
 	}
 	if *item.MaxRetries < 0 || *item.MaxRetries > maxProviderImportRetryCount {

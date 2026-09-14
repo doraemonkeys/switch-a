@@ -132,17 +132,20 @@ const (
 	RootCandidateStrategy          = "priority"
 	GroupStrategy                  = "priority"
 	ProviderWeight                 = 1
-	// ProviderMaxRetries is the default retry count for a provider.
-	// 0 means try once, no retry.
-	ProviderMaxRetries = 0
+	ProviderConcurrency            = 100
+	ProviderMaxRetries             = 4
 )
 
-// Backoff defaults for same-provider retries.
+// Provider creation supplies a complete policy; an explicit zero policy still disables backoff.
 const (
-	BackoffInitialDelay = 100 * time.Millisecond
-	BackoffMaxDelay     = 5 * time.Second
-	BackoffMultiplier   = 2.0
+	ProviderBackoffInitialDelay = time.Second
+	ProviderBackoffMaxDelay     = 0 * time.Second
+	ProviderBackoffMultiplier   = 3.0
+	ProviderBackoffJitter       = true
 )
+
+// Zero multipliers retain the shared backoff contract used by error rules.
+const BackoffMultiplier = 2.0
 
 // HTTP status codes for failover logic.
 // These semantic aliases make failover logic more readable.

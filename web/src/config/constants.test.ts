@@ -267,7 +267,7 @@ describe("DEFAULTS", () => {
   it("should have request handling defaults", () => {
     expect(DEFAULTS.MAX_BODY_SIZE_MB).toBe(10);
     expect(DEFAULTS.GLOBAL_MAX_ATTEMPTS).toBe(0); // 0 = unlimited
-    expect(DEFAULTS.PROVIDER_MAX_RETRIES).toBe(0); // 0 = no retry on same provider
+    expect(DEFAULTS.PROVIDER_MAX_RETRIES).toBe(4);
     expect(DEFAULTS.LOG_RETENTION_DAYS).toBe(90);
   });
 
@@ -285,8 +285,8 @@ describe("DEFAULTS", () => {
 });
 
 describe("DEFAULT_PROVIDER_MAX_RETRIES", () => {
-  it("should be 0 (try once, no retry)", () => {
-    expect(DEFAULT_PROVIDER_MAX_RETRIES).toBe(0);
+  it("should allow four retries by default", () => {
+    expect(DEFAULT_PROVIDER_MAX_RETRIES).toBe(4);
   });
 });
 
@@ -294,8 +294,8 @@ describe("PROVIDER_DEFAULTS", () => {
   it("should have basic provider defaults", () => {
     expect(PROVIDER_DEFAULTS.PRIORITY).toBe(0);
     expect(PROVIDER_DEFAULTS.WEIGHT).toBe(1);
-    expect(PROVIDER_DEFAULTS.CONCURRENCY).toBe(10);
-    expect(PROVIDER_DEFAULTS.MAX_RETRIES).toBe(0);
+    expect(PROVIDER_DEFAULTS.CONCURRENCY).toBe(100);
+    expect(PROVIDER_DEFAULTS.MAX_RETRIES).toBe(4);
   });
 
   it("should have backoff policy defaults", () => {
@@ -314,7 +314,7 @@ describe("PROVIDER_DEFAULTS", () => {
 
 describe("ADD_PROVIDER_DEFAULTS", () => {
   it("should have frontend add-provider retry defaults", () => {
-    expect(ADD_PROVIDER_DEFAULTS.MAX_RETRIES).toBe(3);
+    expect(ADD_PROVIDER_DEFAULTS.MAX_RETRIES).toBe(4);
     expect(ADD_PROVIDER_DEFAULTS.BACKOFF.INITIAL_DELAY).toBe("1s");
     expect(ADD_PROVIDER_DEFAULTS.BACKOFF.MAX_DELAY).toBe(
       PROVIDER_UNLIMITED_BACKOFF_MAX_DELAY,

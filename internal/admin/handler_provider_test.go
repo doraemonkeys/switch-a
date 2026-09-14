@@ -8,10 +8,35 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
+
+func TestCreateProviderRequestDefaultsPreserveExplicitZero(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		body                 string
+		concurrency, retries int
+		backoff              model.BackoffPolicy
+	}{
+		{"omitted", "{}", 100, 4, model.BackoffPolicy{InitialDelay: model.Duration(time.Second), Multiplier: 3, Jitter: true}},
+		{"explicit zero", `{"concurrency":0,"max_retries":0,"backoff":{}}`, 0, 0, model.BackoffPolicy{}},
+		{"custom", `{"concurrency":7,"max_retries":2,"backoff":{"initial_delay":"2s","max_delay":"8s","multiplier":2,"jitter":false}}`, 7, 2, model.BackoffPolicy{InitialDelay: model.Duration(2 * time.Second), MaxDelay: model.Duration(8 * time.Second), Multiplier: 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var req CreateProviderRequest
+			if err := json.Unmarshal([]byte(tc.body), &req); err != nil {
+				t.Fatal(err)
+			}
+			provider := req.toProvider()
+			if provider.Concurrency != tc.concurrency || provider.MaxRetries != tc.retries || provider.Backoff != tc.backoff {
+				t.Fatalf("concurrency=%d retries=%d backoff=%+v", provider.Concurrency, provider.MaxRetries, provider.Backoff)
+			}
+		})
+	}
+}
 
 func TestCreateProvider_RequiresCredentialSessionForEveryAPIType(t *testing.T) {
 	handler, _, _ := testHandler()

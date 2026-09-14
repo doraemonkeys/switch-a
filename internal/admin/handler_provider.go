@@ -9,6 +9,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
@@ -94,7 +95,7 @@ type CreateProviderRequest struct {
 	GroupID               *string                             `json:"group_id"`
 	Weight                int                                 `json:"weight"`
 	Priority              int                                 `json:"priority"`
-	Concurrency           int                                 `json:"concurrency"`
+	Concurrency           *int                                `json:"concurrency"`
 	MaxRetries            *int                                `json:"max_retries"`
 	Backoff               *model.BackoffPolicy                `json:"backoff"`
 	Vendor                string                              `json:"vendor"`
@@ -236,9 +237,9 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 		GroupID:          req.GroupID,
 		Weight:           req.Weight,
 		Priority:         req.Priority,
-		Concurrency:      req.Concurrency,
+		Concurrency:      defaults.ProviderConcurrency,
 		MaxRetries:       DefaultProviderMaxRetries,
-		Backoff:          model.BackoffPolicy{},
+		Backoff:          model.DefaultProviderBackoffPolicy(),
 		Vendor:           req.Vendor,
 		FailoverScope:    model.ScopeAny,
 		AcceptFailover:   model.ScopeAny,
@@ -257,6 +258,9 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 	}
 
 	// Apply explicit values where provided
+	if req.Concurrency != nil {
+		provider.Concurrency = *req.Concurrency
+	}
 	if req.Enabled != nil {
 		provider.Enabled = *req.Enabled
 	}

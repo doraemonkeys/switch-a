@@ -66,9 +66,8 @@ type Provider struct {
 	Name           string                `gorm:"not null" json:"name"`
 	APITypes       []ProviderAPIType     `gorm:"foreignKey:ProviderID" json:"api_types"`
 	AuthMode       string                `gorm:"default:auto" json:"auth_mode"`
-	// UsageLimitPolicy stores only an explicit route-target override. Empty values
-	// use the target-independent switch-provider default; a target can reference
-	// different credential kinds for different API types.
+	// Empty policies follow the credential-derived default; explicit choices remain
+	// authoritative when a route is rebound to a different credential kind.
 	UsageLimitPolicy ProviderUsageLimitPolicy `gorm:"type:text;default:''" json:"usage_limit_policy"`
 	GroupID          *string                  `gorm:"index" json:"group_id"`
 	Group            *Group                   `gorm:"foreignKey:GroupID" json:"-"`

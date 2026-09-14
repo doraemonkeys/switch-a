@@ -192,8 +192,11 @@ func TestValidateProviderImportCommitRequestBounds(t *testing.T) {
 			value := maxProviderImportRoutingValue + 1
 			r.Items[0].Weight = &value
 		}, "weight"},
-		{"concurrency negative", func(r *ProviderImportCommitRequest) { r.Items[0].Concurrency = -1 }, "concurrency"},
-		{"concurrency high", func(r *ProviderImportCommitRequest) { r.Items[0].Concurrency = maxProviderImportRoutingValue + 1 }, "concurrency"},
+		{"concurrency negative", func(r *ProviderImportCommitRequest) { value := -1; r.Items[0].Concurrency = &value }, "concurrency"},
+		{"concurrency high", func(r *ProviderImportCommitRequest) {
+			value := maxProviderImportRoutingValue + 1
+			r.Items[0].Concurrency = &value
+		}, "concurrency"},
 		{"retries negative", func(r *ProviderImportCommitRequest) { value := -1; r.Items[0].MaxRetries = &value }, "max_retries"},
 		{"retries high", func(r *ProviderImportCommitRequest) {
 			value := maxProviderImportRetryCount + 1
@@ -235,6 +238,31 @@ func TestValidateProviderImportCommitRequestBounds(t *testing.T) {
 	}
 	if normalizedProviderImportGroupID(req.GroupID) != nil || normalizedProviderImportGroupID(nil) != nil {
 		t.Fatal("blank group should not be persisted")
+	}
+}
+
+func TestProviderImportConcurrencyDefaultsPreserveExplicitZero(t *testing.T) {
+	for _, tc := range []struct {
+		name, concurrency string
+		want              int
+	}{
+		{"omitted", "", 100},
+		{"unlimited", `,"concurrency":0`, 0},
+		{"custom", `,"concurrency":7`, 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var req ProviderImportCommitRequest
+			body := `{"items":[{"candidate_id":"c","action":"create","provider_id":"p","name":"P"` + tc.concurrency + `}]}`
+			if err := jsonDecodeProviderImportRequest(body, &req); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateProviderImportCommitRequest(&req); err != nil {
+				t.Fatal(err)
+			}
+			if got := req.Items[0].Concurrency; got == nil || *got != tc.want {
+				t.Fatalf("concurrency=%v, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -437,10 +465,10 @@ func TestProviderImportCommitFingerprintIsCanonicalAndActionPrecise(t *testing.T
 	group := " group "
 	first := ProviderImportCommitRequest{GroupID: &group, Items: []ProviderImportCommitItem{
 		{CandidateID: " b ", Action: providerImportActionUpdate, ProviderID: " p-b ", Name: "ignored", Priority: 99},
-		{CandidateID: " a ", Action: providerImportActionCreate, ProviderID: " p-a ", Name: " Name ", Weight: &weight, MaxRetries: &retries, Backoff: &backoff},
+		{CandidateID: " a ", Action: providerImportActionCreate, ProviderID: " p-a ", Name: " Name ", Weight: &weight, Concurrency: new(int), MaxRetries: &retries, Backoff: &backoff},
 	}}
 	second := ProviderImportCommitRequest{GroupID: ptrProviderImportString("group"), Items: []ProviderImportCommitItem{
-		{CandidateID: "a", Action: providerImportActionCreate, ProviderID: "p-a", Name: "Name", Weight: &weight, MaxRetries: &retries, Backoff: &backoff},
+		{CandidateID: "a", Action: providerImportActionCreate, ProviderID: "p-a", Name: "Name", Weight: &weight, Concurrency: new(int), MaxRetries: &retries, Backoff: &backoff},
 		{CandidateID: "b", Action: providerImportActionUpdate, ProviderID: "p-b"},
 	}}
 	if got, want := providerImportCommitRequestFingerprint(first), providerImportCommitRequestFingerprint(second); got != want || len(got) != 64 {

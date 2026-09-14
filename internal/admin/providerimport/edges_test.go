@@ -90,6 +90,9 @@ func TestCommitProviderImportRechecksDurableReceiptAfterAcquiringOwnership(t *te
 		CandidateID: "candidate", Action: providerImportActionCreate, ProviderID: "provider", Name: "Provider",
 		Weight: &weight, MaxRetries: &retries, Backoff: &backoff,
 	}}}
+	if err := validateProviderImportCommitRequest(&req); err != nil {
+		t.Fatal(err)
+	}
 	fingerprint := providerImportCommitRequestFingerprint(req)
 	payload := []byte(`{"import_id":"recheck"}` + "\n")
 	importStore := &providerImportTestStore{receiptFunc: func(importID string, call int) (*store.ProviderImportReceipt, error) {
@@ -192,8 +195,8 @@ func TestProviderImportFingerprintComparatorTies(t *testing.T) {
 	backoff := defaultProviderImportCreateSettings().Backoff
 	items := []ProviderImportCommitItem{
 		{CandidateID: "same", Action: providerImportActionUpdate, ProviderID: "z"},
-		{CandidateID: "same", Action: providerImportActionCreate, ProviderID: "b", Name: "B", Weight: &weight, MaxRetries: &retries, Backoff: &backoff},
-		{CandidateID: "same", Action: providerImportActionCreate, ProviderID: "a", Name: "A", Weight: &weight, MaxRetries: &retries, Backoff: &backoff},
+		{CandidateID: "same", Action: providerImportActionCreate, ProviderID: "b", Name: "B", Weight: &weight, Concurrency: new(int), MaxRetries: &retries, Backoff: &backoff},
+		{CandidateID: "same", Action: providerImportActionCreate, ProviderID: "a", Name: "A", Weight: &weight, Concurrency: new(int), MaxRetries: &retries, Backoff: &backoff},
 	}
 	if len(providerImportCommitRequestFingerprint(ProviderImportCommitRequest{Items: items})) != 64 {
 		t.Fatal("fingerprint was not emitted")
