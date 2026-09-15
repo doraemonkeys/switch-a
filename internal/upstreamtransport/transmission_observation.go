@@ -36,7 +36,7 @@ type TransmissionEvent struct {
 
 type executionObserver struct {
 	observe       func(TransmissionEvent)
-	disclosure    *requestDisclosureTracker
+	disclosure    *RequestDisclosureObservation
 	hops          atomic.Int64
 	transmissions atomic.Int64
 }
@@ -57,7 +57,7 @@ func (o *executionObserver) emit(event TransmissionEvent, kind TransmissionEvent
 	}
 	event.Kind = kind
 	event.Err = err
-	event.Disclosure = o.disclosure.disclosure(false)
+	event.Disclosure = o.disclosure.Result(false)
 	if body != nil {
 		event.BodyReadBytes = body.bytesRead.Load()
 	}

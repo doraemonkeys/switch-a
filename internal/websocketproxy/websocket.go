@@ -13,6 +13,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responsefacts"
+	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 
 	"github.com/coder/websocket"
 	"go.uber.org/zap"
@@ -123,6 +124,7 @@ type WebSocketDialRequest struct {
 // attempt may contain more than one exchange when managed credentials are refreshed,
 // so this result deliberately does not share the provider-attempt lifecycle.
 type DialExchange struct {
+	Disclosure               upstreamtransport.RequestDisclosure
 	Conn                     *websocket.Conn
 	StartedAt                time.Time
 	CompletedAt              time.Time
@@ -556,12 +558,14 @@ func (f *WebSocketForwarder) dialUpstream(ctx context.Context, request WebSocket
 	exchange.capture = capture
 	exchange.captureMode = captureMode
 	exchange.credentialEvidence = credentialEvidence
+	client, disclosure := upstreamtransport.ObserveRequestDisclosure(request.HTTPClient)
 	upstreamConn, resp, err := f.dialer.Dial(ctx, request.URL, &websocket.DialOptions{
-		HTTPClient:   request.HTTPClient,
+		HTTPClient:   client,
 		HTTPHeader:   dialHeaders,
 		Subprotocols: append([]string(nil), request.Subprotocols...),
 	})
 	exchange.CompletedAt = time.Now()
+	exchange.Disclosure = disclosure.Result(resp != nil || upstreamConn != nil)
 	exchange.Err = err
 	if resp != nil {
 		exchange.HandshakeObservedAt = exchange.CompletedAt
