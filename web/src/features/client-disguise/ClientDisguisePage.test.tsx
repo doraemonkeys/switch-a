@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useNavigate } from "react-router";
 import { describe, it, expect, vi } from "vitest";
@@ -79,6 +79,103 @@ function setup(data = state, path = "/client-disguise", overrides = {}) {
 async function openLibrary(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: /Reference library/ }));
 }
+
+describe("client disguise reference following", () => {
+  it.each([
+    {
+      outcome: "an available reference sample",
+      revision: "latest",
+      version: "0.151.0",
+    },
+    {
+      outcome: "the built-in fallback",
+      revision: "new",
+      version: "0.150.0-alpha.8",
+    },
+  ])(
+    "shows the concrete saved version after following $outcome",
+    async ({ revision, version }) => {
+      const builtin = {
+        ...populated.profiles[0],
+        source_id: "builtin",
+        client_version: "0.150.0-alpha.8",
+        features: {
+          ...populated.profiles[0].features,
+          client_version: "0.150.0-alpha.8",
+        },
+      };
+      const latest = {
+        ...builtin,
+        id: "latest",
+        source_id: "reference",
+        client_version: "0.151.0",
+        features: { ...builtin.features, client_version: "0.151.0" },
+      };
+      const initial: DisguiseState = {
+        ...populated,
+        logins: [login],
+        references: [
+          {
+            id: "reference",
+            name: "My desktop",
+            client_identity_id: "existing-client",
+          },
+        ],
+        profiles: revision === "latest" ? [builtin, latest] : [builtin],
+      };
+      const savedLogin: LoginView = {
+        ...login,
+        binding: {
+          ...login.binding!,
+          reference_source_id: "reference",
+          revision_id: revision,
+        },
+      };
+      const get = vi
+        .fn()
+        .mockResolvedValueOnce(initial)
+        .mockResolvedValue({ ...initial, logins: [savedLogin] });
+      const { api, user } = setup(initial, undefined, { get });
+      expect(await screen.findByLabelText("Profile revision")).toHaveValue(
+        "new",
+      );
+      await user.selectOptions(
+        screen.getByLabelText("Reference source"),
+        "reference",
+      );
+      expect(
+        screen.getByRole("radio", { name: /Automatic follow/ }),
+      ).toBeChecked();
+      expect(
+        screen.getByRole("button", { name: "Save login settings" }),
+      ).toBeEnabled();
+      await user.click(
+        screen.getByRole("button", { name: "Save login settings" }),
+      );
+      expect(api.saveBinding).toHaveBeenCalledWith(
+        "login-one",
+        expect.objectContaining({
+          mode: "auto",
+          reference_source_id: "reference",
+          revision_id: "new",
+        }),
+      );
+      await screen.findByText("All changes saved");
+      expect(screen.getByLabelText("Profile revision")).toHaveValue(revision);
+      expect(
+        within(screen.getByLabelText("Profile revision")).getByRole("option", {
+          selected: true,
+        }),
+      ).toHaveTextContent(version);
+      expect(
+        screen.queryByRole("option", { name: "All versions" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("radio", { name: /Automatic follow/ }),
+      ).toBeChecked();
+    },
+  );
+});
 
 describe("client disguise workspace", () => {
   it("checks and displays the official stable release without changing login drafts", async () => {

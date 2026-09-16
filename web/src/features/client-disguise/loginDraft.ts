@@ -7,24 +7,17 @@ import type {
 export interface LoginDraft {
   versionSource: "" | "official_stable";
   revisionID: string;
-  version: string;
   mode: ProfileBinding["mode"];
   reference: string;
   transport: string;
   paths: string;
 }
 
-export function createLoginDraft(
-  login: LoginView,
-  state: DisguiseState,
-): LoginDraft {
+export function createLoginDraft(login: LoginView): LoginDraft {
   const binding = login.binding;
   return {
     versionSource: binding?.version_source ?? "",
     revisionID: binding?.revision_id ?? "",
-    version:
-      state.profiles.find((profile) => profile.id === binding?.revision_id)
-        ?.client_version ?? "",
     mode: binding?.mode ?? "auto",
     reference: binding?.reference_source_id ?? "",
     transport: binding?.transport_sample_id ?? "",
@@ -32,16 +25,10 @@ export function createLoginDraft(
   };
 }
 
-export function hasLoginChanges(
-  draft: LoginDraft,
-  login: LoginView,
-  state: DisguiseState,
-) {
-  const saved = createLoginDraft(login, state);
+export function hasLoginChanges(draft: LoginDraft, login: LoginView) {
+  const saved = createLoginDraft(login);
   return Object.keys(saved).some(
-    (key) =>
-      key !== "version" &&
-      draft[key as keyof LoginDraft] !== saved[key as keyof LoginDraft],
+    (key) => draft[key as keyof LoginDraft] !== saved[key as keyof LoginDraft],
   );
 }
 

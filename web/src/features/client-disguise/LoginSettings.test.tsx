@@ -47,16 +47,18 @@ const state: DisguiseState = {
 };
 function Editor({
   save,
+  data = state,
 }: {
   save: (
     binding: import("@/api/client-disguise/types").ProfileBinding,
   ) => Promise<void>;
+  data?: DisguiseState;
 }) {
-  const [draft, change] = useState(() => createLoginDraft(login, state));
+  const [draft, change] = useState(() => createLoginDraft(login));
   return (
     <LoginSettings
       login={login}
-      state={state}
+      state={data}
       busy={false}
       save={save}
       draft={draft}
@@ -65,6 +67,76 @@ function Editor({
   );
 }
 describe("login lifecycle controls", () => {
+  it("selects a newer version and environment in one step and saves that revision", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const latest = {
+      ...state.profiles[0],
+      id: "latest-windows",
+      client_version: "0.151.0",
+    };
+    const data = {
+      ...state,
+      profiles: [
+        ...state.profiles.map((profile) => ({
+          ...profile,
+          client_version: "0.150.0-alpha.8",
+        })),
+        {
+          ...latest,
+          id: "latest-linux",
+          tuple: { ...tuple, platform: "linux" },
+        },
+        latest,
+      ],
+    };
+    render(
+      <MemoryRouter>
+        <Editor save={save} data={data} />
+      </MemoryRouter>,
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText("Profile revision"),
+      "latest-windows",
+    );
+    expect(
+      screen.queryByRole("option", { name: "All versions" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", {
+        name: /0.151.0.*desktop \/ windows \/ amd64/,
+        selected: true,
+      }),
+    ).toHaveValue("latest-windows");
+    expect(
+      screen.getByRole("radio", { name: /Pin this revision/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "Save login settings" }),
+    ).toBeEnabled();
+    await user.click(
+      screen.getByRole("button", { name: "Save login settings" }),
+    );
+    expect(save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        revision_id: "latest-windows",
+        tuple,
+        mode: "pinned",
+        reference_source_id: "reference",
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByLabelText("Profile revision")).toHaveValue("new");
+    expect(
+      screen.getByRole("radio", { name: /Automatic follow/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "Save login settings" }),
+    ).toBeDisabled();
+  });
+
   it("saves official version following independently of the profile revision", async () => {
     const user = userEvent.setup();
     const save = vi.fn().mockResolvedValue(undefined);

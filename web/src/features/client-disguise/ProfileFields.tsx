@@ -17,12 +17,6 @@ export function ProfileFields({
   change: (draft: LoginDraft) => void;
   profile?: ProfileRevision;
 }) {
-  const versions = [
-    ...new Set(state.profiles.map((item) => item.client_version)),
-  ];
-  const revisions = state.profiles.filter(
-    (item) => !draft.version || item.client_version === draft.version,
-  );
   const officialVersion = state.official_version?.release.version;
   const syncStatus = officialVersion
     ? `Codex CLI 官方稳定版: ${officialVersion}.`
@@ -57,43 +51,34 @@ export function ProfileFields({
             : "Uses the version recorded in your selected client profile."}
         </span>
       </label>
-      <div className="cd-field-grid">
-        <label className="cd-field">
-          Client version
-          <select
-            value={draft.version}
-            onChange={(event) =>
-              change({ ...draft, version: event.target.value, revisionID: "" })
-            }
-          >
-            <option value="">All versions</option>
-            {versions.map((version) => (
-              <option key={version}>{version}</option>
-            ))}
-          </select>
-        </label>
-        <label className="cd-field">
-          Profile revision
-          <select
-            value={draft.revisionID}
-            onChange={(event) =>
-              change({
-                ...draft,
-                revisionID: event.target.value,
-                mode: "pinned",
-              })
-            }
-          >
-            <option value="">Select revision</option>
-            {revisions.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.tuple.client_type} / {item.tuple.platform} /{" "}
-                {item.tuple.arch} — {item.id}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <label className="cd-field cd-reference-field">
+        Profile revision
+        <select
+          aria-label="Profile revision"
+          value={draft.revisionID}
+          onChange={(event) =>
+            change({
+              ...draft,
+              revisionID: event.target.value,
+              mode: "pinned",
+            })
+          }
+        >
+          <option value="" disabled>
+            Select a profile revision
+          </option>
+          {state.profiles.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.client_version} · {item.tuple.client_type} /{" "}
+              {item.tuple.platform} / {item.tuple.arch} — {item.id}
+            </option>
+          ))}
+        </select>
+        <span className="cd-field-help">
+          Each option selects a specific version and environment. Manual
+          selection pins the profile.
+        </span>
+      </label>
       {state.profiles.length === 0 && (
         <p className="cd-description">
           No profiles available. Import an application sample in the reference
@@ -153,7 +138,7 @@ export function ProfileFields({
               change({ ...draft, reference: event.target.value })
             }
           >
-            <option value="">Built-in profile</option>
+            <option value="">No reference source</option>
             {state.references.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
@@ -161,8 +146,9 @@ export function ProfileFields({
             ))}
           </select>
           <span className="cd-field-help">
-            Follows newer samples matching this profile’s client type, platform
-            and architecture.
+            {draft.reference
+              ? "Saving follows available samples for the selected client type, platform and architecture, then tracks future observations. Without a matching sample at this version or newer, the selected revision stays in use."
+              : "Keeps the selected revision until a reference source is assigned."}
           </span>
         </label>
       ) : (

@@ -50,7 +50,7 @@ export function ClientDisguisePage() {
     state?.logins
       .filter((item) => {
         const draft = drafts[item.credential_session_id];
-        return draft && hasLoginChanges(draft, item, state);
+        return draft && hasLoginChanges(draft, item);
       })
       .map((item) => item.credential_session_id),
   );
@@ -136,7 +136,7 @@ export function ClientDisguisePage() {
                   busy={busy}
                   draft={
                     drafts[login.credential_session_id] ??
-                    createLoginDraft(login, state)
+                    createLoginDraft(login)
                   }
                   change={(draft) =>
                     setDrafts((previous) => ({

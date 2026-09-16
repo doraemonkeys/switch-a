@@ -31,7 +31,7 @@ export function LoginSettings({
   change: (draft: LoginDraft) => void;
 }) {
   const [error, setError] = useState("");
-  const dirty = hasLoginChanges(draft, login, state);
+  const dirty = hasLoginChanges(draft, login);
   const profile = state.profiles.find((item) => item.id === draft.revisionID);
   const activeProviders = login.providers.filter(
     (provider) => provider.client_disguise.enabled,
@@ -46,7 +46,7 @@ export function LoginSettings({
     }
   }
   function reset() {
-    change(createLoginDraft(login, state));
+    change(createLoginDraft(login));
     setError("");
   }
   return (
