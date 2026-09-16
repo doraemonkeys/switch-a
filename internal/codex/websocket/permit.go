@@ -9,8 +9,9 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/provenance"
 )
 
-// Permit represents persistence work prepared before a physical disclosure.
-// A failed or uncertain write deliberately leaves durable rows pending.
+// Permit prepares ownership before delivery. The carrier settles it from the
+// delivery outcome: sending handshake headers alone cannot establish a claim
+// when the upstream explicitly refuses the upgrade.
 type Permit struct {
 	operation  *Operation
 	leases     []codexcontinuity.Lease
@@ -36,7 +37,7 @@ func (p *Permit) Commit(ctx context.Context) error {
 		return nil
 	}
 	if p.abandoned {
-		return continuityFailure("commit_visibility", errors.New("permit was abandoned before disclosure"))
+		return continuityFailure("commit_visibility", errors.New("permit's pending claims were abandoned"))
 	}
 	commitContext := context.WithoutCancel(ctx)
 	for _, lease := range p.leases {
@@ -96,13 +97,13 @@ func containsLease(haystack []codexcontinuity.Lease, needle codexcontinuity.Leas
 }
 
 func (p *Permit) abandon(ctx context.Context) {
-	_ = p.AbandonBeforeDisclosure(ctx)
+	_ = p.AbandonPending(ctx)
 }
 
-// AbandonBeforeDisclosure releases only newly claimed ownership when delivery
-// preparation fails before any physical write can have exposed the identifiers.
-// Callers must retain pending claims after an uncertain physical write instead.
-func (p *Permit) AbandonBeforeDisclosure(ctx context.Context) error {
+// AbandonPending releases only this permit's new claims. Callers must establish
+// that delivery did not create the claimed state, such as a pre-write failure or
+// a rejected opening handshake. Lack of client-visible output is insufficient.
+func (p *Permit) AbandonPending(ctx context.Context) error {
 	if p == nil || p.operation == nil {
 		return nil
 	}
@@ -114,13 +115,13 @@ func (p *Permit) AbandonBeforeDisclosure(ctx context.Context) error {
 	var failures []error
 	for _, lease := range p.leases {
 		if lease.NewlyClaimed() {
-			if err := p.operation.runtime.continuity.AbandonBeforeDisclosure(context.WithoutCancel(ctx), lease); err != nil {
+			if err := p.operation.runtime.continuity.AbandonPending(context.WithoutCancel(ctx), lease); err != nil {
 				failures = append(failures, err)
 			}
 		}
 	}
 	if err := errors.Join(failures...); err != nil {
-		return continuityFailure("abandon_before_disclosure", err)
+		return continuityFailure("abandon_pending", err)
 	}
 	p.abandoned = true
 	return nil

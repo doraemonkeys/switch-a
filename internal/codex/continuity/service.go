@@ -367,10 +367,11 @@ func (s *Service) commitProvenance(ctx context.Context, command StoreCommit, out
 	return result.Binding, nil
 }
 
-// AbandonBeforeDisclosure is intentionally limited to the operation that
-// created the pending row. A retry that merely observed an older uncertain
-// pending owner cannot release it for another ProtocolScope.
-func (s *Service) AbandonBeforeDisclosure(ctx context.Context, lease Lease) error {
+// AbandonPending releases an unestablished claim, not a transport observation.
+// The carrier must prove that the attempt did not establish the claimed state,
+// either before disclosure or through an explicit handshake rejection. Only the
+// creator can abandon a pending row; observed and committed owners survive.
+func (s *Service) AbandonPending(ctx context.Context, lease Lease) error {
 	if err := validateLease(lease); err != nil {
 		return err
 	}

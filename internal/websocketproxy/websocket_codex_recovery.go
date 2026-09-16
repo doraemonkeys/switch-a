@@ -51,11 +51,11 @@ func (o *WebSocketSessionOrchestrator) prepareCodexPhysicalDial(
 	if current := o.disguise.Current(); current != nil {
 		prepared.headers, err = current.Headers(ctx, prepared.headers)
 		if err != nil {
-			return errors.Join(err, permit.AbandonBeforeDisclosure(ctx))
+			return errors.Join(err, permit.AbandonPending(ctx))
 		}
 		prepared.httpClient, err = o.disguise.HTTPClient()
 		if err != nil {
-			return errors.Join(err, permit.AbandonBeforeDisclosure(ctx))
+			return errors.Join(err, permit.AbandonPending(ctx))
 		}
 	}
 	return nil
@@ -68,6 +68,7 @@ func (o *WebSocketSessionOrchestrator) codexUpstreamHeaderHygiene() bool {
 const (
 	webSocketDialOwnershipCommit  = "commit"
 	webSocketDialOwnershipAbandon = "abandon_before_disclosure"
+	webSocketDialOwnershipReject  = "abandon_rejected_handshake"
 )
 
 func (o *WebSocketSessionOrchestrator) finishCodexPhysicalDial(
@@ -81,10 +82,17 @@ func (o *WebSocketSessionOrchestrator) finishCodexPhysicalDial(
 	if prepared.boundaryPermit != nil {
 		var err error
 		decision := webSocketDialOwnershipCommit
-		if exchange.Disclosure.DefinitelyNotDisclosed() {
+		switch {
+		case exchange.HandshakeRejected():
+			// No application frames can precede an accepted upgrade. A refusal
+			// releases only this dial's provisional claims, while the disclosure
+			// observation and any previously established owners remain intact.
+			decision = webSocketDialOwnershipReject
+			err = prepared.boundaryPermit.AbandonPending(ctx)
+		case exchange.Disclosure.DefinitelyNotDisclosed():
 			decision = webSocketDialOwnershipAbandon
-			err = prepared.boundaryPermit.AbandonBeforeDisclosure(ctx)
-		} else {
+			err = prepared.boundaryPermit.AbandonPending(ctx)
+		default:
 			err = prepared.boundaryPermit.Commit(ctx)
 		}
 		o.handler.logger.Debug("websocket.dial_ownership_settled",

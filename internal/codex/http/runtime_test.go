@@ -112,7 +112,7 @@ func (r *continuityRecorder) Commit(context.Context, codexcontinuity.Lease) (cod
 	return codexcontinuity.Binding{}, r.commitErr
 }
 
-func (r *continuityRecorder) AbandonBeforeDisclosure(context.Context, codexcontinuity.Lease) error {
+func (r *continuityRecorder) AbandonPending(context.Context, codexcontinuity.Lease) error {
 	r.abandonCalls++
 	return nil
 }

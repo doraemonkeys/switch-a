@@ -37,7 +37,7 @@ type Continuity interface {
 	Adopt(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
 	PrepareVisible(context.Context, codexcontinuity.ClaimRequest) (codexcontinuity.Lease, error)
 	Commit(context.Context, codexcontinuity.Lease) (codexcontinuity.Binding, error)
-	AbandonBeforeDisclosure(context.Context, codexcontinuity.Lease) error
+	AbandonPending(context.Context, codexcontinuity.Lease) error
 }
 
 type ProviderCookies interface {

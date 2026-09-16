@@ -356,7 +356,7 @@ func (c *preCommitContinuity) Commit(context.Context, codexcontinuity.Lease) (co
 	return codexcontinuity.Binding{}, nil
 }
 
-func (*preCommitContinuity) AbandonBeforeDisclosure(context.Context, codexcontinuity.Lease) error {
+func (*preCommitContinuity) AbandonPending(context.Context, codexcontinuity.Lease) error {
 	return nil
 }
 

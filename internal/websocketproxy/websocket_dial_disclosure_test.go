@@ -3,6 +3,7 @@ package websocketproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,13 +19,18 @@ import (
 )
 
 func TestCodexDialDisclosureSettlesProvisionalOwnership(t *testing.T) {
-	for _, disclosure := range []upstreamtransport.RequestDisclosure{
-		upstreamtransport.RequestDisclosureNone,
-		upstreamtransport.RequestDisclosurePossible,
-		upstreamtransport.RequestDisclosureConfirmed,
-		upstreamtransport.RequestDisclosureUnknown,
+	for _, exchange := range []DialExchange{
+		{Disclosure: upstreamtransport.RequestDisclosureNone},
+		{Disclosure: upstreamtransport.RequestDisclosurePossible},
+		{Disclosure: upstreamtransport.RequestDisclosureConfirmed},
+		{Disclosure: upstreamtransport.RequestDisclosureUnknown},
+		{
+			Disclosure:          upstreamtransport.RequestDisclosureConfirmed,
+			HandshakeStatusCode: http.StatusSwitchingProtocols, Err: errors.New("invalid upgrade response"),
+		},
 	} {
-		t.Run(disclosure.String(), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/status=%d", exchange.Disclosure, exchange.HandshakeStatusCode), func(t *testing.T) {
+			disclosure := exchange.Disclosure
 			request := httptest.NewRequest(http.MethodGet, "http://gateway.test/responses", nil)
 			authorizeCodexRequest(request)
 			request.Header.Set("Thread-Id", "unbound-thread")
@@ -40,7 +46,7 @@ func TestCodexDialDisclosureSettlesProvisionalOwnership(t *testing.T) {
 			if err := orchestrator.prepareCodexPhysicalDial(t.Context(), &first); err != nil {
 				t.Fatal(err)
 			}
-			if err := orchestrator.finishCodexPhysicalDial(t.Context(), first, DialExchange{Disclosure: disclosure}); err != nil {
+			if err := orchestrator.finishCodexPhysicalDial(t.Context(), first, exchange); err != nil {
 				t.Fatal(err)
 			}
 			second := disclosurePreparedDial(t, "second")

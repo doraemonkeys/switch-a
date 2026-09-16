@@ -324,18 +324,18 @@ func TestStoreDecisionsCommitAndAbandonFailures(t *testing.T) {
 		t.Fatalf("commit missing durable row = %#v, %v", committed, err)
 	}
 	store.abandon = func(StoreAbandon) (StoreResult, error) { return StoreResult{}, errors.New("abandon failed") }
-	if err := service.AbandonBeforeDisclosure(context.Background(), lease); !IsError(err, ErrorUnavailable) {
+	if err := service.AbandonPending(context.Background(), lease); !IsError(err, ErrorUnavailable) {
 		t.Fatalf("abandon unavailable = %v", err)
 	}
 	store.abandon = func(StoreAbandon) (StoreResult, error) { return StoreResult{Decision: StoreConflict}, nil }
-	if err := service.AbandonBeforeDisclosure(context.Background(), lease); !IsError(err, ErrorConflict) {
+	if err := service.AbandonPending(context.Background(), lease); !IsError(err, ErrorConflict) {
 		t.Fatalf("abandon conflict = %v", err)
 	}
 
 	if _, err := service.Commit(context.Background(), Lease{}); !IsError(err, ErrorInvalidInput) {
 		t.Fatalf("zero lease commit = %v", err)
 	}
-	if err := service.AbandonBeforeDisclosure(context.Background(), Lease{}); !IsError(err, ErrorInvalidInput) {
+	if err := service.AbandonPending(context.Background(), Lease{}); !IsError(err, ErrorInvalidInput) {
 		t.Fatalf("zero lease abandon = %v", err)
 	}
 	if err := service.ActivateResponse("generation", Lease{}); !IsError(err, ErrorInvalidInput) {

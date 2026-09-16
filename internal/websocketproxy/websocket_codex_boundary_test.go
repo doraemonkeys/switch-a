@@ -32,6 +32,15 @@ import (
 
 func testCodexRuntime(t *testing.T) *codexws.Runtime {
 	t.Helper()
+	runtime, err := codexws.New(testCodexRuntimeConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime
+}
+
+func testCodexRuntimeConfig(t *testing.T) codexws.Config {
+	t.Helper()
 	document, err := codexkeyring.GenerateDocument(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -80,14 +89,10 @@ func testCodexRuntime(t *testing.T) *codexws.Runtime {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := codexws.New(codexws.Config{
+	return codexws.Config{
 		ClientIdentities: testWSClientIdentityResolver{&digesterValue}, Continuity: continuity, ProviderCookies: cookies,
 		ExternalScheme: codexhttp.NewTrustedProxySchemeResolver(nil),
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	return runtime
 }
 
 type testWSClientIdentityResolver struct{ digester *codexidentity.Digester }

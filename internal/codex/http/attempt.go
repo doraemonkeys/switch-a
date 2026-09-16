@@ -226,7 +226,7 @@ func (o *Operation) abandonRequestLeases(ctx context.Context, leases []codexcont
 	abandonContext := context.WithoutCancel(ctx)
 	for _, lease := range leases {
 		if lease.NewlyClaimed() {
-			_ = o.runtime.continuity.AbandonBeforeDisclosure(abandonContext, lease)
+			_ = o.runtime.continuity.AbandonPending(abandonContext, lease)
 		}
 	}
 }
@@ -285,7 +285,7 @@ func (a *Attempt) AbandonBeforeDisclosure(ctx context.Context) error {
 		if !lease.NewlyClaimed() {
 			continue
 		}
-		if err := o.runtime.continuity.AbandonBeforeDisclosure(abandonContext, lease); err != nil && firstErr == nil {
+		if err := o.runtime.continuity.AbandonPending(abandonContext, lease); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

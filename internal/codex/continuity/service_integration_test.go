@@ -171,7 +171,7 @@ func TestUncertainPendingAbandonAndTombstoneLifecycle(t *testing.T) {
 		Scope:       scopeFor(clients, scope, "route-a"),
 		OperationID: "local-only",
 	})
-	if err := fixture.service.AbandonBeforeDisclosure(ctx, localOnly); err != nil {
+	if err := fixture.service.AbandonPending(ctx, localOnly); err != nil {
 		t.Fatalf("abandon local-only pending: %v", err)
 	}
 	_, err = fixture.service.Validate(ctx, codexcontinuity.ValidateRequest{
@@ -190,7 +190,7 @@ func TestUncertainPendingAbandonAndTombstoneLifecycle(t *testing.T) {
 	if retry.NewlyClaimed() {
 		t.Fatal("retry must not own abandonment rights for an older pending row")
 	}
-	assertKind(t, fixture.service.AbandonBeforeDisclosure(ctx, retry), codexcontinuity.ErrorInvalidTransition)
+	assertKind(t, fixture.service.AbandonPending(ctx, retry), codexcontinuity.ErrorInvalidTransition)
 
 	fixture.clock.Advance(time.Hour)
 	_, err = fixture.service.Validate(ctx, codexcontinuity.ValidateRequest{
@@ -261,7 +261,7 @@ func TestAcquireExistingFinalizesPendingWithoutReclaiming(t *testing.T) {
 			if acquired.Binding().ClaimOperationID != original.Binding().ClaimOperationID {
 				t.Fatalf("claim operation changed from %q to %q", original.Binding().ClaimOperationID, acquired.Binding().ClaimOperationID)
 			}
-			assertKind(t, fixture.service.AbandonBeforeDisclosure(ctx, acquired), codexcontinuity.ErrorInvalidTransition)
+			assertKind(t, fixture.service.AbandonPending(ctx, acquired), codexcontinuity.ErrorInvalidTransition)
 
 			const finalizers = 8
 			start := make(chan struct{})

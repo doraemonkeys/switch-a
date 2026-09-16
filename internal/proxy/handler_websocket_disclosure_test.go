@@ -29,14 +29,19 @@ func TestCodexWebSocketNewThreadReplacesUndisclosedAccount(t *testing.T) {
 	})
 }
 
-func TestCodexWebSocketDisclosedNewThreadRetainsAccount(t *testing.T) {
-	t.Run("handshake rejected", func(t *testing.T) {
-		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}))
-		defer upstream.Close()
-		testCodexWebSocketDialReplacement(t, upstream.URL, false)
-	})
+func TestCodexWebSocketRejectedNewThreadReplacesAccount(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+			}))
+			defer upstream.Close()
+			testCodexWebSocketDialReplacement(t, upstream.URL, true)
+		})
+	}
+}
+
+func TestCodexWebSocketUncertainNewThreadRetainsAccount(t *testing.T) {
 	t.Run("connection lost after request", func(t *testing.T) {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			conn, _, err := w.(http.Hijacker).Hijack()

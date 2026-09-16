@@ -150,6 +150,12 @@ func (e DialExchange) Accepted() bool {
 	return e.Conn != nil && e.Err == nil
 }
 
+// HandshakeRejected requires a final HTTP response refusing the upgrade. A
+// missing response or an invalid 101 remains uncertain; neither proves refusal.
+func (e DialExchange) HandshakeRejected() bool {
+	return e.Conn == nil && e.HandshakeStatusCode >= http.StatusOK
+}
+
 func (e DialExchange) toWebSocketResult() *WebSocketResult {
 	return &WebSocketResult{
 		HandshakeAccepted:     e.Accepted(),
