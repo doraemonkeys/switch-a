@@ -32,7 +32,9 @@ func TestCredentialEvidenceSealAndFailClosedLifecycle(t *testing.T) {
 	}
 
 	var oversized CredentialEvidence
-	oversized.Add(strings.Repeat("x", MaxRetainedCredentialValueBytes+1))
+	for index := 0; index <= MaxRetainedCredentialValues; index++ {
+		oversized.Add(strings.Repeat("x", index+1))
+	}
 	oversized.Seal()
 	if !oversized.Sealed() || !oversized.Overflowed() || oversized.valuesView() != nil {
 		t.Fatal("oversized evidence must remain sealed but fail closed")
@@ -59,16 +61,12 @@ func TestCredentialEvidenceCapacityFailsClosed(t *testing.T) {
 		t.Fatal("credential count beyond the fixed evidence arena must fail closed")
 	}
 
-	var byteLimited CredentialEvidence
-	value := strings.Repeat("x", MaxRetainedCredentialValueBytes)
-	for index := 0; index <= MaxRetainedCredentialBytes/len(value); index++ {
-		byteLimited.Add(value + string(rune(index)))
-		if byteLimited.Overflowed() {
-			break
-		}
-	}
-	if !byteLimited.Overflowed() {
-		t.Fatal("credential bytes beyond the fixed budget must fail closed")
+	var longEvidence CredentialEvidence
+	token := strings.Repeat("x", MaxRetainedCredentialBytes+1)
+	longEvidence.Add(token)
+	longEvidence.Seal()
+	if longEvidence.Overflowed() || len(longEvidence.valuesView()) != 1 || longEvidence.valuesView()[0] != token {
+		t.Fatal("credential length discarded valid evidence")
 	}
 }
 
@@ -119,7 +117,7 @@ func TestSensitiveHeaderEvidenceSealMergeAndBounds(t *testing.T) {
 
 func TestSanitizedTextScrubsOnlyExactCredential(t *testing.T) {
 	input := `round trip failed: Bearer exact-secret token=pattern-secret {"client_secret":{"nested":["json-secret"]},"safe":"visible"}`
-	result := SanitizedText(input, []string{"exact-secret"}, MaxRetainedErrorBytes, "ERROR")
+	result := SanitizedText(input, []string{"exact-secret"})
 	if strings.Contains(result.Value, "exact-secret") || !strings.Contains(result.Value, "pattern-secret") ||
 		!strings.Contains(result.Value, "json-secret") {
 		t.Fatalf("provider diagnostics were changed unexpectedly: %q", result.Value)
@@ -140,32 +138,31 @@ func TestSanitizedTextScrubsOnlyExactCredential(t *testing.T) {
 	}
 }
 
-func TestSanitizedTextBoundsAndEvidence(t *testing.T) {
-	if got := SanitizedText("", nil, 8, "ERROR"); got != (TextSanitization{}) {
-		t.Fatalf("empty sanitization = %#v", got)
+func TestSanitizedTextRetainsFullDiagnosticsAndReplacesCredentials(t *testing.T) {
+	if got := SanitizedText("", nil); got != (TextSanitization{}) {
+		t.Fatalf("empty text: %#v", got)
 	}
-	if got := SanitizedText("oversized", nil, 3, "ERROR"); got.Value != "[TRUNCATED_ERROR]" || !got.Truncated {
-		t.Fatalf("oversized sanitization = %#v", got)
+	value := strings.Repeat("diagnostic 界 ", 2048)
+	if got := SanitizedText(value, nil); got.Value != value || got.Truncated {
+		t.Fatal("long text lost")
 	}
-	if got := SanitizedText("x", []string{"x"}, 5, "ERROR"); len(got.Value) != 5 || !got.Truncated {
-		t.Fatalf("replacement expansion was not bounded: %#v", got)
+	if got := SanitizedText("x", []string{"x"}); got.Value != RedactedValue || got.Truncated {
+		t.Fatalf("replacement expansion: %#v", got)
 	}
-	if got := SanitizedText("diagnostic", []string{strings.Repeat("x", MaxRetainedCredentialValueBytes+1)}, 32, "ERROR"); got.Value != RedactedValue || !got.Truncated {
-		t.Fatalf("unbounded credentials did not fail closed: %#v", got)
+	token := strings.Repeat("x", MaxRetainedCredentialValueBytes+1)
+	if got := SanitizedText("diagnostic "+token, []string{token}); got.Value != "diagnostic "+RedactedValue || got.Truncated {
+		t.Fatal("long token not replaced exactly")
 	}
-
-	if got := SanitizedTextWithEvidence("diagnostic", CredentialEvidence{}, 32, "ERROR"); got.Value != RedactedValue || !got.Truncated {
-		t.Fatalf("unsealed evidence result = %#v", got)
+	if got := SanitizedTextWithEvidence("diagnostic", CredentialEvidence{}); got.Value != RedactedValue || !got.Truncated {
+		t.Fatal("missing credential evidence not reported")
 	}
-	overflow := CredentialEvidence{}
-	overflow.Add(strings.Repeat("x", MaxRetainedCredentialValueBytes+1))
+	overflow := CredentialEvidence{overflow: true}
 	overflow.Seal()
-	if got := SanitizedTextWithEvidence("diagnostic", overflow, 32, "ERROR"); got.Value != RedactedValue || !got.Truncated {
-		t.Fatalf("overflowed evidence result = %#v", got)
+	if got := SanitizedTextWithEvidence("diagnostic", overflow); got.Value != RedactedValue || !got.Truncated {
+		t.Fatal("incomplete credential evidence not reported")
 	}
-	sealed := sealedCredentialsForTest("secret")
-	if got := SanitizedTextWithEvidence("diagnostic secret", sealed, 64, "ERROR"); strings.Contains(got.Value, "secret") || got.Truncated {
-		t.Fatalf("sealed evidence result = %#v", got)
+	if got := SanitizedTextWithEvidence("diagnostic secret", sealedCredentialsForTest("secret")); got.Value != "diagnostic "+RedactedValue || got.Truncated {
+		t.Fatal("redaction incorrectly counted as loss")
 	}
 }
 
@@ -185,9 +182,6 @@ func TestCredentialReplacementIsBoundedAndPrefersLongestMatch(t *testing.T) {
 	}
 	if got := ReplaceCredentialValues("diagnostic", tooMany); got != RedactedValue {
 		t.Fatalf("unbounded replacement = %q, want fail-closed marker", got)
-	}
-	if got := BoundedRedaction("ERROR", "ignored"); got != "[TRUNCATED_ERROR]" {
-		t.Fatalf("bounded marker = %q", got)
 	}
 }
 
@@ -219,7 +213,7 @@ func TestFailureDetailedCanonicalizesAndRedactsDiagnostics(t *testing.T) {
 		HasSecondary: true,
 	}
 	result, ok := sanitizer.FailureDetailed(input, sealedCredentialsForTest("secret"), false)
-	if !ok || !result.HasSecondary || !result.Truncated {
+	if !ok || !result.HasSecondary || result.Truncated {
 		t.Fatalf("sanitized failure = (%#v, %t)", result, ok)
 	}
 	for _, value := range []string{
@@ -238,7 +232,7 @@ func TestFailureDetailedCanonicalizesAndRedactsDiagnostics(t *testing.T) {
 	result, _ = sanitizer.FailureDetailed(nonSemantic, sealedCredentialsForTest("secret"), false)
 	if !strings.Contains(result.Primary.ProviderErrorType, RedactedValue) ||
 		!strings.Contains(result.Primary.ProviderErrorCode, RedactedValue) ||
-		!strings.Contains(result.Primary.Message, RedactedValue) || !result.Truncated {
+		!strings.Contains(result.Primary.Message, RedactedValue) || result.Truncated {
 		t.Fatalf("non-semantic provider fields were not preserved: %#v", result)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 	"hash"
 	"math"
 	"sync/atomic"
@@ -389,16 +390,12 @@ func (r *recordState) observeUpstreamLocked(payload []byte) {
 	r.observedBytes += int64(len(payload))
 	captured := r.responseBody.appendLocked(session, payload)
 	if captured != len(payload) {
-		r.markOverflowLocked()
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 	}
 	r.syncCountersLocked()
 }
 
-func normalizedRecordOutcome(outcome Outcome, captureDisabled bool) Outcome {
-	if captureDisabled {
-		outcome.SourceCompletion = SourceCompletionPartial
-		outcome.TerminationReason = TerminationReasonCaptureFault
-	}
+func normalizedRecordOutcome(outcome Outcome) Outcome {
 	if outcome.SourceCompletion != "" {
 		return outcome
 	}
@@ -427,15 +424,15 @@ func (r *recordState) retainResponseTrailersLocked(outcome Outcome, allowMetadat
 		r.charge += charge
 		r.httpResponse.Trailers = trailers.Value
 	} else {
-		trailers.Truncated = true
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 	}
 	if trailers.Truncated {
-		r.markOverflowLocked()
-		r.session.logMetadataTruncationLocked(r.gateway, r, "response_trailers", maxRetainedHeaderBytes)
+		r.markIncompleteLocked(capturevalue.CaptureLossMetadataUnavailable)
+		r.session.logMetadataUnavailableLocked(r.gateway, r, "response_trailers")
 	}
 	// Retained attempt evidence remains authoritative even when an optional trailer
 	// snapshot cannot be admitted under the memory budget.
-	r.redactAllHeaders = r.redactAllHeaders || trailers.RedactAll || trailers.Discovered
+	r.redactAllHeaders = r.redactAllHeaders || trailers.RedactAll
 }
 
 func (r *recordState) retainWebSocketCloseLocked(
@@ -463,8 +460,6 @@ func (r *recordState) retainWebSocketCloseLocked(
 		reason = redaction.SanitizedTextWithEvidence(
 			observation.Reason,
 			evidence,
-			maxRetainedCloseReasonBytes,
-			"WEBSOCKET_CLOSE_REASON",
 		)
 	}
 	snapshot := &WebSocketCloseSnapshot{
@@ -477,19 +472,19 @@ func (r *recordState) retainWebSocketCloseLocked(
 		snapshot.Reason = reason.Value
 		snapshot.ReasonTruncated = reason.Truncated
 	} else {
-		reason.Truncated = true
 		snapshot.ReasonTruncated = true
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 	}
 	r.wsClose = snapshot
 	if reason.Truncated {
-		r.markOverflowLocked()
-		r.session.logMetadataTruncationLocked(r.gateway, r, "websocket_close_reason", maxRetainedCloseReasonBytes)
+		r.markIncompleteLocked(capturevalue.CaptureLossMetadataUnavailable)
+		r.session.logMetadataUnavailableLocked(r.gateway, r, "websocket_close_reason")
 	}
 }
 
 func (r *recordState) finishLocked(outcome Outcome, enforceRetention bool) {
 	session := r.session
-	outcome = normalizedRecordOutcome(outcome, r.disabled)
+	outcome = normalizedRecordOutcome(outcome)
 	r.retainResponseTrailersLocked(outcome, enforceRetention)
 	r.retainWebSocketCloseLocked(outcome.WebSocketClose, r.credentialEvidence, enforceRetention)
 	failure, hasFailure := (redaction.Sanitizer{}).FailureDetailed(
@@ -502,17 +497,12 @@ func (r *recordState) finishLocked(outcome Outcome, enforceRetention bool) {
 			r.summary.Failure = failure
 			r.summary.HasFailure = true
 		} else {
-			failure.Truncated = true
+			r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 		}
 	}
 	termination := retainedTerminationReason(outcome.TerminationReason)
 	sourceCompletion := retainedSourceCompletion(outcome.SourceCompletion)
-	if session.reserveLocked(int64(len(termination.Value)+len(sourceCompletion.Value)), enforceRetention) {
-		r.charge += int64(len(termination.Value) + len(sourceCompletion.Value))
-	} else {
-		termination = redaction.TextSanitization{Value: string(TerminationReasonGatewayFinished), Truncated: true}
-		sourceCompletion = redaction.TextSanitization{Value: string(SourceCompletionPartial), Truncated: true}
-	}
+
 	completedAt := outcome.CompletedAt
 	if completedAt.IsZero() {
 		completedAt = session.manager.cfg.clock.WallNow()
@@ -522,12 +512,12 @@ func (r *recordState) finishLocked(outcome Outcome, enforceRetention bool) {
 	r.summary.TerminationReason = TerminationReason(termination.Value)
 	r.summary.CompletedAt = &completedAt
 	if failure.Truncated || termination.Truncated || sourceCompletion.Truncated {
-		r.markOverflowLocked()
-		session.logMetadataTruncationLocked(r.gateway, r, "outcome", maxRetainedErrorBytes)
+		r.markIncompleteLocked(capturevalue.CaptureLossMetadataUnavailable)
+		session.logMetadataUnavailableLocked(r.gateway, r, "outcome")
 	}
 	r.completed = true
 	if r.responseBody.overflowed {
-		r.markOverflowLocked()
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 	}
 	r.syncCountersLocked()
 	if session.activeRecords > 0 {
@@ -594,7 +584,6 @@ func (s *sessionState) releaseRecordLocked(record *recordState) {
 	record.disabled = false
 	record.completed = false
 	record.evicted = false
-	record.overflowCounted = false
 	record.summary = RecordSummary{}
 	record.request = RequestSnapshot{}
 	record.responseBody = blobBuilder{}

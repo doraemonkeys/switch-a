@@ -221,7 +221,10 @@ describe("DebugCapturePage", () => {
 
     expect(await screen.findByText("Capture active")).toBeInTheDocument();
     expect(await screen.findByText("Source: Pending")).toBeInTheDocument();
-    expect(screen.getByText("Capture: Overflowed")).toBeInTheDocument();
+    expect(screen.getByText("Capture: Incomplete")).toBeInTheDocument();
+    expect(
+      screen.getByText("Capture memory budget exhausted"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Transition only")).toBeInTheDocument();
     const transitionFailure = screen.getByRole("note", {
       name: "Transition failure context",

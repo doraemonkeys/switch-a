@@ -230,26 +230,13 @@ func TestFromErrorUsesConcreteDNSAndContextFactsWithoutMethods(t *testing.T) {
 	}
 }
 
-func TestWebSocketCloseBoundsProtocolMessageAtUTF8Boundary(t *testing.T) {
-	reason := strings.Repeat("a", maxWebSocketCloseReasonBytes-1) + "界secret-tail"
-	fact, truncated := WebSocketClose(
-		requestcapture.FailureSiteWebSocketClose,
+func TestWebSocketClosePreservesObservedReason(t *testing.T) {
+	reason := strings.Repeat("界", 2048) + "diagnostic-tail"
+	fact, truncated := WebSocketClose(requestcapture.FailureSiteWebSocketClose,
 		requestcapture.FailurePeerUpstream,
-		&websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: reason},
-	)
-
-	if fact.Class != requestcapture.FailureClassWebSocketClose ||
-		fact.WebSocketCloseCode != int(websocket.StatusPolicyViolation) {
-		t.Fatalf("close fact = %#v", fact)
-	}
-	if !truncated {
-		t.Fatal("bounded close reason did not report truncation")
-	}
-	if len(fact.Message) > maxWebSocketCloseReasonBytes {
-		t.Fatalf("bounded reason bytes = %d, want <= %d", len(fact.Message), maxWebSocketCloseReasonBytes)
-	}
-	if strings.Contains(fact.Message, "secret-tail") {
-		t.Fatalf("bounded reason retained tail: %q", fact.Message)
+		&websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: reason})
+	if truncated || fact.Message != reason || fact.WebSocketCloseCode != int(websocket.StatusPolicyViolation) {
+		t.Fatal("capture changed observed close diagnostics")
 	}
 }
 

@@ -356,19 +356,18 @@ func TestFailureValueHelpersBoundAndCanonicalizeMetadata(t *testing.T) {
 		t.Fatalf("status enrichment = %#v", got)
 	}
 
-	message := strings.Repeat("界", maxProviderProtocolMessageBytes)
+	message := strings.Repeat("界", 4096)
 	semantic, truncated := ProviderSemantic(
 		requestcapture.FailureSiteWebSocketMessage,
 		requestcapture.FailurePeerProvider,
 		http.StatusBadRequest,
-		strings.Repeat("provider-type-", maxProviderDiagnosticIdentifierBytes),
-		strings.Repeat("provider-code-", maxProviderDiagnosticIdentifierBytes),
+		strings.Repeat("provider-type-", 256),
+		strings.Repeat("provider-code-", 256),
 		message,
 	)
-	if !truncated || len(semantic.Message) > maxProviderProtocolMessageBytes ||
-		!strings.HasPrefix(message, semantic.Message) || !strings.HasSuffix(semantic.Message, "界") ||
-		len(semantic.ProviderErrorType) > maxProviderDiagnosticIdentifierBytes ||
-		len(semantic.ProviderErrorCode) > maxProviderDiagnosticIdentifierBytes ||
+	if truncated || semantic.Message != message ||
+		semantic.ProviderErrorType != strings.Repeat("provider-type-", 256) ||
+		semantic.ProviderErrorCode != strings.Repeat("provider-code-", 256) ||
 		semantic.HTTPStatusCode != http.StatusBadRequest {
 		t.Fatalf("semantic fact = %#v, truncated=%t", semantic, truncated)
 	}

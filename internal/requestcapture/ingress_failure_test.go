@@ -88,7 +88,7 @@ func TestIngressFailureBudgetDenialIsVisibleAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.HTTP.Request.Ingress.SourceFailure != nil || !detail.HTTP.Request.Ingress.CaptureTruncated || detail.Summary.CaptureCompletion != CaptureCompletionOverflowed {
+	if detail.HTTP.Request.Ingress.SourceFailure != nil || !detail.HTTP.Request.Ingress.CaptureTruncated || detail.Summary.CaptureCompletion != CaptureCompletionIncomplete {
 		t.Fatalf("failure annotation loss hidden: %+v", detail.HTTP.Request.Ingress)
 	}
 	gateway.Finish(GatewayOutcome{})

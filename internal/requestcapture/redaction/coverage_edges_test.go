@@ -17,12 +17,12 @@ func TestIngressFramingAndTerminalMetadataAreBounded(t *testing.T) {
 		head.TrailerKeys = append(head.TrailerKeys, strings.Repeat("t", MaxRetainedHeaderNameBytes+1))
 	}
 	value := (Sanitizer{}).Ingress(head)
-	if !value.CaptureTruncated || len(value.TransferEncoding) != MaxRetainedHeaderFields || len(value.DeclaredTrailerKeys) != MaxRetainedHeaderFields {
+	if value.CaptureTruncated || len(value.TransferEncoding) != len(head.TransferEncoding) || len(value.DeclaredTrailerKeys) != len(head.TrailerKeys) {
 		t.Fatalf("framing bounds: %+v", value)
 	}
 	for _, state := range []string{"complete", "failed", "aborted", "invalid"} {
 		result := (Sanitizer{}).FinishIngress(value, state, 4, http.Header{"X-End": {"done"}}, strings.Repeat("r", MaxRetainedIdentifierBytes+1))
-		if result.ReceivedBytes != 4 || len(result.Reason) > MaxRetainedIdentifierBytes || result.Trailers["X-End"][0] != "done" {
+		if result.ReceivedBytes != 4 || len(result.Reason) != MaxRetainedIdentifierBytes+1 || result.Trailers["X-End"][0] != "done" {
 			t.Fatalf("terminal bounds: %+v", result)
 		}
 		if state == "invalid" && result.State != "failed" {
@@ -34,7 +34,7 @@ func TestIngressFramingAndTerminalMetadataAreBounded(t *testing.T) {
 func TestIngressFailureKindAndReasonAreBounded(t *testing.T) {
 	for _, kind := range []capturevalue.IngressFailureKind{capturevalue.IngressFailureRead, capturevalue.IngressFailureLimit, capturevalue.IngressFailureLength, capturevalue.IngressFailureStorage, "invalid"} {
 		result, truncated := (Sanitizer{}).IngressFailure(capturevalue.IngressFailureSnapshot{Kind: kind, Reason: strings.Repeat("r", MaxRetainedIdentifierBytes+1)})
-		if !truncated || len(result.Reason) > MaxRetainedIdentifierBytes {
+		if truncated || len(result.Reason) != MaxRetainedIdentifierBytes+1 {
 			t.Fatalf("failure bounds: %+v", result)
 		}
 		if kind == "invalid" {
@@ -51,7 +51,7 @@ func TestEvidenceMergeAndHeaderCredentialSetFailClosedAtInternalBounds(t *testin
 
 	credentialSource := CredentialEvidence{count: 1, bytes: 1}
 	credentialSource.values[0] = "x"
-	credentialDestination := CredentialEvidence{bytes: MaxRetainedCredentialBytes}
+	credentialDestination := CredentialEvidence{count: MaxRetainedCredentialValues}
 	credentialDestination.Merge(credentialSource)
 	if !credentialDestination.Overflowed() {
 		t.Fatal("credential merge must stop as soon as the destination byte budget overflows")
@@ -91,14 +91,14 @@ func TestEvidenceMergeAndHeaderCredentialSetFailClosedAtInternalBounds(t *testin
 		t.Fatalf("deduplicated credential set = %#v", got)
 	}
 	set.add(strings.Repeat("x", MaxRetainedCredentialValueBytes+1))
-	if !set.redactAll {
-		t.Fatal("oversized discovered credential did not fail closed")
+	if set.redactAll || set.count != 2 {
+		t.Fatal("long discovered credential was not preserved")
 	}
 
 	set = headerCredentialSet{bytes: MaxRetainedHeaderBytes}
 	set.add("x")
-	if !set.redactAll {
-		t.Fatal("aggregate discovered credential budget was not enforced")
+	if set.redactAll || set.count != 1 {
+		t.Fatal("credential byte count discarded evidence")
 	}
 	set = headerCredentialSet{count: MaxRetainedCredentialValues}
 	set.add("x")
@@ -112,8 +112,8 @@ func TestEvidenceMergeAndHeaderCredentialSetFailClosedAtInternalBounds(t *testin
 		nil,
 		false,
 	)
-	if !discovered.redactAll {
-		t.Fatal("credential discovery continued after a sensitive value exceeded bounds")
+	if discovered.redactAll || discovered.count != 1 {
+		t.Fatal("long credential discovery lost evidence")
 	}
 }
 
@@ -157,11 +157,8 @@ func TestTextNormalizationAndSanitizerInternalEdges(t *testing.T) {
 	t.Parallel()
 
 	boundedReplacer := credentialReplacer{bounded: true}
-	if got := sanitizedTextWithReplacer("", boundedReplacer, 10, "TEXT"); got != (TextSanitization{}) {
+	if got := sanitizedTextWithReplacer("", boundedReplacer); got != (TextSanitization{}) {
 		t.Fatalf("empty internal sanitization = %#v", got)
-	}
-	if got := truncateSanitized("abcdefghijklmnopqrstuvwxyz", len("...[TRUNCATED]")+3); !strings.HasSuffix(got, "...[TRUNCATED]") {
-		t.Fatalf("long truncation marker = %q", got)
 	}
 
 	names := []string{"", strings.Repeat("x", MaxRetainedHeaderNameBytes+1), "X-Test", "x-test"}
@@ -191,9 +188,9 @@ func TestTextNormalizationAndSanitizerInternalEdges(t *testing.T) {
 		t.Fatalf("over-capacity merged names = %#v", merged)
 	}
 
-	trailers, truncated := boundedTrailerKeys(http.Header{" ": nil, "X-Valid": nil})
-	if truncated || len(trailers) != 1 || trailers[0] != "X-Valid" {
-		t.Fatalf("bounded trailer keys = (%#v, %t)", trailers, truncated)
+	trailers := trailerKeys(http.Header{" ": nil, "X-Valid": nil})
+	if len(trailers) != 2 || trailers[0] != " " || trailers[1] != "X-Valid" {
+		t.Fatalf("trailer keys = %#v", trailers)
 	}
 	if got := ScrubText("secret", []string{"secret"}); got != RedactedValue {
 		t.Fatalf("explicit scrub = %q", got)
@@ -225,7 +222,7 @@ func TestTextNormalizationAndSanitizerInternalEdges(t *testing.T) {
 		Host:     "example.test",
 		RawQuery: "value=" + strings.Repeat("[", 3000),
 	}
-	if got := (Sanitizer{}).structuredURLDetailed(rawURL, nil); !got.Target.Truncated || got.Target.Value != "[TRUNCATED_URL]" {
+	if got := (Sanitizer{}).structuredURLDetailed(rawURL, nil); got.Target.Truncated || !strings.Contains(got.Target.Value, strings.Repeat("%5B", 3000)) {
 		t.Fatalf("URL enlarged by canonical escaping = %#v", got)
 	}
 	metadata := RequestMetadata{

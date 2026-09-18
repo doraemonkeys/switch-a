@@ -1,6 +1,7 @@
 package requestcapture
 
 import (
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 	"math"
 	"unsafe"
 
@@ -388,17 +389,15 @@ func (s *sessionState) releaseEvictionIndexLocked() {
 	}
 }
 
-func (s *sessionState) logMetadataTruncationLocked(
+func (s *sessionState) logMetadataUnavailableLocked(
 	gateway *gatewayState,
 	record *recordState,
 	field string,
-	limit int,
 ) {
 	fields := []zap.Field{
 		zap.String("session_id", s.id),
 		zap.Uint64("generation", s.generation),
 		zap.String("field", field),
-		zap.Int("retained_limit_bytes", limit),
 	}
 	if gateway != nil {
 		fields = append(fields,
@@ -409,11 +408,11 @@ func (s *sessionState) logMetadataTruncationLocked(
 	if record != nil {
 		fields = append(fields, zap.String("record_id", record.id))
 	}
-	s.manager.cfg.logger.Warn("request capture metadata truncated", fields...)
+	s.manager.cfg.logger.Warn("request capture metadata unavailable", fields...)
 }
 
 func (r *recordState) stateFaultLocked(reason string) {
-	r.markOverflowLocked()
+	r.markIncompleteLocked(capturevalue.CaptureLossRecorderFault)
 	r.disabled = true
 	if r.stateFaultLogged {
 		return
@@ -563,5 +562,33 @@ func (s *sessionState) enforceProviderRetentionLocked(providerID string) {
 			return
 		}
 		s.evictRecordLocked(index.first)
+	}
+}
+
+func (r *recordState) markIncompleteLocked(loss capturevalue.CaptureLosses) {
+	if loss == 0 {
+		return
+	}
+	added := loss &^ r.summary.CaptureLosses
+	if r.summary.CaptureLosses == 0 {
+		r.session.incompleteCount++
+	}
+	r.summary.CaptureLosses |= loss
+	r.summary.CaptureCompletion = CaptureCompletionIncomplete
+	if added != 0 {
+		manager := r.session.manager
+		manager.mu.Lock()
+		processCharged := manager.processCharged
+		manager.mu.Unlock()
+		manager.cfg.logger.Warn("request capture evidence incomplete",
+			zap.String("session_id", r.session.id),
+			zap.String("record_id", r.id),
+			zap.String("gateway_request_id", r.gateway.requestID),
+			zap.Strings("causes", added.Names()),
+			zap.Int64("session_retained_bytes", r.session.chargedBytes),
+			zap.Int64("session_limit_bytes", r.session.quotaBytes),
+			zap.Int64("process_charged_bytes", processCharged),
+			zap.Int64("process_limit_bytes", manager.cfg.processCeilingBytes),
+		)
 	}
 }

@@ -48,6 +48,7 @@ type gatewayState struct {
 	ingress                    *capturevalue.IngressSnapshot
 	ingressBuilder             blobBuilder
 	ingressFailureObserved     bool
+	ingressLosses              capturevalue.CaptureLosses
 }
 
 type traceEntryState struct {
@@ -88,7 +89,7 @@ type recordState struct {
 	charge       int64
 	traceEntry   *traceEntryState
 
-	disabled, completed, evicted, overflowCounted bool
+	disabled, completed, evicted bool
 
 	summary                                              RecordSummary
 	request                                              RequestSnapshot
@@ -507,7 +508,7 @@ func (r *recordState) observeHTTPResponseLocked(head HTTPResponseHead) {
 	)
 	charge := addRetainedCharge64(estimateHTTPResponseCharge(result.Snapshot, nil), nameCharge)
 	if !session.reserveLocked(charge, true) {
-		r.markOverflowLocked()
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 		r.httpResponse = &HTTPResponseSnapshot{
 			StatusCode:    head.StatusCode,
 			ContentLength: head.ContentLength,
@@ -519,8 +520,8 @@ func (r *recordState) observeHTTPResponseLocked(head HTTPResponseHead) {
 	r.redactAllHeaders = result.RedactAll
 	r.httpResponse = &result.Snapshot
 	if result.Truncated {
-		r.markOverflowLocked()
-		session.logMetadataTruncationLocked(r.gateway, r, "http_response", maxRetainedHeaderBytes)
+		r.markIncompleteLocked(capturevalue.CaptureLossMetadataUnavailable)
+		session.logMetadataUnavailableLocked(r.gateway, r, "http_response")
 	}
 }
 
@@ -553,7 +554,7 @@ func (r *recordState) observeWebSocketHandshakeLocked(handshake WebSocketHandsha
 	)
 	charge := addRetainedCharge64(estimateWebSocketHandshakeCharge(result.Snapshot, nil), nameCharge)
 	if !session.reserveLocked(charge, true) {
-		r.markOverflowLocked()
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 		r.wsHandshake = &WebSocketHandshakeSnapshot{StatusCode: handshake.StatusCode}
 		return
 	}
@@ -562,8 +563,8 @@ func (r *recordState) observeWebSocketHandshakeLocked(handshake WebSocketHandsha
 	r.redactAllHeaders = result.RedactAll
 	r.wsHandshake = &result.Snapshot
 	if result.Truncated {
-		r.markOverflowLocked()
-		session.logMetadataTruncationLocked(r.gateway, r, "websocket_handshake", maxRetainedHeaderBytes)
+		r.markIncompleteLocked(capturevalue.CaptureLossMetadataUnavailable)
+		session.logMetadataUnavailableLocked(r.gateway, r, "websocket_handshake")
 	}
 }
 
@@ -603,15 +604,14 @@ func (r *recordState) messageResultLocked(ref MessageRef, result MessageResult) 
 			message.failure = failure
 			message.hasFailure = true
 		} else {
-			failure.Truncated = true
-			r.markOverflowLocked()
+			r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 		}
 	}
 	message.resultSet = true
 	message.disposition = result.Disposition
 	if failure.Truncated {
-		r.markOverflowLocked()
-		session.logMetadataTruncationLocked(r.gateway, r, "message_failure", maxRetainedErrorBytes)
+		r.markIncompleteLocked(capturevalue.CaptureLossMetadataUnavailable)
+		session.logMetadataUnavailableLocked(r.gateway, r, "message_failure")
 	}
 	if result.WriteConfirmed {
 		r.writtenBytes += int64(message.observedSize)

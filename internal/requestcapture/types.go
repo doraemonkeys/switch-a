@@ -60,6 +60,7 @@ type (
 	LifecycleState             = capturevalue.LifecycleState
 	SourceCompletion           = capturevalue.SourceCompletion
 	CaptureCompletion          = capturevalue.CaptureCompletion
+	CaptureLosses              = capturevalue.CaptureLosses
 	SnapshotState              = capturevalue.SnapshotState
 	Protocol                   = capturevalue.Protocol
 	SelectionMode              = capturevalue.SelectionMode
@@ -106,7 +107,7 @@ const (
 	SourceCompletionComplete                = capturevalue.SourceCompletionComplete
 	SourceCompletionPartial                 = capturevalue.SourceCompletionPartial
 	CaptureCompletionComplete               = capturevalue.CaptureCompletionComplete
-	CaptureCompletionOverflowed             = capturevalue.CaptureCompletionOverflowed
+	CaptureCompletionIncomplete             = capturevalue.CaptureCompletionIncomplete
 	SnapshotStateFinal                      = capturevalue.SnapshotStateFinal
 	SnapshotStateActivePartial              = capturevalue.SnapshotStateActivePartial
 	ProtocolHTTP                            = capturevalue.ProtocolHTTP
@@ -266,7 +267,7 @@ type SessionStatus struct {
 	CompletedRecordCount        int
 	GatewayTraceCount           int
 	EvictedRecordCount          uint64
-	OverflowedRecordCount       uint64
+	IncompleteRecordCount       uint64
 	HistoryTruncatedTraceCount  uint64
 	DroppedTraceCount           uint64
 	DroppedExchangeCount        uint64

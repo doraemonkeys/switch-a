@@ -5,7 +5,11 @@ import type {
   DebugCaptureTraceEntry,
 } from "@/api";
 import { CaptureFailureContext } from "./CaptureFailureContext";
-import { formatBytes, formatCaptureValue } from "./presentation";
+import {
+  describeCaptureLosses,
+  formatBytes,
+  formatCaptureValue,
+} from "./presentation";
 
 interface CaptureTraceListProps {
   page: DebugCaptureRecordsPage;
@@ -39,6 +43,11 @@ function CompletenessBadges({ record }: { record: DebugCaptureRecordSummary }) {
       >
         Capture: {formatCaptureValue(record.capture_completion)}
       </span>
+      {record.capture_losses.length > 0 && (
+        <span className="basis-full text-xs text-danger">
+          {describeCaptureLosses(record.capture_losses)}
+        </span>
+      )}
     </div>
   );
 }

@@ -3,6 +3,8 @@ package redaction
 import (
 	"net/http"
 	"net/url"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -55,49 +57,23 @@ func TestHeadersDetailedRedactsOnlyExplicitCredentialValue(t *testing.T) {
 	}
 }
 
-func TestHeadersDetailedFailsClosedAndBoundsAttackerInput(t *testing.T) {
-	sanitizer := Sanitizer{}
-	if got := sanitizer.HeadersDetailed(nil, nil, nil, true); len(got.Value) != 0 || !got.RedactAll {
-		t.Fatalf("empty redact-all headers = %#v", got)
-	}
-
-	tooManyFields := make(http.Header, MaxRetainedHeaderFields+1)
+func TestHeadersDetailedPreservesAllFieldsValuesAndBytes(t *testing.T) {
+	source := make(http.Header)
 	for index := 0; index <= MaxRetainedHeaderFields; index++ {
-		tooManyFields[string(rune(index+1))] = []string{"value"}
+		source["X-Field-"+strconv.Itoa(index)] = []string{strings.Repeat("v", MaxRetainedHeaderValueBytes+1)}
 	}
-	if got := sanitizer.HeadersDetailed(tooManyFields, nil, nil, false); len(got.Value) != 0 || !got.RedactAll || !got.Truncated {
-		t.Fatalf("oversized header map = %#v", got)
+	source[strings.Repeat("n", MaxRetainedHeaderNameBytes+1)] = []string{"long name"}
+	source["X-Many"] = make([]string, MaxRetainedHeaderValuesPerField+1)
+	for index := range source["X-Many"] {
+		source["X-Many"][index] = strconv.Itoa(index)
 	}
-
-	oversizedName := strings.Repeat("n", MaxRetainedHeaderNameBytes+1)
-	if got := sanitizer.HeadersDetailed(http.Header{oversizedName: {"value"}, "X-Safe": {"visible"}}, nil, nil, false); !got.RedactAll || !got.Truncated || got.Value["X-Safe"][0] != RedactedValue {
-		t.Fatalf("oversized header name = %#v", got)
+	result := (Sanitizer{}).HeadersDetailed(source, nil, nil, false)
+	if result.Truncated || result.RedactAll || !reflect.DeepEqual(result.Value, map[string][]string(source)) {
+		t.Fatal("capture changed full header set")
 	}
-
-	tooManyValues := make([]string, MaxRetainedHeaderValuesPerField+1)
-	for index := range tooManyValues {
-		tooManyValues[index] = "secret"
-	}
-	if got := sanitizer.HeadersDetailed(http.Header{"Authorization": tooManyValues}, nil, nil, false); got.RedactAll || !got.Truncated || len(got.Value["Authorization"]) != MaxRetainedHeaderValuesPerField {
-		t.Fatalf("oversized header values = %#v", got)
-	}
-
-	oversizedValue := strings.Repeat("v", MaxRetainedHeaderValueBytes+1)
-	if got := sanitizer.HeadersDetailed(http.Header{"X-Safe": {oversizedValue}}, nil, nil, false); !got.Truncated || got.Value["X-Safe"][0] != "[TRUNCATED_HEADER]" {
-		t.Fatalf("oversized safe header value = %#v", got)
-	}
-
-	byteHeavy := make(http.Header)
-	for index := range 10 {
-		byteHeavy[string(rune('a'+index))] = []string{strings.Repeat("x", MaxRetainedHeaderValueBytes)}
-	}
-	if got := sanitizer.HeadersDetailed(byteHeavy, nil, nil, false); !got.Truncated || len(got.Value) >= len(byteHeavy) {
-		t.Fatalf("aggregate header budget was not enforced: retained=%d result=%#v", len(got.Value), got)
-	}
-
-	unboundedCredentials := make([]string, MaxRetainedCredentialValues+1)
-	if got := sanitizer.HeadersDetailed(http.Header{"X-Safe": {"visible"}}, nil, unboundedCredentials, false); !got.RedactAll || got.Value["X-Safe"][0] != RedactedValue {
-		t.Fatalf("unbounded credential set = %#v", got)
+	result = (Sanitizer{}).HeadersDetailed(source, nil, make([]string, MaxRetainedCredentialValues+1), false)
+	if !result.RedactAll || !result.Truncated || result.Value["X-Many"][0] != RedactedValue {
+		t.Fatal("incomplete credential evidence was not reported")
 	}
 }
 
@@ -134,7 +110,7 @@ func TestURLSanitizationReplacesOnlyExactCredentialEchoes(t *testing.T) {
 			t.Fatalf("malformed URL %q = %q", malformed, got)
 		}
 	}
-	if got := sanitizer.URL(strings.Repeat("x", MaxRetainedURLBytes+1), nil); got != "[TRUNCATED_URL]" {
+	if got := sanitizer.URL(strings.Repeat("x", MaxRetainedURLBytes+1), nil); got != strings.Repeat("x", MaxRetainedURLBytes+1) {
 		t.Fatalf("oversized URL = %q", got)
 	}
 }
@@ -159,12 +135,14 @@ func TestTargetVariantsAndCredentialBounds(t *testing.T) {
 		t.Fatalf("unbounded target credentials = %#v", got)
 	}
 	structured = &url.URL{Scheme: "https", Host: strings.Repeat("h", MaxRetainedHostBytes+1), Path: strings.Repeat("p", MaxRetainedURLBytes)}
-	if got := BorrowedHTTPTarget(structured).Sanitize(sanitizer, nil); got.Target.Value != "[TRUNCATED_URL]" || !got.Target.Truncated || !got.Host.Truncated {
+	if got := BorrowedHTTPTarget(structured).Sanitize(sanitizer, nil); got.Target.Value != structured.String() || got.Target.Truncated || got.Host.Truncated {
 		t.Fatalf("oversized structured target = %#v", got)
 	}
 
 	overflow := CredentialEvidence{}
-	overflow.Add(strings.Repeat("x", MaxRetainedCredentialValueBytes+1))
+	for index := 0; index <= MaxRetainedCredentialValues; index++ {
+		overflow.Add(strings.Repeat("x", index+1))
+	}
 	overflow.Seal()
 	if got := sanitizer.TargetWithEvidence(BorrowedWebSocketTarget("wss://example.test/safe"), overflow); got.Target.Value != RedactedValue || got.Host.Value != RedactedValue || !got.Target.Truncated || !got.Host.Truncated {
 		t.Fatalf("overflowed target evidence = %#v", got)
@@ -194,7 +172,9 @@ func TestHeadersWithEvidenceFailsClosedWithoutCompleteInventory(t *testing.T) {
 	}
 
 	overflow := CredentialEvidence{}
-	overflow.Add(strings.Repeat("x", MaxRetainedCredentialValueBytes+1))
+	for index := 0; index <= MaxRetainedCredentialValues; index++ {
+		overflow.Add(strings.Repeat("x", index+1))
+	}
 	overflow.Seal()
 	failedClosed := (Sanitizer{}).HeadersWithEvidence(source, nil, overflow, false)
 	if !failedClosed.RedactAll || failedClosed.Value["X-Debug"][0] != RedactedValue {
@@ -256,7 +236,7 @@ func TestRequestDetailedFailsClosedWithoutCompleteProducerEvidence(t *testing.T)
 	result := (Sanitizer{}).RequestDetailed(raw, BorrowedHTTPTarget(target))
 	if !result.RedactAll || !result.Truncated || result.Snapshot.URL != RedactedValue ||
 		result.Snapshot.Host != RedactedValue || result.Snapshot.Headers["X-Debug"][0] != RedactedValue ||
-		result.Snapshot.Method != "[TRUNCATED_METHOD]" {
+		result.Snapshot.Method != raw.Method {
 		t.Fatalf("unsealed request evidence did not fail closed: %#v", result)
 	}
 
@@ -277,7 +257,7 @@ func TestProviderAndAttemptMetadataAreCanonicalAndBounded(t *testing.T) {
 		SelectionSource: capturevalue.SelectionSourceStrategy,
 		CredentialPhase: capturevalue.CredentialPhaseInitial,
 	}
-	bounded, truncated := BoundedAttemptMetadata(attempt)
+	bounded, truncated := CanonicalAttemptMetadata(attempt)
 	if truncated || bounded != attempt {
 		t.Fatalf("valid attempt = (%#v, %t)", bounded, truncated)
 	}
@@ -287,8 +267,8 @@ func TestProviderAndAttemptMetadataAreCanonicalAndBounded(t *testing.T) {
 	hostile.SelectionMode = capturevalue.SelectionMode("hostile")
 	hostile.SelectionSource = capturevalue.SelectionSource("hostile")
 	hostile.CredentialPhase = capturevalue.CredentialPhase("hostile")
-	bounded, truncated = BoundedAttemptMetadata(hostile)
-	if !truncated || bounded.APIType != "[TRUNCATED_API_TYPE]" ||
+	bounded, truncated = CanonicalAttemptMetadata(hostile)
+	if !truncated || bounded.APIType != hostile.APIType ||
 		bounded.SelectionMode != capturevalue.SelectionModeUnknown ||
 		bounded.SelectionSource != capturevalue.SelectionSourceUnknown ||
 		bounded.CredentialPhase != capturevalue.CredentialPhaseUnknown {
@@ -302,8 +282,8 @@ func TestProviderAndAttemptMetadataAreCanonicalAndBounded(t *testing.T) {
 		},
 		APIType: strings.Repeat("a", MaxRetainedAPITypeBytes+1),
 	}, "https://example.test")
-	if !truncated || provider.ID != "[TRUNCATED_PROVIDER_ID]" ||
-		provider.Name != "[TRUNCATED_PROVIDER_NAME]" || provider.APIType != "[TRUNCATED_API_TYPE]" {
+	if truncated || provider.ID != strings.Repeat("i", MaxRetainedProviderIDBytes+1) ||
+		provider.Name != strings.Repeat("n", MaxRetainedProviderNameBytes+1) || provider.APIType != strings.Repeat("a", MaxRetainedAPITypeBytes+1) {
 		t.Fatalf("bounded provider = (%#v, %t)", provider, truncated)
 	}
 
@@ -381,8 +361,8 @@ func TestResponseMetadataBoundsAndFailsClosed(t *testing.T) {
 		DeclaredTrailers: http.Header{longTrailer: nil},
 	}
 	result := (Sanitizer{}).HTTPResponseDetailed(response, nil, false)
-	if !result.RedactAll || !result.Truncated || result.Snapshot.Protocol != "[TRUNCATED_PROTOCOL]" ||
-		result.Snapshot.Headers["X-Debug"][0] != RedactedValue || len(result.Snapshot.DeclaredTrailerKeys) != 0 {
+	if !result.RedactAll || !result.Truncated || result.Snapshot.Protocol != longProtocol ||
+		result.Snapshot.Headers["X-Debug"][0] != RedactedValue || len(result.Snapshot.DeclaredTrailerKeys) != 1 || result.Snapshot.DeclaredTrailerKeys[0] != longTrailer {
 		t.Fatalf("unsealed response metadata = %#v", result)
 	}
 
@@ -396,7 +376,7 @@ func TestResponseMetadataBoundsAndFailsClosed(t *testing.T) {
 		CredentialEvidence: sealedCredentialsForTest(),
 	}
 	result = (Sanitizer{}).HTTPResponseDetailed(response, nil, false)
-	if !result.Truncated || result.Snapshot.DeclaredTrailerKeys != nil {
+	if result.Truncated || len(result.Snapshot.DeclaredTrailerKeys) != len(tooManyTrailers) {
 		t.Fatalf("oversized declared trailers = %#v", result)
 	}
 
@@ -407,7 +387,7 @@ func TestResponseMetadataBoundsAndFailsClosed(t *testing.T) {
 		CredentialEvidence: sealedCredentialsForTest(),
 	}
 	wsResult := (Sanitizer{}).WebSocketHandshakeDetailed(webSocket, nil, true)
-	if !wsResult.RedactAll || !wsResult.Truncated || wsResult.Snapshot.Protocol != "[TRUNCATED_PROTOCOL]" ||
+	if !wsResult.RedactAll || !wsResult.Truncated || wsResult.Snapshot.Protocol != longProtocol ||
 		wsResult.Snapshot.Headers["X-Debug"][0] != RedactedValue {
 		t.Fatalf("bounded WebSocket metadata = %#v", wsResult)
 	}

@@ -3,7 +3,6 @@ package redaction
 import (
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
@@ -55,84 +54,25 @@ func (s Sanitizer) Headers(source http.Header, extraSensitive []string) map[stri
 	return s.HeadersDetailed(source, names.names, nil, names.redactAll).Value
 }
 
-func (Sanitizer) HeadersDetailed(
-	source http.Header,
-	extraSensitive, credentialValues []string,
-	redactAll bool,
-) HeaderSanitization {
-	credentials := discoverHeaderCredentials(
-		source,
-		extraSensitive,
-		credentialValues,
-		redactAll,
-	)
-	redactAll = credentials.redactAll
-	if len(source) == 0 {
-		return HeaderSanitization{
-			Value: map[string][]string{}, Discovered: credentials.discovered, RedactAll: redactAll,
-		}
-	}
-	if len(source) > MaxRetainedHeaderFields {
-		// Choosing an arbitrary map subset could omit the credential-bearing field.
-		return HeaderSanitization{Value: map[string][]string{}, RedactAll: true, Truncated: true}
-	}
-	secrets := credentials.slice()
-	replacer := compileCredentialReplacer(secrets)
-	if !replacer.bounded {
-		return HeaderSanitization{Value: map[string][]string{}, RedactAll: true, Truncated: true}
-	}
-	keys := make([]string, 0, len(source))
-	for name := range source {
-		keys = append(keys, name)
-	}
-	sort.Strings(keys)
-
-	result := make(map[string][]string, len(keys))
-	retainedBytes := 0
-	truncated := false
-	for _, name := range keys {
-		if len(name) == 0 || len(name) > MaxRetainedHeaderNameBytes {
-			truncated = true
-			continue
-		}
-		values := source[name]
-		valueLimit := len(values)
-		if valueLimit > MaxRetainedHeaderValuesPerField {
-			valueLimit = MaxRetainedHeaderValuesPerField
-			truncated = true
-		}
-		copied := make([]string, 0, valueLimit)
-		sensitive := redactAll || isSensitiveHeaderName(name, extraSensitive)
-		fieldBytes := len(name)
-		for index := 0; index < valueLimit; index++ {
-			value := values[index]
-			if sensitive {
-				value = RedactedValue
+func (Sanitizer) HeadersDetailed(source http.Header, extraSensitive, credentialValues []string, redactAll bool) HeaderSanitization {
+	credentials := discoverHeaderCredentials(source, extraSensitive, credentialValues, redactAll)
+	replacer := compileCredentialReplacer(credentials.slice())
+	redactAll = credentials.redactAll || !replacer.bounded
+	result := make(map[string][]string, len(source))
+	for name, values := range source {
+		copied := make([]string, len(values))
+		for index, value := range values {
+			if redactAll || isSensitiveHeaderName(name, extraSensitive) {
+				copied[index] = RedactedValue
 			} else {
-				bounded := sanitizedTextWithReplacer(value, replacer, MaxRetainedHeaderValueBytes, "HEADER")
-				value = bounded.Value
-				truncated = truncated || bounded.Truncated
+				copied[index] = strings.Clone(replacer.replace(value))
 			}
-			if retainedBytes+fieldBytes+len(value) > MaxRetainedHeaderBytes {
-				truncated = true
-				copied = nil
-				break
-			}
-			copied = append(copied, value)
-			fieldBytes += len(value)
-		}
-		if copied == nil {
-			break
-		}
-		if retainedBytes+fieldBytes > MaxRetainedHeaderBytes {
-			truncated = true
-			break
 		}
 		result[strings.Clone(name)] = copied
-		retainedBytes += fieldBytes
 	}
 	return HeaderSanitization{
-		Value: result, Discovered: credentials.discovered, RedactAll: redactAll, Truncated: truncated,
+		Value: result, Discovered: credentials.discovered, RedactAll: redactAll,
+		Truncated: redactAll && len(source) > 0,
 	}
 }
 
@@ -215,11 +155,6 @@ func (s Sanitizer) parsedURLDetailed(raw string, secrets []string) TargetSanitiz
 	if raw == "" {
 		return TargetSanitization{}
 	}
-	if len(raw) > MaxRetainedURLBytes {
-		return TargetSanitization{
-			Target: TextSanitization{Value: BoundedRedaction("URL", raw), Truncated: true},
-		}
-	}
 	parsed, err := url.Parse(raw)
 	if err != nil || (parsed.Scheme == "" && (strings.Contains(raw, "://") || strings.Contains(raw, "@"))) {
 		return TargetSanitization{
@@ -233,33 +168,7 @@ func (s Sanitizer) structuredURLDetailed(raw *url.URL, secrets []string) TargetS
 	if raw == nil {
 		return TargetSanitization{}
 	}
-	if !boundedURLShape(raw) {
-		return TargetSanitization{
-			Target: TextSanitization{Value: BoundedRedaction("URL", ""), Truncated: true},
-			Host:   SanitizedText(raw.Host, secrets, MaxRetainedHostBytes, "HOST"),
-		}
-	}
 	return s.sanitizeParsedURL(*raw, secrets)
-}
-
-func boundedURLShape(raw *url.URL) bool {
-	remaining := MaxRetainedURLBytes
-	for _, field := range [...]string{
-		raw.Scheme,
-		raw.Opaque,
-		raw.Host,
-		raw.Path,
-		raw.RawPath,
-		raw.RawQuery,
-		raw.Fragment,
-		raw.RawFragment,
-	} {
-		if len(field) > remaining {
-			return false
-		}
-		remaining -= len(field)
-	}
-	return true
 }
 
 func (Sanitizer) sanitizeParsedURL(parsed url.URL, secrets []string) TargetSanitization {
@@ -283,7 +192,7 @@ func (Sanitizer) sanitizeParsedURL(parsed url.URL, secrets []string) TargetSanit
 			parsed.User = url.User(username)
 		}
 	}
-	host := sanitizedTextWithReplacer(parsed.Host, replacer, MaxRetainedHostBytes, "HOST")
+	host := sanitizedTextWithReplacer(parsed.Host, replacer)
 	parsed.Host = host.Value
 	parsed.Scheme = scrubTextWithReplacer(parsed.Scheme, replacer)
 	parsed.Opaque = scrubTextWithReplacer(parsed.Opaque, replacer)
@@ -309,12 +218,6 @@ func (Sanitizer) sanitizeParsedURL(parsed url.URL, secrets []string) TargetSanit
 	// Components are scrubbed before re-encoding because scrubbing the assembled
 	// URL would reinterpret query delimiters and corrupt unrelated parameters.
 	result := parsed.String()
-	if len(result) > MaxRetainedURLBytes {
-		return TargetSanitization{
-			Target: TextSanitization{Value: BoundedRedaction("URL", ""), Truncated: true},
-			Host:   host,
-		}
-	}
 	return TargetSanitization{
 		Target: TextSanitization{Value: strings.Clone(result)},
 		Host:   host,
@@ -326,28 +229,14 @@ func (s Sanitizer) Request(raw RequestMetadata, targets ...Target) capturevalue.
 }
 
 func (s Sanitizer) Ingress(head IngressHead) capturevalue.IngressSnapshot {
-	protocol := boundedPlainText(head.Protocol, MaxRetainedIdentifierBytes, "PROTOCOL")
-	result := capturevalue.IngressSnapshot{Protocol: protocol.Value, ContentLength: head.ContentLength,
-		State: "receiving", CaptureTruncated: protocol.Truncated}
-	// The decoder supplies only a small protocol inventory, but capture still
-	// bounds every retained descriptor independently of the wire source.
-	for _, item := range head.TransferEncoding {
-		if len(result.TransferEncoding) == MaxRetainedHeaderFields {
-			result.CaptureTruncated = true
-			break
-		}
-		value := boundedPlainText(item, MaxRetainedHeaderNameBytes, "TRANSFER_ENCODING")
-		result.TransferEncoding = append(result.TransferEncoding, value.Value)
-		result.CaptureTruncated = result.CaptureTruncated || value.Truncated
+	result := capturevalue.IngressSnapshot{
+		Protocol: strings.Clone(head.Protocol), ContentLength: head.ContentLength, State: "receiving",
 	}
-	for _, item := range head.TrailerKeys {
-		if len(result.DeclaredTrailerKeys) == MaxRetainedHeaderFields {
-			result.CaptureTruncated = true
-			break
-		}
-		value := boundedPlainText(item, MaxRetainedHeaderNameBytes, "TRAILER_KEY")
-		result.DeclaredTrailerKeys = append(result.DeclaredTrailerKeys, value.Value)
-		result.CaptureTruncated = result.CaptureTruncated || value.Truncated
+	for _, value := range head.TransferEncoding {
+		result.TransferEncoding = append(result.TransferEncoding, strings.Clone(value))
+	}
+	for _, value := range head.TrailerKeys {
+		result.DeclaredTrailerKeys = append(result.DeclaredTrailerKeys, strings.Clone(value))
 	}
 	return result
 }
@@ -358,7 +247,7 @@ func (s Sanitizer) IngressFailure(input capturevalue.IngressFailureSnapshot) (ca
 	default:
 		input.Kind = capturevalue.IngressFailureUnknown
 	}
-	text := boundedPlainText(input.Reason, MaxRetainedIdentifierBytes, "INGRESS_FAILURE")
+	text := plainText(input.Reason)
 	input.Reason = text.Value
 	return input, text.Truncated
 }
@@ -371,7 +260,7 @@ func (s Sanitizer) FinishIngress(source capturevalue.IngressSnapshot, state stri
 		source.State = "failed"
 	}
 	source.ReceivedBytes = received
-	text := boundedPlainText(reason, MaxRetainedIdentifierBytes, "INGRESS_REASON")
+	text := plainText(reason)
 	source.Reason = text.Value
 	headers := s.HeadersDetailed(trailers, nil, nil, false)
 	source.Trailers = headers.Value
@@ -394,14 +283,14 @@ func (s Sanitizer) RequestDetailed(raw RequestMetadata, targetInput Target) Requ
 		names.truncated = true
 	}
 	credentialEvidence := &raw.CredentialEvidence
-	headerCredentials, headerRedactAll, headerDiscovered := discoverRequestHeaderCredentials(
+	headerCredentials, headerRedactAll, _ := discoverRequestHeaderCredentials(
 		raw.Headers,
 		raw.Trailers,
 		names.names,
 		credentialEvidence.valuesView(),
 		names.redactAll || !credentialEvidence.Sealed() || credentialEvidence.Overflowed(),
 	)
-	method := boundedPlainText(raw.Method, MaxRetainedMethodBytes, "METHOD")
+	method := plainText(raw.Method)
 	targetResult := targetInput.Sanitize(s, headerCredentials)
 	if headerRedactAll && targetInput.present() {
 		targetResult = TargetSanitization{
@@ -423,7 +312,7 @@ func (s Sanitizer) RequestDetailed(raw RequestMetadata, targetInput Target) Requ
 		SensitiveNames: names.names,
 		// Explicit sensitive-header extensions still fail closed; runtime capture
 		// seals this inventory empty and redacts only the injected credential.
-		RedactAll: headerRedactAll || headerDiscovered,
+		RedactAll: headerRedactAll,
 		Truncated: method.Truncated || targetResult.Target.Truncated || targetResult.Host.Truncated ||
 			headers.Truncated || trailers.Truncated || names.truncated,
 	}
@@ -439,8 +328,8 @@ func (s Sanitizer) Provider(attempt capturevalue.AttemptMetadata, raw RequestMet
 	return provider
 }
 
-func BoundedAttemptMetadata(attempt capturevalue.AttemptMetadata) (capturevalue.AttemptMetadata, bool) {
-	apiType := boundedPlainText(attempt.APIType, MaxRetainedAPITypeBytes, "API_TYPE")
+func CanonicalAttemptMetadata(attempt capturevalue.AttemptMetadata) (capturevalue.AttemptMetadata, bool) {
+	apiType := plainText(attempt.APIType)
 	selectionMode, modeKnown := capturevalue.CanonicalSelectionMode(attempt.SelectionMode)
 	selectionSource, sourceKnown := capturevalue.CanonicalSelectionSource(attempt.SelectionSource)
 	credentialPhase, phaseKnown := capturevalue.CanonicalCredentialPhase(attempt.CredentialPhase)
@@ -462,9 +351,9 @@ func BoundedAttemptMetadata(attempt capturevalue.AttemptMetadata) (capturevalue.
 }
 
 func SanitizedProvider(attempt capturevalue.AttemptMetadata, targetURL string) (capturevalue.ProviderSnapshot, bool) {
-	id := boundedPlainText(attempt.Provider.ID, MaxRetainedProviderIDBytes, "PROVIDER_ID")
-	name := boundedPlainText(attempt.Provider.Name, MaxRetainedProviderNameBytes, "PROVIDER_NAME")
-	apiType := boundedPlainText(attempt.APIType, MaxRetainedAPITypeBytes, "API_TYPE")
+	id := plainText(attempt.Provider.ID)
+	name := plainText(attempt.Provider.Name)
+	apiType := plainText(attempt.APIType)
 	return capturevalue.ProviderSnapshot{
 		ID:        id.Value,
 		Name:      name.Value,
@@ -491,8 +380,8 @@ func (s Sanitizer) HTTPResponseDetailed(raw HTTPResponseMetadata, inheritedNames
 		credentialEvidence.valuesView(),
 		names.redactAll || !credentialEvidence.Sealed() || credentialEvidence.Overflowed(),
 	)
-	protocol := boundedPlainText(raw.Protocol, MaxRetainedIdentifierBytes, "PROTOCOL")
-	trailerKeys, trailerKeysTruncated := boundedTrailerKeys(raw.DeclaredTrailers)
+	protocol := plainText(raw.Protocol)
+	trailerKeys := trailerKeys(raw.DeclaredTrailers)
 	return HTTPResponseSanitization{
 		Snapshot: capturevalue.HTTPResponseSnapshot{
 			StatusCode:          raw.StatusCode,
@@ -502,8 +391,8 @@ func (s Sanitizer) HTTPResponseDetailed(raw HTTPResponseMetadata, inheritedNames
 			DeclaredTrailerKeys: trailerKeys,
 		},
 		SensitiveNames: names.names,
-		RedactAll:      headers.RedactAll || headers.Discovered,
-		Truncated:      names.truncated || headers.Truncated || protocol.Truncated || trailerKeysTruncated,
+		RedactAll:      headers.RedactAll,
+		Truncated:      names.truncated || headers.Truncated || protocol.Truncated,
 	}
 }
 
@@ -525,7 +414,7 @@ func (s Sanitizer) WebSocketHandshakeDetailed(raw WebSocketHandshakeMetadata, in
 		credentialEvidence.valuesView(),
 		names.redactAll || !credentialEvidence.Sealed() || credentialEvidence.Overflowed(),
 	)
-	protocol := boundedPlainText(raw.Protocol, MaxRetainedIdentifierBytes, "PROTOCOL")
+	protocol := plainText(raw.Protocol)
 	return WebSocketHandshakeSanitization{
 		Snapshot: capturevalue.WebSocketHandshakeSnapshot{
 			StatusCode: raw.StatusCode,
@@ -533,7 +422,7 @@ func (s Sanitizer) WebSocketHandshakeDetailed(raw WebSocketHandshakeMetadata, in
 			Headers:    headers.Value,
 		},
 		SensitiveNames: names.names,
-		RedactAll:      headers.RedactAll || headers.Discovered,
+		RedactAll:      headers.RedactAll,
 		Truncated:      names.truncated || headers.Truncated || protocol.Truncated,
 	}
 }

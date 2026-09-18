@@ -32,9 +32,11 @@ func TestWebSocketTranscriptLineageAndVisibility(t *testing.T) {
 		},
 	})
 	recorder.ObserveWebSocketHandshake(WebSocketHandshake{
-		StatusCode: http.StatusSwitchingProtocols,
-		Protocol:   "HTTP/1.1",
-		Headers:    http.Header{"Set-Cookie": {"secret-cookie"}},
+		StatusCode:         http.StatusSwitchingProtocols,
+		Protocol:           "HTTP/1.1",
+		Headers:            http.Header{"Set-Cookie": {"secret-cookie"}},
+		SensitiveHeaders:   testSensitiveHeaderEvidence(),
+		CredentialEvidence: testCredentialEvidence("secret"),
 	})
 
 	first := recorder.MessageRead(MessageRead{
@@ -263,7 +265,7 @@ func TestPayloadOverflowKeepsTerminationMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRecord() error = %v", err)
 	}
-	if detail.Summary.CaptureCompletion != CaptureCompletionOverflowed ||
+	if detail.Summary.CaptureCompletion != CaptureCompletionIncomplete ||
 		detail.Summary.SourceCompletion != SourceCompletionPartial ||
 		detail.Summary.TerminationReason != TerminationReasonReadError {
 		t.Fatalf("overflow completion = %#v", detail.Summary)

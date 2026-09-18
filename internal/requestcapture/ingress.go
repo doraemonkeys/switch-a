@@ -1,6 +1,9 @@
 package requestcapture
 
-import "github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
+import (
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
+)
 
 // IngressRecorder borrows identity only. Session stop invalidates the handle,
 // so capture cannot keep replay storage alive or interfere with upload cleanup.
@@ -26,6 +29,9 @@ func (r GatewayRecorder) BeginIngress(head IngressHead) IngressRecorder {
 	g.sharedRequest, g.sharedRequestComplete = newBlobLocked(access.session)
 	g.ingressBuilder = blobBuilder{value: g.sharedRequest, overflowed: !g.sharedRequestComplete}
 	g.ingress.CaptureTruncated = g.ingress.CaptureTruncated || !g.sharedRequestComplete
+	if !g.sharedRequestComplete {
+		g.ingressLosses |= capturevalue.CaptureLossMemoryBudget
+	}
 	return IngressRecorder{gateway: r}
 }
 
@@ -46,7 +52,7 @@ func (r IngressRecorder) ObserveChunk(chunk []byte) {
 	if g.ingressBuilder.appendLocked(access.session, chunk) != len(chunk) {
 		g.sharedRequestComplete = false
 		g.ingress.CaptureTruncated = true
-		g.markIngressTruncatedLocked()
+		g.markIngressIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 	}
 }
 
@@ -62,13 +68,14 @@ func (r IngressRecorder) FinishIngress(input IngressFinish) {
 		// Source validation can reject the tail of the last read before observers
 		// see it. Preserve the actual received count without claiming full evidence.
 		snapshot.CaptureTruncated = true
-		g.sharedRequestComplete = false
+		g.markIngressIncompleteLocked(capturevalue.CaptureLossIngressGap)
 	}
 	extra := estimateIngressCharge(&snapshot) - estimateIngressCharge(g.ingress)
 	if extra > 0 && !access.session.reserveLocked(extra, true) {
 		snapshot.Trailers = nil
 		snapshot.Reason = ""
 		snapshot.CaptureTruncated = true
+		g.markIngressIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 		extra = estimateIngressCharge(&snapshot) - estimateIngressCharge(g.ingress)
 	}
 	if extra > 0 {
@@ -79,15 +86,13 @@ func (r IngressRecorder) FinishIngress(input IngressFinish) {
 	}
 	*g.ingress = snapshot
 	g.sharedRequestExpected = input.ReceivedBytes
-	if snapshot.CaptureTruncated {
-		g.markIngressTruncatedLocked()
-	}
 }
 
-func (g *gatewayState) markIngressTruncatedLocked() {
+func (g *gatewayState) markIngressIncompleteLocked(loss capturevalue.CaptureLosses) {
+	g.ingressLosses |= loss
 	for entry := g.entryFirst; entry != nil; entry = entry.after {
 		if entry.record != nil && entry.record.protocol == ProtocolHTTP {
-			entry.record.markOverflowLocked()
+			entry.record.markIncompleteLocked(loss)
 		}
 	}
 }
@@ -112,6 +117,6 @@ func (r IngressRecorder) ObserveFailure(input IngressFailure) {
 	}
 	if truncated {
 		g.ingress.CaptureTruncated = true
-		g.markIngressTruncatedLocked()
+		g.markIngressIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 	}
 }

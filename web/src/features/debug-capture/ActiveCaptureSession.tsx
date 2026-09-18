@@ -80,8 +80,8 @@ function CaptureMetrics({ status, session }: ActiveCaptureSessionProps) {
         detail={status.active_download_count + " active downloads"}
       />
       <MetricCard
-        label="Overflowed"
-        value={String(session.overflowed_record_count)}
+        label="Incomplete"
+        value={String(session.incomplete_record_count)}
         detail={session.evicted_record_count + " evicted"}
       />
       <MetricCard

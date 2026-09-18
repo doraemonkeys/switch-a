@@ -141,7 +141,7 @@ describe("Layout", () => {
                 completed_record_count: 0,
                 gateway_trace_count: 0,
                 evicted_record_count: 0,
-                overflowed_record_count: 0,
+                incomplete_record_count: 0,
                 history_truncated_trace_count: 0,
                 dropped_trace_count: 0,
                 dropped_exchange_count: 0,

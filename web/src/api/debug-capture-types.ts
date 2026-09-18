@@ -2,7 +2,9 @@ export type DebugCaptureState = "stopped" | "active";
 export type CaptureProtocol = "http" | "websocket";
 export type CaptureLifecycleState = "active" | "completed";
 export type CaptureSourceCompletion = "pending" | "complete" | "partial";
-export type CaptureCompletion = "complete" | "overflowed";
+export type CaptureCompletion = "complete" | "incomplete";
+export type CaptureLoss =
+  "memory_budget" | "metadata_unavailable" | "recorder_fault" | "ingress_gap";
 export type CaptureSnapshotState = "final" | "active_partial";
 export type CaptureSelectionMode = "initial" | "replacement" | "failover";
 export type CaptureSelectionSource =
@@ -137,7 +139,7 @@ export interface DebugCaptureSessionStatus extends DebugCaptureSessionInfo {
   completed_record_count: number;
   gateway_trace_count: number;
   evicted_record_count: number;
-  overflowed_record_count: number;
+  incomplete_record_count: number;
   history_truncated_trace_count: number;
   dropped_trace_count: number;
   dropped_exchange_count: number;
@@ -184,6 +186,7 @@ export interface DebugCaptureRecordSummary extends DebugCaptureFailureCarrier {
   lifecycle_state: CaptureLifecycleState;
   source_completion?: CaptureSourceCompletion;
   capture_completion: CaptureCompletion;
+  capture_losses: CaptureLoss[];
   started_at: string;
   completed_at?: string;
   termination_reason?: CaptureTerminationReason;

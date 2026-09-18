@@ -122,7 +122,7 @@ func borrowedWebSocketTarget(raw string) redaction.Target {
 }
 
 func sanitizedText(value string, secrets []string, limit int, kind string) textSanitization {
-	result := redaction.SanitizedText(value, secrets, limit, kind)
+	result := redaction.SanitizedText(value, secrets)
 	return textSanitization{value: result.Value, truncated: result.Truncated}
 }
 
@@ -134,10 +134,6 @@ func replaceCredentialValues(value string, secrets []string) string {
 	return redaction.ReplaceCredentialValues(value, secrets)
 }
 
-func boundedRedaction(kind, value string) string {
-	return redaction.BoundedRedaction(kind, value)
-}
-
 func boundedAttemptMetadata(attempt AttemptMetadata) (AttemptMetadata, bool) {
-	return redaction.BoundedAttemptMetadata(attempt)
+	return redaction.CanonicalAttemptMetadata(attempt)
 }

@@ -30,7 +30,7 @@ type CaptureCompletion string
 
 const (
 	CaptureCompletionComplete   CaptureCompletion = "complete"
-	CaptureCompletionOverflowed CaptureCompletion = "overflowed"
+	CaptureCompletionIncomplete CaptureCompletion = "incomplete"
 )
 
 type SnapshotState string
@@ -341,6 +341,7 @@ type RecordSummary struct {
 	LifecycleState                 LifecycleState     `json:"lifecycle_state"`
 	SourceCompletion               SourceCompletion   `json:"source_completion,omitempty"`
 	CaptureCompletion              CaptureCompletion  `json:"capture_completion"`
+	CaptureLosses                  CaptureLosses      `json:"capture_losses"`
 	StartedAt                      time.Time          `json:"started_at"`
 	CompletedAt                    *time.Time         `json:"completed_at,omitempty"`
 	TerminationReason              TerminationReason  `json:"termination_reason,omitempty"`

@@ -26,7 +26,7 @@ func TestCredentialMaterialContainsOnlyInjectedCredential(t *testing.T) {
 	}
 
 	diagnostic := "authorization-secret proxy-secret cookie-secret dark set-cookie-secret api-secret public-value"
-	sanitized := redaction.SanitizedTextWithEvidence(diagnostic, evidence, len(diagnostic)*2, "TEST")
+	sanitized := redaction.SanitizedTextWithEvidence(diagnostic, evidence)
 	if strings.Contains(sanitized.Value, "api-secret") {
 		t.Fatalf("injected credential was retained: %q", sanitized.Value)
 	}
@@ -49,7 +49,7 @@ func TestCredentialMaterialWithNoInjectedCredentialPreservesDiagnostics(t *testi
 
 	_, evidence := CredentialMaterial("")
 	const diagnostic = "Bearer user-token session=cookie-token provider-secret"
-	got := redaction.SanitizedTextWithEvidence(diagnostic, evidence, 128, "TEST")
+	got := redaction.SanitizedTextWithEvidence(diagnostic, evidence)
 	if got.Value != diagnostic || got.Truncated {
 		t.Fatalf("diagnostic = %#v, want unchanged", got)
 	}
@@ -92,15 +92,15 @@ func TestInjectedCredentialFromSnapshotUsesActualAppliedSecret(t *testing.T) {
 	}
 }
 
-func TestCredentialMaterialFailsClosedWhenEvidenceCapacityIsExceeded(t *testing.T) {
+func TestCredentialMaterialPreservesLongInjectedCredential(t *testing.T) {
 	t.Parallel()
 
-	_, evidence := CredentialMaterial(strings.Repeat("x", redaction.MaxRetainedCredentialValueBytes+1))
-	if !evidence.Sealed() || !evidence.Overflowed() {
+	_, evidence := CredentialMaterial(strings.Repeat("x", (4<<10)+1))
+	if !evidence.Sealed() || evidence.Overflowed() {
 		t.Fatalf("overflow evidence = sealed:%t overflowed:%t", evidence.Sealed(), evidence.Overflowed())
 	}
-	if got := redaction.SanitizedTextWithEvidence("otherwise-safe", evidence, 64, "TEST").Value; got != redaction.RedactedValue {
-		t.Fatalf("overflowed evidence did not fail closed: %q", got)
+	if got := redaction.SanitizedTextWithEvidence("otherwise-safe", evidence).Value; got != "otherwise-safe" {
+		t.Fatalf("long credential lost unrelated diagnostics: %q", got)
 	}
 }
 

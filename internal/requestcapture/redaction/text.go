@@ -9,69 +9,31 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 )
 
-func SanitizedText(value string, secrets []string, limit int, kind string) TextSanitization {
-	if value == "" {
-		return TextSanitization{}
-	}
-	if len(value) > limit {
-		return TextSanitization{Value: BoundedRedaction(kind, value), Truncated: true}
-	}
-	return sanitizedTextWithReplacer(value, compileCredentialReplacer(secrets), limit, kind)
+// Text retention is governed by the capture session's accounting, not by an
+// unrelated per-field preview limit. Credential replacement does not lose evidence.
+func SanitizedText(value string, secrets []string) TextSanitization {
+	return sanitizedTextWithReplacer(value, compileCredentialReplacer(secrets))
 }
 
-func SanitizedTextWithEvidence(
-	value string,
-	evidence CredentialEvidence,
-	limit int,
-	kind string,
-) TextSanitization {
+func SanitizedTextWithEvidence(value string, evidence CredentialEvidence) TextSanitization {
 	if !evidence.Sealed() || evidence.Overflowed() {
 		return TextSanitization{Value: RedactedValue, Truncated: true}
 	}
-	return SanitizedText(value, evidence.valuesView(), limit, kind)
+	return SanitizedText(value, evidence.valuesView())
 }
 
-func sanitizedTextWithReplacer(
-	value string,
-	replacer credentialReplacer,
-	limit int,
-	kind string,
-) TextSanitization {
+func sanitizedTextWithReplacer(value string, replacer credentialReplacer) TextSanitization {
 	if value == "" {
 		return TextSanitization{}
-	}
-	if len(value) > limit {
-		return TextSanitization{Value: BoundedRedaction(kind, value), Truncated: true}
 	}
 	if !replacer.bounded {
 		return TextSanitization{Value: RedactedValue, Truncated: true}
 	}
-	result := scrubTextWithReplacer(value, replacer)
-	if len(result) > limit {
-		return TextSanitization{Value: truncateSanitized(result, limit), Truncated: true}
-	}
-	return TextSanitization{Value: strings.Clone(result)}
+	return TextSanitization{Value: strings.Clone(scrubTextWithReplacer(value, replacer))}
 }
 
-func boundedPlainText(value string, limit int, kind string) TextSanitization {
-	if len(value) <= limit {
-		return TextSanitization{Value: strings.Clone(value)}
-	}
-	return TextSanitization{Value: BoundedRedaction(kind, value), Truncated: true}
-}
-
-func BoundedRedaction(kind, _ string) string {
-	// Oversized attacker-controlled values are never hashed: hashing would make
-	// capture work proportional to data that cannot be retained.
-	return "[TRUNCATED_" + kind + "]"
-}
-
-func truncateSanitized(value string, limit int) string {
-	const marker = "...[TRUNCATED]"
-	if limit <= len(marker) {
-		return marker[:limit]
-	}
-	return value[:limit-len(marker)] + marker
+func plainText(value string) TextSanitization {
+	return TextSanitization{Value: strings.Clone(value)}
 }
 
 func normalizeSensitiveHeaderNames(source []string) sensitiveNameSanitization {
@@ -125,25 +87,13 @@ func mergeSensitiveHeaderNames(existing, additions []string, redactAll bool) sen
 	return result
 }
 
-func boundedTrailerKeys(source http.Header) ([]string, bool) {
-	if len(source) > MaxRetainedHeaderFields {
-		return nil, true
-	}
+func trailerKeys(source http.Header) []string {
 	result := make([]string, 0, len(source))
-	truncated := false
 	for value := range source {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if len(value) > MaxRetainedHeaderNameBytes {
-			truncated = true
-			continue
-		}
 		result = append(result, strings.Clone(value))
 	}
 	sort.Strings(result)
-	return result, truncated
+	return result
 }
 
 func scrubText(value string, secrets []string) string {
@@ -235,24 +185,12 @@ func (s Sanitizer) failureFactDetailed(
 	}
 
 	secrets := evidence.valuesView()
-	providerType := SanitizedText(
-		input.ProviderErrorType,
-		secrets,
-		MaxRetainedProviderErrorFieldBytes,
-		"PROVIDER_ERROR_TYPE",
-	)
-	providerCode := SanitizedText(
-		input.ProviderErrorCode,
-		secrets,
-		MaxRetainedProviderErrorFieldBytes,
-		"PROVIDER_ERROR_CODE",
-	)
+	providerType := SanitizedText(input.ProviderErrorType, secrets)
+	providerCode := SanitizedText(input.ProviderErrorCode, secrets)
 	result.ProviderErrorType = providerType.Value
 	result.ProviderErrorCode = providerCode.Value
-	truncated = truncated || providerType.Truncated || providerCode.Truncated ||
-		providerType.Value != input.ProviderErrorType ||
-		providerCode.Value != input.ProviderErrorCode
-	message := SanitizedText(input.Message, secrets, MaxRetainedErrorBytes, "FAILURE_MESSAGE")
+	truncated = truncated || providerType.Truncated || providerCode.Truncated
+	message := SanitizedText(input.Message, secrets)
 	result.Message = message.Value
-	return result, truncated || message.Truncated || message.Value != input.Message
+	return result, truncated || message.Truncated
 }

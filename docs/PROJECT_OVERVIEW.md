@@ -15,7 +15,7 @@ An **AI API Gateway** that proxies HTTP and WebSocket traffic to multiple AI pro
 - **Decoupled Credential Sessions**: Independent API Key & ChatGPT OAuth session pool with 401 auto-refresh, `ChatGPT-Account-Id` hygiene/injection, and quota window tracking.
 - **Pre-Commit Probing & Error Rules**: Semantic error matching on HTTP/SSE streams before flushing to client, triggering automatic failover.
 - **Concurrency & Continuity**: Lease-based concurrency limiting (with generation tags), configurable sticky affinity, and explicit provider/state continuity.
-- **Observability & Diagnostics**: Token usage analytics, structured attempt evidence, real-time live monitoring, and in-memory debug traffic capture.
+- **Observability & Diagnostics**: Token usage analytics, structured attempt evidence, real-time live monitoring, and in-memory debug traffic capture. Capture retains full headers, URLs and diagnostics within its shared memory budget; preview limits only affect display. Incomplete records report memory, metadata, recorder or ingress loss separately from source completion.
 - **Codex Client Profiles**: Provider-scoped client disguise with persistent login devices, downstream Key bindings, platform filtering, versioned reference profiles, and field-level diagnostics.
 - **Admin UI**: Embedded management dashboard for credentials, providers, client profiles, routing, error detection, logs, and portable configuration backups.
 

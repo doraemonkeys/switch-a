@@ -143,7 +143,7 @@ type sessionState struct {
 	evictionIndexCharge   int64
 
 	evictedCount           uint64
-	overflowedCount        uint64
+	incompleteCount        uint64
 	truncatedTraceCount    uint64
 	droppedTraceCount      uint64
 	droppedExchangeCount   uint64
@@ -298,18 +298,13 @@ const (
 	DefaultListLimit                    = 50
 	DefaultMaxListLimit                 = 200
 
-	maxRetainedProviders            = 256
-	maxRetainedIdentifierBytes      = 256
-	maxRetainedProviderIDBytes      = 256
-	maxRetainedProviderNameBytes    = 512
-	maxRetainedAPITypeBytes         = 128
-	maxRetainedURLBytes             = 8 << 10
-	maxRetainedHeaderBytes          = 64 << 10
-	maxRetainedCredentialValueBytes = 4 << 10
-	maxRetainedErrorBytes           = 2 << 10
-	maxRetainedCloseReasonBytes     = 1 << 10
-	maxPendingLineagesPerTrace      = 4096
-	maxCursorBytes                  = 512
+	maxRetainedProviders         = 256
+	maxRetainedIdentifierBytes   = 256
+	maxRetainedProviderIDBytes   = 256
+	maxRetainedProviderNameBytes = 512
+
+	maxPendingLineagesPerTrace = 4096
+	maxCursorBytes             = 512
 )
 
 // Clock separates human-readable wall time from the monotonic elapsed-time

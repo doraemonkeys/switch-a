@@ -367,7 +367,7 @@ func (m *Manager) Status() Status {
 			CompletedRecordCount:        completedRecords,
 			GatewayTraceCount:           s.traceCount,
 			EvictedRecordCount:          s.evictedCount,
-			OverflowedRecordCount:       s.overflowedCount,
+			IncompleteRecordCount:       s.incompleteCount,
 			HistoryTruncatedTraceCount:  s.truncatedTraceCount,
 			DroppedTraceCount:           s.droppedTraceCount,
 			DroppedExchangeCount:        s.droppedExchangeCount,

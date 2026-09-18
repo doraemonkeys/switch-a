@@ -1,4 +1,8 @@
-import type { DebugCaptureBlobPreview, DebugCaptureHeaders } from "@/api";
+import type {
+  CaptureLoss,
+  DebugCaptureBlobPreview,
+  DebugCaptureHeaders,
+} from "@/api";
 
 const BYTE_UNITS = ["B", "KiB", "MiB", "GiB"] as const;
 const BYTES_PER_UNIT = 1_024;
@@ -58,4 +62,15 @@ export function presentBlobPreview(
   } catch {
     return preview.data_base64;
   }
+}
+
+const CAPTURE_LOSS_DESCRIPTIONS: Record<CaptureLoss, string> = {
+  memory_budget: "Capture memory budget exhausted",
+  metadata_unavailable: "Some metadata could not be preserved",
+  recorder_fault: "Capture recorder failed",
+  ingress_gap: "Some received request bytes were not observed",
+};
+
+export function describeCaptureLosses(losses: readonly CaptureLoss[]): string {
+  return losses.map((loss) => CAPTURE_LOSS_DESCRIPTIONS[loss]).join("; ");
 }

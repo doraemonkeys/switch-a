@@ -324,7 +324,7 @@ func TestAdditionalGatewayGuardsLimitsAndSafetyFinalization(t *testing.T) {
 		gatewayState := lookupGatewayForTest(gateway)
 		gateway.Finish(GatewayOutcome{Failure: testFailure("gateway abandoned active records")})
 		if !firstState.completed || !secondState.completed ||
-			secondState.summary.CaptureCompletion != CaptureCompletionOverflowed {
+			secondState.summary.CaptureCompletion != CaptureCompletionIncomplete {
 			t.Fatalf("safety finalization first=%t second=%t completion=%q", firstState.completed, secondState.completed, secondState.summary.CaptureCompletion)
 		}
 		if gatewayState.sharedRequest != nil || gatewayState.sharedRequestInitialized == false {
@@ -492,8 +492,8 @@ func TestAdditionalRecordStateRejectsInvalidTransitions(t *testing.T) {
 			}
 			state := testRecordState(t, recorder)
 			testCase.apply(recorder)
-			if !state.disabled || !state.overflowCounted ||
-				state.summary.CaptureCompletion != CaptureCompletionOverflowed {
+			if !state.disabled || state.summary.CaptureLosses == 0 ||
+				state.summary.CaptureCompletion != CaptureCompletionIncomplete {
 				t.Fatalf("invalid transition did not disable capture: %#v", state)
 			}
 		})
@@ -518,7 +518,7 @@ func TestAdditionalMessageAdmissionAndResultFailures(t *testing.T) {
 		})
 		restore()
 		if !ref.Valid() || len(state.messages) != 1 || state.messages[0].payload != nil ||
-			state.summary.CaptureCompletion != CaptureCompletionOverflowed {
+			state.summary.CaptureCompletion != CaptureCompletionIncomplete {
 			t.Fatalf("partial message admission = ref:%#v record:%#v", ref, state)
 		}
 
@@ -569,7 +569,7 @@ func TestAdditionalMessageAdmissionAndResultFailures(t *testing.T) {
 		restore()
 		message := state.messages[0]
 		if !message.resultSet || message.hasFailure ||
-			state.summary.CaptureCompletion != CaptureCompletionOverflowed {
+			state.summary.CaptureCompletion != CaptureCompletionIncomplete {
 			t.Fatalf("denied result metadata: resultSet=%t hasFailure=%t completion=%q failureTruncated=%t", message.resultSet, message.hasFailure, state.summary.CaptureCompletion, message.failure.Truncated)
 		}
 	})
@@ -627,8 +627,8 @@ func TestAdditionalFinishMetadataFailuresAreFailClosed(t *testing.T) {
 		})
 		restore()
 		if !state.completed || state.summary.HasFailure || len(state.httpResponse.Trailers) != 0 ||
-			state.summary.TerminationReason != TerminationReasonGatewayFinished ||
-			state.summary.CaptureCompletion != CaptureCompletionOverflowed {
+			state.summary.TerminationReason != TerminationReasonReadError ||
+			state.summary.CaptureCompletion != CaptureCompletionIncomplete {
 			t.Fatalf("denied HTTP finish metadata: completed=%t hasFailure=%t trailers=%d termination=%q completion=%q", state.completed, state.summary.HasFailure, len(state.httpResponse.Trailers), state.summary.TerminationReason, state.summary.CaptureCompletion)
 		}
 	})
@@ -649,7 +649,7 @@ func TestAdditionalFinishMetadataFailuresAreFailClosed(t *testing.T) {
 		})
 		restore()
 		if state.wsClose == nil || !state.wsClose.ReasonTruncated || state.wsClose.Reason != "" ||
-			state.summary.CaptureCompletion != CaptureCompletionOverflowed {
+			state.summary.CaptureCompletion != CaptureCompletionIncomplete {
 			t.Fatalf("denied websocket close metadata = %#v record=%#v", state.wsClose, state.summary)
 		}
 	})
@@ -682,7 +682,7 @@ func TestAdditionalFinishMetadataFailuresAreFailClosed(t *testing.T) {
 			recorder.Finish(Outcome{
 				WebSocketClose: &WebSocketCloseObservation{Direction: testCase.direction, Reason: "close"},
 			})
-			if !state.disabled || !state.completed || state.summary.CaptureCompletion != CaptureCompletionOverflowed {
+			if !state.disabled || !state.completed || state.summary.CaptureCompletion != CaptureCompletionIncomplete {
 				t.Fatalf("invalid close transition did not fail closed: %#v", state)
 			}
 		})
@@ -702,7 +702,7 @@ func TestAdditionalFallbackLineageOverflowFailsClosed(t *testing.T) {
 	}); ref.Valid() {
 		t.Fatal("fallback lineage overflow produced a message")
 	}
-	if state.summary.CaptureCompletion != CaptureCompletionOverflowed || len(state.messages) != 0 {
+	if state.summary.CaptureCompletion != CaptureCompletionIncomplete || len(state.messages) != 0 {
 		t.Fatalf("fallback lineage overflow state = %#v messages=%d", state.summary, len(state.messages))
 	}
 }

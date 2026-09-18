@@ -325,6 +325,14 @@ func writeQueryRecordSummaryJSON(writer *jsonDocumentWriter, summary capturevalu
 	}
 	writer.field("capture_completion", &first)
 	writer.string(string(summary.CaptureCompletion))
+	writer.raw(`,"capture_losses":[`)
+	for index, name := range summary.CaptureLosses.Names() {
+		if index > 0 {
+			writer.raw(",")
+		}
+		writer.string(name)
+	}
+	writer.raw("]")
 	writer.field("started_at", &first)
 	writer.time(summary.StartedAt)
 	if summary.CompletedAt != nil {

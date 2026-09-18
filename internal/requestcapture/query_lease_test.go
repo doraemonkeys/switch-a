@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 	"io"
 	"math"
 	"net/http"
@@ -586,9 +587,14 @@ func TestFaultedRecorderStillFinalizesExactlyOnce(t *testing.T) {
 			if err != nil {
 				t.Fatalf("record detail error = %v", err)
 			}
-			if detail.Summary.SourceCompletion != SourceCompletionPartial ||
-				detail.Summary.TerminationReason != TerminationReasonCaptureFault ||
-				detail.Summary.CaptureCompletion != CaptureCompletionOverflowed {
+			expectedSource, expectedReason := SourceCompletionPartial, TerminationReasonGatewayFinished
+			if test.name == "explicit" {
+				expectedSource, expectedReason = SourceCompletionComplete, TerminationReasonEOF
+			}
+			if detail.Summary.SourceCompletion != expectedSource ||
+				detail.Summary.TerminationReason != expectedReason ||
+				detail.Summary.CaptureCompletion != CaptureCompletionIncomplete ||
+				detail.Summary.CaptureLosses != capturevalue.CaptureLossRecorderFault {
 				t.Fatalf("fault completion = %#v", detail.Summary)
 			}
 		})

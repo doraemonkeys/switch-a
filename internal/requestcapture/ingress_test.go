@@ -108,11 +108,11 @@ func TestIngressPartialAndCaptureBudgetDoNotChangeSourceFacts(t *testing.T) {
 			}
 			facts := detail.HTTP.Request.Ingress
 			if facts.State != state || facts.ReceivedBytes != 7 || !facts.CaptureTruncated || facts.Trailers != nil ||
-				detail.Summary.CaptureCompletion != CaptureCompletionOverflowed {
+				detail.Summary.CaptureCompletion != CaptureCompletionIncomplete {
 				t.Fatalf("partial: %+v / %+v", facts, detail.Summary)
 			}
 			later := beginIngressAttempt(gateway)
-			if testRecordState(t, later).summary.CaptureCompletion != CaptureCompletionOverflowed {
+			if testRecordState(t, later).summary.CaptureCompletion != CaptureCompletionIncomplete {
 				t.Fatal("retry lost truncation")
 			}
 			gateway.Finish(GatewayOutcome{})
@@ -148,7 +148,7 @@ func TestIngressDisabledAdmissionAndBoundedMetadata(t *testing.T) {
 	recorder := beginIngressAttempt(gateway)
 	ingress.FinishIngress(IngressFinish{State: "unexpected", Reason: strings.Repeat("r", 512)})
 	facts := testRecordState(t, recorder).request.Ingress
-	if facts.State != "failed" || !facts.CaptureTruncated || len(facts.TransferEncoding) != 128 || len(facts.DeclaredTrailerKeys) != 128 {
+	if facts.State != "failed" || facts.CaptureTruncated || len(facts.TransferEncoding) != len(head.TransferEncoding) || len(facts.DeclaredTrailerKeys) != len(head.TrailerKeys) {
 		t.Fatalf("bounded metadata: %+v", facts)
 	}
 	gateway.Finish(GatewayOutcome{})

@@ -8,6 +8,7 @@ import type {
 import { CaptureFailureContext } from "./CaptureFailureContext";
 import {
   formatBytes,
+  describeCaptureLosses,
   formatCaptureValue,
   getContentType,
   isTextualContentType,
@@ -452,6 +453,11 @@ export function CaptureRecordDialog({
                   {formatCaptureValue(detail.summary.capture_completion)}
                 </span>
               </div>
+              {detail.summary.capture_losses.length > 0 && (
+                <p className="text-sm text-danger">
+                  {describeCaptureLosses(detail.summary.capture_losses)}
+                </p>
+              )}
               <dl className="rounded-lg bg-bg-secondary p-3">
                 <DetailRow
                   label="Provider"

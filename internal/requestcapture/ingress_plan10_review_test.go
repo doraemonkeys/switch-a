@@ -20,7 +20,7 @@ func TestPlan10ReviewIngressAdmissionFailureRemainsTruncated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.Summary.CaptureCompletion != CaptureCompletionOverflowed {
+	if detail.Summary.CaptureCompletion != CaptureCompletionIncomplete {
 		t.Fatalf("lost logical request reported as complete: completion=%q ingress=%+v body=%+v",
 			detail.Summary.CaptureCompletion, detail.HTTP.Request.Ingress, detail.HTTP.RequestBody)
 	}

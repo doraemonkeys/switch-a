@@ -48,7 +48,7 @@ func TestCaptureRetentionKeepsRollingAtCountAndMemoryLimits(t *testing.T) {
 			retained := status.Session.CompletedRecordCount
 			if retained == 0 || status.Session.EvictedRecordCount != uint64(exchanges-retained) ||
 				status.Session.ActiveRecordCount != 0 || status.Session.DroppedExchangeCount != 0 ||
-				status.Session.OverflowedRecordCount != 0 {
+				status.Session.IncompleteRecordCount != 0 {
 				t.Fatalf("capture did not keep rolling: %#v", status.Session)
 			}
 			if test.wantCount != 0 && retained != test.wantCount {

@@ -41,6 +41,7 @@ export { createDebugCaptureApi } from "./debug-capture";
 export type { DebugCaptureApi } from "./debug-capture";
 export type {
   CaptureCompletion,
+  CaptureLoss,
   CaptureCredentialPhase,
   CaptureLifecycleState,
   CaptureProtocol,

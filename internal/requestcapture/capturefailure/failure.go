@@ -8,7 +8,6 @@ import (
 	"os"
 	"reflect"
 	"syscall"
-	"unicode/utf8"
 
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 
@@ -19,14 +18,6 @@ const (
 	// Standard transport wrappers are shallow. A fixed traversal budget keeps the
 	// capture boundary bounded even if an allowlisted wrapper graph is cyclic.
 	maxConcreteWrapperDepth = 4
-	// A WebSocket close control frame has at most 123 payload bytes after its
-	// two-byte status code. Treating that protocol limit as the capture limit means
-	// an injected CloseError cannot smuggle an arbitrarily large retained string.
-	maxWebSocketCloseReasonBytes = 123
-	// Provider error envelopes are application protocol metadata rather than an
-	// arbitrary Go error string. Bound them before ownership crosses into capture.
-	maxProviderDiagnosticIdentifierBytes = 128
-	maxProviderProtocolMessageBytes      = 512
 )
 
 // IsEOF recognizes only the standard sentinel without invoking custom Is or
@@ -193,9 +184,8 @@ func WebSocketClose(
 		requestcapture.FailureCodeWebSocketClose,
 	)
 	applyWebSocketCloseCode(&fact, closeError.Code)
-	message, truncated := boundedUTF8Prefix(closeError.Reason, maxWebSocketCloseReasonBytes)
-	fact.Message = message
-	return fact, truncated
+	fact.Message = closeError.Reason
+	return fact, false
 }
 
 func ProviderSemantic(
@@ -215,20 +205,10 @@ func ProviderSemantic(
 	if statusCode > 0 {
 		fact.HTTPStatusCode = statusCode
 	}
-	var truncated bool
-	fact.ProviderErrorType, truncated = boundedUTF8Prefix(
-		providerErrorType,
-		maxProviderDiagnosticIdentifierBytes,
-	)
-	var codeTruncated bool
-	fact.ProviderErrorCode, codeTruncated = boundedUTF8Prefix(
-		providerErrorCode,
-		maxProviderDiagnosticIdentifierBytes,
-	)
-	var messageTruncated bool
-	boundedMessage, messageTruncated := boundedUTF8Prefix(message, maxProviderProtocolMessageBytes)
-	fact.Message = boundedMessage
-	return fact, truncated || codeTruncated || messageTruncated
+	fact.ProviderErrorType = providerErrorType
+	fact.ProviderErrorCode = providerErrorCode
+	fact.Message = message
+	return fact, false
 }
 
 // Observation promotes a lone secondary fact so callers can independently
@@ -252,17 +232,6 @@ func applyWebSocketCloseCode(fact *requestcapture.FailureFact, code websocket.St
 	fact.Class = requestcapture.FailureClassWebSocketClose
 	fact.Code = requestcapture.FailureCodeWebSocketClose
 	fact.WebSocketCloseCode = int(code)
-}
-
-func boundedUTF8Prefix(value string, limit int) (string, bool) {
-	if len(value) <= limit {
-		return value, false
-	}
-	end := limit
-	for end > 0 && !utf8.ValidString(value[:end]) {
-		end--
-	}
-	return value[:end], true
 }
 
 func empty(fact requestcapture.FailureFact) bool {

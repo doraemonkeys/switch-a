@@ -4,6 +4,7 @@ import (
 	"math"
 	"net/http"
 
+	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturevalue"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/redaction"
 	"go.uber.org/zap"
 )
@@ -76,7 +77,7 @@ func (s *sessionState) beginGateway(input GatewayStart) GatewayRecorder {
 		return GatewayRecorder{}
 	}
 	if requestIDShape.truncated {
-		s.logMetadataTruncationLocked(gateway, nil, "gateway_request_id", maxRetainedIdentifierBytes)
+		s.logMetadataUnavailableLocked(gateway, nil, "gateway_request_id")
 	}
 	return GatewayRecorder{
 		manager:       s.manager,
@@ -158,7 +159,7 @@ func (g *gatewayState) beginRecordLocked(
 	}
 
 	attempt.Provider = selectedProvider
-	attempt, attemptTruncated := redaction.BoundedAttemptMetadata(attempt)
+	attempt, attemptTruncated := redaction.CanonicalAttemptMetadata(attempt)
 	requestResult := (redaction.Sanitizer{}).RequestDetailed(requestMetadata(raw), targetInput)
 	provider, providerTruncated := redaction.SanitizedProvider(attempt, requestResult.Snapshot.URL)
 	recordSequence := session.nextRecordSequence + 1
@@ -195,7 +196,7 @@ func (g *gatewayState) beginRecordLocked(
 		CredentialPhase:      attempt.CredentialPhase,
 		MetadataTruncated:    attemptTruncated || providerTruncated,
 	}
-	recordCharge := estimateRecordCharge(requestResult.Snapshot, summary, requestResult.SensitiveNames)
+	recordCharge := addRetainedCharge64(estimateRecordCharge(requestResult.Snapshot, summary, requestResult.SensitiveNames), raw.CredentialEvidence.RetainedBytes())
 	entryCharge := estimateTraceEntryCharge(entrySnapshot)
 	if !session.reserveLocked(addRetainedCharge64(recordCharge, entryCharge), true) {
 		session.droppedExchangeCount++
@@ -212,7 +213,7 @@ func (g *gatewayState) beginRecordLocked(
 		protocol:             protocol,
 		charge:               recordCharge,
 		request:              requestResult.Snapshot,
-		credentialEvidence:   raw.CredentialEvidence,
+		credentialEvidence:   raw.CredentialEvidence.Clone(),
 		sensitiveHeaderNames: requestResult.SensitiveNames,
 		redactAllHeaders:     requestResult.RedactAll,
 		messageByLineage:     make(map[uint64]*messageState),
@@ -220,8 +221,8 @@ func (g *gatewayState) beginRecordLocked(
 	}
 	record.boundSession.Store(session)
 	if requestResult.Truncated || attemptTruncated || providerTruncated {
-		record.markOverflowLocked()
-		session.logMetadataTruncationLocked(g, record, "request", maxRetainedURLBytes)
+		record.markIncompleteLocked(capturevalue.CaptureLossMetadataUnavailable)
+		session.logMetadataUnavailableLocked(g, record, "request")
 	}
 
 	if !g.sharedRequestInitialized {
@@ -235,8 +236,14 @@ func (g *gatewayState) beginRecordLocked(
 	if g.ingress != nil && protocol == ProtocolHTTP {
 		record.request.Ingress = g.ingress
 	}
-	if (g.ingress == nil && int64(len(raw.Body)) != g.sharedRequestExpected) || !g.sharedRequestComplete || (g.ingress != nil && g.ingress.CaptureTruncated) {
-		record.markOverflowLocked()
+	if g.ingress == nil && int64(len(raw.Body)) != g.sharedRequestExpected {
+		record.markIncompleteLocked(capturevalue.CaptureLossIngressGap)
+	}
+	if !g.sharedRequestComplete {
+		record.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
+	}
+	if g.ingress != nil && g.ingress.CaptureTruncated {
+		record.markIncompleteLocked(g.ingressLosses)
 	}
 	if g.sharedRequest != nil && retainBlobLocked(g.sharedRequest) {
 		record.requestBody = g.sharedRequest
@@ -282,19 +289,20 @@ func (g *gatewayState) beginTransitionRecorderLocked(attempt AttemptMetadata, ev
 		session.droppedExchangeCount++
 		return Recorder{}
 	}
-	if !session.reserveLocked(transitionRecorderChargeBytes, true) {
+	charge := addRetainedCharge64(transitionRecorderChargeBytes, evidence.RetainedBytes())
+	if !session.reserveLocked(charge, true) {
 		g.releaseEntryLocked(entry)
 		g.markHistoryTruncatedLocked(false, true)
 		session.droppedExchangeCount++
 		return Recorder{}
 	}
-	entry.charge += transitionRecorderChargeBytes
+	entry.charge += charge
 	stub := &transitionRecorderState{
 		session:            session,
 		gateway:            g,
 		entry:              entry,
 		generation:         session.generation,
-		credentialEvidence: evidence,
+		credentialEvidence: evidence.Clone(),
 	}
 	stub.boundSession.Store(session)
 	entry.stubOwner = stub
@@ -324,7 +332,7 @@ func (g *gatewayState) appendTransitionTargetLocked(
 		input.Attempt.Provider = selected
 	}
 	var attemptTruncated bool
-	input.Attempt, attemptTruncated = redaction.BoundedAttemptMetadata(input.Attempt)
+	input.Attempt, attemptTruncated = redaction.CanonicalAttemptMetadata(input.Attempt)
 	target := (redaction.Sanitizer{}).TargetWithEvidence(targetInput, input.CredentialEvidence).Target
 	provider, providerTruncated := redaction.SanitizedProvider(input.Attempt, target.Value)
 	failure, hasFailure := (redaction.Sanitizer{}).FailureDetailed(input.Failure, input.CredentialEvidence, false)
@@ -355,7 +363,7 @@ func (g *gatewayState) appendTransitionTargetLocked(
 	entry := &traceEntryState{snapshot: entrySnapshot, charge: charge}
 	g.appendEntryLocked(entry)
 	if entrySnapshot.MetadataTruncated {
-		session.logMetadataTruncationLocked(g, nil, "transition", maxRetainedErrorBytes)
+		session.logMetadataUnavailableLocked(g, nil, "transition")
 	}
 	return entry
 }
@@ -465,14 +473,14 @@ func (r *recordState) messageReadLocked(input MessageRead) MessageRef {
 	}
 	if r.gateway.nextMessageSequence == math.MaxUint64 {
 		r.consumeDeniedMessageLineageLocked(pendingLineage)
-		r.markOverflowLocked()
+		r.stateFaultLocked("message_sequence_exhausted")
 		return MessageRef{}
 	}
 	sequence := r.gateway.nextMessageSequence + 1
 	useFallbackLineage := pendingLineage == nil
 	if useFallbackLineage {
 		if r.gateway.nextLineage == math.MaxUint64 {
-			r.markOverflowLocked()
+			r.stateFaultLocked("message_lineage_exhausted")
 			return MessageRef{}
 		}
 		lineage = MessageLineage{
@@ -504,7 +512,7 @@ func (r *recordState) messageReadLocked(input MessageRead) MessageRef {
 	)
 	if !session.reserveLocked(charge, true) {
 		r.consumeDeniedMessageLineageLocked(pendingLineage)
-		r.markOverflowLocked()
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 		r.syncCountersLocked()
 		return MessageRef{}
 	}
@@ -549,7 +557,7 @@ func (r *recordState) messageReadLocked(input MessageRead) MessageRef {
 	r.messages = append(r.messages, message)
 	r.messageByLineage[lineage.lineage] = message
 	if !complete {
-		r.markOverflowLocked()
+		r.markIncompleteLocked(capturevalue.CaptureLossMemoryBudget)
 	}
 	r.syncCountersLocked()
 	return ref
@@ -591,7 +599,7 @@ func (r *transitionRecorderState) finishLocked(outcome Outcome) {
 	r.entry.snapshot.MetadataTruncated = r.entry.snapshot.MetadataTruncated ||
 		termination.Truncated || failure.Truncated
 	if r.entry.snapshot.MetadataTruncated {
-		session.logMetadataTruncationLocked(r.gateway, nil, "transition_finish", maxRetainedErrorBytes)
+		session.logMetadataUnavailableLocked(r.gateway, nil, "transition_finish")
 	}
 	if r.gateway != nil && r.gateway.activeTransition == r {
 		r.gateway.activeTransition = nil
@@ -602,14 +610,6 @@ func (r *transitionRecorderState) finishLocked(outcome Outcome) {
 func (r *recordState) mutableLocked() bool {
 	return !r.completed && !r.disabled && !r.evicted &&
 		r.session.accepting && r.session.manager.active.Load() == r.session
-}
-
-func (r *recordState) markOverflowLocked() {
-	r.summary.CaptureCompletion = CaptureCompletionOverflowed
-	if !r.overflowCounted {
-		r.overflowCounted = true
-		r.session.overflowedCount++
-	}
 }
 
 func (r *recordState) syncCountersLocked() {

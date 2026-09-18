@@ -10,9 +10,7 @@ func (evidence *CredentialEvidence) Add(value string) {
 		return
 	}
 	evidence.sealed = false
-	if len(value) > MaxRetainedCredentialValueBytes ||
-		len(value) > MaxRetainedCredentialBytes-int(evidence.bytes) ||
-		int(evidence.count) == len(evidence.values) {
+	if int(evidence.count) == len(evidence.values) {
 		evidence.failClosed()
 		return
 	}
@@ -23,7 +21,7 @@ func (evidence *CredentialEvidence) Add(value string) {
 	}
 	evidence.values[evidence.count] = value
 	evidence.count++
-	evidence.bytes += uint32(len(value))
+	evidence.bytes += uint64(len(value))
 }
 
 func (evidence *CredentialEvidence) Merge(other CredentialEvidence) {
@@ -100,7 +98,7 @@ func (evidence *SensitiveHeaderEvidence) Add(name string) {
 	}
 	evidence.names[evidence.count] = name
 	evidence.count++
-	evidence.bytes += uint32(len(name))
+	evidence.bytes += uint64(len(name))
 }
 
 func (evidence *SensitiveHeaderEvidence) Merge(other SensitiveHeaderEvidence) {
@@ -186,22 +184,14 @@ func discoverHeaderCredentials(
 	for _, value := range explicit {
 		set.add(value)
 	}
-	if len(source) > MaxRetainedHeaderFields {
-		set.redactAll = true
-		return set
-	}
 	for name, values := range source {
 		boundedName := strings.TrimSpace(name)
-		if boundedName == "" || len(boundedName) > MaxRetainedHeaderNameBytes {
+		if boundedName == "" {
 			set.redactAll = true
 			return set
 		}
 		if !isSensitiveHeaderName(boundedName, extraSensitive) {
 			continue
-		}
-		if len(values) > MaxRetainedHeaderValuesPerField {
-			set.redactAll = true
-			return set
 		}
 		for _, value := range values {
 			before := set.count
@@ -223,9 +213,7 @@ func (set *headerCredentialSet) add(value string) {
 	if value == "" {
 		return
 	}
-	if len(value) > MaxRetainedCredentialValueBytes ||
-		set.count == len(set.values) ||
-		len(value) > MaxRetainedHeaderBytes-set.bytes {
+	if set.count == len(set.values) {
 		set.redactAll = true
 		return
 	}
@@ -356,14 +344,7 @@ func compileCredentialReplacer(secrets []string) credentialReplacer {
 
 	var unique [MaxRetainedCredentialValues]string
 	uniqueCount := 0
-	totalBytes := 0
 	for _, rawSecret := range secrets {
-		if len(rawSecret) > MaxRetainedCredentialValueBytes ||
-			len(rawSecret) > MaxRetainedCredentialBytes-totalBytes {
-			return credentialReplacer{}
-		}
-		totalBytes += len(rawSecret)
-
 		secret := strings.TrimSpace(rawSecret)
 		if secret == "" {
 			continue
@@ -403,7 +384,7 @@ func compileCredentialReplacer(secrets []string) credentialReplacer {
 	for index := 0; index < uniqueCount; index++ {
 		pairs = append(pairs, unique[index], RedactedValue)
 	}
-	// strings.Replacer compiles the bounded set into a trie and scans source
+	// strings.Replacer compiles the credential set into a trie and scans source
 	// text once. Replacement output is not rescanned, so a credential equal to
 	// the marker cannot recursively rewrite newly emitted markers.
 	compiled.replacer = strings.NewReplacer(pairs...)
@@ -425,4 +406,17 @@ func ReplaceCredentialValues(value string, secrets []string) string {
 		return value
 	}
 	return compileCredentialReplacer(secrets).replace(value)
+}
+
+// RetainedBytes accounts for the credential strings owned by an active recorder.
+// Credential length follows the selected provider, not a separate capture limit.
+func (evidence CredentialEvidence) RetainedBytes() int64 {
+	return int64(evidence.bytes)
+}
+
+func (evidence CredentialEvidence) Clone() CredentialEvidence {
+	for index := 0; index < int(evidence.count); index++ {
+		evidence.values[index] = strings.Clone(evidence.values[index])
+	}
+	return evidence
 }
