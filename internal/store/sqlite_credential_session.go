@@ -11,26 +11,41 @@ import (
 func (s *SQLiteStore) CreateCredentialSession(ctx context.Context, session *credentialsession.Session) (*credentialsession.Session, error) {
 	s.credentialSigning.mu.RLock()
 	defer s.credentialSigning.mu.RUnlock()
-	if err := resolveStaticCredentialSubject(session, s.credentialSigning.signer); err != nil {
-		return nil, fmt.Errorf("create credential session: %w", err)
-	}
 	var created *credentialsession.Session
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		repository, err := s.credentialSessions.WithDB(tx)
-		if err != nil {
-			return err
-		}
-		if err := preserveRestoredStaticSubject(ctx, tx, session, s.credentialSigning.signer); err != nil {
-			return err
-		}
-		created, err = repository.Create(ctx, session)
-		if err != nil {
-			return err
-		}
-		return syncDisguiseLogin(ctx, tx, created.ID, created.Subject())
+		var err error
+		created, err = s.createCredentialSessionInTransaction(ctx, tx, session)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create credential session: %w", err)
+	}
+	return created, nil
+}
+
+// Every creation path must commit the credential and its device together, before
+// profile administration or account maintenance can observe the new session.
+// The caller owns the transaction and credential-signing read lock.
+func (s *SQLiteStore) createCredentialSessionInTransaction(ctx context.Context, tx *gorm.DB, session *credentialsession.Session) (*credentialsession.Session, error) {
+	if session == nil {
+		return nil, fmt.Errorf("%w: session is nil", credentialsession.ErrInvalidSession)
+	}
+	if err := resolveStaticCredentialSubject(session, s.credentialSigning.signer); err != nil {
+		return nil, err
+	}
+	if err := preserveRestoredStaticSubject(ctx, tx, session, s.credentialSigning.signer); err != nil {
+		return nil, err
+	}
+	repository, err := s.credentialSessions.WithDB(tx)
+	if err != nil {
+		return nil, err
+	}
+	created, err := repository.Create(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	if err := syncDisguiseLogin(ctx, tx, created.ID, created.Subject()); err != nil {
+		return nil, fmt.Errorf("initialize login identity for credential session %q: %w", created.ID, err)
 	}
 	return created, nil
 }
@@ -108,7 +123,32 @@ func (s *SQLiteStore) UpdateCredentialSessionCAS(
 	}
 	s.credentialSigning.mu.RLock()
 	defer s.credentialSigning.mu.RUnlock()
-	current, err := s.credentialSessions.Get(ctx, sessionID)
+	var version int64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		version, err = s.updateCredentialSessionInTransaction(ctx, tx, sessionID, expectedVersion, secretData, subject, authState)
+		return err
+	})
+	return version, err
+}
+
+// Imports and direct credential edits share account-change semantics: preserve
+// the device on refresh, and retire the old generation on account replacement.
+// The caller owns the mutation lease, transaction and signing read lock.
+func (s *SQLiteStore) updateCredentialSessionInTransaction(
+	ctx context.Context,
+	tx *gorm.DB,
+	sessionID string,
+	expectedVersion int64,
+	secretData string,
+	subject credentialsession.Subject,
+	authState credentialsession.AuthState,
+) (int64, error) {
+	repository, err := s.credentialSessions.WithDB(tx)
+	if err != nil {
+		return 0, err
+	}
+	current, err := repository.Get(ctx, sessionID)
 	if err != nil {
 		return 0, err
 	}
@@ -124,19 +164,14 @@ func (s *SQLiteStore) UpdateCredentialSessionCAS(
 			subject = candidate.Subject()
 		}
 	}
-	var version int64
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		repository, err := s.credentialSessions.WithDB(tx)
-		if err != nil {
-			return err
-		}
-		version, err = repository.UpdateCredentialCAS(ctx, sessionID, expectedVersion, secretData, subject, authState)
-		if err != nil {
-			return err
-		}
-		return syncDisguiseLogin(ctx, tx, sessionID, subject)
-	})
-	return version, err
+	version, err := repository.UpdateCredentialCAS(ctx, sessionID, expectedVersion, secretData, subject, authState)
+	if err != nil {
+		return 0, err
+	}
+	if err := syncDisguiseLogin(ctx, tx, sessionID, subject); err != nil {
+		return 0, fmt.Errorf("synchronize login identity for credential session %q: %w", sessionID, err)
+	}
+	return version, nil
 }
 
 func resolveStaticCredentialSubject(session *credentialsession.Session, signer StaticCredentialSubjectSigner) error {

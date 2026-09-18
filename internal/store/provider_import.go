@@ -52,6 +52,8 @@ func (s *SQLiteStore) ApplyProviderImport(ctx context.Context, bundle *ProviderI
 		return fmt.Errorf("apply provider import: %w", err)
 	}
 	defer release()
+	s.credentialSigning.mu.RLock()
+	defer s.credentialSigning.mu.RUnlock()
 
 	err = s.db.WithContext(ownedCtx).Transaction(func(tx *gorm.DB) error {
 		return s.applyProviderImportTransaction(ownedCtx, tx, bundle, receipt)
@@ -75,16 +77,15 @@ func (s *SQLiteStore) applyProviderImportTransaction(
 	if err != nil {
 		return err
 	}
-	if err := s.createImportedProviders(ctx, tx, repository, bundle.Creates); err != nil {
+	if err := s.createImportedProviders(ctx, tx, bundle.Creates); err != nil {
 		return err
 	}
-	return updateImportedCredentialSessions(ctx, repository, bundle.CredentialUpdates)
+	return s.updateImportedCredentialSessions(ctx, tx, repository, bundle.CredentialUpdates)
 }
 
 func (s *SQLiteStore) createImportedProviders(
 	ctx context.Context,
 	tx *gorm.DB,
-	repository *credentialsession.Repository,
 	creates []ProviderImportCreate,
 ) error {
 	for index := range creates {
@@ -97,7 +98,7 @@ func (s *SQLiteStore) createImportedProviders(
 			return importConflict(entry.CandidateID, ProviderImportConflictProviderAlreadyExists, entry.Provider.ID, 0, 0)
 		}
 		for sessionIndex := range entry.Sessions {
-			if _, err := repository.Create(ctx, &entry.Sessions[sessionIndex]); err != nil {
+			if _, err := s.createCredentialSessionInTransaction(ctx, tx, entry.Sessions[sessionIndex].Clone()); err != nil {
 				return fmt.Errorf("create imported credential session for candidate %q: %w", entry.CandidateID, err)
 			}
 		}
@@ -108,8 +109,9 @@ func (s *SQLiteStore) createImportedProviders(
 	return nil
 }
 
-func updateImportedCredentialSessions(
+func (s *SQLiteStore) updateImportedCredentialSessions(
 	ctx context.Context,
+	tx *gorm.DB,
 	repository *credentialsession.Repository,
 	updates []ProviderImportCredentialUpdate,
 ) error {
@@ -125,20 +127,21 @@ func updateImportedCredentialSessions(
 		if current.Version != update.ExpectedVersion {
 			return importConflict(update.CandidateID, ProviderImportConflictCredentialVersionMismatch, "", update.ExpectedVersion, current.Version)
 		}
-		if err := updateImportedCredentialSession(ctx, repository, update); err != nil {
+		if err := s.updateImportedCredentialSession(ctx, tx, update); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func updateImportedCredentialSession(
+func (s *SQLiteStore) updateImportedCredentialSession(
 	ctx context.Context,
-	repository *credentialsession.Repository,
+	tx *gorm.DB,
 	update *ProviderImportCredentialUpdate,
 ) error {
-	_, err := repository.UpdateCredentialCAS(
+	_, err := s.updateCredentialSessionInTransaction(
 		ctx,
+		tx,
 		update.SessionID,
 		update.ExpectedVersion,
 		update.SecretData,

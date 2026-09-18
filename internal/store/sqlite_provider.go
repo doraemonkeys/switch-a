@@ -222,16 +222,8 @@ func (s *SQLiteStore) createCredentialSessionsInTransaction(
 	tx *gorm.DB,
 	sessions []*credentialsession.Session,
 ) error {
-	repository, err := s.credentialSessions.WithDB(tx)
-	if err != nil {
-		return err
-	}
 	for _, source := range sessions {
-		session := source.Clone()
-		if err := resolveStaticCredentialSubject(session, s.credentialSigning.signer); err != nil {
-			return err
-		}
-		if _, err := repository.Create(ctx, session); err != nil {
+		if _, err := s.createCredentialSessionInTransaction(ctx, tx, source.Clone()); err != nil {
 			return err
 		}
 	}

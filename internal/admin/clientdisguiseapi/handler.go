@@ -75,7 +75,7 @@ func (h *Handler) SyncOfficialVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, http.StatusOK, state)
 }
-func (h *Handler) fail(w http.ResponseWriter, err error) {
+func (h *Handler) fail(w http.ResponseWriter, err error, fields ...zap.Field) {
 	status := http.StatusInternalServerError
 	if errors.Is(err, clientdisguise.ErrInvalid) {
 		status = http.StatusBadRequest
@@ -86,7 +86,8 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 	if errors.Is(err, clientdisguise.ErrConflict) || errors.Is(err, clientidentity.ErrConflict) {
 		status = http.StatusConflict
 	}
-	h.logger.Error("client disguise administration failed", zap.Error(err), zap.Int("status", status))
+	fields = append(fields, zap.Error(err), zap.Int("status", status))
+	h.logger.Error("client disguise administration failed", fields...)
 	respond(w, status, map[string]string{"message": err.Error()})
 }
 func respond(w http.ResponseWriter, status int, value any) {
@@ -107,7 +108,8 @@ func (h *Handler) SaveBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value.CredentialSessionID = r.PathValue("id")
-	// Administrative reads never create devices; only an outbound target commits one.
+	// Device identity belongs to credential lifecycle; saving a profile only
+	// selects the features that future requests from this login will use.
 	sessions, err := h.catalog.ListCredentialSessions(r.Context())
 	if err != nil {
 		h.fail(w, err)
@@ -126,7 +128,7 @@ func (h *Handler) SaveBinding(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.repository.SetBinding(r.Context(), value)
 	if err != nil {
-		h.fail(w, err)
+		h.fail(w, err, zap.String("credential_session_id", value.CredentialSessionID), zap.String("revision_id", value.RevisionID), zap.String("reference_source_id", value.ReferenceSourceID), zap.String("version_source", value.VersionSource))
 		return
 	}
 	h.logger.Info("client disguise binding updated", zap.String("credential_session_id", value.CredentialSessionID), zap.String("revision_id", result.RevisionID), zap.String("mode", result.Mode), zap.String("version_source", result.VersionSource))

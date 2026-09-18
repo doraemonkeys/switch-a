@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 )
@@ -118,4 +119,61 @@ func providerImportCreateFromFixture(t *testing.T, candidateID string, provider 
 		t.Fatal(err)
 	}
 	return ProviderImportCreate{CandidateID: candidateID, Provider: provider, Sessions: []credentialsession.Session{session}}
+}
+
+func TestProviderImportCredentialUpdateOwnsDisguiseGeneration(t *testing.T) {
+	ctx := context.Background()
+	persistence := newCredentialSessionStore(t)
+	provider := importTestProvider(t, "provider", "original-account", nil)
+	if err := persistence.ApplyProviderImport(ctx, &ProviderImportBundle{Creates: []ProviderImportCreate{
+		providerImportCreateFromFixture(t, "create", provider),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := provider.CredentialSessionForRoute("codex", "http")
+	repo := persistence.ClientDisguiseRepository()
+	original, err := repo.GetLogin(ctx, snapshot.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SelectProfile(ctx, snapshot.SessionID, clientdisguise.BuiltinProfiles()[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, account := range []string{"original-account", "replacement-account"} {
+		session, err := persistence.GetCredentialSession(ctx, snapshot.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		subject, err := credentialsession.AccountSubject(account)
+		if err != nil {
+			t.Fatal(err)
+		}
+		auth := session.AuthState.Clone()
+		auth.AccountID = account
+		if err := persistence.ApplyProviderImport(ctx, &ProviderImportBundle{CredentialUpdates: []ProviderImportCredentialUpdate{{
+			CandidateID: "update", SessionID: session.ID, ExpectedVersion: session.Version,
+			SecretData: `{"access_token":"rotated"}`, Subject: subject, AuthState: auth,
+		}}}); err != nil {
+			t.Fatal(err)
+		}
+		current, err := repo.GetLogin(ctx, session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bindings, err := repo.ListBindings(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if account == "original-account" {
+			if current.DeviceID != original.DeviceID || current.GenerationID != original.GenerationID || len(bindings) != 1 {
+				t.Fatal("same-account import changed device or profile")
+			}
+		} else if current.DeviceID == original.DeviceID || current.GenerationID == original.GenerationID || len(bindings) != 0 {
+			t.Fatal("account replacement retained the previous device or profile")
+		}
+	}
+	history, err := repo.Export(ctx)
+	if err != nil || len(history.LoginHistory) != 1 || history.LoginHistory[0].GenerationID != original.GenerationID {
+		t.Fatalf("replaced generation was not archived: %+v, %v", history.LoginHistory, err)
+	}
 }

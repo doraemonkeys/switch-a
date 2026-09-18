@@ -196,26 +196,26 @@ func (r *Repository) SetBinding(ctx context.Context, binding ProfileBinding) (Pr
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var login LoginIdentity
 		if err := tx.First(&login, "credential_session_id = ?", binding.CredentialSessionID).Error; err != nil {
-			return recordError(err)
+			return fmt.Errorf("login identity for credential session %q: %w", binding.CredentialSessionID, recordError(err))
 		}
 		if binding.Mode != ModeAuto && binding.Mode != ModePinned {
 			return invalid("profile mode must be auto or pinned")
 		}
 		var revision ProfileRevision
 		if err := tx.First(&revision, "id = ?", binding.RevisionID).Error; err != nil {
-			return recordError(err)
+			return fmt.Errorf("profile revision %q: %w", binding.RevisionID, recordError(err))
 		}
 		binding.Tuple = revision.Tuple
 		if binding.ReferenceSourceID != "" {
 			var source ReferenceSource
 			if err := tx.First(&source, "id = ?", binding.ReferenceSourceID).Error; err != nil {
-				return recordError(err)
+				return fmt.Errorf("reference source %q: %w", binding.ReferenceSourceID, recordError(err))
 			}
 		}
 		if binding.TransportSampleID != "" {
 			var transport TransportSample
 			if err := tx.First(&transport, "id = ?", binding.TransportSampleID).Error; err != nil {
-				return recordError(err)
+				return fmt.Errorf("transport sample %q: %w", binding.TransportSampleID, recordError(err))
 			}
 		}
 		if err := resolveAutoRevision(tx, &binding, revision); err != nil {

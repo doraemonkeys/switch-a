@@ -150,6 +150,7 @@ describe("login lifecycle controls", () => {
       screen.getByLabelText("Version source"),
       "official_stable",
     );
+    expect(screen.getByLabelText("Profile revision")).toHaveValue("new");
     await user.click(
       screen.getByRole("button", { name: "Save login settings" }),
     );
@@ -157,6 +158,7 @@ describe("login lifecycle controls", () => {
       expect.objectContaining({
         version_source: "official_stable",
         revision_id: "new",
+        tuple,
         reference_source_id: "reference",
       }),
     );
@@ -171,7 +173,7 @@ describe("login lifecycle controls", () => {
         <Editor save={save} />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/created atomically/)).toBeInTheDocument();
+    expect(screen.getByText(/created atomically/i)).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
     expect(
       screen.getByRole("radio", { name: /Pin this revision/ }),

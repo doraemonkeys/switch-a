@@ -47,7 +47,7 @@ export function ProfileFields({
         </select>
         <span className="cd-field-help">
           {draft.versionSource === "official_stable"
-            ? `Uses the Codex CLI stable release for User-Agent and version fields while keeping this profile’s environment. ${syncStatus}`
+            ? `Updates User-Agent and version fields using the Codex CLI stable release. Keep or choose a profile below for the client type and environment; Desktop profiles can use this version source too. ${syncStatus}`
             : "Uses the version recorded in your selected client profile."}
         </span>
       </label>
@@ -75,8 +75,10 @@ export function ProfileFields({
           ))}
         </select>
         <span className="cd-field-help">
-          Each option selects a specific version and environment. Manual
-          selection pins the profile.
+          {draft.versionSource === "official_stable"
+            ? "Required for client type, operating system and architecture. The version listed is the sampled version; official synchronization controls the version sent upstream."
+            : "Each option selects a specific version and environment."}{" "}
+          Manual selection pins the environment profile.
         </span>
       </label>
       {state.profiles.length === 0 && (
@@ -102,7 +104,11 @@ export function ProfileFields({
             <RefreshCw size={18} aria-hidden="true" />
             <span>
               <strong>Automatic follow</strong>
-              <small>Keep up with your reference source.</small>
+              <small>
+                {draft.versionSource === "official_stable"
+                  ? "Follow environment samples; the Codex CLI version updates independently."
+                  : "Keep up with your reference source."}
+              </small>
             </span>
           </label>
           <label
@@ -154,7 +160,7 @@ export function ProfileFields({
       ) : (
         <p className="cd-field-help cd-mode-help">
           Manual revision selection pins the profile. Choose automatic follow to
-          receive future updates.
+          receive future environment samples from a reference source.
         </p>
       )}
       {profile && <ProfileSummary profile={profile} />}

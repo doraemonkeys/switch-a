@@ -35,6 +35,9 @@ func realAdministration(t *testing.T) (*Handler, *store.SQLiteStore, *clientiden
 	if err := persistence.InstallCodexKeyring(ctx, keyring); err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.FinalizeStaticCredentialSubjects(ctx, keyring); err != nil {
+		t.Fatal(err)
+	}
 	digester, err := codexidentity.NewDigester(keyring)
 	if err != nil {
 		t.Fatal(err)

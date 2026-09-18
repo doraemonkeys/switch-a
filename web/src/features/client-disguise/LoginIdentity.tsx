@@ -13,7 +13,7 @@ export function LoginIdentity({ login }: { login: LoginView }) {
             <small>
               {login.identity
                 ? "Persistent identity assigned"
-                : "Created on first eligible request"}
+                : "Waiting for credential identity"}
             </small>
           </span>
           <ChevronDown size={16} aria-hidden="true" />
@@ -23,7 +23,7 @@ export function LoginIdentity({ login }: { login: LoginView }) {
             <dt>Device ID</dt>
             <dd>
               {login.identity?.device_id ??
-                "Unbound — created atomically before the first eligible send"}
+                "Created atomically when the credential account or API key identity is resolved"}
             </dd>
           </div>
           <div>
