@@ -71,12 +71,15 @@ export function formatProviderCredentialType(
 export function resolveProviderCredentialSession(
   provider: Provider | null | undefined,
   apiType: string,
+  transport?: "http" | "websocket",
 ): ProviderCredentialSession | null {
   if (!provider) {
     return null;
   }
   const sessionID = provider.api_types.find(
-    (entry) => entry.api_type === apiType,
+    (entry) =>
+      entry.api_type === apiType &&
+      (transport === undefined || entry.transport === transport),
   )?.credential_session_id;
   if (!sessionID) {
     return null;

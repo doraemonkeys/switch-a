@@ -48,7 +48,7 @@ func TestSQLiteStickyScopeMigrationAndRestart(t *testing.T) {
 	if err != nil || len(entries) != 1 || entries[0].Key.APIType != "chat" {
 		t.Fatalf("legacy Codex affinity must miss while chat survives: %+v, %v", entries, err)
 	}
-	keyA := model.StickyKey{IP: "ip", User: "user", APIType: "codex", Model: "model", ClientScope: "scope-a"}
+	keyA := model.StickyKey{Transport: "http", IP: "ip", User: "user", APIType: "codex", Model: "model", ClientScope: "scope-a"}
 	keyB := keyA
 	keyB.ClientScope = "scope-b"
 	for key, provider := range map[model.StickyKey]string{keyA: "a", keyB: "b"} {

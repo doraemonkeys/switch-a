@@ -3,12 +3,13 @@ package health
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +46,7 @@ const healthTrackingTimeout = 5 * time.Second
 
 // Store defines the minimal storage interface needed by the health manager.
 type Store interface {
+	HealthScope(string, string) internal.HealthStateStore
 	GetHealthState(ctx context.Context, providerID string) (*model.HealthState, error)
 	UpdateHealthState(ctx context.Context, state *model.HealthState) error
 	GetConfig(ctx context.Context, key string) (string, error)
@@ -70,6 +72,8 @@ type Config struct {
 
 // Manager manages provider health status and circuit breaking.
 type Manager struct {
+	scopes  sync.Map
+	parent  *Manager
 	store   Store
 	circuit *CircuitBreaker
 	clock   internal.Clock
@@ -91,7 +95,23 @@ func NewManager(cfg Config) *Manager {
 // Returns a stop function to terminate the cleanup loop.
 // Example: stop := mgr.StartCleanupLoop(5 * time.Minute, 10 * time.Minute); defer stop()
 func (m *Manager) StartCleanupLoop(interval, maxAge time.Duration) (stop func()) {
-	return m.circuit.StartCleanupLoop(interval, maxAge)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	var once sync.Once
+	wg.Go(func() {
+		ticker := m.clock.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				m.circuit.Cleanup(maxAge)
+				m.scopes.Range(func(_, value any) bool { value.(*Manager).circuit.Cleanup(maxAge); return true })
+			case <-done:
+				return
+			}
+		}
+	})
+	return func() { once.Do(func() { close(done) }); wg.Wait() }
 }
 
 // MarkSuccess marks a successful request for the provider.
@@ -112,6 +132,11 @@ func (m *Manager) MarkSuccess(_ context.Context, providerID string) {
 		return
 	}
 
+	if m.parent != nil {
+		if _, err := m.parent.store.IncrementSuccessCount(internalCtx, providerID, now); err != nil {
+			m.logger.Error("failed to aggregate route success", zap.String("provider_id", providerID), zap.Error(err))
+		}
+	}
 	// Reset circuit breaker on success
 	m.circuit.Reset(providerID)
 }
@@ -140,6 +165,11 @@ func (m *Manager) MarkFailure(_ context.Context, providerID string, err error) b
 		return false
 	}
 
+	if m.parent != nil {
+		if _, err := m.parent.store.IncrementFailCount(internalCtx, providerID, now, lastError); err != nil {
+			m.logger.Error("failed to aggregate route failure", zap.String("provider_id", providerID), zap.Error(err))
+		}
+	}
 	// Get circuit breaker config
 	circuitFailure := m.getConfigInt(internalCtx, "circuit_failure", DefaultCircuitFailure)
 	circuitWindow := m.getConfigDuration(internalCtx, "circuit_window", DefaultCircuitWindow)
@@ -208,6 +238,9 @@ func (m *Manager) SuspendUntil(_ context.Context, providerID string, disabledUnt
 // Uses atomic database operation to prevent race conditions where concurrent
 // calls could overwrite each other's state updates.
 func (m *Manager) RecoverIfExpired(ctx context.Context, providerID string) bool {
+	if m.parent != nil {
+		m.parent.RecoverIfExpired(ctx, providerID)
+	}
 	now := m.clock.Now()
 
 	// Use atomic check-and-update to prevent race conditions.
@@ -231,7 +264,10 @@ func (m *Manager) RecoverIfExpired(ctx context.Context, providerID string) bool 
 // This is a pure query with no side effects.
 // Call RecoverIfExpired first if you want to trigger auto-recovery for expired providers.
 // Note: Uses internal context to avoid "context canceled" errors when client disconnects.
-func (m *Manager) IsAvailable(_ context.Context, providerID string) bool {
+func (m *Manager) IsAvailable(ctx context.Context, providerID string) bool {
+	if m.parent != nil && !m.parent.IsAvailable(ctx, providerID) {
+		return false
+	}
 	// Detach from request context - health check is a fast query that should complete
 	// even if the client disconnects to avoid noisy "context canceled" error logs.
 	internalCtx, cancel := context.WithTimeout(context.Background(), healthTrackingTimeout)
@@ -275,6 +311,12 @@ func (m *Manager) ManualDisable(ctx context.Context, providerID string, reason s
 // operations (typically triggered by UI button clicks), not high-concurrency code paths.
 // The probability of concurrent admin actions on the same provider is negligible.
 func (m *Manager) ManualEnable(ctx context.Context, providerID string) error {
+	if m.parent == nil {
+		if err := m.store.HealthScope("", "").ResetRouteAvailability(ctx, providerID); err != nil {
+			return err
+		}
+	}
+	m.ResetCircuitBreaker(providerID)
 	state, err := m.store.GetHealthState(ctx, providerID)
 	if err != nil {
 		return err
@@ -294,6 +336,7 @@ func (m *Manager) ManualEnable(ctx context.Context, providerID string) error {
 // Call this when a provider is deleted to prevent memory leaks.
 // The database health_states are cleaned up separately during deletion.
 func (m *Manager) ResetCircuitBreaker(providerID string) {
+	m.scopes.Range(func(_, value any) bool { value.(*Manager).ResetCircuitBreaker(providerID); return true })
 	m.circuit.Reset(providerID)
 }
 
@@ -322,4 +365,23 @@ func (m *Manager) getConfigDuration(ctx context.Context, key string, defaultVal 
 		return defaultVal
 	}
 	return time.Duration(v) * time.Second
+}
+
+// ForRoute shares configuration and account-wide availability while keeping
+// automatic circuit state local to the endpoint that actually failed.
+func (m *Manager) ForRoute(apiType, transport string) internal.HealthManager {
+	if m.parent != nil {
+		return m.parent.ForRoute(apiType, transport)
+	}
+	key := providerroute.NewKey(apiType, transport)
+	if existing, ok := m.scopes.Load(key); ok {
+		return existing.(*Manager)
+	}
+	child := NewManager(Config{Store: m.store.HealthScope(apiType, transport), Clock: m.clock, Logger: m.logger.With(zap.String("api_type", apiType), zap.String("transport", key.Transport))})
+	child.parent = m
+	actual, _ := m.scopes.LoadOrStore(key, child)
+	return actual.(*Manager)
+}
+func (m *Manager) AvailabilityForRoute(apiType, transport string) internal.HealthAvailability {
+	return m.ForRoute(apiType, transport)
 }

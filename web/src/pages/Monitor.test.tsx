@@ -39,6 +39,7 @@ const mockProviders: Provider[] = [
     api_types: [
       {
         api_type: "claude",
+        transport: "http",
         base_url: "https://api.anthropic.com",
         credential_session_id: "credential-1",
       },
@@ -72,6 +73,7 @@ const mockProviders: Provider[] = [
     api_types: [
       {
         api_type: "codex",
+        transport: "http",
         base_url: "https://api.openai.com",
         credential_session_id: "credential-2",
       },

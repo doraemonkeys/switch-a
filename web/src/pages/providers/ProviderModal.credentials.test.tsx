@@ -114,11 +114,13 @@ function persistedSplitProvider(): Provider {
     api_types: [
       {
         api_type: "claude",
+        transport: "http",
         base_url: "https://claude.example.com",
         credential_session_id: "credential-override",
       },
       {
         api_type: "codex",
+        transport: "http",
         base_url: "https://codex.example.com",
         credential_session_id: "credential-default",
       },
@@ -155,11 +157,13 @@ function persistedMixedProvider(): Provider {
     api_types: [
       {
         api_type: "claude",
+        transport: "http",
         base_url: "https://claude.example.com",
         credential_session_id: apiKey.id,
       },
       {
         api_type: "codex",
+        transport: "http",
         base_url: "https://codex.example.com",
         credential_session_id: chatGPT.id,
       },
@@ -280,16 +284,19 @@ describe("ProviderModal credential binding precedence", () => {
         api_types: [
           {
             api_type: "claude",
+            transport: "http",
             base_url: "https://claude.example.com",
             credential_session_id: "credential-override",
           },
           {
             api_type: "codex",
+            transport: "http",
             base_url: "https://codex.example.com",
             credential_session_id: "credential-default",
           },
           {
             api_type: "gemini",
+            transport: "http",
             base_url: "https://gemini.example.com",
             credential_session_id: createdSession?.id,
           },
@@ -344,11 +351,13 @@ describe("ProviderModal credential binding precedence", () => {
         api_types: [
           {
             api_type: "claude",
+            transport: "http",
             base_url: "https://claude.example.com",
             credential_session_id: "credential-selected",
           },
           {
             api_type: "codex",
+            transport: "http",
             base_url: "https://codex.example.com",
             credential_session_id: createdSession?.id,
           },
@@ -484,11 +493,12 @@ describe("ProviderModal GPT credential precedence", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(credentialSessions.create).not.toHaveBeenCalled();
     expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
-      api_types: [
+      api_types: ["http", "websocket"].map((transport) =>
         expect.objectContaining({
+          transport,
           credential_session_id: existingSession.id,
         }),
-      ],
+      ),
     });
   });
 
@@ -522,11 +532,12 @@ describe("ProviderModal GPT credential precedence", () => {
       credential_login_id: "login-new-account",
     });
     expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
-      api_types: [
+      api_types: ["http", "websocket"].map((transport) =>
         expect.objectContaining({
+          transport,
           credential_session_id: "credential-created",
         }),
-      ],
+      ),
     });
   });
 
@@ -578,11 +589,12 @@ describe("ProviderModal GPT credential precedence", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(credentialSessions.create).not.toHaveBeenCalled();
     expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
-      api_types: [
+      api_types: ["http", "websocket"].map((transport) =>
         expect.objectContaining({
+          transport,
           credential_session_id: existingSession.id,
         }),
-      ],
+      ),
     });
   });
 
@@ -699,11 +711,13 @@ describe("ProviderModal GPT credential precedence", () => {
       api_types: [
         {
           api_type: "claude",
+          transport: "http",
           base_url: "https://claude.example.com",
           credential_session_id: "credential-api-key",
         },
         {
           api_type: "codex",
+          transport: "http",
           base_url: "https://codex.example.com",
           credential_session_id: "credential-gpt",
         },

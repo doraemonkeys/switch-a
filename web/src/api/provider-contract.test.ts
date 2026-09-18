@@ -8,6 +8,7 @@ function providerPayload() {
     api_types: [
       {
         api_type: "codex",
+        transport: "http",
         base_url: "https://chatgpt.com/backend-api/codex",
         credential_session_id: "credential-gpt",
       },

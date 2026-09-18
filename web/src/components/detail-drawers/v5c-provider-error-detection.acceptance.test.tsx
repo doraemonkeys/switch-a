@@ -40,26 +40,31 @@ const provider = {
   api_types: [
     {
       api_type: "codex",
+      transport: "http",
       base_url: "https://example.test/codex",
       credential_session_id: "credential-api-key",
     },
     {
       api_type: "claude",
+      transport: "http",
       base_url: "https://example.test/claude",
       credential_session_id: "credential-api-key",
     },
     {
       api_type: "gemini",
+      transport: "http",
       base_url: "https://example.test/gemini",
       credential_session_id: "credential-api-key",
     },
     {
       api_type: "custom:private",
+      transport: "http",
       base_url: "https://example.test/private",
       credential_session_id: "credential-api-key",
     },
     {
       api_type: "codex",
+      transport: "http",
       base_url: "https://duplicate.example.test/codex",
       credential_session_id: "credential-api-key",
     },

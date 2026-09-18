@@ -110,8 +110,8 @@ func (s *persistentStickyTestStore) setErrors(upsert, delete, evict, cleanup err
 func TestPersistentStickyCache_RestoresAndFlushesAcrossInstances(t *testing.T) {
 	now := time.Now()
 	clock := &mockClock{now: now}
-	liveKey := model.StickyKey{IP: "10.0.0.1", User: "alice", APIType: "chat"}
-	expiredKey := model.StickyKey{IP: "10.0.0.2", User: "bob", APIType: "chat"}
+	liveKey := model.StickyKey{Transport: "http", IP: "10.0.0.1", User: "alice", APIType: "chat"}
+	expiredKey := model.StickyKey{Transport: "http", IP: "10.0.0.2", User: "bob", APIType: "chat"}
 	store := newPersistentStickyTestStore(
 		model.StickyEntry{Key: liveKey, ProviderID: "provider-a", ExpiresAt: now.Add(time.Minute)},
 		model.StickyEntry{Key: expiredKey, ProviderID: "provider-b", ExpiresAt: now.Add(-time.Second)},
@@ -125,7 +125,7 @@ func TestPersistentStickyCache_RestoresAndFlushesAcrossInstances(t *testing.T) {
 		t.Fatal("expired durable binding must not be restored")
 	}
 
-	newKey := model.StickyKey{IP: "10.0.0.3", User: "carol", APIType: "chat"}
+	newKey := model.StickyKey{Transport: "http", IP: "10.0.0.3", User: "carol", APIType: "chat"}
 	cache.Set(newKey, "provider-c", time.Minute)
 	if err := cache.Close(context.Background()); err != nil {
 		t.Fatalf("close flush failed: %v", err)
@@ -153,8 +153,8 @@ func TestPersistentStickyCache_RestoresAndFlushesAcrossInstances(t *testing.T) {
 func TestPersistentStickyCache_EvictionAndCleanupAreDurable(t *testing.T) {
 	now := time.Now()
 	clock := &mockClock{now: now}
-	keyA := model.StickyKey{IP: "10.0.0.1", APIType: "chat"}
-	keyB := model.StickyKey{IP: "10.0.0.2", APIType: "chat"}
+	keyA := model.StickyKey{Transport: "http", IP: "10.0.0.1", APIType: "chat"}
+	keyB := model.StickyKey{Transport: "http", IP: "10.0.0.2", APIType: "chat"}
 	store := newPersistentStickyTestStore(
 		model.StickyEntry{Key: keyA, ProviderID: "provider-a", ExpiresAt: now.Add(time.Minute)},
 		model.StickyEntry{Key: keyB, ProviderID: "provider-b", ExpiresAt: now.Add(time.Minute)},
@@ -179,7 +179,7 @@ func TestPersistentStickyCache_PersistenceFailureDoesNotBreakMemory(t *testing.T
 	store := newPersistentStickyTestStore()
 	store.setErrors(errors.New("disk unavailable"), nil, nil, nil)
 	cache := NewPersistentStickyCache(store, clock, nil)
-	key := model.StickyKey{IP: "10.0.0.1", APIType: "chat"}
+	key := model.StickyKey{Transport: "http", IP: "10.0.0.1", APIType: "chat"}
 	cache.Set(key, "provider-a", time.Minute)
 	if providerID, found := cache.Get(key); !found || providerID != "provider-a" {
 		t.Fatalf("memory cache should remain usable after persistence failure, got %q (found=%v)", providerID, found)
@@ -194,13 +194,13 @@ func TestPersistentStickyCache_RetryFlushAndErrorBranches(t *testing.T) {
 	store := newPersistentStickyTestStore()
 	store.setErrors(errors.New("disk unavailable"), nil, nil, nil)
 	cache := NewPersistentStickyCache(store, clock, nil)
-	keyA := model.StickyKey{IP: "10.0.0.1", APIType: "chat"}
+	keyA := model.StickyKey{Transport: "http", IP: "10.0.0.1", APIType: "chat"}
 	cache.Set(keyA, "provider-a", time.Minute)
 	if err := cache.flush(context.Background()); err == nil {
 		t.Fatal("expected flush error")
 	}
 	store.setErrors(nil, nil, nil, nil)
-	keyB := model.StickyKey{IP: "10.0.0.2", APIType: "chat"}
+	keyB := model.StickyKey{Transport: "http", IP: "10.0.0.2", APIType: "chat"}
 	cache.Set(keyB, "provider-b", time.Minute)
 	if err := cache.Close(context.Background()); err != nil {
 		t.Fatalf("retry flush failed: %v", err)
@@ -249,7 +249,7 @@ func TestPersistentStickyCache_RetryFlushAndErrorBranches(t *testing.T) {
 func TestPersistentStickyCache_StartCleanupLoopAndNilPersistence(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewPersistentStickyCache(nil, clock, nil)
-	key := model.StickyKey{IP: "10.0.0.1", APIType: "chat"}
+	key := model.StickyKey{Transport: "http", IP: "10.0.0.1", APIType: "chat"}
 	cache.Set(key, "provider-a", time.Millisecond)
 	stop := cache.StartCleanupLoop(5 * time.Millisecond)
 	clock.Advance(time.Second)
@@ -270,8 +270,8 @@ func TestPersistentStickyCache_StartCleanupLoopAndNilPersistence(t *testing.T) {
 }
 
 func TestStickyKeyOrderingHelpers(t *testing.T) {
-	left := model.StickyKey{IP: "a", User: "b", APIType: "c", Model: "d"}
-	right := model.StickyKey{IP: "a", User: "b", APIType: "c", Model: "e"}
+	left := model.StickyKey{Transport: "http", IP: "a", User: "b", APIType: "c", Model: "d"}
+	right := model.StickyKey{Transport: "http", IP: "a", User: "b", APIType: "c", Model: "e"}
 	if !stickyKeyOrder(left, right) || stickyKeyOrder(right, left) {
 		t.Fatal("sticky key ordering should be lexicographic")
 	}

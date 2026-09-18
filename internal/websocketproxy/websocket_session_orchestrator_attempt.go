@@ -13,10 +13,10 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
-
 	"go.uber.org/zap"
 )
 
@@ -314,7 +314,7 @@ func (o *WebSocketSessionOrchestrator) prepareProviderAttempt(
 		// Readiness checks can reject credentials even when the transport target is
 		// already determined. Retaining that known target makes a no-dial transition
 		// diagnostically useful without pretending a physical exchange occurred.
-		knownBaseURL := provider.BaseURLForAPIType(o.apiType)
+		knownBaseURL := provider.BaseURLForRoute(o.apiType, providerroute.WebSocket)
 		if knownBaseURL == "" {
 			return webSocketPreparedProviderAttempt{}, failureCode, err
 		}

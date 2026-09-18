@@ -25,7 +25,7 @@ func (r repository) CommitTarget(context.Context, clientdisguise.Candidate) (cli
 	return r.target, r.err
 }
 func route() model.Provider {
-	return model.Provider{ID: "route", CredentialSessions: []credentialsession.RouteSnapshot{{APIType: "codex", Credential: credentialsession.Snapshot{SessionID: "login"}}}}
+	return model.Provider{ID: "route", CredentialSessions: []credentialsession.RouteSnapshot{{APIType: "codex", Credential: credentialsession.Snapshot{SessionID: "login"}, Transport: "websocket"}}}
 }
 func TestConnectionTargetAndTransportSnapshot(t *testing.T) {
 	provider := route()

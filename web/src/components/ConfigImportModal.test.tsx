@@ -23,6 +23,7 @@ const exportedConfig: ExportedConfig = {
       api_types: [
         {
           api_type: "claude",
+          transport: "http",
           base_url: "https://api.alpha-1.test",
           credential_session_id: "alpha-session",
         },
@@ -41,6 +42,7 @@ const exportedConfig: ExportedConfig = {
       api_types: [
         {
           api_type: "openai",
+          transport: "http",
           base_url: "https://api.beta-1.test",
           credential_session_id: "beta-session",
         },
@@ -59,6 +61,7 @@ const exportedConfig: ExportedConfig = {
       api_types: [
         {
           api_type: "gemini",
+          transport: "http",
           base_url: "https://api.solo.test",
           credential_session_id: "solo-session",
         },

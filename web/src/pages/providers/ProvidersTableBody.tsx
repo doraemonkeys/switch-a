@@ -1,3 +1,4 @@
+import { providerRouteLabel } from "../../features/provider-transports/routeLabel";
 import type { Provider, ProviderAuthView } from "../../api/client";
 import {
   formatProviderPlanType,
@@ -364,10 +365,10 @@ function APITypesCell({ provider }: { provider: Provider }) {
     <div className="flex flex-wrap gap-1.5">
       {apiTypes.slice(0, 2).map((apiType) => (
         <span
-          key={apiType.api_type}
+          key={`${apiType.api_type}/${apiType.transport}`}
           className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-md bg-bg-tertiary text-text-secondary border border-border/50"
         >
-          {apiType.api_type}
+          {providerRouteLabel(apiType)}
         </span>
       ))}
       {apiTypes.length > 2 && (

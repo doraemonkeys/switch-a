@@ -11,7 +11,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap"
 )
 
@@ -301,7 +300,7 @@ func TestHandler_SuspendProviderUntilEvictsContinuity(t *testing.T) {
 	})
 
 	disabledUntil := time.Now().Add(15 * time.Minute).UTC().Truncate(time.Second)
-	handler.suspendProviderUntil(context.Background(), "p1", disabledUntil, usageLimitAutoDisableReason)
+	handler.suspendProviderUntil(context.Background(), "p1", disabledUntil, usageLimitAutoDisableReason, "codex")
 
 	if got := healthMgr.suspendReasons["p1"]; got != usageLimitAutoDisableReason {
 		t.Fatalf("suspend reason = %q, want %q", got, usageLimitAutoDisableReason)
@@ -503,4 +502,9 @@ func TestSelectProviderFallback_AttemptOffset(t *testing.T) {
 	if p0.ID == p1.ID {
 		t.Error("attempt offset should select different providers")
 	}
+}
+
+func (m *mockHealthManager) ForRoute(string, string) internal.HealthManager { return m }
+func (m *mockHealthManager) AvailabilityForRoute(string, string) internal.HealthAvailability {
+	return m
 }

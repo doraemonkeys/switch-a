@@ -497,7 +497,7 @@ func validateStagedExactProviderPolicies(
 			)
 			continue
 		}
-		if _, ok := provider.APITypeConfig(policy.APIType); ok {
+		if provider.SupportsAPIType(policy.APIType) {
 			continue
 		}
 		warnings = append(

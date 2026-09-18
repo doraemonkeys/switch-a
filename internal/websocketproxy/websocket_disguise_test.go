@@ -45,7 +45,7 @@ func (r *testDisguiseRepository) CommitTarget(_ context.Context, c clientdisguis
 }
 func testDisguiseProvider(id string) model.Provider {
 	return model.Provider{ID: id, Enabled: true, ClientDisguise: clientdisguise.Policy{Enabled: true},
-		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://upstream.example"}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://upstream.example", Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions(id, APITypeCodex, credentialsession.KindAPIKey, "secret")}
 }
 func newDisguiseTestOrchestrator(t *testing.T, repository *testDisguiseRepository, providers []model.Provider) *WebSocketSessionOrchestrator {
@@ -55,7 +55,7 @@ func newDisguiseTestOrchestrator(t *testing.T, repository *testDisguiseRepositor
 		t.Fatal(err)
 	}
 	operation := testCodexOperation(t)
-	request := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", ClientDisguise: session.Operation()}
+	request := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", ClientDisguise: session.Operation(), Transport: "websocket"}
 	return newWebSocketSessionOrchestrator(&Gateway{logger: zap.NewNop()}, webSocketSessionOrchestratorConfig{
 		apiType: APITypeCodex, requestID: "disguise-operation", selectReq: request, codexOperation: operation, disguise: session})
 }

@@ -24,11 +24,11 @@ func TestApplyProviderImport_AllowsIndependentSessionsForSameAccount(t *testing.
 		t.Fatalf("ApplyProviderImport() error = %v", err)
 	}
 
-	firstSnapshot, ok := first.CredentialSessionForAPIType("codex")
+	firstSnapshot, ok := first.CredentialSessionForRoute("codex", "http")
 	if !ok {
 		t.Fatal("first provider has no codex session")
 	}
-	secondSnapshot, ok := second.CredentialSessionForAPIType("codex")
+	secondSnapshot, ok := second.CredentialSessionForRoute("codex", "http")
 	if !ok {
 		t.Fatal("second provider has no codex session")
 	}
@@ -61,8 +61,8 @@ func TestApplyProviderImport_UpdatesOnlyExplicitSessionWithCAS(t *testing.T) {
 		t.Fatalf("create import error = %v", err)
 	}
 
-	firstSnapshot, _ := first.CredentialSessionForAPIType("codex")
-	secondSnapshot, _ := second.CredentialSessionForAPIType("codex")
+	firstSnapshot, _ := first.CredentialSessionForRoute("codex", "http")
+	secondSnapshot, _ := second.CredentialSessionForRoute("codex", "http")
 	updatedAuth := firstSnapshot.AuthState.Clone()
 	updatedAuth.Email = "updated@example.com"
 	update := &ProviderImportBundle{CredentialUpdates: []ProviderImportCredentialUpdate{{
@@ -109,7 +109,7 @@ func TestApplyProviderImport_UpdatesOnlyExplicitSessionWithCAS(t *testing.T) {
 
 func providerImportCreateFromFixture(t *testing.T, candidateID string, provider model.Provider) ProviderImportCreate {
 	t.Helper()
-	snapshot, ok := provider.CredentialSessionForAPIType("codex")
+	snapshot, ok := provider.CredentialSessionForRoute("codex", "http")
 	if !ok {
 		t.Fatalf("provider %q has no codex credential session", provider.ID)
 	}

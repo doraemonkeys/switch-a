@@ -82,6 +82,7 @@ function chatGPTCredential(): CredentialSession {
         provider_id: "provider-gpt",
         provider_name: "GPT Production",
         api_type: "codex",
+        transport: "http",
       },
     ]),
     name: "GPT Team Login",
@@ -118,11 +119,13 @@ describe("CredentialSessions", () => {
           provider_id: "provider-a",
           provider_name: "Claude Production",
           api_type: "claude",
+          transport: "http",
         },
         {
           provider_id: "provider-a",
           provider_name: "Claude Production",
           api_type: "codex",
+          transport: "http",
         },
       ]),
       credential("unused", []),
@@ -134,7 +137,9 @@ describe("CredentialSessions", () => {
 
     expect(screen.getByText("Shared Claude key")).toBeInTheDocument();
     expect(screen.getByText("Claude Production · claude")).toBeInTheDocument();
-    expect(screen.getByText("Claude Production · codex")).toBeInTheDocument();
+    expect(
+      screen.getByText("Claude Production · codex / HTTP"),
+    ).toBeInTheDocument();
     const deleteButtons = screen.getAllByRole("button", { name: /delete/i });
     expect(deleteButtons[0]).toBeDisabled();
     expect(deleteButtons[1]).toBeEnabled();
@@ -214,6 +219,7 @@ describe("CredentialSessions", () => {
           provider_id: "provider-a",
           provider_name: "Claude Production",
           api_type: "claude",
+          transport: "http",
         },
       ]),
       chatGPTCredential(),

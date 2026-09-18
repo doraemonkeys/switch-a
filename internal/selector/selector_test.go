@@ -10,7 +10,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
 	"go.uber.org/zap"
 )
 
@@ -99,7 +98,7 @@ func (m *mockStore) credentialSessionProvider(provider model.Provider, apiType s
 	if apiType == "" && len(provider.APITypes) > 0 {
 		apiType = provider.APITypes[0].APIType
 	}
-	if _, ok := provider.CredentialSessionForAPIType(apiType); ok {
+	if _, ok := provider.CredentialSessionForRoute(apiType, "http"); ok {
 		return provider
 	}
 	kind := credentialsession.KindAPIKey
@@ -1264,4 +1263,8 @@ func TestSelector_AllProvidersExcluded(t *testing.T) {
 	if !errors.Is(err, internal.ErrNoProvider) {
 		t.Errorf("expected ErrNoProvider, got %v", err)
 	}
+}
+
+func (m *mockHealthChecker) AvailabilityForRoute(string, string) internal.HealthAvailability {
+	return m
 }

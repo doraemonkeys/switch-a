@@ -299,21 +299,21 @@ func TestProvider_BaseURLForAPIType(t *testing.T) {
 	}
 
 	// Matching API type returns the corresponding BaseURL.
-	if got := p.BaseURLForAPIType("claude"); got != "https://claude.example.com" {
+	if got := p.BaseURLForRoute("claude", "http"); got != "https://claude.example.com" {
 		t.Errorf("BaseURLForAPIType(claude) = %q, want %q", got, "https://claude.example.com")
 	}
-	if got := p.BaseURLForAPIType("codex"); got != "https://codex.example.com" {
+	if got := p.BaseURLForRoute("codex", "http"); got != "https://codex.example.com" {
 		t.Errorf("BaseURLForAPIType(codex) = %q, want %q", got, "https://codex.example.com")
 	}
 
 	// Non-existent API type returns empty string.
-	if got := p.BaseURLForAPIType("gemini"); got != "" {
+	if got := p.BaseURLForRoute("gemini", "http"); got != "" {
 		t.Errorf("BaseURLForAPIType(gemini) = %q, want empty", got)
 	}
 
 	// Empty APITypes returns empty string.
 	empty := Provider{ID: "p2"}
-	if got := empty.BaseURLForAPIType("claude"); got != "" {
+	if got := empty.BaseURLForRoute("claude", "http"); got != "" {
 		t.Errorf("BaseURLForAPIType on empty provider = %q, want empty", got)
 	}
 }
@@ -336,11 +336,11 @@ func TestProvider_CredentialSessionForAPIType(t *testing.T) {
 		}},
 	}
 
-	snapshot, ok := p.CredentialSessionForAPIType("codex")
+	snapshot, ok := p.CredentialSessionForRoute("codex", "http")
 	if !ok || snapshot.SessionID != "session-codex" || snapshot.SecretData != "codex-key" {
 		t.Fatalf("CredentialSessionForAPIType(codex) = %#v, %t", snapshot, ok)
 	}
-	if snapshot, ok := p.CredentialSessionForAPIType("claude"); ok || snapshot != nil {
+	if snapshot, ok := p.CredentialSessionForRoute("claude", "http"); ok || snapshot != nil {
 		t.Fatalf("CredentialSessionForAPIType(claude) = %#v, %t; want missing", snapshot, ok)
 	}
 }

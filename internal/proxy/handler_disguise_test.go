@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
@@ -536,4 +537,9 @@ func TestHTTPDisguiseTargetCommitFailureReturnsDiagnosticWithoutAttempt(t *testi
 	if len(store.attempts) != 0 || store.logs[0].SessionEvidenceJSON == nil || !strings.Contains(*store.logs[0].SessionEvidenceJSON, "commit storage unavailable") {
 		t.Fatalf("failed target evidence=%+v attempts=%+v", store.logs, store.attempts)
 	}
+}
+
+func (h disguiseCircuitHealth) ForRoute(string, string) internal.HealthManager { return h }
+func (h disguiseCircuitHealth) AvailabilityForRoute(string, string) internal.HealthAvailability {
+	return h
 }

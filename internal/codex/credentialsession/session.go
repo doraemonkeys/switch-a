@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 )
 
 const (
@@ -378,8 +380,9 @@ func (s Snapshot) RequireResolvedSubject() error {
 	return nil
 }
 
-// RouteBinding makes the credential used by each route/API pair explicit.
+// RouteBinding gives each API transport its own credential reference.
 type RouteBinding struct {
+	Transport     string    `gorm:"column:transport;primaryKey;type:text;not null;default:http" json:"transport"`
 	RouteTargetID string    `gorm:"column:route_target_id;primaryKey;type:text" json:"route_target_id"`
 	APIType       string    `gorm:"column:api_type;primaryKey;type:text" json:"api_type"`
 	SessionID     string    `gorm:"column:session_id;type:text;not null;index" json:"session_id"`
@@ -390,13 +393,14 @@ type RouteBinding struct {
 func (RouteBinding) TableName() string { return "route_target_credentials" }
 
 func (b RouteBinding) Validate() error {
-	if strings.TrimSpace(b.RouteTargetID) == "" || strings.TrimSpace(b.APIType) == "" || strings.TrimSpace(b.SessionID) == "" {
+	if !providerroute.Valid(b.APIType, b.Transport) || strings.TrimSpace(b.RouteTargetID) == "" || strings.TrimSpace(b.APIType) == "" || strings.TrimSpace(b.SessionID) == "" {
 		return ErrInvalidRouteBinding
 	}
 	return nil
 }
 
 type RouteSnapshot struct {
+	Transport     string `json:"transport"`
 	RouteTargetID string `json:"route_target_id"`
 	APIType       string `json:"api_type"`
 	// VendorScope is optional route metadata. Credential sessions deliberately

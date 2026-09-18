@@ -7,7 +7,6 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap/zaptest"
 )
 
@@ -24,7 +23,7 @@ func TestWebSocketSessionResultRequestAttemptsUsesSelectionTimeContinuitySeedAge
 			SeedID:           "seed-1",
 			OriginProviderID: "provider-origin",
 			ObservedAt:       observedAt,
-		},
+		}, Transport: "websocket",
 	}, selector.SelectionSourceStickyContinuity, selectedAt)
 
 	result := &WebSocketSessionResult{
@@ -66,7 +65,7 @@ func TestProviderSwitchTracker_ConsumesContinuitySeedAndCarriesFailoverProvenanc
 	}
 	store := &routingTestSeedStore{candidate: seed.Candidate(observedAt.Add(time.Second)), seed: seed}
 	req := &model.SelectRequest{
-		ClientIP: key.IP, APIType: key.APIType, Model: key.Model, StickyMode: model.StickyModeModel,
+		ClientIP: key.IP, APIType: key.APIType, Model: key.Model, StickyMode: model.StickyModeModel, Transport: "websocket",
 	}
 	tracker := newProviderSwitchTracker(req, 3, store)
 	if !tracker.lookupVisibleContinuityCandidate() {
@@ -104,7 +103,7 @@ func TestProviderSwitchTracker_RejectsUnprovenSeedAndCreatesVisibilityContext(t 
 		OriginProviderID: "origin", ObservedAt: observedAt,
 	}
 	store := &routingTestSeedStore{candidate: seed.Candidate(observedAt), seed: seed}
-	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel}
+	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel, Transport: "websocket"}
 	tracker := newProviderSwitchTracker(req, 2, store)
 	tracker.lookupVisibleContinuityCandidate()
 	selected := &model.Provider{ID: "different", Vendor: "anthropic"}
@@ -131,20 +130,20 @@ func TestGatewayMaybeLookupVisibleContinuityCandidate_RespectsModelDemand(t *tes
 	store := newMockStore()
 	gateway := newTestGateway(t, Config{Store: store, VisibleContinuitySeedStore: seedStore, Logger: zaptest.NewLogger(t)})
 
-	known := newProviderSwitchTracker(&model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"}, 2, seedStore)
+	known := newProviderSwitchTracker(&model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", Transport: "websocket"}, 2, seedStore)
 	gateway.maybeLookupVisibleContinuityCandidate(context.Background(), &known)
 	if known.continuityCandidate == nil {
 		t.Fatal("known model did not look up continuity candidate")
 	}
 
-	unknown := newProviderSwitchTracker(&model.SelectRequest{APIType: APITypeCodex, Model: ModelUnknown}, 2, seedStore)
+	unknown := newProviderSwitchTracker(&model.SelectRequest{APIType: APITypeCodex, Model: ModelUnknown, Transport: "websocket"}, 2, seedStore)
 	gateway.maybeLookupVisibleContinuityCandidate(context.Background(), &unknown)
 	if unknown.continuityCandidate == nil {
 		t.Fatal("model-independent selection did not look up continuity candidate")
 	}
 
 	store.routingPolicyErr = context.Canceled
-	failed := newProviderSwitchTracker(&model.SelectRequest{APIType: APITypeCodex, Model: ModelUnknown}, 2, seedStore)
+	failed := newProviderSwitchTracker(&model.SelectRequest{APIType: APITypeCodex, Model: ModelUnknown, Transport: "websocket"}, 2, seedStore)
 	gateway.maybeLookupVisibleContinuityCandidate(context.Background(), &failed)
 	if failed.continuityCandidate != nil {
 		t.Fatal("continuity candidate attached after policy lookup failure")

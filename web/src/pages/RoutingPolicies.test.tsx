@@ -68,6 +68,7 @@ function buildProvider(overrides: Partial<Provider> = {}): Provider {
     api_types: [
       {
         api_type: "codex",
+        transport: "http",
         base_url: "https://provider.example.com",
         credential_session_id: "credential-1",
       },

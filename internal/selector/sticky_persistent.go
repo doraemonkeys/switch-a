@@ -117,6 +117,7 @@ func (c *PersistentStickyCache) MergeRestoredEntries(entries []model.StickyEntry
 	c.pendingMu.Lock()
 	defer c.pendingMu.Unlock()
 	for _, entry := range entries {
+		entry.Key = entry.Key.AffinityKey()
 		if _, deleted := c.pending.deletes[entry.Key]; deleted {
 			continue
 		}
@@ -132,6 +133,7 @@ func (c *PersistentStickyCache) MergeRestoredEntries(entries []model.StickyEntry
 
 // Set updates memory first and queues a coalesced durable upsert.
 func (c *PersistentStickyCache) Set(key model.StickyKey, providerID string, ttl time.Duration) {
+	key = key.AffinityKey()
 	if c == nil || c.MemoryStickyCache == nil {
 		return
 	}
@@ -156,6 +158,7 @@ func (c *PersistentStickyCache) Set(key model.StickyKey, providerID string, ttl 
 
 // Delete removes a binding from memory immediately and queues its durable delete.
 func (c *PersistentStickyCache) Delete(key model.StickyKey) {
+	key = key.AffinityKey()
 	if c == nil || c.MemoryStickyCache == nil {
 		return
 	}
@@ -409,6 +412,7 @@ func stickyKeyOrder(left, right model.StickyKey) bool {
 		{left.IP, right.IP},
 		{left.User, right.User},
 		{left.APIType, right.APIType},
+		{left.Transport, right.Transport},
 		{left.Model, right.Model},
 		{left.ClientScope, right.ClientScope},
 	} {

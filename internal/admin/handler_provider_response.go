@@ -7,6 +7,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 )
 
 // ProviderPayload keeps route configuration and session lifecycle summaries
@@ -38,6 +39,7 @@ type ProviderPayload struct {
 }
 
 type ProviderAPITypePayload struct {
+	Transport           string `json:"transport"`
 	APIType             string `json:"api_type"`
 	BaseURL             string `json:"base_url"`
 	CredentialSessionID string `json:"credential_session_id"`
@@ -61,13 +63,13 @@ type ProviderResponse struct {
 func (h *Handler) providerPayload(provider *model.Provider) ProviderPayload {
 	apiTypes := make([]ProviderAPITypePayload, 0, len(provider.APITypes))
 	for _, apiType := range provider.APITypes {
-		snapshot, _ := provider.CredentialSessionForAPIType(apiType.APIType)
+		snapshot, _ := provider.CredentialSessionForRoute(apiType.APIType, apiType.Transport)
 		sessionID := ""
 		if snapshot != nil {
 			sessionID = snapshot.SessionID
 		}
 		apiTypes = append(apiTypes, ProviderAPITypePayload{
-			APIType: apiType.APIType, BaseURL: apiType.BaseURL, CredentialSessionID: sessionID,
+			APIType: apiType.APIType, Transport: providerroute.Normalize(apiType.Transport), BaseURL: apiType.BaseURL, CredentialSessionID: sessionID,
 		})
 	}
 	sessionsByID := make(map[string]ProviderCredentialSessionPayload)

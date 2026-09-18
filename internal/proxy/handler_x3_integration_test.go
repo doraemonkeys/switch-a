@@ -22,7 +22,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap"
 )
 
@@ -1178,3 +1177,6 @@ func (r *x3Reservation) ReleaseCount() int {
 	defer r.mu.Unlock()
 	return r.released
 }
+
+func (m *x3Health) ForRoute(string, string) internal.HealthManager                  { return m }
+func (m *x3Health) AvailabilityForRoute(string, string) internal.HealthAvailability { return m }

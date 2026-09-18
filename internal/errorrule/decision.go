@@ -27,6 +27,7 @@ const (
 	ReasonProviderDeleted              DecisionReason = "provider_deleted"
 	ReasonProviderDisabled             DecisionReason = "provider_disabled"
 	ReasonAPIRemoved                   DecisionReason = "api_removed"
+	ReasonTransportUnsupported         DecisionReason = "transport_unsupported"
 	ReasonClientPlatformExcluded       DecisionReason = "client_platform_excluded"
 	ReasonRoutingChanged               DecisionReason = "routing_changed"
 	ReasonGroupDisabled                DecisionReason = "group_disabled"
@@ -75,6 +76,7 @@ func isProviderRejection(reason DecisionReason) bool {
 	case ReasonProviderDeleted,
 		ReasonProviderDisabled,
 		ReasonAPIRemoved,
+		ReasonTransportUnsupported,
 		ReasonRoutingChanged,
 		ReasonClientPlatformExcluded,
 		ReasonGroupDisabled,

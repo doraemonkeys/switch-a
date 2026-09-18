@@ -203,7 +203,7 @@ func buildExactProviderRoutingPolicy(
 	if !ok {
 		return nil, invalidRoutingPolicy("Target provider not found: " + *spec.targetProviderID)
 	}
-	if _, ok := provider.APITypeConfig(spec.apiType); !ok {
+	if !provider.SupportsAPIType(spec.apiType) {
 		return nil, invalidRoutingPolicy("Target provider does not support api_type: " + spec.apiType)
 	}
 	return &model.RoutingPolicy{

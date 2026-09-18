@@ -73,10 +73,10 @@ func TestCommitProviderImportAtomicallyCreatesAndUpdatesCredentialSessions(t *te
 		if created.Provider.GroupID == nil || *created.Provider.GroupID != "group-a" || created.Provider.Vendor != "openai" {
 			t.Fatalf("created provider = %#v", created.Provider)
 		}
-		if len(created.Provider.APITypes) != 1 || created.Provider.APITypes[0].APIType != "codex" {
+		if len(created.Provider.APITypes) != 2 || created.Provider.APITypes[0].APIType != "codex" {
 			t.Fatalf("route API mapping = %#v", created.Provider.APITypes)
 		}
-		snapshot, ok := created.Provider.CredentialSessionForAPIType("codex")
+		snapshot, ok := created.Provider.CredentialSessionForRoute("codex", "http")
 		if !ok || snapshot.SessionID != created.Sessions[0].ID {
 			t.Fatalf("created route/session mapping = %#v", created.Provider.CredentialSessions)
 		}
@@ -358,7 +358,7 @@ func TestBuildProviderImportUpdateRequiresExactSessionAndSubject(t *testing.T) {
 	provider := providerImportTestProvider(t, "provider", []string{"codex", "responses"}, "session", "account", 3)
 	staticProvider := providerImportTestProvider(t, "provider", []string{"codex"}, "static-session", "account", 3)
 	staticProvider.CredentialSessions[0].Credential.Kind = credentialsession.KindAPIKey
-	if snapshot, ok := provider.CredentialSessionForAPIType("codex"); !ok || snapshot.SessionID != "session" || snapshot.Kind != credentialsession.KindChatGPT {
+	if snapshot, ok := provider.CredentialSessionForRoute("codex", "http"); !ok || snapshot.SessionID != "session" || snapshot.Kind != credentialsession.KindChatGPT {
 		t.Fatalf("provider fixture session = %#v, found=%v", snapshot, ok)
 	}
 	update, result, err := buildProviderImportUpdate(selection, candidate, *candidate.Disposition, map[string]model.Provider{"provider": provider})

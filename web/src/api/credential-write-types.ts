@@ -1,4 +1,5 @@
 export interface CredentialRouteReference {
+  transport: "http" | "websocket";
   provider_id: string;
   provider_name: string;
   api_type: string;

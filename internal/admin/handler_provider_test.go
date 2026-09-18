@@ -61,7 +61,7 @@ func TestCreateProvider_PersistsOnlySessionReferences(t *testing.T) {
 	if provider == nil {
 		t.Fatal("provider was not persisted")
 	}
-	snapshot, ok := provider.CredentialSessionForAPIType("claude")
+	snapshot, ok := provider.CredentialSessionForRoute("claude", "http")
 	if !ok || snapshot.SessionID != "session-1" {
 		t.Fatalf("credential session = %#v", snapshot)
 	}
@@ -114,7 +114,7 @@ func TestUpdateProvider_ReplacesRouteSessionReference(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 	updated := store.providers["provider-1"]
-	snapshot, ok := updated.CredentialSessionForAPIType("claude")
+	snapshot, ok := updated.CredentialSessionForRoute("claude", "http")
 	if !ok || snapshot.SessionID != "session-new" || updated.APITypes[0].BaseURL != "https://new.example.com" {
 		t.Fatalf("updated provider = %#v", updated)
 	}

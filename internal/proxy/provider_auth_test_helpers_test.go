@@ -61,6 +61,20 @@ func withTestCredential[T testProviderValue](provider T, apiType, secret string,
 			},
 		})
 	}
+	for _, route := range append([]model.ProviderAPIType(nil), target.APITypes...) {
+		if route.APIType == APITypeCodex && route.Transport != "websocket" {
+			if _, exists := target.RouteConfig(APITypeCodex, "websocket"); !exists {
+				route.Transport = "websocket"
+				target.APITypes = append(target.APITypes, route)
+			}
+		}
+	}
+	for _, snapshot := range append([]credentialsession.RouteSnapshot(nil), target.CredentialSessions...) {
+		if snapshot.APIType == APITypeCodex {
+			snapshot.Transport = "websocket"
+			target.CredentialSessions = append(target.CredentialSessions, snapshot)
+		}
+	}
 	if value, ok := any(provider).(model.Provider); ok {
 		value = *target
 		return any(value).(T)

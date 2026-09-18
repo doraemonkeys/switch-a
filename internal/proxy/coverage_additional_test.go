@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
 	"go.uber.org/zap"
 )
 
@@ -244,7 +244,7 @@ func TestHandlerSuspendProviderUntilEvictsContinuityOnlyAfterSuccessfulSuspensio
 			Logger:   zap.NewNop(),
 		})
 
-		handler.suspendProviderUntil(context.Background(), "provider-1", until, "quota")
+		handler.suspendProviderUntil(context.Background(), "provider-1", until, "quota", "codex")
 
 		if got := health.suspendedUntil["provider-1"]; !got.Equal(until) {
 			t.Fatalf("suspendedUntil = %v, want %v", got, until)
@@ -268,7 +268,7 @@ func TestHandlerSuspendProviderUntilEvictsContinuityOnlyAfterSuccessfulSuspensio
 			Logger:   zap.NewNop(),
 		})
 
-		handler.suspendProviderUntil(context.Background(), "provider-1", until, "quota")
+		handler.suspendProviderUntil(context.Background(), "provider-1", until, "quota", "codex")
 
 		if health.calls != 1 {
 			t.Fatalf("SuspendUntil calls = %d, want 1", health.calls)
@@ -286,10 +286,15 @@ func TestHandlerSuspendProviderUntilEvictsContinuityOnlyAfterSuccessfulSuspensio
 			Logger:   zap.NewNop(),
 		})
 
-		handler.suspendProviderUntil(context.Background(), "provider-1", until, "quota")
+		handler.suspendProviderUntil(context.Background(), "provider-1", until, "quota", "codex")
 
 		if evictions := selector.ContinuityEvictions(); len(evictions) != 0 {
 			t.Fatalf("continuity evictions = %#v, want none when health manager is absent", evictions)
 		}
 	})
+}
+
+func (m *failingSuspendHealthManager) ForRoute(string, string) internal.HealthManager { return m }
+func (m *failingSuspendHealthManager) AvailabilityForRoute(string, string) internal.HealthAvailability {
+	return m
 }

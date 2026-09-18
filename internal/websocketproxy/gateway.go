@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/apicontract"
 	"github.com/doraemonkeys/switch-a/internal/clientaccess"
@@ -19,12 +20,11 @@ import (
 	codexrecovery "github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	codexws "github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 	wsdisguise "github.com/doraemonkeys/switch-a/internal/websocketproxy/disguise"
 	wsretry "github.com/doraemonkeys/switch-a/internal/websocketproxy/retry"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
@@ -172,6 +172,9 @@ type Gateway struct {
 }
 
 func NewGateway(cfg Config) *Gateway {
+	if cfg.Health != nil {
+		cfg.Health = cfg.Health.ForRoute("codex", providerroute.WebSocket)
+	}
 	if cfg.Store == nil {
 		panic("websocketproxy: Store is required but was nil")
 	}
@@ -264,6 +267,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	selectReq := &model.SelectRequest{
+		Transport:   providerroute.WebSocket,
 		OperationID: requestID,
 		ClientIP:    info.ClientIP,
 		User:        info.UserID,

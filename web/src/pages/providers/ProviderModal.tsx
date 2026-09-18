@@ -24,7 +24,6 @@ import {
   ADD_PROVIDER_DEFAULTS,
   FAILOVER_SCOPES,
   AUTH_MODES,
-  CHATGPT_CODEX_BASE_URL,
   PROVIDER_CREDENTIAL_TYPES,
 } from "../../config/constants";
 import {
@@ -49,21 +48,6 @@ function credentialSessionName(providerName: string, apiType?: string): string {
 // GPT login is intrinsically a Codex credential flow; catalog membership is
 // still checked at submission time so this requirement cannot become a list.
 const CHATGPT_API_TYPE = "codex";
-
-function createChatGPTAPIType(
-  apiType: string,
-  credentialSessionID = "",
-): ProviderFormData["api_types"] {
-  return [
-    {
-      client_key: generateClientKey(),
-      api_type: apiType,
-      base_url: CHATGPT_CODEX_BASE_URL,
-      credential_session_id: credentialSessionID,
-      api_key: "",
-    },
-  ];
-}
 
 function ModalHeader({
   title,
@@ -130,7 +114,13 @@ function createDefaultFormData(): ProviderFormData {
 
 function deriveFormData(initialData?: Provider): ProviderFormData {
   if (!initialData) return createDefaultFormData();
-  const credentialMode = resolveProviderCredentialKind(initialData) ?? "mixed";
+  const kind = resolveProviderCredentialKind(initialData);
+  const credentialMode =
+    kind === "chatgpt" &&
+    new Set(initialData.api_types.map((route) => route.credential_session_id))
+      .size > 1
+      ? "mixed"
+      : (kind ?? "mixed");
   return {
     id: initialData.id,
     name: initialData.name,
@@ -138,6 +128,7 @@ function deriveFormData(initialData?: Provider): ProviderFormData {
     api_types: initialData.api_types.map((t) => ({
       client_key: generateClientKey(),
       api_type: t.api_type,
+      transport: t.transport,
       base_url: t.base_url,
       credential_session_id:
         credentialMode === PROVIDER_CREDENTIAL_TYPES.CHATGPT
@@ -186,7 +177,6 @@ type APITypeSubmissionPreparation =
 function prepareAPITypeSubmission(
   formData: ProviderFormData,
   apiCatalog: APICatalog | null,
-  chatGPTCredential: ChatGPTCredentialDraft,
 ): APITypeSubmissionPreparation {
   if (!apiCatalog) {
     return {
@@ -207,11 +197,8 @@ function prepareAPITypeSubmission(
     }
     return {
       kind: "ok",
-      apiTypes: createChatGPTAPIType(
-        chatGPTAPIType.api_type,
-        chatGPTCredential.kind === "credential_session"
-          ? chatGPTCredential.credentialSessionID
-          : "",
+      apiTypes: formData.api_types.filter(
+        (entry) => entry.api_type === chatGPTAPIType.api_type,
       ),
       isChatGPTProvider: true,
     };
@@ -256,11 +243,7 @@ function prepareProviderSubmission({
     };
   }
 
-  const apiTypePreparation = prepareAPITypeSubmission(
-    formData,
-    apiCatalog,
-    chatGPTCredential,
-  );
+  const apiTypePreparation = prepareAPITypeSubmission(formData, apiCatalog);
   if (apiTypePreparation.kind === "error") {
     return {
       kind: "form-error",
@@ -268,6 +251,18 @@ function prepareProviderSubmission({
     };
   }
   const { apiTypes: validApiTypes, isChatGPTProvider } = apiTypePreparation;
+  if (validApiTypes.length === 0) {
+    return { kind: "form-error", message: "Enable at least one transport." };
+  }
+  const routeKeys = validApiTypes.map(
+    (entry) => `${entry.api_type}/${entry.transport}`,
+  );
+  if (new Set(routeKeys).size !== routeKeys.length) {
+    return {
+      kind: "form-error",
+      message: "Each API type and transport can only be configured once.",
+    };
+  }
 
   if (!isChatGPTProvider) {
     const missingURL = validApiTypes.find(
@@ -379,6 +374,7 @@ async function materializeProviderCredentials({
     }
     const resolved = apiTypes.map((entry) => ({
       api_type: entry.api_type,
+      transport: entry.transport,
       base_url: entry.base_url,
       credential_session_id: sessionID,
     }));
@@ -401,13 +397,17 @@ async function materializeProviderCredentials({
       ? normalizeProviderApiKey(formData.new_shared_api_key)
       : "";
   let sharedSessionID = "";
+  const sessionsBySecret = new Map<string, string>();
   const newCredentialSessions: NewProviderCredentialSessionInput[] = [];
   const resolved: ProviderInput["api_types"] = [];
   for (const entry of apiTypes) {
     const routeSecret = normalizeProviderApiKey(entry.api_key);
     let sessionID = entry.credential_session_id;
-    if (routeSecret) {
+    if (routeSecret && sessionsBySecret.has(routeSecret)) {
+      sessionID = sessionsBySecret.get(routeSecret)!;
+    } else if (routeSecret) {
       sessionID = generateUUIDv4();
+      sessionsBySecret.set(routeSecret, sessionID);
       newCredentialSessions.push({
         id: sessionID,
         name: credentialSessionName(formData.name, entry.api_type),
@@ -428,6 +428,7 @@ async function materializeProviderCredentials({
     }
     resolved.push({
       api_type: entry.api_type,
+      transport: entry.transport,
       base_url: entry.base_url,
       credential_session_id: sessionID,
     });

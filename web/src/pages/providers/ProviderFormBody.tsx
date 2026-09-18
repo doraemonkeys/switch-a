@@ -1,3 +1,5 @@
+import { CodexTransportsField } from "../../features/provider-transports/CodexTransportsField";
+import { defaultCodexRoutes } from "../../features/provider-transports/routeDrafts";
 import { useState } from "react";
 import type { CredentialSession, ProviderAuthView } from "../../api";
 import { CopyButton } from "../../components";
@@ -458,6 +460,19 @@ function ProviderCredentialFields({
   const isChatGPTProvider =
     formData.credential_mode === PROVIDER_CREDENTIAL_TYPES.CHATGPT;
   const isMixedCredentialProvider = formData.credential_mode === "mixed";
+  // Switching login modes preserves each unsaved route configuration.
+  const [inactiveRoutes, setInactiveRoutes] = useState<
+    ProviderFormData["api_types"]
+  >(() => (isChatGPTProvider ? [] : defaultCodexRoutes()));
+  const changeCredentialMode = (credentialMode: ProviderCredentialMode) => {
+    if (credentialMode === formData.credential_mode) return;
+    setInactiveRoutes(formData.api_types);
+    setFormData((previous) => ({
+      ...previous,
+      credential_mode: credentialMode,
+      api_types: inactiveRoutes,
+    }));
+  };
   const reauthenticatesExistingSession = Boolean(chatGPTCredentialSessionID);
 
   const handleApiTypesChange = (entries: ProviderFormData["api_types"]) => {
@@ -479,16 +494,15 @@ function ProviderCredentialFields({
     <>
       <CredentialTypeField
         value={formData.credential_mode}
-        onChange={(credentialMode) =>
-          setFormData((previous) => ({
-            ...previous,
-            credential_mode: credentialMode,
-          }))
-        }
+        onChange={changeCredentialMode}
         locked={isEditMode && isMixedCredentialProvider}
       />
       {isChatGPTProvider ? (
         <>
+          <CodexTransportsField
+            entries={formData.api_types}
+            onChange={handleApiTypesChange}
+          />
           <ChatGPTCredentialSessionField
             sessions={credentialSessions}
             value={chatGPTCredentialSessionID}

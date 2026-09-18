@@ -96,6 +96,7 @@ export type SemanticDecisionReason =
   | "provider_deleted"
   | "provider_disabled"
   | "api_removed"
+  | "transport_unsupported"
   | "routing_changed"
   | "group_disabled"
   | "auth_unavailable"

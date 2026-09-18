@@ -15,7 +15,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap/zaptest"
 )
 
@@ -94,7 +93,7 @@ func routingTestProvider(id string) model.Provider {
 		ID:                 id,
 		Name:               id,
 		Enabled:            true,
-		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://" + id + ".example"}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: APITypeCodex, BaseURL: "https://" + id + ".example", Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions(id, APITypeCodex, credentialsession.KindAPIKey, id+"-key"),
 	}
 }
@@ -210,7 +209,7 @@ func TestPrepareWebSocketProviderAttemptAppliesCodexHygieneOnlyToCodexOperations
 func routingTestProviderForAPI(id, apiType string) model.Provider {
 	return model.Provider{
 		ID: id, Name: id, Enabled: true, AuthMode: "bearer",
-		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: apiType, BaseURL: "https://" + id + ".example"}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: id, APIType: apiType, BaseURL: "https://" + id + ".example", Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions(id, apiType, credentialsession.KindAPIKey, "provider-key"),
 	}
 }
@@ -230,7 +229,7 @@ func TestGatewaySelectProviderWithTracking_PrefersEligibleActiveContinuity(t *te
 		ActiveSessions: &routingTestActiveSessions{lease: activeSource.Lease, found: true},
 		Logger:         zaptest.NewLogger(t),
 	})
-	req := &model.SelectRequest{ClientIP: "192.0.2.7", APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel}
+	req := &model.SelectRequest{ClientIP: "192.0.2.7", APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel, Transport: "websocket"}
 
 	selected, err := gateway.selectProviderWithTracking(context.Background(), req, 0, nil)
 	if err != nil {
@@ -253,7 +252,7 @@ func TestGatewaySelectProviderWithTracking_PrefersEligibleActiveContinuity(t *te
 func TestGatewaySelectProviderWithTracking_RejectsSharedOrWrongGenerationActiveLease(t *testing.T) {
 	strategyProvider := routingTestProvider("strategy")
 	activeProvider := routingTestProvider("active")
-	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel}
+	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel, Transport: "websocket"}
 
 	tests := []struct {
 		name      string
@@ -315,7 +314,7 @@ func TestGatewaySelectProviderWithTracking_PreservesSelectorContinuityAndRejects
 	initial := routingTestSelection(&provider, selector.SelectionSourceStickyContinuity, 1)
 	selection := &routingTestSelector{initial: initial}
 	gateway := newTestGateway(t, Config{Store: newMockStore(), Selector: selection, Logger: zaptest.NewLogger(t)})
-	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel}
+	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel, Transport: "websocket"}
 
 	selected, err := gateway.selectProviderWithTracking(context.Background(), req, 0, nil)
 	if err != nil || selected.Provider() != &provider || selected.Metadata.Source != selector.SelectionSourceStickyContinuity {
@@ -344,7 +343,7 @@ func TestGatewaySelectProviderWithTracking_FallbackNormalizesMissingProvider(t *
 	provider := routingTestProvider("fallback")
 	store.providers = []model.Provider{provider}
 	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
-	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"}
+	req := &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", Transport: "websocket"}
 
 	selected, err := gateway.selectProviderWithTracking(context.Background(), req, 0, nil)
 	if err != nil || selected.Provider().ID != provider.ID || selected.Metadata.Source != selector.SelectionSourceStrategy || !selected.Lease.Held() {
@@ -381,7 +380,7 @@ func TestSelectRequestForSameProviderRetry_RemovesCrossProviderState(t *testing.
 		ProviderContinuityContext:      &model.ProviderContinuityContext{},
 		VisibleContinuitySeedCandidate: &model.VisibleContinuitySeedCandidate{},
 		FailoverContext:                &model.FailoverContext{},
-		MaxProviderSwitches:            3,
+		MaxProviderSwitches:            3, Transport: "websocket",
 	}
 
 	retry := selectRequestForSameProviderRetry(req)
@@ -402,7 +401,7 @@ func TestGatewayStoresVisibleContinuitySeedFromContext(t *testing.T) {
 	seedStore := &routingTestSeedStore{}
 	gateway := newTestGateway(t, Config{Store: newMockStore(), VisibleContinuitySeedStore: seedStore, Logger: zaptest.NewLogger(t)})
 	observedAt := time.Date(2026, time.August, 3, 4, 5, 6, 0, time.UTC)
-	req := &model.SelectRequest{ClientIP: "192.0.2.9", APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel}
+	req := &model.SelectRequest{ClientIP: "192.0.2.9", APIType: APITypeCodex, Model: "gpt-5", StickyMode: model.StickyModeModel, Transport: "websocket"}
 	continuity := &model.ProviderContinuityContext{VisibleOriginProviderID: "origin", VisibleOriginVendor: "openai"}
 
 	gateway.storeVisibleContinuitySeedFromContext(req, continuity, observedAt, nil)

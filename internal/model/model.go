@@ -8,6 +8,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 )
 
 // Scope defines the failover scope for vendor isolation.
@@ -91,31 +92,31 @@ type Provider struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	// CredentialSessions is an immutable, request-ready projection loaded from the
-	// explicit RouteTarget/APIType -> CredentialSession references.
+	// explicit RouteTarget/APIType/Transport -> CredentialSession references.
 	CredentialSessions []credentialsession.RouteSnapshot `gorm:"-" json:"-"`
 	// Health is populated by admin API handlers, not stored in database.
 	Health *HealthState `gorm:"-" json:"health,omitempty"`
 }
 
-// BaseURLForAPIType returns the base URL for the given API type.
+// BaseURLForRoute never borrows an endpoint from another transport.
 // Empty return allows caller to decide failure behavior, since some code paths
 // handle missing API types differently (e.g., admin validation vs proxy routing).
-func (p *Provider) BaseURLForAPIType(apiType string) string {
-	if at, ok := p.APITypeConfig(apiType); ok {
+func (p *Provider) BaseURLForRoute(apiType, transport string) string {
+	if at, ok := p.RouteConfig(apiType, transport); ok {
 		return at.BaseURL
 	}
 	return ""
 }
 
-// CredentialSessionForAPIType returns the already-preloaded snapshot for one
+// CredentialSessionForRoute returns the already-preloaded snapshot for one
 // routing capability. It never performs storage IO, which keeps selector and
 // identity decisions internally consistent for the lifetime of the candidate.
-func (p *Provider) CredentialSessionForAPIType(apiType string) (*credentialsession.Snapshot, bool) {
+func (p *Provider) CredentialSessionForRoute(apiType, transport string) (*credentialsession.Snapshot, bool) {
 	if p == nil {
 		return nil, false
 	}
 	for index := range p.CredentialSessions {
-		if p.CredentialSessions[index].APIType == apiType {
+		if p.CredentialSessions[index].APIType == apiType && providerroute.Normalize(p.CredentialSessions[index].Transport) == providerroute.Normalize(transport) {
 			return &p.CredentialSessions[index].Credential, true
 		}
 	}
@@ -144,11 +145,23 @@ func (p *Provider) CredentialSessionIDs() []string {
 	return ids
 }
 
-// APITypeConfig returns the configured API-type entry for the given API type.
-func (p *Provider) APITypeConfig(apiType string) (ProviderAPIType, bool) {
-	for _, at := range p.APITypes {
-		if at.APIType == apiType {
-			return at, true
+// SupportsAPIType is independent of transport, for API-level routing policies.
+func (p *Provider) SupportsAPIType(apiType string) bool {
+	for _, route := range p.APITypes {
+		if route.APIType == apiType {
+			return true
+		}
+	}
+	return false
+}
+
+// RouteConfig resolves the exact endpoint before credentials or identity are chosen.
+func (p *Provider) RouteConfig(apiType, transport string) (ProviderAPIType, bool) {
+	if p != nil {
+		for _, route := range p.APITypes {
+			if route.APIType == apiType && providerroute.Normalize(route.Transport) == providerroute.Normalize(transport) {
+				return route, true
+			}
 		}
 	}
 	return ProviderAPIType{}, false
@@ -156,8 +169,9 @@ func (p *Provider) APITypeConfig(apiType string) (ProviderAPIType, bool) {
 
 // ProviderAPIType represents the association between Provider and API types.
 // Credentials are intentionally absent: the explicit route_target_credentials
-// relation owns the API-type-to-session mapping.
+// relation owns the (provider, API type, transport) credential binding.
 type ProviderAPIType struct {
+	Transport  string `gorm:"primaryKey;not null;default:http" json:"transport"`
 	ProviderID string `gorm:"primaryKey" json:"provider_id"`
 	APIType    string `gorm:"primaryKey;index" json:"api_type"`
 	BaseURL    string `gorm:"not null;default:''" json:"base_url"`
@@ -522,10 +536,11 @@ func (f LogFilter) HasWebSocketLifecycleFilter() bool {
 
 // StickyKey represents the cache key for sticky session.
 type StickyKey struct {
-	IP      string
-	User    string
-	APIType string
-	Model   string
+	Transport string
+	IP        string
+	User      string
+	APIType   string
+	Model     string
 	// ClientScope contains only the versioned Codex client-credential digest.
 	ClientScope string
 }
@@ -541,6 +556,7 @@ type StickyEntry struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
+	Transport      string
 	ClientDisguise SelectDisguise
 	RoutingCatalog *RoutingCatalog
 	// OperationID is the server-generated request UUID used only to correlate
@@ -630,4 +646,11 @@ type TimeSeriesPoint struct {
 	Requests      int64                    `json:"total_requests"`
 	AvgLatencyMs  int64                    `json:"avg_latency_ms"`
 	OutcomeCounts map[ServiceOutcome]int64 `json:"outcome_counts"`
+}
+
+// AffinityKey gives HTTP's zero value one canonical representation. Continuity
+// keys intentionally omit transport because a conversation can use both paths.
+func (key StickyKey) AffinityKey() StickyKey {
+	key.Transport = providerroute.Normalize(key.Transport)
+	return key
 }

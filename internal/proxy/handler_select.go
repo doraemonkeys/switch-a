@@ -13,9 +13,9 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
-
 	"go.uber.org/zap"
 )
 
@@ -217,10 +217,13 @@ func newLocalProviderLeaseForAPIType(provider *model.Provider, apiType string) *
 		return lease
 	}
 	for _, route := range provider.CredentialSessions {
+		if route.Transport != "" && route.Transport != "http" {
+			continue
+		}
 		if apiType != "" && route.APIType != apiType {
 			continue
 		}
-		baseURL := provider.BaseURLForAPIType(route.APIType)
+		baseURL := provider.BaseURLForRoute(route.APIType, providerroute.HTTP)
 		finalURL, err := upstreamtarget.ParseBaseURL(baseURL)
 		if err != nil {
 			continue

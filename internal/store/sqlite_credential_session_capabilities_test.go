@@ -149,7 +149,7 @@ func TestSQLiteCredentialSessionCapabilitiesAllowExplicitReauthRecovery(t *testi
 		!reflect.DeepEqual(inventory.PendingChatGPTReauthSessionIDs, []string{recovery.ID}) {
 		t.Fatalf("recovery inventory = (%+v, %v)", inventory, err)
 	}
-	if _, err := store.ResolveCredentialSession(ctx, "recovery-route", "codex"); err != nil {
+	if _, err := store.ResolveCredentialSession(ctx, "recovery-route", "codex", "http"); err != nil {
 		t.Fatalf("durable recovery binding should remain inspectable: %v", err)
 	}
 }

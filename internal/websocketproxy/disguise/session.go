@@ -10,6 +10,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/wire"
 	"github.com/doraemonkeys/switch-a/internal/codex/disguiseruntime"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
@@ -30,7 +31,7 @@ type Session struct {
 }
 
 func New(ctx context.Context, repository Repository, providers []model.Provider, headers http.Header, operationID string, pool *upstreamtransport.Pool) (*Session, error) {
-	operation, err := disguiseruntime.New(ctx, repository, providers, headers, operationID)
+	operation, err := disguiseruntime.New(ctx, repository, providers, headers, operationID, "websocket")
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +54,7 @@ func (s *Session) Select(provider *model.Provider) error {
 	if provider == nil {
 		return fmt.Errorf("WebSocket disguise provider is required")
 	}
-	credential, exists := provider.CredentialSessionForAPIType("codex")
+	credential, exists := provider.CredentialSessionForRoute("codex", providerroute.WebSocket)
 	if !exists {
 		return fmt.Errorf("WebSocket provider %s has no Codex credential", provider.ID)
 	}

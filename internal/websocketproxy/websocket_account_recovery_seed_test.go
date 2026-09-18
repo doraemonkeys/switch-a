@@ -26,7 +26,7 @@ func newRecoverySeedTestOrchestrator(t *testing.T, gateway *Gateway, policy mode
 		apiType: APITypeCodex, requestID: t.Name(), codexOperation: operation, maxAttempts: 3,
 		selectReq: &model.SelectRequest{
 			APIType: APITypeCodex, Model: modelName, StickyMode: model.StickyModeModel,
-			ClientIP: "192.0.2.1", ClientScope: operation.ClientScope(),
+			ClientIP: "192.0.2.1", ClientScope: operation.ClientScope(), Transport: "websocket",
 		},
 	})
 }

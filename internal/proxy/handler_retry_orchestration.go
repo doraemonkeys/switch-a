@@ -8,10 +8,10 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap"
 )
 
@@ -72,7 +72,7 @@ func (h *Handler) resolveLegacyFailure(
 
 	switched, resolved, continueExecution := h.activateAlternate(
 		ctx, pctx, state, pending, result,
-		h.legacySwitchReason(ctx, state, result, retryRejectionReason),
+		h.legacySwitchReason(ctx, pctx, state, result, retryRejectionReason),
 		responseanalysis.TransitionExecutorDecision,
 		requestcapture.TerminationReasonStatusFailoverDrain,
 	)
@@ -92,7 +92,7 @@ func (h *Handler) canAttemptLegacyRetry(
 		shouldForceProviderSwitch(result.statusCode) || result.failureDisposition.forcesProviderSwitch() {
 		return false
 	}
-	if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
+	if h.health != nil && !h.health.ForRoute(pctx.apiType, providerroute.HTTP).IsAvailable(ctx, state.currentProvider.ID) {
 		return false
 	}
 	remaining, unlimited := state.ledger.GlobalRemaining(globalAttemptLimit(pctx.cfg.globalMaxAttempts))
@@ -110,7 +110,7 @@ func (h *Handler) attemptLegacyRetry(
 	if err := h.backoff.Wait(ctx, delay); err != nil {
 		return legacyRetryResolution{disposition: legacyRetryTerminal, result: h.cancelLegacyRetry(ctx, pending, result, err)}
 	}
-	if h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID) {
+	if h.health != nil && !h.health.ForRoute(pctx.apiType, providerroute.HTTP).IsAvailable(ctx, state.currentProvider.ID) {
 		return legacyRetryResolution{result: result}
 	}
 	permit, err := h.reserveSameProviderDispatch(ctx, pctx.selectReq, state.currentLease)
@@ -238,6 +238,7 @@ func (h *Handler) logLegacyRetryRejection(
 
 func (h *Handler) legacySwitchReason(
 	ctx context.Context,
+	pctx *proxyContext,
 	state *retryState,
 	result forwardResult,
 	retryRejectionReason errorrule.DecisionReason,
@@ -249,7 +250,7 @@ func (h *Handler) legacySwitchReason(
 		return result.failureDisposition.switchReason
 	case shouldForceProviderSwitch(result.statusCode):
 		return formatPermanentErrorReason(result.statusCode)
-	case h.health != nil && !h.health.IsAvailable(ctx, state.currentProvider.ID):
+	case h.health != nil && !h.health.ForRoute(pctx.apiType, providerroute.HTTP).IsAvailable(ctx, state.currentProvider.ID):
 		return SwitchReasonCircuitBreakerTriggered
 	default:
 		return SwitchReasonMaxRetriesExhausted

@@ -1,15 +1,16 @@
 package selector
 
 import (
-	"github.com/doraemonkeys/switch-a/internal/model"
 	"testing"
 	"time"
+
+	"github.com/doraemonkeys/switch-a/internal/model"
 )
 
 func TestRestoreStickyPreservesActiveAndPendingLocalMutations(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewPersistentStickyCache(nil, clock, nil)
-	key := func(ip string) model.StickyKey { return model.StickyKey{IP: ip, APIType: "codex"} }
+	key := func(ip string) model.StickyKey { return model.StickyKey{Transport: "http", IP: ip, APIType: "codex"} }
 	cache.Set(key("live"), "local", time.Minute)
 	cache.pending.deletes[key("deleted")] = struct{}{}
 	cache.pending.providerEvictions["evicted"] = struct{}{}

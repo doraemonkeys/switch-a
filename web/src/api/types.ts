@@ -77,6 +77,7 @@ export interface ErrorResponse {
 // ProviderAPIType represents the association between Provider and API types.
 // Each entry can override both endpoint and credentials for that API contract.
 export interface ProviderAPIType {
+  transport: "http" | "websocket";
   api_type: string;
   base_url: string;
   credential_session_id: string;
@@ -200,12 +201,8 @@ export interface Provider {
   health?: HealthState | null;
 }
 
-/** API type entry with endpoint/auth overrides, matching backend APITypeInput */
-export interface APITypeInput {
-  api_type: string;
-  base_url: string;
-  credential_session_id: string;
-}
+/** Writes use the same complete route binding as provider responses. */
+export type APITypeInput = ProviderAPIType;
 
 export interface ProviderInput {
   client_disguise?: import("./client-disguise/types").ClientDisguisePolicy;

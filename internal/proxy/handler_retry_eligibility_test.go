@@ -11,7 +11,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
 	"go.uber.org/zap"
 )
 
@@ -81,7 +80,7 @@ func TestHandler_ServeHTTP_SameProviderRetryRevalidatesFreshAuthStateBeforeReuse
 		reserveSameProviderDispatch: func(_ context.Context, current providerLease, _ *model.SelectRequest) (sameProviderDispatchPermit, error) {
 			store.mu.Lock()
 			defer store.mu.Unlock()
-			credential, exists := store.providers[0].CredentialSessionForAPIType("claude")
+			credential, exists := store.providers[0].CredentialSessionForRoute("claude", "http")
 			if !exists || credential.AuthState.Status != credentialsession.AuthStatusActive {
 				return nil, internal.ErrNoProvider
 			}

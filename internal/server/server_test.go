@@ -24,7 +24,6 @@ import (
 	codexws "github.com/doraemonkeys/switch-a/internal/codex/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storepkg "github.com/doraemonkeys/switch-a/internal/store"
-
 	"go.uber.org/zap"
 )
 
@@ -566,3 +565,5 @@ func TestAdminRoutingPoliciesRouteReturnsJSON(t *testing.T) {
 		t.Fatalf("body = %q, want %q", body, "[]\n")
 	}
 }
+
+func (s *mockStore) HealthScope(string, string) internal.HealthStateStore { return nil }

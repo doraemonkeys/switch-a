@@ -1,19 +1,19 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	"context"
 	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/store"
-
 	"go.uber.org/zap"
 )
 
@@ -86,6 +86,7 @@ type ExportedBackoff struct {
 
 // ExportedAPIType represents an API type with its base URL in the export format.
 type ExportedAPIType struct {
+	Transport           string `json:"transport"`
 	APIType             string `json:"api_type"`
 	BaseURL             string `json:"base_url"`
 	CredentialSessionID string `json:"credential_session_id"`
@@ -255,11 +256,15 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 	for i, at := range canonical.APITypes {
 		apiTypes[i] = ExportedAPIType{
 			APIType:             at.APIType,
+			Transport:           providerroute.Normalize(at.Transport),
 			BaseURL:             at.BaseURL,
-			CredentialSessionID: credentialSessionIDForAPIType(&canonical, at.APIType),
+			CredentialSessionID: credentialSessionIDForRoute(&canonical, at.APIType, at.Transport),
 		}
 	}
 	sort.Slice(apiTypes, func(i, j int) bool {
+		if apiTypes[i].APIType == apiTypes[j].APIType {
+			return apiTypes[i].Transport < apiTypes[j].Transport
+		}
 		return apiTypes[i].APIType < apiTypes[j].APIType
 	})
 
@@ -294,8 +299,8 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 	}
 }
 
-func credentialSessionIDForAPIType(provider *model.Provider, apiType string) string {
-	snapshot, ok := provider.CredentialSessionForAPIType(apiType)
+func credentialSessionIDForRoute(provider *model.Provider, apiType, transport string) string {
+	snapshot, ok := provider.CredentialSessionForRoute(apiType, transport)
 	if !ok {
 		return ""
 	}

@@ -460,8 +460,8 @@ func TestCredentialSessionReauthenticationRotatesSharedSessionWithoutRebindingRo
 	if err != nil {
 		t.Fatal(err)
 	}
-	codexCredential, hasCodexCredential := mixed.CredentialSessionForAPIType("codex")
-	claudeCredential, hasClaudeCredential := mixed.CredentialSessionForAPIType("claude")
+	codexCredential, hasCodexCredential := mixed.CredentialSessionForRoute("codex", "http")
+	claudeCredential, hasClaudeCredential := mixed.CredentialSessionForRoute("claude", "http")
 	if len(mixed.APITypes) != 2 || !hasCodexCredential || !hasClaudeCredential ||
 		codexCredential.SessionID != current.ID || claudeCredential.SessionID != static.ID {
 		t.Fatalf("mixed provider bindings changed during reauthentication: %#v", mixed)

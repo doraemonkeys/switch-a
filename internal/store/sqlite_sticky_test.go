@@ -11,7 +11,7 @@ import (
 func TestSQLiteStore_StickyEntriesSurviveReloadAndRespectExpiry(t *testing.T) {
 	store := setupTestStore(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	key := model.StickyKey{IP: "10.0.0.1", User: "alice", APIType: "chat", Model: "model-a"}
+	key := model.StickyKey{Transport: "http", IP: "10.0.0.1", User: "alice", APIType: "chat", Model: "model-a"}
 	entry := model.StickyEntry{Key: key, ProviderID: "provider-a", ExpiresAt: now.Add(time.Minute)}
 	ctx := context.Background()
 
@@ -51,8 +51,8 @@ func TestSQLiteStore_StickyEntriesSurviveReloadAndRespectExpiry(t *testing.T) {
 func TestSQLiteStore_StickyEntriesDeleteByProvider(t *testing.T) {
 	store := setupTestStore(t)
 	now := time.Now().UTC().Add(time.Minute)
-	keyA := model.StickyKey{IP: "10.0.0.1", APIType: "chat"}
-	keyB := model.StickyKey{IP: "10.0.0.2", APIType: "chat"}
+	keyA := model.StickyKey{Transport: "http", IP: "10.0.0.1", APIType: "chat"}
+	keyB := model.StickyKey{Transport: "http", IP: "10.0.0.2", APIType: "chat"}
 	ctx := context.Background()
 	for _, entry := range []model.StickyEntry{
 		{Key: keyA, ProviderID: "provider-a", ExpiresAt: now},
@@ -81,7 +81,7 @@ func TestSQLiteStore_StickyEntriesBestEffortMethodsReportClosedDatabase(t *testi
 		t.Fatalf("close store: %v", err)
 	}
 	ctx := context.Background()
-	key := model.StickyKey{IP: "10.0.0.1", APIType: "chat"}
+	key := model.StickyKey{Transport: "http", IP: "10.0.0.1", APIType: "chat"}
 	entry := model.StickyEntry{Key: key, ProviderID: "provider-a", ExpiresAt: time.Now().Add(time.Minute)}
 	if _, err := store.LoadStickyEntries(ctx, time.Now()); err == nil {
 		t.Fatal("load should report a closed database")

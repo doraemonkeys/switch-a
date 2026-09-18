@@ -15,9 +15,9 @@ import (
 	codexrecovery "github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responsefacts"
-
 	"go.uber.org/zap"
 )
 
@@ -151,11 +151,11 @@ func (h *Handler) writeUncommittedFailure(pctx *proxyContext, lastErr error) int
 }
 
 // suspendProviderUntil marks a provider unavailable until the given time.
-func (h *Handler) suspendProviderUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason string) {
+func (h *Handler) suspendProviderUntil(ctx context.Context, providerID string, disabledUntil time.Time, reason, apiType string) {
 	if h.health == nil {
 		return
 	}
-	if err := h.health.SuspendUntil(ctx, providerID, disabledUntil, reason); err != nil {
+	if err := h.health.ForRoute(apiType, providerroute.HTTP).SuspendUntil(ctx, providerID, disabledUntil, reason); err != nil {
 		h.logger.Warn("failed to suspend provider after upstream failure",
 			zap.String("provider_id", providerID),
 			zap.Time("disabled_until", disabledUntil),

@@ -42,6 +42,8 @@ The namespace is removed before forwarding. Switch-A preserves the upstream API 
 
 ### Codex operation
 
+Each Codex provider can enable HTTP / SSE, WebSocket, or both, with shared or separate credentials and base URLs. Selection skips unsupported transports before contacting upstream; circuit breaking and sticky affinity are isolated per transport. Existing Codex providers and older backups default to both transports with their original credentials.
+
 Codex header hygiene, WebSocket subprotocol negotiation, session continuity, and provider-cookie isolation are always active; there are no runtime switches for these capabilities. Unknown metadata, event types, and fields remain opaque and are forwarded unchanged, as are non-JSON text and binary WebSocket frames. Switch-A rejects only malformed fields it recognizes as protocol controls.
 
 If the keyring is absent and no stored Codex history requires it, Switch-A atomically creates `./codex-keyring.json` at startup. Override the path with `codex_keyring_file` or `SWITCHA_CODEX_KEYRING_FILE` (the environment wins), and persist and protect it alongside the database. If stored history requires a missing keyring, or the configured file is unreadable, corrupt, or incomplete, startup fails without replacing the file; restore the matching keyring or correct the path.

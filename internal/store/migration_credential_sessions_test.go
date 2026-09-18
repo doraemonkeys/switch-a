@@ -14,6 +14,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/keyring"
+	storemigration "github.com/doraemonkeys/switch-a/internal/store/migration"
 	"github.com/doraemonkeys/switch-a/internal/store/migrationtest"
 	"gorm.io/gorm"
 )
@@ -132,11 +133,14 @@ func TestCredentialSessionMigrationPreservesOptionalRouteVendorScope(t *testing.
 	if err := finalizePendingStaticSubjects(db, migrationSubjectSigner{version: "fixture-h1"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := storemigration.MigrateProviderTransports(db); err != nil {
+		t.Fatal(err)
+	}
 	repository, err := credentialsession.NewRepository(db, clock, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := repository.Resolve(context.Background(), migrationtest.StaticProviderID, "codex")
+	route, err := repository.Resolve(context.Background(), migrationtest.StaticProviderID, "codex", "http")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,11 +253,14 @@ func TestCredentialSessionRepositoryPreservesSharedReferencesOnRouteDeletion(t *
 	if err := finalizePendingStaticSubjects(db, migrationSubjectSigner{version: "fixture-h1"}); err != nil {
 		t.Fatalf("finalize static subjects: %v", err)
 	}
+	if err := storemigration.MigrateProviderTransports(db); err != nil {
+		t.Fatal(err)
+	}
 	repository, err := credentialsession.NewRepository(db, clock, nil)
 	if err != nil {
 		t.Fatalf("NewRepository() error = %v", err)
 	}
-	snapshotA, err := repository.Resolve(context.Background(), migrationtest.SameSecretStaticProviderAID, "codex")
+	snapshotA, err := repository.Resolve(context.Background(), migrationtest.SameSecretStaticProviderAID, "codex", "http")
 	if err != nil {
 		t.Fatalf("resolve shared source: %v", err)
 	}
@@ -270,7 +277,7 @@ func TestCredentialSessionRepositoryPreservesSharedReferencesOnRouteDeletion(t *
 	if err := repository.DeleteIfUnreferenced(context.Background(), snapshotA.Credential.SessionID); !errors.Is(err, credentialsession.ErrSessionReferenced) {
 		t.Fatalf("DeleteIfUnreferenced(shared) error = %v", err)
 	}
-	resolvedB, err := repository.Resolve(context.Background(), migrationtest.SameSecretStaticProviderBID, "codex")
+	resolvedB, err := repository.Resolve(context.Background(), migrationtest.SameSecretStaticProviderBID, "codex", "http")
 	if err != nil || resolvedB.Credential.SessionID != snapshotA.Credential.SessionID {
 		t.Fatalf("remaining target lost shared session: snapshot=%+v err=%v", resolvedB, err)
 	}

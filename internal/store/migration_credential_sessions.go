@@ -459,7 +459,7 @@ func insertMigrationBinding(tx *gorm.DB, routeTargetID, apiType, sessionID strin
 	if err := binding.Validate(); err != nil {
 		return err
 	}
-	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&binding).Error; err != nil {
+	if err := tx.Omit("Transport").Clauses(clause.OnConflict{DoNothing: true}).Create(&binding).Error; err != nil {
 		return fmt.Errorf("backfill route credential binding %q/%q: %w", routeTargetID, apiType, err)
 	}
 	return nil

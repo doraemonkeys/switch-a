@@ -11,9 +11,9 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/store"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
-
 	"go.uber.org/zap"
 )
 
@@ -106,6 +106,7 @@ type CreateProviderRequest struct {
 
 // APITypeInput represents an API type entry with endpoint details.
 type APITypeInput struct {
+	Transport           string `json:"transport"`
 	APIType             string `json:"api_type"`
 	BaseURL             string `json:"base_url"`
 	CredentialSessionID string `json:"credential_session_id"`
@@ -119,15 +120,18 @@ func validateAPITypeInputs(apiTypes []APITypeInput) string {
 	if len(apiTypes) == 0 {
 		return "At least one api_type is required"
 	}
-	seen := make(map[string]struct{}, len(apiTypes))
+	seen := make(map[providerroute.Key]struct{}, len(apiTypes))
 	for _, at := range apiTypes {
+		if !providerroute.Valid(at.APIType, providerroute.Normalize(at.Transport)) {
+			return "Invalid transport for api_type: " + at.APIType
+		}
 		if !IsValidAPIType(at.APIType) {
 			return "Invalid api_type: " + at.APIType
 		}
-		if _, exists := seen[at.APIType]; exists {
+		if _, exists := seen[providerroute.NewKey(at.APIType, at.Transport)]; exists {
 			return "Duplicate api_type: " + at.APIType
 		}
-		seen[at.APIType] = struct{}{}
+		seen[providerroute.NewKey(at.APIType, at.Transport)] = struct{}{}
 		if at.BaseURL == "" {
 			return "base_url is required for api_type: " + at.APIType
 		}
@@ -145,15 +149,18 @@ func validateProviderAPITypeConfiguration(provider *model.Provider) string {
 	if len(provider.APITypes) == 0 {
 		return "At least one api_type is required"
 	}
-	seen := make(map[string]struct{}, len(provider.APITypes))
+	seen := make(map[providerroute.Key]struct{}, len(provider.APITypes))
 	for _, at := range provider.APITypes {
+		if !providerroute.Valid(at.APIType, at.Transport) {
+			return "Invalid transport for api_type: " + at.APIType
+		}
 		if !IsValidAPIType(at.APIType) {
 			return "Invalid api_type: " + at.APIType
 		}
-		if _, exists := seen[at.APIType]; exists {
+		if _, exists := seen[providerroute.NewKey(at.APIType, at.Transport)]; exists {
 			return "Duplicate api_type: " + at.APIType
 		}
-		seen[at.APIType] = struct{}{}
+		seen[providerroute.NewKey(at.APIType, at.Transport)] = struct{}{}
 		if at.BaseURL == "" {
 			return "base_url is required for api_type: " + at.APIType
 		}
@@ -223,6 +230,7 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 		apiTypes[i] = model.ProviderAPIType{
 			ProviderID: req.ID,
 			APIType:    at.APIType,
+			Transport:  providerroute.Normalize(at.Transport),
 			BaseURL:    at.BaseURL,
 		}
 	}
@@ -250,6 +258,7 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 		provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
 			RouteTargetID: req.ID,
 			APIType:       req.APITypes[index].APIType,
+			Transport:     providerroute.Normalize(req.APITypes[index].Transport),
 			VendorScope:   req.Vendor,
 			Credential: credentialsession.Snapshot{
 				SessionID: req.APITypes[index].CredentialSessionID,
@@ -478,6 +487,7 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 			apiTypes[i] = model.ProviderAPIType{
 				ProviderID: provider.ID,
 				APIType:    at.APIType,
+				Transport:  providerroute.Normalize(at.Transport),
 				BaseURL:    at.BaseURL,
 			}
 		}
@@ -487,6 +497,7 @@ func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
 			provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
 				RouteTargetID: provider.ID,
 				APIType:       req.APITypes[index].APIType,
+				Transport:     providerroute.Normalize(req.APITypes[index].Transport),
 				Credential: credentialsession.Snapshot{
 					SessionID: req.APITypes[index].CredentialSessionID,
 				},

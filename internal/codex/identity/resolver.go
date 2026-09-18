@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 )
 
 // AuthorityResolver consumes only the immutable credential-session projection;
@@ -25,6 +26,7 @@ func NewAuthorityResolver() AuthorityResolver { return AuthorityResolver{} }
 // advance later, but dispatch must continue to prove the same session subject
 // and authority.
 type CandidateSnapshot struct {
+	transport           string
 	routeTargetID       string
 	credentialSessionID string
 	credentialVersion   int64
@@ -73,6 +75,7 @@ func (AuthorityResolver) Resolve(
 		return CandidateSnapshot{}, err
 	}
 	return CandidateSnapshot{
+		transport:           route.Transport,
 		routeTargetID:       routeTargetID,
 		credentialSessionID: strings.TrimSpace(credential.SessionID),
 		credentialVersion:   credential.Version,
@@ -80,6 +83,8 @@ func (AuthorityResolver) Resolve(
 		protocolScope:       scope,
 	}, nil
 }
+
+func (s CandidateSnapshot) Transport() string { return providerroute.Normalize(s.transport) }
 
 func (s CandidateSnapshot) RouteTargetID() string       { return s.routeTargetID }
 func (s CandidateSnapshot) CredentialSessionID() string { return s.credentialSessionID }
@@ -99,7 +104,7 @@ func (s CandidateSnapshot) APIType() string              { return s.protocolScop
 // SameDispatchIdentity permits credential refresh within one account, while
 // rejecting a route that was rebound to another credential session or subject.
 func (s CandidateSnapshot) SameDispatchIdentity(other CandidateSnapshot) bool {
-	return s.RouteTargetID() == other.RouteTargetID() &&
+	return s.Transport() == other.Transport() && s.RouteTargetID() == other.RouteTargetID() &&
 		s.CredentialSessionID() == other.CredentialSessionID() &&
 		s.APIType() == other.APIType() && s.Authority().Equal(other.Authority())
 }
@@ -110,8 +115,9 @@ func (s CandidateSnapshot) ValidateApplied(actual AppliedIdentity) error {
 
 func (s CandidateSnapshot) String() string {
 	return fmt.Sprintf(
-		"candidate-snapshot(route_target=%s,credential_session=%s,credential_version=%d,scope=%s)",
+		"candidate-snapshot(route_target=%s,transport=%s,credential_session=%s,credential_version=%d,scope=%s)",
 		safeLabel(s.routeTargetID),
+		s.Transport(),
 		safeLabel(s.credentialSessionID),
 		s.credentialVersion,
 		s.protocolScope,
@@ -122,11 +128,13 @@ func (s CandidateSnapshot) GoString() string { return s.String() }
 
 func (s CandidateSnapshot) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
+		Transport           string        `json:"transport"`
 		RouteTargetID       string        `json:"route_target_id"`
 		CredentialSessionID string        `json:"credential_session_id"`
 		CredentialVersion   int64         `json:"credential_version"`
 		ProtocolScope       ProtocolScope `json:"protocol_scope"`
 	}{
+		Transport:           s.Transport(),
 		RouteTargetID:       safeLabel(s.routeTargetID),
 		CredentialSessionID: safeLabel(s.credentialSessionID),
 		CredentialVersion:   s.credentialVersion,

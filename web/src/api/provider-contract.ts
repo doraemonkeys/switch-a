@@ -178,6 +178,7 @@ export function parseCredentialSession(value: unknown): CredentialSession {
         `credential_session.route_references[${index}]`,
       );
       return {
+        transport: parseTransport(item.transport),
         provider_id: stringValue(
           item.provider_id,
           `credential_session.route_references[${index}].provider_id`,
@@ -233,6 +234,7 @@ export function parseProvider(value: unknown): Provider {
   const sessionIDs = new Set(sessions.map((session) => session.id));
   const apiTypes = source.api_types.map((entry, index) => {
     const route = record(entry, `provider.api_types[${index}]`);
+    const transport = parseTransport(route.transport);
     const credentialSessionID = stringValue(
       route.credential_session_id,
       `provider.api_types[${index}].credential_session_id`,
@@ -243,6 +245,7 @@ export function parseProvider(value: unknown): Provider {
       );
     }
     return {
+      transport,
       api_type: stringValue(
         route.api_type,
         `provider.api_types[${index}].api_type`,
@@ -306,4 +309,11 @@ export function parseProviders(value: unknown): Provider[] {
     fail("providers response must be an array");
   }
   return value.map(parseProvider);
+}
+
+function parseTransport(value: unknown): "http" | "websocket" {
+  if (value !== "http" && value !== "websocket") {
+    fail("Invalid provider transport");
+  }
+  return value;
 }

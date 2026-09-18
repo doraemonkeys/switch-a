@@ -12,6 +12,7 @@ import (
 
 // Store defines the data storage interface.
 type Store interface {
+	HealthScope(string, string) HealthStateStore
 	// Provider operations
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	ListProvidersByAPIType(ctx context.Context, apiType string) ([]model.Provider, error)
@@ -22,7 +23,7 @@ type Store interface {
 	CreateCredentialSession(ctx context.Context, session *credentialsession.Session) (*credentialsession.Session, error)
 	GetCredentialSession(ctx context.Context, sessionID string) (*credentialsession.Session, error)
 	ListCredentialSessions(ctx context.Context) ([]credentialsession.Session, error)
-	ResolveCredentialSession(ctx context.Context, routeTargetID, apiType string) (credentialsession.RouteSnapshot, error)
+	ResolveCredentialSession(ctx context.Context, routeTargetID, apiType, transport string) (credentialsession.RouteSnapshot, error)
 	BindCredentialSession(ctx context.Context, binding credentialsession.RouteBinding) error
 	CredentialSessionRouteTargetIDs(ctx context.Context, sessionID string) ([]string, error)
 	DeleteCredentialSession(ctx context.Context, sessionID string) error
@@ -83,8 +84,28 @@ type Store interface {
 	Close() error
 }
 
+// HealthStateStore is the persistence contract consumed by route health managers.
+type HealthStateStore interface {
+	GetHealthState(context.Context, string) (*model.HealthState, error)
+	UpdateHealthState(context.Context, *model.HealthState) error
+	IncrementSuccessCount(context.Context, string, time.Time) (*model.HealthState, error)
+	IncrementFailCount(context.Context, string, time.Time, string) (*model.HealthState, error)
+	AutoDisableUntil(context.Context, string, time.Time, string) error
+	AtomicRecoverIfExpired(context.Context, string, time.Time) (bool, error)
+	GetConfig(context.Context, string) (string, error)
+	ResetRouteAvailability(context.Context, string) error
+	HealthScope(string, string) HealthStateStore
+}
+
 // HealthManager defines the health management interface.
+type HealthAvailability interface {
+	IsAvailable(context.Context, string) bool
+	RecoverIfExpired(context.Context, string) bool
+}
+
 type HealthManager interface {
+	ForRoute(string, string) HealthManager
+	AvailabilityForRoute(string, string) HealthAvailability
 	// MarkSuccess marks a successful request for the provider.
 	MarkSuccess(ctx context.Context, providerID string)
 	// MarkFailure marks a failed request, returns true if circuit breaker triggered.

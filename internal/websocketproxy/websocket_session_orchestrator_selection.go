@@ -9,16 +9,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
@@ -176,11 +176,12 @@ func (h *Gateway) newFallbackProviderLease(provider *model.Provider, apiType str
 		generation: h.fallbackLeaseGeneration.Add(1),
 	}
 	if provider != nil {
-		credential, ok := provider.CredentialSessionForAPIType(apiType)
-		finalURL, parseErr := upstreamtarget.ParseBaseURL(provider.BaseURLForAPIType(apiType))
+		credential, ok := provider.CredentialSessionForRoute(apiType, providerroute.WebSocket)
+		finalURL, parseErr := upstreamtarget.ParseBaseURL(provider.BaseURLForRoute(apiType, providerroute.WebSocket))
 		if ok && credential != nil && parseErr == nil {
 			lease.candidate, parseErr = codexidentity.NewAuthorityResolver().Resolve(
 				credentialsession.RouteSnapshot{
+					Transport:     providerroute.WebSocket,
 					RouteTargetID: provider.ID,
 					APIType:       apiType,
 					VendorScope:   provider.Vendor,

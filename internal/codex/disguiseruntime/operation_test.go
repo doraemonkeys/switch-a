@@ -40,7 +40,7 @@ func desktopHeaders() http.Header {
 func TestLogicalBoundaryAndCrossModeSharedLogin(t *testing.T) {
 	repository, providers := setup(t)
 	ctx := context.Background()
-	operation, err := New(ctx, repository, providers, desktopHeaders(), "op")
+	operation, err := New(ctx, repository, providers, desktopHeaders(), "op", "http")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestLogicalBoundaryAndCrossModeSharedLogin(t *testing.T) {
 	if err != nil || disabled.Policy.Enabled {
 		t.Fatal(disabled, err)
 	}
-	current, err := New(ctx, repository, providers, desktopHeaders(), "new")
+	current, err := New(ctx, repository, providers, desktopHeaders(), "new", "http")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestLogicalBoundaryAndCrossModeSharedLogin(t *testing.T) {
 		t.Fatal(fresh, err)
 	}
 	providers[0].ClientDisguise.Enabled = true
-	resumed, err := New(ctx, repository, providers, desktopHeaders(), "resumed")
+	resumed, err := New(ctx, repository, providers, desktopHeaders(), "resumed", "http")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +92,8 @@ func TestLogicalBoundaryAndCrossModeSharedLogin(t *testing.T) {
 func TestSnapshotAndConcurrentWinnerExclusion(t *testing.T) {
 	repository, providers := setup(t)
 	ctx := context.Background()
-	windows, _ := New(ctx, repository, providers, desktopHeaders(), "windows")
-	linux, _ := New(ctx, repository, providers, http.Header{"User-Agent": {"Codex Desktop/1.0.0 (Linux; x86_64)"}}, "linux")
+	windows, _ := New(ctx, repository, providers, desktopHeaders(), "windows", "http")
+	linux, _ := New(ctx, repository, providers, http.Header{"User-Agent": {"Codex Desktop/1.0.0 (Linux; x86_64)"}}, "linux", "http")
 	if _, err := windows.Commit(ctx, &providers[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestSnapshotAndConcurrentWinnerExclusion(t *testing.T) {
 	if linux.Exclusions()[0].Decision.Facts.Evidence[0].Value == "mutated" {
 		t.Fatal("evidence mutated")
 	}
-	frozen, _ := New(ctx, repository, providers, desktopHeaders(), "frozen")
+	frozen, _ := New(ctx, repository, providers, desktopHeaders(), "frozen", "http")
 	binding, _ := repository.SelectProfile(ctx, "login", "builtin-desktop-linux-amd64")
 	if binding.Tuple.Platform != "linux" {
 		t.Fatal(binding)
@@ -130,7 +130,7 @@ func TestSnapshotAndConcurrentWinnerExclusion(t *testing.T) {
 	if string(retained.Login.AccountBasis.Value) != "account" {
 		t.Fatal("target leaked mutability")
 	}
-	newer, _ := New(ctx, repository, providers, desktopHeaders(), "newer")
+	newer, _ := New(ctx, repository, providers, desktopHeaders(), "newer", "http")
 	candidate, err = newer.Evaluate(ctx, &providers[0])
 	if err != nil || candidate.Decision.Allowed {
 		t.Fatal(candidate, err)
@@ -149,13 +149,13 @@ func TestOperationDependencyAndLookupErrors(t *testing.T) {
 	repo, providers := setup(t)
 	ctx := context.Background()
 	boom := errors.New("unavailable")
-	if _, err := New(ctx, nil, providers, desktopHeaders(), "op"); err == nil {
+	if _, err := New(ctx, nil, providers, desktopHeaders(), "op", "http"); err == nil {
 		t.Fatal("nil repository")
 	}
-	if _, err := New(ctx, failingRepository{boom}, providers, desktopHeaders(), "op"); !errors.Is(err, boom) {
+	if _, err := New(ctx, failingRepository{boom}, providers, desktopHeaders(), "op", "http"); !errors.Is(err, boom) {
 		t.Fatal(err)
 	}
-	op, _ := New(ctx, repo, providers, desktopHeaders(), "op")
+	op, _ := New(ctx, repo, providers, desktopHeaders(), "op", "http")
 	if _, err := op.Evaluate(ctx, nil); err == nil {
 		t.Fatal("nil provider")
 	}

@@ -52,7 +52,7 @@ func authorityTestProvider(id, origin, subjectID string, priority int) model.Pro
 
 func authorityForProvider(t *testing.T, provider model.Provider) codexidentity.UpstreamAuthority {
 	t.Helper()
-	target, err := url.Parse(provider.BaseURLForAPIType(authorityTestAPIType))
+	target, err := url.Parse(provider.BaseURLForRoute(authorityTestAPIType, "http"))
 	if err != nil {
 		t.Fatalf("parse candidate URL: %v", err)
 	}

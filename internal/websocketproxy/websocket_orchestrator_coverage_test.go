@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
@@ -17,8 +18,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -109,7 +108,7 @@ func TestWebSocketSelectionBootstrapKeepsModelDiscoveryBeforeLeaseSelection(t *t
 			selectReq: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeOff,
+				StickyMode: model.StickyModeOff, Transport: "websocket",
 			},
 		})
 
@@ -144,7 +143,7 @@ func TestWebSocketSelectionBootstrapKeepsModelDiscoveryBeforeLeaseSelection(t *t
 			selectReq: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeModel,
+				StickyMode: model.StickyModeModel, Transport: "websocket",
 			},
 		})
 
@@ -165,7 +164,7 @@ func TestWebSocketSelectionBootstrapKeepsModelDiscoveryBeforeLeaseSelection(t *t
 		selectReq := &model.SelectRequest{
 			APIType:    APITypeCodex,
 			Model:      ModelUnknown,
-			StickyMode: model.StickyModeModel,
+			StickyMode: model.StickyModeModel, Transport: "websocket",
 		}
 		store := newMockStore()
 		store.routingPolicies = []model.RoutingPolicy{{
@@ -252,7 +251,7 @@ func TestWebSocketSelectProviderPreservesFailureSemanticsAfterAttempts(t *testin
 		requestID:      "selection-exhausted",
 		apiType:        APITypeCodex,
 		codexOperation: testCodexOperation(t),
-		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
+		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", Transport: "websocket"},
 	})
 	orchestrator.attempts = []WebSocketAttemptResult{{
 		Provider: &provider,
@@ -279,7 +278,7 @@ func TestWebSocketSelectProviderPreservesFailureSemanticsAfterAttempts(t *testin
 		requestID:      "selection-error",
 		apiType:        APITypeCodex,
 		codexOperation: testCodexOperation(t),
-		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
+		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", Transport: "websocket"},
 	})
 	selection, mode, session = orchestrator.selectProvider(context.Background(), 0)
 	if selection.Lease != nil || mode != providerSwitchModeInitial || session == nil {
@@ -299,7 +298,7 @@ func TestWebSocketSelectProviderPreservesFailureSemanticsAfterAttempts(t *testin
 		requestID:      "selection-constraint-conflict",
 		apiType:        APITypeCodex,
 		codexOperation: testCodexOperation(t),
-		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5"},
+		selectReq:      &model.SelectRequest{APIType: APITypeCodex, Model: "gpt-5", Transport: "websocket"},
 	})
 	selection, mode, session = orchestrator.selectProvider(context.Background(), 0)
 	if selection.Lease != nil || mode != providerSwitchModeInitial || session == nil {
@@ -333,7 +332,7 @@ func TestWebSocketProviderPreparationRetainsKnownCaptureTarget(t *testing.T) {
 
 	missingKey := model.Provider{
 		ID:                 "missing-key",
-		APITypes:           []model.ProviderAPIType{{ProviderID: "missing-key", APIType: APITypeCodex, BaseURL: "https://provider.example"}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: "missing-key", APIType: APITypeCodex, BaseURL: "https://provider.example", Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions("missing-key", APITypeCodex, credentialsession.KindAPIKey, ""),
 	}
 	preparedMissingKey, code, err := orchestrator.prepareProviderAttempt(

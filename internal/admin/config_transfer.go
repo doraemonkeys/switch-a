@@ -229,6 +229,7 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		return nil, false
 	}
 
+	p.APITypes = expandHistoricalProviderRoutes(p.APITypes)
 	apiTypes, ok := buildProviderAPITypesFromExport(p.ID, p.APITypes)
 	if !ok {
 		return nil, false
@@ -262,6 +263,7 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 		provider.CredentialSessions[index] = credentialsession.RouteSnapshot{
 			RouteTargetID: p.ID,
 			APIType:       p.APITypes[index].APIType,
+			Transport:     p.APITypes[index].Transport,
 			VendorScope:   p.Vendor,
 			Credential: credentialsession.Snapshot{
 				SessionID: p.APITypes[index].CredentialSessionID,
@@ -296,6 +298,7 @@ func buildProviderAPITypesFromExport(
 		apiTypes = append(apiTypes, model.ProviderAPIType{
 			ProviderID: providerID,
 			APIType:    at.APIType,
+			Transport:  at.Transport,
 			BaseURL:    at.BaseURL,
 		})
 	}
@@ -598,4 +601,21 @@ func normalizeConfigSettings(settings map[string]string) map[string]string {
 	}
 
 	return normalized
+}
+
+func expandHistoricalProviderRoutes(routes []ExportedAPIType) []ExportedAPIType {
+	result := make([]ExportedAPIType, 0, len(routes))
+	for _, route := range routes {
+		if route.Transport != "" {
+			result = append(result, route)
+			continue
+		}
+		route.Transport = "http"
+		result = append(result, route)
+		if route.APIType == "codex" {
+			route.Transport = "websocket"
+			result = append(result, route)
+		}
+	}
+	return result
 }

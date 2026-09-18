@@ -201,7 +201,7 @@ func newRepositoryTestDB(t *testing.T) (*gorm.DB, *Repository, repositoryTestClo
 	})
 	for _, statement := range []string{
 		`CREATE TABLE providers (id TEXT PRIMARY KEY, vendor TEXT NOT NULL)`,
-		`CREATE TABLE provider_api_types (provider_id TEXT NOT NULL, api_type TEXT NOT NULL, PRIMARY KEY(provider_id, api_type))`,
+		`CREATE TABLE provider_api_types (provider_id TEXT NOT NULL, api_type TEXT NOT NULL, transport TEXT NOT NULL DEFAULT 'http', PRIMARY KEY(provider_id, api_type, transport))`,
 	} {
 		if err := db.Exec(statement).Error; err != nil {
 			t.Fatal(err)
@@ -292,7 +292,7 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 		if err := repo.Bind(ctx, RouteBinding{RouteTargetID: routeTargetID, APIType: "codex", SessionID: created.ID}); err != nil {
 			t.Fatalf("Bind(%s) error = %v", routeTargetID, err)
 		}
-		resolvedRoute, err := repo.Resolve(ctx, routeTargetID, "codex")
+		resolvedRoute, err := repo.Resolve(ctx, routeTargetID, "codex", "http")
 		if err != nil || resolvedRoute.VendorScope != wantVendorScope {
 			t.Fatalf("Resolve(%s) = (%#v, %v), want vendor scope %q", routeTargetID, resolvedRoute, err, wantVendorScope)
 		}
@@ -308,11 +308,11 @@ func TestRepositorySharedSessionLifecycleAndCAS(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	resolved, err := repo.Resolve(ctx, "p1", "codex")
+	resolved, err := repo.Resolve(ctx, "p1", "codex", "http")
 	if err != nil || resolved.Credential.SessionID != created.ID {
 		t.Fatalf("Resolve() = (%#v, %v)", resolved, err)
 	}
-	if _, err := repo.Resolve(ctx, "p1", "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := repo.Resolve(ctx, "p1", "missing", "http"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Resolve(missing) error = %v", err)
 	}
 	snapshots, err := repo.ListRouteSnapshots(ctx, []string{"p2", "p1"})

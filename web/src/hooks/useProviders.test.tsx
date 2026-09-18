@@ -11,6 +11,7 @@ const mockProvider: Provider = {
   api_types: [
     {
       api_type: "claude",
+      transport: "http" as const,
       base_url: "https://api.openai.com",
       credential_session_id: "credential-1",
     },
@@ -157,6 +158,7 @@ describe("useProviders", () => {
       api_types: [
         {
           api_type: "claude",
+          transport: "http" as const,
           base_url: "https://new.example.com",
           credential_session_id: "credential-1",
         },
@@ -184,6 +186,7 @@ describe("useProviders", () => {
       api_types: [
         {
           api_type: "claude",
+          transport: "http" as const,
           base_url: "https://updated.example.com",
           credential_session_id: "credential-1",
         },

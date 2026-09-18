@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
@@ -25,8 +26,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/store"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -876,7 +875,7 @@ func TestGatewayCodexNegotiatesSubprotocolAndLeavesInjectTargetValidationUpstrea
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "provider",
 			APIType:    APITypeCodex,
-			BaseURL:    upstream.URL,
+			BaseURL:    upstream.URL, Transport: "websocket",
 		}},
 		CredentialSessions: testCredentialSessions("provider", APITypeCodex, credentialsession.KindAPIKey, "secret"),
 	}}
@@ -955,7 +954,7 @@ func TestCodexWebSocketFailureAndAttemptAdapters(t *testing.T) {
 	}
 
 	applyCodexWebSocketRouteConstraint(nil, nil)
-	selectRequest := &model.SelectRequest{}
+	selectRequest := &model.SelectRequest{Transport: "websocket"}
 	applyCodexWebSocketRouteConstraint(selectRequest, testCodexOperation(t))
 	if selectRequest.RequiredAuthority != nil || selectRequest.PreferredRouteTargetID != "" {
 		t.Fatalf("unexpected owner-free route constraint: %#v", selectRequest)
@@ -1055,7 +1054,7 @@ func TestCodexWebSocketFailureAndAttemptAdapters(t *testing.T) {
 
 func TestCodexOrchestratorPinsRouteOnlyAtClientVisibility(t *testing.T) {
 	operation := testCodexOperation(t)
-	selectRequest := &model.SelectRequest{APIType: APITypeCodex}
+	selectRequest := &model.SelectRequest{APIType: APITypeCodex, Transport: "websocket"}
 	visibleCallbacks := 0
 	orchestrator := newWebSocketSessionOrchestrator(&Gateway{logger: zaptest.NewLogger(t)}, webSocketSessionOrchestratorConfig{
 		apiType: APITypeCodex, selectReq: selectRequest, codexOperation: operation,

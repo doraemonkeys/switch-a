@@ -12,6 +12,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
 	codexheaders "github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/requestingress/clientconnection"
 	"github.com/doraemonkeys/switch-a/internal/requestingress/h2ingress"
@@ -58,7 +59,7 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	pctx.capture = h.beginGatewayCapture(requestID, startTime)
 	pctx.captureParticipates = pctx.capture.Valid()
 	defer func() { pctx.capture.Finish(gatewayCaptureOutcome(ctx)) }()
-	pctx.selectReq = &model.SelectRequest{OperationID: requestID, ClientIP: pctx.info.ClientIP, User: pctx.info.UserID,
+	pctx.selectReq = &model.SelectRequest{Transport: providerroute.HTTP, OperationID: requestID, ClientIP: pctx.info.ClientIP, User: pctx.info.UserID,
 		APIType: apiType, Model: pctx.info.Model, StickyMode: cfg.stickyMode}
 	var clientIdentity clientidentity.Resolution
 	if apiType == APITypeCodex {

@@ -752,3 +752,6 @@ func (s *controlledScheduler) AfterFunc(_ time.Duration, callback func()) respon
 	s.calls <- scheduledCall{timer: timer, callback: callback}
 	return timer
 }
+
+func (m *recordingHealth) ForRoute(string, string) internal.HealthManager                  { return m }
+func (m *recordingHealth) AvailabilityForRoute(string, string) internal.HealthAvailability { return m }

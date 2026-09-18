@@ -35,7 +35,7 @@ func TestMemoryStickyCache_GetSet(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	key := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
 
 	// Get on empty cache
 	providerID, found := cache.Get(key)
@@ -61,7 +61,7 @@ func TestMemoryStickyCache_Expiration(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	key := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
 	cache.Set(key, "provider1", 5*time.Minute)
 
 	// Should be found before expiration
@@ -84,7 +84,7 @@ func TestMemoryStickyCache_Delete(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	key := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
 	cache.Set(key, "provider1", 5*time.Minute)
 
 	// Verify it's cached
@@ -108,8 +108,8 @@ func TestMemoryStickyCache_Cleanup(t *testing.T) {
 	cache := NewMemoryStickyCache(clock)
 
 	// Add entries with different TTLs
-	key1 := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
-	key2 := model.StickyKey{IP: "192.168.1.2", User: "user2", APIType: "claude"}
+	key1 := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key2 := model.StickyKey{Transport: "http", IP: "192.168.1.2", User: "user2", APIType: "claude"}
 
 	cache.Set(key1, "provider1", 5*time.Minute)
 	cache.Set(key2, "provider2", 10*time.Minute)
@@ -139,9 +139,9 @@ func TestMemoryStickyCache_DifferentKeys(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	key1 := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
-	key2 := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "codex"}
-	key3 := model.StickyKey{IP: "192.168.1.1", User: "user2", APIType: "claude"}
+	key1 := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key2 := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "codex"}
+	key3 := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user2", APIType: "claude"}
 
 	cache.Set(key1, "provider1", 5*time.Minute)
 	cache.Set(key2, "provider2", 5*time.Minute)
@@ -160,9 +160,9 @@ func TestMemoryStickyCache_ModelKeyIsolation(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	apiTypeKey := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
-	modelAKey := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude", Model: "model-a"}
-	modelBKey := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude", Model: "model-b"}
+	apiTypeKey := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	modelAKey := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude", Model: "model-a"}
+	modelBKey := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude", Model: "model-b"}
 
 	cache.Set(apiTypeKey, "provider-api-type", 5*time.Minute)
 	cache.Set(modelAKey, "provider-model-a", 5*time.Minute)
@@ -188,7 +188,7 @@ func TestMemoryStickyCache_StartCleanupLoop(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	key := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
 	cache.Set(key, "provider1", 50*time.Millisecond)
 
 	// Start cleanup loop with short interval
@@ -227,9 +227,9 @@ func TestMemoryStickyCache_EvictProviderRemovesAllContinuityKeys(t *testing.T) {
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	key1 := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
-	key2 := model.StickyKey{IP: "192.168.1.2", User: "user2", APIType: "claude"}
-	key3 := model.StickyKey{IP: "192.168.1.3", User: "user3", APIType: "codex"}
+	key1 := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	key2 := model.StickyKey{Transport: "http", IP: "192.168.1.2", User: "user2", APIType: "claude"}
+	key3 := model.StickyKey{Transport: "http", IP: "192.168.1.3", User: "user3", APIType: "codex"}
 
 	cache.Set(key1, "provider-a", 5*time.Minute)
 	cache.Set(key2, "provider-a", 5*time.Minute)
@@ -255,8 +255,8 @@ func TestMemoryStickyCache_ReverseIndexStaysConsistentAcrossOverwriteDeleteAndCl
 	clock := &mockClock{now: time.Now()}
 	cache := NewMemoryStickyCache(clock)
 
-	key := model.StickyKey{IP: "192.168.1.1", User: "user1", APIType: "claude"}
-	expiringKey := model.StickyKey{IP: "192.168.1.2", User: "user2", APIType: "claude"}
+	key := model.StickyKey{Transport: "http", IP: "192.168.1.1", User: "user1", APIType: "claude"}
+	expiringKey := model.StickyKey{Transport: "http", IP: "192.168.1.2", User: "user2", APIType: "claude"}
 
 	cache.Set(key, "provider-a", 5*time.Minute)
 	if _, ok := cache.providerKeys["provider-a"][key]; !ok {

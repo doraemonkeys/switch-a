@@ -12,6 +12,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/wire"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -137,7 +138,7 @@ func (o *WebSocketSessionOrchestrator) appendDisguiseTargetEvidence(evidence *at
 		return
 	}
 	evidence.ProviderID = provider.ID
-	if credential, ok := provider.CredentialSessionForAPIType(APITypeCodex); ok {
+	if credential, ok := provider.CredentialSessionForRoute(APITypeCodex, providerroute.WebSocket); ok {
 		evidence.CredentialSessionID = credential.SessionID
 	}
 	target, ok := o.disguise.Operation().Target(evidence.ProviderID, evidence.CredentialSessionID)

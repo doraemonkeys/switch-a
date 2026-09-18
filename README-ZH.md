@@ -42,6 +42,8 @@ Switch-A 为应用提供统一、稳定的访问入口。它会按策略选择�
 
 ### Codex 运行方式
 
+每个 Codex provider 可独立启用 HTTP / SSE、WebSocket，或同时启用两者，并共享或分别配置凭据与上游地址。路由会在连接上游前跳过不支持的协议；熔断和粘性分别按协议记录。历史 Codex provider 和旧备份默认支持两种协议，继续使用原有凭据。
+
 Codex Header 整理、WebSocket 子协议协商、会话连续性和上游 Cookie 隔离始终启用，不再有控制这些能力的运行时开关。未知 metadata、事件类型和字段会作为不透明内容原样转发，非 JSON 文本和 WebSocket 二进制帧也一样；Switch-A 只拒绝已识别协议控制字段中的非法值。
 
 若 keyring 不存在，且持久化数据中没有需要原 keyring 的 Codex 历史，Switch-A 会在启动时原子创建 `./codex-keyring.json`。可通过 `codex_keyring_file` 或 `SWITCHA_CODEX_KEYRING_FILE` 覆盖路径（环境变量优先），并应与数据库一起持久化和妥善保管。若历史状态需要原 keyring 而文件缺失，或配置的文件不可读、损坏、内容不完整，启动会失败且不会替换该文件；请恢复匹配的 keyring 或修正路径。

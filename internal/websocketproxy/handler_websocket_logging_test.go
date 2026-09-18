@@ -11,11 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
@@ -785,7 +784,7 @@ func TestPrepareWebSocketDialHeaders_ManagedAuthErrorAndLogHelpers(t *testing.T)
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "ws-chatgpt-invalid",
 			APIType:    APITypeCodex,
-			BaseURL:    "https://provider.example",
+			BaseURL:    "https://provider.example", Transport: "websocket",
 		}},
 		CredentialSessions: testCredentialSessions("ws-chatgpt-invalid", APITypeCodex, credentialsession.KindChatGPT, "invalid"),
 	}

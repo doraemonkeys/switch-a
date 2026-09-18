@@ -6,11 +6,12 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 )
 
 const stickyCodexAPIType = "codex"
 
-// BuildContinuityKey derives the sticky/continuity key from the request
+// BuildContinuityKey derives the conversation key, independent of transport, from the request
 // dimensions already known before provider selection. Unknown models degrade to
 // api_type scope even when sticky mode prefers model affinity.
 func BuildContinuityKey(req *model.SelectRequest) model.StickyKey {
@@ -93,4 +94,11 @@ func reqVisibleContinuitySeedCandidate(req *model.SelectRequest) *model.VisibleC
 		return nil
 	}
 	return req.EffectiveVisibleContinuitySeedCandidate()
+}
+
+func reqTransport(req *model.SelectRequest) string {
+	if req == nil {
+		return providerroute.HTTP
+	}
+	return providerroute.Normalize(req.Transport)
 }

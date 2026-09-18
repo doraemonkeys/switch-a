@@ -63,6 +63,7 @@ function buildProvider(overrides: Partial<Provider> = {}): Provider {
     api_types: [
       {
         api_type: "codex",
+        transport: "http",
         base_url: "https://chatgpt.com/backend-api/codex",
         credential_session_id: credentialSession.id,
       },
@@ -295,6 +296,7 @@ describe("ProviderDetailDrawer", () => {
       api_types: [
         {
           api_type: "codex",
+          transport: "http",
           base_url: "https://example.test/codex",
           credential_session_id: "credential-gpt",
         },
@@ -317,11 +319,13 @@ describe("ProviderDetailDrawer", () => {
       api_types: [
         {
           api_type: "custom:private",
+          transport: "http",
           base_url: "https://example.test/custom",
           credential_session_id: "credential-gpt",
         },
         {
           api_type: "gemini",
+          transport: "http",
           base_url: "https://example.test/gemini",
           credential_session_id: "credential-gpt",
         },

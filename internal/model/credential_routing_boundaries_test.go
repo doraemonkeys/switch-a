@@ -23,7 +23,7 @@ func TestProviderCredentialSessionIDsAreStableUniqueAndNonBlank(t *testing.T) {
 	if got, want := provider.CredentialSessionIDs(), []string{"session-b", "session-a"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("CredentialSessionIDs() = %#v, want stable unique %#v", got, want)
 	}
-	if snapshot, ok := (*Provider)(nil).CredentialSessionForAPIType("codex"); ok || snapshot != nil {
+	if snapshot, ok := (*Provider)(nil).CredentialSessionForRoute("codex", "http"); ok || snapshot != nil {
 		t.Fatalf("nil provider CredentialSessionForAPIType() = (%#v, %t), want missing", snapshot, ok)
 	}
 }

@@ -162,7 +162,7 @@ func TestConfigTransferV5RoundTripIncludesRulesButNotStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, ok := provider.CredentialSessionForAPIType("codex")
+	credential, ok := provider.CredentialSessionForRoute("codex", "http")
 	if !ok || credential.SessionID != exported.CredentialSessions[0].ID || credential.SecretData != exported.CredentialSessions[0].SecretData {
 		t.Fatalf("static provider/session round-trip = %#v", provider)
 	}

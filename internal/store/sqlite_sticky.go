@@ -14,6 +14,7 @@ const stickyCodexAPIType = "codex"
 // key. The composite key prevents one client dimension from overwriting another
 // while keeping lookups index-friendly for SQLite.
 type stickyEntryRecord struct {
+	Transport   string    `gorm:"primaryKey;not null;default:http;column:transport"`
 	IP          string    `gorm:"primaryKey;column:ip"`
 	User        string    `gorm:"primaryKey;column:user"`
 	APIType     string    `gorm:"primaryKey;column:api_type"`
@@ -44,6 +45,7 @@ func (s *SQLiteStore) LoadStickyEntries(ctx context.Context, now time.Time) ([]m
 				IP:          record.IP,
 				User:        record.User,
 				APIType:     record.APIType,
+				Transport:   record.Transport,
 				Model:       record.Model,
 				ClientScope: record.ClientScope,
 			},
@@ -62,6 +64,7 @@ func (s *SQLiteStore) UpsertStickyEntry(ctx context.Context, entry model.StickyE
 		IP:          entry.Key.IP,
 		User:        entry.Key.User,
 		APIType:     entry.Key.APIType,
+		Transport:   entry.Key.AffinityKey().Transport,
 		Model:       entry.Key.Model,
 		ClientScope: entry.Key.ClientScope,
 		ProviderID:  entry.ProviderID,
@@ -73,6 +76,7 @@ func (s *SQLiteStore) UpsertStickyEntry(ctx context.Context, entry model.StickyE
 			{Name: "ip"},
 			{Name: "user"},
 			{Name: "api_type"},
+			{Name: "transport"},
 			{Name: "model"},
 			{Name: "client_scope"},
 		},
@@ -83,7 +87,7 @@ func (s *SQLiteStore) UpsertStickyEntry(ctx context.Context, entry model.StickyE
 // DeleteStickyEntry removes one binding from durable storage.
 func (s *SQLiteStore) DeleteStickyEntry(ctx context.Context, key model.StickyKey) error {
 	return s.db.WithContext(ctx).
-		Where("ip = ? AND user = ? AND api_type = ? AND model = ? AND client_scope = ?", key.IP, key.User, key.APIType, key.Model, key.ClientScope).
+		Where("ip = ? AND user = ? AND api_type = ? AND transport = ? AND model = ? AND client_scope = ?", key.IP, key.User, key.APIType, key.AffinityKey().Transport, key.Model, key.ClientScope).
 		Delete(&stickyEntryRecord{}).Error
 }
 

@@ -190,10 +190,10 @@ func TestGatewayReplacesRejectedHandshakeUnderPreserveConversation(t *testing.T)
 	store := newMockStore()
 	store.providers = []model.Provider{
 		{ID: "primary", AuthMode: "bearer", Enabled: true,
-			APITypes:           []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL}},
+			APITypes:           []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL, Transport: "websocket"}},
 			CredentialSessions: testCredentialSessions("primary", APITypeCodex, credentialsession.KindAPIKey, "primary-key")},
 		{ID: "fallback", AuthMode: "bearer", Enabled: true,
-			APITypes:           []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL}},
+			APITypes:           []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL, Transport: "websocket"}},
 			CredentialSessions: testCredentialSessions("fallback", APITypeCodex, credentialsession.KindAPIKey, "fallback-key")},
 	}
 	gateway := newTestGateway(t, Config{Store: store, Logger: zap.NewNop()})

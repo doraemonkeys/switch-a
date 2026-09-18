@@ -19,6 +19,7 @@ const mockExportedConfig: ExportedConfig = {
       api_types: [
         {
           api_type: "claude",
+          transport: "http",
           base_url: "https://api.example.com",
           credential_session_id: "session-1",
         },

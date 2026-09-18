@@ -11,10 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
@@ -466,7 +465,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      "handshake-model",
-				StickyMode: model.StickyModeModel,
+				StickyMode: model.StickyModeModel, Transport: "websocket",
 			},
 			probeOn: true,
 			want: webSocketSelectionProbeDecision{
@@ -479,7 +478,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeModel,
+				StickyMode: model.StickyModeModel, Transport: "websocket",
 			},
 			probeOn: false,
 			want: webSocketSelectionProbeDecision{
@@ -492,7 +491,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeOff,
+				StickyMode: model.StickyModeOff, Transport: "websocket",
 			},
 			probeOn: true,
 			want: webSocketSelectionProbeDecision{
@@ -505,7 +504,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    "claude",
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeModel,
+				StickyMode: model.StickyModeModel, Transport: "websocket",
 			},
 			configure: func(store *mockStore) {
 				store.routingPolicies = []model.RoutingPolicy{{
@@ -524,7 +523,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    "claude",
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeModel,
+				StickyMode: model.StickyModeModel, Transport: "websocket",
 			},
 			configure: func(store *mockStore) {
 				store.routingPolicies = []model.RoutingPolicy{{
@@ -550,7 +549,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeModel,
+				StickyMode: model.StickyModeModel, Transport: "websocket",
 			},
 			configure: func(store *mockStore) {
 				store.routingPolicyErr = errors.New("routing policy store unavailable")
@@ -567,7 +566,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeOff,
+				StickyMode: model.StickyModeOff, Transport: "websocket",
 			},
 			configure: func(store *mockStore) {
 				store.routingPolicies = []model.RoutingPolicy{
@@ -591,7 +590,7 @@ func TestWebSocketSessionOrchestrator_SelectionProbeDecision(t *testing.T) {
 			req: &model.SelectRequest{
 				APIType:    APITypeCodex,
 				Model:      ModelUnknown,
-				StickyMode: model.StickyModeOff,
+				StickyMode: model.StickyModeOff, Transport: "websocket",
 			},
 			configure: func(store *mockStore) {
 				store.routingPolicyErr = errors.New("routing policy store unavailable")

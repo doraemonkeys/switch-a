@@ -7,11 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
-
-	"github.com/coder/websocket"
 )
 
 type observerTestLiveTraffic struct {
@@ -112,7 +111,7 @@ func TestBuildWebSocketDialHeaders_UsesAPITypeKeyOverride(t *testing.T) {
 		APITypes: []model.ProviderAPIType{{
 			ProviderID: "p1",
 			APIType:    "codex",
-			BaseURL:    "https://example.com",
+			BaseURL:    "https://example.com", Transport: "websocket",
 		}},
 		CredentialSessions: testCredentialSessions("p1", "codex", credentialsession.KindAPIKey, "codex-key"),
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/disguiseruntime"
 	codexhttp "github.com/doraemonkeys/switch-a/internal/codex/http"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	disguiseresponse "github.com/doraemonkeys/switch-a/internal/proxy/disguise"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
@@ -47,7 +48,7 @@ func (h *Handler) beginHTTPDisguise(ctx context.Context, pctx *proxyContext) err
 	if err != nil {
 		return err
 	}
-	op, err := disguiseruntime.New(ctx, h.clientDisguise, providers, pctx.r.Header, pctx.requestID)
+	op, err := disguiseruntime.New(ctx, h.clientDisguise, providers, pctx.r.Header, pctx.requestID, "http")
 	if err != nil {
 		return err
 	}
@@ -61,7 +62,7 @@ func (h *Handler) prepareHTTPDisguise(ctx context.Context, pctx *proxyContext, p
 	if d == nil {
 		return nil
 	}
-	credential, ok := provider.CredentialSessionForAPIType(APITypeCodex)
+	credential, ok := provider.CredentialSessionForRoute(APITypeCodex, providerroute.HTTP)
 	if !ok {
 		return httpDisguiseInvariantFailure(pctx, "target", fmt.Errorf("selected provider has no Codex credential"))
 	}

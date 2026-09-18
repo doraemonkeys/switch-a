@@ -10,7 +10,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"gorm.io/gorm"
 )
 
@@ -279,26 +279,41 @@ func credentialBindingsForProvider(provider *model.Provider) ([]credentialsessio
 	if provider == nil || strings.TrimSpace(provider.ID) == "" {
 		return nil, fmt.Errorf("provider ID is required")
 	}
-	supported := providerAPITypeSet(provider.APITypes)
+	supported := make(map[providerroute.Key]struct{}, len(provider.APITypes))
+	for i := range provider.APITypes {
+		route := &provider.APITypes[i]
+		route.Transport = providerroute.Normalize(route.Transport)
+		if !providerroute.Valid(route.APIType, route.Transport) {
+			return nil, fmt.Errorf("invalid transport %q for API type %q", route.Transport, route.APIType)
+		}
+		key := providerroute.NewKey(route.APIType, route.Transport)
+		if _, exists := supported[key]; exists {
+			return nil, fmt.Errorf("duplicate provider route %v", key)
+		}
+		supported[key] = struct{}{}
+	}
 	bindings := make([]credentialsession.RouteBinding, 0, len(provider.CredentialSessions))
-	seen := make(map[string]struct{}, len(provider.CredentialSessions))
+	seen := make(map[providerroute.Key]struct{}, len(provider.CredentialSessions))
 	for _, route := range provider.CredentialSessions {
 		apiType := strings.TrimSpace(route.APIType)
-		if _, exists := supported[apiType]; !exists {
+		key := providerroute.NewKey(apiType, route.Transport)
+		if _, exists := supported[key]; !exists {
 			return nil, fmt.Errorf("credential session reference targets unsupported API type %q", apiType)
 		}
-		if _, duplicate := seen[apiType]; duplicate {
+		if _, duplicate := seen[key]; duplicate {
 			return nil, fmt.Errorf("duplicate credential session reference for API type %q", apiType)
 		}
-		seen[apiType] = struct{}{}
+		seen[key] = struct{}{}
 		bindings = append(bindings, credentialsession.RouteBinding{
 			RouteTargetID: provider.ID,
 			APIType:       apiType,
+			Transport:     key.Transport,
 			SessionID:     strings.TrimSpace(route.Credential.SessionID),
 		})
 	}
-	for apiType := range supported {
-		if _, exists := seen[apiType]; !exists {
+	for key := range supported {
+		apiType := key.APIType
+		if _, exists := seen[key]; !exists {
 			return nil, fmt.Errorf("provider API type %q requires a credential session reference", apiType)
 		}
 	}

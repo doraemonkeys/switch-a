@@ -8,10 +8,10 @@ import (
 	"sort"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/store"
-
 	"go.uber.org/zap"
 )
 
@@ -832,4 +832,10 @@ func (s *configErrorStore) GetAllConfig(_ context.Context) (map[string]string, e
 	result := make(map[string]string, len(s.configData))
 	maps.Copy(result, s.configData)
 	return result, nil
+}
+
+func (s *mockStore) HealthScope(string, string) internal.HealthStateStore   { return nil }
+func (m *mockHealthManager) ForRoute(string, string) internal.HealthManager { return m }
+func (m *mockHealthManager) AvailabilityForRoute(string, string) internal.HealthAvailability {
+	return m
 }

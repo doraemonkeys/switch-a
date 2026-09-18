@@ -19,6 +19,7 @@ export interface ClientAPIKeyPolicyChange {
 }
 
 export interface ExportedAPIType {
+  transport?: "http" | "websocket";
   api_type: string;
   base_url: string;
   credential_session_id: string;

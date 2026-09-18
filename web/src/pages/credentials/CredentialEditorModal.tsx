@@ -1,3 +1,4 @@
+import { providerRouteLabel } from "../../features/provider-transports/routeLabel";
 import { useState } from "react";
 import { AlertTriangle, Eye, EyeOff, Pencil, RotateCcw, X } from "lucide-react";
 import type { CredentialSession } from "../../api";
@@ -110,10 +111,10 @@ export function CredentialEditorModal({
                       <div className="mt-1.5 flex flex-wrap gap-1">
                         {references.map((ref) => (
                           <span
-                            key={`${ref.provider_id}/${ref.api_type}`}
+                            key={`${ref.provider_id}/${ref.api_type}/${ref.transport}`}
                             className="rounded-md bg-white/80 px-2 py-0.5 text-[11px] font-medium text-amber-950 border border-amber-200"
                           >
-                            {ref.provider_name} · {ref.api_type}
+                            {ref.provider_name} · {providerRouteLabel(ref)}
                           </span>
                         ))}
                       </div>

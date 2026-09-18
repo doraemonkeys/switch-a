@@ -38,7 +38,7 @@ func TestBuildProviderFromExport_AcceptsExplicitSessionReference(t *testing.T) {
 	if !ok {
 		t.Fatal("buildProviderFromExport() rejected current contract")
 	}
-	snapshot, found := provider.CredentialSessionForAPIType("codex")
+	snapshot, found := provider.CredentialSessionForRoute("codex", "http")
 	if !found || snapshot.SessionID != "session-1" {
 		t.Fatalf("credential session = %#v", snapshot)
 	}

@@ -15,14 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/providerauth"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis/tokenusage"
-
-	"github.com/coder/websocket"
 )
 
 const (
@@ -78,13 +78,13 @@ func testCredentialSessions(routeTargetID, apiType string, kind credentialsessio
 			AuthState: credentialsession.AuthState{
 				Status: authStatus,
 			},
-		},
+		}, Transport: "websocket",
 	}}
 }
 
 func testPreparedProviderAttempt(t *testing.T, provider *model.Provider, apiType, upstreamURL string) webSocketPreparedProviderAttempt {
 	t.Helper()
-	credential, ok := provider.CredentialSessionForAPIType(apiType)
+	credential, ok := provider.CredentialSessionForRoute(apiType, "websocket")
 	if !ok || credential == nil {
 		t.Fatalf("provider %q has no %q credential session", provider.ID, apiType)
 	}
@@ -96,7 +96,7 @@ func testPreparedProviderAttempt(t *testing.T, provider *model.Provider, apiType
 		RouteTargetID: provider.ID,
 		APIType:       apiType,
 		VendorScope:   provider.Vendor,
-		Credential:    *credential,
+		Credential:    *credential, Transport: "websocket",
 	}, apiType, finalURL)
 	if err != nil {
 		t.Fatalf("resolve candidate: %v", err)
@@ -610,4 +610,9 @@ func (m *mockDialer) Dial(ctx context.Context, url string, opts *websocket.DialO
 		return m.dialFunc(ctx, url, opts)
 	}
 	return nil, nil, nil
+}
+
+func (m *trackingHealthManager) ForRoute(string, string) internal.HealthManager { return m }
+func (m *trackingHealthManager) AvailabilityForRoute(string, string) internal.HealthAvailability {
+	return m
 }

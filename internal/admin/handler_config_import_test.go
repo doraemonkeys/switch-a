@@ -71,7 +71,7 @@ func TestImportConfig_AppliesProviderAndCredentialSessionAtomically(t *testing.T
 	if provider == nil {
 		t.Fatal("provider was not imported")
 	}
-	snapshot, ok := provider.CredentialSessionForAPIType("claude")
+	snapshot, ok := provider.CredentialSessionForRoute("claude", "http")
 	if !ok || snapshot.SessionID != "session-1" || store.credentialSessions["session-1"] == nil {
 		t.Fatalf("provider/session state = provider %#v sessions %#v", provider, store.credentialSessions)
 	}

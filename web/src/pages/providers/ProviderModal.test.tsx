@@ -100,6 +100,7 @@ function buildPersistedChatGPTProvider(): Provider {
     api_types: [
       {
         api_type: "codex",
+        transport: "http",
         base_url: CHATGPT_CODEX_BASE_URL,
         credential_session_id: credentialSessionID,
       },
@@ -220,6 +221,7 @@ describe("ProviderModal", () => {
       api_types: [
         {
           api_type: "claude",
+          transport: "http",
           base_url: "https://api.example.com",
           credential_session_id: "credential-existing",
         },
@@ -312,6 +314,7 @@ describe("ProviderModal", () => {
         api_types: [
           {
             api_type: "claude",
+            transport: "http",
             base_url: "https://api.example.com",
             credential_session_id: createdSession?.id,
           },
@@ -490,6 +493,13 @@ describe("ProviderModal GPT login", () => {
       api_types: [
         {
           api_type: "codex",
+          transport: "http",
+          base_url: CHATGPT_CODEX_BASE_URL,
+          credential_session_id: "credential-created",
+        },
+        {
+          api_type: "codex",
+          transport: "websocket",
           base_url: CHATGPT_CODEX_BASE_URL,
           credential_session_id: "credential-created",
         },
@@ -576,6 +586,7 @@ describe("ProviderModal GPT login", () => {
       api_types: [
         {
           api_type: "claude",
+          transport: "http",
           base_url: "https://api.example.com",
           credential_session_id: createdSession?.id,
         },
@@ -663,6 +674,13 @@ describe("ProviderModal token import", () => {
       api_types: [
         {
           api_type: "codex",
+          transport: "http",
+          base_url: CHATGPT_CODEX_BASE_URL,
+          credential_session_id: "credential-created",
+        },
+        {
+          api_type: "codex",
+          transport: "websocket",
           base_url: CHATGPT_CODEX_BASE_URL,
           credential_session_id: "credential-created",
         },
@@ -720,11 +738,12 @@ describe("ProviderModal token import", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
     expect(credentialSessions.create).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[1]?.[0]).toMatchObject({
-      api_types: [
+      api_types: ["http", "websocket"].map((transport) =>
         expect.objectContaining({
+          transport,
           credential_session_id: "credential-created",
         }),
-      ],
+      ),
     });
     expect(onClose).toHaveBeenCalledTimes(1);
   });

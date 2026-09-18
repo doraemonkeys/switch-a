@@ -62,16 +62,17 @@ func (e *ProviderSelectionEligibility) resolveCandidate(
 		return candidate
 	}
 	apiType := reqAPIType(e.req)
-	credential, ok := provider.CredentialSessionForAPIType(apiType)
+	credential, ok := provider.CredentialSessionForRoute(apiType, reqTransport(e.req))
 	if ok && credential != nil {
 		candidate.credential = cloneCredentialSessionSnapshot(*credential)
 		route := credentialsession.RouteSnapshot{
 			RouteTargetID: provider.ID,
 			APIType:       apiType,
+			Transport:     reqTransport(e.req),
 			VendorScope:   provider.Vendor,
 			Credential:    candidate.credential,
 		}
-		finalURL, parseErr := upstreamtarget.ParseBaseURL(provider.BaseURLForAPIType(apiType))
+		finalURL, parseErr := upstreamtarget.ParseBaseURL(provider.BaseURLForRoute(apiType, reqTransport(e.req)))
 		if parseErr == nil {
 			candidate.identity, candidate.identityErr = e.resolver.Resolve(route, apiType, finalURL)
 		} else {
@@ -162,8 +163,7 @@ func providerSupportsAPIType(provider *model.Provider, apiType string) bool {
 	if provider == nil || apiType == "" {
 		return false
 	}
-	_, ok := provider.APITypeConfig(apiType)
-	return ok
+	return provider.SupportsAPIType(apiType)
 }
 
 func cloneProviderSelectionSnapshot(provider *model.Provider) *model.Provider {

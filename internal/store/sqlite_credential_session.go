@@ -43,8 +43,8 @@ func (s *SQLiteStore) ListCredentialSessions(ctx context.Context) ([]credentials
 	return s.credentialSessions.List(ctx)
 }
 
-func (s *SQLiteStore) ResolveCredentialSession(ctx context.Context, routeTargetID, apiType string) (credentialsession.RouteSnapshot, error) {
-	return s.credentialSessions.Resolve(ctx, routeTargetID, apiType)
+func (s *SQLiteStore) ResolveCredentialSession(ctx context.Context, routeTargetID, apiType, transport string) (credentialsession.RouteSnapshot, error) {
+	return s.credentialSessions.Resolve(ctx, routeTargetID, apiType, transport)
 }
 
 func (s *SQLiteStore) BindCredentialSession(ctx context.Context, binding credentialsession.RouteBinding) error {

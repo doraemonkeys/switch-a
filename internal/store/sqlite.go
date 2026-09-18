@@ -19,7 +19,6 @@ import (
 	errorrulesqlite "github.com/doraemonkeys/switch-a/internal/errorrule/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	storemigration "github.com/doraemonkeys/switch-a/internal/store/migration"
-
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -116,6 +115,9 @@ func NewSQLiteStore(
 	if err := migrateCredentialSessions(db, clock); err != nil {
 		return nil, fmt.Errorf("migrate credential sessions: %w", err)
 	}
+	if err := storemigration.MigrateProviderRouteStorage(db); err != nil {
+		return nil, err
+	}
 	if err := clientdisguise.Migrate(context.Background(), db); err != nil {
 		return nil, fmt.Errorf("migrate client disguise: %w", err)
 	}
@@ -136,10 +138,6 @@ func NewSQLiteStore(
 	}
 	if err := providercookiesqlite.Migrate(context.Background(), db); err != nil {
 		return nil, fmt.Errorf("migrate Codex provider-Cookie storage: %w", err)
-	}
-
-	if err := storemigration.MigrateStickyClientScope(db); err != nil {
-		return nil, fmt.Errorf("migrate sticky client scope: %w", err)
 	}
 
 	if err := db.AutoMigrate(

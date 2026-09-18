@@ -36,6 +36,7 @@ function providerPayload(overrides: Record<string, unknown> = {}) {
     api_types: [
       {
         api_type: "claude",
+        transport: "http" as const,
         base_url: "https://test.example.com",
         credential_session_id: credentialSession.id,
       },
@@ -67,7 +68,12 @@ function credentialSessionPayload(overrides: Record<string, unknown> = {}) {
     secret_data: "sk-current",
     referenced_route_target_ids: ["1"],
     route_references: [
-      { provider_id: "1", provider_name: "OpenAI", api_type: "claude" },
+      {
+        provider_id: "1",
+        provider_name: "OpenAI",
+        api_type: "claude",
+        transport: "http",
+      },
     ],
     created_at: "2026-08-28T00:00:00Z",
     updated_at: "2026-08-28T00:00:00Z",
@@ -156,6 +162,7 @@ describe("createApiClient providers API", () => {
       api_types: [
         {
           api_type: "claude",
+          transport: "http" as const,
           base_url: "https://test.example.com",
           credential_session_id: "session-1",
         },
@@ -187,6 +194,7 @@ describe("createApiClient providers API", () => {
       api_types: [
         {
           api_type: "claude",
+          transport: "http" as const,
           base_url: "https://test.example.com",
           credential_session_id: "session-1",
         },

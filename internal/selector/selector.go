@@ -9,7 +9,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
 	"go.uber.org/zap"
 )
 
@@ -35,6 +34,7 @@ type Store interface {
 
 // HealthChecker defines the interface to check provider availability.
 type HealthChecker interface {
+	AvailabilityForRoute(string, string) internal.HealthAvailability
 	// RecoverIfExpired triggers auto-recovery if the provider's disable period has expired.
 	// Returns true if recovery was performed.
 	RecoverIfExpired(ctx context.Context, providerID string) bool
@@ -359,7 +359,9 @@ func isStickyEnabled(mode model.StickyMode) bool {
 }
 
 func buildStickyKey(req *model.SelectRequest) model.StickyKey {
-	return BuildContinuityKey(req)
+	key := BuildContinuityKey(req)
+	key.Transport = reqTransport(req)
+	return key
 }
 
 // selectPreferredRoute applies the route hint only after a verified Authority
@@ -591,6 +593,9 @@ func (s *Selector) selectionScope(ctx context.Context, req *model.SelectRequest)
 	}
 	for _, providerID := range scope.order {
 		candidate := scope.candidates[providerID]
+		if _, supported := candidate.provider.RouteConfig(reqAPIType(req), reqTransport(req)); !supported {
+			s.logger.Debug("provider route excluded", zap.String("operation_id", reqOperationID(req)), zap.String("provider_id", providerID), zap.String("api_type", reqAPIType(req)), zap.String("transport", reqTransport(req)), zap.String("reason", "transport_unsupported"))
+		}
 		if candidate.identityErr == nil {
 			continue
 		}

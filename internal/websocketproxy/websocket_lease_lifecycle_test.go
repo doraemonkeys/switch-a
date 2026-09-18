@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/model"
-
 	"go.uber.org/zap/zaptest"
 )
 
@@ -146,7 +145,7 @@ func TestWebSocketOrchestratorTransfersOrRetainsLeaseOwnershipExplicitly(t *test
 			orchestrator := &WebSocketSessionOrchestrator{
 				handler:           handler,
 				requestID:         "request-a",
-				selectReq:         &model.SelectRequest{APIType: APITypeCodex},
+				selectReq:         &model.SelectRequest{APIType: APITypeCodex, Transport: "websocket"},
 				currentProvider:   &provider,
 				currentLease:      selection.Lease,
 				excludedProviders: make(map[string]bool),
@@ -225,7 +224,7 @@ func TestFallbackProviderLeaseHasCopySafeOpaqueIdentity(t *testing.T) {
 
 func TestTryActiveProviderFallbackRejectsMissingOrReleasedSource(t *testing.T) {
 	provider := routingTestProvider("active")
-	request := &model.SelectRequest{APIType: APITypeCodex, StickyMode: model.StickyModeModel}
+	request := &model.SelectRequest{APIType: APITypeCodex, StickyMode: model.StickyModeModel, Transport: "websocket"}
 	selection := routingTestSelection(&provider, "", 4)
 	selectorSource := &routingTestSelector{active: routingTestSelection(&provider, "", 4)}
 

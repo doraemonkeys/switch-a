@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -81,7 +80,7 @@ func TestGateway_RelaysSessionAndPersistsLifecycle(t *testing.T) {
 	store.providers = []model.Provider{{
 		ID: providerID, Name: "Gateway Integration Provider",
 		AuthMode: "bearer", Enabled: true,
-		APITypes:           []model.ProviderAPIType{{ProviderID: providerID, APIType: APITypeCodex, BaseURL: upstream.URL}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: providerID, APIType: APITypeCodex, BaseURL: upstream.URL, Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions(providerID, APITypeCodex, credentialsession.KindAPIKey, "provider-secret"),
 	}}
 	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
@@ -201,8 +200,8 @@ func TestGateway_ReplacesProviderAfterChatGPTAccountModelCapabilityMismatch(t *t
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "primary", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL}}, CredentialSessions: testCredentialSessions("primary", APITypeCodex, credentialsession.KindAPIKey, "primary-key")},
-		{ID: "fallback", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL}}, CredentialSessions: testCredentialSessions("fallback", APITypeCodex, credentialsession.KindAPIKey, "fallback-key")},
+		{ID: "primary", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL, Transport: "websocket"}}, CredentialSessions: testCredentialSessions("primary", APITypeCodex, credentialsession.KindAPIKey, "primary-key")},
+		{ID: "fallback", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "fallback", APIType: APITypeCodex, BaseURL: fallback.URL, Transport: "websocket"}}, CredentialSessions: testCredentialSessions("fallback", APITypeCodex, credentialsession.KindAPIKey, "fallback-key")},
 	}
 	health := newTrackingHealthManager()
 	gateway := newTestGateway(t, Config{Store: store, Health: health, Logger: zaptest.NewLogger(t)})
@@ -280,8 +279,8 @@ func TestGateway_ReplacesProviderConfigurationFailureBeforeUpgrade(t *testing.T)
 
 	store := newMockStore()
 	store.providers = []model.Provider{
-		{ID: "misconfigured", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "misconfigured", APIType: APITypeCodex}}, CredentialSessions: testCredentialSessions("misconfigured", APITypeCodex, credentialsession.KindAPIKey, "key")},
-		{ID: "ready", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "ready", APIType: APITypeCodex, BaseURL: ready.URL}}, CredentialSessions: testCredentialSessions("ready", APITypeCodex, credentialsession.KindAPIKey, "key")},
+		{ID: "misconfigured", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "misconfigured", APIType: APITypeCodex, Transport: "websocket"}}, CredentialSessions: testCredentialSessions("misconfigured", APITypeCodex, credentialsession.KindAPIKey, "key")},
+		{ID: "ready", AuthMode: "bearer", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "ready", APIType: APITypeCodex, BaseURL: ready.URL, Transport: "websocket"}}, CredentialSessions: testCredentialSessions("ready", APITypeCodex, credentialsession.KindAPIKey, "key")},
 	}
 	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
 	server := newGatewayIntegrationServer(gateway, RequestConfig{GlobalAuthMode: "bearer", GlobalMaxAttempts: 2}, "configuration-replacement")
@@ -374,7 +373,7 @@ func TestGateway_RetriesSameManagedProviderAfterUnauthorizedHandshake(t *testing
 	store.providers = []model.Provider{{
 		ID:                 "managed",
 		Enabled:            true,
-		APITypes:           []model.ProviderAPIType{{ProviderID: "managed", APIType: APITypeCodex, BaseURL: upstream.URL}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: "managed", APIType: APITypeCodex, BaseURL: upstream.URL, Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions("managed", APITypeCodex, credentialsession.KindChatGPT, `{"access_token":"initial-token"}`),
 	}}
 	auth := &rotatingGatewayAuthenticator{}

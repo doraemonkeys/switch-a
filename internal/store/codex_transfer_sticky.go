@@ -35,7 +35,7 @@ func importCodexSticky(ctx context.Context, s *SQLiteStore, state *CodexState) e
 			return fmt.Errorf("sticky entry references missing provider %s", entry.ProviderID)
 		}
 		var current stickyEntryRecord
-		query := s.db.Where("ip = ? AND user = ? AND api_type = ? AND model = ? AND client_scope = ?", entry.Key.IP, entry.Key.User, entry.Key.APIType, entry.Key.Model, entry.Key.ClientScope)
+		query := s.db.Where("ip = ? AND user = ? AND api_type = ? AND transport = ? AND model = ? AND client_scope = ?", entry.Key.IP, entry.Key.User, entry.Key.APIType, entry.Key.AffinityKey().Transport, entry.Key.Model, entry.Key.ClientScope)
 		if err := query.Find(&current).Error; err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func snapshotCommittedSticky(ctx context.Context, s *SQLiteStore, bundle *Config
 	}
 	selected := map[model.StickyKey]bool{}
 	for _, entry := range bundle.CodexState.Sticky {
-		selected[entry.Key] = true
+		selected[entry.Key.AffinityKey()] = true
 	}
 	for _, entry := range entries {
 		if selected[entry.Key] {

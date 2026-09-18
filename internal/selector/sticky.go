@@ -39,6 +39,7 @@ func NewMemoryStickyCache(clock internal.Clock) *MemoryStickyCache {
 
 // Get retrieves a cached provider ID for the given key.
 func (c *MemoryStickyCache) Get(key model.StickyKey) (providerID string, found bool) {
+	key = key.AffinityKey()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -76,6 +77,7 @@ func (c *MemoryStickyCache) restoreEntry(entry model.StickyEntry) {
 }
 
 func (c *MemoryStickyCache) setLocked(key model.StickyKey, providerID string, expiresAt time.Time) {
+	key = key.AffinityKey()
 	if previous, ok := c.entries[key]; ok {
 		c.removeProviderKeyLocked(previous.providerID, key)
 	}
@@ -88,6 +90,7 @@ func (c *MemoryStickyCache) setLocked(key model.StickyKey, providerID string, ex
 
 // Delete removes a cached entry.
 func (c *MemoryStickyCache) Delete(key model.StickyKey) {
+	key = key.AffinityKey()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

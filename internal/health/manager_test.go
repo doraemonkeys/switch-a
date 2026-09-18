@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
 	"go.uber.org/zap"
 )
 
@@ -723,3 +723,7 @@ func TestManager_ManualEnable_GetStateError(t *testing.T) {
 		t.Error("ManualEnable should return error on store error")
 	}
 }
+
+func (s *mockStore) HealthScope(string, string) internal.HealthStateStore { return s }
+
+func (s *mockStore) ResetRouteAvailability(context.Context, string) error { return nil }

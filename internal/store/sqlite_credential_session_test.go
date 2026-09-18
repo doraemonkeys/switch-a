@@ -79,7 +79,7 @@ func TestSQLiteCredentialSessionSharedReferencesAndProviderDeletion(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	resolved, err := store.ResolveCredentialSession(ctx, "p1", "responses")
+	resolved, err := store.ResolveCredentialSession(ctx, "p1", "responses", "http")
 	if err != nil || resolved.Credential.SessionID != "shared" || resolved.Credential.SecretData != "secret" {
 		t.Fatalf("ResolveCredentialSession() = (%#v, %v)", resolved, err)
 	}
@@ -89,7 +89,7 @@ func TestSQLiteCredentialSessionSharedReferencesAndProviderDeletion(t *testing.T
 	if err := store.DeleteProvider(ctx, "p1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ResolveCredentialSession(ctx, "p2", "codex"); err != nil {
+	if _, err := store.ResolveCredentialSession(ctx, "p2", "codex", "http"); err != nil {
 		t.Fatalf("shared session was removed with first provider: %v", err)
 	}
 	if err := store.DeleteProvider(ctx, "p2"); err != nil {
@@ -143,7 +143,7 @@ func TestSQLiteProviderCredentialMaterializationIsAtomicAndInspectable(t *testin
 	if err := store.UpdateProviderWithCredentialSessions(ctx, updatedProvider, []*credentialsession.Session{replacement}); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := store.ResolveCredentialSession(ctx, provider.ID, "codex")
+	resolved, err := store.ResolveCredentialSession(ctx, provider.ID, "codex", "http")
 	if err != nil || resolved.Credential.SessionID != replacement.ID || resolved.Credential.SecretData != replacement.SecretData {
 		t.Fatalf("updated route credential = (%+v, %v)", resolved, err)
 	}
@@ -222,7 +222,7 @@ func TestSQLiteCredentialSessionAllowsSameAccountAcrossIndependentSessions(t *te
 	if err := store.CreateProvider(ctx, providerWithSessionRefs("cross-vendor", "anthropic", map[string]string{"codex": "login-a"})); err != nil {
 		t.Fatalf("CreateProvider(cross vendor) error = %v", err)
 	}
-	resolved, err := store.ResolveCredentialSession(ctx, "cross-vendor", "codex")
+	resolved, err := store.ResolveCredentialSession(ctx, "cross-vendor", "codex", "http")
 	if err != nil || resolved.VendorScope != "anthropic" {
 		t.Fatalf("ResolveCredentialSession(cross vendor) = (%#v, %v)", resolved, err)
 	}

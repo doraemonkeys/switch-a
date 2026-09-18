@@ -10,7 +10,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap"
 )
 
@@ -30,7 +29,7 @@ type x3AdapterStore struct {
 func (s *x3AdapterStore) ListProvidersByAPIType(_ context.Context, apiType string) ([]model.Provider, error) {
 	providers := make([]model.Provider, 0, len(s.providers))
 	for i := range s.providers {
-		if _, ok := s.providers[i].APITypeConfig(apiType); !ok {
+		if !s.providers[i].SupportsAPIType(apiType) {
 			continue
 		}
 		provider := s.providers[i]

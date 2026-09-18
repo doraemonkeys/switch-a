@@ -11,6 +11,9 @@ const stickyCodexAPIType = "codex"
 // MigrateStickyClientScope rebuilds the primary key explicitly because adding a
 // GORM primaryKey field does not replace SQLite's existing composite key.
 func MigrateStickyClientScope(db *gorm.DB) error {
+	if db.Migrator().HasColumn("sticky_entries", "transport") {
+		return nil
+	}
 	var columns []struct {
 		Name string
 		PK   int

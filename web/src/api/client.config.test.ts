@@ -103,6 +103,7 @@ describe("createApiClient config API read and update operations", () => {
           api_types: [
             {
               api_type: "claude",
+              transport: "http" as const,
               base_url: "https://api.openai.com",
               credential_session_id: "session-1",
             },
@@ -180,6 +181,7 @@ describe("createApiClient config API import operations", () => {
           api_types: [
             {
               api_type: "claude",
+              transport: "http" as const,
               base_url: "https://api.openai.com",
               credential_session_id: "session-1",
             },
@@ -263,6 +265,7 @@ describe("createApiClient config API import operations", () => {
           api_types: [
             {
               api_type: "claude",
+              transport: "http" as const,
               base_url: "https://api.openai.com",
               credential_session_id: "session-1",
             },

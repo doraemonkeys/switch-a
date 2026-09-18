@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"go.uber.org/zap"
 )
 
 // trackingHealthManager tracks calls to MarkFailure and MarkSuccess for testing.
@@ -472,4 +472,9 @@ func (n *notifyingResponseWriter) Write(p []byte) (int, error) {
 // Flush delegates to the inner recorder so forwardSSE detects Flusher support.
 func (n *notifyingResponseWriter) Flush() {
 	n.ResponseRecorder.Flush()
+}
+
+func (m *trackingHealthManager) ForRoute(string, string) internal.HealthManager { return m }
+func (m *trackingHealthManager) AvailabilityForRoute(string, string) internal.HealthAvailability {
+	return m
 }

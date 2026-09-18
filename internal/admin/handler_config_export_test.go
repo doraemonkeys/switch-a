@@ -12,7 +12,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
 	"go.uber.org/zap"
 )
 
@@ -173,7 +172,7 @@ func TestBuildExportedProvider_BackoffAndSessionReferenceRoundTrip(t *testing.T)
 	if !ok {
 		t.Fatal("buildProviderFromExport() rejected current export")
 	}
-	snapshot, ok := imported.CredentialSessionForAPIType("claude")
+	snapshot, ok := imported.CredentialSessionForRoute("claude", "http")
 	if !ok || snapshot.SessionID != "p1-session" {
 		t.Fatalf("imported session = %#v", snapshot)
 	}

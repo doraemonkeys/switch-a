@@ -15,10 +15,10 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/codex/upstreamheaders"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturebridge"
 	"github.com/doraemonkeys/switch-a/internal/selector"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
-
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -99,7 +99,7 @@ func (h *Gateway) validateWebSocketProviderReady(
 			err:          errors.New("provider is required"),
 		}
 	}
-	baseURL := provider.BaseURLForAPIType(apiType)
+	baseURL := provider.BaseURLForRoute(apiType, providerroute.WebSocket)
 	if baseURL == "" {
 		return "", credentialsession.Snapshot{}, &webSocketProviderConfigError{
 			missingField: "base_url",
@@ -182,15 +182,16 @@ func injectedCredentialForCapture(credential credentialsession.Snapshot, headers
 }
 
 func (h *Gateway) prepareWebSocketDialHeaders(ctx context.Context, r *http.Request, provider *model.Provider, apiType, globalAuthMode string) (http.Header, error) {
-	credential, ok := provider.CredentialSessionForAPIType(apiType)
+	credential, ok := provider.CredentialSessionForRoute(apiType, providerroute.WebSocket)
 	if !ok || credential == nil {
 		return nil, fmt.Errorf("provider %q has no credential session for api_type %q", provider.ID, apiType)
 	}
-	finalURL, err := upstreamtarget.ParseBaseURL(provider.BaseURLForAPIType(apiType))
+	finalURL, err := upstreamtarget.ParseBaseURL(provider.BaseURLForRoute(apiType, providerroute.WebSocket))
 	if err != nil {
 		return nil, err
 	}
 	candidate, err := codexidentity.NewAuthorityResolver().Resolve(credentialsession.RouteSnapshot{
+		Transport:     providerroute.WebSocket,
 		RouteTargetID: provider.ID,
 		APIType:       apiType,
 		VendorScope:   provider.Vendor,

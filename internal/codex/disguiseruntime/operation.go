@@ -22,6 +22,7 @@ type Repository interface {
 type Operation struct {
 	repository  Repository
 	operationID string
+	transport   string
 	facts       clientdisguise.PlatformFacts
 	mu          sync.Mutex
 	candidates  map[string]clientdisguise.Candidate
@@ -29,14 +30,14 @@ type Operation struct {
 	exclusions  map[string]model.DisguiseExclusion
 }
 
-func New(ctx context.Context, repository Repository, providers []model.Provider, headers http.Header, operationID string) (*Operation, error) {
+func New(ctx context.Context, repository Repository, providers []model.Provider, headers http.Header, operationID, transport string) (*Operation, error) {
 	if repository == nil {
 		return nil, fmt.Errorf("client disguise repository required")
 	}
-	operation := &Operation{repository: repository, operationID: operationID, facts: clientdisguise.ProjectPlatform(headers), candidates: make(map[string]clientdisguise.Candidate), targets: make(map[string]clientdisguise.TargetSnapshot), exclusions: make(map[string]model.DisguiseExclusion)}
+	operation := &Operation{repository: repository, operationID: operationID, transport: transport, facts: clientdisguise.ProjectPlatform(headers), candidates: make(map[string]clientdisguise.Candidate), targets: make(map[string]clientdisguise.TargetSnapshot), exclusions: make(map[string]model.DisguiseExclusion)}
 	for i := range providers {
 		provider := &providers[i]
-		session, ok := provider.CredentialSessionForAPIType(APIType)
+		session, ok := provider.CredentialSessionForRoute(APIType, transport)
 		if !ok {
 			continue
 		}
@@ -50,11 +51,11 @@ func New(ctx context.Context, repository Repository, providers []model.Provider,
 	return operation, nil
 }
 func targetKey(providerID, sessionID string) string { return providerID + "\x00" + sessionID }
-func providerKey(provider *model.Provider) (string, string, error) {
+func providerKey(provider *model.Provider, transport string) (string, string, error) {
 	if provider == nil {
 		return "", "", fmt.Errorf("provider required")
 	}
-	session, ok := provider.CredentialSessionForAPIType(APIType)
+	session, ok := provider.CredentialSessionForRoute(APIType, transport)
 	if !ok {
 		return "", "", fmt.Errorf("provider %s has no codex credential session", provider.ID)
 	}
@@ -64,7 +65,7 @@ func (o *Operation) Evaluate(ctx context.Context, provider *model.Provider) (cli
 	if err := ctx.Err(); err != nil {
 		return clientdisguise.Candidate{}, err
 	}
-	key, _, err := providerKey(provider)
+	key, _, err := providerKey(provider, o.transport)
 	if err != nil {
 		return clientdisguise.Candidate{}, err
 	}
@@ -78,7 +79,7 @@ func (o *Operation) Evaluate(ctx context.Context, provider *model.Provider) (cli
 	return candidate.Clone(), nil
 }
 func (o *Operation) Commit(ctx context.Context, provider *model.Provider) (clientdisguise.TargetSnapshot, error) {
-	key, _, err := providerKey(provider)
+	key, _, err := providerKey(provider, o.transport)
 	if err != nil {
 		return clientdisguise.TargetSnapshot{}, err
 	}

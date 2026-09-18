@@ -36,7 +36,7 @@ func TestGatewayRejectedHandshakeLeavesHTTPFallbackUnbound(t *testing.T) {
 	store := newMockStore()
 	store.providers = []model.Provider{{
 		ID: "primary", AuthMode: "bearer", Enabled: true,
-		APITypes:           []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: "primary", APIType: APITypeCodex, BaseURL: primary.URL, Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions("primary", APITypeCodex, credentialsession.KindAPIKey, "primary-key"),
 	}}
 	gateway := newTestGateway(t, Config{Store: store, Codex: wsRuntime, Logger: zap.NewNop()})

@@ -14,11 +14,11 @@ import (
 	codexidentity "github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
 	"github.com/doraemonkeys/switch-a/internal/responseanalysis"
 	"github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap"
 )
 
@@ -117,7 +117,7 @@ func (h *Handler) executeProxy(ctx context.Context, pctx *proxyContext) {
 			continueExecution = false
 		}
 		if pctx.disguise != nil && pctx.disguise.target.Policy.Enabled && result.failureKind != attemptFailureDisguise && pctx.ingressFailure() == nil {
-			h.applyHealthAssessment(ctx, attempt.provider.ID, &result)
+			h.applyHealthAssessment(ctx, attempt.provider.ID, &result, pctx.apiType)
 			if result.healthCircuitOpened && continueExecution && state.currentProvider.ID == attempt.provider.ID {
 				// Health is published only after conversion settles. An already
 				// prepared same-provider dispatch has not sent bytes or earned an
@@ -424,7 +424,7 @@ func (h *Handler) resolveStatusFailure(
 	if result.failureDisposition.autoDisableUntil != nil {
 		h.suspendProviderUntil(
 			ctx, state.currentProvider.ID, *result.failureDisposition.autoDisableUntil,
-			result.failureDisposition.autoDisableReason,
+			result.failureDisposition.autoDisableReason, pctx.apiType,
 		)
 	}
 	return h.resolveLegacyFailure(ctx, pctx, state, pending, result)
@@ -503,18 +503,18 @@ func (h *Handler) assessAndApplyHealth(
 	if pctx.disguise != nil && pctx.disguise.target.Policy.Enabled {
 		return
 	}
-	h.applyHealthAssessment(ctx, providerID, result)
+	h.applyHealthAssessment(ctx, providerID, result, pctx.apiType)
 }
 
-func (h *Handler) applyHealthAssessment(ctx context.Context, providerID string, result *forwardResult) {
+func (h *Handler) applyHealthAssessment(ctx context.Context, providerID string, result *forwardResult, apiType string) {
 	if !result.healthAvailable || h.health == nil {
 		return
 	}
 	switch result.health.Verdict {
 	case errorrule.HealthSuccess:
-		h.health.MarkSuccess(ctx, providerID)
+		h.health.ForRoute(apiType, providerroute.HTTP).MarkSuccess(ctx, providerID)
 	case errorrule.HealthFailure:
-		result.healthCircuitOpened = h.health.MarkFailure(ctx, providerID, fmt.Errorf("provider attempt failed: %s", result.health.Cause))
+		result.healthCircuitOpened = h.health.ForRoute(apiType, providerroute.HTTP).MarkFailure(ctx, providerID, fmt.Errorf("provider attempt failed: %s", result.health.Cause))
 	}
 }
 

@@ -1,3 +1,4 @@
+import { providerRouteLabel } from "../../features/provider-transports/routeLabel";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { Provider, RequestLog } from "../../api/types";
@@ -171,14 +172,15 @@ function BasicInfoSection({
                 const session = resolveProviderCredentialSession(
                   provider,
                   apiType.api_type,
+                  apiType.transport,
                 );
                 return (
                   <div
-                    key={apiType.api_type}
+                    key={`${apiType.api_type}/${apiType.transport}`}
                     className="flex items-center gap-2 justify-end"
                   >
                     <span className="px-1.5 py-0.5 text-xs rounded bg-info-light text-blue-700 shrink-0">
-                      {apiType.api_type}
+                      {providerRouteLabel(apiType)}
                     </span>
                     <span
                       className="px-1.5 py-0.5 text-[10px] font-medium rounded shrink-0 bg-bg-tertiary text-text-muted"

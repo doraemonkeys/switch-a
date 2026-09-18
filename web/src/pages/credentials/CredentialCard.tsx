@@ -1,3 +1,4 @@
+import { providerRouteLabel } from "../../features/provider-transports/routeLabel";
 import { useState } from "react";
 import {
   AlertTriangle,
@@ -218,12 +219,12 @@ export function CredentialCard({
               ) : (
                 references.map((ref) => (
                   <span
-                    key={`${ref.provider_id}/${ref.api_type}`}
+                    key={`${ref.provider_id}/${ref.api_type}/${ref.transport}`}
                     className="inline-flex items-center gap-1 rounded-md border border-border/80 bg-white px-2 py-0.5 text-xs font-medium text-text-secondary shadow-2xs"
                     title={`Provider ID: ${ref.provider_id}`}
                   >
                     <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                    {ref.provider_name} · {ref.api_type}
+                    {ref.provider_name} · {providerRouteLabel(ref)}
                   </span>
                 ))
               )}

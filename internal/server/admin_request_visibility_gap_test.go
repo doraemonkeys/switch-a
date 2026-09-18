@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/admin"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/proxy"
 	selectorpkg "github.com/doraemonkeys/switch-a/internal/selector"
-
 	"go.uber.org/zap"
 )
 
@@ -64,7 +64,7 @@ func (s *consistencyMockStore) ListProviders(context.Context) ([]model.Provider,
 func (s *consistencyMockStore) ListProvidersByAPIType(_ context.Context, apiType string) ([]model.Provider, error) {
 	providers := make([]model.Provider, 0, len(s.providers))
 	for _, provider := range s.providers {
-		if _, ok := provider.APITypeConfig(apiType); ok {
+		if provider.SupportsAPIType(apiType) {
 			providers = append(providers, provider)
 		}
 	}
@@ -171,3 +171,5 @@ func TestAdminStatusAndActiveRequestsRemainConsistentAfterActiveRegistryCleanup(
 		)
 	}
 }
+
+func (s *consistencyMockStore) HealthScope(string, string) internal.HealthStateStore { return nil }

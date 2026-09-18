@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -112,6 +113,7 @@ func (r *Repository) List(ctx context.Context) ([]Session, error) {
 // credential. Provider names are resolved at read time so renaming a provider
 // never duplicates or stales credential metadata.
 type RouteReference struct {
+	Transport    string `json:"transport"`
 	ProviderID   string `json:"provider_id"`
 	ProviderName string `json:"provider_name"`
 	APIType      string `json:"api_type"`
@@ -121,7 +123,7 @@ func (r *Repository) ListRouteReferences(ctx context.Context, sessionID string) 
 	var references []RouteReference
 	if err := r.db.WithContext(ctx).
 		Table("route_target_credentials AS bindings").
-		Select("bindings.route_target_id AS provider_id, providers.name AS provider_name, bindings.api_type").
+		Select("bindings.route_target_id AS provider_id, providers.name AS provider_name, bindings.api_type, bindings.transport").
 		Joins("JOIN providers ON providers.id = bindings.route_target_id").
 		Where("bindings.session_id = ?", strings.TrimSpace(sessionID)).
 		Order("providers.name COLLATE NOCASE ASC, bindings.api_type ASC, bindings.route_target_id ASC").
@@ -132,6 +134,7 @@ func (r *Repository) ListRouteReferences(ctx context.Context, sessionID string) 
 }
 
 func (r *Repository) Bind(ctx context.Context, binding RouteBinding) error {
+	binding.Transport = providerroute.Normalize(binding.Transport)
 	if err := binding.Validate(); err != nil {
 		return err
 	}
@@ -147,7 +150,7 @@ func (r *Repository) Bind(ctx context.Context, binding RouteBinding) error {
 			return err
 		}
 		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "route_target_id"}, {Name: "api_type"}},
+			Columns:   []clause.Column{{Name: "route_target_id"}, {Name: "api_type"}, {Name: "transport"}},
 			DoUpdates: clause.AssignmentColumns([]string{"session_id", "updated_at"}),
 		}).Create(&binding).Error; err != nil {
 			return fmt.Errorf("bind route target %q API type %q: %w", binding.RouteTargetID, binding.APIType, err)
@@ -169,13 +172,13 @@ func (r *Repository) ReplaceRouteBindings(ctx context.Context, routeTargetID str
 		if err := tx.Where("route_target_id = ?", routeTargetID).Delete(&RouteBinding{}).Error; err != nil {
 			return fmt.Errorf("delete route credential bindings for %q: %w", routeTargetID, err)
 		}
-		seen := make(map[string]struct{}, len(bindings))
+		seen := make(map[providerroute.Key]struct{}, len(bindings))
 		for _, binding := range bindings {
 			binding.RouteTargetID = routeTargetID
-			if _, duplicate := seen[binding.APIType]; duplicate {
+			if _, duplicate := seen[providerroute.NewKey(binding.APIType, binding.Transport)]; duplicate {
 				return fmt.Errorf("%w: duplicate API type %q", ErrInvalidRouteBinding, binding.APIType)
 			}
-			seen[binding.APIType] = struct{}{}
+			seen[providerroute.NewKey(binding.APIType, binding.Transport)] = struct{}{}
 			if err := txRepo.Bind(ctx, binding); err != nil {
 				return err
 			}
@@ -184,19 +187,20 @@ func (r *Repository) ReplaceRouteBindings(ctx context.Context, routeTargetID str
 	})
 }
 
-func (r *Repository) Resolve(ctx context.Context, routeTargetID, apiType string) (RouteSnapshot, error) {
+func (r *Repository) Resolve(ctx context.Context, routeTargetID, apiType, transport string) (RouteSnapshot, error) {
 	var row struct {
 		RouteTargetID string
 		APIType       string
+		Transport     string
 		VendorScope   string
 		Session       Session `gorm:"embedded"`
 	}
 	err := r.db.WithContext(ctx).
 		Table("route_target_credentials AS bindings").
-		Select("bindings.route_target_id, bindings.api_type, providers.vendor AS vendor_scope, sessions.*").
+		Select("bindings.route_target_id, bindings.api_type, bindings.transport, providers.vendor AS vendor_scope, sessions.*").
 		Joins("JOIN credential_sessions AS sessions ON sessions.id = bindings.session_id").
 		Joins("JOIN providers ON providers.id = bindings.route_target_id").
-		Where("bindings.route_target_id = ? AND bindings.api_type = ?", strings.TrimSpace(routeTargetID), strings.TrimSpace(apiType)).
+		Where("bindings.route_target_id = ? AND bindings.api_type = ? AND bindings.transport = ?", strings.TrimSpace(routeTargetID), strings.TrimSpace(apiType), providerroute.Normalize(transport)).
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return RouteSnapshot{}, ErrNotFound
@@ -209,7 +213,7 @@ func (r *Repository) Resolve(ctx context.Context, routeTargetID, apiType string)
 	if err != nil {
 		return RouteSnapshot{}, fmt.Errorf("resolve route credential for %q/%q: %w", routeTargetID, apiType, err)
 	}
-	return RouteSnapshot{RouteTargetID: row.RouteTargetID, APIType: row.APIType, VendorScope: row.VendorScope, Credential: snapshot}, nil
+	return RouteSnapshot{RouteTargetID: row.RouteTargetID, APIType: row.APIType, Transport: row.Transport, VendorScope: row.VendorScope, Credential: snapshot}, nil
 }
 
 func (r *Repository) ListRouteSnapshots(ctx context.Context, routeTargetIDs []string) (map[string][]RouteSnapshot, error) {
@@ -220,17 +224,18 @@ func (r *Repository) ListRouteSnapshots(ctx context.Context, routeTargetIDs []st
 	type joined struct {
 		RouteTargetID string
 		APIType       string
+		Transport     string
 		VendorScope   string
 		Session       Session `gorm:"embedded"`
 	}
 	var rows []joined
 	if err := r.db.WithContext(ctx).
 		Table("route_target_credentials AS bindings").
-		Select("bindings.route_target_id, bindings.api_type, providers.vendor AS vendor_scope, sessions.*").
+		Select("bindings.route_target_id, bindings.api_type, bindings.transport, providers.vendor AS vendor_scope, sessions.*").
 		Joins("JOIN credential_sessions AS sessions ON sessions.id = bindings.session_id").
 		Joins("JOIN providers ON providers.id = bindings.route_target_id").
 		Where("bindings.route_target_id IN ?", routeTargetIDs).
-		Order("bindings.route_target_id ASC, bindings.api_type ASC").
+		Order("bindings.route_target_id ASC, bindings.api_type ASC, bindings.transport ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list route credential snapshots: %w", err)
 	}
@@ -243,6 +248,7 @@ func (r *Repository) ListRouteSnapshots(ctx context.Context, routeTargetIDs []st
 		result[rows[index].RouteTargetID] = append(result[rows[index].RouteTargetID], RouteSnapshot{
 			RouteTargetID: rows[index].RouteTargetID,
 			APIType:       rows[index].APIType,
+			Transport:     rows[index].Transport,
 			VendorScope:   rows[index].VendorScope,
 			Credential:    snapshot,
 		})
@@ -497,7 +503,7 @@ func validateBindingTargets(ctx context.Context, db *gorm.DB, binding RouteBindi
 	var route struct{ ProviderID string }
 	if err := db.WithContext(ctx).Table("provider_api_types AS api_types").
 		Select("api_types.provider_id").
-		Where("api_types.provider_id = ? AND api_types.api_type = ?", binding.RouteTargetID, binding.APIType).
+		Where("api_types.provider_id = ? AND api_types.api_type = ? AND api_types.transport = ?", binding.RouteTargetID, binding.APIType, providerroute.Normalize(binding.Transport)).
 		Take(&route).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrInvalidRouteBinding

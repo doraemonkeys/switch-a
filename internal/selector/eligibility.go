@@ -165,6 +165,9 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 	if !providerSupportsAPIType(provider, reqAPIType(e.req)) {
 		return false, errorrule.ReasonAPIRemoved, nil
 	}
+	if _, supported := provider.RouteConfig(reqAPIType(e.req), reqTransport(e.req)); !supported {
+		return false, errorrule.ReasonTransportUnsupported, nil
+	}
 	// Routing policy defines the candidate boundary itself. Every entry point,
 	// including sticky reuse, must re-check it so cached providers cannot outlive
 	// a stricter policy match.
@@ -199,8 +202,8 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 	}
 
 	if mode.checkHealth && e.health != nil {
-		e.health.RecoverIfExpired(ctx, provider.ID)
-		if !e.health.IsAvailable(ctx, provider.ID) {
+		e.health.AvailabilityForRoute(reqAPIType(e.req), reqTransport(e.req)).RecoverIfExpired(ctx, provider.ID)
+		if !e.health.AvailabilityForRoute(reqAPIType(e.req), reqTransport(e.req)).IsAvailable(ctx, provider.ID) {
 			return false, errorrule.ReasonProviderDisabled, nil
 		}
 	}

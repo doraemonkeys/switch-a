@@ -1,3 +1,4 @@
+import { CodexTransportsField } from "../../features/provider-transports/CodexTransportsField";
 import { useState } from "react";
 import type { AuthMode, CredentialSession } from "../../api";
 import { useAPICatalog } from "../../api/useApi";
@@ -140,7 +141,10 @@ function ApiTypeRouteRow({
   onRemove,
   onToggleOverrideVisibility,
 }: ApiTypeRouteRowProps) {
-  const entryLabel = entry.api_type || `entry ${index + 1}`;
+  const transportSuffix = entry.transport === "websocket" ? " WebSocket" : "";
+  const entryLabel = entry.api_type
+    ? entry.api_type + transportSuffix
+    : `entry ${index + 1}`;
   const availableSessions = credentialSessions.filter(
     (session) =>
       session.kind === "api_key" ||
@@ -158,6 +162,12 @@ function ApiTypeRouteRow({
   return (
     <div className="rounded-xl border border-border/70 bg-bg-secondary/30 p-3">
       <div className="space-y-2.5">
+        {entry.api_type === "codex" && (
+          <p className="text-xs font-semibold">
+            Codex ·{" "}
+            {entry.transport === "websocket" ? "WebSocket" : "HTTP / SSE"}
+          </p>
+        )}
         <div className="grid grid-cols-[minmax(6.5rem,10rem)_minmax(0,1fr)_auto] gap-2 items-start">
           <input
             type="text"
@@ -183,7 +193,7 @@ function ApiTypeRouteRow({
             type="button"
             onClick={() => onRemove(entry.client_key)}
             className="h-10 px-3 rounded-lg border border-border text-text-muted hover:text-danger hover:border-danger/30 transition-colors shrink-0 cursor-pointer"
-            aria-label={`Remove ${entry.api_type || "entry"}`}
+            aria-label={`Remove ${entryLabel}`}
           >
             Remove
           </button>
@@ -273,7 +283,15 @@ export function ApiTypesField({
     v: string,
   ) => {
     const next = entries.map((entry) =>
-      entry.client_key === clientKey ? { ...entry, [field]: v } : entry,
+      entry.client_key === clientKey
+        ? {
+            ...entry,
+            [field]: v,
+            ...(field === "api_type" && v !== "codex"
+              ? { transport: "http" as const }
+              : {}),
+          }
+        : entry,
     );
     onChange(next);
   };
@@ -300,6 +318,7 @@ export function ApiTypesField({
       {
         client_key: generateClientKey(),
         api_type: apiType,
+        transport: "http",
         base_url: lastUrl,
         credential_session_id: "",
         api_key: "",
@@ -310,7 +329,7 @@ export function ApiTypesField({
   const toggleQuickType = (type: string) => {
     const existing = entries.find((entry) => entry.api_type === type);
     if (existing) {
-      removeEntry(existing.client_key);
+      onChange(entries.filter((entry) => entry.api_type !== type));
     } else {
       addEntry(type);
     }
@@ -328,6 +347,9 @@ export function ApiTypesField({
         session, or enter a replacement API key to create one when you save.
       </p>
       <div className="space-y-3">
+        {selectedTypes.has("codex") && (
+          <CodexTransportsField entries={entries} onChange={onChange} />
+        )}
         {entries.map((entry, index) => (
           <ApiTypeRouteRow
             key={entry.client_key}

@@ -19,6 +19,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/errorrule/statistics"
 	"github.com/doraemonkeys/switch-a/internal/model"
+	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture"
 	"github.com/doraemonkeys/switch-a/internal/requestcapture/capturefailure"
 	"github.com/doraemonkeys/switch-a/internal/requestingress"
@@ -30,7 +31,6 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/upstreamtarget"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 	"github.com/doraemonkeys/switch-a/internal/websocketproxy"
-
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -653,7 +653,7 @@ func (h *Handler) buildProviderRequest(
 	pctx *proxyContext,
 	provider *model.Provider,
 ) (*http.Request, requestcapture.FailureCode, error) {
-	baseURL := provider.BaseURLForAPIType(pctx.apiType)
+	baseURL := provider.BaseURLForRoute(pctx.apiType, providerroute.HTTP)
 
 	// Fail fast if provider has no BaseURL configured for this API type.
 	// This prevents forwarding requests to invalid URLs (just the path with no host),

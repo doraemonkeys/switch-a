@@ -12,11 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/websocketprotocol"
 	"github.com/doraemonkeys/switch-a/internal/model"
-
-	"github.com/coder/websocket"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
@@ -115,7 +114,7 @@ func TestGatewayProbeClosesWithProtocolErrorWhenUpstreamDoesNotSelectFixedProtoc
 	}}
 	store.providers = []model.Provider{{
 		ID: "probe-mismatch", AuthMode: "bearer", Enabled: true,
-		APITypes:           []model.ProviderAPIType{{ProviderID: "probe-mismatch", APIType: APITypeCodex, BaseURL: upstream.URL}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: "probe-mismatch", APIType: APITypeCodex, BaseURL: upstream.URL, Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions("probe-mismatch", APITypeCodex, credentialsession.KindAPIKey, "provider-key"),
 	}}
 	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
@@ -201,7 +200,7 @@ func TestGatewayProbeUsesFixedSubprotocolForUpstream(t *testing.T) {
 	}}
 	store.providers = []model.Provider{{
 		ID: "probe-match", AuthMode: "bearer", Enabled: true,
-		APITypes:           []model.ProviderAPIType{{ProviderID: "probe-match", APIType: APITypeCodex, BaseURL: upstream.URL}},
+		APITypes:           []model.ProviderAPIType{{ProviderID: "probe-match", APIType: APITypeCodex, BaseURL: upstream.URL, Transport: "websocket"}},
 		CredentialSessions: testCredentialSessions("probe-match", APITypeCodex, credentialsession.KindAPIKey, "provider-key"),
 	}}
 	gateway := newTestGateway(t, Config{Store: store, Logger: zaptest.NewLogger(t)})
