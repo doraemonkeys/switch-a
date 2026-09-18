@@ -41,6 +41,9 @@ func (f *fakeService) ListProfiles(context.Context) ([]clientdisguise.ProfileRev
 func (f *fakeService) ListReferences(context.Context) ([]clientdisguise.ReferenceSource, error) {
 	return []clientdisguise.ReferenceSource{}, f.err("references")
 }
+func (f *fakeService) ListClientRequests(context.Context) ([]clientdisguise.ClientRequestObservation, error) {
+	return []clientdisguise.ClientRequestObservation{}, f.err("client_requests")
+}
 func (f *fakeService) ListTransportSamples(context.Context) ([]clientdisguise.TransportSample, error) {
 	return []clientdisguise.TransportSample{}, f.err("transports")
 }
@@ -104,7 +107,7 @@ func TestOverviewSharesIdentityWithoutCreatingIt(t *testing.T) {
 	}
 }
 func TestOverviewRepositoryFailures(t *testing.T) {
-	for _, stage := range []string{"sessions", "providers", "logins", "bindings", "profiles", "references", "transports", "clients"} {
+	for _, stage := range []string{"sessions", "providers", "logins", "bindings", "profiles", "references", "transports", "clients", "client_requests"} {
 		t.Run(stage, func(t *testing.T) {
 			handler, service := setup()
 			service.failAt = stage

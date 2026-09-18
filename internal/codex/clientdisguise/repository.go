@@ -28,7 +28,7 @@ func (r *Repository) WithDB(db *gorm.DB) *Repository {
 
 func Migrate(ctx context.Context, db *gorm.DB) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.AutoMigrate(&LoginIdentity{}, &LoginHistory{}, &ProfileBinding{}, &ProfileRevision{}, &Sample{}, &ReferenceSource{}, &TransportSample{}, &ProfileTrack{}, &officialversion.State{}); err != nil {
+		if err := tx.AutoMigrate(&LoginIdentity{}, &LoginHistory{}, &ProfileBinding{}, &ProfileRevision{}, &Sample{}, &ReferenceSource{}, &TransportSample{}, &ProfileTrack{}, &officialversion.State{}, &ClientRequestObservation{}); err != nil {
 			return err
 		}
 		for _, profile := range BuiltinProfiles() {

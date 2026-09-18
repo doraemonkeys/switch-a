@@ -16,7 +16,7 @@ import (
 func TestDisguiseGatewayPhysicalHandshakeAndResponseRestoration(t *testing.T) {
 	const threadID = "01990c82-10f0-7b21-8ac0-1ba32684b015"
 	const deviceID = "device-physical-codex-credential"
-	repository := &testDisguiseRepository{revision: "physical"}
+	repository := &observingDisguiseRepository{testDisguiseRepository: &testDisguiseRepository{revision: "physical"}}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("User-Agent"); got != "profile-physical" {
 			t.Errorf("physical profile = %q", got)
@@ -93,6 +93,12 @@ func TestDisguiseGatewayPhysicalHandshakeAndResponseRestoration(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, payload, err := connection.Read(ctx)
+	observed := repository.observedRequests()
+	if len(observed) != 2 || observed[0].headers.Get("User-Agent") != options.HTTPHeader.Get("User-Agent") ||
+		observed[1].headers.Get("User-Agent") != options.HTTPHeader.Get("User-Agent") ||
+		!observed[1].at.After(observed[0].at) {
+		t.Fatalf("handshake and logical request activity=%+v", observed)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

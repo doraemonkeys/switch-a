@@ -134,6 +134,37 @@ describe("client disguise administration contract", () => {
     expect(result.profiles[0].id).toBe("revision");
     expect(() => parseDisguiseState({})).toThrow();
   });
+  it("decodes request observations without inventing activity for older identities", () => {
+    const request = {
+      observed_at: "2026-09-18T10:30:00Z",
+      tuple,
+      client_version: "0.153.4",
+      user_agent: "Codex Desktop/0.153.4",
+      originator: "Codex Desktop",
+    };
+    const overview = {
+      logins: [],
+      profiles: [],
+      references: [],
+      transport_samples: [],
+      clients: [
+        { client_id: "recent", last_request: request },
+        { client_id: "older" },
+      ],
+    };
+    expect(parseDisguiseState(overview).clients).toEqual(overview.clients);
+    expect(() =>
+      parseDisguiseState({
+        ...overview,
+        clients: [
+          {
+            client_id: "broken",
+            last_request: { ...request, observed_at: 42 },
+          },
+        ],
+      }),
+    ).toThrow();
+  });
   it("uses encoded resource IDs and committed server results", async () => {
     const request = vi.fn();
     const api = createClientDisguiseApi(request);

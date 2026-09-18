@@ -277,6 +277,7 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 	var codexOperation *codexws.Operation
 	var disguiseSession *wsdisguise.Session
+	var observeClientRequest func(context.Context)
 	if apiType == APITypeCodex {
 		var err error
 		codexOperation, err = h.codex.Begin(ctx, r, apiType, requestID, cfg.ConversationRecoveryPolicy)
@@ -295,30 +296,32 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 			h.writeCodexWebSocketFailureForOperation(w, requestID, err)
 			return
 		}
+		observeClientRequest = h.referenceClientObserver(r.Header, codexOperation.ClientIdentity().ID, requestID)
 		if disguiseSession != nil {
 			selectReq.ClientDisguise = disguiseSession.Operation()
 		}
 	}
 	newObserver, tracker, applyObservation, onClientVisible := h.newWebSocketObserverPipeline(apiType, requestID)
 	orchestrator := newWebSocketSessionOrchestrator(h, webSocketSessionOrchestratorConfig{
-		info:                info,
-		selectReq:           selectReq,
-		apiType:             apiType,
-		requestID:           requestID,
-		requestDone:         ctx.Done(),
-		startTime:           startTime,
-		maxAttempts:         cfg.GlobalMaxAttempts,
-		globalAuthMode:      cfg.GlobalAuthMode,
-		probeClientModel:    cfg.ProbeClientModel,
-		maxMessageBytes:     cfg.MaxMessageBytes,
-		newObserver:         newObserver,
-		applyObservation:    applyObservation,
-		onClientVisible:     onClientVisible,
-		tracker:             tracker,
-		capture:             capture,
-		captureParticipates: captureParticipates,
-		codexOperation:      codexOperation,
-		disguise:            disguiseSession,
+		info:                 info,
+		selectReq:            selectReq,
+		apiType:              apiType,
+		requestID:            requestID,
+		requestDone:          ctx.Done(),
+		startTime:            startTime,
+		maxAttempts:          cfg.GlobalMaxAttempts,
+		globalAuthMode:       cfg.GlobalAuthMode,
+		probeClientModel:     cfg.ProbeClientModel,
+		maxMessageBytes:      cfg.MaxMessageBytes,
+		newObserver:          newObserver,
+		applyObservation:     applyObservation,
+		onClientVisible:      onClientVisible,
+		observeClientRequest: observeClientRequest,
+		tracker:              tracker,
+		capture:              capture,
+		captureParticipates:  captureParticipates,
+		codexOperation:       codexOperation,
+		disguise:             disguiseSession,
 	})
 	if captureParticipates {
 		// Exchange records must close before their gateway, but only after sticky,
@@ -367,9 +370,7 @@ func (h *Gateway) beginDisguiseSession(ctx context.Context, headers http.Header,
 	if h.disguise == nil {
 		return nil, nil
 	}
-	if observer, ok := h.disguise.(interface {
-		ObserveClient(context.Context, string, http.Header, time.Time) error
-	}); ok {
+	if observer, ok := h.disguise.(clientRequestObserver); ok {
 		if err := observer.ObserveClient(ctx, clientID, headers, capturedAt); err != nil {
 			h.logger.Error("websocket.client_disguise_learning_failed",
 				zap.String("operation_id", requestID),

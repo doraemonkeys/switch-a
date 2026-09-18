@@ -79,13 +79,24 @@ export interface ClientSample {
   client_version: string;
   features: ClientFeatures;
 }
+export interface ClientRequestObservation {
+  observed_at: string;
+  tuple: ClientTuple;
+  client_version: string;
+  user_agent: string;
+  originator: string;
+}
+export interface ClientIdentityView {
+  client_id: string;
+  last_request?: ClientRequestObservation;
+}
 export interface DisguiseState {
   official_version?: OfficialVersionState;
   logins: LoginView[];
   profiles: ProfileRevision[];
   references: ReferenceSource[];
   transport_samples: TransportSample[];
-  clients: { client_id: string }[];
+  clients: ClientIdentityView[];
 }
 export interface OfficialVersionState {
   release: { version: string; tag: string; url: string; published_at: string };

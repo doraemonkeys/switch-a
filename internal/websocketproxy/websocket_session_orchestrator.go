@@ -35,6 +35,7 @@ type webSocketSessionOrchestratorConfig struct {
 	newSelectionProbeObserver webSocketSelectionProbeObserverFactory
 	applyObservation          func(WebSocketObservation)
 	onClientVisible           func(webSocketVisibleWriteContext)
+	observeClientRequest      func(context.Context)
 	tracker                   LiveTraffic
 	capture                   requestcapture.GatewayRecorder
 	captureParticipates       bool
@@ -88,6 +89,7 @@ type WebSocketSessionOrchestrator struct {
 	newSelectionProbeObserver webSocketSelectionProbeObserverFactory
 	applyObservation          func(WebSocketObservation)
 	onClientVisible           func(webSocketVisibleWriteContext)
+	observeClientRequest      func(context.Context)
 	tracker                   LiveTraffic
 	capture                   requestcapture.GatewayRecorder
 	captureParticipates       bool
@@ -143,6 +145,7 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 		newObserver:               cfg.newObserver,
 		newSelectionProbeObserver: selectionProbeObserverFactory,
 		applyObservation:          cfg.applyObservation,
+		observeClientRequest:      cfg.observeClientRequest,
 		tracker:                   cfg.tracker,
 		capture:                   cfg.capture,
 		captureParticipates:       cfg.captureParticipates,
@@ -164,17 +167,6 @@ func newWebSocketSessionOrchestrator(handler *Gateway, cfg webSocketSessionOrche
 	orchestrator.logReplayTransition(orchestrator.replayBuffer.Status())
 	orchestrator.onClientVisible = orchestrator.codexVisibleCallback(cfg.onClientVisible)
 	return orchestrator
-}
-
-func (o *WebSocketSessionOrchestrator) codexVisibleCallback(
-	next func(webSocketVisibleWriteContext),
-) func(webSocketVisibleWriteContext) {
-	return func(visible webSocketVisibleWriteContext) {
-		o.switchTracker.markClientVisible(o.currentProvider, time.Now())
-		if next != nil {
-			next(visible)
-		}
-	}
 }
 
 func (o *WebSocketSessionOrchestrator) newAttemptObserver() WebSocketMessageObserver {

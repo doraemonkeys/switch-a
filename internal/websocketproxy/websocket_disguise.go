@@ -19,6 +19,30 @@ import (
 
 const errCodeClientDisguise = "CLIENT_DISGUISE_FAILED"
 
+type clientRequestObserver interface {
+	ObserveClient(context.Context, string, http.Header, time.Time) error
+}
+
+func (h *Gateway) referenceClientObserver(headers http.Header, clientID, operationID string) func(context.Context) {
+	observer, ok := h.disguise.(clientRequestObserver)
+	if !ok || clientID == "" {
+		return nil
+	}
+	// A persistent connection can carry many turns. Reuse its original client
+	// features, never the selected provider's disguise or a replayed transmission.
+	original := headers.Clone()
+	return func(ctx context.Context) {
+		at := time.Now()
+		if err := observer.ObserveClient(ctx, clientID, original, at); err != nil {
+			h.logger.Warn("websocket.client_request_observation_failed",
+				zap.String("operation_id", operationID), zap.String("client_identity_id", clientID), zap.Error(err))
+			return
+		}
+		h.logger.Debug("websocket.client_request_observed",
+			zap.String("operation_id", operationID), zap.String("client_identity_id", clientID), zap.Time("observed_at", at))
+	}
+}
+
 func disguiseProfileHeader(name string) bool {
 	switch strings.ToLower(name) {
 	case "user-agent", "originator", "version", "x-codex-client-version", "x-codex-desktop-build", "x-codex-os-version", "x-stainless-os", "x-stainless-arch", "x-stainless-package-version", "x-stainless-runtime-version":

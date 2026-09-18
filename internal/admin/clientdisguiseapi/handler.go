@@ -21,6 +21,7 @@ type Repository interface {
 	ListBindings(context.Context) ([]clientdisguise.ProfileBinding, error)
 	ListProfiles(context.Context) ([]clientdisguise.ProfileRevision, error)
 	ListReferences(context.Context) ([]clientdisguise.ReferenceSource, error)
+	ListClientRequests(context.Context) ([]clientdisguise.ClientRequestObservation, error)
 	ListTransportSamples(context.Context) ([]clientdisguise.TransportSample, error)
 	SetBinding(context.Context, clientdisguise.ProfileBinding) (clientdisguise.ProfileBinding, error)
 	LearnSample(context.Context, clientdisguise.Sample) (clientdisguise.LearnResult, error)

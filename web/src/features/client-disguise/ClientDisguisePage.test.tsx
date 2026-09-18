@@ -177,6 +177,159 @@ describe("client disguise reference following", () => {
   );
 });
 
+describe("client disguise reference selection", () => {
+  it("finds recent clients and preserves the reference draft and selection across refreshes", async () => {
+    const latest = {
+      client_id: "latest-client",
+      last_request: {
+        observed_at: "2026-09-18T10:30:00Z",
+        tuple,
+        client_version: "0.153.4",
+        user_agent: "Codex Desktop/0.153.4 (Windows; x86_64)",
+        originator: "Codex Desktop",
+      },
+    };
+    const earlier = {
+      client_id: "earlier-client",
+      last_request: {
+        ...latest.last_request,
+        observed_at: "2026-09-18T09:00:00Z",
+        tuple: { client_type: "cli", platform: "macos", arch: "arm64" },
+        originator: "codex_cli_rs",
+      },
+    };
+    const initial = { ...state, clients: [state.clients[0], earlier, latest] };
+    const { api, user } = setup(initial, "/client-disguise?view=references");
+    await user.click(
+      await screen.findByRole("button", { name: "Add reference" }),
+    );
+    await user.type(screen.getByLabelText("Source name"), "My desktop");
+    await user.type(screen.getByLabelText(/Source ID/), "my-desktop");
+    const group = screen.getByRole("radiogroup", { name: "Reference client" });
+    const choices = within(group).getAllByRole("radio");
+    expect(choices.map((choice) => (choice as HTMLInputElement).value)).toEqual(
+      ["latest-client", "earlier-client", "existing-client"],
+    );
+    expect(choices[0]).toHaveAccessibleName(/Codex Desktop.*最近请求.*Windows/);
+    expect(
+      choices.every((choice) => !(choice as HTMLInputElement).checked),
+    ).toBe(true);
+    expect(within(group).getByText("暂无请求记录")).toBeInTheDocument();
+    await user.click(choices[0]);
+    await user.click(screen.getByText("已选：Codex Desktop 0.153.4"));
+    expect(screen.getByText(latest.last_request.user_agent)).toBeVisible();
+    expect(screen.getByText("latest-client", { selector: "dd" })).toBeVisible();
+    await user.type(
+      screen.getByRole("searchbox", { name: "搜索参考客户端" }),
+      "Windows{Enter}",
+    );
+    expect(api.saveReference).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Source name")).toHaveValue("My desktop");
+    await user.clear(screen.getByRole("searchbox", { name: "搜索参考客户端" }));
+    await user.type(
+      screen.getByRole("searchbox", { name: "搜索参考客户端" }),
+      "macOS",
+    );
+    expect(within(group).getAllByRole("radio")).toHaveLength(1);
+    expect(within(group).getByRole("radio")).toHaveAccessibleName(/Codex CLI/);
+    await user.clear(screen.getByRole("searchbox", { name: "搜索参考客户端" }));
+    api.get.mockResolvedValue({
+      ...initial,
+      clients: [
+        latest,
+        {
+          ...earlier,
+          last_request: {
+            ...earlier.last_request,
+            observed_at: "2026-09-18T11:00:00Z",
+          },
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "刷新客户端" }));
+    await waitFor(() =>
+      expect(within(group).getAllByRole("radio")[0]).toHaveAttribute(
+        "value",
+        "earlier-client",
+      ),
+    );
+    expect(
+      within(group).getByRole("radio", { name: /Codex Desktop/ }),
+    ).toBeChecked();
+    expect(screen.getByLabelText("Source name")).toHaveValue("My desktop");
+    expect(screen.getByLabelText(/Source ID/)).toHaveValue("my-desktop");
+    await user.click(
+      screen.getByRole("button", { name: "Save reference source" }),
+    );
+    expect(api.saveReference).toHaveBeenCalledWith({
+      id: "my-desktop",
+      name: "My desktop",
+      client_identity_id: "latest-client",
+    });
+  });
+
+  it("waits for a client refresh before allowing saves in another tab", async () => {
+    const { api, user } = setup(populated);
+    await screen.findByLabelText("Profile revision");
+    await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
+    await openLibrary(user);
+    await user.click(screen.getByRole("button", { name: "Add reference" }));
+    let finishRefresh!: (value: DisguiseState) => void;
+    api.get.mockReturnValueOnce(
+      new Promise<DisguiseState>((resolve) => {
+        finishRefresh = resolve;
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "刷新客户端" }));
+    expect(screen.getByRole("button", { name: "刷新中…" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Login profiles" }));
+    expect(screen.getByRole("button", { name: "Please wait…" })).toBeDisabled();
+    await act(async () => finishRefresh(populated));
+    expect(screen.getByLabelText("Profile revision")).toHaveValue("old");
+    expect(
+      screen.getByRole("button", { name: "Save login settings" }),
+    ).toBeEnabled();
+    expect(api.saveBinding).not.toHaveBeenCalled();
+  });
+
+  it("explains empty client lists and keeps selections when refresh fails", async () => {
+    const { api, user } = setup(
+      { ...state, clients: [] },
+      "/client-disguise?view=references",
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Add reference" }),
+    );
+    expect(
+      screen.getByText("暂无客户端。先从要参考的客户端发送一次请求，再刷新。"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Save reference source" }),
+    ).toBeDisabled();
+    api.get.mockResolvedValue(state);
+    await user.click(screen.getByRole("button", { name: "刷新客户端" }));
+    const radio = await screen.findByRole("radio");
+    await user.click(radio);
+    expect(
+      screen.queryByText("最近请求", { exact: true }),
+    ).not.toBeInTheDocument();
+    api.get.mockRejectedValueOnce(new Error("Refresh unavailable"));
+    await user.click(screen.getByRole("button", { name: "刷新客户端" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Refresh unavailable",
+    );
+    expect(radio).toBeChecked();
+    expect(screen.getByRole("button", { name: "刷新客户端" })).toBeEnabled();
+    await user.type(
+      screen.getByRole("searchbox", { name: "搜索参考客户端" }),
+      "no-match",
+    );
+    expect(
+      screen.getByText("没有匹配的客户端，试试其他关键词。"),
+    ).toBeVisible();
+  });
+});
+
 describe("client disguise workspace", () => {
   it("checks and displays the official stable release without changing login drafts", async () => {
     const official = {
@@ -248,9 +401,10 @@ describe("client disguise workspace", () => {
     await user.click(screen.getByRole("button", { name: "Add reference" }));
     await user.type(screen.getByLabelText(/Source ID/), "reference");
     await user.type(screen.getByLabelText("Source name"), "My desktop");
-    await user.selectOptions(
-      screen.getByLabelText("Reference client"),
-      "existing-client",
+    await user.click(
+      within(
+        screen.getByRole("radiogroup", { name: "Reference client" }),
+      ).getByRole("radio"),
     );
     await user.click(
       screen.getByRole("button", { name: "Save reference source" }),

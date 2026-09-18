@@ -400,6 +400,17 @@ func (o *WebSocketSessionOrchestrator) newReplayFailureAttempt(
 	return attemptResult, outcome
 }
 
+func (o *WebSocketSessionOrchestrator) codexVisibleCallback(
+	next func(webSocketVisibleWriteContext),
+) func(webSocketVisibleWriteContext) {
+	return func(visible webSocketVisibleWriteContext) {
+		o.switchTracker.markClientVisible(o.currentProvider, time.Now())
+		if next != nil {
+			next(visible)
+		}
+	}
+}
+
 func (o *WebSocketSessionOrchestrator) newAttemptRelayContext(
 	dialExchange DialExchange,
 ) (WebSocketMessageObserver, webSocketRelayOptions) {
@@ -428,6 +439,9 @@ func (o *WebSocketSessionOrchestrator) codexClientPreWrite(
 func (o *WebSocketSessionOrchestrator) classifyClientFrame(ctx context.Context, messageType websocket.MessageType, data []byte) *codexws.ClientFramePermit {
 	frame := o.codexOperation.ClassifyClientFrame(ctx, messageType == websocket.MessageText, data)
 	o.logCodexClientFramePermit(frame)
+	if frame.IsResponseCreate() && o.observeClientRequest != nil {
+		o.observeClientRequest(ctx)
+	}
 	if frame.IsResponseCreate() && o.requestObservation != nil {
 		snapshot := o.requestObservation.ObserveResponseCreate(data)
 		if o.handler.activeSessions != nil {

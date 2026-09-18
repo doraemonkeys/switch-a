@@ -193,13 +193,14 @@ func TestWebSocketProviderRetryPreservesSettingsAndReplay(t *testing.T) {
 						defer upstream.Close()
 						p := routingTestProvider("a")
 						p.APITypes[0].BaseURL, p.MaxRetries = upstream.URL, 4
-						store := &mockStore{}
+						store := &mockStore{providers: []model.Provider{p}}
 						if probe {
 							store.routingPolicies = []model.RoutingPolicy{{Enabled: true, APIType: APITypeCodex, ModelMatchType: model.RoutingPolicyModelMatchTypePrefix, ModelMatchValue: "gpt-"}}
 						}
 						selection := &accountRecoverySelector{providers: []model.Provider{p}}
 						core, traces := observer.New(zap.DebugLevel)
-						gateway := newTestGateway(t, Config{Store: store, Selector: selection, Logger: zap.New(core)})
+						activity := &observingDisguiseRepository{testDisguiseRepository: &testDisguiseRepository{revision: "retry"}}
+						gateway := newTestGateway(t, Config{Store: store, Selector: selection, Logger: zap.New(core), Disguise: activity})
 						selection.gateway = gateway
 						server, done := retryTestServer(t, gateway, RequestConfig{ConversationRecoveryPolicy: policy, GlobalAuthMode: "bearer", ProbeClientModel: probe, StickyMode: sticky, StickyTTL: time.Minute})
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -257,6 +258,9 @@ func TestWebSocketProviderRetryPreservesSettingsAndReplay(t *testing.T) {
 						log := store.LastLog()
 						if log.State == nil || *log.State != model.ReasoningObservationCaptured || log.Effort == nil || *log.Effort != "high" {
 							t.Fatalf("requested reasoning lost during retry: %+v", log.RequestedReasoningObservation)
+						}
+						if requests := activity.observedRequests(); len(requests) != 2 {
+							t.Fatalf("expected handshake and one client request; replay changed activity: %+v", requests)
 						}
 						events := traces.FilterMessage("websocket.request_reasoning_observed").All()
 						if len(events) != 1 || events[0].ContextMap()["client_request_index"] != uint64(1) {

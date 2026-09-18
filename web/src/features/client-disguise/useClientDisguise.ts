@@ -8,7 +8,8 @@ export function useClientDisguise() {
   const [reload, setReload] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {
     let active = true;
     api.clientDisguise
@@ -19,6 +20,9 @@ export function useClientDisguise() {
       .catch((reason: unknown) => {
         if (active)
           setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (active) setRefreshing(false);
       });
     return () => {
       active = false;
@@ -29,7 +33,7 @@ export function useClientDisguise() {
     action: () => Promise<unknown>,
     message = "Changes saved.",
   ) {
-    setBusy(true);
+    setSaving(true);
     setError("");
     setNotice("");
     try {
@@ -41,14 +45,26 @@ export function useClientDisguise() {
       setError(reason instanceof Error ? reason.message : String(reason));
       return false;
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
   function retry() {
+    setRefreshing(true);
+    setNotice("");
     setError("");
     setReload((value) => value + 1);
   }
 
-  return { api, state, error, notice, busy, mutate, retry };
+  // All tabs share this snapshot; a pending refresh must settle before a save.
+  return {
+    api,
+    state,
+    error,
+    notice,
+    busy: saving || refreshing,
+    refreshing,
+    mutate,
+    retry,
+  };
 }

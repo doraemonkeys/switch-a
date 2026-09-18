@@ -21,7 +21,8 @@ type LoginView struct {
 	Providers           []ProviderView                 `json:"providers"`
 }
 type ClientView struct {
-	ClientID string `json:"client_id"`
+	ClientID    string                                   `json:"client_id"`
+	LastRequest *clientdisguise.ClientRequestObservation `json:"last_request,omitempty"`
 }
 type Overview struct {
 	OfficialVersion  *officialversion.State           `json:"official_version,omitempty"`
@@ -75,12 +76,9 @@ func (h *Handler) overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return result, err
 	}
-	clients, err := h.clients.ListClients(ctx)
+	result.Clients, err = h.clientOverview(ctx)
 	if err != nil {
 		return result, err
-	}
-	for _, client := range clients {
-		result.Clients = append(result.Clients, ClientView{ClientID: client.ID})
 	}
 	for _, session := range sessions {
 		view := LoginView{CredentialSessionID: session.ID, Name: session.Name, Providers: []ProviderView{}}
@@ -105,6 +103,26 @@ func (h *Handler) overview(ctx context.Context) (Overview, error) {
 			}
 		}
 		result.Logins = append(result.Logins, view)
+	}
+	return result, nil
+}
+
+func (h *Handler) clientOverview(ctx context.Context) ([]ClientView, error) {
+	clients, err := h.clients.ListClients(ctx)
+	if err != nil {
+		return nil, err
+	}
+	requests, err := h.repository.ListClientRequests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	requestsByClient := make(map[string]*clientdisguise.ClientRequestObservation, len(requests))
+	for i := range requests {
+		requestsByClient[requests[i].ClientID] = &requests[i]
+	}
+	result := make([]ClientView, 0, len(clients))
+	for _, client := range clients {
+		result = append(result, ClientView{ClientID: client.ID, LastRequest: requestsByClient[client.ID]})
 	}
 	return result, nil
 }

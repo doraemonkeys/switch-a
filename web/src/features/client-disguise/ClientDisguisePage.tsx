@@ -28,7 +28,7 @@ const SECTIONS = [
 ] as const;
 
 export function ClientDisguisePage() {
-  const { api, state, error, notice, busy, mutate, retry } =
+  const { api, state, error, notice, busy, refreshing, mutate, retry } =
     useClientDisguise();
   const [params, setParams] = useSearchParams();
   // Keep drafts by login so navigation never silently discards an unfinished edit.
@@ -183,7 +183,13 @@ export function ClientDisguisePage() {
             </p>
           </div>
           <div hidden={section !== "references"}>
-            <ReferenceSettings state={state} busy={busy} mutate={mutate} />
+            <ReferenceSettings
+              state={state}
+              busy={busy}
+              mutate={mutate}
+              refresh={retry}
+              refreshing={refreshing}
+            />
           </div>
           <div hidden={section !== "clients"}>
             <ClientIdentitySettings state={state} busy={busy} mutate={mutate} />

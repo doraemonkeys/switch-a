@@ -155,9 +155,25 @@ export function parseDisguiseState(value: unknown): DisguiseState {
     profiles: list(item.profiles, parseProfile),
     references: list(item.references, parseReference),
     transport_samples: list(item.transport_samples, parseTransport),
-    clients: list(item.clients, (value) => ({
-      client_id: str(record(value).client_id),
-    })),
+    clients: list(item.clients, (value) => {
+      const client = record(value);
+      const request =
+        client.last_request == null ? null : record(client.last_request);
+      return {
+        client_id: str(client.client_id),
+        ...(request
+          ? {
+              last_request: {
+                observed_at: str(request.observed_at),
+                tuple: tuple(request.tuple),
+                client_version: str(request.client_version),
+                user_agent: str(request.user_agent),
+                originator: str(request.originator),
+              },
+            }
+          : {}),
+      };
+    }),
   };
 }
 

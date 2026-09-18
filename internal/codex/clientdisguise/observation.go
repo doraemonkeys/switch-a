@@ -14,13 +14,26 @@ var osVersionPattern = regexp.MustCompile("(?i)(?:Windows|Linux|Darwin|macOS|Mac
 // ObserveClient receives original ingress headers, so learning can never ingest
 // the gateway's own mapped identifiers or confuse them with reference features.
 func (r *Repository) ObserveClient(ctx context.Context, clientID string, headers http.Header, capturedAt time.Time) error {
-	facts := ProjectPlatform(headers)
-	if clientID == "" || facts.Conflict || !facts.Tuple.Valid() {
+	if clientID == "" {
 		return nil
 	}
+	if capturedAt.IsZero() {
+		capturedAt = r.now()
+	}
+	facts := ProjectPlatform(headers)
 	ua := headers.Get("User-Agent")
 	version := userAgentVersion(ua)
-	if version == "" {
+	observedTuple := facts.Tuple
+	if facts.Conflict {
+		observedTuple.Platform = ""
+	}
+	if err := r.recordClientRequest(ctx, ClientRequestObservation{
+		ClientID: clientID, ObservedAt: capturedAt, Tuple: observedTuple,
+		ClientVersion: version, UserAgent: ua, Originator: headers.Get("Originator"),
+	}); err != nil {
+		return err
+	}
+	if facts.Conflict || !facts.Tuple.Valid() || version == "" {
 		return nil
 	}
 	features := Features{UserAgent: ua, Originator: headers.Get("Originator"), ClientVersion: version}

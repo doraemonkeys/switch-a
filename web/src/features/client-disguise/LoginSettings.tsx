@@ -130,7 +130,7 @@ export function LoginSettings({
             disabled={busy || !profile || !dirty}
           >
             <Save size={15} aria-hidden="true" />
-            {busy ? "Saving…" : "Save login settings"}
+            {busy ? "Please wait…" : "Save login settings"}
           </button>
         </div>
       </footer>

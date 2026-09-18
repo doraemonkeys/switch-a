@@ -6,6 +6,7 @@ import type {
   ReferenceSource,
 } from "@/api/client-disguise/types";
 import { SampleImport } from "./references/SampleImport";
+import { ReferenceClientPicker } from "./references/ReferenceClientPicker";
 
 export type DisguiseMutation = (
   action: () => Promise<unknown>,
@@ -21,10 +22,14 @@ export function ReferenceSettings({
   state,
   busy,
   mutate,
+  refresh,
+  refreshing,
 }: {
   state: DisguiseState;
   busy: boolean;
   mutate: DisguiseMutation;
+  refresh: () => void;
+  refreshing: boolean;
 }) {
   const api = useApi();
   const [source, setSource] = useState<ReferenceSource | null>(null);
@@ -66,7 +71,7 @@ export function ReferenceSettings({
             <h3>Reference sources</h3>
             <span className="cd-count">{state.references.length}</span>
           </div>
-          {state.references.length ? (
+          {state.references.length > 0 && (
             <div className="cd-source-list">
               {state.references.map((item) => (
                 <button
@@ -90,7 +95,8 @@ export function ReferenceSettings({
                 </button>
               ))}
             </div>
-          ) : (
+          )}
+          {state.references.length === 0 && !source && (
             <div className="cd-panel-empty">
               <Radio size={28} aria-hidden="true" />
               <h3>No reference sources yet</h3>
@@ -148,36 +154,25 @@ export function ReferenceSettings({
                     The stable identifier used by imported samples.
                   </span>
                 </label>
-                <label className="cd-field">
-                  Reference client
-                  <select
-                    required
-                    value={source.client_identity_id}
-                    onChange={(event) =>
-                      setSource({
-                        ...source,
-                        client_identity_id: event.target.value,
-                      })
-                    }
-                  >
-                    <option value="">Select client identity</option>
-                    {state.clients.map((item) => (
-                      <option key={item.client_id}>{item.client_id}</option>
-                    ))}
-                  </select>
-                </label>
-                {state.clients.length === 0 && (
-                  <p className="cd-field-help">
-                    Client identities appear after a client sends a request
-                    through the gateway.
-                  </p>
-                )}
+                <ReferenceClientPicker
+                  clients={state.clients}
+                  value={source.client_identity_id}
+                  onChange={(id) =>
+                    setSource({ ...source, client_identity_id: id })
+                  }
+                  refresh={refresh}
+                  refreshing={refreshing}
+                />
                 <button
                   className="cd-button cd-button-primary"
                   disabled={
                     !source.id.trim() ||
                     !source.name.trim() ||
-                    !source.client_identity_id
+                    refreshing ||
+                    !state.clients.some(
+                      (client) =>
+                        client.client_id === source.client_identity_id,
+                    )
                   }
                 >
                   Save reference source
