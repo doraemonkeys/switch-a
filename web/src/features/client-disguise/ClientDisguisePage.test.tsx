@@ -222,7 +222,7 @@ describe("client disguise reference selection", () => {
     );
     expect(within(group).getAllByRole("radio")).toHaveLength(1);
     expect(within(group).getByRole("radio")).toHaveAccessibleName(
-      /Codex 通用默认标识/,
+      /Codex 默认入口标识（未指定入口）/,
     );
     await user.clear(screen.getByRole("searchbox", { name: "搜索参考客户端" }));
     api.get.mockResolvedValue({

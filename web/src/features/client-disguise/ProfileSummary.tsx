@@ -54,10 +54,11 @@ export function ProfileSummary({
       </dl>
       {!sampledUserAgent(profile) && (
         <p className="cd-field-help cd-partial-profile">
-          部分特征：未采集 User-Agent，环境中未采集的字段沿用原请求。
+          部分特征：未采集完整 User-Agent。选择已知入口标识时，会同步调整原
+          User-Agent 中可识别的 Codex 产品名，系统和终端信息沿用原请求。
           {official
             ? "版本字段使用官方稳定版，原 User-Agent 中可识别的 Codex 版本会同步更新。"
-            : "User-Agent 和客户端版本保留原值。"}
+            : "客户端版本沿用原请求。"}
         </p>
       )}
       <details className="cd-profile-details">

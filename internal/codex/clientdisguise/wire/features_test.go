@@ -37,7 +37,7 @@ func TestObservedFeaturePositionsDoNotInventMissingEnvironment(t *testing.T) {
 	if err != nil || bare.Get("Version") != "" || bare.Get("X-Codex-Desktop-Build") != "" {
 		t.Fatal(bare, err)
 	}
-	if s.profileFeature("unsupported") != "" {
+	if s.profileFeature("unsupported", "") != "" {
 		t.Fatal("invented feature")
 	}
 }

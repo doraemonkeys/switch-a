@@ -30,6 +30,48 @@ func (p ProfileRevision) UserAgent(version string) string {
 	return WithUserAgentVersion(p.Features.ClientUserAgent(), version)
 }
 
+// A partial profile can select a known entry point without inventing its host
+// environment. Complete observations remain authoritative, including captures
+// whose thread originator differs from the process named in the UA.
+func (p ProfileRevision) RequestUserAgent(original, version string) string {
+	if sampled := p.UserAgent(version); sampled != "" {
+		return sampled
+	}
+	return WithUserAgentVersion(withUserAgentOriginator(original, p.Features.ClientOriginator()), version)
+}
+
+func withUserAgentOriginator(ua, originator string) string {
+	knownEntryPoint := false
+	for _, client := range clientTypes {
+		if originator == client.originator {
+			knownEntryPoint = true
+			break
+		}
+	}
+	if !knownEntryPoint {
+		return ua
+	}
+	match := versionPattern.FindStringSubmatchIndex(ua)
+	if len(match) != 4 || match[0] != 0 {
+		return ua
+	}
+	previousProduct := strings.TrimRight(ua[:match[2]], "/ ")
+	if previousProduct == originator {
+		return ua
+	}
+	previousVersion := ua[match[2]:match[3]]
+	ua = originator + "/" + ua[match[2]:]
+	return productSuffixVersion.ReplaceAllStringFunc(ua, func(suffix string) string {
+		parts := productSuffixVersion.FindStringSubmatch(suffix)
+		// Repeated product/version pairs follow the selected entry point. A
+		// different suffix build identifies the embedding app and stays intact.
+		if !strings.EqualFold(parts[1], "("+previousProduct+"; ") || parts[2] != previousVersion {
+			return suffix
+		}
+		return "(" + originator + "; " + previousVersion + ")"
+	})
+}
+
 func userAgentVersion(userAgent string) string {
 	match := versionPattern.FindStringSubmatch(userAgent)
 	if len(match) == 2 {
@@ -45,6 +87,13 @@ func (f Features) ClientUserAgent() string {
 		return f.UserAgent
 	}
 	return profileHeader(f.Headers, "User-Agent")
+}
+
+func (f Features) ClientOriginator() string {
+	if f.Originator != "" {
+		return f.Originator
+	}
+	return profileHeader(f.Headers, "Originator")
 }
 
 // A known release without a sampled UA is not a complete client fingerprint.

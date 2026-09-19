@@ -3,8 +3,6 @@ package wire
 import (
 	"net/http"
 	"strings"
-
-	disguise "github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 )
 
 func (s *Session) applyProfileHeaders(result http.Header) {
@@ -13,18 +11,12 @@ func (s *Session) applyProfileHeaders(result http.Header) {
 	if updates == nil {
 		updates = make(map[string]string)
 	}
-	if ua := s.profileFeature("user_agent"); ua != "" {
+	originalUA := result.Get("User-Agent")
+	if ua := s.profileFeature("user_agent", originalUA); ua != "" && (ua != originalUA || features.ClientUserAgent() != "") {
 		updates["User-Agent"] = ua
-	} else if s.target.OfficialVersion.Version != "" {
-		old := result.Get("User-Agent")
-		ua := disguise.WithUserAgentVersion(old, s.target.OfficialVersion.Version)
-		if ua != old {
-			result.Set("User-Agent", ua)
-			s.difference("header", "User-Agent", old, ua)
-		}
 	}
-	if features.Originator != "" {
-		updates["Originator"] = features.Originator
+	if originator := features.ClientOriginator(); originator != "" {
+		updates["Originator"] = originator
 	}
 	for name, observed := range updates {
 		value, apply := s.profileHeaderValue(name, observed)
@@ -45,10 +37,12 @@ func (s *Session) profileHeaderValue(name, observed string) (string, bool) {
 	}
 	switch {
 	case strings.EqualFold(name, "User-Agent"):
-		value := s.profileFeature("user_agent")
+		value := s.profileFeature("user_agent", observed)
 		return value, value != ""
+	case strings.EqualFold(name, "Originator"):
+		return s.profileFeature("originator", observed), true
 	case headerFeatureKind(name) == "feature:client_version":
-		value := s.profileFeature("client_version")
+		value := s.profileFeature("client_version", observed)
 		return value, value != ""
 	default:
 		return observed, true
@@ -57,13 +51,13 @@ func (s *Session) profileHeaderValue(name, observed string) (string, bool) {
 
 // Structured profile features replace only observed protocol positions. Missing
 // OS/build samples must not manufacture an environment from a matching tuple.
-func (s *Session) profileFeature(name string) string {
+func (s *Session) profileFeature(name, original string) string {
 	features := s.target.Profile.Features
 	switch name {
 	case "user_agent":
-		return s.target.Profile.UserAgent(s.target.OfficialVersion.Version)
+		return s.target.Profile.RequestUserAgent(original, s.target.OfficialVersion.Version)
 	case "originator":
-		return features.Originator
+		return features.ClientOriginator()
 	case "client_version":
 		if s.target.OfficialVersion.Version != "" {
 			return s.target.OfficialVersion.Version

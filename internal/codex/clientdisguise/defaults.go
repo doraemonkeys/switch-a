@@ -32,8 +32,8 @@ func BuiltinAccountProfile() ProfileRevision {
 
 // Public source fixes the release and originator, while host OS and terminal
 // values are runtime observations. Only the repository's captured Windows
-// Desktop tuple supplies a complete UA; other defaults preserve the incoming
-// UA and version together until a complete reference sample is available.
+// Desktop tuple supplies a complete UA; other defaults project their entry point
+// onto the incoming UA while retaining its environment and version.
 func BuiltinProfiles() []ProfileRevision {
 	platforms := []string{"windows", "linux", "macos"}
 	architectures := []string{"amd64", "arm64"}

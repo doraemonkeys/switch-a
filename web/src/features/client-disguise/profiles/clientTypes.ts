@@ -23,7 +23,7 @@ export const CLIENT_TYPES: Record<string, ClientTypePresentation | undefined> =
       originator: "codex_exec",
     },
     cli: {
-      name: "Codex 通用默认标识",
+      name: "Codex 默认入口标识（未指定入口）",
       description:
         "底层客户端未指定具体入口时的默认标识；终端交互请选择 TUI，脚本执行请选择 exec。",
       originator: "codex_cli_rs",

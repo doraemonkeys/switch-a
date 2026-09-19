@@ -33,6 +33,17 @@ func TestTerminalEntryPointRecognition(t *testing.T) {
 	}
 }
 
+func TestWindowsMatchingAllowsAllEntryPointsAndArchitectures(t *testing.T) {
+	for _, client := range clientTypes {
+		for _, arch := range []string{"amd64", "arm64", ""} {
+			facts := PlatformFacts{Tuple: Tuple{ClientType: client.name, Platform: "windows", Arch: arch}}
+			if decision := EvaluatePlatform(Policy{Enabled: true}, facts, windowsDesktop); !decision.Allowed {
+				t.Fatalf("Windows client excluded: %+v", decision)
+			}
+		}
+	}
+}
+
 func TestExecRequestCanBindLearnAndRestore(t *testing.T) {
 	ctx := context.Background()
 	repo := testRepository(t)
