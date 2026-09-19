@@ -1,23 +1,44 @@
 import { useId, useState } from "react";
 import { ChevronDown, RefreshCw, Search } from "lucide-react";
-import type { ClientIdentityView } from "@/api/client-disguise/types";
+import type {
+  ClientIdentityView,
+  ReferenceSource,
+} from "@/api/client-disguise/types";
 import {
   clientPlatform,
   clientRequestTime,
   clientTitle,
+  referenceClientOptions,
   requestTime,
   shortClientID,
 } from "./clientPresentation";
 import "./reference-client-picker.css";
 
+function ReferenceSourceLabels({ sources }: { sources: ReferenceSource[] }) {
+  return (
+    <span className="cd-reference-sources">
+      {sources.map((source) => (
+        <span key={source.id} className="cd-reference-source">
+          <strong>{source.name}</strong>
+          <span>
+            Source ID <code>{source.id}</code>
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function ReferenceClientPicker({
   clients,
+  references,
   value,
   onChange,
   refresh,
   refreshing,
 }: {
   clients: ClientIdentityView[];
+  references: ReferenceSource[];
   value: string;
   onChange: (id: string) => void;
   refresh: () => void;
@@ -25,19 +46,17 @@ export function ReferenceClientPicker({
 }) {
   const id = useId();
   const [query, setQuery] = useState("");
-  const sorted = [...clients].sort(
-    (a, b) =>
-      requestTime(b) - requestTime(a) || a.client_id.localeCompare(b.client_id),
-  );
-  const latestTime = sorted.length ? requestTime(sorted[0]) : 0;
-  const selected = clients.find((client) => client.client_id === value);
+  const options = referenceClientOptions(clients, references);
+  const latestTime = options.length ? requestTime(options[0].client) : 0;
+  const selected = options.find(({ client }) => client.client_id === value);
   const search = query.trim().toLowerCase();
-  const filtered = sorted.filter((client) =>
+  const filtered = options.filter(({ client, sources }) =>
     [
       client.client_id,
       clientTitle(client),
       clientPlatform(client),
       client.last_request?.user_agent,
+      ...sources.flatMap((source) => [source.name, source.id]),
     ]
       .join(" ")
       .toLowerCase()
@@ -59,14 +78,14 @@ export function ReferenceClientPicker({
         </button>
       </div>
       <p id={id + "-help"} className="cd-field-help">
-        按最近请求排序。刚发过请求？刷新后查看「最近请求」标记和时间。
+        已关联的客户端显示参考源名称和 Source ID，按最近请求排序。
       </p>
       <label className="cd-reference-search">
         <Search size={15} aria-hidden="true" />
         <input
           type="search"
           aria-label="搜索参考客户端"
-          placeholder="搜索客户端、系统或 ID"
+          placeholder="搜索参考源名称、Source ID、客户端或系统"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -82,7 +101,7 @@ export function ReferenceClientPicker({
         aria-describedby={id + "-help"}
         aria-busy={refreshing}
       >
-        {filtered.map((client) => (
+        {filtered.map(({ client, sources }) => (
           <label
             key={client.client_id}
             className="cd-reference-option"
@@ -97,15 +116,24 @@ export function ReferenceClientPicker({
             />
             <span className="cd-reference-option-body">
               <span className="cd-reference-option-heading">
-                <strong>{clientTitle(client)}</strong>
+                {sources.length > 0 ? (
+                  <ReferenceSourceLabels sources={sources} />
+                ) : (
+                  <strong>{clientTitle(client)}</strong>
+                )}
                 {latestTime > 0 && requestTime(client) === latestTime && (
                   <span className="cd-reference-latest">最近请求</span>
                 )}
               </span>
+              {sources.length > 0 && (
+                <span className="cd-reference-client-type">
+                  {clientTitle(client)}
+                </span>
+              )}
               <span className="cd-reference-platform">
                 {clientPlatform(client)}{" "}
                 <span title={client.client_id}>
-                  · ID {shortClientID(client.client_id)}
+                  · Client ID {shortClientID(client.client_id)}
                 </span>
               </span>
               <span className="cd-reference-time">
@@ -131,25 +159,38 @@ export function ReferenceClientPicker({
       {selected && (
         <details className="cd-reference-selection">
           <summary>
-            已选：{clientTitle(selected)}{" "}
+            <span>
+              已选：
+              {selected.sources.length > 0
+                ? selected.sources.map((source) => source.name).join("、")
+                : clientTitle(selected.client)}
+            </span>
             <ChevronDown size={14} aria-hidden="true" />
           </summary>
           <dl className="cd-detail-grid">
+            {selected.sources.length > 0 && (
+              <div>
+                <dt>Reference sources</dt>
+                <dd>
+                  <ReferenceSourceLabels sources={selected.sources} />
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Client ID</dt>
-              <dd>{selected.client_id}</dd>
+              <dd>{selected.client.client_id}</dd>
             </div>
             <div>
               <dt>最近请求时间</dt>
-              <dd>{clientRequestTime(selected)}</dd>
+              <dd>{clientRequestTime(selected.client)}</dd>
             </div>
             <div>
               <dt>User-Agent</dt>
-              <dd>{selected.last_request?.user_agent || "暂无记录"}</dd>
+              <dd>{selected.client.last_request?.user_agent || "暂无记录"}</dd>
             </div>
             <div>
               <dt>Originator</dt>
-              <dd>{selected.last_request?.originator || "暂无记录"}</dd>
+              <dd>{selected.client.last_request?.originator || "暂无记录"}</dd>
             </div>
           </dl>
         </details>

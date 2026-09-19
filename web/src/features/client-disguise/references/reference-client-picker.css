@@ -106,6 +106,31 @@
   color: #16654f;
   white-space: nowrap;
 }
+.cd-reference-sources {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  font-family: inherit;
+}
+.cd-reference-source {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cd-reference-source strong {
+  color: var(--cd-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cd-reference-source > span {
+  color: var(--cd-muted);
+  font-size: 10px;
+}
+.cd-reference-source code {
+  color: #496b5c;
+}
+.cd-reference-client-type,
 .cd-reference-platform,
 .cd-reference-time {
   font-size: 11px;

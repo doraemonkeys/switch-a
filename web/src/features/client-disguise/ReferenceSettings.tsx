@@ -156,6 +156,7 @@ export function ReferenceSettings({
                 </label>
                 <ReferenceClientPicker
                   clients={state.clients}
+                  references={state.references}
                   value={source.client_identity_id}
                   onChange={(id) =>
                     setSource({ ...source, client_identity_id: id })

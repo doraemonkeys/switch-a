@@ -1,4 +1,7 @@
-import type { ClientIdentityView } from "@/api/client-disguise/types";
+import type {
+  ClientIdentityView,
+  ReferenceSource,
+} from "@/api/client-disguise/types";
 
 const CLIENT_NAMES: Record<string, string> = {
   desktop: "Codex Desktop",
@@ -11,6 +14,28 @@ const PLATFORM_NAMES: Record<string, string> = {
   linux: "Linux",
 };
 const SHORT_ID_LENGTH = 8;
+
+export function referenceClientOptions(
+  clients: ClientIdentityView[],
+  references: ReferenceSource[],
+) {
+  const sourcesByClient = new Map<string, ReferenceSource[]>();
+  for (const source of references) {
+    const sources = sourcesByClient.get(source.client_identity_id) ?? [];
+    sources.push(source);
+    sourcesByClient.set(source.client_identity_id, sources);
+  }
+  return clients
+    .map((client) => ({
+      client,
+      sources: sourcesByClient.get(client.client_id) ?? [],
+    }))
+    .sort(
+      (a, b) =>
+        requestTime(b.client) - requestTime(a.client) ||
+        a.client.client_id.localeCompare(b.client.client_id),
+    );
+}
 
 export function clientTitle(client: ClientIdentityView): string {
   const request = client.last_request;

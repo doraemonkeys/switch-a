@@ -573,7 +573,9 @@ describe("client disguise workspace", () => {
     await user.click(
       await screen.findByRole("button", { name: /Office desktop/ }),
     );
-    expect(screen.getByLabelText(/Source ID/)).toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: /^Source ID/ })).toHaveAttribute(
+      "readonly",
+    );
     await user.clear(screen.getByLabelText("Source name"));
     await user.type(screen.getByLabelText("Source name"), "Renamed desktop");
     await user.click(
