@@ -15,6 +15,7 @@ const codexMaintenanceAPIType = "codex"
 
 type codexMaintenanceCatalogRow struct {
 	RouteTargetID        string         `gorm:"column:route_target_id"`
+	Transport            string         `gorm:"column:transport"`
 	ProviderID           sql.NullString `gorm:"column:provider_id"`
 	Vendor               sql.NullString `gorm:"column:vendor"`
 	FinalURL             sql.NullString `gorm:"column:final_url"`
@@ -42,6 +43,7 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return tx.Table("provider_api_types AS api_types").
 			Select(`api_types.provider_id AS route_target_id,
+				api_types.transport AS transport,
 				providers.id AS provider_id,
 				providers.vendor AS vendor,
 				api_types.base_url AS final_url,
@@ -53,10 +55,10 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 				sessions.subject_value AS subject_value,
 				sessions.subject_key_version AS subject_key_version`).
 			Joins("LEFT JOIN providers ON providers.id = api_types.provider_id").
-			Joins("LEFT JOIN route_target_credentials AS bindings ON bindings.route_target_id = api_types.provider_id AND bindings.api_type = api_types.api_type").
+			Joins("LEFT JOIN route_target_credentials AS bindings ON bindings.route_target_id = api_types.provider_id AND bindings.api_type = api_types.api_type AND bindings.transport = api_types.transport").
 			Joins("LEFT JOIN credential_sessions AS sessions ON sessions.id = bindings.session_id").
 			Where("api_types.api_type = ?", codexMaintenanceAPIType).
-			Order("api_types.provider_id ASC").
+			Order("api_types.provider_id ASC, api_types.transport ASC").
 			Scan(&rows).Error
 	}, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -68,7 +70,7 @@ func (s *SQLiteStore) LoadCodexMaintenanceCatalog(ctx context.Context) (codexmai
 			!row.BindingSessionID.Valid || !row.CredentialSessionID.Valid ||
 			!row.CredentialKind.Valid || !row.CredentialAuthStatus.Valid || !row.SubjectKind.Valid ||
 			!row.SubjectKeyVersion.Valid {
-			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q has an incomplete provider, binding, or credential session", row.RouteTargetID)
+			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q (%s/%s) has an incomplete provider, binding, or credential session", row.RouteTargetID, codexMaintenanceAPIType, row.Transport)
 		}
 		if row.BindingSessionID.String != row.CredentialSessionID.String {
 			return codexmaintenance.CatalogSnapshot{}, fmt.Errorf("load Codex maintenance catalog: route target %q resolved a mismatched credential session", row.RouteTargetID)
