@@ -26,6 +26,30 @@ type ProviderSelectionEligibility struct {
 	hiddenModelDemand bool
 }
 
+type providerRejectionScope string
+
+const (
+	providerRejectionScopeRoute   providerRejectionScope = "route"
+	providerRejectionScopeRequest providerRejectionScope = "request"
+)
+
+// A request can reject a healthy route without invalidating affinity shared by
+// other conversations. Preserve that distinction at the decision's source.
+type providerRejection struct {
+	reason errorrule.DecisionReason
+	scope  providerRejectionScope
+}
+
+func (r providerRejection) allowed() bool { return r.reason == "" }
+
+func routeRejection(reason errorrule.DecisionReason) providerRejection {
+	return providerRejection{reason: reason, scope: providerRejectionScopeRoute}
+}
+
+func requestRejection(reason errorrule.DecisionReason) providerRejection {
+	return providerRejection{reason: reason, scope: providerRejectionScopeRequest}
+}
+
 // Request returns the request snapshot that this eligibility object was built for.
 func (e *ProviderSelectionEligibility) Request() *model.SelectRequest {
 	if e == nil {
@@ -131,8 +155,8 @@ func (e *ProviderSelectionEligibility) IsEligible(ctx context.Context, provider 
 // eligibility closure and returns an error when the backing auth-state source
 // cannot be read safely.
 func (e *ProviderSelectionEligibility) AllowsProvider(ctx context.Context, provider *model.Provider) (bool, error) {
-	allowed, _, err := e.evaluateProvider(ctx, provider, selectionEligibilityMode())
-	return allowed, err
+	rejection, err := e.evaluateProvider(ctx, provider, selectionEligibilityMode())
+	return err == nil && rejection.allowed(), err
 }
 
 // allowsExistingRoute reuses the immutable candidate eligibility boundary while
@@ -143,80 +167,81 @@ func (e *ProviderSelectionEligibility) allowsExistingRoute(
 	provider *model.Provider,
 	checkHealth bool,
 ) (bool, errorrule.DecisionReason, error) {
-	return e.evaluateProvider(ctx, provider, existingRouteEligibilityMode(checkHealth))
+	rejection, err := e.evaluateProvider(ctx, provider, existingRouteEligibilityMode(checkHealth))
+	return err == nil && rejection.allowed(), rejection.reason, err
 }
 
 func (e *ProviderSelectionEligibility) evaluateProvider(
 	ctx context.Context,
 	provider *model.Provider,
 	mode providerEligibilityMode,
-) (bool, errorrule.DecisionReason, error) {
+) (providerRejection, error) {
 	if e == nil || provider == nil {
-		return false, errorrule.ReasonProviderDeleted, nil
+		return routeRejection(errorrule.ReasonProviderDeleted), nil
 	}
 	candidate := e.candidate(ctx, provider)
 	provider = candidate.provider
 	if provider == nil {
-		return false, errorrule.ReasonProviderDeleted, nil
+		return routeRejection(errorrule.ReasonProviderDeleted), nil
 	}
 	if !provider.Enabled {
-		return false, errorrule.ReasonProviderDisabled, nil
+		return routeRejection(errorrule.ReasonProviderDisabled), nil
 	}
 	if !providerSupportsAPIType(provider, reqAPIType(e.req)) {
-		return false, errorrule.ReasonAPIRemoved, nil
+		return routeRejection(errorrule.ReasonAPIRemoved), nil
 	}
 	if _, supported := provider.RouteConfig(reqAPIType(e.req), reqTransport(e.req)); !supported {
-		return false, errorrule.ReasonTransportUnsupported, nil
+		return routeRejection(errorrule.ReasonTransportUnsupported), nil
 	}
 	// Routing policy defines the candidate boundary itself. Every entry point,
 	// including sticky reuse, must re-check it so cached providers cannot outlive
 	// a stricter policy match.
 	if mode.checkRouting && !e.routing.allowsProvider(provider) {
-		return false, errorrule.ReasonRoutingChanged, nil
+		return requestRejection(errorrule.ReasonRoutingChanged), nil
 	}
 	if e.req != nil && e.req.ClientDisguise != nil && reqAPIType(e.req) == "codex" {
 		disguise, err := e.req.ClientDisguise.Evaluate(ctx, provider)
 		if err != nil {
-			return false, errorrule.ReasonProviderLookupError, err
+			return requestRejection(errorrule.ReasonProviderLookupError), err
 		}
 		if !disguise.Decision.Allowed {
-			return false, errorrule.ReasonClientPlatformExcluded, nil
+			return requestRejection(errorrule.ReasonClientPlatformExcluded), nil
 		}
 	}
 	if candidate.groupErr != nil {
-		return false, errorrule.ReasonProviderLookupError, candidate.groupErr
+		return routeRejection(errorrule.ReasonProviderLookupError), candidate.groupErr
 	}
 	if candidate.group != nil && !candidate.group.Enabled {
-		return false, errorrule.ReasonGroupDisabled, nil
+		return routeRejection(errorrule.ReasonGroupDisabled), nil
 	}
 	if !credentialSessionUsable(candidate.credential) {
-		return false, errorrule.ReasonAuthUnavailable, nil
+		return routeRejection(errorrule.ReasonAuthUnavailable), nil
 	}
 	if !candidate.identityResolved {
-		return false, errorrule.ReasonAuthUnavailable, nil
+		return routeRejection(errorrule.ReasonAuthUnavailable), nil
 	}
 	if required := reqRequiredAuthority(e.req); mode.checkAuthority && required != nil {
 		if !candidate.identity.Authority().Equal(*required) {
-			return false, errorrule.ReasonAuthUnavailable, nil
+			return requestRejection(errorrule.ReasonAuthUnavailable), nil
 		}
 	}
 	if !e.allowsCodexContinuation(provider, candidate.identity) {
-		return false, errorrule.ReasonRoutingChanged, nil
+		return requestRejection(errorrule.ReasonRoutingChanged), nil
 	}
 
 	if mode.checkHealth && e.health != nil {
 		e.health.AvailabilityForRoute(reqAPIType(e.req), reqTransport(e.req)).RecoverIfExpired(ctx, provider.ID)
 		if !e.health.AvailabilityForRoute(reqAPIType(e.req), reqTransport(e.req)).IsAvailable(ctx, provider.ID) {
-			return false, errorrule.ReasonProviderDisabled, nil
+			return routeRejection(errorrule.ReasonProviderDisabled), nil
 		}
 	}
 
 	if mode.checkRouteTransition &&
 		!routeTransitionAllowsProvider(provider, e.req, e.reqMaxProviderSwitches()) {
-		return false, errorrule.ReasonRoutingChanged, nil
+		return requestRejection(errorrule.ReasonRoutingChanged), nil
 	}
 
-	return true, "", nil
+	return providerRejection{}, nil
 }
 
 func (e *ProviderSelectionEligibility) allowsCodexContinuation(provider *model.Provider, identity codexidentity.CandidateSnapshot) bool {

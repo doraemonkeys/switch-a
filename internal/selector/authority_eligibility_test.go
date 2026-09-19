@@ -92,8 +92,8 @@ func TestRequiredAuthorityOverridesPreferredStickyAndStrategy(t *testing.T) {
 	if result.Provider().ID != allowed.ID {
 		t.Fatalf("selected provider = %q, want authority-matching %q", result.Provider().ID, allowed.ID)
 	}
-	if _, found := sticky.Get(BuildContinuityKey(req)); found {
-		t.Fatal("cross-authority sticky hint was not evicted")
+	if providerID, found := sticky.Get(BuildContinuityKey(req)); !found || providerID != crossAuthority.ID {
+		t.Fatal("one request's authority constraint erased shared affinity")
 	}
 	candidate, ok := result.CandidateSnapshot()
 	if !ok || !candidate.Authority().Equal(required) {

@@ -193,7 +193,7 @@ func TestSelector_Select_DisabledRoutingPolicyFallsBackToDefaultSelection(t *tes
 	}
 }
 
-func TestSelector_Select_StickyCacheEvictsProviderRejectedByRoutingPolicy(t *testing.T) {
+func TestSelector_Select_StickyCachePreservesProviderRejectedByRoutingPolicy(t *testing.T) {
 	gAllowed := "g-allowed"
 	gBlocked := "g-blocked"
 
@@ -255,8 +255,8 @@ func TestSelector_Select_StickyCacheEvictsProviderRejectedByRoutingPolicy(t *tes
 	if provider.ID != "p-allowed" {
 		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p-allowed")
 	}
-	if _, found := sticky.Get(buildStickyKey(req)); found {
-		t.Fatal("expected sticky entry to be evicted when routing policy rejects the cached provider")
+	if providerID, found := sticky.Get(buildStickyKey(req)); !found || providerID != "p-blocked" {
+		t.Fatal("request routing policy erased shared affinity")
 	}
 }
 
@@ -312,7 +312,7 @@ func TestSelector_Select_StickyCachePreservesAffinityOnAuthStateReadError(t *tes
 	}
 }
 
-func TestSelector_Select_StickyCacheEvictsProviderRejectedByExactProviderRule(t *testing.T) {
+func TestSelector_Select_StickyCachePreservesProviderRejectedByExactProviderRule(t *testing.T) {
 	groupID := "g-exact"
 
 	store := newMockStore()
@@ -372,8 +372,8 @@ func TestSelector_Select_StickyCacheEvictsProviderRejectedByExactProviderRule(t 
 	if provider.ID != "p-exact" {
 		t.Fatalf("provider.ID = %q, want %q", provider.ID, "p-exact")
 	}
-	if _, found := sticky.Get(buildStickyKey(req)); found {
-		t.Fatal("expected sticky entry to be evicted when exact-provider routing rejects the cached provider")
+	if providerID, found := sticky.Get(buildStickyKey(req)); !found || providerID != "p-sticky-blocked" {
+		t.Fatal("exact-provider request routing erased shared affinity")
 	}
 }
 

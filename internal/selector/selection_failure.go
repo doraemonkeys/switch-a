@@ -66,8 +66,8 @@ func (s *Selector) hasContinuityRoutingConflict(
 			continue
 		}
 
-		baseAllowed, _, err := e.evaluateProvider(ctx, candidate.provider, baseEligibility)
-		if err != nil || !baseAllowed {
+		rejection, err := e.evaluateProvider(ctx, candidate.provider, baseEligibility)
+		if err != nil || !rejection.allowed() {
 			continue
 		}
 		if candidate.provider.Concurrency > 0 &&

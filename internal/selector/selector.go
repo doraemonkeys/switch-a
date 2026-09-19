@@ -408,19 +408,21 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 		return nil, nil
 	}
 
-	// Get and verify provider
 	provider := scope.Provider(providerID)
-	if provider == nil {
-		s.sticky.Delete(stickyKey)
-		return nil, nil
-	}
-
-	allowed, err := scope.AllowsProvider(ctx, provider)
+	rejection, err := scope.evaluateProvider(ctx, provider, selectionEligibilityMode())
 	if err != nil {
 		return nil, err
 	}
-	if !allowed {
-		s.sticky.Delete(stickyKey)
+	if !rejection.allowed() {
+		decision := stickyBindingDecisionSkipped
+		// Affinity outlives any one conversation. Only route-wide failures
+		// invalidate it; a request-specific refusal must leave it reusable.
+		if rejection.scope == providerRejectionScopeRoute {
+			s.sticky.Delete(stickyKey)
+			decision = stickyBindingDecisionEvicted
+		}
+		s.observeStickyBindingDecision(scope.req, providerID, decision,
+			stickyBindingDecisionReason(rejection.reason), rejection.scope)
 		return nil, nil
 	}
 
@@ -431,6 +433,7 @@ func (s *Selector) checkStickyCache(ctx context.Context, scope *ProviderSelectio
 			provider.ID,
 			stickyBindingDecisionEvicted,
 			stickyBindingDecisionReasonProviderConcurrencyExhausted,
+			providerRejectionScopeRoute,
 		)
 		s.sticky.Delete(stickyKey)
 		return nil, nil

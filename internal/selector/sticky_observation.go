@@ -8,7 +8,10 @@ import (
 
 type stickyBindingDecision string
 
-const stickyBindingDecisionEvicted stickyBindingDecision = "sticky_binding_evicted"
+const (
+	stickyBindingDecisionEvicted stickyBindingDecision = "sticky_binding_evicted"
+	stickyBindingDecisionSkipped stickyBindingDecision = "sticky_binding_skipped"
+)
 
 type stickyBindingDecisionReason string
 
@@ -22,6 +25,7 @@ func (s *Selector) observeStickyBindingDecision(
 	providerID string,
 	decision stickyBindingDecision,
 	reason stickyBindingDecisionReason,
+	rejectionScope providerRejectionScope,
 ) {
 	if s == nil || s.logger == nil {
 		return
@@ -30,6 +34,8 @@ func (s *Selector) observeStickyBindingDecision(
 		zap.String("operation_id", reqOperationID(req)),
 		zap.String("provider_id", providerID),
 		zap.String("api_type", reqAPIType(req)),
+		zap.String("transport", reqTransport(req)),
+		zap.String("rejection_scope", string(rejectionScope)),
 		zap.String("decision", string(decision)),
 		zap.String("reason", string(reason)),
 	)
