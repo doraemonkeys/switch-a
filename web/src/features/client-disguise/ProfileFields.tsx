@@ -8,6 +8,7 @@ import {
   type LoginDraft,
 } from "./loginDraft";
 import { ProfileSummary } from "./ProfileSummary";
+import { CLIENT_TYPES } from "./profiles/clientTypes";
 import {
   profileEnvironments,
   environmentLabel,
@@ -27,6 +28,10 @@ export function ProfileFields({
   change: (draft: LoginDraft) => void;
 }) {
   const environments = profileEnvironments(state.profiles);
+  const selectedTuple = environments.find(
+    ([key]) => key === draft.environment,
+  )?.[1];
+  const clientType = CLIENT_TYPES[selectedTuple?.client_type ?? ""];
   const selection = profileSelection(draft);
   const effective = effectiveProfile(draft, state);
   const officialVersion = state.official_version?.release.version;
@@ -49,6 +54,7 @@ export function ProfileFields({
         客户端环境
         <select
           aria-label="客户端环境"
+          aria-describedby="client-environment-help"
           value={draft.environment}
           disabled={environments.length === 0}
           onChange={(event) =>
@@ -70,7 +76,16 @@ export function ProfileFields({
             </option>
           ))}
         </select>
-        <span className="cd-field-help">可选组合来自已有配置与采样。</span>
+        <span id="client-environment-help" className="cd-field-help">
+          {clientType ? (
+            <>
+              {clientType.description} 内置 Originator：
+              <code>{clientType.originator}</code>。
+            </>
+          ) : (
+            "可选组合来自已有配置与采样。"
+          )}
+        </span>
       </label>
       {environments.length === 0 ? (
         <p className="cd-description">

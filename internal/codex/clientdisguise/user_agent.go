@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var productSuffixVersion = regexp.MustCompile(`(?i)(\((?:codex_cli_rs|codex-tui|codex_desktop|Codex Desktop|codex); )([^ )]+)(\))`)
+var productSuffixVersion = regexp.MustCompile(`(?i)(\((?:codex_cli_rs|codex-tui|codex_exec|codex-exec|codex_desktop|Codex Desktop|codex); )([^ )]+)(\))`)
 
 // An explicit release selection changes only the Codex product version. Desktop
 // build numbers, OS releases and terminal/runtime versions remain observations.

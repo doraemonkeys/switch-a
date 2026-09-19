@@ -6,6 +6,7 @@ const (
 	builtinVersion              = "0.150.0-alpha.8"
 	builtinSourceURL            = "https://github.com/openai/codex/blob/rust-v0.150.0-alpha.8/codex-rs/login/src/auth/default_client.rs"
 	builtinTUISourceURL         = "https://github.com/openai/codex/blob/rust-v0.150.0-alpha.8/codex-rs/tui/src/lib.rs"
+	builtinExecSourceURL        = "https://github.com/openai/codex/blob/rust-v0.150.0-alpha.8/codex-rs/exec/src/lib.rs"
 	builtinDesktopCaptureSource = "internal/codex/headers/testdata/codex-desktop-0.150.0-alpha.8/manifest.json"
 	builtinDesktopUserAgent     = "Codex Desktop/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)"
 	builtinDesktopBuild         = "26.820.60940"
@@ -18,7 +19,7 @@ const (
 func BuiltinAccountProfile() ProfileRevision {
 	return ProfileRevision{
 		ID:            "builtin-desktop-windows-amd64",
-		Tuple:         Tuple{ClientType: "desktop", Platform: "windows", Arch: "amd64"},
+		Tuple:         Tuple{ClientType: clientTypeDesktop, Platform: "windows", Arch: "amd64"},
 		ClientVersion: builtinVersion,
 		Features: Features{
 			ClientVersion: builtinVersion, Originator: "Codex Desktop",
@@ -34,20 +35,15 @@ func BuiltinAccountProfile() ProfileRevision {
 // Desktop tuple supplies a complete UA; other defaults preserve the incoming
 // UA and version together until a complete reference sample is available.
 func BuiltinProfiles() []ProfileRevision {
-	result := make([]ProfileRevision, 0, 18)
-	for _, clientType := range []string{"desktop", "tui", "cli"} {
-		originator, source := "codex_cli_rs", builtinSourceURL
-		if clientType == "desktop" {
-			originator = "Codex Desktop"
-		}
-		if clientType == "tui" {
-			originator, source = "codex-tui", builtinTUISourceURL
-		}
-		for _, platform := range []string{"windows", "linux", "macos"} {
-			for _, arch := range []string{"amd64", "arm64"} {
-				tuple := Tuple{ClientType: clientType, Platform: platform, Arch: arch}
-				profile := ProfileRevision{ID: "builtin-" + clientType + "-" + platform + "-" + arch, Tuple: tuple, ClientVersion: builtinVersion, Features: Features{ClientVersion: builtinVersion, Originator: originator}, SourceID: "builtin", EvidenceKind: "source", SourceURL: source, CreatedAt: time.Unix(0, 0).UTC()}
-				if tuple == (Tuple{ClientType: "desktop", Platform: "windows", Arch: "amd64"}) {
+	platforms := []string{"windows", "linux", "macos"}
+	architectures := []string{"amd64", "arm64"}
+	result := make([]ProfileRevision, 0, len(clientTypes)*len(platforms)*len(architectures))
+	for _, client := range clientTypes {
+		for _, platform := range platforms {
+			for _, arch := range architectures {
+				tuple := Tuple{ClientType: client.name, Platform: platform, Arch: arch}
+				profile := ProfileRevision{ID: "builtin-" + client.name + "-" + platform + "-" + arch, Tuple: tuple, ClientVersion: builtinVersion, Features: Features{ClientVersion: builtinVersion, Originator: client.originator}, SourceID: "builtin", EvidenceKind: "source", SourceURL: client.sourceURL, CreatedAt: time.Unix(0, 0).UTC()}
+				if tuple == (Tuple{ClientType: clientTypeDesktop, Platform: "windows", Arch: "amd64"}) {
 					profile = BuiltinAccountProfile()
 				}
 				result = append(result, profile)

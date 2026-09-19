@@ -103,6 +103,15 @@ describe("profile catalog semantics", () => {
     ).toEqual([]);
   });
   it("projects the observed UA version and respects imported aliases", () => {
+    expect(
+      requestVersion({
+        ...profile,
+        features: {
+          ...profile.features,
+          user_agent: "codex_exec/0.151.0 (Linux; x86_64)",
+        },
+      }),
+    ).toBe("0.151.0");
     expect(requestVersion({ ...profile, client_version: "0.156.0" })).toBe(
       "0.155.0-alpha.9",
     );

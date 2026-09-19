@@ -98,6 +98,66 @@ function mount(data = state, current = login) {
 }
 
 describe("login environment and snapshot selection", () => {
+  it("explains terminal identities and saves the selected entry point", async () => {
+    const terminalProfiles = [
+      {
+        type: "tui",
+        name: "Codex CLI（交互式 TUI）",
+        originator: "codex-tui",
+        hint: /运行 codex，在终端中交互聊天/,
+      },
+      {
+        type: "exec",
+        name: "Codex CLI（非交互 exec）",
+        originator: "codex_exec",
+        hint: /运行 codex exec/,
+      },
+      {
+        type: "cli",
+        name: "Codex 通用默认标识",
+        originator: "codex_cli_rs",
+        hint: /未指定具体入口/,
+      },
+    ];
+    const data = {
+      ...state,
+      profiles: [
+        ...state.profiles,
+        ...terminalProfiles.map((client) => ({
+          ...state.profiles[0],
+          id: `builtin-${client.type}`,
+          tuple: { ...tuple, client_type: client.type },
+          source_id: "builtin",
+          features: {
+            ...state.profiles[0].features,
+            originator: client.originator,
+          },
+        })),
+      ],
+    };
+    const { user, save } = mount(data);
+    const environment = screen.getByLabelText("客户端环境");
+    for (const client of terminalProfiles) {
+      await user.selectOptions(
+        environment,
+        screen.getByRole("option", { name: `${client.name} · Windows · x64` }),
+      );
+      expect(environment).toHaveAccessibleDescription(client.hint);
+      expect(environment).toHaveAccessibleDescription(
+        new RegExp(client.originator),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Save login settings" }),
+      );
+      expect(save).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          tuple: { ...tuple, client_type: client.type },
+          revision_id: `builtin-${client.type}`,
+        }),
+      );
+    }
+  });
+
   it("changes environments without changing update mode and restores each environment selection", async () => {
     const macTuple = { ...tuple, platform: "macos", arch: "arm64" };
     const data: DisguiseState = {

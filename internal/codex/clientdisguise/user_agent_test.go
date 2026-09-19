@@ -17,6 +17,7 @@ func TestWireClientVersionRequiresAUserAgent(t *testing.T) {
 		{"release only", ProfileRevision{ClientVersion: "2.0.0"}, ""},
 		{"header version only", ProfileRevision{Features: Features{Headers: map[string]string{"Version": "2.0.0"}}}, ""},
 		{"known UA wins over stale release", ProfileRevision{ClientVersion: "2.0.0", Features: Features{UserAgent: "codex-tui/1.0.0 (Linux; x86_64)"}}, "1.0.0"},
+		{"exec UA wins over stale release", ProfileRevision{ClientVersion: "2.0.0", Features: Features{UserAgent: "codex_exec/1.0.0 (Linux; x86_64)"}}, "1.0.0"},
 		{"imported UA alias", ProfileRevision{Features: Features{Headers: map[string]string{"user-agent": "codex-tui/2.0.0 (Linux; x86_64)"}}}, "2.0.0"},
 		{"typed UA wins over alias", ProfileRevision{Features: Features{UserAgent: "codex-tui/2.0.0", Headers: map[string]string{"User-Agent": "codex-tui/1.0.0"}}}, "2.0.0"},
 		{"canonical header wins over casing alias", ProfileRevision{Features: Features{Headers: map[string]string{"User-Agent": "codex-tui/2.0.0", "user-agent": "codex-tui/1.0.0"}}}, "2.0.0"},
@@ -37,6 +38,7 @@ func TestWireClientVersionRequiresAUserAgent(t *testing.T) {
 
 func TestExplicitUserAgentVersionMismatchIsRejected(t *testing.T) {
 	for _, features := range []Features{
+		{UserAgent: "codex_exec/1.0.0 (Linux; x86_64)"},
 		{UserAgent: "codex-tui/1.0.0 (Linux; x86_64)"},
 		{Headers: map[string]string{"user-agent": "codex-tui/1.0.0 (Linux; x86_64)"}},
 	} {

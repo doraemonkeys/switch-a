@@ -47,7 +47,7 @@ type Tuple struct {
 }
 
 func (t Tuple) Valid() bool {
-	return (t.ClientType == "desktop" || t.ClientType == "tui" || t.ClientType == "cli") &&
+	return validClientType(t.ClientType) &&
 		(t.Platform == "windows" || t.Platform == "linux" || t.Platform == "macos") &&
 		(t.Arch == "amd64" || t.Arch == "arm64")
 }

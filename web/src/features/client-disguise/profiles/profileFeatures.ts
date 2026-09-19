@@ -14,7 +14,7 @@ const FEATURE_LABELS: Record<
   os_version: "系统版本",
 };
 const CODEX_VERSION =
-  /codex[_ /-]*(?:desktop|cli(?:_rs)?|tui)?[/ ](\d+(?:\.\d+){1,3}(?:[-+][a-z\d.-]+)?)/i;
+  /codex[_ /-]*(?:desktop|cli(?:_rs)?|tui|exec)?[/ ](\d+(?:\.\d+){1,3}(?:[-+][a-z\d.-]+)?)/i;
 export const UNOBSERVED = "沿用原请求";
 
 function headerValue(profile: ProfileRevision, name: string) {

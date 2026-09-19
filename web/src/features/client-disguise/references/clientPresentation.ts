@@ -3,11 +3,8 @@ import type {
   ReferenceSource,
 } from "@/api/client-disguise/types";
 
-const CLIENT_NAMES: Record<string, string> = {
-  desktop: "Codex Desktop",
-  cli: "Codex CLI",
-  tui: "Codex TUI",
-};
+import { CLIENT_TYPES } from "../profiles/clientTypes";
+
 const PLATFORM_NAMES: Record<string, string> = {
   windows: "Windows",
   macos: "macOS",
@@ -41,7 +38,7 @@ export function clientTitle(client: ClientIdentityView): string {
   const request = client.last_request;
   if (!request) return "待识别客户端";
   const name =
-    CLIENT_NAMES[request.tuple.client_type] ||
+    CLIENT_TYPES[request.tuple.client_type]?.name ||
     request.originator ||
     "未知客户端";
   return [name, request.client_version].filter(Boolean).join(" ");

@@ -36,7 +36,7 @@ type Candidate struct {
 	Decision            PlatformDecision
 }
 
-var versionPattern = regexp.MustCompile(`(?i)(?:codex[_ /-]*(?:desktop|cli(?:_rs)?|tui)?[/ ]|codex_desktop/)([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)`)
+var versionPattern = regexp.MustCompile(`(?i)(?:codex[_ /-]*(?:desktop|cli(?:_rs)?|tui|exec)?[/ ]|codex_desktop/)([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)`)
 
 func ProjectPlatform(headers http.Header) PlatformFacts {
 	var facts PlatformFacts
@@ -60,11 +60,13 @@ func ProjectPlatform(headers http.Header) PlatformFacts {
 	combined := strings.ToLower(ua + " " + headers.Get("Originator"))
 	switch {
 	case strings.Contains(combined, "desktop"), strings.Contains(combined, "electron"):
-		facts.Tuple.ClientType = "desktop"
+		facts.Tuple.ClientType = clientTypeDesktop
 	case strings.Contains(combined, "tui"):
-		facts.Tuple.ClientType = "tui"
+		facts.Tuple.ClientType = clientTypeTUI
+	case strings.Contains(combined, "codex_exec"), strings.Contains(combined, "codex-exec"):
+		facts.Tuple.ClientType = clientTypeExec
 	case strings.Contains(combined, "codex_cli"), strings.Contains(combined, "codex-cli"), strings.Contains(combined, "codex/"):
-		facts.Tuple.ClientType = "cli"
+		facts.Tuple.ClientType = clientTypeDefault
 	}
 	archInput := strings.ToLower(ua + " " + headers.Get("X-Stainless-Arch") + " " + headers.Get("Sec-CH-UA-Arch"))
 	switch {

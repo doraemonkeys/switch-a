@@ -5,11 +5,8 @@ import type {
   ReferenceSource,
 } from "@/api/client-disguise/types";
 
-const CLIENT_NAMES: Record<string, string> = {
-  desktop: "Desktop",
-  tui: "TUI",
-  cli: "CLI",
-};
+import { CLIENT_TYPES } from "./clientTypes";
+
 const PLATFORM_NAMES: Record<string, string> = {
   windows: "Windows",
   macos: "macOS",
@@ -22,7 +19,7 @@ export function environmentKey(tuple: ClientTuple) {
 }
 export function environmentLabel(tuple: ClientTuple) {
   return [
-    CLIENT_NAMES[tuple.client_type] ?? tuple.client_type,
+    CLIENT_TYPES[tuple.client_type]?.name ?? tuple.client_type,
     PLATFORM_NAMES[tuple.platform] ?? tuple.platform,
     ARCH_NAMES[tuple.arch] ?? tuple.arch,
   ].join(" · ");

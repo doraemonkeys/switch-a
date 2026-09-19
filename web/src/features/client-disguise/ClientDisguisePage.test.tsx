@@ -221,7 +221,9 @@ describe("client disguise reference selection", () => {
       "macOS",
     );
     expect(within(group).getAllByRole("radio")).toHaveLength(1);
-    expect(within(group).getByRole("radio")).toHaveAccessibleName(/Codex CLI/);
+    expect(within(group).getByRole("radio")).toHaveAccessibleName(
+      /Codex 通用默认标识/,
+    );
     await user.clear(screen.getByRole("searchbox", { name: "搜索参考客户端" }));
     api.get.mockResolvedValue({
       ...initial,
