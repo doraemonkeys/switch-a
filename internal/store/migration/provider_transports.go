@@ -15,7 +15,9 @@ func MigrateProviderTransports(db *gorm.DB) error {
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		statements := []string{
-			`CREATE TABLE provider_api_types_transport (provider_id TEXT NOT NULL, api_type TEXT NOT NULL, transport TEXT NOT NULL DEFAULT 'http', base_url TEXT NOT NULL DEFAULT '', PRIMARY KEY(provider_id, api_type, transport))`,
+			// Include GORM's named provider constraint before publishing bindings.
+			// Adding it later rebuilds this parent table and cascades away every binding.
+			`CREATE TABLE provider_api_types_transport (provider_id TEXT NOT NULL, api_type TEXT NOT NULL, transport TEXT NOT NULL DEFAULT 'http', base_url TEXT NOT NULL DEFAULT '', PRIMARY KEY(provider_id, api_type, transport), CONSTRAINT fk_providers_api_types FOREIGN KEY(provider_id) REFERENCES providers(id))`,
 			`CREATE TABLE route_target_credentials_transport (route_target_id TEXT NOT NULL, api_type TEXT NOT NULL, transport TEXT NOT NULL DEFAULT 'http', session_id TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, PRIMARY KEY(route_target_id, api_type, transport), FOREIGN KEY(route_target_id, api_type, transport) REFERENCES provider_api_types_transport(provider_id, api_type, transport) ON DELETE CASCADE, FOREIGN KEY(session_id) REFERENCES credential_sessions(id) ON DELETE RESTRICT)`,
 		}
 		if tx.Migrator().HasTable("provider_api_types") {
