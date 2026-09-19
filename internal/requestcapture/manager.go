@@ -236,11 +236,12 @@ func (m *Manager) scanStart(request StartRequest) (startShape, error) {
 		if len(provider.ID) > maxRetainedProviderIDBytes || len(provider.Name) > maxRetainedProviderNameBytes {
 			return startShape{}, &ValidationError{Field: "providers", Reason: "provider identity exceeds retained metadata limits"}
 		}
-		if provider.ID != strings.TrimSpace(provider.ID) ||
-			provider.Name != strings.TrimSpace(provider.Name) {
+		// Only IDs select capture targets; display names preserve catalog metadata
+		// and must not make an otherwise valid provider ineligible for capture.
+		if provider.ID != strings.TrimSpace(provider.ID) {
 			return startShape{}, &ValidationError{
 				Field:  "providers",
-				Reason: "provider identities must use canonical whitespace",
+				Reason: "provider IDs must not contain surrounding whitespace",
 			}
 		}
 		if provider.ID == "" {

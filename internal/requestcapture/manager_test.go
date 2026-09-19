@@ -367,19 +367,23 @@ func TestStartDenialAndConcurrentLosersDoNotMaterialize(t *testing.T) {
 	}
 }
 
-func TestStartRejectsNonCanonicalProviderIdentity(t *testing.T) {
+func TestStartRejectsNonCanonicalProviderIDs(t *testing.T) {
 	manager := newTestManager(t, nil)
-	for _, provider := range []ProviderIdentity{
-		{ID: " selected", Name: "Selected"},
-		{ID: "selected", Name: "Selected "},
+	for _, providerID := range []string{
+		" selected",
+		"selected ",
+		"\u00a0selected\u3000",
+		"\tselected\n",
 	} {
+		provider := ProviderIdentity{ID: providerID, Name: "Selected"}
 		_, err := manager.Start(StartRequest{
 			Providers:                 []ProviderIdentity{provider},
 			AcknowledgeRawPayloadRisk: true,
 		})
 		var validation *ValidationError
-		if !errors.As(err, &validation) || validation.Field != "providers" {
-			t.Fatalf("Start(%#v) error = %v, want provider validation", provider, err)
+		if !errors.As(err, &validation) || validation.Field != "providers" ||
+			validation.Reason != "provider IDs must not contain surrounding whitespace" {
+			t.Fatalf("Start(%#v) error = %v, want provider ID whitespace validation", provider, err)
 		}
 	}
 }

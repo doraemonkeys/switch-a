@@ -53,6 +53,62 @@ func TestStartSessionResolvesSafeProviderIdentities(t *testing.T) {
 	}
 }
 
+func TestStartSessionPreservesProviderDisplayNames(t *testing.T) {
+	tests := []struct {
+		name         string
+		providerName string
+	}{
+		{name: "trailing space", providerName: "\u4e34\u65f6gpt "},
+		{name: "leading space", providerName: " Provider A"},
+		{name: "unicode whitespace", providerName: "\u00a0Provider A\u3000"},
+		{name: "tabs and newlines", providerName: "\tProvider A\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, err := requestcapture.NewManager(requestcapture.Config{})
+			if err != nil {
+				t.Fatalf("NewManager() error = %v", err)
+			}
+			t.Cleanup(func() { _ = manager.Close() })
+			provider := requestcapture.ProviderIdentity{ID: "provider-a", Name: test.providerName}
+			handler := NewHandler(Config{
+				Providers: &stubProviderCatalog{providers: []model.Provider{{ID: provider.ID, Name: provider.Name}}},
+				Sessions:  manager,
+			})
+			recorder := httptest.NewRecorder()
+			handler.StartSession(recorder, httptest.NewRequest(http.MethodPost, "/admin/api/debug-capture/sessions",
+				strings.NewReader(`{"provider_ids":["provider-a"],"acknowledge_raw_payload_risk":true}`)))
+			if recorder.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+			}
+			var session requestcapture.SessionInfo
+			if err := json.NewDecoder(recorder.Body).Decode(&session); err != nil {
+				t.Fatal(err)
+			}
+			if len(session.ProviderIDs) != 1 || session.ProviderIDs[0] != provider.ID ||
+				len(session.Providers) != 1 || session.Providers[0] != provider {
+				t.Fatalf("session changed provider identity: %#v", session)
+			}
+
+			statusRecorder := httptest.NewRecorder()
+			handler.Status(statusRecorder, httptest.NewRequest(http.MethodGet, "/admin/api/debug-capture/status", nil))
+			if statusRecorder.Code != http.StatusOK {
+				t.Fatalf("status = %d; body=%s", statusRecorder.Code, statusRecorder.Body.String())
+			}
+			var status struct {
+				Session *requestcapture.SessionInfo `json:"session"`
+			}
+			if err := json.NewDecoder(statusRecorder.Body).Decode(&status); err != nil {
+				t.Fatal(err)
+			}
+			if status.Session == nil || status.Session.SessionID != session.SessionID ||
+				len(status.Session.Providers) != 1 || status.Session.Providers[0] != provider {
+				t.Fatalf("status changed provider identity: %#v", status.Session)
+			}
+		})
+	}
+}
+
 func TestStartSessionRejectsInvalidInputBeforeStarting(t *testing.T) {
 	tests := []struct {
 		name      string
