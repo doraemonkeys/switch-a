@@ -20,6 +20,7 @@ type Repository interface {
 	ListLogins(context.Context) ([]clientdisguise.LoginIdentity, error)
 	ListBindings(context.Context) ([]clientdisguise.ProfileBinding, error)
 	ListProfiles(context.Context) ([]clientdisguise.ProfileRevision, error)
+	ListTracks(context.Context) ([]clientdisguise.ProfileTrack, error)
 	ListReferences(context.Context) ([]clientdisguise.ReferenceSource, error)
 	ListClientRequests(context.Context) ([]clientdisguise.ClientRequestObservation, error)
 	ListTransportSamples(context.Context) ([]clientdisguise.TransportSample, error)

@@ -153,6 +153,16 @@ export function parseDisguiseState(value: unknown): DisguiseState {
       : { official_version: parseOfficialVersion(item.official_version) }),
     logins: list(item.logins, parseLogin),
     profiles: list(item.profiles, parseProfile),
+    tracks: list(item.tracks, (value) => {
+      const track = record(value);
+      return {
+        ...tuple(track),
+        source_id: str(track.source_id),
+        revision_id: str(track.revision_id),
+        client_version: str(track.client_version),
+        captured_at: str(track.captured_at),
+      };
+    }),
     references: list(item.references, parseReference),
     transport_samples: list(item.transport_samples, parseTransport),
     clients: list(item.clients, (value) => {

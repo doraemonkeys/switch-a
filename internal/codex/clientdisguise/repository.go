@@ -250,6 +250,9 @@ func (r *Repository) ListBindings(ctx context.Context) ([]ProfileBinding, error)
 func (r *Repository) ListProfiles(ctx context.Context) ([]ProfileRevision, error) {
 	return listRecords[ProfileRevision](ctx, r.db)
 }
+func (r *Repository) ListTracks(ctx context.Context) ([]ProfileTrack, error) {
+	return listRecords[ProfileTrack](ctx, r.db)
+}
 func (r *Repository) ListReferences(ctx context.Context) ([]ReferenceSource, error) {
 	return listRecords[ReferenceSource](ctx, r.db)
 }

@@ -80,6 +80,7 @@ describe("client disguise administration contract", () => {
       parseDisguiseState({
         logins: [],
         profiles: [],
+        tracks: [],
         references: [],
         transport_samples: [],
         clients: [],
@@ -126,12 +127,28 @@ describe("client disguise administration contract", () => {
         },
       ],
       profiles: [profile],
+      tracks: [
+        {
+          ...tuple,
+          source_id: "ref",
+          revision_id: "revision",
+          client_version: "1",
+          captured_at: "2026-09-06",
+        },
+      ],
       references: [reference],
       transport_samples: [transport],
       clients: [{ client_id: "client" }],
     });
     expect(result.logins[0].identity).toBeUndefined();
     expect(result.profiles[0].id).toBe("revision");
+    expect(result.tracks[0]).toEqual({
+      ...tuple,
+      source_id: "ref",
+      revision_id: "revision",
+      client_version: "1",
+      captured_at: "2026-09-06",
+    });
     expect(() => parseDisguiseState({})).toThrow();
   });
   it("decodes request observations without inventing activity for older identities", () => {
@@ -145,6 +162,7 @@ describe("client disguise administration contract", () => {
     const overview = {
       logins: [],
       profiles: [],
+      tracks: [],
       references: [],
       transport_samples: [],
       clients: [

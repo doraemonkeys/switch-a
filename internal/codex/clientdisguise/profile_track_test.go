@@ -52,6 +52,10 @@ func TestReferenceTrackDuplicateWatermarkAndResume(t *testing.T) {
 	if snapshot.Tracks[0].RevisionID != first.Revision.ID || !snapshot.Tracks[0].CapturedAt.Equal(at.Add(2*time.Hour)) {
 		t.Fatal(snapshot.Tracks)
 	}
+	tracks, err := r.ListTracks(ctx)
+	if err != nil || len(tracks) != 1 || tracks[0] != snapshot.Tracks[0] {
+		t.Fatalf("list must retain the duplicate observation watermark and original revision: %+v, %v", tracks, err)
+	}
 	restored := testRepository(t)
 	if err := restored.Import(ctx, snapshot); err != nil {
 		t.Fatal(err)

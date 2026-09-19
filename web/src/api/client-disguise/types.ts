@@ -39,6 +39,12 @@ export interface ProfileBinding {
   telemetry_path_mappings: Record<string, string> | null;
   updated_at?: string;
 }
+export interface ProfileTrack extends ClientTuple {
+  source_id: string;
+  revision_id: string;
+  client_version: string;
+  captured_at: string;
+}
 export interface LoginIdentity {
   credential_session_id: string;
   generation_id: string;
@@ -94,6 +100,7 @@ export interface DisguiseState {
   official_version?: OfficialVersionState;
   logins: LoginView[];
   profiles: ProfileRevision[];
+  tracks: ProfileTrack[];
   references: ReferenceSource[];
   transport_samples: TransportSample[];
   clients: ClientIdentityView[];

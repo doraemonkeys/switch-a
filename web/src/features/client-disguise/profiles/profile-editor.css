@@ -1,0 +1,219 @@
+.cd-profile-editor .cd-field,
+.cd-profile-editor .cd-mode-fieldset legend {
+  font-size: 12px;
+}
+.cd-profile-editor .cd-field-help,
+.cd-profile-editor .cd-mode-option small {
+  font-size: 12px;
+}
+.cd-profile-editor .cd-field-help {
+  color: var(--cd-muted);
+}
+.client-disguise .cd-snapshot-picker {
+  margin-top: 20px;
+}
+.cd-snapshot-picker > legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.cd-snapshot-picker > legend span {
+  color: var(--cd-muted);
+  font-weight: 400;
+}
+.cd-snapshot-group {
+  border: 1px solid var(--cd-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cd-snapshot-group + .cd-snapshot-group {
+  margin-top: 10px;
+}
+.cd-snapshot-group-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  background: #f5f7f8;
+  font-size: 13px;
+}
+.cd-snapshot-group-title small {
+  color: var(--cd-muted);
+  font-size: 12px;
+}
+.cd-snapshot-choice {
+  padding: 12px 13px;
+  border-top: 1px solid var(--cd-line);
+}
+.cd-snapshot-choice[data-selected="true"] {
+  background: var(--cd-tint);
+}
+.cd-snapshot-choice > label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.cd-snapshot-choice input[type="radio"] {
+  accent-color: var(--cd-accent);
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.cd-snapshot-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cd-snapshot-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.cd-snapshot-copy small {
+  color: var(--cd-muted);
+  font-size: 12px;
+}
+.cd-snapshot-badge {
+  display: inline-flex;
+  color: #52665d;
+  background: #fff;
+  border: 1px solid #d8e2dd;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  padding: 1px 6px;
+}
+.cd-snapshot-copy .cd-snapshot-change {
+  color: var(--cd-accent);
+}
+.cd-snapshot-history {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 13px 10px 36px;
+  background: #fff;
+  border: 0;
+  border-top: 1px solid var(--cd-line);
+  color: var(--cd-accent);
+}
+.cd-profile-editor .cd-snapshot-history {
+  font-size: 12px;
+}
+.cd-snapshot-comparison {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.cd-snapshot-comparison > summary {
+  color: var(--cd-accent);
+  padding-block: 4px;
+  width: fit-content;
+}
+.cd-snapshot-comparison .cd-field-help {
+  margin-top: 8px;
+}
+.cd-snapshot-comparison table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin-top: 10px;
+}
+.cd-snapshot-comparison th,
+.cd-snapshot-comparison td {
+  text-align: left;
+  vertical-align: top;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--cd-line);
+  overflow-wrap: anywhere;
+  font-weight: 400;
+}
+.cd-snapshot-comparison thead th {
+  color: var(--cd-muted);
+}
+.cd-snapshot-identifiers {
+  margin-top: 10px;
+  color: var(--cd-muted);
+}
+.cd-snapshot-identifiers dl {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+}
+.cd-snapshot-identifiers dd {
+  overflow-wrap: anywhere;
+  font-family: monospace;
+  color: var(--cd-ink);
+}
+.cd-reference-follow > .cd-field-help {
+  margin-top: 8px;
+}
+.cd-follow-preview {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  padding: 12px 13px;
+  margin-top: 12px;
+  background: #f5f7f8;
+  border-radius: 7px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.cd-follow-preview > span,
+.cd-follow-preview small {
+  color: var(--cd-muted);
+}
+.cd-follow-preview small {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+.cd-profile-version {
+  border-top: 1px solid var(--cd-line);
+  padding-top: 18px;
+  margin-top: 22px;
+}
+.cd-profile-effective {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+}
+.cd-profile-effective > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px 18px;
+  flex-wrap: wrap;
+}
+.cd-profile-effective dt {
+  color: var(--cd-muted);
+}
+.cd-profile-effective dd {
+  overflow-wrap: anywhere;
+}
+.cd-partial-profile {
+  margin-top: 12px;
+}
+.cd-profile-result .cd-profile-details summary,
+.cd-profile-result .cd-detail-grid,
+.cd-profile-result .cd-detail-grid dd {
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .cd-profile-editor .cd-mode-options {
+    grid-template-columns: 1fr;
+  }
+  .cd-profile-editor .cd-field select {
+    font-size: 16px;
+  }
+  .cd-profile-effective > div {
+    display: grid;
+    gap: 4px;
+  }
+}

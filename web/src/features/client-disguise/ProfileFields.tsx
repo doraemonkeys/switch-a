@@ -1,169 +1,130 @@
-import { Pin, RefreshCw, SlidersHorizontal } from "lucide-react";
-import type {
-  DisguiseState,
-  ProfileRevision,
-} from "@/api/client-disguise/types";
-import type { LoginDraft } from "./loginDraft";
+import { SlidersHorizontal } from "lucide-react";
+import type { DisguiseState } from "@/api/client-disguise/types";
+import {
+  changeEnvironment,
+  changeProfileSelection,
+  effectiveProfile,
+  profileSelection,
+  type LoginDraft,
+} from "./loginDraft";
 import { ProfileSummary } from "./ProfileSummary";
+import {
+  profileEnvironments,
+  environmentLabel,
+} from "./profiles/profileCatalog";
+import { ProfileMode } from "./profiles/ProfileMode";
+import { ReferenceFollow } from "./profiles/ReferenceFollow";
+import { SnapshotPicker } from "./profiles/SnapshotPicker";
+import "./profiles/profile-editor.css";
 
 export function ProfileFields({
   state,
   draft,
   change,
-  profile,
 }: {
   state: DisguiseState;
   draft: LoginDraft;
   change: (draft: LoginDraft) => void;
-  profile?: ProfileRevision;
 }) {
+  const environments = profileEnvironments(state.profiles);
+  const selection = profileSelection(draft);
+  const effective = effectiveProfile(draft, state);
   const officialVersion = state.official_version?.release.version;
-  const syncStatus = officialVersion
-    ? `Codex CLI 官方稳定版: ${officialVersion}.`
-    : "Uses the profile version until the first successful sync.";
+  const syncFallback = officialVersion
+    ? ""
+    : "首次同步成功前，沿用快照的版本规则。";
   return (
-    <section className="cd-editor-section" aria-labelledby="profile-heading">
+    <section
+      className="cd-editor-section cd-profile-editor"
+      aria-labelledby="profile-heading"
+    >
       <div className="cd-section-heading">
         <SlidersHorizontal size={17} aria-hidden="true" />
-        <h3 id="profile-heading">Client profile</h3>
+        <h3 id="profile-heading">环境配置</h3>
       </div>
       <p className="cd-description">
-        Choose the client version and environment this login presents upstream.
+        选择该登录凭据向上游呈现的客户端环境和版本。
       </p>
       <label className="cd-field cd-reference-field">
-        Version source
+        客户端环境
         <select
-          aria-label="Version source"
+          aria-label="客户端环境"
+          value={draft.environment}
+          disabled={environments.length === 0}
+          onChange={(event) =>
+            change(changeEnvironment(draft, event.target.value, state))
+          }
+        >
+          <option value="" disabled>
+            选择客户端环境
+          </option>
+          {draft.environment &&
+            !environments.some(([key]) => key === draft.environment) && (
+              <option value={draft.environment}>
+                环境不可用：{draft.environment}
+              </option>
+            )}
+          {environments.map(([key, tuple]) => (
+            <option key={key} value={key}>
+              {environmentLabel(tuple)}
+            </option>
+          ))}
+        </select>
+        <span className="cd-field-help">可选组合来自已有配置与采样。</span>
+      </label>
+      {environments.length === 0 ? (
+        <p className="cd-description">
+          暂无环境快照，请先在 Reference library 中导入应用层样本。
+        </p>
+      ) : (
+        draft.environment && (
+          <>
+            <ProfileMode draft={draft} change={change} />
+            {draft.mode === "auto" ? (
+              <ReferenceFollow state={state} draft={draft} change={change} />
+            ) : (
+              <SnapshotPicker
+                key={draft.environment}
+                state={state}
+                environment={draft.environment}
+                revisionID={selection.revisionID}
+                select={(revisionID) =>
+                  change(changeProfileSelection(draft, { revisionID }))
+                }
+              />
+            )}
+            {!effective && (
+              <p className="cd-field-help">
+                当前快照不可用，请选择可用环境，或在固定快照模式下重新选择。
+              </p>
+            )}
+          </>
+        )
+      )}
+      <label className="cd-field cd-profile-version">
+        发送版本来源
+        <select
+          aria-label="发送版本来源"
           value={draft.versionSource}
           onChange={(event) =>
             change({
               ...draft,
-              versionSource: event.target.value as typeof draft.versionSource,
+              versionSource: event.target.value as LoginDraft["versionSource"],
             })
           }
         >
-          <option value="">Profile version (built-in or reference)</option>
+          <option value="">使用快照采集版本</option>
           <option value="official_stable">同步 Codex CLI 官方稳定版</option>
         </select>
         <span className="cd-field-help">
           {draft.versionSource === "official_stable"
-            ? `Updates User-Agent and version fields using the Codex CLI stable release. Keep or choose a profile below for the client type and environment; Desktop profiles can use this version source too. ${syncStatus}`
-            : "Uses the version recorded in your selected client profile."}
+            ? `版本号与 User-Agent 中的 Codex 版本独立更新，固定快照时环境特征仍保持不变。${syncFallback}`
+            : "使用所选快照的版本规则；未采集 User-Agent 时保留原请求版本。"}
         </span>
       </label>
-      <label className="cd-field cd-reference-field">
-        Profile revision
-        <select
-          aria-label="Profile revision"
-          value={draft.revisionID}
-          onChange={(event) =>
-            change({
-              ...draft,
-              revisionID: event.target.value,
-              mode: "pinned",
-            })
-          }
-        >
-          <option value="" disabled>
-            Select a profile revision
-          </option>
-          {state.profiles.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.client_version} · {item.tuple.client_type} /{" "}
-              {item.tuple.platform} / {item.tuple.arch} — {item.id}
-            </option>
-          ))}
-        </select>
-        <span className="cd-field-help">
-          {draft.versionSource === "official_stable"
-            ? "Required for client type, operating system and architecture. The version listed is the sampled version; official synchronization controls the version sent upstream."
-            : "Each option selects a specific version and environment."}{" "}
-          Manual selection pins the environment profile.
-        </span>
-      </label>
-      {state.profiles.length === 0 && (
-        <p className="cd-description">
-          No profiles available. Import an application sample in the reference
-          library to create one.
-        </p>
+      {effective && (
+        <ProfileSummary profile={effective} state={state} draft={draft} />
       )}
-      <fieldset className="cd-mode-fieldset">
-        <legend>Update mode</legend>
-        <div className="cd-mode-options">
-          <label
-            className="cd-mode-option"
-            data-selected={draft.mode === "auto"}
-          >
-            <input
-              type="radio"
-              name="update-mode"
-              value="auto"
-              checked={draft.mode === "auto"}
-              onChange={() => change({ ...draft, mode: "auto" })}
-            />
-            <RefreshCw size={18} aria-hidden="true" />
-            <span>
-              <strong>Automatic follow</strong>
-              <small>
-                {draft.versionSource === "official_stable"
-                  ? "Follow environment samples; the Codex CLI version updates independently."
-                  : "Keep up with your reference source."}
-              </small>
-            </span>
-          </label>
-          <label
-            className="cd-mode-option"
-            data-selected={draft.mode === "pinned"}
-          >
-            <input
-              type="radio"
-              name="update-mode"
-              value="pinned"
-              checked={draft.mode === "pinned"}
-              onChange={() => change({ ...draft, mode: "pinned" })}
-            />
-            <Pin size={18} aria-hidden="true" />
-            <span>
-              <strong>Pin this revision</strong>
-              <small>
-                {draft.versionSource === "official_stable"
-                  ? "Pin environment features; the Codex CLI version still updates."
-                  : "Keep this exact profile until you change it."}
-              </small>
-            </span>
-          </label>
-        </div>
-      </fieldset>
-      {draft.mode === "auto" ? (
-        <label className="cd-field cd-reference-field">
-          Reference source
-          <select
-            aria-label="Reference source"
-            value={draft.reference}
-            onChange={(event) =>
-              change({ ...draft, reference: event.target.value })
-            }
-          >
-            <option value="">No reference source</option>
-            {state.references.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-          <span className="cd-field-help">
-            {draft.reference
-              ? "Saving follows available samples for the selected client type, platform and architecture, then tracks future observations. Without a matching sample at this version or newer, the selected revision stays in use."
-              : "Keeps the selected revision until a reference source is assigned."}
-          </span>
-        </label>
-      ) : (
-        <p className="cd-field-help cd-mode-help">
-          Manual revision selection pins the profile. Choose automatic follow to
-          receive future environment samples from a reference source.
-        </p>
-      )}
-      {profile && <ProfileSummary profile={profile} />}
     </section>
   );
 }

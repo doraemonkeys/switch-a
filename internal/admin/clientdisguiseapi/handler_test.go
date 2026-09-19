@@ -38,6 +38,9 @@ func (f *fakeService) ListBindings(context.Context) ([]clientdisguise.ProfileBin
 func (f *fakeService) ListProfiles(context.Context) ([]clientdisguise.ProfileRevision, error) {
 	return []clientdisguise.ProfileRevision{}, f.err("profiles")
 }
+func (f *fakeService) ListTracks(context.Context) ([]clientdisguise.ProfileTrack, error) {
+	return []clientdisguise.ProfileTrack{{SourceID: "reference", ClientType: "desktop", Platform: "windows", Arch: "amd64", ClientVersion: "1.0.0", RevisionID: "revision", CapturedAt: time.Unix(100, 0).UTC()}}, f.err("tracks")
+}
 func (f *fakeService) ListReferences(context.Context) ([]clientdisguise.ReferenceSource, error) {
 	return []clientdisguise.ReferenceSource{}, f.err("references")
 }
@@ -100,6 +103,9 @@ func TestOverviewSharesIdentityWithoutCreatingIt(t *testing.T) {
 	if value.Logins[0].Identity.DeviceID != "device" || value.Logins[0].Binding.RevisionID != "revision" || value.Clients[0].ClientID != "client" {
 		t.Fatal(value)
 	}
+	if len(value.Tracks) != 1 || value.Tracks[0].RevisionID != "revision" || value.Tracks[0].SourceID != "reference" || value.Tracks[0].Tuple() != (clientdisguise.Tuple{ClientType: "desktop", Platform: "windows", Arch: "amd64"}) || !value.Tracks[0].CapturedAt.Equal(time.Unix(100, 0).UTC()) {
+		t.Fatalf("reference track lost in overview: %+v", value.Tracks)
+	}
 	for _, call := range service.calls {
 		if call == "save" {
 			t.Fatal("GET mutated binding")
@@ -107,7 +113,7 @@ func TestOverviewSharesIdentityWithoutCreatingIt(t *testing.T) {
 	}
 }
 func TestOverviewRepositoryFailures(t *testing.T) {
-	for _, stage := range []string{"sessions", "providers", "logins", "bindings", "profiles", "references", "transports", "clients", "client_requests"} {
+	for _, stage := range []string{"sessions", "providers", "logins", "bindings", "profiles", "tracks", "references", "transports", "clients", "client_requests"} {
 		t.Run(stage, func(t *testing.T) {
 			handler, service := setup()
 			service.failAt = stage

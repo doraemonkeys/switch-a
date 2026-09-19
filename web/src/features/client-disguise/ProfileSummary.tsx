@@ -1,58 +1,95 @@
-import { ArrowUpRight, ChevronDown, Monitor } from "lucide-react";
-import type { ProfileRevision } from "@/api/client-disguise/types";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
+import type {
+  DisguiseState,
+  ProfileRevision,
+} from "@/api/client-disguise/types";
+import type { LoginDraft } from "./loginDraft";
+import {
+  captureLabel,
+  environmentLabel,
+  sourceName,
+} from "./profiles/profileCatalog";
+import {
+  featureFields,
+  requestVersion,
+  sampledUserAgent,
+  UNOBSERVED,
+} from "./profiles/profileFeatures";
 
-export function ProfileSummary({ profile }: { profile: ProfileRevision }) {
-  const features = Object.entries(profile.features).filter(([, value]) =>
-    typeof value === "string"
-      ? value.length > 0
-      : value != null && Object.keys(value).length > 0,
-  );
+export function ProfileSummary({
+  profile,
+  state,
+  draft,
+}: {
+  profile: ProfileRevision;
+  state: DisguiseState;
+  draft: LoginDraft;
+}) {
+  const official =
+    draft.versionSource === "official_stable"
+      ? state.official_version?.release.version
+      : "";
+  const version = official || requestVersion(profile);
+  const versionOrigin = official ? "官方稳定版" : "来自快照";
   return (
-    <div className="cd-profile-preview">
-      <div className="cd-preview-heading">
-        <span className="cd-preview-icon">
-          <Monitor size={22} aria-hidden="true" />
-        </span>
+    <div
+      className="cd-profile-preview cd-profile-result"
+      aria-label="生效预览"
+      aria-live="polite"
+    >
+      <dl className="cd-profile-effective">
         <div>
-          <p className="cd-kicker">SELECTED PROFILE</p>
-          <strong>
-            {profile.tuple.client_type} <span>·</span>{" "}
-            {profile.client_version || "Unversioned"}
-          </strong>
+          <dt>环境配置</dt>
+          <dd>
+            {environmentLabel(profile.tuple)} ·{" "}
+            {draft.mode === "auto" ? "自动跟随" : "固定快照"}
+          </dd>
         </div>
-        <span className="cd-platform">
-          {profile.tuple.platform} / {profile.tuple.arch}
-        </span>
-      </div>
-      <p className="cd-description">
-        {profile.evidence_kind === "source"
-          ? "Source-backed profile. Unspecified environment features keep the incoming client values."
-          : `Captured ${profile.captured_at} · Source: ${profile.source_id}`}
-      </p>
+        <div>
+          <dt>实际发送版本</dt>
+          <dd>
+            {version ? `${version} · ${versionOrigin}` : "沿用原请求版本"}
+          </dd>
+        </div>
+      </dl>
+      {!sampledUserAgent(profile) && (
+        <p className="cd-field-help cd-partial-profile">
+          部分特征：未采集 User-Agent，环境中未采集的字段沿用原请求。
+          {official
+            ? "版本字段使用官方稳定版，原 User-Agent 中可识别的 Codex 版本会同步更新。"
+            : "User-Agent 和客户端版本保留原值。"}
+        </p>
+      )}
       <details className="cd-profile-details">
         <summary>
-          Inspect profile fields <ChevronDown size={14} aria-hidden="true" />
+          快照详情与完整 ID <ChevronDown size={14} aria-hidden="true" />
         </summary>
         <dl className="cd-detail-grid">
           <div>
-            <dt>Revision ID</dt>
-            <dd>{profile.id}</dd>
+            <dt>快照 ID</dt>
+            <dd aria-label="快照 ID">{profile.id}</dd>
           </div>
           <div>
-            <dt>User-Agent</dt>
-            <dd>{profile.features.user_agent || "Unchanged"}</dd>
+            <dt>采集版本</dt>
+            <dd>{profile.client_version}</dd>
           </div>
           <div>
-            <dt>Originator</dt>
-            <dd>{profile.features.originator || "Unchanged"}</dd>
-          </div>
-          <div>
-            <dt>Feature scope</dt>
+            <dt>来源</dt>
             <dd>
-              {features.map(([key]) => key.replaceAll("_", " ")).join(", ") ||
-                "Device identity only"}
+              {sourceName(profile.source_id, state.references)} ·{" "}
+              {profile.source_id}
             </dd>
           </div>
+          <div>
+            <dt>采集时间</dt>
+            <dd>{captureLabel(profile)}</dd>
+          </div>
+          {featureFields(profile).map((field) => (
+            <div key={field.key}>
+              <dt>{field.label}</dt>
+              <dd>{field.value || UNOBSERVED}</dd>
+            </div>
+          ))}
         </dl>
         {profile.source_url && (
           <a
@@ -61,14 +98,10 @@ export function ProfileSummary({ profile }: { profile: ProfileRevision }) {
             target="_blank"
             rel="noreferrer"
           >
-            Profile evidence source{" "}
-            <ArrowUpRight size={13} aria-hidden="true" />
+            查看采样依据 <ArrowUpRight size={13} aria-hidden="true" />
           </a>
         )}
-        <p className="cd-field-help">
-          Device identity and observed fields apply. Transport characteristics
-          require an independently selected sample.
-        </p>
+        <p className="cd-field-help">传输层特征由高级设置中的独立样本决定。</p>
       </details>
     </div>
   );

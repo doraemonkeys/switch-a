@@ -5,12 +5,14 @@ import { describe, it, expect, vi } from "vitest";
 import { ApiContext } from "@/api/context";
 import type { ApiClient } from "@/api/client";
 import { ClientDisguisePage } from "./ClientDisguisePage";
+import { chooseSnapshot, expectSnapshot } from "./profiles/editorTestActions";
 import type { DisguiseState, LoginView } from "@/api/client-disguise/types";
 
 const tuple = { client_type: "desktop", platform: "windows", arch: "amd64" };
 const state: DisguiseState = {
   logins: [],
   profiles: [],
+  tracks: [],
   references: [],
   transport_samples: [],
   clients: [{ client_id: "existing-client" }],
@@ -136,16 +138,10 @@ describe("client disguise reference following", () => {
         .mockResolvedValueOnce(initial)
         .mockResolvedValue({ ...initial, logins: [savedLogin] });
       const { api, user } = setup(initial, undefined, { get });
-      expect(await screen.findByLabelText("Profile revision")).toHaveValue(
-        "new",
-      );
-      await user.selectOptions(
-        screen.getByLabelText("Reference source"),
-        "reference",
-      );
-      expect(
-        screen.getByRole("radio", { name: /Automatic follow/ }),
-      ).toBeChecked();
+      await screen.findByLabelText("客户端环境");
+      expectSnapshot("new");
+      await user.selectOptions(screen.getByLabelText("参考来源"), "reference");
+      expect(screen.getByRole("radio", { name: /自动跟随/ })).toBeChecked();
       expect(
         screen.getByRole("button", { name: "Save login settings" }),
       ).toBeEnabled();
@@ -161,18 +157,12 @@ describe("client disguise reference following", () => {
         }),
       );
       await screen.findByText("All changes saved");
-      expect(screen.getByLabelText("Profile revision")).toHaveValue(revision);
-      expect(
-        within(screen.getByLabelText("Profile revision")).getByRole("option", {
-          selected: true,
-        }),
-      ).toHaveTextContent(version);
+      expectSnapshot(revision);
+      expect(screen.getByLabelText("生效预览")).toHaveTextContent(version);
       expect(
         screen.queryByRole("option", { name: "All versions" }),
       ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("radio", { name: /Automatic follow/ }),
-      ).toBeChecked();
+      expect(screen.getByRole("radio", { name: /自动跟随/ })).toBeChecked();
     },
   );
 });
@@ -270,8 +260,8 @@ describe("client disguise reference selection", () => {
 
   it("waits for a client refresh before allowing saves in another tab", async () => {
     const { api, user } = setup(populated);
-    await screen.findByLabelText("Profile revision");
-    await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
+    await screen.findByLabelText("客户端环境");
+    await chooseSnapshot(user, "old");
     await openLibrary(user);
     await user.click(screen.getByRole("button", { name: "Add reference" }));
     let finishRefresh!: (value: DisguiseState) => void;
@@ -285,7 +275,7 @@ describe("client disguise reference selection", () => {
     await user.click(screen.getByRole("button", { name: "Login profiles" }));
     expect(screen.getByRole("button", { name: "Please wait…" })).toBeDisabled();
     await act(async () => finishRefresh(populated));
-    expect(screen.getByLabelText("Profile revision")).toHaveValue("old");
+    expectSnapshot("old");
     expect(
       screen.getByRole("button", { name: "Save login settings" }),
     ).toBeEnabled();
@@ -347,16 +337,16 @@ describe("client disguise workspace", () => {
     const { api, user } = setup(populated, "/client-disguise", {
       syncOfficialVersion,
     });
-    await screen.findByLabelText("Version source");
+    await screen.findByLabelText("发送版本来源");
     await user.selectOptions(
-      screen.getByLabelText("Version source"),
+      screen.getByLabelText("发送版本来源"),
       "official_stable",
     );
     api.get.mockResolvedValue({ ...populated, official_version: official });
     await user.click(screen.getByRole("button", { name: "Check now" }));
     await screen.findByText("Codex CLI 官方稳定版: 0.151.0");
     expect(syncOfficialVersion).toHaveBeenCalledTimes(1);
-    expect(screen.getByLabelText("Version source")).toHaveValue(
+    expect(screen.getByLabelText("发送版本来源")).toHaveValue(
       "official_stable",
     );
     expect(
@@ -455,14 +445,14 @@ describe("client disguise workspace", () => {
   it("preserves separate login drafts across account and section navigation", async () => {
     const { api, user } = setup(populated);
     await screen.findByRole("heading", { name: "Office login" });
-    await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
+    await chooseSnapshot(user, "old");
     await user.click(screen.getByRole("button", { name: /Personal login/ }));
-    expect(screen.getByLabelText("Profile revision")).toHaveValue("new");
+    expectSnapshot("new");
     await user.click(screen.getByRole("button", { name: /Office login/ }));
-    expect(screen.getByLabelText("Profile revision")).toHaveValue("old");
+    expectSnapshot("old");
     await openLibrary(user);
     await user.click(screen.getByRole("button", { name: "Login profiles" }));
-    expect(screen.getByLabelText("Profile revision")).toHaveValue("old");
+    expectSnapshot("old");
     await user.click(
       screen.getByRole("button", { name: "Save login settings" }),
     );
@@ -504,12 +494,10 @@ describe("client disguise workspace", () => {
     expect(
       screen.getByRole("button", { name: "Save login settings" }),
     ).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
+    await chooseSnapshot(user, "old");
     await user.click(screen.getByRole("button", { name: "Reset" }));
-    expect(screen.getByLabelText("Profile revision")).toHaveValue("new");
-    expect(
-      screen.getByRole("radio", { name: /Automatic follow/ }),
-    ).toBeChecked();
+    expectSnapshot("new");
+    expect(screen.getByRole("radio", { name: /自动跟随/ })).toBeChecked();
     expect(api.saveBinding).not.toHaveBeenCalled();
   });
 
@@ -533,14 +521,14 @@ describe("client disguise workspace", () => {
       });
     const { user } = setup(populated, undefined, { saveBinding, get });
     await screen.findByRole("heading", { name: "Office login" });
-    await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
+    await chooseSnapshot(user, "old");
     await user.click(
       screen.getByRole("button", { name: "Save login settings" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Save unavailable",
     );
-    expect(screen.getByLabelText("Profile revision")).toHaveValue("old");
+    expectSnapshot("old");
     expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "Save login settings" }),
@@ -633,14 +621,14 @@ describe("client disguise workspace", () => {
     );
     const { user } = setup(populated, undefined, { saveBinding });
     await screen.findByRole("heading", { name: "Office login" });
-    await user.selectOptions(screen.getByLabelText("Profile revision"), "old");
+    await chooseSnapshot(user, "old");
     await user.click(
       screen.getByRole("button", { name: "Save login settings" }),
     );
-    expect(screen.getByLabelText("Profile revision")).toBeDisabled();
+    expect(screen.getByLabelText("客户端环境")).toBeDisabled();
     await act(async () => finish());
     await waitFor(() =>
-      expect(screen.getByLabelText("Profile revision")).toBeEnabled(),
+      expect(screen.getByLabelText("客户端环境")).toBeEnabled(),
     );
   });
 });

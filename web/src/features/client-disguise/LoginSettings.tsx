@@ -12,6 +12,7 @@ import {
   buildProfileBinding,
   createLoginDraft,
   hasLoginChanges,
+  selectedProfile,
   type LoginDraft,
 } from "./loginDraft";
 
@@ -32,7 +33,7 @@ export function LoginSettings({
 }) {
   const [error, setError] = useState("");
   const dirty = hasLoginChanges(draft, login);
-  const profile = state.profiles.find((item) => item.id === draft.revisionID);
+  const profile = selectedProfile(draft, state);
   const activeProviders = login.providers.filter(
     (provider) => provider.client_disguise.enabled,
   ).length;
@@ -80,12 +81,7 @@ export function LoginSettings({
         </span>
       </header>
       <fieldset disabled={busy} className="cd-editor-fields">
-        <ProfileFields
-          state={state}
-          draft={draft}
-          change={change}
-          profile={profile}
-        />
+        <ProfileFields state={state} draft={draft} change={change} />
         <LoginIdentity login={login} />
         <AdvancedLoginSettings state={state} draft={draft} change={change} />
       </fieldset>

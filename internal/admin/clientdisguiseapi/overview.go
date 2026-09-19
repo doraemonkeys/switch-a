@@ -28,6 +28,7 @@ type Overview struct {
 	OfficialVersion  *officialversion.State           `json:"official_version,omitempty"`
 	Logins           []LoginView                      `json:"logins"`
 	Profiles         []clientdisguise.ProfileRevision `json:"profiles"`
+	Tracks           []clientdisguise.ProfileTrack    `json:"tracks"`
 	References       []clientdisguise.ReferenceSource `json:"references"`
 	TransportSamples []clientdisguise.TransportSample `json:"transport_samples"`
 	Clients          []ClientView                     `json:"clients"`
@@ -65,6 +66,10 @@ func (h *Handler) overview(ctx context.Context) (Overview, error) {
 		return result, err
 	}
 	result.Profiles, err = h.repository.ListProfiles(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.Tracks, err = h.repository.ListTracks(ctx)
 	if err != nil {
 		return result, err
 	}
