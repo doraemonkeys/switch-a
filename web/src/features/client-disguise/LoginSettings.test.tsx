@@ -98,8 +98,8 @@ function mount(data = state, current = login) {
 }
 
 describe("login environment and snapshot selection", () => {
-  it("explains terminal identities and saves the selected entry point", async () => {
-    const terminalProfiles = [
+  it("explains client identities and saves the selected entry point", async () => {
+    const entryPointProfiles = [
       {
         type: "tui",
         name: "Codex CLI（交互式 TUI）",
@@ -113,6 +113,12 @@ describe("login environment and snapshot selection", () => {
         hint: /运行 codex exec/,
       },
       {
+        type: "browser-use",
+        name: "Codex Browser Use",
+        originator: "codex-browser-use",
+        hint: /通过 Codex app-server 驱动浏览器操作/,
+      },
+      {
         type: "cli",
         name: "Codex 默认入口标识（未指定入口）",
         originator: "codex_cli_rs",
@@ -123,7 +129,7 @@ describe("login environment and snapshot selection", () => {
       ...state,
       profiles: [
         ...state.profiles,
-        ...terminalProfiles.map((client) => ({
+        ...entryPointProfiles.map((client) => ({
           ...state.profiles[0],
           id: `builtin-${client.type}`,
           tuple: { ...tuple, client_type: client.type },
@@ -137,7 +143,7 @@ describe("login environment and snapshot selection", () => {
     };
     const { user, save } = mount(data);
     const environment = screen.getByLabelText("客户端环境");
-    for (const client of terminalProfiles) {
+    for (const client of entryPointProfiles) {
       await user.selectOptions(
         environment,
         screen.getByRole("option", { name: `${client.name} · Windows · x64` }),

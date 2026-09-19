@@ -22,6 +22,11 @@ export const CLIENT_TYPES: Record<string, ClientTypePresentation | undefined> =
       description: "运行 codex exec，用于脚本和自动化任务。",
       originator: "codex_exec",
     },
+    "browser-use": {
+      name: "Codex Browser Use",
+      description: "通过 Codex app-server 驱动浏览器操作的客户端。",
+      originator: "codex-browser-use",
+    },
     cli: {
       name: "Codex 默认入口标识（未指定入口）",
       description:

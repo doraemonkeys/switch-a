@@ -7,6 +7,7 @@ const (
 	builtinSourceURL            = "https://github.com/openai/codex/blob/rust-v0.150.0-alpha.8/codex-rs/login/src/auth/default_client.rs"
 	builtinTUISourceURL         = "https://github.com/openai/codex/blob/rust-v0.150.0-alpha.8/codex-rs/tui/src/lib.rs"
 	builtinExecSourceURL        = "https://github.com/openai/codex/blob/rust-v0.150.0-alpha.8/codex-rs/exec/src/lib.rs"
+	builtinBrowserUseSourceURL  = "https://github.com/openai/codex/blob/rust-v0.150.0-alpha.8/codex-rs/app-server/src/request_processors/initialize_processor.rs"
 	builtinDesktopCaptureSource = "internal/codex/headers/testdata/codex-desktop-0.150.0-alpha.8/manifest.json"
 	builtinDesktopUserAgent     = "Codex Desktop/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)"
 	builtinDesktopBuild         = "26.820.60940"

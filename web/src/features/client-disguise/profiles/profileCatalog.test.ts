@@ -132,6 +132,30 @@ describe("profile catalog semantics", () => {
       }),
     ).toBe("");
   });
+  it.each([
+    {
+      user_agent:
+        "codex-browser-use/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)",
+    },
+    {
+      headers: {
+        "user-agent":
+          "CODEX-BROWSER-USE/0.155.0-alpha.2.6 (Linux; x86_64) unknown (codex-browser-use; 0.1.0)",
+      },
+    },
+  ])(
+    "uses the Browser Use product release instead of its caller or stored version",
+    (features) => {
+      expect(
+        requestVersion({
+          ...profile,
+          tuple: { ...tuple, client_type: "browser-use" },
+          client_version: "0.156.0",
+          features: { ...profile.features, user_agent: "", ...features },
+        }),
+      ).toBe("0.155.0-alpha.2.6");
+    },
+  );
   it("uses the source head for new environments and excludes remembered navigation from dirty state", () => {
     const login = {
       credential_session_id: "login",

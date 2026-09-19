@@ -3,11 +3,12 @@ package clientdisguise
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestTerminalEntryPointRecognition(t *testing.T) {
+func TestClientEntryPointRecognition(t *testing.T) {
 	for _, tc := range []struct {
 		name, userAgent, originator, wantType, wantVersion string
 	}{
@@ -16,13 +17,20 @@ func TestTerminalEntryPointRecognition(t *testing.T) {
 		{"exec UA only", "codex_exec/0.150.0 (Linux 6.8; x86_64)", "", "exec", "0.150.0"},
 		{"exec originator with generic UA", "codex_cli_rs/0.150.0 (Linux 6.8; x86_64)", "codex_exec", "exec", "0.150.0"},
 		{"exec alias", "codex-exec/0.150.0 (Linux 6.8; x86_64)", "", "exec", "0.150.0"},
+		{"browser use", "codex-browser-use/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)", "", "browser-use", "0.155.0-alpha.2.6"},
+		{"browser use originator with generic UA", "codex_cli_rs/0.155.0 (Linux 6.8; x86_64)", "codex-browser-use", "browser-use", "0.155.0"},
+		{"browser use case insensitive", "CODEX-BROWSER-USE/0.155.0 (Linux 6.8; x86_64)", "CODEX-BROWSER-USE", "browser-use", "0.155.0"},
 		{"default client", "codex_cli_rs/0.150.0 (Linux 6.8; x86_64)", "codex_cli_rs", "cli", "0.150.0"},
 		{"generic Codex UA", "codex/0.150.0 (Linux 6.8; x86_64)", "", "cli", "0.150.0"},
 		{"unknown", "other/1.0 (Linux 6.8; x86_64)", "other", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			facts := ProjectPlatform(http.Header{"User-Agent": {tc.userAgent}, "Originator": {tc.originator}})
-			want := Tuple{ClientType: tc.wantType, Platform: "linux", Arch: "amd64"}
+			platform := "linux"
+			if strings.Contains(tc.userAgent, "Windows") {
+				platform = "windows"
+			}
+			want := Tuple{ClientType: tc.wantType, Platform: platform, Arch: "amd64"}
 			if facts.Tuple != want || facts.Tuple.Valid() != (tc.wantType != "") {
 				t.Fatalf("tuple = %+v, want %+v", facts.Tuple, want)
 			}

@@ -106,6 +106,9 @@ func TestUserAgentReleaseChangesOnlyProductVersion(t *testing.T) {
 	for _, tc := range []struct{ ua, want string }{
 		{"codex_exec/0.150.0 (Linux 6.8; x86_64) Terminal/1.0 (codex_exec; 0.150.0)", "codex_exec/0.151.0 (Linux 6.8; x86_64) Terminal/1.0 (codex_exec; 0.151.0)"},
 		{"codex-tui/0.150.0 (Linux 6.8; x86_64) Terminal/1.0 (codex-tui; 0.150.0)", "codex-tui/0.151.0 (Linux 6.8; x86_64) Terminal/1.0 (codex-tui; 0.151.0)"},
+		{"codex-browser-use/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)", "codex-browser-use/0.151.0 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"},
+		{"codex-browser-use/0.150.0 (Linux 6.8; arm64) unknown (codex-browser-use; 0.150.0)", "codex-browser-use/0.151.0 (Linux 6.8; arm64) unknown (codex-browser-use; 0.150.0)"},
+		{"Codex Desktop/0.150.0 (Linux 6.8; arm64) unknown (Codex Desktop; 0.150.0)", "Codex Desktop/0.151.0 (Linux 6.8; arm64) unknown (Codex Desktop; 0.150.0)"},
 		{"Codex Desktop/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)", "Codex Desktop/0.151.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)"},
 		{"other-client/1.0", "other-client/1.0"},
 		{"", ""},

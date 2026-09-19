@@ -4,6 +4,7 @@ import "testing"
 
 func TestPartialProfileProjectsOnlyKnownEntryPointIdentity(t *testing.T) {
 	const incoming = "codex-tui/0.149.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex-tui; 0.149.0)"
+	const browserUA = "codex-browser-use/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"
 	for _, tc := range []struct {
 		name, originator, original, version, want string
 	}{
@@ -12,6 +13,12 @@ func TestPartialProfileProjectsOnlyKnownEntryPointIdentity(t *testing.T) {
 		{"desktop without a host sample", "Codex Desktop", incoming, "", "Codex Desktop/0.149.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (Codex Desktop; 0.149.0)"},
 		{"same entry point", "codex-tui", incoming, "", incoming},
 		{"official release", "codex_exec", incoming, "0.151.0", "codex_exec/0.151.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex_exec; 0.151.0)"},
+		{"browser use selected", "codex-browser-use", incoming, "", "codex-browser-use/0.149.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex-browser-use; 0.149.0)"},
+		{"browser use selected with official release", "codex-browser-use", incoming, "0.151.0", "codex-browser-use/0.151.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex-browser-use; 0.151.0)"},
+		{"browser use incoming", "codex_exec", browserUA, "", "codex_exec/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"},
+		{"browser use incoming with official release", "codex_exec", browserUA, "0.151.0", "codex_exec/0.151.0 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"},
+		{"browser use unchanged", "codex-browser-use", browserUA, "", browserUA},
+		{"browser caller version happens to match", "codex_exec", "codex-browser-use/0.150.0 (Linux; x86_64) unknown (codex-browser-use; 0.150.0)", "0.151.0", "codex_exec/0.151.0 (Linux; x86_64) unknown (codex-browser-use; 0.150.0)"},
 		{"exec alias", "codex-tui", "codex-exec/0.149.0 (Linux 6.8; arm64) unknown", "", "codex-tui/0.149.0 (Linux 6.8; arm64) unknown"},
 		{"embedding app build", "codex_exec", builtinDesktopUserAgent, "", "codex_exec/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)"},
 		{"unrelated suffix", "codex_exec", incoming + " (codex_cli_rs; 0.149.0)", "", "codex_exec/0.149.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex_exec; 0.149.0) (codex_cli_rs; 0.149.0)"},

@@ -5,10 +5,14 @@ import (
 	"strings"
 )
 
-var productSuffixVersion = regexp.MustCompile(`(?i)(\((?:codex_cli_rs|codex-tui|codex_exec|codex-exec|codex_desktop|Codex Desktop|codex); )([^ )]+)(\))`)
+var versionPattern = regexp.MustCompile(`(?i)codex[_ /-]*(?:desktop|cli(?:_rs)?|tui|exec|browser-use)?[/ ]([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)`)
+
+// CLI suffixes can repeat the Codex release. App-server callers such as Desktop
+// and Browser Use report independent versions, even when those happen to match.
+var productSuffixVersion = regexp.MustCompile(`(?i)(\((?:codex_cli_rs|codex-tui|codex_exec|codex-exec|codex); )([^ )]+)(\))`)
 
 // An explicit release selection changes only the Codex product version. Desktop
-// build numbers, OS releases and terminal/runtime versions remain observations.
+// and Browser Use builds, OS releases and terminal/runtime versions remain observations.
 func WithUserAgentVersion(ua, version string) string {
 	match := versionPattern.FindStringSubmatchIndex(ua)
 	if len(match) != 4 || version == "" {
@@ -37,7 +41,9 @@ func (p ProfileRevision) RequestUserAgent(original, version string) string {
 	if sampled := p.UserAgent(version); sampled != "" {
 		return sampled
 	}
-	return WithUserAgentVersion(withUserAgentOriginator(original, p.Features.ClientOriginator()), version)
+	// Resolve version ownership before renaming the entry point; otherwise a CLI
+	// suffix projected into an app-server caller would lose its release linkage.
+	return withUserAgentOriginator(WithUserAgentVersion(original, version), p.Features.ClientOriginator())
 }
 
 func withUserAgentOriginator(ua, originator string) string {
