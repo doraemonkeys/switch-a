@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
@@ -15,11 +16,12 @@ import (
 )
 
 type Attempt struct {
-	operation     *Operation
-	protocolScope codexidentity.ProtocolScope
-	authority     codexidentity.UpstreamAuthority
-	routeTargetID string
-	responseURL   *url.URL
+	continuationPolicy continuation.Policy
+	operation          *Operation
+	protocolScope      codexidentity.ProtocolScope
+	authority          codexidentity.UpstreamAuthority
+	routeTargetID      string
+	responseURL        *url.URL
 
 	requestClaimLeases []codexcontinuity.Lease
 	pinProtocolScope   bool
@@ -58,6 +60,14 @@ func (o *Operation) PrepareAttempt(
 	attempt.protocolScope = candidate.ProtocolScope()
 	attempt.authority = applied.Authority()
 	attempt.routeTargetID = candidate.RouteTargetID()
+	policy, err := o.continuation.Authorize(ctx, candidate)
+	if err != nil {
+		if continuation.IsDenied(err) {
+			return nil, identityError("conversation_continuation", err)
+		}
+		return nil, dependencyError("conversation_continuation", err)
+	}
+	attempt.continuationPolicy = policy
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -539,6 +549,9 @@ func (v *Visibility) Commit(ctx context.Context) error {
 		v.leases = v.leases[1:]
 	}
 	if v.operation.allowsAccountSwitch() && v.attempt != nil {
+		if err := v.operation.continuation.CommitVisible(commitContext, v.attempt.routeTargetID, v.attempt.protocolScope, v.attempt.continuationPolicy); err != nil {
+			return dependencyError("conversation_continuation_commit", err)
+		}
 		v.operation.mu.Lock()
 		v.operation.visibleRouteTargetID = v.attempt.routeTargetID
 		scope, authority := v.attempt.protocolScope, v.attempt.authority

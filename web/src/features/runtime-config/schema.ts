@@ -6,7 +6,6 @@ import {
   STICKY_MODES,
   AUTH_MODES,
   GPT_ACCOUNT_FALLBACK_CLIENTS,
-  CONVERSATION_RECOVERY_POLICY_OPTIONS,
 } from "../../config";
 import type { ConfigCategory } from "./types";
 
@@ -48,7 +47,7 @@ export const CONFIG_CATEGORIES: readonly ConfigCategory[] = [
       },
       {
         title: "会话连续性",
-        description: "粘性路由与跨账号恢复分别控制，互不替代。",
+        description: "设置粘性路由；Codex 对话续接在各 Provider 中配置。",
         fields: [
           {
             key: K.STICKY_MODE,
@@ -72,16 +71,6 @@ export const CONFIG_CATEGORIES: readonly ConfigCategory[] = [
             defaultValue: D.STICKY_TTL,
             disabledWhen: (values) =>
               values[K.STICKY_MODE] === STICKY_MODES.OFF,
-          },
-          {
-            key: K.CONVERSATION_RECOVERY_POLICY,
-            label: "GPT 对话恢复策略",
-            kind: "select",
-            description:
-              "允许换账号时，按粘性和选路策略选择可用账号，原样传递对话状态。",
-            defaultValue: D.CONVERSATION_RECOVERY_POLICY,
-            options: CONVERSATION_RECOVERY_POLICY_OPTIONS,
-            help: "切回固定原账号后，已跨账号续聊的对话可能无法继续。",
           },
           {
             key: K.WEBSOCKET_PROBE_CLIENT_MODEL,

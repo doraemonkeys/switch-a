@@ -20,6 +20,7 @@ const (
 )
 
 var obsoleteRuntimeConfigKeys = []string{
+	defaults.ConfigKeyConversationRecoveryPolicy,
 	legacyCodexUpstreamHeaderHygieneKey,
 	legacyCodexWebSocketSubprotocolKey,
 	legacyCodexContinuityKey,
@@ -43,7 +44,6 @@ func GetDefaultConfigs() map[string]string {
 		"sse_idle_timeout":                           DefaultSSEIdleTimeout,
 		"sticky_mode":                                DefaultStickyMode,
 		"sticky_ttl":                                 DefaultStickyTTL,
-		defaults.ConfigKeyConversationRecoveryPolicy: defaults.DefaultConversationRecoveryPolicy,
 		defaults.ConfigKeyWebSocketProbeClientModel:  DefaultWebSocketProbeClientModel,
 		"circuit_failure":                            DefaultCircuitFailure,
 		"circuit_window":                             DefaultCircuitWindow,

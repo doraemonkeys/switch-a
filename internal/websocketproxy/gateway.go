@@ -395,6 +395,7 @@ func applyCodexWebSocketRouteConstraint(request *model.SelectRequest, operation 
 		return
 	}
 	authority, routeTargetID := operation.RequiredAuthority()
+	request.CodexContinuation = operation.Continuation()
 	request.RequiredAuthority = authority
 	request.PreferredRouteTargetID = routeTargetID
 }

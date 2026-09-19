@@ -3,6 +3,7 @@ package codexws
 import (
 	"context"
 
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
 )
 
@@ -92,6 +93,11 @@ func (p *ClientFramePermit) PrepareDelivery(ctx context.Context) (*Permit, error
 	if p.disposition == ClientFrameReject {
 		return nil, p.rejection
 	}
+	if candidate, ok := p.operation.candidateSnapshot(); ok {
+		if _, err := p.operation.continuation.Authorize(ctx, candidate); err != nil {
+			return nil, continuationFailure(err)
+		}
+	}
 	if p.currentConnectionRequired {
 		if _, active := p.operation.currentGeneration(); !active {
 			return nil, reconnectRequiredFailure("client_frame_connection")
@@ -106,4 +112,12 @@ func (p *ClientFramePermit) PrepareDelivery(ctx context.Context) (*Permit, error
 	}
 	permit.closeReplacement = !p.replacementEligible
 	return permit, nil
+}
+
+func continuationFailure(err error) *Failure {
+	class := FailureStorage
+	if continuation.IsDenied(err) {
+		class = FailureIdentity
+	}
+	return &Failure{Class: class, Stage: "conversation_continuation", Cause: err}
 }

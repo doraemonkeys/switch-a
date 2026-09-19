@@ -73,7 +73,7 @@ func TestHandler_ServeHTTP_WebSocket_PreCommitSemanticErrorSkipsStickyAndMarksFa
 		if err == nil {
 			continue
 		}
-		if errors.Is(err, io.EOF) || isNormalClose(err) {
+		if errors.Is(err, io.EOF) || isNormalClose(err) || websocket.CloseStatus(err) == websocket.StatusServiceRestart {
 			break
 		}
 		t.Fatalf("read websocket events: %v", err)
@@ -112,7 +112,7 @@ func TestHandler_ServeHTTP_WebSocket_PreCommitSemanticErrorSkipsStickyAndMarksFa
 	}
 }
 
-func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailureVisibility(t *testing.T) {
+func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorRequestsReconnectWithoutSticky(t *testing.T) {
 	const errorPayload = `{"error":{"message":"provider failed after commit","type":"provider_failure"},"status":500,"type":"error"}`
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -184,14 +184,16 @@ func TestHandler_ServeHTTP_WebSocket_PostCommitSemanticErrorKeepsStickyAndFailur
 		if err == nil {
 			continue
 		}
-		if errors.Is(err, io.EOF) || isNormalClose(err) {
+		if errors.Is(err, io.EOF) || isNormalClose(err) || websocket.CloseStatus(err) == websocket.StatusServiceRestart {
 			break
 		}
 		t.Fatalf("read websocket events: %v", err)
 	}
 
 	waitFor(t, func() bool { return store.LogsLen() > 0 }, testPollTimeout)
-	waitFor(t, func() bool { return mockSel.StickyUpdatesLen() == 1 }, testPollTimeout)
+	if mockSel.StickyUpdatesLen() != 0 {
+		t.Fatal("failed provider refreshed sticky preference")
+	}
 	waitFor(t, func() bool { return len(healthMgr.getMarkFailureCalls()) == 1 }, 10*testPollTimeout)
 
 	if len(healthMgr.getMarkFailureCalls()) != 1 {

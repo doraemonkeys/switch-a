@@ -28,6 +28,13 @@ func (o *Operation) PrepareDial(
 	if err := candidate.ValidateApplied(applied); err != nil {
 		return nil, &Failure{Class: FailureIdentity, Stage: "applied_identity", Cause: err}
 	}
+	policy, err := o.continuation.Authorize(ctx, candidate)
+	if err != nil {
+		return nil, continuationFailure(err)
+	}
+	o.mu.Lock()
+	o.continuationPolicy = policy
+	o.mu.Unlock()
 	if err := o.bindPhysicalCandidate(candidate); err != nil {
 		return nil, err
 	}
@@ -84,7 +91,7 @@ func (o *Operation) CommitVisibility(ctx context.Context) error {
 	o.mu.Lock()
 	if o.visibilityCommitted {
 		o.mu.Unlock()
-		return nil
+		return o.commitConversationRoute(ctx)
 	}
 	o.mu.Unlock()
 	if err := o.pinPhysicalCandidate(true, true, true); err != nil {
@@ -93,9 +100,24 @@ func (o *Operation) CommitVisibility(ctx context.Context) error {
 	if err := o.CommitCookies(ctx); err != nil {
 		return err
 	}
+	if err := o.commitConversationRoute(ctx); err != nil {
+		return err
+	}
 	o.mu.Lock()
 	o.visibilityCommitted = true
 	o.mu.Unlock()
+	return nil
+}
+
+func (o *Operation) commitConversationRoute(ctx context.Context) error {
+	if candidate, ok := o.candidateSnapshot(); ok {
+		o.mu.Lock()
+		policy := o.continuationPolicy
+		o.mu.Unlock()
+		if err := o.continuation.CommitVisible(ctx, candidate.RouteTargetID(), candidate.ProtocolScope(), policy); err != nil {
+			return &Failure{Class: FailureStorage, Stage: "conversation_continuation_commit", Cause: err}
+		}
+	}
 	return nil
 }
 

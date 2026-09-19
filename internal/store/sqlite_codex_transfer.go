@@ -7,6 +7,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	continuitysqlite "github.com/doraemonkeys/switch-a/internal/codex/continuity/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	codexkeyring "github.com/doraemonkeys/switch-a/internal/codex/keyring"
@@ -17,12 +18,13 @@ import (
 const CodexStateVersion = 1
 
 type CodexState struct {
-	Sticky         []model.StickyEntry                `json:"sticky"`
-	Version        int                                `json:"version"`
-	Disguise       clientdisguise.Snapshot            `json:"disguise"`
-	ClientIdentity clientidentity.Snapshot            `json:"client_identity"`
-	Continuity     []continuitysqlite.TransferBinding `json:"continuity"`
-	HMAC           []codexkeyring.HMACMaterial        `json:"keyring_hmac"`
+	ConversationRoutes []continuation.Binding             `json:"conversation_routes"`
+	Sticky             []model.StickyEntry                `json:"sticky"`
+	Version            int                                `json:"version"`
+	Disguise           clientdisguise.Snapshot            `json:"disguise"`
+	ClientIdentity     clientidentity.Snapshot            `json:"client_identity"`
+	Continuity         []continuitysqlite.TransferBinding `json:"continuity"`
+	HMAC               []codexkeyring.HMACMaterial        `json:"keyring_hmac"`
 }
 
 func (s *SQLiteStore) ClientIdentityResolver(digester clientidentity.ScopeDigester) (*clientidentity.Resolver, error) {
@@ -63,6 +65,9 @@ func (s *SQLiteStore) ExportCodexState(ctx context.Context) (*CodexState, error)
 		if err != nil {
 			return err
 		}
+		if err := tx.Order("client_id, kind, digest").Find(&result.ConversationRoutes).Error; err != nil {
+			return err
+		}
 		result.Sticky, err = (&SQLiteStore{db: tx, clock: s.clock}).LoadStickyEntries(ctx, s.clock.Now())
 		if err != nil {
 			return err
@@ -75,7 +80,7 @@ func (s *SQLiteStore) ExportCodexState(ctx context.Context) (*CodexState, error)
 		return nil, err
 	}
 	if s.codexKeyring == nil {
-		if len(result.ClientIdentity.Clients)+len(result.Disguise.Logins)+len(result.Disguise.LoginHistory)+len(result.Continuity) > 0 {
+		if len(result.ClientIdentity.Clients)+len(result.Disguise.Logins)+len(result.Disguise.LoginHistory)+len(result.Continuity)+len(result.ConversationRoutes) > 0 {
 			return nil, fmt.Errorf("portable Codex state requires initialized keyring")
 		}
 		return nil, nil
@@ -104,6 +109,9 @@ func importCodexState(ctx context.Context, tx *gorm.DB, state *CodexState) error
 		return err
 	}
 	if err := continuitysqlite.Import(ctx, tx, state.Continuity); err != nil {
+		return err
+	}
+	if err := continuation.NewRepository(tx).Save(ctx, state.ConversationRoutes); err != nil {
 		return err
 	}
 	for _, material := range state.HMAC {

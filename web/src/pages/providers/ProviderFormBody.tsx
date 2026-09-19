@@ -1,4 +1,5 @@
 import { ApiTypesField } from "../../features/provider-transports/ApiTypesField";
+import { ProviderContinuationFields } from "../../features/codex-continuation/ProviderContinuationFields";
 import { CodexTransportsField } from "../../features/provider-transports/CodexTransportsField";
 import { defaultCodexRoutes } from "../../features/provider-transports/routeDrafts";
 import { useState } from "react";
@@ -757,6 +758,14 @@ export function ProviderFormBody({
         expanded={failoverExpanded}
         onToggle={() => setFailoverExpanded(!failoverExpanded)}
       />
+      {formData.api_types.some((route) => route.api_type === "codex") && (
+        <ProviderContinuationFields
+          value={formData.codex_continuation}
+          onChange={(codex_continuation) =>
+            setFormData((previous) => ({ ...previous, codex_continuation }))
+          }
+        />
+      )}
       <ProviderDisguiseFields
         value={formState.data.client_disguise}
         onChange={(client_disguise) =>

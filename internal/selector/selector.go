@@ -364,9 +364,8 @@ func buildStickyKey(req *model.SelectRequest) model.StickyKey {
 	return key
 }
 
-// selectPreferredRoute applies the route hint only after a verified Authority
-// has narrowed the candidate set. Without that boundary, a provider ID could
-// silently steer a state-bearing request to a different security owner.
+// The current conversation route wins over soft affinity, while the shared
+// eligibility closure still checks both continuation directions and routing.
 func (s *Selector) selectPreferredRoute(
 	ctx context.Context,
 	scope *ProviderSelectionEligibility,

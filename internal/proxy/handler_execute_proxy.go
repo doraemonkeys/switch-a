@@ -473,7 +473,10 @@ func (h *Handler) finalizeCommittedResponse(pctx *proxyContext, state *retryStat
 	}
 	completedSuccess := result.success && !result.upstreamErrorObserved && result.failureKind == attemptFailureNone &&
 		!result.clientTermination.observed() && pctx.ingressFailure() == nil
-	stickyEligible := pctx.apiType != APITypeCodex || pctx.cfg.ConversationRecoveryPolicy != model.ConversationRecoverySwitchAccountPreserveConversation || completedSuccess
+	// A client stopping an already visible response does not invalidate the route.
+	// Provider failures, on the other hand, must not refresh its soft preference.
+	clientStopped := result.clientTermination.observed() && !result.upstreamErrorObserved && result.semantic == nil && pctx.ingressFailure() == nil
+	stickyEligible := pctx.apiType != APITypeCodex || completedSuccess || clientStopped
 	if result.responseCommitted && stickyEligible && pctx.cfg.stickyMode != model.StickyModeOff && h.selector != nil {
 		h.selector.UpdateStickyWithTTL(pctx.selectReq, state.currentProvider.ID, pctx.cfg.stickyTTL)
 	}

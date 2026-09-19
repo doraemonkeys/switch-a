@@ -32,7 +32,10 @@ func (o *Operation) resolveRequestOwners(ctx context.Context, result codexheader
 		if _, persistent := candidate.PersistentNamespace(); !persistent {
 			continue
 		}
-		_, err := o.ledger.ObserveRequest(ctx, evidence(candidate))
+		resolution, err := o.ledger.ObserveRequest(ctx, evidence(candidate))
+		if err == nil {
+			err = o.continuation.Observe(ctx, evidence(candidate), resolution)
+		}
 		if err != nil {
 			return nil, continuityFailure("request_provenance", err)
 		}

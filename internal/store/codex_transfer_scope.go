@@ -31,6 +31,12 @@ func (state *CodexState) Select(providerIDs, sessionIDs []string) *CodexState {
 	selection.selectFeatures(state.Disguise)
 	selection.selectContinuity(state.Continuity)
 	selection.selectSticky(state)
+	for _, route := range state.ConversationRoutes {
+		if slices.Contains(providerIDs, route.ProviderID) {
+			selection.result.ConversationRoutes = append(selection.result.ConversationRoutes, route)
+			selection.clients[route.ClientID] = true
+		}
+	}
 	for _, owner := range selection.result.Continuity {
 		for _, alias := range state.ClientIdentity.Aliases {
 			if alias.Version == owner.ClientKeyVersion && bytes.Equal(alias.Digest, owner.ClientDigest) {

@@ -155,7 +155,7 @@ func TestCodexHTTPRecoveryAdapterPreservesRootConditionsAndSafeDiagnostics(t *te
 	}
 }
 
-func TestCodexHTTPUnknownPreviousResponseMapsToNewThreadBeforeUpstream(t *testing.T) {
+func TestCodexHTTPUnknownPreviousResponseNeedsAnAcceptingProvider(t *testing.T) {
 	var upstreamRequests atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		upstreamRequests.Add(1)
@@ -173,15 +173,15 @@ func TestCodexHTTPUnknownPreviousResponseMapsToNewThreadBeforeUpstream(t *testin
 
 	handler.ServeHTTP(response, request)
 
-	if response.Code != http.StatusGone {
-		t.Fatalf("HTTP status = %d, want %d; body=%s", response.Code, http.StatusGone, response.Body.String())
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("HTTP status = %d, want %d; body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
 	}
 	var envelope model.GatewayError
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Error.Code != string(codexrecovery.ErrorCodeNewThreadRequired) {
-		t.Fatalf("error code = %q, want %q", envelope.Error.Code, codexrecovery.ErrorCodeNewThreadRequired)
+	if envelope.Error.Code != ErrCodeProviderUnavailable {
+		t.Fatalf("error code = %q, want %q", envelope.Error.Code, ErrCodeProviderUnavailable)
 	}
 	if got := upstreamRequests.Load(); got != 0 {
 		t.Fatalf("upstream requests = %d, want zero", got)

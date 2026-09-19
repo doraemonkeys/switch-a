@@ -26,6 +26,7 @@ const credentialSession = {
 
 function providerPayload(overrides: Record<string, unknown> = {}) {
   return {
+    codex_continuation: { outbound: "any", inbound: "none" },
     client_disguise: {
       enabled: false,
       match_platform: true,

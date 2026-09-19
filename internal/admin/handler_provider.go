@@ -1,13 +1,13 @@
 package admin
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/defaults"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -85,6 +85,7 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 
 // CreateProviderRequest represents the request to create a provider.
 type CreateProviderRequest struct {
+	CodexContinuation     continuation.Policy                 `json:"codex_continuation"`
 	ClientDisguise        clientdisguise.Policy               `json:"client_disguise"`
 	ID                    string                              `json:"id"`
 	Name                  string                              `json:"name"`
@@ -185,6 +186,9 @@ func validateProviderConfiguration(provider *model.Provider) string {
 // validate checks that all required fields are present and all provided fields have valid values.
 // Returns an error message if validation fails, empty string otherwise.
 func (req *CreateProviderRequest) validate() string {
+	if err := req.CodexContinuation.Validate(); err != nil {
+		return err.Error()
+	}
 	if err := req.ClientDisguise.Validate(); err != nil {
 		return err.Error()
 	}
@@ -236,22 +240,23 @@ func (req *CreateProviderRequest) toProvider() *model.Provider {
 	}
 
 	provider := &model.Provider{
-		ClientDisguise:   req.ClientDisguise,
-		ID:               req.ID,
-		Name:             req.Name,
-		APITypes:         apiTypes,
-		AuthMode:         req.AuthMode,
-		UsageLimitPolicy: req.UsageLimitPolicy,
-		GroupID:          req.GroupID,
-		Weight:           req.Weight,
-		Priority:         req.Priority,
-		Concurrency:      defaults.ProviderConcurrency,
-		MaxRetries:       DefaultProviderMaxRetries,
-		Backoff:          model.DefaultProviderBackoffPolicy(),
-		Vendor:           req.Vendor,
-		FailoverScope:    model.ScopeAny,
-		AcceptFailover:   model.ScopeAny,
-		Enabled:          true,
+		CodexContinuation: req.CodexContinuation.Effective(),
+		ClientDisguise:    req.ClientDisguise,
+		ID:                req.ID,
+		Name:              req.Name,
+		APITypes:          apiTypes,
+		AuthMode:          req.AuthMode,
+		UsageLimitPolicy:  req.UsageLimitPolicy,
+		GroupID:           req.GroupID,
+		Weight:            req.Weight,
+		Priority:          req.Priority,
+		Concurrency:       defaults.ProviderConcurrency,
+		MaxRetries:        DefaultProviderMaxRetries,
+		Backoff:           model.DefaultProviderBackoffPolicy(),
+		Vendor:            req.Vendor,
+		FailoverScope:     model.ScopeAny,
+		AcceptFailover:    model.ScopeAny,
+		Enabled:           true,
 	}
 	provider.CredentialSessions = make([]credentialsession.RouteSnapshot, len(req.APITypes))
 	for index := range req.APITypes {
@@ -405,6 +410,7 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProviderRequest represents the request to update a provider.
 type UpdateProviderRequest struct {
+	CodexContinuation     *continuation.Policy                `json:"codex_continuation"`
 	ClientDisguise        *clientdisguise.Policy              `json:"client_disguise"`
 	Name                  *string                             `json:"name"`
 	APITypes              []APITypeInput                      `json:"api_types"`
@@ -425,11 +431,23 @@ type UpdateProviderRequest struct {
 
 // validate checks that all provided fields have valid values.
 // Returns an error message if validation fails, empty string otherwise.
-func (req *UpdateProviderRequest) validate() string {
+func (req *UpdateProviderRequest) validateCodexPolicies() string {
+	if req.CodexContinuation != nil {
+		if err := req.CodexContinuation.Validate(); err != nil {
+			return err.Error()
+		}
+	}
 	if req.ClientDisguise != nil {
 		if err := req.ClientDisguise.Validate(); err != nil {
 			return err.Error()
 		}
+	}
+	return ""
+}
+
+func (req *UpdateProviderRequest) validate() string {
+	if message := req.validateCodexPolicies(); message != "" {
+		return message
 	}
 	if req.Name != nil && *req.Name == "" {
 		return "Name cannot be empty"
@@ -475,6 +493,9 @@ func (req *UpdateProviderRequest) validate() string {
 
 // applyTo updates the provider fields from the request.
 func (req *UpdateProviderRequest) applyTo(provider *model.Provider) {
+	if req.CodexContinuation != nil {
+		provider.CodexContinuation = req.CodexContinuation.Effective()
+	}
 	if req.ClientDisguise != nil {
 		provider.ClientDisguise = *req.ClientDisguise
 	}
@@ -642,32 +663,5 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ProviderResponse{
 		ProviderPayload: h.providerPayload(persisted),
 		Warnings:        warnings,
-	})
-}
-
-// DeleteProvider handles DELETE /admin/api/providers/{id}.
-// Generation retirement and deletion share one selector lifecycle boundary so
-// no dispatch can cross from the deleted provider snapshot into a recreated ID.
-func (h *Handler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
-	h.handleDelete(w, r, deleteConfig{
-		resourceType: "Provider",
-		getFunc: func(ctx context.Context, id string) error {
-			_, err := h.store.GetProvider(ctx, id)
-			return err
-		},
-		deleteFunc: func(ctx context.Context, id string) error {
-			if err := h.mutateProviderGeneration(id, func() error {
-				return h.store.DeleteProvider(ctx, id)
-			}); err != nil {
-				return err
-			}
-			// Clear circuit breaker failure history to prevent memory leak.
-			// The CircuitBreaker holds failure timestamps in a map that persist
-			// until explicitly cleared or cleaned up by the periodic cleanup loop.
-			if h.health != nil {
-				h.health.ResetCircuitBreaker(id)
-			}
-			return nil
-		},
 	})
 }

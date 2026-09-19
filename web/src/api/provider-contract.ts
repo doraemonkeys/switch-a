@@ -260,6 +260,7 @@ export function parseProvider(value: unknown): Provider {
 
   return {
     client_disguise: parseDisguisePolicy(source.client_disguise),
+    codex_continuation: parseCodexContinuation(source.codex_continuation),
     id: stringValue(source.id, "provider.id"),
     name: stringValue(source.name, "provider.name"),
     api_types: apiTypes,
@@ -317,3 +318,4 @@ function parseTransport(value: unknown): "http" | "websocket" {
   }
   return value;
 }
+import { parseCodexContinuation } from "../features/codex-continuation/policy";

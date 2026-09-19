@@ -258,12 +258,11 @@ describe("configuration editing", () => {
     );
   });
 
-  it("disables sticky TTL independently of conversation recovery", () => {
+  it("disables sticky TTL when sticky routing is off", () => {
     createForm();
     fireEvent.change(screen.getByLabelText("粘性路由"), {
       target: { value: "off" },
     });
     expect(screen.getByLabelText("粘性有效期")).toBeDisabled();
-    expect(screen.getByLabelText("GPT 对话恢复策略")).toBeEnabled();
   });
 });

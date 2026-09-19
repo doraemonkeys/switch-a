@@ -56,36 +56,6 @@ func (o *WebSocketSessionOrchestrator) captureSuppressedAttempt(
 
 func (o *WebSocketSessionOrchestrator) clearSuppressedAttempt() { o.suppressedAttempt = nil }
 
-func (o *WebSocketSessionOrchestrator) canReplacePhysicalAttempt(attempt WebSocketAttemptResult) bool {
-	if attempt.Result == nil {
-		return false
-	}
-	if o.codexOperation != nil && !o.codexOperation.ReplacementAllowed() {
-		return false
-	}
-	if codexWebSocketRecoveryDecision(attempt.terminalErr(), codexrecovery.PhaseWebSocketAccepted).Condition() == codexrecovery.ConditionReconnectRequired {
-		return false
-	}
-	if attempt.ReplayFailed {
-		return false
-	}
-	if o.replayBuffer != nil && !o.replayBuffer.Enabled() && attempt.Result.HandshakeAccepted {
-		return false
-	}
-	if attempt.shouldReplaceBeforeClientVisible() {
-		return true
-	}
-	if attempt.Result.ClientVisible {
-		return false
-	}
-	if attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError {
-		return o.suppressedAttempt != nil &&
-			attempt.Result.UpstreamError != nil &&
-			attempt.Result.UpstreamError.IsSwitchableProviderScoped()
-	}
-	return false
-}
-
 func (o *WebSocketSessionOrchestrator) logProviderSwitch(
 	attempt WebSocketAttemptResult,
 	switchReason string,

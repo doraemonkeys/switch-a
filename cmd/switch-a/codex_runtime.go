@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
@@ -80,7 +82,27 @@ func newApplicationCodexRuntime(
 			log.Debug("codex.client_identity", fields...)
 		}
 	})
+	conversationRoutes := &continuation.Service{
+		Store: persistence.CodexContinuationRepository(),
+		Policy: func(ctx context.Context, id string) (continuation.Policy, bool, error) {
+			provider, err := persistence.GetProvider(ctx, id)
+			if errors.Is(err, store.ErrNotFound) {
+				return continuation.Policy{}, false, nil
+			}
+			if err != nil {
+				return continuation.Policy{}, false, err
+			}
+			return provider.CodexContinuation, true, nil
+		},
+		Observe: func(event continuation.Trace) {
+			log.Debug("codex.conversation_continuation", zap.String("operation_id", event.OperationID),
+				zap.String("milestone", event.Milestone), zap.String("source_provider_id", event.Decision.SourceProviderID),
+				zap.String("target_provider_id", event.Decision.TargetProviderID), zap.Bool("allowed", event.Decision.Allowed),
+				zap.String("reason", event.Decision.Reason), zap.Error(event.Err))
+		},
+	}
 	httpRuntime, err := codexhttp.New(codexhttp.Config{
+		Continuation:     conversationRoutes,
 		ClientIdentities: identities, Continuity: continuity,
 		ProviderCookies: cookies, ExternalScheme: scheme,
 	})
@@ -88,6 +110,7 @@ func newApplicationCodexRuntime(
 		return nil, fmt.Errorf("initialize Codex HTTP runtime: %w", err)
 	}
 	webSocketRuntime, err := codexws.New(codexws.Config{
+		Continuation:     conversationRoutes,
 		ClientIdentities: identities, Continuity: continuity,
 		ProviderCookies: cookies, ExternalScheme: scheme,
 	})

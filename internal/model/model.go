@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/codex/identity"
 	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
@@ -62,11 +63,12 @@ func IsValidStickyMode(m StickyMode) bool {
 
 // Provider represents an AI provider configuration.
 type Provider struct {
-	ClientDisguise clientdisguise.Policy `json:"client_disguise" gorm:"serializer:json;type:text"`
-	ID             string                `gorm:"primaryKey" json:"id"`
-	Name           string                `gorm:"not null" json:"name"`
-	APITypes       []ProviderAPIType     `gorm:"foreignKey:ProviderID" json:"api_types"`
-	AuthMode       string                `gorm:"default:auto" json:"auth_mode"`
+	CodexContinuation continuation.Policy   `json:"codex_continuation" gorm:"embedded;embeddedPrefix:codex_continuation_"`
+	ClientDisguise    clientdisguise.Policy `json:"client_disguise" gorm:"serializer:json;type:text"`
+	ID                string                `gorm:"primaryKey" json:"id"`
+	Name              string                `gorm:"not null" json:"name"`
+	APITypes          []ProviderAPIType     `gorm:"foreignKey:ProviderID" json:"api_types"`
+	AuthMode          string                `gorm:"default:auto" json:"auth_mode"`
 	// Empty policies follow the credential-derived default; explicit choices remain
 	// authoritative when a route is rebound to a different credential kind.
 	UsageLimitPolicy ProviderUsageLimitPolicy `gorm:"type:text;default:''" json:"usage_limit_policy"`
@@ -556,9 +558,10 @@ type StickyEntry struct {
 
 // SelectRequest represents a provider selection request.
 type SelectRequest struct {
-	Transport      string
-	ClientDisguise SelectDisguise
-	RoutingCatalog *RoutingCatalog
+	CodexContinuation *continuation.Session
+	Transport         string
+	ClientDisguise    SelectDisguise
+	RoutingCatalog    *RoutingCatalog
 	// OperationID is the server-generated request UUID used only to correlate
 	// selection decisions. It must never contain a client-provided request header.
 	OperationID string

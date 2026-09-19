@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/model/providerroute"
@@ -13,6 +14,7 @@ import (
 // ProviderPayload keeps route configuration and session lifecycle summaries
 // explicit without serializing the session-owned secret.
 type ProviderPayload struct {
+	CodexContinuation  continuation.Policy                `json:"codex_continuation"`
 	ClientDisguise     clientdisguise.Policy              `json:"client_disguise"`
 	ID                 string                             `json:"id"`
 	Name               string                             `json:"name"`
@@ -92,6 +94,7 @@ func (h *Handler) providerPayload(provider *model.Provider) ProviderPayload {
 	})
 	return ProviderPayload{
 		ClientDisguise:           provider.ClientDisguise,
+		CodexContinuation:        provider.CodexContinuation.Effective(),
 		ID:                       provider.ID,
 		Name:                     provider.Name,
 		APITypes:                 apiTypes,

@@ -1,4 +1,5 @@
 import { useState, useEffect, useEffectEvent, useRef, useId } from "react";
+import { DEFAULT_CODEX_CONTINUATION } from "../../features/codex-continuation/policy";
 import type { FormEvent } from "react";
 import type {
   APICatalog,
@@ -107,6 +108,7 @@ function createDefaultFormData(): ProviderFormData {
     vendor: "",
     failover_scope: FAILOVER_SCOPES.ANY,
     accept_failover: FAILOVER_SCOPES.ANY,
+    codex_continuation: { ...DEFAULT_CODEX_CONTINUATION },
     enabled: true,
     client_disguise: { ...DEFAULT_DISGUISE_POLICY },
   };
@@ -150,6 +152,9 @@ function deriveFormData(initialData?: Provider): ProviderFormData {
     vendor: initialData.vendor || "",
     failover_scope: initialData.failover_scope || FAILOVER_SCOPES.ANY,
     accept_failover: initialData.accept_failover || FAILOVER_SCOPES.ANY,
+    codex_continuation: initialData.codex_continuation ?? {
+      ...DEFAULT_CODEX_CONTINUATION,
+    },
     enabled: initialData.enabled,
     client_disguise: initialData.client_disguise ?? {
       ...DEFAULT_DISGUISE_POLICY,
@@ -336,6 +341,7 @@ function providerInputFromForm(
     vendor: formData.vendor,
     failover_scope: formData.failover_scope,
     accept_failover: formData.accept_failover,
+    codex_continuation: formData.codex_continuation,
     enabled: formData.enabled,
     client_disguise: formData.client_disguise,
   };

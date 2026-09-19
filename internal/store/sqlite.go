@@ -12,6 +12,7 @@ import (
 	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	continuitysqlite "github.com/doraemonkeys/switch-a/internal/codex/continuity/sqlite"
 	providercookiesqlite "github.com/doraemonkeys/switch-a/internal/codex/cookie/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
@@ -141,6 +142,7 @@ func NewSQLiteStore(
 	}
 
 	if err := db.AutoMigrate(
+		&continuation.Binding{},
 		&model.Group{},
 		&model.Provider{},
 		&model.ProviderAPIType{},

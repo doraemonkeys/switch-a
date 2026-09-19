@@ -200,6 +200,9 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 			return false, errorrule.ReasonAuthUnavailable, nil
 		}
 	}
+	if !e.allowsCodexContinuation(provider, candidate.identity) {
+		return false, errorrule.ReasonRoutingChanged, nil
+	}
 
 	if mode.checkHealth && e.health != nil {
 		e.health.AvailabilityForRoute(reqAPIType(e.req), reqTransport(e.req)).RecoverIfExpired(ctx, provider.ID)
@@ -214,4 +217,11 @@ func (e *ProviderSelectionEligibility) evaluateProvider(
 	}
 
 	return true, "", nil
+}
+
+func (e *ProviderSelectionEligibility) allowsCodexContinuation(provider *model.Provider, identity codexidentity.CandidateSnapshot) bool {
+	if reqAPIType(e.req) != "codex" || e.req.CodexContinuation == nil {
+		return true
+	}
+	return e.req.CodexContinuation.Evaluate(provider.ID, identity.ProtocolScope(), provider.CodexContinuation).Allowed
 }

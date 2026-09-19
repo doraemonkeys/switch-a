@@ -2,14 +2,49 @@ package websocketproxy
 
 import (
 	"context"
-	"github.com/doraemonkeys/switch-a/internal/websocketproxy/messageio"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
+	"github.com/doraemonkeys/switch-a/internal/codex/recovery"
 	"github.com/doraemonkeys/switch-a/internal/model"
 	"github.com/doraemonkeys/switch-a/internal/selector"
+	"github.com/doraemonkeys/switch-a/internal/websocketproxy/messageio"
 	"go.uber.org/zap"
 )
+
+func (o *WebSocketSessionOrchestrator) canReplacePhysicalAttempt(attempt WebSocketAttemptResult) bool {
+	if attempt.Result == nil {
+		return false
+	}
+	if o.codexOperation != nil && !o.codexOperation.ReplacementAllowed() {
+		return false
+	}
+	if codexWebSocketRecoveryDecision(attempt.terminalErr(), codexrecovery.PhaseWebSocketAccepted).Condition() == codexrecovery.ConditionReconnectRequired {
+		return false
+	}
+	if attempt.ReplayFailed && !continuation.IsDenied(attempt.terminalErr()) {
+		return false
+	}
+	if o.replayBuffer != nil && !o.replayBuffer.Enabled() && attempt.Result.HandshakeAccepted {
+		return false
+	}
+	if attempt.shouldReplaceBeforeClientVisible() {
+		return true
+	}
+	if attempt.Result.ClientVisible {
+		return false
+	}
+	if continuation.IsDenied(attempt.terminalErr()) {
+		return true
+	}
+	if attempt.Result.TerminalCause == model.TerminalUpstreamSemanticError {
+		return o.suppressedAttempt != nil &&
+			attempt.Result.UpstreamError != nil &&
+			attempt.Result.UpstreamError.IsSwitchableProviderScoped()
+	}
+	return false
+}
 
 func (o *WebSocketSessionOrchestrator) prepareSelectionContinuity(ctx context.Context) {
 	if o.codexOperation == nil || !o.codexOperation.AllowsAccountSwitch() {
@@ -133,8 +168,7 @@ func shouldWriteWebSocketSticky(session *WebSocketSessionResult, recovery bool) 
 	if !result.ClientVisible || result.RecoveryAction == model.RecoveryActionReconnectRequired || result.UpstreamError != nil || result.accountRecoveryNotified {
 		return false
 	}
-	assessment := assessWebSocketSession(session)
-	return assessment.ServiceOutcome == model.ServiceOutcomeCompleted
+	return result.SessionCommitted || result.CompletionObserved
 }
 
 func (o *WebSocketSessionOrchestrator) providerScopedSuppressDecision() func(webSocketPreWriteContext) webSocketPreWriteDecision {

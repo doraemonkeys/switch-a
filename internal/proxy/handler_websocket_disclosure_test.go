@@ -41,7 +41,7 @@ func TestCodexWebSocketRejectedNewThreadReplacesAccount(t *testing.T) {
 	}
 }
 
-func TestCodexWebSocketUncertainNewThreadRetainsAccount(t *testing.T) {
+func TestCodexWebSocketUncertainNewThreadCanReplaceBeforeVisibility(t *testing.T) {
 	t.Run("connection lost after request", func(t *testing.T) {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			conn, _, err := w.(http.Hijacker).Hijack()
@@ -52,7 +52,7 @@ func TestCodexWebSocketUncertainNewThreadRetainsAccount(t *testing.T) {
 			conn.Close()
 		}))
 		defer upstream.Close()
-		testCodexWebSocketDialReplacement(t, upstream.URL, false)
+		testCodexWebSocketDialReplacement(t, upstream.URL, true)
 	})
 }
 

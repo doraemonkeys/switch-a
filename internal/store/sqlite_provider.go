@@ -122,6 +122,10 @@ func (s *SQLiteStore) CreateProviderWithCredentialSessions(
 }
 
 func (s *SQLiteStore) createProviderInTransaction(ctx context.Context, tx *gorm.DB, provider *model.Provider) error {
+	if err := provider.CodexContinuation.Validate(); err != nil {
+		return err
+	}
+	provider.CodexContinuation = provider.CodexContinuation.Effective()
 	bindings, err := credentialBindingsForProvider(provider)
 	if err != nil {
 		return err
@@ -329,6 +333,10 @@ func validateProviderAPITypeUpdate(tx *gorm.DB, provider *model.Provider) error 
 }
 
 func saveProviderWithoutAssociations(tx *gorm.DB, provider *model.Provider) error {
+	if err := provider.CodexContinuation.Validate(); err != nil {
+		return err
+	}
+	provider.CodexContinuation = provider.CodexContinuation.Effective()
 	provider.FailoverScope = providerScopeOrAny(provider.FailoverScope)
 	provider.AcceptFailover = providerScopeOrAny(provider.AcceptFailover)
 	return tx.Omit("APITypes", "CredentialSessions", "Health", "Group").Save(provider).Error

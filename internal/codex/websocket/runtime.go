@@ -10,6 +10,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientcredential"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
@@ -49,6 +50,7 @@ type ExternalSchemeResolver interface {
 }
 
 type Config struct {
+	Continuation     *continuation.Service
 	ClientIdentities ClientIdentityResolver
 	Continuity       Continuity
 	ProviderCookies  ProviderCookies
@@ -56,6 +58,7 @@ type Config struct {
 }
 
 type Runtime struct {
+	continuation     *continuation.Service
 	clientIdentities ClientIdentityResolver
 	continuity       Continuity
 	providerCookies  ProviderCookies
@@ -67,6 +70,7 @@ func New(config Config) (*Runtime, error) {
 		return nil, fmt.Errorf("initialize Codex WebSocket runtime: client scopes, continuity, provider cookies, and external scheme are required")
 	}
 	return &Runtime{
+		continuation:     config.Continuation,
 		clientIdentities: config.ClientIdentities, continuity: config.Continuity,
 		providerCookies: config.ProviderCookies, externalScheme: config.ExternalScheme,
 	}, nil
@@ -81,12 +85,14 @@ type ownerResolution struct {
 // Operation is request-local. Its mutex protects the two relay directions,
 // which may validate and commit state concurrently after the handshake.
 type Operation struct {
-	recoveryPolicy model.ConversationRecoveryPolicy
-	ledger         *codexprovenance.Ledger
-	runtime        *Runtime
-	operationID    string
-	apiType        string
-	headers        http.Header
+	continuation       *continuation.Session
+	continuationPolicy continuation.Policy
+	recoveryPolicy     model.ConversationRecoveryPolicy
+	ledger             *codexprovenance.Ledger
+	runtime            *Runtime
+	operationID        string
+	apiType            string
+	headers            http.Header
 
 	clientIdentity     clientidentity.Resolution
 	currentClientScope codexidentity.ClientScope
@@ -125,6 +131,9 @@ func (r *Runtime) Begin(ctx context.Context, request *http.Request, apiType, ope
 	}
 	if err := r.bindClientScope(ctx, op, request.Header, true); err != nil {
 		return nil, err
+	}
+	if r.continuation != nil {
+		op.continuation = r.continuation.Begin(op.clientIdentity.ID, operationID)
 	}
 	op.ledger = codexprovenance.NewLedger(codexprovenance.Config{Resolver: r.continuity, RecoveryPolicy: op.recoveryPolicy, ClientScopeCandidates: op.clientScopes, APIType: apiType, OperationID: operationID})
 	if err := op.inspectClientInput(ctx, request.Header, codexheaders.MessageView{}, false); err != nil {
@@ -403,6 +412,13 @@ func (o *Operation) pinProtocolScopeLocked(scope codexidentity.ProtocolScope, st
 
 func candidateKey(candidate codexheaders.BindingCandidate) [sha256.Size]byte {
 	return sha256.Sum256(candidate.DigestInput())
+}
+
+func (o *Operation) Continuation() *continuation.Session {
+	if o == nil {
+		return nil
+	}
+	return o.continuation
 }
 
 func evidence(candidate codexheaders.BindingCandidate) codexcontinuity.Evidence {

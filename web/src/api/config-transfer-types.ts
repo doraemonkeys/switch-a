@@ -26,6 +26,7 @@ export interface ExportedAPIType {
 }
 
 export interface ExportedProvider {
+  codex_continuation?: import("../features/codex-continuation/policy").CodexContinuationPolicy;
   client_disguise?: import("./client-disguise/types").ClientDisguisePolicy;
   id: string;
   name: string;

@@ -375,6 +375,9 @@ func validateImportRequest(
 
 // validateExportedProvider validates a single provider and returns warnings.
 func validateExportedProvider(p *ExportedProvider) []string {
+	if err := p.CodexContinuation.Validate(); err != nil {
+		return []string{err.Error()}
+	}
 	var warnings []string
 
 	if p.ID == "" {

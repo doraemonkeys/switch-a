@@ -382,6 +382,12 @@ func (f *WebSocketForwarder) relayPreVisibleClientMessage(
 	if observeClient != nil {
 		observeClient(messageType, data)
 	}
+	if decision.Action == webSocketPreWriteActionReselect {
+		captureWebSocketMessageResult(options, captured, requestcapture.MessageDispositionIdentityRejected, false, decision.Err)
+		progress.Result = newSinglePeerRelaySessionResultForOperation(decision.Err, webSocketPeerUnknown,
+			webSocketRelayFailureOperationUnknown, fallbackCommit, lifecycle, 0, 0)
+		return progress
+	}
 	payload := decision.physicalPayload(data)
 	if err := messageio.Write(ctx, upstreamConn, messageType, payload); err != nil {
 		writeErr := clientFrameWriteError(decision, err)

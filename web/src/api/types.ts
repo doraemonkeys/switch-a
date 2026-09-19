@@ -174,6 +174,7 @@ export interface ReauthenticateCredentialSessionInput {
 }
 
 export interface Provider {
+  codex_continuation?: import("../features/codex-continuation/policy").CodexContinuationPolicy;
   client_disguise?: import("./client-disguise/types").ClientDisguisePolicy;
   id: string;
   name: string;
@@ -205,6 +206,7 @@ export interface Provider {
 export type APITypeInput = ProviderAPIType;
 
 export interface ProviderInput {
+  codex_continuation?: import("../features/codex-continuation/policy").CodexContinuationPolicy;
   client_disguise?: import("./client-disguise/types").ClientDisguisePolicy;
   id?: string;
   name: string;

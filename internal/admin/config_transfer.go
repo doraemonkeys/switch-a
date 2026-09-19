@@ -217,6 +217,9 @@ type AppliedCount struct {
 // buildProviderFromExport builds a model.Provider from an ExportedProvider.
 // Returns false if the provider is invalid and should be skipped.
 func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (*model.Provider, bool) {
+	if err := p.CodexContinuation.Validate(); err != nil {
+		return nil, false
+	}
 	if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.Name) == "" {
 		return nil, false
 	}
@@ -236,17 +239,18 @@ func buildProviderFromExport(p *ExportedProvider, validGroups map[string]bool) (
 	}
 
 	provider := &model.Provider{
-		ID:               p.ID,
-		Name:             p.Name,
-		APITypes:         apiTypes,
-		AuthMode:         authMode,
-		UsageLimitPolicy: p.UsageLimitPolicy,
-		ClientDisguise:   p.ClientDisguise,
-		GroupID:          buildProviderGroupIDFromExport(p.GroupID, validGroups),
-		Weight:           normalizeProviderWeightFromExport(p.Weight),
-		Priority:         p.Priority,
-		Concurrency:      p.Concurrency,
-		MaxRetries:       p.MaxRetries,
+		ID:                p.ID,
+		Name:              p.Name,
+		APITypes:          apiTypes,
+		AuthMode:          authMode,
+		UsageLimitPolicy:  p.UsageLimitPolicy,
+		ClientDisguise:    p.ClientDisguise,
+		CodexContinuation: p.CodexContinuation.Effective(),
+		GroupID:           buildProviderGroupIDFromExport(p.GroupID, validGroups),
+		Weight:            normalizeProviderWeightFromExport(p.Weight),
+		Priority:          p.Priority,
+		Concurrency:       p.Concurrency,
+		MaxRetries:        p.MaxRetries,
 		Backoff: model.BackoffPolicy{
 			InitialDelay: p.Backoff.InitialDelay,
 			MaxDelay:     p.Backoff.MaxDelay,

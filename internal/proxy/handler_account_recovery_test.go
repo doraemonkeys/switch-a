@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"io"
 	"net/http"
 	"reflect"
@@ -23,6 +24,9 @@ func TestHTTPAccountRecoveryThreeAccountsPreservesWireAndBudget(t *testing.T) {
 		t.Run(string(rune('0'+budget)), func(t *testing.T) {
 			events := &x3EventLog{}
 			a, b, c := x3Provider("recovery-a"), x3Provider("recovery-b"), x3Provider("recovery-c")
+			for _, provider := range []*model.Provider{a, b, c} {
+				provider.CodexContinuation.Inbound = continuation.Any
+			}
 			selection := &x3Selector{initial: a, initialLease: x3NewLease(a, events), alternates: []*model.Provider{b, c}, events: events}
 			rules, err := errorrule.CompileRuleSet(71, nil)
 			if err != nil {
@@ -130,7 +134,7 @@ func TestHTTPRecoveryUpstreamErrorEventsNeverUpdateSticky(t *testing.T) {
 	}
 }
 
-func TestHTTPStickyRequiresCompletedClientVisibleSuccess(t *testing.T) {
+func TestHTTPStickyRequiresVisibleRouteWithoutProviderFailure(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		result forwardResult
@@ -141,7 +145,7 @@ func TestHTTPStickyRequiresCompletedClientVisibleSuccess(t *testing.T) {
 		{"semantic error", forwardResult{responseCommitted: true}, false},
 		{"write failure", forwardResult{success: true, responseCommitted: true, failureKind: attemptFailureWrite}, false},
 		{"read failure", forwardResult{success: true, responseCommitted: true, failureKind: attemptFailureRead}, false},
-		{"cancelled", forwardResult{success: true, responseCommitted: true, clientTermination: clientTerminationDisconnect}, false},
+		{"cancelled", forwardResult{success: true, responseCommitted: true, clientTermination: clientTerminationDisconnect}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := &x3Selector{}

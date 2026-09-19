@@ -142,7 +142,7 @@ func (b *preVisibleClientMessageBuffer) RecordDecision(messageType websocket.Mes
 	if b.state != webSocketReplayable {
 		return invalidWebSocketReplayMessageIndex
 	}
-	if decision.Action != webSocketPreWriteActionForward || !decision.ReplayEligible {
+	if (decision.Action != webSocketPreWriteActionForward && decision.Action != webSocketPreWriteActionReselect) || !decision.ReplayEligible {
 		return invalidWebSocketReplayMessageIndex
 	}
 	if !isReplayableWebSocketMessageType(messageType) {

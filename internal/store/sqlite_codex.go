@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	continuitysqlite "github.com/doraemonkeys/switch-a/internal/codex/continuity/sqlite"
 	providercookiesqlite "github.com/doraemonkeys/switch-a/internal/codex/cookie/sqlite"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
@@ -49,6 +50,10 @@ func (inventory CodexPersistenceInventory) PendingChatGPTReauthSubjectCount() in
 type CodexRepositories struct {
 	Continuity      *continuitysqlite.Repository
 	ProviderCookies *providercookiesqlite.Repository
+}
+
+func (s *SQLiteStore) CodexContinuationRepository() *continuation.Repository {
+	return continuation.NewRepository(s.db)
 }
 
 // InspectCodexPersistence is the read-only startup capability boundary. Every

@@ -3,6 +3,7 @@ package websocketproxy
 import (
 	"context"
 	"errors"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -207,6 +208,9 @@ func classifyDialFailure(statusCode int) model.TerminalCause {
 }
 
 func classifyRelayTerminalCause(err error, failurePeer webSocketPeer) model.TerminalCause {
+	if continuation.IsDenied(err) {
+		return model.TerminalProviderUnavailable
+	}
 	if failurePeer == webSocketPeerUnknown && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return model.TerminalInternalError
 	}

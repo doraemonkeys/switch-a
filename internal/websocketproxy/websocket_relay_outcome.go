@@ -179,7 +179,7 @@ func shouldPreserveClientOnPreVisibleFailure(
 	}
 
 	switch outcome.terminalCause {
-	case model.TerminalUpstreamTransportError, model.TerminalCleanClose:
+	case model.TerminalUpstreamTransportError, model.TerminalCleanClose, model.TerminalProviderUnavailable:
 		return true
 	default:
 		return false

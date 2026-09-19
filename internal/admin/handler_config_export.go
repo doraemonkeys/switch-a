@@ -9,6 +9,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/clientaccess"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/credentialsession"
 	"github.com/doraemonkeys/switch-a/internal/errorrule"
 	"github.com/doraemonkeys/switch-a/internal/model"
@@ -45,22 +46,23 @@ type ExportedConfig struct {
 // ExportedProvider represents a provider in the export format.
 // This is a flattened version without health state or timestamps.
 type ExportedProvider struct {
-	ClientDisguise   clientdisguise.Policy          `json:"client_disguise"`
-	ID               string                         `json:"id"`
-	Name             string                         `json:"name"`
-	APITypes         []ExportedAPIType              `json:"api_types"`
-	AuthMode         string                         `json:"auth_mode"`
-	UsageLimitPolicy model.ProviderUsageLimitPolicy `json:"usage_limit_policy,omitempty"`
-	GroupID          *string                        `json:"group_id,omitempty"`
-	Weight           int                            `json:"weight"`
-	Priority         int                            `json:"priority"`
-	Concurrency      int                            `json:"concurrency"`
-	MaxRetries       int                            `json:"max_retries"`
-	Backoff          ExportedBackoff                `json:"backoff,omitzero"`
-	Vendor           string                         `json:"vendor,omitempty"`
-	FailoverScope    string                         `json:"failover_scope,omitempty"`
-	AcceptFailover   string                         `json:"accept_failover,omitempty"`
-	Enabled          bool                           `json:"enabled"`
+	CodexContinuation continuation.Policy            `json:"codex_continuation"`
+	ClientDisguise    clientdisguise.Policy          `json:"client_disguise"`
+	ID                string                         `json:"id"`
+	Name              string                         `json:"name"`
+	APITypes          []ExportedAPIType              `json:"api_types"`
+	AuthMode          string                         `json:"auth_mode"`
+	UsageLimitPolicy  model.ProviderUsageLimitPolicy `json:"usage_limit_policy,omitempty"`
+	GroupID           *string                        `json:"group_id,omitempty"`
+	Weight            int                            `json:"weight"`
+	Priority          int                            `json:"priority"`
+	Concurrency       int                            `json:"concurrency"`
+	MaxRetries        int                            `json:"max_retries"`
+	Backoff           ExportedBackoff                `json:"backoff,omitzero"`
+	Vendor            string                         `json:"vendor,omitempty"`
+	FailoverScope     string                         `json:"failover_scope,omitempty"`
+	AcceptFailover    string                         `json:"accept_failover,omitempty"`
+	Enabled           bool                           `json:"enabled"`
 }
 
 type ExportedCredentialSession struct {
@@ -275,17 +277,18 @@ func buildExportedProvider(p *model.Provider) ExportedProvider {
 	}
 
 	return ExportedProvider{
-		ID:               canonical.ID,
-		Name:             canonical.Name,
-		APITypes:         apiTypes,
-		AuthMode:         canonical.AuthMode,
-		UsageLimitPolicy: canonical.UsageLimitPolicy,
-		ClientDisguise:   canonical.ClientDisguise,
-		GroupID:          groupID,
-		Weight:           canonical.Weight,
-		Priority:         canonical.Priority,
-		Concurrency:      canonical.Concurrency,
-		MaxRetries:       canonical.MaxRetries,
+		ID:                canonical.ID,
+		Name:              canonical.Name,
+		APITypes:          apiTypes,
+		AuthMode:          canonical.AuthMode,
+		UsageLimitPolicy:  canonical.UsageLimitPolicy,
+		ClientDisguise:    canonical.ClientDisguise,
+		CodexContinuation: canonical.CodexContinuation.Effective(),
+		GroupID:           groupID,
+		Weight:            canonical.Weight,
+		Priority:          canonical.Priority,
+		Concurrency:       canonical.Concurrency,
+		MaxRetries:        canonical.MaxRetries,
 		Backoff: ExportedBackoff{
 			InitialDelay: canonical.Backoff.InitialDelay,
 			MaxDelay:     canonical.Backoff.MaxDelay,

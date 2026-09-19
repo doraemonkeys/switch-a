@@ -82,7 +82,6 @@ var validConfigKeys = map[string]bool{
 	"sse_idle_timeout":                           true,
 	"sticky_mode":                                true,
 	"sticky_ttl":                                 true,
-	defaults.ConfigKeyConversationRecoveryPolicy: true,
 	defaults.ConfigKeyWebSocketProbeClientModel:  true,
 	"circuit_failure":                            true,
 	"circuit_window":                             true,
@@ -140,7 +139,6 @@ var configValidators = map[string]ConfigValidator{
 	"sse_idle_timeout":                           validateNonNegativeIntConfig, // 0 means no timeout
 	"sticky_mode":                                validateStickyModeConfig,
 	"sticky_ttl":                                 validatePositiveIntConfig,
-	defaults.ConfigKeyConversationRecoveryPolicy: validateConversationRecoveryPolicyConfig,
 	defaults.ConfigKeyWebSocketProbeClientModel:  validateBoolConfig,
 	"circuit_failure":                            validatePositiveIntConfig,
 	"circuit_window":                             validatePositiveIntConfig,
@@ -217,14 +215,6 @@ func validateAuthModeConfig(value string) error {
 func validateStrategyConfig(value string) error {
 	if !IsValidStrategy(value) {
 		return fmt.Errorf("must be 'priority', 'random', or 'weight'")
-	}
-	return nil
-}
-
-func validateConversationRecoveryPolicyConfig(value string) error {
-	if !model.ConversationRecoveryPolicy(value).IsValid() {
-		return fmt.Errorf("must be %q or %q", model.ConversationRecoveryPreserveConversation,
-			model.ConversationRecoverySwitchAccountPreserveConversation)
 	}
 	return nil
 }

@@ -68,62 +68,11 @@ describe("ConfigForm", () => {
     ).toHaveValue("switch_a");
   });
 
-  it("defaults recovery to the original account and explains switching back", () => {
+  it("keeps Codex continuation in provider settings", () => {
     renderConfigForm();
     expect(
-      screen.getByRole("combobox", {
-        name: /GPT 对话恢复策略/,
-      }),
-    ).toHaveValue("preserve_conversation");
-    expect(
-      screen.getByText("切回固定原账号后，已跨账号续聊的对话可能无法继续。"),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("option", { name: /client_decides/ }),
+      screen.queryByRole("combobox", { name: /GPT 对话恢复策略/ }),
     ).not.toBeInTheDocument();
-  });
-
-  it("saves recovery independently of sticky mode and can switch back", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderConfigForm(onSave, { [CONFIG_KEYS.STICKY_MODE]: "off" });
-    const select = screen.getByRole("combobox", {
-      name: /GPT 对话恢复策略/,
-    });
-    fireEvent.change(select, {
-      target: { value: "switch_account_preserve_conversation" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
-    await waitFor(() =>
-      expect(onSave).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          [CONFIG_KEYS.CONVERSATION_RECOVERY_POLICY]:
-            "switch_account_preserve_conversation",
-          [CONFIG_KEYS.STICKY_MODE]: "off",
-        }),
-      ),
-    );
-    fireEvent.change(select, { target: { value: "preserve_conversation" } });
-    fireEvent.click(screen.getByRole("button", { name: /保存修改/ }));
-    await waitFor(() =>
-      expect(onSave).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          [CONFIG_KEYS.CONVERSATION_RECOVERY_POLICY]: "preserve_conversation",
-        }),
-      ),
-    );
-  });
-
-  it("resets recovery to its saved policy", () => {
-    renderConfigForm(vi.fn(), {
-      [CONFIG_KEYS.CONVERSATION_RECOVERY_POLICY]:
-        "switch_account_preserve_conversation",
-    });
-    const select = screen.getByRole("combobox", {
-      name: /GPT 对话恢复策略/,
-    });
-    fireEvent.change(select, { target: { value: "preserve_conversation" } });
-    fireEvent.click(screen.getByRole("button", { name: /撤销修改/ }));
-    expect(select).toHaveValue("switch_account_preserve_conversation");
   });
 
   it("omits Codex rollout controls", () => {

@@ -83,6 +83,9 @@ func reqRequiredAuthority(req *model.SelectRequest) *codexidentity.UpstreamAutho
 }
 
 func reqPreferredRouteTargetID(req *model.SelectRequest) string {
+	if req != nil && req.APIType == stickyCodexAPIType && req.CodexContinuation != nil {
+		return req.CodexContinuation.PreferredProviderID()
+	}
 	if req == nil || req.RequiredAuthority == nil {
 		return ""
 	}

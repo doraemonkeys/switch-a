@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/doraemonkeys/switch-a/internal"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/http"
@@ -55,7 +57,7 @@ func proxyCodexTestClientScope(t *testing.T) codexidentity.ClientScope {
 	return scope
 }
 
-func newProxyCodexFixture(t *testing.T) proxyCodexFixture {
+func newProxyCodexFixture(t *testing.T, policies ...continuation.PolicyLookup) proxyCodexFixture {
 	t.Helper()
 	hmac := proxyCodexTestHMAC{}
 	digesterValue, err := codexidentity.NewDigester(hmac)
@@ -90,13 +92,19 @@ func newProxyCodexFixture(t *testing.T) proxyCodexFixture {
 		t.Fatal(err)
 	}
 	scheme := codexhttp.NewTrustedProxySchemeResolver(nil)
+	routes := &continuation.Service{Store: &proxyConversationRoutes{rows: make(map[string]continuation.Binding)}}
+	if len(policies) > 0 {
+		routes.Policy = policies[0]
+	}
 	httpRuntime, err := codexhttp.New(codexhttp.Config{
+		Continuation:     routes,
 		ClientIdentities: proxyClientIdentityResolver{&digesterValue}, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	webSocketRuntime, err := codexws.New(codexws.Config{
+		Continuation:     routes,
 		ClientIdentities: proxyClientIdentityResolver{&digesterValue}, Continuity: continuity, ProviderCookies: cookies, ExternalScheme: scheme,
 	})
 	if err != nil {
@@ -115,7 +123,21 @@ func newProxyCodexTestHandler(t *testing.T, config Config) *Handler {
 		config.Auth = newProxyTestAuthenticator()
 	}
 	if config.CodexHTTP == nil || config.CodexWebSocket == nil {
-		fixture := newProxyCodexFixture(t)
+		fixture := newProxyCodexFixture(t, func(ctx context.Context, id string) (continuation.Policy, bool, error) {
+			if config.Store == nil {
+				return continuation.Policy{}, false, nil
+			}
+			providers, err := config.Store.ListProvidersByAPIType(ctx, APITypeCodex)
+			if err != nil {
+				return continuation.Policy{}, false, err
+			}
+			for _, provider := range providers {
+				if provider.ID == id {
+					return provider.CodexContinuation, true, nil
+				}
+			}
+			return continuation.Policy{}, false, nil
+		})
 		if config.CodexHTTP == nil {
 			config.CodexHTTP = fixture.runtime
 		}
@@ -124,6 +146,27 @@ func newProxyCodexTestHandler(t *testing.T, config Config) *Handler {
 		}
 	}
 	return NewHandler(config)
+}
+
+type proxyConversationRoutes struct {
+	mu   sync.Mutex
+	rows map[string]continuation.Binding
+}
+
+func (s *proxyConversationRoutes) Lookup(_ context.Context, key continuation.Binding) (continuation.Binding, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row, ok := s.rows[key.ClientID+":"+key.Kind+":"+key.Digest]
+	return row, ok, nil
+}
+
+func (s *proxyConversationRoutes) Save(_ context.Context, rows []continuation.Binding) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, row := range rows {
+		s.rows[row.ClientID+":"+row.Kind+":"+row.Digest] = row
+	}
+	return nil
 }
 
 func newProxyTestAuthenticator() ProviderAuthenticator {

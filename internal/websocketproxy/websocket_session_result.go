@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/websocketproxy/messageio"
 	"net/http"
 	"time"
@@ -479,6 +480,9 @@ func newWebSocketProviderConfigurationAttempt(
 }
 
 func websocketSwitchReason(attempt WebSocketAttemptResult) string {
+	if continuation.IsDenied(attempt.terminalErr()) {
+		return "conversation_continuation_boundary"
+	}
 	if attempt.Result != nil &&
 		!attempt.Result.ClientVisible &&
 		attempt.Result.UpstreamError != nil {

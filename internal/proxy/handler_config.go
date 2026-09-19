@@ -316,15 +316,9 @@ func (h *Handler) loadConfig(ctx context.Context) (*runtimeConfig, error) {
 	}
 	cfg.sseIdleTimeout = parseDurationSecondsOrDefault(sseIdleTimeout, DefaultSSEIdleTimeout)
 
-	// Snapshot once so an in-flight operation retains one recovery contract.
-	recoveryPolicy, err := h.store.GetConfig(ctx, ConfigKeyConversationRecoveryPolicy)
-	if err != nil {
-		h.logger.Warn("failed to get conversation_recovery_policy, using default", zap.Error(err))
-		recoveryPolicy = defaults.DefaultConversationRecoveryPolicy
-	} else if recoveryPolicy != "" && !model.ConversationRecoveryPolicy(recoveryPolicy).IsValid() {
-		h.logger.Warn("invalid conversation_recovery_policy, using default", zap.String("value", recoveryPolicy))
-	}
-	cfg.ConversationRecoveryPolicy = model.NormalizeConversationRecoveryPolicy(recoveryPolicy)
+	// Provider continuation owns admission. The protocol adapter preserves input
+	// provenance while the shared continuation boundary governs every candidate.
+	cfg.ConversationRecoveryPolicy = model.ConversationRecoverySwitchAccountPreserveConversation
 
 	// Sticky session config
 	stickyModeStr, err := h.store.GetConfig(ctx, ConfigKeyStickyMode)

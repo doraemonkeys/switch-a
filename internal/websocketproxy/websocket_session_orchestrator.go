@@ -3,6 +3,7 @@ package websocketproxy
 import (
 	"context"
 	"errors"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"net/http"
 	"time"
 
@@ -271,6 +272,12 @@ func (o *WebSocketSessionOrchestrator) preparePhysicalReplacement(ctx context.Co
 	switchReason := websocketSwitchReason(attempt)
 	o.attempts[len(o.attempts)-1].SwitchReason = switchReason
 	nextSelectionMode := o.switchTracker.prepareProviderSwitch()
+	if continuation.IsDenied(attempt.terminalErr()) {
+		// Late conversation evidence corrects selection; no provider has failed.
+		o.switchTracker.nextMode = model.SwitchModeReplacement
+		o.switchTracker.syncRequest()
+		nextSelectionMode = model.SwitchModeReplacement
+	}
 	o.logProviderSwitch(attempt, switchReason, nextSelectionMode)
 	o.excludeCurrentProvider()
 	return nil

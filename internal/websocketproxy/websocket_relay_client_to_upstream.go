@@ -89,7 +89,7 @@ func (o *WebSocketSessionOrchestrator) deliverBufferedClientMessage(
 	if decision.PrepareReplay != nil {
 		decision = decision.PrepareReplay(message.Data)
 	}
-	if decision.Action == webSocketPreWriteActionReject {
+	if decision.Action == webSocketPreWriteActionReject || decision.Action == webSocketPreWriteActionReselect {
 		disposition := decision.RejectionDisposition
 		if disposition == "" {
 			disposition = requestcapture.MessageDispositionProtocolRejected
@@ -318,6 +318,10 @@ func (p *webSocketRelayMessageProcessor) process(
 	}
 	if p.observe != nil {
 		p.observe(messageType, data)
+	}
+	if decision.Action == webSocketPreWriteActionReselect {
+		captureWebSocketMessageResult(p.options, captured, requestcapture.MessageDispositionIdentityRejected, false, decision.Err)
+		return webSocketPeerUnknown, webSocketRelayFailureOperationUnknown, decision.Err
 	}
 	payload := decision.physicalPayload(data)
 	if err := messageio.Write(p.ctx, p.dst, messageType, payload); err != nil {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -149,7 +150,10 @@ func TestHandler_ServeHTTP_WebSocket_PostVisibleFailureKeepsRouteTargetFixed(t *
 	if msgType != websocket.MessageText || string(payload) != `{"type":"response.created","response":{"id":"origin-visible"}}` {
 		t.Fatalf("origin payload = (%v, %q), want origin visible response", msgType, string(payload))
 	}
-	if _, _, err := conn.Read(ctx); err == nil {
+	if _, payload, err := conn.Read(ctx); err != nil || !strings.Contains(string(payload), ErrCodeWebSocketReconnect) {
+		t.Fatalf("missing reconnect notice: %s %v", payload, err)
+	}
+	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusServiceRestart {
 		t.Fatal("post-visible provider failure must terminate the fixed-route session")
 	}
 	// Persistence is intentionally asynchronous after the WebSocket session ends.

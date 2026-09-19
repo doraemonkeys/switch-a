@@ -206,9 +206,6 @@ describe("CONFIG_KEYS", () => {
     expect(CONFIG_KEYS.USER_HEADER).toBe("user_header");
     expect(CONFIG_KEYS.STICKY_MODE).toBe("sticky_mode");
     expect(CONFIG_KEYS.STICKY_TTL).toBe("sticky_ttl");
-    expect(CONFIG_KEYS.CONVERSATION_RECOVERY_POLICY).toBe(
-      "conversation_recovery_policy",
-    );
     expect(CONFIG_KEYS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(
       "websocket_probe_client_model",
     );
@@ -252,10 +249,6 @@ describe("DEFAULTS", () => {
     expect(DEFAULTS.STICKY_MODE).toBe("api_type");
     expect(DEFAULTS.STICKY_TTL).toBe(604800);
     expect(DEFAULTS.WEBSOCKET_PROBE_CLIENT_MODEL).toBe(false);
-  });
-
-  it("defaults conversation recovery to the original account", () => {
-    expect(DEFAULTS.CONVERSATION_RECOVERY_POLICY).toBe("preserve_conversation");
   });
 
   it("should have circuit breaker defaults", () => {

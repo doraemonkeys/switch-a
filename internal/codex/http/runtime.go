@@ -15,6 +15,7 @@ import (
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientcredential"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientidentity"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"github.com/doraemonkeys/switch-a/internal/codex/continuity"
 	"github.com/doraemonkeys/switch-a/internal/codex/cookie"
 	"github.com/doraemonkeys/switch-a/internal/codex/headers"
@@ -50,6 +51,7 @@ type ExternalSchemeResolver interface {
 }
 
 type Config struct {
+	Continuation     *continuation.Service
 	ClientIdentities ClientIdentityResolver
 	Continuity       Continuity
 	ProviderCookies  ProviderCookies
@@ -57,6 +59,7 @@ type Config struct {
 }
 
 type Runtime struct {
+	continuation     *continuation.Service
 	clientIdentities ClientIdentityResolver
 	continuity       Continuity
 	providerCookies  ProviderCookies
@@ -68,6 +71,7 @@ func New(config Config) (*Runtime, error) {
 		return nil, fmt.Errorf("initialize Codex HTTP runtime: client identities, continuity, provider cookies, and external scheme are required")
 	}
 	return &Runtime{
+		continuation:     config.Continuation,
 		clientIdentities: config.ClientIdentities, continuity: config.Continuity,
 		providerCookies: config.ProviderCookies, externalScheme: config.ExternalScheme,
 	}, nil
@@ -80,6 +84,7 @@ type ownerResolution struct {
 }
 
 type Operation struct {
+	continuation   *continuation.Session
 	runtime        *Runtime
 	operationID    string
 	apiType        string
@@ -176,6 +181,9 @@ func (r *Runtime) BeginResolved(ctx context.Context, request *http.Request, apiT
 	op.currentClientScope = identity.Primary
 	op.clientScopes = append([]codexidentity.ClientScope(nil), identity.Aliases...)
 	op.hasClientScope = true
+	if r.continuation != nil {
+		op.continuation = r.continuation.Begin(identity.ID, operationID)
+	}
 	if err := op.beginContinuity(ctx, request.Header, message, discovery); err != nil {
 		return nil, err
 	}
@@ -332,6 +340,9 @@ func (o *Operation) resolveClientOwners(ctx context.Context, discovery codexhead
 			continue
 		}
 		resolution, err := o.provenance.ObserveRequest(ctx, evidence(candidate))
+		if err == nil {
+			err = o.continuation.Observe(ctx, evidence(candidate), resolution)
+		}
 		o.owners[key] = o.classifyProvenanceResolution(resolution, err)
 	}
 }
@@ -420,6 +431,13 @@ func (o *Operation) applyResolvedOwnerConstraints() error {
 
 func candidateKey(candidate codexheaders.BindingCandidate) [sha256.Size]byte {
 	return sha256.Sum256(candidate.DigestInput())
+}
+
+func (o *Operation) Continuation() *continuation.Session {
+	if o == nil {
+		return nil
+	}
+	return o.continuation
 }
 
 func evidence(candidate codexheaders.BindingCandidate) codexcontinuity.Evidence {

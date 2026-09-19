@@ -153,6 +153,7 @@ func (h *Handler) serveHTTPIngress(w http.ResponseWriter, r *http.Request, cfg *
 	defer codexOperation.Discard()
 	pctx.selectReq.Model = pctx.info.Model
 	pctx.selectReq.ClientScope = codexOperation.ClientScope()
+	pctx.selectReq.CodexContinuation = codexOperation.Continuation()
 	if apiType == APITypeCodex {
 		switch strings.ToLower(cfg.userHeader) {
 		case "authorization", "x-api-key", "api-key":

@@ -93,6 +93,7 @@ const (
 	webSocketPreWriteActionForward webSocketPreWriteAction = iota
 	webSocketPreWriteActionSuppress
 	webSocketPreWriteActionReject
+	webSocketPreWriteActionReselect
 )
 
 type webSocketPreWriteDecision struct {

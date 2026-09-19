@@ -3,6 +3,7 @@ package websocketproxy
 import (
 	"context"
 	"errors"
+	"github.com/doraemonkeys/switch-a/internal/codex/continuation"
 	"net/http"
 	"time"
 
@@ -527,6 +528,15 @@ func (o *WebSocketSessionOrchestrator) codexClientFrameDecision(
 	}
 	permit, err := frame.PrepareDelivery(ctx)
 	if err != nil {
+		if continuation.IsDenied(err) {
+			if frame.ReplacementEligible() && o.codexOperation.ReplacementAllowed() {
+				// First-frame evidence can arrive after the dial. Keep the immutable
+				// frame for selection with that evidence before disclosing it upstream.
+				decision.Action, decision.Err = webSocketPreWriteActionReselect, err
+				return decision
+			}
+			return codexRejectedWrite(codexrecovery.Mark(codexrecovery.ConditionReconnectRequired, err))
+		}
 		return codexRejectedWrite(err)
 	}
 	if permit != nil {

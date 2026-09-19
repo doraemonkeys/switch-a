@@ -138,6 +138,45 @@ function buildPersistedChatGPTProvider(): Provider {
 }
 
 describe("ProviderModal", () => {
+  it("defaults Codex continuation to outbound any and inbound none", async () => {
+    const user = userEvent.setup();
+    render(<ProviderModal onClose={vi.fn()} onSubmit={vi.fn()} groups={[]} />);
+    expect(screen.queryByLabelText("对话转出")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "codex" }));
+    expect(screen.getByLabelText("对话转出")).toHaveValue("any");
+    expect(screen.getByLabelText("外部对话接入")).toHaveValue("none");
+  });
+
+  it("edits both Codex continuation directions independently", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ProviderModal
+        initialData={buildPersistedChatGPTProvider()}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        groups={[]}
+      />,
+    );
+    expect(screen.getByLabelText("对话转出")).toHaveValue("any");
+    expect(screen.getByLabelText("外部对话接入")).toHaveValue("none");
+    await user.selectOptions(screen.getByLabelText("对话转出"), "none");
+    await user.selectOptions(
+      screen.getByLabelText("外部对话接入"),
+      "same_identity",
+    );
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codex_continuation: { outbound: "none", inbound: "same_identity" },
+          failover_scope: "any",
+          accept_failover: "any",
+        }),
+      ),
+    );
+  });
+
   it("submits the add-provider retry defaults", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
