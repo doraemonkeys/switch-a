@@ -11,7 +11,6 @@ const maxConsecutiveEmptyReads = 100
 
 var (
 	errForwardOnly = errors.New("switch pump to raw forwarding")
-	errPumpStopped = errors.New("stop response pump")
 	errNilDriver   = errors.New("analysis driver factory returned a nil driver")
 )
 
@@ -111,7 +110,7 @@ func (s *rawSource[T]) fill(forAnalysis bool) error {
 	started := <-s.startAck
 	if started.directive == directiveStop {
 		s.directive = directiveStop
-		return errPumpStopped
+		return ErrReadStopped
 	}
 
 	n, readErr := s.body.Read(s.scratch)
@@ -139,7 +138,7 @@ func (s *rawSource[T]) fill(forAnalysis bool) error {
 	directive := <-s.rawAck
 	s.directive = directive
 	if directive == directiveStop {
-		return errPumpStopped
+		return ErrReadStopped
 	}
 	if readErr != nil {
 		s.pendingErr = readErr
@@ -356,7 +355,7 @@ func finishAnalysisRead[T any](
 		forwardPumpAndTerminate(config, source, decodedBytes)
 	case source.directive == directiveForwardOnly || errors.Is(readErr, errForwardOnly):
 		forwardPumpAndTerminate(config, source, decodedBytes)
-	case source.directive == directiveStop || errors.Is(readErr, errPumpStopped):
+	case source.directive == directiveStop || errors.Is(readErr, ErrReadStopped):
 		sendPumpTerminal(config, source, decodedBytes, nil)
 	case source.rawErr != nil && !errors.Is(source.rawErr, io.EOF):
 		sendPumpTerminal(config, source, decodedBytes, source.rawErr)
@@ -421,7 +420,7 @@ func terminalEvent[T any](source *rawSource[T], decodedBytes int64, err error) p
 }
 
 func normalizePumpError(err error) error {
-	if errors.Is(err, io.EOF) || errors.Is(err, errPumpStopped) {
+	if errors.Is(err, io.EOF) || errors.Is(err, ErrReadStopped) {
 		return nil
 	}
 	return err

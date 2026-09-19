@@ -189,6 +189,8 @@ For enabled Codex profiles, original input remains the source for routing, owner
 
 HTTP monitoring reports `upstream_body_read_bytes`: body bytes consumed across transmissions, including rereads, without implying delivery or disclosure. Ingress received bytes, final trailers and later replay-storage failure remain separate capture facts; `bytes_sent` retains WebSocket payload semantics.
 
+HTTP response analysis budgets probe retention separately from protocol parsing. Releasing held bytes continues completion and usage observation under the shared process memory budget. Client disconnects preserve complete events already buffered locally; analysis degradation logs its reason and memory context.
+
 ### 2. WebSocket Request Flow
 
 1. **Upgrade detected** → branched from `internal/proxy/handler.go` to `internal/websocketproxy/gateway.go`

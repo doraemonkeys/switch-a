@@ -7,9 +7,8 @@ import (
 	"fmt"
 )
 
-// Class identifies why capacity is retained. The account implementation may
-// use it for structured diagnostics, but all classes share the same request and
-// process ceilings.
+// Class identifies why capacity is retained. Raw-prefix retention has its own
+// probe ceiling; protocol-bounded analysis and retention share a process ceiling.
 type Class string
 
 const (

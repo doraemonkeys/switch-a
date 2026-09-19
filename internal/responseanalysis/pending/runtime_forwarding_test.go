@@ -175,19 +175,16 @@ func TestMemoryDenialsFailOpenWithExactRawBytes(t *testing.T) {
 		requestLimit int
 		processLimit int
 		wantReason   BoundaryReason
+		wantFailure  BoundaryReason
 		wantPeak     int
 		factoryCalls int32
 	}{
 		{
-			name: "decoded buffer request denial", requestLimit: testReadBuffer - 1, processLimit: 4 * 1024 * 1024,
-			wantReason: ReasonRequestMemoryExhausted,
-		},
-		{
 			name: "decoded buffer process denial", requestLimit: 256 * 1024, processLimit: testReadBuffer - 1,
-			wantReason: ReasonProcessMemoryExhausted,
+			wantReason: ReasonProcessMemoryExhausted, wantFailure: ReasonProcessMemoryExhausted,
 		},
 		{
-			name: "raw prefix request denial after partial retention", requestLimit: testReadBuffer + 2, processLimit: 4 * 1024 * 1024,
+			name: "raw prefix probe denial after partial retention", requestLimit: 2, processLimit: 4 * 1024 * 1024,
 			wantReason: ReasonRequestMemoryExhausted, wantPeak: testReadBuffer + 2, factoryCalls: 1,
 		},
 		{
@@ -204,7 +201,7 @@ func TestMemoryDenialsFailOpenWithExactRawBytes(t *testing.T) {
 				t.Fatal(err)
 			}
 			config.ProcessBudget = budget
-			config.RequestMemoryLimit = test.requestLimit
+			config.ProbeMemoryLimit = test.requestLimit
 			body := newSteppedBody(immediateStep("raw", io.EOF))
 			writer := newRecordingWriter()
 			var factoryCalls atomic.Int32
@@ -217,7 +214,7 @@ func TestMemoryDenialsFailOpenWithExactRawBytes(t *testing.T) {
 			})
 			boundary := awaitBoundary(t, response)
 			completion := awaitCompletion(t, boundary.Forwarding)
-			if boundary.State != StateForwarding || boundary.Reason != test.wantReason || completion.AnalysisFailure != test.wantReason {
+			if boundary.State != StateForwarding || boundary.Reason != test.wantReason || completion.AnalysisFailure != test.wantFailure {
 				t.Fatalf("boundary=%#v completion=%#v", boundary, completion)
 			}
 			if string(writer.snapshot().body) != "raw" || completion.ClientBodyBytesWritten != 3 || completion.UpstreamBytesRead != 3 {
@@ -233,7 +230,7 @@ func TestMemoryDenialsFailOpenWithExactRawBytes(t *testing.T) {
 
 func TestRawPrefixMemoryDenialPreservesSameReadFailure(t *testing.T) {
 	config, budget := newTestConfig(t, newManualScheduler())
-	config.RequestMemoryLimit = testReadBuffer + 2
+	config.ProbeMemoryLimit = 2
 	upstreamFailure := errors.New("upstream reset with final bytes")
 	secondRead := immediateStep("unexpected second read", io.EOF)
 	body := newSteppedBody(
@@ -251,7 +248,7 @@ func TestRawPrefixMemoryDenialPreservesSameReadFailure(t *testing.T) {
 	if boundary.State != StateForwarding || boundary.Reason != ReasonRequestMemoryExhausted {
 		t.Fatalf("boundary=%#v", boundary)
 	}
-	if completion.AnalysisFailure != ReasonRequestMemoryExhausted || completion.Termination != TerminationUpstreamReadFailure {
+	if completion.AnalysisFailure != "" || completion.Termination != TerminationUpstreamReadFailure {
 		t.Fatalf("completion=%#v", completion)
 	}
 	if got := writer.snapshot(); string(got.body) != "raw" || len(got.statuses) != 1 {

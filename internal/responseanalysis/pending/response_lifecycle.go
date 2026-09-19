@@ -4,10 +4,11 @@ import "github.com/doraemonkeys/switch-a/internal/responseanalysis/allocation"
 
 const (
 	rawPrefixChunkBytes    = 4 * 1024
-	maxRawPrefixChunkCount = maxRequestMemoryLimit / rawPrefixChunkBytes
+	maxRawPrefixChunkCount = maxProbeMemoryLimit / rawPrefixChunkBytes
 
 	traceProbeReleased     = "internal_error.probe_released"
 	traceResponseFinalized = "internal_error.response_finalized"
+	traceAnalysisStopped   = "response_analysis.stopped"
 )
 
 type prefixChunk struct {
@@ -215,15 +216,19 @@ func (c *coordinator[T]) trace(name string, reason BoundaryReason) {
 	if c.config.Trace == nil {
 		return
 	}
-	requestUsed, _ := c.account.snapshot()
+	requestUsed, requestPeak := c.account.snapshot()
 	c.config.Trace.Trace(TraceEvent{
 		Name:               name,
 		OperationID:        c.input.OperationID,
 		State:              c.state,
 		Reason:             reason,
+		AnalysisFailure:    c.analysisFailure,
 		UpstreamBytesRead:  c.upstreamBytes,
 		ClientBytesWritten: c.clientBytes,
 		RequestBytes:       requestUsed,
+		PeakRequestBytes:   requestPeak,
+		ProbeMemoryLimit:   c.config.ProbeMemoryLimit,
 		ProcessBytes:       c.config.ProcessBudget.Used(),
+		ProcessMemoryLimit: c.config.ProcessBudget.Limit(),
 	})
 }

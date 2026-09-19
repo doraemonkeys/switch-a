@@ -189,10 +189,14 @@ type TraceEvent struct {
 	OperationID        string
 	State              ResolutionState
 	Reason             BoundaryReason
+	AnalysisFailure    BoundaryReason
 	UpstreamBytesRead  int64
 	ClientBytesWritten int64
 	RequestBytes       int
+	PeakRequestBytes   int
+	ProbeMemoryLimit   int
 	ProcessBytes       int
+	ProcessMemoryLimit int
 }
 
 type TraceSink interface {
@@ -204,7 +208,7 @@ type Config[T any] struct {
 	Scheduler                Scheduler
 	ProbeDuration            time.Duration
 	IdleDuration             time.Duration
-	RequestMemoryLimit       int
+	ProbeMemoryLimit         int
 	DecodedBufferBytes       int
 	ObservationQueueCapacity int
 	CommandQueueCapacity     int
@@ -289,5 +293,8 @@ func (e *AlreadyResolved) Error() string {
 
 var (
 	ErrAnalysisStopped = errors.New("response analysis stopped")
-	ErrInvalidConfig   = errors.New("invalid pending response configuration")
+	// ErrReadStopped prevents new upstream reads without invalidating bytes
+	// already buffered by a decoder. It is distinct from decoding corruption.
+	ErrReadStopped   = errors.New("upstream response reads stopped")
+	ErrInvalidConfig = errors.New("invalid pending response configuration")
 )

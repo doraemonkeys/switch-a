@@ -58,7 +58,8 @@ func (b *ProcessBudget) Peak() int {
 
 type requestAccount struct {
 	process                    *ProcessBudget
-	limit                      int
+	probeLimit                 int
+	probeUsed                  int
 	used                       int
 	peak                       int
 	closed                     bool
@@ -67,7 +68,7 @@ type requestAccount struct {
 }
 
 const (
-	maxRequestMemoryLimit      = 1024 * 1024
+	maxProbeMemoryLimit        = 1024 * 1024
 	gzipDecoderWorkingSetBytes = 256 * 1024
 )
 
@@ -76,15 +77,15 @@ func newRequestAccount(process *ProcessBudget, limit int) (*requestAccount, erro
 		return nil, fmt.Errorf("process memory budget is required")
 	}
 	if limit <= 0 {
-		return nil, fmt.Errorf("request memory limit must be positive")
+		return nil, fmt.Errorf("probe retention limit must be positive")
 	}
-	if limit > maxRequestMemoryLimit {
-		return nil, fmt.Errorf("request memory limit cannot exceed %d bytes", maxRequestMemoryLimit)
+	if limit > maxProbeMemoryLimit {
+		return nil, fmt.Errorf("probe retention limit cannot exceed %d bytes", maxProbeMemoryLimit)
 	}
 	account := &requestAccount{
-		process: process,
-		limit:   limit,
-		grants:  make(map[*grantState]struct{}),
+		process:    process,
+		probeLimit: limit,
+		grants:     make(map[*grantState]struct{}),
 	}
 	process.mu.Lock()
 	process.accounts[account] = struct{}{}
@@ -130,7 +131,9 @@ func (a *requestAccount) reserveUpTo(class allocation.Class, preferred, minimum 
 	}
 
 	capacity := min(preferred, process.limit-process.used)
-	capacity = min(capacity, a.limit-a.used)
+	if class == allocation.ClassRawPrefix {
+		capacity = min(capacity, a.probeLimit-a.probeUsed)
+	}
 	if capacity < minimum {
 		_, err := a.reserveLocked(class, minimum)
 		return nil, 0, err
@@ -163,7 +166,11 @@ func (a *requestAccount) reserveLocked(class allocation.Class, capacity int) (al
 		// an arbitrary working-memory bypass.
 		requestCharged = false
 	}
-	if requestCharged && capacity > a.limit-a.used {
+	// Probe retention controls when forwarding starts. Decoder and framing
+	// work is bounded by the protocol and charged to the process budget; tying
+	// it to retention would silently lose completion/usage during buffer growth.
+	probeCharged := class == allocation.ClassRawPrefix
+	if probeCharged && capacity > a.probeLimit-a.probeUsed {
 		return nil, &allocation.Denial{
 			Reason:            allocation.DenialRequestMemoryExhausted,
 			Class:             class,
@@ -181,8 +188,11 @@ func (a *requestAccount) reserveLocked(class allocation.Class, capacity int) (al
 		a.gzipDecoderWorksetConsumed = true
 	}
 
-	state := &grantState{account: a, capacity: capacity, requestCharged: requestCharged}
+	state := &grantState{account: a, capacity: capacity, requestCharged: requestCharged, probeCharged: probeCharged}
 	a.grants[state] = struct{}{}
+	if probeCharged {
+		a.probeUsed += capacity
+	}
 	if requestCharged {
 		a.used += capacity
 		a.peak = max(a.peak, a.used)
@@ -209,6 +219,7 @@ func (a *requestAccount) close() {
 		delete(a.grants, state)
 	}
 	a.used = 0
+	a.probeUsed = 0
 	delete(process.accounts, a)
 }
 
@@ -225,6 +236,7 @@ type grantState struct {
 	account        *requestAccount
 	capacity       int
 	requestCharged bool
+	probeCharged   bool
 	released       bool
 }
 
@@ -247,6 +259,9 @@ func (g *grant) Release() {
 	delete(state.account.grants, state)
 	if state.requestCharged {
 		state.account.used -= state.capacity
+	}
+	if state.probeCharged {
+		state.account.probeUsed -= state.capacity
 	}
 	process.used -= state.capacity
 }

@@ -70,10 +70,10 @@ func ValidateConfig[T any](config Config[T]) error {
 		return fmt.Errorf("%w: probe duration must be positive", ErrInvalidConfig)
 	case config.IdleDuration < 0:
 		return fmt.Errorf("%w: idle duration cannot be negative", ErrInvalidConfig)
-	case config.RequestMemoryLimit <= 0:
-		return fmt.Errorf("%w: request memory limit must be positive", ErrInvalidConfig)
-	case config.RequestMemoryLimit > maxRequestMemoryLimit:
-		return fmt.Errorf("%w: request memory limit cannot exceed %d bytes", ErrInvalidConfig, maxRequestMemoryLimit)
+	case config.ProbeMemoryLimit <= 0:
+		return fmt.Errorf("%w: probe retention limit must be positive", ErrInvalidConfig)
+	case config.ProbeMemoryLimit > maxProbeMemoryLimit:
+		return fmt.Errorf("%w: probe retention limit cannot exceed %d bytes", ErrInvalidConfig, maxProbeMemoryLimit)
 	case config.DecodedBufferBytes <= 0 || config.DecodedBufferBytes > maxPumpReadBufferBytes:
 		return fmt.Errorf("%w: decoded buffer size must be between 1 and %d bytes", ErrInvalidConfig, maxPumpReadBufferBytes)
 	case config.ObservationQueueCapacity <= 0 || config.ObservationQueueCapacity > maxObservationQueueCapacity:
@@ -108,7 +108,7 @@ func Start[T any](ctx context.Context, config Config[T], input StartInput[T]) *R
 		publishInvalidStart(shared, input)
 		return response
 	}
-	account, err := newRequestAccount(config.ProcessBudget, config.RequestMemoryLimit)
+	account, err := newRequestAccount(config.ProcessBudget, config.ProbeMemoryLimit)
 	if err != nil {
 		publishInvalidStart(shared, input)
 		return response
@@ -179,7 +179,7 @@ func (c *coordinator[T]) run(ctx context.Context) {
 		// The executor already owns the status/credential decision. Avoiding a
 		// dormant pump here guarantees hold mode cannot read ahead before it acts.
 	case c.input.InitialFailure != "":
-		c.analysisFailure = c.input.InitialFailure
+		c.recordAnalysisFailure(c.input.InitialFailure)
 		_ = c.commitForwarding(c.input.InitialFailure, nil, nil)
 		if c.termination == "" {
 			c.startPump(false)
@@ -203,6 +203,12 @@ func (c *coordinator[T]) run(ctx context.Context) {
 		case command := <-c.shared.commands:
 			c.handleCommand(command)
 		case event := <-c.events:
+			// A writer can synchronously trigger cancellation. Honor it before a
+			// queued read-start event so select ordering cannot authorize a new read.
+			if cancelled != nil && ctx.Err() != nil {
+				cancelled = nil
+				c.handleCancellation()
+			}
 			c.handlePumpEvent(event)
 		case <-c.usage.ready:
 			if observation, ok := c.usage.take(); ok {
@@ -372,13 +378,11 @@ func (c *coordinator[T]) handleProbingRaw(raw []byte) {
 		c.rawAck <- directiveAnalyze
 		return
 	}
-	reason := c.recordAnalysisFailure(err)
+	// Releasing the held wire prefix ends probing, not protocol observation.
+	// The current read still contains bytes needed for completion and usage.
+	reason := c.config.FailureReason(err)
 	_ = c.commitForwarding(reason, nil, raw[retained:])
-	if c.termination == TerminationClientWriteFailure {
-		c.rawAck <- directiveStop
-		return
-	}
-	c.rawAck <- directiveForwardOnly
+	c.rawAck <- c.bufferedAnalysisDirective()
 }
 
 func (c *coordinator[T]) handleForwardingRaw(raw []byte) {
@@ -391,17 +395,15 @@ func (c *coordinator[T]) handleForwardingRaw(raw []byte) {
 		c.rawAck <- directiveAnalyze
 		return
 	}
-	c.recordAnalysisFailure(err)
+	c.trace(traceProbeReleased, c.config.FailureReason(err))
 	writeErr := c.flushPrefix()
 	if writeErr == nil && retained < len(raw) {
 		writeErr = c.writeRaw(raw[retained:])
 	}
 	if writeErr != nil {
 		c.stopAfterClientWriteFailure()
-		c.rawAck <- directiveStop
-		return
 	}
-	c.rawAck <- directiveForwardOnly
+	c.rawAck <- c.bufferedAnalysisDirective()
 }
 
 func (c *coordinator[T]) writeForwardingRaw(raw []byte) {
@@ -417,12 +419,14 @@ func (c *coordinator[T]) writeForwardingRaw(raw []byte) {
 	c.rawAck <- directiveForwardOnly
 }
 
-func (c *coordinator[T]) recordAnalysisFailure(err error) BoundaryReason {
-	reason := c.config.FailureReason(err)
+func (c *coordinator[T]) recordAnalysisFailure(reason BoundaryReason) BoundaryReason {
 	if reason == "" {
 		reason = ReasonAnalysisInternal
 	}
-	c.analysisFailure = reason
+	if c.analysisFailure == "" {
+		c.analysisFailure = reason
+		c.trace(traceAnalysisStopped, reason)
+	}
 	return reason
 }
 
@@ -450,7 +454,7 @@ func (c *coordinator[T]) handleAnalysisCheckpoint() {
 		if err := c.flushPrefix(); err != nil {
 			c.termination = TerminationClientWriteFailure
 			c.closeBody()
-			c.observationAck <- directiveStop
+			c.observationAck <- c.bufferedAnalysisDirective()
 			return
 		}
 	}
@@ -458,6 +462,11 @@ func (c *coordinator[T]) handleAnalysisCheckpoint() {
 }
 
 func (c *coordinator[T]) handleDecisiveObservation(event pumpEvent[T]) {
+	// Cancellation can race the parser after the last raw write. Preserve an
+	// observed analysis failure even when the client no longer needs a decision.
+	if event.observationKind == ObservationFailOpen {
+		c.recordAnalysisFailure(event.reason)
+	}
 	if c.state == StateDiscarded || c.termination == TerminationClientWriteFailure || c.termination == TerminationClientCancelled {
 		c.config.Observations.Release(&event.observation)
 		c.observationAck <- c.bufferedAnalysisDirective()
@@ -502,13 +511,9 @@ func (c *coordinator[T]) handleDecisiveObservation(event pumpEvent[T]) {
 			_ = c.commitForwarding(ReasonClientVisibleEvent, &event.observation, nil)
 		}
 		c.config.Observations.Release(&event.observation)
-		c.observationAck <- c.analysisDirective()
+		c.observationAck <- c.bufferedAnalysisDirective()
 	case ObservationFailOpen:
-		reason := event.reason
-		if reason == "" {
-			reason = ReasonAnalysisInternal
-		}
-		c.analysisFailure = reason
+		reason := c.analysisFailure
 		switch c.state {
 		case StateProbing:
 			_ = c.commitForwarding(reason, &event.observation, nil)
@@ -527,10 +532,7 @@ func (c *coordinator[T]) handleDecisiveObservation(event pumpEvent[T]) {
 }
 
 func (c *coordinator[T]) handleAnalysisFailure(reason BoundaryReason) {
-	if reason == "" {
-		reason = ReasonAnalysisInternal
-	}
-	c.analysisFailure = reason
+	reason = c.recordAnalysisFailure(reason)
 	switch c.state {
 	case StateProbing:
 		_ = c.commitForwarding(reason, nil, nil)

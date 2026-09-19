@@ -502,8 +502,8 @@ func TestProbeBudgetCompressionExpansionIsBoundedAndRawExact(t *testing.T) {
 		wantReason  BoundaryReason
 	}{
 		{
-			name:       "production request ceiling fails open first",
-			wantReason: BoundaryReason(FailureRequestMemoryExhausted),
+			name:       "production budget reaches decoded event cap",
+			wantReason: BoundaryReason(FailureDecodedEventTooLarge),
 		},
 		{
 			name:        "controlled maximum reaches decoded event cap",

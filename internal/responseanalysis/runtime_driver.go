@@ -38,12 +38,15 @@ func (d *runtimeDriver) Read(decoded []byte, emit func(Observation) bool) (int, 
 		return 0, &framing.Error{Reason: framing.FailureInternal, Cause: errors.New("runtime protocol driver is incomplete")}
 	}
 	n, readErr := d.decoder.Read(decoded)
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, pending.ErrReadStopped) {
 		// A decoder can return a complete-looking payload together with an
 		// integrity failure (for example gzip.ErrChecksum). Letting those bytes
 		// create a semantic match would discard an unverified upstream response.
 		return n, readErr
 	}
+	// A stopped read may accompany the last decoded bytes of a gzip member
+	// while it looks for another member. Observe complete frames already held
+	// locally, without treating the stop as EOF or issuing another network read.
 	keepGoing := true
 	consume := func(observation Observation) bool {
 		if observation.CompletionEvent != "" && d.observeCompletion != nil {

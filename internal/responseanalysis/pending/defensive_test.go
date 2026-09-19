@@ -23,8 +23,8 @@ func TestValidateConfigRejectsEveryInvalidDependencyAndLimit(t *testing.T) {
 		{"scheduler", func(config *Config[testObservation]) { config.Scheduler = nil }},
 		{"probe duration", func(config *Config[testObservation]) { config.ProbeDuration = 0 }},
 		{"idle duration", func(config *Config[testObservation]) { config.IdleDuration = -1 }},
-		{"request memory positive", func(config *Config[testObservation]) { config.RequestMemoryLimit = 0 }},
-		{"request memory maximum", func(config *Config[testObservation]) { config.RequestMemoryLimit = maxRequestMemoryLimit + 1 }},
+		{"request memory positive", func(config *Config[testObservation]) { config.ProbeMemoryLimit = 0 }},
+		{"request memory maximum", func(config *Config[testObservation]) { config.ProbeMemoryLimit = maxProbeMemoryLimit + 1 }},
 		{"decoded buffer", func(config *Config[testObservation]) { config.DecodedBufferBytes = 0 }},
 		{"decoded buffer maximum", func(config *Config[testObservation]) { config.DecodedBufferBytes = maxPumpReadBufferBytes + 1 }},
 		{"observation queue", func(config *Config[testObservation]) { config.ObservationQueueCapacity = 0 }},
@@ -189,7 +189,7 @@ func TestRealSchedulerAndAccountDefensivePaths(t *testing.T) {
 	if _, err := newRequestAccount(process, 0); err == nil {
 		t.Fatal("created request account without a positive limit")
 	}
-	if _, err := newRequestAccount(process, maxRequestMemoryLimit+1); err == nil {
+	if _, err := newRequestAccount(process, maxProbeMemoryLimit+1); err == nil {
 		t.Fatal("created request account above the hard request limit")
 	}
 	var nilAccount *requestAccount

@@ -149,7 +149,9 @@ func NewHandler(cfg Config) *Handler {
 		if err != nil {
 			panic(fmt.Sprintf("proxy: create response-analysis budget: %v", err))
 		}
-		analyzer, err = responseanalysis.NewAnalyzer(responseanalysis.NewRegistry(), budget, responseanalysis.AnalyzerOptions{})
+		analyzer, err = responseanalysis.NewAnalyzer(responseanalysis.NewRegistry(), budget, responseanalysis.AnalyzerOptions{
+			Trace: responseanalysis.NewLogTrace(cfg.Logger),
+		})
 		if err != nil {
 			panic(fmt.Sprintf("proxy: create response analyzer: %v", err))
 		}

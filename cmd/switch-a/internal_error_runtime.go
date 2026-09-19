@@ -60,7 +60,7 @@ func newInternalErrorRuntime(
 	analyzer, err := responseanalysis.NewAnalyzer(
 		responseanalysis.NewRegistry(),
 		budget,
-		responseanalysis.AnalyzerOptions{Scheduler: scheduler},
+		responseanalysis.AnalyzerOptions{Scheduler: scheduler, Trace: responseanalysis.NewLogTrace(log)},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("initialize response analyzer: %w", err)

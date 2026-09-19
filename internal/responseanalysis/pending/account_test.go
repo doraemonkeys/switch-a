@@ -21,14 +21,14 @@ func TestRequestAccountExactLimitsAndDenialRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := account.Reserve(allocation.ClassSemanticFields, 4)
+	second, err := account.Reserve(allocation.ClassRawPrefix, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if used, peak := account.snapshot(); used != 10 || peak != 10 || process.Used() != 10 {
 		t.Fatalf("unexpected exact-limit accounting: used=%d peak=%d process=%d", used, peak, process.Used())
 	}
-	_, err = account.Reserve(allocation.ClassFramingBuffer, 1)
+	_, err = account.Reserve(allocation.ClassRawPrefix, 1)
 	assertDenial(t, err, allocation.DenialRequestMemoryExhausted)
 	if used, _ := account.snapshot(); used != 10 || process.Used() != 10 {
 		t.Fatalf("denial mutated counters: request=%d process=%d", used, process.Used())
@@ -60,6 +60,48 @@ func TestRequestAccountProcessDenial(t *testing.T) {
 	assertDenial(t, err, allocation.DenialProcessMemoryExhausted)
 	if used, peak := account.snapshot(); used != 0 || peak != 0 || process.Used() != 0 || process.Peak() != 0 {
 		t.Fatalf("process denial changed accounting: request=%d/%d process=%d/%d", used, peak, process.Used(), process.Peak())
+	}
+}
+
+func TestProbeRetentionAndAnalysisWorkingMemoryAreIndependent(t *testing.T) {
+	process, err := NewProcessBudget(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := newRequestAccount(process, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer account.close()
+	prefix, err := account.Reserve(allocation.ClassRawPrefix, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	framing, err := account.Reserve(allocation.ClassFramingBuffer, 40)
+	if err != nil {
+		t.Fatalf("probe ceiling limited protocol parsing: %v", err)
+	}
+	fields, capacity, err := account.reserveUpTo(allocation.ClassSemanticFields, 20, 1)
+	if err != nil || capacity != 14 {
+		t.Fatalf("analysis process ceiling: capacity=%d err=%v", capacity, err)
+	}
+	_, err = account.Reserve(allocation.ClassRawPrefix, 1)
+	assertDenial(t, err, allocation.DenialRequestMemoryExhausted)
+	_, err = account.Reserve(allocation.ClassFramingBuffer, 1)
+	assertDenial(t, err, allocation.DenialProcessMemoryExhausted)
+	if used, peak := account.snapshot(); used != 64 || peak != 64 {
+		t.Fatalf("working memory disappeared from diagnostics: %d/%d", used, peak)
+	}
+	prefix.Release()
+	reused, err := account.Reserve(allocation.ClassRawPrefix, 10)
+	if err != nil {
+		t.Fatalf("released probe capacity unavailable: %v", err)
+	}
+	reused.Release()
+	framing.Release()
+	fields.Release()
+	if process.Used() != 0 {
+		t.Fatalf("leaked %d bytes", process.Used())
 	}
 }
 

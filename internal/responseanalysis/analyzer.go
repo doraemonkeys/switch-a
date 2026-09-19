@@ -14,7 +14,9 @@ import (
 type SemanticMatchFunc func(SemanticFields) bool
 
 type AnalyzerOptions struct {
-	ProbeDuration    time.Duration
+	ProbeDuration time.Duration
+	// ProbeMemoryLimit bounds held wire bytes. Protocol parsing has separate
+	// event limits and shares the process budget with every other request.
 	ProbeMemoryLimit int
 	IdleDuration     time.Duration
 	Scheduler        Scheduler
@@ -104,7 +106,7 @@ func (a *Analyzer) Start(ctx context.Context, input StartInput) *PendingResponse
 		Scheduler:                a.scheduler,
 		ProbeDuration:            a.probeDuration,
 		IdleDuration:             idleDuration,
-		RequestMemoryLimit:       a.probeMemoryLimit,
+		ProbeMemoryLimit:         a.probeMemoryLimit,
 		DecodedBufferBytes:       PumpReadBufferBytes,
 		ObservationQueueCapacity: ObservationQueueCapacity,
 		CommandQueueCapacity:     PumpCommandQueueCapacity,

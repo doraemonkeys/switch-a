@@ -20,6 +20,68 @@ const clientDisconnectIntegrationTimeout = 5 * time.Second
 
 const delayedClientDisconnectAfterUpstreamEOF = 250 * time.Millisecond
 
+func TestHandler_LargeSSECompletionBeforeClientDisconnectPersistsUsage(t *testing.T) {
+	const terminalPaddingBytes = 130 * 1024
+	terminal := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"tools\":[{\"description\":\"" +
+		strings.Repeat("x", terminalPaddingBytes) +
+		"\"}],\"usage\":{\"input_tokens\":172419,\"output_tokens\":793,\"total_tokens\":173212}}}\n\n"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if _, err := io.WriteString(w, terminal); err != nil {
+			t.Errorf("write terminal event: %v", err)
+			return
+		}
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+	store := newMockStore()
+	store.providers = []model.Provider{withTestStaticCredential(model.Provider{
+		ID: "completion-provider", Name: "Completion Provider", AuthMode: "bearer", Enabled: true,
+		APITypes: []model.ProviderAPIType{{ProviderID: "completion-provider", APIType: APITypeCodex, BaseURL: upstream.URL}},
+	}, "", "test-key")}
+	handler := newProxyCodexTestHandler(t, Config{Store: store, Health: newTrackingHealthManager(), Logger: zap.NewNop()})
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), clientDisconnectIntegrationTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, proxyServer.URL+RouteCodexResponses, strings.NewReader(`{"model":"gpt-5","stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	authorizeProxyCodexTestRequest(request)
+	response, err := proxyServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	var received strings.Builder
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		received.WriteString(line)
+		if line == "\n" {
+			break
+		}
+	}
+	if received.String() != terminal {
+		t.Fatal("terminal SSE changed during forwarding")
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return store.LogsLen() == 1 }, clientDisconnectIntegrationTimeout)
+	log := store.LastLog()
+	if requestLogServiceOutcome(log) != model.ServiceOutcomeCompleted || requestLogCompletionState(log) != model.CompletionStateCompleted ||
+		requestLogTerminationReason(log) != model.TerminationReasonClientDisconnect || log.TotalTokens == nil || *log.TotalTokens != 173212 {
+		t.Fatalf("terminal event lost at settlement: %+v", log)
+	}
+}
+
 func TestHandler_RealSSEClientDisconnectPersistsClientAttribution(t *testing.T) {
 	tests := []struct {
 		name        string
