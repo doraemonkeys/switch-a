@@ -8,6 +8,7 @@ import (
 )
 
 var (
+	utf8BOM        = []byte("\xef\xbb\xbf")
 	doneMarker     = []byte("[DONE]")
 	eventField     = []byte("event")
 	dataField      = []byte("data")
@@ -18,13 +19,14 @@ var (
 // to the framer; dispatch moves the data and event grants into the returned
 // Frame without copying payload bytes.
 type SSE struct {
-	maxBytes   int
-	line       ownedBuffer
-	data       ownedBuffer
-	event      ownedText
-	hasData    bool
-	eventBytes int
-	ended      bool
+	maxBytes      int
+	line          ownedBuffer
+	data          ownedBuffer
+	event         ownedText
+	hasData       bool
+	eventBytes    int
+	ended         bool
+	atStreamStart bool
 }
 
 func NewSSE(maxBytes int) *SSE {
@@ -40,10 +42,11 @@ func NewSSEWithReserver(maxBytes int, reserver allocation.Reserver) (*SSE, error
 
 func newSSE(maxBytes int, reserver allocation.Reserver) *SSE {
 	return &SSE{
-		maxBytes: maxBytes,
-		line:     newOwnedBuffer(reserver, allocation.ClassFramingBuffer),
-		data:     newOwnedBuffer(reserver, allocation.ClassFramingBuffer),
-		event:    newOwnedText(reserver, allocation.ClassFramingBuffer),
+		maxBytes:      maxBytes,
+		atStreamStart: true,
+		line:          newOwnedBuffer(reserver, allocation.ClassFramingBuffer),
+		data:          newOwnedBuffer(reserver, allocation.ClassFramingBuffer),
+		event:         newOwnedText(reserver, allocation.ClassFramingBuffer),
 	}
 }
 
@@ -133,7 +136,14 @@ func (f *SSE) consumeCurrentLine() (Frame, bool, error) {
 	return f.consumeLine(line)
 }
 
-func (f *SSE) consumeLine(line []byte) (Frame, bool, error) {
+func (f *SSE) consumeLine(rawLine []byte) (Frame, bool, error) {
+	line := rawLine
+	if f.atStreamStart {
+		// Reusing the first physical line handles BOMs split across reads without
+		// adding a separate buffer or changing event dispatch timing.
+		f.atStreamStart = false
+		line = bytes.TrimPrefix(line, utf8BOM)
+	}
 	if len(line) == 0 {
 		f.line.reset()
 		frame, ok := f.dispatch()
@@ -158,7 +168,7 @@ func (f *SSE) consumeLine(line []byte) (Frame, bool, error) {
 		}
 		f.line.reset()
 	case bytes.Equal(name, dataField):
-		if err := f.consumeDataLine(line, value); err != nil {
+		if err := f.consumeDataLine(rawLine, value); err != nil {
 			return Frame{}, false, err
 		}
 	default:
@@ -169,9 +179,9 @@ func (f *SSE) consumeLine(line []byte) (Frame, bool, error) {
 
 func (f *SSE) consumeDataLine(line, value []byte) error {
 	if !f.hasData {
-		// The parsed value is a suffix of line. Moving the line allocation avoids
-		// retaining equally large line and data buffers for the common one-line
-		// SSE event while preserving reserve-before-allocation semantics.
+		// The value remains a suffix of the original buffered line even after BOM
+		// removal. Moving that allocation avoids retaining two large buffers for a
+		// one-line SSE event while preserving reserve-before-allocation semantics.
 		valueStart := len(line) - len(value)
 		if err := f.line.moveCompactedTo(&f.data, valueStart, len(line)); err != nil {
 			return err

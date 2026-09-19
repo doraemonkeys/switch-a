@@ -234,6 +234,7 @@ func gzipRuntimeBytesWithCorruptChecksum(t *testing.T, decoded []byte) []byte {
 
 func TestAnalyzerRawIdentityEverySplit(t *testing.T) {
 	decoded := []byte("event: error\ndata: {\"type\":\"error\",\"code\":\"server_is_overloaded\",\"message\":\"At Capacity\"}\n\n")
+	bomData := []byte("\ufeffdata: {\"type\":\"error\",\"code\":\"server_is_overloaded\",\"message\":\"At Capacity\"}\n\n")
 	tests := []struct {
 		name           string
 		encoding       string
@@ -244,6 +245,8 @@ func TestAnalyzerRawIdentityEverySplit(t *testing.T) {
 	}{
 		{name: "identity", encoding: "identity", wire: decoded, wantBoundary: BoundarySemanticMatch, semanticCommit: true},
 		{name: "gzip", encoding: "gzip", wire: gzipRuntimeBytes(t, decoded), wantBoundary: BoundarySemanticMatch, semanticCommit: true},
+		{name: "BOM identity", encoding: "identity", wire: bomData, wantBoundary: BoundarySemanticMatch, semanticCommit: true},
+		{name: "BOM gzip", encoding: "gzip", wire: gzipRuntimeBytes(t, bomData), wantBoundary: BoundarySemanticMatch, semanticCommit: true},
 		{name: "malformed SSE fail-open", encoding: "identity", wire: []byte("data: not-json\n\n"), wantBoundary: BoundaryReason(FailureMalformedFrame), wantFailure: BoundaryReason(FailureMalformedFrame)},
 		{name: "corrupt gzip fail-open", encoding: "gzip", wire: []byte("broken-gzip"), wantBoundary: BoundaryReason(FailureContentDecoding), wantFailure: BoundaryReason(FailureContentDecoding)},
 		{name: "brotli fail-open", encoding: "br", wire: []byte{0x1b, 0x58, 0x00, 0x28, 0x2c}, wantBoundary: BoundaryReason(FailureUnsupportedEncoding), wantFailure: BoundaryReason(FailureUnsupportedEncoding)},

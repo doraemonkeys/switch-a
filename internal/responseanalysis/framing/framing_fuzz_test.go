@@ -9,6 +9,8 @@ func FuzzFramerSplitInvariant(f *testing.F) {
 	f.Add(byte(KindSSE), []byte("event: error\ndata: {\"message\":\"busy\"}\n\n"), uint16(7), uint16(256))
 	f.Add(byte(KindJSON), []byte(`{"error":{"message":"busy"}}`), uint16(3), uint16(256))
 	f.Add(byte(KindSSE), []byte("data: first\r\ndata: second"), uint16(0), uint16(64))
+	f.Add(byte(KindSSE), []byte("\ufeffdata: first\r\n\r\n"), uint16(1), uint16(64))
+	f.Add(byte(KindSSE), []byte("\ufeffdata: first\n\n\ufeffdata: ignored\n\n"), uint16(2), uint16(64))
 
 	f.Fuzz(func(t *testing.T, kindByte byte, wire []byte, splitSeed, limitSeed uint16) {
 		kind := KindJSON
