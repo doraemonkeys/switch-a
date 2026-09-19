@@ -29,8 +29,8 @@ export function ProfileFields({
 }) {
   const environments = profileEnvironments(state.profiles);
   const selectedTuple = environments.find(
-    ([key]) => key === draft.environment,
-  )?.[1];
+    ({ key }) => key === draft.environment,
+  )?.tuple;
   const clientType = CLIENT_TYPES[selectedTuple?.client_type ?? ""];
   const selection = profileSelection(draft);
   const effective = effectiveProfile(draft, state);
@@ -65,14 +65,15 @@ export function ProfileFields({
             选择客户端环境
           </option>
           {draft.environment &&
-            !environments.some(([key]) => key === draft.environment) && (
+            !environments.some(({ key }) => key === draft.environment) && (
               <option value={draft.environment}>
                 环境不可用：{draft.environment}
               </option>
             )}
-          {environments.map(([key, tuple]) => (
+          {environments.map(({ key, tuple, hasUserAgentSample }) => (
             <option key={key} value={key}>
               {environmentLabel(tuple)}
+              {!hasUserAgentSample && " · 仅部分特征"}
             </option>
           ))}
         </select>

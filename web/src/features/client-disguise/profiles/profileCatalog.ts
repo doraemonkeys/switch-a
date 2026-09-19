@@ -6,6 +6,7 @@ import type {
 } from "@/api/client-disguise/types";
 
 import { CLIENT_TYPES } from "./clientTypes";
+import { sampledUserAgent } from "./profileFeatures";
 
 const PLATFORM_NAMES: Record<string, string> = {
   windows: "Windows",
@@ -94,11 +95,23 @@ export function environmentProfiles(state: DisguiseState, environment: string) {
   );
 }
 export function profileEnvironments(profiles: ProfileRevision[]) {
-  const tuples = new Map(
-    profiles.map((profile) => [environmentKey(profile.tuple), profile.tuple]),
-  );
-  return [...tuples].sort(([, a], [, b]) =>
-    environmentLabel(a).localeCompare(environmentLabel(b)),
+  const environments = new Map<
+    string,
+    { key: string; tuple: ClientTuple; hasUserAgentSample: boolean }
+  >();
+  for (const profile of profiles) {
+    const key = environmentKey(profile.tuple);
+    // Sampling belongs to the environment's available profiles, not its client type.
+    environments.set(key, {
+      key,
+      tuple: profile.tuple,
+      hasUserAgentSample:
+        Boolean(sampledUserAgent(profile)) ||
+        environments.get(key)?.hasUserAgentSample === true,
+    });
+  }
+  return [...environments.values()].sort((a, b) =>
+    environmentLabel(a.tuple).localeCompare(environmentLabel(b.tuple)),
   );
 }
 export function referenceHead(

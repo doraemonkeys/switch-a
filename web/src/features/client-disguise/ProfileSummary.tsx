@@ -1,4 +1,5 @@
 import { ArrowUpRight, ChevronDown } from "lucide-react";
+import { Link, useSearchParams } from "react-router";
 import type {
   DisguiseState,
   ProfileRevision,
@@ -31,6 +32,10 @@ export function ProfileSummary({
       : "";
   const version = official || requestVersion(profile);
   const versionOrigin = official ? "官方稳定版" : "来自快照";
+  const hasUserAgentSample = Boolean(sampledUserAgent(profile));
+  const [params] = useSearchParams();
+  const referenceParams = new URLSearchParams(params);
+  referenceParams.set("view", "references");
   return (
     <div
       className="cd-profile-preview cd-profile-result"
@@ -46,20 +51,59 @@ export function ProfileSummary({
           </dd>
         </div>
         <div>
-          <dt>实际发送版本</dt>
+          <dt>客户端特征</dt>
+          <dd>
+            {hasUserAgentSample
+              ? "已采集 User-Agent"
+              : "部分特征 · 未采集 User-Agent"}
+          </dd>
+        </div>
+        <div>
+          <dt>推理请求版本</dt>
           <dd>
             {version ? `${version} · ${versionOrigin}` : "沿用原请求版本"}
           </dd>
         </div>
+        <div>
+          <dt>账号请求 UA</dt>
+          <dd>
+            {hasUserAgentSample
+              ? "使用所选快照的 UA 与版本规则"
+              : "使用全局「GPT 账号请求」回退配置"}
+          </dd>
+        </div>
       </dl>
-      {!sampledUserAgent(profile) && (
-        <p className="cd-field-help cd-partial-profile">
-          部分特征：未采集完整 User-Agent。选择已知入口标识时，会同步调整原
-          User-Agent 中可识别的 Codex 产品名，系统和终端信息沿用原请求。
-          {official
-            ? "版本字段使用官方稳定版，原 User-Agent 中可识别的 Codex 版本会同步更新。"
-            : "客户端版本沿用原请求。"}
-        </p>
+      {!hasUserAgentSample && (
+        <>
+          <p className="cd-field-help cd-partial-profile">
+            已知入口标识会应用到原 User-Agent 中可识别的 Codex
+            产品名；系统、终端及调用方信息沿用原请求。
+            {official
+              ? "版本字段使用官方稳定版，原 User-Agent 中可识别的 Codex 版本会同步更新。"
+              : "客户端版本沿用原请求。"}{" "}
+            如需使用采样 UA，请在{" "}
+            <Link
+              className="cd-text-link"
+              to={`/client-disguise?${referenceParams}`}
+            >
+              Reference library
+            </Link>{" "}
+            采集或导入包含完整 User-Agent 的样本，再选择对应快照。
+          </p>
+          <p className="cd-field-help cd-partial-profile">
+            Token 刷新和额度查询使用全局回退
+            UA，可能与推理请求不同。在全局配置的 「认证与账号 → GPT
+            账号请求」中查看。{" "}
+            <Link
+              className="cd-text-link"
+              to="/config"
+              target="_blank"
+              rel="noreferrer"
+            >
+              查看全局配置（新标签页）
+            </Link>
+          </p>
+        </>
       )}
       <details className="cd-profile-details">
         <summary>
