@@ -146,7 +146,7 @@ func TestSessionPersistenceAndStateWriteErrors(t *testing.T) {
 		OAuthIssuer: defaultOAuthIssuer, OAuthClientID: defaultOAuthClientID,
 		ExpiresAt: now.Add(2 * time.Hour), LastRefresh: now,
 	}
-	if err := service.persistChatGPTCredentialSession(context.Background(), &snapshot, refreshed); err != nil {
+	if _, err := service.persistChatGPTCredentialSession(context.Background(), &snapshot, refreshed); err != nil {
 		t.Fatalf("persistChatGPTCredentialSession error = %v", err)
 	}
 	if store.casWrites != 1 || store.session.Version != 2 {

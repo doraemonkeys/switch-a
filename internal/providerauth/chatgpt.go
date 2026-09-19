@@ -37,17 +37,19 @@ func encodeChatGPTCredentialSecret(credential *model.ChatGPTProviderCredential) 
 	if credential == nil {
 		return "", nil
 	}
-	payload, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
-		AccessToken:   credential.AccessToken,
-		RefreshToken:  credential.RefreshToken,
-		IDToken:       credential.IDToken,
-		OAuthIssuer:   strings.TrimSpace(credential.OAuthIssuer),
-		OAuthClientID: strings.TrimSpace(credential.OAuthClientID),
-	})
+	secret := chatGPTCredentialMaterial(credential)
+	payload, err := model.EncodeChatGPTProviderSecret(&secret)
 	if err != nil {
 		return "", fmt.Errorf("marshal chatgpt credential secret: %w", err)
 	}
 	return payload, nil
+}
+
+func chatGPTCredentialMaterial(credential *model.ChatGPTProviderCredential) model.ChatGPTProviderSecret {
+	return model.ChatGPTProviderSecret{
+		AccessToken: credential.AccessToken, RefreshToken: credential.RefreshToken, IDToken: credential.IDToken,
+		OAuthIssuer: strings.TrimSpace(credential.OAuthIssuer), OAuthClientID: strings.TrimSpace(credential.OAuthClientID),
+	}
 }
 
 func decodeChatGPTCredentialSecret(raw string) (*chatGPTCredentialSecret, error) {

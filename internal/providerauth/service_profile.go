@@ -41,6 +41,12 @@ func (s *Service) refreshChatGPTUsageSnapshot(ctx context.Context, routeSnapshot
 		return err
 	}
 	ctx = ownedCtx
+	if pending := s.pendingChatGPTRefreshCommit(latest.SessionID); pending != nil {
+		latest, credential, err = s.resumeChatGPTRefreshCommit(ctx, latest, credential, pending)
+		if err != nil {
+			return err
+		}
+	}
 
 	client, err := s.clientProfiles.Resolve(ctx, latest.SessionID, accountclient.UsageQuery)
 	if err != nil {
@@ -107,26 +113,20 @@ func (s *Service) persistChatGPTCredentialSession(
 	ctx context.Context,
 	snapshot *credentialsession.Snapshot,
 	credential *model.ChatGPTProviderCredential,
-) error {
+) (credentialsession.Snapshot, error) {
 	store, ok := s.credentialStore.(CredentialStore)
 	if !ok {
-		return fmt.Errorf("credential session store is unavailable")
+		return credentialsession.Snapshot{}, fmt.Errorf("credential session store is unavailable")
 	}
 	if snapshot == nil || credential == nil {
-		return fmt.Errorf("credential session snapshot and refreshed credential are required")
+		return credentialsession.Snapshot{}, fmt.Errorf("credential session snapshot and refreshed credential are required")
 	}
 	if snapshot.Subject.Kind != credentialsession.SubjectAccount || string(snapshot.Subject.Value) != strings.TrimSpace(credential.AccountID) {
-		return fmt.Errorf("refreshed credential subject does not match session %q", snapshot.SessionID)
+		return credentialsession.Snapshot{}, fmt.Errorf("refreshed credential subject does not match session %q", snapshot.SessionID)
 	}
-	secretData, err := model.EncodeChatGPTProviderSecret(&model.ChatGPTProviderSecret{
-		AccessToken:   credential.AccessToken,
-		RefreshToken:  credential.RefreshToken,
-		IDToken:       credential.IDToken,
-		OAuthIssuer:   credential.OAuthIssuer,
-		OAuthClientID: credential.OAuthClientID,
-	})
+	secretData, err := encodeChatGPTCredentialSecret(credential)
 	if err != nil {
-		return fmt.Errorf("encode refreshed credential session %q: %w", snapshot.SessionID, err)
+		return credentialsession.Snapshot{}, fmt.Errorf("encode refreshed credential session %q: %w", snapshot.SessionID, err)
 	}
 	authState := snapshot.AuthState.Clone()
 	authState.Status = credentialsession.AuthStatusActive
@@ -140,10 +140,16 @@ func (s *Service) persistChatGPTCredentialSession(
 	authState.UsageSnapshot = credentialSessionUsageSnapshot(credential.Usage)
 	authState.RefreshFailCount = 0
 	authState.LastRefreshFailureAt = nil
-	if _, err := store.UpdateCredentialSessionCAS(ctx, snapshot.SessionID, snapshot.Version, secretData, snapshot.Subject, authState); err != nil {
-		return fmt.Errorf("persist refreshed credential session %q: %w", snapshot.SessionID, err)
+	version, err := store.UpdateCredentialSessionCAS(ctx, snapshot.SessionID, snapshot.Version, secretData, snapshot.Subject, authState)
+	if err != nil {
+		return credentialsession.Snapshot{}, fmt.Errorf("persist refreshed credential session %q: %w", snapshot.SessionID, err)
 	}
-	return nil
+	committed := *snapshot
+	committed.Subject = snapshot.Subject.Clone()
+	committed.Version = version
+	committed.SecretData = secretData
+	committed.AuthState = authState
+	return committed, nil
 }
 
 func decodeChatGPTCredentialSession(snapshot *credentialsession.Snapshot) (*model.ChatGPTProviderCredential, error) {

@@ -38,6 +38,15 @@ func (s *Service) refreshAndPersistChatGPTCredentialCoordinated(
 		zap.Int64("version", latestSnapshot.Version),
 		zap.Bool("credential_changed", latestCredential.RefreshToken != credential.RefreshToken),
 	)
+	if pending := s.pendingChatGPTRefreshCommit(snapshot.SessionID); pending != nil {
+		latestSnapshot, latestCredential, err = s.resumeChatGPTRefreshCommit(ownedCtx, latestSnapshot, latestCredential, pending)
+		if err != nil {
+			return nil, err
+		}
+		// A forced retry completes the exchange already performed. Only an expired
+		// replacement needs another exchange, using its committed generation.
+		force = false
+	}
 	if !force && latestCredential.ExpiresAt.After(s.clock.Now().Add(proactiveRefreshWindow)) {
 		return latestCredential, nil
 	}
@@ -65,7 +74,8 @@ func (s *Service) withCredentialSessionMutations(
 }
 
 // InvalidateCredentialSessions invalidates refresh generations by SessionID;
-// route-target IDs are never accepted as cache keys.
+// route-target IDs are never accepted as cache keys. Pending commits survive
+// invalidation: only a reloaded credential can prove the exchange was superseded.
 func (s *Service) InvalidateCredentialSessions(sessionIDs []string) {
 	s.refreshMu.Lock()
 	invalidated := 0
@@ -214,7 +224,7 @@ func (s *Service) ensureFreshValidatedChatGPTSessionCredential(
 	force bool,
 ) (*model.ChatGPTProviderCredential, error) {
 	now := s.clock.Now()
-	if !force && credential.ExpiresAt.After(now.Add(proactiveRefreshWindow)) {
+	if !force && credential.ExpiresAt.After(now.Add(proactiveRefreshWindow)) && s.pendingChatGPTRefreshCommit(snapshot.SessionID) == nil {
 		return credential, nil
 	}
 
@@ -266,11 +276,94 @@ func (s *Service) refreshAndPersistChatGPTCredentialDirect(
 	if err != nil {
 		return nil, s.persistChatGPTRefreshFailure(ctx, routeTargetID, snapshot, err)
 	}
-	if err := s.persistChatGPTCredentialSession(ctx, snapshot, refreshed); err != nil {
-		return nil, err
+	pending := &pendingChatGPTRefreshCommit{
+		operationID: s.idGenerator.NewID(), sourceVersion: snapshot.Version,
+		source: chatGPTCredentialMaterial(credential), subject: snapshot.Subject.Clone(),
+		credential: cloneChatGPTCredential(refreshed),
 	}
-	s.storeRecentChatGPTRefresh(snapshot.SessionID, refreshed)
-	return refreshed, nil
+	s.refreshMu.Lock()
+	s.pendingChatGPTRefreshCommits[snapshot.SessionID] = pending
+	s.refreshMu.Unlock()
+	s.refreshCommitLogger(snapshot.SessionID, pending).Debug("chatgpt_refresh.commit_pending")
+	_, committedCredential, err := s.commitChatGPTRefresh(ctx, *snapshot, pending)
+	return committedCredential, err
+}
+
+func (s *Service) pendingChatGPTRefreshCommit(sessionID string) *pendingChatGPTRefreshCommit {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	return s.pendingChatGPTRefreshCommits[sessionID]
+}
+
+func (s *Service) forgetChatGPTRefreshCommit(sessionID string, pending *pendingChatGPTRefreshCommit) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if s.pendingChatGPTRefreshCommits[sessionID] == pending {
+		delete(s.pendingChatGPTRefreshCommits, sessionID)
+	}
+}
+
+func (s *Service) refreshCommitLogger(sessionID string, pending *pendingChatGPTRefreshCommit) *zap.Logger {
+	return s.logger.With(
+		zap.String("session_id", sessionID),
+		zap.String("operation_id", pending.operationID),
+		zap.Int64("source_version", pending.sourceVersion),
+	)
+}
+
+// The caller owns the session mutation lease. Metadata writes may advance the
+// version without replacing credentials, so retry against the latest version
+// only while the source material and subject still identify this exchange.
+func (s *Service) resumeChatGPTRefreshCommit(
+	ctx context.Context,
+	snapshot credentialsession.Snapshot,
+	credential *model.ChatGPTProviderCredential,
+	pending *pendingChatGPTRefreshCommit,
+) (credentialsession.Snapshot, *model.ChatGPTProviderCredential, error) {
+	log := s.refreshCommitLogger(snapshot.SessionID, pending).With(zap.Int64("current_version", snapshot.Version))
+	if snapshot.Version < pending.sourceVersion {
+		log.Warn("chatgpt_refresh.commit_revision_regressed")
+		return snapshot, nil, fmt.Errorf("resume credential session %q commit: %w", snapshot.SessionID, credentialsession.ErrVersionConflict)
+	}
+	if chatGPTCredentialMaterial(credential) != pending.source || !snapshot.Subject.Equal(pending.subject) {
+		// This also reconciles a write that committed despite returning an error.
+		// Persisted replacement credentials always take precedence over this result.
+		s.forgetChatGPTRefreshCommit(snapshot.SessionID, pending)
+		s.refreshMu.Lock()
+		delete(s.recentChatGPTRefreshes, snapshot.SessionID)
+		s.refreshMu.Unlock()
+		log.Info("chatgpt_refresh.commit_superseded")
+		return snapshot, credential, nil
+	}
+	log.Debug("chatgpt_refresh.commit_retry")
+	return s.commitChatGPTRefresh(ctx, snapshot, pending)
+}
+
+func (s *Service) commitChatGPTRefresh(
+	ctx context.Context,
+	snapshot credentialsession.Snapshot,
+	pending *pendingChatGPTRefreshCommit,
+) (credentialsession.Snapshot, *model.ChatGPTProviderCredential, error) {
+	credential := cloneChatGPTCredential(pending.credential)
+	// Quota observations can arrive while persistence is unavailable. Completing
+	// an older exchange must not roll them back to its original usage snapshot.
+	latestUsage := providerUsageSnapshot(snapshot.AuthState.UsageSnapshot)
+	if usageSnapshotNewer(latestUsage, credential.Usage) {
+		credential.Usage = latestUsage
+		if latestUsage.PlanType != "" {
+			credential.PlanType = latestUsage.PlanType
+		}
+	}
+	committed, err := s.persistChatGPTCredentialSession(ctx, &snapshot, credential)
+	log := s.refreshCommitLogger(snapshot.SessionID, pending)
+	if err != nil {
+		log.Warn("chatgpt_refresh.commit_failed", zap.Int64("expected_version", snapshot.Version), zap.Error(err))
+		return snapshot, nil, err
+	}
+	s.storeRecentChatGPTRefresh(snapshot.SessionID, credential)
+	s.forgetChatGPTRefreshCommit(snapshot.SessionID, pending)
+	log.Debug("chatgpt_refresh.committed", zap.Int64("committed_version", committed.Version))
+	return committed, credential, nil
 }
 
 func (s *Service) beginChatGPTRefresh(sessionID string) (*inFlightChatGPTRefresh, bool) {

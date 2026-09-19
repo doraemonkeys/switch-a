@@ -109,6 +109,17 @@ type recentChatGPTRefresh struct {
 	expiresAt  time.Time
 }
 
+// A successful remote exchange cannot be rolled back by a failed local write.
+// Pending commits own that result until persistence or credential replacement;
+// unlike the recent-generation cache, they must never expire on a timer.
+type pendingChatGPTRefreshCommit struct {
+	operationID   string
+	sourceVersion int64
+	source        model.ChatGPTProviderSecret
+	subject       credentialsession.Subject
+	credential    *model.ChatGPTProviderCredential
+}
+
 type inFlightProviderUsageObservation struct {
 	latest *model.ProviderUsageSnapshot
 }
@@ -139,9 +150,10 @@ type Service struct {
 	sessionExpiryEpoch  uint64
 	shutdown            bool
 
-	refreshMu              sync.Mutex
-	inFlightRefreshes      map[string]*inFlightChatGPTRefresh
-	recentChatGPTRefreshes map[string]recentChatGPTRefresh
+	refreshMu                    sync.Mutex
+	inFlightRefreshes            map[string]*inFlightChatGPTRefresh
+	recentChatGPTRefreshes       map[string]recentChatGPTRefresh
+	pendingChatGPTRefreshCommits map[string]*pendingChatGPTRefreshCommit
 
 	usageObservationMu        sync.Mutex
 	inFlightUsageObservations map[string]*inFlightProviderUsageObservation
@@ -181,22 +193,23 @@ func newService(cfg Config, runtime serviceRuntime) *Service {
 	}
 
 	service := &Service{
-		clientProfiles:            accountclient.NewResolver(accountclient.Config{Profiles: cfg.ClientProfiles, Policy: cfg.AccountClientPolicy, Logger: logger}),
-		credentialStore:           cfg.CredentialStore,
-		runtimeConfig:             cfg.RuntimeConfig,
-		httpClient:                httpClient,
-		clock:                     clock,
-		logger:                    logger,
-		idGenerator:               idGenerator,
-		callback:                  runtime.callback,
-		scheduleAfter:             scheduleAfter,
-		pendingByState:            make(map[string]pendingLogin),
-		pendingByLoginID:          make(map[string]pendingLogin),
-		completed:                 make(map[string]completedLogin),
-		providerImports:           make(map[string]stagedChatGPTProviderImport),
-		inFlightRefreshes:         make(map[string]*inFlightChatGPTRefresh),
-		recentChatGPTRefreshes:    make(map[string]recentChatGPTRefresh),
-		inFlightUsageObservations: make(map[string]*inFlightProviderUsageObservation),
+		clientProfiles:               accountclient.NewResolver(accountclient.Config{Profiles: cfg.ClientProfiles, Policy: cfg.AccountClientPolicy, Logger: logger}),
+		credentialStore:              cfg.CredentialStore,
+		runtimeConfig:                cfg.RuntimeConfig,
+		httpClient:                   httpClient,
+		clock:                        clock,
+		logger:                       logger,
+		idGenerator:                  idGenerator,
+		callback:                     runtime.callback,
+		scheduleAfter:                scheduleAfter,
+		pendingByState:               make(map[string]pendingLogin),
+		pendingByLoginID:             make(map[string]pendingLogin),
+		completed:                    make(map[string]completedLogin),
+		providerImports:              make(map[string]stagedChatGPTProviderImport),
+		inFlightRefreshes:            make(map[string]*inFlightChatGPTRefresh),
+		recentChatGPTRefreshes:       make(map[string]recentChatGPTRefresh),
+		pendingChatGPTRefreshCommits: make(map[string]*pendingChatGPTRefreshCommit),
+		inFlightUsageObservations:    make(map[string]*inFlightProviderUsageObservation),
 	}
 	if service.callback == nil {
 		service.callback = newLoopbackCallbackServer(http.HandlerFunc(service.handleChatGPTOAuthCallback), logger)
