@@ -1,3 +1,4 @@
+import { ApiTypesField } from "../../features/provider-transports/ApiTypesField";
 import { CodexTransportsField } from "../../features/provider-transports/CodexTransportsField";
 import { defaultCodexRoutes } from "../../features/provider-transports/routeDrafts";
 import { useState } from "react";
@@ -5,7 +6,6 @@ import type { CredentialSession, ProviderAuthView } from "../../api";
 import { CopyButton } from "../../components";
 import { FormField } from "./FormField";
 import {
-  ApiTypesField,
   GroupSelectField,
   NumberFieldRow,
   EnabledCheckbox,

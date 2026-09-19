@@ -144,7 +144,236 @@ function persistedSplitProvider(): Provider {
   };
 }
 
+function persistedSharedCodexProvider(): Provider {
+  const initial = persistedSplitProvider();
+  initial.api_types.push({
+    ...initial.api_types[1],
+    transport: "websocket",
+  });
+  return initial;
+}
+
+function renderExistingProvider(initial: Provider) {
+  const onSubmit = vi.fn().mockResolvedValue(undefined);
+  const credentialSessions = createCredentialSessionsApi([
+    apiKeySession("credential-default"),
+    apiKeySession("credential-override"),
+  ]);
+  renderModal(
+    <ProviderModal
+      initialData={initial}
+      onClose={vi.fn()}
+      onSubmit={onSubmit}
+      groups={[]}
+    />,
+    { credentialSessions } as unknown as ApiClient,
+  );
+  return onSubmit;
+}
+
 describe("Codex transport credentials", () => {
+  it("configures both enabled transports once and creates one shared credential", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    renderModal(
+      <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />,
+      {
+        credentialSessions: createCredentialSessionsApi([]),
+      } as unknown as ApiClient,
+    );
+
+    await user.type(screen.getByLabelText("Name"), "Shared Codex");
+    await user.click(screen.getByRole("button", { name: "codex" }));
+    await user.click(screen.getByRole("checkbox", { name: "WebSocket" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Configure WebSocket separately" }),
+    ).not.toBeChecked();
+    expect(
+      screen.queryByLabelText("Base URL for codex WebSocket"),
+    ).not.toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("Base URL for codex"),
+      "https://shared.example.com",
+    );
+    await user.type(
+      screen.getByLabelText("API key override for codex"),
+      "shared-key",
+    );
+    await user.click(screen.getByRole("button", { name: /add provider/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.new_credential_sessions).toHaveLength(1);
+    expect(payload.new_credential_sessions[0].secret_data).toBe("shared-key");
+    expect(payload.api_types).toEqual(
+      ["http", "websocket"].map((transport) => ({
+        api_type: "codex",
+        transport,
+        base_url: "https://shared.example.com",
+        credential_session_id: payload.new_credential_sessions[0].id,
+      })),
+    );
+  });
+
+  it.each(["existing session", "replacement key"])(
+    "edits identical transports together using %s",
+    async (credentialChange) => {
+      const user = userEvent.setup();
+      const initial = persistedSharedCodexProvider();
+      const onSubmit = renderExistingProvider(initial);
+      expect(
+        await screen.findByLabelText("Current API key for codex"),
+      ).toHaveValue("secret-credential-default");
+      expect(
+        screen.queryByLabelText("Current API key for codex WebSocket"),
+      ).not.toBeInTheDocument();
+
+      await user.clear(screen.getByLabelText("Base URL for codex"));
+      await user.type(
+        screen.getByLabelText("Base URL for codex"),
+        "https://updated.example.com",
+      );
+      if (credentialChange === "existing session") {
+        await user.selectOptions(
+          screen.getByLabelText("Credential session for codex"),
+          "credential-override",
+        );
+      } else {
+        await user.type(
+          screen.getByLabelText("API key override for codex"),
+          "replacement-key",
+        );
+      }
+      await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      const payload = onSubmit.mock.calls[0][0];
+      const credentialID =
+        credentialChange === "existing session"
+          ? "credential-override"
+          : payload.new_credential_sessions[0].id;
+      expect(payload.api_types).toEqual([
+        initial.api_types[0],
+        ...["http", "websocket"].map((transport) => ({
+          api_type: "codex",
+          transport,
+          base_url: "https://updated.example.com",
+          credential_session_id: credentialID,
+        })),
+      ]);
+      if (credentialChange === "replacement key") {
+        expect(payload.new_credential_sessions).toHaveLength(1);
+        expect(payload.new_credential_sessions[0].secret_data).toBe(
+          "replacement-key",
+        );
+      } else {
+        expect(payload.new_credential_sessions).toEqual([]);
+      }
+    },
+  );
+
+  it.each([
+    { base_url: "https://ws.example.com" },
+    { credential_session_id: "credential-override" },
+  ])("preserves existing separate configuration: %j", async (difference) => {
+    const user = userEvent.setup();
+    const initial = persistedSharedCodexProvider();
+    initial.api_types[2] = { ...initial.api_types[2], ...difference };
+    const onSubmit = renderExistingProvider(initial);
+
+    expect(
+      screen.getByRole("checkbox", { name: "Configure WebSocket separately" }),
+    ).toBeChecked();
+    expect(screen.getByLabelText("Base URL for codex WebSocket")).toHaveValue(
+      initial.api_types[2].base_url,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText("Credential session for codex WebSocket"),
+      ).toHaveValue(initial.api_types[2].credential_session_id),
+    );
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].api_types).toEqual(initial.api_types);
+    expect(onSubmit.mock.calls[0][0].new_credential_sessions).toEqual([]);
+  });
+
+  it("supports independent edits and explicitly returns to the HTTP configuration", async () => {
+    const user = userEvent.setup();
+    const initial = persistedSharedCodexProvider();
+    const onSubmit = renderExistingProvider(initial);
+    const separate = screen.getByRole("checkbox", {
+      name: "Configure WebSocket separately",
+    });
+
+    await user.click(separate);
+    expect(screen.getByLabelText("Base URL for codex WebSocket")).toHaveValue(
+      initial.api_types[1].base_url,
+    );
+    await user.clear(screen.getByLabelText("Base URL for codex WebSocket"));
+    await user.type(
+      screen.getByLabelText("Base URL for codex WebSocket"),
+      "https://separate.example.com",
+    );
+    await user.type(
+      screen.getByLabelText("API key override for codex WebSocket"),
+      "ws-only-key",
+    );
+    expect(screen.getByLabelText("Base URL for codex")).toHaveValue(
+      initial.api_types[1].base_url,
+    );
+    expect(screen.getByLabelText("API key override for codex")).toHaveValue("");
+
+    await user.click(separate);
+    expect(
+      screen.queryByLabelText("Base URL for codex WebSocket"),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].api_types).toEqual(initial.api_types);
+    expect(onSubmit.mock.calls[0][0].new_credential_sessions).toEqual([]);
+  });
+
+  it.each([
+    { disabled: "HTTP / SSE", retained: "websocket", label: "codex WebSocket" },
+    { disabled: "WebSocket", retained: "http", label: "codex" },
+  ])(
+    "keeps shared edits when $disabled is disabled",
+    async ({ disabled, retained, label }) => {
+      const user = userEvent.setup();
+      const initial = persistedSharedCodexProvider();
+      const onSubmit = renderExistingProvider(initial);
+      await user.clear(screen.getByLabelText("Base URL for codex"));
+      await user.type(
+        screen.getByLabelText("Base URL for codex"),
+        "https://retained.example.com",
+      );
+      await user.click(screen.getByRole("checkbox", { name: disabled }));
+      expect(screen.getByLabelText(`Base URL for ${label}`)).toHaveValue(
+        "https://retained.example.com",
+      );
+      expect(
+        screen.queryByRole("checkbox", {
+          name: "Configure WebSocket separately",
+        }),
+      ).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0].api_types).toEqual([
+        initial.api_types[0],
+        {
+          ...initial.api_types[1],
+          transport: retained,
+          base_url: "https://retained.example.com",
+        },
+      ]);
+    },
+  );
+
   it.each(["shared", "distinct"])(
     "creates both transports with %s keys",
     async (mode) => {
@@ -166,6 +395,11 @@ describe("Codex transport credentials", () => {
         "http-key",
       );
       await user.click(screen.getByRole("checkbox", { name: "WebSocket" }));
+      await user.click(
+        screen.getByRole("checkbox", {
+          name: "Configure WebSocket separately",
+        }),
+      );
       await user.clear(screen.getByLabelText("Base URL for codex WebSocket"));
       await user.type(
         screen.getByLabelText("Base URL for codex WebSocket"),

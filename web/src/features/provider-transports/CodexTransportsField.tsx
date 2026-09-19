@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ProviderAPITypeDraft } from "../../pages/providers/types";
 import { generateClientKey } from "../../pages/providers/types";
 import { CHATGPT_CODEX_BASE_URL } from "../../config/constants";
@@ -5,9 +6,11 @@ import { CHATGPT_CODEX_BASE_URL } from "../../config/constants";
 export function CodexTransportsField({
   entries,
   onChange,
+  children,
 }: {
   entries: ProviderAPITypeDraft[];
   onChange: (entries: ProviderAPITypeDraft[]) => void;
+  children?: ReactNode;
 }) {
   const codexRoutes = entries.filter((entry) => entry.api_type === "codex");
   function toggle(transport: "http" | "websocket", enabled: boolean) {
@@ -54,9 +57,9 @@ export function CodexTransportsField({
         ))}
       </div>
       <p className="text-xs text-text-muted">
-        Requests only use enabled transports. Each route can share a credential
-        or use its own.
+        Choose how Codex requests connect to this provider.
       </p>
+      {children}
     </fieldset>
   );
 }
