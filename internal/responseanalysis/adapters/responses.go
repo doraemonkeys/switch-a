@@ -41,6 +41,9 @@ func (a responsesAdapter) Observe(frame framing.Frame) Result {
 	if isResponseControlType(eventType) {
 		return resources.finish(Result{Class: EventControl, Usage: usage})
 	}
+	// Notifications such as codex.rate_limits remain client-visible protocol data.
+	// Holding them until answer text arrives would change transparent forwarding
+	// semantics merely to extend the retry window.
 	result := a.nonError(usage, eventType == "response.completed", &resources)
 	if eventType == "response.completed" {
 		result.CompletionEvent = eventType

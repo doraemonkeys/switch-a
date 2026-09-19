@@ -78,6 +78,9 @@ func (f *WebSocketForwarder) relay(ctx context.Context, clientConn, upstreamConn
 		if !isReplayableWebSocketMessageType(messageType) {
 			return
 		}
+		// Transparent forwarding includes notifications such as codex.rate_limits.
+		// Once delivered, they close transparent retry even without answer text;
+		// replacing the provider would mix two upstream streams for the client.
 		becameVisible := lifecycle.MarkClientVisible()
 		if becameVisible && options.PreVisibleReplayBuffer != nil {
 			options.PreVisibleReplayBuffer.CloseReplay(webSocketReplayVisibilityClosed)
