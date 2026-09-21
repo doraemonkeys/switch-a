@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-func TestWireClientVersionRequiresAUserAgent(t *testing.T) {
+func TestCodexVersionUsesObservedProductOrSelectedRelease(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		profile ProfileRevision
 		want    string
 	}{
-		{"release only", ProfileRevision{ClientVersion: "2.0.0"}, ""},
-		{"header version only", ProfileRevision{Features: Features{Headers: map[string]string{"Version": "2.0.0"}}}, ""},
+		{"release only", ProfileRevision{ClientVersion: "2.0.0"}, "2.0.0"},
+		{"header version only", ProfileRevision{Features: Features{Headers: map[string]string{"Version": "2.0.0"}}}, "2.0.0"},
 		{"known UA wins over stale release", ProfileRevision{ClientVersion: "2.0.0", Features: Features{UserAgent: "codex-tui/1.0.0 (Linux; x86_64)"}}, "1.0.0"},
 		{"exec UA wins over stale release", ProfileRevision{ClientVersion: "2.0.0", Features: Features{UserAgent: "codex_exec/1.0.0 (Linux; x86_64)"}}, "1.0.0"},
 		{"browser use product wins over caller and stale release", ProfileRevision{ClientVersion: "2.0.0", Features: Features{UserAgent: "codex-browser-use/1.0.0 (Linux; x86_64) unknown (codex-browser-use; 0.1.0)"}}, "1.0.0"},
@@ -30,7 +30,7 @@ func TestWireClientVersionRequiresAUserAgent(t *testing.T) {
 		{"opaque UA without version", ProfileRevision{Features: Features{UserAgent: "custom-client"}}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := test.profile.WireClientVersion(); got != test.want {
+			if got := test.profile.CodexVersion(); got != test.want {
 				t.Fatalf("got %q, want %q", got, test.want)
 			}
 		})
@@ -84,7 +84,7 @@ func TestLearningDoesNotInheritUserAgentAcrossReleases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if partial.Revision.Features.ClientUserAgent() != "" || partial.Revision.WireClientVersion() != "" {
+	if partial.Revision.Features.ClientUserAgent() != "" || partial.Revision.CodexVersion() != "2.0.0" {
 		t.Fatal("partial release reused an older UA", partial.Revision.Features)
 	}
 	if partial.Revision.Features.Headers["X-Stainless-OS"] != "Windows" || partial.Revision.Features.Originator != "Codex Desktop" {
@@ -101,7 +101,7 @@ func TestLearningDoesNotInheritUserAgentAcrossReleases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidate.Profile.Features.ClientUserAgent() != newUA || candidate.Profile.WireClientVersion() != "2.0.0" {
+	if candidate.Profile.Features.ClientUserAgent() != newUA || candidate.Profile.CodexVersion() != "2.0.0" {
 		t.Fatal("complete observation did not advance automatic binding")
 	}
 	preserved, err := r.GetLogin(ctx, "login")

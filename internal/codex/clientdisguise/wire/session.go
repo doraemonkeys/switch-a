@@ -41,6 +41,8 @@ type Difference struct {
 }
 
 type Session struct {
+	profile         disguise.RequestProfile
+	features        disguise.Features
 	target          disguise.TargetSnapshot
 	operationID     string
 	mu              sync.Mutex
@@ -51,7 +53,7 @@ type Session struct {
 
 // Conversation identifiers belong to the client and continuity layer. Wire
 // conversion needs only the selected device/profile, never an identity database.
-func NewSession(target disguise.TargetSnapshot, operationID string) *Session {
+func NewSession(target disguise.TargetSnapshot, operationID string, facts disguise.PlatformFacts) *Session {
 	target.Profile.Features.Headers = cloneMap(target.Profile.Features.Headers)
 	target.Binding.TelemetryPathMappings = cloneMap(target.Binding.TelemetryPathMappings)
 	if target.Transport != nil {
@@ -59,7 +61,8 @@ func NewSession(target disguise.TargetSnapshot, operationID string) *Session {
 		transport.Config = append([]byte(nil), transport.Config...)
 		target.Transport = &transport
 	}
-	return &Session{target: target, operationID: operationID, installations: make(map[string]string)}
+	profile := target.Profile.ForRequest(facts, target.OfficialVersion.Version)
+	return &Session{target: target, profile: profile, features: profile.Features(), operationID: operationID, installations: make(map[string]string)}
 }
 func cloneMap(source map[string]string) map[string]string {
 	if source == nil {
@@ -219,7 +222,7 @@ func (s *Session) transformValue(ctx context.Context, kind, value string, restor
 	case strings.HasPrefix(kind, "feature:"):
 		derived = value
 		if !restore {
-			if feature := s.profileFeature(strings.TrimPrefix(kind, "feature:"), value); feature != "" {
+			if feature, apply := s.profileFeature(strings.TrimPrefix(kind, "feature:"), value); apply {
 				derived = feature
 			}
 		}

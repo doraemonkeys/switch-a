@@ -6,13 +6,13 @@ import (
 )
 
 func (s *Session) applyProfileHeaders(result http.Header) {
-	features := s.target.Profile.Features
+	features := s.features
 	updates := cloneMap(features.Headers)
 	if updates == nil {
 		updates = make(map[string]string)
 	}
 	originalUA := result.Get("User-Agent")
-	if ua := s.profileFeature("user_agent", originalUA); ua != "" && (ua != originalUA || features.ClientUserAgent() != "") {
+	if ua, apply := s.profileFeature("user_agent", originalUA); apply && (ua != originalUA || features.ClientUserAgent() != "") {
 		updates["User-Agent"] = ua
 	}
 	if originator := features.ClientOriginator(); originator != "" {
@@ -29,46 +29,41 @@ func (s *Session) applyProfileHeaders(result http.Header) {
 	}
 }
 
-// Header aliases share the structured feature decision, so a partial sample
-// cannot bypass UA/version coherence through an explicit Version override.
+// Header aliases share the resolved request profile, so selected versions and
+// caller roles cannot diverge between typed features and imported headers.
 func (s *Session) profileHeaderValue(name, observed string) (string, bool) {
 	if !featureHeader(name) {
 		return "", false
 	}
 	switch {
 	case strings.EqualFold(name, "User-Agent"):
-		value := s.profileFeature("user_agent", observed)
-		return value, value != ""
+		return s.profileFeature("user_agent", observed)
 	case strings.EqualFold(name, "Originator"):
-		return s.profileFeature("originator", observed), true
+		return s.features.ClientOriginator(), true
 	case headerFeatureKind(name) == "feature:client_version":
-		value := s.profileFeature("client_version", observed)
-		return value, value != ""
+		return s.profileFeature("client_version", observed)
 	default:
 		return observed, true
 	}
 }
 
-// Structured profile features replace only observed protocol positions. Missing
-// OS/build samples must not manufacture an environment from a matching tuple.
-func (s *Session) profileFeature(name, original string) string {
-	features := s.target.Profile.Features
+// Structured fields use the same request profile as the UA. Independent caller
+// builds are not replaced with the primary client's build.
+func (s *Session) profileFeature(name, original string) (string, bool) {
+	var value string
 	switch name {
 	case "user_agent":
-		return s.target.Profile.RequestUserAgent(original, s.target.OfficialVersion.Version)
+		value = s.profile.UserAgent(original)
 	case "originator":
-		return features.ClientOriginator()
+		value = s.features.ClientOriginator()
 	case "client_version":
-		if s.target.OfficialVersion.Version != "" {
-			return s.target.OfficialVersion.Version
-		}
-		return s.target.Profile.WireClientVersion()
+		value = s.profile.ClientVersion()
 	case "desktop_build":
-		return features.DesktopBuild
+		value = s.features.DesktopBuild
 	case "os_version":
-		return features.OSVersion
+		return s.profile.OSVersion()
 	}
-	return ""
+	return value, value != ""
 }
 func protocolFeatureKind(name string) string {
 	switch name {

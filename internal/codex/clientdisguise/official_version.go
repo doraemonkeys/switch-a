@@ -21,7 +21,7 @@ func (s TargetSnapshot) ClientVersion() string {
 	if s.OfficialVersion.Version != "" {
 		return s.OfficialVersion.Version
 	}
-	return s.Profile.ClientVersion
+	return s.Profile.CodexVersion()
 }
 
 func validateVersionSource(source string) error {

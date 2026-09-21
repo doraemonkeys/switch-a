@@ -2,7 +2,7 @@ package clientdisguise
 
 import "testing"
 
-func TestPartialProfileProjectsOnlyKnownEntryPointIdentity(t *testing.T) {
+func TestEntryPointProjectionWithoutASelectedRelease(t *testing.T) {
 	const incoming = "codex-tui/0.149.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex-tui; 0.149.0)"
 	const browserUA = "codex-browser-use/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"
 	for _, tc := range []struct {
@@ -15,10 +15,10 @@ func TestPartialProfileProjectsOnlyKnownEntryPointIdentity(t *testing.T) {
 		{"official release", "codex_exec", incoming, "0.151.0", "codex_exec/0.151.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex_exec; 0.151.0)"},
 		{"browser use selected", "codex-browser-use", incoming, "", "codex-browser-use/0.149.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex-browser-use; 0.149.0)"},
 		{"browser use selected with official release", "codex-browser-use", incoming, "0.151.0", "codex-browser-use/0.151.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex-browser-use; 0.151.0)"},
-		{"browser use incoming", "codex_exec", browserUA, "", "codex_exec/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"},
-		{"browser use incoming with official release", "codex_exec", browserUA, "0.151.0", "codex_exec/0.151.0 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"},
+		{"browser use incoming", "codex_exec", browserUA, "", browserUA},
+		{"browser use incoming with official release", "codex_exec", browserUA, "0.151.0", "codex-browser-use/0.151.0 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)"},
 		{"browser use unchanged", "codex-browser-use", browserUA, "", browserUA},
-		{"browser caller version happens to match", "codex_exec", "codex-browser-use/0.150.0 (Linux; x86_64) unknown (codex-browser-use; 0.150.0)", "0.151.0", "codex_exec/0.151.0 (Linux; x86_64) unknown (codex-browser-use; 0.150.0)"},
+		{"browser caller version happens to match", "codex_exec", "codex-browser-use/0.150.0 (Linux; x86_64) unknown (codex-browser-use; 0.150.0)", "0.151.0", "codex-browser-use/0.151.0 (Linux; x86_64) unknown (codex-browser-use; 0.150.0)"},
 		{"exec alias", "codex-tui", "codex-exec/0.149.0 (Linux 6.8; arm64) unknown", "", "codex-tui/0.149.0 (Linux 6.8; arm64) unknown"},
 		{"embedding app build", "codex_exec", builtinDesktopUserAgent, "", "codex_exec/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)"},
 		{"unrelated suffix", "codex_exec", incoming + " (codex_cli_rs; 0.149.0)", "", "codex_exec/0.149.0 (Windows 10.0.26200; x86_64) Terminal/1.2 (codex_exec; 0.149.0) (codex_cli_rs; 0.149.0)"},
@@ -30,7 +30,7 @@ func TestPartialProfileProjectsOnlyKnownEntryPointIdentity(t *testing.T) {
 		{"unknown product version", "codex_exec", "codex-tui/unknown (Linux; x86_64)", "", "codex-tui/unknown (Linux; x86_64)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			profile := ProfileRevision{ClientVersion: "9.9.9", Features: Features{Originator: tc.originator}}
+			profile := ProfileRevision{Features: Features{Originator: tc.originator}}
 			if got := profile.RequestUserAgent(tc.original, tc.version); got != tc.want {
 				t.Fatalf("request UA = %q, want %q", got, tc.want)
 			}

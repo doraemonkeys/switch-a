@@ -1,8 +1,11 @@
 package clientdisguise
 
 import (
+	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/useragent"
 )
 
 var versionPattern = regexp.MustCompile(`(?i)codex[_ /-]*(?:desktop|cli(?:_rs)?|tui|exec|browser-use)?[/ ]([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)`)
@@ -38,12 +41,17 @@ func (p ProfileRevision) UserAgent(version string) string {
 // environment. Complete observations remain authoritative, including captures
 // whose thread originator differs from the process named in the UA.
 func (p ProfileRevision) RequestUserAgent(original, version string) string {
+	return p.ForRequest(ProjectPlatform(http.Header{"User-Agent": {original}}), version).UserAgent(original)
+}
+
+func (p ProfileRevision) primaryUserAgent(original, version string) string {
 	if sampled := p.UserAgent(version); sampled != "" {
 		return sampled
 	}
 	// Resolve version ownership before renaming the entry point; otherwise a CLI
 	// suffix projected into an app-server caller would lose its release linkage.
-	return withUserAgentOriginator(WithUserAgentVersion(original, version), p.Features.ClientOriginator())
+	ua := withUserAgentOriginator(WithUserAgentVersion(original, version), p.Features.ClientOriginator())
+	return useragent.ProjectEnvironment(ua, "", p.Tuple.Platform, p.Tuple.Arch, p.Features.OSVersion)
 }
 
 func withUserAgentOriginator(ua, originator string) string {
@@ -102,14 +110,10 @@ func (f Features) ClientOriginator() string {
 	return profileHeader(f.Headers, "Originator")
 }
 
-// A known release without a sampled UA is not a complete client fingerprint.
-// Existing stored profiles may also contain a UA inherited from an older release;
-// its actual version remains authoritative until a complete observation arrives.
-func (p ProfileRevision) WireClientVersion() string {
+// A selected release does not depend on capturing a complete host fingerprint.
+// When a UA is present, its actual release wins over inconsistent imported fields.
+func (p ProfileRevision) CodexVersion() string {
 	ua := p.Features.ClientUserAgent()
-	if ua == "" {
-		return ""
-	}
 	if version := userAgentVersion(ua); version != "" {
 		return version
 	}

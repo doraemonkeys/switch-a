@@ -132,7 +132,7 @@ func (o *WebSocketSessionOrchestrator) finishDisguiseAttempt(attempt *WebSocketA
 	if o.codexOperation != nil {
 		evidence.ClientIdentityID = o.codexOperation.ClientIdentity().ID
 	}
-	evidence.PlatformFacts = make(map[string]string)
+	evidence.PlatformFacts = map[string]string{"request_role": string(o.disguise.Operation().Facts().RequestRole)}
 	for _, fact := range o.disguise.Operation().Facts().Evidence {
 		evidence.PlatformFacts[fact.Field] = fact.Value
 	}
@@ -244,7 +244,7 @@ func (o *WebSocketSessionOrchestrator) logDisguiseAttempt(attempt *WebSocketAtte
 			zap.String("operation_id", o.requestID), zap.String("diagnostic_id", evidence.DiagnosticID), zap.Error(err))
 	}
 	fields := []zap.Field{zap.String("operation_id", o.requestID), zap.Int("attempt_index", attempt.Attempt),
-		zap.String("provider_id", evidence.ProviderID), zap.Any("client_disguise", evidence)}
+		zap.String("provider_id", evidence.ProviderID), zap.String("request_role", evidence.PlatformFacts["request_role"]), zap.Any("client_disguise", evidence)}
 	if failure != nil {
 		o.handler.logger.Error("websocket.client_disguise_failed", fields...)
 	} else {

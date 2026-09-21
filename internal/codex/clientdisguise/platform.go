@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/officialversion"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/useragent"
 )
 
 type PlatformEvidence struct {
@@ -13,9 +14,10 @@ type PlatformEvidence struct {
 	Platform string `json:"platform"`
 }
 type PlatformFacts struct {
-	Tuple    Tuple              `json:"tuple"`
-	Conflict bool               `json:"conflict"`
-	Evidence []PlatformEvidence `json:"evidence"`
+	RequestRole useragent.Role     `json:"request_role"`
+	Tuple       Tuple              `json:"tuple"`
+	Conflict    bool               `json:"conflict"`
+	Evidence    []PlatformEvidence `json:"evidence"`
 }
 type PlatformDecision struct {
 	Allowed         bool          `json:"allowed"`
@@ -38,6 +40,7 @@ type Candidate struct {
 func ProjectPlatform(headers http.Header) PlatformFacts {
 	var facts PlatformFacts
 	ua := headers.Get("User-Agent")
+	facts.RequestRole = useragent.RequestRole(ua, headers.Get("Originator"))
 	for _, field := range []string{"User-Agent", "X-Stainless-OS", "X-Client-Platform", "Sec-CH-UA-Platform"} {
 		value := headers.Get(field)
 		platform := detectPlatform(value)
@@ -56,6 +59,8 @@ func ProjectPlatform(headers http.Header) PlatformFacts {
 	}
 	combined := strings.ToLower(ua + " " + headers.Get("Originator"))
 	switch {
+	case facts.RequestRole == useragent.BrowserUse:
+		facts.Tuple.ClientType = clientTypeBrowserUse
 	case strings.Contains(combined, "desktop"), strings.Contains(combined, "electron"):
 		facts.Tuple.ClientType = clientTypeDesktop
 	case strings.Contains(combined, "tui"):

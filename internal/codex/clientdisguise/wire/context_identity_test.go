@@ -25,7 +25,7 @@ func TestDeviceDisguisePreservesConversationGraphAcrossCarriers(t *testing.T) {
 	for _, thread := range []string{rootThreadID, childThreadID} {
 		t.Run(thread, func(t *testing.T) {
 			ctx := context.Background()
-			s := NewSession(disguise.TargetSnapshot{
+			s := newPrimarySession(disguise.TargetSnapshot{
 				Policy: disguise.Policy{Enabled: true},
 				Login:  disguise.LoginIdentity{DeviceID: virtualDeviceID},
 			}, "operation")
@@ -111,7 +111,7 @@ func TestContextFieldsRemainOpaqueToDisguise(t *testing.T) {
 		"parent_turn_id", "root_turn_id", "prompt_cache_key",
 	}
 	ctx := context.Background()
-	s := NewSession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}}, "operation")
+	s := newPrimarySession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}}, "operation")
 	headers := make(http.Header)
 	for _, field := range fields {
 		headers.Set(field, "opaque:not-a-uuid")
@@ -151,7 +151,7 @@ func TestContextFieldsRemainOpaqueToDisguise(t *testing.T) {
 
 func TestInstallationAliasesAndAbsentIdentity(t *testing.T) {
 	ctx := context.Background()
-	s := NewSession(disguise.TargetSnapshot{
+	s := newPrimarySession(disguise.TargetSnapshot{
 		Policy: disguise.Policy{Enabled: true},
 		Login:  disguise.LoginIdentity{DeviceID: virtualDeviceID},
 	}, "operation")

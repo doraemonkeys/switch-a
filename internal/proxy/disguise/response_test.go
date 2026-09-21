@@ -10,12 +10,13 @@ import (
 	"testing"
 
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise"
+	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/useragent"
 	"github.com/doraemonkeys/switch-a/internal/codex/clientdisguise/wire"
 	"github.com/doraemonkeys/switch-a/internal/upstreamtransport"
 )
 
 func responseSession() *wire.Session {
-	return wire.NewSession(clientdisguise.TargetSnapshot{Policy: clientdisguise.Policy{Enabled: true}}, "operation")
+	return wire.NewSession(clientdisguise.TargetSnapshot{Policy: clientdisguise.Policy{Enabled: true}}, "operation", clientdisguise.PlatformFacts{RequestRole: useragent.Primary})
 }
 func jsonHead() upstreamtransport.ResponseHead {
 	return upstreamtransport.ResponseHead{Header: http.Header{"Content-Type": []string{"application/json"}, "Content-Length": []string{"10"}}}

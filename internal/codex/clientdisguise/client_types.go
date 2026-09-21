@@ -8,9 +8,9 @@ const (
 	clientTypeDefault    = "cli"
 )
 
-// Each app-server caller is a separate entry point. Browser Use shares the
-// Codex protocol with the CLI, but its caller identity is part of the observed
-// UA and must remain selectable independently.
+// These identities describe profile samples and selectable primary clients.
+// Request roles are resolved separately: a Browser Use request also exists
+// within a Desktop or CLI target environment.
 var clientTypes = []struct {
 	name       string
 	originator string

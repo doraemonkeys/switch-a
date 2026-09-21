@@ -24,15 +24,15 @@ func TestUserAgentAndVersionAreAppliedTogether(t *testing.T) {
 		wantUA      string
 		wantVersion string
 	}{
-		{"incomplete builtin", builtin, originalUA, "0.149.0"},
-		{"incomplete header overrides", disguise.ProfileRevision{ClientVersion: "0.150.0-alpha.8", Features: disguise.Features{Headers: map[string]string{"Version": "0.150.0-alpha.8", "X-Client-Version": "0.150.0-alpha.8", "User-Agent": ""}}}, originalUA, "0.149.0"},
+		{"incomplete builtin", builtin, newUA, "0.150.0-alpha.8"},
+		{"incomplete header overrides", disguise.ProfileRevision{ClientVersion: "0.150.0-alpha.8", Features: disguise.Features{Headers: map[string]string{"Version": "0.150.0-alpha.8", "X-Client-Version": "0.150.0-alpha.8", "User-Agent": ""}}}, newUA, "0.150.0-alpha.8"},
 		{"complete reference", disguise.ProfileRevision{ClientVersion: "0.150.0-alpha.8", Features: disguise.Features{UserAgent: newUA}}, newUA, "0.150.0-alpha.8"},
 		{"stored mixed profile", disguise.ProfileRevision{ClientVersion: "0.150.0-alpha.8", Features: disguise.Features{UserAgent: originalUA, Headers: map[string]string{"Version": "0.150.0-alpha.8"}}}, originalUA, "0.149.0"},
 		{"UA supplied as header", disguise.ProfileRevision{ClientVersion: "0.150.0-alpha.8", Features: disguise.Features{Headers: map[string]string{"user-agent": newUA}}}, newUA, "0.150.0-alpha.8"},
 		{"typed UA wins over header alias", disguise.ProfileRevision{ClientVersion: "0.150.0-alpha.8", Features: disguise.Features{UserAgent: newUA, Headers: map[string]string{"user-agent": originalUA, "Version": "0.149.0"}}}, newUA, "0.150.0-alpha.8"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := NewSession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}, Profile: test.profile}, "version-coherence")
+			s := newPrimarySession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}, Profile: test.profile}, "version-coherence")
 			original := http.Header{"User-Agent": {originalUA}, "Version": {"0.149.0"}, "X-Client-Version": {"0.149.0"}, "X-Codex-Client-Version": {"0.149.0"}, "Accept-Encoding": {"gzip"}}
 			derived, err := s.Headers(context.Background(), original)
 			if err != nil {
@@ -79,10 +79,10 @@ func TestUserAgentAndVersionAreAppliedTogether(t *testing.T) {
 	}
 }
 
-func TestIncompleteProfileDoesNotInjectAVersionHeader(t *testing.T) {
-	s := NewSession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}, Profile: disguise.ProfileRevision{ClientVersion: "2.0.0", Features: disguise.Features{Headers: map[string]string{"Version": "2.0.0"}}}}, "partial")
+func TestSelectedVersionWithoutASampledUAKeepsHeaderAndUAConsistent(t *testing.T) {
+	s := newPrimarySession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}, Profile: disguise.ProfileRevision{ClientVersion: "2.0.0", Features: disguise.Features{Headers: map[string]string{"Version": "2.0.0"}}}}, "partial")
 	got, err := s.Headers(context.Background(), http.Header{"User-Agent": {"codex-tui/1.0.0"}})
-	if err != nil || got.Get("Version") != "" || got.Get("User-Agent") != "codex-tui/1.0.0" {
-		t.Fatal("incomplete profile invented a version", got, err)
+	if err != nil || got.Get("Version") != "2.0.0" || got.Get("User-Agent") != "codex-tui/2.0.0" {
+		t.Fatal("selected release disagrees between headers and UA", got, err)
 	}
 }

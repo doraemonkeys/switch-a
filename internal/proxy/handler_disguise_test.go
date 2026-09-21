@@ -21,6 +21,7 @@ import (
 )
 
 type httpDisguiseRepository struct {
+	profile       *clientdisguise.ProfileRevision
 	mu            sync.Mutex
 	commits       []string
 	missingDevice bool
@@ -29,7 +30,11 @@ type httpDisguiseRepository struct {
 }
 
 func (r *httpDisguiseRepository) EvaluateCandidate(_ context.Context, id string, basis clientdisguise.AccountBasis, policy clientdisguise.Policy, facts clientdisguise.PlatformFacts) (clientdisguise.Candidate, error) {
-	return clientdisguise.Candidate{CredentialSessionID: id, AccountBasis: basis, Policy: policy, Facts: facts, Profile: clientdisguise.ProfileRevision{ID: "revision-one", ClientVersion: "1.2.3", Features: clientdisguise.Features{UserAgent: "frozen-agent"}}, Decision: clientdisguise.PlatformDecision{Allowed: true}}, nil
+	profile := clientdisguise.ProfileRevision{ID: "revision-one", ClientVersion: "1.2.3", Features: clientdisguise.Features{UserAgent: "frozen-agent"}}
+	if r.profile != nil {
+		profile = r.profile.Clone()
+	}
+	return clientdisguise.Candidate{CredentialSessionID: id, AccountBasis: basis, Policy: policy, Facts: facts, Profile: profile, Decision: clientdisguise.PlatformDecision{Allowed: true}}, nil
 }
 func (r *httpDisguiseRepository) CommitTarget(_ context.Context, c clientdisguise.Candidate) (clientdisguise.TargetSnapshot, error) {
 	r.mu.Lock()

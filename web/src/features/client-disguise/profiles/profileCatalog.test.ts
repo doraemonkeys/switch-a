@@ -130,7 +130,7 @@ describe("profile catalog semantics", () => {
         ...profile,
         features: { ...profile.features, user_agent: "" },
       }),
-    ).toBe("");
+    ).toBe(profile.client_version);
   });
   it.each([
     {

@@ -8,11 +8,12 @@ import (
 )
 
 func TestObservedFeaturePositionsDoNotInventMissingEnvironment(t *testing.T) {
-	s := testSession()
-	s.target.Profile.ClientVersion = "2.0.0"
-	s.target.Profile.Features.DesktopBuild = "42"
-	s.target.Profile.Features.OSVersion = "10.1"
-	s.target.Profile.Features.Headers = map[string]string{"X-Stainless-OS": ""}
+	target := testSession().target
+	target.Profile.ClientVersion = "2.0.0"
+	target.Profile.Features.DesktopBuild = "42"
+	target.Profile.Features.OSVersion = "10.1"
+	target.Profile.Features.Headers = map[string]string{"X-Stainless-OS": ""}
+	s := newPrimarySession(target, "feature-positions")
 	headers, err := s.Headers(context.Background(), http.Header{"Version": {"1.0.0"}, "X-Client-Version": {"1.0.0"}, "X-Codex-Client-Version": {"1.0.0"}, "X-Codex-Desktop-Build": {"1"}, "X-Codex-Os-Version": {"9"}, "X-Stainless-Os": {"old"}})
 	if err != nil || headers.Get("Version") != "2.0.0" || headers.Get("X-Client-Version") != "2.0.0" || headers.Get("X-Codex-Desktop-Build") != "42" || headers.Get("X-Codex-Os-Version") != "10.1" || headers.Get("X-Stainless-OS") != "" {
 		t.Fatal(headers, err)
@@ -27,7 +28,8 @@ func TestObservedFeaturePositionsDoNotInventMissingEnvironment(t *testing.T) {
 			t.Fatalf("missing %s in %s", fragment, got)
 		}
 	}
-	s.target.Profile.Features.OSVersion = ""
+	target.Profile.Features.OSVersion = ""
+	s = newPrimarySession(target, "partial-feature-positions")
 	original = []byte(`{"client_metadata":{"os_version":"keep","desktop_build":42,"client_version":"","originator":null}}`)
 	got, err = s.RequestJSON(context.Background(), original)
 	if err != nil || !bytes.Equal(got, original) {
@@ -37,7 +39,7 @@ func TestObservedFeaturePositionsDoNotInventMissingEnvironment(t *testing.T) {
 	if err != nil || bare.Get("Version") != "" || bare.Get("X-Codex-Desktop-Build") != "" {
 		t.Fatal(bare, err)
 	}
-	if s.profileFeature("unsupported", "") != "" {
+	if _, apply := s.profileFeature("unsupported", ""); apply {
 		t.Fatal("invented feature")
 	}
 }

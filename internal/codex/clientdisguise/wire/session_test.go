@@ -15,7 +15,7 @@ import (
 )
 
 func testSession() *Session {
-	return NewSession(disguise.TargetSnapshot{
+	return newPrimarySession(disguise.TargetSnapshot{
 		Policy:  disguise.Policy{Enabled: true},
 		Login:   disguise.LoginIdentity{GenerationID: "login", DeviceID: "device"},
 		Binding: disguise.ProfileBinding{TelemetryPathMappings: map[string]string{"/original": "/telemetry"}},
@@ -128,7 +128,7 @@ func TestDeviceFailureAndFrozenSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := testSession().target
-	session := NewSession(target, "op")
+	session := newPrimarySession(target, "op")
 	target.Profile.Features.Headers["Version"] = "changed"
 	target.Binding.TelemetryPathMappings["/original"] = "/changed"
 	headers, err := session.Headers(context.Background(), nil)

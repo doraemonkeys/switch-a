@@ -26,9 +26,9 @@ func TestBrowserUseInputAcrossRequestCarriers(t *testing.T) {
 	for _, tc := range []struct {
 		profileID, wantUA, wantVersion, wantOriginator string
 	}{
-		{"builtin-browser-use-windows-amd64", originalUA, originalVersion, "codex-browser-use"},
-		{"builtin-exec-windows-amd64", "codex_exec/0.155.0-alpha.2.6 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)", originalVersion, "codex_exec"},
-		{"builtin-desktop-windows-amd64", "Codex Desktop/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.820.60940)", "0.150.0-alpha.8", "Codex Desktop"},
+		{"builtin-browser-use-windows-amd64", strings.Replace(originalUA, "/"+originalVersion, "/0.150.0-alpha.8", 1), "0.150.0-alpha.8", "codex-browser-use"},
+		{"builtin-exec-windows-amd64", strings.Replace(originalUA, "/"+originalVersion, "/0.150.0-alpha.8", 1), "0.150.0-alpha.8", "codex-browser-use"},
+		{"builtin-desktop-windows-amd64", "codex-browser-use/0.150.0-alpha.8 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.1.0)", "0.150.0-alpha.8", "codex-browser-use"},
 		{"reference", sampledUA, "0.155.0-alpha.2.7", "codex-browser-use"},
 	} {
 		for _, release := range []string{"", "0.156.0"} {
@@ -45,7 +45,7 @@ func TestBrowserUseInputAcrossRequestCarriers(t *testing.T) {
 				s := NewSession(disguise.TargetSnapshot{
 					Policy: disguise.Policy{Enabled: true}, Profile: profile,
 					OfficialVersion: officialversion.Release{Version: release},
-				}, "browser-use-input")
+				}, "browser-use-input", disguise.ProjectPlatform(http.Header{"User-Agent": {originalUA}}))
 				metadata := map[string]string{
 					"user_agent": originalUA, "originator": "codex-browser-use", "client_version": originalVersion,
 					"thread_id": "thread", "session_id": "session", "window_id": "thread:1",

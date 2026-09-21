@@ -24,11 +24,11 @@ func TestEntryPointSelectionIsConsistentAcrossRequestCarriers(t *testing.T) {
 			t.Run(profile.ID+"/"+release, func(t *testing.T) {
 				wantVersion := release
 				if wantVersion == "" {
-					wantVersion = "0.149.0"
+					wantVersion = profile.ClientVersion
 				}
 				originator := profile.Features.Originator
 				wantUA := originator + "/" + wantVersion + " (Windows 10.0.26200; x86_64) Terminal/1.2 (" + originator + "; " + wantVersion + ")"
-				s := NewSession(disguise.TargetSnapshot{
+				s := newPrimarySession(disguise.TargetSnapshot{
 					Policy: disguise.Policy{Enabled: true}, Profile: profile,
 					OfficialVersion: officialversion.Release{Version: release},
 				}, "entry-point-selection")
@@ -120,7 +120,7 @@ func TestOriginatorHeaderAliasesAgreeWithProtocolMetadata(t *testing.T) {
 		if typed != "" {
 			wantOriginator = typed
 		}
-		s := NewSession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}, Profile: disguise.ProfileRevision{Features: features}}, "alias-selection")
+		s := newPrimarySession(disguise.TargetSnapshot{Policy: disguise.Policy{Enabled: true}, Profile: disguise.ProfileRevision{Features: features}}, "alias-selection")
 		headers, err := s.Headers(context.Background(), http.Header{"User-Agent": {"codex_cli_rs/0.149.0 (Linux; x86_64)"}})
 		if err != nil || headers.Get("Originator") != wantOriginator || !strings.HasPrefix(headers.Get("User-Agent"), wantOriginator+"/") {
 			t.Fatal(headers, err)
@@ -133,7 +133,7 @@ func TestOriginatorHeaderAliasesAgreeWithProtocolMetadata(t *testing.T) {
 }
 
 func TestPartialProfilePreservesUnchangedUserAgentValues(t *testing.T) {
-	s := NewSession(disguise.TargetSnapshot{
+	s := newPrimarySession(disguise.TargetSnapshot{
 		Policy:  disguise.Policy{Enabled: true},
 		Profile: disguise.ProfileRevision{Features: disguise.Features{Originator: "codex-tui"}},
 	}, "unchanged-user-agent")
@@ -149,14 +149,14 @@ func TestPartialProfilePreservesUnchangedUserAgentValues(t *testing.T) {
 
 func TestEntryPointSelectionDoesNotRewriteDisabledOrResponseTraffic(t *testing.T) {
 	target := disguise.TargetSnapshot{Profile: disguise.ProfileRevision{Features: disguise.Features{Originator: "codex_exec"}}}
-	s := NewSession(target, "disabled")
+	s := newPrimarySession(target, "disabled")
 	original := http.Header{"User-Agent": {"codex-tui/0.149.0 (Linux; x86_64)"}, "Originator": {"thread-override"}}
 	got, err := s.Headers(context.Background(), original)
 	if err != nil || !reflect.DeepEqual(got, original) {
 		t.Fatal(got, err)
 	}
 	target.Policy.Enabled = true
-	s = NewSession(target, "response")
+	s = newPrimarySession(target, "response")
 	got, err = s.RestoreHeaders(context.Background(), original)
 	if err != nil || !reflect.DeepEqual(got, original) {
 		t.Fatal(got, err)

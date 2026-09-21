@@ -29,7 +29,6 @@ export function sampledUserAgent(profile: ProfileRevision) {
 }
 export function requestVersion(profile: ProfileRevision) {
   const ua = sampledUserAgent(profile);
-  if (!ua) return "";
   return (
     CODEX_VERSION.exec(ua)?.[1] ||
     profile.client_version ||

@@ -48,7 +48,7 @@ export function ProfileFields({
         <h3 id="profile-heading">环境配置</h3>
       </div>
       <p className="cd-description">
-        选择该登录凭据向上游呈现的客户端环境和版本。
+        选择该登录凭据向上游呈现的主客户端身份、平台和版本。
       </p>
       <label className="cd-field cd-reference-field">
         客户端环境
@@ -135,7 +135,7 @@ export function ProfileFields({
         <span className="cd-field-help">
           {draft.versionSource === "official_stable"
             ? `版本号与 User-Agent 中的 Codex 版本独立更新，固定快照时环境特征仍保持不变。${syncFallback}`
-            : "使用所选快照的版本规则；未采集 User-Agent 时保留原请求版本。"}
+            : "使用所选快照的 Codex 版本；完整 User-Agent 尚未采集时也会应用已知版本。"}
         </span>
       </label>
       {effective && (

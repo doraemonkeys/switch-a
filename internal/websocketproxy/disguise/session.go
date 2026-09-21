@@ -67,7 +67,7 @@ func (s *Session) Select(provider *model.Provider) error {
 	defer s.mu.Unlock()
 	session := s.sessions[key]
 	if session == nil {
-		session = wire.NewSession(target, s.operationID)
+		session = wire.NewSession(target, s.operationID, s.operation.Facts())
 		s.sessions[key] = session
 	}
 	s.current = session

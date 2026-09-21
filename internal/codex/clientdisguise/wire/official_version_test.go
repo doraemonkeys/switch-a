@@ -19,7 +19,7 @@ func TestOfficialVersionConsistentAcrossRequestCarriers(t *testing.T) {
 				Profile:         disguise.ProfileRevision{ClientVersion: "0.149.0", Features: disguise.Features{UserAgent: sampleUA, Headers: map[string]string{"Version": "0.149.0"}}},
 				OfficialVersion: officialversion.Release{Version: "0.151.0"},
 			}
-			s := NewSession(target, "release-test")
+			s := newPrimarySession(target, "release-test")
 			incomingUA := "codex-tui/0.148.0 (Linux 6.9; arm64) screen (codex-tui; 0.148.0)"
 			selectedUA := sampleUA
 			if selectedUA == "" {

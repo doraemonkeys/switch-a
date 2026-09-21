@@ -332,7 +332,7 @@ describe("login environment and snapshot selection", () => {
     expect(screen.getByText(/来源当前版本较旧/)).toBeVisible();
   });
 
-  it("shows incoming version preservation for partial profiles and independent official version projection", async () => {
+  it("shows the selected release for partial profiles and independent official version projection", async () => {
     const partial = {
       ...state.profiles[0],
       evidence_kind: "source",
@@ -350,7 +350,7 @@ describe("login environment and snapshot selection", () => {
       official_version: official,
     });
     const preview = screen.getByLabelText("生效预览");
-    expect(within(preview).getByText("沿用原请求版本")).toBeVisible();
+    expect(within(preview).getByText("1 · 来自快照")).toBeVisible();
     expect(within(preview).getByText(/部分特征/)).toBeVisible();
     await user.selectOptions(
       screen.getByLabelText("发送版本来源"),

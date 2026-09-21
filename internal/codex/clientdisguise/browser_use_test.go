@@ -3,6 +3,7 @@ package clientdisguise
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,8 @@ func TestBrowserUseBuiltinEnvironments(t *testing.T) {
 				if profile.Features.Originator != "codex-browser-use" || profile.Features.UserAgent != "" || profile.SourceURL != builtinBrowserUseSourceURL {
 					t.Fatalf("default invented observations or lost provenance: %+v", profile)
 				}
-				if got := profile.RequestUserAgent(ua, ""); got != ua {
+				wantUA := strings.Replace(ua, "/0.155.0-alpha.2.6", "/"+builtinVersion, 1)
+				if got := profile.RequestUserAgent(ua, ""); got != wantUA {
 					t.Fatalf("default changed observed environment: %q", got)
 				}
 			})
@@ -67,7 +69,7 @@ func TestBrowserUseReferenceFollowingAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := candidateFor(t, repo, "browser-login", wantTuple)
-	if first.Profile.Features.UserAgent != originalUA || first.Profile.WireClientVersion() != "0.155.0-alpha.2.6" {
+	if first.Profile.Features.UserAgent != originalUA || first.Profile.CodexVersion() != "0.155.0-alpha.2.6" {
 		t.Fatal("reference did not capture the Codex release", first.Profile)
 	}
 	const nextUA = "codex-browser-use/0.155.0-alpha.2.7 (Windows 10.0.26200; x86_64) unknown (codex-browser-use; 0.2.0)"

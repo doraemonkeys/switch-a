@@ -37,7 +37,7 @@ func (shortWriter) Write(p []byte) (int, error) { return len(p) / 2, nil }
 func TestSampleSnapshotAndTransportFailure(t *testing.T) {
 	target := testSession().target
 	target.Transport = &disguise.TransportSample{Config: []byte(`{"http_protocol":"http1","alpn":["http/1.1"]}`)}
-	s := NewSession(target, "op")
+	s := newPrimarySession(target, "op")
 	target.Transport.Config[0] = '!'
 	config, err := s.TransportConfig()
 	if err != nil || config.HTTPProtocol != "http1" {
@@ -63,7 +63,7 @@ func TestSampleSnapshotAndTransportFailure(t *testing.T) {
 	if _, err = s.TransportConfig(); err != nil {
 		t.Fatal(err)
 	}
-	bare := NewSession(disguise.TargetSnapshot{}, "")
+	bare := newPrimarySession(disguise.TargetSnapshot{}, "")
 	if got, err := bare.Headers(context.Background(), nil); err != nil || got != nil {
 		t.Fatal(got, err)
 	}
