@@ -7,7 +7,6 @@ export { useConfigExport } from "./useConfigExport";
 export { useStatus, useHealthStates } from "./useStatus";
 export { useLogs } from "./useLogs";
 export { useLiveRequests } from "./useLiveRequests";
-export { useStats } from "./useStats";
 export { useTokenUsage } from "./useTokenUsage";
 export type { UseTokenUsageResult } from "./useTokenUsage";
 export { useQuery, useMutation } from "./useQuery";

@@ -1,15 +1,12 @@
 import { useState } from "react";
 import { useLogs, DEFAULT_LIMIT } from "../hooks/useLogs";
 import { useProviders } from "../hooks/useProviders";
-import { useStats } from "../hooks/useStats";
 import { LogFilters, LogDetailModal } from "../components";
 import type { RequestLog } from "../api/types";
-import { useAnalyticsWindow } from "../features/analytics-window/useAnalyticsWindow";
 import { api } from "../api/client";
 import {
   LogsHeader,
   LogsTable,
-  LogStatsGrid,
   Pagination,
   ErrorBanner,
 } from "../components/logs";
@@ -33,10 +30,6 @@ export function Logs() {
   } = useLogs({ limit, offset: 0 });
   const { providers } = useProviders();
 
-  const { window: analyticsWindow, applyIntent: applyAnalyticsWindowIntent } =
-    useAnalyticsWindow();
-  const { stats, loading: statsLoading } = useStats(analyticsWindow);
-
   // Selected log for detail modal (fetched with attempts)
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
 
@@ -49,11 +42,6 @@ export function Logs() {
       // Fallback to partial log if fetch fails
       setSelectedLog(log);
     }
-  };
-
-  const handleLogsRefresh = async () => {
-    applyAnalyticsWindowIntent({ type: "refresh-requested" });
-    await refetch();
   };
 
   // Calculate pagination values
@@ -91,7 +79,7 @@ export function Logs() {
 
   return (
     <div className="space-y-6">
-      <LogsHeader loading={loading} onRefresh={handleLogsRefresh} />
+      <LogsHeader loading={loading} onRefresh={refetch} />
 
       {error && <ErrorBanner message={error.message} />}
 
@@ -125,15 +113,6 @@ export function Logs() {
           onPageChange={handlePageChange}
         />
       )}
-
-      {/* Normalized Outcome Stats Grid */}
-      <LogStatsGrid
-        stats={stats}
-        statsLoading={statsLoading}
-        window={analyticsWindow}
-        onWindowIntent={applyAnalyticsWindowIntent}
-        hasActiveFilters={hasActiveFilters}
-      />
 
       <LogDetailModal
         log={selectedLog}

@@ -1,9 +1,5 @@
 import { CLAUDE_CACHE_BILLING } from "./constants";
 
-// Type for stat card variants
-export type StatVariantValue = "success" | "warning" | "danger";
-export type StatVariant = StatVariantValue | undefined;
-
 // =============================================================================
 // Token Formatting Utilities
 // =============================================================================
@@ -88,13 +84,6 @@ export function calculateEffectiveCost(
 
 // Helper to determine aria-sort value for sortable table headers
 export type AriaSortValue = "ascending" | "descending" | "none";
-
-export function getStatVariantClass(variant: StatVariant): string {
-  if (variant === "success") return "text-success";
-  if (variant === "warning") return "text-warning";
-  if (variant === "danger") return "text-danger";
-  return "text-text-primary";
-}
 
 export function getAriaSortValue(
   field: string,

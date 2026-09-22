@@ -317,7 +317,7 @@ describe("App", () => {
     });
   });
 
-  it("keeps Logs focused on request logs and outcome stats", async () => {
+  it("keeps Logs focused on request history", async () => {
     const apiClient = createMockApiClient();
     render(<TestApp initialPath="/logs" apiClient={apiClient} />);
 
@@ -325,8 +325,12 @@ describe("App", () => {
       await screen.findByRole("heading", { name: /Request Logs/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
-      expect(apiClient.stats.get).toHaveBeenCalled();
+      expect(apiClient.logs.list).toHaveBeenCalled();
     });
+    expect(
+      screen.queryByRole("heading", { name: "Normalized Outcome Stats" }),
+    ).not.toBeInTheDocument();
+    expect(apiClient.stats.get).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("heading", { name: "Token Usage Analytics" }),
     ).not.toBeInTheDocument();
