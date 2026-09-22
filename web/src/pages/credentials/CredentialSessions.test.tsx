@@ -201,7 +201,6 @@ describe("CredentialSessions", () => {
       expect.objectContaining({
         initialCredentialSession: {
           sessionID: "gpt-session",
-          expectedVersion: 7,
         },
       }),
     );

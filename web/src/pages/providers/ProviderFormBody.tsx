@@ -281,15 +281,15 @@ function ChatGPTLoginSection({
           <h4 className="text-sm font-semibold text-text-primary">GPT Login</h4>
           <p className="text-xs text-text-muted mt-1">
             {reauthenticatesExistingSession
-              ? "Reconnect this credential session in place. Every route sharing it recovers together, while provider route bindings stay unchanged. A different GPT account is rejected."
-              : "Switch-A will create a Codex-only provider backed by a local ChatGPT OAuth session. The sign-in link can be completed in any browser on this machine."}
+              ? "Sign in again with the same GPT account. Reconnection takes effect immediately for every provider using this account."
+              : "Connect a GPT account, then save this provider to use it. Open the sign-in link in any browser on this machine."}
           </p>
         </div>
         <button
           type="button"
           onClick={() => void onStartChatGPTLogin()}
           disabled={chatGPTLoginState.loading}
-          className={`btn btn-secondary ${chatGPTLoginState.loading ? "opacity-60 cursor-wait" : ""}`}
+          className={`btn btn-secondary shrink-0 whitespace-nowrap ${chatGPTLoginState.loading ? "opacity-60 cursor-wait" : ""}`}
         >
           {getChatGPTLoginButtonLabel(
             chatGPTLoginState,
@@ -397,7 +397,7 @@ function ChatGPTCredentialSessionField({
             value={value}
             onChange={(event) => onChange(event.target.value)}
           >
-            <option value="">Create from GPT login below</option>
+            <option value="">Connect a new GPT account</option>
             {chatGPTSessions.map((session) => (
               <option key={session.id} value={session.id}>
                 {session.name} · {session.auth_state.status} ·{" "}
@@ -414,8 +414,17 @@ function ChatGPTCredentialSessionField({
           {error && <p className="text-xs text-danger mt-1">{error}</p>}
           {!loading && !error && (
             <p className="text-xs text-text-muted mt-1">
-              Select a reusable GPT session, or complete a new login below.
+              Choose a saved account, or connect another account below.
             </p>
+          )}
+          {value && (
+            <button
+              type="button"
+              className="mt-2 text-xs font-medium text-primary hover:underline cursor-pointer"
+              onClick={() => onChange("")}
+            >
+              Connect another GPT account
+            </button>
           )}
         </>
       )}

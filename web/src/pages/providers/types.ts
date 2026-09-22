@@ -8,8 +8,8 @@ export type ProviderCredentialMode = CredentialSessionKind | "mixed";
 
 export interface ProviderAPITypeDraft extends APITypeInput {
   client_key: string;
-  /** A write-only replacement secret; it is materialized as a new session. */
-  api_key: string;
+  /** Null keeps the selected credential; a string is an explicit API key edit. */
+  api_key: string | null;
 }
 
 export interface ProviderFormData extends Omit<ProviderInput, "api_types"> {

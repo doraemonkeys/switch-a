@@ -70,7 +70,6 @@ function LoginHarness({
         onClick={() =>
           login.selectCredentialSession({
             sessionID: "session-b",
-            expectedVersion: 4,
           })
         }
       >
@@ -106,9 +105,7 @@ describe("useChatGPTCredentialLogin transactions", () => {
     } as unknown as ApiClient;
     render(
       <ApiContext.Provider value={api}>
-        <LoginHarness
-          initialTarget={{ sessionID: "session-a", expectedVersion: 3 }}
-        />
+        <LoginHarness initialTarget={{ sessionID: "session-a" }} />
       </ApiContext.Provider>,
     );
     await user.click(screen.getByRole("button", { name: "Start" }));
@@ -144,16 +141,13 @@ describe("useChatGPTCredentialLogin transactions", () => {
 
     render(
       <ApiContext.Provider value={api}>
-        <LoginHarness
-          initialTarget={{ sessionID: "session-a", expectedVersion: 3 }}
-        />
+        <LoginHarness initialTarget={{ sessionID: "session-a" }} />
       </ApiContext.Provider>,
     );
 
     await user.click(screen.getByRole("button", { name: "Import" }));
     await waitFor(() =>
       expect(reauthenticate).toHaveBeenCalledWith("session-a", {
-        expected_version: 3,
         credential_login_id: "login-a",
       }),
     );

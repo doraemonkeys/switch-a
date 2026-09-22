@@ -316,7 +316,6 @@ describe("createApiClient providers API", () => {
     });
 
     const result = await api.credentialSessions.reauthenticate("session/1", {
-      expected_version: 1,
       credential_login_id: "login-1",
     });
 
@@ -326,7 +325,6 @@ describe("createApiClient providers API", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          expected_version: 1,
           credential_login_id: "login-1",
         }),
       }),

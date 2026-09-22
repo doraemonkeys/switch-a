@@ -122,8 +122,8 @@ export function ApiTypesField({
         API Types
       </legend>
       <p className="text-xs text-text-muted mb-3">
-        Select an existing credential session, or enter a new API key to create
-        one when you save.
+        Edit the API key directly, or select a saved credential. Key changes
+        take effect when you save this provider.
       </p>
       <div className="space-y-3">
         {entries.map((entry, index) =>

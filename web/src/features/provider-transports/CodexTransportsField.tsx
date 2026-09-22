@@ -32,7 +32,7 @@ export function CodexTransportsField({
         transport,
         base_url: reference?.base_url ?? CHATGPT_CODEX_BASE_URL,
         credential_session_id: reference?.credential_session_id ?? "",
-        api_key: reference?.api_key ?? "",
+        api_key: reference ? reference.api_key : "",
       },
     ]);
   }

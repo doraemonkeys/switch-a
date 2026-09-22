@@ -111,7 +111,6 @@ async function persistCompletedChatGPTLogin(
   const session = await api.credentialSessions.reauthenticate(
     target.sessionID,
     {
-      expected_version: target.expectedVersion,
       credential_login_id: loginID,
     },
   );
@@ -188,7 +187,6 @@ function useChatGPTLoginPolling(
 ) {
   const session = state.loginSession;
   const targetSessionID = state.reauthenticationTarget?.sessionID ?? "";
-  const targetVersion = state.reauthenticationTarget?.expectedVersion ?? 0;
 
   useEffect(() => {
     if (!api || !session || !enabled) {
@@ -199,9 +197,7 @@ function useChatGPTLoginPolling(
         if (session.generation !== loginGeneration.current) {
           return;
         }
-        const target = targetSessionID
-          ? { sessionID: targetSessionID, expectedVersion: targetVersion }
-          : null;
+        const target = targetSessionID ? { sessionID: targetSessionID } : null;
         void completeChatGPTLogin({
           api,
           loginID,
@@ -233,7 +229,6 @@ function useChatGPTLoginPolling(
     reauthenticationCommit,
     session,
     targetSessionID,
-    targetVersion,
   ]);
 }
 

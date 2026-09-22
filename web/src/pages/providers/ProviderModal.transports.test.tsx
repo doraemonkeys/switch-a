@@ -196,10 +196,7 @@ describe("Codex transport credentials", () => {
       screen.getByLabelText("Base URL for codex"),
       "https://shared.example.com",
     );
-    await user.type(
-      screen.getByLabelText("API key override for codex"),
-      "shared-key",
-    );
+    await user.type(screen.getByLabelText("API key for codex"), "shared-key");
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -222,11 +219,11 @@ describe("Codex transport credentials", () => {
       const user = userEvent.setup();
       const initial = persistedSharedCodexProvider();
       const onSubmit = renderExistingProvider(initial);
+      expect(await screen.findByLabelText("API key for codex")).toHaveValue(
+        "secret-credential-default",
+      );
       expect(
-        await screen.findByLabelText("Current API key for codex"),
-      ).toHaveValue("secret-credential-default");
-      expect(
-        screen.queryByLabelText("Current API key for codex WebSocket"),
+        screen.queryByLabelText("API key for codex WebSocket"),
       ).not.toBeInTheDocument();
 
       await user.clear(screen.getByLabelText("Base URL for codex"));
@@ -240,8 +237,9 @@ describe("Codex transport credentials", () => {
           "credential-override",
         );
       } else {
+        await user.clear(screen.getByLabelText("API key for codex"));
         await user.type(
-          screen.getByLabelText("API key override for codex"),
+          screen.getByLabelText("API key for codex"),
           "replacement-key",
         );
       }
@@ -317,14 +315,17 @@ describe("Codex transport credentials", () => {
       screen.getByLabelText("Base URL for codex WebSocket"),
       "https://separate.example.com",
     );
+    await user.clear(screen.getByLabelText("API key for codex WebSocket"));
     await user.type(
-      screen.getByLabelText("API key override for codex WebSocket"),
+      screen.getByLabelText("API key for codex WebSocket"),
       "ws-only-key",
     );
     expect(screen.getByLabelText("Base URL for codex")).toHaveValue(
       initial.api_types[1].base_url,
     );
-    expect(screen.getByLabelText("API key override for codex")).toHaveValue("");
+    expect(screen.getByLabelText("API key for codex")).toHaveValue(
+      "secret-credential-default",
+    );
 
     await user.click(separate);
     expect(
@@ -390,10 +391,7 @@ describe("Codex transport credentials", () => {
         screen.getByLabelText("Base URL for codex"),
         "https://http.example.com",
       );
-      await user.type(
-        screen.getByLabelText("API key override for codex"),
-        "http-key",
-      );
+      await user.type(screen.getByLabelText("API key for codex"), "http-key");
       await user.click(screen.getByRole("checkbox", { name: "WebSocket" }));
       await user.click(
         screen.getByRole("checkbox", {
@@ -406,11 +404,9 @@ describe("Codex transport credentials", () => {
         "https://ws.example.com",
       );
       if (mode === "distinct") {
-        await user.clear(
-          screen.getByLabelText("API key override for codex WebSocket"),
-        );
+        await user.clear(screen.getByLabelText("API key for codex WebSocket"));
         await user.type(
-          screen.getByLabelText("API key override for codex WebSocket"),
+          screen.getByLabelText("API key for codex WebSocket"),
           "ws-key",
         );
       }
@@ -473,7 +469,7 @@ describe("Codex transport credentials", () => {
       { credentialSessions } as unknown as ApiClient,
     );
     expect(
-      await screen.findByLabelText("Current API key for codex WebSocket"),
+      await screen.findByLabelText("API key for codex WebSocket"),
     ).toHaveValue("secret-credential-override");
     await user.click(screen.getByRole("checkbox", { name: "HTTP / SSE" }));
     await user.click(screen.getByRole("button", { name: /save changes/i }));

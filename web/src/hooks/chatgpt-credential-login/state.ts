@@ -8,7 +8,6 @@ export type ChatGPTCredentialDraft =
 
 export interface ChatGPTCredentialSessionTarget {
   sessionID: string;
-  expectedVersion: number;
 }
 
 export interface ChatGPTLoginSession {
@@ -188,7 +187,6 @@ export function chatGPTLoginReducer(
           credential: credentialSessionDraft(action.result.session.id),
           reauthenticationTarget: {
             sessionID: action.result.session.id,
-            expectedVersion: action.result.session.version,
           },
           lastReauthenticatedSession: action.result.session,
         };

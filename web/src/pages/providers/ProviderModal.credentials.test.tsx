@@ -1,418 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import type { ReactElement } from "react";
-import {
-  parseAPICatalog,
-  type ApiClient,
-  type CreateCredentialSessionInput,
-  type CredentialSession,
-  type Provider,
-} from "../../api";
-import { APICatalogContext, ApiContext } from "../../api/context";
-import { AUTH_MODES, PROVIDER_CREDENTIAL_TYPES } from "../../config/constants";
+import { PROVIDER_CREDENTIAL_TYPES } from "../../config/constants";
 import { ProviderModal } from "./ProviderModal";
-
-const testAPICatalog = parseAPICatalog(
-  JSON.parse(
-    readFileSync(
-      resolve(process.cwd(), "../contracts/internal-error/v1/api-catalog.json"),
-      "utf8",
-    ),
-  ) as unknown,
-);
-
-function apiKeySession(id: string): CredentialSession {
-  return {
-    id,
-    name: id,
-    kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-    secret_data: `secret-${id}`,
-    version: 1,
-    subject: { kind: "keyed_digest", value: `digest-${id}` },
-    auth_state: { status: "active" },
-    referenced_route_target_ids: [],
-    route_references: [],
-    created_at: "2026-08-28T00:00:00Z",
-    updated_at: "2026-08-28T00:00:00Z",
-  };
-}
-
-function chatGPTSession(
-  id: string,
-  email: string,
-  status: CredentialSession["auth_state"]["status"] = "active",
-): CredentialSession {
-  return {
-    id,
-    name: email,
-    kind: PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-    version: 1,
-    subject: { kind: "account", value: `account-${id}` },
-    auth_state: {
-      status,
-      email,
-      account_id: `account-${id}`,
-    },
-    referenced_route_target_ids: [],
-    route_references: [],
-    created_at: "2026-08-28T00:00:00Z",
-    updated_at: "2026-08-28T00:00:00Z",
-  };
-}
-
-function createCredentialSessionsApi(sessions: CredentialSession[]) {
-  return {
-    list: vi.fn().mockResolvedValue(sessions),
-    create: vi.fn().mockImplementation((input: CreateCredentialSessionInput) =>
-      Promise.resolve({
-        ...apiKeySession("credential-created"),
-        kind: input.kind,
-      }),
-    ),
-    reauthenticate: vi
-      .fn()
-      .mockImplementation((id: string): Promise<CredentialSession> => {
-        const current = sessions.find((session) => session.id === id);
-        if (!current) {
-          return Promise.reject(
-            new Error(`Credential session not found: ${id}`),
-          );
-        }
-        return Promise.resolve({
-          ...current,
-          version: current.version + 1,
-          auth_state: { ...current.auth_state, status: "active" },
-        });
-      }),
-  };
-}
-
-function renderModal(element: ReactElement, api: ApiClient) {
-  return render(
-    <ApiContext.Provider value={api}>
-      <APICatalogContext.Provider
-        value={{
-          catalog: testAPICatalog,
-          loading: false,
-          error: null,
-          refetch: () => Promise.resolve(),
-        }}
-      >
-        {element}
-      </APICatalogContext.Provider>
-    </ApiContext.Provider>,
-  );
-}
-
-function persistedSplitProvider(): Provider {
-  return {
-    id: "provider-split",
-    name: "Split Credentials",
-    api_types: [
-      {
-        api_type: "claude",
-        transport: "http",
-        base_url: "https://claude.example.com",
-        credential_session_id: "credential-override",
-      },
-      {
-        api_type: "codex",
-        transport: "http",
-        base_url: "https://codex.example.com",
-        credential_session_id: "credential-default",
-      },
-    ],
-    auth_mode: AUTH_MODES.AUTO,
-    credential_sessions: [
-      apiKeySession("credential-override"),
-      apiKeySession("credential-default"),
-    ],
-    group_id: null,
-    weight: 1,
-    priority: 0,
-    concurrency: 10,
-    max_retries: 1,
-    vendor: "",
-    failover_scope: "any",
-    accept_failover: "any",
-    enabled: true,
-    created_at: "2026-03-22T12:00:00Z",
-    updated_at: "2026-03-22T12:00:00Z",
-  };
-}
-
-function persistedMixedProvider(): Provider {
-  const apiKey = apiKeySession("credential-api-key");
-  const chatGPT = chatGPTSession(
-    "credential-gpt",
-    "mixed@example.com",
-    "reauth_required",
-  );
-  return {
-    id: "provider-mixed",
-    name: "Mixed Credentials",
-    api_types: [
-      {
-        api_type: "claude",
-        transport: "http",
-        base_url: "https://claude.example.com",
-        credential_session_id: apiKey.id,
-      },
-      {
-        api_type: "codex",
-        transport: "http",
-        base_url: "https://codex.example.com",
-        credential_session_id: chatGPT.id,
-      },
-    ],
-    auth_mode: AUTH_MODES.AUTO,
-    credential_sessions: [apiKey, chatGPT],
-    group_id: null,
-    weight: 1,
-    priority: 0,
-    concurrency: 10,
-    max_retries: 1,
-    vendor: "",
-    failover_scope: "any",
-    accept_failover: "any",
-    enabled: true,
-    created_at: "2026-03-22T12:00:00Z",
-    updated_at: "2026-03-22T12:00:00Z",
-  };
-}
-
-function persistedGPTProvider(): Provider {
-  const mixed = persistedMixedProvider();
-  return {
-    ...mixed,
-    id: "provider-gpt",
-    name: "GPT Credentials",
-    auth_mode: AUTH_MODES.BEARER,
-    api_types: mixed.api_types.filter((entry) => entry.api_type === "codex"),
-    credential_sessions: mixed.credential_sessions.filter(
-      (session) => session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
-    ),
-  };
-}
-
-describe("ProviderModal credential binding precedence", () => {
-  it("reveals and copies the current API key without creating a replacement", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-    const credentialSessions = createCredentialSessionsApi([
-      apiKeySession("credential-override"),
-      apiKeySession("credential-default"),
-    ]);
-    const api = { credentialSessions } as unknown as ApiClient;
-
-    renderModal(
-      <ProviderModal
-        initialData={persistedSplitProvider()}
-        onClose={vi.fn()}
-        onSubmit={onSubmit}
-        groups={[]}
-      />,
-      api,
-    );
-
-    const currentKey = await screen.findByLabelText(
-      "Current API key for claude",
-    );
-    expect(currentKey).toHaveAttribute("type", "password");
-    expect(currentKey).toHaveValue("secret-credential-override");
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Show current API key for claude",
-      }),
-    );
-    expect(currentKey).toHaveAttribute("type", "text");
-    await user.click(screen.getAllByRole("button", { name: "Copy" })[0]);
-    expect(await navigator.clipboard.readText()).toBe(
-      "secret-credential-override",
-    );
-
-    await user.click(screen.getByRole("button", { name: /save changes/i }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(credentialSessions.create).not.toHaveBeenCalled();
-  });
-
-  it("preserves existing bindings when a shared key credentials a new route", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-    const credentialSessions = createCredentialSessionsApi([
-      apiKeySession("credential-override"),
-      apiKeySession("credential-default"),
-    ]);
-    const api = { credentialSessions } as unknown as ApiClient;
-
-    renderModal(
-      <ProviderModal
-        initialData={persistedSplitProvider()}
-        onClose={vi.fn()}
-        onSubmit={onSubmit}
-        groups={[]}
-      />,
-      api,
-    );
-
-    expect(
-      screen.queryByLabelText("New Shared API Key"),
-    ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "gemini" }));
-    await user.type(screen.getByLabelText("New Shared API Key"), "shared-key");
-    await user.clear(screen.getByLabelText("Base URL for gemini"));
-    await user.type(
-      screen.getByLabelText("Base URL for gemini"),
-      "https://gemini.example.com",
-    );
-    await user.click(screen.getByRole("button", { name: /save changes/i }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const submitted = onSubmit.mock.calls[0]?.[0];
-    const createdSession = submitted.new_credential_sessions?.[0];
-    expect(createdSession).toMatchObject({
-      name: "Split Credentials",
-      kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-      secret_data: "shared-key",
-    });
-    expect(submitted).toEqual(
-      expect.objectContaining({
-        api_types: [
-          {
-            api_type: "claude",
-            transport: "http",
-            base_url: "https://claude.example.com",
-            credential_session_id: "credential-override",
-          },
-          {
-            api_type: "codex",
-            transport: "http",
-            base_url: "https://codex.example.com",
-            credential_session_id: "credential-default",
-          },
-          {
-            api_type: "gemini",
-            transport: "http",
-            base_url: "https://gemini.example.com",
-            credential_session_id: createdSession?.id,
-          },
-        ],
-        new_credential_sessions: [createdSession],
-      }),
-    );
-    expect(credentialSessions.create).not.toHaveBeenCalled();
-  });
-
-  it("uses a shared key only for new routes without a selected session", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-    const credentialSessions = createCredentialSessionsApi([
-      apiKeySession("credential-selected"),
-    ]);
-    const api = { credentialSessions } as unknown as ApiClient;
-
-    renderModal(
-      <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />,
-      api,
-    );
-
-    await user.type(screen.getByLabelText("Name"), "Mixed Bindings");
-    await user.type(screen.getByLabelText("New Shared API Key"), "shared-key");
-    await user.click(screen.getByRole("button", { name: "claude" }));
-    await user.click(screen.getByRole("button", { name: "codex" }));
-    await user.type(
-      screen.getByLabelText("Base URL for claude"),
-      "https://claude.example.com",
-    );
-    await user.type(
-      screen.getByLabelText("Base URL for codex"),
-      "https://codex.example.com",
-    );
-    await user.selectOptions(
-      screen.getByLabelText("Credential session for claude"),
-      "credential-selected",
-    );
-    await user.click(screen.getByRole("button", { name: /add provider/i }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const submitted = onSubmit.mock.calls[0]?.[0];
-    const createdSession = submitted.new_credential_sessions?.[0];
-    expect(createdSession).toMatchObject({
-      name: "Mixed Bindings",
-      kind: PROVIDER_CREDENTIAL_TYPES.API_KEY,
-      secret_data: "shared-key",
-    });
-    expect(submitted).toEqual(
-      expect.objectContaining({
-        api_types: [
-          {
-            api_type: "claude",
-            transport: "http",
-            base_url: "https://claude.example.com",
-            credential_session_id: "credential-selected",
-          },
-          {
-            api_type: "codex",
-            transport: "http",
-            base_url: "https://codex.example.com",
-            credential_session_id: createdSession?.id,
-          },
-        ],
-        new_credential_sessions: [createdSession],
-      }),
-    );
-    expect(credentialSessions.create).not.toHaveBeenCalled();
-  });
-
-  it("retains a transactional API key draft when the provider write fails", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("provider write failed"))
-      .mockResolvedValueOnce(undefined);
-    const credentialSessions = createCredentialSessionsApi([]);
-    const api = { credentialSessions } as unknown as ApiClient;
-
-    renderModal(
-      <ProviderModal onClose={vi.fn()} onSubmit={onSubmit} groups={[]} />,
-      api,
-    );
-
-    await user.type(screen.getByLabelText("Name"), "Retry Provider");
-    await user.type(screen.getByLabelText("New Shared API Key"), "retry-key");
-    await user.click(screen.getByRole("button", { name: "claude" }));
-    await user.type(
-      screen.getByLabelText("Base URL for claude"),
-      "https://claude.example.com",
-    );
-
-    await user.click(screen.getByRole("button", { name: /add provider/i }));
-    await screen.findByText("provider write failed");
-    await user.click(screen.getByRole("button", { name: /add provider/i }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
-
-    const first = onSubmit.mock.calls[0]?.[0];
-    const second = onSubmit.mock.calls[1]?.[0];
-    const firstSession = first.new_credential_sessions?.[0];
-    const secondSession = second.new_credential_sessions?.[0];
-    expect(firstSession).toMatchObject({
-      name: "Retry Provider",
-      secret_data: "retry-key",
-    });
-    expect(secondSession).toMatchObject({
-      name: "Retry Provider",
-      secret_data: "retry-key",
-    });
-    expect(secondSession?.id).not.toBe(firstSession?.id);
-    expect(first.api_types[0]?.credential_session_id).toBe(firstSession?.id);
-    expect(second.api_types[0]?.credential_session_id).toBe(secondSession?.id);
-    expect(credentialSessions.create).not.toHaveBeenCalled();
-  });
-});
+import type { ApiClient, CredentialSession } from "../../api";
+import {
+  chatGPTSession,
+  createCredentialSessionsApi,
+  persistedGPTProvider,
+  persistedMixedProvider,
+  renderModal,
+} from "./ProviderModal.test-support";
 
 describe("ProviderModal GPT credential precedence", () => {
   const tokenBlob = '{"tokens":{"access_token":"acc","refresh_token":"ref"}}';
@@ -519,7 +117,9 @@ describe("ProviderModal GPT credential precedence", () => {
       screen.getByLabelText("Credential Session"),
       existingSession.id,
     );
-    await user.selectOptions(screen.getByLabelText("Credential Session"), "");
+    await user.click(
+      screen.getByRole("button", { name: "Connect another GPT account" }),
+    );
     await importGPTCredential(user);
 
     expect(screen.getByLabelText("Credential Session")).toHaveValue("");
@@ -565,7 +165,7 @@ describe("ProviderModal GPT credential precedence", () => {
     );
 
     expect(
-      screen.getByText(/Reconnect this credential session in place/),
+      screen.getByText(/Sign in again with the same GPT account/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /reconnect gpt/i }),
@@ -576,11 +176,16 @@ describe("ProviderModal GPT credential precedence", () => {
     await screen.findByText(
       "Reconnected as existing@example.com. Provider routes were not changed.",
     );
+    expect(
+      await screen.findByRole("option", {
+        name: /existing@example\.com · active/,
+      }),
+    ).toBeInTheDocument();
+    expect(credentialSessions.list).toHaveBeenCalledTimes(2);
 
     expect(credentialSessions.reauthenticate).toHaveBeenCalledWith(
       existingSession.id,
       {
-        expected_version: 9,
         credential_login_id: "login-new-account",
       },
     );
@@ -640,7 +245,6 @@ describe("ProviderModal GPT credential precedence", () => {
       ),
     ).toBeInTheDocument();
     expect(sessions.reauthenticate).toHaveBeenCalledWith("credential-gpt", {
-      expected_version: 1,
       credential_login_id: "login-pure-reconnect",
     });
     expect(onSubmit).not.toHaveBeenCalled();
@@ -684,7 +288,9 @@ describe("ProviderModal GPT credential precedence", () => {
     expect(credentialType).toHaveValue("Mixed route credentials");
     expect(credentialType).toHaveAttribute("readonly");
     expect(
-      screen.getByText(/every route sharing it recovers together/i),
+      screen.getByText(
+        /Reconnection takes effect immediately for every provider/i,
+      ),
     ).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Import via token"));
@@ -693,7 +299,6 @@ describe("ProviderModal GPT credential precedence", () => {
 
     await waitFor(() =>
       expect(sessions.reauthenticate).toHaveBeenCalledWith("credential-gpt", {
-        expected_version: 1,
         credential_login_id: "login-mixed-reconnect",
       }),
     );

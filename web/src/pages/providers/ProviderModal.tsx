@@ -136,7 +136,7 @@ function deriveFormData(initialData?: Provider): ProviderFormData {
         credentialMode === PROVIDER_CREDENTIAL_TYPES.CHATGPT
           ? ""
           : t.credential_session_id,
-      api_key: "",
+      api_key: null,
     })),
     auth_mode: initialData.auth_mode || "auto",
     credential_mode: credentialMode,
@@ -286,6 +286,18 @@ function prepareProviderSubmission({
       ? normalizeProviderApiKey(formData.new_shared_api_key)
       : "";
   if (!isChatGPTProvider) {
+    const emptyReplacement = validApiTypes.find(
+      (entry) =>
+        entry.credential_session_id &&
+        entry.api_key !== null &&
+        !normalizeProviderApiKey(entry.api_key),
+    );
+    if (emptyReplacement) {
+      return {
+        kind: "form-error",
+        message: `API key for "${emptyReplacement.api_type}" cannot be empty. Enter a key or undo the change.`,
+      };
+    }
     const missingKey = validApiTypes.find(
       (apiType) =>
         !apiType.credential_session_id &&
@@ -311,7 +323,10 @@ function prepareProviderSubmission({
     kind: "ok",
     apiTypes: validApiTypes.map((apiType) => ({
       ...apiType,
-      api_key: normalizeProviderApiKey(apiType.api_key),
+      api_key:
+        apiType.api_key === null
+          ? null
+          : normalizeProviderApiKey(apiType.api_key),
     })),
     isChatGPTProvider,
   };
@@ -391,7 +406,7 @@ async function materializeProviderCredentials({
         api_types: resolved.map((entry) => ({
           ...entry,
           client_key: generateClientKey(),
-          api_key: "",
+          api_key: null,
         })),
       },
       chatGPTCredentialSessionID: sessionID,
@@ -450,7 +465,7 @@ async function materializeProviderCredentials({
       api_types: resolved.map((entry) => ({
         ...entry,
         client_key: generateClientKey(),
-        api_key: "",
+        api_key: null,
       })),
     },
   };
@@ -484,6 +499,7 @@ export function ProviderModal({
     credentialSessions,
     loading: credentialSessionsLoading,
     error: credentialSessionsQueryError,
+    refetch: refetchCredentialSessions,
     createCredentialSession,
   } = useCredentialSessions();
 
@@ -519,7 +535,6 @@ export function ProviderModal({
     initialCredentialSession: initialChatGPTCredentialSession
       ? {
           sessionID: initialChatGPTCredentialSession.id,
-          expectedVersion: initialChatGPTCredentialSession.version,
         }
       : null,
   });
@@ -547,8 +562,10 @@ export function ProviderModal({
     selectedChatGPTCredentialSession,
   );
   const notifyCredentialSessionReauthenticated = useEffectEvent(
-    (session: CredentialSession) =>
-      onCredentialSessionReauthenticated?.(session),
+    async (session: CredentialSession) => {
+      await refetchCredentialSessions();
+      await onCredentialSessionReauthenticated?.(session);
+    },
   );
   useEffect(() => {
     if (lastReauthenticatedSession) {
@@ -561,11 +578,7 @@ export function ProviderModal({
         session.id === sessionID &&
         session.kind === PROVIDER_CREDENTIAL_TYPES.CHATGPT,
     );
-    selectCredentialSession(
-      selected
-        ? { sessionID: selected.id, expectedVersion: selected.version }
-        : null,
-    );
+    selectCredentialSession(selected ? { sessionID: selected.id } : null);
   };
 
   // Auto-focus first focusable element when modal opens
@@ -674,7 +687,7 @@ export function ProviderModal({
           autoComplete="off"
         >
           <fieldset
-            className="contents"
+            className="space-y-4"
             disabled={committingChatGPTReauthentication}
           >
             <ProviderFormBody

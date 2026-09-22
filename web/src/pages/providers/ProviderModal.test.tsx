@@ -332,10 +332,7 @@ describe("ProviderModal", () => {
       screen.getByLabelText("Base URL for claude"),
       "https://api.example.com",
     );
-    await user.type(
-      screen.getByLabelText("API key override for claude"),
-      "claude-key",
-    );
+    await user.type(screen.getByLabelText("API key for claude"), "claude-key");
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
@@ -403,10 +400,7 @@ describe("ProviderModal", () => {
       screen.getByLabelText("Base URL for claude"),
       "https://api.example.com",
     );
-    await user.type(
-      screen.getByLabelText("API key override for claude"),
-      "   ",
-    );
+    await user.type(screen.getByLabelText("API key for claude"), "   ");
 
     await user.click(screen.getByRole("button", { name: /add provider/i }));
 
@@ -438,12 +432,12 @@ describe("ProviderModal", () => {
     await user.type(screen.getByLabelText("Name"), "Visible Override");
     await user.click(screen.getByRole("button", { name: "claude" }));
 
-    const overrideInput = screen.getByLabelText("API key override for claude");
+    const overrideInput = screen.getByLabelText("API key for claude");
     expect(overrideInput).toHaveAttribute("type", "password");
 
     await user.click(
       screen.getByRole("button", {
-        name: "Show API key override for claude",
+        name: "Show API key for claude",
       }),
     );
 

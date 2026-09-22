@@ -34,7 +34,6 @@ export function CredentialSessionReauthenticationModal({
     initialAuthView: resolveCredentialSessionAuthView(session),
     initialCredentialSession: {
       sessionID: session.id,
-      expectedVersion: session.version,
     },
   });
   const notifyReauthenticated = useEffectEvent((updated: CredentialSession) =>

@@ -169,7 +169,6 @@ export interface UpdateCredentialSessionInput {
 }
 
 export interface ReauthenticateCredentialSessionInput {
-  expected_version: number;
   credential_login_id: string;
 }
 

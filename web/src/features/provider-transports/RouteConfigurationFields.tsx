@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useId, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import type { CredentialSession } from "../../api";
 import { CopyButton } from "../../components";
-import { hasProviderApiKey } from "../../lib/providerApiKey";
+import { normalizeProviderApiKey } from "../../lib/providerApiKey";
 import type { RouteConfigurationDraft } from "./routeDrafts";
+
 export function RouteConfigurationFields({
   configuration,
   entryLabel,
@@ -14,7 +16,8 @@ export function RouteConfigurationFields({
   credentialSessions: CredentialSession[];
   onChange: (change: Partial<RouteConfigurationDraft>) => void;
 }) {
-  const [overrideVisible, setOverrideVisible] = useState(false);
+  const keyFieldID = useId();
+  const [visible, setVisible] = useState(false);
   const selectedSession = credentialSessions.find(
     (session) => session.id === configuration.credential_session_id,
   );
@@ -22,7 +25,14 @@ export function RouteConfigurationFields({
     selectedSession?.kind === "api_key"
       ? selectedSession.secret_data
       : undefined;
-  const visibilityAction = overrideVisible ? "Hide" : "Show";
+  const apiKey = configuration.api_key ?? currentApiKey ?? "";
+  const replacingKey =
+    Boolean(configuration.credential_session_id) &&
+    configuration.api_key !== null;
+  const credentialUnavailable =
+    Boolean(configuration.credential_session_id) && !selectedSession;
+  const usesChatGPT = selectedSession?.kind === "chatgpt";
+  const visibilityAction = visible ? "Hide" : "Show";
 
   return (
     <div className="space-y-2.5">
@@ -41,17 +51,27 @@ export function RouteConfigurationFields({
       </label>
       <label className="block space-y-1">
         <span className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
-          Credential Session
+          Saved Credential
         </span>
         <select
           className="input"
           value={configuration.credential_session_id}
-          onChange={(event) =>
-            onChange({ credential_session_id: event.target.value })
-          }
+          onChange={(event) => {
+            const sessionID = event.target.value;
+            // A new selection supersedes the previous key draft.
+            onChange({
+              credential_session_id: sessionID,
+              api_key: sessionID ? null : "",
+            });
+          }}
           aria-label={`Credential session for ${entryLabel}`}
         >
-          <option value="">Create or select a credential</option>
+          <option value="">Enter an API key</option>
+          {credentialUnavailable && (
+            <option value={configuration.credential_session_id}>
+              Current credential
+            </option>
+          )}
           {credentialSessions.map((session) => (
             <option key={session.id} value={session.id}>
               {session.name} ·{" "}
@@ -62,131 +82,86 @@ export function RouteConfigurationFields({
           ))}
         </select>
       </label>
-      {currentApiKey && (
-        <CurrentApiKeyField apiKey={currentApiKey} entryLabel={entryLabel} />
-      )}
-      <div className="space-y-1">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
-          New API Key
+      {usesChatGPT ? (
+        <p className="text-xs text-text-muted">
+          This route uses a GPT account. To use an API key, choose “Enter an API
+          key” above.
         </p>
-        <div className="relative">
-          <input
-            type={overrideVisible ? "text" : "password"}
-            className="input pr-10"
-            value={configuration.api_key}
-            onChange={(event) => onChange({ api_key: event.target.value })}
-            autoComplete="new-password"
-            placeholder="Keep selected session or use default key"
-            aria-label={`API key override for ${entryLabel}`}
-          />
-          <button
-            type="button"
-            onClick={() => setOverrideVisible((visible) => !visible)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors p-1"
-            aria-label={`${visibilityAction} API key override for ${entryLabel}`}
-            title={`${visibilityAction} API key override for ${entryLabel}`}
-          >
-            <CredentialVisibilityIcon visible={overrideVisible} />
-          </button>
-        </div>
-      </div>
-      <p className="text-xs text-text-muted">
-        {describeCredentialBinding(configuration)}
-      </p>
-    </div>
-  );
-}
-
-function describeCredentialBinding(entry: RouteConfigurationDraft): string {
-  if (hasProviderApiKey(entry.api_key)) {
-    return "A new credential session will be created on save.";
-  }
-  if (entry.credential_session_id) {
-    return `Bound to credential session ${entry.credential_session_id}.`;
-  }
-  return "Choose a session or provide a new API key before saving.";
-}
-
-function CredentialVisibilityIcon({ visible }: { visible: boolean }) {
-  if (visible) {
-    return (
-      <svg
-        className="w-5 h-5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg
-      className="w-5 h-5"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-      />
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-      />
-    </svg>
-  );
-}
-
-function CurrentApiKeyField({
-  apiKey,
-  entryLabel,
-}: {
-  apiKey: string;
-  entryLabel: string;
-}) {
-  const [visible, setVisible] = useState(false);
-  const visibilityAction = visible ? "Hide" : "Show";
-
-  return (
-    <div className="space-y-1">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
-        Current API Key
-      </p>
-      <div className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <input
-            type={visible ? "text" : "password"}
-            className="input pr-10 font-mono"
-            value={apiKey}
-            readOnly
-            aria-label={`Current API key for ${entryLabel}`}
-          />
-          <button
-            type="button"
-            onClick={() => setVisible((current) => !current)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors p-1"
-            aria-label={`${visibilityAction} current API key for ${entryLabel}`}
-            title={`${visibilityAction} current API key`}
-          >
-            <CredentialVisibilityIcon visible={visible} />
-          </button>
-        </div>
-        <CopyButton
-          text={apiKey}
-          className="h-10 shrink-0 rounded-lg border border-border px-3 hover:border-primary"
-        />
-      </div>
+      ) : (
+        <>
+          <div className="space-y-1">
+            <label
+              htmlFor={keyFieldID}
+              className="text-[11px] font-medium uppercase tracking-wide text-text-muted"
+            >
+              API Key
+            </label>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="relative min-w-0 flex-1">
+                <input
+                  id={keyFieldID}
+                  type={visible ? "text" : "password"}
+                  className="input pr-10 font-mono"
+                  value={apiKey}
+                  disabled={credentialUnavailable}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    onChange({
+                      api_key:
+                        currentApiKey &&
+                        normalizeProviderApiKey(value) === currentApiKey
+                          ? null
+                          : value,
+                    });
+                  }}
+                  autoComplete="new-password"
+                  placeholder={
+                    credentialUnavailable
+                      ? "Loading current key..."
+                      : "Enter an API key or use the shared key"
+                  }
+                  aria-label={`API key for ${entryLabel}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setVisible((current) => !current)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors p-1"
+                  aria-label={`${visibilityAction} API key for ${entryLabel}`}
+                >
+                  {visible ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+              {apiKey && (
+                <CopyButton
+                  text={apiKey}
+                  className="h-10 shrink-0 rounded-lg border border-border px-3 hover:border-primary"
+                />
+              )}
+            </div>
+          </div>
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-xs text-text-muted">
+              {configuration.credential_session_id
+                ? `Key edits apply only to ${entryLabel} when you save. Other routes sharing this credential keep their key.`
+                : "This key will be used when you save. Leave blank to use the shared key."}
+            </p>
+            {replacingKey && (
+              <button
+                type="button"
+                className="shrink-0 text-xs font-medium text-primary hover:underline cursor-pointer"
+                aria-label={`Undo API key change for ${entryLabel}`}
+                onClick={() => onChange({ api_key: null })}
+              >
+                Undo key change
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -69,7 +69,6 @@ type UpdateCredentialSessionRequest struct {
 }
 
 type ReauthenticateCredentialSessionRequest struct {
-	ExpectedVersion   int64  `json:"expected_version"`
 	CredentialLoginID string `json:"credential_login_id"`
 }
 
@@ -356,8 +355,8 @@ func (h *Handler) ReauthenticateCredentialSession(w http.ResponseWriter, r *http
 	}
 	sessionID := strings.TrimSpace(r.PathValue("id"))
 	loginID := strings.TrimSpace(req.CredentialLoginID)
-	if sessionID == "" || loginID == "" || req.ExpectedVersion < 1 {
-		writeError(w, http.StatusBadRequest, ErrCodeValidation, "id, expected_version, and credential_login_id are required")
+	if sessionID == "" || loginID == "" {
+		writeError(w, http.StatusBadRequest, ErrCodeValidation, "id and credential_login_id are required")
 		return
 	}
 
@@ -365,7 +364,6 @@ func (h *Handler) ReauthenticateCredentialSession(w http.ResponseWriter, r *http
 		zap.String("operation", credentialSessionReauthenticationOperation),
 		zap.String("session_id", sessionID),
 		zap.String("login_id", loginID),
-		zap.Int64("expected_version", req.ExpectedVersion),
 	)
 	candidate, err := builder.BuildCredentialSessionFromChatGPTLogin(loginID, sessionID)
 	if err != nil {
@@ -424,10 +422,13 @@ func (h *Handler) ReauthenticateCredentialSession(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Reconnection replaces authentication for the same account, not an edited
+	// snapshot. Refreshes and usage updates may advance the version during login.
+	// Resolve the version under the mutation lease so they cannot invalidate it.
 	nextVersion, err := repository.UpdateCredentialSessionCAS(
 		ownedCtx,
 		sessionID,
-		req.ExpectedVersion,
+		current.Version,
 		candidate.SecretData,
 		candidateSubject,
 		candidate.AuthState,
@@ -457,6 +458,8 @@ func (h *Handler) ReauthenticateCredentialSession(w http.ResponseWriter, r *http
 	h.logger.Info("credential session reauthentication completed",
 		zap.String("operation", credentialSessionReauthenticationOperation),
 		zap.String("session_id", sessionID),
+		zap.String("login_id", loginID),
+		zap.Int64("previous_version", current.Version),
 		zap.Int64("version", nextVersion),
 		zap.Int("referenced_route_target_count", len(payload.ReferencedRouteTargets)),
 	)
