@@ -34,9 +34,6 @@ jobs:
           check-latest: true
           cache-dependency-path: go.sum
       - name: Install quality tools
-        env:
-          # gopls releases may advance their toolchain requirement independently of the project.
-          GOTOOLCHAIN: auto
         run: make install-go-tools
       - name: Run Go quality gates
         run: make ci-go

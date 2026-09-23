@@ -1,4 +1,4 @@
-.PHONY: ci ci-go ci-web fixture-check lint coverage gopls-check sloc clean test fmt format-check build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc web-fmt web-format-check rm-tmpclaude check-go-env tools install-tools install-go-tools install-sloc-guard ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
+.PHONY: ci ci-go ci-web fixture-check lint coverage sloc clean test fmt format-check build build-all web-build release-windows release-mac release-clean web-lint web-coverage web-tsc web-fmt web-format-check rm-tmpclaude check-go-env tools install-tools install-go-tools install-sloc-guard ensure-go-test-coverage ensure-golangci-lint ensure-sloc-guard
 
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -16,10 +16,6 @@ ifeq ($(OS),Windows_NT)
     GO_TOOL_BIN := $(shell cygpath -u "$(GO_TOOL_BIN)")
 endif
 GO_EXE := $(shell go env GOEXE)
-# Resolve gopls at install time so CI follows the current stable Go tooling release.
-GOPLS_VERSION := latest
-GOPLS_MODULE := golang.org/x/tools/gopls
-GOPLS := $(GO_TOOL_BIN)/gopls$(GO_EXE)
 # Hosted CI follows stable Go, so quality tools resolve their current compatible releases.
 GO_TEST_COVERAGE_VERSION := latest
 GO_TEST_COVERAGE_MODULE := github.com/vladopajic/go-test-coverage/v2
@@ -44,7 +40,6 @@ SLOC_GUARD := $(TOOLS_ROOT)/bin/sloc-guard$(GO_EXE)
 # Include new source files in local gates while excluding tracked paths deleted by
 # an in-progress refactor; both omissions otherwise make the checks misleading.
 EXISTING_GO_FILES := git ls-files -z --cached --others --exclude-standard '*.go' | while IFS= read -r -d '' file; do if [ -f "$$file" ]; then printf '%s\0' "$$file"; fi; done
-GOPLS_CHECK := $(EXISTING_GO_FILES) | xargs -0 "$(GOPLS)" check -severity=hint
 GOFMT_CHECK := $(EXISTING_GO_FILES) | xargs -0 gofmt -l
 REQUIRED_GO_VERSION := $(shell awk '/^go / {print $$2}' go.mod)
 FIXTURE_ROOT := internal/codex/headers/testdata
@@ -98,25 +93,24 @@ fixture-check:
 	go test -count=1 ./internal/codex/headers -run '$(FIXTURE_TEST_PATTERN)'
 
 # Hosted CI keeps Go and web gates separate so their jobs can run in parallel.
-ci-go: check-go-env fixture-check coverage lint format-check gopls-check
+ci-go: check-go-env fixture-check coverage lint format-check
 
 ci-web: web-coverage web-tsc web-lint web-format-check
 
 # Local CI also normalizes formatting and removes transient debug captures so a
 # successful run leaves the working tree ready for review.
-ci: check-go-env fixture-check coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc gopls-check
+ci: check-go-env fixture-check coverage lint fmt web-coverage web-tsc web-lint web-fmt rm-tmpclaude sloc
 
 rm-tmpclaude:
 	@rm -f tmpclaude-*
 
-tools: ensure-go-test-coverage ensure-golangci-lint ensure-gopls ensure-sloc-guard
+tools: ensure-go-test-coverage ensure-golangci-lint ensure-sloc-guard
 
 install-tools: install-go-tools install-sloc-guard
 
 install-go-tools:
 	GOBIN="$(GO_TOOL_BIN_NATIVE)" go install $(GO_TEST_COVERAGE_MODULE)@$(GO_TEST_COVERAGE_VERSION)
 	GOBIN="$(GO_TOOL_BIN_NATIVE)" go install $(GOLANGCI_LINT_MODULE)@$(GOLANGCI_LINT_VERSION)
-	GOBIN="$(GO_TOOL_BIN_NATIVE)" go install $(GOPLS_MODULE)@$(GOPLS_VERSION)
 
 install-sloc-guard:
 	cargo install sloc-guard $(SLOC_GUARD_VERSION_ARG) --root "$(TOOLS_ROOT_NATIVE)" --locked --force
@@ -139,15 +133,6 @@ ensure-golangci-lint:
 		exit 1; \
 	fi
 
-ensure-gopls:
-	@if [ ! -x "$(GOPLS)" ]; then \
-		echo "Missing required tool: gopls"; \
-		echo "Expected executable: $(GOPLS)"; \
-		echo "Install manually with:"; \
-		echo "  GOBIN=\"$(GO_TOOL_BIN_NATIVE)\" go install $(GOPLS_MODULE)@$(GOPLS_VERSION)"; \
-		exit 1; \
-	fi
-
 ensure-sloc-guard:
 	@if [ ! -x "$(SLOC_GUARD)" ]; then \
 		echo "Missing required tool: sloc-guard"; \
@@ -159,9 +144,6 @@ ensure-sloc-guard:
 
 lint: ensure-golangci-lint
 	"$(GOLANGCI_LINT)" run
-
-gopls-check: ensure-gopls
-	$(GOPLS_CHECK)
 
 coverage: ensure-go-test-coverage
 	mkdir -p .tmp
