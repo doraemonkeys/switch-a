@@ -28,11 +28,30 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
           check-latest: true
-          cache-dependency-path: go.sum
+          cache: false
+      - name: Locate Go caches
+        id: go-cache-paths
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      # Dependency-only keys keep restoring an old build snapshot after source changes.
+      # Save each successful revision and seed new revisions from the latest compatible cache.
+      - name: Restore Go and lint caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.build }}
+            ${{ steps.go-cache-paths.outputs.modules }}
+            ~/.cache/golangci-lint
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-go.outputs.go-version }}-
       - name: Install quality tools
         run: make install-go-tools
       - name: Run Go quality gates
